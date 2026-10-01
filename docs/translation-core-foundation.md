@@ -1,7 +1,7 @@
 # Translation Core foundation
 
 Phase 2 adds an additive, domain-neutral contract layer under
-`transpraxis.translation_core`. It reads Folith's existing state and produces
+`folith.translation_core`. It reads Folith's existing state and produces
 JSON-serializable views; it does not add an agent loop, persistence store, or
 translation execution path.
 
@@ -31,7 +31,7 @@ workflow, project adapters, repair loop, or `.localize-anything` state layout.
 
 ## Folith remains authoritative
 
-- `transpraxis.models.GlossaryEntry`, its
+- `folith.models.GlossaryEntry`, its
   `candidate`/`provisional`/`locked`/`rejected` lifecycle, and
   `translate`/`preserve` behavior remain the only terminology model. Project
   Memory refers to confirmed glossary entries; it does not create a parallel

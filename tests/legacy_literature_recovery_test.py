@@ -4,7 +4,7 @@ import json
 
 from docx import Document
 
-from transpraxis import legacy_literature
+from folith import legacy_literature
 
 
 def _legacy_docx(path):

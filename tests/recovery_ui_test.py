@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import checkpoint
+from folith import checkpoint
 
 
 def _interrupted_job(job_id):

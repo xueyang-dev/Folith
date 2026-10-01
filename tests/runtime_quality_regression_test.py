@@ -12,8 +12,8 @@ from docx import Document
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import assets, context, entity_registry, knowledge, model_roles
-from transpraxis.translation_protocol import (
+from folith import assets, context, entity_registry, knowledge, model_roles
+from folith.translation_protocol import (
     TranslationProtocolError,
     parse_translation_array,
     parse_translation_response,

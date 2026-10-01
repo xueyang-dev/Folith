@@ -4,8 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from transpraxis import models
-from transpraxis import style_profile
+from folith import models
+from folith import style_profile
 
 
 def test_profiles_are_predefined_and_closed():

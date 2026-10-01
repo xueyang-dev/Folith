@@ -31,7 +31,7 @@ only signal.
 
 ## Read-only workbench projection
 
-`transpraxis/workbench_view.py` is the single presentation projection for Review,
+`folith/workbench_view.py` is the single presentation projection for Review,
 Overview, navigation, Translation context, and Delivery copy. It calls
 `translation_review_readiness()` and reads persisted findings, review events,
 decisions, pairs, and confirmed knowledge.

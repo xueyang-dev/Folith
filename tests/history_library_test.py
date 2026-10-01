@@ -17,7 +17,7 @@ display name / 文档元数据（不是完整源文件名），卡片**内部**�
 from pathlib import Path
 
 import core
-from transpraxis import history_view as hv
+from folith import history_view as hv
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
@@ -552,9 +552,9 @@ def test_css_targets_the_card_frame_with_a_distinct_prefix():
     绝对定位规则一起铺满整页，CTA 就会锚到页面底部而不是卡片右下角。
 
     样式断言取**真正被注入的那份 CSS**：样式表已整体迁出 app.py（见
-    `transpraxis.ui.styles`），继续在 app.py 源码里找规则会随迁移静默变红。
+    `folith.ui.styles`），继续在 app.py 源码里找规则会随迁移静默变红。
     """
-    from transpraxis.ui import styles as ui_styles
+    from folith.ui import styles as ui_styles
 
     source = APP_PATH.read_text(encoding="utf-8")
     css = ui_styles.get_combined_css()
@@ -639,11 +639,11 @@ def test_remove_action_lives_inside_the_card_and_avoids_the_click_prefix():
 def test_remove_modal_is_wired_into_the_history_branch():
     """移除弹窗由历史页渲染，且底行给「移除 + CTA」两个按钮都留了位置。
 
-    样式断言取**真正被注入的那一份 CSS**（`transpraxis.ui.styles.get_combined_css()`），
+    样式断言取**真正被注入的那一份 CSS**（`folith.ui.styles.get_combined_css()`），
     而不是某个文件里的字符串——样式表已整体迁出 app.py，绑文件路径的断言会随迁移
     静默变红，且无法证明用户真的看到了这条规则。
     """
-    from transpraxis.ui import styles as ui_styles
+    from folith.ui import styles as ui_styles
 
     source = APP_PATH.read_text(encoding="utf-8")
     # 必须锚定行首：`elif app_view == "history":` 里也含有 `if app_view == …`

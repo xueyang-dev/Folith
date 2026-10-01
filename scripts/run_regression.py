@@ -139,7 +139,7 @@ def main() -> int:
     script_files = sum(1 for r in rows if r[1] == SCRIPT_STYLE)
     passed_cases = 0
     for row in rows:
-        found = re.match(r"(\d+) passed", row[4])
+        found = re.search(r"(\d+) passed", row[4])
         if found:
             passed_cases += int(found.group(1))
 

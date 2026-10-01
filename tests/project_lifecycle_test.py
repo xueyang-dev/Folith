@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import core  # noqa: E402
-from transpraxis import project as project_module  # noqa: E402
+from folith import project as project_module  # noqa: E402
 
 LOCKED = {"source": "canopy closure", "target": "林冠郁闭", "preferred": "林冠郁闭",
           "status": "locked", "behavior": "translate"}

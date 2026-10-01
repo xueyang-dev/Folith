@@ -102,7 +102,10 @@ def _button_labels(node):
     labels = []
     for call in (n for n in ast.walk(node) if isinstance(n, ast.Call)):
         if ast.unparse(call.func).endswith(".button") and call.args:
-            labels.append(ast.unparse(call.args[0]).replace('"', "'"))
+            label = call.args[0]
+            if isinstance(label, ast.Call) and isinstance(label.func, ast.Name) and label.func.id == "_t":
+                label = label.args[0]
+            labels.append(ast.unparse(label).replace('"', "'"))
     return labels
 
 
@@ -133,7 +136,7 @@ def test_manage_action_has_no_tooltip_wrapper():
     assert not any(kw.arg == "help" for kw in manage[0].keywords), \
         "「管理」带 tooltip 会让 `.stButton > button` 直接子选择器静默失效"
     css = APP_PATH.read_text(encoding="utf-8")
-    styles_file = ROOT / "transpraxis" / "ui" / "styles.py"
+    styles_file = ROOT / "folith" / "ui" / "styles.py"
     if styles_file.is_file():
         css += "\n" + styles_file.read_text(encoding="utf-8")
     assert ".st-key-provider_status .stButton > button {" in css, \
@@ -180,7 +183,7 @@ def test_ai_engine_footer_still_renders_as_a_status_module():
         assert 'tp-nav-label">AI引擎' not in markup, \
             "AI Engine 区不能伪装成「工作区」分组里的一个分组标题"
         source = APP_PATH.read_text(encoding="utf-8")
-        styles_file = ROOT / "transpraxis" / "ui" / "styles.py"
+        styles_file = ROOT / "folith" / "ui" / "styles.py"
         if styles_file.is_file():
             source += "\n" + styles_file.read_text(encoding="utf-8")
         assert 'st-key-provider_status' in source, "status module 的容器 key 必须保留"

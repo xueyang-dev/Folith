@@ -9,6 +9,8 @@ dist/
 
 # 应用运行数据（任务进度与中间文件）
 outputs/
+exports/
+
 
 # 凭据与密钥：一律不入库
 # `outputs/` 已整体忽略，这里**再显式声明一次** provider_config.json——
@@ -69,3 +71,11 @@ tmp/
 .DS_Store
 .idea/
 .vscode/
+
+# Reproducible localization working packets; catalogs and memory remain versioned.
+.localize-anything/
+
+# Local design drafts
+/BUGFIX_drafts_pending.md
+/DELIVERY_REDESIGN_ANALYSIS.md
+/DELIVERY_REDESIGN_SUMMARY.md

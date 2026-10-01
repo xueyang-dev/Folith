@@ -18,7 +18,7 @@ import json
 import core
 import pytest
 from docx import Document
-from transpraxis import assets
+from folith import assets
 
 
 def _state():

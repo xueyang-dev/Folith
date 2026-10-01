@@ -113,3 +113,147 @@ def test_switching_delivery_preset_does_not_raise_keyerror_on_outputs():
             tmx.check()
         at.run()
         assert not at.exception, [e.value for e in at.exception]
+
+
+# ── §10 Selection-state consistency ──────────────────────────────────────────
+
+
+def _count_selected(at, keys):
+    """Return the number of truthy checkbox widgets for the given key list."""
+    return sum(
+        1 for cb in at.checkbox
+        if cb.key in keys and cb.value
+    )
+
+
+def _footer_file_count(at):
+    """Parse the footer file count from the delivery summary markdown."""
+    for m in at.markdown:
+        if "将生成" in m.value and "个文件" in m.value:
+            import re
+            match = re.search(r"将生成\s*(\d+)\s*个文件", m.value)
+            if match:
+                return int(match.group(1))
+    return None
+
+
+def test_select_unselect_artifact_all_views_agree():
+    """checkbox → selected count → footer file count → output_config are consistent."""
+    at = _step3_app()
+
+    # baseline: standard preset → deliver_plain_docx + deliver_bilingual_docx + deliver_terms_xlsx
+    config = at.session_state["output_config"]
+    translation_keys = ["deliver_plain_docx", "deliver_bilingual_docx",
+                        "deliver_pdf", "output_annotate"]
+    asset_keys = ["deliver_terms_xlsx", "deliver_tmx", "deliver_tbx", "deliver_jsonl"]
+
+    checked_translation = _count_selected(at, translation_keys)
+    checked_assets = _count_selected(at, asset_keys)
+
+    # selected counts in markdown headers must match widget state
+    assert any(
+        "译文文件" in m.value and f"已选 {checked_translation}" in m.value
+        for m in at.markdown
+    ), f"译文文件 header count should be {checked_translation}"
+    assert any(
+        "语言资产" in m.value and f"已选 {checked_assets}" in m.value
+        for m in at.markdown
+    ), f"语言资产 header count should be {checked_assets}"
+
+    # footer file count matches output_config
+    footer = _footer_file_count(at)
+    assert footer == 3, f"standard preset should generate 3 files, got {footer}"
+    assert config["deliver_plain_docx"] is True
+    assert config["deliver_bilingual_docx"] is True
+    assert config["deliver_terms_xlsx"] is True
+
+    # uncheck deliver_plain_docx
+    next(cb for cb in at.checkbox if cb.key == "deliver_plain_docx").uncheck()
+    at.run()
+    assert not at.exception
+
+    config2 = at.session_state["output_config"]
+    assert config2["deliver_plain_docx"] is False
+
+    footer2 = _footer_file_count(at)
+    assert footer2 == 2, f"after uncheck, footer should show 2 files, got {footer2}"
+
+    new_checked = _count_selected(at, translation_keys)
+    assert any(
+        "译文文件" in m.value and f"已选 {new_checked}" in m.value
+        for m in at.markdown
+    ), "译文文件 header count should update after uncheck"
+
+
+def test_preset_complete_selected_counts_correct():
+    """完整交付 preset → checkbox states, selected counts, footer all correct."""
+    at = _step3_app()
+    next(item for item in at.selectbox if item.label == "交付方案").select("complete")
+    at.run()
+    assert not at.exception
+
+    config = at.session_state["output_config"]
+    assert config["deliver_plain_docx"] is True
+    assert config["deliver_bilingual_docx"] is True
+    assert config["deliver_pdf"] is True
+    assert config["deliver_terms_xlsx"] is True
+    assert config["deliver_tmx"] is True
+    assert config["deliver_tbx"] is True
+
+    # checkbox values match config
+    for key in ("deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
+                 "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx"):
+        cb = next((c for c in at.checkbox if c.key == key), None)
+        assert cb is not None, f"checkbox {key} not found"
+        assert cb.value is True, f"checkbox {key} should be checked for complete preset"
+
+    footer = _footer_file_count(at)
+    assert footer == 6, f"complete preset should generate 6 files, got {footer}"
+
+    assert any("译文文件" in m.value and "已选 3" in m.value for m in at.markdown), \
+        "complete preset: 译文文件 should show 已选 3"
+    assert any("语言资产" in m.value and "已选 3" in m.value for m in at.markdown), \
+        "complete preset: 语言资产 should show 已选 3"
+
+
+def test_preset_compact_selected_counts_correct():
+    """精简交付 preset → only deliver_plain_docx checked, counts correct."""
+    at = _step3_app()
+    next(item for item in at.selectbox if item.label == "交付方案").select("compact")
+    at.run()
+    assert not at.exception
+
+    config = at.session_state["output_config"]
+    assert config["deliver_plain_docx"] is True
+    assert config["deliver_bilingual_docx"] is False
+    assert config["deliver_terms_xlsx"] is False
+
+    footer = _footer_file_count(at)
+    assert footer == 1, f"compact preset should generate 1 file, got {footer}"
+
+    assert any("译文文件" in m.value and "已选 1" in m.value for m in at.markdown), \
+        "compact preset: 译文文件 should show 已选 1"
+    assert any("语言资产" in m.value and "已选 0" in m.value for m in at.markdown), \
+        "compact preset: 语言资产 should show 已选 0"
+
+
+def test_dual_panel_groups_both_present():
+    """Both 译文文件 and 语言资产 group headers appear on step 3."""
+    at = _step3_app()
+    assert any("译文文件" in m.value and "已选" in m.value for m in at.markdown), \
+        "译文文件 panel header must appear"
+    assert any("语言资产" in m.value and "已选" in m.value for m in at.markdown), \
+        "语言资产 panel header must appear"
+
+
+def test_plain_docx_and_pdf_are_visually_disambiguated():
+    """The two 纯译文 rows are shown with distinct format labels in the HTML."""
+    at = _step3_app()
+    # Both rows have their format badge rendered; the format strings differ
+    # (DOCX vs PDF) so users can tell them apart.
+    html_values = " ".join(m.value for m in at.markdown)
+    assert "DOCX" in html_values and "PDF" in html_values, \
+        "Both DOCX and PDF format badges must be present"
+    # Both 纯译文 rows show their disambiguated title in the markdown copy
+    assert html_values.count("纯译文") >= 2, \
+        "Both 纯译文 rows must render their title in markdown"

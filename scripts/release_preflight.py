@@ -70,6 +70,7 @@ SOFT_PATTERNS = [
 HOME_PATH_PATTERNS = [
     (r"/Users/[A-Za-z0-9._\-]+", "macOS 家目录"),
     (r"/home/[A-Za-z0-9._\-]+", "Linux 家目录"),
+    (r"/var/folders/[A-Za-z0-9._\-]+/", "macOS 临时目录"),
     (r"[Cc]:\\Users\\[A-Za-z0-9._\-]+", "Windows 家目录"),
 ]
 
@@ -232,10 +233,10 @@ def check_credential_ignored(rep: Report) -> None:
 
 def check_no_outputs_tracked(rep: Report) -> None:
     rep.section("[6] outputs/ 是否进入版本控制")
-    tracked = [f for f in _tracked_files() if f.startswith("outputs/")]
+    tracked = [f for f in _tracked_files() if f.startswith(("outputs/", "exports/"))]
     staged = [
         ln for ln in _git("diff", "--cached", "--name-only").stdout.splitlines()
-        if ln.startswith("outputs/")
+        if ln.startswith(("outputs/", "exports/"))
     ]
     if tracked:
         rep.fail(f"{len(tracked)} 个 outputs/ 路径已被跟踪", tracked[0])
@@ -397,6 +398,7 @@ def _is_generated(rel: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="发布卫生预检（只读）")
+    parser.add_argument("--dist", type=Path, default=DIST, help="构建产物目录")
     parser.add_argument("--quiet", action="store_true", help="只输出失败项")
     parser.add_argument(
         "--ref",
@@ -404,6 +406,7 @@ def main() -> int:
         help="产物比对的基准 revision（默认 HEAD；发布时建议显式给 tag，如 --ref v0.4.0）",
     )
     args = parser.parse_args()
+    globals()["DIST"] = args.dist.resolve()
 
     if _git("rev-parse", "--verify", args.ref).returncode != 0:
         print(f"FAIL  revision `{args.ref}` 不存在 —— 无法比对产物")

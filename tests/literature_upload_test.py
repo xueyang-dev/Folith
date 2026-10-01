@@ -1,7 +1,7 @@
 """普通参考资料上传的解析与内部来源登记测试。"""
 from pathlib import Path
 
-from transpraxis import literature_evidence
+from folith import literature_evidence
 
 
 def test_bibtex_and_ris_uploads_become_citable_sources(tmp_path: Path):

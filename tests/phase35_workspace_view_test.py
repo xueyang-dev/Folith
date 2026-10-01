@@ -1,8 +1,8 @@
 """Phase 3.5 cross-page human-facing state invariants."""
 import json
 
-from transpraxis.translation_core import fingerprint
-from transpraxis.workspace_view import (
+from folith.translation_core import fingerprint
+from folith.workspace_view import (
     ai_configuration_view,
     delivery_review_gate_copy,
     history_copy,

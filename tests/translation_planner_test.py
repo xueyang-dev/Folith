@@ -5,9 +5,9 @@ import json
 
 import pytest
 
-from transpraxis.task_overview import LIFECYCLE_STATES as TASK_LIFECYCLES
-from transpraxis.task_overview import TONES as TASK_TONES
-from transpraxis.translation_planner import plan_findings, workspace_progress
+from folith.task_overview import LIFECYCLE_STATES as TASK_LIFECYCLES
+from folith.task_overview import TONES as TASK_TONES
+from folith.translation_planner import plan_findings, workspace_progress
 
 
 # ---------------- fixtures ----------------

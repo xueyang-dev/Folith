@@ -19,7 +19,7 @@ def main():
     core.OUTPUT_DIR = tmp
     try:
         app_source = (root / "app.py").read_text(encoding="utf-8")
-        styles_file = root / "transpraxis" / "ui" / "styles.py"
+        styles_file = root / "folith" / "ui" / "styles.py"
         if styles_file.is_file():
             app_source += "\n" + styles_file.read_text(encoding="utf-8")
         assert ':has([data-testid="stFileChip"]) .tp-upload-copy' in app_source \
@@ -153,7 +153,7 @@ def main():
         remove_source = next(b for b in at.button if b.label == "删除")
         assert remove_source.icon == ":material/delete_outline:", \
             "低频移除操作应收进文件卡并使用轻量图标"
-        assert any("已保存" in m.value for m in at.markdown), \
+        assert any(("已保存" in m.value or "已自动保存" in m.value) for m in at.markdown), \
             "已有输入时底部操作栏应反馈保存状态"
         assert not next(b for b in at.button if b.label == "下一步").disabled, \
             "上传原文后下一步必须变为可用"

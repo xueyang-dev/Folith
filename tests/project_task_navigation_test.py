@@ -44,7 +44,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import core  # noqa: E402
-from transpraxis import project as project_module  # noqa: E402
+from folith import project as project_module  # noqa: E402
 
 LOCKED = {"source": "canopy closure", "target": "林冠郁闭", "preferred": "林冠郁闭",
           "status": "locked", "behavior": "translate"}
@@ -1014,7 +1014,7 @@ def test_project_detail_has_four_primary_tabs():
 
 
 def test_overview_is_a_work_center_not_a_database_record():
-    """概览 = 工作概览 + 进行中任务 + 最近任务 + 项目知识；**不出现 UUID**。"""
+    """概览 = 工作概览 + 未交付任务 + 项目知识；已显示任务不重复。"""
     with nav_env():
         project = core.create_project("沙特教材", description="教材本地化")
         seeded = project_module.merge_confirmed_knowledge(
@@ -1025,8 +1025,8 @@ def test_overview_is_a_work_center_not_a_database_record():
         page = _markdown_text(at)
         # 这是工作信息，不是数据库字段。
         assert "工作概览" in page
-        assert "进行中的任务" in page
-        assert "最近任务" in page
+        assert "未交付任务" in page
+        assert "其他最近任务" not in page
         assert "项目知识" in page
         assert "第一章" in page
         assert "教材本地化" in page, "项目描述属于 header"
@@ -1056,12 +1056,12 @@ def test_overview_uses_real_project_data():
         # 四个 summary card 都读到真实数量（各 1）。
         assert page.count('<div class="tp-stat-value">1</div>') == 4, page[:1200]
         # 每张卡是 label / 主值 / 短注三元组，说明保持短句（不再是一句长文案）。
-        for label, note in (("任务", "1 进行中"), ("术语", "已确认"),
+        for label, note in (("任务", "1 未交付"), ("术语", "已确认"),
                             ("规则", "已确认"), ("记忆", "已审核")):
             assert (f'<div class="tp-stat-label">{label}</div>'
                     f'<div class="tp-stat-value">1</div>'
                     f'<div class="tp-stat-note">{note}</div>') in page, label
-        assert "1 进行中" in page, "任务卡必须给出进行中/已完成分布"
+        assert "1 未交付" in page, "任务卡必须区分未交付与已交付"
 
 
 def test_overview_empty_project_shows_onboarding_not_zeros():
@@ -1085,17 +1085,18 @@ def test_overview_empty_project_shows_onboarding_not_zeros():
         assert ">0</div>" not in page, "空项目不应渲染一排 0"
 
 
-def test_overview_recent_tasks_are_capped_at_five():
+def test_overview_prioritizes_unfinished_tasks_and_caps_recent_tasks():
     with nav_env():
         project = core.create_project("多任务项目")
         for index in range(8):
             _seed_job(f"job-{index}", f"doc-{index}.docx", project["project_id"])
         at = _project_page(state={"active_project_id": project["project_id"]})
         page = _markdown_text(at)
-        assert "显示最近 5 个" in page, page[:400]
+        # 四条未交付任务优先展示，剩余任务才进入最近任务区。
+        assert "显示最近 4 个" in page, page[:400]
         recent = [b.key for b in at.button
                   if b.key and b.key.startswith("project_recent_open_")]
-        assert len(recent) == 5, recent
+        assert len(recent) == 4, recent
         # 完整列表在「任务」tab，不塞进概览。
         assert _button(at, f"overview_all_tasks_{project['project_id']}") is not None
 
@@ -1105,18 +1106,18 @@ def test_overview_view_all_switches_to_tasks_tab():
         project = core.create_project("多任务项目")
         _seed_job("job-0", "doc-0.docx", project["project_id"])
         at = _project_page(state={"active_project_id": project["project_id"]})
-        at.button(key=f"overview_all_tasks_{project['project_id']}").click()
+        # 只有存在未展示的最近任务时才提供「查看全部」；单条未交付任务已经完整展示。
+        assert _button(at, f"overview_all_tasks_{project['project_id']}") is None
+        at.session_state["active_project_tab"] = "tasks"
         at.run()
         assert not at.exception, [e.value for e in at.exception]
         assert at.session_state["active_project_tab"] == "tasks"
 
 
 def test_hub_and_detail_agree_on_the_task_distribution():
-    """同一个项目的未交付任务：Hub 卡片与详情概览都只能说「进行中」。
+    """Hub 卡片和详情概览都不能把未交付任务标成已完成。
 
-    这条守住的是一个真实的一致性问题：详情用 canonical lifecycle（只有冻结交付
-    才算完成），Hub 卡片也必须用同一套语义，否则同一个项目在列表上写"2 已完成"、
-    进详情却是"2 进行中"。
+    Hub 按工作状态分桶，详情按交付状态汇总；两边都只把已冻结交付计为完成。
     """
     with nav_env():
         project = core.create_project("一致性项目")
@@ -1129,12 +1130,12 @@ def test_hub_and_detail_agree_on_the_task_distribution():
 
         detail_page = _visible_text(
             _project_page(state={"active_project_id": project["project_id"]}))
-        assert "2 进行中" in detail_page, detail_page[:1800]
+        assert "2 未交付" in detail_page, detail_page[:1800]
         assert "2 已完成" not in detail_page
 
 
-def test_overview_puts_active_tasks_before_recent_tasks():
-    """进行中的任务优先于最近任务；已交付任务不进「进行中的任务」。"""
+def test_overview_prioritizes_unfinished_tasks_without_duplicates():
+    """未交付任务优先展示；列表不复刻项目概览中已经显示的行。"""
     with nav_env():
         project = core.create_project("活跃项目")
         _seed_inbox_task("active", "active.docx",
@@ -1143,9 +1144,8 @@ def test_overview_puts_active_tasks_before_recent_tasks():
                          project_id=project["project_id"], pairs=2)
         at = _project_page(state={"active_project_id": project["project_id"]})
         page = _markdown_text(at)
-        assert "进行中的任务" in page
-        assert page.find("进行中的任务") < page.find("最近任务"), \
-            "进行中的任务必须排在最近任务之前"
+        assert "未交付任务" in page
+        assert "其他最近任务" not in page
         active_keys = [b.key for b in at.button
                        if b.key and b.key.startswith("project_job_open_")]
         assert set(active_keys) == {"project_job_open_active",
@@ -1566,8 +1566,8 @@ def test_settings_holds_uuid_and_project_metadata():
         assert "项目资料" in page
         assert "高级信息" in page
         assert project["project_id"] in page, "设置必须给出真实 Project ID"
-        assert "Project ID" in page
-        assert "创建时间" in page and "最近更新" in page
+        assert "项目 ID" in page and "不可变 UUID" in page
+        assert "创建于" in page and "最近更新" in page
         assert "描述在设置里" in page
         assert _button(at, f"settings_edit_{project['project_id']}") is not None
         assert _button(at, f"settings_delete_{project['project_id']}") is not None

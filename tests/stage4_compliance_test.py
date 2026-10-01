@@ -7,8 +7,8 @@ import core
 from docx import Document
 from docx.enum.text import WD_LINE_SPACING
 from docx.shared import Cm, Pt
-from transpraxis import compliance
-from transpraxis import thesis_constraints
+from folith import compliance
+from folith import thesis_constraints
 
 
 def _state(text="", **settings):

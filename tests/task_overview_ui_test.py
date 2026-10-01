@@ -10,8 +10,8 @@ the real Streamlit workspace and checks the page-level acceptance rules:
 * blocking findings → the primary CTA is "查看问题" and no delivery CTA exists;
 * suggestions → described as non-blocking, never as "必须处理";
 * the Banner is the **only** surface that states the canonical verdict;
-* the Banner is a compact **two-row** card — the task details live in the
-  workbench toolbar, not as a third row inside the Banner;
+* the task header stays compact — task details live in task-level navigation,
+  not as another permanent row inside the header;
 * a running/interrupted task can be resumed from the Banner (the runtime
   controls used to live on the deleted overview page);
 * runtime details open in a side-drawer surface, with technical information
@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 import core
-from transpraxis import task_overview as to
+from folith import task_overview as to
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
@@ -114,7 +114,7 @@ def _banner_markup(at):
         if "tp-workspace-verdict" in str(item.value)
         or "tp-workspace-status-detail" in str(item.value)
         or "tp-banner-metric" in str(item.value)
-        or "tp-banner-runtime is-" in str(item.value))
+        or "tp-runtime-hud is-" in str(item.value))
 
 
 def _buttons(at):
@@ -150,30 +150,27 @@ def test_unknown_section_degrades_to_the_translation_workbench(tmp_path, monkeyp
     assert "查看概览" not in _buttons(at)
 
 
-def test_the_banner_is_the_only_surface_stating_the_canonical_verdict(
-        tmp_path, monkeypatch):
+def test_compact_header_keeps_progress_and_one_issue_entry(tmp_path, monkeypatch):
     at = _open_workspace(tmp_path, monkeypatch, "bannerone",
                          _state(1, review_required=True))
-    state = core.load_job_state("bannerone")
-    expected = to.derive_task_overview_state(state)
     page = _markup(at)
 
-    assert page.count('class="tp-workspace-verdict is-') == 1, \
-        "Banner 只允许有一个 canonical 状态 chip"
-    assert page.count('class="tp-workspace-status-detail"') == 1
-    assert expected["label"] in page
-    assert f'title="{expected["detail"]}"' in page
-    # 工具栏不再挂第二份 canonical chip（那是同一句话的第三次复述）。
+    assert 'class="tp-workspace-topbar"' in page
+    assert "tp-banner-metric" in page
+    issue_entries = [button for button in at.button
+                     if button.key == "workspace_issues_bannerone"]
+    assert len(issue_entries) == 1, "全局问题只能有一个明确入口"
+    assert "tp-issue-bar" not in page, "旧的独立问题卡片必须退出主工作流"
     assert "tp-nav-canonical" not in page
 
 
 def test_blocking_state_is_red_on_the_banner(tmp_path, monkeypatch):
     at = _open_workspace(tmp_path, monkeypatch, "bannerred",
                          _state(1, targets=["TODO: replace before delivery"]))
-    banner = _banner_markup(at)
-
-    assert 'class="tp-workspace-verdict is-blocked"' in banner
-    assert 'class="tp-banner-metric is-blocked"' in banner
+    issue_button = next(button for button in at.button
+                        if button.key == "workspace_issues_bannerred")
+    assert "问题" in issue_button.label
+    assert "tp-banner-metric is-blocked" not in _banner_markup(at)
 
 
 def test_blocking_findings_replace_the_delivery_cta(tmp_path, monkeypatch):
@@ -186,7 +183,8 @@ def test_blocking_findings_replace_the_delivery_cta(tmp_path, monkeypatch):
     for forbidden in ("准备交付", "生成冻结交付", "继续准备交付"):
         assert not _has_button(at, forbidden), \
             f"blocking 时不得出现交付 CTA：{forbidden}"
-    assert "需要处理问题" in _markup(at)
+    assert sum(button.key == "workspace_issues_bannerblocking" for button in at.button) == 1
+    assert "需要处理问题" not in _markup(at)
 
 
 def test_suggestions_are_never_described_as_blocking(tmp_path, monkeypatch):
@@ -196,17 +194,16 @@ def test_suggestions_are_never_described_as_blocking(tmp_path, monkeypatch):
     at = _open_workspace(tmp_path, monkeypatch, "bannersuggestion", state)
 
     page = _markup(at)
-    assert "建议" in page
-    assert "0 项必须处理" in page
-    assert "不会阻止交付" in page
-    assert _has_button(at, "准备交付"), "只有建议时仍可进入交付准备"
+    labels = _buttons(at)
+    assert any("条建议" in label for label in labels), labels
+    assert "必须处理" not in page, "只有建议时不应暗示阻塞"
 
 
 def test_ready_for_delivery_prep_never_claims_final_delivery(tmp_path, monkeypatch):
     at = _open_workspace(tmp_path, monkeypatch, "bannerready", _state(2))
 
     page = _markup(at)
-    assert "可以准备交付" in page
+    assert _has_button(at, "准备交付")
     assert "Ready for delivery" not in page
     assert "可以正式交付" not in page
     assert "已交付" not in page
@@ -241,12 +238,10 @@ def test_blocking_and_suggestion_are_separate_indicators(tmp_path, monkeypatch):
     """「必须处理 N」与「建议 N」是两个口径，不能合并成一个数字。"""
     at = _open_workspace(tmp_path, monkeypatch, "bannersplit",
                          _state(1, targets=["TODO: replace before delivery"]))
-    metrics = _banner_metrics(at)
-
-    assert ("blocked", "必须处理 1") in metrics, metrics
-    assert not any(tone == "attention" and text.startswith("建议")
-                   for tone, text in metrics), \
-        "blocking 与 suggestion 是两种语义，不能都写成 is-attention"
+    labels = _buttons(at)
+    assert sum("问题" in label for label in labels) == 1, labels
+    assert not any("条建议" in label for label in labels), \
+        "阻塞问题 CTA 与建议入口必须分开表达"
 
 
 def test_suggestion_only_job_has_no_blocking_indicator(tmp_path, monkeypatch):
@@ -254,11 +249,10 @@ def test_suggestion_only_job_has_no_blocking_indicator(tmp_path, monkeypatch):
     state["pairs"][0]["source"] = "A" * 200
     state["paras"] = ["A" * 200]
     at = _open_workspace(tmp_path, monkeypatch, "bannersuggestonly", state)
-    metrics = _banner_metrics(at)
-
-    assert not any(tone == "blocked" for tone, _text in metrics), \
-        "只有建议时不得常驻一个红色的「必须处理」指标"
-    assert any(text.startswith("建议") for _tone, text in metrics), metrics
+    labels = _buttons(at)
+    assert not any("问题" in label for label in labels), \
+        "只有建议时不得展示阻塞问题 CTA"
+    assert any("条建议" in label for label in labels), labels
 
 
 def test_delivered_requires_a_real_snapshot(tmp_path, monkeypatch):
@@ -276,7 +270,7 @@ def test_delivered_requires_a_real_snapshot(tmp_path, monkeypatch):
     at.session_state["workspace_section"] = "translation"
     at.run()
     assert not at.exception, at.exception
-    assert "可以准备交付" in _markup(at)
+    assert _has_button(at, "准备交付")
     assert "已交付" not in _banner_markup(at)
 
     _, ok, errors = core.approve_delivery(job_id, note="task banner test")
@@ -300,8 +294,11 @@ def test_delivery_page_headline_matches_the_canonical_state(tmp_path, monkeypatc
                          _state(2), section="delivery")
     page = _markup(at)
 
-    assert "tp-readiness-card is-success" in page
-    assert "可以准备交付" in page
+    assert "tp-delivery-status-badge is-success" in page
+    assert "前置检查已通过" in page
+    assert "术语同步" not in page
+    assert "段修改" not in page
+    assert "待创建交付 v1" in page
     assert "可以冻结交付" not in page, \
         "'可以准备交付' 不得被写成 '可以冻结交付'"
 
@@ -319,7 +316,7 @@ def test_runtime_controls_are_visible_in_the_banner(tmp_path, monkeypatch):
     banner = _banner_markup(at)
     labels = _buttons(at)
 
-    assert "tp-banner-runtime is-" in banner, "运行区必须在 Banner 内渲染"
+    assert "tp-runtime-hud is-" in banner, "运行区必须在 Banner 内渲染"
     assert labels.count("继续处理") == 1, \
         f"「继续处理」只能出现一次（运行区提供）：{labels}"
     # 运行区给了主动作，Banner 不得再渲染第二个 canonical 主动作按钮。
@@ -343,9 +340,9 @@ def test_runtime_details_open_in_drawer_and_technical_info_stays_collapsed(tmp_p
     assert not at.exception, at.exception
     drawer = _markup(at)
     assert "运行概要" in drawer
-    assert "当前阶段" in drawer and "Pipeline" in drawer
+    assert "任务阶段" in drawer
     assert "最近活动" in drawer
-    assert any(expander.label == "技术信息" for expander in at.expander)
+    assert any(expander.label == "技术详情 ▸" for expander in at.expander)
 
 
 def test_runtime_drawer_can_close_without_changing_workspace(tmp_path, monkeypatch):
@@ -357,7 +354,7 @@ def test_runtime_drawer_can_close_without_changing_workspace(tmp_path, monkeypat
     next(button for button in at.button if button.label == "关闭运行详情").click()
     at.run()
     assert "runtime_drawer_job_id" not in at.session_state
-    assert not any(expander.label == "技术信息" for expander in at.expander)
+    assert not any(expander.label == "技术详情 ▸" for expander in at.expander)
     assert any("<h2>翻译</h2>" in str(item.value) for item in at.markdown)
 
 
@@ -365,7 +362,7 @@ def test_completed_task_has_no_runtime_row(tmp_path, monkeypatch):
     at = _open_workspace(tmp_path, monkeypatch, "bannerruntimeidle", _state(2))
     captions = " ".join(str(c.value) for c in at.caption)
 
-    assert "tp-banner-runtime is-" not in _banner_markup(at)
+    assert "tp-runtime-hud is-" not in _banner_markup(at)
     assert "worker id" not in captions
     assert not any(label == "继续处理" for label in _buttons(at))
 
@@ -380,7 +377,6 @@ def test_task_details_expose_the_source_filename(tmp_path, monkeypatch):
 
     code = " ".join(str(item.value) for item in at.code)
     assert "Neural Machine Interface.docx" in code
-    assert any(expander.label == "任务详情" for expander in at.expander)
     assert not any(expander.label == "项目详情" for expander in at.expander), \
         "同一个「任务详情」不应该以「项目详情」再复制一份"
 
@@ -405,27 +401,21 @@ def test_a_cleared_job_gets_no_resume_action(tmp_path, monkeypatch):
 
     assert not at.exception, at.exception
     assert "还没有打开的任务" in _markup(at)
-    assert "tp-banner-runtime is-" not in _banner_markup(at), \
+    assert "tp-runtime-hud is-" not in _banner_markup(at), \
         "空 shell 没有运行可恢复，不该渲染运行区"
     assert not any(label == "继续处理" for label in _buttons(at))
 
 
 # ---------------- Banner 的两行契约 ----------------
 
-def test_the_task_details_are_not_a_third_banner_row():
-    """报告要求 Banner 是紧凑两行；「任务详情」是工具栏右端的入口。
-
-    上一轮的 Banner 实际是**三行**（身份 / 指标 / 任务详情展开器）：一个低频
-    入口每天都固定吃掉 42px + 上下间距。AppTest 看不到容器嵌套，所以这里钉
-    调用关系——Banner 不再渲染它，工具栏渲染它。
-    """
+def test_task_details_are_a_secondary_task_navigation_action():
+    """完整源文件与导入范围留在任务导航的按需详情里。"""
     topbar = _function_source("_render_workspace_topbar")
     nav = _function_source("_render_workspace_nav")
 
-    assert "_workspace_task_details(" not in topbar, \
-        "「任务详情」不能让 Banner 长出第三行"
-    assert "_workspace_task_details(" in nav, \
-        "「任务详情」必须挂在工具栏里，否则完整文件名就无处可看"
+    assert "_workspace_task_details(" not in topbar
+    assert 'st.popover(_t("任务详情")' in nav
+    assert "_workspace_task_details(" in nav
 
 
 def test_the_toolbar_carries_page_navigation_only(tmp_path, monkeypatch):

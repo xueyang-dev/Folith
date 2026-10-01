@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from transpraxis.terminology import term_matches  # noqa: E402
+from folith.terminology import term_matches  # noqa: E402
 
 CLASSIFICATIONS = ("unaffected", "compatible", "incompatible", "ambiguous",
                    "scope_sensitive")

@@ -15,7 +15,7 @@ import core
 _MARK_PROFILE = "文档画像"
 _MARK_DIGEST = "文档理解器"
 _MARK_SYNOPSIS = "全书理解器"
-_MARK_TERMS = "术语管理专家"
+_MARK_TERMS = "长文翻译的术语编辑"
 _MARK_KNOWLEDGE = "翻译流知识抽取器"
 _MARK_REVIEWER = "独立的翻译审校专家"
 _MARK_TRANSLATOR = "学术翻译专家"
@@ -71,7 +71,7 @@ class OfflineProvider:
             return self._synopsis()
         if _MARK_TERMS in system:
             self.calls["terms"] += 1
-            return self._terms()
+            return self._terms(user_prompt)
         if _MARK_KNOWLEDGE in system:
             self.calls["knowledge"] += 1
             return "[]"
@@ -115,10 +115,11 @@ class OfflineProvider:
             "themes": ["生态恢复", "干扰机制"],
         }, ensure_ascii=False)
 
-    def _terms(self) -> str:
-        return json.dumps([
-            {"Source": "ecological succession", "Target": "生态演替", "domain": "生态学"},
-        ], ensure_ascii=False)
+    def _terms(self, user_prompt: str) -> str:
+        source, target = (("ecological succession", "生态演替")
+                          if "ecological succession" in user_prompt.casefold()
+                          else ("Ecological restoration", "生态恢复"))
+        return json.dumps([{"Source": source, "Target": target, "domain": "生态学"}], ensure_ascii=False)
 
     def _review(self, user_prompt: str) -> dict:
         """独立审校响应：默认无问题；可对指定全局 segment_id 报告 blocking。"""

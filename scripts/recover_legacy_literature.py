@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from transpraxis import legacy_literature
+from folith import legacy_literature
 
 
 def _read(path: Path):

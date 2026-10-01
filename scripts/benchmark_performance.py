@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 import core
-from transpraxis.storage.job_repository import (
+from folith.storage.job_repository import (
     load_job_state_cached,
     save_job_state_atomic,
     list_job_summaries,

@@ -11,7 +11,7 @@
 | 版本 | 主题 | 解决的问题 |
 | --- | --- | --- |
 | **v0.4.0** | **MTI Finalization Pipeline** | 真值、案例 provenance、精确失效、学校合规、终稿渲染与交付闭环 |
-| **v0.5.0** | **Translation Quality Pipeline** | provider、model、context、terminology、style、prompt、review 与 repair 的译文质量闭环 |
+| **后续质量版本** | **Translation Quality Pipeline** | provider、model、context、terminology、style、prompt、review 与 repair 的译文质量闭环 |
 
 v0.4.0 不以“生成更多论文文字”为目标。它要保证当前译文、案例、报告、DOCX、PDF 和 QA 使用同一份证据，并且任一输入变化只让真正依赖它的产物失效。
 
@@ -399,9 +399,9 @@ LibreOffice PASS 只说明该引擎成功渲染并通过对应规则，绝不等
 
 #### 阶段 4—6 实际完成（v0.4.0 release candidate）
 
-- Stage 4 已落在 `transpraxis/compliance.py`：`MTI_PRACTICE_REPORT_DEFAULT` 使用结构化 rule records，保留 authority/source/clause/conflict 字段；项目 Roadmap 仅作为实现追踪，不是规范来源。默认 profile 不携带真实院校身份。
+- Stage 4 已落在 `folith/compliance.py`：`MTI_PRACTICE_REPORT_DEFAULT` 使用结构化 rule records，保留 authority/source/clause/conflict 字段；项目 Roadmap 仅作为实现追踪，不是规范来源。默认 profile 不携带真实院校身份。
 - Stage 4 的确定性检查覆盖摘要、关键词、目录层级、正文/参考文献双向 ID、图表编号与 caption、双语附录、按语源区分的原文长度、结构事实、DOCX 可读取 layout、作者占位符和项目级语言约束。英文 10,000 字折算、脚注/顺序编码冲突、synthetic 是否计入学校最低案例数均保留为 manual review。
-- Stage 5 已落在 `transpraxis/rendered_qa.py` 与现有 finalization records：PyMuPDF 只读取 PDF 文本/块/字体/位置事实，不做 OCR；空白页、密度、标题落单、边界、页眉页脚和页码区域分别作为 warning 或 manual review。LibreOffice 缺失时是 `NOT_RUN`，不伪造 PASS。
+- Stage 5 已落在 `folith/rendered_qa.py` 与现有 finalization records：PyMuPDF 只读取 PDF 文本/块/字体/位置事实，不做 OCR；空白页、密度、标题落单、边界、页眉页脚和页码区域分别作为 warning 或 manual review。LibreOffice 缺失时是 `NOT_RUN`，不伪造 PASS。
 - Stage 5 保存独立的 Structural QA、LibreOffice Render、Author Visual Review、Word Final Review 和 `report-qa.md`；DOCX 或 render 变化会清除旧人工确认并沿 Stage 2 dependency graph 重跑相应下游。
 - Stage 6 已用 `eval/fixtures/mti_finalization_regression.json` 完成匿名 Case-15、文献/术语定向变化、案例分布、占位符、断点恢复、增量复用、QA 分离、E2E 冻结和历史 snapshot 不回写回归。当前 release candidate 不提前声称完成 v0.5 Translation Quality Pipeline。
 
@@ -411,9 +411,9 @@ LibreOffice PASS 只说明该引擎成功渲染并通过对应规则，绝不等
 
 `MTI_PRACTICE_REPORT_DEFAULT` 以 `mti_practice_report_reference_v1` 保存匿名结构化参考来源。摘要、关键词、目录三级、图表章内编号、双语附录、案例分析报告基本结构、A4、页边距、页眉/页脚距离和固定 20 磅行距在该默认产品 profile 中执行确定性检查。英文源文最低长度折算、synthetic case 是否计入最低案例数、具体引用格式和院校特殊封面/页眉/目录要求继续为 `manual_review`，统一提示用户根据所在院校要求确认。项目 roadmap 只作实现追踪，不是规范来源；真实原始 DOC/DOCX/PDF 不进入仓库。
 
-## v0.5.0：Translation Quality Pipeline
+## 后续质量版本：Translation Quality Pipeline
 
-v0.4.0 解决“终稿是否真实、同步、合规、可复核”；v0.5.0 解决“译文本身是否足够好”。两者不能互相替代。
+v0.4.0 解决“终稿是否真实、同步、合规、可复核”；后续质量版本 解决“译文本身是否足够好”。两者不能互相替代。
 
 ```text
 Source
@@ -429,7 +429,7 @@ Source
   → Human Evaluation
 ```
 
-v0.5.0 的开发顺序应从评测开始，而不是先改 prompt：
+后续质量版本 的开发顺序应从评测开始，而不是先改 prompt：
 
 1. 建立匿名、分层的长文翻译 benchmark，覆盖术语、专名、长句、指代、隐喻、文体和跨段连贯；
 2. 对 dots API 及其他 provider/model 运行同一输入、同一术语、同一 style profile 的可复现对比；
@@ -439,7 +439,7 @@ v0.5.0 的开发顺序应从评测开始，而不是先改 prompt：
 6. 将 review 与 repair 绑定到明确 finding，比较修复前后并阻止“越修越差”；
 7. 将通过人工评审的结果沉淀为 provider/model/runtime 回归门禁。
 
-v0.5.0 的成功标准不是“某模型分数最高”，而是能够回答：在哪类文本、哪类难点、哪种上下文和术语配置下，某个 provider/model 组合稳定地产生更好的译文，并且修复流程不会破坏已正确内容。
+后续质量版本 的成功标准不是“某模型分数最高”，而是能够回答：在哪类文本、哪类难点、哪种上下文和术语配置下，某个 provider/model 组合稳定地产生更好的译文，并且修复流程不会破坏已正确内容。
 
 ## 建议提交顺序
 

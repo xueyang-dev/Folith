@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 import pytest
 
 import core
-from transpraxis.storage import job_repository as repo
+from folith.storage import job_repository as repo
 
 
 @pytest.fixture
@@ -152,13 +153,10 @@ def test_read_runtime_view_is_lightweight_and_reads_no_full_state(temp_job_env: 
     core.save_job_state(job_id, state)
 
     # Save a runtime state
-    core.runtime_state_path(job_id).write_text(json.dumps({
-        "status": "running",
-        "phase_label": "段落翻译中",
-        "completed_units": 15,
-        "total_units": 50,
-        "operation_label": "翻译",
-    }), encoding="utf-8")
+    core.update_runtime_state(
+        job_id, status="running", phase_label="段落翻译中",
+        completed_units=15, total_units=50, operation_label="翻译",
+        heartbeat=True, worker={"owner_pid": os.getpid(), "worker_id": "test-worker"})
 
     repo.reset_cache_stats()
 

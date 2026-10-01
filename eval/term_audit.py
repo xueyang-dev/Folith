@@ -25,8 +25,8 @@ from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from transpraxis import models  # noqa: E402
-from transpraxis.terminology import term_matches  # noqa: E402
+from folith import models  # noqa: E402
+from folith.terminology import term_matches  # noqa: E402
 
 DECISIONS = ("approved", "rejected", "scope_sensitive", "variant_allowed",
              "needs_review")

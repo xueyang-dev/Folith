@@ -2,7 +2,7 @@
 
 用法：
   # 环境变量提供 API Key（DeepSeek/OpenCode Go/OpenAI/Gemini 任一）
-  export TRANSPRAXIS_API_KEY=sk-xxx
+  export FOLITH_API_KEY=sk-xxx
   # 翻译整个文档
   python scripts/translate_pdf.py "文档.pdf" --target-lang 简体中文
   # 只翻译前 40 页
@@ -31,17 +31,17 @@ import core
 
 def resolve_key_and_model(provider, model):
     env_keys = {
-        "DeepSeek": ("TRANSPRAXIS_API_KEY", "DEEPSEEK_API_KEY"),
-        "OpenCode Go": ("TRANSPRAXIS_API_KEY", "OPENCODE_GO_API_KEY"),
-        "OpenAI": ("TRANSPRAXIS_API_KEY", "OPENAI_API_KEY"),
-        "Gemini": ("TRANSPRAXIS_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        "DeepSeek": ("FOLITH_API_KEY", "DEEPSEEK_API_KEY"),
+        "OpenCode Go": ("FOLITH_API_KEY", "OPENCODE_GO_API_KEY"),
+        "OpenAI": ("FOLITH_API_KEY", "OPENAI_API_KEY"),
+        "Gemini": ("FOLITH_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
     }
-    key = next((os.environ.get(k) for k in env_keys.get(provider, ["TRANSPRAXIS_API_KEY"])
+    key = next((os.environ.get(k) for k in env_keys.get(provider, ["FOLITH_API_KEY"])
                 if os.environ.get(k)), None)
     if not key:
         raise SystemExit(
             f"未找到 {provider} API Key。请先设置环境变量，例如：\n"
-            f"  export TRANSPRAXIS_API_KEY=你的Key\n"
+            f"  export FOLITH_API_KEY=你的Key\n"
             f"（或 DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY / OPENAI_API_KEY / "
             f"GEMINI_API_KEY）")
     if not model:

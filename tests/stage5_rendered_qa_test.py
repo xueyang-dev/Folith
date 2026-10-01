@@ -9,7 +9,7 @@ import fitz
 import pytest
 
 import core
-from transpraxis import academic_writer, finalization, rendered_qa
+from folith import academic_writer, finalization, rendered_qa
 
 
 @pytest.fixture(autouse=True)
@@ -144,13 +144,13 @@ def test_docx_hash_change_resets_human_reviews_and_stales_render(tmp_path, monke
         "bytes": b"template", "contract": {"template_identity": {}}
     })
     monkeypatch.setattr(
-        "transpraxis.report_template.render_report_docx",
+        "folith.report_template.render_report_docx",
         lambda *args, **kwargs: b"docx-v2")
     monkeypatch.setattr(
-        "transpraxis.final_docx.validate_final_docx",
+        "folith.final_docx.validate_final_docx",
         lambda *_args, **_kwargs: {"status": "pass", "content_hash": "validation"})
     monkeypatch.setattr(
-        "transpraxis.compliance.inspect_docx_layout",
+        "folith.compliance.inspect_docx_layout",
         lambda _bytes: {"sections": 1, "paragraph_styles": []})
 
     result = core.report_docx_bytes(job_id)

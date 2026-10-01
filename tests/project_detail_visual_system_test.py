@@ -16,7 +16,7 @@
   7. Knowledge tab 是结构化页，不再是大段说明文；
   8. Settings 把「名称/描述编辑」合并成一个动作；
   9. Overview 不显示 Project ID / UUID；
- 10. Settings 显示高级信息（Project ID / UUID / 时间戳）；
+ 10. Settings 把身份与时间戳收进默认折叠的高级信息；
  11. overflow menu 是轻量 menu card，不是独立侧栏；
  12. switch-project 面板是 compact row list（轻量下拉面），不是一叠大卡；
     它不再是大型 Modal，管理入口也不在其中重复。
@@ -40,7 +40,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import core  # noqa: E402
-from transpraxis import project as project_module  # noqa: E402
+from folith import project as project_module  # noqa: E402
 
 LOCKED = {"source": "canopy closure", "target": "林冠郁闭", "preferred": "林冠郁闭",
           "status": "locked", "behavior": "translate"}
@@ -397,6 +397,9 @@ def test_task_tab_lists_tasks_with_the_shared_row_language():
         assert _find_container(at, "project_task_list") is not None
         assert _button(at, "project_task_open_t1") is not None
         assert "打开任务" not in page, "task row 不再挂大号「打开任务」按钮"
+        css = _styles(at)
+        assert '[class*="st-key-projrow_"] .stButton button' in css
+        assert 'pointer-events: auto !important;' in css
 
 
 # ================= 7. Knowledge tab：结构化，不是说明文 =================
@@ -519,16 +522,17 @@ def test_settings_groups_are_four_and_danger_is_separated():
         assert ".st-key-pd_danger_action .stButton > button {" in css
 
 
-def test_settings_shows_advanced_identity_block():
-    """高级信息给出 Project ID / UUID / 创建时间 / 最近更新。"""
+def test_settings_collapses_advanced_identity_block():
+    """高级信息默认收起，并避免重复显示 Project ID 与 UUID。"""
     with detail_env():
         project = core.create_project("设置项目")
         at = _project_page(project["project_id"], tab="settings")
         page = _visible_text(at)
         assert "高级信息" in page
-        assert "Project ID" in page and project["project_id"] in page
-        assert "UUID" in page
-        assert "创建时间" in page and "最近更新" in page
+        assert any(item.label == "查看身份与时间戳" for item in at.expander)
+        assert "项目 ID" in page and project["project_id"] in page
+        assert "不可变 UUID" in page
+        assert "创建于" in page and "最近更新" in page
 
 
 def test_settings_actions_are_not_a_row_of_primary_buttons():

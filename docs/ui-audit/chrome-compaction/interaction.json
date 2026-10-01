@@ -1,0 +1,392 @@
+[
+  {
+    "state": "inspector_open",
+    "viewport": {
+      "width": 1440,
+      "height": 800
+    },
+    "pager": {
+      "x": 286,
+      "y": 735,
+      "width": 782,
+      "height": 34,
+      "bottom": 769
+    },
+    "grid": {
+      "x": 286,
+      "y": 160,
+      "width": 782,
+      "height": 573,
+      "bottom": 733
+    },
+    "titleFits": true,
+    "metadataFits": true,
+    "issueLabels": [
+      {
+        "text": "术语 1 · UAM",
+        "height": 26
+      },
+      {
+        "text": "术语 1 · UAM",
+        "height": 0
+      },
+      {
+        "text": "审校发现 8",
+        "height": 26
+      },
+      {
+        "text": "审校发现 8",
+        "height": 0
+      }
+    ],
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 1440,
+      "height": 800,
+      "bottom": 800
+    },
+    "taskHeader": {
+      "x": 16,
+      "y": 8,
+      "width": 1408,
+      "height": 62,
+      "bottom": 70
+    },
+    "mainStyle": {
+      "width": "1440px",
+      "maxWidth": "none"
+    },
+    "topbar": {
+      "x": 16,
+      "y": 8,
+      "width": 1408,
+      "height": 61
+    },
+    "topbarCopy": {
+      "x": 92,
+      "y": 8,
+      "width": 1139,
+      "height": 38,
+      "bottom": 46
+    },
+    "taskMore": null,
+    "topbarColumns": [
+      {
+        "x": 16,
+        "y": 8,
+        "width": 68,
+        "height": 24
+      },
+      {
+        "x": 92,
+        "y": 8,
+        "width": 1139,
+        "height": 22
+      },
+      {
+        "x": 1239,
+        "y": 8,
+        "width": 185,
+        "height": 37
+      },
+      {
+        "x": 16,
+        "y": 45,
+        "width": 1366,
+        "height": 24
+      },
+      {
+        "x": 1386,
+        "y": 45,
+        "width": 38,
+        "height": 24
+      }
+    ],
+    "workflowNav": {
+      "x": 16,
+      "y": 45,
+      "width": 1408,
+      "height": 24,
+      "bottom": 69
+    },
+    "toolbar": {
+      "x": 286,
+      "y": 73,
+      "width": 782,
+      "height": 26,
+      "bottom": 99
+    },
+    "issueSummary": {
+      "x": 286,
+      "y": 102,
+      "width": 619,
+      "height": 26,
+      "bottom": 128
+    },
+    "sourceWarning": null,
+    "activeActions": {
+      "x": 286,
+      "y": 101,
+      "width": 782,
+      "height": 28,
+      "bottom": 129
+    },
+    "gridHeader": {
+      "x": 286,
+      "y": 131,
+      "width": 782,
+      "height": 27,
+      "bottom": 158
+    },
+    "firstSegment": {
+      "x": 286,
+      "y": 160,
+      "width": 782,
+      "height": 89
+    },
+    "firstSegmentY": 160,
+    "headerToSegment": 160,
+    "sourceWidth": 275,
+    "targetWidth": 275,
+    "rowColumnCount": 5,
+    "inspector": {
+      "x": 1093,
+      "y": 70,
+      "width": 331,
+      "height": 706,
+      "bottom": 776
+    },
+    "rowRects": [
+      {
+        "segment": 0,
+        "active": true,
+        "density": "one",
+        "y": 160,
+        "height": 89,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 17,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 1,
+        "active": false,
+        "density": "two",
+        "y": 249,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 20,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 2,
+        "active": false,
+        "density": "one",
+        "y": 324,
+        "height": 55,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 4,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 3,
+        "active": false,
+        "density": "two",
+        "y": 379,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 17,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 4,
+        "active": false,
+        "density": "long",
+        "y": 454,
+        "height": 93,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 29,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 5,
+        "active": false,
+        "density": "long",
+        "y": 547,
+        "height": 129,
+        "textareas": [
+          {
+            "height": 118,
+            "scrollHeight": 118,
+            "valueLength": 69,
+            "cssHeight": "118px",
+            "cssMinHeight": "118px",
+            "cssMaxHeight": "118px",
+            "rootHeight": 120,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 6,
+        "active": false,
+        "density": "long",
+        "y": 676,
+        "height": 109,
+        "textareas": [
+          {
+            "height": 96,
+            "scrollHeight": 96,
+            "valueLength": 58,
+            "cssHeight": "96px",
+            "cssMinHeight": "96px",
+            "cssMaxHeight": "96px",
+            "rootHeight": 98,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 7,
+        "active": false,
+        "density": "long",
+        "y": 785,
+        "height": 95,
+        "textareas": [
+          {
+            "height": 84,
+            "scrollHeight": 84,
+            "valueLength": 35,
+            "cssHeight": "84px",
+            "cssMinHeight": "84px",
+            "cssMaxHeight": "84px",
+            "rootHeight": 86,
+            "inlineStyle": ""
+          }
+        ]
+      }
+    ],
+    "rowAncestry": [
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_row_6bd045b3a3a7ec60_0 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 160,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "4px",
+        "paddingBottom": "4px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 160,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_grid_6bd045b3a3a7ec60 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 160,
+        "height": 573,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 160,
+        "height": 573,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-workspace_main_col st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 70,
+        "height": 706,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "2px",
+        "paddingBottom": "4px",
+        "gap": "2px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 70,
+        "height": 706,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      }
+    ],
+    "viewportIntersectingRows": 8,
+    "visibleSegments": 7,
+    "fullyVisibleSegments": 6
+  }
+]

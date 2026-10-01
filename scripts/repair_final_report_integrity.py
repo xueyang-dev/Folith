@@ -16,7 +16,7 @@ from typing import Any, Dict
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from transpraxis import (academic_quality, academic_validator, academic_writer,
+from folith import (academic_quality, academic_validator, academic_writer,
                          final_docx, report_template)
 
 

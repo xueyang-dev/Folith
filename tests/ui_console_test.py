@@ -141,7 +141,7 @@ def test_ui_delivery_freezes_a_final_snapshot(source_doc):
         at = open_workspace("ui-freeze", section="delivery")
 
         assert not at.exception, [e.value for e in at.exception]
-        freeze = button(at, "确认并冻结最终版本")
+        freeze = button(at, "创建交付版本 v1")
         assert freeze is not None, f"交付页必须有冻结动作，实际按钮：{labels(at)}"
         assert freeze.disabled is False, "干净任务必须可以冻结交付"
 
@@ -151,7 +151,7 @@ def test_ui_delivery_freezes_a_final_snapshot(source_doc):
 
         state = core.load_job_state("ui-freeze")
         assert state["delivery_status"] == "final"
-        from transpraxis import snapshots
+        from folith import snapshots
         manifest = snapshots.latest_snapshot(core.job_dir("ui-freeze"))
         assert manifest is not None, "界面冻结必须产出不可变快照"
         assert manifest["snapshot_version"] == 1
@@ -178,7 +178,7 @@ def test_ui_review_gate_blocks_delivery_then_human_decision_unblocks(source_doc)
 
         # --- 交付：未决时不得提供冻结动作 ---
         delivery = open_workspace("ui-gate", section="delivery")
-        freeze = button(delivery, "确认并冻结最终版本")
+        freeze = button(delivery, "创建交付版本 v1")
         assert freeze is None or freeze.disabled, \
             "存在未决 blocking 时不得允许冻结交付"
 
@@ -199,13 +199,13 @@ def test_ui_review_gate_blocks_delivery_then_human_decision_unblocks(source_doc)
                      if item.get("record_type") == "human_decision"]
         assert decisions, "界面动作必须记录为 HumanDecision 审计"
         assert decisions[-1]["actor_type"] == "human"
-        from transpraxis.translation_evidence import translation_review_readiness
+        from folith.translation_evidence import translation_review_readiness
         assert translation_review_readiness(state)["ready"] is True, \
             "人工决定后必须解除交付阻塞"
 
         # --- 交付：现在可以冻结了 ---
         after = open_workspace("ui-gate", section="delivery")
-        freeze = button(after, "确认并冻结最终版本")
+        freeze = button(after, "创建交付版本 v1")
         assert freeze is not None and freeze.disabled is False, \
             "阻塞解除后必须可以冻结交付"
 
@@ -433,7 +433,7 @@ def test_ui_delivery_gate_matrix_is_consistent(source_doc):
     provider = OfflineProvider(glossary=source_doc["glossary"])
     with offline_console(provider):
         clean = delivery_state(provider, "gate-clean", "clean")
-        freeze = button(clean, "确认并冻结最终版本")
+        freeze = button(clean, "创建交付版本 v1")
         assert freeze is not None and freeze.disabled is False, \
             "干净任务必须可以冻结交付"
 
@@ -442,7 +442,7 @@ def test_ui_delivery_gate_matrix_is_consistent(source_doc):
                               review_blocking_segments={3})
     with offline_console(blocked):
         at = delivery_state(blocked, "gate-blocked", "blocked")
-        freeze = button(at, "确认并冻结最终版本")
+        freeze = button(at, "创建交付版本 v1")
         assert freeze is None or freeze.disabled, \
             "审校未就绪时冻结必须不可用"
         # 并且必须说明下一步该做什么
@@ -463,9 +463,9 @@ def test_ui_delivery_gate_matrix_is_consistent(source_doc):
         at.session_state["workspace_section"] = "delivery"
         at.run()
         assert not at.exception, [e.value for e in at.exception]
-        freeze = button(at, "确认并冻结最终版本")
-        assert freeze is not None and freeze.disabled, \
-            "翻译未完成时冻结必须禁用"
+        freeze = button(at, "创建交付版本 v1")
+        assert freeze is None or freeze.disabled, \
+            "翻译未完成时不得允许创建交付版本"
         page = "\n".join(str(m.value) for m in at.markdown)
         assert "翻译尚未完成" in page, page[:300]
         assert "0 / 2 段已翻译" in page, page[:300]
@@ -592,7 +592,7 @@ def test_workspace_responsive_rules_anchor_on_a_rendered_column():
     Inspector 列上。注释里说明这段历史是允许的，所以比对前先剥掉 CSS 注释。
     """
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    styles_file = ROOT / "transpraxis" / "ui" / "styles.py"
+    styles_file = ROOT / "folith" / "ui" / "styles.py"
     if styles_file.is_file():
         source += "\n" + styles_file.read_text(encoding="utf-8")
     without_comments = re.sub(r"/\*[\s\S]*?\*/", "", source)

@@ -13,9 +13,9 @@ import json
 
 import pytest
 
-from transpraxis import delivery
-from transpraxis import task_overview as to
-from transpraxis.translation_core import fingerprint
+from folith import delivery
+from folith import task_overview as to
+from folith.translation_core import fingerprint
 
 
 # ---------------- fixtures ----------------
@@ -405,7 +405,7 @@ def test_canonical_tone_matches_lifecycle_palette():
 # ---------------- single source of truth ----------------
 
 def test_planner_verdict_reads_the_canonical_derivation():
-    from transpraxis.translation_planner import workspace_progress
+    from folith.translation_planner import workspace_progress
 
     state = _state(2)
     overview = to.derive_task_overview_state(state)

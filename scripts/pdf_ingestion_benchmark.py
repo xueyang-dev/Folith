@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import core  # noqa: E402
-from transpraxis.performance import PipelineProfiler  # noqa: E402
+from folith.performance import PipelineProfiler  # noqa: E402
 
 
 def _rss_bytes() -> int:

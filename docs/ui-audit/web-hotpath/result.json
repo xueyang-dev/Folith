@@ -1,0 +1,12 @@
+{
+  "pairs": 4845,
+  "mounted_editors": 40,
+  "initial_render_ms": 6787,
+  "planner_calls_initial": 1,
+  "planner_calls_edit": 0,
+  "planner_calls_selection": 0,
+  "planner_calls_save": 1,
+  "draft_survived_selection": true,
+  "saved_snapshot_verified": true,
+  "page_errors": []
+}

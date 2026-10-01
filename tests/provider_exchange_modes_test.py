@@ -62,8 +62,20 @@ def test_custom_relay_base_url():
         calls.clear()
         core.call_llm("自定义中转站", "k", "relay-model", "s", "u",
                       base_url="https://relay.example.com/v1/chat/completions")
+        # 归一化后与上面是同一个地址 → 必须复用已建立的客户端（这正是连接复用的
+        # 意义所在）。契约不是"每次都新建客户端"，而是"生效的 base_url 正确"。
+        assert not [entry for entry in calls
+                    if isinstance(entry, tuple) and entry[0] == "client"], \
+            "归一化后相同的 base_url 必须复用客户端，而不是每请求重建"
+        create_kwargs = next(k for k in calls if not isinstance(k, tuple))
+        assert create_kwargs["model"] == "relay-model"
+
+        # 换一个真正不同的中转地址 → 必须新建客户端，且不得串用上一个地址的客户端。
+        calls.clear()
+        core.call_llm("自定义中转站", "k", "relay-model", "s", "u",
+                      base_url="https://other-relay.example.com/v1/chat/completions")
         client_kwargs = next(k for tag, k in calls if tag == "client")
-        assert client_kwargs["base_url"] == "https://relay.example.com/v1"
+        assert client_kwargs["base_url"] == "https://other-relay.example.com/v1"
 
         # 预设中转站使用注册表默认 base_url
         calls.clear()
@@ -97,6 +109,9 @@ def test_custom_relay_base_url():
         core.OpenAI = original
         core.set_llm_base_url(None)
         core.set_llm_reasoning_effort(None)
+        # 上面建立的客户端来自测试替身，必须丢弃，避免同一进程内的后续用例
+        # 复用到一个由替身构造的客户端。
+        core.reset_llm_clients()
     print("  ✓ 自定义中转站 base_url（线程级上下文 + 预设中转站）")
 
 
@@ -152,6 +167,7 @@ def test_provider_probe():
         assert ok and "OK" in msg
     finally:
         core.OpenAI = original
+        core.reset_llm_clients()
 
     class Boom:
         def __init__(self, **kwargs):
@@ -163,6 +179,7 @@ def test_provider_probe():
         assert not ok and "401" in msg
     finally:
         core.OpenAI = original
+        core.reset_llm_clients()
     print("  ✓ test_provider（成功 / 失败路径）")
 
 
@@ -246,7 +263,7 @@ def test_fetch_provider_models():
 
 
 def test_exchange_formats():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-exchange-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-exchange-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -347,7 +364,7 @@ def _make_docx(texts):
 
 
 def test_mode_semantics():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-mode-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-mode-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     prompts = []
@@ -410,7 +427,7 @@ def test_mode_semantics():
 
 
 def test_translation_memory_switch():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-tm-switch-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-tm-switch-"))
     old_dir = core.OUTPUT_DIR
     old_llm = core.call_llm
     core.OUTPUT_DIR = tmp

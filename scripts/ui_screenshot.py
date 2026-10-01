@@ -41,14 +41,15 @@ _SCRIPT = r"""
 const PW = process.env.FOLIO_PLAYWRIGHT_CORE;
 const CHROME = process.env.FOLIO_CHROME;
 const { chromium } = require(PW);
-const [url, out, section, waitMs, view] = process.argv.slice(2);
+const [url, out, section, waitMs, view, widthsArg, metricsPath, heightArg] = process.argv.slice(2);
+const viewportHeight = Number(heightArg || 900);
 
 (async () => {
   const browser = await chromium.launch({
     executablePath: CHROME, args: ['--no-sandbox', '--disable-gpu'],
   });
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 }, deviceScaleFactor: Number(process.env.DEVICE_SCALE_FACTOR || 2),
+    viewport: { width: 1440, height: viewportHeight }, deviceScaleFactor: Number(process.env.DEVICE_SCALE_FACTOR || 2),
   });
   page.on('pageerror', (e) => console.error('[pageerror]', e.message));
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -82,22 +83,161 @@ const [url, out, section, waitMs, view] = process.argv.slice(2);
   } else if (section) {
     const history = sidebar.locator('button:has-text("历史任务")').first();
     if (await history.count()) { await history.click(); await page.waitForTimeout(2500); }
-    const showcaseBtn = page.locator('[class*="st-key-history_card_showcase-job"] button, [class*="st-key-history_cta_showcase-job"] button').first();
+    // The full-card hit target always enters Translation.  A task's secondary
+    // CTA may instead jump to Review or Delivery, which is the wrong smoke-test
+    // starting point.
+    const openTaskBtn = page.locator('[class*="st-key-history_card_"] button').first();
     const action = /打开任务|继续审校|查看交付|准备交付|继续处理|继续翻译|更新报告|查看进度|打开/;
-    const actionBtn = (await showcaseBtn.count())
-      ? showcaseBtn
+    const actionBtn = (await openTaskBtn.count())
+      ? openTaskBtn
       : page.locator('button').filter({ hasText: action }).first();
     if (await actionBtn.count()) { await actionBtn.click(); await page.waitForTimeout(3500); }
-    const navRoot = page.locator('[class*="st-key-workspace_nav"]').first();
-    const nav = (await navRoot.count())
-      ? navRoot.locator('button').filter({ hasText: section }).first()
-      : page.locator('button').filter({ hasText: section }).first();
-    if (await nav.count()) { await nav.click(); await page.waitForTimeout(3000); }
-    else console.error('[warn] 未找到导航项:', section);
+    if (!(section === '翻译' && await page.locator('.tp-cat-head').count())) {
+      const navRoot = page.locator('.st-key-workspace_nav').first();
+      const nav = (await navRoot.count())
+        ? navRoot.locator('button').filter({ hasText: new RegExp(`^${section}$`) }).first()
+        : page.locator('button').filter({ hasText: new RegExp(`^${section}$`) }).first();
+      if (await nav.count() && await nav.isVisible()) {
+        await nav.click(); await page.waitForTimeout(3000);
+      } else console.error('[warn] 未找到可见导航项:', section);
+    }
   }
   await page.waitForTimeout(Number(waitMs || 2500));
-  await page.screenshot({ path: out, fullPage: false });
-  console.log('saved', out);
+
+  const measure = async () => page.evaluate(() => {
+    const box = (selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.x), y: Math.round(r.y),
+        width: Math.round(r.width), height: Math.round(r.height),
+        bottom: Math.round(r.bottom) };
+    };
+    const main = box('[data-testid="stMainBlockContainer"]');
+    const mainEl = document.querySelector('[data-testid="stMainBlockContainer"]');
+    const firstSegment = document.querySelector('.tp-cat-rowcell[data-segment="0"]')
+      ?.closest('[class*="st-key-cat_row_"]');
+    const firstRect = firstSegment?.getBoundingClientRect();
+    const row = firstSegment || document.querySelector('[class*="st-key-cat_row_"]');
+    const columns = row ? [...row.querySelectorAll('[data-testid="stColumn"]')] : [];
+    const rect = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.x), y: Math.round(r.y),
+        width: Math.round(r.width), height: Math.round(r.height) };
+    };
+    const topbar = document.querySelector('.st-key-workspace_topbar');
+    const topbarColumns = topbar ? [...topbar.querySelectorAll('[data-testid="stColumn"]')]
+      .map(el => rect(el)) : [];
+    const source = row?.querySelector('.tp-cat-source')?.closest('[data-testid="stColumn"]');
+    const target = row?.querySelector('textarea')?.closest('[data-testid="stColumn"]');
+    const visibleRows = [...document.querySelectorAll('[class*="st-key-cat_row_"]')]
+      .filter(el => { const r = el.getBoundingClientRect();
+        return r.top < innerHeight && r.bottom > 0; }).length;
+    const rowRects = [...document.querySelectorAll('[class*="st-key-cat_row_"]')]
+      .slice(0, 8).map(el => {
+        const r = el.getBoundingClientRect();
+        const marker = el.querySelector('[data-segment]');
+        return { segment: marker ? Number(marker.dataset.segment) : null,
+          active: marker?.classList.contains('is-active') || false,
+          density: marker?.classList.contains('is-row-two') ? 'two' :
+            marker?.classList.contains('is-row-long') ? 'long' : 'one',
+          y: Math.round(r.y), height: Math.round(r.height),
+          textareas: [...el.querySelectorAll('textarea')].map(area => {
+            const a = area.getBoundingClientRect();
+            const cs = getComputedStyle(area);
+            const root = area.closest('[data-testid="stTextAreaRootElement"]');
+            const rr = root ? root.getBoundingClientRect() : null;
+            return { height: Math.round(a.height), scrollHeight: area.scrollHeight,
+              valueLength: area.value.length, cssHeight: cs.height,
+              cssMinHeight: cs.minHeight, cssMaxHeight: cs.maxHeight,
+              rootHeight: rr ? Math.round(rr.height) : null,
+              inlineStyle: area.getAttribute('style') || '' };
+          }) };
+      });
+    const rowAncestry = firstSegment ? (() => {
+      const items = [];
+      let node = firstSegment;
+      for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+        const r = node.getBoundingClientRect();
+        const cs = getComputedStyle(node);
+        items.push({ tag: node.tagName, testid: node.getAttribute('data-testid'),
+          className: String(node.className || '').slice(0, 180),
+          y: Math.round(r.y), height: Math.round(r.height),
+          marginTop: cs.marginTop, marginBottom: cs.marginBottom,
+          paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
+          gap: cs.gap });
+      }
+      return items;
+    })() : [];
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      main, taskHeader: box('.st-key-workspace_exit_actions'),
+      mainStyle: mainEl ? { width: getComputedStyle(mainEl).width,
+        maxWidth: getComputedStyle(mainEl).maxWidth } : null,
+      topbar: rect(topbar),
+      topbarCopy: box('.tp-workspace-topbar-copy'),
+      taskMore: box('[class*="st-key-workspace_more_"]'),
+      topbarColumns,
+      workflowNav: box('.st-key-workspace_nav'),
+      toolbar: box('.st-key-translation_toolbar'),
+      issueSummary: box('.st-key-translation_issue_filters'),
+      sourceWarning: box('.tp-source-quality-alert'),
+      activeActions: box('.st-key-translation_editor_actions'),
+      gridHeader: box('.tp-cat-head'),
+      firstSegment: rect(firstSegment),
+      firstSegmentY: firstRect ? Math.round(firstRect.top) : null,
+      headerToSegment: main && firstRect ? Math.round(firstRect.top - main.y) : null,
+      sourceWidth: rect(source)?.width ?? null,
+      targetWidth: rect(target)?.width ?? null,
+      rowColumnCount: columns.length,
+      inspector: box('.st-key-workspace_context_col'),
+      visibleSegments: visibleRows,
+      rowRects,
+      rowAncestry,
+    };
+  });
+  const widths = (widthsArg || '').split(',').map(Number).filter(x => x > 0);
+  const results = [];
+  const path = require('path');
+  const fs = require('fs');
+  for (const width of (widths.length ? widths : [1440])) {
+    await page.setViewportSize({ width, height: viewportHeight });
+    await page.waitForTimeout(700);
+    const measured = await measure();
+    results.push({ state: 'inspector_closed', ...measured });
+    const targetPath = widths.length
+      ? path.join(path.dirname(out), `${path.parse(out).name}-${width}${path.extname(out) || '.png'}`)
+      : out;
+    await page.screenshot({ path: targetPath, fullPage: false });
+    console.log('saved', targetPath);
+  }
+
+  // Browser-level persistence check: open the contextual Inspector, then close it
+  // through the single toolbar control and verify the main editor regains its width.
+  const toggle = page.locator('[class*="st-key-workspace_inspector_toggle_"] button').first();
+  if (await toggle.count()) {
+    await toggle.click();
+    await page.waitForSelector('.st-key-workspace_context_col', { timeout: 10000 });
+    await page.waitForTimeout(500);
+    results.push({ state: 'inspector_open', ...(await measure()) });
+    const collapse = page.locator('[class*="st-key-workspace_inspector_toggle_"] button').first();
+    if (await collapse.count()) {
+      await collapse.click();
+      // Streamlit may retain an empty keyed wrapper after fragment replacement;
+      // geometry (rather than node removal) tells us whether width was released.
+      await page.waitForFunction(() => {
+        const button = document.querySelector('[class*="st-key-workspace_inspector_toggle_"] button');
+        return !button || (
+          button.textContent.includes('检查器') &&
+          !button.textContent.includes('收起')
+        );
+      }, null, { timeout: 10000 });
+      results.push({ state: 'inspector_restored_closed', ...(await measure()) });
+    }
+  }
+  if (metricsPath) fs.writeFileSync(metricsPath, JSON.stringify(results, null, 2));
+  console.log(JSON.stringify(results));
   await browser.close();
 })().catch((e) => { console.error('FAILED', e.message); process.exit(1); });
 """
@@ -143,6 +283,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--url", default=os.environ.get("FOLIO_URL",
                                                         "http://127.0.0.1:8501"))
     parser.add_argument("--wait-ms", default="2500", help="渲染后额外等待毫秒数")
+    parser.add_argument("--widths", default="",
+                        help="按逗号分隔的桌面 viewport 宽度；截图文件会追加宽度")
+    parser.add_argument("--metrics", type=Path, default=None,
+                        help="将 DOM 几何与可见段落数写入 JSON")
+    parser.add_argument("--height", type=int, default=900,
+                        help="viewport 高度（默认 900）")
     args = parser.parse_args(argv)
 
     if shutil.which("node") is None:
@@ -167,7 +313,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = subprocess.run(
             ["node", script_path, args.url, str(args.out), args.section,
-             str(args.wait_ms), args.view],
+             str(args.wait_ms), args.view, args.widths,
+             str(args.metrics) if args.metrics else "", str(args.height)],
             env=env, capture_output=True, text=True)
     finally:
         Path(script_path).unlink(missing_ok=True)
@@ -178,10 +325,16 @@ def main(argv: list[str] | None = None) -> int:
         if result.stderr.strip():
             print(result.stderr.strip(), file=sys.stderr)
         return result.returncode
-    if not args.out.is_file():
-        print(f"[错误] 未生成截图：{args.out}", file=sys.stderr)
+    screenshot_paths = ([args.out] if not args.widths else [
+        args.out.with_name(f"{args.out.stem}-{width}{args.out.suffix or '.png'}")
+        for width in args.widths.split(",") if width.strip().isdigit()
+    ])
+    missing = [path for path in screenshot_paths if not path.is_file()]
+    if missing:
+        print(f"[错误] 未生成截图：{missing[0]}", file=sys.stderr)
         return 1
-    print(f"尺寸 {args.out.stat().st_size / 1024:.0f} KB -> {args.out}")
+    for path in screenshot_paths:
+        print(f"尺寸 {path.stat().st_size / 1024:.0f} KB -> {path}")
     return 0
 
 

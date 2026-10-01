@@ -19,7 +19,7 @@ os.environ["FOLITH_OUTPUT_DIR"] = str(OUTPUT)
 sys.path.insert(0, str(ROOT))
 
 import core
-from transpraxis import translation_core
+from folith import translation_core
 
 
 def setup_showcase_fixtures():

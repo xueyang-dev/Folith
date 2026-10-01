@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import knowledge, models
+from folith import knowledge, models
 
 
 def _candidate(source="continuity", target="连续性", segment=0):
@@ -200,7 +200,8 @@ def test_context_and_knowledge_surfaces_rerun_without_widget_identity_errors():
         at.session_state["workspace_section"] = "translation"
         at.run()
         assert not at.exception, f"翻译工作台页面异常：{at.exception}"
-        assert any("点段号选中" in item.value for item in at.markdown)
+        assert at.button(key=f"cat_sel_{job_id}_0")
+        assert at.button(key=f"cat_sel_{job_id}_1")
 
         next(button for button in at.sidebar.button
              if button.label == "术语与翻译记忆").click()
@@ -212,16 +213,20 @@ def test_context_and_knowledge_surfaces_rerun_without_widget_identity_errors():
         assert any(str(label).startswith("待审核")
                    for label in at.segmented_control[0].options), \
             "待审核数量必须挂在 Tab 上"
-        at.segmented_control[0].set_value("review").run()
+        tabs = at.segmented_control(key="library_tab")
+        tabs.set_value(next(label for label in tabs.options
+                            if str(label).startswith("待审核"))).run()
+        assert at.session_state["library_tab"] == "review"
         assert not at.exception, f"待审核 Tab 异常：{at.exception}"
         quick = next(button for button in at.button
                      if str(getattr(button, "key", "")).startswith("la_quick_"))
-        assert quick.label == "接受"
+        assert quick.label == "加入项目"
         quick.click()
         at.run()
         assert not at.exception, f"处理知识词条后异常：{at.exception}"
         at.run()
         assert not at.exception, f"重复运行待审核列表异常：{at.exception}"
+        assert at.session_state["library_tab"] == "review"
         decided = core.load_job_state(job_id)["knowledge_candidates"][0]
         assert decided["decision"] == "project_term"
         print("  ✓ context/knowledge UI：上下文可见、知识决策持久化、重复 rerun 无 key 冲突")
@@ -251,7 +256,10 @@ def test_knowledge_library_bounds_large_pending_lists_and_supports_search():
         next(button for button in at.sidebar.button
              if button.label == "术语与翻译记忆").click()
         at.run()
-        at.segmented_control[0].set_value("review").run()
+        tabs = at.segmented_control(key="library_tab")
+        tabs.set_value(next(label for label in tabs.options
+                            if str(label).startswith("待审核"))).run()
+        assert at.session_state["library_tab"] == "review"
         assert not at.exception, at.exception
         assert any(text.label == "搜索候选术语、译文或来源" for text in at.text_input)
         page = "\n".join(item.value for item in at.caption)

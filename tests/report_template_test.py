@@ -9,7 +9,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches
 
 import core
-from transpraxis import (academic_evidence, academic_quality, academic_validator,
+from folith import (academic_evidence, academic_quality, academic_validator,
                          academic_writer, final_docx, report_template,
                          thesis_constraints)
 

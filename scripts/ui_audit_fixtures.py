@@ -12,8 +12,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import core
-from transpraxis import academic_writer, case_provenance, translation_core
-from transpraxis import translation_evidence
+from folith import academic_writer, case_provenance, translation_core
+from folith import translation_evidence
 
 
 OUTPUT = ROOT / "outputs"

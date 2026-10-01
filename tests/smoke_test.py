@@ -29,9 +29,15 @@ def test_opencode_go_provider_route():
     class FakeOpenAI:
         def __init__(self, **kwargs):
             calls.append(kwargs)
+            self._http_client = kwargs.get("http_client")
             self.chat = type("Chat", (), {"completions": FakeCompletions()})()
 
+        def close(self):
+            if self._http_client is not None:
+                self._http_client.close()
+
     original = core.OpenAI
+    core.reset_llm_clients()
     core.OpenAI = FakeOpenAI
     try:
         result = core.call_llm(
@@ -41,8 +47,12 @@ def test_opencode_go_provider_route():
     assert result == '{"ok":true}'
     assert calls[0]["base_url"] == "https://opencode.ai/zen/go/v1"
     assert calls[0]["http_client"]._trust_env is False
-    assert calls[0]["http_client"].is_closed
+    # 客户端现在由池复用：一次请求结束后必须仍然存活，否则每个请求都要重建
+    # keep-alive 连接池，客户端池就没有意义。释放池时才关闭底层绕过代理的连接。
+    assert not calls[0]["http_client"].is_closed
     assert calls[1]["model"] == "deepseek-v4-flash"
+    core.reset_llm_clients()
+    assert calls[0]["http_client"].is_closed, "释放客户端池必须关闭绕过代理的连接"
     print("  ✓ OpenCode Go provider route")
 
 
@@ -131,7 +141,7 @@ def test_compose_spans():
 
 
 def test_annotate_stage():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-annot-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-annot-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -367,14 +377,14 @@ def test_symbol_segment_passthrough_and_tm_gate():
     assert core._tm_eligible("I blushed.", "我脸红了。")
     assert not core._tm_eligible("hello", "")
 
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-sym-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-sym-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
         docx_bytes = _make_docx(["OK.", "* * * *", "◇◇◇", "这是长段落。"])
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "术语管理专家" in system_prompt:
+            if "长文翻译的术语编辑" in system_prompt:
                 return '[]'
             if "翻译审校专家" in system_prompt:
                 return '[]'
@@ -401,7 +411,7 @@ def test_symbol_segment_passthrough_and_tm_gate():
 
 
 def test_tm_sanitize_on_load():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-tmsan-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-tmsan-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -436,7 +446,7 @@ def test_annotations_normalize_and_bounds():
 
 
 def test_annotate_resume_by_offset():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-annres-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-annres-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -501,7 +511,7 @@ def test_completeness_check():
 
 
 def test_review_truncated_suggestion_rollback():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-trunc-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-trunc-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -509,7 +519,7 @@ def test_review_truncated_suggestion_rollback():
         docx_bytes = _make_docx([long_para])
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "术语管理专家" in system_prompt:
+            if "长文翻译的术语编辑" in system_prompt:
                 return '[]'
             if "翻译审校专家" in system_prompt:
                 return json.dumps([
@@ -536,7 +546,7 @@ def test_review_truncated_suggestion_rollback():
 
 
 def test_job_store():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-test-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-test-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -585,8 +595,13 @@ def _fake_llm_factory():
     calls = []
 
     def fake_llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-        calls.append(system_prompt[:10])
-        if "术语管理专家" in system_prompt:
+        calls.append(system_prompt)
+        if any(marker in system_prompt for marker in ("文档画像", "文档理解器", "全书理解器")):
+            from offline_provider import OfflineProvider
+            return OfflineProvider()(provider, api_key, model, system_prompt, user_prompt)
+        if "翻译流知识抽取器" in system_prompt or "双语对照审阅专家" in system_prompt:
+            return "[]"
+        if "长文翻译的术语编辑" in system_prompt:
             return '[{"Source": "MT", "Target": "机器翻译"}, {"Source": "CAT", "Target": "计算机辅助翻译"}, 123, {"Source": null, "Target": "坏数据"}]'
         if "翻译审校专家" in system_prompt:
             return '[]'  # 审校无问题
@@ -598,7 +613,7 @@ def _fake_llm_factory():
 
 
 def test_e2e_pipeline():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-e2e-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-e2e-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -634,7 +649,7 @@ def test_e2e_pipeline():
             target_lang="简体中文", auto_term=True, enable_report=True,
             translation_theory="目的论 (Skopos Theory)", user_glossary=[],
             research_settings={"report_stage": "proposal"})
-        assert len(calls) == n_before
+        assert len(calls) == n_before, calls[n_before:]
         assert state2["p3_md"] == state["p3_md"]
         assert core.load_source(jid) == docx_bytes
         print("  ✓ 端到端流水线（清洗/术语/批次翻译/审校/报告/幂等/TM 入库）")
@@ -644,14 +659,14 @@ def test_e2e_pipeline():
 
 
 def test_deterministic_repair():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-repair-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-repair-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
         docx_bytes = _make_docx(["请参考 https://example.com/ref 获取详细信息。"])
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "术语管理专家" in system_prompt:
+            if "长文翻译的术语编辑" in system_prompt:
                 return '[]'
             if "翻译审校专家" in system_prompt:
                 return '[]'
@@ -678,7 +693,7 @@ def test_deterministic_repair():
 
 
 def test_review_fix_and_blocking():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-review-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-review-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -686,7 +701,7 @@ def test_review_fix_and_blocking():
                                  "这是第二段，内容足够长以通过过滤。"])
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "术语管理专家" in system_prompt:
+            if "长文翻译的术语编辑" in system_prompt:
                 return '[]'
             if "这是盲审" in system_prompt:
                 return '[]'
@@ -743,7 +758,7 @@ def test_review_fix_and_blocking():
 
 
 def test_tm_reuse():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-tm-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-tm-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -752,7 +767,7 @@ def test_tm_reuse():
         counting = {"translate": 0, "review": 0}
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "术语管理专家" in system_prompt:
+            if "长文翻译的术语编辑" in system_prompt:
                 return '[]'
             if "翻译审校专家" in system_prompt:
                 counting["review"] += 1
@@ -779,7 +794,7 @@ def test_tm_reuse():
 
 
 def test_resume_translation():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-resume-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-resume-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -793,7 +808,7 @@ def test_resume_translation():
                 if "第二段" in user_prompt:
                     raise RuntimeError("模拟网络中断")
                 return json.dumps([f"译文：{s}" for _, s in _numbered_sources(user_prompt)])
-            if "术语管理专家" in system_prompt:
+            if "长文翻译的术语编辑" in system_prompt:
                 return '[]'  # 空术语表
             if "翻译审校专家" in system_prompt:
                 return '[]'
@@ -835,7 +850,7 @@ def test_resume_translation():
 
 
 def test_resume_report_sections():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-report-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-report-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -849,7 +864,7 @@ def test_resume_report_sections():
             def __call__(self, provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
                 if "学术翻译专家" in system_prompt:
                     return json.dumps([f"译文：{s}" for _, s in _numbered_sources(user_prompt)])
-                if "术语管理专家" in system_prompt:
+                if "长文翻译的术语编辑" in system_prompt:
                     return '[]'
                 if "翻译审校专家" in system_prompt:
                     return '[]'
@@ -900,7 +915,7 @@ def test_resume_report_sections():
 
 
 def test_missing_source():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-missing-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-missing-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:

@@ -9,7 +9,7 @@
 
 需求里提到「主要 React / TSX 组件」。**Folith 里没有 React/TSX。**
 仓库里不存在 `.tsx` / `.ts` 应用代码，整个 UI 是 **Streamlit**（Python）：
-`app.py`（~12.8k 行 Python + 内联 CSS）、`core.py`、`gui.py` 和 `transpraxis/` 包。
+`app.py`（~12.8k 行 Python + 内联 CSS）、`core.py`、`gui.py` 和 `folith/` 包。
 
 所以本次重构的落点是 Streamlit 的容器/组件层与 CSS，而不是 React 组件树。
 下面所有「组件」指的是 Streamlit 渲染函数。
@@ -78,7 +78,7 @@
 
 | 文件 | 类型 | 说明 |
 |---|---|---|
-| `transpraxis/language_assets.py` | **新增** 635 行 | 纯只读视图模型层，不 import Streamlit、不写盘、不发明字段 |
+| `folith/language_assets.py` | **新增** 635 行 | 纯只读视图模型层，不 import Streamlit、不写盘、不发明字段 |
 | `app.py` | 修改 | 新增 CSS 段 + `Language Assets Workspace` 段（约 L3903–4953）；删除两个旧渲染函数；新增 `_la_jump_to_segment` 深链 |
 | `core.py` | 修改（**纯增量**） | 新增 `update_glossary_entry` / `delete_glossary_entry` / `add_glossary_entry` 与 `_glossary_mutation_note` |
 | `tests/language_assets_workspace_test.py` | **新增** 874 行 / **39 条** | 视图模型 + 三 Tab + Inspector + 决策 + 批量 + 空/错态 + 契约 + 出现位置深链（3 条） |
@@ -95,7 +95,7 @@
 
 ## 3. 新组件结构
 
-### 3.1 视图模型层 `transpraxis/language_assets.py`
+### 3.1 视图模型层 `folith/language_assets.py`
 
 纯函数，可脱离 Streamlit 单测：
 
@@ -274,7 +274,7 @@ Streamlit 把每个元素包进 `div[data-testid="stLayoutWrapper"]`，
 | 能力 | 后端事实 | UI 处理 |
 |---|---|---|
 | **全局术语库** | `core.review_knowledge_candidate` docstring 明确：*"There is intentionally no global glossary store."* | Inspector 里 `全局术语库` checkbox **disabled**，caption 说明原因；`提升为全局术语` disabled + tooltip；`更改默认` disabled |
-| **项目级术语库** | 已存在项目记忆：`transpraxis/project.py` 持久化项目 `glossary`，`core.promote_job_to_project` 是现有 Memory gate | 语言资产页读取真实项目记录并与任务术语合并；接受并加入项目术语会先更新任务冻结版本，再通过 Memory gate 写入项目。项目独有条目可查看，但因当前没有项目文件 CRUD API，直接编辑保持 disabled |
+| **项目级术语库** | 已存在项目记忆：`folith/project.py` 持久化项目 `glossary`，`core.promote_job_to_project` 是现有 Memory gate | 语言资产页读取真实项目记录并与任务术语合并；接受并加入项目术语会先更新任务冻结版本，再通过 Memory gate 写入项目。项目独有条目可查看，但因当前没有项目文件 CRUD API，直接编辑保持 disabled |
 | **模糊匹配百分比** | TM 没有相似度数据 | **不显示**任何 match % |
 | **TM 来源文档** | TM 记录只有 `target` / `reviewed` / `updated_at` | 「翻译记忆」工具栏 `来源` selectbox **disabled** + tooltip |
 | **TM 语言对** | 没有持久化语言对（语言方向只在 `pipeline_config.target_lang`） | `语言对` selectbox **disabled** + tooltip |

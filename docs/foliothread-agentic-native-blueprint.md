@@ -106,7 +106,7 @@ Translation Core 是 Folith 的唯一核心。它应拥有以下稳定概念：
 - `HumanDecision`：用户对发现、术语或交付的明确决定；
 - `DeliverySnapshot`：绑定到特定源文档、译文和审校状态的交付版本。
 
-现有 `transpraxis.translation_core` 已经是正确的起点。下一步不是再造一个 `agent_core`，而是把现有 `models.py`、`checkpoint.py`、`translation_protocol.py`、`delivery.py` 和 `translation_core/` 的职责整理到这组概念下。
+现有 `folith.translation_core` 已经是正确的起点。下一步不是再造一个 `agent_core`，而是把现有 `models.py`、`checkpoint.py`、`translation_protocol.py`、`delivery.py` 和 `translation_core/` 的职责整理到这组概念下。
 
 #### Orchestration：受限的 Agent 工作编排
 
@@ -207,7 +207,7 @@ Folith 应把人类控制点集中在四处：
 
 ## 5. 学术能力的重新安置
 
-TransPraxis 的学术能力不应被粗暴删除，因为其中的 provenance、合规和渲染 QA 对某些用户有价值；但它们必须从核心产品降级为一个明确的下游扩展：
+Folith 的学术能力不应被粗暴删除，因为其中的 provenance、合规和渲染 QA 对某些用户有价值；但它们必须从核心产品降级为一个明确的下游扩展：
 
 ```text
 Folith Core
@@ -253,7 +253,7 @@ Folith/
 │  ├─ adapters/                 # 文档、provider、渲染和导出
 │  ├─ studio/                   # UI/CLI application layer
 │  └─ research/                 # 可选 MTI / academic extension
-├─ transpraxis/                 # v0.x 兼容实现，逐步缩小
+├─ folith/                 # v0.x 兼容实现，逐步缩小
 ├─ tests/
 │  ├─ core/
 │  ├─ orchestration/
@@ -267,7 +267,7 @@ Folith/
 
 1. 先定义并测试稳定的 core contract；
 2. 把现有调用从 UI 和 academic 模块中抽出来；
-3. 让旧 `transpraxis` namespace 成为兼容入口；
+3. 让旧 `folith` namespace 成为兼容入口；
 4. 最后再移动文件和修改公开 import。
 
 `foliothread/` 的新目录只有在至少一个真实调用已经不再依赖旧目录时才创建。否则只是重复代码树。
@@ -290,7 +290,7 @@ Folith/
 
 ### 7.2 近期正式发布：先完成 UI 全面打磨
 
-用户已于 2026-09-14 确定：近期 UI 全面打磨结束后发布正式版，并在 GitHub、小红书、X 发布与宣传。此发布先于 CAT 内核里程碑，不以 DOCX Contract v1 或 TM V2 完成为前提。版本号与具体日期尚未确定，不预设为 v0.5.0。
+用户已于 2026-09-14 确定：近期 UI 全面打磨结束后发布正式版，并在 GitHub、小红书、X 发布与宣传。此发布先于 CAT 内核里程碑，不以 DOCX Contract v1 或 TM V2 完成为前提。v0.4.0 已于 2026-09-22 发布；当前独立代码包候选版本为 v0.5.0，具体发布日期待定，范围见 release-plan.md。
 
 发布范围、验收与渠道准备见[近期正式版发布计划](release-plan.md)。发布材料只承诺已验证的当前能力，未来 CAT 计划单独标注。这里记录发布意图，本次文档更新不执行上传或对外发帖。
 
@@ -374,7 +374,7 @@ Agentic Native 的核心指标不是“自动化率越高越好”，而是：
 - 新增更多 academic artifact 类型；
 - 新增通用 Agent planner、tool registry 或多 Agent 协议；
 - 将所有模型输出保存为长期记忆；
-- 继续复制 TransPraxis 的通用翻译能力；
+- 继续复制 Folith 的通用翻译能力；
 - 为尚无真实场景的格式增加完整 adapter；
 - 为每个内部状态增加一个新的 UI fixture；
 - 仅为了改名而进行全仓库 import rename。
@@ -393,7 +393,7 @@ Folith
       ├─ Evidence-aware Delivery
       └─ optional Research / MTI Extension
 
-TransPraxis
+Folith
   └─ legacy state / compatibility source
 
 localize-anything

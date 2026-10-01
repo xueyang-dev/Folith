@@ -2,7 +2,7 @@
 from pathlib import Path
 
 import core
-from transpraxis import assets
+from folith import assets
 
 
 LONG_SOURCE_PREFIX = ("This deliberately long source segment describes the "
@@ -23,7 +23,7 @@ def _ui_state():
                       " and it continues with further clauses that must remain "
                       "fully visible in the segment grid without ellipsis "
                       "so that a translator can read the whole sentence "
-                      "before editing its translation in the inspector pane.")
+                      "before editing its translation in the workbench.")
         pairs.append({
             "source": source,
             "target": f"译文 {index + 1}",
@@ -76,7 +76,24 @@ def test_translation_workspace_master_detail_selection_and_editing(tmp_path):
         # 新的段落网格：表头 + 提示，替代原先的 dataframes 列表
         page = "\n".join(item.value for item in at.markdown)
         assert 'class="tp-cat-head"' in page, "必须渲染 CAT 段落网格表头"
-        assert "点段号选中" in page
+        assert f"translation_search_{job_id}" in {
+            str(item.key) for item in at.text_input
+        }, "搜索必须和状态筛选同处翻译工具栏"
+        assert at.session_state["workspace_inspector_open"] is True, \
+            "翻译工作台默认展开"
+        assert any("段落 #1" in item.value for item in at.markdown), \
+            "默认显示当前段落上下文"
+        next(button for button in at.button
+             if button.key == f"workspace_inspector_toggle_{job_id}").click()
+        at.run()
+        assert not at.exception, at.exception
+        assert at.session_state["workspace_inspector_open"] is False
+        assert not any("段落 #1" in item.value for item in at.markdown)
+        next(button for button in at.button
+             if button.key == f"workspace_inspector_toggle_{job_id}").click()
+        at.run()
+        assert not at.exception, at.exception
+        assert at.session_state["workspace_inspector_open"] is True
         assert any("段落 #1" in item.value for item in at.markdown)
 
         _select_segment(at, job_id, 2)
@@ -84,6 +101,11 @@ def test_translation_workspace_master_detail_selection_and_editing(tmp_path):
         assert any("段落 #3" in item.value for item in at.markdown)
         assert any("planetary" in item.value and "行星性" in item.value
                    for item in at.markdown)
+
+        _select_segment(at, job_id, 4)
+        assert any("翻译记忆" in item.value and "已匹配并复用" in item.value
+                   for item in at.markdown), \
+            "打开 Inspector 时，复用翻译记忆的段落仍要显示 TM 上下文"
 
         _select_segment(at, job_id, 7)
         assert at.session_state["selected_segment_id"] == assets.segment_id(job_id, 7)
@@ -166,8 +188,68 @@ def test_translation_workspace_master_detail_selection_and_editing(tmp_path):
                  if 'class="tp-cat-source' in str(item.value)]
         long_cell = next((c for c in cells if LONG_SOURCE_PREFIX in c), None)
         assert long_cell is not None, "长段落必须出现在网格单元格里"
-        assert "before editing its translation in the inspector pane." in long_cell, \
+        assert "before editing its translation in the workbench." in long_cell, \
             "长段落必须完整显示，不能在网格里被截断"
         assert "…" not in long_cell, "段落网格不得用省略号截断长句"
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_inspector_can_collapse_and_restore_context(tmp_path):
+    from streamlit.testing.v1 import AppTest
+
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        job_id = "translationinspector0001"
+        core.save_job_state(job_id, _ui_state())
+        app_path = Path(__file__).resolve().parent.parent / "app.py"
+        at = AppTest.from_file(str(app_path), default_timeout=30)
+        at.run()
+        at.session_state["active_job_id"] = job_id
+        at.session_state["app_view"] = "workspace"
+        at.session_state["workspace_mode"] = True
+        at.session_state["workspace_section"] = "translation"
+        at.run()
+        assert not at.exception, at.exception
+        assert at.session_state["workspace_inspector_open"] is True
+        assert any('class="tp-inspector-segment-head"' in item.value
+                   for item in at.markdown)
+
+        next(button for button in at.button
+             if button.key == f"workspace_inspector_toggle_{job_id}").click()
+        at.run()
+        assert not at.exception, at.exception
+        assert at.session_state["workspace_inspector_open"] is False
+        assert any('class="tp-cat-head"' in item.value for item in at.markdown), \
+            "收起 Inspector 后 CAT 网格必须留在原 fragment 中"
+        assert not any('class="tp-inspector-segment-head"' in item.value
+                       for item in at.markdown)
+
+        next(button for button in at.button
+             if button.key == f"workspace_inspector_toggle_{job_id}").click()
+        at.run()
+        assert not at.exception, at.exception
+        assert at.session_state["workspace_inspector_open"] is True
+        assert any('class="tp-inspector-segment-head"' in item.value
+                   for item in at.markdown), "重新展开应恢复当前段落上下文"
+
+        next(button for button in at.button
+             if button.key == f"workspace_inspector_toggle_{job_id}").click()
+        at.run()
+        assert not at.exception, at.exception
+        assert at.session_state["workspace_inspector_open"] is False
+        assert any('class="tp-cat-head"' in item.value for item in at.markdown), \
+            "收起 Inspector 后 CAT 网格必须继续可见"
+        assert not any('class="tp-inspector-segment-head"' in item.value
+                       for item in at.markdown)
+
+        next(button for button in at.button
+             if button.key == f"workspace_inspector_toggle_{job_id}").click()
+        at.run()
+        assert not at.exception, at.exception
+        assert at.session_state["workspace_inspector_open"] is True
+        assert any('class="tp-inspector-segment-head"' in item.value
+                   for item in at.markdown)
     finally:
         core.OUTPUT_DIR = old_output

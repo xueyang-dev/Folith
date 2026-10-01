@@ -2,7 +2,7 @@
 import json
 
 import core
-from transpraxis import finalization
+from folith import finalization
 
 
 def _write_artifact(job_id, filename, payload):
@@ -272,9 +272,10 @@ def test_case_and_qa_workspace_surfaces_render_without_conflating_states(tmp_pat
         assert not at.exception, at.exception
         # 交付页的标题与顶栏 verdict 同属 canonical 状态词汇：本轮是硬门禁未通过，
         # 不是"暂不满足交付条件"这种含糊说法，也不是"可以准备交付"。
-        assert any("交付门禁未通过" in item.value for item in at.markdown)
-        assert any("翻译审校" in item.value for item in at.markdown)
-        assert any("冻结交付" in item.value for item in at.markdown)
+        assert any("个阻塞问题" in item.value for item in at.markdown)
+        assert not any(button.label == "创建交付版本 v1" and not button.disabled for button in at.button)
+        assert any("独立审校" in item.value for item in at.markdown)
+        assert any("创建交付版本" in item.value for item in at.markdown)
         delivery_markup = "\n".join(item.value for item in at.markdown)
         for label in ("学术产物同步", "案例复核", "合规检查", "DOCX 结构检查",
                       "LibreOffice 页面渲染", "作者视觉复核", "Word 最终复核"):

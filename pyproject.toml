@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "foliothread"
-version = "0.4.0"
+version = "0.5.0"
 description = "Folith·译页 — Agentic Translation Workspace"
 readme = "README.md"
 license = "MIT"
@@ -28,18 +28,16 @@ test = ["pytest>=8,<9"]
 folith = "gui:main"
 # Published package and command kept as a compatibility alias for existing installs.
 foliothread = "gui:main"
-# Legacy v0.4 command; the public product command is `folith`.
-transpraxis = "gui:main"
 
 [tool.setuptools]
 py-modules = ["app", "core", "gui"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["transpraxis*"]
+include = ["folith*"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.package-data]
-transpraxis = ["resources/*.txt", "resources/brand/*.svg", "resources/brand/*.png"]
+folith = ["resources/*.txt", "resources/locales/zh-CN.json", "resources/locales/en.json", "resources/locales/es.json", "resources/locales/ru.json", "resources/locales/ar.json", "resources/brand/*.svg", "resources/brand/*.png"]

@@ -21,7 +21,7 @@ JS 真滚动本身不好做单元测试，但状态机完全可以测——不�
 from pathlib import Path
 
 import core
-from transpraxis import assets
+from folith import assets
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 PENDING = "pending_scroll_segment_id"
@@ -117,6 +117,18 @@ def test_grid_selection_sets_and_consumes_scroll_once(tmp_path, monkeypatch):
     assert at.session_state["selected_segment_id"] == assets.segment_id(job_id, 3)
 
 
+def test_source_cell_selection_activates_the_work_row(tmp_path, monkeypatch):
+    """点击原文单元格也必须切换当前工作行。"""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "navsource01"
+    core.save_job_state(job_id, _state())
+    at = _open(tmp_path, job_id)
+
+    _click(at, f"cat_source_activate_{job_id}_3")
+    assert at.session_state["selected_segment_id"] == assets.segment_id(job_id, 3)
+    assert _active_segment(at) == 3
+
+
 def test_repeated_navigation_converges(tmp_path, monkeypatch):
     """连续跳转多个段落都必须收敛，不产生 rerun 堆积。"""
     monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
@@ -130,6 +142,11 @@ def test_repeated_navigation_converges(tmp_path, monkeypatch):
         assert at.session_state["selected_segment_id"] == \
             assets.segment_id(job_id, target)
         assert _active_segment(at) == target, f"#{target + 1} 必须是 active"
+        # Preview rows retain their editors/selection targets, but only the
+        # active work row exposes operations (including overflow actions).
+        edit_buttons = [button.key for button in at.button
+                        if str(button.key).startswith("cat_action_source_")]
+        assert edit_buttons == [f"cat_action_source_{job_id}_{target}"]
 
 
 def test_tail_segment_is_reachable(tmp_path, monkeypatch):
@@ -165,7 +182,7 @@ def test_issue_anchor_targets_aggregated_segments(tmp_path, monkeypatch):
     core.save_job_state(job_id, _state(count=30))
     at = _open(tmp_path, job_id)
 
-    _click(at, f"agent_all_{job_id}")
+    _click(at, f"workspace_issues_{job_id}")
     assert at.session_state["issues_panel_open"] is True
     _click_anchor(at, job_id, 5)
 
@@ -190,7 +207,7 @@ def test_hidden_target_reveals_filters_before_rendering(tmp_path, monkeypatch):
     at.run()
     assert not at.exception, at.exception
 
-    _click(at, f"agent_all_{job_id}")
+    _click(at, f"workspace_issues_{job_id}")
     _click_anchor(at, job_id, 5)
 
     assert at.session_state[f"translation_filter_{job_id}"] == "全部", \
@@ -208,7 +225,7 @@ def test_hidden_target_clears_search_and_tells_the_user(tmp_path, monkeypatch):
 
     at.session_state[f"translation_search_{job_id}"] = "第 1 段"
     at.run()
-    _click(at, f"agent_all_{job_id}")
+    _click(at, f"workspace_issues_{job_id}")
     _click_anchor(at, job_id, 5)
 
     assert at.session_state[f"translation_search_{job_id}"] == ""
@@ -241,7 +258,7 @@ def test_issues_panel_replaces_popover(tmp_path, monkeypatch):
     assert not any(str(button.key).startswith("agent_jump_") for button in at.button), \
         "不应再有旧的 pills 跳转控件（它的选中值会在 rerun 后重放）"
 
-    _click(at, f"agent_all_{job_id}")
+    _click(at, f"workspace_issues_{job_id}")
     assert at.session_state["issues_panel_open"] is True
     page = _markdown(at)
     assert "tp-issues-summary" in page, "Issues 面板必须显示分级计数"
@@ -255,7 +272,7 @@ def test_issue_anchor_closes_panel_and_selects_segment(tmp_path, monkeypatch):
     core.save_job_state(job_id, _state())
     at = _open(tmp_path, job_id)
 
-    _click(at, f"agent_all_{job_id}")
+    _click(at, f"workspace_issues_{job_id}")
     assert at.session_state["issues_panel_open"] is True
     _click_anchor(at, job_id, 0)
 
@@ -273,7 +290,7 @@ def test_close_button_leaves_issues_panel(tmp_path, monkeypatch):
     at = _open(tmp_path, job_id)
     before = at.session_state["selected_segment_id"]
 
-    _click(at, f"agent_all_{job_id}")
+    _click(at, f"workspace_issues_{job_id}")
     assert at.session_state["issues_panel_open"] is True
     _click(at, f"issues_close_{job_id}")
     assert "issues_panel_open" not in at.session_state

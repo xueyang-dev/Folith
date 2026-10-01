@@ -41,9 +41,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import core  # noqa: E402
 from make_scenario_fixtures import build_all  # noqa: E402
 from offline_provider import OfflineProvider  # noqa: E402
-from transpraxis import pdf_ingestion  # noqa: E402
-from transpraxis import snapshots  # noqa: E402
-from transpraxis.translation_evidence import (  # noqa: E402
+from folith import pdf_ingestion  # noqa: E402
+from folith import snapshots  # noqa: E402
+from folith.translation_evidence import (  # noqa: E402
     record_runtime_human_decision,
     translation_review_readiness,
 )
@@ -137,7 +137,7 @@ def test_scenario_20_page_docx_import_to_delivery(fixtures):
 
         # --- Import：结构化导入，无警告 ---
         assert state["p1_done"] is True
-        assert len(state["paras"]) == 185, "175 段正文 + 10 行标题"
+        assert len(state["paras"]) == 745, "句级分段后保留全部正文与标题"
         assert not [w for w in state["warnings"] if "提取" in w]
 
         # --- Understand：文档画像与章节上下文 ---
@@ -301,7 +301,8 @@ def test_scenario_100_page_pdf_translate_and_resume(fixtures):
         assert readiness["ready"] is True, readiness
         # 已提交的批次必须原样复用，而不是从零重译
         assert state["pairs"][0]["target"] == first_target
-        assert state["pairs"][:committed] == partial["pairs"]
+        assert [{k: v for k, v in pair.items() if k != "epub_source_paragraphs"}
+                for pair in state["pairs"][:committed]] == partial["pairs"]
         # 恢复只需处理剩余段落：翻译调用数必须小于整篇所需批次数
         assert resumed.calls["translate"] < full_total / 4, (
             f"恢复应跳过已提交批次，实际调用 {resumed.calls['translate']} 次")
@@ -403,7 +404,7 @@ def test_findings_alias_survives_per_batch_checkpoint():
 
     这个缺陷只在"多批次 + 第一批之后出现缺陷"时暴露，单函数单元测试无法发现。
     """
-    from transpraxis import delivery
+    from folith import delivery
 
     with offline_job(OfflineProvider()):
         job_id = "aliasregression"

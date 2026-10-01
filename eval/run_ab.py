@@ -160,7 +160,7 @@ def run_arm(arm: str, *, code_root: Path, run_dir: Path, corpus_docx: Path,
     env = dict(os.environ)
     env["PYTHONPATH"] = str(code_root)
     if api_key:
-        env["TRANSPRAXIS_EVAL_API_KEY"] = api_key
+        env["FOLITH_EVAL_API_KEY"] = api_key
     proc = subprocess.run(cmd, cwd=str(code_root), env=env,
                           capture_output=True, text=True, timeout=8 * 3600)
     if proc.returncode != 0:
@@ -383,7 +383,7 @@ def main(argv=None) -> int:
     baseline_ref = cfg["code"]["baseline_ref"]
     baseline_wt = ensure_baseline_worktree(baseline_ref)
     current_ref = _git_head(ROOT)
-    api_key = os.environ.get("TRANSPRAXIS_EVAL_API_KEY", "")
+    api_key = os.environ.get("FOLITH_EVAL_API_KEY", "")
     tm_seed = Path(cfg["tm_seed"]).resolve() if cfg.get("tm_seed") else None
     if tm_seed is not None and not tm_seed.is_file():
         raise FileNotFoundError(f"TM 种子不存在：{tm_seed}")

@@ -2,9 +2,9 @@
 from pathlib import Path
 
 import core
-from transpraxis import assets, delivery, translation_evidence
-from transpraxis.translation_core import fingerprint, normalize_finding
-from transpraxis.workbench_view import review_workbench_view
+from folith import assets, delivery, translation_evidence
+from folith.translation_core import fingerprint, normalize_finding
+from folith.workbench_view import review_workbench_view
 
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
@@ -109,6 +109,16 @@ def _open_workspace(job_id, section, *, api_key=""):
     return at
 
 
+def _settle_segment_action(at, job_id):
+    """Wait for mocked background work and render its completion feedback."""
+    worker = core._RUNTIME_WORKERS.get(job_id)
+    if worker:
+        worker.join(timeout=3)
+        assert not worker.is_alive()
+    at.run()
+    assert not at.exception, at.exception
+
+
 def _queue(at):
     return next(item for item in at.radio if item.label == "审校队列")
 
@@ -125,7 +135,7 @@ def _save_row_editor(at, job_id, index):
                 if button.key == f"cat_save_btn_{job_id}_{index}").click()
 
 
-def test_blocking_review_decisions_are_reachable_before_finding_evidence(
+def test_review_decisions_follow_evidence_in_the_inspector(
         tmp_path):
     old_output = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp_path
@@ -139,6 +149,10 @@ def test_blocking_review_decisions_are_reachable_before_finding_evidence(
         for label in ("确认已解决", "修改译文", "保留当前译文", "重新翻译并复审"):
             assert label in labels
         assert labels.index("确认已解决") < labels.index("重新翻译并复审")
+        markup = "\n".join(item.value for item in at.markdown)
+        assert "tp-review-readiness is-" not in markup
+        assert markup.index("tp-review-problem") < markup.index('<h4>证据</h4>') < markup.index('<h4>建议</h4>')
+        assert any(expander.label == "历史" for expander in at.expander)
     finally:
         core.OUTPUT_DIR = old_output
 
@@ -169,7 +183,7 @@ def test_suggested_target_action_edits_rereviews_and_clears_current_work(
         core.save_job_state(job_id, state)
 
         def fake_review(job_id_, indexes, provider, api_key, model, target_lang,
-                        *, style_rules="", call_llm_fn=None):
+                        *, style_rules="", call_llm_fn=None, base_url=None):
             current = core.load_job_state(job_id_)
             reviewed = []
             for segment_id in indexes:
@@ -200,6 +214,7 @@ def test_suggested_target_action_edits_rereviews_and_clears_current_work(
         next(button for button in at.button
              if button.label == "应用建议并复审").click()
         at.run()
+        _settle_segment_action(at, job_id)
 
         assert not at.exception, at.exception
         updated = core.load_job_state(job_id)
@@ -212,7 +227,10 @@ def test_suggested_target_action_edits_rereviews_and_clears_current_work(
                    for action in updated["human_actions"])
         assert review_workbench_view(updated)["queue_items"] == []
         assert review_workbench_view(updated)["delivery"]["title"] == "翻译审校已完成"
-        assert any("建议译文已应用" in item.value for item in at.success)
+        # Async completion may consume the one-shot toast in an intermediate rerun.
+        # The persisted clean review is the completion contract.
+        assert updated["pairs"][0]["review_status"] == "reviewed_clean"
+        assert updated["pairs"][0]["accepted_target"] == "建议译文"
         assert any(button.label == "前往交付" for button in at.button)
     finally:
         core.OUTPUT_DIR = old_output
@@ -258,7 +276,7 @@ def test_review_actions_select_same_segment_next_then_cross_navigate(tmp_path):
         assert at.session_state["selected_segment_id"] == assets.segment_id(job_id, 1)
         assert any("段落 #2" in item.value for item in at.markdown)
 
-        next(button for button in at.button if button.label == "查看审校").click()
+        next(button for button in at.button if button.key == "workspace_nav_review").click()
         at.run()
         assert at.session_state["workspace_section"] == "review"
         assert at.session_state["selected_finding_id"] == second_segment_item["finding_id"]
@@ -297,15 +315,15 @@ def test_delivery_risk_action_is_visible_only_for_current_blockers(tmp_path):
         core.save_job_state(job_id, _state({0: 1}))
         at = _open_workspace(job_id, "delivery")
 
-        assert any("仍要交付" in item.value for item in at.markdown)
-        assert any(button.label == "确认风险并继续交付" for button in at.button)
+        assert any("接受风险并继续交付" in item.value for item in at.markdown)
+        assert any(button.label == "确认风险并创建交付版本" for button in at.button)
         assert any(item.label == "我确认理解这些问题仍然存在，并决定继续交付"
                    for item in at.checkbox)
 
         core.save_translation_edit(job_id, 0, "人工修改后的译文")
         at.run()
         assert not at.exception, at.exception
-        assert not any(button.label == "确认风险并继续交付" for button in at.button)
+        assert not any(button.label == "确认风险并创建交付版本" for button in at.button)
         assert any("需要重新审校" in item.value or "上次审校后发生变化" in item.value
                    for item in [*at.markdown, *at.error, *at.warning])
     finally:
@@ -348,6 +366,7 @@ def test_separate_reviewer_manual_rereview_uses_reviewer_credentials(
         assert review_button.disabled is False
         review_button.click()
         at.run()
+        _settle_segment_action(at, job_id)
 
         assert calls == [("OpenAI", "reviewer-key", "reviewer-model",
                           "https://reviewer.example/v1")]
@@ -399,6 +418,7 @@ def test_separate_reviewer_suggested_target_uses_reviewer_credentials(
         assert apply_button.disabled is False
         apply_button.click()
         at.run()
+        _settle_segment_action(at, job_id)
 
         assert calls == [("OpenAI", "reviewer-key", "reviewer-model",
                           "https://reviewer.example/v1")]
@@ -508,3 +528,41 @@ def test_review_required_translation_edit_and_restore_feedback_keeps_rereview_co
     at.run()
 
     assert any("需要重新审校" in item.value for item in at.warning)
+
+
+def test_issue_drawer_includes_persisted_review_and_document_checks(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "mixedissuesui"
+    state = _state({0: 2}, review_required=False)
+    state["glossary"] = [{"id": "source-term", "source": "Source",
+                           "preferred": "正确术语", "status": "locked"}]
+    core.save_job_state(job_id, state)
+    at = _open_workspace(job_id, "translation")
+    next(button for button in at.button if button.key == f"workspace_issues_{job_id}").click().run()
+    assert not at.exception, at.exception
+    page = "\n".join(item.value for item in at.markdown)
+    assert "全文检查 · 建议" in page
+    assert "审校记录 · 必须处理" in page
+    assert "第 1 段问题 1" in page and "第 1 段问题 2" in page
+    assert '<b>2</b> 必须处理' in page
+    assert '<b>1</b> 建议检查' in page
+    anchor = next(button for button in at.button
+                  if str(button.key).startswith(f"issue_anchor_{job_id}_finding:"))
+    anchor.click().run()
+    assert not at.exception, at.exception
+    assert any('tp-inspector-segment-head' in item.value for item in at.markdown)
+
+
+def test_cancelled_optional_work_keeps_prepare_delivery_action(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "optionalcancelui"
+    state = _state({0: 0}, review_required=False)
+    core.save_job_state(job_id, state)
+    core.update_runtime_state(job_id, status="cancelled", stage_id="annotation")
+    at = _open_workspace(job_id, "translation")
+    button = next(button for button in at.button if button.key == f"workspace_topbar_cta_{job_id}")
+    assert button.label == "准备交付"
+    button.click().run()
+    assert not at.exception, at.exception
+    assert at.session_state["workspace_section"] == "delivery"
+    assert not any(button.key == f"workspace_topbar_cta_{job_id}" for button in at.button)

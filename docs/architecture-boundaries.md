@@ -42,7 +42,7 @@ MTI、论文和翻译实践报告不再作为产品的默认解释，而是“�
 | 交付、快照与页面 QA | `delivery.py`、`snapshots.py`、`rendered_qa.py`、`finalization.py` | 保留，作为可追溯交付基础 |
 | Provider 与模型配置 | `core.py`、`model_roles.py`、`gui.py` | 保留，Phase 1 不改变调用方式 |
 
-公共品牌已经改为 Folith / 译页，但 v0.4 的 Python import namespace `transpraxis`、既有状态字段、内部 artifact ID、`transpraxis:` 导出字段和 `TRANSPRAXIS_*` 环境变量继续保留。这些是技术兼容边界，不是产品定位。
+公共品牌已经改为 Folith / 译页，但 v0.4 的 Python import namespace `folith`、既有状态字段、内部 artifact ID、`folith:` 导出字段和 `FOLITH_*` 环境变量继续保留。这些是技术兼容边界，不是产品定位。
 
 ## 3. MTI / 论文能力：legacy / specialized
 
@@ -74,9 +74,9 @@ v0.5 在现有边界上演化，不在 Phase 1 提前实现：
 ## 5. 命名与迁移规则
 
 - 用户可见产品名、页面标题、启动器、README、发布说明和资源名使用 `Folith` / `译页`。
-- `transpraxis/` 目录继续作为 v0.4 稳定内部模块边界；当前阶段不进行全仓库 import rename。
-- `foliothread` 是已发布的包名和 console 入口；`transpraxis` 入口以及旧环境变量作为兼容别名保留。
-- 现有 `TRANSPRAXIS_API_KEY`、`TRANSPRAXIS_EVAL_API_KEY` 等环境变量保留，避免把品牌迁移误变成运行时迁移。
+- 0.5.0 已将内部包从旧品牌迁移到 `folith/`，代码和资源引用同步迁移。
+- 发行包名仍为 `foliothread`；0.5.0 主命令为 `folith`，`foliothread` 命令为兼容别名。旧品牌命令在 0.5.0 移除；明确保留的旧环境变量见品牌文档。
+- 现有 `FOLITH_API_KEY`、`FOLITH_EVAL_API_KEY` 等环境变量保留，避免把品牌迁移误变成运行时迁移。
 - 旧的论文全文、渲染页面、临时截图和旧 logo 不属于产品资产；它们不应进入仓库。`.codex_tmp/` 已加入忽略规则。
 
 ## 6. 读写边界：读取不得有写副作用
@@ -142,7 +142,7 @@ v0.5 在现有边界上演化，不在 Phase 1 提前实现：
 1. **正文判定不能用语言区间枚举。** 按脚本列区间永远会漏掉下一种语言，而漏掉的
    后果不是报错，是**原样保留 + 标成已审校 + 通过交付检查**（译文就是原文）。
    "这一行是不是文字"本身就是 Unicode 类别问题，不是语言清单问题。核心层与
-   检查点恢复共用同一个判定（`transpraxis.textual.has_textual_content`），
+   检查点恢复共用同一个判定（`folith.textual.has_textual_content`），
    不允许各存一份正则。
 2. **翻译记忆的身份是「目标语言 + 原文」。** 只用原文当键，一种语言的已审校译文
    会串进另一种语言的任务。没有目标语言上下文就不建立任何可命中路径（fail

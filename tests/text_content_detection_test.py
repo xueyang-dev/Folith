@@ -80,7 +80,7 @@ def test_tm_eligibility_follows_the_same_rule():
 
 def test_checkpoint_eligibility_shares_the_same_predicate():
     """检查点恢复用的是同一个判定（重复一份正则 = 迟早漂移）。"""
-    from transpraxis import checkpoint
+    from folith import checkpoint
 
     for label, text in CONTENT_SAMPLES:
         assert checkpoint._eligible(text, "某译文"), label

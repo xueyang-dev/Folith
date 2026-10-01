@@ -1,9 +1,9 @@
 """Phase 3 human-facing review workbench projection regressions."""
 import json
 
-from transpraxis import delivery
-from transpraxis.translation_core import fingerprint, normalize_finding
-from transpraxis.workbench_view import (
+from folith import delivery
+from folith.translation_core import fingerprint, normalize_finding
+from folith.workbench_view import (
     filter_queue_items,
     next_queue_item_id,
     review_workbench_view,

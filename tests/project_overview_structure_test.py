@@ -7,8 +7,8 @@
   **不渲染**四张 summary card，**不渲染**第二块「项目知识尚未建立」，
   整页最多一个主要 Empty State（不出现 dashed empty box）。
 - ACTIVE PROJECT（存在 task）= command center：
-  工作概览 → 进行中的任务 → 最近任务 → 项目知识摘要。
-  没有进行中的任务时**整节不渲染**，也不补一个巨大的空框。
+  工作概览 → 未交付任务 → 其他最近任务 → 项目知识摘要。
+  没有未交付任务时**整节不渲染**，也不补一个巨大的空框；上方已经展示的任务不再重复。
 - Header 只回答身份与下一步：名称 + 状态 badge + 描述（为空则整行省略）+
   `+ 新建任务` 与 `···` **同一行**；UUID / Project ID / 时间戳不在概览里。
 - Tabs 是 compact left-aligned 的四项，不四等分页面宽度。
@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import core  # noqa: E402
-from transpraxis import project as project_module  # noqa: E402
+from folith import project as project_module  # noqa: E402
 
 LOCKED = {"source": "canopy closure", "target": "林冠郁闭", "preferred": "林冠郁闭",
           "status": "locked", "behavior": "translate"}
@@ -287,31 +287,29 @@ def test_active_project_renders_summary_cards():
         page = _visible_text(at)
         assert "工作概览" in page
         assert page.count('<div class="tp-stat-value">1</div>') == 4, page[:1200]
-        assert "1 进行中" in page, "任务卡必须给出进行中/已完成分布"
+        assert "1 未交付" in page, "任务卡必须区分未交付与已交付"
 
 
-# ================= 6. ACTIVE PROJECT：优先显示进行中的任务 =================
+# ================= 6. ACTIVE PROJECT：优先显示未交付任务且不重复 =================
 
 
-def test_active_project_prioritizes_active_tasks():
+def test_active_project_prioritizes_unfinished_tasks_without_duplicates():
     with overview_env():
         project = core.create_project("活跃项目")
         _seed_job("a", "a.docx", project["project_id"])
         _seed_job("b", "b.docx", project["project_id"])
         at = _project_page(project["project_id"])
         page = _visible_text(at)
-        assert "进行中的任务" in page and "最近任务" in page
-        assert page.find("进行中的任务") < page.find("最近任务"), \
-            "进行中的任务必须排在最近任务之前"
+        assert "未交付任务" in page and "其他最近任务" not in page
         assert _button(at, "project_job_open_a") is not None
         assert _button(at, "project_job_open_b") is not None
 
 
-# ================= 7. 没有 active task：不补巨大空框 =================
+# ================= 7. 没有未交付任务：不补巨大空框 =================
 
 
-def test_active_project_without_active_tasks_skips_the_empty_section():
-    """有 task 但没有进行中的任务：直接给「最近任务」，不渲染大型 empty card。"""
+def test_active_project_without_unfinished_tasks_skips_the_empty_section():
+    """有 task 但全部已交付：直接给「最近任务」，不渲染大型 empty card。"""
     with overview_env():
         project = core.create_project("已交付项目")
         _seed_delivered_job("done", "done.docx", project["project_id"])
@@ -319,8 +317,8 @@ def test_active_project_without_active_tasks_skips_the_empty_section():
         page = _visible_text(at)
         assert "工作概览" in page, "它仍然是 ACTIVE PROJECT"
         assert "最近任务" in page
-        assert "进行中的任务" not in page, "没有进行中的任务时整节不渲染"
-        assert "没有进行中的任务" not in page, "不得用一个大空框说明「没有」"
+        assert "未交付任务" not in page, "没有未交付任务时整节不渲染"
+        assert "没有未交付任务" not in page, "不得用一个大空框说明「没有」"
         assert "tp-empty-card" not in page
         assert "tp-empty\"" not in page
 

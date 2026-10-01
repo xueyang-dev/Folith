@@ -1,0 +1,452 @@
+[
+  {
+    "section": "translation",
+    "width": 1280,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 979,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1248,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 924,
+      "y": 71,
+      "width": 340,
+      "height": 705,
+      "bottom": 776
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 3,
+    "termRow": null,
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "terms",
+    "width": 1280,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 979,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1248,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 924,
+      "y": 71,
+      "width": 340,
+      "height": 668.53125,
+      "bottom": 739.53125
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": {
+      "x": 32,
+      "y": 153,
+      "width": 844,
+      "height": 45,
+      "bottom": 198
+    },
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "delivery",
+    "width": 1280,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 979,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1248,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": null,
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": null,
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": {
+      "x": 16,
+      "y": 405.96875,
+      "width": 340,
+      "height": 72,
+      "bottom": 477.96875
+    },
+    "deliveryNavColor": "rgb(23, 78, 152)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "review",
+    "width": 1280,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 979,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1248,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 924,
+      "y": 71,
+      "width": 340,
+      "height": 631.828125,
+      "bottom": 702.828125
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": null,
+    "reviewRow": {
+      "x": 32,
+      "y": 207.78125,
+      "width": 844,
+      "height": 107.484375,
+      "bottom": 315.265625
+    },
+    "reviewQueue": {
+      "x": 32,
+      "y": 207.78125,
+      "width": 844,
+      "height": 859.875,
+      "bottom": 1067.65625
+    },
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "translation",
+    "width": 1440,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1139,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1408,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 1084,
+      "y": 71,
+      "width": 340,
+      "height": 705,
+      "bottom": 776
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 3,
+    "termRow": null,
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "terms",
+    "width": 1440,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1139,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1408,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 1084,
+      "y": 71,
+      "width": 340,
+      "height": 668.53125,
+      "bottom": 739.53125
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": {
+      "x": 32,
+      "y": 153,
+      "width": 1004,
+      "height": 45,
+      "bottom": 198
+    },
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "delivery",
+    "width": 1440,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1139,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1408,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": null,
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": null,
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": {
+      "x": 16,
+      "y": 405.96875,
+      "width": 340,
+      "height": 72,
+      "bottom": 477.96875
+    },
+    "deliveryNavColor": "rgb(23, 78, 152)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "review",
+    "width": 1440,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1139,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1408,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 1084,
+      "y": 71,
+      "width": 340,
+      "height": 631.828125,
+      "bottom": 702.828125
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": null,
+    "reviewRow": {
+      "x": 32,
+      "y": 207.78125,
+      "width": 1004,
+      "height": 107.484375,
+      "bottom": 315.265625
+    },
+    "reviewQueue": {
+      "x": 32,
+      "y": 207.78125,
+      "width": 1004,
+      "height": 859.875,
+      "bottom": 1067.65625
+    },
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "translation",
+    "width": 1600,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1299,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1568,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 1244,
+      "y": 71,
+      "width": 340,
+      "height": 705,
+      "bottom": 776
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 3,
+    "termRow": null,
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "terms",
+    "width": 1600,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1299,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1568,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 1244,
+      "y": 71,
+      "width": 340,
+      "height": 668.53125,
+      "bottom": 739.53125
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": {
+      "x": 32,
+      "y": 153,
+      "width": 1164,
+      "height": 45,
+      "bottom": 198
+    },
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "delivery",
+    "width": 1600,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1299,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1568,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": null,
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": null,
+    "reviewRow": null,
+    "reviewQueue": null,
+    "artifact": {
+      "x": 16,
+      "y": 405.96875,
+      "width": 340,
+      "height": 72,
+      "bottom": 477.96875
+    },
+    "deliveryNavColor": "rgb(23, 78, 152)",
+    "horizontalOverflow": false
+  },
+  {
+    "section": "review",
+    "width": 1600,
+    "title": {
+      "x": 92,
+      "y": 8,
+      "width": 1299,
+      "height": 22,
+      "bottom": 30
+    },
+    "header": {
+      "x": 16,
+      "y": 8,
+      "width": 1568,
+      "height": 63,
+      "bottom": 71
+    },
+    "inspector": {
+      "x": 1244,
+      "y": 71,
+      "width": 340,
+      "height": 631.828125,
+      "bottom": 702.828125
+    },
+    "titleFits": true,
+    "visibleTranslationActions": 0,
+    "termRow": null,
+    "reviewRow": {
+      "x": 32,
+      "y": 207.78125,
+      "width": 1164,
+      "height": 107.484375,
+      "bottom": 315.265625
+    },
+    "reviewQueue": {
+      "x": 32,
+      "y": 207.78125,
+      "width": 1164,
+      "height": 859.875,
+      "bottom": 1067.65625
+    },
+    "artifact": null,
+    "deliveryNavColor": "rgb(102, 112, 133)",
+    "horizontalOverflow": false
+  }
+]

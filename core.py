@@ -2,11 +2,13 @@
 
 职责：大模型路由、文档清洗、术语抽取、双语翻译、报告生成、任务进度持久化。
 """
+import copy
 import hashlib
 import io
 import json
 import csv
 import inspect
+from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 import os
 import queue
@@ -23,6 +25,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
@@ -33,30 +36,46 @@ from docx import Document
 from google import genai
 from openai import OpenAI
 
-from transpraxis import models as _models
-from transpraxis import state_migration as _state_migration
-from transpraxis import context as _context
-from transpraxis import knowledge as _knowledge
-from transpraxis import repair as _repair
-from transpraxis import translation_evidence as _translation_evidence
-from transpraxis import checkpoint as _checkpoint
-from transpraxis import snapshots as _snapshots
-from transpraxis import entity_registry as _entity_registry
-from transpraxis import model_roles as _model_roles
-from transpraxis import pdf_ingestion as _pdf_ingestion
-from transpraxis import source_cleanup as _source_cleanup
-from transpraxis import segmentation as _segmentation
-from transpraxis import source_quality as _source_quality
-from transpraxis import translation_protocol as _translation_protocol
-from transpraxis.storage import job_repository as _job_repo
-from transpraxis import translation_target as _translation_target
-from transpraxis import finalization as _finalization
-from transpraxis import rendered_qa as _rendered_qa
-from transpraxis import project as _project
-from transpraxis import translation_memory as _tm_scope
-from transpraxis import usage as _usage
-from transpraxis.performance import PipelineProfiler
-from transpraxis.textual import has_textual_content, normalize_language
+from folith import models as _models
+from folith import state_migration as _state_migration
+from folith import context as _context
+from folith import knowledge as _knowledge
+from folith import repair as _repair
+from folith import translation_evidence as _translation_evidence
+from folith import checkpoint as _checkpoint
+from folith import snapshots as _snapshots
+from folith import entity_registry as _entity_registry
+from folith import model_roles as _model_roles
+from folith import pdf_ingestion as _pdf_ingestion
+from folith import source_cleanup as _source_cleanup
+from folith import segmentation as _segmentation
+from folith import source_quality as _source_quality
+from folith import translation_protocol as _translation_protocol
+from folith import persistence_profiler as _persistence_profiler
+from folith import critical_path as _critical_path
+from folith.storage import job_repository as _job_repo
+from folith.storage import state_journal as _state_journal
+from folith import translation_target as _translation_target
+from folith import finalization as _finalization
+from folith import rendered_qa as _rendered_qa
+from folith import project as _project
+from folith import translation_memory as _tm_scope
+from folith import usage as _usage
+from folith import llm_transport as _llm_transport
+from folith import request_control as _request_control
+from folith import workflow_errors as _workflow_errors
+from folith import job_lock as _job_lock
+from folith import review_scheduler as _review_scheduler
+from folith import ocr_backends as _ocr_backends
+from folith.ocr_cache import (
+    OCRPageCache as _OCRPageCache,
+    OCRPageIdentity as _OCRPageIdentity,
+    OCR_PREPROCESSING_VERSION as _OCR_PREPROCESSING_VERSION,
+    read_legacy_checkpoint_pages as _read_legacy_ocr_pages,
+)
+from folith.performance import PipelineProfiler
+from folith.textual import has_textual_content, normalize_language, text_direction
+from folith.trace import trace, TraceLevel, RunContext
 
 # ================= 常量 =================
 # 任务进度与过程文件的本地存储目录（已加入 .gitignore）
@@ -68,6 +87,7 @@ DELIVERY_CONFIG_DEFAULTS = {
     "deliver_plain_docx": True,
     "deliver_bilingual_docx": True,
     "deliver_pdf": False,
+    "deliver_epub": False,
     "deliver_terms_xlsx": True,
     "deliver_tbx": False,
     "deliver_tmx": False,
@@ -268,8 +288,72 @@ def _runtime_job_id():
     return getattr(_RUNTIME_CTX, "job_id", None)
 
 
+def _exclusive_job_execution(job_id_position):
+    """CLI and direct stage calls own the same lifetime lock as GUI workers."""
+    def decorate(function):
+        @wraps(function)
+        def execute(*args, **kwargs):
+            job_id = args[job_id_position] if len(args) > job_id_position else kwargs["job_id"]
+            previous = _runtime_job_id()
+            if previous == job_id:
+                return function(*args, **kwargs)
+            execution_lock = _job_lock.acquire(job_dir(job_id) / ".worker.lock", blocking=False)
+            if execution_lock is None:
+                raise RuntimeError("任务正在后台处理，请等待完成后重试。")
+            _RUNTIME_CTX.job_id = job_id
+            try:
+                return function(*args, **kwargs)
+            finally:
+                if previous is None:
+                    _RUNTIME_CTX.__dict__.pop("job_id", None)
+                else:
+                    _RUNTIME_CTX.job_id = previous
+                execution_lock.close()
+        return execute
+    return decorate
+
+
 def _runtime_cancel_requested(job_id):
+    _workflow_errors.check(job_id)
     return bool((load_runtime_state(job_id) or {}).get("cancel_requested"))
+
+
+def _runtime_pause_checkpoint(job_id):
+    """Pause cooperatively between operations; keep in-memory results and lease."""
+    if not job_id or not load_runtime_state(job_id).get("pause_requested"):
+        return
+    previous = load_runtime_state(job_id)
+    update_runtime_state(job_id, status="paused", phase="paused",
+                         event="任务已暂停，可继续处理", event_name="job_paused",
+                         event_visibility="user", event_category="lifecycle")
+    while load_runtime_state(job_id).get("pause_requested"):
+        if _runtime_cancel_requested(job_id):
+            raise RuntimeError("任务已请求取消")
+        time.sleep(0.25)
+    if _runtime_cancel_requested(job_id):
+        raise RuntimeError("任务已请求取消")
+    update_runtime_state(job_id, status="running", phase=previous.get("phase") or "running",
+                         phase_label=previous.get("phase_label") or "正在执行",
+                         event="任务已继续", event_name="job_continued",
+                         event_visibility="user", event_category="lifecycle")
+
+
+def request_job_pause(job_id):
+    if not is_job_worker_alive(job_id):
+        return False
+    update_runtime_state(job_id, pause_requested=True, status="pausing",
+                         event="已请求暂停，当前操作结束后暂停", event_name="pause_requested",
+                         event_visibility="user", event_category="lifecycle")
+    return True
+
+
+def continue_job(job_id):
+    if not is_job_worker_alive(job_id):
+        return False
+    update_runtime_state(job_id, pause_requested=False, status="running", phase="running",
+                         event="正在继续任务", event_name="continue_requested",
+                         event_visibility="user", event_category="lifecycle")
+    return True
 
 
 # ================= 基础工具函数 =================
@@ -318,6 +402,61 @@ def is_rate_limited(err):
     return '429' in s or 'RESOURCE_EXHAUSTED' in s or 'rate limit' in s.lower()
 
 
+def _llm_cancel_check():
+    """Cancellation probe bound to the job currently running on this thread."""
+    job_id = _runtime_job_id()
+    if not job_id:
+        return None
+    return lambda: _runtime_cancel_requested(job_id)
+
+
+def _llm_request_controller(provider, model):
+    """Shared, provider/model scoped request controller (see request_control)."""
+    return _request_control.get_request_controller(provider, model)
+
+
+# Per-thread provider accounting. One translation batch runs entirely on one
+# worker thread, so a before/after delta gives that batch's real API latency,
+# request count and failure count without any cross-thread bookkeeping.
+_LLM_LATENCY_CTX = threading.local()
+
+
+def _record_llm_thread_stats(seconds, *, failed):
+    _LLM_LATENCY_CTX.seconds = getattr(_LLM_LATENCY_CTX, "seconds", 0.0) + max(0.0, seconds)
+    _LLM_LATENCY_CTX.requests = getattr(_LLM_LATENCY_CTX, "requests", 0) + 1
+    if failed:
+        _LLM_LATENCY_CTX.failures = getattr(_LLM_LATENCY_CTX, "failures", 0) + 1
+
+
+def llm_thread_stats():
+    """Cumulative provider stats for the calling thread."""
+    return {
+        "api_latency_s": float(getattr(_LLM_LATENCY_CTX, "seconds", 0.0) or 0.0),
+        "requests": int(getattr(_LLM_LATENCY_CTX, "requests", 0) or 0),
+        "failures": int(getattr(_LLM_LATENCY_CTX, "failures", 0) or 0),
+    }
+
+
+def llm_thread_stats_delta(before):
+    after = llm_thread_stats()
+    return {
+        "api_latency_s": max(0.0, after["api_latency_s"] - float(before.get("api_latency_s") or 0.0)),
+        "requests": max(0, after["requests"] - int(before.get("requests") or 0)),
+        "failures": max(0, after["failures"] - int(before.get("failures") or 0)),
+    }
+
+
+def reset_llm_clients():
+    """Drop every pooled provider client (closing it) so the next call rebuilds.
+
+    Ops/test hook: production never needs this because the pool identity is
+    derived from provider routing plus a credential fingerprint, both stable
+    for a process.  Tests that swap the SDK class (``core.OpenAI``) must call
+    this so a client built by a previous stub is not reused.
+    """
+    return _llm_transport.close_all_clients()
+
+
 # ================= PDF 确定性段落提取 =================
 # 经验（来自 localize-anything 与全书实测）：分段/清洗必须确定性，不能交给 LLM。
 # 旧流程把 ~2500 字符的任意文本块交给模型"清洗"，导致两类系统性缺陷：
@@ -341,6 +480,13 @@ OCR_WORKERS_DEFAULT = 2
 OCR_QUEUE_SIZE_DEFAULT = 4
 OCR_CONFIDENCE_THRESHOLD_DEFAULT = 88.0
 OCR_CHECKPOINT_VERSION = 1
+# Fixed 220 DPI stays the production baseline; adaptive resolution is an
+# opt-in experiment whose result must be compared against this baseline.
+OCR_DPI_BASELINE = 220
+OCR_ADAPTIVE_LOW_DPI = 150
+OCR_ADAPTIVE_HIGH_DPI = 300
+OCR_ADAPTIVE_MIN_CONFIDENCE = 70.0
+OCR_ADAPTIVE_MIN_TEXT_DENSITY = 0.30
 _OCR_PAGE_NUMBER_RE = re.compile(
     r"^\s*(?:page\s+)?\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?\s*$",
     re.IGNORECASE,
@@ -465,26 +611,28 @@ def _runtime_float_option(explicit, saved, env_name, default, *, minimum=0.0, ma
     return max(minimum, min(value, maximum))
 
 
-def _ocr_runtime_metadata(language, workers):
+def _ocr_runtime_metadata(language, workers, backend=None, command=""):
     """Describe the provider actually executing OCR, not only a config value."""
+    resolved, resolve_warnings = _ocr_backends.resolve_backend(
+        backend, tesseract_command=command, language=language)
+    info = resolved.runtime_info(language).to_dict()
+    metadata = {**info, "language": language, "workers": workers}
+    warnings = list(resolve_warnings)
     configured_device = str(os.environ.get("FOLIOTHREAD_OCR_DEVICE", "auto") or "auto").lower()
-    metadata = {
-        "backend": "tesseract",
-        "model": "tesseract-lstm",
-        "device": "cpu",
-        "provider": "tesseract",
-        "execution_provider": "native_cpu",
-        "gpu_name": None,
-        "language": language,
-        "workers": workers,
-    }
-    warnings = []
-    if configured_device not in {"", "auto", "cpu"}:
+    if configured_device not in {"", "auto", "cpu"} and metadata.get("device") == "cpu":
         warnings.append(
-            f"OCR 配置请求 device={configured_device}，但当前 Tesseract runtime 实际使用 CPU；"
-            "未发生 GPU 加速。"
+            f"OCR 配置请求 device={configured_device}，但当前 "
+            f"{metadata.get('backend')} runtime 实际使用 CPU；未发生 GPU 加速。"
         )
     return metadata, warnings
+
+
+def ocr_backend_report():
+    """Diagnostics: which backends exist and what device they would really use."""
+    command = _find_tesseract()
+    version = _ocr_backend_version("tesseract", command) if command else ""
+    return _ocr_backends.backend_report(tesseract_command=command,
+                                        tesseract_version=version)
 
 
 def _ocr_join_lines(left, right):
@@ -592,56 +740,138 @@ def _ocr_page_with_tesseract(command, png_bytes, language):
 
 
 def _ocr_checkpoint_path(checkpoint_dir):
+    """Legacy v1 checkpoint location, kept only for one-time adoption."""
     return Path(checkpoint_dir) / "ocr_checkpoint.json" if checkpoint_dir else None
 
 
-def _load_ocr_checkpoint(path, source_hash, indices, language):
-    if path is None or not path.is_file():
-        return {}
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError):
-        return {}
-    if not isinstance(value, dict) or value.get("version") != OCR_CHECKPOINT_VERSION:
-        return {}
-    if value.get("source_sha256") != source_hash or value.get("language") != language:
-        return {}
-    if value.get("indices") != list(indices):
-        return {}
-    pages = value.get("pages")
-    return pages if isinstance(pages, dict) else {}
+def _ocr_cache_dir(checkpoint_dir):
+    """Page-granular cache root (manifest + one file per page)."""
+    return Path(checkpoint_dir) / "ocr_cache" if checkpoint_dir else None
 
 
-def _save_ocr_checkpoint(path, source_hash, indices, language, pages, status="running"):
-    if path is None:
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + ".tmp")
-        temporary.write_text(json.dumps({
-            "version": OCR_CHECKPOINT_VERSION,
-            "source_sha256": source_hash,
-            "indices": list(indices),
-            "language": language,
-            "pages": pages,
-            "status": status,
-            "updated_at": _utc_now_iso(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(path)
-    except OSError:
-        pass
+#: Shared cache root for the quick-profile representative pages.  Profiling runs
+#: before a job exists, so it cannot write into the job directory; the formal
+#: pipeline reads this directory in addition to its own job-scoped cache.
+OCR_PROFILE_CACHE_DIRNAME = "ocr_profile_cache"
+
+
+def ocr_profile_cache_dir(source_bytes=None, *, source_sha256=None):
+    """Content-addressed cache for the quick-profile representative pages.
+
+    Returns ``None`` when no source is given, so callers degrade to "no shared
+    cache" instead of silently writing to a global bucket.  Page files are keyed
+    by the full OCR identity (which includes the document SHA-256), so two
+    documents can never mix even though they share this root.
+    """
+    digest = str(source_sha256 or "").strip()
+    if not digest and source_bytes:
+        digest = hashlib.sha256(source_bytes).hexdigest()
+    if not digest:
+        return None
+    return OUTPUT_DIR / OCR_PROFILE_CACHE_DIRNAME / digest[:16]
+
+
+def _ocr_env_flag(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_OCR_BACKEND_VERSION_CACHE = {}
+
+
+def _ocr_backend_version(backend, command=""):
+    """The real engine version, part of the OCR cache identity.
+
+    A silent Tesseract upgrade changes glyph output, so a cached page produced
+    by another version must not be reused.  When the version cannot be probed we
+    record ``unknown`` rather than pretending it is stable.
+    """
+    key = (str(backend or ""), str(command or ""))
+    if key in _OCR_BACKEND_VERSION_CACHE:
+        return _OCR_BACKEND_VERSION_CACHE[key]
+    version = ""
+    if str(backend or "") == "tesseract" and command:
+        try:
+            proc = subprocess.run(
+                [command, "--version"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=15)
+            lines = (proc.stdout or proc.stderr or "").splitlines()
+            if lines:
+                match = re.search(r"(\d+\.\d+\.\d+)", lines[0])
+                version = match.group(1) if match else lines[0].strip()[:40]
+        except Exception:  # noqa: BLE001 - version probing must not block OCR
+            version = ""
+    _OCR_BACKEND_VERSION_CACHE[key] = version or "unknown"
+    return _OCR_BACKEND_VERSION_CACHE[key]
+
+
+def _ocr_page_quality_ok(record, *, min_confidence=None, min_density=None):
+    """Quality signal that decides whether a page needs a higher-DPI retry.
+
+    Deliberately conservative: it only says "not good enough" on evidence the
+    rest of the pipeline already treats as a source-quality problem —
+    replacement characters, very low alphanumeric density, or low OCR
+    confidence.  It never claims a page is perfect, only that re-running it at a
+    higher DPI has a plausible chance of helping.
+    """
+    threshold = (OCR_ADAPTIVE_MIN_CONFIDENCE if min_confidence is None
+                 else float(min_confidence))
+    density_floor = (OCR_ADAPTIVE_MIN_TEXT_DENSITY if min_density is None
+                     else float(min_density))
+    blocks = (record or {}).get("blocks") or []
+    texts = []
+    confidences = []
+    for block in blocks:
+        text = re.sub(r"\s+", " ", str(block.get("text") or "").strip())
+        if not text:
+            continue
+        texts.append(text)
+        try:
+            confidence = float(block.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = None
+        if confidence is not None:
+            confidences.append(confidence)
+    if not texts:
+        return False
+    joined = " ".join(texts)
+    if "\ufffd" in joined or "\u25a1" in joined:
+        return False
+    alnum = sum(1 for char in joined if char.isalnum())
+    if alnum / max(1, len(joined)) < density_floor:
+        return False
+    if confidences and (sum(confidences) / len(confidences)) < threshold:
+        return False
+    return True
 
 
 def _ocr_pdf_text_with_warnings(
     file_bytes, max_pages=None, on_progress=None, *, workers=None, queue_size=None,
     checkpoint_dir=None, cancel_check=None, profiler=None, return_details=False,
+    dpi=None, adaptive_dpi=None, backend=None, profile_cache_dir=None,
 ):
-    """OCR a scanned PDF with Tesseract and return ``(text, warnings)``.
+    """OCR a scanned PDF with the local backend and return ``(text, warnings)``.
 
     ``max_pages=3`` is used by the quick-profile preview.  ``None`` means all
     pages and is used by the actual translation pipeline.  The function never
-    sends page images or OCR text anywhere; it only invokes the local
-    Tesseract executable.
+    sends page images or OCR text anywhere; it only invokes the local engine.
+
+    Durable caching is page-granular (``ocr_cache/manifest.json`` plus one file
+    per page).  Because a page is keyed by *page index* rather than by the
+    requested index set, the three representative pages produced by the
+    quick-profile pass are reused by the full run instead of being OCR'd twice.
+
+    ``profile_cache_dir`` adds a second, **read-only** cache root.  It exists
+    because the quick profile runs before a job exists, so its pages cannot live
+    in the job directory; it writes to the shared content-addressed profile
+    cache instead, and the formal run reads that root in addition to its own
+    job-scoped cache.  A page is only reused when its full identity matches, so
+    a different DPI / backend / version / document still recomputes.
+
+    ``adaptive_dpi`` is an opt-in experiment: a low-DPI first pass, with a
+    higher-DPI rerun only for pages whose quality signal fails.
     """
     command = _find_tesseract()
     if not command:
@@ -662,10 +892,64 @@ def _ocr_pdf_text_with_warnings(
 
     workers = max(1, min(int(workers or _ocr_workers_default()), 8))
     queue_size = max(1, min(int(queue_size or _ocr_queue_size_default(workers)), 32))
-    runtime_metadata, runtime_warnings = _ocr_runtime_metadata(language, workers)
+    _tesseract_version = _ocr_backend_version("tesseract", command)
+    # One contract for every backend; an unavailable request falls back to
+    # Tesseract with a visible warning rather than silently claiming success.
+    resolved_backend, backend_warnings = _ocr_backends.resolve_backend(
+        backend, tesseract_command=command, tesseract_version=_tesseract_version,
+        page_ocr=_ocr_page_with_tesseract, language=language)
+    warnings.extend(backend_warnings)
+    runtime_metadata, runtime_warnings = _ocr_runtime_metadata(
+        language, workers, backend=resolved_backend.name, command=command)
     warnings.extend(runtime_warnings)
+    backend_name = str(runtime_metadata.get("backend") or "tesseract")
+    backend_model = str(runtime_metadata.get("model") or "")
+    backend_version = str(runtime_metadata.get("backend_version")
+                          or _tesseract_version)
+    runtime_metadata = {**runtime_metadata, "backend": backend_name,
+                        "backend_version": backend_version}
+    base_dpi = max(72, int(dpi or OCR_DPI_BASELINE))
+    adaptive = (_ocr_env_flag("FOLIOTHREAD_OCR_ADAPTIVE_DPI", False)
+                if adaptive_dpi is None else bool(adaptive_dpi))
+    first_dpi = OCR_ADAPTIVE_LOW_DPI if adaptive else base_dpi
+    retry_dpi = max(base_dpi, OCR_ADAPTIVE_HIGH_DPI) if adaptive else base_dpi
     source_hash = hashlib.sha256(file_bytes or b"").hexdigest()
-    checkpoint_path = _ocr_checkpoint_path(checkpoint_dir)
+    cache = _OCRPageCache(_ocr_cache_dir(checkpoint_dir))
+    # Read-only secondary cache holding the quick-profile representative pages.
+    # It lives outside the job directory because profiling happens before a job
+    # exists.  A page found here is byte-identical to what this run would
+    # produce (the identity match proves it), so it is reused rather than
+    # recomputed.  Nothing is ever written to it from here.
+    _profile_dir = Path(profile_cache_dir) if profile_cache_dir else None
+    _profile_cache_root = _ocr_cache_dir(_profile_dir) if _profile_dir else None
+    if _profile_cache_root is not None and _profile_cache_root == _ocr_cache_dir(checkpoint_dir):
+        _profile_cache_root = None
+    profile_cache = (_OCRPageCache(_profile_cache_root)
+                     if _profile_cache_root is not None else None)
+    legacy_path = _ocr_checkpoint_path(checkpoint_dir)
+
+    def _identity(index, dpi_value):
+        return _OCRPageIdentity(
+            source_sha256=source_hash, page_index=int(index),
+            backend=backend_name, model=backend_model,
+            backend_version=backend_version, language=language,
+            dpi=int(dpi_value), preprocessing_version=_OCR_PREPROCESSING_VERSION)
+
+    def _load_cached(loader_dpi):
+        records, _manifest = cache.load(
+            source_sha256=source_hash, indices=indices, language=language,
+            backend=backend_name, model=backend_model,
+            backend_version=backend_version, dpi=int(loader_dpi))
+        if profile_cache is not None:
+            missing = [index for index in indices if str(index) not in records]
+            if missing:
+                extra, _ = profile_cache.load(
+                    source_sha256=source_hash, indices=missing, language=language,
+                    backend=backend_name, model=backend_model,
+                    backend_version=backend_version, dpi=int(loader_dpi))
+                for key, record in extra.items():
+                    records.setdefault(key, record)
+        return records
 
     try:
         with fitz.open(stream=file_bytes, filetype="pdf") as doc:
@@ -677,26 +961,59 @@ def _ocr_pdf_text_with_warnings(
                 indices = list(range(count))
             else:
                 indices = sorted({0, count // 2, count - 1})[:max_pages]
-            page_records = _load_ocr_checkpoint(
-                checkpoint_path, source_hash, indices, language)
-            pending_indices = [index for index in indices if str(index) not in page_records]
+            # Lookup order is best-evidence-first: a page already computed at
+            # the retry DPI beats the first-pass DPI, which beats a legacy
+            # checkpoint (adopted only when its identity matches exactly).
+            page_records = {}
+            dpi_by_page = {}
+            if adaptive:
+                for loader_dpi in (retry_dpi, first_dpi):
+                    for key, record in _load_cached(loader_dpi).items():
+                        if key not in page_records:
+                            page_records[key] = record
+                            dpi_by_page[key] = loader_dpi
+            else:
+                for key, record in _load_cached(first_dpi).items():
+                    page_records[key] = record
+                    dpi_by_page[key] = first_dpi
+            legacy_pages = _read_legacy_ocr_pages(
+                legacy_path, source_sha256=source_hash, indices=indices,
+                language=language, backend=backend_name, model=backend_model,
+                dpi=base_dpi)
+            for key, record in legacy_pages.items():
+                if key not in page_records:
+                    page_records[key] = record
+                    dpi_by_page[key] = base_dpi
+            cached_pages = len(page_records)
             failed_pages = []
             render_stage = profiler.start_stage(
                 "rasterize", concurrency=1, page_count=len(indices),
-                metadata={"dpi": 220, "queue_size": queue_size,
-                          "cached_pages": len(indices) - len(pending_indices)},
+                metadata={"dpi": first_dpi, "baseline_dpi": base_dpi,
+                          "adaptive_dpi": adaptive, "queue_size": queue_size,
+                          "cached_pages": cached_pages},
             ) if profiler is not None else None
             ocr_stage = profiler.start_stage(
                 "ocr", concurrency=workers, page_count=len(indices),
                 metadata={**runtime_metadata, "queue_size": queue_size,
-                          "cached_pages": len(indices) - len(pending_indices)},
+                          "cached_pages": cached_pages, "adaptive_dpi": adaptive,
+                          "first_dpi": first_dpi, "retry_dpi": retry_dpi},
             ) if profiler is not None else None
             page_lock = threading.RLock()
             queue_lock = threading.RLock()
-            work_queue = queue.Queue(maxsize=queue_size)
             stop_event = threading.Event()
             worker_errors = []
-            completed_pages = len(indices) - len(pending_indices)
+            completed_pages = cached_pages
+            dpi_used_by_page = {}
+            adaptive_retried = []
+            # Constant-size run record: written once when the run starts so a
+            # crash leaves evidence of what was in flight, then once at the end.
+            cache.write_manifest(
+                source_sha256=source_hash, indices=indices, language=language,
+                backend=backend_name, model=backend_model,
+                backend_version=backend_version, dpi=first_dpi, status="running",
+                completed_pages=cached_pages,
+                extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
+                       "first_dpi": first_dpi, "retry_dpi": retry_dpi})
 
             def check_cancel():
                 if cancel_check and cancel_check():
@@ -715,117 +1032,176 @@ def _ocr_pdf_text_with_warnings(
                 except Exception:  # noqa: BLE001 - UI progress is optional
                     pass
 
-            def ocr_worker():
+            def run_pass(pass_indices, pass_dpi):
+                """Bounded worker fan-out at one DPI; returns failed (page, error)."""
                 nonlocal completed_pages
-                while True:
-                    task = work_queue.get()
-                    try:
-                        if task is None:
-                            return
-                        idx, png_bytes, enqueued_at, page_width, page_height = task
-                        check_cancel()
-                        started = time.perf_counter()
-                        blocks, error = _ocr_page_with_tesseract(command, png_bytes, language)
-                        finished = time.perf_counter()
-                        if error:
-                            with page_lock:
-                                failed_pages.append((idx + 1, error))
-                        else:
-                            record = {
-                                "page_number": idx + 1,
-                                "page_width": page_width,
-                                "page_height": page_height,
-                                "blocks": blocks,
-                            }
-                            with page_lock:
-                                page_records[str(idx)] = record
-                                _save_ocr_checkpoint(
-                                    checkpoint_path, source_hash, indices, language,
-                                    page_records,
-                                )
-                        with queue_lock:
-                            completed_pages += 1
-                        if ocr_stage is not None:
-                            ocr_stage.item(
-                                f"page-{idx + 1}", started, finished_monotonic=finished,
-                                queue_wait_s=max(0.0, started - enqueued_at),
-                                status="completed" if not error else "failed",
-                                metadata={"kind": "page", "page_number": idx + 1},
-                            )
-                        emit_page_progress()
-                    except BaseException as exc:  # noqa: BLE001 - propagate cancellation
-                        worker_errors.append(exc)
-                        stop_event.set()
-                    finally:
-                        work_queue.task_done()
+                if not pass_indices:
+                    return []
+                work_queue = queue.Queue(maxsize=queue_size)
+                local_failed = []
+                pass_completed = 0
 
-            threads = [threading.Thread(target=ocr_worker, name=f"ocr-worker-{i}", daemon=True)
-                       for i in range(workers)]
+                def ocr_worker():
+                    nonlocal completed_pages, pass_completed
+                    while True:
+                        task = work_queue.get()
+                        try:
+                            if task is None:
+                                return
+                            idx, png_bytes, enqueued_at, page_width, page_height = task
+                            check_cancel()
+                            started = time.perf_counter()
+                            blocks, error = resolved_backend.ocr_page(
+                                png_bytes, page_index=idx, page_number=idx + 1,
+                                language=language, dpi=pass_dpi)
+                            if not error:
+                                # Store the lean mapping; backend/device/provider
+                                # are recorded once per page, not per block.
+                                blocks = [block.to_dict() for block in blocks]
+                            finished = time.perf_counter()
+                            if error:
+                                with page_lock:
+                                    local_failed.append((idx + 1, error))
+                            else:
+                                record = {
+                                    "page_number": idx + 1,
+                                    "page_width": page_width,
+                                    "page_height": page_height,
+                                    "dpi": pass_dpi,
+                                    "backend": backend_name,
+                                    "device": runtime_metadata.get("device"),
+                                    "provider": runtime_metadata.get("provider"),
+                                    "execution_provider": runtime_metadata.get(
+                                        "execution_provider"),
+                                    "blocks": blocks,
+                                }
+                                with page_lock:
+                                    page_records[str(idx)] = record
+                                    dpi_by_page[str(idx)] = pass_dpi
+                                    dpi_used_by_page[str(idx)] = pass_dpi
+                                    # Page-granular durability: this write holds
+                                    # only the page that just finished.
+                                    cache.store_page(_identity(idx, pass_dpi), record)
+                            with queue_lock:
+                                pass_completed += 1
+                                completed_pages += 1
+                            if ocr_stage is not None:
+                                ocr_stage.item(
+                                    f"page-{idx + 1}", started,
+                                    finished_monotonic=finished,
+                                    queue_wait_s=max(0.0, started - enqueued_at),
+                                    status="completed" if not error else "failed",
+                                    metadata={"kind": "page", "page_number": idx + 1,
+                                              "dpi": pass_dpi},
+                                )
+                            emit_page_progress()
+                        except BaseException as exc:  # noqa: BLE001 - propagate cancel
+                            worker_errors.append(exc)
+                            stop_event.set()
+                        finally:
+                            work_queue.task_done()
+
+                threads = [threading.Thread(target=ocr_worker,
+                                            name=f"ocr-worker-{i}", daemon=True)
+                           for i in range(workers)]
+                try:
+                    for thread in threads:
+                        thread.start()
+                    for idx in pass_indices:
+                        check_cancel()
+                        if stop_event.is_set():
+                            break
+                        started = time.perf_counter()
+                        pix = doc[idx].get_pixmap(dpi=pass_dpi, alpha=False)
+                        png_bytes = pix.tobytes("png")
+                        rendered_at = time.perf_counter()
+                        queued_at = rendered_at
+                        while True:
+                            try:
+                                page_width = float(doc[idx].rect.width)
+                                page_height = float(doc[idx].rect.height)
+                                work_queue.put(
+                                    (idx, png_bytes, queued_at, page_width, page_height),
+                                    timeout=0.2,
+                                )
+                                queued_at = time.perf_counter()
+                                break
+                            except queue.Full:
+                                check_cancel()
+                                if stop_event.is_set():
+                                    break
+                        if render_stage is not None:
+                            render_stage.item(
+                                f"page-{idx + 1}", started,
+                                finished_monotonic=queued_at,
+                                queue_wait_s=max(0.0, queued_at - rendered_at),
+                                metadata={"kind": "page", "page_number": idx + 1,
+                                          "dpi": pass_dpi},
+                            )
+                        if stop_event.is_set():
+                            break
+                    while not stop_event.is_set() and pass_completed < len(pass_indices):
+                        check_cancel()
+                        time.sleep(0.1)
+                    if worker_errors:
+                        raise worker_errors[0]
+                finally:
+                    if worker_errors:
+                        stop_event.set()
+                    for _ in threads:
+                        while True:
+                            try:
+                                work_queue.put(None, timeout=0.2)
+                                break
+                            except queue.Full:
+                                if not any(thread.is_alive() for thread in threads):
+                                    break
+                    for thread in threads:
+                        thread.join(timeout=10)
+                return list(local_failed)
+
             cancelled = False
             try:
-                for thread in threads:
-                    thread.start()
                 emit_page_progress()
-                for idx in pending_indices:
-                    check_cancel()
-                    if stop_event.is_set():
-                        break
-                    started = time.perf_counter()
-                    pix = doc[idx].get_pixmap(dpi=220, alpha=False)
-                    png_bytes = pix.tobytes("png")
-                    rendered_at = time.perf_counter()
-                    queued_at = rendered_at
-                    while True:
-                        try:
-                            page_width, page_height = float(doc[idx].rect.width), float(doc[idx].rect.height)
-                            work_queue.put(
-                                (idx, png_bytes, queued_at, page_width, page_height),
-                                timeout=0.2,
-                            )
-                            queued_at = time.perf_counter()
-                            break
-                        except queue.Full:
-                            check_cancel()
-                            if stop_event.is_set():
-                                break
-                    if render_stage is not None:
-                        render_stage.item(
-                            f"page-{idx + 1}", started,
-                            finished_monotonic=queued_at,
-                            queue_wait_s=max(0.0, queued_at - rendered_at),
-                            metadata={"kind": "page", "page_number": idx + 1},
-                        )
-                    if stop_event.is_set():
-                        break
-                while not stop_event.is_set() and completed_pages < len(indices):
-                    check_cancel()
-                    time.sleep(0.1)
-                if worker_errors:
-                    raise worker_errors[0]
+                failed_pages.extend(run_pass(
+                    [index for index in indices if str(index) not in page_records],
+                    first_dpi))
+                if adaptive and not stop_event.is_set():
+                    retry_indices = [
+                        index for index in indices
+                        if str(index) in page_records
+                        and dpi_by_page.get(str(index), first_dpi) < retry_dpi
+                        and not _ocr_page_quality_ok(page_records[str(index)])
+                    ]
+                    if retry_indices:
+                        adaptive_retried = [index + 1 for index in retry_indices]
+                        warnings.append(
+                            f"自适应 OCR 分辨率：{len(retry_indices)} 页首轮质量信号不达标，"
+                            f"已用 {retry_dpi} DPI 重跑（baseline {base_dpi} DPI）。")
+                        failed_pages.extend(run_pass(retry_indices, retry_dpi))
             except BaseException:
                 cancelled = True
                 stop_event.set()
                 raise
             finally:
-                stop_event.set() if worker_errors else None
-                for _ in threads:
-                    while True:
-                        try:
-                            work_queue.put(None, timeout=0.2)
-                            break
-                        except queue.Full:
-                            if not any(thread.is_alive() for thread in threads):
-                                break
-                for thread in threads:
-                    thread.join(timeout=10)
                 if render_stage is not None:
                     render_stage.finish(status="cancelled" if cancelled else "completed")
                 if ocr_stage is not None:
                     ocr_stage.finish(status="cancelled" if cancelled else "completed")
-                _save_ocr_checkpoint(
-                    checkpoint_path, source_hash, indices, language, page_records,
+                cache.write_manifest(
+                    source_sha256=source_hash, indices=indices, language=language,
+                    backend=backend_name, model=backend_model,
+                    backend_version=backend_version, dpi=first_dpi,
                     status="cancelled" if cancelled else "completed",
-                )
+                    completed_pages=sum(1 for index in indices
+                                        if str(index) in page_records),
+                    failed_pages=len(failed_pages),
+                    extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
+                           "first_dpi": first_dpi, "retry_dpi": retry_dpi,
+                           "retried_pages": adaptive_retried,
+                           "dpi_used_by_page": {
+                               key: dpi_used_by_page[key]
+                               for key in sorted(dpi_used_by_page)}})
 
             if failed_pages:
                 sample = "；".join(f"第 {page} 页：{detail}" for page, detail in failed_pages[:3])
@@ -871,7 +1247,18 @@ def _ocr_pdf_text_with_warnings(
                 "page_order": [index + 1 for index in indices
                                if str(index) in page_records],
                 "failed_pages": len(failed_pages),
-                "checkpoint_file": str(checkpoint_path) if checkpoint_path else "",
+                "checkpoint_file": str(cache.manifest_path) if cache.manifest_path else "",
+                "ocr_cache_dir": str(cache.directory) if cache.directory else "",
+                "ocr_cache_stats": cache.stats(),
+                "ocr_cache_bytes_written": cache.bytes_written(),
+                "ocr_dpi_baseline": base_dpi,
+                "ocr_dpi_first_pass": first_dpi,
+                "ocr_dpi_retry": retry_dpi,
+                "ocr_adaptive_dpi": adaptive,
+                "ocr_adaptive_retried_pages": adaptive_retried,
+                "ocr_dpi_used_by_page": {key: dpi_by_page[key]
+                                         for key in sorted(dpi_by_page)},
+                "ocr_cached_pages": cached_pages,
                 "paragraph_confidences": paragraph_confidences,
                 "mean_confidence": (
                     sum(valid_confidences) / len(valid_confidences)
@@ -1081,7 +1468,8 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                                             ocr_max_pages=3, on_progress=None,
                                             profiler=None, checkpoint_dir=None,
                                             ocr_workers=None, ocr_queue_size=None,
-                                            cancel_check=None):
+                                            cancel_check=None,
+                                            profile_cache_dir=None):
     """Extract paragraphs together with an import-scope report.
 
     Returns ``(paragraphs, warnings, report)``.  The report is what makes the
@@ -1140,6 +1528,7 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                         "cancel_check": cancel_check,
                         "profiler": profiler,
                         "return_details": True,
+                        "profile_cache_dir": profile_cache_dir,
                     }
                     for key, value in optional_ocr_kwargs.items():
                         if supports_kwargs or key in parameters:
@@ -1271,17 +1660,34 @@ def cleanup_source_paragraphs(paragraphs, provider, api_key, model, *,
 
 
 def _source_segmentation_mode(state=None, explicit=None):
-    """Resolve sentence/paragraph mode without changing an existing task."""
+    """Resolve the CAT segmentation mode.
+
+    Natural sentence units are now the default for every imported format.  An
+    explicit ``paragraph`` request remains supported for controlled legacy or
+    manual imports, while a saved legacy paragraph marker is treated as a
+    migration trigger rather than silently preserving the old CAT behaviour.
+    """
     saved = {}
     if isinstance(state, dict):
         saved = state.get("segmentation") or {}
-    filename = str((state or {}).get("filename") or "").lower()
-    default_mode = ("sentence" if filename.endswith(".pdf") else "paragraph")
+    configured = explicit
+    if configured is None:
+        configured = os.environ.get("FOLIOTHREAD_SEGMENTATION_MODE")
+    if isinstance(saved, dict) and saved.get("locked") \
+            and saved.get("mode") in _segmentation.SUPPORTED_MODES:
+        # Once stage 1 has started, the positional CAT contract is immutable.
+        # Ignore later UI/environment overrides so a resume cannot reindex
+        # existing translations underneath the reviewer.
+        configured = saved.get("mode")
+    if configured is None and isinstance(saved, dict):
+        # ``paragraph`` is the pre-sentence default.  Let the state migration
+        # gate decide which individual paragraphs can be upgraded safely.
+        configured = (saved.get("mode") if saved.get("locked") else
+                      "sentence" if saved.get("mode") == "paragraph"
+                      else saved.get("mode"))
     return _segmentation.resolve_mode(
-        explicit,
-        saved.get("mode") if isinstance(saved, dict) else None,
-        os.environ.get("FOLIOTHREAD_SEGMENTATION_MODE"),
-        default=default_mode,
+        configured,
+        default="sentence",
     )
 
 
@@ -1305,6 +1711,9 @@ def _apply_source_segmentation(state, cleaned_paragraphs, *, mode=None):
     source_paragraphs = [str(item or "").strip() for item in cleaned_paragraphs]
     segments, metadata = segment_source_paragraphs(
         source_paragraphs, state=state, mode=mode)
+    previous_segmentation = state.get("segmentation") or {}
+    if isinstance(previous_segmentation, dict) and previous_segmentation.get("locked"):
+        metadata["locked"] = True
     state["source_paragraphs"] = list(source_paragraphs)
     state["segmentation"] = metadata
     return segments, metadata
@@ -1320,6 +1729,49 @@ def _source_quality_gate_enabled(state):
     return str((state or {}).get("filename") or "").lower().endswith(".pdf")
 
 
+def _confirmed_source_quality_indexes(state, paragraphs):
+    """Return confirmations that still match both stable segment ID and source."""
+    pairs = (state or {}).get("pairs") or []
+    confirmations = (state or {}).get("source_quality_confirmations") or []
+    confirmed = set()
+    for index, pair in enumerate(pairs):
+        if not isinstance(pair, dict) or index >= len(paragraphs):
+            continue
+        uid = str(pair.get("segment_uid") or "")
+        source = str(paragraphs[index] or "")
+        if not uid or not source or str(pair.get("source") or "") != source:
+            continue
+        if any(isinstance(item, dict)
+               and str(item.get("segment_uid") or "") == uid
+               and str(item.get("source") or "") == source
+               for item in confirmations):
+            confirmed.add(index)
+    return confirmed
+
+
+def _filter_confirmed_source_quality(report, state, paragraphs):
+    confirmed = _confirmed_source_quality_indexes(state, paragraphs)
+    if not confirmed:
+        return report
+    report["flags"] = [
+        flag for flag in report.get("flags") or []
+        if flag.get("segment_index") not in confirmed
+    ]
+    report["source_lineage_flags"] = [
+        flag for flag in report.get("source_lineage_flags") or []
+        if flag.get("segment_index") not in confirmed
+    ]
+    report["clusters"] = [
+        [index for index in cluster if index not in confirmed]
+        for cluster in report.get("clusters") or []
+        if any(index not in confirmed for index in cluster)
+    ]
+    report["flagged_count"] = len(report["flags"])
+    report["status"] = "blocked" if report["flags"] else "passed"
+    report["confirmed_count"] = len(confirmed)
+    return report
+
+
 def _audit_source_quality_for_state(state):
     paragraphs = (state or {}).get("paras") or []
     if not _source_quality_gate_enabled(state):
@@ -1331,7 +1783,153 @@ def _audit_source_quality_for_state(state):
             "flags": [],
             "clusters": [],
         }
-    return audit_source_quality(paragraphs)
+    report = _filter_confirmed_source_quality(
+        audit_source_quality(paragraphs), state, paragraphs)
+
+    # Also audit the pre-cleanup PDF rows. A cleanup join can turn many short,
+    # obviously suspect OCR fragments into one long string which no longer
+    # matches the short-fragment rules. Preserve those findings through the
+    # cleanup output map and paragraph-to-segment ranges.
+    raw_paragraphs = (state or {}).get("source_paras") or []
+    cleanup = (state or {}).get("source_cleanup") or {}
+    segmentation = (state or {}).get("segmentation") or {}
+    output_inputs = cleanup.get("output_input_indices")
+    paragraph_ranges = segmentation.get("paragraph_ranges") or []
+    if not raw_paragraphs or not paragraph_ranges:
+        return report
+    if not isinstance(output_inputs, list):
+        # Safe for old jobs only when the stored raw and cleaned paragraph
+        # arrays still have a direct one-to-one relationship.
+        if len(raw_paragraphs) == len((state or {}).get("source_paragraphs") or []):
+            output_inputs = [[index] for index in range(len(raw_paragraphs))]
+        else:
+            return report
+
+    segments_by_paragraph = {}
+    for row in paragraph_ranges:
+        if not isinstance(row, dict):
+            continue
+        paragraph_index = row.get("paragraph_index")
+        start, end = row.get("start"), row.get("end")
+        if (isinstance(paragraph_index, int) and isinstance(start, int)
+                and isinstance(end, int) and 0 <= start <= end <= len(paragraphs)):
+            segments_by_paragraph[paragraph_index] = list(range(start, end))
+
+    existing = {
+        int(flag.get("segment_index")): flag
+        for flag in report.get("flags") or []
+        if isinstance(flag, dict) and isinstance(flag.get("segment_index"), int)
+    }
+    raw_report = audit_source_quality(raw_paragraphs)
+    lineage_flags = []
+    for raw_flag in raw_report.get("flags") or []:
+        raw_index = raw_flag.get("segment_index")
+        if not isinstance(raw_index, int):
+            continue
+        output_indices = [
+            output_index for output_index, source_indices in enumerate(output_inputs)
+            if isinstance(source_indices, list) and raw_index in source_indices
+        ]
+        affected = [
+            segment_index
+            for output_index in output_indices
+            for segment_index in segments_by_paragraph.get(output_index, [])
+        ]
+        if not affected:
+            continue
+        raw_text = str(raw_flag.get("text") or "").strip()
+        cleaned_paragraphs = (state or {}).get("source_paragraphs") or []
+        excused = False
+        for output_index in output_indices:
+            cleaned_p = ""
+            if output_index < len(cleaned_paragraphs):
+                cleaned_p = str(cleaned_paragraphs[output_index] or "")
+            if not cleaned_p:
+                cleaned_p = " ".join(str(paragraphs[si] or "") for si in segments_by_paragraph.get(output_index, []))
+
+            if _source_quality.is_integrated_numeric_fragment(raw_text, cleaned_p):
+                excused = True
+                break
+
+            previous_is_mapped = raw_index > 0 and (raw_index - 1 in output_inputs[output_index])
+            if previous_is_mapped and _source_quality.is_integrated_line_continuation(
+                    raw_text, raw_paragraphs[raw_index - 1], cleaned_p):
+                excused = True
+                break
+
+            raw_reasons_set = set(raw_flag.get("reasons") or [])
+            if (raw_reasons_set <= {"含未配对的闭合括号", "小写开头的疑似残片或 OCR 杂质", "与相邻可疑片段形成连续异常", "小写且未闭合的短片段"}
+                    and not _source_quality._has_unmatched_bracket(cleaned_p)
+                    and not _source_quality._reasons(cleaned_p)
+                    and raw_text and raw_text.casefold() in cleaned_p.casefold()):
+                excused = True
+                break
+
+            if (len(cleaned_p) >= 50
+                    and re.search(r"[.!?。！？]$", cleaned_p)
+                    and not _source_quality._has_unmatched_bracket(cleaned_p)
+                    and not _source_quality._reasons(cleaned_p)
+                    and raw_text and raw_text.casefold() in cleaned_p.casefold()
+                    and (raw_index == 0 or (raw_index - 1) not in output_inputs[output_index]
+                         or not re.search(r"[.!?。！？]$", raw_paragraphs[raw_index - 1]))
+                    and not (raw_reasons_set & {
+                        "孤立数字行，疑似页码或批注", "含未配对的闭合括号",
+                        "短片段含异常空格连字符", "孤立字母数字杂质",
+                    })):
+                excused = True
+                break
+
+
+        if excused:
+            continue
+
+        exact = [index for index in affected
+                 if raw_text and raw_text.casefold() in
+                 str(paragraphs[index] or "").casefold()]
+        target_segments = exact if exact else affected
+        for segment_index in target_segments:
+            if _source_quality.is_integrated_numeric_fragment(
+                    raw_text, str(paragraphs[segment_index] or "")):
+                continue
+            previous_is_mapped = raw_index > 0 and any(
+                raw_index - 1 in output_inputs[output_index]
+                and segment_index in segments_by_paragraph.get(output_index, [])
+                for output_index in output_indices)
+            if previous_is_mapped and _source_quality.is_integrated_line_continuation(
+                    raw_text, raw_paragraphs[raw_index - 1],
+                    str(paragraphs[segment_index] or "")):
+                continue
+            current = existing.get(segment_index)
+            if current is None:
+                current = {
+                    "segment_index": segment_index,
+                    "text": str(paragraphs[segment_index] or ""),
+                    "reasons": [],
+                    "severity": "blocking",
+                    "adjacent_flagged_segments": 1,
+                }
+                existing[segment_index] = current
+                report.setdefault("flags", []).append(current)
+            reasons = current.setdefault("reasons", [])
+            for reason in raw_flag.get("reasons") or []:
+                note = f"清洗前片段「{raw_text[:80]}」：{reason}"
+                if note not in reasons:
+                    reasons.append(note)
+            source_indices = current.setdefault("source_input_indices", [])
+            if raw_index not in source_indices:
+                source_indices.append(raw_index)
+            lineage_flags.append({
+                "segment_index": segment_index,
+                "source_input_index": raw_index,
+                "text": raw_text,
+                "reasons": list(raw_flag.get("reasons") or []),
+            })
+    report["flags"].sort(key=lambda item: int(item.get("segment_index", -1)))
+    report["flagged_count"] = len(report["flags"])
+    if report["flags"]:
+        report["status"] = "blocked"
+    report["source_lineage_flags"] = lineage_flags
+    return _filter_confirmed_source_quality(report, state, paragraphs)
 
 
 def _source_quality_finding(flag):
@@ -1372,44 +1970,112 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
 
     支持官方接口与 OpenAI /chat/completions 兼容中转站：
     base_url 显式传入 > 提供商默认 base_url > 会话线程级自定义中转地址。
+
+    传输层 client 按 provider / base_url / proxy 模式 / 超时配置复用
+    （见 :mod:`folith.llm_transport`），不再每个请求重建连接池；
+    API Key 只以不可逆指纹参与复用键，不进入日志、cache key 明文或性能产物。
+    运行时遥测走可合并通道，见 :func:`_runtime_telemetry_request_started`。
     """
     cfg = PROVIDERS.get(provider)
     if not cfg:
         return ""
     runtime_job_id = _runtime_job_id()
     if runtime_job_id:
+        _runtime_pause_checkpoint(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
-        update_runtime_state(
-            runtime_job_id, status="waiting_external", phase="waiting_llm",
-            phase_label="等待模型响应", event="已向模型发送请求",
-            event_name="llm_request_started")
-    if cfg["kind"] == "gemini":
+        _runtime_telemetry_request_started(runtime_job_id)
+    _llm_started = time.perf_counter()
+    try:
+        result = _call_llm_transport(
+            cfg, provider, api_key, model, system_prompt, user_prompt,
+            temperature=temperature, base_url=base_url,
+            response_format=response_format, reasoning_effort=reasoning_effort,
+            runtime_job_id=runtime_job_id, started_at=_llm_started)
+    except BaseException as exc:
         try:
-            client = genai.Client(api_key=api_key,
-                                  http_options=genai.types.HttpOptions(timeout=150_000))
-        except (AttributeError, TypeError):
-            client = genai.Client(api_key=api_key)
-        config_kwargs = {"temperature": temperature}
+            _workflow_errors.raise_if_fatal(exc, runtime_job_id)
+        except _workflow_errors.WorkflowStopped as stopped:
+            exc = stopped
+        _llm_dur = time.perf_counter() - _llm_started
+        _record_llm_thread_stats(_llm_dur, failed=True)
+        run = trace.get_active_run(runtime_job_id)
+        if run:
+            run.record_model_call(
+                provider=provider, model=model, duration_s=_llm_dur,
+                input_chars=len(system_prompt or "") + len(user_prompt or ""),
+                status="error", error_type=type(exc).__name__,
+            )
+            run.record_error(
+                stage="model_request", operation=model,
+                error_type=type(exc).__name__, message=str(exc),
+            )
+        if runtime_job_id:
+            # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
+            # 看到的是真实结果而不是一个永远不会结束的在途请求。
+            _runtime_telemetry_request_failed(runtime_job_id)
+        raise exc
+    _record_llm_thread_stats(time.perf_counter() - _llm_started, failed=False)
+    if runtime_job_id:
+        _runtime_telemetry_request_finished(runtime_job_id)
+        if _runtime_cancel_requested(runtime_job_id):
+            raise RuntimeError("任务已请求取消")
+    return result
+
+
+def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
+                        *, temperature=0.1, base_url=None, response_format=None,
+                        reasoning_effort=None, runtime_job_id=None, started_at=None):
+    """Perform one provider request on a pooled transport client."""
+    if cfg["kind"] == "gemini":
+        def _build_gemini_client():
+            try:
+                return genai.Client(
+                    api_key=api_key,
+                    http_options=genai.types.HttpOptions(
+                        timeout=_llm_transport.GEMINI_TIMEOUT_MS))
+            except (AttributeError, TypeError):
+                return genai.Client(api_key=api_key)
+
+        client = _llm_transport.get_registry().acquire(
+            _llm_transport.build_gemini_identity(provider=provider, api_key=api_key),
+            _build_gemini_client)
+        config_kwargs = {"temperature": temperature, "system_instruction": system_prompt}
         if response_format and cfg.get("capabilities", {}).get("supports_response_format"):
             config_kwargs["response_mime_type"] = "application/json"
-        res = client.models.generate_content(
-            model=model,
-            contents=user_prompt,
-            system_instruction=system_prompt,
-            config=genai.types.GenerateContentConfig(**config_kwargs),
-        )
-        result = (res.text or "").strip()
-        if runtime_job_id:
-            update_runtime_state(runtime_job_id, status="running", phase="running",
-                                 phase_label="处理模型结果", event="已收到模型响应",
-                                 event_name="llm_response_received")
-            if _runtime_cancel_requested(runtime_job_id):
-                raise RuntimeError("任务已请求取消")
-        return result
+        try:
+            res = client.models.generate_content(
+                model=model,
+                contents=user_prompt,
+                config=genai.types.GenerateContentConfig(**config_kwargs),
+            )
+            out_text = (res.text or "").strip()
+            usage = getattr(res, "usage_metadata", None)
+            run = trace.get_active_run(runtime_job_id)
+            if run and started_at is not None:
+                run.record_model_call(
+                    provider=provider,
+                    model=model,
+                    duration_s=time.perf_counter() - started_at,
+                    request_id=getattr(res, "request_id", None),
+                    input_chars=len(system_prompt or "") + len(user_prompt or ""),
+                    output_chars=len(out_text),
+                    prompt_tokens=getattr(usage, "prompt_token_count", 0) if usage else 0,
+                    completion_tokens=getattr(usage, "candidates_token_count", 0) if usage else 0,
+                    cached_tokens=getattr(usage, "cached_content_token_count", 0) if usage else 0,
+                    total_tokens=getattr(usage, "total_token_count", 0) if usage else 0,
+                    ttft_s=None,
+                )
+        finally:
+            if not _llm_transport.client_pool_enabled():
+                # Escape hatch: without a pool nobody owns the client, so this
+                # request must release it instead of leaking one per call.
+                _llm_transport.close_client(client)
+        return out_text
 
     # OpenAI 官方与所有 OpenAI 兼容接口共用 SDK 路由
-    kwargs = {"api_key": api_key, "timeout": (15.0, 180.0), "max_retries": 1}
+    kwargs = {"api_key": api_key, "timeout": _llm_transport.OPENAI_TIMEOUT,
+              "max_retries": _llm_transport.OPENAI_MAX_RETRIES}
     resolved_base = resolve_openai_base_url(provider, base_url)
     resolved_reasoning = (reasoning_effort if reasoning_effort is not None
                           else getattr(_LLM_CTX, "reasoning_effort", None))
@@ -1420,44 +2086,73 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         resolved_reasoning = None
     if resolved_base:
         kwargs["base_url"] = resolved_base
-    http_client = None
-    if cfg.get("proxy_bypass"):
-        # 该接口经用户本地代理时 TLS 失败：显式关闭环境代理。
-        http_client = httpx.Client(trust_env=False, timeout=(15.0, 180.0))
-        kwargs["http_client"] = http_client
-    try:
-        client = OpenAI(**kwargs)
-        request = {
-            "model": model,
-            "messages": [{"role": "system", "content": system_prompt},
-                         {"role": "user", "content": user_prompt}],
-        }
-        # Reasoning models may reject sampling controls such as temperature;
-        # when the user explicitly selects reasoning, omit it for official
-        # recognized reasoning families and let the model's policy take over.
-        if resolved_reasoning:
-            request["reasoning_effort"] = resolved_reasoning
-            if not str(model or "").lower().startswith(
-                    ("o1", "o3", "o4-mini", "gpt-5", "gpt-6",
-                     "deepseek-r1", "qwq")):
-                request["temperature"] = temperature
-        else:
+    proxy_bypass = bool(cfg.get("proxy_bypass"))
+
+    def _build_openai_client():
+        build_kwargs = dict(kwargs)
+        bypass_client = None
+        if proxy_bypass:
+            # 该接口经用户本地代理时 TLS 失败：显式关闭环境代理。
+            bypass_client = httpx.Client(
+                trust_env=False, timeout=_llm_transport.OPENAI_TIMEOUT)
+            build_kwargs["http_client"] = bypass_client
+        try:
+            return OpenAI(**build_kwargs)
+        except BaseException:
+            if bypass_client is not None:
+                bypass_client.close()
+            raise
+
+    client = _llm_transport.get_registry().acquire(
+        _llm_transport.build_openai_identity(
+            provider=provider, base_url=resolved_base, proxy_bypass=proxy_bypass,
+            api_key=api_key),
+        _build_openai_client)
+    request = {
+        "model": model,
+        "messages": [{"role": "system", "content": system_prompt},
+                     {"role": "user", "content": user_prompt}],
+    }
+    # Reasoning models may reject sampling controls such as temperature;
+    # when the user explicitly selects reasoning, omit it for official
+    # recognized reasoning families and let the model's policy take over.
+    if resolved_reasoning:
+        request["reasoning_effort"] = resolved_reasoning
+        if not str(model or "").lower().startswith(
+                ("o1", "o3", "o4-mini", "gpt-5", "gpt-6",
+                 "deepseek-r1", "qwq")):
             request["temperature"] = temperature
-        if response_format and cfg.get("capabilities", {}).get(
-                "supports_response_format"):
-            request["response_format"] = response_format
+    else:
+        request["temperature"] = temperature
+    if response_format and cfg.get("capabilities", {}).get(
+            "supports_response_format"):
+        request["response_format"] = response_format
+    try:
         res = client.chat.completions.create(**request)
-        result = (res.choices[0].message.content or "").strip()
-        if runtime_job_id:
-            update_runtime_state(runtime_job_id, status="running", phase="running",
-                                 phase_label="处理模型结果", event="已收到模型响应",
-                                 event_name="llm_response_received")
-            if _runtime_cancel_requested(runtime_job_id):
-                raise RuntimeError("任务已请求取消")
-        return result
+        out_text = (res.choices[0].message.content or "").strip()
+        usage = getattr(res, "usage", None)
+        pt_details = getattr(usage, "prompt_tokens_details", None) if usage else None
+        run = trace.get_active_run(runtime_job_id)
+        if run and started_at is not None:
+            run.record_model_call(
+                provider=provider,
+                model=model,
+                duration_s=time.perf_counter() - started_at,
+                request_id=getattr(res, "id", None),
+                input_chars=len(system_prompt or "") + len(user_prompt or ""),
+                output_chars=len(out_text),
+                prompt_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+                completion_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+                cached_tokens=getattr(pt_details, "cached_tokens", 0) if pt_details else 0,
+                total_tokens=getattr(usage, "total_tokens", 0) if usage else 0,
+                ttft_s=None,
+            )
     finally:
-        if http_client:
-            http_client.close()
+        if not _llm_transport.client_pool_enabled():
+            # Escape hatch: without a pool nobody owns the client, so this
+            # request must release it instead of leaking one per call.
+            _llm_transport.close_client(client)
+    return out_text
 
 
 def _provider_error_payload(error):
@@ -1832,10 +2527,10 @@ def import_tmx(file_stream, project_id=None, target_lang=None):
 def extract_auto_terms(paragraphs, target_lang, provider, api_key, model):
     """自动抽取术语库（兼容旧接口：返回 {source: target}）。
 
-    新实现（transpraxis.terminology.extract_auto_terms_v2）：分布式采样、
+    新实现（folith.terminology.extract_auto_terms_v2）：分布式采样、
     全量 occurrences、candidate 状态与 model_knowledge 证据。
     """
-    from transpraxis.terminology import extract_auto_terms_v2
+    from folith.terminology import extract_auto_terms_v2
     entries, _warnings = extract_auto_terms_v2(
         paragraphs, target_lang, provider, api_key, model)
     return {e["source"]: e["target"] for e in entries}
@@ -1843,7 +2538,7 @@ def extract_auto_terms(paragraphs, target_lang, provider, api_key, model):
 
 # ================= 概念化术语表（对齐 localize-anything 的 Glossary 模型）=================
 def normalize_glossary(entries):
-    """标准化术语条目（委托 transpraxis.models，兼容旧字段并新增 id/occurrences/evidence）。"""
+    """标准化术语条目（委托 folith.models，兼容旧字段并新增 id/occurrences/evidence）。"""
     return _models.normalize_glossary(entries)
 
 
@@ -1876,11 +2571,15 @@ def glossary_to_terms(glossary):
 
 
 def check_glossary_compliance(src, tgt, glossary, segment_id=None,
-                              section_profile=None):
-    """锁定术语的确定性合规检查（委托 transpraxis.terminology：entry_id/segment_id 级）。"""
-    from transpraxis.terminology import check_glossary_compliance as _qa
+                              section_profile=None, entries=None, matcher=None):
+    """锁定术语的确定性合规检查（委托 folith.terminology：entry_id/segment_id 级）。
+
+    `entries` / `matcher` 可选（Phase 8 §9）：批次内术语表不变时，调用方预派生一次
+    即可，避免每个 segment 都重新归一化整张术语表。
+    """
+    from folith.terminology import check_glossary_compliance as _qa
     return _qa(src, tgt, glossary, segment_id=segment_id,
-               section_profile=section_profile)
+               section_profile=section_profile, entries=entries, matcher=matcher)
 
 
 # ================= 确定性检查（对齐 localize-anything 的机械检查）=================
@@ -1940,7 +2639,7 @@ def find_residuals(src, tgt, target_lang):
 def _count_sentences(text):
     """粗粒度句数统计：按终结符切分（引号/括号闭合归并到前一句）。"""
     text = _ABBREV_RE.sub(" ", text)
-    parts = re.split(r"[.!?…。！？]+[”\"'’)\]]*", text)
+    parts = re.split(r"[.!?…。！？؟]+[”\"'’)\]]*", text)
     return sum(1 for p in parts if p.strip())
 
 
@@ -1991,6 +2690,13 @@ def check_translation_batch(sources, targets, glossary, target_lang,
                             section_profile=None):
     """确定性检查一批译文：空译、保留项丢失、源语残留、锁定术语合规（scope 感知）。"""
     findings = []
+    # Phase 8 §9：术语表的 normalize + 已编译视图在批次内只派生一次。以前
+    # `check_glossary_compliance` 每个 segment 都自己 `normalize_glossary(glossary)`，
+    # 一批 4 段就是 4 次 O(G) 归一化 + 4 轮全表术语扫描。这里显式预派生（同内容同
+    # revision 会命中已编译视图缓存），结果与逐段自行派生完全一致。
+    normalized_glossary = normalize_glossary(glossary)
+    from folith.terminology import compiled_glossary as _compiled_glossary
+    glossary_matcher = _compiled_glossary(normalized_glossary)
     for i, (src, tgt) in enumerate(zip(sources, targets)):
         raw_src, raw_tgt = src, tgt
         src = "" if src is None else str(src)
@@ -2059,7 +2765,8 @@ def check_translation_batch(sources, targets, glossary, target_lang,
                 target_span=residual, reason=f"疑似残留源语片段「{residual}」",
                 kind="source_residue", detected_text=residual))
         findings.extend(check_glossary_compliance(
-            src, tgt, glossary, segment_id=i, section_profile=section_profile))
+            src, tgt, glossary, segment_id=i, section_profile=section_profile,
+            entries=normalized_glossary, matcher=glossary_matcher))
         for f in findings:
             if "segment_index" not in f:
                 f["segment_index"] = i
@@ -2083,6 +2790,271 @@ BATCH_SIZE = 4
 MAX_BATCH_CHARS = 1600
 TRANSLATION_MAX_BATCH_CHARS = 2400
 DEFAULT_TRANSLATION_CONCURRENCY = 1
+
+# ================= 权威快照节奏（translation hot path）=================
+# `state.json` 始终是唯一的权威完整快照；这里只决定自动翻译过程中**多久**把它
+# 落一次盘。每批一次全量重写会让累计写入量随文档长度平方增长（5000 段实测
+# 655× 写放大），而崩溃时最多只会重算"尚未落盘的批次"。
+#
+# 上界由两个触发器**先到者**决定：
+#   * 每 N 个批次（every_batches）；
+#   * 距上次落盘超过 T 秒（max_interval_s）。
+# 因此最坏崩溃窗口 = min(N 个批次, T 秒) 内完成的工作，是一个**硬上限**，
+# 而不是"可能丢掉几十分钟"。
+#
+# 以下事件**永远**立即落盘，不受节奏影响：取消、致命失败、阶段结束、进入/离开
+# 审校、人工编辑、术语冻结/变更、交付与定稿、显式保存、worker 交接/退出。
+STATE_SNAPSHOT_EVERY_BATCHES = 8
+STATE_SNAPSHOT_MAX_INTERVAL_S = 3.0
+#: Replay budget, not a batch count.  With the journal carrying every committed
+#: batch, a crash costs *replay* rather than *re-translation*, so the cadence no
+#: longer has to bound model work -- it only has to bound how much journal a
+#: recovery reads.  That is a byte budget, and using one is what decouples the
+#: snapshot count from the segment count: the old batch-count cadence produced
+#: O(segments) full snapshots, each of size O(segments).
+STATE_SNAPSHOT_JOURNAL_BYTES = 8 * 1024 * 1024
+#: The part that actually flattens the curve.  A *constant* replay budget gives
+#: a *constant* number of snapshots per byte of journal -- and the journal is
+#: O(document) -- so the snapshot count stays O(document) and the amplification
+#: stays O(document), just with a smaller constant.  Measured: 8 MiB fixed gave
+#: 1 / 3 / 10 / 48 snapshots at 1k / 5k / 10k / 20k segments, i.e. still linear.
+#:
+#: Making the budget a multiple of the snapshot's own size fixes the shape: the
+#: snapshot grows with the document, so the budget does too, and the number of
+#: snapshots grows only logarithmically.  Replay memory stays O(document) --
+#: which is what the state already costs to hold -- so this bounds the thing the
+#: budget existed to bound, without reintroducing the original O(n^2) writes.
+STATE_SNAPSHOT_JOURNAL_FRACTION = 4.0
+#: The second half of the fix, and the half that actually binds.
+#:
+#: Scaling the byte budget alone changed nothing measurable: measured with the
+#: fraction budget but the 3s interval still live, the snapshot counts were
+#: 1 / 3 / 11 / 64 at 1k / 5k / 10k / 20k -- *worse* than the constant budget's
+#: 1 / 3 / 10 / 48, and still linear.  The reason is that the wall-clock trigger
+#: was the binding one all along: 64 snapshots over a 209s run is one snapshot
+#: every 3.3s, and 11 over 32.5s is one every 3.0s.  Run time is O(document), so
+#: a fixed-interval trigger makes the snapshot count O(document) no matter what
+#: the byte budget says.
+#:
+#: The interval trigger is a leftover from the pre-journal design, where the
+#: only way to bound lost work was to bound *time* -- a crash could only be
+#: repaired by re-translating, so the snapshot had to be fresh in seconds.  With
+#: the journal every committed batch is already fsync'd, so a crash loses zero
+#: committed work and the snapshot's only remaining job is to compact the
+#: journal.  Compaction is a function of the journal's *size*, not of elapsed
+#: time, so with the journal on the time trigger is disabled by default and the
+#: cadence becomes purely byte-driven -- which is what makes it O(1).
+#:
+#: ``0.0`` means "no wall-clock trigger".  An explicit
+#: ``FOLIOTHREAD_STATE_SNAPSHOT_INTERVAL_S`` still wins, so the old behaviour
+#: stays reachable for benchmarks and for the pre-journal regression tests.
+STATE_SNAPSHOT_JOURNAL_MAX_INTERVAL_S = 0.0
+
+
+def state_journal_enabled():
+    """Whether the translation hot path journals its commits.
+
+    Off restores the bounded batch-count cadence verbatim, which is the
+    pre-journal behaviour and is always correct -- just more expensive.
+    """
+    raw = os.environ.get("FOLITH_STATE_JOURNAL")
+    if raw is None:
+        raw = os.environ.get("FOLIOTHREAD_STATE_JOURNAL")
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in {"0", "off", "false", "no"}
+
+
+def state_snapshot_cadence(total_batches=None, journal=None):
+    """Resolve the automatic-snapshot cadence (env overridable for benchmarks).
+
+    Two triggers exist and whichever fires first wins:
+
+    ``every_batches``
+        The bounded batch-count cadence.  ``0`` means "no batch-count trigger",
+        which is the default once the journal is on.  It is additionally capped
+        at ~10% of the document, so a crash on a *short* job cannot throw away a
+        large fraction of it.
+    ``journal_bytes``
+        Snapshot once this many bytes of un-applied journal have accumulated.
+        ``0`` means "no byte trigger", which is the default when the journal is
+        off.
+
+    Keeping both means the old behaviour is exactly recoverable (journal off, or
+    an explicit ``FOLIOTHREAD_STATE_SNAPSHOT_EVERY``), which is what makes the
+    change auditable rather than a leap of faith.
+    """
+    if journal is None:
+        journal = state_journal_enabled()
+    every = STATE_SNAPSHOT_EVERY_BATCHES
+    interval = STATE_SNAPSHOT_MAX_INTERVAL_S
+    journal_bytes = STATE_SNAPSHOT_JOURNAL_BYTES
+    raw = os.environ.get("FOLIOTHREAD_STATE_SNAPSHOT_EVERY")
+    if raw:
+        try:
+            every = max(1, int(raw))
+        except (TypeError, ValueError):
+            pass
+    else:
+        # No explicit cadence: the journal, when present, replaces the
+        # batch-count trigger entirely.
+        every = 0 if journal else STATE_SNAPSHOT_EVERY_BATCHES
+    raw = os.environ.get("FOLIOTHREAD_STATE_SNAPSHOT_INTERVAL_S")
+    if raw:
+        try:
+            interval = max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    elif journal:
+        # The journal makes the time trigger redundant *and* harmful: it is the
+        # one trigger whose firing rate is proportional to run time, i.e. to
+        # document length.  See STATE_SNAPSHOT_JOURNAL_MAX_INTERVAL_S.
+        interval = STATE_SNAPSHOT_JOURNAL_MAX_INTERVAL_S
+    fraction = STATE_SNAPSHOT_JOURNAL_FRACTION
+    raw = os.environ.get("FOLITH_STATE_SNAPSHOT_JOURNAL_BYTES")
+    if raw is None:
+        raw = os.environ.get("FOLIOTHREAD_STATE_SNAPSHOT_JOURNAL_BYTES")
+    if raw:
+        try:
+            journal_bytes = max(0, int(raw))
+        except (TypeError, ValueError):
+            pass
+    raw = os.environ.get("FOLITH_STATE_SNAPSHOT_JOURNAL_FRACTION")
+    if raw is None:
+        raw = os.environ.get("FOLIOTHREAD_STATE_SNAPSHOT_JOURNAL_FRACTION")
+    if raw:
+        try:
+            fraction = max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    if not journal:
+        journal_bytes = 0
+        fraction = 0.0
+    every = max(0, int(every))
+    if every and total_batches:
+        every = max(1, min(every, -(-int(total_batches) // 10)))
+    return {
+        "every_batches": every,
+        "max_interval_s": float(interval),
+        "journal_bytes": int(journal_bytes),
+        "journal_fraction": float(fraction),
+    }
+
+
+def state_snapshot_crash_window(batch_size=None, total_batches=None):
+    """Worst-case segments a crash can force back through the pipeline.
+
+    Two regimes, and the number is honest about which one is active:
+
+    * with the journal, a crash forces **zero** re-translation -- recovery
+      replays committed batches from ``state_journal.jsonl`` without calling a
+      model, so the window is bounded in journal bytes, not segments;
+    * without it, the bounded cadence still applies: at most ``every_batches``
+      batches of committed-but-unsnapshotted translation.
+
+    Reported in the benchmark output and asserted by the persistence tests.
+    """
+    cadence = state_snapshot_cadence(total_batches=total_batches)
+    if not cadence["every_batches"]:
+        return 0
+    return max(1, int(batch_size or BATCH_SIZE)) * cadence["every_batches"]
+
+
+# ---------------------------------------------------------------------------
+# State journal: the per-batch delta of the translation hot path
+# ---------------------------------------------------------------------------
+# The record shape is fixed and named.  It is deliberately *not* a diff: the
+# three collections below are the only ones the translation commit touches, and
+# each is described in the way it actually changes.
+#
+#   set     -- whole-value changes (replaced, or mutated in place inside the
+#              batch).  Compared against a pre-batch snapshot of just these keys.
+#   extend  -- append-only lists.  The pre-append length travels with the items
+#              so a double application is detected instead of duplicating.
+#   patch   -- in-place updates to items earlier records already carried, keyed
+#              by the item's own identity.  Produced by the mutator itself.
+_JOURNAL_SET_KEYS = (
+    "translation_truth", "dependency_impact", "academic_state", "final_qa",
+    "p3_done", "p3_md", "p3_sections", "delivery_status",
+    "delivery_approved_by_human", "delivery_approval", "stage",
+    "review_stats", "knowledge_candidates", "translation_continuity",
+    "entity_registry", "knowledge_feedback_policy",
+    "knowledge_feedback_failures", "has_blocking",
+)
+_JOURNAL_EXTEND_KEYS = (
+    "findings", "review_evidence", "repair_overlays", "human_actions",
+    "knowledge_events", "context_packet_log", "glossary_injection_log",
+)
+
+
+def new_journal_patches():
+    """Collector for the typed in-place patches one batch applies."""
+    return {}
+
+
+def journal_baseline(state):
+    """Capture the named hot-path fields before one batch commits.
+
+    A deep copy is required for the keys that are mutated in place (for example
+    ``review_stats`` and ``knowledge_feedback_policy``); a shallow one would
+    alias the live object and report "unchanged" forever.
+    """
+    return {
+        "set": {key: copy.deepcopy(state[key])
+                for key in _JOURNAL_SET_KEYS if key in state},
+        "len": {key: len(state.get(key) or []) for key in _JOURNAL_EXTEND_KEYS},
+    }
+
+
+def build_batch_journal_record(state, baseline, patches, *, batch, offset,
+                               segment_ids, pairs):
+    """Build one ``translation_batch_committed`` record, or ``None``.
+
+    ``None`` means the delta cannot be described faithfully -- an unaddressable
+    item, or a list a normalizer shrank mid-batch.  The caller then takes an
+    immediate snapshot instead.  That fallback is the whole safety argument for
+    this optimisation: an undescribable delta costs performance, never
+    durability.
+    """
+    if not baseline or patches.get("incomplete"):
+        return None
+    record = {
+        "schema": _state_journal.JOURNAL_SCHEMA_VERSION,
+        "mutation": _state_journal.MUTATION_TRANSLATION_BATCH,
+        "mutation_id": uuid.uuid4().hex,
+        "ts": _finalization.now_iso(),
+        "batch": int(batch),
+        "offset": int(offset),
+        "segment_ids": list(segment_ids),
+        "pairs": list(pairs),
+    }
+    set_values = {}
+    for key in _JOURNAL_SET_KEYS:
+        if key not in state:
+            continue
+        current = state[key]
+        if key in baseline["set"] and current == baseline["set"][key]:
+            continue
+        set_values[key] = current
+    if set_values:
+        record["set"] = set_values
+    extend_values = {}
+    for key in _JOURNAL_EXTEND_KEYS:
+        items = state.get(key)
+        if not isinstance(items, list):
+            return None
+        start = baseline["len"][key]
+        if len(items) < start:
+            return None
+        if len(items) > start:
+            extend_values[key] = {"base": start, "items": items[start:]}
+    if extend_values:
+        record["extend"] = extend_values
+    patch_values = {key: value for key, value in patches.items()
+                    if value and key != "incomplete"}
+    if patch_values:
+        record["patch"] = patch_values
+    return record
 
 
 def make_batches(paragraphs, batch_size=BATCH_SIZE, max_chars=MAX_BATCH_CHARS,
@@ -2122,12 +3094,40 @@ def make_batches(paragraphs, batch_size=BATCH_SIZE, max_chars=MAX_BATCH_CHARS,
 def _translation_evidence_index(
     paras, pairs, batch_pairs, glossary, document_profile,
     document_synopsis, section_digests, findings_all, blind=False,
-    candidate_targets=None,
+    candidate_targets=None, blocked_source_indexes=None,
 ):
-    return _translation_evidence.TranslationEvidenceIndex(
-        paras, pairs + batch_pairs, glossary, document_profile,
-        document_synopsis, section_digests, findings_all,
-        blind=blind, candidate_targets=candidate_targets)
+    # The index copies every committed pair (`list(pairs)`) plus the whole
+    # glossary and findings list, so its cost is a function of document length,
+    # not batch length.  Recording items-scanned is what makes that visible.
+    with _critical_path.phase("review_input_evidence_index") as _index_sink:
+        _index_sink.traversed(
+            len(pairs) + len(batch_pairs) + len(glossary) + len(findings_all))
+        blocked = {int(index) for index in (blocked_source_indexes or set())
+                   if isinstance(index, int) and not isinstance(index, bool)}
+        safe_paras = ["" if index in blocked else source
+                      for index, source in enumerate(paras or [])]
+        safe_pairs = []
+        for index, pair in enumerate(list(pairs or []) + list(batch_pairs or [])):
+            if index not in blocked or not isinstance(pair, dict):
+                safe_pairs.append(pair)
+                continue
+            safe_pair = dict(pair)
+            for key in ("source", "target", "initial_target", "accepted_target",
+                        "suggested_target"):
+                safe_pair[key] = ""
+            safe_pairs.append(safe_pair)
+        safe_findings = [
+            finding for finding in findings_all or []
+            if not (isinstance(finding, dict)
+                    and finding.get("type") == "source_quality_gate"
+                    and isinstance(finding.get("segment_index"), int)
+                    and not isinstance(finding.get("segment_index"), bool)
+                    and finding.get("segment_index") in blocked)
+        ]
+        return _translation_evidence.TranslationEvidenceIndex(
+            safe_paras, safe_pairs, glossary, document_profile,
+            document_synopsis, section_digests, safe_findings,
+            blind=blind, candidate_targets=candidate_targets)
 
 
 def _review_finding_record(finding, review_event_id):
@@ -2158,40 +3158,55 @@ def _review_finding_record(finding, review_event_id):
 def _runtime_review_context(
     state, offset, batch_len, glossary_text, style_rules, target_lang,
 ):
-    paras = state.get("paras") or []
-    pairs = state.get("pairs") or []
-    profile = state.get("document_profile") or {}
-    digests = state.get("section_digests") or []
-    previous_target = _context.select_target_context(pairs, offset, limit=2)
-    dependency_ids = _runtime_review_dependency_ids(
-        state, offset, batch_len, previous_target)
-    target_dependency_ids = set(range(
-        max(0, offset), max(0, offset) + max(0, batch_len)))
-    target_dependency_ids.update(
-        int(item["segment_index"])
-        for item in previous_target or []
-        if isinstance(item, dict)
-        and isinstance(item.get("segment_index"), int)
-        and not isinstance(item.get("segment_index"), bool)
-    )
-    return {
-        "document_profile": profile,
-        "document_synopsis": state.get("document_synopsis") or {},
-        "section_profile": _batch_section_profile(profile, offset, batch_len) or {},
-        "section_digest": _context.digest_for_segment(digests, offset) or {},
-        "previous_source_context": list(paras[max(0, offset - 2):offset]),
-        "previous_target_context": [
-            dict(item) for item in previous_target
-            if item.get("level") in {"human_accepted", "reviewed", "tm_approved"}
-        ],
-        "next_source_context": list(
-            paras[offset + batch_len:offset + batch_len + 2]),
-        "target_language": target_lang,
-        "style_constraints": style_rules or "",
-        "advisory_terminology_context": glossary_text or "",
-        "_dependency_segment_ids": dependency_ids,
-        "_dependency_target_segment_ids": sorted(target_dependency_ids),
-    }
+    # Phase 7 (§5) verified this call site rather than rewrote it.  It must keep
+    # ``select_target_context``: ``limit=2`` really does truncate here, so the
+    # level-priority rule is load-bearing, and ``recent_target_context`` (the
+    # generation-side fast path) would silently change which previous targets
+    # the reviewer sees.  The contract is therefore still *committed / reviewed*
+    # context: ``state["pairs"]`` filtered by the caller below to
+    # ``human_accepted | reviewed | tm_approved`` -- never provisional output.
+    #
+    # Phase 5 already removed the prefix materialisation from the helper
+    # (``list(pairs)[:offset]`` plus a dict per historical segment); what
+    # remains is an O(offset) *dereference* walk that cannot early-exit, because
+    # only the top provenance slot is allowed to stop the scan.  That is a
+    # semantic property, not slack: see docs/translation-review-context-scaling.md.
+    with _critical_path.phase("review_input_previous_context") as _ctx_sink:
+        _ctx_sink.traversed(max(0, int(offset or 0)))
+        paras = state.get("paras") or []
+        pairs = state.get("pairs") or []
+        profile = state.get("document_profile") or {}
+        digests = state.get("section_digests") or []
+        previous_target = _context.select_target_context(pairs, offset, limit=2)
+        dependency_ids = _runtime_review_dependency_ids(
+            state, offset, batch_len, previous_target)
+        target_dependency_ids = set(range(
+            max(0, offset), max(0, offset) + max(0, batch_len)))
+        target_dependency_ids.update(
+            int(item["segment_index"])
+            for item in previous_target or []
+            if isinstance(item, dict)
+            and isinstance(item.get("segment_index"), int)
+            and not isinstance(item.get("segment_index"), bool)
+        )
+        return {
+            "document_profile": profile,
+            "document_synopsis": state.get("document_synopsis") or {},
+            "section_profile": _batch_section_profile(profile, offset, batch_len) or {},
+            "section_digest": _context.digest_for_segment(digests, offset) or {},
+            "previous_source_context": list(paras[max(0, offset - 2):offset]),
+            "previous_target_context": [
+                dict(item) for item in previous_target
+                if item.get("level") in {"human_accepted", "reviewed", "tm_approved"}
+            ],
+            "next_source_context": list(
+                paras[offset + batch_len:offset + batch_len + 2]),
+            "target_language": target_lang,
+            "style_constraints": style_rules or "",
+            "advisory_terminology_context": glossary_text or "",
+            "_dependency_segment_ids": dependency_ids,
+            "_dependency_target_segment_ids": sorted(target_dependency_ids),
+        }
 
 
 def _runtime_review_dependency_ids(state, offset, batch_len, previous_target=None):
@@ -2265,7 +3280,7 @@ def _tm_eligible(source, target):
 # 同一段原文在 Français 与简体中文任务里的正确译文不同；只用原文当键，一种
 # 语言的译文就会串进另一种语言的任务，并以"已审校"的名义静默通过交付检查。
 # 因此作用域键是结构性的：不给出目标语言就**无法**命中任何条目。
-# 定义放在 `transpraxis.translation_memory`，核心层与展示层共用同一份格式。
+# 定义放在 `folith.translation_memory`，核心层与展示层共用同一份格式。
 TM_SCOPE_SEP = _tm_scope.TM_SCOPE_SEP
 tm_scope_key = _tm_scope.tm_scope_key
 tm_unscope_key = _tm_scope.tm_unscope_key
@@ -2363,6 +3378,13 @@ def tm_lookup(tm, source, index=None, *, target_lang=None):
     return None, ""
 
 
+class _TranslationMemory(dict):
+    """Remember the read baseline so a save applies only this writer's changes."""
+    def __init__(self, values=()):
+        super().__init__(values)
+        self.baseline = {key: dict(value) for key, value in self.items()}
+
+
 def load_tm(project_id=None):
     """加载指定项目的翻译记忆并自清洗：非法条目直接丢弃。
 
@@ -2380,19 +3402,93 @@ def load_tm(project_id=None):
         try:
             raw = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
-            return {}
-        return {k: v for k, v in raw.items()
+            return _TranslationMemory()
+        return _TranslationMemory({k: v for k, v in raw.items()
                 if isinstance(v, dict) and v.get("reviewed")
-                and _tm_eligible(tm_unscope_key(k)[1], v.get("target"))}
-    return {}
+                and _tm_eligible(tm_unscope_key(k)[1], v.get("target"))})
+    return _TranslationMemory()
+
+
+#: Parent directories whose TM file we have already created in this process.
+#: ``mkdir(parents=True, exist_ok=True)`` still costs a syscall when the
+#: directory exists, and the promotion path used to pay it once per batch.
+_TM_DIR_READY = set()
+_TM_DIR_LOCK = threading.Lock()
+
+
+def _ensure_tm_dir(path):
+    """Create the TM parent directory at most once per process."""
+    parent = str(path.parent)
+    with _TM_DIR_LOCK:
+        if parent in _TM_DIR_READY:
+            return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # The writer below retries; do not poison the cache with a failure.
+        return
+    with _TM_DIR_LOCK:
+        _TM_DIR_READY.add(parent)
+
+
+def _write_tm_bytes(path, payload):
+    """Write the encoded payload, rebuilding the directory once if it vanished."""
+    try:
+        path.write_bytes(payload)
+    except OSError:
+        with _TM_DIR_LOCK:
+            _TM_DIR_READY.discard(str(path.parent))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+
+
+def reset_tm_dir_cache():
+    """Forget the directory hint (tests that delete/repoint ``OUTPUT_DIR``)."""
+    with _TM_DIR_LOCK:
+        _TM_DIR_READY.clear()
 
 
 def save_tm(tm, project_id=None):
+    """持久化项目翻译记忆。
+
+    `tm.json` 是**派生的物化缓存**，不是权威真值：`checkpoint.reconcile_translation_memory`
+    会在每次 `translate_stage` 开始时用 `state["pairs"]`（已审校段落）加上尚未确认的
+    `tm_promotion_pending` 事件把它重建出来。因此这个函数的写路径可以独立优化，
+    而不会改变权威边界。
+
+    写路径与 `state.json` 共用同一个紧凑序列化器与"编码一次再写 bytes"的做法；
+    目录创建也只在进程内做一次。
+    """
     p = tm_path(project_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(tm, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    with _persistence_profiler.phase("tm_prepare"):
+        _ensure_tm_dir(p)
+    with _job_lock.exclusive(p.with_suffix(".write.lock")):
+        if isinstance(tm, _TranslationMemory):
+            # The lock covers re-read, delta merge and replacement across tasks
+            # and processes. Unchanged stale entries must not resurrect deletes.
+            merged = dict(load_tm(project_id))
+            for key in tm.baseline.keys() - tm.keys():
+                merged.pop(key, None)
+            for key, value in tm.items():
+                if key not in tm.baseline or value != tm.baseline[key]:
+                    merged[key] = value
+        else:
+            # Explicit replacement mappings (project import/initialisation).
+            merged = dict(tm)
+        tmp = p.with_suffix(".json.tmp")
+        try:
+            with _persistence_profiler.phase("tm_json_serialization") as sink:
+                encoded = json.dumps(merged, **_job_repo.COMPACT_JSON).encode("utf-8")
+                sink.serialized(len(encoded))
+            with _persistence_profiler.phase("tm_file_write") as sink:
+                _write_tm_bytes(tmp, encoded)
+                sink.written(len(encoded))
+            with _persistence_profiler.phase("tm_atomic_replace"):
+                tmp.replace(p)
+        finally:
+            tmp.unlink(missing_ok=True)
+        if isinstance(tm, _TranslationMemory):
+            tm.baseline = {key: dict(value) for key, value in tm.items()}
 
 
 def tm_project_id(state):
@@ -2445,7 +3541,7 @@ copy_default_tm_to_project = copy_system_tm_to_project
 
 
 # ================= Project：跨任务复用的已确认项目记忆 =================
-# Project 层本身是领域模块（transpraxis/project.py，显式接收 root）；
+# Project 层本身是领域模块（folith/project.py，显式接收 root）；
 # 这里只是把它接到本地 OUTPUT_DIR，并负责"任务属于哪个项目"的读写。
 #
 # 身份模型（v0.5 定死）：
@@ -2809,7 +3905,7 @@ def project_name_for_id(project_id):
 # 在两套记忆之间漂移，因此这些状态一律拒绝移动。
 _ACTIVE_RUNTIME_STATUSES = {
     "resume_requested", "queued", "starting", "running",
-    "waiting_external", "cancelling",
+    "waiting_external", "cancelling", "pausing", "paused",
 }
 
 
@@ -3170,9 +4266,14 @@ def _project_memory_injection(state):
 
 # ================= 翻译 / 修复 / 审校（对齐 localize-anything 的三通道）=================
 def _translator_system(glossary_text, style_rules, target_lang):
-    return (f"你是一位学术翻译专家，请将用户提供的段落翻译成{target_lang}。\n"
-            f"规则：只翻译可翻译的正文；作者姓名、机构名、品牌名、URL、邮箱、DOI、"
-            f"引用标注（如 [12]）等保留原文；译文须与原文一一对应并保持顺序。\n"
+    return (f"你是一位专业翻译人员，请将用户提供的段落翻译成{target_lang}。\n"
+            "先识别原文体裁并沿用其语气；执行学术翻译专家常见工作时，也不得把小说、"
+            "回忆录、对话或商业文本改写成论文语体。只翻译可翻译的正文，译文须与原文"
+            "一一对应并保持顺序。\n"
+            "人名、地名、机构名、品牌名和作品名不应一律保留源语：遵循已提供的术语表、"
+            "实体提示和全书既定译法；没有既定译法时，选择目标语言中自然、连贯的表达，"
+            "并在后文保持一致。只有明确标为“保留原文”的词条才按其规则原样保留。URL、"
+            "邮箱、DOI、引用标注（如 [12]）和其他机器标识符保持准确，不要改动其字符。\n"
             f"{glossary_text}\n"
             f"{style_rules}\n"
             "翻译前请在内部检查：指代与照应关系、术语和专名、理论/非字面用法、"
@@ -3227,18 +4328,38 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     call_fn = call_llm_fn or call_llm
     response_format = _native_translation_response_format(
         provider, model, len(segments))
+    # Rate limiting is handled by the shared provider controller: it paces
+    # request starts and pushes one cooldown every worker observes, instead of
+    # each worker sleeping a fixed 15 s and then stampeding the provider.
+    controller = _llm_request_controller(provider, model)
+    cancel_check = _llm_cancel_check()
     last_err = None
     for _attempt in range(3):
+        if _attempt and _runtime_job_id():
+            update_runtime_state(
+                _runtime_job_id(),
+                event=f"翻译请求未完成，正在重试（第 {_attempt + 1}/3 次尝试）",
+                event_name="translation_retry", event_visibility="user",
+                event_category="external_wait", phase="retry",
+                phase_label=f"正在重试翻译请求（第 {_attempt + 1}/3 次尝试）",
+                operation_id="translation_retry",
+                operation_label=f"正在重试翻译请求（第 {_attempt + 1}/3 次尝试）",
+            )
         try:
+            controller.acquire(cancel_check)
             res = _invoke_llm(
                 call_fn, provider, api_key, model, sys_prompt, user_prompt,
                 temperature=0.3, response_format=response_format)
+            controller.note_success()
             return _translation_protocol.parse_translation_response(
                 res, len(segments))
         except Exception as e:
+            _workflow_errors.raise_if_fatal(e, _runtime_job_id())
+            if "任务已请求取消" in str(e):
+                raise
             last_err = e
             if is_rate_limited(e):
-                time.sleep(15)
+                controller.note_rate_limited()
 
     raise RuntimeError(
         f"批次翻译失败（{len(segments)} 段）："
@@ -3259,17 +4380,23 @@ def repair_batch(sources, targets, findings, glossary_text, style_rules, target_
     call_fn = call_llm_fn or call_llm
     response_format = _native_translation_response_format(
         provider, model, len(sources))
+    controller = _llm_request_controller(provider, model)
+    cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
+            controller.acquire(cancel_check)
             res = _invoke_llm(
                 call_fn, provider, api_key, model, sys_prompt, user_prompt,
                 temperature=0.2, response_format=response_format)
+            controller.note_success()
             arr = _translation_protocol.parse_translation_response(
                 res, len(sources))
             return [clean_xml_chars(item).strip() for item in arr]
         except Exception as e:
+            if "任务已请求取消" in str(e):
+                raise
             if is_rate_limited(e):
-                time.sleep(15)
+                controller.note_rate_limited()
     raise RuntimeError("自动修复失败：模型返回格式异常")
 
 
@@ -3289,16 +4416,22 @@ def review_translation_batch(sources, targets, glossary_text, style_rules, targe
                   '请严格输出 JSON 数组，每项格式：{"segment_index": 0, "severity": "actionable", '
                   '"reason": "问题说明", "suggested_target": "可选：修正后的译文"}')
     user_prompt = f"待审校段落（目标语言：{target_lang}）：\n{numbered}"
+    controller = _llm_request_controller(provider, model)
+    cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
+            controller.acquire(cancel_check)
             res = call_llm(provider, api_key, model, sys_prompt, user_prompt, temperature=0.2)
+            controller.note_success()
             arr = parse_json_array(res)
             if arr is None:
                 return [], True
             return arr, False
         except Exception as e:
+            if "任务已请求取消" in str(e):
+                raise
             if is_rate_limited(e):
-                time.sleep(15)
+                controller.note_rate_limited()
             else:
                 break
     return [], True
@@ -3377,18 +4510,142 @@ def _rare_ok(span_text, token_freq):
     return True
 
 
-def _domain_ok(span_text):
-    """专业名词门槛：称谓+人名、全常用词短语不算专业名词。"""
+_COMMON_STOP_TERMS = {
+    # 常见国家名
+    "germany", "france", "china", "japan", "united states", "usa", "uk",
+    "united kingdom", "russia", "italy", "spain", "canada", "australia",
+    "india", "brazil", "egypt", "israel", "syria", "jordan", "lebanon",
+    "iran", "iraq", "saudi arabia", "turkey", "greece", "poland", "ukraine",
+    "sweden", "norway", "finland", "denmark", "netherlands", "belgium",
+    "switzerland", "austria", "portugal", "mexico", "argentina", "korea",
+    "vietnam", "thailand", "singapore",
+    # 洲与大区
+    "europe", "asia", "america", "africa", "middle east", "latin america",
+    # 常见城市与通识地理实体
+    "beijing", "shanghai", "berlin", "paris", "london", "tokyo",
+    "new york", "washington", "jerusalem", "tel aviv", "cairo", "damascus",
+    "amman", "beirut", "baghdad", "tehran", "rome", "athens", "moscow",
+    "california", "texas", "sinai", "negev",
+    # 通识宗教/神学通用词
+    "god", "lord",
+}
+
+_COMMON_FIRST_NAMES = {
+    # 常用英美/希伯来/国际人名
+    "sarah", "yaakov", "david", "john", "michael", "mary", "james", "robert",
+    "william", "joseph", "charles", "thomas", "daniel", "matthew", "anthony",
+    "mark", "paul", "andrew", "joshua", "george", "edward", "brian", "kevin",
+    "ronald", "timothy", "jason", "jeffrey", "ryan", "jacob", "gary", "nicholas",
+    "eric", "jonathan", "stephen", "larry", "justin", "scott", "brandon",
+    "benjamin", "samuel", "gregory", "alexander", "patrick", "frank", "jack",
+    "adam", "peter", "henry", "ethan", "jeremy", "walter", "christian", "noah",
+    "arthur", "jesse", "dylan", "bryan", "joe", "alan", "philip", "louis",
+    "nadav", "moran", "ralik", "anat", "haggai", "ora", "avsha", "esti", "maya",
+    "antoine", "evan", "gordon", "mageni", "ze’ev", "ze'ev", "raz", "oron",
+    "yarden", "ilan", "ramon", "udi", "ben-amitai", "chemi", "ami", "yossik",
+    "patchi", "uri", "yotam", "dan", "shuki", "danni", "yossi", "gabi", "moti",
+}
+
+_CHINESE_KINSHIP_TITLES = (
+    "爷爷", "奶奶", "姥爷", "姥姥", "叔叔", "阿姨", "伯父", "伯母", "舅舅", "舅妈",
+    "父亲", "母亲", "爸爸", "妈妈", "哥哥", "弟弟", "姐姐", "妹妹",
+    "先生", "女士", "夫人", "小姐", "神父", "拉比", "牧师", "教授", "医生"
+)
+
+_NON_PERSON_SUFFIXES = (
+    "节", "日", "市", "省", "州", "国", "湖", "山", "海", "洋", "岛", "湾",
+    "条约", "协定", "行动", "计划", "公司", "战", "战争", "军", "队", "法案",
+    "书", "篇", "卷", "号", "机", "弹", "炮", "服", "路", "桥", "门", "网", "图"
+)
+
+_GENERIC_CLASSIFIERS = {
+    "kibbutz", "mount", "mt", "lake", "river", "sea", "fort", "port",
+    "cape", "saint", "st", "valley", "bay", "camp", "gulf"
+}
+
+
+def _is_person_name(src_text, tgt_text=""):
+    """判断是否为人物姓名或称谓（严禁作为专业术语标注）。"""
+    s = (src_text or "").strip()
+    t = (tgt_text or "").strip()
+    if not s and not t:
+        return False
+    # 1. 英语称谓前缀（如 Grandpa Yaakov, Grandma Sarah, Mr. Smith）
+    if _KINSHIP_TITLE_RE.search(s):
+        return True
+    # 2. 中文称谓后缀/包含（如 雅科夫爷爷、萨拉奶奶）
+    if any(k in t for k in _CHINESE_KINSHIP_TITLES):
+        return True
+    # 3. 中文音译人名（由 2-4 个音译段用·或•连接，如“莎拉·马格尼”、“泽埃夫·拉兹”、“伊兰·拉蒙”、“乌迪·本-阿米泰”）
+    if t and "《" not in t and "》" not in t:
+        if not any(t.endswith(sfx) for sfx in _NON_PERSON_SUFFIXES):
+            if re.fullmatch(r"[\u4e00-\u9fa5]{1,4}(?:[·•][\u4e00-\u9fa5\-]{1,5}){1,3}", t):
+                return True
+    # 4. 英文人名库匹配（1-3个词，包含人名库词汇且非军事/装备术语）
+    toks = re.findall(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*", s.lower())
+    if toks and len(toks) <= 3:
+        if any(tok in _COMMON_FIRST_NAMES for tok in toks):
+            if not any(tok in {"war", "operation", "air", "missile", "jet", "force", "army", "corps", "wing", "squadron"} for tok in toks):
+                return True
+    return False
+
+
+def _is_split_proper_noun(src_span, src_text):
+    """检测标注片段是否为一个复合专名/地名短语的一部分（如 Kibbutz Geva 中仅标了 Kibbutz）。"""
+    if not src_span or not src_text:
+        return False
+    s_start, s_end = src_span
+    span_str = src_text[s_start:s_end].strip()
+    if span_str.lower() in _GENERIC_CLASSIFIERS:
+        after = src_text[s_end:]
+        m_after = re.match(r"^\s+([A-Z][a-z]+)", after)
+        before = src_text[:s_start]
+        m_before = re.search(r"([A-Z][a-z]+)\s+$", before)
+        if m_after or m_before:
+            return True
+    return False
+
+
+_PRONOUN_OR_CONVERSATIONAL = {
+    "you", "i", "we", "my", "your", "our", "ours", "them", "us", "me",
+    "don't", "doesn't", "didn't", "won't", "can't", "please", "shall"
+}
+
+
+def _domain_ok(span_text, tgt_text=""):
+    """专业名词门槛：称谓+人名、通识地名、全常用词短语、过长标题/句子不算专业名词。"""
     span = (span_text or "").strip()
     if not span:
         return False
-    if _KINSHIP_TITLE_RE.match(span):
-        return False  # Grandma Sarah / Mr. Smith 之类
+    if span.lower() in _COMMON_STOP_TERMS:
+        return False
+    if _is_person_name(span, tgt_text):
+        return False
     tokens = re.findall(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*", span)
     if not tokens:
         return False
+    if len(tokens) > 5 or len(span) > 40:
+        return False  # 术语不应是长句或整行标题
+    if any(t.lower().replace("’", "'") in _PRONOUN_OR_CONVERSATIONAL for t in tokens):
+        return False  # 包含人称代词或祈使口语的句子/标题严禁标为术语
     if all(_is_common_word(t) for t in tokens):
         return False  # Translation from Hebrew 之类全是常用词
+    return True
+
+
+def _hard_ok(span_text, full_source_text):
+    """难点句门槛：
+    1. 必须是具体有特殊句式/翻译技巧的短语或分句，严禁将整段长文粗暴全量标记；
+    2. 片段长度不能过长（超过 120 字符的整段/长句染色失去重点意义）。
+    """
+    span = (span_text or "").strip()
+    if not span:
+        return False
+    full = (full_source_text or "").strip()
+    if len(full) > 35 and len(span) >= len(full) * 0.8:
+        return False
+    if len(span) > 120:
+        return False
     return True
 
 
@@ -3410,12 +4667,13 @@ def _normalize_annotations(annotations):
 
 
 def _clean_annotations(annotations, pairs):
-    """过滤 + 去重 + 数量上限；术语表覆盖的 domain（note 以"术语："开头）不参与过滤。"""
+    """过滤 + 去重 + 数量上限；术语表覆盖与模型识别统一经过门槛控制。"""
     token_freq = {}
     for pr in pairs:
         for tok in re.findall(r"[A-Za-z]+", pr["source"].lower()):
             token_freq[tok] = token_freq.get(tok, 0) + 1
     cleaned = {}
+    term_counts = {}
     for gi, items in _normalize_annotations(annotations).items():
         if not (0 <= gi < len(pairs)):
             continue  # 段已被删除等场景：越界键丢弃
@@ -3424,11 +4682,31 @@ def _clean_annotations(annotations, pairs):
         for it in items:
             atype = it["type"]
             s_span = it.get("src_span")
+            t_span = it.get("tgt_span")
             span_text = src_text[s_span[0]:s_span[1]] if s_span else ""
+            tgt_text = pairs[gi]["target"][t_span[0]:t_span[1]] if t_span and 0 <= t_span[0] < t_span[1] <= len(pairs[gi]["target"]) else ""
             overlay = atype == "domain" and str(it.get("note", "")).startswith("术语：")
             if atype == "rare" and not _rare_ok(span_text, token_freq):
                 continue
-            if atype == "domain" and not overlay and not _domain_ok(span_text):
+            if atype == "domain":
+                term_from_note = ""
+                if overlay:
+                    term_from_note = str(it.get("note", "")).split("->")[0].replace("术语：", "").strip().lower()
+                if span_text.strip().lower() in _COMMON_STOP_TERMS or term_from_note in _COMMON_STOP_TERMS:
+                    continue
+                if not _domain_ok(span_text, tgt_text):
+                    continue
+                if overlay and term_from_note and not _domain_ok(term_from_note, tgt_text):
+                    continue
+                if _is_split_proper_noun(s_span, src_text):
+                    continue
+                tokens = re.findall(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*", span_text)
+                if len(tokens) > 5 or len(span_text) > 40:
+                    continue
+                term_key = (term_from_note or span_text).strip().lower()
+                if term_counts.get(term_key, 0) >= 2:
+                    continue
+            if atype == "hard" and not _hard_ok(span_text, src_text):
                 continue
             key = (atype, tuple(s_span) if s_span else None,
                    tuple(it["tgt_span"]) if it.get("tgt_span") else None)
@@ -3438,6 +4716,9 @@ def _clean_annotations(annotations, pairs):
             if counts[atype] >= ANNOT_MAX_PER_SEG[atype]:
                 continue
             counts[atype] += 1
+            if atype == "domain":
+                term_key = span_text.strip().lower()
+                term_counts[term_key] = term_counts.get(term_key, 0) + 1
             kept.append(it)
         if kept:
             cleaned[gi] = kept
@@ -3445,22 +4726,32 @@ def _clean_annotations(annotations, pairs):
 
 
 def _annotator_system(target_lang):
-    return (f"你是一位翻译教学专家。请从下列{target_lang}双语对照中标注三类学习重点：\n"
-            "1. rare：真正的生僻词/难词——英语母语者也未必认识的低频书面词，"
-            "如 chicory、muezzin、cacophony。只标注单个单词（最多一个带连字符的复合词）。\n"
-            "   严禁标注日常常用词（如 production、grin、rooster、speedily、elementary），"
-            "严禁标注短语、引用句或名句（如 'Elementary, my dear Watson'）。\n"
-            "2. domain：专业领域名词，译文采用了专门/约定俗成的译法（如术语表、行话、专名译法）；\n"
-            "   严禁标注亲属称谓（如 Grandma Sarah）、全常用词短语（如 Translation from Hebrew）、"
-            "普通日常表达。\n"
-            "3. hard：翻译难度高的句子，译文使用了特别翻译技巧（语序调整、词性转换、拆合句、"
-            "文化负载词处理、比喻/双关处理等）；普通直译句不要标注。\n"
+    return (f"你是一位翻译教学专家与专业的双语对照审阅专家。请从下列{target_lang}双语对照中，极为克制地标注三类学习与审阅重点（宁缺毋滥，每段若无真正亮点则不标）：\n"
+            "1. rare：极度低频的生僻词（英语母语者也罕见的单词，最多一个带连字符复合词，如 chicory、cacophony）。"
+            "严禁标注任何常用词或短语。\n"
+            "2. domain：高价值核心专业术语（译文采用了行业规范/约定俗成的专名译法）。"
+            "仅限 1-4 个单词的行业核心术语短语（如 Urban Air Mobility、propulsion systems、anti-aircraft guns）；"
+            "【特别警告】：严禁标注任何人物姓名或亲属称谓（如 Grandpa Yaakov、Grandma Sarah、Ze'ev Raz 等人物名字一律严禁标为术语）；"
+            "严禁标注常见国家/城市/行政区地名（如 Egypt、Germany、Paris、California）；"
+            "严禁将专名短语/复合实体截断只标一半（例如当原文为具体地名、机构或专名如 Kibbutz Geva 时，严禁仅挑出 Kibbutz 等通用词素导致实体被切断）；"
+            "严禁标注普通短语、整句标题或常用词。\n"
+            "3. hard：采用了精妙翻译技巧的具体短语或从句（如后置定语分词前置、主动被动转换、倒装语序重组）。"
+            "【特别警告】：hard 必须是具体的短语或分句（不超过 15 个英文单词），严禁标注整个长句，严禁标注整段文字！"
+            "如果是词汇层面的普通选词，严禁标为 hard！普通直译句一律不标。\n"
             "规则：\n"
-            "- 每个段落最多 2 个 rare、2 个 domain、1 个 hard；标注真正有价值的，宁缺毋滥；\n"
-            "- src 必须是原文中的原文字符串，tgt 必须是对应译文中的字符串（hard 可以是整句/整段）；\n"
-            "- note 用一句话说明标注理由或所用译法；\n"
+            "- 严格追求高质量与少而精：绝大多数普通段落应该返回空，每个段落最多 1 个 rare、1 个 domain、1 个 hard；\n"
+            "- src 必须是原文中完整词或短语片段（严禁截断单词，西文字词必须包含完整单词边界），tgt 必须是对应译文中的完整字符串片段；\n"
+            "- note 用一句话简短说明标注理由或所用译法；\n"
             '严格输出 JSON 数组，每项格式：{"seg": 1, "type": "rare", "src": "...", '
             '"tgt": "...", "note": "..."}。seg 为段落序号（从 1 开始）。不要输出任何解释文字。')
+
+
+class AnnotationBatchResult(list):
+    """An empty successful response differs from an unavailable annotation."""
+    def __init__(self, items=(), *, status="success", error=""):
+        super().__init__(items)
+        self.status = status
+        self.error = error
 
 
 def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
@@ -3470,12 +4761,16 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
         for i, p in enumerate(pairs_slice))
     sys_prompt = _annotator_system(target_lang)
     user_prompt = f"待标注双语段落：\n{numbered}"
+    controller = _llm_request_controller(provider, model)
+    cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
+            controller.acquire(cancel_check)
             res = call_llm(provider, api_key, model, sys_prompt, user_prompt, temperature=0.2)
+            controller.note_success()
             arr = parse_json_array(res)
             if arr is None:
-                return []
+                return AnnotationBatchResult(status="parse_failed", error="模型未返回标注数组")
             out = []
             for item in arr:
                 if not isinstance(item, dict):
@@ -3493,13 +4788,20 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
                     continue
                 out.append({"seg": seg - 1, "type": atype, "src": src,
                             "tgt": tgt, "note": note})
-            return out
+            if arr and not out:
+                return AnnotationBatchResult(status="parse_failed", error="标注字段或段落索引无效")
+            return AnnotationBatchResult(out, status="success" if out else "empty")
         except Exception as e:
+            _workflow_errors.raise_if_fatal(e, _runtime_job_id())
+            if "请求取消" in str(e):
+                raise
             if is_rate_limited(e):
-                time.sleep(10)  # 限流退避后重试，避免整批标注静默丢失
+                # Shared provider cooldown instead of a local fixed sleep, so
+                # annotation retries cannot stampede alongside translation.
+                controller.note_rate_limited()
                 continue
-            return []
-    return []
+            return AnnotationBatchResult(status="request_failed", error=str(e)[:500])
+    return AnnotationBatchResult(status="request_failed", error="请求限流，重试次数已用尽")
 
 
 def _compose_spans(spans, text_len):
@@ -3531,10 +4833,25 @@ def _compose_spans(spans, text_len):
 def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
                    on_caption=None):
     """三色自动标注：LLM 识别 + 术语表确定性覆盖（专业名词=黄色必标）。"""
-    if state.get("annotations_done"):
-        return state
     pairs = state["pairs"]
+    quality_report = _audit_source_quality_for_state(state)
+    state["source_quality_gate"] = quality_report
+    blocked_source_indexes = {
+        item.get("segment_index")
+        for item in quality_report.get("flags") or []
+        if isinstance(item, dict) and isinstance(item.get("segment_index"), int)
+    }
     annotations = _normalize_annotations(state.get("annotations"))
+    for index in blocked_source_indexes:
+        annotations.pop(index, None)
+    batch_results = state.setdefault("annotation_batches", {})
+    failed_offsets = {int(key) for key, result in batch_results.items()
+                      if result.get("status") in {"request_failed", "parse_failed", "stale"}}
+    if state.get("annotations_done") and not failed_offsets:
+        if blocked_source_indexes:
+            state["annotations"] = annotations
+            save_job_state(job_id, state)
+        return state
     batches = make_batches([p["source"] for p in pairs], batch_size=ANNOT_BATCH_SIZE,
                            max_chars=2600)
     # 断点按“已标注段数”记录（而非批次号），避免批大小调整后续跑错位
@@ -3544,74 +4861,428 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
     if done_offset:
         if on_caption:
             on_caption(f"↩️ 从第 {done_offset + 1} 段（批次 {start_bi + 1}/{len(batches)}）继续标注...")
+    if job_id:
+        update_runtime_state(
+            job_id, heartbeat=True, stage="annotation", stage_id="annotation",
+            operation="正在标注", operation_id="annotation", operation_label="正在标注",
+            stage_progress={"completed": done_offset, "total": len(pairs), "unit": "段"}
+        )
 
     # 1) LLM 标注
-    failed_batches = 0
-    for bi in range(start_bi, len(batches)):
-        batch_srcs = batches[bi]
+    for bi in range(len(batches)):
         offset = sum(len(b) for b in batches[:bi])
+        if bi < start_bi and offset not in failed_offsets:
+            continue
+        if job_id:
+            _runtime_pause_checkpoint(job_id)
+            if _runtime_cancel_requested(job_id):
+                raise RuntimeError("任务已请求取消")
+        batch_srcs = batches[bi]
         slice_pairs = pairs[offset:offset + len(batch_srcs)]
         if on_caption and bi % 10 == 0:
             on_caption(f"🎨 自动标注第 {offset + 1}-{offset + len(slice_pairs)} 段"
                        f"（共 {len(pairs)} 段，批次 {bi + 1}/{len(batches)}）...")
-        items = annotate_batch(slice_pairs, target_lang, provider, api_key, model)
-        if not items:
-            failed_batches += 1
+        eligible_local_indexes = [
+            index for index in range(len(slice_pairs))
+            if offset + index not in blocked_source_indexes
+        ]
+        eligible_pairs = [slice_pairs[index] for index in eligible_local_indexes]
+        if not eligible_pairs:
+            state["annotations"] = annotations
+            state["annotations_done_offset"] = offset + len(slice_pairs)
+            save_job_state(job_id, state)
+            continue
+        items = annotate_batch(eligible_pairs, target_lang, provider, api_key, model)
+        batch_results[str(offset)] = {
+            "status": getattr(items, "status", "success" if items else "empty"),
+            "error": getattr(items, "error", ""),
+            "segment_count": len(slice_pairs),
+        }
+        if batch_results[str(offset)]["status"] in {"success", "empty"}:
+            for gi in range(offset, offset + len(slice_pairs)):
+                annotations.pop(gi, None)
         for item in items:
-            gi = offset + item["seg"]
+            local_index = item.get("seg")
+            if (not isinstance(local_index, int)
+                    or not 0 <= local_index < len(eligible_local_indexes)):
+                continue
+            gi = offset + eligible_local_indexes[local_index]
             src, tgt, atype, note = item["src"], item["tgt"], item["type"], item["note"]
             src_span = _find_span(pairs[gi]["source"], src)
             tgt_span = _find_span(pairs[gi]["target"], tgt) if tgt else None
-            if atype == "hard":
-                # 难句兜底：找不到精确片段时标整段
-                if src_span is None:
-                    src_span = (0, len(pairs[gi]["source"]))
-                if tgt_span is None:
-                    tgt_span = (0, len(pairs[gi]["target"])) if pairs[gi]["target"] else None
-            elif src_span is None:
-                continue  # 词级标注必须在原文中定位
+            # 原文片段必须能精确匹配定位，绝不允许整段粗暴兜底；译文未定位时不强制整段染色
+            if src_span is None:
+                continue
             annotations.setdefault(gi, []).append(
-                {"type": atype, "src_span": list(src_span) if src_span else None,
+                {"type": atype, "src_span": list(src_span),
                  "tgt_span": list(tgt_span) if tgt_span else None, "note": note})
         # 每批落盘：断点粒度 = 一个批次
         state["annotations"] = annotations
-        state["annotations_done_offset"] = offset + len(slice_pairs)
+        state["annotations_done_offset"] = max(done_offset, offset + len(slice_pairs))
         save_job_state(job_id, state)
+        if job_id:
+            update_runtime_state(
+                job_id, heartbeat=True,
+                stage_progress={"completed": min(offset + len(slice_pairs), len(pairs)),
+                                "total": len(pairs), "unit": "段"}
+            )
 
-    # 2) 术语表确定性覆盖：专业名词（特殊译法）-> 黄色
+    # 2) 术语表确定性覆盖：专业名词（特殊译法）-> 黄色（受停用词、长度和全文频次控制）
+    term_counts = {}
     for gi, pr in enumerate(pairs):
+        if gi in blocked_source_indexes:
+            continue
         for entry in glossary:
             term = (entry.get("source") or "").strip()
+            tgt_term = (entry.get("target") or "").strip()
+            term_lower = term.lower()
             if len(term) < 2 or term not in pr["source"]:
                 continue
+            if not _domain_ok(term, tgt_term):
+                continue
+            tokens = re.findall(r"[A-Za-z]+(?:['’\-][A-Za-z]+)*", term)
+            if len(tokens) > 5 or len(term) > 40:
+                continue
+            if term_counts.get(term_lower, 0) >= 2:
+                continue
             span = _find_span(pr["source"], term)
-            tgt_span = None
-            tgt_term = (entry.get("target") or "").strip()
-            if tgt_term:
-                tgt_span = _find_span(pr["target"], tgt_term)
+            tgt_span = _find_span(pr["target"], tgt_term) if tgt_term else None
+            if not span or not tgt_span:
+                continue
+            if _is_split_proper_noun(span, pr["source"]):
+                continue
+            term_counts[term_lower] = term_counts.get(term_lower, 0) + 1
             annotations.setdefault(gi, []).append(
-                {"type": "domain", "src_span": list(span) if span else None,
-                 "tgt_span": list(tgt_span) if tgt_span else None,
-                 "note": f"术语：{term} -> {tgt_term or '保留原文'}"})
+                {"type": "domain", "src_span": list(span),
+                 "tgt_span": list(tgt_span),
+                 "note": f"术语：{term} -> {tgt_term}"})
 
     # 3) 确定性过滤（常用词/称谓/全常用词短语）+ 去重 + 数量上限
     cleaned = _clean_annotations(annotations, pairs)
     state["annotations"] = cleaned
-    state["annotations_done"] = True
+    failed_batches = sum(result.get("status") in {"request_failed", "parse_failed", "stale"}
+                         for result in batch_results.values())
+    state["annotations_done"] = failed_batches == 0
+    state["annotations_status"] = "partial" if failed_batches else "success"
     state["annotations_failed_batches"] = failed_batches
     save_job_state(job_id, state)
+    if job_id:
+        update_runtime_state(
+            job_id, heartbeat=True,
+            stage_progress={"completed": len(pairs), "total": len(pairs), "unit": "段"}
+        )
     if on_caption:
         total = sum(len(v) for v in cleaned.values())
-        on_caption(f"✅ 自动标注完成：{total} 处（失败批次 {failed_batches}/{len(batches)}）")
+        on_caption(f"{'⚠️ 自动标注部分完成' if failed_batches else '✅ 自动标注完成'}："
+                   f"{total} 处（失败批次 {failed_batches}/{len(batches)}；可继续处理补跑失败批次）")
     return state
 
 
+DEFAULT_REVIEW_OVERLAP = False
+DEFAULT_MAX_REVIEW_IN_FLIGHT = 2
+DEFAULT_REVIEW_OVERLAP_STRATEGY = "generated"
+
+
+def review_overlap_enabled(review_overlap=None, pipeline_config=None) -> bool:
+    """Return whether review overlap is enabled.
+
+    Priority:
+    1. review_overlap parameter (if explicitly given)
+    2. pipeline_config["review_overlap"] / pipeline_config["review_overlap_enabled"]
+    3. env FOLITH_REVIEW_OVERLAP / FOLIOTHREAD_REVIEW_OVERLAP
+    4. False (default)
+    """
+    if review_overlap is not None:
+        return bool(review_overlap)
+    if isinstance(pipeline_config, dict):
+        if "review_overlap" in pipeline_config:
+            return bool(pipeline_config["review_overlap"])
+        if "review_overlap_enabled" in pipeline_config:
+            return bool(pipeline_config["review_overlap_enabled"])
+    env_val = os.getenv("FOLITH_REVIEW_OVERLAP") or os.getenv("FOLIOTHREAD_REVIEW_OVERLAP")
+    if env_val is not None:
+        return env_val.strip().lower() in ("1", "true", "yes", "on")
+    return DEFAULT_REVIEW_OVERLAP
+
+
+def review_overlap_max_in_flight(max_in_flight=None, pipeline_config=None) -> int:
+    """Return maximum in-flight reviews for review overlap."""
+    if max_in_flight is not None:
+        try:
+            return max(1, min(8, int(max_in_flight)))
+        except (TypeError, ValueError):
+            pass
+    if isinstance(pipeline_config, dict) and pipeline_config.get("max_review_in_flight") is not None:
+        try:
+            return max(1, min(8, int(pipeline_config["max_review_in_flight"])))
+        except (TypeError, ValueError):
+            pass
+    env_val = os.getenv("FOLITH_MAX_REVIEW_IN_FLIGHT") or os.getenv("FOLIOTHREAD_MAX_REVIEW_IN_FLIGHT")
+    if env_val is not None:
+        try:
+            return max(1, min(8, int(env_val)))
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_MAX_REVIEW_IN_FLIGHT
+
+
+def review_overlap_strategy_mode(strategy=None, pipeline_config=None) -> str:
+    """Return review overlap strategy mode ('generated' or 'stable')."""
+    val = strategy
+    if not val and isinstance(pipeline_config, dict):
+        val = pipeline_config.get("review_overlap_strategy")
+    if not val:
+        val = os.getenv("FOLITH_REVIEW_OVERLAP_STRATEGY") or os.getenv("FOLIOTHREAD_REVIEW_OVERLAP_STRATEGY")
+    val = str(val or "").strip().lower()
+    return val if val in ("generated", "stable") else DEFAULT_REVIEW_OVERLAP_STRATEGY
+
+
+def _execute_batch_review(
+    snapshot: _review_scheduler.BatchReviewSnapshot,
+    reviewer_call: Callable,
+    reviewer_config: Dict[str, Any],
+    job_id: str,
+    enable_review: bool,
+) -> _review_scheduler.ReviewResult:
+    """Worker task that executes semantic review & suggestion verification on an immutable snapshot.
+
+    Operates strictly on snapshot data; performs zero shared state mutations.
+    """
+    _llm_before = llm_thread_stats()
+    started_at = time.perf_counter()
+    if not enable_review:
+        return _review_scheduler.ReviewResult(
+            batch_index=snapshot.batch_index,
+            offset=snapshot.offset,
+            review_succeeded=False,
+            review_failed=False,
+            rfindings=[],
+            review_trace=None,
+            review_event_id=None,
+            formal_records=[],
+            promoted_review_events=[],
+            repair_overlays=[],
+            review_evidence=[],
+            accepted_suggestions={},
+            started_at_s=started_at,
+            finished_at_s=time.perf_counter(),
+            total_wall_s=0.0,
+        )
+    if not snapshot.formal_segment_ids:
+        return _review_scheduler.ReviewResult(
+            batch_index=snapshot.batch_index,
+            offset=snapshot.offset,
+            review_succeeded=True,
+            review_failed=False,
+            rfindings=[],
+            review_trace=None,
+            review_event_id=None,
+            formal_records=[],
+            promoted_review_events=[],
+            repair_overlays=[],
+            review_evidence=[],
+            accepted_suggestions={},
+            started_at_s=started_at,
+            finished_at_s=time.perf_counter(),
+            total_wall_s=0.0,
+        )
+
+    rfindings = []
+    review_failed = False
+    review_succeeded = False
+    review_trace = None
+    review_event_id = None
+    formal_records = []
+    promoted_review_events = []
+    repair_overlays = []
+    review_evidence = []
+    accepted_suggestions = {}
+
+    rfindings, failed, review_trace = (
+        _translation_evidence.review_translation_batch_with_evidence(
+            [snapshot.source_texts[segment_id - snapshot.offset]
+             for segment_id in snapshot.formal_segment_ids],
+            [snapshot.generated_targets[segment_id - snapshot.offset]
+             for segment_id in snapshot.formal_segment_ids],
+            snapshot.glossary_text,
+            snapshot.style_rules,
+            snapshot.target_lang,
+            reviewer_config["provider"],
+            reviewer_config["api_key"],
+            reviewer_config["model"],
+            snapshot.evidence_index,
+            call_llm=reviewer_call,
+            segment_ids=snapshot.formal_segment_ids,
+            translation_core_packet=snapshot.formal_packet,
+        )
+    )
+
+    review_event_id = (
+        f"translation-review-{job_id}-{snapshot.batch_index}-formal-"
+        f"{snapshot.base_evidence_count}"
+    )
+    if review_trace:
+        review_trace["review_event_id"] = review_event_id
+
+    if failed:
+        review_failed = True
+    else:
+        review_succeeded = True
+        global_to_local = {
+            snapshot.offset + index: index for index in range(len(snapshot.batch_pairs))
+        }
+        for rf in rfindings:
+            sev = rf.get("severity")
+            if sev not in ("blocking", "actionable", "informational"):
+                continue
+            segment_id = rf.get("segment_id")
+            idx = global_to_local.get(segment_id)
+            if idx is None:
+                continue
+            record = _review_finding_record(rf, review_event_id)
+            if (
+                sev == "actionable"
+                and rf.get("suggested_target")
+                and idx not in snapshot.blocked_local_indexes
+                and not snapshot.batch_pairs[idx].get("from_tm")
+            ):
+                suggested = clean_xml_chars(rf["suggested_target"]).replace("\n", " ").strip()
+                if suggested:
+                    old_target = snapshot.generated_targets[idx]
+                    overlay = _repair.create_overlay(
+                        [old_target],
+                        [suggested],
+                        [rf],
+                        "review_suggested",
+                        sources=[snapshot.source_texts[idx]],
+                        finding_segment_ids=[segment_id],
+                    )
+                    recheck = _globalize_batch_findings(
+                        check_translation_batch(
+                            [snapshot.source_texts[idx]],
+                            [suggested],
+                            snapshot.glossary,
+                            snapshot.target_lang,
+                            section_profile=snapshot.section_profile,
+                        ),
+                        segment_id,
+                    )
+                    blind_trace = None
+                    blind_findings = []
+                    blind_failed = False
+                    if not any(f["severity"] in ("blocking", "actionable") for f in recheck):
+                        blind_index = _translation_evidence_index(
+                            snapshot.paras,
+                            snapshot.committed_pairs,
+                            snapshot.batch_pairs,
+                            snapshot.glossary,
+                            snapshot.document_profile,
+                            snapshot.document_synopsis,
+                            snapshot.section_digests,
+                            snapshot.findings_all,
+                            blind=True,
+                            candidate_targets={segment_id: suggested},
+                        )
+                        suggested_packet = _translation_evidence.build_runtime_review_packet(
+                            snapshot.state_ref,
+                            [snapshot.batch_pairs[idx]],
+                            [segment_id],
+                            snapshot.glossary,
+                            deterministic_checks=recheck,
+                            review_context=snapshot.review_context,
+                            candidate_targets={segment_id: suggested},
+                            blind=True,
+                        )
+                        blind_findings, blind_failed, blind_trace = (
+                            _translation_evidence.review_translation_batch_with_evidence(
+                                [snapshot.source_texts[idx]],
+                                [suggested],
+                                snapshot.glossary_text,
+                                snapshot.style_rules,
+                                snapshot.target_lang,
+                                reviewer_config["provider"],
+                                reviewer_config["api_key"],
+                                reviewer_config["model"],
+                                blind_index,
+                                call_llm=reviewer_call,
+                                blind=True,
+                                segment_ids=[segment_id],
+                                review_identity={
+                                    "input_hash": overlay["input_hash"],
+                                    "candidate_hash": overlay["candidate_hash"],
+                                },
+                                translation_core_packet=suggested_packet,
+                            )
+                        )
+                    overlay = _repair.evaluate_overlay(
+                        overlay,
+                        recheck,
+                        blind_findings,
+                        blind_failed,
+                        review_identity=(blind_trace or {}).get("review_identity"),
+                    )
+                    repair_overlays.append({
+                        "batch": snapshot.batch_index,
+                        "offset": snapshot.offset,
+                        "batch_local_ordinal": idx,
+                        "segment_id": segment_id,
+                        **overlay,
+                        "blind_trace": blind_trace,
+                    })
+                    if overlay["status"] == "accepted":
+                        accepted_suggestions[idx] = suggested
+                        if blind_trace:
+                            promoted_review_events.append((
+                                blind_trace,
+                                f"translation-review-{job_id}-{snapshot.batch_index}-suggested-"
+                                f"{segment_id}-{len(promoted_review_events)}",
+                                segment_id,
+                            ))
+                    else:
+                        record["suggested_target"] = suggested
+                        formal_records.append(record)
+                        if blind_trace:
+                            review_evidence.append({
+                                "batch": snapshot.batch_index,
+                                "phase": "suggested_shadow_review",
+                                **blind_trace,
+                            })
+                    continue
+            formal_records.append(record)
+
+    finished_at = time.perf_counter()
+    _llm_delta = llm_thread_stats_delta(_llm_before)
+    return _review_scheduler.ReviewResult(
+        batch_index=snapshot.batch_index,
+        offset=snapshot.offset,
+        review_succeeded=review_succeeded,
+        review_failed=review_failed,
+        rfindings=rfindings,
+        review_trace=review_trace,
+        review_event_id=review_event_id,
+        formal_records=formal_records,
+        promoted_review_events=promoted_review_events,
+        repair_overlays=repair_overlays,
+        review_evidence=review_evidence,
+        accepted_suggestions=accepted_suggestions,
+        api_latency_s=float(_llm_delta.get("api_latency_s", 0.0) or 0.0),
+        llm_requests=int(_llm_delta.get("requests", 0) or 0),
+        llm_failures=int(_llm_delta.get("failures", 0) or 0),
+        started_at_s=started_at,
+        finished_at_s=finished_at,
+        total_wall_s=finished_at - started_at,
+    )
+
+
+@_exclusive_job_execution(1)
 def translate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
                     style_rules, enable_review, use_tm=True, document_profile=None,
                     on_status=None, on_caption=None, translator_config=None,
                     reviewer_config=None, batch_size=None, max_batch_chars=None,
                     auxiliary_config=None, knowledge_feedback_interval=None,
-                    translation_concurrency=None):
+                    translation_concurrency=None, profiler=None,
+                    review_overlap=None, max_review_in_flight=None,
+                    review_overlap_strategy=None):
     """阶段二：语义批次翻译 + 确定性检查/修复 + 独立审校 + 翻译记忆。
 
     对齐 localize-anything 经验：
@@ -3644,13 +5315,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     usage_ledger = state.setdefault("llm_usage", _usage.empty_usage())
     translator_call = _model_roles.make_role_call(
         _usage.tracked_call(call_llm, usage_ledger, role="translation"),
-        translator_config)
+        translator_config, job_id=job_id)
     reviewer_call = _model_roles.make_role_call(
         _usage.tracked_call(call_llm, usage_ledger, role="review"),
-        reviewer_config)
+        reviewer_config, job_id=job_id)
     auxiliary_call = _model_roles.make_role_call(
         _usage.tracked_call(call_llm, usage_ledger, role="auxiliary"),
-        auxiliary_config)
+        auxiliary_config, job_id=job_id)
     _tm_project = tm_project_id(state)
     # 目标语言是 TM 作用域的一部分：没有它就不建立任何命中路径（fail closed）。
     _tm_lang = str(target_lang or "").strip() or str(state.get("target_lang") or "").strip()
@@ -3684,18 +5355,209 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     }
     truncated_indexes = []
 
-    def _commit_translation_batch(batch_pairs, offset):
-        nonlocal truncated_indexes
+    # Bounded snapshot cadence for automatic translation generation.  A full
+    # authoritative snapshot per batch makes cumulative writes grow with the
+    # square of the document length; deferring to a bounded window keeps
+    # `state.json` authoritative while cutting that growth by the cadence
+    # factor.  The crash window is a hard cap (see state_snapshot_crash_window).
+    # `_cadence` is filled in once the batch plan is known (the cap is a
+    # fraction of the document).
+    _cadence = {"every_batches": 1, "max_interval_s": STATE_SNAPSHOT_MAX_INTERVAL_S,
+                "journal_bytes": 0, "journal_fraction": 0.0}
+    _pending_snapshot_batches = 0
+    _last_snapshot_at = time.perf_counter()
+    _snapshot_stats = {"taken": 0, "deferred": 0}
+    # The journal carries every committed batch, so a crash is repaired by
+    # replay instead of re-translation.  Sequence numbers continue from the
+    # snapshot's cursor, which keeps them monotonic across the rotations that
+    # follow each snapshot.
+    _journal_enabled = state_journal_enabled()
+    _journal_seq = _state_journal.cursor(state)
+    _journal_retire_pending = False
+    _journal_bytes_written = _state_journal.size(job_id) if _journal_enabled else 0
+    _journal_stats = {"records": 0, "bytes": 0, "unusable": 0, "budget_bytes": 0}
+    # Replay budget: a floor for small documents, otherwise a multiple of the
+    # snapshot's own size.  Recomputed at every flush (see `_refresh_budget`),
+    # never per batch -- a `stat` per batch would be a syscall on the hot path
+    # for a number that only changes when a snapshot is written.
+    _journal_budget_bytes = _cadence["journal_bytes"]
+
+    def _refresh_budget():
+        """Resize the replay budget against the snapshot that just landed."""
+        nonlocal _journal_budget_bytes
+        floor = _cadence["journal_bytes"]
+        fraction = _cadence.get("journal_fraction") or 0.0
+        if not floor:
+            _journal_budget_bytes = 0
+            return
+        if not fraction:
+            _journal_budget_bytes = floor
+            return
+        try:
+            snapshot_bytes = job_state_path(job_id).stat().st_size
+        except OSError:
+            snapshot_bytes = 0
+        _journal_budget_bytes = max(floor, int(snapshot_bytes * fraction))
+        _journal_stats["budget_bytes"] = _journal_budget_bytes
+    # TM promotions ride the same window as the state snapshot.  `tm.json` is a
+    # derived cache (see `save_tm`), so its write cadence is a performance knob
+    # rather than a truth knob -- but it must stay *consistent* with the
+    # snapshot, which is why the two flush together instead of on independent
+    # schedules.  State is written first: that keeps the snapshot ahead of the
+    # cache, which is the direction recovery can repair from.
+    _pending_tm_entries = []
+    _pending_tm_window = {"batch": None, "offset": 0}
+
+    def _flush_tm_promotions():
+        """Persist accumulated promotions, paired with their evidence events.
+
+        The `tm_promotion_pending` / `tm_promotion_done` pair is emitted around
+        the actual write, so a crash can still distinguish "promoted" from
+        "merely intended" -- the same contract as one-write-per-batch, just
+        with a coarser granularity.
+        """
+        if not _pending_tm_entries:
+            return
+        entries = list(_pending_tm_entries)
+        _pending_tm_entries.clear()
+        batch_index = _pending_tm_window["batch"]
+        offset = _pending_tm_window["offset"]
+        safe_append_event({
+            "batch": batch_index, "offset": offset,
+            "phase": "tm_promotion_pending", "entries": entries,
+        })
+        started = time.perf_counter()
+        started_cpu = time.thread_time()
+        save_tm(tm, _tm_project)
+        finished = time.perf_counter()
+        _record_batch_stage(
+            "tm_commit", batch_index if batch_index is not None else 0,
+            (started, finished), tm_entry_count=len(entries))
+        _critical_path.profiler().record(
+            "commit_tm_promotion_flush", finished - started,
+            cpu_s=time.thread_time() - started_cpu)
+        _critical_path.count("tm_promotion_flush_count")
+        safe_append_event({
+            "batch": batch_index, "offset": offset,
+            "phase": "tm_promotion_done", "entries": entries,
+        })
+
+    def _flush_state_snapshot(reason):
+        """Write the authoritative snapshot now and reset the cadence window.
+
+        Order is fixed and load-bearing.  The cursor is stamped onto the state
+        *before* the snapshot is written, so the snapshot that reaches the disk
+        always claims exactly the journal records it contains -- never fewer
+        (which would replay them twice) and never more (which would drop them).
+        The journal is retired only after the atomic replace has succeeded.
+        """
+        nonlocal _pending_snapshot_batches, _last_snapshot_at
+        nonlocal _journal_bytes_written, _journal_retire_pending
+        stopped = _workflow_errors.failure(job_id)
+        if stopped is not None and stopped.reason == "disk_full":
+            raise stopped
+        if _journal_seq:
+            _state_journal.set_cursor(state, _journal_seq)
+        # `save_job_state` performs the compaction step (it retires the journal
+        # once the snapshot provably contains every record).  Compaction order
+        # is fixed: new snapshot -> temp -> atomic replace -> retire journal.
+        save_job_state(job_id, state)
+        if _journal_retire_pending:
+            _state_journal.rotate(job_id)
+            _journal_retire_pending = False
+            _journal_bytes_written = 0
+        if _journal_enabled:
+            _journal_bytes_written = _state_journal.size(job_id)
+            _refresh_budget()
+        _flush_tm_promotions()
+        _pending_snapshot_batches = 0
+        _last_snapshot_at = time.perf_counter()
+        _snapshot_stats["taken"] += 1
+        _critical_path.count("state_snapshot_taken")
+        safe_append_event({
+            "batch": None, "offset": len(pairs), "phase": "state_snapshot",
+            "reason": reason, "pairs_count": len(pairs),
+        })
+
+    def _commit_translation_batch(batch_pairs, offset, bi, baseline, patches,
+                                  segment_ids):
+        nonlocal truncated_indexes, _pending_snapshot_batches, _cadence
+        nonlocal _journal_seq, _journal_bytes_written, _journal_enabled
+        nonlocal _journal_retire_pending
         pairs.extend(batch_pairs)
         changed_indexes = list(range(offset, offset + len(batch_pairs)))
         if changed_indexes:
-            _mark_translation_truth_changed(
-                job_id, state, changed_indexes,
-                "翻译流水线写入 CURRENT_TRANSLATION；记录该批次影响范围",
-                actor="pipeline", action="translation_batch",
-                stale_translation_reviews=False)
+            # Measured separately from the save itself: recording the truth
+            # mutation is real per-batch work that the opaque ``state_commit``
+            # stage used to hide.
+            with _persistence_profiler.phase("truth_marking"):
+                _mark_translation_truth_changed(
+                    job_id, state, changed_indexes,
+                    "翻译流水线写入 CURRENT_TRANSLATION；记录该批次影响范围",
+                    actor="pipeline", action="translation_batch",
+                    stale_translation_reviews=False, patches=patches)
         truncated_indexes = []
-        save_job_state(job_id, state)
+        # The record is built here, after every state mutation for this batch and
+        # before the cadence decision, so it describes the committed batch
+        # exactly and is on disk before the window that may swallow it.
+        record = None
+        if _journal_enabled:
+            record = build_batch_journal_record(
+                state, baseline, patches, batch=bi, offset=offset,
+                segment_ids=segment_ids, pairs=batch_pairs)
+        if record is not None:
+            _journal_seq += 1
+            record["seq"] = _journal_seq
+            try:
+                _, _written = _state_journal.append_mutation(job_id, record)
+            except OSError as exc:
+                _workflow_errors.raise_if_fatal(exc, job_id)
+                _written = None
+            if _written is None:
+                record = None
+                _journal_seq -= 1
+            else:
+                _journal_bytes_written += _written
+                _journal_stats["records"] += 1
+                _journal_stats["bytes"] += _written
+        # Only a *missing* record while the journal is on is a problem.  With the
+        # journal off there is nothing to describe, and the bounded cadence is
+        # the durability mechanism -- exactly as before this round.
+        fallback = record is None and _journal_enabled
+        if fallback:
+            _journal_stats["unusable"] += 1
+        _pending_snapshot_batches += 1
+        elapsed = time.perf_counter() - _last_snapshot_at
+        due = False
+        if _cadence["every_batches"] \
+                and _pending_snapshot_batches >= _cadence["every_batches"]:
+            due = True
+        elif _cadence["max_interval_s"] \
+                and elapsed >= _cadence["max_interval_s"]:
+            # 0.0 disables the trigger outright; without this guard a 0.0 would
+            # mean "snapshot on every batch", the opposite of the intent.
+            due = True
+        elif _journal_budget_bytes \
+                and _journal_bytes_written >= _journal_budget_bytes:
+            due = True
+        if fallback:
+            # Preserve the old durable journal until the complete replacement
+            # snapshot succeeds, including when another cadence trigger fired.
+            due = True
+            _journal_enabled = False
+            _journal_retire_pending = True
+            _cadence = state_snapshot_cadence(
+                total_batches=len(batches), journal=False)
+            _refresh_budget()
+            safe_append_event({
+                "batch": bi, "offset": offset,
+                "phase": "state_journal_disabled",
+                "reason": "unusable_batch_delta",
+            })
+        if due:
+            _flush_state_snapshot("cadence")
+        else:
+            _snapshot_stats["deferred"] += 1
 
     def _save_translation_failure():
         nonlocal truncated_indexes
@@ -3705,7 +5567,9 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 "断点恢复截断未完成批次；CURRENT_TRANSLATION 已改变",
                 actor="pipeline", action="translation_checkpoint_truncate")
             truncated_indexes = []
-        save_job_state(job_id, state)
+        # A truncated/failed batch is a mandatory immediate snapshot: it must
+        # not wait for the cadence window.
+        _flush_state_snapshot("translation_failure")
 
     # 批次大小直接影响调用次数与耗时（本仓库 82 段文档实测：4/2400 → 32 批，
     # 6/4800 → 17 批）。默认沿用模块常量以保持既有行为，只有显式配置时才改变。
@@ -3720,6 +5584,21 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         semantic_units=state.get("semantic_units")
         or state.get("section_digests") or None)
     state["batch_plan"]["batch_count"] = len(batches)
+    # The snapshot cadence is bounded by a fraction of the document, so it can
+    # only be resolved once the batch plan exists.
+    _cadence = state_snapshot_cadence(
+        total_batches=len(batches), journal=_journal_enabled)
+    _refresh_budget()
+    state["batch_plan"]["snapshot_cadence"] = {
+        "every_batches": _cadence["every_batches"],
+        "max_interval_s": _cadence["max_interval_s"],
+        "journal_enabled": bool(_journal_enabled),
+        "journal_bytes": _cadence["journal_bytes"],
+        "journal_fraction": _cadence["journal_fraction"],
+        "journal_budget_bytes": _journal_budget_bytes,
+        "crash_window_segments": state_snapshot_crash_window(
+            batch_size=effective_batch_size, total_batches=len(batches)),
+    }
     # Knowledge extraction is a continuity aid, not a second translation pass.
     # In strict/review mode it remains per-batch; in ordinary mode it observes
     # every batch until continuity exists, then observes at a bounded interval.
@@ -3769,7 +5648,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         if segment_index in existing_source_gate_indexes:
             continue
         findings_all.append(_source_quality_finding(flag))
-    from transpraxis.terminology import (
+    from folith.terminology import (
         detect_glossary_conflicts as _detect_conflicts,
         glossary_block as _glossary_block,
         select_glossary_for_segments as _select_glossary,
@@ -3799,16 +5678,70 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     checkpoint_lock = threading.RLock()
     commit_lock = threading.RLock()
     active_batches = set()
+    runtime_batches_saved = [start_batch]
+
+    def _translation_runtime(operation_id, label, *, saved=False):
+        if not (on_status or on_caption):
+            return
+        with commit_lock:
+            if saved:
+                runtime_batches_saved[0] += 1
+            update_runtime_state(
+                job_id, status="running", stage="translation", stage_id="translation",
+                operation=operation_id, operation_id=operation_id, operation_label=label,
+                phase=operation_id, phase_label=label, progress=True,
+                stage_progress={"completed": runtime_batches_saved[0], "total": len(batches),
+                                "unit": "批次", "in_flight": [i + 1 for i in sorted(active_batches)]},
+                event=label, event_name=operation_id,
+                event_visibility="user", event_category="progress")
+
+    # Translation-phase instrumentation. Same vocabulary as the PDF stages: one
+    # stage per real sub-phase, wall time and item counts only. Recording a
+    # timing never changes whether a batch succeeds, fails or is resumed.
+    _translation_stages = {}
+    _telemetry_start = runtime_persistence_stats()
+    if profiler is not None:
+        for _stage_name, _stage_meta in (
+            ("translation_generation", {"phase": "generation"}),
+            ("translation_deterministic_qa", {"phase": "deterministic_qa"}),
+            ("translation_repair", {"phase": "repair"}),
+            ("translation_semantic_review", {"phase": "semantic_review"}),
+            ("knowledge_feedback", {"phase": "knowledge_feedback"}),
+            ("state_commit", {"phase": "state_commit"}),
+            ("tm_commit", {"phase": "tm_commit"}),
+            ("runtime_telemetry", {"phase": "runtime_telemetry"}),
+        ):
+            _translation_stages[_stage_name] = profiler.start_stage(
+                _stage_name, concurrency=effective_concurrency,
+                batch_count=len(batches), metadata=_stage_meta)
+
+    def _record_batch_stage(stage_name, bi, timing, **extra_metadata):
+        stage = _translation_stages.get(stage_name)
+        if stage is None or not timing:
+            return
+        started, finished = timing
+        stage.item(
+            f"batch-{bi + 1}", started, finished_monotonic=finished,
+            queue_wait_s=float(extra_metadata.pop("queue_wait_s", 0.0) or 0.0),
+            api_latency_s=float(extra_metadata.pop("api_latency_s", 0.0) or 0.0),
+            retry_count=int(extra_metadata.pop("retry_count", 0) or 0),
+            metadata={"kind": "batch", "batch_index": bi + 1, **extra_metadata},
+        )
+
 
     def safe_append_event(event):
         with checkpoint_lock:
-            _checkpoint.append_event(job_dir(job_id), event)
+            try:
+                _checkpoint.append_event(job_dir(job_id), event)
+            except OSError as exc:
+                _workflow_errors.raise_if_fatal(exc, job_id)
+                raise
 
     inherited_base_url = getattr(_LLM_CTX, "base_url", None)
     inherited_reasoning = getattr(_LLM_CTX, "reasoning_effort", None)
     inherited_job_id = getattr(_RUNTIME_CTX, "job_id", job_id)
 
-    def _process_batch_payload(bi):
+    def _process_batch_payload(bi, run_review=True, effective_pairs=None):
         if inherited_base_url is not None:
             _LLM_CTX.base_url = inherited_base_url
         if inherited_reasoning is not None:
@@ -3824,12 +5757,23 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             "batch": bi, "offset": offset, "phase": "generation_started",
             "segment_count": len(batch),
         })
+        # Phase timers. `_mark(name)` closes the interval that started at the
+        # previous mark, so every stage below reports its own wall time.
+        timings = {}
+        _phase_mark = [time.perf_counter()]
+        _llm_before = llm_thread_stats()
+
+        def _mark(name):
+            now = time.perf_counter()
+            timings[name] = (_phase_mark[0], now)
+            _phase_mark[0] = now
 
         with commit_lock:
             active_batches.add(bi)
         if on_caption:
             active_str = " ".join(f"#{i + 1}" for i in sorted(active_batches))
             on_caption(f"🌍 正在翻译第 {offset + 1}-{offset + len(batch)} 段（并发批次 {active_str}，共 {len(paras)} 段）...")
+        _translation_runtime("context_build", f"正在构建第 {bi + 1} 批翻译上下文")
 
         try:
             ctx_prev = [
@@ -3845,11 +5789,14 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 if index not in blocked_source_indexes
             ]
             with commit_lock:
-                previous_target = [
-                    item for item in _context.select_target_context(
-                        pairs, offset, limit=max(2, offset))
-                    if item.get("segment_index") not in blocked_source_indexes
-                ][-2:]
+                pairs_to_query = pairs if effective_pairs is None else effective_pairs
+                # 这里只需要"最近 2 段"。原式传 limit=max(2, offset) 再取 [-2:] —— 等价，
+                # 但 `select_target_context` 会 list(pairs)[:offset] 并为每个历史段落建字典，
+                # 每批 O(offset)、整篇 O(n²)（20k 段实测占 setup 65%）。尾部快路径与它逐字
+                # 等价，由 tests/context_target_selection_equivalence_test.py 逐例差分守住。
+                previous_target = _context.recent_target_context(
+                    pairs_to_query, offset, 2,
+                    exclude_indexes=blocked_source_indexes)
             section_digest = _context.digest_for_segment(section_digests, offset)
 
             # 1) 翻译记忆精确命中直接复用
@@ -3863,9 +5810,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 if source_flag is not None:
                     blocked_local_indexes.add(i)
                     batch_pairs[i] = {
-                        "source": clean_src, "target": clean_src,
-                        "initial_target": clean_src,
-                        "accepted_target": clean_src,
+                        "source": clean_src, "target": "",
+                        "initial_target": "",
                         "target_provenance": "source_review_required",
                         "reviewed": False,
                         "review_status": "source_review_required",
@@ -3873,8 +5819,12 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                         "source_quality": dict(source_flag),
                     }
                     continue
+                _tm_t0 = time.perf_counter()
                 hit, tm_match = tm_lookup(tm, clean_src, tm_norm_index,
                                           target_lang=_tm_lang)
+                _tm_dur_ms = (time.perf_counter() - _tm_t0) * 1000.0
+                trace.record_tm_lookup(hit_type=tm_match if hit else "miss",
+                                       duration_ms=_tm_dur_ms, job_id=job_id)
                 if hit:
                     batch_pairs[i] = {"source": clean_src, "target": hit["target"],
                                       "initial_target": hit["target"],
@@ -3899,31 +5849,37 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             with commit_lock:
                 provisional_hints = _knowledge.provisional_hints(
                     state.get("knowledge_candidates") or [],
-                    authoritative_entries=glossary)
+                    authoritative_entries=glossary, sources=texts)
                 entity_hints = registry.hints_for(
                     texts, glossary_entries=glossary, limit=12)
+            _term_t0 = time.perf_counter()
             selected, injected_ids = _select_glossary(
                 texts, glossary + provisional_hints,
                 document_profile, section_profile)
+            _term_dur_ms = (time.perf_counter() - _term_t0) * 1000.0
+            trace.record_terminology_lookup(matches=len(selected), duration_ms=_term_dur_ms, job_id=job_id)
             glossary_text = _glossary_block(selected)
-            context_packet = _context.compile_context_packet(
-                document_profile=document_profile,
-                document_synopsis=document_synopsis,
-                section_digest=section_digest,
-                glossary_text=glossary_text,
-                previous_source=ctx_prev,
-                previous_target=previous_target,
-                next_source=ctx_next,
-                current_batch=texts,
-                style_rules=style_rules,
-                entity_hints=entity_hints,
-                context_budget_chars=max(5200, min(12000, effective_max_chars * 3)),
-            )
+            with trace.span("translation", operation="context_build", job_id=job_id, items_in=len(texts)):
+                context_packet = _context.compile_context_packet(
+                    document_profile=document_profile,
+                    document_synopsis=document_synopsis,
+                    section_digest=section_digest,
+                    glossary_text=glossary_text,
+                    previous_source=ctx_prev,
+                    previous_target=previous_target,
+                    next_source=ctx_next,
+                    current_batch=texts,
+                    style_rules=style_rules,
+                    entity_hints=entity_hints,
+                    context_budget_chars=max(5200, min(12000, effective_max_chars * 3)),
+                )
             review_context = _runtime_review_context(
                 state, offset, len(batch), glossary_text, style_rules, target_lang)
 
             # 2) 未命中段落批次翻译
+            _mark("_setup")
             if to_translate:
+                _translation_runtime("translation_generation", f"正在翻译第 {offset + 1}–{offset + len(batch)} 段")
                 try:
                     targets = translate_batch(texts, ctx_prev, ctx_next, glossary_text, style_rules,
                                               target_lang, translator_config["provider"],
@@ -3932,6 +5888,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                                               context_packet=context_packet,
                                               call_llm_fn=translator_call)
                 except RuntimeError as batch_error:
+                    _workflow_errors.raise_if_fatal(batch_error, job_id)
                     if "任务已请求取消" in str(batch_error):
                         raise
                     failure = {
@@ -3984,12 +5941,15 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             safe_append_event({
                 "batch": bi, "offset": offset, "phase": "generation_done",
             })
+            _mark("translation_generation")
+            _translation_runtime("translation_qa", f"正在检查第 {bi + 1} 批译文")
             findings = [
                 finding for finding in check_translation_batch(
                     batch_sources, batch_targets, glossary, target_lang,
                     section_profile=section_profile)
                 if finding.get("segment_index") not in blocked_local_indexes
             ]
+            _mark("translation_deterministic_qa")
 
             # 3) 确定性问题自动修复（一轮）
             fixable = [
@@ -3997,26 +5957,49 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 if f["severity"] in ("blocking", "actionable")
                 and f.get("segment_index") not in blocked_local_indexes
             ]
+            reviewable_local_indexes = [
+                index for index in range(len(batch_pairs))
+                if index not in blocked_local_indexes
+            ]
+            reviewable_segment_ids = [offset + index
+                                      for index in reviewable_local_indexes]
             repair_overlays_to_record = []
             review_evidence_to_record = []
             if fixable and len(fixable) <= 8:
                 if on_caption:
                     on_caption(f"🔧 批次 {bi + 1} 发现 {len(fixable)} 个确定性问题，正在自动修复...")
                 try:
-                    repaired = repair_batch(batch_sources, batch_targets, fixable, glossary_text,
+                    repair_local_indexes = [
+                        index for index in range(len(batch_pairs))
+                        if index not in blocked_local_indexes
+                    ]
+                    repair_local_position = {
+                        local_index: position
+                        for position, local_index in enumerate(repair_local_indexes)
+                    }
+                    repair_findings = [
+                        {**finding,
+                         "segment_index": repair_local_position[finding["segment_index"]]}
+                        for finding in fixable
+                    ]
+                    repaired = repair_batch(
+                        [batch_sources[index] for index in repair_local_indexes],
+                        [batch_targets[index] for index in repair_local_indexes],
+                        repair_findings, glossary_text,
                                             style_rules, target_lang,
                                             translator_config["provider"],
                                             translator_config["api_key"],
                                             translator_config["model"],
                                             call_llm_fn=translator_call)
-                    if repaired and len(repaired) == len(batch_pairs):
+                    if repaired and len(repaired) == len(repair_local_indexes):
                         formal_targets = list(batch_targets)
                         shadow_targets = list(formal_targets)
-                        for j, p in enumerate(batch_pairs):
-                            if j in blocked_local_indexes:
-                                continue
-                            if not p["from_tm"] and repaired[j] and repaired[j].strip():
-                                candidate = clean_xml_chars(repaired[j]).replace('\n', ' ')
+                        for position, j in enumerate(repair_local_indexes):
+                            p = batch_pairs[j]
+                            if (not p["from_tm"] and repaired[position]
+                                    and repaired[position].strip()):
+                                candidate = clean_xml_chars(
+                                    repaired[position]).replace('\n', ' ')
                                 if is_incomplete_translation(batch_sources[j], candidate) \
                                         and not is_incomplete_translation(batch_sources[j], formal_targets[j]):
                                     continue
@@ -4029,36 +6012,50 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                             batch_sources, shadow_targets, glossary, target_lang,
                             section_profile=section_profile)
                         shadow_findings = _globalize_batch_findings(shadow_findings, offset)
+                        shadow_findings = [
+                            finding for finding in shadow_findings
+                            if (isinstance(finding.get("segment_index"), int)
+                                and finding["segment_index"] - offset
+                                not in blocked_local_indexes)
+                        ]
                         blind_findings, blind_failed, blind_trace = [], False, None
                         if enable_review and not any(
                                 f["severity"] in ("blocking", "actionable")
                                 for f in shadow_findings):
-                            with commit_lock:
-                                current_pairs = list(pairs)
-                                current_findings_all = list(findings_all)
+                            with _critical_path.phase("repair_shadow_state_copy") as _copy_sink:
+                                with commit_lock:
+                                    current_pairs = list(pairs)
+                                    current_findings_all = list(findings_all)
+                                _copy_sink.traversed(
+                                    len(current_pairs) + len(current_findings_all))
                             shadow_index = _translation_evidence_index(
                                 paras, current_pairs, batch_pairs, glossary, document_profile,
                                 document_synopsis, section_digests, current_findings_all,
                                 blind=True,
                                 candidate_targets={offset + j: shadow_targets[j]
-                                                   for j in range(len(shadow_targets))})
+                                                   for j in reviewable_local_indexes},
+                                blocked_source_indexes=blocked_source_indexes)
+                            reviewable_pairs = [batch_pairs[j]
+                                                for j in reviewable_local_indexes]
+                            reviewable_targets = [shadow_targets[j]
+                                                  for j in reviewable_local_indexes]
                             shadow_packet = _translation_evidence.build_runtime_review_packet(
-                                state, batch_pairs,
-                                list(range(offset, offset + len(batch_pairs))),
+                                state, reviewable_pairs, reviewable_segment_ids,
                                 glossary,
                                 deterministic_checks=shadow_findings,
                                 review_context=review_context,
                                 candidate_targets={offset + j: shadow_targets[j]
-                                                   for j in range(len(shadow_targets))},
+                                                   for j in reviewable_local_indexes},
                                 blind=True,
                             )
                             blind_findings, blind_failed, blind_trace = \
                                 _translation_evidence.review_translation_batch_with_evidence(
-                                    batch_sources, shadow_targets, glossary_text, style_rules,
+                                    [batch_sources[j] for j in reviewable_local_indexes],
+                                    reviewable_targets, glossary_text, style_rules,
                                     target_lang, reviewer_config["provider"],
                                     reviewer_config["api_key"], reviewer_config["model"],
                                     shadow_index, call_llm=reviewer_call, blind=True,
-                                    segment_ids=list(range(offset, offset + len(batch_pairs))),
+                                    segment_ids=reviewable_segment_ids,
                                     review_identity={
                                         "input_hash": overlay["input_hash"],
                                         "candidate_hash": overlay["candidate_hash"],
@@ -4093,6 +6090,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             safe_append_event({
                 "batch": bi, "offset": offset, "phase": "deterministic_qa_done",
             })
+            _mark("translation_repair")
 
             # 4) 独立审校
             review_succeeded = False
@@ -4102,37 +6100,59 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             review_event_id = None
             formal_records = []
             promoted_review_events = []
-            formal_segment_ids = list(range(offset, offset + len(batch_pairs)))
-            if enable_review:
-                with commit_lock:
-                    current_pairs = list(pairs)
-                    current_findings_all = list(findings_all)
-                evidence_index = _translation_evidence_index(
-                    paras, current_pairs, batch_pairs, glossary, document_profile,
-                    document_synopsis, section_digests, current_findings_all)
-                formal_packet = _translation_evidence.build_runtime_review_packet(
-                    state, batch_pairs, formal_segment_ids, glossary,
-                    deterministic_checks=_globalize_batch_findings(findings, offset),
-                    review_context=review_context,
-                )
-                rfindings, failed, review_trace = \
-                    _translation_evidence.review_translation_batch_with_evidence(
-                        batch_sources, batch_targets, glossary_text, style_rules, target_lang,
-                        reviewer_config["provider"], reviewer_config["api_key"],
-                        reviewer_config["model"], evidence_index, call_llm=reviewer_call,
-                        segment_ids=formal_segment_ids,
-                        translation_core_packet=formal_packet)
-                review_event_id = (
-                    f"translation-review-{job_id}-{bi}-formal-"
-                    f"{len(state.get('review_evidence') or []) + len(review_evidence_to_record)}")
-                review_trace["review_event_id"] = review_event_id
-                if failed:
-                    review_failed = True
-                    for pair in batch_pairs:
-                        if not pair.get("from_tm"):
-                            pair["review_status"] = "review_failed"
-                else:
-                    review_succeeded = True
+            formal_segment_ids = reviewable_segment_ids
+            evidence_index = None
+            formal_packet = None
+            if run_review and enable_review:
+                _translation_runtime("translation_review", f"正在审校第 {bi + 1} 批译文")
+                if formal_segment_ids:
+                    with _critical_path.phase("review_input_state_copy") as _copy_sink:
+                        with commit_lock:
+                            current_pairs = list(pairs)
+                            current_findings_all = list(findings_all)
+                        _copy_sink.traversed(len(current_pairs) + len(current_findings_all))
+                    _critical_path.count("reviewer_calls_formal")
+                    evidence_index = _translation_evidence_index(
+                        paras, current_pairs, batch_pairs, glossary, document_profile,
+                        document_synopsis, section_digests, current_findings_all,
+                        blocked_source_indexes=blocked_source_indexes)
+                    reviewable_pairs = [batch_pairs[index]
+                                        for index in reviewable_local_indexes]
+                    reviewable_sources = [batch_sources[index]
+                                          for index in reviewable_local_indexes]
+                    reviewable_targets = [batch_targets[index]
+                                          for index in reviewable_local_indexes]
+                    review_findings = [
+                        finding for finding in findings
+                        if finding.get("segment_index") not in blocked_local_indexes
+                    ]
+                    formal_packet = _translation_evidence.build_runtime_review_packet(
+                        state, reviewable_pairs, formal_segment_ids, glossary,
+                        deterministic_checks=_globalize_batch_findings(
+                            review_findings, offset),
+                        review_context=review_context,
+                    )
+                    rfindings, failed, review_trace = \
+                        _translation_evidence.review_translation_batch_with_evidence(
+                            reviewable_sources, reviewable_targets, glossary_text,
+                            style_rules, target_lang, reviewer_config["provider"],
+                            reviewer_config["api_key"], reviewer_config["model"],
+                            evidence_index, call_llm=reviewer_call,
+                            segment_ids=formal_segment_ids,
+                            translation_core_packet=formal_packet)
+                    review_event_id = (
+                        f"translation-review-{job_id}-{bi}-formal-"
+                        f"{len(state.get('review_evidence') or []) + len(review_evidence_to_record)}")
+                    review_trace["review_event_id"] = review_event_id
+                    if failed:
+                        review_failed = True
+                        for pair in batch_pairs:
+                            if (not pair.get("from_tm")
+                                    and pair.get("target_provenance")
+                                    != "source_review_required"):
+                                pair["review_status"] = "review_failed"
+                    else:
+                        review_succeeded = True
                     global_to_local = {
                         offset + index: index for index in range(len(batch_pairs))
                     }
@@ -4148,81 +6168,108 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                         if sev == "actionable" and rf.get("suggested_target") \
                                 and idx not in blocked_local_indexes \
                                 and not batch_pairs[idx]["from_tm"]:
-                            suggested = clean_xml_chars(rf["suggested_target"]).replace('\n', ' ').strip()
-                            if suggested:
-                                old_target = batch_pairs[idx]["target"]
-                                overlay = _repair.create_overlay(
-                                    [old_target], [suggested], [rf], "review_suggested",
-                                    sources=[batch_sources[idx]],
-                                    finding_segment_ids=[segment_id])
-                                recheck = _globalize_batch_findings(check_translation_batch(
-                                    [batch_sources[idx]], [suggested], glossary, target_lang,
-                                    section_profile=section_profile), segment_id)
-                                blind_trace = None
-                                blind_findings = []
-                                blind_failed = False
-                                if not any(f["severity"] in ("blocking", "actionable")
-                                           for f in recheck):
-                                    with commit_lock:
-                                        cur_pairs = list(pairs)
-                                        cur_f_all = list(findings_all)
-                                    blind_index = _translation_evidence_index(
-                                        paras, cur_pairs, batch_pairs, glossary, document_profile,
-                                        document_synopsis, section_digests, cur_f_all,
-                                        blind=True, candidate_targets={segment_id: suggested})
-                                    suggested_packet = \
-                                        _translation_evidence.build_runtime_review_packet(
-                                            state, [batch_pairs[idx]], [segment_id], glossary,
-                                            deterministic_checks=recheck,
-                                            review_context=review_context,
-                                            candidate_targets={segment_id: suggested},
-                                            blind=True,
-                                        )
-                                    blind_findings, blind_failed, blind_trace = \
-                                        _translation_evidence.review_translation_batch_with_evidence(
-                                            [batch_sources[idx]], [suggested], glossary_text,
-                                            style_rules, target_lang,
-                                            reviewer_config["provider"],
-                                            reviewer_config["api_key"],
-                                            reviewer_config["model"], blind_index,
-                                            call_llm=reviewer_call, blind=True,
-                                            segment_ids=[segment_id], review_identity={
-                                                "input_hash": overlay["input_hash"],
-                                                "candidate_hash": overlay["candidate_hash"],
-                                            }, translation_core_packet=suggested_packet)
-                                overlay = _repair.evaluate_overlay(
-                                    overlay, recheck, blind_findings, blind_failed,
-                                    review_identity=(blind_trace or {}).get("review_identity"))
-                                repair_overlays_to_record.append({
-                                    "batch": bi, "offset": offset,
-                                    "batch_local_ordinal": idx,
-                                    "segment_id": segment_id, **overlay,
-                                    "blind_trace": blind_trace,
-                                })
-                                if overlay["status"] == "accepted":
-                                    batch_pairs[idx]["target"] = suggested
-                                    if blind_trace:
-                                        promoted_review_events.append((
-                                            blind_trace,
-                                            f"translation-review-{job_id}-{bi}-suggested-"
-                                            f"{segment_id}-{len(promoted_review_events)}",
-                                            segment_id,
-                                        ))
-                                else:
-                                    record["suggested_target"] = suggested
-                                    formal_records.append(record)
-                                    if blind_trace:
-                                        review_evidence_to_record.append({
-                                            "batch": bi, "phase": "suggested_shadow_review",
-                                            **blind_trace,
-                                        })
-                                continue
+                            with _critical_path.phase("reviewer_suggestion_overlay"):
+                                suggested = clean_xml_chars(rf["suggested_target"]).replace('\n', ' ').strip()
+                                if suggested:
+                                    old_target = batch_pairs[idx]["target"]
+                                    overlay = _repair.create_overlay(
+                                        [old_target], [suggested], [rf], "review_suggested",
+                                        sources=[batch_sources[idx]],
+                                        finding_segment_ids=[segment_id])
+                                    recheck = _globalize_batch_findings(check_translation_batch(
+                                        [batch_sources[idx]], [suggested], glossary, target_lang,
+                                        section_profile=section_profile), segment_id)
+                                    blind_trace = None
+                                    blind_findings = []
+                                    blind_failed = False
+                                    if not any(f["severity"] in ("blocking", "actionable")
+                                               for f in recheck):
+                                        with _critical_path.phase("review_input_state_copy") as _copy_sink:
+                                            with commit_lock:
+                                                cur_pairs = list(pairs)
+                                                cur_f_all = list(findings_all)
+                                            _copy_sink.traversed(len(cur_pairs) + len(cur_f_all))
+                                        blind_index = _translation_evidence_index(
+                                            paras, cur_pairs, batch_pairs, glossary, document_profile,
+                                            document_synopsis, section_digests, cur_f_all,
+                                            blind=True, candidate_targets={segment_id: suggested},
+                                            blocked_source_indexes=blocked_source_indexes)
+                                        suggested_packet = \
+                                            _translation_evidence.build_runtime_review_packet(
+                                                state, [batch_pairs[idx]], [segment_id], glossary,
+                                                deterministic_checks=recheck,
+                                                review_context=review_context,
+                                                candidate_targets={segment_id: suggested},
+                                                blind=True,
+                                            )
+                                        with _critical_path.phase("reviewer_blind_validation"):
+                                            blind_findings, blind_failed, blind_trace = \
+                                                _translation_evidence.review_translation_batch_with_evidence(
+                                                    [batch_sources[idx]], [suggested], glossary_text,
+                                                    style_rules, target_lang,
+                                                    reviewer_config["provider"],
+                                                    reviewer_config["api_key"],
+                                                    reviewer_config["model"], blind_index,
+                                                    call_llm=reviewer_call, blind=True,
+                                                    segment_ids=[segment_id], review_identity={
+                                                        "input_hash": overlay["input_hash"],
+                                                        "candidate_hash": overlay["candidate_hash"],
+                                                    }, translation_core_packet=suggested_packet)
+                                        _critical_path.count("reviewer_calls_blind")
+                                    overlay = _repair.evaluate_overlay(
+                                        overlay, recheck, blind_findings, blind_failed,
+                                        review_identity=(blind_trace or {}).get("review_identity"))
+                                    repair_overlays_to_record.append({
+                                        "batch": bi, "offset": offset,
+                                        "batch_local_ordinal": idx,
+                                        "segment_id": segment_id, **overlay,
+                                        "blind_trace": blind_trace,
+                                    })
+                                    if overlay["status"] == "accepted":
+                                        batch_pairs[idx]["target"] = suggested
+                                        if blind_trace:
+                                            promoted_review_events.append((
+                                                blind_trace,
+                                                f"translation-review-{job_id}-{bi}-suggested-"
+                                                f"{segment_id}-{len(promoted_review_events)}",
+                                                segment_id,
+                                            ))
+                                    else:
+                                        record["suggested_target"] = suggested
+                                        formal_records.append(record)
+                                        if blind_trace:
+                                            review_evidence_to_record.append({
+                                                "batch": bi, "phase": "suggested_shadow_review",
+                                                **blind_trace,
+                                            })
+                                    continue
                         formal_records.append(record)
+
+                else:
+                    review_succeeded = True
+                _mark("translation_semantic_review")
+            elif not run_review and enable_review and formal_segment_ids:
+                with commit_lock:
+                    current_pairs = list(pairs) if effective_pairs is None else list(effective_pairs)
+                    current_findings_all = list(findings_all)
+                evidence_index = _translation_evidence_index(
+                    paras, current_pairs, batch_pairs, glossary, document_profile,
+                    document_synopsis, section_digests, current_findings_all,
+                    blocked_source_indexes=blocked_source_indexes)
+                reviewable_pairs = [batch_pairs[index]
+                                    for index in reviewable_local_indexes]
+                formal_packet = _translation_evidence.build_runtime_review_packet(
+                    state, reviewable_pairs, formal_segment_ids, glossary,
+                    deterministic_checks=_globalize_batch_findings(findings, offset),
+                    review_context=review_context,
+                )
 
             return {
                 "bi": bi,
                 "offset": offset,
                 "batch": batch,
+                "timings": timings,
+                "llm_stats": llm_thread_stats_delta(_llm_before),
                 "batch_pairs": batch_pairs,
                 "batch_sources": batch_sources,
                 "injected_ids": injected_ids,
@@ -4241,6 +6288,11 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 "formal_segment_ids": formal_segment_ids,
                 "repair_overlays": repair_overlays_to_record,
                 "review_evidence": review_evidence_to_record,
+                "findings": findings,
+                "review_context": review_context,
+                "glossary_text": glossary_text,
+                "evidence_index": evidence_index,
+                "formal_packet": formal_packet,
             }
         finally:
             with commit_lock:
@@ -4249,6 +6301,11 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     def _commit_batch(bundle):
         bi = bundle["bi"]
         offset = bundle["offset"]
+        # Captured before anything in this batch touches state: the journal
+        # describes the delta against exactly this baseline, and no save happens
+        # between here and the record being built, so the baseline cannot drift.
+        _journal_patches = new_journal_patches()
+        _journal_before = journal_baseline(state) if _journal_enabled else None
         batch = bundle["batch"]
         batch_pairs = bundle["batch_pairs"]
         batch_sources = bundle["batch_sources"]
@@ -4266,25 +6323,61 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         promoted_review_events = bundle["promoted_review_events"]
         formal_segment_ids = bundle["formal_segment_ids"]
 
-        state.setdefault("context_packet_log", []).append({
-            "batch": bi,
-            "offset": offset,
-            **_context.context_metadata(context_packet),
-        })
-        state.setdefault("glossary_injection_log", []).append({
-            "batch": bi,
-            "offset": offset,
-            "entry_ids": injected_ids,
-            "glossary_version": (state.get("glossary_frozen") or {}).get("version"),
-            "glossary_hash": (state.get("glossary_frozen") or {}).get("glossary_hash"),
-            "entity_hint_count": len(bundle.get("entity_hints") or []),
-            "document_synopsis_summary": (document_synopsis or {}).get("summary", ""),
-            "section_digest_summary": (section_digest or {}).get("summary", ""),
-        })
-        if bundle.get("repair_overlays"):
-            state.setdefault("repair_overlays", []).extend(bundle["repair_overlays"])
-        if bundle.get("review_evidence"):
-            state.setdefault("review_evidence", []).extend(bundle["review_evidence"])
+        # Record this batch's translation-phase timings. Provider latency and
+        # request/failure counts come from the worker thread's own accounting,
+        # so retries are visible per batch rather than inferred.
+        _llm_delta = bundle.get("llm_stats") or {}
+        _segment_count = len(bundle.get("batch") or [])
+        with _critical_path.phase("commit_timing_record"):
+            for _stage_name, _stage_timing in (bundle.get("timings") or {}).items():
+                if str(_stage_name).startswith("_"):
+                    continue
+                _record_batch_stage(
+                    _stage_name, bi, _stage_timing,
+                    api_latency_s=(_llm_delta.get("api_latency_s") or 0.0)
+                    if _stage_name == "translation_generation" else 0.0,
+                    retry_count=int(_llm_delta.get("failures") or 0)
+                    if _stage_name == "translation_generation" else 0,
+                    segment_count=_segment_count,
+                    llm_requests=int(_llm_delta.get("requests") or 0),
+                    llm_failures=int(_llm_delta.get("failures") or 0),
+                )
+        _batch_timings = bundle.get("timings") or {}
+        _gen_timing = _batch_timings.get("translation_generation")
+        _batch_dur_ms = 0.0
+        if _gen_timing:
+            _batch_dur_ms = max(0.0, (_gen_timing[1] - _gen_timing[0]) * 1000.0)
+        trace.record_batch(
+            batch_id=bi + 1,
+            segment_count=_segment_count,
+            source_chars=sum(len(p.get("source", "")) for p in (bundle.get("batch_pairs") or [])),
+            duration_ms=_batch_dur_ms,
+            tm_hits=sum(1 for p in (bundle.get("batch_pairs") or []) if p.get("from_tm")),
+            model_called=bool(bundle.get("to_translate")),
+            job_id=job_id,
+        )
+
+        with _critical_path.phase("commit_log_append") as _log_sink:
+            state.setdefault("context_packet_log", []).append({
+                "batch": bi,
+                "offset": offset,
+                **_context.context_metadata(context_packet),
+            })
+            state.setdefault("glossary_injection_log", []).append({
+                "batch": bi,
+                "offset": offset,
+                "entry_ids": injected_ids,
+                "glossary_version": (state.get("glossary_frozen") or {}).get("version"),
+                "glossary_hash": (state.get("glossary_frozen") or {}).get("glossary_hash"),
+                "entity_hint_count": len(bundle.get("entity_hints") or []),
+                "document_synopsis_summary": (document_synopsis or {}).get("summary", ""),
+                "section_digest_summary": (section_digest or {}).get("summary", ""),
+            })
+            if bundle.get("repair_overlays"):
+                state.setdefault("repair_overlays", []).extend(bundle["repair_overlays"])
+            if bundle.get("review_evidence"):
+                state.setdefault("review_evidence", []).extend(bundle["review_evidence"])
+            _log_sink.traversed(len(state.get("context_packet_log") or []))
 
         if enable_review:
             stats["batches_reviewed"] += 1
@@ -4296,13 +6389,14 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             if review_trace and review_event_id:
                 _translation_evidence.register_runtime_review_event(
                     state, {"batch": bi, **review_trace}, formal_records,
-                    review_event_id, formal_segment_ids)
+                    review_event_id, formal_segment_ids,
+                    patches=_journal_patches)
             for promoted_trace, promoted_event_id, promoted_segment_id in \
                     promoted_review_events:
                 _translation_evidence.register_runtime_review_event(
                     state, {"batch": bi, **promoted_trace}, [],
                     promoted_event_id, [promoted_segment_id],
-                    phase="suggested_shadow_review")
+                    phase="suggested_shadow_review", patches=_journal_patches)
             safe_append_event({
                 "batch": bi, "offset": offset, "phase": "semantic_review_done",
             })
@@ -4312,32 +6406,46 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             })
 
         # 审校可能修改过译文：对最终译文整体复验一次确定性检查
-        findings = [
-            finding for finding in check_translation_batch(
-                batch_sources, [p["target"] for p in batch_pairs], glossary,
-                target_lang, section_profile=section_profile)
-            if finding.get("segment_index") not in blocked_local_indexes
-        ]
+        with _critical_path.phase("commit_recheck_deterministic") as _chk_sink:
+            _chk_sink.traversed(len(batch_sources) + len(glossary))
+            findings = [
+                finding for finding in check_translation_batch(
+                    batch_sources, [p["target"] for p in batch_pairs], glossary,
+                    target_lang, section_profile=section_profile)
+                if finding.get("segment_index") not in blocked_local_indexes
+            ]
 
         # 批内冲突检测（跨段同术语多译法）——在 TM 入库前执行
-        for cf in _detect_conflicts(batch_pairs, glossary, sections=sections):
-            segment_id = offset + cf["segment_id"]
-            cf["segment_index"] = segment_id
-            cf["segment_id"] = segment_id
-            findings_all.append(cf)
+        with _critical_path.phase("commit_conflict_detection") as _cf_sink:
+            safe_batch_pairs = []
+            for index, pair in enumerate(batch_pairs):
+                if index not in blocked_local_indexes:
+                    safe_batch_pairs.append(pair)
+                else:
+                    safe_batch_pairs.append({**pair, "source": "", "target": ""})
+            _cf_sink.traversed(len(glossary) * len(safe_batch_pairs))
+            for cf in _detect_conflicts(safe_batch_pairs, glossary, sections=sections):
+                segment_id = offset + cf["segment_id"]
+                cf["segment_index"] = segment_id
+                cf["segment_id"] = segment_id
+                findings_all.append(cf)
 
         # 记录仍未解决的确定性问题
-        for f in findings:
-            if f["severity"] in ("blocking", "actionable", "informational"):
-                segment_id = offset + f["segment_index"]
-                record = dict(f)
-                record.update({"segment_id": segment_id,
-                               "segment_index": segment_id,
-                               "severity": f["severity"], "type": "check",
-                               "detector": f.get("detector") or "Deterministic QA"})
-                findings_all.append(record)
+        with _critical_path.phase("commit_findings_merge") as _merge_sink:
+            for f in findings:
+                if f["severity"] in ("blocking", "actionable", "informational"):
+                    segment_id = offset + f["segment_index"]
+                    record = dict(f)
+                    record.update({"segment_id": segment_id,
+                                   "segment_index": segment_id,
+                                   "severity": f["severity"], "type": "check",
+                                   "detector": f.get("detector") or "Deterministic QA"})
+                    findings_all.append(record)
+            _merge_sink.traversed(len(findings_all))
 
         # 5) 批后知识反馈：只进入 candidate queue，不改变 frozen glossary.
+        _knowledge_started = time.perf_counter()
+        _knowledge_started_cpu = time.thread_time()
         accepted_for_knowledge = []
         review_bad_segments = {
             finding.get("segment_id")
@@ -4345,6 +6453,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             if finding.get("severity") in ("blocking", "actionable")
         }
         for j, pair in enumerate(batch_pairs):
+            if j in blocked_local_indexes:
+                continue
             local_findings = [
                 finding for finding in findings
                 if finding.get("segment_index") == j
@@ -4362,18 +6472,38 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         if knowledge_due and accepted_for_knowledge:
             state["knowledge_feedback_policy"]["observed_batches"].append(bi)
             knowledge_segment_ids = [offset + j for j in accepted_for_knowledge]
-            knowledge_candidates, knowledge_events, knowledge_warning = \
-                _knowledge.observe_batch(
-                    [batch_sources[j] for j in accepted_for_knowledge],
-                    [batch_pairs[j]["target"] for j in accepted_for_knowledge],
-                    paras, pairs,
-                    glossary, offset, auxiliary_config["provider"],
-                    auxiliary_config["api_key"], auxiliary_config["model"],
-                    existing_candidates=state.get("knowledge_candidates") or [],
-                    call_llm=auxiliary_call, segment_ids=knowledge_segment_ids,
-                    observation_provenance=(
-                        "reviewed" if review_succeeded else "generated_continuity"
-                    ))
+            knowledge_source_context = [
+                "" if index in blocked_source_indexes else source
+                for index, source in enumerate(paras)
+            ]
+            knowledge_pair_context = []
+            for index, pair in enumerate(pairs):
+                if index in blocked_source_indexes and isinstance(pair, dict):
+                    knowledge_pair_context.append({
+                        **pair, "source": "", "target": "",
+                        "initial_target": "", "accepted_target": "",
+                    })
+                else:
+                    knowledge_pair_context.append(pair)
+            # The only provider call on the commit path; timed apart so a slow
+            # auxiliary model is never mistaken for commit CPU.
+            with _critical_path.phase("commit_knowledge_llm") as _kb_sink:
+                knowledge_candidates, knowledge_events, knowledge_warning = \
+                    _knowledge.observe_batch(
+                        [batch_sources[j] for j in accepted_for_knowledge],
+                        [batch_pairs[j]["target"] for j in accepted_for_knowledge],
+                        knowledge_source_context, knowledge_pair_context,
+                        glossary, offset, auxiliary_config["provider"],
+                        auxiliary_config["api_key"], auxiliary_config["model"],
+                        existing_candidates=state.get("knowledge_candidates") or [],
+                        call_llm=auxiliary_call, segment_ids=knowledge_segment_ids,
+                        observation_provenance=(
+                            "reviewed" if review_succeeded else "generated_continuity"
+                        ))
+                _kb_sink.traversed(len(knowledge_segment_ids))
+                _kb_sink.received(sum(len(batch_sources[j])
+                                      for j in accepted_for_knowledge))
+                _critical_path.count("knowledge_observe_batch_calls")
         else:
             if not knowledge_due:
                 state["knowledge_feedback_policy"]["skipped_batches"].append(bi)
@@ -4424,38 +6554,69 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             "batch": bi, "offset": offset, "phase": "knowledge_feedback_done",
             "candidate_count": len(knowledge_candidates),
         })
+        _knowledge_finished = time.perf_counter()
+        _record_batch_stage("knowledge_feedback", bi,
+                            (_knowledge_started, _knowledge_finished),
+                            candidate_count=len(knowledge_candidates),
+                            segment_count=len(batch_pairs))
+        # Same interval, recorded on the critical-path timeline so it can be
+        # compared against the other commit buckets without re-reading stages.
+        _critical_path.profiler().record(
+            "commit_knowledge_feedback", _knowledge_finished - _knowledge_started,
+            cpu_s=time.thread_time() - _knowledge_started_cpu)
 
         # 6) 审校通过的段落 -> 翻译记忆
         if enable_review:
-            for j, p in enumerate(batch_pairs):
-                segment_id = offset + j
-                seg_findings = [
-                    f for f in findings_all
-                    if f.get("segment_id", f.get("segment_index")) == segment_id
-                ]
-                if not p.get("from_tm"):
-                    if not review_succeeded:
-                        p["review_status"] = "review_failed"
-                        p["reviewed"] = False
-                    elif seg_findings:
-                        p["review_status"] = "reviewed_with_findings"
-                        p["reviewed"] = False
-                    else:
-                        p["review_status"] = "reviewed_clean"
-                if review_succeeded and not seg_findings and not p["from_tm"] \
-                        and _tm_eligible(p["source"], p["target"]):
-                    p["reviewed"] = True
-                    p["accepted_target"] = p["target"]
-                    p["target_provenance"] = "tm_approved" if p.get("from_tm") else "reviewed"
-                    if use_tm:
-                        _key = tm_put(tm, p["source"], p["target"], _tm_lang)
-                        if _key:
-                            _norm = tm_normalize(p["source"])
-                            if _norm and _norm not in tm_norm_index:
-                                tm_norm_index[_norm] = _key
-                    stats["reviewed_segments"] += 1
+            with _critical_path.phase("commit_tm_eligibility") as _tm_sink:
+                _tm_sink.traversed(len(batch_pairs) * max(1, len(findings_all)))
+                for j, p in enumerate(batch_pairs):
+                    if j in blocked_local_indexes:
+                        continue
+                    segment_id = offset + j
+                    seg_findings = [
+                        f for f in findings_all
+                        if f.get("segment_id", f.get("segment_index")) == segment_id
+                    ]
+                    if not p.get("from_tm"):
+                        if not review_succeeded:
+                            p["review_status"] = "review_failed"
+                            p["reviewed"] = False
+                        elif seg_findings:
+                            p["review_status"] = "reviewed_with_findings"
+                            p["reviewed"] = False
+                        else:
+                            p["review_status"] = "reviewed_clean"
+                    if review_succeeded and not seg_findings and not p["from_tm"] \
+                            and _tm_eligible(p["source"], p["target"]):
+                        p["reviewed"] = True
+                        p["accepted_target"] = p["target"]
+                        p["target_provenance"] = "tm_approved" if p.get("from_tm") else "reviewed"
+                        if use_tm:
+                            _key = tm_put(tm, p["source"], p["target"], _tm_lang)
+                            if _key:
+                                _norm = tm_normalize(p["source"])
+                                if _norm and _norm not in tm_norm_index:
+                                    tm_norm_index[_norm] = _key
+                        stats["reviewed_segments"] += 1
 
-        _commit_translation_batch(batch_pairs, offset)
+        _translation_runtime("state_commit", f"正在写入第 {bi + 1} 批译文")
+        _snapshot_taken_before = _snapshot_stats["taken"]
+        _state_commit_started = time.perf_counter()
+        _state_commit_started_cpu = time.thread_time()
+        _commit_translation_batch(
+            batch_pairs, offset, bi, _journal_before, _journal_patches,
+            [_finalization.segment_id(job_id, offset + index, pair)
+             for index, pair in enumerate(batch_pairs)])
+        _state_commit_finished = time.perf_counter()
+        _translation_runtime("state_commit_done", f"已保存第 {bi + 1} 批译文", saved=True)
+        _critical_path.profiler().record(
+            "commit_state_commit", _state_commit_finished - _state_commit_started,
+            cpu_s=time.thread_time() - _state_commit_started_cpu)
+        _record_batch_stage("state_commit", bi,
+                            (_state_commit_started, _state_commit_finished),
+                            segment_count=len(batch_pairs),
+                            snapshot_taken=(
+                                _snapshot_stats["taken"] > _snapshot_taken_before))
         safe_append_event({
             "batch": bi, "offset": offset, "phase": "state_commit_done",
             "pairs_count": len(pairs),
@@ -4466,53 +6627,236 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             and pair.get("review_status") == "reviewed_clean"
         ]) if enable_review and use_tm and review_succeeded else []
         if tm_entries:
-            safe_append_event({
-                "batch": bi, "offset": offset, "phase": "tm_promotion_pending",
-                "entries": tm_entries,
-            })
-            save_tm(tm, _tm_project)
-            safe_append_event({
-                "batch": bi, "offset": offset, "phase": "tm_promotion_done",
-                "entries": tm_entries,
-            })
+            # Accumulate onto the snapshot window instead of rewriting the whole
+            # project TM once per batch.  Recovery does not depend on this
+            # write: `checkpoint.reconcile_translation_memory` rebuilds the
+            # cache from `state["pairs"]` plus any unacknowledged
+            # `tm_promotion_pending` event.
+            _pending_tm_entries.extend(tm_entries)
+            _pending_tm_window["batch"] = bi
+            _pending_tm_window["offset"] = offset
 
-        if on_status:
-            concurrency_tag = f"，并发 {effective_concurrency}" if effective_concurrency > 1 else ""
-            on_status(f"【阶段二】双语翻译与术语严格注入...（批次 {bi + 1}/{len(batches)}{concurrency_tag}）")
-        if on_caption:
-            on_caption(f"🌍 正在翻译第 {offset + 1}-{offset + len(batch)} 段（共 {len(paras)} 段）...")
 
-    if effective_concurrency <= 1 or (len(batches) - start_batch) <= 1:
-        for bi in range(start_batch, len(batches)):
-            if _runtime_cancel_requested(job_id):
-                raise RuntimeError("任务已请求取消")
-            bundle = _process_batch_payload(bi)
-            _commit_batch(bundle)
-    else:
-        window = min(len(batches) - start_batch, effective_concurrency * 2)
-        futures = {}
-        with ThreadPoolExecutor(max_workers=effective_concurrency, thread_name_prefix="ft-trans") as executor:
-            for bi in range(start_batch, start_batch + window):
-                futures[bi] = executor.submit(_process_batch_payload, bi)
+    overlap_active = (
+        review_overlap_enabled(review_overlap, state.get("pipeline_config"))
+        and bool(enable_review)
+        and effective_concurrency <= 1
+    )
+    state["batch_plan"]["review_overlap_enabled"] = bool(overlap_active)
 
-            for bi in range(start_batch, len(batches)):
-                if _runtime_cancel_requested(job_id):
-                    for f in futures.values():
-                        f.cancel()
-                    raise RuntimeError("任务已请求取消")
-                next_bi = bi + window
-                if next_bi < len(batches):
-                    futures[next_bi] = executor.submit(_process_batch_payload, next_bi)
+    try:
+        if overlap_active and (len(batches) - start_batch) > 1:
+            in_flight_cap = review_overlap_max_in_flight(
+                max_review_in_flight, state.get("pipeline_config")
+            )
+            strategy_mode = review_overlap_strategy_mode(
+                review_overlap_strategy, state.get("pipeline_config")
+            )
+            state["batch_plan"]["review_overlap_in_flight_cap"] = in_flight_cap
+            state["batch_plan"]["review_overlap_strategy"] = strategy_mode
+            scheduler = _review_scheduler.ReviewScheduler(
+                max_in_flight=in_flight_cap, reviewer_workers=in_flight_cap
+            )
+            staged_batches = {}
+            staged_pairs = {}
+            gen_timings = {}
+            next_commit = start_batch
 
-                bundle = futures[bi].result()
+            def _drain_one_commit(target_bi):
+                bundle = staged_batches.pop(target_bi)
+                idle_wait_start = time.perf_counter()
+                rev_res = scheduler.wait_for_batch(target_bi)
+                idle_wait = time.perf_counter() - idle_wait_start
+                if idle_wait > 0.0001:
+                    scheduler.record_translator_idle(idle_wait)
+
+                overlap_s = 0.0
+                for g_bi, (g_start, g_end) in gen_timings.items():
+                    if g_bi > target_bi:
+                        overlap_interval = max(
+                            0.0,
+                            min(rev_res.finished_at_s, g_end) - max(rev_res.started_at_s, g_start),
+                        )
+                        overlap_s += overlap_interval
+                overlap_s = min(rev_res.total_wall_s, overlap_s)
+                exposed_s = max(0.0, rev_res.total_wall_s - overlap_s)
+                scheduler.record_hidden_latency(overlap_s)
+                scheduler.record_exposed_latency(exposed_s)
+
+                bundle["review_succeeded"] = rev_res.review_succeeded
+                bundle["rfindings"] = rev_res.rfindings
+                bundle["review_failed"] = rev_res.review_failed
+                bundle["review_trace"] = rev_res.review_trace
+                bundle["review_event_id"] = rev_res.review_event_id
+                bundle["formal_records"] = rev_res.formal_records
+                bundle["promoted_review_events"] = rev_res.promoted_review_events
+                bundle["repair_overlays"].extend(rev_res.repair_overlays)
+                bundle["review_evidence"].extend(rev_res.review_evidence)
+
+                if rev_res.review_failed:
+                    for pair in bundle["batch_pairs"]:
+                        if (not pair.get("from_tm")
+                                and pair.get("target_provenance")
+                                != "source_review_required"):
+                            pair["review_status"] = "review_failed"
+
+                if rev_res.accepted_suggestions:
+                    for idx, suggested in rev_res.accepted_suggestions.items():
+                        bundle["batch_pairs"][idx]["target"] = suggested
+
+                bundle["timings"]["translation_semantic_review"] = (
+                    rev_res.started_at_s, rev_res.finished_at_s
+                )
+                bundle["llm_stats"]["api_latency_s"] = (
+                    bundle["llm_stats"].get("api_latency_s", 0.0) + rev_res.api_latency_s
+                )
+                bundle["llm_stats"]["requests"] = (
+                    bundle["llm_stats"].get("requests", 0) + rev_res.llm_requests
+                )
+                bundle["llm_stats"]["failures"] = (
+                    bundle["llm_stats"].get("failures", 0) + rev_res.llm_failures
+                )
+
                 _commit_batch(bundle)
-                del futures[bi]
+                staged_pairs.pop(target_bi, None)
+
+            try:
+                for bi in range(start_batch, len(batches)):
+                    _runtime_pause_checkpoint(job_id)
+                    if _runtime_cancel_requested(job_id):
+                        scheduler.cancel()
+                        raise RuntimeError("任务已请求取消")
+
+                    if strategy_mode == "stable":
+                        while next_commit < bi:
+                            _drain_one_commit(next_commit)
+                            next_commit += 1
+
+                    effective_pairs = list(pairs)
+                    for prev_bi in sorted(staged_pairs.keys()):
+                        if prev_bi < bi:
+                            effective_pairs.extend(staged_pairs[prev_bi])
+
+                    gen_start = time.perf_counter()
+                    bundle = _process_batch_payload(
+                        bi, run_review=False, effective_pairs=effective_pairs
+                    )
+                    gen_end = time.perf_counter()
+                    gen_timings[bi] = (gen_start, gen_end)
+
+                    staged_batches[bi] = bundle
+                    staged_pairs[bi] = [dict(p) for p in bundle["batch_pairs"]]
+
+                    # Drain ready prior batches (< bi) or when backpressure requires it
+                    while next_commit < bi and (
+                        scheduler.in_flight_count() >= in_flight_cap
+                        or scheduler.has_result(next_commit)
+                    ):
+                        _drain_one_commit(next_commit)
+                        next_commit += 1
+
+                    snapshot = _review_scheduler.BatchReviewSnapshot.create(
+                        batch_index=bi,
+                        offset=bundle["offset"],
+                        batch_pairs=bundle["batch_pairs"],
+                        glossary=glossary,
+                        glossary_text=bundle.get("glossary_text") or "",
+                        glossary_ids=bundle["injected_ids"],
+                        glossary_hash=frozen_hash or "",
+                        style_rules=style_rules,
+                        target_lang=target_lang,
+                        section_profile=bundle["section_profile"],
+                        deterministic_findings=bundle["findings"],
+                        blocked_local_indexes=bundle["blocked_local_indexes"],
+                        review_context=bundle["review_context"],
+                        formal_segment_ids=bundle["formal_segment_ids"],
+                        evidence_index=bundle["evidence_index"],
+                        formal_packet=bundle["formal_packet"],
+                        translator_model=str(translator_config.get("model") or ""),
+                        paras=paras,
+                        committed_pairs=list(pairs),
+                        findings_all=list(findings_all),
+                        document_profile=document_profile or {},
+                        document_synopsis=document_synopsis or {},
+                        section_digests=section_digests or [],
+                        state_ref=state,
+                        base_evidence_count=(
+                            len(state.get("review_evidence") or [])
+                            + len(bundle.get("review_evidence") or [])
+                        ),
+                    )
+                    scheduler.submit(
+                        snapshot,
+                        lambda s: _execute_batch_review(
+                            s, reviewer_call, reviewer_config, job_id, enable_review
+                        ),
+                    )
+
+                while next_commit < len(batches):
+                    if _runtime_cancel_requested(job_id):
+                        scheduler.cancel()
+                        raise RuntimeError("任务已请求取消")
+                    _drain_one_commit(next_commit)
+                    next_commit += 1
+            finally:
+                scheduler.shutdown(wait=False)
+                overlap_stats = scheduler.stats_snapshot()
+                metrics = _review_scheduler.compute_overlap_metrics(overlap_stats)
+                state["review_overlap"] = metrics
+                if profiler is not None and "translation_semantic_review" in _translation_stages:
+                    _translation_stages["translation_semantic_review"].record["metadata"][
+                        "review_overlap"
+                    ] = metrics
+        elif effective_concurrency <= 1 or (len(batches) - start_batch) <= 1:
+            for bi in range(start_batch, len(batches)):
+                _runtime_pause_checkpoint(job_id)
+                if _runtime_cancel_requested(job_id):
+                    raise RuntimeError("任务已请求取消")
+                bundle = _process_batch_payload(bi)
+                _commit_batch(bundle)
+        else:
+            window = min(len(batches) - start_batch, effective_concurrency * 2)
+            futures = {}
+            with ThreadPoolExecutor(max_workers=effective_concurrency, thread_name_prefix="ft-trans") as executor:
+                for bi in range(start_batch, start_batch + window):
+                    futures[bi] = executor.submit(_process_batch_payload, bi)
+
+                for bi in range(start_batch, len(batches)):
+                    _runtime_pause_checkpoint(job_id)
+                    if _runtime_cancel_requested(job_id):
+                        for f in futures.values():
+                            f.cancel()
+                        raise RuntimeError("任务已请求取消")
+                    next_bi = bi + window
+                    if next_bi < len(batches):
+                        futures[next_bi] = executor.submit(_process_batch_payload, next_bi)
+
+                    bundle = futures[bi].result()
+                    _commit_batch(bundle)
+                    del futures[bi]
+    finally:
+        # Mandatory immediate snapshot on leaving the loop: normal completion,
+        # user cancellation and fatal failure all converge here, so a committed
+        # batch can never be left sitting inside the deferred cadence window.
+        # The TM check matters on its own: the last batch's promotions are only
+        # accumulated *after* the cadence decision, so a final cadence flush can
+        # leave them pending with `_pending_snapshot_batches` already back to 0.
+        if _pending_snapshot_batches or _pending_tm_entries \
+                or (_journal_enabled
+                    and _journal_seq > _state_journal.cursor(state)):
+            _flush_state_snapshot("loop_exit")
 
     # 全局冲突检测（跨批次），与批内结果去重
     batch_conflict_keys = {(f.get("type"), f.get("entry_id"),
                             f.get("segment_index"), True)
                            for f in findings_all if f.get("conflict")}
-    for cf in _detect_conflicts(pairs, glossary, sections=sections):
+    safe_pairs = []
+    for index, pair in enumerate(pairs):
+        if index not in blocked_source_indexes:
+            safe_pairs.append(pair)
+        else:
+            safe_pairs.append({**pair, "source": "", "target": ""})
+    for cf in _detect_conflicts(safe_pairs, glossary, sections=sections):
         cf["segment_index"] = cf["segment_id"]
         key = (cf.get("type"), cf.get("entry_id"), cf.get("segment_index"), True)
         if key not in batch_conflict_keys:
@@ -4522,17 +6866,69 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         (item.get("type"), item.get("segment_index"), item.get("source"))
         for item in findings_all
     }
-    for conflict in registry.consistency_findings():
+    for conflict in registry.consistency_findings(pairs):
         key = (conflict.get("type"), conflict.get("segment_index"),
                conflict.get("source"))
         if key not in existing_entity_conflicts:
             findings_all.append(conflict)
             existing_entity_conflicts.add(key)
 
+    state["state_journal"] = {
+        "enabled": bool(_journal_enabled),
+        "records": _journal_stats["records"],
+        "bytes": _journal_stats["bytes"],
+        "unusable_batches": _journal_stats["unusable"],
+        "budget_bytes": _journal_budget_bytes,
+        "cursor": _state_journal.cursor(state),
+        "snapshots": _snapshot_stats["taken"],
+        "deferred_batches": _snapshot_stats["deferred"],
+    }
     stats["blocking"] = sum(1 for f in findings_all if f["severity"] == "blocking")
     stats["actionable"] = sum(1 for f in findings_all if f["severity"] == "actionable")
     stats["informational"] = sum(1 for f in findings_all if f["severity"] == "informational")
     state["has_blocking"] = stats["blocking"] > 0
+
+    # Runtime-telemetry cost for this run: how much wall time the (now
+    # coalesced) runtime persistence actually consumed.  Recorded as a stage so
+    # it can be compared against generation/review without touching the state
+    # machine.
+    if profiler is not None and _translation_stages:
+        with _critical_path.phase("commit_telemetry"):
+            _telemetry_end = runtime_persistence_stats()
+            _critical_path.count("telemetry_state_writes",
+                                 _telemetry_end["state_writes"]
+                                 - _telemetry_start["state_writes"])
+            _critical_path.count("telemetry_event_appends",
+                                 _telemetry_end["event_appends"]
+                                 - _telemetry_start["event_appends"])
+            _critical_path.count("telemetry_fsyncs",
+                                 _telemetry_end["fsyncs"]
+                                 - _telemetry_start["fsyncs"])
+        _telemetry_stage = _translation_stages.get("runtime_telemetry")
+        if _telemetry_stage is not None:
+            _telemetry_stage.record["metadata"].update({
+                "state_writes": int(_telemetry_end["state_writes"]
+                                    - _telemetry_start["state_writes"]),
+                "event_appends": int(_telemetry_end["event_appends"]
+                                     - _telemetry_start["event_appends"]),
+                "fsyncs": int(_telemetry_end["fsyncs"]
+                              - _telemetry_start["fsyncs"]),
+                "state_write_seconds": round(
+                    _telemetry_end["state_write_seconds"]
+                    - _telemetry_start["state_write_seconds"], 6),
+                "event_append_seconds": round(
+                    _telemetry_end["event_append_seconds"]
+                    - _telemetry_start["event_append_seconds"], 6),
+                "batch_count": len(batches),
+            })
+            _telemetry_stage.finish(status="completed", persist=False)
+        for _stage_name, _stage in _translation_stages.items():
+            if _stage_name != "runtime_telemetry":
+                _stage.finish(status="completed", persist=False)
+        # One artifact write for the whole translation phase instead of one per
+        # stage: the stages share a single performance.json, so closing them
+        # together must not re-serialize every prior stage eight times.
+        profiler.persist()
     return state
 
 
@@ -4620,6 +7016,28 @@ def _apply_run_fonts(run):
     rfonts.set(qn("w:ascii"), EN_FONT)
     rfonts.set(qn("w:hAnsi"), EN_FONT)
     rfonts.set(qn("w:eastAsia"), CN_FONT)
+    rfonts.set(qn("w:cs"), "Arial")
+
+
+def _apply_paragraph_direction(paragraph, language=None):
+    """Set the direction on the individual paragraph, including table cells."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    rtl = text_direction(paragraph.text, language) == "rtl"
+    ppr = paragraph._p.get_or_add_pPr()
+    bidi = ppr.find(qn("w:bidi"))
+    if bidi is None:
+        bidi = OxmlElement("w:bidi")
+        ppr.append(bidi)
+    bidi.set(qn("w:val"), "1" if rtl else "0")
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT if rtl else WD_ALIGN_PARAGRAPH.LEFT
+    if rtl:
+        # Logical leading alignment stays on the right in RTL renderers;
+        # literal "right" is mirrored by paragraph BiDi in LibreOffice.
+        ppr.find(qn("w:jc")).set(qn("w:val"), "start")
+    for run in paragraph.runs:
+        _apply_run_fonts(run)
 
 
 def dict_to_excel(term_dict):
@@ -4631,34 +7049,37 @@ def dict_to_excel(term_dict):
     return output
 
 
-def paragraphs_to_word(paragraphs):
+def paragraphs_to_word(paragraphs, source_lang=None):
     doc = Document()
     _apply_doc_fonts(doc)
     doc.add_heading('阶段一：清洗后原文提取', 0)
     for p in paragraphs:
-        doc.add_paragraph(p)
+        _apply_paragraph_direction(doc.add_paragraph(p), source_lang)
     out = io.BytesIO()
     doc.save(out)
     out.seek(0)
     return out
 
 
-def translations_to_word(pairs):
+def translations_to_word(pairs, target_lang=None):
     doc = Document()
     _apply_doc_fonts(doc)
     doc.add_heading("译文", 0)
     for pair in pairs or []:
-        doc.add_paragraph(str(pair.get("target") or ""))
+        _apply_paragraph_direction(
+            doc.add_paragraph(str(pair.get("target") or "")), target_lang)
     out = io.BytesIO()
     doc.save(out)
     out.seek(0)
     return out
 
 
-def translations_to_pdf(pairs):
+def translations_to_pdf(pairs, target_lang=None):
     """Render a paginated, Unicode-aware translation PDF with PyMuPDF Story."""
     paragraphs = "".join(
-        '<table class="entry"><tr><td dir="auto">'
+        '<table class="entry"><tr>'
+        f'<td dir="{text_direction(pair.get("target"), target_lang)}" '
+        'style="text-align: start">'
         f'{html_escape(str(pair.get("target") or ""))}</td></tr></table>'
         for pair in pairs or [])
     html = f'<article><h1>译文</h1>{paragraphs}</article>'
@@ -4668,7 +7089,7 @@ def translations_to_pdf(pairs):
         "color: #1f2937; } h1 { font-size: 20pt; margin: 0 0 20pt; "
         "color: #111827; } table.entry { width: 100%; border-collapse: collapse; "
         "margin: 0 0 10pt; break-inside: avoid; page-break-inside: avoid; } "
-        "td { padding: 0; text-align: start; unicode-bidi: plaintext; }"
+        "td { padding: 0; }"
     )
     story = fitz.Story(html=html, user_css=css, em=11)
     page_rect = fitz.paper_rect("a4")
@@ -4708,13 +7129,47 @@ def glossary_to_excel(entries, fallback=None):
     return output
 
 
+def _is_latin_word_char(ch):
+    if not ch:
+        return False
+    if ch.isascii() and (ch.isalnum() or ch == "_"):
+        return True
+    return "\u00C0" <= ch <= "\u024F"
+
+
+def _expand_span_end(text, start, end, last_is_latin):
+    if last_is_latin:
+        while end < len(text) and _is_latin_word_char(text[end]):
+            end += 1
+    return start, end
+
+
 def _find_span(text, needle):
-    """宽容定位子串：统一引号/破折号/省略号、折叠空白后查找，返回 (start, end) 或 None。"""
+    """宽容定位子串：统一引号/破折号/省略号、折叠空白后查找，返回 (start, end) 或 None。
+    对于西文字词，确保不从词中截断，且若命中词首则完整包含整个单词（如 Egypt 命中 Egyptian MiGs 时标全 Egyptian）。
+    """
     if not needle or not text:
         return None
-    if needle in text:
+
+    first_is_latin = _is_latin_word_char(needle[0])
+    last_is_latin = _is_latin_word_char(needle[-1])
+
+    # 1. 直接子串查找（首字符为西文字母时，确保位于词首边界，避免在 smart 中误中 art）
+    if first_is_latin:
+        curr = 0
+        while True:
+            pos = text.find(needle, curr)
+            if pos < 0:
+                break
+            if pos == 0 or not _is_latin_word_char(text[pos - 1]):
+                return _expand_span_end(text, pos, pos + len(needle), last_is_latin)
+            curr = pos + 1
+    else:
         pos = text.find(needle)
-        return pos, pos + len(needle)
+        if pos >= 0:
+            return _expand_span_end(text, pos, pos + len(needle), last_is_latin)
+
+    # 2. 宽容归一化查找（引号、破折号、省略号统一及空白折叠）
     mapping = []
     norm_chars = []
     for orig_idx, ch in enumerate(text):
@@ -4731,9 +7186,21 @@ def _find_span(text, needle):
     needle2 = needle.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     needle2 = needle2.replace("–", "-").replace("—", "-").replace("…", "...")
     needle2 = re.sub(r"\s+", " ", needle2).strip()
-    pos = norm_text.find(needle2)
+
+    curr = 0
+    pos = -1
+    while True:
+        pos = norm_text.find(needle2, curr)
+        if pos < 0:
+            break
+        if first_is_latin and pos > 0 and _is_latin_word_char(norm_text[pos - 1]):
+            curr = pos + 1
+            continue
+        break
+
     if pos < 0:
         return None
+
     start = None
     for i in range(pos, len(mapping)):
         if mapping[i] is not None:
@@ -4746,7 +7213,7 @@ def _find_span(text, needle):
             break
     if start is None or end is None:
         return None
-    return start, end
+    return _expand_span_end(text, start, end, last_is_latin)
 
 
 def _colored_cell(cell, text, spans, colors=None):
@@ -4765,6 +7232,8 @@ def _colored_cell(cell, text, spans, colors=None):
             str(palette.get(atype, ANNOTATION_COLORS[atype])).lstrip("#"))
         if atype in ("rare", "domain"):
             run.bold = True
+        elif atype == "hard":
+            run.underline = True
         cursor = end
         first = False
     if cursor < len(text):
@@ -4774,7 +7243,7 @@ def _colored_cell(cell, text, spans, colors=None):
         cell.paragraphs[0].add_run("")
 
 
-def pairs_to_word(pairs, annotations=None, colors=None):
+def pairs_to_word(pairs, annotations=None, colors=None, *, source_lang=None, target_lang=None):
     """双语对照表 -> Word 表格。
 
     annotations: {seg: [{"type": "rare|domain|hard", "src_span": [s,e]|None,
@@ -4790,7 +7259,7 @@ def pairs_to_word(pairs, annotations=None, colors=None):
     table.style = 'Table Grid'
     table.rows[0].cells[0].text = "原文"
     table.rows[0].cells[1].text = "译文"
-    annot = _normalize_annotations(annotations)
+    annot = _clean_annotations(annotations, pairs) if annotations else {}
     for i, pair in enumerate(pairs):
         row = table.add_row().cells
         seg_annot = annot.get(i) or []
@@ -4802,6 +7271,10 @@ def pairs_to_word(pairs, annotations=None, colors=None):
              for it in seg_annot if it.get("tgt_span")], len(pair['target']))
         _colored_cell(row[0], pair['source'], src_spans, palette)
         _colored_cell(row[1], pair['target'], tgt_spans, palette)
+        for paragraph in row[0].paragraphs:
+            _apply_paragraph_direction(paragraph, source_lang)
+        for paragraph in row[1].paragraphs:
+            _apply_paragraph_direction(paragraph, target_lang)
     # 图例（放表格后，避免挤占首行）
     p_legend = doc.add_paragraph()
     legend_parts = [
@@ -5034,7 +7507,7 @@ RUNTIME_LEASE_SECONDS = 60
 RUNTIME_STALL_SECONDS = 45
 RUNTIME_ACTIVE_STATUSES = {
     "resume_requested", "queued", "starting", "running",
-    "waiting_external", "cancelling",
+    "waiting_external", "cancelling", "pausing", "paused",
 }
 
 _RUNTIME_EVENT_META = {
@@ -5115,6 +7588,7 @@ def _runtime_defaults():
         "events": [],
         "last_technical_event": "",
         "cancel_requested": False,
+        "pause_requested": False,
         "attempt": 0,
         "resume_request_id": None,
         "error": None,
@@ -5182,11 +7656,39 @@ def _append_runtime_event(job_id, event, *, stage=None, operation=None, metadata
         record["metadata"] = metadata
     path = runtime_events_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
+    started = time.perf_counter()
+    try:
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        _workflow_errors.raise_if_fatal(exc, job_id)
+        raise
+    with _RUNTIME_PERSIST_LOCK:
+        _RUNTIME_PERSIST_STATS["event_appends"] += 1
+        _RUNTIME_PERSIST_STATS["fsyncs"] += 1
+        _RUNTIME_PERSIST_STATS["event_append_seconds"] += (
+            time.perf_counter() - started)
     return record
+
+
+def _runtime_event_lines_reverse(path):
+    """Read complete JSONL lines from the tail without loading the whole log."""
+    with path.open("rb") as handle:
+        position = handle.seek(0, os.SEEK_END)
+        pending = b""
+        while position:
+            size = min(position, 8192)
+            position -= size
+            handle.seek(position)
+            lines = (handle.read(size) + pending).split(b"\n")
+            pending = lines[0]
+            for line in reversed(lines[1:]):
+                if line:
+                    yield line.decode("utf-8")
+        if pending:
+            yield pending.decode("utf-8")
 
 
 def read_runtime_events(job_id, limit=None, *, visibility=None, category=None):
@@ -5195,7 +7697,10 @@ def read_runtime_events(job_id, limit=None, *, visibility=None, category=None):
         return []
     events = []
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        newest_first = bool(limit and limit > 0)
+        lines = (_runtime_event_lines_reverse(path) if newest_first else
+                 path.read_text(encoding="utf-8").splitlines())
+        for line in lines:
             try:
                 value = json.loads(line)
             except (TypeError, ValueError):
@@ -5210,9 +7715,258 @@ def read_runtime_events(job_id, limit=None, *, visibility=None, category=None):
                 if category and event_category != category:
                     continue
                 events.append(normalized)
+                if newest_first and len(events) >= limit:
+                    break
     except OSError:
         return []
+    if newest_first:
+        return list(reversed(events))
     return events[-limit:] if limit else events
+
+
+# ================= 运行时遥测合并（高并发下的写放大治理）=================
+# 背景：`call_llm` 过去对**每个请求**做两次 `update_runtime_state`，每次都是
+# 「读全量 runtime_state.json → 合并 → 整文件重写」，并在 append runtime event
+# 时 flush + fsync。并发 4 时，一次批次循环就能产生几十次全量重写和 fsync，
+# 而这些写入里没有一个是业务真值。
+#
+# 现在把「在途请求状态」这类高频、非真值遥测改为**前缘立即 + 尾缘合并**：
+#   * 前缘：窗口内第一次更新立即落盘（UI 马上能看到"等待模型响应"）；
+#   * 尾缘：窗口内后续更新合并成一次写入（默认 350 ms，落在 250–500 ms 区间）；
+#   * 在途请求数归零时立即落盘（UI 立刻回到"处理中/完成"）；
+#   * 失败立即落盘（不能把失败藏在一个还没到期的窗口里）。
+#
+# 业务真值不受影响：取消、失败、worker lease、阶段边界和业务 checkpoint 仍然
+# 直接调用 `update_runtime_state`，走原有同步持久化路径。
+RUNTIME_TELEMETRY_FLUSH_SECONDS = 0.35
+
+_RUNTIME_PERSIST_LOCK = threading.RLock()
+_RUNTIME_PERSIST_STATS = {
+    "state_writes": 0,
+    "event_appends": 0,
+    "fsyncs": 0,
+    "state_write_seconds": 0.0,
+    "event_append_seconds": 0.0,
+}
+
+
+def runtime_persistence_stats():
+    """Counters proving how much runtime persistence actually happened."""
+    with _RUNTIME_PERSIST_LOCK:
+        return dict(_RUNTIME_PERSIST_STATS)
+
+
+def reset_runtime_persistence_stats():
+    with _RUNTIME_PERSIST_LOCK:
+        for key in _RUNTIME_PERSIST_STATS:
+            _RUNTIME_PERSIST_STATS[key] = 0
+
+
+class _RuntimeTelemetryCoalescer:
+    """Merge high-frequency, non-authoritative runtime telemetry updates.
+
+    Only LLM in-flight status flows through here.  Everything that a crash
+    recovery or a cancellation decision depends on is written synchronously by
+    the caller instead of being queued behind this window.
+    """
+
+    def __init__(self, job_id, *, flush_interval=None, writer=None):
+        self.job_id = job_id
+        self.flush_interval = max(
+            0.0, float(flush_interval if flush_interval is not None
+                       else RUNTIME_TELEMETRY_FLUSH_SECONDS))
+        self._writer = writer
+        self._lock = threading.RLock()
+        self._pending = {}
+        self._active = 0
+        self._last_flush = 0.0
+        self._timer = None
+        self._closed = False
+        self._stats = {"submits": 0, "flushes": 0, "coalesced": 0,
+                       "immediate": 0, "events": 0}
+
+    # -- public API -------------------------------------------------------
+    def request_started(self):
+        self.submit(active_delta=1, status="waiting_external",
+                    phase="waiting_llm", event_name="llm_request_started")
+
+    def request_finished(self):
+        self.submit(active_delta=-1, status="running", phase="running",
+                    event_name="llm_response_received")
+
+    def request_failed(self, error=None):
+        self.submit(force=True, active_delta=-1, status="running", phase="running",
+                    event=str(error)[:240] if error else "模型请求失败",
+                    event_name="llm_request_failed")
+
+    def submit(self, *, active_delta=0, force=False, **changes):
+        """Record one telemetry update; flush on the leading or trailing edge."""
+        with self._lock:
+            if self._closed:
+                return
+            self._stats["submits"] += 1
+            if active_delta:
+                if active_delta > 0 and self._active == 0:
+                    changes["model_wait_started_at"] = _utc_now_iso()
+                self._active = max(0, self._active + int(active_delta))
+            for key, value in changes.items():
+                if value is not None:
+                    self._pending[key] = value
+            now = time.monotonic()
+            leading_edge = (now - self._last_flush) >= self.flush_interval
+            if force or leading_edge or self._active == 0:
+                self._stats["immediate"] += 1
+                self._flush_locked(now)
+                return
+            self._stats["coalesced"] += 1
+            self._schedule_locked(now)
+
+    def flush(self):
+        with self._lock:
+            if self._pending or self._active:
+                self._flush_locked(time.monotonic())
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            if self._pending:
+                self._flush_locked(time.monotonic())
+
+    def stats(self):
+        with self._lock:
+            return {**self._stats, "active": self._active}
+
+    # -- internals --------------------------------------------------------
+    def _schedule_locked(self, now):
+        if self._timer is not None:
+            return
+        delay = max(0.01, self.flush_interval - (now - self._last_flush))
+        timer = threading.Timer(delay, self._flush_from_timer)
+        timer.daemon = True
+        self._timer = timer
+        timer.start()
+
+    def _flush_from_timer(self):
+        with self._lock:
+            self._timer = None
+            if self._closed:
+                return
+            self._flush_locked(time.monotonic())
+
+    def _flush_locked(self, now):
+        changes = dict(self._pending)
+        self._pending.clear()
+        self._last_flush = now
+        active = self._active
+        event_name = changes.pop("event_name", None)
+        event = changes.pop("event", None)
+        if active > 0:
+            changes["status"] = "waiting_external"
+            changes["phase"] = "waiting_llm"
+            changes["phase_label"] = f"等待模型响应（{active} 个请求进行中）"
+            if event is None:
+                if event_name == "llm_response_received":
+                    event = f"已收到模型响应，仍有 {active} 个请求进行中"
+                else:
+                    event = "已向模型发送请求"
+                    event_name = "llm_request_started"
+        else:
+            changes.setdefault("status", "running")
+            changes.setdefault("phase", "running")
+            changes["phase_label"] = "处理模型结果"
+            if event is None:
+                event = "已收到模型响应"
+                event_name = "llm_response_received"
+        # 取消是业务真值：一旦用户请求取消，合并窗口里的"等待/处理中"就不该再
+        # 覆盖 cancelling。宁可丢掉这几条遥测，也不能让 UI 显示成还在正常跑。
+        try:
+            if (load_runtime_state(self.job_id) or {}).get("cancel_requested"):
+                return
+        except Exception:  # noqa: BLE001 - 读不到就按未取消处理
+            pass
+        writer = self._writer or update_runtime_state
+        try:
+            writer(self.job_id, event=event, event_name=event_name, **changes)
+            self._stats["flushes"] += 1
+            self._stats["events"] += 1
+        except Exception:  # noqa: BLE001 - telemetry must never break a request
+            pass
+
+
+_TELEMETRY_LOCK = threading.RLock()
+_TELEMETRY_COALESCERS = {}
+_TELEMETRY_COALESCER_STATS = {"created": 0}
+
+
+def _runtime_telemetry_coalescer(job_id):
+    if not job_id:
+        return None
+    with _TELEMETRY_LOCK:
+        coalescer = _TELEMETRY_COALESCERS.get(job_id)
+        if coalescer is None:
+            coalescer = _RuntimeTelemetryCoalescer(job_id)
+            _TELEMETRY_COALESCERS[job_id] = coalescer
+            _TELEMETRY_COALESCER_STATS["created"] += 1
+        return coalescer
+
+
+def _runtime_telemetry_request_started(job_id):
+    coalescer = _runtime_telemetry_coalescer(job_id)
+    if coalescer is not None:
+        coalescer.request_started()
+
+
+def _runtime_telemetry_request_finished(job_id):
+    coalescer = _runtime_telemetry_coalescer(job_id)
+    if coalescer is not None:
+        coalescer.request_finished()
+
+
+def _runtime_telemetry_request_failed(job_id, error=None):
+    coalescer = _runtime_telemetry_coalescer(job_id)
+    if coalescer is not None:
+        coalescer.request_failed(error=error)
+
+
+def flush_runtime_telemetry(job_id=None):
+    """Force pending telemetry to disk (call at stage boundaries / shutdown)."""
+    with _TELEMETRY_LOCK:
+        if job_id:
+            coalescer = _TELEMETRY_COALESCERS.get(job_id)
+            targets = [coalescer] if coalescer else []
+        else:
+            targets = list(_TELEMETRY_COALESCERS.values())
+    for coalescer in targets:
+        coalescer.flush()
+
+
+def reset_runtime_telemetry(job_id=None):
+    """Drop coalescer state; used when a job reaches a terminal boundary."""
+    with _TELEMETRY_LOCK:
+        if job_id is None:
+            targets = list(_TELEMETRY_COALESCERS.values())
+            _TELEMETRY_COALESCERS.clear()
+        else:
+            coalescer = _TELEMETRY_COALESCERS.pop(job_id, None)
+            targets = [coalescer] if coalescer else []
+    for coalescer in targets:
+        coalescer.close()
+
+
+def runtime_telemetry_stats():
+    with _TELEMETRY_LOCK:
+        coalescers = {jid: coalescer.stats()
+                      for jid, coalescer in _TELEMETRY_COALESCERS.items()}
+        created = _TELEMETRY_COALESCER_STATS["created"]
+    totals = {"submits": 0, "flushes": 0, "coalesced": 0, "immediate": 0, "events": 0}
+    for stats in coalescers.values():
+        for key in totals:
+            totals[key] += int(stats.get(key) or 0)
+    return {"coalescers": len(coalescers), "created": created,
+            "totals": totals, "per_job": coalescers}
 
 
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
@@ -5222,7 +7976,7 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     if not job_id:
         return _runtime_defaults()
     now = _utc_now_iso()
-    with _RUNTIME_LOCK:
+    with _RUNTIME_LOCK, _job_lock.exclusive(job_dir(job_id) / ".runtime-write.lock"):
         current = load_runtime_state(job_id)
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
@@ -5233,6 +7987,14 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         if cancel_active and changes.get("status") in {"running", "waiting_external"}:
             changes = {**changes, "status": "cancelling", "phase": "cancelling",
                        "phase_label": "正在取消"}
+        if current.get("pause_requested") and changes.get("pause_requested") is not False and changes.get("status") in {"running", "waiting_external"}:
+            changes = {**changes, "status": current.get("status") if current.get("status") == "paused" else "pausing"}
+        if changes.get("operation_label") and changes["operation_label"] != current.get("operation_label"):
+            changes["operation_started_at"] = now
+        if changes.get("phase") and changes["phase"] != current.get("phase"):
+            changes["phase_started_at"] = now
+        if changes.get("status") in {"completed", "cancelled", "failed"}:
+            changes["finished_at"] = now
         current.update({key: value for key, value in changes.items()
                         if value is not None or key == "error"})
         if heartbeat:
@@ -5251,7 +8013,10 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                 event_name = event_name or _runtime_event_code(message)
                 visibility, category = _runtime_event_meta(
                     event_name, event_visibility, event_category)
+                current["last_activity_at"] = now
                 inline = {
+                    "stage": current.get("stage_id") or current.get("stage"),
+                    "operation": current.get("operation_id") or current.get("operation"),
                     "at": now, "timestamp": now, "event": event_name,
                     "message": message, "visibility": visibility,
                     "category": category,
@@ -5279,10 +8044,21 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                         metadata=event_metadata, visibility=visibility, category=category)
         directory = job_dir(job_id)
         directory.mkdir(parents=True, exist_ok=True)
-        tmp = directory / f"{RUNTIME_STATE_FILE}.tmp"
-        tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-        tmp.replace(runtime_state_path(job_id))
+        tmp = directory / f"{RUNTIME_STATE_FILE}.{uuid.uuid4().hex}.tmp"
+        started = time.perf_counter()
+        try:
+            tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            tmp.replace(runtime_state_path(job_id))
+        except OSError as exc:
+            _workflow_errors.raise_if_fatal(exc, job_id)
+            raise
+        finally:
+            tmp.unlink(missing_ok=True)
+        with _RUNTIME_PERSIST_LOCK:
+            _RUNTIME_PERSIST_STATS["state_writes"] += 1
+            _RUNTIME_PERSIST_STATS["state_write_seconds"] += (
+                time.perf_counter() - started)
         return current
 
 
@@ -5324,7 +8100,8 @@ def _annotation_blocks_completion(state):
     """
     if not isinstance(state, dict):
         return False
-    return state.get("enable_annotate") is True and not state.get("annotations_done")
+    return state.get("enable_annotate") is True and (
+        not state.get("annotations_done") or workflow_outcomes(state)["annotation"]["status"] == "partial")
 
 
 def _runtime_business_complete(state):
@@ -5355,17 +8132,34 @@ def _lost_worker_message(runtime, state, *, stalled=False):
 
 
 def _runtime_mark_lost(job_id, status, message):
+    worker = load_runtime_state(job_id).get("worker") or {}
     return update_runtime_state(
         job_id, status=status, phase=status, phase_label=message,
-        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None},
+        worker=worker if _job_execution_alive(job_id) else {
+            "owner_pid": None, "worker_id": None, "lease_expires_at": None},
         event=message, event_name=status)
+
+
+def _job_execution_alive(job_id):
+    """A stale lease does not prove that its owner has stopped executing."""
+    if is_job_worker_alive(job_id):
+        return True
+    owner = (load_runtime_state(job_id).get("worker") or {}).get("owner_pid")
+    return owner != os.getpid() and _runtime_pid_alive(owner)
 
 
 def get_job_runtime_status(job_id, state=None):
     """Return the durable runtime status and reconcile dead local workers."""
     state = state if isinstance(state, dict) else load_job_state(job_id)
     runtime = load_runtime_state(job_id)
+    failure = _workflow_errors.failure(job_id)
+    if failure is not None and failure.reason == "disk_full":
+        return {**runtime, "status": "failed", "phase": "failed", "phase_label": "磁盘空间不足",
+                "error": {"type": "WorkflowStopped", "message": "磁盘空间不足，任务已停止发起新请求；请释放空间后重试。"}}
     status = runtime.get("status") or "idle"
+    if status == "completed" and state and _annotation_blocks_completion(state):
+        return {**runtime, "status": "idle_incomplete", "phase": "idle_incomplete",
+                "phase_label": "正文已完成，标注仍有失败批次"}
     if status in RUNTIME_ACTIVE_STATUSES:
         worker = runtime.get("worker") or {}
         pid = worker.get("owner_pid")
@@ -5384,7 +8178,7 @@ def get_job_runtime_status(job_id, state=None):
                                    _lost_worker_message(runtime, state))
         if lease and lease < now or heartbeat and (
                 now - heartbeat).total_seconds() > RUNTIME_STALL_SECONDS:
-            if registered:
+            if registered or _job_execution_alive(job_id):
                 return _runtime_mark_lost(job_id, "stalled",
                                        _lost_worker_message(
                                            runtime, state, stalled=True))
@@ -5436,7 +8230,7 @@ def build_job_runtime_view(job_id, state=None):
         "starting": "正在恢复任务", "running": "正在运行",
         "waiting_external": "正在运行",
         "stalled": "暂无运行信号", "interrupted": "上次运行已中断",
-        "failed": "当前步骤失败", "cancelling": "正在取消", "cancelled": "任务已取消",
+        "pausing": "正在暂停", "paused": "已暂停", "failed": "当前步骤失败", "cancelling": "正在取消", "cancelled": "任务已取消",
         "completed": "已完成", "idle_incomplete": "未完成",
         "waiting_manual": "待术语确认",
     }
@@ -5448,7 +8242,7 @@ def build_job_runtime_view(job_id, state=None):
         "stalled": ["retry", "cancel", "details"],
         "interrupted": ["resume", "retry", "details"],
         "failed": ["retry", "resume", "details"],
-        "cancelling": ["details"], "cancelled": ["resume", "details"],
+        "pausing": ["cancel", "details"], "paused": ["resume", "cancel", "details"], "cancelling": ["details"], "cancelled": ["resume", "details"],
         "idle_incomplete": ["resume"], "waiting_manual": ["view"],
         "completed": ["view"],
     }
@@ -5459,7 +8253,7 @@ def build_job_runtime_view(job_id, state=None):
     academic_present = bool(state and ((state.get("academic_state") or {}).get("artifacts")
                                        or (state.get("academic_state") or {}).get(
                                            "current_stage") not in {None, "", "not_started"}))
-    if state and state.get("p2_done") and (
+    if not runtime.get("segment_operation") and state and state.get("p2_done") and (
             state.get("report_enabled", True) or academic_present):
         completed, total = _academic_runtime_progress(job_id, state)
     if status == "completed" and total:
@@ -5486,6 +8280,8 @@ def build_job_runtime_view(job_id, state=None):
         detail = "暂时没有新的运行信号，可以重试当前步骤。"
     elif status == "idle_incomplete":
         detail = "当前进度已保存，可以继续处理。"
+        if state and workflow_outcomes(state)["annotation"]["status"] == "partial":
+            detail = "正文已完成；标注部分失败，可在审校工作台补跑。"
     elif status == "failed":
         error = runtime.get("error") or {}
         detail = error.get("message") if isinstance(error, dict) else str(error)
@@ -5497,6 +8293,7 @@ def build_job_runtime_view(job_id, state=None):
     }.get(status)
     return {
         "status": status,
+        "workflow_outcomes": workflow_outcomes(state or {}),
         "status_label": labels.get(status, status),
         "runtime_status": status,
         "headline_status": labels.get(status, status),
@@ -5644,10 +8441,10 @@ def _runtime_stage_info(label):
         }
     if "文档" in text or "排版" in text:
         stage = "document_processing"
-    elif "术语" in text:
-        stage = "terminology"
     elif "翻译" in text:
         stage = "translation"
+    elif "术语" in text:
+        stage = "terminology"
     elif "标注" in text:
         stage = "annotation"
     elif "报告" in text or "学术" in text:
@@ -5733,10 +8530,15 @@ def _runtime_heartbeat_loop(job_id, stop_event):
         current = load_runtime_state(job_id)
         if current.get("status") not in RUNTIME_ACTIVE_STATUSES:
             return
-        update_runtime_state(job_id, heartbeat=True)
+        try:
+            _workflow_errors.check(job_id)
+            update_runtime_state(job_id, heartbeat=True)
+        except _workflow_errors.WorkflowStopped:
+            return
 
 
 def _runtime_status_callback(job_id, state, label):
+    _runtime_pause_checkpoint(job_id)
     stage_info = _runtime_stage_info(label)
     current = load_runtime_state(job_id)
     operation = stage_info.get("operation") or current.get("operation")
@@ -5746,7 +8548,8 @@ def _runtime_status_callback(job_id, state, label):
     saved_state = load_job_state(job_id)
     state = saved_state or (state if isinstance(state, dict) else {})
     changes = dict(stage_info)
-    completed_units, total_units = _academic_runtime_progress(job_id, state)
+    completed_units, total_units = (_academic_runtime_progress(job_id, state)
+                                    if stage_info.get("stage") == "academic_writing" else (0, 0))
     changes.update({
         "operation": operation,
         "operation_id": stage_info.get("operation_id") or operation,
@@ -5773,13 +8576,20 @@ def _runtime_caption_callback(job_id, text):
     message = str(text or "").strip()
     if not message:
         return
+    _runtime_pause_checkpoint(job_id)
+    stage_info = _runtime_stage_info(message)
+    changes = {"operation_label": message, "phase_label": message}
+    if stage_info["stage"] != "pipeline":
+        changes.update({key: stage_info[key] for key in (
+            "stage", "stage_id", "operation", "operation_id", "operation_label")})
     update_runtime_state(job_id, progress=True, event=message, status="running",
-                         event_visibility="user", event_category="progress")
+                         event_visibility="user", event_category="progress", **changes)
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
 
-def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None):
+def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None,
+                    segment_operation=None):
     stop_event = threading.Event()
     heartbeat = threading.Thread(target=_runtime_heartbeat_loop,
                                  args=(job_id, stop_event), daemon=True)
@@ -5805,19 +8615,48 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             phase_label="正在读取最近检查点", heartbeat=True, progress=True,
             event="后台 worker 已接管任务", event_name="worker_started",
             event_visibility="technical", event_category="orchestration",
-            pipeline="academic_writing" if kwargs.get("enable_report")
-            else "document_pipeline")
+            pipeline=("segment_operation" if segment_operation else
+                      "academic_writing" if kwargs.get("enable_report")
+                      else "document_pipeline"))
         update_runtime_state(
             job_id, status="running", phase="running",
             phase_label="已恢复 · 正在执行" if queued.get("resume_request_id")
             else "正在执行", heartbeat=True)
-        result = run_job_pipeline(
-            job_id, filename, file_bytes, **kwargs,
-            on_status=lambda label: _runtime_status_callback(job_id, state, label),
-            on_caption=lambda text: _runtime_caption_callback(job_id, text),
-        )
+        if segment_operation:
+            kind = segment_operation["kind"]
+            indexes = segment_operation["indexes"]
+            kwargs.pop("reasoning_effort", None)
+            if kind == "review":
+                result = review_translation_segments(job_id, indexes, **kwargs)
+                failed = result[1].get("failed_segment_ids") or []
+                if failed:
+                    raise RuntimeError(f"{len(failed)} 个段落审校未完成，请在审校队列中重试。")
+            else:
+                result = retranslate_segments(
+                    job_id, indexes, **kwargs,
+                    on_caption=lambda text: _runtime_caption_callback(job_id, text))
+                if len(result[1]) != len(indexes):
+                    raise RuntimeError("部分段落未完成重译，请查看段落状态后重试。")
+                readiness = _translation_evidence.translation_review_readiness(result[0])
+                if set(indexes) & set(readiness.get("failed_segment_ids") or []):
+                    raise RuntimeError("重译已保存，但部分段落审校未完成，请在审校队列中重试。")
+            if not _runtime_cancel_requested(job_id):
+                update_runtime_state(
+                    job_id, segment_operation_result="completed",
+                    completed_units=len(indexes), progress=True,
+                    event="所选段落审校已完成" if kind == "review" else "所选段落重译已完成",
+                    event_name="segment_operation_completed", event_visibility="user",
+                    event_category="progress")
+        else:
+            result = run_job_pipeline(
+                job_id, filename, file_bytes, **kwargs,
+                on_status=lambda label: _runtime_status_callback(job_id, state, label),
+                on_caption=lambda text: _runtime_caption_callback(job_id, text),
+            )
         result_state = load_job_state(job_id) or state
         if _runtime_cancel_requested(job_id):
+            if not segment_operation:
+                trace.finish_run(job_id=job_id, status="cancelled")
             update_runtime_state(job_id, status="cancelled", phase="cancelled",
                                  phase_label="已取消", event="任务已取消",
                                  event_name="job_cancelled", progress=True,
@@ -5825,6 +8664,8 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                                  worker={"owner_pid": None, "worker_id": None,
                                          "lease_expires_at": None})
         elif _runtime_business_complete(result_state):
+            if not segment_operation:
+                trace.finish_run(job_id=job_id, status="completed")
             update_runtime_state(job_id, status="completed", phase="completed",
                                  phase_label="已完成", event="任务已完成",
                                  event_name="job_completed", progress=True,
@@ -5833,6 +8674,8 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                                  worker={"owner_pid": None, "worker_id": None,
                                          "lease_expires_at": None})
         else:
+            if not segment_operation:
+                trace.finish_run(job_id=job_id, status="checkpointed")
             update_runtime_state(job_id, status="idle_incomplete", phase="idle_incomplete",
                                  phase_label="等待继续", event="阶段已保存，等待继续",
                                  event_name="job_checkpointed", progress=True,
@@ -5846,9 +8689,14 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
     # lease 永不过期 → 应用还活着时这个任务会**真的硬卡死**（状态一直停在活跃态，
     # start_job_worker / resume_job 都会拒绝）。这里必须失败闭合。
     except BaseException as exc:  # noqa: BLE001 - worker must publish failure to UI
-        cancelled = _runtime_cancel_requested(job_id) or "请求取消" in str(exc)
+        cancelled = bool(load_runtime_state(job_id).get("cancel_requested")) or "请求取消" in str(exc)
+        if not segment_operation:
+            trace.finish_run(job_id=job_id, status="cancelled" if cancelled else "failed", failure_reason=str(exc))
         if not cancelled:
-            _write_runtime_technical_log(job_id, exc)
+            try:
+                _write_runtime_technical_log(job_id, exc)
+            except OSError:
+                pass
         current = load_runtime_state(job_id)
         provider_status = provider_error_status(exc)
         user_error_message = (
@@ -5863,94 +8711,163 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             "timestamp": _utc_now_iso(),
             "technical_log": RUNTIME_TECHNICAL_LOG,
         }
-        update_runtime_state(
-            job_id, status="cancelled" if cancelled else "failed",
-            phase="cancelled" if cancelled else "failed",
-            phase_label="已取消" if cancelled else "步骤失败",
-            error=error,
-            event="任务已取消" if cancelled else f"步骤失败：{user_error_message[:180]}",
-            event_name="job_cancelled" if cancelled else "job_failed",
-            event_visibility="user",
-            event_category="lifecycle" if cancelled else "error",
-            progress=True, heartbeat=True,
-            worker={"owner_pid": None, "worker_id": None,
-                    "lease_expires_at": None})
+        try:
+            update_runtime_state(
+                job_id, status="cancelled" if cancelled else "failed",
+                phase="cancelled" if cancelled else "failed",
+                phase_label="已取消" if cancelled else "步骤失败",
+                error=error,
+                event="任务已取消" if cancelled else f"步骤失败：{user_error_message[:180]}",
+                event_name="job_cancelled" if cancelled else "job_failed",
+                event_visibility="user",
+                event_category="lifecycle" if cancelled else "error",
+                progress=True, heartbeat=True,
+                worker={"owner_pid": None, "worker_id": None,
+                        "lease_expires_at": None})
+        except _workflow_errors.WorkflowStopped as stopped:
+            if stopped.reason != "disk_full":
+                raise
         return None
     finally:
         _append_runtime_technical_log(
             job_id, f"worker released pid={os.getpid()}"
                     f" thread={threading.current_thread().name}")
         stop_event.set()
+        heartbeat.join(timeout=RUNTIME_HEARTBEAT_SECONDS + 1)
         set_llm_base_url(None)
-        _RUNTIME_CTX.__dict__.clear()
-        update_runtime_state(
-            job_id, event="后台运行已释放", event_name="worker_released",
-            event_visibility="technical", event_category="orchestration")
-        with _RUNTIME_WORKERS_LOCK:
-            _RUNTIME_WORKERS.pop(job_id, None)
+        # Terminal boundary: flush anything still inside the telemetry window,
+        # then drop the coalescer so a resumed run starts from a clean slate.
+        # The pooled transport client for this worker thread is released here
+        # too, so a long-lived process does not accumulate idle sockets.
+        try:
+            flush_runtime_telemetry(job_id)
+            reset_runtime_telemetry(job_id)
+            _llm_transport.close_thread_clients()
+            try:
+                update_runtime_state(
+                    job_id, event="后台运行已释放", event_name="worker_released",
+                    event_visibility="technical", event_category="orchestration")
+            except _workflow_errors.WorkflowStopped as stopped:
+                if stopped.reason != "disk_full":
+                    raise
+        finally:
+            _RUNTIME_CTX.__dict__.clear()
+            with _RUNTIME_WORKERS_LOCK:
+                if _RUNTIME_WORKERS.get(job_id) is threading.current_thread():
+                    _RUNTIME_WORKERS.pop(job_id, None)
+                execution_lock = getattr(threading.current_thread(), "execution_lock", None)
+                if execution_lock is not None:
+                    execution_lock.close()
 
 
 def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None,
-                     resume_request_id=None):
+                     resume_request_id=None, *, segment_operation=None):
     """Start one resumable pipeline worker; repeated UI reruns are idempotent."""
-    if file_bytes is not None:
-        try:
-            save_source(job_id, file_bytes)
-        except Exception:
-            pass
     with _RUNTIME_WORKERS_LOCK:
-        worker = _RUNTIME_WORKERS.get(job_id)
-        if worker and worker.is_alive():
+        if _job_execution_alive(job_id):
             return False
-        runtime = load_runtime_state(job_id)
-        status = runtime.get("status") or "idle"
-        matching_resume = status == "resume_requested" and resume_request_id \
-            and runtime.get("resume_request_id") == resume_request_id
-        if status in RUNTIME_ACTIVE_STATUSES and not matching_resume:
+        execution_lock = _job_lock.acquire(job_dir(job_id) / ".worker.lock", blocking=False)
+        if execution_lock is None:
             return False
-        if not matching_resume:
-            runtime = get_job_runtime_status(job_id)
-            if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
+        try:
+            _workflow_errors.reset(job_id)
+            if file_bytes is not None:
+                save_source(job_id, file_bytes)
+            runtime = load_runtime_state(job_id)
+            status = runtime.get("status") or "idle"
+            matching_resume = bool(resume_request_id) and (
+                status not in RUNTIME_ACTIVE_STATUSES or (
+                    status == "resume_requested" and runtime.get("resume_request_id") == resume_request_id))
+            if status in RUNTIME_ACTIVE_STATUSES and not matching_resume:
                 return False
-        state = load_job_state(job_id) or new_job_state(filename)
-        worker_id = uuid.uuid4().hex
-        attempt = int(runtime.get("attempt") or 0) + 1
-        started_at = _utc_now_iso()
-        lease_expires_at = (datetime.now(timezone.utc) +
-                            timedelta(seconds=RUNTIME_LEASE_SECONDS)).isoformat(
-                                timespec="seconds")
-        completed_units, total_units = (0, 0)
-        if state.get("p2_done") and pipeline_kwargs.get("enable_report"):
-            completed_units, total_units = _academic_runtime_progress(job_id, state)
-        context = _academic_resume_context(state, runtime) \
-            if matching_resume and pipeline_kwargs.get("enable_report") else {
-                "pipeline": "document_pipeline", "stage": "pipeline",
-                "stage_id": "pipeline", "operation": "pipeline",
-                "operation_id": "pipeline", "operation_label": "准备任务",
-                "stage_progress": {},
-                "section_id": "", "stage_index": None, "stage_total": None,
-            }
-        update_runtime_state(
-            job_id, status="queued", phase="starting", phase_label="准备中",
-            **context, started_at=runtime.get("started_at") if matching_resume
-            else started_at,
-            operation_started_at=started_at, last_progress_at=started_at,
-            last_heartbeat_at=started_at, cancel_requested=False, error=None,
-            attempt=attempt, resume_request_id=resume_request_id or "",
-            completed_units=completed_units, total_units=total_units,
-            overall_progress=None,
-            worker={"owner_pid": os.getpid(), "worker_id": worker_id,
-                    "lease_expires_at": lease_expires_at},
-            event="已排入后台 worker", event_name="job_queued",
-            event_visibility="technical", event_category="orchestration")
-        worker = threading.Thread(
-            target=_run_job_worker,
-            args=(job_id, filename, file_bytes, dict(pipeline_kwargs or {}), base_url),
-            name=f"transpraxis-{job_id}", daemon=True)
-        worker.worker_id = worker_id
-        _RUNTIME_WORKERS[job_id] = worker
-        worker.start()
-        return True
+            if not matching_resume:
+                runtime = get_job_runtime_status(job_id)
+                if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
+                    return False
+            state = load_job_state(job_id) or new_job_state(filename)
+            worker_id = uuid.uuid4().hex
+            attempt = int(runtime.get("attempt") or 0) + 1
+            started_at = _utc_now_iso()
+            lease_expires_at = (datetime.now(timezone.utc) +
+                                timedelta(seconds=RUNTIME_LEASE_SECONDS)).isoformat(
+                                    timespec="seconds")
+            completed_units, total_units = (0, 0)
+            if state.get("p2_done") and pipeline_kwargs.get("enable_report"):
+                completed_units, total_units = _academic_runtime_progress(job_id, state)
+            context = _academic_resume_context(state, runtime) \
+                if matching_resume and pipeline_kwargs.get("enable_report") else {
+                    "pipeline": "document_pipeline", "stage": "pipeline",
+                    "stage_id": "pipeline", "operation": "pipeline",
+                    "operation_id": "pipeline", "operation_label": "准备任务",
+                    "stage_progress": {},
+                    "section_id": "", "stage_index": None, "stage_total": None,
+                }
+            if segment_operation:
+                kind = segment_operation["kind"]
+                context.update(
+                    pipeline="segment_operation", stage="translation",
+                    stage_id="segment_review" if kind == "review" else "segment_retranslation",
+                    operation=kind, operation_id=kind,
+                    operation_label="所选段落审校" if kind == "review" else "所选段落重译")
+                completed_units, total_units = 0, len(segment_operation["indexes"])
+            if matching_resume and status != "resume_requested":
+                runtime = update_runtime_state(
+                    job_id, status="resume_requested", phase="resume_requested",
+                    phase_label="正在恢复任务", resume_request_id=resume_request_id,
+                    started_at=started_at, operation_started_at=started_at,
+                    last_progress_at=started_at, completed_units=completed_units,
+                    total_units=total_units, overall_progress=None,
+                    worker={"owner_pid": os.getpid(), "worker_id": worker_id,
+                            "lease_expires_at": lease_expires_at},
+                    event="已从断点恢复任务", event_name="resume_requested",
+                    event_visibility="user", event_category="lifecycle",
+                    event_metadata={"resume_request_id": resume_request_id}, **context)
+            update_runtime_state(
+                job_id, status="queued", phase="starting", phase_label="准备中",
+                **context, started_at=runtime.get("started_at") if matching_resume
+                else started_at,
+                operation_started_at=started_at, last_progress_at=started_at,
+                last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False, error=None,
+                attempt=attempt, resume_request_id=resume_request_id or "",
+                segment_operation=segment_operation or {}, segment_operation_result="pending",
+                completed_units=completed_units, total_units=total_units,
+                overall_progress=None,
+                worker={"owner_pid": os.getpid(), "worker_id": worker_id,
+                        "lease_expires_at": lease_expires_at},
+                event="已排入后台 worker", event_name="job_queued",
+                event_visibility="technical", event_category="orchestration")
+            worker = threading.Thread(
+                target=_run_job_worker,
+                args=(job_id, filename, file_bytes, dict(pipeline_kwargs or {}), base_url,
+                      segment_operation),
+                name=f"folith-{job_id}", daemon=True)
+            worker.worker_id = worker_id
+            worker.execution_lock = execution_lock
+            _RUNTIME_WORKERS[job_id] = worker
+            worker.start()
+            execution_lock = None  # owned by the worker until its final cleanup
+            return True
+        finally:
+            if execution_lock is not None:
+                execution_lock.close()
+
+
+def start_segment_worker(job_id, kind, indexes, *, base_url=None, **kwargs):
+    """Run a selected review or retranslation on the existing job worker."""
+    if kind not in {"review", "retranslate"}:
+        raise ValueError(f"未知段落操作：{kind}")
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    indexes = sorted(set(int(index) for index in indexes))
+    if not indexes or any(index < 0 or index >= len(state.get("pairs") or [])
+                          for index in indexes):
+        raise ValueError("请选择仍然存在的翻译段落。")
+    if kind == "review":
+        kwargs["base_url"] = base_url or ""
+    return start_job_worker(
+        job_id, state.get("filename") or "", None, kwargs, base_url=base_url,
+        segment_operation={"kind": kind, "indexes": indexes})
 
 
 def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
@@ -5958,6 +8875,10 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
     """Idempotently request resume and publish the transition before worker start."""
     with _RUNTIME_WORKERS_LOCK:
         runtime = get_job_runtime_status(job_id)
+        if runtime.get("status") in {"paused", "pausing"} and is_job_worker_alive(job_id):
+            return continue_job(job_id)
+        if _job_execution_alive(job_id):
+            return False
         if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
             return False
         state = load_job_state(job_id) or new_job_state(filename)
@@ -5969,29 +8890,6 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
         if state.get("p2_done") and (academic.get("artifacts") or academic.get(
                 "current_stage") not in {None, "", "not_started"}):
             pipeline_kwargs["enable_report"] = True
-        completed_units, total_units = (0, 0)
-        context = {
-            "pipeline": "document_pipeline", "stage": "pipeline",
-            "stage_id": "pipeline", "operation": "pipeline",
-            "operation_id": "pipeline", "operation_label": "继续处理",
-            "stage_progress": {},
-            "section_id": "", "stage_index": None, "stage_total": None,
-        }
-        if state.get("p2_done") and pipeline_kwargs.get("enable_report"):
-            completed_units, total_units = _academic_runtime_progress(job_id, state)
-            context = _academic_resume_context(state, runtime)
-        now = _utc_now_iso()
-        update_runtime_state(
-            job_id, status="resume_requested", phase="resume_requested",
-            phase_label="正在恢复任务", resume_request_id=request_id,
-            started_at=now, operation_started_at=now,
-            last_progress_at=now, completed_units=completed_units,
-            total_units=total_units, overall_progress=None,
-            worker={"owner_pid": None, "worker_id": None,
-                    "lease_expires_at": None},
-            event="已从断点恢复任务", event_name="resume_requested",
-            event_visibility="user", event_category="lifecycle",
-            event_metadata={"resume_request_id": request_id}, **context)
         return start_job_worker(
             job_id, filename, None, pipeline_kwargs, base_url=base_url,
             resume_request_id=request_id)
@@ -6006,7 +8904,7 @@ def is_job_worker_alive(job_id):
             return True
         # If in-memory registry lost the reference (e.g. Streamlit reloaded the module),
         # look for any active worker thread belonging to this job in the current process.
-        target_name = f"transpraxis-{job_id}"
+        target_name = f"folith-{job_id}"
         for thread in threading.enumerate():
             if thread.name == target_name and thread.is_alive():
                 _RUNTIME_WORKERS[job_id] = thread
@@ -6022,7 +8920,7 @@ def request_job_cancel(job_id, *, force=False):
     if not job_id:
         return False
     alive = is_job_worker_alive(job_id)
-    if alive and not force:
+    if alive or _job_execution_alive(job_id):
         update_runtime_state(job_id, status="cancelling", cancel_requested=True,
                              phase="cancelling", phase_label="正在取消",
                              event="已请求取消任务", event_name="cancel_requested",
@@ -6043,6 +8941,8 @@ def request_job_cancel(job_id, *, force=False):
 
 def retry_job_step(job_id):
     """Invalidate only the failed academic operation and its downstream work."""
+    if _job_execution_alive(job_id):
+        return False
     runtime = get_job_runtime_status(job_id)
     if runtime.get("status") not in {"failed", "stalled", "interrupted", "cancelled"}:
         return False
@@ -6109,11 +9009,29 @@ def _reset_final_qa(state, reason=""):
 
 def _mark_translation_truth_changed(
     job_id, state, indexes, reason, *, actor="user", action="translation_changed",
-    stale_translation_reviews=True,
+    stale_translation_reviews=True, patches=None,
 ):
-    """Record one canonical CURRENT_TRANSLATION mutation and its impact slice."""
+    """Record one canonical CURRENT_TRANSLATION mutation and its impact slice.
+
+    ``patches`` is an optional collector threaded through to the in-place
+    staleness markers, so the state journal can replay their effects by identity
+    instead of diffing two states.
+    """
     indexes = sorted({int(index) for index in indexes
                       if isinstance(index, int) or str(index).lstrip("-").isdigit()})
+    if state.get("annotations_done") or state.get("annotations_done_offset"):
+        affected = set(indexes)
+        offset = 0
+        for batch in make_batches([pair.get("source") or "" for pair in state.get("pairs") or []],
+                                  batch_size=ANNOT_BATCH_SIZE, max_chars=2600):
+            if affected.intersection(range(offset, offset + len(batch))):
+                state.setdefault("annotation_batches", {})[str(offset)] = {
+                    "status": "stale", "segment_count": len(batch), "error": "当前译文已改变"}
+                state["annotations_done"] = False
+                for index in range(offset, offset + len(batch)):
+                    (state.get("annotations") or {}).pop(index, None)
+                    (state.get("annotations") or {}).pop(str(index), None)
+            offset += len(batch)
     truth = dict(state.get("translation_truth") or {})
     truth["authority"] = _finalization.CURRENT_TRANSLATION
     truth["version"] = int(truth.get("version") or 0) + 1
@@ -6134,7 +9052,7 @@ def _mark_translation_truth_changed(
     if stale_translation_reviews:
         _invalidate_translation_reviews(state, indexes, reason)
     changed_segment_ids = list(truth["last_change"]["segment_ids"])
-    from transpraxis import academic_writer
+    from folith import academic_writer
     propagated = academic_writer.propagate_artifact_staleness(
         state, input_segment_ids=changed_segment_ids)
     # Make the read-only artifact inputs available to the pure impact helper,
@@ -6145,7 +9063,7 @@ def _mark_translation_truth_changed(
         enriched, job_id, indexes, reason)
     state["dependency_impact"] = impact
     _finalization.mark_case_reviews_stale(
-        state, impact.get("affected_case_ids") or [], reason)
+        state, impact.get("affected_case_ids") or [], reason, patches=patches)
     stale_names = [item.get("id") for item in impact.get("affected") or []
                    if item.get("kind") == "artifact"]
     academic = state.setdefault("academic_state", {})
@@ -6176,7 +9094,7 @@ def _mark_translation_truth_changed(
 
 
 def _invalidate_translation_reviews(
-    state, indexes, reason, *, review_event_ids=None,
+    state, indexes, reason, *, review_event_ids=None, patches=None,
 ):
     """Revoke review/TM trust while preserving review and decision history."""
     # A whole-book consistency pass is a view over the current translation.
@@ -6190,7 +9108,7 @@ def _invalidate_translation_reviews(
                       if isinstance(index, int) or str(index).lstrip("-").isdigit()})
     changed = _translation_evidence.mark_runtime_review_stale(
         state, indexes, reason, dependency_change=True,
-        review_event_ids=review_event_ids)
+        review_event_ids=review_event_ids, patches=patches)
     if not any(changed.values()):
         return changed
     tm = load_tm(tm_project_id(state))
@@ -6238,7 +9156,7 @@ def dependency_impact_view(job_id, state=None):
 def compliance_profile_view(job_id, state=None):
     """Evaluate source-backed compliance and explicit project constraints."""
     state = state if state is not None else load_job_state(job_id) or {}
-    from transpraxis import compliance
+    from folith import compliance
     artifacts = {
         name: load_academic_artifact(job_id, name)
         for name in ("evidence", "report", "validation", "outline",
@@ -6273,7 +9191,7 @@ def compliance_profile_view(job_id, state=None):
 
 
 def current_translation_hash(state=None):
-    from transpraxis import academic_evidence
+    from folith import academic_evidence
     state = state or {}
     return academic_evidence.stable_hash({
         "pairs": [
@@ -6285,7 +9203,7 @@ def current_translation_hash(state=None):
 
 def generate_report_qa(job_id, state=None, *, save_file=False):
     """Build the concise QA report and bind it to current artifact hashes."""
-    from transpraxis import academic_evidence, academic_writer
+    from folith import academic_evidence, academic_writer
     state = state or load_job_state(job_id) or {}
     report_record = load_academic_artifact(job_id, "report") or {}
     render_record = load_academic_artifact(job_id, "libreoffice_render") or {}
@@ -6340,7 +9258,7 @@ def generate_report_qa(job_id, state=None, *, save_file=False):
 
 def save_compliance_record(job_id, state=None):
     """Persist the current compliance and language-constraint artifacts."""
-    from transpraxis import academic_evidence, academic_writer, compliance
+    from folith import academic_evidence, academic_writer, compliance
     state = state or load_job_state(job_id) or {}
     result = compliance_profile_view(job_id, state)
     academic = state.get("academic_state") or {}
@@ -6391,7 +9309,7 @@ def _case_artifact_case(job_id, case_id):
 
 def _mark_case_downstream_stale(job_id, state, case_id, reason, *, actor="user",
                                 action="case_changed", root_stale=True):
-    from transpraxis import academic_writer
+    from folith import academic_writer
     root_id = f"case:{case_id}"
     before_root = dict((state.get("academic_state") or {}).get(
         "artifacts", {}).get(root_id) or {})
@@ -6433,7 +9351,7 @@ def review_academic_case(job_id, case_id, status, note="", actor="user"):
     selected, case = _case_artifact_case(job_id, case_id)
     if case is None:
         return state, False, "找不到案例"
-    from transpraxis import case_provenance
+    from folith import case_provenance
     normalized = case_provenance.with_provenance(case)
     review_status = str(status or "").strip().lower()
     if review_status not in case_provenance.REVIEW_STATUSES:
@@ -6472,7 +9390,7 @@ def review_academic_case(job_id, case_id, status, note="", actor="user"):
 
 def replace_rejected_case(job_id, case_id, *, actor="user"):
     """Replace one author-rejected case from the already validated pool."""
-    from transpraxis import academic_writer, academic_quality, case_provenance
+    from folith import academic_writer, academic_quality, case_provenance
     state = load_job_state(job_id)
     if state is None:
         return None, False, ["任务不存在"]
@@ -6580,7 +9498,7 @@ def update_synthetic_baseline(job_id, case_id, text, *, status="modified", note=
     _selected, case = _case_artifact_case(job_id, case_id)
     if case is None:
         return state, False, "找不到案例"
-    from transpraxis import case_provenance
+    from folith import case_provenance
     if not case_provenance.is_synthetic(case):
         return state, False, "只有合成对照案例可以修改或拒绝模拟初译"
     if status not in {"modified", "rejected", "approved"}:
@@ -6675,7 +9593,7 @@ def run_libreoffice_render_qa(job_id, state=None):
         qa.setdefault("notes", {})["libreoffice_render"] = \
             "LibreOffice not installed; render NOT_RUN"
         state["final_qa"] = qa
-        from transpraxis import academic_writer
+        from folith import academic_writer
         academic_writer._save_artifact(
             state, job_dir(job_id), "libreoffice_render", {
                 "schema_version": _rendered_qa.VERSION,
@@ -6691,11 +9609,11 @@ def run_libreoffice_render_qa(job_id, state=None):
         generate_report_qa(job_id, state, save_file=True)
         save_job_state(job_id, state)
         return state, qa
-    from transpraxis import academic_evidence, academic_writer
+    from folith import academic_evidence, academic_writer
     version_result = subprocess.run([soffice, "--version"], capture_output=True,
                                     text=True, timeout=10, check=False)
     engine_version = (version_result.stdout or version_result.stderr or "").strip()
-    with tempfile.TemporaryDirectory(prefix=f"transpraxis-lo-{job_id}-") as tmp:
+    with tempfile.TemporaryDirectory(prefix=f"folith-lo-{job_id}-") as tmp:
         tmp_path = Path(tmp)
         source_path = tmp_path / "current.docx"
         source_path.write_bytes(docx)
@@ -6784,9 +9702,16 @@ def run_libreoffice_render_qa(job_id, state=None):
 
 
 def _reconcile_final_delivery_snapshot(job_id, state):
+    # A snapshot can only be stale while a *final* delivery is being claimed.
+    # Checking that claim first keeps the whole function off the translation
+    # hot path: no snapshot-directory walk, no manifest reads, and no full-state
+    # identity hash on a save that cannot possibly need one.  Semantics are
+    # unchanged because the previous body also returned ``state`` untouched
+    # whenever ``delivery_status != "final"``.
+    if state.get("delivery_status") != "final":
+        return state
     latest = _snapshots.latest_snapshot(job_dir(job_id))
-    if latest and state.get("delivery_status") == "final" \
-            and _snapshots.state_identity(state) != latest.get("translation_state_identity"):
+    if latest and _snapshots.state_identity(state) != latest.get("translation_state_identity"):
         return _invalidate_final_delivery_state(state)
     return state
 
@@ -6827,8 +9752,60 @@ def load_job_state(job_id):
 
 
 def save_job_state(job_id, state):
-    """原子写入（先写临时文件再替换），避免中断写坏 state.json，并同步派生 summary.json。"""
-    _job_repo.save_job_state_atomic(job_id, state)
+    """原子写入（先写临时文件再替换），避免中断写坏 state.json，并同步派生 summary.json。
+
+    写完快照后是同一次 compaction：只要这份快照已经包含 journal 里的每一条记录，
+    journal 就没有剩余职责。判断交给 ``rotate_if_applied``——它按 ``journal_cursor``
+    复核，因此「把落后于 journal 的内存状态写盘」这种合法调用永远不会丢掉快照里
+    没有的记录。
+    """
+    # External saves share the worker lifetime lock: a worker cannot start
+    # between the ownership check and the atomic snapshot replacement.
+    execution_lock = None
+    if _runtime_job_id() != job_id:
+        runtime = load_runtime_state(job_id)
+        if runtime.get("segment_operation") and runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
+            raise RuntimeError("所选段落正在后台处理，请等待完成后保存；草稿可以保留。")
+        execution_lock = _job_lock.acquire(job_dir(job_id) / ".worker.lock", blocking=False)
+        if execution_lock is None:
+            raise RuntimeError("任务正在后台处理，请等待完成后保存；草稿可以保留。")
+    try:
+        _reconcile_translation_failures(state)
+        try:
+            _job_repo.save_job_state_atomic(job_id, state)
+        except OSError as exc:
+            _workflow_errors.raise_if_fatal(exc, job_id)
+            raise
+        try:
+            _state_journal.rotate_if_applied(job_id, state)
+        except OSError:
+            pass
+    finally:
+        if execution_lock is not None:
+            execution_lock.close()
+
+
+def _reconcile_translation_failures(state):
+    """Keep failure history while recording recovery proved by current pairs."""
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    for failure in state.get("translation_failures") or []:
+        if failure.get("recovered"):
+            continue
+        offset, count = failure.get("offset"), failure.get("segment_count")
+        if not isinstance(offset, int) or not isinstance(count, int) or count <= 0 or offset < 0:
+            continue
+        affected = pairs[offset:offset + count]
+        if len(affected) != count:
+            continue
+        if all(pair.get("target", "").strip()
+               and pair.get("target_provenance") in {"generated", "human_edit", "reviewed", "tm_approved"}
+               and offset + local < len(paras)
+               and pair.get("source", "").replace('\n', ' ') == str(paras[offset + local]).replace('\n', ' ')
+               for local, pair in enumerate(affected)):
+            failure["recovered"] = True
+            failure["recovered_at"] = _finalization.now_iso()
+            failure["recovery_evidence"] = "current_translation_present"
 
 
 # ================= 未保存译文草稿的持久化 =================
@@ -6972,6 +9949,8 @@ def assign_missing_segment_uids(state, *, job_id=""):
     身份漂移，浏览器里已经存在的选中态、编辑框与未保存草稿都继续有效。结构操作
     产生的新段落用 `seg-<job_id>-u<n>`，与索引格式不可能碰撞，且永不复用。
     """
+    from folith.epub import bind_source_references
+    bind_source_references(state)
     pairs = (state or {}).get("pairs")
     if not isinstance(pairs, list):
         return 0
@@ -6994,6 +9973,119 @@ def assign_missing_segment_uids(state, *, job_id=""):
         assigned += 1
     state[_UID_SEQ_FIELD] = max(seq, len(pairs), len(seen))
     return assigned
+
+
+def confirm_source_quality_segment(job_id, index, *, actor="user", note=""):
+    """Record that a person checked one flagged PDF segment against its source.
+
+    Confirmation is bound to the current stable segment ID and exact source
+    text. Any later source edit, split, or merge makes it inapplicable.
+    """
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    pairs = state.get("pairs") or []
+    paragraphs = state.get("paras") or []
+    if not isinstance(index, int) or not 0 <= index < len(pairs) \
+            or index >= len(paragraphs):
+        raise IndexError(f"段落索引超出范围：{index}")
+    if not _source_quality_gate_enabled(state):
+        raise ValueError("原文确认只适用于 PDF 源文质量门")
+    if is_excluded(pairs[index]):
+        raise ValueError("已排除的段落不能确认或翻译")
+    active_gate = _audit_source_quality_for_state(state)
+    if index not in {item.get("segment_index") for item in active_gate.get("flags") or []}:
+        raise ValueError("该段没有待确认的源文质量问题；请刷新后重试")
+    source = str(paragraphs[index] or "")
+    if not source or str(pairs[index].get("source") or "") != source:
+        raise ValueError("段落原文已变化，请刷新后重新核对")
+    if not str(note or "").strip():
+        raise ValueError("请说明已核对的原文依据")
+    assign_missing_segment_uids(state, job_id=job_id)
+    pair = pairs[index]
+    uid = segment_uid(pair)
+    confirmations = state.setdefault("source_quality_confirmations", [])
+    confirmation = {
+        "segment_uid": uid,
+        "source": source,
+        "note": str(note).strip(),
+        "actor": str(actor or "user"),
+        "confirmed_at": _finalization.now_iso(),
+    }
+    confirmations[:] = [
+        item for item in confirmations
+        if not (isinstance(item, dict)
+                and str(item.get("segment_uid") or "") == uid)
+    ]
+    confirmations.append(confirmation)
+    previous_target = str(pair.get("target") or "")
+    previous_accepted = str(pair.get("accepted_target") or "")
+    had_translation_truth = bool(
+        previous_target or previous_accepted or pair.get("reviewed")
+        or pair.get("from_tm") or pair.get("human_accepted")
+    )
+    if had_translation_truth:
+        pair.setdefault("source_quality_target_history", []).append({
+            "source": source,
+            "target": previous_target,
+            "initial_target": str(pair.get("initial_target") or ""),
+            "accepted_target": previous_accepted,
+            "target_provenance": str(pair.get("target_provenance") or ""),
+            "review_status": str(pair.get("review_status") or ""),
+            "captured_at": confirmation["confirmed_at"],
+        })
+    pair["target"] = ""
+    pair["initial_target"] = ""
+    pair["reviewed"] = False
+    pair["review_status"] = "source_confirmed_translation_pending"
+    pair["target_provenance"] = "source_review_required"
+    pair["from_tm"] = False
+    for key in ("accepted_target", "human_accepted", "accepted_by_human", "tm_match"):
+        pair.pop(key, None)
+    annotations = state.get("annotations")
+    if isinstance(annotations, dict):
+        annotations.pop(index, None)
+        annotations.pop(str(index), None)
+        state["annotations_done"] = False
+    from folith import knowledge as _knowledge
+    state["knowledge_candidates"] = _knowledge.discard_candidates_for_segments(
+        state.get("knowledge_candidates") or [], [index])
+    state["translation_continuity"] = list(state["knowledge_candidates"])
+    for finding in state.setdefault("findings", []):
+        if (isinstance(finding, dict)
+                and finding.get("type") == "source_quality_gate"
+                and finding.get("segment_index") == index
+                and not finding.get("resolved")):
+            finding["resolved"] = True
+            finding["resolution"] = {
+                "action": "source_confirmed",
+                "note": confirmation["note"],
+                "timestamp": confirmation["confirmed_at"],
+                "actor": confirmation["actor"],
+            }
+    if had_translation_truth:
+        _mark_translation_truth_changed(
+            job_id, state, [index],
+            "源文人工核对后撤销旧译文，必须重新生成并审校",
+            actor=str(actor or "user"), action="source_quality_confirmed")
+    else:
+        _invalidate_translation_reviews(
+            state, [index], "源文已人工核对，译文必须重新生成并审校")
+        _invalidate_final_delivery_state(state)
+    tm = load_tm(tm_project_id(state))
+    if tm_discard(tm, source, state_target_lang(state)):
+        save_tm(tm, tm_project_id(state))
+    state["source_quality_gate"] = _audit_source_quality_for_state(state)
+    state.setdefault("human_actions", []).append({
+        "finding_id": f"source:{uid}",
+        "action": "source_quality_confirmed",
+        "actor": confirmation["actor"],
+        "actor_type": "human",
+        "timestamp": confirmation["confirmed_at"],
+        "note": confirmation["note"],
+    })
+    save_job_state(job_id, state)
+    return state, confirmation
 
 
 def excluded_segment_records(state):
@@ -7192,7 +10284,7 @@ def save_translation_edit(job_id, index, target, actor="user"):
     identity, clears segment review, removes TM reuse provenance, and invalidates
     mutable final approval while leaving historical frozen snapshots untouched.
     """
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
 
     state = load_job_state(job_id)
     if state is None:
@@ -7237,7 +10329,7 @@ def _recheck_delivery_invariants_for_segments(state, indexes, *, actor="user"):
     to block delivery; if the same problem remains, the existing finding stays
     open and the current validation report remains authoritative.
     """
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
 
     indexes = {int(index) for index in indexes}
     report = validate_delivery_translation_state(state)
@@ -7271,7 +10363,7 @@ def _recheck_delivery_invariants_for_segments(state, indexes, *, actor="user"):
 
 def restore_translation_edit(job_id, index, actor="user"):
     """Restore the translation state that existed before the first edit."""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
 
     state = load_job_state(job_id)
     if state is None:
@@ -7531,6 +10623,10 @@ def mutate_translation_segments(
             initial_target=merged_initial, source_edited=True)
         # 合并保留左段的身份（用户是在左段上发起操作的），右段身份随之消失。
         merged[SEGMENT_UID_FIELD] = segment_uid(current) or next_segment_uid(state, job_id)
+        from folith.epub import SOURCE_REFS
+        if SOURCE_REFS in current and SOURCE_REFS in following:
+            merged[SOURCE_REFS] = list(dict.fromkeys(
+                current[SOURCE_REFS] + following[SOURCE_REFS]))
         merged_ids = list(dict.fromkeys(
             list(current.get("glossary_entry_ids") or []) +
             list(following.get("glossary_entry_ids") or [])))
@@ -7545,6 +10641,9 @@ def mutate_translation_segments(
     elif operation == "insert":
         inserted = reset_trust(
             {}, "", "", initial_target="", manual_segment=True)
+        from folith.epub import SOURCE_REFS
+        if SOURCE_REFS in pairs[index]:
+            inserted[SOURCE_REFS] = list(pairs[index][SOURCE_REFS])
         inserted[SEGMENT_UID_FIELD] = next_segment_uid(state, job_id)
         pairs.insert(index + 1, inserted)
         paras.insert(index + 1, "")
@@ -7632,6 +10731,8 @@ def mutate_translation_segments(
     state["annotations"] = {}
     state["annotations_done"] = False
     state["annotations_done_offset"] = 0
+    state["annotation_batches"] = {}
+    state["annotations_failed_batches"] = 0
     state["segment_structure_version"] = int(
         state.get("segment_structure_version") or 0) + 1
     history = list(state.get("segment_structure_history") or [])
@@ -7738,6 +10839,8 @@ def undo_translation_segment_structure(job_id, *, actor="user"):
     state["annotations"] = {}
     state["annotations_done"] = False
     state["annotations_done_offset"] = 0
+    state["annotation_batches"] = {}
+    state["annotations_failed_batches"] = 0
     state["segment_structure_version"] = int(
         state.get("segment_structure_version") or 0) + 1
     state["segment_structure_history"] = history[:-1]
@@ -7872,6 +10975,33 @@ def resolve_task_id(file_bytes, *, project_id=None, target_lang=None,
     return candidate
 
 
+def resolve_job_id(job_ref):
+    """根据任务 ID 或短哈希/短编码解析出确切已存在的 job_id。
+
+    - 精确匹配：磁盘存在该任务且能成功加载状态 -> 直接返回；
+    - 短哈希前缀匹配：长度 >= 4，大小写无关匹配本地任务目录；
+      若有匹配且状态有效，按最近修改时间返回最匹配的合法任务 ID；
+    - 未找到返回 None。
+    """
+    token = str(job_ref or "").strip()
+    if not token:
+        return None
+    if load_job_state(token) is not None:
+        return token
+    if len(token) >= 4 and OUTPUT_DIR.is_dir():
+        token_lower = token.casefold()
+        matches = []
+        for d in sorted(OUTPUT_DIR.iterdir(),
+                        key=lambda p: p.stat().st_mtime if p.is_dir() else 0,
+                        reverse=True):
+            if d.is_dir() and d.name.casefold().startswith(token_lower):
+                if load_job_state(d.name) is not None:
+                    matches.append(d.name)
+        if matches:
+            return matches[0]
+    return None
+
+
 def save_source(job_id, file_bytes):
     """留存源文件，刷新页面后即使不重新上传也能继续（如重做阶段一）。"""
     d = job_dir(job_id)
@@ -7886,7 +11016,7 @@ def load_source(job_id):
 
 def save_report_template(job_id, filename, template_bytes):
     """Parse and persist the uploaded DOCX template before academic stages run."""
-    from transpraxis import report_template
+    from folith import report_template
 
     raw = _bytes(template_bytes)
     contract = report_template.parse_docx_template(filename, raw)
@@ -7934,7 +11064,7 @@ def clear_report_template(job_id):
 
 def load_report_template(job_id):
     """Load the persisted DOCX bytes and canonical contract, if configured."""
-    from transpraxis import report_template
+    from folith import report_template
 
     directory = job_dir(job_id)
     docx_path = directory / "report-template.docx"
@@ -7975,8 +11105,8 @@ def report_docx_bytes(job_id, state=None, frozen_assets=None):
         return None
     template = load_report_template(job_id)
     if template:
-        from transpraxis import academic_evidence, academic_writer, compliance
-        from transpraxis import final_docx, report_template
+        from folith import academic_evidence, academic_writer, compliance
+        from folith import final_docx, report_template
         artifact = load_academic_artifact(job_id, "report")
         report_record = academic_writer.artifact_record(state, "report")
         if isinstance((state.get("academic_state") or {}).get("artifacts", {}).get(
@@ -8046,7 +11176,7 @@ def report_docx_bytes(job_id, state=None, frozen_assets=None):
     if state.get("report_status") in {
             "incomplete", "failed_template_validation", "review_required"}:
         return None
-    from transpraxis import academic_writer
+    from folith import academic_writer
     if isinstance((state.get("academic_state") or {}).get("artifacts", {}).get(
             "report"), dict) and academic_writer.artifact_record(
                 state, "report").get("status") != "valid":
@@ -8061,14 +11191,22 @@ def validate_translation_target(source, target, *, segment_index=None,
         source, target, segment_index=segment_index, allow_json=allow_json)
 
 
-def validate_translation_pairs(pairs, glossary=None, target_lang=""):
+def validate_translation_pairs(pairs, glossary=None, target_lang="", *, allow_empty=False):
     """Validate pairs independently of the model response parser."""
     pairs = list(pairs or [])
-    target_report = _translation_target.validate_translation_pairs(pairs)
+    target_report = _translation_target.validate_translation_pairs(pairs, allow_empty=allow_empty)
     qa_findings = check_translation_batch(
         [str(pair.get("source") or "") for pair in pairs if isinstance(pair, dict)],
         [str(pair.get("target") or "") for pair in pairs if isinstance(pair, dict)],
         glossary or [], target_lang or "简体中文")
+    if allow_empty:
+        for finding in qa_findings:
+            index = finding.get("segment_index")
+            if (isinstance(index, int) and 0 <= index < len(pairs)
+                    and isinstance(pairs[index], dict)
+                    and not str(pairs[index].get("target") or "").strip()
+                    and finding.get("category") == "completeness"):
+                finding["severity"] = "actionable"
     return {
         **target_report,
         "qa_findings": qa_findings,
@@ -8090,11 +11228,17 @@ def validate_delivery_translation_state(state):
         if isinstance(flag, dict) and isinstance(flag.get("segment_index"), int)
     ]
     report = validate_translation_pairs(
-        pairs, state.get("glossary") or [], state.get("target_lang") or "简体中文")
+        pairs, state.get("glossary") or [], state.get("target_lang") or "简体中文",
+        allow_empty=True)
+    from folith import delivery as _delivery
+    for finding in source_quality_findings:
+        if _delivery.is_missing_translation_finding(state, finding):
+            finding["severity"] = "actionable"
     report["source_quality_gate"] = source_quality_gate
     report["source_quality_findings"] = source_quality_findings
     report["blocking_findings"] = list(report.get("blocking_findings") or [])
-    report["blocking_findings"].extend(source_quality_findings)
+    report["blocking_findings"].extend(
+        finding for finding in source_quality_findings if finding.get("severity") == "blocking")
     issues = list(report.get("issues") or [])
     if state.get("p2_done") and len(pairs) != len(state.get("paras") or []):
         issues.append({
@@ -8104,19 +11248,40 @@ def validate_delivery_translation_state(state):
         })
     entity_findings = _entity_registry.EntityRegistry(
         state.get("entity_registry") or []
-    ).consistency_findings()
+    ).consistency_findings(pairs)
     return {
         **report,
         "issues": issues,
         "entity_findings": entity_findings,
-        "blocking": bool(issues or report.get("blocking_findings")),
-        "status": "fail" if issues or report.get("blocking_findings") else (
-            "review_required" if entity_findings else "pass"),
+        "blocking": bool(any(issue.get("severity") == "blocking" for issue in issues)
+                         or report.get("blocking_findings")),
+        "status": "fail" if any(issue.get("severity") == "blocking" for issue in issues)
+        or report.get("blocking_findings") else (
+            "review_required" if issues or source_quality_findings or entity_findings else "pass"),
     }
 
 
 def _record_delivery_validation_findings(state, report):
     """Persist only new invariant/entity findings for the review queue."""
+    from folith import delivery as _delivery
+    _refresh_entity_consistency(state)
+    active_source_indexes = {
+        finding.get("segment_index") for finding in report.get("source_quality_findings") or []
+    }
+    for finding in state.setdefault("findings", []):
+        if not isinstance(finding, dict) or finding.get("resolved"):
+            continue
+        if _delivery.is_missing_translation_finding(state, finding):
+            finding["severity"] = "actionable"
+        if (finding.get("type") == "source_quality_gate"
+                and finding.get("segment_index") not in active_source_indexes):
+            finding["resolved"] = True
+            finding["resolution"] = {
+                "action": "source_quality_rechecked",
+                "note": "当前原文重新检查通过",
+                "timestamp": _finalization.now_iso(),
+                "actor": "system",
+            }
     state["source_quality_gate"] = dict(report.get("source_quality_gate") or {})
     state["delivery_validation"] = {
         "status": report.get("status"),
@@ -8182,7 +11347,7 @@ def _record_delivery_validation_findings(state, report):
 
 
 def _academic_workspace_archive(job_id):
-    from transpraxis import academic_writer
+    from folith import academic_writer
 
     names = ("research_model", "argument_plan", "selected_cases", "outline",
              "case_analysis_plans", "human_evidence_questions")
@@ -8200,8 +11365,8 @@ def _academic_workspace_archive(job_id):
 
 def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     """Build the configured delivery set used by both preview and snapshots."""
-    from transpraxis import assets as _assets
-    from transpraxis import report_evidence as _report_evidence
+    from folith import assets as _assets
+    from folith import report_evidence as _report_evidence
 
     validation = validate_delivery_translation_state(state)
     _record_delivery_validation_findings(state, validation)
@@ -8236,22 +11401,35 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
             ).encode("utf-8")
         if state.get("p2_done") and pairs:
             if config["deliver_plain_docx"]:
-                bundle["translation.docx"] = _bytes(translations_to_word(pairs))
+                bundle["translation.docx"] = _bytes(translations_to_word(
+                    pairs, target_lang=state.get("target_lang") or target_lang))
             if config["deliver_bilingual_docx"]:
-                bundle["bilingual.docx"] = _bytes(pairs_to_word(pairs))
+                bundle["bilingual.docx"] = _bytes(pairs_to_word(
+                    pairs, source_lang=state.get("source_lang"),
+                    target_lang=state.get("target_lang") or target_lang))
             if config["deliver_pdf"]:
-                bundle["translation.pdf"] = translations_to_pdf(pairs)
+                bundle["translation.pdf"] = translations_to_pdf(
+                    pairs, target_lang=state.get("target_lang") or target_lang)
+            if config["deliver_epub"]:
+                from folith.epub import build_translation_epub
+                epub_bytes, epub_report = build_translation_epub(
+                    state, source, job_id=job_id)
+                bundle["translation.epub"] = epub_bytes
+                bundle["epub_export_report.json"] = (
+                    json.dumps(epub_report, ensure_ascii=False, indent=2) + "\n"
+                ).encode("utf-8")
             if config["enable_annotate"]:
                 bundle["annotated_bilingual.docx"] = _bytes(pairs_to_word(
                     pairs, annotations=state.get("annotations"),
-                    colors=ANNOTATION_COLORS))
+                    colors=ANNOTATION_COLORS, source_lang=state.get("source_lang"),
+                    target_lang=state.get("target_lang") or target_lang))
             if config["deliver_terms_xlsx"]:
                 bundle["terms.xlsx"] = _bytes(glossary_to_excel(
                     glossary, state.get("auto_terms")))
             if config["deliver_tbx"]:
-                bundle["terms.tbx"] = _assets.build_tbx(glossary)
+                bundle["terms.tbx"] = _assets.build_tbx(glossary, *_assets.asset_languages(state, target_lang))
             if config["deliver_tmx"]:
-                bundle["memory.tmx"] = _assets.build_tmx(state, job_id=job_id)
+                bundle["memory.tmx"] = _assets.build_tmx(state, *_assets.asset_languages(state, target_lang), job_id=job_id)
             if config["deliver_jsonl"]:
                 bundle["bilingual.jsonl"] = _assets.build_jsonl(
                     state, job_id=job_id).encode("utf-8")
@@ -8301,7 +11479,8 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
         # ``paras`` is the sentence-sized CAT contract; the stage-1 source
         # artifact should retain the recovered paragraph layout when available.
         cleaned_source = state.get("source_paragraphs") or state.get("paras")
-        bundle["stage1_cleaned.docx"] = _bytes(paragraphs_to_word(cleaned_source))
+        bundle["stage1_cleaned.docx"] = _bytes(paragraphs_to_word(
+            cleaned_source, source_lang=state.get("source_lang")))
     if state.get("source_cleanup_done"):
         bundle["source_cleanup.json"] = (
             json.dumps(state.get("source_cleanup") or {},
@@ -8311,7 +11490,8 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
         bundle["auto_terms.xlsx"] = _bytes(dict_to_excel(state["auto_terms"]))
     if state.get("p2_done") and state.get("pairs"):
         bundle["stage2_bilingual.docx"] = _bytes(pairs_to_word(
-            state["pairs"], annotations=state.get("annotations"), colors=ANNOTATION_COLORS))
+            state["pairs"], annotations=state.get("annotations"), colors=ANNOTATION_COLORS,
+            source_lang=state.get("source_lang"), target_lang=state.get("target_lang") or target_lang))
     if state.get("p3_md"):
         report_docx = report_docx_bytes(job_id, state)
         if report_docx is not None:
@@ -8400,6 +11580,8 @@ def _reset_source_dependent_state(state):
         "annotations": {},
         "annotations_done": False,
         "annotations_done_offset": 0,
+        "annotation_batches": {},
+        "annotations_failed_batches": 0,
         "batch_plan": {},
         "delivery_status": "draft",
         "delivery_approved_by_human": False,
@@ -8472,8 +11654,12 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
     effective_request_interval = _runtime_float_option(
         request_interval_seconds, saved_config.get("source_cleanup_request_interval"),
         "FOLIOTHREAD_LLM_CLEANUP_REQUEST_INTERVAL", 0.0, maximum=60.0)
+    active_run = trace.start_run(
+        job_id=job_id, filename=filename or resolved_filename,
+        output_dir=job_dir(job_id)
+    )
     profiler = PipelineProfiler(
-        job_dir(job_id) / "performance.json", run_id=uuid.uuid4().hex
+        job_dir(job_id) / "performance.json", run_id=active_run.run_id
     )
 
     def report(label):
@@ -8500,7 +11686,8 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                 profiler=profiler, checkpoint_dir=job_dir(job_id),
                 ocr_workers=effective_ocr_workers,
                 ocr_queue_size=effective_ocr_queue_size,
-                cancel_check=lambda: _runtime_cancel_requested(job_id))
+                cancel_check=lambda: _runtime_cancel_requested(job_id),
+                profile_cache_dir=ocr_profile_cache_dir(source))
         if not raw_paragraphs:
             detail = extraction_warnings[-1] if extraction_warnings else "未知提取错误"
             raise ValueError(f"未提取到有效文本：{detail}")
@@ -8570,7 +11757,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             "source_cleanup_done": True,
             "segmentation": segmentation_meta,
             "extraction_report": extraction_report,
-            "source_quality_gate": audit_source_quality(segments),
+            "source_quality_gate": _audit_source_quality_for_state(state),
             "p1_done": True,
             "source_page_count": 0,
         })
@@ -8584,6 +11771,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             pipeline_config["enable_source_cleanup"] = True
         save_source(job_id, source)
         state["performance"] = profiler.persist()
+        trace.finish_run(job_id=job_id, status="checkpointed")
         save_job_state(job_id, state)
         update_runtime_state(
             job_id, status="idle_incomplete", phase="idle_incomplete",
@@ -8599,6 +11787,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                     "lease_expires_at": None})
         return state
     except BaseException as exc:
+        trace.finish_run(job_id=job_id, status="failed", failure_reason=str(exc))
         _write_runtime_technical_log(job_id, exc)
         provider_status = provider_error_status(exc)
         user_error_message = (
@@ -8743,7 +11932,7 @@ def load_context_artifacts(job_id, state=None):
 
 def task_status_label(state, job_id=""):
     """User-facing task status derived from persisted workflow state."""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
 
     if job_id:
         snapshot = delivery_snapshot_status(job_id, state)
@@ -8951,8 +12140,8 @@ def _apply_glossary_staleness(state, job_id=None):
     - 追加 blocking finding（type=glossary_stale），交付回到 review_required；
     - 从 translation_memory.json 中清除，防止后续任务精确命中旧译文。
     """
-    from transpraxis import delivery as _delivery
-    from transpraxis.terminology import stale_segments_for_glossary
+    from folith import delivery as _delivery
+    from folith.terminology import stale_segments_for_glossary
 
     stale = stale_segments_for_glossary(state)
     pairs = state.get("pairs") or []
@@ -9035,7 +12224,7 @@ def _apply_glossary_staleness(state, job_id=None):
     state["has_blocking"] = stats["blocking"] > 0
     state["delivery_status"] = _delivery.compute_delivery_status(state)
     if job_id:
-        from transpraxis import academic_writer
+        from folith import academic_writer
         segment_ids = [
             _finalization.segment_id(job_id, index, pairs[index])
             for index in stale if 0 <= index < len(pairs)
@@ -9376,13 +12565,147 @@ def set_entity_translation(job_id, source_form, target, *, entity_type="other_pr
     return state
 
 
+def entity_consistency_queue(state):
+    return _entity_registry.EntityRegistry(
+        state.get("entity_registry") or []).consistency_findings(state.get("pairs") or [])
+
+
+def preview_entity_repair(state, source_form, target):
+    from folith import consistency
+    record = _entity_registry.EntityRegistry(state.get("entity_registry") or [])._find(source_form)
+    if record is None:
+        raise ValueError("找不到该实体")
+    return consistency.preview(record, state.get("pairs") or [], target)
+
+
+def apply_entity_repair(job_id, source_form, target, preview, *, actor="user"):
+    """Apply only the exact before/after edits the operator reviewed."""
+    from folith import consistency
+    if _job_execution_alive(job_id):
+        raise RuntimeError("任务仍在执行，请等待后台处理结束")
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError("找不到任务")
+    current = preview_entity_repair(state, source_form, target)
+    if current != preview:
+        raise ValueError("译文已变化，请重新查看修改预览")
+    registry = _entity_registry.EntityRegistry(state.get("entity_registry") or [])
+    record = registry._find(source_form)
+    record["accepted_variants"] = []
+    registry.lock(source_form, consistency.spelling(target), entity_type=record["entity_type"])
+    state["entity_registry"] = registry.to_list()
+    indexes = []
+    for change in current:
+        index = change["index"]
+        pair = state["pairs"][index]
+        if is_excluded(pair):
+            raise ValueError("预览包含已排除的段落，请重新查看预览")
+        pair.setdefault("_translation_edit_restore", {
+            key: pair.get(key) for key in ("target", "reviewed", "review_status", "target_provenance", "from_tm")})
+        pair.update(target=change["after"], human_edited=True, reviewed=False,
+                    review_status="not_reviewed", target_provenance="human_edit", from_tm=False)
+        for key in ("accepted_target", "human_accepted", "accepted_by_human"):
+            pair.pop(key, None)
+        indexes.append(index)
+    if indexes:
+        _recount_reviewed_segments(state)
+        _mark_translation_truth_changed(job_id, state, indexes,
+            f"人工统一实体译名：{source_form} → {target}", actor=actor, action="entity_consistency_repair")
+    else:
+        _invalidate_final_delivery_state(state)
+    _refresh_entity_consistency(state, actor=actor)
+    _recheck_delivery_invariants_for_segments(state, indexes, actor=actor)
+    save_job_state(job_id, state)
+    return state, indexes
+
+
+def accept_entity_variants(job_id, source_form, *, actor="user"):
+    from folith import consistency
+    if _job_execution_alive(job_id):
+        raise RuntimeError("任务仍在执行，请等待后台处理结束")
+    state = load_job_state(job_id)
+    registry = _entity_registry.EntityRegistry(state.get("entity_registry") or [])
+    record = registry._find(source_form)
+    if record is None:
+        raise ValueError("找不到该实体")
+    record["accepted_variants"] = sorted({
+        value for row in consistency.current_occurrences(record, state.get("pairs") or [])
+        for value in row["variants"]})
+    record["status"] = "human_accepted"
+    state["entity_registry"] = registry.to_list()
+    state.setdefault("human_actions", []).append({
+        "action": "entity_variants_accepted", "finding_id": f"entity:{record['id']}",
+        "note": f"确认语境允许这些译名：{record['accepted_variants']}",
+        "timestamp": _finalization.now_iso(), "actor": actor})
+    _refresh_entity_consistency(state, actor=actor)
+    _recheck_delivery_invariants_for_segments(state, [], actor=actor)
+    save_job_state(job_id, state)
+    return state
+
+
+def _refresh_entity_consistency(state, *, actor="system"):
+    active = {item["source"] for item in entity_consistency_queue(state)}
+    for finding in state.get("findings") or []:
+        if finding.get("type") == "entity_conflict" and not finding.get("resolved") \
+                and finding.get("source") not in active:
+            finding["resolved"] = True
+            finding["resolution"] = {"action": "entity_consistency_rechecked",
+                "note": "当前译文已统一或语境变体已人工确认", "actor": actor,
+                "timestamp": _finalization.now_iso()}
+
+
+def workflow_outcomes(state):
+    digests = state.get("section_digests") or []
+    degraded = [item.get("unit_id") for item in digests if item.get("status") == "deterministic_fallback"]
+    synopsis_degraded = (state.get("document_synopsis") or {}).get("status") == "deterministic_fallback"
+    annotation_results = state.get("annotation_batches") or {}
+    failed = [int(offset) for offset, result in annotation_results.items()
+              if result.get("status") in {"request_failed", "parse_failed", "stale"}]
+    legacy_failures = bool(state.get("annotations_failed_batches") and not annotation_results)
+    return {
+        "understanding": {"status": "degraded" if degraded or synopsis_degraded else
+            "success" if state.get("understanding_done") else "not_run",
+            "degraded_units": degraded, "synopsis_degraded": synopsis_degraded,
+            "total_units": len(digests)},
+        "annotation": {"status": "partial" if failed or legacy_failures else
+            "success" if state.get("annotations_done") else "not_run",
+            "failed_offsets": failed, "failed_batches": len(failed) if annotation_results else
+            int(state.get("annotations_failed_batches") or 0),
+            "legacy_unlocated": legacy_failures},
+    }
+
+
+def prepare_workflow_retry(job_id, part):
+    if _job_execution_alive(job_id):
+        raise RuntimeError("任务仍在执行，请等待后台处理结束")
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError("找不到任务")
+    state.setdefault("workflow_retry_history", []).append({
+        "part": part, "previous_outcomes": workflow_outcomes(state),
+        "requested_at": _finalization.now_iso()})
+    if part == "understanding":
+        state["understanding_retry_requested"] = True
+    elif part == "annotation":
+        if workflow_outcomes(state)["annotation"]["legacy_unlocated"]:
+            state["annotations_done_offset"] = 0
+            state["annotations"] = {}
+            state["annotation_batches"] = {}
+            state["annotations_failed_batches"] = 0
+        state["annotations_done"] = False
+    else:
+        raise ValueError("未知的补跑步骤")
+    save_job_state(job_id, state)
+    return state
+
+
 def write_profile_artifacts(job_id, document_profile, style_profile):
     """把 Step 01 的画像产物落盘为版本化 artifact：
     document_profile.json / style_profile.json（含 style_profile_id 哈希）。
     返回写入的 style_profile_id，失败返回 None。
     """
     try:
-        from transpraxis.style_profile import style_profile_id
+        from folith.style_profile import style_profile_id
         job_root = job_dir(job_id)
         job_root.mkdir(parents=True, exist_ok=True)
         (job_root / "document_profile.json").write_text(
@@ -9417,7 +12740,7 @@ def bypass_freeze(job_id, frozen_by="user"):
 # ================= 交付状态与人工处理记录 =================
 def _translation_review_finding(state, finding_id):
     """Resolve either the Core finding ID or the existing review-card ID."""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
     selector = str(finding_id or "")
     candidates = [item for item in state.get("findings") or []
                   if isinstance(item, dict) and (
@@ -9433,7 +12756,7 @@ def _translation_review_finding(state, finding_id):
 
 def _promote_human_reviewed_segment(state, segment_id, actor):
     """Promote one currently clean human-confirmed pair through existing TM truth."""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
     pairs = state.get("pairs") or []
     if not isinstance(segment_id, int) or not 0 <= segment_id < len(pairs):
         return
@@ -9464,7 +12787,7 @@ def decide_translation_review_finding(
     job_id, finding_id, decision, actor, *, actor_type, note="",
 ):
     """Apply one fail-closed Translation Core HumanDecision to persisted state."""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
     state = load_job_state(job_id)
     if state is None:
         raise ValueError(f"找不到任务 {job_id}")
@@ -9500,6 +12823,11 @@ def _targeted_final_review_ids(state, limit=8):
     pairs = state.get("pairs") or []
     if not pairs:
         return []
+    blocked_source_indexes = {
+        item.get("segment_index")
+        for item in _audit_source_quality_for_state(state).get("flags") or []
+        if isinstance(item, dict) and isinstance(item.get("segment_index"), int)
+    }
     severity_rank = {"blocking": 0, "actionable": 1, "informational": 2}
     selected = {}
     for finding in state.get("findings") or []:
@@ -9519,7 +12847,8 @@ def _targeted_final_review_ids(state, limit=8):
             segment_id = int(raw_index)
         except (TypeError, ValueError):
             continue
-        if isinstance(raw_index, bool) or not 0 <= segment_id < len(pairs):
+        if (isinstance(raw_index, bool) or not 0 <= segment_id < len(pairs)
+                or segment_id in blocked_source_indexes):
             continue
         score = severity_rank.get(str(finding.get("severity") or ""), 3)
         previous = selected.get(segment_id)
@@ -9540,8 +12869,8 @@ def review_translation_segments(
     post-translation whole-book pass.  They do not change the normal manual
     refresh path and keep the global conflict visible to the reviewer.
     """
-    from transpraxis import delivery as _delivery
-    from transpraxis.terminology import (
+    from folith import delivery as _delivery
+    from folith.terminology import (
         glossary_block as _glossary_block,
         select_glossary_for_segments as _select_glossary,
     )
@@ -9554,6 +12883,26 @@ def review_translation_segments(
                           and 0 <= int(index) < len(pairs)})
     if not segment_ids:
         return state, {"reviewed_segment_ids": [], "failed_segment_ids": []}
+    blocked_source_indexes = {
+        item.get("segment_index")
+        for item in _audit_source_quality_for_state(state).get("flags") or []
+        if isinstance(item, dict) and isinstance(item.get("segment_index"), int)
+    }
+    blocked_requested = [index for index in segment_ids
+                         if index in blocked_source_indexes]
+    if blocked_requested:
+        numbers = "、".join(str(index + 1) for index in blocked_requested)
+        raise ValueError(f"第 {numbers} 段原文尚未核对，不能发送给审校模型")
+    if base_url is None:
+        pipeline_config = state.get("pipeline_config") or {}
+        saved_reviewer = (state.get("reviewer_config")
+                          or pipeline_config.get("reviewer") or {})
+        saved_translator = (state.get("translator_config")
+                            or pipeline_config.get("translator") or {})
+        if str(saved_reviewer.get("provider") or "") == str(provider or ""):
+            base_url = saved_reviewer.get("base_url") or ""
+        elif str(saved_translator.get("provider") or "") == str(provider or ""):
+            base_url = saved_translator.get("base_url") or ""
     review_call = call_llm_fn or _model_roles.make_role_call(
         call_llm, {"provider": provider, "api_key": api_key,
                    "model": model, "base_url": base_url})
@@ -9766,7 +13115,7 @@ def _run_targeted_final_review(
 
 def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
     """Legacy action surface; Core findings route through HumanDecision."""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
     state = load_job_state(job_id)
     if state is None:
         return None
@@ -9800,7 +13149,7 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
 def approve_delivery(job_id, note="", accept_blocking=False, actor="user",
                      target_lang="", provider="", model=""):
     """人工交付确认 -> final + immutable snapshot."""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
     state = load_job_state(job_id)
     if state is None:
         return None, False, ["任务不存在"]
@@ -9836,7 +13185,7 @@ def approve_delivery(job_id, note="", accept_blocking=False, actor="user",
             return state, False, [
                 "Project compliance constraint failed: " +
                 ", ".join(project.get("failures") or [])]
-        from transpraxis import academic_writer
+        from folith import academic_writer
         report_record = academic_writer.artifact_record(state, "report")
         docx_record = academic_writer.artifact_record(
             state, "final_docx_validation")
@@ -9917,7 +13266,7 @@ def retranslate_segments(job_id, indexes, provider, api_key, model, target_lang,
                          reviewer_api_key=None, reviewer_model=None,
                          reviewer_base_url=None):
     """定点重译（抽取自 scripts/fix_segments.py 的能力）。"""
-    from transpraxis import delivery as _delivery
+    from folith import delivery as _delivery
     state, fixed = _delivery.retranslate_segments(
         job_id, indexes, provider, api_key, model, target_lang,
         style_rules, glossary, on_status, on_caption, actor)
@@ -9955,7 +13304,7 @@ def academic_status_label(state):
 
 def invalidate_academic_report(job_id, scope="all", section_id=None):
     """Invalidate academic artifacts only; translation stages remain intact."""
-    from transpraxis import academic_writer
+    from folith import academic_writer
     state = load_job_state(job_id)
     if state is None:
         raise ValueError(f"找不到任务 {job_id}")
@@ -9966,7 +13315,7 @@ def invalidate_academic_report(job_id, scope="all", section_id=None):
 
 def load_academic_artifact(job_id, name):
     """Read a canonical academic JSON artifact for UI/CLI inspection."""
-    from transpraxis import academic_writer
+    from folith import academic_writer
     ARTIFACT_FILES = academic_writer.ARTIFACT_FILES
     if name not in ARTIFACT_FILES:
         raise ValueError(f"未知学术 artifact：{name}")
@@ -9986,7 +13335,7 @@ def record_human_evidence(job_id, question_id, answer, interface="academic_works
     answered; the case-analysis/section staleness is propagated through the
     existing dependency-hash architecture (only affected sections rewrite).
     """
-    from transpraxis import academic_writer, human_evidence
+    from folith import academic_writer, human_evidence
     state = load_job_state(job_id)
     if state is None:
         raise ValueError(f"找不到任务 {job_id}")
@@ -10025,7 +13374,7 @@ def generate_mti_report(bilingual_pairs, termbase_dict, theory, provider, api_ke
     callers; the canonical inputs are now the saved translation state and the
     durable academic artifacts beside ``state.json``.
     """
-    from transpraxis import academic_writer
+    from folith import academic_writer
     report_md = academic_writer.run_academic_pipeline(
         state, job_id, theory, provider, api_key, model,
         artifact_dir=job_dir(job_id), call_llm=call_llm,
@@ -10038,6 +13387,7 @@ def generate_mti_report(bilingual_pairs, termbase_dict, theory, provider, api_ke
 
 
 # ================= 主流程：单文档完整流水线 =================
+@_exclusive_job_execution(0)
 def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                      target_lang, auto_term, enable_report, translation_theory,
                      user_glossary=None, style_rules="", enable_review=True,
@@ -10106,11 +13456,18 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         source_cleanup_request_interval,
         saved_runtime_config.get("source_cleanup_request_interval"),
         "FOLIOTHREAD_LLM_CLEANUP_REQUEST_INTERVAL", 0.0, maximum=60.0)
+    active_run = trace.start_run(
+        job_id=job_id,
+        filename=filename,
+        file_size_bytes=len(file_bytes) if file_bytes else 0,
+        target_lang=target_lang,
+        output_dir=job_dir(job_id),
+    )
     profiler = PipelineProfiler(
-        job_dir(job_id) / "performance.json", run_id=uuid.uuid4().hex
+        job_dir(job_id) / "performance.json", run_id=active_run.run_id
     )
 
-    def persist_performance():
+    def persist_performance(final_status=None):
         # Resuming a task after ingestion must not replace a useful prior
         # timing artifact with an empty run merely because later translation
         # stages do not touch the PDF profiler.
@@ -10118,7 +13475,10 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                 and previous_performance.get("stages")
                 and not profiler.snapshot().get("stages")):
             return previous_performance
-        return profiler.persist()
+        prof_res = profiler.persist()
+        if final_status:
+            trace.finish_run(job_id=job_id, status=final_status)
+        return prof_res
 
     # An explicit UI-triggered source rescan is a checkpoint-only operation:
     # it must not fall through into profiling, terminology, or translation in
@@ -10182,9 +13542,12 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
     is_pdf_for_config = str(filename or state.get("filename") or "").lower().endswith(".pdf")
     if mode is not None:
         strict_terminology_governance = mode == "quality"
+    primary_base_url = (translator_base_url
+                        or getattr(_LLM_CTX, "base_url", None) or "")
     translator_config = _model_roles.normalize_role_config(
         None, fallback_provider=provider, fallback_model=model,
-        fallback_api_key=api_key, fallback_base_url=translator_base_url)
+        fallback_api_key=api_key, fallback_base_url=primary_base_url)
+    resolved_reviewer_provider = reviewer_provider or provider
     reviewer_config = _model_roles.normalize_role_config(
         {
             "provider": reviewer_provider,
@@ -10193,8 +13556,12 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             "base_url": reviewer_base_url,
         },
         fallback_provider=provider, fallback_model=model,
-        fallback_api_key=api_key)
+        fallback_api_key=api_key,
+        fallback_base_url=(primary_base_url
+                           if resolved_reviewer_provider == provider else ""))
     saved_auxiliary = state.get("auxiliary_config") or {}
+    resolved_auxiliary_provider = (auxiliary_provider
+                                   or saved_auxiliary.get("provider") or provider)
     auxiliary_config = _model_roles.normalize_role_config(
         {
             "provider": auxiliary_provider or saved_auxiliary.get("provider"),
@@ -10203,7 +13570,17 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             "base_url": auxiliary_base_url or saved_auxiliary.get("base_url"),
         },
         fallback_provider=provider, fallback_model=model,
-        fallback_api_key=api_key)
+        fallback_api_key=api_key,
+        fallback_base_url=(primary_base_url
+                           if resolved_auxiliary_provider == provider else ""))
+    understanding_runtime_config = _model_roles.public_role_config(auxiliary_config)
+    has_fallback_digests = any(
+        isinstance(item, dict) and item.get("status") == "deterministic_fallback"
+        for item in state.get("section_digests") or [])
+    retry_failed_understanding = bool(
+        state.get("understanding_retry_requested") or (state.get("understanding_done")
+        and has_fallback_digests
+        and state.get("understanding_runtime_config") != understanding_runtime_config))
     pipeline_config = {
         "target_lang": target_lang,
         "auto_term": bool(auto_term),
@@ -10256,7 +13633,7 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
     state.setdefault("llm_usage", _usage.empty_usage())
     auxiliary_call = _model_roles.make_role_call(
         _usage.tracked_call(call_llm, state["llm_usage"], role="auxiliary"),
-        auxiliary_config)
+        auxiliary_config, job_id=job_id)
     state.update(
         target_lang=target_lang, auto_term_enabled=bool(auto_term),
         report_enabled=bool(enable_report), theory=translation_theory,
@@ -10296,6 +13673,10 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         else:
             # New tasks: Quick skips it; Standard and Academic keep it enabled.
             enable_understanding = mode != "quick"
+    retry_failed_understanding = bool(
+        state.get("understanding_retry_requested") or (enable_understanding and state.get("understanding_done")
+        and has_fallback_digests
+        and state.get("understanding_runtime_config") != understanding_runtime_config))
     if enable_source_cleanup is None:
         if isinstance(saved_source_cleanup, bool):
             enable_source_cleanup = saved_source_cleanup
@@ -10326,10 +13707,11 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             or (not state.get("source_cleanup_done")
                 and not (state.get("segmentation") or {}).get("mode"))):
         state.setdefault("segmentation", {})["mode"] = effective_segmentation_mode
+        state.setdefault("segmentation", {})["locked"] = True
     warnings = state.setdefault("warnings", [])
 
     if enable_report:
-        from transpraxis import academic_writer
+        from folith import academic_writer
         academic_writer.prepare_academic_inputs(
             state, translation_theory, research_settings, literature_sources)
         academic_writer.sync_versions(state)
@@ -10370,7 +13752,7 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             state["segmentation"] = segmentation_meta
             state["source_cleanup"] = cleanup_meta
             state["source_cleanup_done"] = True
-            state["source_quality_gate"] = audit_source_quality(segments)
+            state["source_quality_gate"] = _audit_source_quality_for_state(state)
             cleanup_meta.update({
                 "paragraph_count": len(cleaned),
                 "segment_count": len(segments),
@@ -10390,7 +13772,7 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                 state["segmentation"] = segmentation_meta
                 state["source_cleanup"] = cleanup_meta
                 state["source_cleanup_done"] = True
-                state["source_quality_gate"] = audit_source_quality(segments)
+                state["source_quality_gate"] = _audit_source_quality_for_state(state)
             state["p1_done"] = True
             save_job_state(job_id, state)
 
@@ -10404,7 +13786,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
 
     # 全部完成 -> 直接返回
     if state["p1_done"] and state["p2_done"] and (not enable_report or state["p3_done"]) \
-            and (not enable_annotate or state.get("annotations_done")):
+            and (not enable_annotate or state.get("annotations_done")) \
+            and not retry_failed_understanding:
         state["stage"] = _state_migration.derive_stage(state)
         state["performance"] = persist_performance()
         save_job_state(job_id, state)
@@ -10440,7 +13823,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                     profiler=profiler, checkpoint_dir=job_dir(job_id),
                     ocr_workers=effective_ocr_workers,
                     ocr_queue_size=effective_ocr_queue_size,
-                    cancel_check=lambda: _runtime_cancel_requested(job_id))
+                    cancel_check=lambda: _runtime_cancel_requested(job_id),
+                    profile_cache_dir=ocr_profile_cache_dir(file_bytes))
 
             raw_paragraphs = list(paragraphs)
             # Persist the extraction boundary before remote cleanup starts.  If the
@@ -10550,11 +13934,12 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             raise RuntimeError("任务已请求取消")
         if on_status:
             on_status("【阶段1.2】文档画像（分布式采样 + 结构化校验）...")
-        from transpraxis.document_profile import profile_document
+        from folith.document_profile import profile_document
         profile, profile_warnings = profile_document(
             state["paras"], auxiliary_config["provider"],
             auxiliary_config["api_key"], auxiliary_config["model"], target_lang,
-            call_llm=auxiliary_call)
+            call_llm=auxiliary_call,
+            cancel_check=lambda: _runtime_cancel_requested(job_id))
         state["document_profile"] = profile
         state["profile_done"] = True
         for w in profile_warnings:
@@ -10571,7 +13956,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         raise RuntimeError("任务已请求取消")
 
     # ---------------- 阶段 1.3：全文语义理解 ----------------
-    if enable_understanding and not state.get("understanding_done"):
+    if (enable_understanding or state.get("understanding_retry_requested")) and (
+            not state.get("understanding_done") or retry_failed_understanding):
         if _runtime_cancel_requested(job_id):
             raise RuntimeError("任务已请求取消")
         if on_status:
@@ -10588,8 +13974,15 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         state["semantic_units"] = units
         state["section_digests"] = digests
         state["document_synopsis"] = synopsis
+        old_understanding_warnings = set(state.get("understanding_warnings") or [])
+        warnings[:] = [warning for warning in warnings if warning not in old_understanding_warnings]
         state["understanding_warnings"] = list(understanding_warnings)
         state["understanding_done"] = True
+        state["understanding_retry_requested"] = False
+        state["understanding_status"] = "degraded" if understanding_warnings or any(
+            item.get("status") == "deterministic_fallback" for item in digests
+        ) or synopsis.get("status") == "deterministic_fallback" else "success"
+        state["understanding_runtime_config"] = understanding_runtime_config
         for warning in understanding_warnings:
             if warning not in warnings:
                 warnings.append(warning)
@@ -10597,7 +13990,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             job_dir(job_id), units, digests, synopsis)
         if on_caption:
             status = synopsis.get("status") or "unavailable"
-            on_caption(f"✅ 全文理解完成：{len(digests)} 个语义单元 · 概要状态 {status}")
+            on_caption(f"{'⚠️ 全文理解降级' if state['understanding_status'] == 'degraded' else '✅ 全文理解完成'}："
+                       f"{len(digests)} 个语义单元 · 概要状态 {status}")
         save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
@@ -10611,7 +14005,7 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             on_status("【阶段1.5】正在 AI 智能抽取全文核心术语...")
         if on_caption:
             on_caption("🤖 正在从全文分布式样本中提取专业术语...")
-        from transpraxis.terminology import extract_auto_terms_v2
+        from folith.terminology import extract_auto_terms_v2
         entries, extract_warnings = extract_auto_terms_v2(
             state["paras"], target_lang, auxiliary_config["provider"],
             auxiliary_config["api_key"], auxiliary_config["model"],
@@ -10698,9 +14092,22 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                         knowledge_feedback_interval=_batch_cfg.get(
                             "knowledge_feedback_interval", knowledge_feedback_interval),
                         translation_concurrency=_batch_cfg.get(
-                            "translation_concurrency", translation_concurrency))
+                            "translation_concurrency", translation_concurrency),
+                        profiler=profiler,
+                        review_overlap=_batch_cfg.get("review_overlap"),
+                        max_review_in_flight=_batch_cfg.get("max_review_in_flight"),
+                        review_overlap_strategy=_batch_cfg.get("review_overlap_strategy"))
+        for _required_stage in ("translation_generation", "translation_deterministic_qa",
+                                "translation_repair", "translation_semantic_review",
+                                "knowledge_feedback", "state_commit", "tm_commit",
+                                "runtime_telemetry"):
+            if profiler.get(_required_stage) is None:
+                profiler.skipped(_required_stage, metadata={"reason": "not_applicable"})
+        state["performance"] = profiler.persist()
         state["p2_done"] = True
-        from transpraxis import delivery as _delivery
+        from folith.epub import bind_source_references
+        bind_source_references(state)
+        from folith import delivery as _delivery
         state["delivery_status"] = _delivery.compute_delivery_status(state)
         save_job_state(job_id, state)
 
@@ -10750,6 +14157,6 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         save_job_state(job_id, state)
 
     state["stage"] = _state_migration.derive_stage(state)
-    state["performance"] = persist_performance()
+    state["performance"] = persist_performance(final_status="completed")
     save_job_state(job_id, state)
     return state

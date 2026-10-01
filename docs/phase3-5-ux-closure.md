@@ -7,8 +7,8 @@ read-only presentation model and makes recovery paths explicit.
 
 ## Architecture
 
-`transpraxis/workspace_view.py` is the shared presentation boundary. It reads
-the authoritative state from `transpraxis.workbench_view` and returns:
+`folith/workspace_view.py` is the shared presentation boundary. It reads
+the authoritative state from `folith.workbench_view` and returns:
 
 - one AI configuration view for translator and optional reviewer connections;
 - one workspace projection with segment counts, readiness, downstream impact,

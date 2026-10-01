@@ -4,7 +4,7 @@ import pytest
 import fitz
 
 import core
-from transpraxis import pdf_preview
+from folith import pdf_preview
 
 
 @pytest.fixture

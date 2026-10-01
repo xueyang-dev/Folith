@@ -7,7 +7,7 @@
     folith-app-icon.png   App 图标（海军蓝圆角方块）
 
 本脚本只负责 kit 没覆盖的补充变体——源文件是
-`transpraxis/resources/brand/` 下的两个 SVG（`folith-mark.svg` 彩色图标、
+`folith/resources/brand/` 下的两个 SVG（`folith-mark.svg` 彩色图标、
 `folith-mark-mono.svg` 单色图标）。改了 SVG 之后必须能一条命令重新生成：
 手工导出的位图会漂移，很快就不再等于向量源，而深色底材料、窄栏版位、
 单色场景又都在引用这些 PNG。
@@ -42,7 +42,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BRAND = ROOT / "transpraxis" / "resources" / "brand"
+BRAND = ROOT / "folith" / "resources" / "brand"
 
 DEFAULT_PLAYWRIGHT_CANDIDATES = (
     "~/Dev/grok-workspace/node_modules/playwright-core",

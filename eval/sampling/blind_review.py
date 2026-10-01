@@ -18,8 +18,8 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from transpraxis import models
-from transpraxis.terminology import term_matches
+from folith import models
+from folith.terminology import term_matches
 
 MAX_PACKET = 80
 

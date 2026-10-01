@@ -1,0 +1,14 @@
+{
+  "description": "Aligned draft references for software acceptance; translation quality requires bilingual review.",
+  "languages": {"zh": "简体中文", "en": "English", "ru": "俄语", "ar": "阿拉伯语"},
+  "rows": [
+    {"id": "plain", "zh": "研究团队正在开发一种提高翻译质量的新方法。", "en": "The research team is developing a new method to improve translation quality.", "ru": "Исследовательская группа разрабатывает новый метод повышения качества перевода.", "ar": "يعمل فريق البحث على تطوير طريقة جديدة لتحسين جودة الترجمة."},
+    {"id": "negation", "zh": "这些结果并不意味着治疗对所有患者都有效。", "en": "These results do not mean that the treatment is effective for all patients.", "ru": "Эти результаты не означают, что лечение эффективно для всех пациентов.", "ar": "لا تعني هذه النتائج أن العلاج فعال لجميع المرضى."},
+    {"id": "question", "zh": "会议什么时候开始？谁负责提交报告？", "en": "When does the meeting start? Who is responsible for submitting the report?", "ru": "Когда начинается встреча? Кто отвечает за предоставление отчёта?", "ar": "متى يبدأ الاجتماع؟ من المسؤول عن تقديم التقرير؟"},
+    {"id": "mixed_digits", "zh": "2026 年，AI 系统处理了 1,234 份文件，准确率为 95.5%。", "en": "In 2026, the AI system processed 1,234 documents with an accuracy of 95.5%.", "ru": "В 2026 году система AI обработала 1,234 документа с точностью 95.5%.", "ar": "في عام 2026، عالج نظام AI عددًا قدره 1,234 وثيقة بدقة بلغت 95.5%."},
+    {"id": "latin_prefix", "zh": "OpenAI API：请求超时为 30 秒（参见第 2 节）。", "en": "OpenAI API: the request timeout is 30 seconds (see Section 2).", "ru": "OpenAI API: время ожидания запроса составляет 30 секунд (см. раздел 2).", "ar": "OpenAI API: مهلة الطلب 30 ثانية (انظر القسم 2)."},
+    {"id": "tokens", "zh": "请将 {user_name} 的报告发送至 editor@example.com，并访问 https://example.com/report。", "en": "Send the report for {user_name} to editor@example.com and visit https://example.com/report.", "ru": "Отправьте отчёт для {user_name} на editor@example.com и посетите https://example.com/report.", "ar": "أرسل تقرير {user_name} إلى editor@example.com، وزُر https://example.com/report."},
+    {"id": "diacritics", "zh": "学生读了这本书，然后写了一份简短的总结。", "en": "The student read the book, then wrote a short summary.", "ru": "Студент прочитал книгу, затем написал краткое резюме.", "ar": "قَرَأَ الطَّالِبُ الْكِتَابَ، ثُمَّ كَتَبَ مُلَخَّصًا قَصِيرًا."},
+    {"id": "arabic_indic_digits", "zh": "订单号为 ١٢٣٤；请保留这个编号。", "en": "The order number is ١٢٣٤; please preserve this number.", "ru": "Номер заказа — ١٢٣٤; пожалуйста, сохраните этот номер.", "ar": "رقم الطلب هو ١٢٣٤؛ يُرجى الاحتفاظ بهذا الرقم."}
+  ]
+}

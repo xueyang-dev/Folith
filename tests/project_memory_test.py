@@ -29,8 +29,8 @@ sys.path.insert(0, str(ROOT / "tests"))
 import core  # noqa: E402
 from make_scenario_fixtures import build_terminology_scenario  # noqa: E402
 from offline_provider import OfflineProvider  # noqa: E402
-from transpraxis import project as project_module  # noqa: E402
-from transpraxis.translation_memory import tm_record_language  # noqa: E402
+from folith import project as project_module  # noqa: E402
+from folith.translation_memory import tm_record_language  # noqa: E402
 
 
 # ================= 翻译记忆的**语言身份**必须随载荷走 =================
@@ -1145,7 +1145,7 @@ def test_pipeline_reuses_typography_variant_and_records_match_kind():
 
         pair = result["pairs"][0]
         assert pair.get("from_tm") is True, "排版等价的段落应复用记忆"
-        assert pair.get("tm_match") == "normalized"
+        assert pair.get("tm_match") == "exact", "导入清洗已统一空白，仍须复用相同译文"
         assert pair["target"] == "林冠郁闭指数被重新计算。"
 
 

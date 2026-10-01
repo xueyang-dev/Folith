@@ -12,9 +12,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import document_profile, models, state_migration, terminology
-from transpraxis import assets, delivery
-from transpraxis import report_evidence
+from folith import document_profile, models, state_migration, terminology
+from folith import assets, delivery
+from folith import report_evidence
 
 
 def test_document_profile_normalize_validate():
@@ -231,7 +231,7 @@ def test_state_migration_old_job():
 
 
 def test_core_load_job_state_migrates():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-mig-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-mig-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -308,7 +308,7 @@ def test_extract_auto_terms_v2():
         paras, "简体中文", "DeepSeek", "k", "deepseek-chat",
         document_profile=profile, call_llm=llm)
     assert calls["n"] == 1
-    assert warnings == []
+    assert len(warnings) == 1 and "原文无命中" in warnings[0] and "MT" in warnings[0]
     by_source = {e["source"]: e for e in entries}
     assert "Skopos theory" in by_source and "fidelity principle" in by_source
     # 去重：同 source 只保留一条，occurrences 取并集
@@ -316,7 +316,7 @@ def test_extract_auto_terms_v2():
     assert by_source["Skopos theory"]["occurrences"] == list(range(12)), \
         "重复候选应合并全部 occurrence"
     # 垃圾条目被丢弃；candidate 状态；evidence 为 model_knowledge 且无 URL
-    assert "MT" in by_source and len(by_source) == 3
+    assert "MT" not in by_source and len(by_source) == 2
     assert all(e["status"] == "candidate" for e in entries), "自动术语不得自动 locked"
     assert all(e["evidence"][0]["evidence_type"] == "model_knowledge" for e in entries)
     assert all(not e["evidence"][0]["url"] for e in entries), "model_knowledge 禁 URL"
@@ -345,8 +345,8 @@ def _make_docx(texts):
     return buf.getvalue()
 
 
-def test_review_state_persist_and_restore():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-termstate-"))
+def test_review_state_persist_and_restore(monkeypatch):
+    tmp = Path(tempfile.mkdtemp(prefix="folith-termstate-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -356,7 +356,7 @@ def test_review_state_persist_and_restore():
         calls = {"extract": 0, "translate": 0}
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "术语管理专家" in system_prompt:
+            if "长文翻译的术语编辑" in system_prompt:
                 calls["extract"] += 1
                 return json.dumps([
                     {"Source": "Skopos theory", "Target": "目的论"},
@@ -369,7 +369,7 @@ def test_review_state_persist_and_restore():
                 return '[]'
             return "报告章节内容。"
 
-        core.call_llm = llm
+        monkeypatch.setattr(core, "call_llm", llm)
         kwargs = dict(provider="DeepSeek", api_key="k", model="deepseek-chat",
                       target_lang="简体中文", auto_term=True, enable_report=False,
                       translation_theory="目的论 (Skopos Theory)", user_glossary=[])
@@ -432,7 +432,7 @@ def _numbered(user_prompt):
 
 def test_apptest_term_review_panel():
     from streamlit.testing.v1 import AppTest
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-apptest-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-apptest-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -600,7 +600,7 @@ def test_conflict_detection():
 
 
 def test_batch_injection_log_and_prompt():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-inject-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-inject-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -703,7 +703,7 @@ def test_mark_fixed_then_final():
 
 
 def test_retranslate_segments():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-rt-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-rt-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -768,7 +768,7 @@ def test_retranslate_segments():
 
 
 def test_retranslate_keeps_postcheck_findings():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-rt-postcheck-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-rt-postcheck-"))
     old_dir = core.OUTPUT_DIR
     old_call = core.call_llm
     core.OUTPUT_DIR = tmp
@@ -800,7 +800,7 @@ def test_retranslate_keeps_postcheck_findings():
 
 
 def test_pipeline_blocking_delivery_status():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-deliv-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-deliv-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -1040,7 +1040,7 @@ def test_segment_evidence_bundle():
 
 
 def test_report_prompt_evidence_contract():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-rep-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-rep-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -1109,7 +1109,7 @@ def test_report_prompt_evidence_contract():
 
 
 def test_initial_target_recorded():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-init-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-init-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -1171,7 +1171,7 @@ def test_evidence_provider_interface():
 
 
 def test_unfreeze_back_to_edit():
-    tmp = Path(tempfile.mkdtemp(prefix="transpraxis-unfreeze-"))
+    tmp = Path(tempfile.mkdtemp(prefix="folith-unfreeze-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:

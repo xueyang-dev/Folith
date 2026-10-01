@@ -525,8 +525,8 @@ def test_job_cancel_finds_thread_when_runtime_workers_cleared(tmp_path, monkeypa
         core.OUTPUT_DIR = old_dir
 
 
-def test_job_cancel_force_immediately_marks_cancelled(tmp_path, monkeypatch):
-    """force=True 时无论 worker 是否退出，立刻将状态置为 cancelled。"""
+def test_job_cancel_force_waits_for_worker_exit(tmp_path, monkeypatch):
+    """Python threads cannot be killed: keep ownership until the worker exits."""
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp_path
     entered = threading.Event()
@@ -546,7 +546,11 @@ def test_job_cancel_force_immediately_marks_cancelled(tmp_path, monkeypatch):
         # 强制终止
         assert core.request_job_cancel(job_id, force=True)
         runtime = core.get_job_runtime_status(job_id)
-        assert runtime["status"] == "cancelled"
+        assert runtime["status"] == "cancelling"
+        assert not core.resume_job(job_id, "fixture.docx", {})
+        release.set()
+        assert _wait_for(lambda: not core.is_job_worker_alive(job_id))
+        assert core.get_job_runtime_status(job_id)["status"] == "cancelled"
     finally:
         release.set()
         monkeypatch.setattr(core, "run_job_pipeline", original)

@@ -1,0 +1,41 @@
+[
+  {
+    "name": "构建上下文",
+    "buttonsSameRow": true,
+    "clip": {
+      "height": 138,
+      "width": 618,
+      "x": 8,
+      "y": 252.390625
+    },
+    "height": 102,
+    "overflow": false,
+    "tableY": 435.7890625
+  },
+  {
+    "name": "翻译中",
+    "buttonsSameRow": true,
+    "clip": {
+      "height": 138,
+      "width": 618,
+      "x": 8,
+      "y": 252.390625
+    },
+    "height": 102,
+    "overflow": false,
+    "tableY": 435.7890625
+  },
+  {
+    "name": "等待模型",
+    "buttonsSameRow": true,
+    "clip": {
+      "height": 138,
+      "width": 618,
+      "x": 8,
+      "y": 252.390625
+    },
+    "height": 102,
+    "overflow": false,
+    "tableY": 435.7890625
+  }
+]

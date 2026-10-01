@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from transpraxis import models
-from transpraxis.terminology import term_matches
+from folith import models
+from folith.terminology import term_matches
 
 
 def compute_terminology_metrics(state: Dict[str, Any],

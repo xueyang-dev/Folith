@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import assets, delivery, document_profile, models, state_migration, terminology
+from folith import assets, delivery, document_profile, models, state_migration, terminology
 
 
 def _make_docx(texts):
@@ -758,7 +758,7 @@ def test_report_evidence_verbatim_and_no_fabrication():
                 "initial_target": "We trained 300 participants.", "reviewed": True,
                 "from_tm": False, "glossary_entry_ids": []}],
         findings=[], delivery_status="draft")
-    block = __import__("transpraxis.report_evidence", fromlist=["evidence_text_block"])
+    block = __import__("folith.report_evidence", fromlist=["evidence_text_block"])
     text = block.evidence_text_block(state, "re0000000000000001")
     assert "累计培训300人次" in text, "证据必须逐字来自 state"
     assert "[seg-re0000000000000001-0000]" in text, "证据必须带真实 segment_id"
@@ -790,7 +790,7 @@ def test_external_evidence_attack_and_prompt_scan():
     # 代码库扫描：模型 prompt 不得要求模型生成引用来源 URL
     import subprocess
     hits = subprocess.run(
-        ["rg", "-n", "https?://", "core.py", "transpraxis/", "scripts/"],
+        ["rg", "-n", "https?://", "core.py", "folith/", "scripts/"],
         capture_output=True, text=True).stdout
     prompt_files = []
     for line in hits.splitlines():
@@ -810,7 +810,8 @@ def test_external_evidence_attack_and_prompt_scan():
         if '"{http://' in line:
             continue
         # SVG 资源的 xmlns 声明不是 prompt 里的引用 URL
-        if 'xmlns="http://www.w3.org' in line:
+        if "xmlns=" in line or "xmlns:" in line or any(namespace in line for namespace in (
+                "http://schemas.openxmlformats.org/", "http://www.w3.org/1999/xhtml")):
             continue
         if "PRESERVE_RE" in line or "example.com" in line and "系统" not in line:
             continue
@@ -820,6 +821,9 @@ def test_external_evidence_attack_and_prompt_scan():
         # 本机回环地址是本地开发/验证工具的默认目标，不是 prompt 里的引用 URL
         if any(host in line for host in (
                 "http://127.0.0.1", "http://localhost", "http://0.0.0.0")):
+            continue
+        # 界面静态多语言资源不包含任何模型 prompt
+        if "folith/resources/locales/" in path:
             continue
         # 品牌资产渲染脚本的字体样式表是本地排版输入，不进入任何 prompt
         if "fonts.googleapis.com" in line:
@@ -911,8 +915,8 @@ def test_long_document_simulation_and_performance():
                 "elapsed_s": round(elapsed, 2),
             }
         q, ql = stats["quick"], stats["quality"]
-        assert q["segments"] == 400 and ql["segments"] == 400
-        assert q["batches"] == 100
+        assert q["segments"] == 2000 and ql["segments"] == 2000
+        assert q["batches"] == 500
         assert q["avg_injected"] < q["glossary_size"], \
             f"相关注入应显著少于全表：avg {q['avg_injected']} vs {q['glossary_size']}"
         assert q["max_injected"] < q["glossary_size"]
@@ -920,7 +924,7 @@ def test_long_document_simulation_and_performance():
         assert ql["blocking"] == 0 and q["blocking"] == 0
         assert q["actionable"] == 0 and ql["actionable"] == 0, \
             "合规 mock 不应产生 scope 误报/残留误报"
-        assert q["reviewed"] == 400 and ql["reviewed"] == 400, \
+        assert q["reviewed"] == 2000 and ql["reviewed"] == 2000, \
             "合规 mock 下全部段落应审校通过（TM eligible）"
         assert ql["delivery"] == "draft" and q["delivery"] == "draft"
         assert q["elapsed_s"] < 30 and ql["elapsed_s"] < 30, \

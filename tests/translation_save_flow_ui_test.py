@@ -27,7 +27,7 @@ import json
 from pathlib import Path
 
 import core
-from transpraxis import assets
+from folith import assets
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
@@ -104,6 +104,17 @@ def _button(at, key):
     return next((button for button in at.button if button.key == key), None)
 
 
+def _open_inspector(at, job_id):
+    if at.session_state["workspace_inspector_open"]:
+        return at
+    button = _button(at, f"workspace_inspector_toggle_{job_id}")
+    assert button is not None
+    button.click()
+    at.run()
+    assert not at.exception, at.exception
+    return at
+
+
 def _expander_labels(at):
     """展开器的"标签"不是 markdown，必须从 `at.expander` 读。"""
     return [str(item.label) for item in at.expander]
@@ -164,6 +175,20 @@ def test_typing_in_the_grid_reveals_the_save_entry_and_persists(tmp_path,
         "译文 1", "译文 2", "我敲进去的第三段译文", "译文 4"]
 
 
+def test_editing_a_target_activates_its_work_row(tmp_path, monkeypatch):
+    """编辑任意译文时，服务端回退路径也要同步当前工作行。"""
+    job_id = "saveflow_active_row"
+    at = _open_workspace(job_id, tmp_path, monkeypatch)
+    target_index = 2
+    segment_id = assets.segment_id(job_id, target_index)
+
+    _text_area(at, f"translation_editor_{segment_id}").set_value("第三段的新译文")
+    at.run()
+
+    assert at.session_state["selected_segment_id"] == segment_id
+    assert at.session_state["selected_segment_index"] == target_index
+
+
 def test_unsaved_draft_survives_a_filter_change_and_saves_what_was_typed(
         tmp_path, monkeypatch):
     """发布前必修：切筛选/切段落时未保存内容不能无提示丢失。
@@ -208,6 +233,8 @@ def test_unsaved_draft_survives_a_filter_change_and_saves_what_was_typed(
         f"切回来必须看到自己敲的内容，实际：{restored.value!r}")
 
     # 关键：保存写的必须是用户敲的内容，而不是旧译文。
+    _button(at, f"cat_sel_{job_id}_2").click()
+    at.run()
     _button(at, f"cat_save_btn_{job_id}_2").click()
     at.run()
     assert not at.exception, at.exception
@@ -283,7 +310,9 @@ def test_discard_all_drops_pending_drafts_and_restores_the_committed_text(
 def test_save_and_next_persists_then_moves_to_the_following_segment(
         tmp_path, monkeypatch):
     job_id = "saveflow0006"
-    at = _open_workspace(job_id, tmp_path, monkeypatch)
+    state = _ui_state()
+    state["pairs"][2]["target"] = ""
+    at = _open_workspace(job_id, tmp_path, monkeypatch, state=state)
 
     next(button for button in at.button
          if button.key == f"cat_sel_{job_id}_1").click()
@@ -292,7 +321,7 @@ def test_save_and_next_persists_then_moves_to_the_following_segment(
     _text_area(at, f"translation_editor_{segment_id}").set_value("第二段改写")
     at.run()
 
-    _button(at, f"cat_save_next_btn_{job_id}_1").click()
+    _button(at, f"translation_save_next_{job_id}_1").click()
     at.run()
     assert not at.exception, at.exception
     assert core.load_job_state(job_id)["pairs"][1]["target"] == "第二段改写"
@@ -392,8 +421,8 @@ def test_excluded_segment_is_listed_and_restorable_from_the_workbench(
     assert core.excluded_segments_summary(core.load_job_state(job_id))["count"] == 0
 
 
-def test_import_scope_is_visible_in_the_workspace(tmp_path, monkeypatch):
-    """导入范围必须让新人看得见：提取了什么、什么没纳入、导出是重建文档。"""
+def test_import_scope_is_available_in_task_details(tmp_path, monkeypatch):
+    """按需查看导入范围：说明提取内容、排除内容和重建式导出。"""
     job_id = "saveflow0010"
     monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     state = _ui_state()
@@ -414,9 +443,11 @@ def test_import_scope_is_visible_in_the_workspace(tmp_path, monkeypatch):
     at.run()
     assert not at.exception, at.exception
 
-    labels = _expander_labels(at)
-    assert any("导入范围" in label for label in labels), \
-        f"正文必须给出导入范围入口，实际展开器：{labels}"
+    nav = Path(APP_PATH).read_text(encoding="utf-8")
+    assert 'st.popover(_t("任务详情")' in nav, \
+        "导入范围必须移入按需打开的任务详情"
+    # AppTest exposes the expander's contents in its element tree even while the
+    # browser disclosure is collapsed; its Expander wrapper has no expand().
     page = _markdown(at)
     assert "tp-scope-block" in page, "导入范围必须列出未纳入的内容"
     assert "表格内容" in page, "必须逐项说明哪些内容没有进入翻译"
@@ -438,6 +469,7 @@ def test_agent_failure_never_offers_to_apply(tmp_path, monkeypatch):
         "action": "rewrite", "label": "改写", "kind": "rewrite",
         "status": "error", "text": "AI 动作失败：连接超时",
     }
+    _open_inspector(at, job_id)
     at.run()
     assert not at.exception, at.exception
 
@@ -458,6 +490,7 @@ def test_agent_empty_result_is_also_read_only(tmp_path, monkeypatch):
         "action": "rewrite", "label": "改写", "kind": "rewrite",
         "status": "empty", "text": "模型没有返回内容，请重试。",
     }
+    _open_inspector(at, job_id)
     at.run()
     assert not at.exception, at.exception
     assert not any(button.label == "应用到译文" for button in at.button), \
@@ -467,24 +500,24 @@ def test_agent_empty_result_is_also_read_only(tmp_path, monkeypatch):
 
 # ------------------------------------------------------- 连续编辑的快捷动作
 
-def test_copy_source_to_target_seeds_an_unsaved_draft(tmp_path, monkeypatch):
-    """专名/代码/译者新增内容：先把原文放进译文框，仍然要人点保存。"""
+def test_pasting_source_into_target_remains_an_unsaved_draft(tmp_path, monkeypatch):
+    """Pasting untranslated names or code must still require explicit saving."""
     job_id = "saveflow0013"
     at = _open_workspace(job_id, tmp_path, monkeypatch)
 
     segment_id = assets.segment_id(job_id, 0)
-    _button(at, f"translation_inspector_copy_{job_id}").click()
+    _text_area(at, f"translation_editor_{segment_id}").set_value("Source segment 1")
     at.run()
     assert not at.exception, at.exception
 
     editor = _text_area(at, f"translation_editor_{segment_id}")
     assert editor is not None
     assert editor.value == "Source segment 1", editor.value
-    assert f"{job_id}|{segment_id}" in _drafts(at), "复制应当是未保存草稿"
-    # 关键：复制本身不写文档——写回始终由人决定。
+    assert f"{job_id}|{segment_id}" in _drafts(at), "粘贴应当是未保存草稿"
+    # 粘贴本身不写文档——写回始终由人决定。
     assert core.load_job_state(job_id)["pairs"][0]["target"] == "译文 1"
 
-    _button(at, f"translation_inspector_save_{job_id}").click()
+    _button(at, f"cat_save_btn_{job_id}_0").click()
     at.run()
     assert not at.exception, at.exception
     assert core.load_job_state(job_id)["pairs"][0]["target"] == "Source segment 1"
@@ -503,7 +536,7 @@ def test_save_and_go_to_next_unconfirmed_segment(tmp_path, monkeypatch):
     _text_area(at, f"translation_editor_{segment_id}").set_value("第一段的修改")
     at.run()
 
-    _button(at, f"translation_inspector_save_next_open_{job_id}").click()
+    _button(at, f"translation_save_next_{job_id}_0").click()
     at.run()
     assert not at.exception, at.exception
     assert core.load_job_state(job_id)["pairs"][0]["target"] == "第一段的修改"
@@ -520,12 +553,12 @@ def test_save_and_next_reports_when_nothing_is_left(tmp_path, monkeypatch):
     segment_id = assets.segment_id(job_id, 0)
     _text_area(at, f"translation_editor_{segment_id}").set_value("第一段的修改")
     at.run()
-    _button(at, f"translation_inspector_save_next_open_{job_id}").click()
+    _button(at, f"translation_save_next_{job_id}_0").click()
     at.run()
     assert not at.exception, at.exception
 
     info = " ".join(str(item.value) for item in at.info)
-    assert "没有其它待处理段落了" in info, info
+    assert "没有其它待翻译或待审校段落了" in info, info
     assert at.session_state["selected_segment_id"] == assets.segment_id(job_id, 0)
 
 
@@ -534,11 +567,10 @@ def test_retranslate_needs_an_engine_and_says_so(tmp_path, monkeypatch):
     job_id = "saveflow0015"
     at = _open_workspace(job_id, tmp_path, monkeypatch)
 
-    button = _button(at, f"translation_inspector_retranslate_{job_id}")
+    button = _button(at, f"cat_action_retranslate_inline_{job_id}_0")
     assert button is not None
     assert button.disabled is True
-    captions = " ".join(str(item.value) for item in at.caption)
-    assert "定点翻译需要先完成 AI 引擎配置" in captions, captions
+    assert "定点翻译需要先完成 AI 引擎配置" in button.proto.help
 
 
 def test_drafts_survive_switching_to_another_task(tmp_path, monkeypatch):
@@ -722,7 +754,8 @@ def test_a_persisted_draft_comes_back_in_a_new_session(tmp_path, monkeypatch):
     editor = _text_area(at, f"translation_editor_{segment_id}")
     assert editor is not None, "恢复的草稿必须回到输入框"
     assert editor.value == "上次会话没保存完的第三段", editor.value
-    assert "未保存" in _markdown(at), "恢复的草稿仍然是未保存状态"
+    assert "未保存的译文修改" in " ".join(str(item.value) for item in at.warning), \
+        "恢复的草稿仍然是未保存状态"
 
     after = core.load_job_state(job_id)
     assert [pair["target"] for pair in after["pairs"]] == [
@@ -855,8 +888,8 @@ def test_server_side_edits_force_the_editor_to_remount(tmp_path, monkeypatch):
     让 widget 用新默认值重建"这条常见做法，对**已经被敲过字**的输入框无效：前端组件
     实例不重挂载，它保留自己的 dirty 值。
 
-    用户看到的是：点了「复制原文到译文」，框里还是自己刚才写的字；点了「采用磁盘上的
-    版本」，框里还是自己那份草稿；点了「丢弃全部」，文字还在。而 `AppTest` 没有前端
+    用户看到的是：点了「采用磁盘上的版本」，框里还是自己那份草稿；点了「丢弃全部」，
+    文字还在。而 `AppTest` 没有前端
     状态机——清 key 之后它下一轮就用新默认值重建，断言照样通过，是"看起来测过了"。
 
     能在这里守住的是**契约**：服务端换了内容就必须换 key（`app.py:
@@ -865,28 +898,28 @@ def test_server_side_edits_force_the_editor_to_remount(tmp_path, monkeypatch):
     """
     job_id = "saveflow0025"
     at = _open_workspace(job_id, tmp_path, monkeypatch)
-    segment_id = assets.segment_id(job_id, 0)
+    segment_id = assets.segment_id(job_id, 2)
     base = f"translation_editor_{segment_id}"
 
-    # 前置：真的敲过字，否则前端没有 dirty 状态可言。
-    _text_area(at, base).set_value("我自己的草稿")
-    at.run()
+    # 真正输入草稿后，用另一个标签页的译文制造保存冲突。
+    _, theirs = _open_conflict(at, job_id, segment_id, mine="我自己的草稿")
     assert _editor_keys(at, base) == [base], "还没复位时 key 不应该变"
 
-    # 「复制原文到译文」：服务端决定内容是原文 → key 必须换。
-    _button(at, f"translation_inspector_copy_{job_id}").click()
+    # 「采用磁盘上的版本」：服务端换内容时必须换 key。
+    _button(at, f"translation_conflict_take_{job_id}").click()
     at.run()
     assert not at.exception, at.exception
     assert _editor_keys(at, base) == [f"{base}#1"], \
         f"服务端换了内容就必须换 key（逼前端重挂载），实际 {_editor_keys(at, base)}"
-    assert _text_area(at, base).value == "Source segment 1"
-    assert core.load_job_state(job_id)["pairs"][0]["target"] == "译文 1", \
-        "复制本身不写文档"
+    assert _text_area(at, base).value == theirs
+    assert core.load_job_state(job_id)["pairs"][2]["target"] == theirs
 
     # 「丢弃全部」：同理，输入框必须回到已保存的译文。
+    _text_area(at, base).set_value("采用磁盘版本后的新草稿")
+    at.run()
     _button(at, f"translation_draft_discard_all_{job_id}").click()
     at.run()
     assert not at.exception, at.exception
     assert _drafts(at) == {}
     assert _editor_keys(at, base) == [f"{base}#2"], _editor_keys(at, base)
-    assert _text_area(at, base).value == "译文 1"
+    assert _text_area(at, base).value == theirs

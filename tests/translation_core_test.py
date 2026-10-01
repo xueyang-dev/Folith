@@ -6,8 +6,8 @@ from copy import deepcopy
 
 import pytest
 
-from transpraxis import models
-from transpraxis.translation_core import (
+from folith import models
+from folith.translation_core import (
     build_review_packet,
     fingerprint,
     mark_stale,
@@ -16,7 +16,7 @@ from transpraxis.translation_core import (
     record_human_decision,
     review_input_fingerprint,
 )
-from transpraxis.translation_evidence import (
+from folith.translation_evidence import (
     TranslationEvidenceIndex,
     build_runtime_review_packet,
     current_review_event,

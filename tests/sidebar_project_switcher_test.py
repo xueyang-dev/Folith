@@ -597,6 +597,10 @@ def test_project_tooltip_is_a_short_phrase_with_a_width_cap():
         capped = _css_rule(
             css, '[data-testid="stTooltipContent"], .stTooltipContent')
         assert "max-width: 260px" in capped, capped
+        assert "pointer-events:none" in capped.replace(" ", ""), \
+            "Tooltip 内容不得接收鼠标事件，否则鼠标移入浮窗会延长显示并遮挡工作区"
+        assert "user-select:none" in capped.replace(" ", ""), \
+            "Tooltip 内容是瞬时说明，不应变成可复制文本面板"
 
 
 def test_header_navigation_is_pure_navigation():

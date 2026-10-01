@@ -39,10 +39,12 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 | 版本 | 文件 | 来源 | 用在哪里 |
 | --- | --- | --- | --- |
 | 品牌标准图 | `docs/assets/folith-brand-standard.png` | 用户提供 | 本规范的完整参考 |
-| 主横向组合 | `folith-lockup.png` | 用户提供 | README 首屏、侧栏品牌位 |
+| 主横向组合 | `folith-lockup.png` | 用户提供 | README 首屏、透明版的原始素材 |
+| 透明横向组合 | `folith-lockup-transparent.png` | 原图逐像素去白底 | 日间与纸面主题侧栏 |
+| 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 同一原图，仅调整文字颜色 | 夜间主题侧栏 |
 | 图标（透明底） | `folith-mark.png` | 用户提供 | 页面图标（浏览器标签页、安装入口） |
 | App 图标 | `folith-app-icon.png` | 用户提供 | 桌面与应用入口 |
-| 深色底横向组合 | `folith-logo-dark.png` | SVG 派生 | 深色背景材料 |
+| 深色底横向组合 | `folith-logo-dark.png` | SVG 派生 | 旧补充素材，侧栏不再使用 |
 | 竖向组合 | `folith-logo-stacked.png` | SVG 派生 | 窄栏或正方形版位 |
 | 彩色图标（向量） | `folith-mark.svg` | 向量源 | 派生渲染与单色底稿 |
 | 单色图标（向量） | `folith-mark-mono.svg` | 向量源 | 单色、需跟随 `currentColor` 的场景 |
@@ -83,7 +85,7 @@ hover 和 active 只使用 Cobalt 的更深阶；语义色继续使用既有绿�
 补充变体由脚本生成：只修改 SVG 源，然后重跑并检查。
 
 ```bash
-$EDITOR transpraxis/resources/brand/folith-mark.svg
+$EDITOR folith/resources/brand/folith-mark.svg
 python scripts/render_brand_assets.py
 python scripts/render_brand_assets.py --check
 python -m pytest tests/brand_assets_test.py -q
@@ -95,13 +97,28 @@ python -m pytest tests/brand_assets_test.py -q
 
 ## 5. 工作台应用
 
-侧栏、页面图标、启动器和导出署名使用正式品牌素材：侧栏品牌位 = `folith-lockup.png`，
+侧栏、页面图标、启动器和导出署名使用正式品牌素材：侧栏品牌位使用 `folith-lockup.png` 的透明 PNG 派生版，
 页面图标 = `folith-mark.png`，App 图标 = `folith-app-icon.png`；组合字标统一为
 `Folith·译页`。README 首屏展示同一份主 lockup。页面仍保持既有侧栏、任务步骤、
 内容面、圆角、间距和颜色，不借 rebrand 之机改动导航或交互流程。
 
 ## 6. 兼容边界
 
-`foliothread` Python 包名、`foliothread` / `transpraxis` console 入口、
-`FOLIOTHREAD_*` 环境变量、项目 schema、内存格式、导出字段和历史资源名都属于
+`folith` 是当前 Python 代码包和主 console 入口；PyPI 发行包名仍为
+`foliothread`，并保留同名 console 入口。
+
+已有 `FOLIOTHREAD_*` 环境变量、项目 schema、内存格式和历史资源名属于
 兼容性边界，不能仅为品牌整洁而删除或重命名。它们不改变产品表层品牌。
+
+## 7. 独立代码包（2026-10-01）
+
+代码包、资源路径、线程名称和新导出的 TBX/TMX 扩展字段统一使用 `folith`。
+评测凭据变量为 `FOLITH_EVAL_API_KEY`。旧 TransPraxis 包和启动命令已移除，
+不提供旧包导入别名。已有 `outputs/` 任务、项目和凭据继续从原位置读取，
+无需搬移数据。CHANGELOG 与已有导出日志中的旧名称是历史记录。
+
+### 侧栏透明 PNG（2026-10-01）
+
+日间与纸面使用 `folith-lockup-transparent.png`，夜间使用 `folith-lockup-transparent-dark.png`。两者从正式原图逐像素去白底，保留图标内白色文字与箭头；夜间版只调整文字颜色，尺寸与 alpha 轮廓相同。不再使用 SVG 派生图或主题放大。
+
+重建命令：`python3 scripts/extract_brand_png.py`（维护环境需 Pillow、NumPy、SciPy）。原图保留，不覆盖。

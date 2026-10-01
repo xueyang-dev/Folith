@@ -1,0 +1,493 @@
+"""Read-only human-facing projection for the translation review workbench."""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, List, Mapping, Optional, Sequence
+
+from . import delivery, translation_evidence
+
+
+READINESS_COPY = {
+    "not_run": ("尚未审校", "当前译文尚未开始独立审校", "warning"),
+    "missing": ("还有内容待处理", "完成待审段落或处理必须解决的问题后即可继续", "warning"),
+    "failed": ("审校未完成", "部分段落的独立审校未成功，请重试", "danger"),
+    "stale": ("译文已变化，需要重新审校", "上次审校仍保留在历史中，但不再代表当前译文", "warning"),
+    "current": ("当前译文已完成审校", "所有需要独立审校的段落都与当前译文一致", "success"),
+    "not_required": ("当前任务未启用独立审校", "此任务沿用原有交付流程", "neutral"),
+}
+
+FINDING_STATUS_COPY = {
+    "open": "待处理",
+    "resolved": "已确认解决",
+    "dismissed": "已确认保留",
+    "stale": "已过期",
+}
+
+_STALE_REASON_COPY = (
+    (("canonical glossary", "glossary"), "项目术语发生变化"),
+    (("confirmed style", "style knowledge"), "项目风格规则发生变化"),
+    (("document profile",), "文档画像发生变化"),
+    (("target", "translation truth", "current_translation", "translation"),
+     "当前译文已修改"),
+    (("superseded",), "已有更新的审校结果"),
+)
+
+
+def stale_reason_label(reason: Any) -> str:
+    """Translate a persisted technical stale reason without hiding its source."""
+    text = str(reason or "").strip()
+    folded = text.casefold()
+    for needles, label in _STALE_REASON_COPY:
+        if any(needle in folded for needle in needles):
+            return label
+    return "审校依据发生变化" if text else "当前内容需要重新审校"
+
+
+def _segment_id(value: Mapping[str, Any]) -> Optional[int]:
+    segment_id = value.get("segment_id")
+    if isinstance(segment_id, bool) or not isinstance(segment_id, int):
+        segment_id = value.get("segment_index")
+    return segment_id if isinstance(segment_id, int) and not isinstance(
+        segment_id, bool) else None
+
+
+def _pair(state: Mapping[str, Any], segment_id: Optional[int]) -> Mapping[str, Any]:
+    pairs = state.get("pairs") or []
+    if segment_id is None or not 0 <= segment_id < len(pairs):
+        return {}
+    pair = pairs[segment_id]
+    return pair if isinstance(pair, Mapping) else {}
+
+
+def _current_finding(state: Mapping[str, Any], finding: Mapping[str, Any]) -> bool:
+    if finding.get("status") == "stale" or finding.get(
+            "superseded_by_review_event_id"):
+        return False
+    if finding.get("type") != "review" or not finding.get("input_fingerprint"):
+        return True
+    segment_id = _segment_id(finding)
+    if segment_id is None:
+        return False
+    event = translation_evidence.current_review_event(state, segment_id)
+    return bool(event and event.get("review_event_id") == finding.get(
+        "review_event_id"))
+
+
+def _identity_detail(context: Mapping[str, Any]) -> str:
+    span = str(context.get("detected_text") or context.get("target_span")
+               or context.get("source_span") or "").strip()
+    if span:
+        preview = " ".join(span.split())
+        return f"“{preview[:24]}{'…' if len(preview) > 24 else ''}”"
+    return str(context.get("category_label") or "审校问题")
+
+
+def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[str, Any]:
+    context = delivery.finding_context(dict(state), dict(finding))
+    segment_id = context.get("segment_index")
+    severity = str(context.get("severity") or "informational")
+    filter_group = {
+        "blocking": "pending",
+        "actionable": "suggested",
+        "informational": "reference",
+    }.get(severity, "reference")
+    rendered_id = str(context.get("finding_id") or "")
+    summary = str(context.get("summary") or context.get("reason")
+                  or "旧版本审校记录").strip()
+    core_finding = bool(finding.get("finding_id") and finding.get(
+        "input_fingerprint"))
+    return {
+        "id": f"finding:{rendered_id}",
+        "kind": "finding",
+        "filter_group": filter_group,
+        "priority": {"blocking": 2, "actionable": 4,
+                     "informational": 5}.get(severity, 5),
+        "segment_id": segment_id,
+        "segment_index": segment_id,
+        "segment_number": context.get("segment_number"),
+        "finding_id": rendered_id,
+        "core_finding_id": str(finding.get("finding_id") or ""),
+        "core_finding": core_finding,
+        "requires_human_confirmation": bool(
+            finding.get("requires_human_confirmation")),
+        "decidable": not (core_finding and finding.get(
+            "identity_stability") == "provisional"),
+        "severity": severity,
+        "severity_label": context.get("severity_label"),
+        "finding_type": context.get("finding_type"),
+        "status": str(finding.get("status") or (
+            "resolved" if finding.get("resolved") else "open")),
+        "status_label": FINDING_STATUS_COPY.get(str(finding.get("status") or "open"),
+                                                "待处理"),
+        "category": context.get("category"),
+        "category_label": context.get("category_label"),
+        "title": f"第 {context.get('segment_number')} 段 · {_identity_detail(context)}",
+        "summary": summary,
+        "reason": context.get("reason"),
+        "source": context.get("source"),
+        "target": context.get("target"),
+        "source_span": context.get("source_span"),
+        "target_span": context.get("target_span"),
+        "explanation": context.get("explanation"),
+        "recommendation": context.get("recommendation"),
+        "suggested_target": str(finding.get("suggested_target") or "").strip(),
+        "legacy_diagnostic": context.get("legacy_diagnostic"),
+        "proper_noun_candidate": context.get("proper_noun_candidate"),
+        "detected_text": context.get("detected_text"),
+        "detector": context.get("detector"),
+        "confidence": context.get("confidence"),
+        "evidence_refs": list(context.get("evidence_refs") or []),
+        "evidence_ids": list(context.get("evidence_ids") or []),
+        "review_evidence": list(context.get("review_evidence") or []),
+        "review_event_id": context.get("review_event_id"),
+        "entry_id": str(finding.get("entry_id") or ""),
+        "technical_reason": str(finding.get("stale_reason") or ""),
+        "identity_stability": finding.get("identity_stability") or "legacy",
+    }
+
+
+def _historical_event(state: Mapping[str, Any], segment_id: int) -> Mapping[str, Any]:
+    for event in reversed(state.get("review_evidence") or []):
+        if not isinstance(event, Mapping):
+            continue
+        ids = event.get("segment_ids") or (event.get("completion_receipt") or {}).get(
+            "reviewed_segment_ids") or []
+        if segment_id in ids:
+            return event
+    return {}
+
+
+def _review_task_item(
+    state: Mapping[str, Any], kind: str, segment_id: int,
+) -> Dict[str, Any]:
+    pair = _pair(state, segment_id)
+    event = _historical_event(state, segment_id)
+    copy = {
+        "failed": ("审校未完成", "上次独立审校调用失败", "retry", 0),
+        "stale": ("需要重新审校", stale_reason_label(event.get("stale_reason")),
+                  "rereview", 1),
+        "missing": ("尚未审校", "当前译文尚未完成独立审校", "review", 3),
+    }
+    status_label, summary, action, priority = copy[kind]
+    return {
+        "id": f"{kind}:segment:{segment_id}",
+        "kind": kind,
+        "filter_group": "rereview" if kind in {"failed", "stale"} else "pending",
+        "priority": priority,
+        "segment_id": segment_id,
+        "segment_index": segment_id,
+        "segment_number": segment_id + 1,
+        "finding_id": "",
+        "core_finding_id": "",
+        "core_finding": False,
+        "requires_human_confirmation": False,
+        "decidable": False,
+        "severity": "blocking" if kind in {"failed", "stale"} else "actionable",
+        "severity_label": status_label,
+        "status": kind,
+        "status_label": status_label,
+        "category": "review_freshness",
+        "category_label": "独立审校",
+        "title": f"第 {segment_id + 1} 段 · {status_label}",
+        "summary": summary,
+        "reason": summary,
+        "source": str(pair.get("source") or ""),
+        "target": str(pair.get("target") or ""),
+        "source_span": "",
+        "target_span": "",
+        "explanation": summary,
+        "recommendation": "重新运行此段审校，生成与当前译文一致的新结果。",
+        "suggested_target": "",
+        "legacy_diagnostic": False,
+        "proper_noun_candidate": False,
+        "detected_text": "",
+        "detector": "Independent Review",
+        "confidence": None,
+        "evidence_refs": [],
+        "evidence_ids": [],
+        "review_evidence": [],
+        "review_event_id": event.get("review_event_id"),
+        "entry_id": "",
+        "technical_reason": str(event.get("stale_reason") or event.get("error") or ""),
+        "identity_stability": "synthetic",
+        "action": action,
+    }
+
+
+def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    items = [
+        _review_task_item(state, kind, segment_id)
+        for kind, key in (
+            ("failed", "failed_segment_ids"),
+            ("stale", "stale_segment_ids"),
+            ("missing", "missing_segment_ids"),
+        )
+        for segment_id in readiness.get(key) or []
+    ]
+    current_findings = [
+        finding for finding in delivery.review_queue_findings(dict(state))
+        if _current_finding(state, finding)
+    ]
+    items.extend(_finding_item(state, finding) for finding in current_findings)
+    return sorted(items, key=lambda item: (
+        item["priority"], item.get("segment_id") if isinstance(
+            item.get("segment_id"), int) else 10**9, item["id"]))
+
+
+def _primary_action(
+    readiness: Mapping[str, Any], counts: Mapping[str, int], items: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    failed = len(readiness.get("failed_segment_ids") or [])
+    stale = len(readiness.get("stale_segment_ids") or [])
+    missing = len(readiness.get("missing_segment_ids") or [])
+    blocking = counts.get("blocking", 0)
+    actionable = counts.get("actionable", 0)
+    if failed:
+        return {"kind": "review_segments", "label": f"重试失败的 {failed} 段",
+                "segment_ids": list(readiness["failed_segment_ids"])}
+    if stale:
+        return {"kind": "review_segments", "label": f"重新审校 {stale} 段",
+                "segment_ids": list(readiness["stale_segment_ids"])}
+    if blocking:
+        first = next(item for item in items if item.get("severity") == "blocking")
+        return {"kind": "handle_finding", "label": f"继续处理 {blocking} 个必须处理的问题",
+                "item_id": first["id"]}
+    if missing:
+        return {"kind": "review_segments", "label": f"审校尚未完成的 {missing} 段",
+                "segment_ids": list(readiness["missing_segment_ids"])}
+    if actionable:
+        first = next(item for item in items if item.get("severity") == "actionable")
+        return {"kind": "handle_finding", "label": f"检查 {actionable} 个建议",
+                "item_id": first["id"]}
+    return {"kind": "delivery", "label": "前往交付"}
+
+
+def _delivery_copy(readiness: Mapping[str, Any], counts: Mapping[str, int]) -> Dict[str, Any]:
+    if readiness.get("ready"):
+        return {"title": "翻译审校已完成", "detail": "当前译文的审校状态允许继续准备交付",
+                "tone": "success"}
+    failed = len(readiness.get("failed_segment_ids") or [])
+    stale = len(readiness.get("stale_segment_ids") or [])
+    missing = len(readiness.get("missing_segment_ids") or [])
+    if failed:
+        detail = f"{failed} 段审校未完成，请重试"
+    elif stale:
+        detail = f"{stale} 段译文在上次审校后发生变化，需要重新审校"
+    elif counts.get("blocking"):
+        detail = f"还有 {counts['blocking']} 个必须处理的问题"
+    elif missing:
+        detail = f"还有 {missing} 段尚未完成审校"
+    else:
+        detail = "当前译文的审校尚未完成"
+    return {"title": "暂时无法交付", "detail": detail, "tone": "warning"}
+
+
+def _nav_copy(readiness: Mapping[str, Any], counts: Mapping[str, int]) -> Dict[str, str]:
+    failed = len(readiness.get("failed_segment_ids") or [])
+    stale = len(readiness.get("stale_segment_ids") or [])
+    missing = len(readiness.get("missing_segment_ids") or [])
+    if failed:
+        return {"label": f"{failed} 未完成", "tone": "attention", "title": "有审校调用未完成"}
+    if stale:
+        return {"label": f"{stale} 需复审", "tone": "stale", "title": "当前译文变化后需要重新审校"}
+    if counts.get("blocking"):
+        return {"label": f"{counts['blocking']} 必须处理", "tone": "attention",
+                "title": "还有必须处理的审校问题"}
+    if missing:
+        return {"label": f"{missing} 待审", "tone": "pending", "title": "还有段落尚未审校"}
+    if readiness.get("status") == "not_required":
+        return {"label": "不适用", "tone": "neutral", "title": "当前任务未启用独立审校"}
+    if counts.get("actionable"):
+        return {"label": f"{counts['actionable']} 建议", "tone": "pending",
+                "title": "有建议检查项，不影响交付"}
+    if counts.get("informational"):
+        return {"label": f"{counts['informational']} 参考", "tone": "neutral",
+                "title": "有可供参考的审校信息"}
+    return {"label": "✓", "tone": "done", "title": "当前译文审校已完成"}
+
+
+def _risk_acceptance(
+    state: Mapping[str, Any], readiness: Mapping[str, Any],
+) -> Dict[str, Any]:
+    records = [item for item in state.get("human_actions") or []
+               if isinstance(item, Mapping)
+               and item.get("record_type") == "delivery_risk_acceptance"]
+    current = [dict(item) for item in records if item.get("status") == "current"]
+    decision_only_block = (
+        readiness.get("status") == "missing"
+        and bool(readiness.get("blocking_finding_ids"))
+        and not readiness.get("missing_segment_ids")
+        and not readiness.get("stale_segment_ids")
+        and not readiness.get("failed_segment_ids")
+        and all(item.get("status") == "missing"
+                for item in readiness.get("decision_errors") or [])
+    )
+    return {
+        "current": bool(current),
+        "current_records": current,
+        "stale_count": sum(item.get("status") == "stale" for item in records),
+        "available": bool(readiness.get("ready") or decision_only_block),
+    }
+
+
+def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project authoritative review truth into one read-only workbench model."""
+    readiness = translation_evidence.translation_review_readiness(state)
+    items = _queue_items(state, readiness)
+    counts = {
+        severity: sum(item.get("kind") == "finding" and item.get("severity") == severity
+                      for item in items)
+        for severity in delivery.SEVERITY_LABELS
+    }
+    filter_counts = {
+        name: sum(item.get("filter_group") == name for item in items)
+        for name in ("pending", "rereview", "suggested", "reference")
+    }
+    filter_counts["all"] = len(items)
+    status = str(readiness.get("status") or "not_run")
+    label, detail, tone = READINESS_COPY.get(status, READINESS_COPY["not_run"])
+    progress = {
+        "total": len(readiness.get("expected_segment_ids") or []),
+        "current": len(readiness.get("current_segment_ids") or []),
+        "stale": len(readiness.get("stale_segment_ids") or []),
+        "missing": len(readiness.get("missing_segment_ids") or []),
+        "failed": len(readiness.get("failed_segment_ids") or []),
+        "blocking": counts["blocking"],
+        "actionable": counts["actionable"],
+        "informational": counts["informational"],
+    }
+    return {
+        "readiness": {**readiness, "label": label, "detail": detail, "tone": tone},
+        "progress": progress,
+        "queue_items": items,
+        "queue_counts": counts,
+        "filter_counts": filter_counts,
+        "primary_action": _primary_action(readiness, counts, items),
+        "delivery": _delivery_copy(readiness, counts),
+        "nav": _nav_copy(readiness, counts),
+        "risk_acceptance": _risk_acceptance(state, readiness),
+    }
+
+
+def filter_queue_items(
+    items: Sequence[Mapping[str, Any]], filter_name: str,
+) -> List[Dict[str, Any]]:
+    """Return one queue filter without changing its priority order."""
+    if filter_name == "all":
+        return [dict(item) for item in items]
+    return [dict(item) for item in items if item.get("filter_group") == filter_name]
+
+
+def select_queue_item(
+    items: Sequence[Mapping[str, Any]], selected_id: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Keep a valid selection or deterministically select the first item."""
+    selector = str(selected_id or "")
+    selected = next((item for item in items if item.get("id") == selector), None)
+    return dict(selected or items[0]) if selected or items else None
+
+
+def next_queue_item_id(
+    items: Sequence[Mapping[str, Any]], completed_id: Any,
+    segment_id: Optional[int] = None,
+) -> Optional[str]:
+    """Prefer another current issue on the same segment, then queue priority."""
+    remaining = [item for item in items if item.get("id") != str(completed_id or "")]
+    if segment_id is not None:
+        same_segment = next((item for item in remaining
+                             if item.get("segment_id") == segment_id), None)
+        if same_segment:
+            return str(same_segment["id"])
+    return str(remaining[0]["id"]) if remaining else None
+
+
+def _timestamp(value: Any) -> str:
+    text = str(value or "")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return text
+
+
+def review_history(
+    state: Mapping[str, Any], segment_id: Optional[int], limit: int = 5,
+) -> List[Dict[str, Any]]:
+    """Return compact current-vs-history copy for one segment."""
+    if segment_id is None:
+        return []
+    rows: List[Dict[str, Any]] = []
+    finding_ids = set()
+    for finding in state.get("findings") or []:
+        if not isinstance(finding, Mapping) or _segment_id(finding) != segment_id:
+            continue
+        finding_ids.update({str(finding.get("finding_id") or ""),
+                            delivery.finding_id(dict(finding))})
+        status = str(finding.get("status") or (
+            "resolved" if finding.get("resolved") else "open"))
+        if status == "stale":
+            label = "上次审校发现已过期"
+        elif status == "resolved":
+            label = "问题已确认解决"
+        elif status == "dismissed":
+            label = "已确认保留当前译文"
+        else:
+            label = "发现审校问题"
+        rows.append({
+            "timestamp": _timestamp(finding.get("stale_at") or finding.get("created_at")),
+            "label": label,
+            "detail": str(finding.get("summary") or finding.get("reason") or ""),
+        })
+    for action in state.get("human_actions") or []:
+        if not isinstance(action, Mapping) or not ({
+                str(action.get("finding_id") or ""),
+                str(action.get("translation_core_finding_id") or ""),
+        } & finding_ids):
+            continue
+        decision = str(action.get("decision") or action.get("action") or "")
+        label = {
+            "accept_resolution": "确认问题已解决",
+            "dismiss": "确认保留当前译文",
+            "request_revision": "请求修改译文",
+            "accepted_risk": "记录风险接受",
+        }.get(decision, "记录人工处理")
+        if action.get("status") == "stale":
+            label += "（已过期）"
+        actor = str(action.get("actor") or "用户")
+        rows.append({
+            "timestamp": _timestamp(action.get("decided_at") or action.get("timestamp")),
+            "label": label,
+            "detail": f"{actor} · {str(action.get('note') or '').strip()}".rstrip(" ·"),
+        })
+    for event in state.get("review_evidence") or []:
+        if not isinstance(event, Mapping):
+            continue
+        ids = event.get("segment_ids") or (event.get("completion_receipt") or {}).get(
+            "reviewed_segment_ids") or []
+        if segment_id not in ids:
+            continue
+        if event.get("freshness_status") == "stale":
+            label = "上次审校已过期"
+        elif event.get("decision") == "failed" or (
+                event.get("completion_receipt") or {}).get("status") == "failed":
+            label = "审校未完成"
+        elif event.get("decision") == "clean":
+            label = "重新审校通过"
+        else:
+            label = "完成独立审校"
+        rows.append({
+            "timestamp": _timestamp(event.get("completed_at") or event.get("created_at")
+                                    or event.get("stale_at")),
+            "label": label,
+            "detail": stale_reason_label(event.get("stale_reason"))
+            if event.get("freshness_status") == "stale" else "",
+        })
+    truth = state.get("translation_truth") or {}
+    change = truth.get("last_change") or {}
+    if segment_id in (change.get("segment_indexes") or []):
+        rows.append({
+            "timestamp": _timestamp(truth.get("last_changed_at")),
+            "label": "译文已修改",
+            "detail": "上次审校结果因此需要重新确认",
+        })
+    rows.sort(key=lambda row: row.get("timestamp") or "", reverse=True)
+    return rows[:max(0, int(limit))]

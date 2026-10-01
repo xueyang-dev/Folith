@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from transpraxis import (
+from folith import (
     academic_evidence, academic_validator, academic_writer, claim_strength,
 )
 

@@ -10,9 +10,9 @@ import pytest
 
 import core
 from eval.mti_finalization_regression import load_fixture, run_regression
-from transpraxis import academic_evidence, academic_writer, academic_validator
-from transpraxis import case_provenance, finalization, rendered_qa, snapshots
-from transpraxis import models
+from folith import academic_evidence, academic_writer, academic_validator
+from folith import case_provenance, finalization, rendered_qa, snapshots
+from folith import models
 
 
 @pytest.fixture(autouse=True)
@@ -132,13 +132,13 @@ def test_literature_removal_invalidates_claim_chain_and_removes_dangling_referen
             artifact_type="writing_subsection"),
     })
     state["p3_md"] = "<!--cite:lit-a-->"
-    profile = __import__("transpraxis.compliance", fromlist=["compliance_profile"])
+    profile = __import__("folith.compliance", fromlist=["compliance_profile"])
     profile = profile.compliance_profile()
     report_artifact = {"report": {"abstract_zh": "摘" * 400,
                                    "keywords_zh": ["甲"] * 5,
                                    "keywords_en": ["a"] * 5}}
     sources = {"sources": [{"source_id": "lit-a"}, {"source_id": "lit-b"}]}
-    result = __import__("transpraxis.compliance", fromlist=["evaluate_compliance"])
+    result = __import__("folith.compliance", fromlist=["evaluate_compliance"])
     result = result.evaluate_compliance(
         state, {"report": report_artifact, "literature_sources": sources},
         profile, state["p3_md"])
@@ -154,7 +154,7 @@ def test_literature_removal_invalidates_claim_chain_and_removes_dangling_referen
     assert artifacts["case:SC-0015"]["status"] == "valid"
 
     result_after_removal = __import__(
-        "transpraxis.compliance", fromlist=["evaluate_compliance"]
+        "folith.compliance", fromlist=["evaluate_compliance"]
     ).evaluate_compliance(
         state, {"report": report_artifact,
                 "literature_sources": {"sources": [{"source_id": "lit-a"}]}},

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import core
-from transpraxis import academic_writer, case_provenance, finalization, snapshots
+from folith import academic_writer, case_provenance, finalization, snapshots
 
 
 def _synthetic_case(case_id, segment_id, baseline, current, *, eligible=True):

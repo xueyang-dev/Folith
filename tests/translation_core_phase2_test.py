@@ -2,14 +2,14 @@
 from copy import deepcopy
 
 import core
-from transpraxis import models
-from transpraxis import delivery
-from transpraxis.translation_core import (
+from folith import models
+from folith import delivery
+from folith.translation_core import (
     fingerprint,
     normalize_finding,
     project_memory_from_state,
 )
-from transpraxis.translation_evidence import (
+from folith.translation_evidence import (
     record_runtime_human_decision,
     translation_review_readiness,
 )

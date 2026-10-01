@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 ROOT = Path(__file__).resolve().parent.parent
-BRAND = ROOT / "transpraxis" / "resources" / "brand"
+BRAND = ROOT / "folith" / "resources" / "brand"
 BRAND_STANDARD = ROOT / "docs" / "assets" / "folith-brand-standard.png"
 MARK = BRAND / "folith-mark.svg"
 MARK_MONO = BRAND / "folith-mark-mono.svg"
@@ -163,7 +163,7 @@ def test_app_tokens_match_brand_palette():
     """app.py 的 :root 品牌 token 必须等于品牌源文件的取色。"""
     app = (ROOT / "app.py").read_text(encoding="utf-8")
     if ":root {" not in app:
-        app = (ROOT / "transpraxis" / "ui" / "styles.py").read_text(encoding="utf-8")
+        app = (ROOT / "folith" / "ui" / "styles.py").read_text(encoding="utf-8")
     block = app.split(":root {", 1)[1].split("}", 1)[0]
 
     def token(name: str) -> str:
@@ -194,7 +194,7 @@ def test_streamlit_theme_matches_primary():
 def test_sidebar_uses_formal_lockup():
     """侧栏与页面图标使用用户提供的正式素材，避免回退到派生图或旧裁切图。"""
     app = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert '"folith-lockup.png"' in app, "侧栏品牌位应使用正式主 lockup"
+    assert '"folith-lockup-transparent.png"' in app, "侧栏应使用正式原图去白底的 PNG"
     assert '"folith-mark.png"' in app, "页面图标应使用正式图标素材"
     assert '译页 智能体翻译工作台' in app, \
         "品牌位的替代文本要与新定位一致"
@@ -213,9 +213,9 @@ def test_legacy_source_crops_are_retained_but_not_current_entries():
 
 def test_readme_references_existing_logo():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "transpraxis/resources/brand/folith-lockup.png" in readme, \
+    assert "folith/resources/brand/folith-lockup.png" in readme, \
         "README 首屏必须展示用户提供的正式主 lockup"
-    for rel in re.findall(r'src="(transpraxis/resources/brand/[^"]+)"', readme):
+    for rel in re.findall(r'src="(folith/resources/brand/[^"]+)"', readme):
         assert (ROOT / rel).is_file(), f"README 引用了不存在的资产：{rel}"
 
 

@@ -1,5 +1,5 @@
 """Canonical case provenance and deterministic presentation contracts."""
-from transpraxis import case_presentation, case_provenance, thesis_constraints
+from folith import case_presentation, case_provenance, thesis_constraints
 
 
 def test_legacy_case_types_normalize_to_orthogonal_public_dimensions():

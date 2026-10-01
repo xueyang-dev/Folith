@@ -10,8 +10,8 @@ from typing import Any, Dict, List
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis.entity_registry import EntityRegistry
-from transpraxis.translation_protocol import parse_translation_array
+from folith.entity_registry import EntityRegistry
+from folith.translation_protocol import parse_translation_array
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "runtime_regression.json"

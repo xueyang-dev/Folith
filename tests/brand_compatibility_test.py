@@ -7,8 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from transpraxis import brand
-from transpraxis import project
+from folith import brand
+from folith import project
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -32,7 +32,7 @@ def test_console_aliases_and_legacy_constants_remain_available():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'folith = "gui:main"' in pyproject
     assert 'foliothread = "gui:main"' in pyproject
-    assert 'transpraxis = "gui:main"' in pyproject
+    assert 'folith = "gui:main"' in pyproject
     assert brand.LEGACY_BRAND == "FolioThread"
     assert brand.LEGACY_PACKAGE == "foliothread"
 

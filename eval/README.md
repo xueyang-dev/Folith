@@ -9,7 +9,7 @@
 .venv/bin/python eval/self_test.py
 
 # 使用本地任务进行评测；任务 ID、API key 和输出目录仅在本机配置
-TRANSPRAXIS_EVAL_API_KEY=your-key .venv/bin/python eval/run_ab.py \
+FOLITH_EVAL_API_KEY=your-key .venv/bin/python eval/run_ab.py \
     --config eval/config.example.json
 ```
 

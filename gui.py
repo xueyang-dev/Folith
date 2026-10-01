@@ -21,7 +21,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from transpraxis import brand
+from folith import brand
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_PORT = 8501
@@ -158,7 +158,7 @@ def main(argv=None) -> int:
         if args.no_browser:
             proc.wait()
         elif (not args.browser) and open_native_window(url):
-            proc.wait()
+            return 0
         else:
             webbrowser.open(url)
             proc.wait()

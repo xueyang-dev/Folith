@@ -3,7 +3,7 @@
 本文件说明 Folith 的 Project 层——蓝图 §3.2 定义的 Project / Job 边界，
 以及"跨任务复用"具体是怎么发生的。
 
-- 领域模块：`transpraxis/project.py`
+- 领域模块：`folith/project.py`
 - 界面入口：侧栏「工作区 → 项目」（`/projects`）与 `/projects/:projectId`
 - 测试：`tests/project_lifecycle_test.py`、`tests/project_task_navigation_test.py`、
   `tests/project_memory_test.py`
@@ -281,7 +281,7 @@ outputs/
 就会串进另一种语言的任务，跳过模型调用、被标成已审校、并通过交付检查——译文是
 另一种语言，而且完全静默。
 
-作用域键因此是结构性的（`transpraxis/translation_memory.py`，核心层与展示层共用
+作用域键因此是结构性的（`folith/translation_memory.py`，核心层与展示层共用
 同一份格式，避免两边各写一份而漂移）：
 
 - `tm_scope_key(language, source)` 生成键；语言为空时返回空键；

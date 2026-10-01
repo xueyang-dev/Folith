@@ -26,7 +26,7 @@
 run_job_pipeline
   └─ extract_document_paragraphs_with_report
        ├─ _pdf_extraction_facts                 PDF 分类事实：页数、文本页、空页、图片数
-       ├─ transpraxis.pdf_ingestion.extract_pdf_paragraphs
+       ├─ folith.pdf_ingestion.extract_pdf_paragraphs
        │    ├─ extract_layout_blocks             PyMuPDF text/image blocks
        │    ├─ classify_blocks                   header/footer/page-number/caption 等角色
        │    ├─ _line_groups                     行与缩进分组
@@ -39,13 +39,13 @@ run_job_pipeline
             ├─ edge page-number/header/footer    确定性噪声剔除
             └─ _ocr_text_to_paragraphs           OCR block → 段落
   └─ core.cleanup_source_paragraphs
-       └─ transpraxis.source_cleanup.cleanup_source_paragraphs
+       └─ folith.source_cleanup.cleanup_source_paragraphs
             ├─ deterministic cleanup            whitespace / obvious line join / hyphenation
             ├─ confidence gate                  high-confidence OCR bypasses LLM
             ├─ bounded LLM batches               retry / request gate / strict JSON schema
             └─ ordered merge                     source item order preserved
   └─ segment_build
-       ├─ transpraxis.segmentation.segment_paragraphs
+       ├─ folith.segmentation.segment_paragraphs
        │    ├─ cleaned paragraph → sentence-sized CAT units
        │    ├─ conservative exceptions: heading/list/table/URL/abbreviation
        │    └─ ordered paragraph range map for audit and export
@@ -62,27 +62,27 @@ run_job_pipeline
 | 阶段 | 模块 / 函数 | 原始行为 | 当前行为 | 网络等待 / worker |
 | --- | --- | --- | --- | --- |
 | pdf_classify | `core._pdf_extraction_facts` | 同步 | 同步，按页读取事实 | 1 个本地执行流，无网络 |
-| layout_recovery | `transpraxis.pdf_ingestion.*` | 同步 | 同步，PyMuPDF layout classifier | 1 个本地执行流，无网络 |
+| layout_recovery | `folith.pdf_ingestion.*` | 同步 | 同步，PyMuPDF layout classifier | 1 个本地执行流，无网络 |
 | rasterize | `core._ocr_pdf_text_with_warnings` | 与 OCR 串行、逐页渲染 | producer + bounded queue | 1 个 renderer；queue 默认 4 |
 | ocr | `_ocr_page_with_tesseract` | 每页 `subprocess.run`，主流程串行 | worker threads，有序回收 | 默认 2 个 Tesseract worker |
 | deterministic_cleanup | `source_cleanup._deterministic_prepare` | 没有独立可见 stage | 同步、低成本 | 1 |
 | llm_cleanup | `source_cleanup.cleanup_source_paragraphs` | 生产默认 `parallelism=1`，batch-by-batch 串行；网络等待占主墙钟 | 有界 worker queue，默认 4；结果按 batch index 合并 | 最大 4 个请求；可选 request interval |
-| segment_build | `transpraxis.segmentation.segment_paragraphs` + `run_job_pipeline` | 与 state 写入混在阶段末尾；清洗段落直接作为翻译段 | 清洗段落先保留在 `source_paragraphs`，普通 prose 按句生成有序 CAT 单元；标题、列表、表格、缩写等保守不拆 | 1 |
+| segment_build | `folith.segmentation.segment_paragraphs` + `run_job_pipeline` | 与 state 写入混在阶段末尾；清洗段落直接作为翻译段 | 清洗段落先保留在 `source_paragraphs`，普通 prose 按句生成有序 CAT 单元；标题、列表、表格、缩写等保守不拆 | 1 |
 
 ### CAT 断句契约
 
 原文纠错仍以“恢复后的段落”为输入，避免模型在缺少版面上下文时误判断行；扫描 PDF 的
-翻译和 CAT 工作台则使用句级 `state["paras"]`。PDF 默认模式是 `sentence`，每个输入段落只在
-本段内部拆分，不跨段拼接。以下内容保持一个结构单元：标题、列表项、表格行、URL / 邮箱、
-小数、常见缩写和没有可靠终止标点的短行。逗号、冒号、分号也不会被当成句界。
+翻译和 CAT 工作台支持两种用户在开始翻译前选择的粒度：`sentence`（默认，按自然句）和
+`paragraph`（保留清洗后的自然段）。句模式每个输入段落只在本段内部拆分，不跨段拼接；
+以下内容保持一个结构单元：标题、列表项、表格行、URL / 邮箱、小数、常见缩写和没有可靠
+终止标点的短行。逗号、冒号、分号也不会被当成句界。
 
 清洗后的段落仍可从 `state["source_paragraphs"]` 和 stage-1 原文产物中读取；
 `state["segmentation"]` 记录规则版本、输入段落数、输出翻译单元数和段落范围映射。
-非 PDF 导入默认保留既有段落级 contract；如需让 DOCX/text 也按句，可给
-`run_job_pipeline(..., segmentation_mode="sentence")`；如需兼容旧的 PDF 段落级导入，
-可传 `segmentation_mode="paragraph"` 或设置 `FOLIOTHREAD_SEGMENTATION_MODE=paragraph`。
-任务一旦完成原文阶段，模式会随状态保存，恢复时不会因环境变化而重新解释已有单元。
-已有翻译任务不会被后台静默重分段；显式 PDF 重扫会重新建立源段落、CAT 单元和下游对齐。
+新任务在第 2 步选择粒度；任务开始后模式随状态锁定，恢复时不会因环境变化而重新解释已有
+单元。旧的明确段落模式任务会经过一次自然句迁移：只有源文覆盖完整且已有译文句数能
+一一对应的段落才会拆开，其他段落保留原样并进入门禁提示。显式传入
+`run_job_pipeline(..., segmentation_mode="paragraph")` 仍可使用段落模式。
 
 ### LLM cleanup 的并发、重试和 checkpoint
 
@@ -95,8 +95,25 @@ run_job_pipeline
 
 只有 transport / timeout / provider unavailable / rate-limit 会自动重试；协议 JSON
 错误不会盲目重试，而是保留该 batch 的 deterministic source 文本并给出 warning。
-成功结果写入 `source_cleanup_checkpoint.json`，成功之后才进入 ordered merge；
+成功结果写入 `source_cleanup_checkpoint/`，成功之后才进入 ordered merge；
 因此取消或 provider 失败不会清掉已经完成的 batch。
+
+**2026-09-25 更新：两个 checkpoint 都改成增量写。**
+
+* 原文纠错检查点由「每批成功重写一份含全部结果的 `source_cleanup_checkpoint.json`」
+  改为批级增量：`source_cleanup_checkpoint/manifest.json` +
+  `batches/batch-<NNNNN>.json`，一批成功只写自己那一份。指纹、有序合并、严格响应
+  校验、失败批次回退与恢复语义不变；旧的单文件格式仍可读。
+* OCR 检查点由「每页成功重写一份含全部页的 `ocr_checkpoint.json`」改为页级增量：
+  `ocr_cache/manifest.json`（常量大小）+ `pages/page-<index>-<key12>.json`。
+  缓存身份覆盖文档 SHA-256 / 页下标 / 后端 / 模型 / 后端版本 / 语言 / DPI /
+  预处理版本，任一不同即不复用。旧 `ocr_checkpoint.json` 只在当前身份恰好等于旧
+  代码唯一可能产出的身份时被采纳（只读兼容，不猜）。
+
+由此带来的直接收益：**快速画像的 3 页 OCR 结果会被正式流水线复用**。旧实现的
+有效性键是「请求的下标集合」，`{0, mid, last}` 与 `{0..n-1}` 永远不可能匹配，
+所以代表页一定会被 OCR 两次；现在按页身份命中，正式跑只补差集。
+写量与复用实测见 [第二轮验收报告 · OCR cache](performance-hardening-round2.md)。
 
 ### OCR runtime 事实
 
@@ -113,7 +130,22 @@ gpu_name=null
 
 这不是“配置宣称支持 GPU”而是运行时事实。若 `FOLIOTHREAD_OCR_DEVICE` 请求
 `cuda` / `gpu` 等非 CPU 值，会记录可见 warning，说明当前 Tesseract 实际仍为 CPU；
-当前代码没有 PaddleOCR / ONNX CUDA backend，也不会把 Tesseract 假报成 GPU。
+不会把 Tesseract 假报成 GPU。
+
+**2026-09-25 更新：后端已抽成边界，但 Tesseract 仍是默认与兜底。**
+`folith/ocr_backends.py` 定义了统一 block 契约（文本 / bbox / confidence /
+页身份 / 真实 backend·device·provider）与 `resolve_backend()`；`TesseractBackend`
+作为**零额外模型依赖**的兜底保留；`PaddleOCRBackend` 是可选加速后端，其
+`available()` 由真实 import 决定，`runtime_info()` 问 PaddlePaddle 实际选了哪个
+device——**CUDA 存在不等于 GPU 启用**。本机 `core.ocr_backend_report()` 实测：
+`tesseract available=true device=cpu version=5.5.0`，
+`paddleocr available=false reason="No module named 'paddleocr'"`。
+MinerU 未接入：没有 benchmark 证明它更优且不重复 Folith 自己的 layout /
+source-cleanup 层，因此不替换默认 ingestion。
+
+另有实验性的自适应分辨率路径（`FOLIOTHREAD_OCR_ADAPTIVE_DPI`，**默认关闭**）：
+先按低 DPI 跑一轮，只对质量信号不达标的页用高 DPI 重跑。基线仍是 220 DPI，
+不会永久降低所有页的分辨率；每次选择都写进性能元数据。
 
 ## 结构化性能统计
 
@@ -129,6 +161,15 @@ gpu_name=null
 `pdf_classify`、`rasterize`、`ocr`、`layout_recovery`、
 `deterministic_cleanup`、`llm_cleanup`、`segment_build`。
 不适用阶段会记录为 `skipped`，而不是伪造耗时。
+
+**2026-09-25 更新：翻译阶段现在写同一个 profiler。**
+`translate_stage(..., profiler=...)` 追加 8 个阶段：
+`translation_generation`、`translation_deterministic_qa`、`translation_repair`、
+`translation_semantic_review`、`knowledge_feedback`、`state_commit`、`tm_commit`、
+`runtime_telemetry`。除墙钟与批次/条目数外，还记录每批平均/最大耗时、
+API 延迟、重试次数、LLM 请求与失败增量、有效并发，以及
+`runtime_telemetry` 阶段的持久化成本（写入次数 / fsync 次数 / 写入耗时）。
+插桩不改变状态机：同一 fixture 带与不带 profiler 产出的译文序列完全一致。
 
 ## deterministic cleanup / confidence gate
 
@@ -214,10 +255,19 @@ benchmark 同时验证了 serial / optimized 的提取文本 digest 和 cleanup 
 
 * OCR 当前仍是 Tesseract CPU；如果真实测试中 OCR 成为主瓶颈，下一步应单独引入
   可验证的 GPU OCR backend，并记录其真实 execution provider，不能仅把配置项改成
-  `cuda`。
+  `cuda`。**2026-09-25**：后端边界与可选 PaddleOCR 后端已就位（见上文），
+  但本机没有 `paddleocr`，因此还没有可比的加速数据；GPU 未启用仍是事实记录。
 * PyMuPDF layout recovery 仍是同步的；它通常是本地低耗时阶段，只有
   `performance.json` 显示它占比异常时才值得拆 worker。
 * cleanup 并发提高吞吐会增加 provider 同时连接数；生产部署应按服务商限额设置
   concurrency / request interval，而不是无限 `gather`。
+* **2026-09-25**：限流不再由每个 worker 各自 `sleep(15)` 处理，而是统一到
+  provider/model 作用域的请求闸门（共享冷却 + 指数退避 + 抖动 + 可取消睡眠），
+  消除重试雪崩；详见 [第二轮验收报告 · Translation throughput](performance-hardening-round2.md)。
 * 目前性能文件描述一次 pipeline run；恢复任务会生成新的 run_id，但 OCR / cleanup
   checkpoint 仍复用，因此恢复不会重复 OCR 已完成页或重发已成功 batch。
+  **2026-09-25**：checkpoint 已改为增量写，恢复语义不变，写入量不再随文档长度平方增长。
+* **2026-09-25 未解决**：翻译阶段每批一次的全量 `state.json` 重写（`state_commit`）
+  在 1000 段文档下累计写入 359 MB、放大 132×、占整轮 35%。本轮只量化，未改动
+  `state.json` 的单一权威真值契约；详见
+  [第二轮验收报告 · Persistence](performance-hardening-round2.md)。

@@ -6,8 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import checkpoint, context, delivery, knowledge, models, repair, usage
-from transpraxis.translation_evidence import (
+from folith import checkpoint, context, delivery, knowledge, models, repair, usage
+from folith.translation_evidence import (
     TranslationEvidenceIndex,
     build_runtime_review_packet,
     review_translation_batch_with_evidence,

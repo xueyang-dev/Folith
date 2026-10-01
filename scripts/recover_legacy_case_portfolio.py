@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import core
-from transpraxis import academic_evidence, academic_writer, legacy_cases, thesis_constraints
+from folith import academic_evidence, academic_writer, legacy_cases, thesis_constraints
 
 
 def _json(path: Path):

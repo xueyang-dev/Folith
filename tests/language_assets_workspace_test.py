@@ -2,7 +2,7 @@
 
 覆盖两层：
 
-1. `transpraxis.language_assets` 的纯投影（不依赖 Streamlit）：聚合、过滤、
+1. `folith.language_assets` 的纯投影（不依赖 Streamlit）：聚合、过滤、
    段落引用、以及「后端没有的字段不伪造」这条硬约束；
 2. `app.py` 里的工作区：三个 Tab、搜索、过滤、Inspector、两阶段接受、
    Quick Accept、仅此次采用、拒绝、多选、批量接受/拒绝、审核后列表更新、
@@ -17,8 +17,8 @@ import re
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import assets as _assets
-from transpraxis import knowledge, language_assets, models
+from folith import assets as _assets
+from folith import knowledge, language_assets, models
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -770,7 +770,7 @@ def test_quick_accept_saves_to_project_termbase():
                                   candidates=[_candidate("point cloud", "点云")])):
         at = _app(session={"library_tab": "review"})
         quick = _buttons(at, "la_quick_")[0]
-        assert quick.help and "项目术语库" in quick.help, "Quick Accept 的默认去向必须写明"
+        assert quick.help and "所属项目的术语库" in quick.help, "Quick Accept 的默认去向必须写明"
         quick.click().run()
         at.run()
         assert not at.exception, [e.value for e in at.exception]
@@ -957,7 +957,7 @@ def test_empty_states_for_all_three_tabs():
     with _Workspace([]):
         at = _app()
         page = "\n".join(m.value for m in at.markdown)
-        assert "当前项目还没有术语" in page
+        assert "当前还没有术语" in page
         at.segmented_control[0].set_value("tm").run()
         assert "完成并确认翻译后，翻译记忆会出现在这里" in \
             "\n".join(m.value for m in at.markdown)
@@ -1100,3 +1100,18 @@ def test_term_inspector_edit_and_delete_go_through_the_freeze_flow():
         assert core.load_job_state(job_id)["glossary"] == []
         at.run()
         assert not at.exception, [e.value for e in at.exception]
+
+
+def test_tm_first_mount_and_switch_use_the_same_project_as_caption():
+    with _Workspace([]):
+        project = core.create_project("Project for TM")
+        at = _app({"current_project_id": project["project_id"],
+                   "library_tm_project": project["project_id"]})
+        at.segmented_control[0].set_value("tm").run()
+        assert not at.exception, [e.value for e in at.exception]
+        picker = next(box for box in at.selectbox if box.key == "library_tm_project")
+        assert picker.value == project["project_id"]
+        assert any("当前查看：Project for TM" in caption.value for caption in at.caption)
+        picker.set_value(core.SYSTEM_PROJECT_ID).run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert any("当前查看：未分类" in caption.value for caption in at.caption)

@@ -8,7 +8,7 @@ import time
 import fitz
 
 import core
-from transpraxis.performance import PipelineProfiler
+from folith.performance import PipelineProfiler
 
 
 def _response_for(kwargs, user):
@@ -134,10 +134,17 @@ def test_cleanup_checkpoint_resumes_only_unfinished_batches(tmp_path):
     else:  # pragma: no cover - the cancellation contract must be exercised
         raise AssertionError("cleanup did not stop at the requested checkpoint")
 
-    checkpoint = json.loads(
-        (tmp_path / "source_cleanup_checkpoint.json").read_text(encoding="utf-8")
-    )
-    assert sorted(checkpoint["results"]) == ["0"]
+    # Batch-level incremental checkpoint: one file for the one finished batch,
+    # plus a constant-size manifest. No growing `results` payload.
+    checkpoint_root = tmp_path / "source_cleanup_checkpoint"
+    manifest = json.loads(
+        (checkpoint_root / "manifest.json").read_text(encoding="utf-8"))
+    batch_files = sorted(
+        path.name for path in (checkpoint_root / "batches").glob("batch-*.json"))
+    assert batch_files == ["batch-00000.json"]
+    assert manifest["completed_batches"] == 1
+    assert manifest["batch_count"] == 3
+    assert manifest["status"] == "cancelled"
 
     resumed_calls = []
 

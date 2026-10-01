@@ -1,7 +1,7 @@
 """Phase 3 reviewer-role routing and no-review policy regressions."""
 
 import core
-from transpraxis import delivery, model_roles
+from folith import delivery, model_roles
 
 
 def _job(tmp_path, monkeypatch, job_id, *, review_required=True):

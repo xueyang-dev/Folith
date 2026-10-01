@@ -1,0 +1,1070 @@
+[
+  {
+    "state": "inspector_open",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 1280,
+      "height": 800,
+      "bottom": 800
+    },
+    "taskHeader": {
+      "x": 16,
+      "y": 24,
+      "width": 1248,
+      "height": 98,
+      "bottom": 122
+    },
+    "mainStyle": {
+      "width": "1280px",
+      "maxWidth": "none"
+    },
+    "topbar": {
+      "x": 16,
+      "y": 24,
+      "width": 1248,
+      "height": 88
+    },
+    "topbarCopy": {
+      "x": 117,
+      "y": 29,
+      "width": 898,
+      "height": 38,
+      "bottom": 67
+    },
+    "taskMore": null,
+    "topbarColumns": [
+      {
+        "x": 16,
+        "y": 24,
+        "width": 93,
+        "height": 32
+      },
+      {
+        "x": 117,
+        "y": 29,
+        "width": 898,
+        "height": 22
+      },
+      {
+        "x": 1023,
+        "y": 26,
+        "width": 241,
+        "height": 29
+      },
+      {
+        "x": 16,
+        "y": 69,
+        "width": 1206,
+        "height": 37
+      },
+      {
+        "x": 1226,
+        "y": 73,
+        "width": 38,
+        "height": 30
+      }
+    ],
+    "workflowNav": {
+      "x": 16,
+      "y": 69,
+      "width": 1248,
+      "height": 43,
+      "bottom": 112
+    },
+    "toolbar": {
+      "x": 259,
+      "y": 159,
+      "width": 686,
+      "height": 32,
+      "bottom": 191
+    },
+    "issueSummary": {
+      "x": 259,
+      "y": 201,
+      "width": 686,
+      "height": 26,
+      "bottom": 227
+    },
+    "sourceWarning": null,
+    "activeActions": {
+      "x": 259,
+      "y": 242,
+      "width": 686,
+      "height": 32,
+      "bottom": 274
+    },
+    "gridHeader": {
+      "x": 259,
+      "y": 284,
+      "width": 686,
+      "height": 27,
+      "bottom": 311
+    },
+    "firstSegment": {
+      "x": 259,
+      "y": 305,
+      "width": 686,
+      "height": 89
+    },
+    "firstSegmentY": 305,
+    "headerToSegment": 305,
+    "sourceWidth": 240,
+    "targetWidth": 240,
+    "rowColumnCount": 5,
+    "inspector": {
+      "x": 970,
+      "y": 146,
+      "width": 294,
+      "height": 630,
+      "bottom": 776
+    },
+    "rowRects": [
+      {
+        "segment": 0,
+        "active": true,
+        "density": "one",
+        "y": 305,
+        "height": 89,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 17,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 1,
+        "active": false,
+        "density": "two",
+        "y": 394,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 20,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 2,
+        "active": false,
+        "density": "one",
+        "y": 469,
+        "height": 55,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 4,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 3,
+        "active": false,
+        "density": "two",
+        "y": 524,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 17,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 4,
+        "active": false,
+        "density": "long",
+        "y": 599,
+        "height": 93,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 29,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 5,
+        "active": false,
+        "density": "long",
+        "y": 692,
+        "height": 129,
+        "textareas": [
+          {
+            "height": 118,
+            "scrollHeight": 118,
+            "valueLength": 69,
+            "cssHeight": "118px",
+            "cssMinHeight": "118px",
+            "cssMaxHeight": "118px",
+            "rootHeight": 120,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 6,
+        "active": false,
+        "density": "long",
+        "y": 821,
+        "height": 109,
+        "textareas": [
+          {
+            "height": 96,
+            "scrollHeight": 96,
+            "valueLength": 58,
+            "cssHeight": "96px",
+            "cssMinHeight": "96px",
+            "cssMaxHeight": "96px",
+            "rootHeight": 98,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 7,
+        "active": false,
+        "density": "long",
+        "y": 930,
+        "height": 95,
+        "textareas": [
+          {
+            "height": 84,
+            "scrollHeight": 84,
+            "valueLength": 35,
+            "cssHeight": "84px",
+            "cssMinHeight": "84px",
+            "cssMaxHeight": "84px",
+            "rootHeight": 86,
+            "inlineStyle": ""
+          }
+        ]
+      }
+    ],
+    "rowAncestry": [
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_row_6bd045b3a3a7ec60_0 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 305,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "4px",
+        "paddingBottom": "4px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 305,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_grid_6bd045b3a3a7ec60 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 305,
+        "height": 390,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 305,
+        "height": 390,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-workspace_main_col st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 146,
+        "height": 630,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "12px",
+        "paddingBottom": "16px",
+        "gap": "10px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 146,
+        "height": 630,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      }
+    ],
+    "viewportIntersectingRows": 6,
+    "visibleSegments": 6,
+    "fullyVisibleSegments": 5
+  },
+  {
+    "state": "inspector_open",
+    "viewport": {
+      "width": 1440,
+      "height": 800
+    },
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 1440,
+      "height": 800,
+      "bottom": 800
+    },
+    "taskHeader": {
+      "x": 16,
+      "y": 24,
+      "width": 1408,
+      "height": 98,
+      "bottom": 122
+    },
+    "mainStyle": {
+      "width": "1440px",
+      "maxWidth": "none"
+    },
+    "topbar": {
+      "x": 16,
+      "y": 24,
+      "width": 1408,
+      "height": 88
+    },
+    "topbarCopy": {
+      "x": 130,
+      "y": 29,
+      "width": 1014,
+      "height": 38,
+      "bottom": 67
+    },
+    "taskMore": null,
+    "topbarColumns": [
+      {
+        "x": 16,
+        "y": 24,
+        "width": 106,
+        "height": 32
+      },
+      {
+        "x": 130,
+        "y": 29,
+        "width": 1014,
+        "height": 22
+      },
+      {
+        "x": 1151,
+        "y": 26,
+        "width": 273,
+        "height": 29
+      },
+      {
+        "x": 16,
+        "y": 69,
+        "width": 1366,
+        "height": 37
+      },
+      {
+        "x": 1386,
+        "y": 73,
+        "width": 38,
+        "height": 30
+      }
+    ],
+    "workflowNav": {
+      "x": 16,
+      "y": 69,
+      "width": 1408,
+      "height": 43,
+      "bottom": 112
+    },
+    "toolbar": {
+      "x": 286,
+      "y": 159,
+      "width": 782,
+      "height": 32,
+      "bottom": 191
+    },
+    "issueSummary": {
+      "x": 286,
+      "y": 201,
+      "width": 782,
+      "height": 26,
+      "bottom": 227
+    },
+    "sourceWarning": null,
+    "activeActions": {
+      "x": 286,
+      "y": 242,
+      "width": 782,
+      "height": 32,
+      "bottom": 274
+    },
+    "gridHeader": {
+      "x": 286,
+      "y": 284,
+      "width": 782,
+      "height": 27,
+      "bottom": 311
+    },
+    "firstSegment": {
+      "x": 286,
+      "y": 305,
+      "width": 782,
+      "height": 89
+    },
+    "firstSegmentY": 305,
+    "headerToSegment": 305,
+    "sourceWidth": 275,
+    "targetWidth": 275,
+    "rowColumnCount": 5,
+    "inspector": {
+      "x": 1093,
+      "y": 146,
+      "width": 331,
+      "height": 630,
+      "bottom": 776
+    },
+    "rowRects": [
+      {
+        "segment": 0,
+        "active": true,
+        "density": "one",
+        "y": 305,
+        "height": 89,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 17,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 1,
+        "active": false,
+        "density": "two",
+        "y": 394,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 20,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 2,
+        "active": false,
+        "density": "one",
+        "y": 469,
+        "height": 55,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 4,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 3,
+        "active": false,
+        "density": "two",
+        "y": 524,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 17,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 4,
+        "active": false,
+        "density": "long",
+        "y": 599,
+        "height": 93,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 29,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 5,
+        "active": false,
+        "density": "long",
+        "y": 692,
+        "height": 129,
+        "textareas": [
+          {
+            "height": 118,
+            "scrollHeight": 118,
+            "valueLength": 69,
+            "cssHeight": "118px",
+            "cssMinHeight": "118px",
+            "cssMaxHeight": "118px",
+            "rootHeight": 120,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 6,
+        "active": false,
+        "density": "long",
+        "y": 821,
+        "height": 109,
+        "textareas": [
+          {
+            "height": 96,
+            "scrollHeight": 96,
+            "valueLength": 58,
+            "cssHeight": "96px",
+            "cssMinHeight": "96px",
+            "cssMaxHeight": "96px",
+            "rootHeight": 98,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 7,
+        "active": false,
+        "density": "long",
+        "y": 930,
+        "height": 95,
+        "textareas": [
+          {
+            "height": 84,
+            "scrollHeight": 84,
+            "valueLength": 35,
+            "cssHeight": "84px",
+            "cssMinHeight": "84px",
+            "cssMaxHeight": "84px",
+            "rootHeight": 86,
+            "inlineStyle": ""
+          }
+        ]
+      }
+    ],
+    "rowAncestry": [
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_row_6bd045b3a3a7ec60_0 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 305,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "4px",
+        "paddingBottom": "4px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 305,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_grid_6bd045b3a3a7ec60 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 305,
+        "height": 390,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 305,
+        "height": 390,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-workspace_main_col st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 146,
+        "height": 630,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "12px",
+        "paddingBottom": "16px",
+        "gap": "10px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 146,
+        "height": 630,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      }
+    ],
+    "viewportIntersectingRows": 6,
+    "visibleSegments": 6,
+    "fullyVisibleSegments": 5
+  },
+  {
+    "state": "inspector_open",
+    "viewport": {
+      "width": 1600,
+      "height": 800
+    },
+    "main": {
+      "x": 0,
+      "y": 0,
+      "width": 1600,
+      "height": 800,
+      "bottom": 800
+    },
+    "taskHeader": {
+      "x": 16,
+      "y": 24,
+      "width": 1568,
+      "height": 98,
+      "bottom": 122
+    },
+    "mainStyle": {
+      "width": "1600px",
+      "maxWidth": "none"
+    },
+    "topbar": {
+      "x": 16,
+      "y": 24,
+      "width": 1568,
+      "height": 88
+    },
+    "topbarCopy": {
+      "x": 142,
+      "y": 29,
+      "width": 1129,
+      "height": 38,
+      "bottom": 67
+    },
+    "taskMore": null,
+    "topbarColumns": [
+      {
+        "x": 16,
+        "y": 24,
+        "width": 118,
+        "height": 32
+      },
+      {
+        "x": 142,
+        "y": 29,
+        "width": 1129,
+        "height": 22
+      },
+      {
+        "x": 1280,
+        "y": 26,
+        "width": 304,
+        "height": 29
+      },
+      {
+        "x": 16,
+        "y": 69,
+        "width": 1526,
+        "height": 37
+      },
+      {
+        "x": 1546,
+        "y": 73,
+        "width": 38,
+        "height": 30
+      }
+    ],
+    "workflowNav": {
+      "x": 16,
+      "y": 69,
+      "width": 1568,
+      "height": 43,
+      "bottom": 112
+    },
+    "toolbar": {
+      "x": 313,
+      "y": 159,
+      "width": 878,
+      "height": 32,
+      "bottom": 191
+    },
+    "issueSummary": {
+      "x": 313,
+      "y": 201,
+      "width": 878,
+      "height": 26,
+      "bottom": 227
+    },
+    "sourceWarning": null,
+    "activeActions": {
+      "x": 313,
+      "y": 242,
+      "width": 878,
+      "height": 32,
+      "bottom": 274
+    },
+    "gridHeader": {
+      "x": 313,
+      "y": 284,
+      "width": 878,
+      "height": 27,
+      "bottom": 311
+    },
+    "firstSegment": {
+      "x": 313,
+      "y": 305,
+      "width": 878,
+      "height": 89
+    },
+    "firstSegmentY": 305,
+    "headerToSegment": 305,
+    "sourceWidth": 310,
+    "targetWidth": 310,
+    "rowColumnCount": 5,
+    "inspector": {
+      "x": 1216,
+      "y": 146,
+      "width": 368,
+      "height": 630,
+      "bottom": 776
+    },
+    "rowRects": [
+      {
+        "segment": 0,
+        "active": true,
+        "density": "one",
+        "y": 305,
+        "height": 89,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 17,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 1,
+        "active": false,
+        "density": "two",
+        "y": 394,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 20,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 2,
+        "active": false,
+        "density": "one",
+        "y": 469,
+        "height": 55,
+        "textareas": [
+          {
+            "height": 44,
+            "scrollHeight": 44,
+            "valueLength": 4,
+            "cssHeight": "44px",
+            "cssMinHeight": "44px",
+            "cssMaxHeight": "44px",
+            "rootHeight": 46,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 3,
+        "active": false,
+        "density": "two",
+        "y": 524,
+        "height": 75,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 17,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 4,
+        "active": false,
+        "density": "long",
+        "y": 599,
+        "height": 93,
+        "textareas": [
+          {
+            "height": 64,
+            "scrollHeight": 64,
+            "valueLength": 29,
+            "cssHeight": "64px",
+            "cssMinHeight": "64px",
+            "cssMaxHeight": "64px",
+            "rootHeight": 66,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 5,
+        "active": false,
+        "density": "long",
+        "y": 692,
+        "height": 129,
+        "textareas": [
+          {
+            "height": 118,
+            "scrollHeight": 118,
+            "valueLength": 69,
+            "cssHeight": "118px",
+            "cssMinHeight": "118px",
+            "cssMaxHeight": "118px",
+            "rootHeight": 120,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 6,
+        "active": false,
+        "density": "long",
+        "y": 821,
+        "height": 109,
+        "textareas": [
+          {
+            "height": 96,
+            "scrollHeight": 96,
+            "valueLength": 58,
+            "cssHeight": "96px",
+            "cssMinHeight": "96px",
+            "cssMaxHeight": "96px",
+            "rootHeight": 98,
+            "inlineStyle": ""
+          }
+        ]
+      },
+      {
+        "segment": 7,
+        "active": false,
+        "density": "long",
+        "y": 930,
+        "height": 95,
+        "textareas": [
+          {
+            "height": 84,
+            "scrollHeight": 84,
+            "valueLength": 35,
+            "cssHeight": "84px",
+            "cssMinHeight": "84px",
+            "cssMaxHeight": "84px",
+            "rootHeight": 86,
+            "inlineStyle": ""
+          }
+        ]
+      }
+    ],
+    "rowAncestry": [
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_row_6bd045b3a3a7ec60_0 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 305,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "4px",
+        "paddingBottom": "4px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 305,
+        "height": 89,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-cat_grid_6bd045b3a3a7ec60 st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 305,
+        "height": 390,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "0px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 305,
+        "height": 390,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stVerticalBlock",
+        "className": "stVerticalBlock st-key-workspace_main_col st-emotion-cache-q25c8l ep3ma5o3",
+        "y": 146,
+        "height": 630,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "12px",
+        "paddingBottom": "16px",
+        "gap": "10px"
+      },
+      {
+        "tag": "DIV",
+        "testid": "stLayoutWrapper",
+        "className": "st-emotion-cache-18kf3ut ep3ma5o4",
+        "y": 146,
+        "height": 630,
+        "marginTop": "0px",
+        "marginBottom": "0px",
+        "paddingTop": "0px",
+        "paddingBottom": "0px",
+        "gap": "normal"
+      }
+    ],
+    "viewportIntersectingRows": 6,
+    "visibleSegments": 6,
+    "fullyVisibleSegments": 5
+  }
+]

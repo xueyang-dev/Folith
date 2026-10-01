@@ -1,0 +1,12 @@
+{
+  "hud": {
+    "fillWidth": 0,
+    "percent": "0",
+    "trackWidth": 1302.25
+  },
+  "drawer": {
+    "fillWidth": 0,
+    "percent": "0",
+    "trackWidth": 419
+  }
+}

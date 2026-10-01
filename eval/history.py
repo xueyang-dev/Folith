@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import state_migration
+from folith import state_migration
 
 # 已知流程 failure modes -> 回归测试覆盖
 KNOWN_FAILURE_MODES = [

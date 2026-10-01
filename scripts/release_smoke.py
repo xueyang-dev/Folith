@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.metadata
+import importlib.util
 import pathlib
 import socket
 import subprocess
@@ -71,13 +73,14 @@ def _import_origin() -> str:
 
 def _imports() -> str:
     modules = [
-        "app", "core", "gui", "transpraxis",
-        "transpraxis.textual", "transpraxis.translation_memory",
-        "transpraxis.project", "transpraxis.checkpoint",
+        "app", "core", "gui", "folith",
+        "folith.textual", "folith.translation_memory",
+        "folith.project", "folith.checkpoint",
     ]
     for name in modules:
         importlib.import_module(name)
-    return f"{len(modules)} 个模块导入成功"
+    assert importlib.util.find_spec("transpraxis") is None, "安装环境仍含旧代码包"
+    return f"{len(modules)} 个模块导入成功；无旧代码包"
 
 
 def _binding() -> str:
@@ -96,7 +99,7 @@ def _binding() -> str:
 
 def _tm_scope() -> str:
     """缺陷 #2：翻译记忆按目标语言隔离，且信息不足时失败关闭。"""
-    from transpraxis import translation_memory as tm
+    from folith import translation_memory as tm
 
     zh = tm.tm_scope_key("简体中文", "会议明天开始。")
     fr = tm.tm_scope_key("Français", "会议明天开始。")
@@ -112,7 +115,7 @@ def _tm_scope() -> str:
 
 def _textual() -> str:
     """缺陷 #3：正文判定用 Unicode 类别，不是 ASCII/脚本区间。"""
-    from transpraxis.textual import has_textual_content
+    from folith.textual import has_textual_content
 
     for text in ["Привет мир", "안녕하세요", "مرحبا", "Γειά σου",
                  "日本語のテキスト", "hello world", "1234", "混合 mixed 文本"]:
@@ -143,9 +146,11 @@ def _task_identity() -> str:
 
 def _entry_points() -> str:
     bindir = pathlib.Path(sys.executable).parent
-    found = [n for n in ("folith", "foliothread", "transpraxis")
+    found = [n for n in ("folith", "foliothread")
              if (bindir / n).exists()]
-    assert len(found) == 3, f"缺少控制台入口点，只有 {found}"
+    entries = importlib.metadata.distribution("foliothread").entry_points
+    assert {e.name for e in entries if e.group == "console_scripts"} == {"folith", "foliothread"}
+    assert len(found) == 2, f"缺少控制台入口点，只有 {found}"
     return f"入口点存在: {', '.join(found)}"
 
 

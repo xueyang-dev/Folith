@@ -4,7 +4,7 @@ import json
 
 from docx import Document
 
-from transpraxis import academic_evidence, legacy_cases
+from folith import academic_evidence, legacy_cases
 
 
 def _write_docx(path, rows):

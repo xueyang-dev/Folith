@@ -1,13 +1,14 @@
-"""Targeted tests for CAT Workspace viewport bounds, lightweight action menus, and draft preservation."""
+"""Targeted tests for CAT viewport bounds, selected row actions, and drafts."""
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
 import core
-from transpraxis.ui.workspace import cat_grid as cat_ui
+from folith.ui.workspace import cat_grid as cat_ui
 
 
 @pytest.fixture
@@ -23,12 +24,34 @@ def cat_env(tmp_path: Path):
 APP_FILE = str(Path(__file__).resolve().parent.parent / "app.py")
 
 
+def test_cat_grid_uses_enclosing_workspace_fragment():
+    """AppTest does full reruns; guard the browser's fragment-only click path.
+
+    Decorating this wrapper captures selected_index before a click and prevents
+    the workspace from recomputing selection and refreshing the Inspector.
+    """
+    module = ast.parse(Path(APP_FILE).read_text())
+    grid = next(node for node in module.body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "_render_cat_grid_table")
+    assert not grid.decorator_list
+
+
 def test_cat_grid_rows_is_40():
     """Invariant: CAT viewport is bounded to 40 rows (reduced from 400)."""
     assert cat_ui.CAT_GRID_ROWS == 40
 
 
-def _open_workspace(job_id: str, *, section: str = "translation") -> AppTest:
+def test_cat_editor_height_adapts_to_content_without_shrinking_text():
+    """Short rows stay compact while wrapped rows retain readable editor height."""
+    assert cat_ui._editor_height("Short segment") == 44
+    assert cat_ui._editor_height("第一行\n第二行") == 64
+    assert cat_ui._editor_height("x" * 500) > cat_ui._editor_height("x" * 100)
+    assert cat_ui._editor_height("译" * 500) > cat_ui._editor_height("x" * 500)
+
+
+def _open_workspace(job_id: str, *, section: str = "translation",
+                    inspector=None) -> AppTest:
     at = AppTest.from_file(APP_FILE, default_timeout=40)
     at.run()
     at.session_state["active_job_id"] = job_id
@@ -37,33 +60,46 @@ def _open_workspace(job_id: str, *, section: str = "translation") -> AppTest:
     at.session_state["workspace_section"] = section
     at.run()
     assert not at.exception, [e.value for e in at.exception]
+    if (inspector is not None and section == "translation"
+            and bool(at.session_state["workspace_inspector_open"]) != inspector):
+        at.button(key=f"workspace_inspector_toggle_{job_id}").click()
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
     return at
 
 
-def test_cat_non_selected_rows_render_lightweight_affordance(cat_env: Path):
-    """Invariant: Non-selected rows do NOT render popovers, only a lightweight trigger button."""
+def test_cat_actions_follow_the_selected_row(cat_env: Path):
+    """Keep 40 editors mounted while moving the single active toolbar."""
     job_id = "job-cat-viewport"
     state = core.new_job_state("doc.docx")
     state["pairs"] = [{"source": f"Sentence {i}", "target": f"译文 {i}"} for i in range(100)]
     core.save_job_state(job_id, state)
 
     at = _open_workspace(job_id)
+    assert at.session_state["workspace_inspector_open"] is True
 
     # Out of 100 rows, exactly 40 rows should be mounted in the viewport
     mounted_text_areas = [ta for ta in at.text_area if ta.key and ta.key.startswith("translation_editor_")]
     assert len(mounted_text_areas) == 40, f"Expected 40 textareas mounted, got {len(mounted_text_areas)}"
 
     btn_keys = {b.key for b in at.button}
-    assert f"cat_action_source_{job_id}_0" in btn_keys, "Selected row 0 must render full action menu"
-    assert f"cat_action_split_{job_id}_0" in btn_keys, "Selected row 0 must render full action menu"
+    assert f"cat_action_source_{job_id}_0" in btn_keys, "Selected row 0 must render its action menu"
+    assert f"cat_action_split_{job_id}_0" in btn_keys, "Selected row 0 must render its action menu"
 
-    # Non-selected rows (rows 1-39) do NOT construct the multi-button action menu:
-    assert f"cat_action_source_{job_id}_1" not in btn_keys, "Non-selected row must not construct full action menu"
-    assert f"cat_action_split_{job_id}_1" not in btn_keys, "Non-selected row must not construct full action menu"
-
-    # Non-selected rows (39 rows) have lightweight trigger buttons
-    lightweight_buttons = [b for b in at.button if b.key and b.key.startswith(f"cat_actions_sel_{job_id}_")]
-    assert len(lightweight_buttons) == 39, f"Expected 39 lightweight trigger buttons, got {len(lightweight_buttons)}"
+    assert f"cat_action_source_{job_id}_1" not in btn_keys
+    action_source_buttons = [
+        b for b in at.button
+        if b.key and b.key.startswith(f"cat_action_source_{job_id}_")
+    ]
+    assert len(action_source_buttons) == 1
+    at.button(key=f"cat_sel_{job_id}_1").click().run()
+    assert not at.exception
+    btn_keys = {b.key for b in at.button}
+    assert f"cat_action_source_{job_id}_1" in btn_keys
+    assert f"cat_action_split_{job_id}_1" in btn_keys
+    assert f"cat_action_source_{job_id}_0" not in btn_keys
+    assert len([ta for ta in at.text_area
+                if str(ta.key).startswith("translation_editor_")]) == 40
 
 
 def test_cat_viewport_paging_and_draft_persistence(cat_env: Path):
@@ -116,7 +152,7 @@ def test_cat_grid_and_inspector_cross_fragment_sync(cat_env: Path):
     ]
     core.save_job_state(job_id, state)
 
-    at = _open_workspace(job_id)
+    at = _open_workspace(job_id, inspector=True)
 
     # Initial state: Segment 1 (row index 0) selected
     assert any("段落 #1" in str(m.value) for m in at.markdown)
@@ -142,7 +178,7 @@ def test_cat_viewport_paging_syncs_inspector(cat_env: Path):
     state["pairs"] = [{"source": f"Paragraph {i}", "target": f"段落 {i}"} for i in range(80)]
     core.save_job_state(job_id, state)
 
-    at = _open_workspace(job_id)
+    at = _open_workspace(job_id, inspector=True)
     assert any("段落 #1" in str(m.value) for m in at.markdown)
 
     # Page to next viewport
@@ -158,13 +194,13 @@ def test_cat_viewport_paging_syncs_inspector(cat_env: Path):
 
 
 def test_production_call_path_contract():
-    """Invariant: app.py delegates CAT Grid and Inspector to transpraxis.ui.workspace without duplicate code."""
+    """Invariant: app.py delegates CAT Grid and Inspector to folith.ui.workspace without duplicate code."""
     import app
-    from transpraxis.ui.workspace import cat_grid as cg
-    from transpraxis.ui.workspace import inspector as insp
-    from transpraxis.ui.workspace import translation as trans
+    from folith.ui.workspace import cat_grid as cg
+    from folith.ui.workspace import inspector as insp
+    from folith.ui.workspace import translation as trans
 
-    # Verify transpraxis.ui.workspace exports canonical implementations
+    # Verify folith.ui.workspace exports canonical implementations
     assert hasattr(cg, "render_cat_grid_table")
     assert hasattr(cg, "render_translation_row")
     assert hasattr(cg, "render_translation_row_actions")
@@ -172,7 +208,7 @@ def test_production_call_path_contract():
     assert hasattr(insp, "render_workspace_translation_context")
     assert hasattr(trans, "render_translation_workspace_fragment")
 
-    # Verify app.py delegates to transpraxis.ui.workspace modules
+    # Verify app.py delegates to folith.ui.workspace modules
     import inspect
     cat_grid_source = inspect.getsource(app._render_cat_grid_table)
     assert "_cat_grid_ui.render_cat_grid_table" in cat_grid_source
@@ -189,8 +225,8 @@ def test_production_call_path_contract():
 
 def test_pdf_fragment_rerun_isolation():
     """Invariant: PDF preview fragment is isolated and does not trigger translation workspace re-evaluations."""
-    from transpraxis.ui import pdf_view
-    from transpraxis.ui.workspace import translation
+    from folith.ui import pdf_view
+    from folith.ui.workspace import translation
 
     # Verify both are decorated as independent fragments
     assert hasattr(pdf_view.render_pdf_preview_fragment, "_is_fragment") or callable(pdf_view.render_pdf_preview_fragment)
@@ -202,8 +238,8 @@ def test_pdf_fragment_rerun_isolation():
 
 def test_runtime_strip_isolation():
     """Invariant: Runtime status bar polling (2s) is isolated and does not trigger translation re-evaluations."""
-    from transpraxis.ui.workspace import runtime
-    from transpraxis.ui.workspace import translation
+    from folith.ui.workspace import runtime
+    from folith.ui.workspace import translation
 
     # Verify runtime strip has 2s polling isolated to itself
     assert callable(runtime.render_runtime_strip_fragment)

@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
-from transpraxis import delivery
+from folith import delivery
 
 
 def test_delivery_review_ui():
@@ -93,8 +93,8 @@ def test_delivery_review_ui():
         at.session_state["workspace_section"] = "review"
         at.run()
         assert not at.exception, f"交付队列渲染异常：{at.exception}"
-        assert any("人工工作区" in x.value and "审校" in x.value for x in at.markdown)
-        assert any(button.label == "任务列表" for button in at.button)
+        assert any("审校工作台" in x.value for x in at.markdown)
+        assert any(button.key == f"workspace_back_{job_id}" for button in at.button)
         assert any(button.label == "主页" for button in at.button)
         filter_control = next(x for x in at.segmented_control
                               if x.label == "筛选审校任务")
@@ -113,7 +113,7 @@ def test_delivery_review_ui():
         assert at.session_state["selected_finding_id"] == expected_finding_id
         assert any("当前译文" in x.value for x in at.markdown)
         assert any("译文可能扩大原文概念的语义范围" in x.value for x in at.markdown)
-        assert any("当前译文没有保留原文的概念边界" in x.value for x in at.markdown)
+        assert any("当前译文没有保留原文的概念边界" in x.value for x in [*at.markdown, *at.caption])
         assert any("回到原文核对概念关系" in x.value for x in at.markdown)
         assert any("0.87" in x.value for x in [*at.markdown, *at.caption])
         assert any('tp-review-span">Name source</mark>' in x.value for x in at.markdown)
@@ -156,7 +156,7 @@ def test_delivery_review_ui():
         at.run()
         assert at.session_state["selected_finding_id"] == third_finding_id
         location_blocks = [x.value for x in at.markdown
-                           if '<div class="tp-review-compare-text">' in x.value]
+                           if '<div class="tp-review-evidence-pair">' in x.value]
         assert any("Other" in value for value in location_blocks)
         assert any("text" in value for value in location_blocks)
         assert any("tp-review-span" in value for value in location_blocks)
@@ -165,9 +165,9 @@ def test_delivery_review_ui():
         legacy_label = next(option for option in queue.options if "旧版基础问题" in option)
         queue.set_value(legacy_label)
         at.run()
-        assert any("旧版本" in x.value for x in at.markdown)
+        assert any("旧记录" in x.value for x in [*at.markdown, *at.caption])
         location_blocks = [x.value for x in at.markdown
-                           if '<div class="tp-review-compare-text">' in x.value]
+                           if '<div class="tp-review-evidence-pair">' in x.value]
         assert not any("tp-review-span" in value for value in location_blocks)
 
         at.session_state["workspace_section"] = "report"
@@ -178,12 +178,12 @@ def test_delivery_review_ui():
         at.session_state["workspace_section"] = "delivery"
         at.run()
         assert not at.exception, f"切换最终交付后异常：{at.exception}"
-        assert any("最终交付" in x.value for x in at.markdown)
+        assert any("准备交付" in x.value for x in at.markdown)
 
-        next(button for button in at.button if button.label == "任务列表").click()
+        next(button for button in at.button if button.key == f"workspace_back_{job_id}").click()
         at.run()
         assert not at.exception, f"返回任务列表异常：{at.exception}"
-        assert at.session_state["app_view"] == "history"
+        assert at.session_state["app_view"] == "projects"
 
         at.session_state["app_view"] = "workspace"
         at.session_state["workspace_mode"] = True

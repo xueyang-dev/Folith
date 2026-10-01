@@ -1,7 +1,7 @@
 # Folith · 译页
 
 <p align="center">
-  <img src="transpraxis/resources/brand/folith-lockup.png" alt="Folith·译页 — Agentic Translation Workspace — 智能体翻译工作台" width="840">
+  <img src="folith/resources/brand/folith-lockup.png" alt="Folith·译页 — Agentic Translation Workspace — 智能体翻译工作台" width="840">
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases"><img src="https://img.shields.io/badge/release-v0.4.0-blue.svg" alt="Release v0.4.0"></a>
+  <a href="https://github.com/xueyang-dev/Folith/releases"><img src="https://img.shields.io/badge/candidate-v0.5.0-orange.svg" alt="Candidate v0.5.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
 </p>
@@ -81,7 +81,7 @@
 - **🧠 动态上下文与跨章节一致性**：引入滑动上下文窗口与章节摘要索引，翻译当前段落时智能检索前后文与专有名词，杜绝“断章取义”与术语前后矛盾。
 - **💎 语言资产闭环 (TM & Terminology)**：内置精确匹配与归一化翻译记忆复用；支持项目术语抽取、锁定与精准注入，大幅削减大模型 Token 开销与无关幻觉。
 - **🛡️ 状态解耦与人工责任闭环**：保存译文与审校确认严格分离，段落经人工编辑后自动触发重新审校校验；任务状态实时落盘，遭遇浏览器刷新或意外中断可秒级恢复。
-- **📦 标准化交付与过程证据包**：支持纯译文 DOCX、双语对照 DOCX、重点标注版、术语表、TMX 记忆库、结构化 JSONL 数据集以及 `delivery_manifest.json` 交付清单。
+- **📦 标准化交付与过程证据包**：支持纯译文 DOCX、双语对照 DOCX、重点标注版、[保留内嵌图片的流式译文 EPUB](docs/epub-export.md)、术语表、TMX 记忆库、结构化 JSONL 数据集以及 `delivery_manifest.json` 交付清单。
 - **🎓 专用研究与报告工作流**：支持将翻译过程、案例对比、理论支持与反思复盘导出为结构化分析与实践报告，满足翻译硕士 (MTI) 等学术与专业评估需求。
 
 ---
@@ -98,13 +98,15 @@
 | :--- | :--- |
 | **1. 文档解析与上下文** | 版面分析、段落提取、噪音频段排除、离线 OCR（无网络隐私泄露）、轻量结构化纠偏与上下文切片 |
 | **2. 术语与资产准备** | 自动化术语候选抽取、置信度评分、人工锁定/冻结、多格式术语导入导出 (XLSX / TBX) |
-| **3. 智能体翻译** | 动态上下文组装、相关术语精准注入、断点缓存保存、多模型并行加速 |
+| **3. 智能体翻译** | 动态上下文组装、相关术语精准注入、断点缓存保存、顺序翻译（默认并发 1），可选审校重叠流水线默认关闭 |
 | **4. 人工审校与质检** | 规则质检（漏译、占位符、标点、术语一致性）、问题定位导航、编辑-重审联动闭环 |
 | **5. 交付与资产沉淀** | 交付门禁校验、多格式成果物导出、已确认译文入库 (TMX)、全生命周期清单落盘 |
 
 ---
 
 ## 🚀 快速上手 (Quick Start)
+
+界面默认使用简体中文。English、Español、Русский、العربية 为**实验功能**，每语目前 535/1454 条译文，缺译显示中文；尚未完成独立语言审阅及完整阿拉伯语 RTL 验收。中文 README 为当前维护版本，多语言界面不代表文档或模型输出已本地化。详见 [外观与多语言边界](docs/i18n/README.md)。
 
 ### 系统要求
 - Python 3.10 或更高版本
@@ -114,11 +116,13 @@
 ### 方式 1：通过 Pip 安装发布包（推荐）
 
 ```bash
-# 从 Releases 下载最新 wheel 包
+# 当前公开发布版 v0.4.0：从 Releases 下载后安装
 python -m pip install foliothread-0.4.0-py3-none-any.whl
+foliothread  # v0.4.0 compatibility command
 
-# 启动工作台
-folith
+# 0.5.0 候选版从源码构建（见下方方式 2）；正式发布后使用：
+# python -m pip install foliothread-0.5.0-py3-none-any.whl
+# folith
 ```
 
 ### 方式 2：从源码运行与开发
@@ -134,6 +138,8 @@ python -m pip install -e .
 # 启动工作台
 folith
 ```
+
+代码模块使用独立的 `folith` 包；发行包名为 `foliothread`。0.5.0 移除旧 TransPraxis 包和启动命令，升级后请使用 `folith` 或 `foliothread`。已有任务和配置继续保存在 `outputs/`。
 
 仓库根目录提供一键启动脚本：
 - **Windows**: 双击运行 `start.bat`
@@ -160,7 +166,8 @@ Folith 采用模块化模型接入架构，在系统设置中支持开箱即用�
 ## 🗺️ 路线图 (Roadmap)
 
 - [x] **v0.4.0**：统一 Folith 品牌体系、交互界面重构、语言资产与术语中心、交付门禁系统与草稿实时容灾
-- [ ] **v0.5.0**：DOCX 原格式保真写回（基于 XML 模板的原位段落替换，保留原始排版、样式与内嵌图表）
+- [ ] **v0.5.0（候选）**：独立 Folith 代码包、性能与恢复改进、EPUB 交付和实验性外观/语言设置
+- [ ] **后续版本**：DOCX 原格式保真写回（基于 XML 模板的原位段落替换，保留原始排版、样式与内嵌图表）
 - [ ] **v0.6.0**：TM V2 引擎（支持多语料库检索与模糊匹配评分、增强型 TMX 分段索引）
 - [ ] **v0.7.0**：文档跨版本差分更新与增量翻译同步
 

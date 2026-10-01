@@ -8,7 +8,7 @@ from zipfile import ZipFile
 from io import BytesIO
 
 import core
-from transpraxis import snapshots
+from folith import snapshots
 
 
 def _job(job_id, *, target="译文", findings=None, glossary=None):
@@ -211,9 +211,9 @@ def test_incomplete_requested_report_blocks_backend_and_workspace_delivery():
         at.session_state["workspace_mode"] = True
         at.session_state["workspace_section"] = "delivery"
         at.run()
-        button = next(item for item in at.button
-                      if item.label == "确认并冻结最终版本")
-        assert button.disabled
+        assert not at.exception, at.exception
+        assert not any(item.label.startswith("创建交付版本") and not item.disabled
+                       for item in at.button)
         assert core.load_job_state(job_id)["delivery_status"] != "final"
     finally:
         core.OUTPUT_DIR = old_dir
@@ -227,6 +227,14 @@ def test_configured_delivery_builds_every_selected_format_and_nothing_else():
     try:
         job_id = "snapshotconfigured"
         state = _job(job_id)
+        # EPUB reads the source package to retain media and paragraph order.
+        # A placeholder byte string is insufficient for the all-format fixture.
+        from docx import Document
+        source_document = Document()
+        source_document.add_paragraph("Source text")
+        source_buffer = BytesIO()
+        source_document.save(source_buffer)
+        core.save_source(job_id, source_buffer.getvalue())
         state["glossary"] = [{
             "source": "Source", "target": "来源", "preferred": "来源",
             "status": "locked", "scope": "document",
@@ -264,6 +272,7 @@ def test_configured_delivery_builds_every_selected_format_and_nothing_else():
         assets = core.delivery_snapshot_assets(job_id, 1)
         expected = {
             "translation.docx", "bilingual.docx", "translation.pdf",
+            "translation.epub", "epub_export_report.json",
             "annotated_bilingual.docx", "terms.xlsx", "terms.tbx",
             "memory.tmx", "bilingual.jsonl", "segment_evidence.jsonl",
             "selected_cases.json", "academic_workspace.zip",
@@ -278,6 +287,9 @@ def test_configured_delivery_builds_every_selected_format_and_nothing_else():
             assert "译文" in "".join(page.get_text() for page in pdf)
         with ZipFile(BytesIO(assets["translation.docx"])) as docx:
             assert "word/document.xml" in docx.namelist()
+        with ZipFile(BytesIO(assets["translation.epub"])) as epub:
+            assert epub.read("mimetype") == b"application/epub+zip"
+            assert "EPUB/content.opf" in epub.namelist()
         with ZipFile(BytesIO(assets["terms.xlsx"])) as workbook:
             assert "xl/workbook.xml" in workbook.namelist()
         with ZipFile(BytesIO(assets["academic_workspace.zip"])) as workspace:
@@ -326,8 +338,8 @@ def test_workspace_delivery_lists_exact_configured_assets():
         at.run()
         assert not at.exception, at.exception
         assert [button.label for button in at.download_button] == [
-            "下载", "下载 manifest"]
-        assert any("结构化数据" in item.value for item in at.markdown)
+            "下载", "下载"]
+        assert any("结构化双语数据" in item.value for item in at.markdown)
         assert any("delivery_manifest.json" in item.value for item in at.markdown)
         assert not any("TBX 术语库" in item.value for item in at.markdown)
     finally:
@@ -369,8 +381,8 @@ def test_frozen_snapshot_is_visible_in_workspace_and_history():
         at.session_state["workspace_section"] = "delivery"
         at.run()
         assert not at.exception, at.exception
-        assert any("最终交付版本 v1" in item.value for item in at.success)
-        assert any(button.label == "下载最终交付版本 v1"
+        assert any("交付版本 v1 已创建" in item.value for item in at.markdown)
+        assert any(button.label == "下载 v1 归档"
                    for button in at.download_button)
 
         at.session_state["app_view"] = "history"

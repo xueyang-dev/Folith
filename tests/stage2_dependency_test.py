@@ -7,7 +7,7 @@ from pathlib import Path
 
 import core
 from eval.mti_finalization_regression import load_fixture
-from transpraxis import academic_evidence, academic_writer
+from folith import academic_evidence, academic_writer
 
 
 def _record(name, *, segments=(), inputs=(), artifact_type="deterministic_artifact"):

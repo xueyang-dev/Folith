@@ -47,9 +47,9 @@ def test_resume_transition_hides_no_worker_copy_and_keeps_technical_details():
         # 运行状态现在是任务 Banner 内的运行区（概览页已删除）；面板里只放
         # 状态/进度/动作，引擎细节一律留在按需打开的右侧抽屉里。
         panel = next(item.value for item in at.markdown
-                     if 'class="tp-banner-runtime is-' in item.value)
-        assert "正在恢复任务" in panel
-        assert "流程进度" in panel and "11" in panel
+                     if 'class="tp-runtime-hud is-' in item.value)
+        assert "正在恢复" in panel
+        assert "63.6%" in panel and "11" in panel
         assert "当前没有后台 worker" not in panel
         assert "worker" not in panel and "lease" not in panel and "PID" not in panel
         resuming = [button for button in at.button if button.label == "正在恢复…"]
@@ -61,7 +61,7 @@ def test_resume_transition_hides_no_worker_copy_and_keeps_technical_details():
         at.run()
         assert not at.exception, at.exception
         technical = next(expander for expander in at.expander
-                         if expander.label == "技术信息")
+                         if expander.label == "技术详情 ▸")
         assert technical is not None
         assert sum(event["event"] == "resume_requested" for event in
                    core.read_runtime_events(job_id, visibility="user")) == 1

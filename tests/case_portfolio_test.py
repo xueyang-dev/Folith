@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from transpraxis import (academic_evidence, academic_quality, academic_validator,
+from folith import (academic_evidence, academic_quality, academic_validator,
                          academic_writer, case_presentation, final_docx, report_template,
                          thesis_constraints)
 

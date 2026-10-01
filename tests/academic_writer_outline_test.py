@@ -1,6 +1,6 @@
 import json
 
-from transpraxis import academic_writer
+from folith import academic_writer
 
 
 def test_generic_outline_uses_chapter_titles_to_route_cases():
