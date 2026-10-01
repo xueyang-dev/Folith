@@ -42,3 +42,49 @@ def test_go_catalog_refresh_cache_failure_and_connection_change(monkeypatch, tmp
     next(item for item in at.text_input if item.label == 'API 密钥').set_value('another-account').run()
     assert calls[-1][1] == 'another-account'
     assert not at.exception
+
+
+def test_discovered_model_and_region_endpoint_survive_navigation_and_restart(monkeypatch, tmp_path):
+    monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
+    cfg = {'provider': 'DeepSeek', 'model': 'new-text-model', 'api_key': 'deepseek-key',
+           'base_url': 'https://regional.example.com/v1', 'reasoning_effort': ''}
+    monkeypatch.setattr(core, 'load_provider_config', lambda: cfg)
+    calls = []
+    def fetch(provider, key, base_url=None):
+        calls.append((provider, key, base_url))
+        return True, ['new-text-model', 'another-model'], '已获取 2 个可用模型'
+    monkeypatch.setattr(core, 'fetch_provider_models', fetch)
+    at = AppTest.from_file(str(APP), default_timeout=30).run()
+    assert at.session_state['model_choice_DeepSeek'] == 'new-text-model'
+    at.session_state['app_view'] = 'settings'
+    at.run()
+    assert calls[-1] == ('DeepSeek', 'deepseek-key', 'https://regional.example.com/v1')
+    assert next(s for s in at.selectbox if s.label == '模型').value == 'new-text-model'
+    at.session_state['app_view'] = 'appearance'
+    at.run()
+    assert at.session_state['model_choice_DeepSeek'] == 'new-text-model'
+    assert not at.exception
+
+
+def test_reviewer_catalog_uses_separate_credentials_and_clears_on_provider_change(monkeypatch, tmp_path):
+    monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
+    monkeypatch.setattr(core, 'load_provider_config', lambda: None)
+    calls = []
+    def fetch(provider, key, base_url=None):
+        calls.append((provider, key, base_url))
+        return True, ['review-new-model'], '已获取 1 个可用模型'
+    monkeypatch.setattr(core, 'fetch_provider_models', fetch)
+    at = AppTest.from_file(str(APP), default_timeout=30).run()
+    at.session_state['app_view'] = 'settings'
+    at.session_state['provider_choice'] = 'DeepSeek'
+    at.session_state['reviewer_mode'] = 'separate'
+    at.session_state['reviewer_provider_choice'] = 'Gemini'
+    at.session_state['reviewer_api_key'] = 'gemini-review-key'
+    at.run()
+    assert ('Gemini', 'gemini-review-key', None) in calls
+    assert 'review-new-model' in next(s for s in at.selectbox if s.label == '审校模型').options
+    assert any(b.label == '获取审校模型' for b in at.button)
+    next(s for s in at.selectbox if s.label == '审校服务商').select('Moonshot (Kimi)').run()
+    assert at.session_state['reviewer_api_key'] == ''
+    assert not any(p == 'Moonshot (Kimi)' and key == 'gemini-review-key' for p, key, base in calls)
+    assert not at.exception

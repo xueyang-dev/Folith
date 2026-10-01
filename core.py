@@ -133,8 +133,8 @@ PROVIDERS = {
     "DeepSeek": {
         "kind": "openai_compat",
         "base_url": "https://api.deepseek.com",
-        "default_model": "deepseek-v4-flash",
-        "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+        "default_model": "deepseek-flash",
+        "models": ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"],
     },
     "OpenAI": {
         "kind": "openai",
@@ -235,8 +235,10 @@ def resolve_openai_base_url(provider, base_url=None):
     """
     cfg = PROVIDERS.get(provider) or {}
     explicit = base_url is not None
+    if explicit and str(base_url).strip() and not normalize_openai_base_url(base_url):
+        raise ValueError("API 地址无效（需要 http(s)://…/v1）")
     resolved = normalize_openai_base_url(
-        base_url if explicit else cfg.get("base_url"))
+        base_url if explicit and str(base_url).strip() else cfg.get("base_url"))
     if cfg.get("custom_base_url") and explicit and not resolved:
         raise ValueError("自定义中转站的 API 地址无效（需要 http(s)://…/v1）")
     if cfg.get("custom_base_url") and not explicit and not resolved:
@@ -272,7 +274,7 @@ def reasoning_effort_options(provider, model):
     # OpenAI reasoning families and common compatible relay names.  The UI
     # deliberately uses the portable low/medium/high subset.
     prefixes = ("o1", "o3", "o4-mini", "gpt-5", "gpt-6", "deepseek-r1", "qwq")
-    if not name.startswith(prefixes):
+    if "-chat" in name or not name.startswith(prefixes):
         return ()
     return ("low", "medium", "high")
 
@@ -2124,6 +2126,10 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             request["temperature"] = temperature
     else:
         request["temperature"] = temperature
+    if provider == "OpenAI" and str(model or "").lower().startswith(
+            ("o1", "o3", "o4", "gpt-5", "gpt-6")) and "-chat" not in str(model).lower():
+        if resolved_reasoning != "none":
+            request.pop("temperature", None)
     if response_format and cfg.get("capabilities", {}).get(
             "supports_response_format"):
         request["response_format"] = response_format
@@ -2344,12 +2350,47 @@ def test_provider(provider, api_key, model, base_url=None):
     return True, f"响应「{(out or '').strip()[:24]}」· 耗时 {elapsed:.1f}s"
 
 
+def _fetch_gemini_models(api_key):
+    """Use Gemini's native, paginated directory instead of an OpenAI route."""
+    if not (api_key or "").strip():
+        return False, [], "请先填写 API Key"
+    models = []
+    params = {"pageSize": 1000}
+    try:
+        while True:
+            response = httpx.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key.strip(), "Accept": "application/json"},
+                params=params, timeout=20.0)
+            response.raise_for_status()
+            payload = response.json()
+            for row in payload.get("models", []):
+                name = row.get("name", "").removeprefix("models/")
+                if ("generateContent" in row.get("supportedGenerationMethods", [])
+                        and name.startswith(("gemini-", "gemma-"))
+                        and not any(part in name for part in ("tts", "native-audio"))):
+                    models.append(name)
+            if not payload.get("nextPageToken"):
+                break
+            params["pageToken"] = payload["nextPageToken"]
+    except httpx.HTTPError as exc:
+        return False, [], provider_error_message(exc, "获取模型失败")
+    except (ValueError, AttributeError, TypeError):
+        return False, [], "获取模型失败：服务商返回了无法解析的响应。"
+    models = sorted(set(models), key=str.casefold)
+    if not models:
+        return False, [], "模型目录为空或返回格式不受支持"
+    return True, models, f"已获取 {len(models)} 个可用模型"
+
+
 def fetch_provider_models(provider, api_key, base_url=None):
-    """获取 OpenAI 兼容服务商的模型目录，返回 (ok, models, message)。"""
+    """获取服务商的文本生成模型目录，返回 (ok, models, message)。"""
     cfg = PROVIDERS.get(provider) or {}
+    if cfg.get("kind") == "gemini":
+        return _fetch_gemini_models(api_key)
     if cfg.get("kind") not in ("openai", "openai_compat"):
         return False, [], "当前服务商不支持 OpenAI 兼容模型目录"
-    if not (api_key or "").strip() and provider != "OpenCode Go":
+    if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter"):
         return False, [], "请先填写 API Key"
     try:
         resolved_base = resolve_openai_base_url(provider, base_url)
@@ -2364,8 +2405,11 @@ def fetch_provider_models(provider, api_key, base_url=None):
         if (api_key or "").strip():
             headers["Authorization"] = f"Bearer {api_key.strip()}"
         transport = {"trust_env": False} if cfg.get("proxy_bypass") else {}
+        directory_url = f"{resolved_base}/models"
+        if provider == "SiliconFlow":
+            directory_url += "?sub_type=chat"
         response = httpx.get(
-            f"{resolved_base}/models", headers=headers,
+            directory_url, headers=headers,
             timeout=20.0, **transport,
         )
         response.raise_for_status()
@@ -2380,13 +2424,25 @@ def fetch_provider_models(provider, api_key, base_url=None):
     rows = payload.get("data") if isinstance(payload, dict) else payload
     if not rows and isinstance(payload, dict):
         rows = payload.get("models")
+    if not isinstance(rows, list):
+        return False, [], "模型目录为空或返回格式不受支持"
     models = []
     for row in rows or []:
+        if isinstance(row, dict):
+            architecture = row.get("architecture") or {}
+            inputs = row.get("input_modalities", architecture.get("input_modalities"))
+            outputs = row.get("output_modalities", architecture.get("output_modalities"))
+            if (inputs is not None and "text" not in inputs) or (outputs is not None and "text" not in outputs):
+                continue
         model_id = row if isinstance(row, str) else (
             row.get("id") or row.get("model") or row.get("name")
             if isinstance(row, dict) else None)
         if model_id and str(model_id).strip():
             models.append(str(model_id).strip())
+    if provider == "OpenAI":
+        models = [model for model in models if model.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4", "ft:gpt-", "ft:o"))
+                  and not any(part in model for part in (
+                      "audio", "realtime", "transcribe", "tts", "image", "codex", "-pro", "deep-research"))]
     if provider == "OpenCode Go":
         # Go's public catalog has IDs but no endpoint metadata. These documented
         # families use chat/completions; Responses/Messages need separate adapters.

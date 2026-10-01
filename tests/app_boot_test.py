@@ -280,8 +280,8 @@ def main():
         assert engine_select.value == "DeepSeek"
         assert "自定义中转站" in engine_select.options
         model_select = next(s for s in at.selectbox if s.label == "模型")
-        assert model_select.value == "deepseek-v4-flash", \
-            "已退役的历史模型配置应回落到当前默认模型"
+        assert model_select.value == "deepseek-chat", \
+            "已保存的模型应保留；静态预设不能替代服务商实际可用模型"
         model_opts = [o for o in model_select.options if o is not None]
         assert model_opts == sorted(model_opts, key=str.casefold)
         # API 配置必须跨页面保留（persist_state="session"）

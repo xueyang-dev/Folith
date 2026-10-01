@@ -1495,5 +1495,8 @@
   "{v0} 个文档": "Documents: {v0}",
   "正在获取模型目录…": "Fetching model catalog…",
   "当前仅列出已支持 Chat Completions 的模型系列。": "Only model families supported through Chat Completions are listed.",
-  "打开设置时自动获取模型目录，缓存一小时；失败时保留已有列表。": "Opening settings automatically fetches the model catalog, cached for one hour; the existing list is kept on failure."
+  "打开设置时自动获取模型目录，缓存一小时；失败时保留已有列表。": "Opening settings automatically fetches the model catalog, cached for one hour; the existing list is kept on failure.",
+  "读取服务商支持的文本生成模型目录": "Read the provider’s text-generation model catalog",
+  "获取审校模型": "Fetch reviewer models",
+  "API 地址（可选）": "API URL (optional)"
 }

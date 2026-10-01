@@ -135,14 +135,14 @@ if _saved_provider_cfg:
         st.session_state[f"api_key_{_saved_provider}"] = \
             _saved_provider_cfg["api_key"]
     _saved_model = _saved_provider_cfg.get("model")
-    _saved_models = core.PROVIDERS.get(_saved_provider, {}).get("models") or []
-    if _saved_model and (not _saved_models or _saved_model in _saved_models) \
-            and f"model_choice_{_saved_provider}" not in st.session_state:
+    if _saved_model and f"model_choice_{_saved_provider}" not in st.session_state:
         st.session_state[f"model_choice_{_saved_provider}"] = \
             _saved_model
-    if _saved_provider_cfg.get("base_url") \
-            and "custom_base_url" not in st.session_state:
-        st.session_state.custom_base_url = _saved_provider_cfg["base_url"]
+    if _saved_provider_cfg.get("base_url"):
+        endpoint_key = ("custom_base_url" if _saved_provider == "自定义中转站"
+                        else f"base_url_{_saved_provider}")
+        if endpoint_key not in st.session_state:
+            st.session_state[endpoint_key] = _saved_provider_cfg["base_url"]
     if _saved_provider_cfg.get("reasoning_effort") \
             and f"reasoning_effort_{_saved_provider}" not in st.session_state:
         st.session_state[f"reasoning_effort_{_saved_provider}"] = \
@@ -338,34 +338,43 @@ def _reset_provider_connection(preserve_models=False):
         st.session_state.pop("model_fetch_feedback", None)
 
 
-def _refresh_model_catalog(provider, api_key, base_url=None, *, force=False):
+def _refresh_model_catalog(provider, api_key, base_url=None, *, force=False, role="translator"):
     """Cache each connection's catalog in this browser session, including failures."""
     cfg = core.PROVIDERS[provider]
-    if cfg.get("kind") not in ("openai", "openai_compat"):
+    if cfg.get("kind") not in ("openai", "openai_compat", "gemini"):
         return
-    if provider != "OpenCode Go" and not api_key:
+    if provider not in ("OpenCode Go", "OpenRouter") and not api_key:
         return
     if cfg.get("custom_base_url") and not core.normalize_openai_base_url(base_url):
         return
     identity = (api_key or "", base_url or cfg.get("base_url") or "")
-    cache_key = f"model_catalog_cache_{provider}"
+    prefix = "" if role == "translator" else "reviewer_"
+    feedback_key = f"{prefix}model_fetch_feedback"
+    cache_key = f"{prefix}model_catalog_cache_{provider}"
     cached = st.session_state.get(cache_key) or {}
     now = core.time.monotonic()
     same_connection = cached.get("identity") == identity
     if not force and same_connection and now < cached.get("expires", 0):
         if cached.get("models"):
-            st.session_state[f"fetched_models_{provider}"] = cached["models"]
-        st.session_state.model_fetch_feedback = cached["feedback"]
+            st.session_state[f"{prefix}fetched_models_{provider}"] = cached["models"]
+        st.session_state[feedback_key] = cached["feedback"]
         return
     if not same_connection:
-        st.session_state.pop(f"fetched_models_{provider}", None)
+        st.session_state.pop(f"{prefix}fetched_models_{provider}", None)
     ok, models, message = core.fetch_provider_models(provider, api_key, base_url)
     st.session_state[cache_key] = {"identity": identity, "expires": now + (3600 if ok else 300),
                                    "models": models if ok else (cached.get("models") if same_connection else []),
                                    "feedback": (ok, message)}
     if ok:
-        st.session_state[f"fetched_models_{provider}"] = models
-    st.session_state.model_fetch_feedback = (ok, message)
+        st.session_state[f"{prefix}fetched_models_{provider}"] = models
+    st.session_state[feedback_key] = (ok, message)
+
+
+def _reset_reviewer_provider():
+    # A newly selected provider must never receive the previous provider's key.
+    for key in ("reviewer_api_key", "reviewer_base_url", "reviewer_model", "reviewer_model_fetch_feedback"):
+        st.session_state[key] = ""
+    _reset_reviewer_connection()
 
 
 def _reset_reviewer_connection():
@@ -8746,12 +8755,9 @@ default_model = provider_cfg.get("default_model")
 if default_model not in model_opts:
     default_model = model_opts[0] if model_opts else ""
 ai_model = st.session_state.get(f"model_choice_{ai_provider}", default_model)
-if model_opts and ai_model not in model_opts:
-    ai_model = default_model
-    st.session_state[f"model_choice_{ai_provider}"] = default_model
 api_key = st.session_state.get(f"api_key_{ai_provider}", "")
 api_base = st.session_state.get("custom_base_url", "") \
-    if provider_cfg.get("custom_base_url") else None
+    if provider_cfg.get("custom_base_url") else st.session_state.get(f"base_url_{ai_provider}") or None
 reasoning_options = core.reasoning_effort_options(ai_provider, ai_model)
 reasoning_effort = st.session_state.get(f"reasoning_effort_{ai_provider}", "")
 if reasoning_effort not in reasoning_options:
@@ -12384,16 +12390,17 @@ with setup_placeholder.container():
         provider_cfg = core.PROVIDERS[ai_provider]
         _refresh_model_catalog(
             ai_provider, st.session_state.get(f"api_key_{ai_provider}", ""),
-            st.session_state.get("custom_base_url") if provider_cfg.get("custom_base_url") else None)
+            st.session_state.get("custom_base_url") if provider_cfg.get("custom_base_url")
+            else st.session_state.get(f"base_url_{ai_provider}") or None)
         model_opts = sorted(provider_cfg.get("models") or [], key=str.casefold)
         fetched_models = sorted(
             set(st.session_state.get(f"fetched_models_{ai_provider}") or []),
             key=str.casefold)
         if fetched_models:
             model_opts = fetched_models
-            current = st.session_state.get(f"model_choice_{ai_provider}")
-            if current and current not in model_opts:
-                model_opts = sorted([*model_opts, current], key=str.casefold)
+        current = st.session_state.get(f"model_choice_{ai_provider}")
+        if model_opts and current and current not in model_opts:
+            model_opts = sorted([*model_opts, current], key=str.casefold)
         with pc2:
             with st.container(key="model_selector_row"):
                 model_col, fetch_col = st.columns(
@@ -12434,7 +12441,13 @@ with setup_placeholder.container():
             api_key = st.text_input(
                 _t("API 密钥"), type="password", key=f"api_key_{ai_provider}",
                 on_change=_reset_provider_connection, **_PERSIST_STATE)
-            api_base = None
+            if provider_cfg.get("kind") != "gemini":
+                api_base = st.text_input(
+                    _t("API 地址（可选）"), key=f"base_url_{ai_provider}",
+                    placeholder=provider_cfg.get("base_url") or "https://api.openai.com/v1",
+                    on_change=_reset_provider_connection, **_PERSIST_STATE) or None
+            else:
+                api_base = None
         st.markdown(
             _h('<div class="tp-settings-section-head">模型参数'
             '<span>只显示当前模型支持的选项</span></div>'),
@@ -12475,12 +12488,19 @@ with setup_placeholder.container():
                 if st.session_state.get("reviewer_provider_choice", ai_provider) in providers
                 else providers.index(ai_provider),
                 key="reviewer_provider_choice",
-                on_change=_reset_reviewer_connection,
+                on_change=_reset_reviewer_provider,
                 **_PERSIST_STATE,
              format_func=_localized_formatter())
             reviewer_provider_cfg = core.PROVIDERS[reviewer_provider]
+            _refresh_model_catalog(
+                reviewer_provider, st.session_state.get("reviewer_api_key", ""),
+                st.session_state.get("reviewer_base_url") or None, role="reviewer")
             reviewer_model_opts = sorted(
-                reviewer_provider_cfg.get("models") or [], key=str.casefold)
+                st.session_state.get(f"reviewer_fetched_models_{reviewer_provider}")
+                or reviewer_provider_cfg.get("models") or [], key=str.casefold)
+            selected_reviewer = st.session_state.get("reviewer_model")
+            if reviewer_model_opts and selected_reviewer and selected_reviewer not in reviewer_model_opts:
+                reviewer_model_opts = sorted([*reviewer_model_opts, selected_reviewer], key=str.casefold)
             if reviewer_model_opts:
                 reviewer_default = reviewer_provider_cfg.get("default_model")
                 if reviewer_default not in reviewer_model_opts:
@@ -12513,19 +12533,27 @@ with setup_placeholder.container():
                 on_change=_reset_reviewer_connection,
                 **_PERSIST_STATE,
             )
+            if st.button(_t("获取审校模型"), key="fetch_reviewer_models",
+                         disabled=not (reviewer_api_key or reviewer_provider in ("OpenCode Go", "OpenRouter"))):
+                _refresh_model_catalog(reviewer_provider, reviewer_api_key,
+                                       reviewer_base_url or None, force=True, role="reviewer")
+                st.rerun()
+            if feedback := st.session_state.get("reviewer_model_fetch_feedback"):
+                ok, message = feedback
+                (st.success if ok else st.error)(message)
         else:
             reviewer_provider = ai_provider
             reviewer_model = ""
             reviewer_api_key = ""
             reviewer_base_url = ""
-        can_fetch_models = provider_cfg.get("kind") in ("openai", "openai_compat")
+        can_fetch_models = provider_cfg.get("kind") in ("openai", "openai_compat", "gemini")
         if can_fetch_models:
             fetch_base = api_base or provider_cfg.get("base_url")
             if fetch_slot.button(
                     _t("获取可用模型"), width="stretch",
-                    disabled=not ((api_key or ai_provider == "OpenCode Go")
-                                  and (fetch_base or ai_provider == "OpenAI")),
-                    help=_t("从 OpenAI 兼容接口的 /models 目录读取可用模型")):
+                    disabled=not ((api_key or ai_provider in ("OpenCode Go", "OpenRouter"))
+                                  and (fetch_base or ai_provider in ("OpenAI", "Gemini"))),
+                    help=_t("读取服务商支持的文本生成模型目录")):
                 with st.spinner(_t("正在获取模型目录…")):
                     _refresh_model_catalog(ai_provider, api_key, api_base, force=True)
                 st.rerun()
@@ -12535,9 +12563,12 @@ with setup_placeholder.container():
             if feedback := st.session_state.get("model_fetch_feedback"):
                 ok, msg = feedback
                 (st.success if ok else st.error)(msg)
-        base_ready = (not provider_cfg.get("custom_base_url")
+        base_ready = (not api_base and not provider_cfg.get("custom_base_url")
                       or bool(core.normalize_openai_base_url(api_base)))
-        save_ready = bool(api_key and ai_model and base_ready) and (
+        reviewer_base_ready = (reviewer_mode == "same"
+                               or (not reviewer_base_url and not core.PROVIDERS[reviewer_provider].get("custom_base_url"))
+                               or bool(core.normalize_openai_base_url(reviewer_base_url)))
+        save_ready = bool(api_key and ai_model and base_ready and reviewer_base_ready) and (
             reviewer_mode == "same"
             or bool(reviewer_provider and reviewer_model and reviewer_api_key)
         )

@@ -27,7 +27,7 @@ def test_provider_registry_sane():
                 "mimo-v2.5-pro", "mimo-v2.5", "hy3", "grok-4.5",
             ], "OpenCode Go 只能列出 /chat/completions 模型"
         if name == "DeepSeek":
-            assert cfg["models"] == ["deepseek-v4-flash", "deepseek-v4-pro"]
+            assert cfg["models"] == ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"]
         if name == "Gemini":
             assert "gemini-2.0-flash" not in cfg["models"]
     print("  ✓ PROVIDERS 注册表（openai_compat / 模型目录完整）")
@@ -503,3 +503,77 @@ def test_go_catalog_is_public_and_uses_matching_transport(monkeypatch):
     assert calls[0][0] == 'https://opencode.ai/zen/go/v1/models'
     assert calls[0][1]['trust_env'] is False
     assert 'Authorization' not in calls[0][1]['headers']
+
+
+def test_gemini_native_model_catalog_paginates_and_filters(monkeypatch):
+    calls = []
+    def get(url, headers, params, timeout):
+        calls.append((url, headers, dict(params)))
+        rows = ([{'name': 'models/gemini-new', 'supportedGenerationMethods': ['generateContent']},
+                 {'name': 'models/embedding-new', 'supportedGenerationMethods': ['embedContent']}]
+                if len(calls) == 1 else
+                [{'name': 'models/gemma-new', 'supportedGenerationMethods': ['generateContent']},
+                 {'name': 'models/gemini-new-tts', 'supportedGenerationMethods': ['generateContent']}])
+        payload = {'models': rows}
+        if len(calls) == 1: payload['nextPageToken'] = 'page-two'
+        return httpx.Response(200, request=httpx.Request('GET', url), json=payload)
+    monkeypatch.setattr(core.httpx, 'get', get)
+    ok, models, _ = core.fetch_provider_models('Gemini', 'gemini-key')
+    assert ok and models == ['gemini-new', 'gemma-new']
+    assert calls[0][0] == 'https://generativelanguage.googleapis.com/v1beta/models'
+    assert calls[0][1]['x-goog-api-key'] == 'gemini-key'
+    assert calls[1][2]['pageToken'] == 'page-two'
+
+
+def test_catalog_protocol_filters_and_provider_routes(monkeypatch):
+    calls = []
+    def get(url, **kwargs):
+        calls.append((url, kwargs))
+        rows = [{'id': 'gpt-4.1'}, {'id': 'o3'}, {'id': 'o3-pro'},
+                {'id': 'ft:gpt-4.1:org:custom:123'},
+                {'id': 'text-embedding-3-small'}, {'id': 'gpt-4o-realtime-preview'},
+                {'id': 'gpt-5.3-codex'}, {'id': 'gpt-image-1'}]
+        if 'openrouter' in url:
+            rows = [{'id': 'text-model', 'architecture': {'input_modalities': ['text'], 'output_modalities': ['text']}},
+                    {'id': 'image-model', 'architecture': {'input_modalities': ['text'], 'output_modalities': ['image']}}]
+        return httpx.Response(200, request=httpx.Request('GET', url), json={'data': rows})
+    monkeypatch.setattr(core.httpx, 'get', get)
+    assert core.fetch_provider_models('OpenAI', 'openai-key')[1] == ['ft:gpt-4.1:org:custom:123', 'gpt-4.1', 'o3']
+    assert calls[-1][0] == 'https://api.openai.com/v1/models'
+    assert core.fetch_provider_models('OpenRouter', '')[1] == ['text-model']
+    assert 'Authorization' not in calls[-1][1]['headers']
+    core.fetch_provider_models('SiliconFlow', 'sf-key')
+    assert calls[-1][0] == 'https://api.siliconflow.cn/v1/models?sub_type=chat'
+
+
+def test_preset_endpoint_overrides_do_not_fall_back_silently():
+    assert core.resolve_openai_base_url('Moonshot (Kimi)', 'https://api.moonshot.ai/v1') == 'https://api.moonshot.ai/v1'
+    assert core.resolve_openai_base_url('DeepSeek', '') == 'https://api.deepseek.com'
+    try:
+        core.resolve_openai_base_url('Moonshot (Kimi)', 'not-an-api-url')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('An invalid preset override must not send its key to OpenAI')
+
+
+def test_official_reasoning_auto_mode_omits_temperature(monkeypatch):
+    calls = []
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return type('Response', (), {'choices': [type('Choice', (), {'message': type('Message', (), {'content': 'OK'})()})()]})()
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = type('Chat', (), {'completions': FakeCompletions()})()
+    monkeypatch.setattr(core, 'OpenAI', FakeOpenAI)
+    core.reset_llm_clients()
+    try:
+        for model in ('o3', 'o4-mini', 'gpt-5-mini'):
+            core.call_llm('OpenAI', 'key', model, 'system', 'user', reasoning_effort='')
+            assert 'temperature' not in calls[-1]
+        core.call_llm('OpenAI', 'key', 'gpt-4.1', 'system', 'user', temperature=0.2)
+        assert calls[-1]['temperature'] == 0.2
+        assert core.reasoning_effort_options('OpenAI', 'gpt-5-chat-latest') == ()
+    finally:
+        core.reset_llm_clients()
