@@ -338,6 +338,36 @@ def _reset_provider_connection(preserve_models=False):
         st.session_state.pop("model_fetch_feedback", None)
 
 
+def _refresh_model_catalog(provider, api_key, base_url=None, *, force=False):
+    """Cache each connection's catalog in this browser session, including failures."""
+    cfg = core.PROVIDERS[provider]
+    if cfg.get("kind") not in ("openai", "openai_compat"):
+        return
+    if provider != "OpenCode Go" and not api_key:
+        return
+    if cfg.get("custom_base_url") and not core.normalize_openai_base_url(base_url):
+        return
+    identity = (api_key or "", base_url or cfg.get("base_url") or "")
+    cache_key = f"model_catalog_cache_{provider}"
+    cached = st.session_state.get(cache_key) or {}
+    now = core.time.monotonic()
+    same_connection = cached.get("identity") == identity
+    if not force and same_connection and now < cached.get("expires", 0):
+        if cached.get("models"):
+            st.session_state[f"fetched_models_{provider}"] = cached["models"]
+        st.session_state.model_fetch_feedback = cached["feedback"]
+        return
+    if not same_connection:
+        st.session_state.pop(f"fetched_models_{provider}", None)
+    ok, models, message = core.fetch_provider_models(provider, api_key, base_url)
+    st.session_state[cache_key] = {"identity": identity, "expires": now + (3600 if ok else 300),
+                                   "models": models if ok else (cached.get("models") if same_connection else []),
+                                   "feedback": (ok, message)}
+    if ok:
+        st.session_state[f"fetched_models_{provider}"] = models
+    st.session_state.model_fetch_feedback = (ok, message)
+
+
 def _reset_reviewer_connection():
     st.session_state.provider_configured = False
     st.session_state.reviewer_connection_status = "unverified"
@@ -12352,10 +12382,18 @@ with setup_placeholder.container():
                                     on_change=_reset_provider_connection,
                                     **_PERSIST_STATE, format_func=_localized_formatter())
         provider_cfg = core.PROVIDERS[ai_provider]
+        _refresh_model_catalog(
+            ai_provider, st.session_state.get(f"api_key_{ai_provider}", ""),
+            st.session_state.get("custom_base_url") if provider_cfg.get("custom_base_url") else None)
         model_opts = sorted(provider_cfg.get("models") or [], key=str.casefold)
         fetched_models = sorted(
             set(st.session_state.get(f"fetched_models_{ai_provider}") or []),
             key=str.casefold)
+        if fetched_models:
+            model_opts = fetched_models
+            current = st.session_state.get(f"model_choice_{ai_provider}")
+            if current and current not in model_opts:
+                model_opts = sorted([*model_opts, current], key=str.casefold)
         with pc2:
             with st.container(key="model_selector_row"):
                 model_col, fetch_col = st.columns(
@@ -12373,23 +12411,8 @@ with setup_placeholder.container():
                         index=model_opts.index(st.session_state.get(
                             model_key, default_model)),
                         key=model_key,
-                        on_change=_reset_provider_connection,
-                        **_PERSIST_STATE, format_func=_localized_formatter())
-                elif fetched_models:
-                    model_key = f"fetched_model_choice_{ai_provider}"
-                    preferred_key = f"preferred_fetched_model_{ai_provider}"
-                    current_model = st.session_state.get(
-                        model_key, st.session_state.get(
-                            preferred_key, st.session_state.get(
-                                f"model_choice_{ai_provider}")))
-                    if current_model not in fetched_models:
-                        current_model = fetched_models[0]
-                    ai_model = model_col.selectbox(
-                        _t("模型"), fetched_models,
-                        index=fetched_models.index(current_model), key=model_key,
                         on_change=_reset_provider_connection, args=(True,),
                         **_PERSIST_STATE, format_func=_localized_formatter())
-                    st.session_state[f"model_choice_{ai_provider}"] = ai_model
                 else:
                     ai_model = model_col.text_input(
                         _t("模型"), key=f"model_choice_{ai_provider}",
@@ -12495,27 +12518,20 @@ with setup_placeholder.container():
             reviewer_model = ""
             reviewer_api_key = ""
             reviewer_base_url = ""
-        can_fetch_models = provider_cfg.get("kind") in ("openai", "openai_compat") \
-            and (provider_cfg.get("custom_base_url") or not model_opts)
+        can_fetch_models = provider_cfg.get("kind") in ("openai", "openai_compat")
         if can_fetch_models:
             fetch_base = api_base or provider_cfg.get("base_url")
             if fetch_slot.button(
                     _t("获取可用模型"), width="stretch",
-                    disabled=not (api_key and fetch_base),
+                    disabled=not ((api_key or ai_provider == "OpenCode Go")
+                                  and (fetch_base or ai_provider == "OpenAI")),
                     help=_t("从 OpenAI 兼容接口的 /models 目录读取可用模型")):
-                with st.spinner("正在获取模型目录…"):
-                    ok, fetched, msg = core.fetch_provider_models(
-                        ai_provider, api_key, base_url=fetch_base)
-                if ok:
-                    st.session_state[f"fetched_models_{ai_provider}"] = fetched
-                    selected = st.session_state.get(f"model_choice_{ai_provider}")
-                    if selected not in fetched:
-                        selected = fetched[0]
-                    st.session_state[f"preferred_fetched_model_{ai_provider}"] = selected
-                else:
-                    st.session_state.pop(f"fetched_models_{ai_provider}", None)
-                st.session_state.model_fetch_feedback = (ok, msg)
+                with st.spinner(_t("正在获取模型目录…")):
+                    _refresh_model_catalog(ai_provider, api_key, api_base, force=True)
                 st.rerun()
+            st.caption(_t("打开设置时自动获取模型目录，缓存一小时；失败时保留已有列表。"))
+            if ai_provider == "OpenCode Go":
+                st.caption(_t("当前仅列出已支持 Chat Completions 的模型系列。"))
             if feedback := st.session_state.get("model_fetch_feedback"):
                 ok, msg = feedback
                 (st.success if ok else st.error)(msg)

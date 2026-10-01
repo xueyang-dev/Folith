@@ -42,6 +42,7 @@ def test_opencode_go_provider_route():
     try:
         result = core.call_llm(
             "OpenCode Go", "secret", "deepseek-v4-flash", "system", "user")
+        core.call_llm("OpenCode Go", "secret", "deepseek-v4-flash", "system", "user")
     finally:
         core.OpenAI = original
     assert result == '{"ok":true}'
@@ -51,6 +52,9 @@ def test_opencode_go_provider_route():
     # keep-alive 连接池，客户端池就没有意义。释放池时才关闭底层绕过代理的连接。
     assert not calls[0]["http_client"].is_closed
     assert calls[1]["model"] == "deepseek-v4-flash"
+    assert calls[1]["extra_headers"]["User-Agent"] == "Folith/0.5.0"
+    assert calls[1]["extra_headers"]["x-opencode-session"]
+    assert calls[1]["extra_headers"] == calls[2]["extra_headers"]
     core.reset_llm_clients()
     assert calls[0]["http_client"].is_closed, "释放客户端池必须关闭绕过代理的连接"
     print("  ✓ OpenCode Go provider route")

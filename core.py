@@ -125,7 +125,7 @@ PROVIDERS = {
         "default_model": "glm-5.2",
         "models": [
             "glm-5.2", "glm-5.1",
-            "deepseek-v4-pro", "deepseek-v4-flash",
+            "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash",
             "kimi-k3", "kimi-k2.7-code", "kimi-k2.6",
             "mimo-v2.5-pro", "mimo-v2.5", "hy3", "grok-4.5",
         ],
@@ -2127,6 +2127,15 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     if response_format and cfg.get("capabilities", {}).get(
             "supports_response_format"):
         request["response_format"] = response_format
+    if provider == "OpenCode Go":
+        session_id = runtime_job_id or getattr(_LLM_CTX, "opencode_session", None)
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            _LLM_CTX.opencode_session = session_id
+        request["extra_headers"] = {
+            "User-Agent": "Folith/0.5.0",
+            "x-opencode-session": str(session_id),
+        }
     try:
         res = client.chat.completions.create(**request)
         out_text = (res.choices[0].message.content or "").strip()
@@ -2340,20 +2349,24 @@ def fetch_provider_models(provider, api_key, base_url=None):
     cfg = PROVIDERS.get(provider) or {}
     if cfg.get("kind") not in ("openai", "openai_compat"):
         return False, [], "当前服务商不支持 OpenAI 兼容模型目录"
-    if not (api_key or "").strip():
+    if not (api_key or "").strip() and provider != "OpenCode Go":
         return False, [], "请先填写 API Key"
     try:
         resolved_base = resolve_openai_base_url(provider, base_url)
     except ValueError as exc:
         return False, [], str(exc)
+    if not resolved_base and provider == "OpenAI":
+        resolved_base = "https://api.openai.com/v1"
     if not resolved_base:
         return False, [], "请先填写 API 地址"
     try:
+        headers = {"Accept": "application/json"}
+        if (api_key or "").strip():
+            headers["Authorization"] = f"Bearer {api_key.strip()}"
+        transport = {"trust_env": False} if cfg.get("proxy_bypass") else {}
         response = httpx.get(
-            f"{resolved_base}/models",
-            headers={"Authorization": f"Bearer {api_key.strip()}",
-                     "Accept": "application/json"},
-            timeout=20.0,
+            f"{resolved_base}/models", headers=headers,
+            timeout=20.0, **transport,
         )
         response.raise_for_status()
         payload = response.json()
@@ -2374,6 +2387,11 @@ def fetch_provider_models(provider, api_key, base_url=None):
             if isinstance(row, dict) else None)
         if model_id and str(model_id).strip():
             models.append(str(model_id).strip())
+    if provider == "OpenCode Go":
+        # Go's public catalog has IDs but no endpoint metadata. These documented
+        # families use chat/completions; Responses/Messages need separate adapters.
+        models = [model for model in models if model.startswith((
+            "deepseek-", "glm-", "kimi-", "longcat-", "mimo-", "hy", "space-bunny-"))]
     models = sorted(set(models), key=str.casefold)
     if not models:
         return False, [], "模型目录为空或返回格式不受支持"

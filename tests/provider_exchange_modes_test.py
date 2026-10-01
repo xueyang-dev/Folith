@@ -22,7 +22,7 @@ def test_provider_registry_sane():
             assert cfg["base_url"] is None and name == "自定义中转站"
         if name == "OpenCode Go":
             assert cfg["models"] == [
-                "glm-5.2", "glm-5.1", "deepseek-v4-pro", "deepseek-v4-flash",
+                "glm-5.2", "glm-5.1", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash",
                 "kimi-k3", "kimi-k2.7-code", "kimi-k2.6",
                 "mimo-v2.5-pro", "mimo-v2.5", "hy3", "grok-4.5",
             ], "OpenCode Go 只能列出 /chat/completions 模型"
@@ -486,3 +486,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_go_catalog_is_public_and_uses_matching_transport(monkeypatch):
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(200, request=httpx.Request('GET', url), json={
+            'data': [{'id': 'deepseek-v4.1-flash'}, {'id': 'glm-5.3'},
+                     {'id': 'gpt-6-luna'}, {'id': 'qwen3.8-max'}]})
+
+    monkeypatch.setattr(core.httpx, 'get', get)
+    ok, models, _ = core.fetch_provider_models('OpenCode Go', '')
+    assert ok and models == ['deepseek-v4.1-flash', 'glm-5.3']
+    assert calls[0][0] == 'https://opencode.ai/zen/go/v1/models'
+    assert calls[0][1]['trust_env'] is False
+    assert 'Authorization' not in calls[0][1]['headers']
