@@ -1,6 +1,10 @@
 """Step 03 Deliverables Builder interaction regressions."""
 
 from pathlib import Path
+import re
+import pytest
+import core
+from folith.ui.i18n import tr
 
 from streamlit.testing.v1 import AppTest
 
@@ -257,3 +261,41 @@ def test_plain_docx_and_pdf_are_visually_disambiguated():
     # Both 纯译文 rows show their disambiguated title in the markdown copy
     assert html_values.count("纯译文") >= 2, \
         "Both 纯译文 rows must render their title in markdown"
+
+
+@pytest.mark.parametrize('locale', ['en', 'es', 'ru', 'ar'])
+@pytest.mark.parametrize('research', [False, True])
+def test_delivery_cards_and_confirmation_localize_visible_copy(tmp_path, monkeypatch, locale, research):
+    monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
+    at = _step3_app(research=research)
+    at.session_state['ui_locale'] = locale
+    at.run()
+    assert not at.exception
+    assert at.selectbox(key='delivery_preset').value == 'standard'
+    assert tr('标准交付', locale=locale) in at.selectbox(key='delivery_preset').options[1]
+    cards = [item.value for item in at.markdown if any(f'class="{marker}' in item.value for marker in
+             ('tp-delivery-row-copy', 'tp-delivery-group-head', 'tp-delivery-preset-help', 'tp-delivery-summary'))]
+    assert cards
+    untranslated = [value for value in cards if re.search('[\u4e00-\u9fff]', value)]
+    assert not untranslated, untranslated
+    # A single-file plan must use a whole translated label, not "1 files".
+    at.checkbox(key='deliver_bilingual_docx').uncheck().run()
+    at.checkbox(key='deliver_terms_xlsx').uncheck().run()
+    assert any(tr('将生成 {v0} 个文件', locale=locale, v0=1) in item.value for item in at.markdown)
+    at.checkbox(key='deliver_plain_docx').uncheck().run()
+    assert any(tr('将生成 {v0} 个文件', locale=locale, v0=0) in item.value for item in at.markdown)
+    at.checkbox(key='deliver_plain_docx').check().run()
+    # User data matching a catalog key must remain unchanged and HTML-safe.
+    at.session_state['task_files'] = [{'name': '原稿<script>.docx', 'bytes': b'source'}]
+    at.session_state['task_glossary_name'] = '理论框架'
+    at.session_state['style_template'] = '纸面模式'
+    at.button(key='next_to_4').click().run()
+    assert not at.exception
+    summary = next(item.value for item in at.markdown if 'class="tp-confirm-stack"' in item.value)
+    assert '原稿&lt;script&gt;.docx' in summary and '<script>' not in summary
+    assert '理论框架' in summary and '纸面模式' in summary
+    assert tr('仅含译文文本', locale=locale) in summary
+    assert tr('按自然句', locale=locale) in summary
+    assert tr('基础检查', locale=locale) in summary
+    runtime = next(item.value for item in at.markdown if 'class="tp-confirm-card tp-runtime-card"' in item.value)
+    assert not re.search('[\u4e00-\u9fff]', runtime)

@@ -64,7 +64,7 @@ from folith.ui.workspace import translation as _translation_ui
 from folith.ui import session as _ui_session
 from folith.ui import browser as _browser
 from folith import profiler
-from folith.ui.i18n import tr as _t, html_literal as _h, localized_formatter as _localized_formatter
+from folith.ui.i18n import tr as _t, html_literal as _h, localized_formatter as _localized_formatter, current_locale as _current_ui_locale
 from folith.ui import preferences as _preferences
 
 # Older Streamlit versions (including the Python 3.9-compatible line) do not
@@ -474,13 +474,13 @@ def _research_outputs_visible(preset_label=None, strategy_config=None):
             or bool(config.get("research_outputs_enabled")))
 
 
-def _delivery_preset_label(key, *, current=None, modified=False):
+def _delivery_preset_label(key, *, current=None, modified=False, locale=None):
     meta = _DELIVERY_PRESETS.get(key, _DELIVERY_PRESETS["standard"])
-    label = meta["label"]
+    label = _t(meta["label"], locale=locale)
     if key == "standard":
-        label += " · 推荐"
+        label += " · " + _t("推荐", locale=locale)
     if current == key and modified and key != "custom":
-        label += " · 已修改"
+        label += " · " + _t("已修改", locale=locale)
     return label
 
 
@@ -637,9 +637,9 @@ def _delivery_summary_html(summary):
         f"{escape(str(kind))} ×{int(amount)}"
         for kind, amount in counts.items())
     if not parts:
-        parts = "尚未选择交付文件"
+        parts = escape(_t("尚未选择交付文件"))
     return (
-        (_h('<div class="tp-delivery-summary"><strong>将生成 ') + str(count) + _h(' 个文件</strong><span>') + str(parts) + '</span></div>')
+        ('<div class="tp-delivery-summary"><strong>' + escape(_t('将生成 {v0} 个文件', v0=count)) + '</strong><span>' + parts + '</span></div>')
     )
 
 
@@ -655,9 +655,9 @@ def _render_delivery_item(item, *, group_key, index, config, disabled=False):
         row_key += "_nested"
     # When a format is present and the title would be ambiguous, append the
     # format to the visible title so users can scan rows at a glance.
-    display_title = item["title"]
+    display_title = _t(item["title"])
     if item.get("format") and item.get("disambig_fmt"):
-        display_title = f"{item['title']} · {item['format']}"
+        display_title += f" · {item['format']}"
     with st.container(key=row_key):
         check_col, copy_col, meta_col = st.columns([0.06, 0.80, 0.14])
         with check_col:
@@ -672,7 +672,7 @@ def _render_delivery_item(item, *, group_key, index, config, disabled=False):
             # display_title may have " · FORMAT" appended when disambig_fmt is set.
             st.markdown(
                 f'<div class="tp-delivery-row-copy"><strong>{escape(display_title)}'
-                f'</strong><span>{escape(item["detail"])}</span></div>',
+                f'</strong><span>{escape(_t(item["detail"]))}</span></div>',
                 unsafe_allow_html=True)
         with meta_col:
             if item.get("format"):
@@ -692,7 +692,7 @@ def _render_delivery_group(title, subtitle, items, config, *, group_key,
     extra_result = None
     with st.container(key=f"delivery_group_{group_key}"):
         st.markdown(
-            ('<div class="tp-delivery-group-head"><div><strong>' + str(escape(title)) + '</strong><span class="tp-delivery-group-sub">' + str(escape(subtitle)) + _h('</span></div><b>已选 ') + str(selected) + '</b></div>'), unsafe_allow_html=True)
+            ('<div class="tp-delivery-group-head"><div><strong>' + str(escape(_t(title))) + '</strong><span class="tp-delivery-group-sub">' + str(escape(_t(subtitle))) + _h('</span></div><b>已选 ') + str(selected) + '</b></div>'), unsafe_allow_html=True)
         for index, item in enumerate(items, start=1):
             disabled = (item.get("key") == "enable_annotate"
                         and not config.get("deliver_bilingual_docx"))
@@ -712,7 +712,7 @@ def _render_delivery_preset_selector():
         st.session_state.delivery_preset = current
     modified = bool(st.session_state.get("delivery_preset_modified"))
     meta = _DELIVERY_PRESETS[current]
-    status = " · 已修改" if modified and current != "custom" else ""
+    status = " · " + _t("已修改") if modified and current != "custom" else ""
     with st.container(key="delivery_preset_selector"):
         label_col, select_col, desc_col = st.columns([0.18, 0.32, 0.50])
         with label_col:
@@ -722,15 +722,15 @@ def _render_delivery_preset_selector():
         with select_col:
             st.selectbox(
                 _t("交付方案"), list(_DELIVERY_PRESET_KEYS),
-                format_func=_localized_formatter(_delivery_preset_select_label),
+                format_func=lambda key, locale=_current_ui_locale(): _delivery_preset_label(key, locale=locale),
                 key="delivery_preset", on_change=_on_delivery_preset_change,
                 label_visibility="collapsed",
                 **_PERSIST_STATE)
         with desc_col:
             st.markdown(
                 f'<div class="tp-delivery-preset-help">'
-                f'<strong>{escape(meta["label"])}{escape(status)}</strong>'
-                f'<span>&ensp;{escape(meta["description"])}</span></div>',
+                f'<strong>{escape(_t(meta["label"]))}{escape(status)}</strong>'
+                f'<span>&ensp;{escape(_t(meta["description"]))}</span></div>',
                 unsafe_allow_html=True)
 
 
@@ -1277,7 +1277,7 @@ def _render_task_actions(*, back_step=None, next_step=None, next_label="下一�
         else:
             status_col, back_col, next_col = st.columns([2.6, .8, .8])
         has_inputs = bool(st.session_state.get("task_files"))
-        save_text = "✓ 已自动保存" if has_inputs else "更改会自动保存"
+        save_text = escape(_t("✓ 已自动保存") if has_inputs else _t("更改会自动保存"))
         save_class = "tp-autosave is-saved" if has_inputs else "tp-autosave"
         if delivery_summary is not None:
             status_col.markdown(
@@ -1561,7 +1561,7 @@ def _summary_html(filename, target_lang, preset_label, glossary_name,
     filename = escape(str(filename))
     target_lang = escape(str(target_lang))
     preset_key = str(preset_label)
-    preset_label = escape(_PRESET_DISPLAY_NAMES.get(preset_key, preset_key))
+    preset_label = escape(_t(_PRESET_DISPLAY_NAMES.get(preset_key, preset_key)))
     glossary_name = escape(str(glossary_name))
     workflow = []
     if strategy_config.get("enable_understanding"):
@@ -1580,10 +1580,10 @@ def _summary_html(filename, target_lang, preset_label, glossary_name,
     mode_label = preset_label
     if _strategy_is_adjusted(preset_key, strategy_config) \
             or _output_is_adjusted(preset_key, output_config):
-        mode_label += " · 已调整"
+        mode_label += " · " + escape(_t("已调整"))
     segmentation_label = (
-        "按自然句" if strategy_config.get("segmentation_mode", "sentence") == "sentence"
-        else "按自然段")
+        _t("按自然句") if strategy_config.get("segmentation_mode", "sentence") == "sentence"
+        else _t("按自然段"))
     delivery_key = delivery_preset or st.session_state.get(
         "delivery_preset", "standard")
     delivery_label = _delivery_preset_label(
@@ -1630,19 +1630,19 @@ def _summary_html(filename, target_lang, preset_label, glossary_name,
         artifacts.append(("fact_check", "审校报告",
                           "审校发现与处理记录", "MD"))
     style_value = escape(str(
-        style_template + (f"（{style_source}）" if style_source else "")))
+        style_template + (f"（{_t(style_source)}）" if style_source else "")))
     artifact_rows = "".join(
         '<div class="tp-artifact-row">'
         f'<span class="material-symbols-rounded" aria-hidden="true">{icon}</span>'
-        f'<div><strong>{name}</strong><span>{detail}</span></div><b>{kind}</b></div>'
+        f'<div><strong>{escape(_t(name))}</strong><span>{escape(_t(detail))}</span></div><b>{kind}</b></div>'
         for icon, name, detail, kind in artifacts)
     return (
-        (_h('<div class="tp-confirm-stack"><section class="tp-confirm-card"><div class="tp-confirm-head"><span class="material-symbols-rounded" aria-hidden="true">tune</span><strong>任务配置</strong></div><div class="tp-summary-grid"><div class="tp-summary-item"><span>原文</span><strong>') + str(filename) + _h('</strong></div><div class="tp-summary-item"><span>目标语言</span><strong>') + str(target_lang) + _h('</strong></div><div class="tp-summary-item"><span>翻译模式</span><strong>') + str(mode_label) + _h('</strong></div><div class="tp-summary-item"><span>翻译单元</span><strong>') + str(segmentation_label) + _h('</strong></div><div class="tp-summary-item"><span>交付方案</span><strong>') + str(escape(delivery_label)) + _h('</strong></div><div class="tp-summary-item"><span>译文风格</span><strong>') + str(style_value) + _h('</strong></div><div class="tp-summary-item"><span>术语库</span><strong>') + str(glossary_name) + _h('</strong></div><div class="tp-summary-item is-wide"><span>工作流</span><strong>') + str(" → ".join(workflow)) + _h('</strong></div></div></section><section class="tp-confirm-card"><div class="tp-confirm-head"><span class="material-symbols-rounded" aria-hidden="true">inventory_2</span><strong>将生成 ') + str(delivery_summary["file_count"]) + _h(' 个文件</strong></div><div class="tp-artifact-list">') + str(artifact_rows) + '</div></section></div>'))
+        (_h('<div class="tp-confirm-stack"><section class="tp-confirm-card"><div class="tp-confirm-head"><span class="material-symbols-rounded" aria-hidden="true">tune</span><strong>任务配置</strong></div><div class="tp-summary-grid"><div class="tp-summary-item"><span>原文</span><strong>') + str(filename) + _h('</strong></div><div class="tp-summary-item"><span>目标语言</span><strong>') + str(target_lang) + _h('</strong></div><div class="tp-summary-item"><span>翻译模式</span><strong>') + str(mode_label) + _h('</strong></div><div class="tp-summary-item"><span>翻译单元</span><strong>') + escape(segmentation_label) + _h('</strong></div><div class="tp-summary-item"><span>交付方案</span><strong>') + str(escape(delivery_label)) + _h('</strong></div><div class="tp-summary-item"><span>译文风格</span><strong>') + str(style_value) + _h('</strong></div><div class="tp-summary-item"><span>术语库</span><strong>') + str(glossary_name) + _h('</strong></div><div class="tp-summary-item is-wide"><span>工作流</span><strong>') + " → ".join(escape(_t(step)) for step in workflow) + _h('</strong></div></div></section><section class="tp-confirm-card"><div class="tp-confirm-head"><span class="material-symbols-rounded" aria-hidden="true">inventory_2</span><strong>') + escape(_t("将生成 {v0} 个文件", v0=delivery_summary["file_count"])) + _h('</strong></div><div class="tp-artifact-list">') + str(artifact_rows) + '</div></section></div>'))
 
 
 def _runtime_html(provider, model, connection_status, can_start):
     provider = escape(str(provider))
-    model = escape(str(model or "未配置"))
+    model = escape(str(model)) if model else escape(_t("未配置"))
     connection = {
         "connected": ("已连接", "is-success"),
         "error": ("连接失败", "is-error"),
@@ -1659,7 +1659,7 @@ def _runtime_html(provider, model, connection_status, can_start):
     else:
         readiness = ("待验证", "is-warning")
     return (
-        (_h('<section class="tp-confirm-card tp-runtime-card"><div class="tp-confirm-head"><span class="material-symbols-rounded" aria-hidden="true">memory</span><strong>运行环境</strong></div><div class="tp-runtime-grid"><div><span>AI 引擎</span><strong>') + str(provider) + _h('</strong></div><div><span>模型</span><strong>') + str(model) + _h('</strong></div><div><span>连接状态</span><strong class="tp-status ') + str(connection[1]) + '">' + str(connection[0]) + _h('</strong></div><div><span>启动状态</span><strong class="tp-status ') + str(readiness[1]) + '">' + str(readiness[0]) + '</strong></div></div></section>'))
+        (_h('<section class="tp-confirm-card tp-runtime-card"><div class="tp-confirm-head"><span class="material-symbols-rounded" aria-hidden="true">memory</span><strong>运行环境</strong></div><div class="tp-runtime-grid"><div><span>AI 引擎</span><strong>') + str(provider) + _h('</strong></div><div><span>模型</span><strong>') + str(model) + _h('</strong></div><div><span>连接状态</span><strong class="tp-status ') + str(connection[1]) + '">' + escape(_t(connection[0])) + _h('</strong></div><div><span>启动状态</span><strong class="tp-status ') + str(readiness[1]) + '">' + escape(_t(readiness[0])) + '</strong></div></div></section>'))
 
 
 def _render_profile_editor(job_id, state, box=None):
@@ -8432,7 +8432,7 @@ def _render_workspace_delivery(job_id, state, overview=None):
     col_group_head, col_group_scope = st.columns([1.5, 2.5], vertical_alignment="center")
     with col_group_head:
         st.markdown(
-            (_h('<div class="tp-delivery-group-header"><strong>主要交付成果</strong><span class="tp-group-count">') + str(len(present_primary)) + _h(' 个文件</span></div>')),
+            (_h('<div class="tp-delivery-group-header"><strong>主要交付成果</strong><span class="tp-group-count">') + escape(_t("{v0} 个文件", v0=len(present_primary))) + '</span></div>'),
             unsafe_allow_html=True
         )
     with col_group_scope:
@@ -8482,7 +8482,7 @@ def _render_workspace_delivery(job_id, state, overview=None):
 
     # 5. Language Assets Section
     st.markdown(
-        (_h('<div class="tp-delivery-group-header"><strong>语言资产</strong><span class="tp-group-count">') + str(len(present_lang)) + _h(' 个文件</span></div>')),
+        (_h('<div class="tp-delivery-group-header"><strong>语言资产</strong><span class="tp-group-count">') + escape(_t("{v0} 个文件", v0=len(present_lang))) + '</span></div>'),
         unsafe_allow_html=True
     )
     with st.container(key="delivery_lang_grid"):
@@ -12874,8 +12874,8 @@ with setup_placeholder.container():
             _step_title(4, _t("确认运行"), _t("核对任务、输出内容与运行环境"))
             task_files = st.session_state.get("task_files") or []
             filename_summary = task_files[0]["name"] if len(task_files) == 1 \
-                else f"{len(task_files)} 个文档"
-            glossary_name = st.session_state.get("task_glossary_name", "未添加")
+                else _t("{v0} 个文档", v0=len(task_files))
+            glossary_name = st.session_state.get("task_glossary_name") or _t("未添加")
             style_template = st.session_state.get("style_template", "学术书面语")
             style_source = ""
             style_sel = st.session_state.get("style_selection")
