@@ -31,25 +31,23 @@ def test_catalog_gate_is_read_only_and_rejects_new_gaps(tmp_path, monkeypatch):
     (tmp_path / 'app.py').write_text("tr('保存')")
     catalogs = tmp_path / 'folith/resources/locales'
     catalogs.mkdir(parents=True)
-    baseline = tmp_path / 'baseline.json'
-    baseline.write_text(json.dumps({lang: ['实验'] for lang in locales.LOCALES}))
-    (catalogs / 'zh-CN.json').write_text(json.dumps({'保存': '保存', '实验': '实验', '第 {v0} 段': '第 {v0} 段'}))
+    (catalogs / 'zh-CN.json').write_text(json.dumps({'保存': '保存', '实验': '实验', '第 {v0} 段': '第 {v0} 段', '将生成 ': '将生成 '}))
     for lang in locales.LOCALES:
-        (catalogs / f'{lang}.json').write_text(json.dumps({'保存': 'Save', '第 {v0} 段': 'Segment {v0}'}))
+        (catalogs / f'{lang}.json').write_text(json.dumps({'保存': 'Save', '实验': 'Experiment', '第 {v0} 段': 'Segment {v0}', '将生成 ': 'Will generate '}))
     monkeypatch.setattr(locales, 'ROOT', tmp_path)
     monkeypatch.setattr(locales, 'CATALOGS', catalogs)
-    monkeypatch.setattr(locales, 'BASELINE', baseline)
     before = {p: p.read_bytes() for p in catalogs.iterdir()}
-    assert locales.check(allow_incomplete=True) == 0
-    assert locales.check() == 1  # Strict mode still reports incomplete languages.
+    assert locales.check() == 0
     assert before == {p: p.read_bytes() for p in catalogs.iterdir()}
-    (catalogs / 'en.json').write_text(json.dumps({'第 {v0} 段': 'Segment {v0}'}))
-    assert locales.check(allow_incomplete=True) == 1
-    (catalogs / 'en.json').write_text(json.dumps({'保存': 'Save', '第 {v0} 段': 'Segment'}))
-    assert locales.check(allow_incomplete=True) == 1
+    (catalogs / 'en.json').write_text(json.dumps({'第 {v0} 段': 'Segment {v0}', '将生成 ': 'Will generate '}))
+    assert locales.check() == 1
+    (catalogs / 'en.json').write_text(json.dumps({'保存': 'Save', '实验': 'Experiment', '第 {v0} 段': 'Segment', '将生成 ': 'Will generate '}))
+    assert locales.check() == 1
+    (catalogs / 'en.json').write_text(json.dumps({'保存': 'Save', '实验': 'Experiment', '第 {v0} 段': 'Segment {v0}', '将生成 ': 'Will generate'}))
+    assert locales.check() == 1  # Dropping the separator breaks assembled UI labels.
     (catalogs / 'ar.json').unlink()
     with pytest.raises(FileNotFoundError):
-        locales.check(allow_incomplete=True)
+        locales.check()
 
 
 def test_preflight_recognizes_macos_temporary_paths():

@@ -96,6 +96,8 @@ def test_generation_contract_rejects_partial_results():
     with pytest.raises(ValueError):
         validate_batch(source, {'0': {lang: 'Segment' for lang in ('en','es','ru','ar')}})
     validate_batch(source, {'0': {lang: 'Segment {v0}' for lang in ('en','es','ru','ar')}})
+    with pytest.raises(ValueError, match='whitespace'):
+        validate_batch({'0': '将生成 '}, {'0': {lang: 'Generate' for lang in ('en','es','ru','ar')}})
 
 
 def test_bare_html_literal_translates_and_escapes(monkeypatch):

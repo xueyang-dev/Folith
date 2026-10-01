@@ -41,8 +41,8 @@ jobs:
 
           print("critical module compile/import: OK")
           PY
-      - name: Check experimental UI catalogs
-        run: python scripts/check_ui_locales.py --allow-incomplete
+      - name: Check complete UI catalogs
+        run: python scripts/check_ui_locales.py
       - name: Run tests
         run: python scripts/run_regression.py --tsv release-regression.tsv
 

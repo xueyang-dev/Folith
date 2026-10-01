@@ -4436,7 +4436,7 @@ def _consume_pending_focus():
 
 
 def _render_focus_trigger(job_id, index):
-    _h("""把键盘焦点放进目标段落的译文框。
+    """把键盘焦点放进目标段落的译文框。
 
     "保存并下一段"如果没有焦点回位，用户每段都要重新点一次输入框——连续审校的
     手感就断在这一步上（这正是"保存并下一段"存在的意义）。
@@ -4447,7 +4447,7 @@ def _render_focus_trigger(job_id, index):
 
     定位用行锚点反查容器，而不是按 key 拼类名：类名形如
     `st-key-cat_editor_<job>_<index>`，用 `[class*=…_1]` 会同时命中 `…_12`。
-    """)
+    """
     if index is None:
         return
     st.html(f"""
@@ -9067,7 +9067,7 @@ def _remember_project_visit(project_id):
 
 
 def _route_params(**mapping):
-    _h("""把导航状态镜像到 URL query params（`/projects/<uuid>` 的可分享等价物）。
+    """把导航状态镜像到 URL query params（`/projects/<uuid>` 的可分享等价物）。
 
     Streamlit 的脚本式路由没有真实 path segment，因此用 `project=<uuid>` 表达
     "当前打开的是哪个项目"，用 `task=<hash>` 表达"当前打开的是哪个任务"。
@@ -9075,7 +9075,7 @@ def _route_params(**mapping):
 
     空值必须**删除**该参数，而不是写成 `?project=None`：后者会让 URL 看起来像
     "打开了一个叫 None 的项目"。
-    """)
+    """
     if mapping.get("task"):
         if "project" not in mapping:
             mapping["project"] = None

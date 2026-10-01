@@ -11,22 +11,19 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 CATALOGS = ROOT / 'folith/resources/locales'
 LOCALES = ('en', 'es', 'ru', 'ar')
-BASELINE = ROOT / 'docs/i18n/experimental-missing.json'
 
 def placeholders(text):
     return sorted(field for _, field, _, _ in string.Formatter().parse(text) if field is not None)
 
-def check(*, allow_incomplete=False, references_output=None):
+def check(*, references_output=None):
     source = json.loads((CATALOGS / 'zh-CN.json').read_text(encoding='utf-8'))
     errors = []
-    baseline = json.loads(BASELINE.read_text(encoding="utf-8")) if allow_incomplete else {}
     for locale in LOCALES:
         target = json.loads((CATALOGS / f'{locale}.json').read_text(encoding='utf-8'))
         missing, extra = source.keys() - target.keys(), target.keys() - source.keys()
         print(f'{locale}: {len(missing)} missing / {len(extra)} unexpected keys')
-        new_missing = missing - set(baseline.get(locale, ()))
-        if new_missing or extra:
-            errors.append(f'{locale}: {len(new_missing)} unapproved missing / {len(extra)} unexpected keys')
+        if missing or extra:
+            errors.append(f'{locale}: {len(missing)} missing / {len(extra)} unexpected keys')
         for key in source.keys() & target.keys():
             value = target[key]
             if not isinstance(value, str) or not value.strip():
@@ -37,6 +34,11 @@ def check(*, allow_incomplete=False, references_output=None):
                     errors.append(f'{locale}: placeholder mismatch: {key}')
             except ValueError:
                 errors.append(f'{locale}: invalid braces: {key}')
+            source_text = source[key]
+            leading = re.match(r'^\s*', source_text).group()
+            trailing = re.search(r'\s*$', source_text).group()
+            if re.match(r'^\s*', value).group() != leading or re.search(r'\s*$', value).group() != trailing:
+                errors.append(f'{locale}: fragment whitespace mismatch: {key!r}')
             if re.search(r'<\s*/?\s*(script|iframe|img|style)\b', value, re.I):
                 errors.append(f'{locale}: unexpected HTML in plain UI text: {key}')
     references = {}
@@ -67,16 +69,13 @@ def check(*, allow_incomplete=False, references_output=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--allow-incomplete', action='store_true',
-                        help='Allow only documented experimental missing keys')
     parser.add_argument('--write-references', type=Path,
                         help='Explicitly export source references outside the package')
     args = parser.parse_args()
     try:
         if args.write_references and args.write_references.resolve().is_relative_to(CATALOGS.resolve()):
             parser.error('source references must be written outside the package catalogs')
-        sys.exit(check(allow_incomplete=args.allow_incomplete,
-                       references_output=args.write_references))
+        sys.exit(check(references_output=args.write_references))
     except (OSError, ValueError) as exc:
         print(f'Catalog check failed: {exc}', file=sys.stderr)
         sys.exit(1)

@@ -4,9 +4,11 @@
 
 外观与语言页面已接入侧栏，路由 `?view=appearance`。日间、夜间、暖黄色纸面三种显示模式可切换。设置保存在本机 `outputs/ui_preferences.json`，重启后恢复。已有中文默认界面，新增 English、Español、Русский、العربية 四个选项。
 
-**全量本地化仍未完成。** 中文源资源 1,454 条；每个目标语言现有 535 条，尚缺 919 条。缺失文案显示中文原文。当前模型服务明确返回 `403 / INSUFFICIENT_BALANCE`，因此没有把缺失文案伪装成译文，也没有将报告标为 ready。用户已选择更换可用 AI 服务后继续全量翻译；等待新配置保存。
+**界面目录已补齐。** 中文源目录及 en/es/ru/ar 四语目录各 1,448 条，目标键集与中文完全一致。此前缺少的 919 条中，913 条实际界面文案已补译；另 6 条是两个内部函数说明误经 HTML 文本提取器拆分出来的内容，已恢复为普通 docstring 并从所有目录移除。已有每语 535 条译文保留。
 
-`localize-anything` 已运行 scan、glossary bootstrap、context、check、report。英文结构检查为 `fail`，919 个 blocking 缺译项；报告为 `incomplete`。其他三语有同样的资源缺项。结构检查通过之前尚未启动独立语言审阅；现有译文不是人工签核或正式发布译文。
+本轮由 Codex 与获授权的语言子代理直接补译，未使用外部模型服务（现有服务仍返回 `403 / INSUFFICIENT_BALANCE`）。严格门禁检查键集、非空译文、具名占位符、非法 HTML 和拼接片段前后空格；CI 不再允许实验缺译基线。
+
+四语界面仍为**实验功能**：目录完整不等同于独立语言审阅、所有动态文案和 RTL 页面已完成验收。没有把代理补译冒充人工语言签核。先前 `.localize-anything/` 中的 incomplete 报告属于补译前历史，不代表当前目录。
 
 ## 架构与边界
 
@@ -37,18 +39,18 @@ st.caption(tr("第 {v0} 段", v0=index + 1))
 `html_literal()` 只能处理**插值前的静态源码片段**。它对目标文案进行 HTML 转义；用户数据应单独转义后插值，不能把已渲染 HTML 整体交给翻译器。
 
 ```bash
-python3 scripts/check_ui_locales.py --allow-incomplete
+python3 scripts/check_ui_locales.py
 python3 scripts/check_ui_locales.py --write-references .localize-anything/source-references.json
 python3 -m pytest tests/ui_preferences_test.py -q
 ```
 
-严格检查在当前未补齐状态下会返回非零，这是真实的缺译信息。CI 使用 `--allow-incomplete`，按 `experimental-missing.json` 中逐键记录的已知缺译允许实验功能，新增缺译、资源丢失、额外键和占位符错误仍失败；补译不要求更新基线即可通过。检查默认只读，引用索引仅在显式指定输出时生成。
+严格检查要求全部四语文案齐全，新增缺译、资源丢失、额外键、占位符错误和拼接片段空格变化均失败。检查默认只读，引用索引仅在显式指定输出时生成。未来新增文案应补齐四语后再提交，不恢复缺译白名单。
 
 ## 使用 Localize Anything
 
 项目保留 `.localize-anything/project-memory.json` 的产品范围、风格和保留规则，以及 canonical Glossary。`scripts/localize_ui.py` 直接委托同级 `localize-anything` 或 `~/Dev/localize-anything` 的 CLI，不复制其工作流，也不把工具加入 Folith 的运行依赖。维护工具要求 Python 3.11+（应用运行本身仍按原来的 Python 要求）。默认定位同级仓库；其他机器使用 `--tool-root /path/to/localize-anything`。
 
-配置新的可用模型并在 Folith AI 引擎页面保存后，可补齐缺项：
+将来增加源文案时，可直接维护目录；如使用现有生成脚本，需先在 Folith AI 引擎页面保存可用模型：
 
 ```bash
 python3 scripts/translate_ui_catalogs.py
@@ -78,7 +80,7 @@ Project Memory 当前目标语言必须与命令一致，工具会拒绝混用�
 
 真实浏览器已检查英文夜间设置页、阿拉伯语纸面设置页和英文夜间翻译工作台，发现并修复了深色品牌图混合、按钮对比度、长语言标签和模式选中状态问题。没有修改真实译文、调用任务生成或创建交付版本。
 
-未完成：全部目标资源、独立语言审阅、完整页面语义与视觉覆盖、阿拉伯语所有复杂表格/长文案、真实屏幕阅读器和所有设备尺寸验证。
+未完成：独立语言审阅、完整页面语义与视觉覆盖、阿拉伯语所有复杂表格/长文案、真实屏幕阅读器和所有设备尺寸验证。
 
 ![英文夜间模式](screenshots/dark-en.jpg)
 

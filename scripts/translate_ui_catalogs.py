@@ -47,6 +47,8 @@ def validate_batch(source, target):
         for locale, text in values.items():
             if not isinstance(text, str) or not text.strip():
                 raise ValueError('Empty translation')
+            if re.match(r'^\s*', text).group() != re.match(r'^\s*', source[key]).group() or re.search(r'\s*$', text).group() != re.search(r'\s*$', source[key]).group():
+                raise ValueError('Fragment whitespace mismatch')
             if fields(text) != fields(source[key]):
                 raise ValueError('Placeholder mismatch')
             if re.search(r'<\s*/?\s*(script|iframe|img|style)\b', text, re.I):
