@@ -1,0 +1,24 @@
+{
+  "probe_run": {
+    "exit_code": 0,
+    "stderr_tail": ""
+  },
+  "probe": {
+    "url": "http://127.0.0.1:56359",
+    "steps": [],
+    "before": {
+      "chinese_present": true,
+      "english_present": false
+    },
+    "after_english": {
+      "english_present": true,
+      "chinese_present": false,
+      "sample": "add\n\nNew task\n\nProjects\n\nfolder\n\nNo project selected\n\nCurrent task\nradio_button_checked\n\n01 Document & profile\n\nradio_button_unchecked\n\n02 Translation strategy\n\nradio_button_unchecked\n\n03 Deliverables\n\nradio_button_unchecked\n\n04 Confirm & run\n\nhistory\n\nTask history\n\nmenu_book\n\nTerms & translation me"
+    },
+    "restored": {
+      "chinese_present": true
+    },
+    "ok": true
+  },
+  "ok": true
+}

@@ -1,0 +1,49 @@
+{
+  "task1": {
+    "exit_code": 0,
+    "job_id": "7fe3fb28ac8a9c53"
+  },
+  "task2": {
+    "exit_code": 0,
+    "job_id": "827607d3e7508259"
+  },
+  "target": "7fe3fb28ac8a9c53",
+  "neighbour": "827607d3e7508259",
+  "neighbour_snapshot_files_before": 7,
+  "url": "http://127.0.0.1:60140",
+  "probe_exit_code": 0,
+  "probe": {
+    "job": "7fe3fb28ac8a9c53",
+    "steps": {
+      "listed": {
+        "present": true
+      },
+      "opened": {
+        "present": true,
+        "confirm_disabled": true
+      },
+      "wrong_name": {
+        "present": true,
+        "confirm_disabled": true
+      },
+      "closed": {
+        "present": true
+      },
+      "correct_name": {
+        "present": true,
+        "confirm_disabled": false,
+        "typed_value": "D0 Text Layer"
+      },
+      "after_confirm": {
+        "present": false
+      }
+    },
+    "ok": true,
+    "expected_name": "D0 Text Layer"
+  },
+  "services_after_exit": 0,
+  "target_dir_after": false,
+  "neighbour_dir_after": true,
+  "neighbour_snapshot_files_after": 7,
+  "ok": true
+}

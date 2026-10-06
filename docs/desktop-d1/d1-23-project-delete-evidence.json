@@ -1,0 +1,44 @@
+{
+  "project_name": "验收用空项目",
+  "url": "http://127.0.0.1:61023",
+  "probe_exit_code": 0,
+  "probe": {
+    "project_name": "验收用空项目",
+    "steps": {
+      "created": {
+        "project_id": "bbf43606-091e-4671-b994-7de6c715c937",
+        "rows": 1
+      },
+      "opened": {
+        "confirm_disabled": true
+      },
+      "wrong_name": {
+        "confirm_disabled": true
+      },
+      "correct_name": {
+        "confirm_disabled": false,
+        "typed_value": "验收用空项目"
+      },
+      "after_confirm": {
+        "row_present": false
+      }
+    },
+    "ok": true,
+    "project_id": "bbf43606-091e-4671-b994-7de6c715c937"
+  },
+  "probe_attempts": [
+    {
+      "attempt": 1,
+      "exit_code": 0,
+      "ok": true,
+      "error": ""
+    }
+  ],
+  "services_after_exit": 0,
+  "backups": [
+    "projects/_deleted/bbf43606-091e-4671-b994-7de6c715c937-20261003T185646Z.json"
+  ],
+  "backup_mentions_project": true,
+  "project_still_present": false,
+  "ok": true
+}

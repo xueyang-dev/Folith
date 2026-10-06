@@ -1,0 +1,120 @@
+{
+  "started_at": "2026-10-03T11:04:24.376Z",
+  "url": "http://127.0.0.1:63407",
+  "source": "/private/tmp/d0-mixed-slice/fixtures/d0-mixed.docx",
+  "edit_text": "فقرة مختلطة: النموذج v2 ينتج «مرحبا بالعالم» بإجمالي 42 فقرة (mixed edit).",
+  "target_lang": "العربية",
+  "review_requested": true,
+  "steps": [
+    {
+      "step": "open-app",
+      "ok": true,
+      "detail": {
+        "title": "译页 · 智能体翻译工作台"
+      }
+    },
+    {
+      "step": "configure-provider",
+      "ok": true,
+      "detail": {
+        "saved": true,
+        "stub_url": "http://127.0.0.1:63405/v1"
+      }
+    },
+    {
+      "step": "test-connection",
+      "ok": true,
+      "detail": {
+        "alert": "响应「OK」· 耗时 0.7s"
+      }
+    },
+    {
+      "step": "upload-source",
+      "ok": true,
+      "detail": {
+        "target_lang": "العربية",
+        "ocr_language": null
+      }
+    },
+    {
+      "step": "strategy",
+      "ok": true,
+      "detail": {
+        "preset": "标准",
+        "review_enabled": true,
+        "preset_text_has_review": true
+      }
+    },
+    {
+      "step": "delivery-options",
+      "ok": true,
+      "detail": true
+    },
+    {
+      "step": "run-task",
+      "ok": true,
+      "detail": "7686e0f1d33af987"
+    },
+    {
+      "step": "wait-translation",
+      "ok": true,
+      "detail": {
+        "body_excerpt": "跳到主要内容\n\narrow_back\n\n项目\n\nd0-mixed\n5 / 5 已译\n0 / 1 术语确认\n审校 5 / 5\n保存于 14:05\n\n准备交付\n\n查看 1 条建议\n\nradio_button_checked\n\n翻译\n\ncheck_circle\n\n术语\n\ncheck_circle\n\n审校\n\nerror_outline\n\n交付\n\ninfo\n\n任务详情\n\nexpand_more\n章节目录\nkeyboard_arrow_right\n\nترجمة النصوص العربية: استعادة النظام البيئي وآلياته · 4–5\n\nlist\n\n全部 5\n\npending_"
+      }
+    },
+    {
+      "step": "edit-and-commit",
+      "ok": true,
+      "detail": {
+        "edit_text": "فقرة مختلطة: النموذج v2 ينتج «مرحبا بالعالم» بإجمالي 42 فقرة (mixed edit).",
+        "alerts": [
+          "第 1 段译文已保存；上一次审校已过期，需要重新审校。"
+        ]
+      }
+    },
+    {
+      "step": "review",
+      "ok": true,
+      "detail": {
+        "reruns": 4,
+        "decided": 0,
+        "pending_rereview": 0,
+        "body_excerpt": "跳到主要内容\n\narrow_back\n\n项目\n\nd0-mixed\n5 / 5 已译\n0 / 1 术语确认\n审校 5 / 5\n保存于 14:05\n\n准备交付\n\n查看 1 条建议\n\ncheck_circle\n\n翻译\n\ncheck_circle\n\n术语\n\nradio_button_checked\n\n审校\n\nerror_outline\n\n交付\n\ninfo\n\n任务详情\n\nexpand_more\n\n第 4 段已完成重新审校。\n\n审校工作台\n0 项\n\n5 / 5 段已有最新独立审校结果\n\n待处理 0\n\n需复审 0\n\n建议 0\n\n参考 0\n\n全部 0\n\n当前筛选下没有审校任务。\n\nkeyboard_arrow_right\n\n审校任务操作\n\n选择一项检查结果，查看证据和处理建议。"
+      }
+    },
+    {
+      "step": "freeze-delivery",
+      "ok": true,
+      "detail": {
+        "body_excerpt": "跳到主要内容\n\narrow_back\n\n项目\n\nd0-mixed\n5 / 5 已译\n0 / 1 术语确认\n审校 5 / 5\n已交付 · 冻结交付 v1\n保存于 14:06\n\n已交付\n\n查看 1 条建议\n\ncheck_circle\n\n翻译\n\ncheck_circle\n\n术语\n\ncheck_circle\n\n审校\n\nradio_button_checked\n\n交付\n\ninfo\n\n任务详情\n\nexpand_more\n\n✓ 交付版本 v1 已创建\n\n交付中心\n工作版本 v3 · 已创建交付版本 v1\n\n确认完成、创建交付版本、获取交付文件\n\n准备交付\n5 / 5 已完成 · 工作版本 v3 · 最后修改 —\n前置检查已通过\n✓\n译文导出 · 可导出\n✓\n独立审校 · 已完成\n当前交付 v1 · 0 个阻塞问题（审校）\n\n交付内容：纯译文 · DOCX、双语对照 · DOCX\n\n调整交付内容\n\nexp"
+      }
+    },
+    {
+      "step": "download-delivery",
+      "ok": true,
+      "detail": {
+        "path": "/private/tmp/d0-mixed-slice/downloads/translation.docx",
+        "bytes": 37070,
+        "sha256": "c7019eb5b6ea98f284e3f2d5df7ed9740ecc60ca2f47f93f734b0f203fddf7a7",
+        "suggested": "translation.docx"
+      }
+    }
+  ],
+  "alerts": [
+    "已获取 1 个可用模型",
+    "响应「OK」· 耗时 0.7s",
+    "第 1 段译文已保存；上一次审校已过期，需要重新审校。",
+    "第 4 段已完成重新审校。",
+    "✓ 交付版本 v1 已创建"
+  ],
+  "page_errors": [],
+  "job_id": "7686e0f1d33af987",
+  "download": {
+    "path": "/private/tmp/d0-mixed-slice/downloads/translation.docx",
+    "bytes": 37070,
+    "sha256": "c7019eb5b6ea98f284e3f2d5df7ed9740ecc60ca2f47f93f734b0f203fddf7a7",
+    "suggested": "translation.docx"
+  },
+  "ok": true,
+  "finished_at": "2026-10-03T11:06:09.763Z"
+}

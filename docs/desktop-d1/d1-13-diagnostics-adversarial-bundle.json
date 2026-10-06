@@ -1,0 +1,74 @@
+{
+  "collected_at": "2026-10-03T17:05:48+0300",
+  "diagnostics": {
+    "app": {
+      "build_id": "git:1260a82",
+      "built_at": "2026-10-03T14:05:07+00:00",
+      "commit": "1260a826819cce3df23e165af36f8563f84d3625",
+      "frozen": true,
+      "packaging_backend": "pyinstaller",
+      "target_arch": "arm64",
+      "target_platform": "macos",
+      "version": "0.5.0"
+    },
+    "data_schema": {
+      "job_state": "unversioned",
+      "journal": {
+        "declared": 1,
+        "observed": null
+      },
+      "runtime": {
+        "declared": "2",
+        "observed": null
+      },
+      "source": "observed from 0 job(s) in the data directory",
+      "translation_drafts": {
+        "declared": 1,
+        "observed": null
+      }
+    },
+    "locations": {
+      "data_dir": "/private/tmp/diag-adv2/data",
+      "job_count": 0,
+      "launcher_log": "/private/tmp/diag-adv2/logs/launcher.log",
+      "log_dir": "/private/tmp/diag-adv2/logs",
+      "service_log": "/private/tmp/diag-adv2/logs/service.log"
+    },
+    "runtime": {
+      "pyinstaller_version": "6.22.3",
+      "python_version": "3.11.3",
+      "pywebview_version": "6.2.1",
+      "streamlit_version": "1.64.0"
+    },
+    "system": {
+      "architecture": "arm64",
+      "machine": "arm64",
+      "os": "Darwin",
+      "os_version": "macOS-27.0.1-arm64-arm-64bit"
+    },
+    "tools": {
+      "libreoffice": {
+        "found": false,
+        "path": "",
+        "render_qa": "NOT_RUN"
+      },
+      "tesseract": {
+        "found": true,
+        "languages": [
+          "ara",
+          "chi_sim",
+          "eng"
+        ],
+        "path": "~/Dev/FolioThread/dist/desktop/Folith.app/Contents/Frameworks/tesseract/bin/tesseract"
+      }
+    }
+  },
+  "error_summary": [
+    "launcher.log: 2026-10-03 10:00:01 ERROR 模型请求失败 api_key=<redacted>",
+    "launcher.log: 2026-10-03 10:00:02 ERROR upstream returned 401 for key <redacted>",
+    "launcher.log: 2026-10-03 10:00:03 WARNING startup_token=<redacted>",
+    "launcher.log: 2026-10-03 10:00:04 ERROR prompt was \"Ecological restoration has moved from describing static states\"",
+    "launcher.log: 2026-10-03 10:00:06 ERROR 服务进程意外退出，日志：~/Library/Logs/Folith/service.log"
+  ],
+  "export_version": 1
+}

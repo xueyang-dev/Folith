@@ -1,0 +1,10 @@
+# Desktop packaging build dependencies (not shipped inside the app).
+#
+# The frozen bundle is built with these tools; they are intentionally NOT part of
+# the runtime dependency set in requirements.txt / requirements-desktop.txt.
+#
+#   venv/bin/python -m pip install -r requirements-desktop-build.txt
+#
+# Versions are pinned so a D0/D2/D3 build record can be reproduced (roadmap §3.5).
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8

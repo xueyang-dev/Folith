@@ -1,0 +1,189 @@
+{
+  "scenario": "paused-plus-running",
+  "url": "http://127.0.0.1:58589",
+  "task1": {
+    "job_id": "1aafb43730792f38",
+    "attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 0,
+        "job_id": "1aafb43730792f38",
+        "error": ""
+      }
+    ]
+  },
+  "task2": {
+    "job_id": "1ceb00fbb65d7262",
+    "attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 0,
+        "job_id": "1ceb00fbb65d7262",
+        "error": ""
+      }
+    ]
+  },
+  "jobs": [
+    "1aafb43730792f38",
+    "1ceb00fbb65d7262"
+  ],
+  "statuses_before_exit": {
+    "1aafb43730792f38": "waiting_external",
+    "1ceb00fbb65d7262": "waiting_external"
+  },
+  "active_statuses": [
+    "cancelling",
+    "paused",
+    "pausing",
+    "queued",
+    "resume_requested",
+    "running",
+    "starting",
+    "waiting_external"
+  ],
+  "active_before_exit": [
+    "1aafb43730792f38",
+    "1ceb00fbb65d7262"
+  ],
+  "several_active_before_exit": true,
+  "paused_ok": "1",
+  "statuses_after_pause": {
+    "1aafb43730792f38": "waiting_external",
+    "1ceb00fbb65d7262": "paused"
+  },
+  "app_exit_code": 0,
+  "probe": {
+    "automation": "ok",
+    "waited_for": "/private/tmp/d1-paused/go-exit",
+    "pause_job": "1ceb00fbb65d7262",
+    "pause_clicked": true,
+    "status_after_pause": "paused",
+    "paused": true,
+    "marker_seen": true,
+    "report": {
+      "started_at": 1791043272.450987,
+      "steps": [
+        "locate-job",
+        "flush-editor",
+        "cancel-task",
+        "commit-drafts",
+        "cancel-other-tasks",
+        "final-check"
+      ],
+      "job_id_in_window": "1ceb00fbb65d7262",
+      "job_id": "1ceb00fbb65d7262",
+      "flush": {
+        "tag": "body",
+        "value_tail": "",
+        "value_length": 0,
+        "flushed": false
+      },
+      "before": {
+        "job_id": "1ceb00fbb65d7262",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "paused",
+        "task_running": true,
+        "worker_lock_held": true
+      },
+      "cancel": {
+        "cancel_clicked": true,
+        "cancel_detail": {
+          "clicked": true,
+          "via": "scoped"
+        },
+        "left_active_status": true,
+        "worker_lock_released": true,
+        "status": "cancelled"
+      },
+      "commit": {
+        "committed_segments": [],
+        "remaining": 0,
+        "rounds": 1,
+        "failures": [],
+        "confirmed": true
+      },
+      "other_cancels": {
+        "1aafb43730792f38": {
+          "cancel_clicked": true,
+          "cancel_detail": {
+            "clicked": true,
+            "via": "scoped"
+          },
+          "left_active_status": true,
+          "worker_lock_released": true,
+          "status": "cancelled"
+        }
+      },
+      "after": {
+        "job_id": "1ceb00fbb65d7262",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "cancelled",
+        "task_running": false,
+        "worker_lock_held": false
+      },
+      "other_after": {
+        "1aafb43730792f38": {
+          "job_id": "1aafb43730792f38",
+          "draft_count": 0,
+          "draft_segments": [],
+          "active_status": "cancelled",
+          "task_running": false,
+          "worker_lock_held": false
+        }
+      },
+      "safe_to_exit": true,
+      "action": "saved-and-stopped",
+      "finished_at": 1791043276.340651
+    }
+  },
+  "exit_report": {
+    "safe_to_exit": true,
+    "action": "saved-and-stopped",
+    "forced": null,
+    "job_id": "1ceb00fbb65d7262",
+    "active_jobs_on_disk": null,
+    "other_cancels": {
+      "1aafb43730792f38": {
+        "cancel_clicked": true,
+        "cancel_detail": {
+          "clicked": true,
+          "via": "scoped"
+        },
+        "left_active_status": true,
+        "worker_lock_released": true,
+        "status": "cancelled"
+      }
+    },
+    "steps": [
+      "locate-job",
+      "flush-editor",
+      "cancel-task",
+      "commit-drafts",
+      "cancel-other-tasks",
+      "final-check"
+    ]
+  },
+  "statuses_after_exit": {
+    "1aafb43730792f38": "cancelled",
+    "1ceb00fbb65d7262": "cancelled"
+  },
+  "services_after_exit": 0,
+  "data_after_exit": {
+    "1aafb43730792f38": {
+      "parsed": true,
+      "paragraphs": 12,
+      "pairs": 0
+    },
+    "1ceb00fbb65d7262": {
+      "parsed": true,
+      "paragraphs": 54,
+      "pairs": 0
+    }
+  },
+  "expected_others": [
+    "1aafb43730792f38"
+  ],
+  "ok": true
+}

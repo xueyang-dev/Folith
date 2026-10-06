@@ -1,0 +1,77 @@
+{
+  "app": "/Users/xueyang/Dev/FolioThread/dist/desktop/Folith.app/Contents/MacOS/Folith",
+  "data_dir": "/private/tmp/d1-unsafe/desktop-data",
+  "cases": [
+    {
+      "case": "nonexistent",
+      "source": "/private/tmp/d1-unsafe/does-not-exist",
+      "exit_code": 12,
+      "expected_exit_code": 12,
+      "message": "  详情：旧数据目录不存在或不是目录：/private/tmp/d1-unsafe/does-not-exist",
+      "target_unchanged": true,
+      "changed_entries": [],
+      "ok": true
+    },
+    {
+      "case": "regular-file",
+      "source": "/private/tmp/d1-unsafe/not-a-directory.txt",
+      "exit_code": 12,
+      "expected_exit_code": 12,
+      "message": "  详情：旧数据目录不存在或不是目录：/private/tmp/d1-unsafe/not-a-directory.txt",
+      "target_unchanged": true,
+      "changed_entries": [],
+      "ok": true
+    },
+    {
+      "case": "same-as-target",
+      "source": "/private/tmp/d1-unsafe/desktop-data",
+      "exit_code": 12,
+      "expected_exit_code": 12,
+      "message": "  详情：旧数据目录与当前数据目录相同，无需接入",
+      "target_unchanged": true,
+      "changed_entries": [],
+      "ok": true
+    },
+    {
+      "case": "target-parent",
+      "source": "/private/tmp/d1-unsafe",
+      "exit_code": 12,
+      "expected_exit_code": 12,
+      "message": "  详情：旧数据目录与当前数据目录不能互相包含",
+      "target_unchanged": true,
+      "changed_entries": [],
+      "ok": true
+    },
+    {
+      "case": "target-child",
+      "source": "/private/tmp/d1-unsafe/desktop-data/existing-job",
+      "exit_code": 12,
+      "expected_exit_code": 12,
+      "message": "  详情：旧数据目录与当前数据目录不能互相包含",
+      "target_unchanged": true,
+      "changed_entries": [],
+      "ok": true
+    },
+    {
+      "case": "filesystem-root",
+      "source": "/",
+      "exit_code": 12,
+      "expected_exit_code": 12,
+      "message": "  详情：旧数据目录与当前数据目录不能互相包含",
+      "target_unchanged": true,
+      "changed_entries": [],
+      "ok": true
+    },
+    {
+      "case": "empty-source",
+      "source": "/private/tmp/d1-unsafe/empty-source",
+      "exit_code": 0,
+      "expected_exit_code": null,
+      "message": "  当前数据目录：/private/tmp/d1-unsafe/desktop-data",
+      "target_unchanged": true,
+      "changed_entries": [],
+      "ok": true
+    }
+  ],
+  "ok": true
+}

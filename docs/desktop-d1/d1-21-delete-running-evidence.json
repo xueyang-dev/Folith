@@ -1,0 +1,119 @@
+{
+  "url": "http://127.0.0.1:60939",
+  "running_setup": {
+    "exit_code": 0,
+    "job_id": "db62e6ce527302c8"
+  },
+  "target": "db62e6ce527302c8",
+  "status_at_attempt": {
+    "schema_version": "2",
+    "status": "waiting_external",
+    "pipeline": "document_pipeline",
+    "stage": "document_processing",
+    "stage_id": "llm_cleanup",
+    "stage_index": null,
+    "stage_total": null,
+    "operation": "llm_cleanup",
+    "operation_id": "llm_cleanup",
+    "operation_label": "LLM 原文纠错与断行整理",
+    "stage_progress": {
+      "unit": "批次",
+      "completed": 0,
+      "total": 1,
+      "in_flight": []
+    },
+    "section_id": "",
+    "phase": "waiting_llm",
+    "phase_label": "等待模型响应（1 个请求进行中）",
+    "started_at": "2026-10-03T17:37:57+00:00",
+    "operation_started_at": "2026-10-03T17:37:57+00:00",
+    "last_heartbeat_at": "2026-10-03T17:37:57+00:00",
+    "last_progress_at": "2026-10-03T17:37:58+00:00",
+    "completed_units": 0,
+    "total_units": 0,
+    "overall_progress": null,
+    "last_event": "已向模型发送请求",
+    "events": [
+      {
+        "stage": "document_processing",
+        "operation": "document_processing",
+        "at": "2026-10-03T17:37:57+00:00",
+        "timestamp": "2026-10-03T17:37:57+00:00",
+        "event": "document_processing",
+        "message": "【阶段一】排版解析与段落重建（确定性提取）...",
+        "visibility": "user",
+        "category": "progress"
+      },
+      {
+        "stage": "llm_cleanup",
+        "operation": "llm_cleanup",
+        "at": "2026-10-03T17:37:57+00:00",
+        "timestamp": "2026-10-03T17:37:57+00:00",
+        "event": "llm_cleanup",
+        "message": "【阶段一】LLM 原文纠错与断行整理…",
+        "visibility": "user",
+        "category": "progress"
+      },
+      {
+        "stage": "llm_cleanup",
+        "operation": "llm_cleanup",
+        "at": "2026-10-03T17:37:58+00:00",
+        "timestamp": "2026-10-03T17:37:58+00:00",
+        "event": "llm_cleanup",
+        "message": "【阶段一】LLM 原文纠错与断行整理（批次 0/1）…",
+        "visibility": "user",
+        "category": "progress"
+      },
+      {
+        "stage": "llm_cleanup",
+        "operation": "llm_cleanup",
+        "at": "2026-10-03T17:37:58+00:00",
+        "timestamp": "2026-10-03T17:37:58+00:00",
+        "event": "llm_request_started",
+        "message": "已向模型发送请求",
+        "visibility": "user",
+        "category": "external_wait"
+      }
+    ],
+    "last_technical_event": "后台 worker 已接管任务",
+    "cancel_requested": false,
+    "pause_requested": false,
+    "attempt": 1,
+    "resume_request_id": "",
+    "error": null,
+    "worker": {
+      "owner_pid": 96761,
+      "worker_id": "d34a5da5792f42f390db8d3795de80b2",
+      "lease_expires_at": "2026-10-03T17:38:57+00:00"
+    },
+    "segment_operation": {},
+    "segment_operation_result": "pending",
+    "phase_started_at": "2026-10-03T17:37:58+00:00",
+    "last_activity_at": "2026-10-03T17:37:58+00:00",
+    "model_wait_started_at": "2026-10-03T17:37:58+00:00"
+  },
+  "probe_exit_code": 0,
+  "probe": {
+    "job": "db62e6ce527302c8",
+    "steps": {
+      "listed": {
+        "present": true
+      },
+      "opened": {
+        "present": true,
+        "confirm_input_present": false,
+        "confirm_button_present": false,
+        "close_present": true
+      },
+      "closed": {
+        "present": true
+      }
+    },
+    "ok": true,
+    "refusal_text": true
+  },
+  "target_dir_while_running": true,
+  "services_after_exit": 0,
+  "target_dir_after": true,
+  "ok": true
+}

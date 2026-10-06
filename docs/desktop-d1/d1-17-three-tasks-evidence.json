@@ -1,0 +1,254 @@
+{
+  "scenario": "three-running",
+  "url": "http://127.0.0.1:56494",
+  "task1": {
+    "job_id": "a3881ae841bf6176",
+    "attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 1,
+        "job_id": null,
+        "error": "test-connection: page.waitForTimeout: Target page, context or browser has been closed"
+      },
+      {
+        "attempt": 2,
+        "exit_code": 0,
+        "job_id": "a3881ae841bf6176",
+        "error": ""
+      }
+    ]
+  },
+  "task2": {
+    "job_id": "8f394d9c9eb47a8a",
+    "attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 1,
+        "job_id": null,
+        "error": "open-app: page.waitForTimeout: Target page, context or browser has been closed"
+      },
+      {
+        "attempt": 2,
+        "exit_code": 0,
+        "job_id": "8f394d9c9eb47a8a",
+        "error": ""
+      }
+    ]
+  },
+  "task3": {
+    "job_id": "a8547504169ec13f",
+    "attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 0,
+        "job_id": "a8547504169ec13f",
+        "error": ""
+      }
+    ]
+  },
+  "jobs": [
+    "a3881ae841bf6176",
+    "8f394d9c9eb47a8a",
+    "a8547504169ec13f"
+  ],
+  "statuses_before_exit": {
+    "a3881ae841bf6176": "waiting_external",
+    "8f394d9c9eb47a8a": "waiting_external",
+    "a8547504169ec13f": "waiting_external"
+  },
+  "active_statuses": [
+    "cancelling",
+    "paused",
+    "pausing",
+    "queued",
+    "resume_requested",
+    "running",
+    "starting",
+    "waiting_external"
+  ],
+  "active_before_exit": [
+    "a3881ae841bf6176",
+    "8f394d9c9eb47a8a",
+    "a8547504169ec13f"
+  ],
+  "several_active_before_exit": true,
+  "app_exit_code": 0,
+  "probe": {
+    "automation": "ok",
+    "waited_for": "/private/tmp/d1-three2/go-exit",
+    "marker_seen": true,
+    "report": {
+      "started_at": 1791042919.5932631,
+      "steps": [
+        "locate-job",
+        "navigate-to-job",
+        "flush-editor",
+        "cancel-task",
+        "commit-drafts",
+        "cancel-other-tasks",
+        "final-check"
+      ],
+      "job_id_in_window": null,
+      "active_jobs_on_disk": [
+        "8f394d9c9eb47a8a",
+        "a3881ae841bf6176",
+        "a8547504169ec13f"
+      ],
+      "job_source": "data-dir",
+      "navigated_to_job": true,
+      "job_id": "8f394d9c9eb47a8a",
+      "flush": {
+        "tag": "body",
+        "value_tail": "",
+        "value_length": 0,
+        "flushed": false
+      },
+      "before": {
+        "job_id": "8f394d9c9eb47a8a",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "waiting_external",
+        "task_running": true,
+        "worker_lock_held": true
+      },
+      "cancel": {
+        "cancel_clicked": true,
+        "cancel_detail": {
+          "clicked": true,
+          "via": "scoped"
+        },
+        "left_active_status": true,
+        "worker_lock_released": true,
+        "status": "cancelled"
+      },
+      "commit": {
+        "committed_segments": [],
+        "remaining": 0,
+        "rounds": 1,
+        "failures": [],
+        "confirmed": true
+      },
+      "other_cancels": {
+        "a3881ae841bf6176": {
+          "cancel_clicked": true,
+          "cancel_detail": {
+            "clicked": true,
+            "via": "scoped"
+          },
+          "left_active_status": true,
+          "worker_lock_released": true,
+          "status": "cancelled"
+        },
+        "a8547504169ec13f": {
+          "cancel_clicked": true,
+          "cancel_detail": {
+            "clicked": true,
+            "via": "scoped"
+          },
+          "left_active_status": true,
+          "worker_lock_released": true,
+          "status": "cancelled"
+        }
+      },
+      "after": {
+        "job_id": "8f394d9c9eb47a8a",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "cancelled",
+        "task_running": false,
+        "worker_lock_held": false
+      },
+      "other_after": {
+        "a3881ae841bf6176": {
+          "job_id": "a3881ae841bf6176",
+          "draft_count": 0,
+          "draft_segments": [],
+          "active_status": "cancelled",
+          "task_running": false,
+          "worker_lock_held": false
+        },
+        "a8547504169ec13f": {
+          "job_id": "a8547504169ec13f",
+          "draft_count": 0,
+          "draft_segments": [],
+          "active_status": "cancelled",
+          "task_running": false,
+          "worker_lock_held": false
+        }
+      },
+      "safe_to_exit": true,
+      "action": "saved-and-stopped",
+      "finished_at": 1791042977.853321
+    }
+  },
+  "exit_report": {
+    "safe_to_exit": true,
+    "action": "saved-and-stopped",
+    "forced": null,
+    "job_id": "8f394d9c9eb47a8a",
+    "active_jobs_on_disk": [
+      "8f394d9c9eb47a8a",
+      "a3881ae841bf6176",
+      "a8547504169ec13f"
+    ],
+    "other_cancels": {
+      "a3881ae841bf6176": {
+        "cancel_clicked": true,
+        "cancel_detail": {
+          "clicked": true,
+          "via": "scoped"
+        },
+        "left_active_status": true,
+        "worker_lock_released": true,
+        "status": "cancelled"
+      },
+      "a8547504169ec13f": {
+        "cancel_clicked": true,
+        "cancel_detail": {
+          "clicked": true,
+          "via": "scoped"
+        },
+        "left_active_status": true,
+        "worker_lock_released": true,
+        "status": "cancelled"
+      }
+    },
+    "steps": [
+      "locate-job",
+      "navigate-to-job",
+      "flush-editor",
+      "cancel-task",
+      "commit-drafts",
+      "cancel-other-tasks",
+      "final-check"
+    ]
+  },
+  "statuses_after_exit": {
+    "a3881ae841bf6176": "cancelled",
+    "8f394d9c9eb47a8a": "cancelled",
+    "a8547504169ec13f": "cancelled"
+  },
+  "services_after_exit": 0,
+  "data_after_exit": {
+    "a3881ae841bf6176": {
+      "parsed": true,
+      "paragraphs": 12,
+      "pairs": 4
+    },
+    "8f394d9c9eb47a8a": {
+      "parsed": true,
+      "paragraphs": 54,
+      "pairs": 0
+    },
+    "a8547504169ec13f": {
+      "parsed": true,
+      "paragraphs": 5,
+      "pairs": 0
+    }
+  },
+  "expected_others": [
+    "a3881ae841bf6176",
+    "a8547504169ec13f"
+  ],
+  "ok": true
+}

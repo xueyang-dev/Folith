@@ -1,0 +1,227 @@
+{
+  "setup": {
+    "job_id": "795cafb66e003279",
+    "ok": true,
+    "attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 0,
+        "job_id": "795cafb66e003279",
+        "error": ""
+      }
+    ]
+  },
+  "before": {
+    "runtime_status": "running",
+    "translated_pairs": 12
+  },
+  "app": {
+    "exit_code": 0,
+    "stdout_tail": "===========\nwarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.\n  诊断：/private/tmp/d1-timeout3/logs/diagnostics.json\n  退出前检查：提交草稿 0 处；剩余草稿 0 处；任务来自数据目录扫描（窗口未停留在该任务）\n[警告] 退出前仍有未提交的编辑或运行中的任务未停止；已取消本次退出，请重试或先在工作台保存。\n  数据目录：/private/tmp/d1-timeout3/data\n  退出前检查：提交草稿 0 处；剩余草稿 0 处\n  服务回收：child_gone=True service_gone=True port_released=True acknowledged=True\n"
+  },
+  "probe": {
+    "automation": "ok",
+    "data_dir": "/private/tmp/d1-timeout3/data",
+    "job_id": "795cafb66e003279",
+    "lock_acquired": true,
+    "lock_seen_by_flow": true,
+    "report_unsafe": {
+      "started_at": 1791037348.252464,
+      "steps": [
+        "locate-job",
+        "navigate-to-job",
+        "flush-editor",
+        "commit-drafts",
+        "final-check",
+        "force-prompt"
+      ],
+      "job_id_in_window": null,
+      "active_jobs_on_disk": [
+        "795cafb66e003279"
+      ],
+      "job_source": "data-dir",
+      "navigated_to_job": true,
+      "job_id": "795cafb66e003279",
+      "flush": {
+        "tag": "body",
+        "value_tail": "",
+        "value_length": 0,
+        "flushed": false
+      },
+      "before": {
+        "job_id": "795cafb66e003279",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "interrupted",
+        "task_running": false,
+        "worker_lock_held": true
+      },
+      "commit": {
+        "committed_segments": [],
+        "remaining": 0,
+        "rounds": 1,
+        "failures": [],
+        "confirmed": true
+      },
+      "after": {
+        "job_id": "795cafb66e003279",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "interrupted",
+        "task_running": false,
+        "worker_lock_held": true
+      },
+      "safe_to_exit": false,
+      "action": "incomplete",
+      "force_prompt": "worker 仍持有写入锁。\n\n选择「确定」将强制退出，只保证已经落盘的结果可恢复；选择「取消」返回应用继续等待。",
+      "forced": false,
+      "finished_at": 1791037350.823906
+    },
+    "window_still_open_after_unsafe": true,
+    "lock_released": true,
+    "report_safe": {
+      "started_at": 1791037351.256588,
+      "steps": [
+        "locate-job",
+        "flush-editor",
+        "commit-drafts",
+        "final-check"
+      ],
+      "job_id_in_window": "795cafb66e003279",
+      "job_id": "795cafb66e003279",
+      "flush": {
+        "tag": "body",
+        "value_tail": "",
+        "value_length": 0,
+        "flushed": false
+      },
+      "before": {
+        "job_id": "795cafb66e003279",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "cancelled",
+        "task_running": false,
+        "worker_lock_held": false
+      },
+      "commit": {
+        "committed_segments": [],
+        "remaining": 0,
+        "rounds": 1,
+        "failures": [],
+        "confirmed": true
+      },
+      "after": {
+        "job_id": "795cafb66e003279",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "cancelled",
+        "task_running": false,
+        "worker_lock_held": false
+      },
+      "safe_to_exit": true,
+      "action": "saved-and-stopped",
+      "finished_at": 1791037351.264252
+    }
+  },
+  "report_unsafe": {
+    "started_at": 1791037348.252464,
+    "steps": [
+      "locate-job",
+      "navigate-to-job",
+      "flush-editor",
+      "commit-drafts",
+      "final-check",
+      "force-prompt"
+    ],
+    "job_id_in_window": null,
+    "active_jobs_on_disk": [
+      "795cafb66e003279"
+    ],
+    "job_source": "data-dir",
+    "navigated_to_job": true,
+    "job_id": "795cafb66e003279",
+    "flush": {
+      "tag": "body",
+      "value_tail": "",
+      "value_length": 0,
+      "flushed": false
+    },
+    "before": {
+      "job_id": "795cafb66e003279",
+      "draft_count": 0,
+      "draft_segments": [],
+      "active_status": "interrupted",
+      "task_running": false,
+      "worker_lock_held": true
+    },
+    "commit": {
+      "committed_segments": [],
+      "remaining": 0,
+      "rounds": 1,
+      "failures": [],
+      "confirmed": true
+    },
+    "after": {
+      "job_id": "795cafb66e003279",
+      "draft_count": 0,
+      "draft_segments": [],
+      "active_status": "interrupted",
+      "task_running": false,
+      "worker_lock_held": true
+    },
+    "safe_to_exit": false,
+    "action": "incomplete",
+    "force_prompt": "worker 仍持有写入锁。\n\n选择「确定」将强制退出，只保证已经落盘的结果可恢复；选择「取消」返回应用继续等待。",
+    "forced": false,
+    "finished_at": 1791037350.823906
+  },
+  "report_safe": {
+    "started_at": 1791037351.256588,
+    "steps": [
+      "locate-job",
+      "flush-editor",
+      "commit-drafts",
+      "final-check"
+    ],
+    "job_id_in_window": "795cafb66e003279",
+    "job_id": "795cafb66e003279",
+    "flush": {
+      "tag": "body",
+      "value_tail": "",
+      "value_length": 0,
+      "flushed": false
+    },
+    "before": {
+      "job_id": "795cafb66e003279",
+      "draft_count": 0,
+      "draft_segments": [],
+      "active_status": "cancelled",
+      "task_running": false,
+      "worker_lock_held": false
+    },
+    "commit": {
+      "committed_segments": [],
+      "remaining": 0,
+      "rounds": 1,
+      "failures": [],
+      "confirmed": true
+    },
+    "after": {
+      "job_id": "795cafb66e003279",
+      "draft_count": 0,
+      "draft_segments": [],
+      "active_status": "cancelled",
+      "task_running": false,
+      "worker_lock_held": false
+    },
+    "safe_to_exit": true,
+    "action": "saved-and-stopped",
+    "finished_at": 1791037351.264252
+  },
+  "services_after_exit": 0,
+  "after": {
+    "translated_pairs": 12,
+    "delivery_status": "final"
+  },
+  "ok": true
+}

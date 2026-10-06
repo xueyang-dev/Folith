@@ -1,0 +1,29 @@
+{
+  "legacy_dir": "/private/tmp/d1-dryrun/legacy-outputs",
+  "data_dir": "/private/tmp/d1-dryrun/desktop-data",
+  "legacy_setup": {
+    "exit_code": 0,
+    "job_id": "b4cc5b222aa31fd5"
+  },
+  "before": {
+    "legacy_entries": 40,
+    "data_entries": 4
+  },
+  "dry_run": {
+    "exit_code": 0,
+    "stdout": "试运行：可接入 1 个任务，跳过 0 个已存在任务\n  旧数据目录（未改动）：/private/tmp/d1-dryrun/legacy-outputs\n  当前数据目录：/private/tmp/d1-dryrun/desktop-data\n  未复制（凭据 / 应用状态）：provider_config.json",
+    "mentions_dry_run": true
+  },
+  "legacy_diff": {
+    "added": [],
+    "removed": [],
+    "changed": []
+  },
+  "data_diff": {
+    "added": [],
+    "removed": [],
+    "changed": []
+  },
+  "user_key_untouched": true,
+  "ok": true
+}

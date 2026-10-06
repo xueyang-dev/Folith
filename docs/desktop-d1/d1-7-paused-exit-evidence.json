@@ -1,0 +1,198 @@
+{
+  "stub_delay_s": 8.0,
+  "setup": {
+    "exit_code": 0,
+    "job_id": "2b0514fb89b5e6bf",
+    "stderr_tail": ""
+  },
+  "before_service_stop": {
+    "pair_count": 0,
+    "translated_count": 0,
+    "delivery_status": "draft",
+    "runtime_status": "waiting_external",
+    "runtime_stage": "translation",
+    "journal_pairs": 4,
+    "worker_lock_held": true
+  },
+  "app": {
+    "exit_code": 0,
+    "tail": "d1-p10/data\n  日志目录：/private/tmp/d1-p10/logs\n  版本：0.5.0  build：git:1260a82\n====================================================\n  诊断：/private/tmp/d1-p10/logs/diagnostics.json\n  退出前检查：提交草稿 0 处；剩余草稿 0 处；取消运行任务：是；worker 锁释放：是\n  服务回收：child_gone=True service_gone=True port_released=True acknowledged=True\n"
+  },
+  "probe": {
+    "automation": "ok",
+    "data_dir": "/private/tmp/d1-p10/data",
+    "samples": [
+      {
+        "pair_count": 4,
+        "translated_count": 4,
+        "delivery_status": "draft",
+        "runtime_status": "waiting_external",
+        "runtime_stage": "translation",
+        "journal_pairs": 0,
+        "worker_lock_held": true
+      }
+    ],
+    "job_id": "2b0514fb89b5e6bf",
+    "navigated": true,
+    "state_on_arrival": {
+      "pair_count": 0,
+      "translated_count": 0,
+      "delivery_status": "draft",
+      "runtime_status": "interrupted",
+      "runtime_stage": "translation",
+      "journal_pairs": 4,
+      "worker_lock_held": false
+    },
+    "state_after_resume_click": {
+      "pair_count": 4,
+      "translated_count": 4,
+      "delivery_status": "draft",
+      "runtime_status": "waiting_external",
+      "runtime_stage": "translation",
+      "journal_pairs": 0,
+      "worker_lock_held": true
+    },
+    "mid_task_state": {
+      "pair_count": 4,
+      "translated_count": 4,
+      "delivery_status": "draft",
+      "runtime_status": "waiting_external",
+      "runtime_stage": "translation",
+      "journal_pairs": 0,
+      "worker_lock_held": true
+    },
+    "pause_click": "clicked",
+    "paused_state": {
+      "pair_count": 4,
+      "translated_count": 4,
+      "delivery_status": "draft",
+      "runtime_status": "paused",
+      "runtime_stage": "translation",
+      "journal_pairs": 0,
+      "worker_lock_held": true
+    },
+    "paused_observed": true,
+    "worker_lock_held_at_pause": true,
+    "paused_confirmed": true,
+    "closing": true,
+    "closing_cancelled": true,
+    "flow_report_seen": true,
+    "state_after_close_request": {
+      "pair_count": 8,
+      "translated_count": 8,
+      "delivery_status": "draft",
+      "runtime_status": "cancelled",
+      "runtime_stage": "translation",
+      "journal_pairs": 0,
+      "worker_lock_held": false
+    }
+  },
+  "flow_report": {
+    "started_at": 1791025262.0071108,
+    "steps": [
+      "locate-job",
+      "flush-editor",
+      "cancel-task",
+      "commit-drafts",
+      "final-check"
+    ],
+    "job_id_in_window": "2b0514fb89b5e6bf",
+    "job_id": "2b0514fb89b5e6bf",
+    "flush": {
+      "tag": "body",
+      "value_tail": "",
+      "value_length": 0,
+      "flushed": false
+    },
+    "before": {
+      "job_id": "2b0514fb89b5e6bf",
+      "draft_count": 0,
+      "draft_segments": [],
+      "active_status": "paused",
+      "task_running": true,
+      "worker_lock_held": true
+    },
+    "cancel": {
+      "cancel_clicked": true,
+      "cancel_detail": {
+        "clicked": true,
+        "via": "scoped"
+      },
+      "left_active_status": true,
+      "worker_lock_released": true,
+      "status": "cancelled"
+    },
+    "commit": {
+      "committed_segments": [],
+      "remaining": 0,
+      "rounds": 1,
+      "failures": [],
+      "confirmed": true
+    },
+    "after": {
+      "job_id": "2b0514fb89b5e6bf",
+      "draft_count": 0,
+      "draft_segments": [],
+      "active_status": "cancelled",
+      "task_running": false,
+      "worker_lock_held": false
+    },
+    "safe_to_exit": true,
+    "action": "saved-and-stopped",
+    "finished_at": 1791025262.4463758
+  },
+  "after_exit": {
+    "pair_count": 8,
+    "translated_count": 8,
+    "delivery_status": "draft",
+    "runtime_status": "cancelled",
+    "runtime_stage": "translation",
+    "journal_pairs": 0,
+    "worker_lock_held": false
+  },
+  "services_after_exit": 0,
+  "resume_run": {
+    "exit_code": 0
+  },
+  "resume": {
+    "job": "2b0514fb89b5e6bf",
+    "url": "http://127.0.0.1:61944",
+    "steps": [],
+    "body_before": "跳到主要内容\n\narrow_back\n\n项目\n\nd0-text-layer\n8 / 8 已译\n0 / 1 术语确认\n保存于 14:01\n\n处理中断\n\n查看 2 条建议\n\nradio_button_checked\n\n翻译\n\ncheck_circle\n\n术语\n\nerror_outline\n\n交付\n\n···\n\nexpand_more\ninfo\n\n任务详情\n\nexpand_more\n已取消\n已保存第 2 批译文\n2 / 3 批 · 66.7% · 已取消 · 任务运行 03:04\n\n继续处理\n\n运行详情 →\n\n章节目录\n\n8 个翻译单元 · 按 40 段分块导航\n\nkeyboard_arrow_down\n\n第 1–8 单元 (8 段)\n\n#1 Recent work on Ecological restoration and…\n\n#2 Field measurements were collected across 2…\n\n#3 The observed response was non-linear, whic…\n\n#4 Earlier studies reported a comparable patt…\n\n#5 We therefore treat Soil carbon cycling as…\n\n#6 We recorded the canopy structure and the u…\n\n#7 Where the disturbance regime changed, the…\n\n#8 These results are consistent with the hypo…\n\nlist\n\n全部 8\n\npending_actions\n\n待审 8\n\ntask_alt\n\n已审 0\n\n术语 1 · Ecological restoration\n\nfilter_list\n\n筛选\n\nexpand_more\narrow_upward\n\n上一段\n\narrow_downward\n\n下一段\n\nvertical_split\n\n显示或收起右栏\n\n编号\n原文\n译文 · 可直接编辑\n1–8 / 8",
+    "progress_before": {
+      "done": 8,
+      "total": 8
+    },
+    "interrupted_text_present": false,
+    "resume_present": true,
+    "retry_present": false,
+    "abandon_present": false,
+    "resume_clicked": true,
+    "control_used": "runtime_resume",
+    "pause_control_present": false,
+    "progress_after": {
+      "done": 12,
+      "total": 12
+    },
+    "resumed": true,
+    "body_after": "跳到主要内容\n\narrow_back\n\n项目\n\nd0-text-layer\n12 / 12 已译\n0 / 1 术语确认\n保存于 14:01\n\n准备交付\n\n查看 2 条建议\n\nradio_button_checked\n\n翻译\n\ncheck_circle\n\n术语\n\nerror_outline\n\n交付\n\n···\n\nexpand_more\ninfo\n\n任务详情\n\nexpand_more\n章节目录\n\n12 个翻译单元 · 按 40 段分块导航\n\nkeyboard_arrow_down\n\n第 1–12 单元 (12 段)\n\n#1 Recent work on Ecological restoration and…\n\n#2 Field measurements were collected across 2…\n\n#3 The observed response was non-linear, whic…\n\n#4 Earlier studies reported a comparable patt…\n\n#5 We therefore treat Soil carbon cycling as…\n\n#6 We recorded the canopy structure and the u…\n\n#7 Where the disturbance regime changed, the…\n\n#8 These",
+    "ok": true
+  },
+  "after_resume": {
+    "pair_count": 12,
+    "translated_count": 12,
+    "delivery_status": "draft",
+    "runtime_status": "completed",
+    "runtime_stage": "translation",
+    "journal_pairs": 0,
+    "worker_lock_held": false
+  },
+  "flow_steps": [
+    "locate-job",
+    "flush-editor",
+    "cancel-task",
+    "commit-drafts",
+    "final-check"
+  ],
+  "ok": true
+}

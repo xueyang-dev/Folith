@@ -1,0 +1,154 @@
+{
+  "edits": [
+    {
+      "index": 0,
+      "text": "多句切换编辑 1 · MULTI-EDIT-ONE 42"
+    },
+    {
+      "index": 2,
+      "text": "多句切换编辑 2 · MULTI-EDIT-TWO 中文与 English 混排"
+    },
+    {
+      "index": 4,
+      "text": "多句切换编辑 3 · MULTI-EDIT-THREE"
+    }
+  ],
+  "setup": {
+    "exit_code": 0,
+    "job_id": "ecf5c98c025af14e",
+    "slice_error": "",
+    "stderr_tail": ""
+  },
+  "after_translation": {
+    "pair_count": 12,
+    "translated": 12,
+    "targets": {
+      "0": "本句陈述了第1项观测事实，并说明其与整体过程的关系。",
+      "1": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "2": "本句陈述了第3项观测事实，并说明其与整体过程的关系。",
+      "3": "本句陈述了第4项观测事实，并说明其与整体过程的关系。",
+      "4": "本句陈述了第1项观测事实，并说明其与整体过程的关系。",
+      "5": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "6": "本句陈述了第3项观测事实，并说明其与整体过程的关系。",
+      "7": "本句陈述了第4项观测事实，并说明其与整体过程的关系。",
+      "8": "本句陈述了第1项观测事实，并说明其与整体过程的关系。",
+      "9": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "10": "本句陈述了第3项观测事实，并说明其与整体过程的关系。",
+      "11": "本句陈述了第4项观测事实，并说明其与整体过程的关系。"
+    },
+    "human_edited": [],
+    "delivery_status": "draft"
+  },
+  "edit_run": {
+    "exit_code": 0,
+    "stderr_tail": ""
+  },
+  "edit": {
+    "job": "ecf5c98c025af14e",
+    "url": "http://127.0.0.1:54418",
+    "verify_only": false,
+    "segments": [
+      {
+        "index": 0,
+        "expected": "多句切换编辑 1 · MULTI-EDIT-ONE 42",
+        "saved_alert": true,
+        "actual": "多句切换编辑 1 · MULTI-EDIT-ONE 42",
+        "ok": true
+      },
+      {
+        "index": 2,
+        "expected": "多句切换编辑 2 · MULTI-EDIT-TWO 中文与 English 混排",
+        "saved_alert": true,
+        "actual": "多句切换编辑 2 · MULTI-EDIT-TWO 中文与 English 混排",
+        "ok": true
+      },
+      {
+        "index": 4,
+        "expected": "多句切换编辑 3 · MULTI-EDIT-THREE",
+        "saved_alert": true,
+        "actual": "多句切换编辑 3 · MULTI-EDIT-THREE",
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "after_edit": {
+    "pair_count": 12,
+    "translated": 12,
+    "targets": {
+      "0": "多句切换编辑 1 · MULTI-EDIT-ONE 42",
+      "1": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "2": "多句切换编辑 2 · MULTI-EDIT-TWO 中文与 English 混排",
+      "3": "本句陈述了第4项观测事实，并说明其与整体过程的关系。",
+      "4": "多句切换编辑 3 · MULTI-EDIT-THREE",
+      "5": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "6": "本句陈述了第3项观测事实，并说明其与整体过程的关系。",
+      "7": "本句陈述了第4项观测事实，并说明其与整体过程的关系。",
+      "8": "本句陈述了第1项观测事实，并说明其与整体过程的关系。",
+      "9": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "10": "本句陈述了第3项观测事实，并说明其与整体过程的关系。",
+      "11": "本句陈述了第4项观测事实，并说明其与整体过程的关系。"
+    },
+    "human_edited": [
+      0,
+      2,
+      4
+    ],
+    "delivery_status": "draft"
+  },
+  "verify_run": {
+    "exit_code": 0,
+    "stderr_tail": ""
+  },
+  "verify": {
+    "job": "ecf5c98c025af14e",
+    "url": "http://127.0.0.1:54509",
+    "verify_only": true,
+    "segments": [
+      {
+        "index": 0,
+        "expected": "多句切换编辑 1 · MULTI-EDIT-ONE 42",
+        "actual": "多句切换编辑 1 · MULTI-EDIT-ONE 42",
+        "ok": true
+      },
+      {
+        "index": 2,
+        "expected": "多句切换编辑 2 · MULTI-EDIT-TWO 中文与 English 混排",
+        "actual": "多句切换编辑 2 · MULTI-EDIT-TWO 中文与 English 混排",
+        "ok": true
+      },
+      {
+        "index": 4,
+        "expected": "多句切换编辑 3 · MULTI-EDIT-THREE",
+        "actual": "多句切换编辑 3 · MULTI-EDIT-THREE",
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "after_restart": {
+    "pair_count": 12,
+    "translated": 12,
+    "targets": {
+      "0": "多句切换编辑 1 · MULTI-EDIT-ONE 42",
+      "1": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "2": "多句切换编辑 2 · MULTI-EDIT-TWO 中文与 English 混排",
+      "3": "本句陈述了第4项观测事实，并说明其与整体过程的关系。",
+      "4": "多句切换编辑 3 · MULTI-EDIT-THREE",
+      "5": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "6": "本句陈述了第3项观测事实，并说明其与整体过程的关系。",
+      "7": "本句陈述了第4项观测事实，并说明其与整体过程的关系。",
+      "8": "本句陈述了第1项观测事实，并说明其与整体过程的关系。",
+      "9": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "10": "本句陈述了第3项观测事实，并说明其与整体过程的关系。",
+      "11": "本句陈述了第4项观测事实，并说明其与整体过程的关系。"
+    },
+    "human_edited": [
+      0,
+      2,
+      4
+    ],
+    "delivery_status": "draft"
+  },
+  "ok": true
+}

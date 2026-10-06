@@ -1,0 +1,131 @@
+{
+  "scenario": "cancelling-at-exit",
+  "url": "http://127.0.0.1:60060",
+  "task1": {
+    "job_id": "533bed4351bcdabc",
+    "attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 0,
+        "job_id": "533bed4351bcdabc",
+        "error": ""
+      }
+    ]
+  },
+  "jobs": [
+    "533bed4351bcdabc"
+  ],
+  "statuses_before_exit": {
+    "533bed4351bcdabc": "waiting_external"
+  },
+  "active_statuses": [
+    "cancelling",
+    "paused",
+    "pausing",
+    "queued",
+    "resume_requested",
+    "running",
+    "starting",
+    "waiting_external"
+  ],
+  "active_before_exit": [
+    "533bed4351bcdabc"
+  ],
+  "several_active_before_exit": false,
+  "cancelling_ok": "1",
+  "status_after_cancel_request": null,
+  "status_at_exit_trigger": "cancelling",
+  "app_exit_code": 0,
+  "probe": {
+    "automation": "ok",
+    "waited_for": "/private/tmp/d1-cancelling2/go-exit",
+    "cancel_job": "533bed4351bcdabc",
+    "cancel_clicked": true,
+    "status_after_cancel_request": "cancelling",
+    "marker_seen": true,
+    "report": {
+      "started_at": 1791043594.022177,
+      "steps": [
+        "locate-job",
+        "flush-editor",
+        "cancel-task",
+        "commit-drafts",
+        "final-check"
+      ],
+      "job_id_in_window": "533bed4351bcdabc",
+      "job_id": "533bed4351bcdabc",
+      "flush": {
+        "tag": "body",
+        "value_tail": "",
+        "value_length": 0,
+        "flushed": false
+      },
+      "before": {
+        "job_id": "533bed4351bcdabc",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "cancelling",
+        "task_running": true,
+        "worker_lock_held": true
+      },
+      "cancel": {
+        "cancel_clicked": false,
+        "cancel_detail": {
+          "clicked": false,
+          "reason": "cancel-control-not-found"
+        },
+        "left_active_status": true,
+        "worker_lock_released": true,
+        "status": "cancelled"
+      },
+      "commit": {
+        "committed_segments": [],
+        "remaining": 0,
+        "rounds": 1,
+        "failures": [],
+        "confirmed": true
+      },
+      "after": {
+        "job_id": "533bed4351bcdabc",
+        "draft_count": 0,
+        "draft_segments": [],
+        "active_status": "cancelled",
+        "task_running": false,
+        "worker_lock_held": false
+      },
+      "other_after": {},
+      "safe_to_exit": true,
+      "action": "saved-and-stopped",
+      "finished_at": 1791043601.110761
+    }
+  },
+  "exit_report": {
+    "safe_to_exit": true,
+    "action": "saved-and-stopped",
+    "forced": null,
+    "job_id": "533bed4351bcdabc",
+    "active_jobs_on_disk": null,
+    "other_cancels": null,
+    "steps": [
+      "locate-job",
+      "flush-editor",
+      "cancel-task",
+      "commit-drafts",
+      "final-check"
+    ]
+  },
+  "statuses_after_exit": {
+    "533bed4351bcdabc": "cancelled"
+  },
+  "services_after_exit": 0,
+  "data_after_exit": {
+    "533bed4351bcdabc": {
+      "parsed": true,
+      "paragraphs": 0,
+      "pairs": 0,
+      "source_present": true
+    }
+  },
+  "expected_others": [],
+  "ok": true
+}

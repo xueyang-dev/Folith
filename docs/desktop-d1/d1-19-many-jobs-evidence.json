@@ -1,0 +1,38 @@
+{
+  "jobs_requested": 50,
+  "seed_job": {
+    "exit_code": 0,
+    "job_id": "ce6c8528cd910f57"
+  },
+  "jobs_on_disk": 50,
+  "copy_seconds": 0.2,
+  "url": "http://127.0.0.1:55291",
+  "probe_exit_code": 0,
+  "probe": {
+    "url": "http://127.0.0.1:55291",
+    "expect": 50,
+    "steps": {
+      "load": {
+        "ms": 1977
+      },
+      "list": {
+        "ms": 3414,
+        "rendered_items": 50
+      },
+      "workspace": {
+        "ms": 1054,
+        "rendered": true
+      }
+    },
+    "ok": true,
+    "title": "译页 · 智能体翻译工作台",
+    "total_ms": 6446
+  },
+  "diagnostics": {
+    "exit_code": 0,
+    "job_count": 50,
+    "schema_source": "observed from 20 job(s) in the data directory"
+  },
+  "services_after_exit": 0,
+  "ok": true
+}

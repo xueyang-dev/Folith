@@ -1,0 +1,54 @@
+{
+  "data_dir": "/private/tmp/d2-first2/fresh/nested/data",
+  "log_dir": "/private/tmp/d2-first2/fresh/nested/logs",
+  "pre_existing": {
+    "data": false,
+    "logs": false
+  },
+  "launch": {
+    "port": 57147,
+    "service_pid": 48739
+  },
+  "dirs_created": {
+    "data": true,
+    "logs": true
+  },
+  "page": {
+    "http_status": 200,
+    "bytes": 7260,
+    "shell_ok": true
+  },
+  "switch": {
+    "url": "http://127.0.0.1:57147",
+    "steps": [],
+    "before": {
+      "chinese_present": true,
+      "english_present": false
+    },
+    "after_english": {
+      "english_present": true,
+      "chinese_present": false,
+      "sample": "add\n\nNew task\n\nProjects\n\nfolder\n\nNo project selected\n\nCurrent task\nradio_button_checked\n\n01 Document & profile\n\nradio_button_unchecked\n\n02 Translation strategy\n\nradio_button_unchecked\n\n03 Deliverables\n\nradio_button_unchecked\n\n04 Confirm & run\n\nhistory\n\nTask history\n\nmenu_book\n\nTerms & translation me"
+    },
+    "restored": null,
+    "ok": true,
+    "_exit_code": 0,
+    "_stderr_tail": ""
+  },
+  "preferences_after_switch": {
+    "theme": "light",
+    "locale": "en"
+  },
+  "after_restart": {
+    "url": "http://127.0.0.1:57200",
+    "steps": [],
+    "before": {
+      "chinese_present": false,
+      "english_present": true
+    },
+    "ok": true,
+    "_exit_code": 0,
+    "_stderr_tail": ""
+  },
+  "ok": true
+}
