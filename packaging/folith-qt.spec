@@ -149,6 +149,28 @@ coll = COLLECT(
     name="Folith",
 )
 
+# 文档类型声明：没有它，Finder /「打开方式」不会把 PDF/DOCX 交给本应用，
+# `QFileOpenEvent` 也就永远不会到达（双击只会拉起应用但不带文件）。
+# `LSHandlerRank = Alternate`：只做候选处理程序，**不抢系统默认**——PDF/DOCX 的
+# 默认应用应该是用户的阅读器/编辑器，不是本应用。
+# 与 `adapter.SUPPORTED_SUFFIXES`（= 共享应用层的 `SOURCE_SUFFIXES`）逐项对应；
+# `tests/qt_macos_file_open_test.py` 会核对两边不漂移。
+DOCUMENT_TYPES = [
+    {"CFBundleTypeName": "PDF document",
+     "CFBundleTypeRole": "Viewer",
+     "LSHandlerRank": "Alternate",
+     "LSItemContentTypes": ["com.adobe.pdf"]},
+    {"CFBundleTypeName": "Word document",
+     "CFBundleTypeRole": "Editor",
+     "LSHandlerRank": "Alternate",
+     "LSItemContentTypes": ["org.openxmlformats.wordprocessingml.document",
+                            "com.microsoft.word.doc"]},
+    {"CFBundleTypeName": "Plain text",
+     "CFBundleTypeRole": "Editor",
+     "LSHandlerRank": "Alternate",
+     "LSItemContentTypes": ["public.plain-text", "net.daringfireball.markdown"]},
+]
+
 info_plist = {
     "CFBundleName": "Folith",
     "CFBundleDisplayName": "Folith",
@@ -163,6 +185,7 @@ info_plist = {
     "NSHighResolutionCapable": True,
     "NSHumanReadableCopyright": "Folith · 译页",
     "NSRequiresAquaSystemAppearance": False,
+    "CFBundleDocumentTypes": DOCUMENT_TYPES,
 }
 
 _ICON = OUT_DIR / "Folith.icns"

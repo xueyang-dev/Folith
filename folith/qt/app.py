@@ -17,6 +17,43 @@ from . import i18n
 from . import bootstrap
 
 
+class ExternalFileQueue:
+    """把"应用外部交来的文档"排队到主窗口就绪为止。
+
+    为什么需要：macOS 的 `QFileOpenEvent` 可能在主窗口建好**之前**就到达（启动即
+    打开文件），argv 更是一定早于窗口。没有这个缓冲，先到的路径会被丢掉，用户看到
+    的是"应用起来了，但文件没进来"。
+    """
+
+    def __init__(self, opener) -> None:
+        self._opener = opener
+        self._window = None
+        self._pending: list[str] = []
+
+    def add(self, path: str) -> None:
+        text = str(path or "").strip()
+        if not text:
+            return
+        if self._window is None:
+            self._pending.append(text)
+            return
+        self._opener(self._window, [text])
+
+    def attach(self, window) -> None:
+        self._window = window
+        self.flush()
+
+    def flush(self) -> None:
+        if self._window is None or not self._pending:
+            return
+        queued, self._pending = self._pending, []
+        self._opener(self._window, queued)
+
+    @property
+    def pending(self) -> list[str]:
+        return list(self._pending)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="folith-qt", description="Folith desktop client (Qt Widgets)")
@@ -40,6 +77,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--result", default=None, help="把摘要 JSON 写到这个路径")
     parser.add_argument("--allow-second-instance", action="store_true",
                         help="跳过单实例锁（仅用于隔离测试）")
+    parser.add_argument("files", nargs="*", default=[],
+                        help="要用本应用打开的文档（macOS 也会通过 QFileOpenEvent 送来）")
     return parser
 
 
@@ -60,6 +99,13 @@ def main(argv: list[str] | None = None) -> int:
 
     app = window_module.build_application(sys.argv[:1])
     # macOS 的"用本应用打开文件"事件可能在窗口建好之前到达：先排队，窗口就绪后再导入。
+    external_files = ExternalFileQueue(
+        lambda window, files: window.open_external_files(files))
+    for path in args.files:
+        external_files.add(path)
+    if hasattr(app, "file_opened"):
+        app.file_opened.connect(external_files.add)
+
     lock = None
     if not args.allow_second_instance:
         from folith.desktop import single_instance
@@ -132,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
 
     main_window = window_module.MainWindow(config, paths, lock)
     window_module.install_quit_filter(app, main_window)
+    # 窗口就绪：把启动期间排队的文档一次性交进去。
+    external_files.attach(main_window)
 
     if args.smoke:
         summary = {

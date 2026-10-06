@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QLabel, QMainWindow, QStackedWidget, QStatusBar,
@@ -763,6 +763,34 @@ class MainWindow(QMainWindow):
             self.home.project_filter.setCurrentIndex(index)
         self._notice(i18n.tr('已创建项目「{v0}」', v0=project.get('name')))
 
+    def open_external_files(self, paths: list[str]) -> None:
+        """处理**应用外部**交来的文档（Finder 打开方式 / Dock 拖放 / `open -a` / argv）。
+
+        只接受 `adapter.SUPPORTED_SUFFIXES` 里的类型；其余如实说明，不静默忽略——
+        用户双击了一个不被支持的文件时，"什么都没发生"是最糟的反馈。
+        """
+        wanted = [str(item) for item in (paths or []) if str(item or "").strip()]
+        if not wanted:
+            return
+        supported: list[str] = []
+        refused: list[str] = []
+        for item in wanted:
+            if Path(item).suffix.lower() in adapter.SUPPORTED_SUFFIXES:
+                supported.append(item)
+            else:
+                refused.append(item)
+        if refused:
+            self._notice(
+                i18n.tr('不支持的文件类型：{v0}；支持 {v1}。',
+                        v0="、".join(Path(item).name for item in refused),
+                        v1="、".join(adapter.SUPPORTED_SUFFIXES)),
+                error=True)
+        if not supported:
+            return
+        # 先回到任务列表：导入结果就落在这里，用户能看到新任务出现。
+        self.show_home()
+        self.import_paths(supported)
+
     def manage_projects(self) -> None:
         dialog = ProjectDialog(self)
         dialog.exec()
@@ -1486,10 +1514,49 @@ class MainWindow(QMainWindow):
 #: 唯一可靠做法是**验收时不挂外部 AX 代理**（人工键鼠不受影响），并等上游修复后升级 PySide6。
 
 
+def file_open_path(event) -> str:
+    """从 `QFileOpenEvent` 取出本地文件路径；取不到返回空串。
+
+    单独抽出来是为了可测：真正的 `FolithApplication` 是**全局单例**，一个进程里没
+    法为测试再造一个，而"事件里的路径怎么取"正是这段逻辑最容易写错的地方。
+    """
+    try:
+        path = str(event.file() or "")
+    except Exception:  # noqa: BLE001 - 老版本/变体可能只有 url()
+        path = ""
+    if path:
+        return path
+    try:
+        return str(event.url().toLocalFile() or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+class FolithApplication(QApplication):
+    """macOS 把"用本应用打开某个文档"投递给**应用对象**（`QFileOpenEvent`）。
+
+    没有这个处理时，双击 PDF/DOCX、Finder「打开方式」、把文件拖到 Dock 图标、
+    `open -a Folith x.pdf` 都只会把应用唤到前台，然后什么都不发生——用户看到的是
+    "打开了但没反应"。事件可能在窗口建好之前就到达（启动即打开文件），所以这里只
+    负责把路径发出来，由入口决定是立刻导入还是先排队。
+    """
+
+    file_opened = Signal(str)
+
+    def event(self, event):  # noqa: N802 - Qt 命名
+        if event.type() == QEvent.Type.FileOpen:
+            path = file_open_path(event)
+            if path:
+                self.file_opened.emit(path)
+            # 事件已消费：返回 True，避免 Qt 再走默认处理（默认处理会忽略它）。
+            return True
+        return super().event(event)
+
+
 def build_application(argv: list[str] | None = None) -> QApplication:
     app = QApplication.instance()
     if app is None:
-        app = QApplication(argv if argv is not None else sys.argv[:1])
+        app = FolithApplication(argv if argv is not None else sys.argv[:1])
     app.setApplicationName("Folith")
     app.setApplicationDisplayName("Folith")
     app.setOrganizationName("Folith")
