@@ -20,7 +20,7 @@
 | 维度 | 结果 |
 | --- | --- |
 | 工程实现 | §6 要求的 A/B/C/D 主流程全部实现；本轮循环内修复 **40+ 处真实缺陷**（含数据损坏级：交付预览承诺门禁会拒绝的事、批次错位防护、列表可能指向错任务） |
-| 机器可验证验收 | **PASS**：163 项用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件全量回归（154 通过；唯一失败为既有 brand 用例：命中他人未跟踪文件 + 本仓 Qt 客户端 `dialogs.py` 一处注释，见 E180）、文档一致性审计（用例数/候选身份/最低系统/结论字符串/**相对链接是否断**自动核对）、重复定义静态检查（全部模块） |
+| 机器可验证验收 | **PASS**：166 项用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件全量回归（154 通过；唯一失败为既有 brand 用例：命中他人未跟踪文件 + 本仓 Qt 客户端 `dialogs.py` 一处注释，见 E180）、文档一致性审计（用例数/候选身份/最低系统/结论字符串/**相对链接是否断**自动核对）、重复定义静态检查（全部模块） |
 | 人工强制项 | **0/7 完成**（本轮 computer use 回传：C.2′ → **抓到真缺陷并已修复**；A.8′ 连接 PASS / 任务链被 AX 崩溃阻断；C.12 空闲 PASS / 运行中未验证；A.1′、A.7″、B.1、D.9 见下方明细）。详见 [computer-use-acceptance-2b74924a-2026-10-05.md](computer-use-acceptance-2b74924a-2026-10-05.md) |
 | 公开分发 | **DEFERRED**：Developer ID / 硬化运行时 / 签名 / 公证 / staple / 真实下载——属另行授权范围，不阻塞受邀 Beta |
 | 技术阻断 | **无**（不依赖人工项的部分已全部收口；剩余项均为"只有人能判定"） |
@@ -56,7 +56,7 @@ venv/bin/python scripts/qt_artifact_check.py --out build/qt-desktop/artifact-che
 venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py \
     tests/qt_extraction_error_test.py tests/qt_client_style_test.py \
     tests/qt_client_adapter_test.py tests/qt_client_window_test.py \
-    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 163 项
+    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 166 项
 
 # 完整验证链（20 步：构建 → 门禁 → 文档一致性 → 用例 → 端到端探针）
 bash scripts/qt_beta_chain.sh tmp/qt-beta/chain
@@ -223,7 +223,7 @@ venv/bin/python scripts/qt_release_checks.py --check-notes
 1. **候选已就绪**：`dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（身份见 §1；未签名未公证）。
    发给测试者的最小集合：[acceptance-quickstart.md](acceptance-quickstart.md)（一页速览 + 回传模板）
    ＋ [manual-acceptance.md](manual-acceptance.md)（详细步骤）＋ 本文件（状态与证据入口）。
-2. **机器侧已无剩余工作**：163 用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件回归、
+2. **机器侧已无剩余工作**：166 用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件回归、
    文档一致性审计、重复定义检查——全部通过；终局核对见证据日志 R60。
 3. **唯一剩余路径 = 7 条强制人工项**（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9）。
    请用**人工键鼠**完成——不要挂 AX 代理/Computer Use：那是上游 QTBUG-149612 的触发条件，

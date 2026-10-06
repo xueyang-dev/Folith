@@ -14,7 +14,7 @@
 - **当前结论（§7）**：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`
   ——人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`。
 - **架构决策**：**GO — Qt Widgets / macOS arm64**（[s8-decision.md](s8-decision.md)）。
-- **机器可验证部分**：全部 PASS（163 用例、20 步验证链、155 文件全量回归、文档一致性审计（含链接校验）、
+- **机器可验证部分**：全部 PASS（166 用例、20 步验证链、155 文件全量回归、文档一致性审计（含链接校验）、
   重复定义静态检查）。
 - **人工强制项**：**0/7**（见 §3）；用户已做了一轮部分验收，**输入法项被一个原生崩溃阻断**。
 - **最重要的一件事**：macOS 上**外部辅助功能扫描（AI "Computer Use" / AX 客户端）会让 Qt
@@ -36,7 +36,7 @@
 | 身份在文档中的位置 | 三份文档的身份块**由生成器写入**：`status.md`、`manual-acceptance.md`、`acceptance-quickstart.md`（`scripts/qt_acceptance_kit.py --write`） |
 | 声明最低系统 | macOS **15.0**（实测原生闭包 `minos 15.0.0`；13/14 不支持、不声称） |
 | 签名 | 未签名、未公证（受邀 Beta，首次需右键「打开」放行一次） |
-| 用例 | **163**（`qt_acceptance_kit_test` 9 / `qt_delivery_content_test` 3 / `qt_extraction_error_test` 5 / `qt_client_style_test` 8 / `qt_client_adapter_test` 57 / `qt_client_window_test` 68 / `qt_release_plumbing_test` 10 / `qt_spike_test` 3 … 以 `--collect-only` 为准） |
+| 用例 | **166**（`qt_acceptance_kit_test` 9 / `qt_delivery_content_test` 3 / `qt_extraction_error_test` 5 / `qt_client_style_test` 8 / `qt_client_adapter_test` 57 / `qt_client_window_test` **71**（本地化与窗口外壳各加了一批）/ `qt_release_plumbing_test` 10 / `qt_spike_test` 3 … 以 `--collect-only` 为准） |
 | 验证链 | `bash scripts/qt_beta_chain.sh tmp/qt-beta/chain` → **20 步**，任一步失败 rc=1 |
 | 全量回归 | **155 文件：154 通过**；唯一失败是既有的 `brand_regression_test`——命中**他人**未跟踪文件（`benchmark/ocr-vision-pilot/*.json`、`docs/desktop-handover.md`）**以及 `folith/qt/dialogs.py:566` 一处注释**（见 E180） |
 | 证据规模 | `docs/qt-spike/evidence-log.md`：**E1–E202**、66 个轮次小节（S1–S8 + Beta R2–R71） |
@@ -185,7 +185,7 @@ bash scripts/qt_beta_chain.sh tmp/qt-beta/chain
 # 只复核端到端探针（9 步，不重建候选；只改了测试/文档时用这个）
 bash scripts/qt_beta_chain.sh tmp/qt-beta/chain --probes-only
 
-# 单跑 Qt 用例（163 项）
+# 单跑 Qt 用例（166 项）
 venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py \
   tests/qt_extraction_error_test.py tests/qt_client_style_test.py tests/qt_client_adapter_test.py \
   tests/qt_client_window_test.py tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q -rf
