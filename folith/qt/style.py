@@ -10,11 +10,12 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (QCheckBox, QFrame, QLabel, QPushButton,
-                               QStyledItemDelegate, QWidget)
+                               QRadioButton, QStyledItemDelegate, QWidget)
 
+from . import i18n
 from . import theme as theme_module
 
 # 状态芯片的语义色调 -> 用哪几个 token
@@ -91,12 +92,14 @@ def build_qss(theme: str) -> str:
 
     return f"""
 /* ================= 基础 ================= */
+/* 只设文字与字号，**不在这里刷背景**：给每个 QWidget 都刷页面底色，会让所有
+   容器型控件（表单字段外壳、色卡容器、复选框文字区…）在卡片里露出一道灰条。
+   背景由顶层窗口与显式声明了 objectName 的面负责。 */
 QWidget {{
-    background: {t['bg-page']};
     color: {t['text-primary']};
     font-size: {f['body']}px;
 }}
-QMainWindow, QDialog {{ background: {t['bg-page']}; }}
+QMainWindow, QDialog, QStackedWidget, QTabWidget::pane {{ background: {t['bg-page']}; }}
 QToolTip {{
     background: {t['bg-surface-raised']};
     color: {t['text-primary']};
@@ -127,6 +130,10 @@ QLabel#kpiLabel {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#statusError {{ color: {t['danger']}; font-weight: 600; }}
 QLabel#statusOk {{ color: {t['success']}; font-weight: 600; }}
 QLabel#link {{ color: {t['accent']}; font-weight: 600; }}
+/* 交付清单：小节标题 + 右侧汇总（"6 个文件 · 85.5 KB"），行内布局由委托自绘 */
+QLabel#assetMeta {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
+QLabel#assetGroupTitle {{ font-size: {f['label']}px; font-weight: 700; color: {t['text-muted']}; }}
+QLabel#assetMissing {{ font-size: {f['micro']}px; font-weight: 600; color: {t['danger']}; }}
 {chip_rules()}
 
 /* ================= 面（卡片） ================= */
@@ -162,6 +169,61 @@ QFrame#cardHeader {{ background: transparent; border: none;
 QFrame#cardFooter {{ background: transparent; border: none;
     border-top: 1px solid {t['border-hairline']}; }}
 QFrame#hairline {{ background: {t['border-hairline']}; max-height: 1px; border: none; }}
+/* 空状态：Web 界面里"还没有任务 / 没有被排除的段落"是居中的图标 + 标题 + 说明，
+   不是一块空白列表；虚线卡与 `dashedCard` 同源，避免每页各画一种空槽位。 */
+QFrame#emptyState, QWidget#emptyState {{
+    background: {t['bg-surface-subtle']};
+    border: 1px dashed {t['border-strong']};
+    border-radius: {r['md']}px;
+}}
+QLabel#emptyTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#emptyHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+/* 表单：标签在输入框**上方**（旧界面如此），而不是右对齐挤在左侧窄列里 */
+QLabel#fieldLabel {{ font-size: {f['caption']}px; color: {t['text-secondary']}; font-weight: 500; }}
+QLabel#fieldHint {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
+/* 密钥输入：一个"输入框外壳"，右侧放显示/隐藏按钮（QSS 没有 :focus-within） */
+QFrame#inputGroup {{
+    background: {t['bg-surface']};
+    border: 1px solid {t['border-subtle']};
+    border-radius: {r['sm']}px;
+}}
+QFrame#inputGroup[focus="true"] {{ border-color: {t['accent']}; }}
+QLineEdit#inputBare {{
+    background: transparent; border: none;
+    padding: 0 {sp['xs']}px; min-height: {c['md']}px;
+    color: {t['text-primary']};
+}}
+QLineEdit#inputBare:focus {{ border: none; }}
+/* 输入框内的图标按钮：不要自成一块方框，只保留悬停/选中的底色 */
+QFrame#inputGroup QPushButton#iconButton {{ border: none; background: transparent; }}
+QFrame#inputGroup QPushButton#iconButton:hover {{ background: {t['bg-hover']}; }}
+QPushButton#iconButton:checked {{ background: {t['bg-selected']}; border-color: {t['accent-border']}; }}
+QPushButton#themeCard {{
+    background: transparent;
+    border: 1px solid {t['border-hairline']};
+    border-radius: {r['md']}px;
+    padding: {sp['xs']}px;
+}}
+QPushButton#themeCard:hover {{ border-color: {t['border-strong']}; background: {t['bg-hover']}; }}
+QPushButton#themeCard:checked {{
+    border: 2px solid {t['accent']}; background: {t['accent-soft']};
+}}
+/* 首页卡片视图：任务卡 + 项目分组标题（旧 Web 界面"按项目分组"的那一屏） */
+/* 滚动区的画布：QScrollArea 的 viewport 不画背景，没有这一层就会露出未绘制的
+   黑色区域（尤其卡片视图里分组不足一行时）。 */
+QWidget#pageCanvas {{ background: {t['bg-page']}; }}
+QFrame#taskCard {{
+    background: {t['bg-surface']};
+    border: 1px solid {t['border-hairline']};
+    border-radius: {r['md']}px;
+}}
+QFrame#taskCard:hover {{ border-color: {t['border-strong']}; background: {t['bg-hover']}; }}
+QFrame#taskCard[selected="true"] {{
+    border: 2px solid {t['accent']}; background: {t['accent-soft']};
+}}
+QLabel#taskCardTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#taskCardMeta {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+QLabel#groupHeading {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
 {strip_rules()}
 
 /* ================= 侧栏 ================= */
@@ -219,6 +281,23 @@ QPushButton#ghostAction {{ background: transparent; border-color: transparent; c
 QPushButton#ghostAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#dangerAction {{ color: {t['danger']}; border-color: {t['border-subtle']}; background: {t['bg-surface']}; }}
 QPushButton#dangerAction:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
+/* 破坏性动作的**主按钮**：确认删除/强制退出这种"按下就回不去"的一条，
+   用实心危险色，而不是白色底 + 红字（那看起来像次要动作）。 */
+QPushButton#dangerPrimary {{
+    background: {t['danger']}; color: {t['text-on-accent']};
+    border: 1px solid {t['danger']}; font-weight: 600;
+}}
+QPushButton#dangerPrimary:hover {{ background: {t['danger']}; border-color: {t['text-primary']}; }}
+QPushButton#dangerPrimary:focus {{ border-color: {t['text-primary']}; }}
+/* 对话框里的详情区（诊断 JSON / 异常堆栈）：默认收起，展开后是只读面板 */
+QTextBrowser#dialogDetail {{
+    font-family: {", ".join(repr(name) for name in theme_module.MONO_STACK)};
+    background: {t['bg-surface-sunken']};
+    border: 1px solid {t['border-faint']};
+    border-radius: {r['sm']}px;
+    padding: {sp['sm']}px;
+    color: {t['text-secondary']};
+}}
 QPushButton#linkAction {{
     background: transparent; border: none; color: {t['accent']};
     padding: 0 {sp['xxs']}px; min-height: 0; font-weight: 600;
@@ -280,6 +359,14 @@ QPlainTextEdit#targetEdit {{
 QPlainTextEdit#targetEdit:focus {{ border-color: {t['accent']}; }}
 QLineEdit#pathValue {{ background: transparent; border: none; padding: 0; color: {t['text-primary']}; }}
 QTextBrowser#diagnosticsView {{ font-family: {", ".join(repr(name) for name in theme_module.MONO_STACK)}; }}
+/* 工作台"检查项"：只读报告面（沉底面板），不要输入框那种聚焦边框 */
+QTextBrowser#qaView {{
+    background: {t['bg-surface-sunken']};
+    border: 1px solid {t['border-faint']};
+    border-radius: {r['sm']}px;
+    padding: {sp['sm']}px;
+    color: {t['text-primary']};
+}}
 QComboBox {{
     background: {t['bg-surface']};
     color: {t['text-primary']};
@@ -300,7 +387,9 @@ QComboBox QAbstractItemView {{
     selection-color: {t['text-primary']};
     outline: none;
 }}
-QCheckBox {{ spacing: {sp['sm']}px; color: {t['text-secondary']}; }}
+/* 全局基础规则给每个 QWidget 都刷了页面底色，会漏进子控件：复选框/单选框的
+   **文字区域**因此被刷上一道灰条。这里显式透明，行为与 QLabel 一致。 */
+QCheckBox {{ background: transparent; spacing: {sp['sm']}px; color: {t['text-secondary']}; }}
 QCheckBox:hover {{ color: {t['text-primary']}; }}
 QCheckBox::indicator {{
     width: 16px; height: 16px;
@@ -310,6 +399,20 @@ QCheckBox::indicator {{
 }}
 QCheckBox::indicator:hover {{ border-color: {t['accent']}; }}
 QCheckBox::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']}; }}
+QRadioButton {{ background: transparent; spacing: {sp['sm']}px; color: {t['text-secondary']}; }}
+QRadioButton:hover {{ color: {t['text-primary']}; }}
+QRadioButton::indicator {{
+    width: 16px; height: 16px;
+    border: 1px solid {t['border-strong']};
+    border-radius: 8px;
+    background: {t['bg-surface']};
+}}
+QRadioButton::indicator:hover {{ border-color: {t['accent']}; }}
+/* 选中态与复选框同构：外圈填 accent，内层圆点由 style.RadioButton 自绘
+   （QSS 画不了内层圆，只写 border 会得到一个方角大方块）。 */
+QRadioButton::indicator:checked {{
+    background: {t['accent']}; border-color: {t['accent']};
+}}
 QGroupBox {{
     border: 1px solid {t['border-hairline']};
     border-radius: {r['md']}px;
@@ -375,6 +478,9 @@ QMenu {{
 }}
 QMenu::item {{ padding: {sp['xs']}px {sp['xl']}px {sp['xs']}px {sp['md']}px; border-radius: {r['sm']}px; }}
 QMenu::item:selected {{ background: {t['bg-selected']}; }}
+/* 全局 `QWidget` 的文字色会盖掉菜单的禁用调色板：置灰的动作看起来仍然可点。
+   这里显式给禁用态一个"确实灰掉"的颜色。 */
+QMenu::item:disabled {{ color: {t['disabled-ink']}; }}
 QMenu::separator {{ height: 1px; background: {t['border-hairline']}; margin: {sp['xs']}px {sp['sm']}px; }}
 QStatusBar {{ background: {t['bg-sidebar']}; border-top: 1px solid {t['border-hairline']}; }}
 QStatusBar::item {{ border: none; }}
@@ -701,11 +807,297 @@ class CheckBox(QCheckBox):
         painter.end()
 
 
+class EmptyState(QFrame):
+    """空状态：居中图标 + 标题 + 一句说明（+ 可选动作）。
+
+    交付清单为空、被排除段落为空这类"什么都没发生"的位置，如果没有专门表达，
+    界面上留下的就是一块空白列表——看起来像加载失败。这里把旧界面（首页"还没有任务"）
+    的同一套表达固定成一个控件，各页复用它，不再各写一种空槽位。
+    """
+
+    def __init__(self, *, icon: str = "info", title: str = "", hint: str = "",
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("emptyState")
+        from PySide6.QtWidgets import QVBoxLayout
+
+        column = QVBoxLayout(self)
+        column.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        column.setSpacing(theme_module.SPACE["xs"])
+        self.icon_label = QLabel()
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        from . import icons
+
+        self._icons = icons
+        self.set_icon(icon)
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("emptyTitle")
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint_label = QLabel(hint)
+        self.hint_label.setObjectName("emptyHint")
+        self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint_label.setWordWrap(True)
+        column.addStretch(1)
+        column.addWidget(self.icon_label)
+        column.addWidget(self.title_label)
+        column.addWidget(self.hint_label)
+        column.addStretch(1)
+        self.setVisible(bool(title))
+
+    def set_icon(self, name: str) -> None:
+        self.icon_label.setPixmap(
+            self._icons.pixmap(name, 30, text_color("text-muted")))
+
+    def set_text(self, title: str, hint: str = "") -> None:
+        self.title_label.setText(title)
+        self.hint_label.setText(hint)
+        self.hint_label.setVisible(bool(hint))
+        self.setVisible(bool(title))
+
+
+class AssetRowDelegate(QStyledItemDelegate):
+    """交付资产行：类型图标 + 文件名 + 右侧大小；分组标题行是另一套紧凑样式。
+
+    为什么自绘而不是 `QListWidget` 默认渲染：一行里要同时放图标、主文案、右对齐的
+    大小和"文件缺失"标记，QSS 的 `::item` 做不到多段布局；而且分组标题必须是
+    **不可选中**的行，默认渲染会把它当成普通条目高亮。
+
+    条目数据放在 `Qt.UserRole` 的一个 dict 里：
+
+        {"kind": "header" | "asset", "title": str, "meta": str,
+         "icon": str, "missing": bool}
+
+    `Qt.DisplayRole` 仍然是文件/分组名，命令行与既有用例继续按文本读取。
+    """
+
+    HEADER_HEIGHT = 30
+    ROW_HEIGHT = theme_module.CONTROL["row"]
+
+    def sizeHint(self, option, index) -> QSize:  # noqa: N802 - Qt 命名
+        data = index.data(Qt.ItemDataRole.UserRole) or {}
+        height = (self.HEADER_HEIGHT if data.get("kind") == "header"
+                  else self.ROW_HEIGHT)
+        return QSize(option.rect.width(), height)
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802 - Qt 命名
+        from PySide6.QtWidgets import QStyle
+
+        tokens = theme_module.tokens(current_theme())
+        data = index.data(Qt.ItemDataRole.UserRole) or {}
+        rect = option.rect
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        if data.get("kind") == "header":
+            font = QFont(theme_module.FONT_STACK[0])
+            font.setPixelSize(theme_module.FONT_SIZES["label"])
+            font.setWeight(QFont.Weight.Bold)
+            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
+            painter.setFont(font)
+            metrics = painter.fontMetrics()
+            meta = str(data.get("meta") or "")
+            meta_width = metrics.horizontalAdvance(meta) if meta else 0
+            painter.setPen(QPen(QColor(tokens["text-muted"])))
+            painter.drawText(
+                QRectF(rect.left() + 2, rect.top(), rect.width() - meta_width - 12,
+                       rect.height()),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                metrics.elidedText(str(data.get("title") or ""),
+                                   Qt.TextElideMode.ElideRight,
+                                   max(0, rect.width() - meta_width - 12)))
+            if meta:
+                painter.drawText(
+                    QRectF(rect.right() - meta_width - 2, rect.top(),
+                           meta_width, rect.height()),
+                    int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                    meta)
+            hairline = QPen(QColor(tokens["border-hairline"]))
+            painter.setPen(hairline)
+            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+            painter.restore()
+            return
+
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if selected:
+            painter.fillRect(rect, QColor(tokens["bg-selected"]))
+            painter.fillRect(QRectF(rect.left(), rect.top(), 3, rect.height()),
+                             QColor(tokens["accent"]))
+        elif hovered:
+            painter.fillRect(rect, QColor(tokens["bg-hover"]))
+
+        icon_size = 16
+        pad = theme_module.SPACE["sm"]
+        icon_rect = QRectF(rect.left() + pad + (3 if selected else 0),
+                           rect.top() + (rect.height() - icon_size) / 2,
+                           icon_size, icon_size)
+        from . import icons as _icons
+
+        pixmap = _icons.pixmap(str(data.get("icon") or "file"), icon_size,
+                               tokens["text-muted"])
+        if not pixmap.isNull():
+            painter.drawPixmap(icon_rect.topLeft(), pixmap)
+
+        font = QFont(theme_module.FONT_STACK[0])
+        font.setPixelSize(theme_module.FONT_SIZES["body"])
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        meta_font = QFont(theme_module.FONT_STACK[0])
+        meta_font.setPixelSize(theme_module.FONT_SIZES["caption"])
+        meta_metrics = QFontMetrics(meta_font)
+        meta = str(data.get("meta") or "")
+        meta_width = meta_metrics.horizontalAdvance(meta) if meta else 0
+        text_left = icon_rect.right() + pad
+        text_width = max(0, int(rect.width() - (text_left - rect.left())
+                                - meta_width - pad * 3))
+        painter.setPen(QPen(QColor(tokens["text-primary"])))
+        painter.drawText(
+            QRectF(text_left, rect.top(), text_width, rect.height()),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            metrics.elidedText(str(index.data(Qt.ItemDataRole.DisplayRole) or ""),
+                               Qt.TextElideMode.ElideMiddle, text_width))
+        if meta:
+            painter.setFont(meta_font)
+            painter.setPen(QPen(QColor(tokens["danger"] if data.get("missing")
+                                       else tokens["text-muted"])))
+            painter.drawText(
+                QRectF(rect.right() - meta_width - pad * 1.5, rect.top(),
+                       meta_width + pad, rect.height()),
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                meta)
+        hairline = QPen(QColor(tokens["border-hairline"]))
+        painter.setPen(hairline)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QPointF(rect.left(), rect.bottom()),
+                         QPointF(rect.right(), rect.bottom()))
+        painter.restore()
+
+
+class RadioButton(QRadioButton):
+    """单选框：与 `CheckBox` 同源——QSS 画不出 indicator 里的圆点，这里补一个。"""
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().paintEvent(event)
+        if not self.isChecked():
+            return
+        from PySide6.QtWidgets import QStyle, QStyleOptionButton
+
+        option = QStyleOptionButton()
+        option.initFrom(self)
+        rect = self.style().subElementRect(
+            QStyle.SubElement.SE_RadioButtonIndicator, option, self)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme_module.tokens(current_theme())["text-on-accent"]))
+        radius = max(2.0, rect.width() * 0.22)
+        painter.drawEllipse(QPointF(rect.center()), radius, radius)
+        painter.end()
+
+
+def field_label(text: str, parent=None) -> QLabel:
+    """表单字段标签：小字号 + 次要色，放在控件上方（旧界面的表单排版）。"""
+    label = QLabel(text, parent)
+    label.setObjectName("fieldLabel")
+    return label
+
+
+class SecretField(QWidget):
+    """密钥输入：输入框 + 右侧"显示/隐藏"眼睛按钮（旧界面的同一交互）。
+
+    `line_edit` 直接暴露给调用方（取值、校验都用它），这里只负责组合外观与焦点态：
+    QSS 没有 `:focus-within`，所以焦点进入/离开内层输入框时手动翻转外框属性。
+    没有这个按钮时，用户只能盲打 API Key——那是"看起来不像软件"的典型来源。
+    """
+
+    def __init__(self, text: str = "", *, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from PySide6.QtWidgets import QFrame, QHBoxLayout, QLineEdit
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.frame = QFrame(self)
+        self.frame.setObjectName("inputGroup")
+        outer.addWidget(self.frame)
+
+        row = QHBoxLayout(self.frame)
+        row.setContentsMargins(theme_module.SPACE["sm"], 0,
+                               theme_module.SPACE["xs"], 0)
+        row.setSpacing(theme_module.SPACE["xxs"])
+        self.line_edit = QLineEdit(text, self.frame)
+        self.line_edit.setObjectName("inputBare")
+        self.line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.reveal_button = icon_button("eye", i18n.tr('显示密钥'), size=16,
+                                         parent=self.frame)
+        self.reveal_button.setCheckable(True)
+        self.reveal_button.toggled.connect(self._set_revealed)
+        row.addWidget(self.line_edit, 1)
+        row.addWidget(self.reveal_button)
+        self.line_edit.installEventFilter(self)
+
+    def _set_revealed(self, revealed: bool) -> None:
+        from PySide6.QtWidgets import QLineEdit
+
+        from . import icons
+
+        self.line_edit.setEchoMode(QLineEdit.EchoMode.Normal if revealed
+                                   else QLineEdit.EchoMode.Password)
+        self.reveal_button.setToolTip("隐藏密钥" if revealed else "显示密钥")
+        self.reveal_button.setIcon(icons.icon(
+            "eye-off" if revealed else "eye", 16, text_color("text-secondary")))
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt 命名
+        if watched is self.line_edit and event.type() in (
+                QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+            self.frame.setProperty(
+                "focus", "true" if event.type() == QEvent.Type.FocusIn else "false")
+            repolish(self.frame)
+        return super().eventFilter(watched, event)
+
+    # -- 透传 QLineEdit 常用接口，调用方不必知道内部结构 --
+    def text(self) -> str:
+        return self.line_edit.text()
+
+    def setText(self, value: str) -> None:
+        self.line_edit.setText(value)
+
+    def setPlaceholderText(self, value: str) -> None:  # noqa: N802 - Qt 命名
+        self.line_edit.setPlaceholderText(value)
+
+    def setEnabled(self, value: bool) -> None:  # noqa: N802 - Qt 命名
+        super().setEnabled(value)
+        self.frame.setEnabled(value)
+        self.line_edit.setEnabled(value)
+        self.reveal_button.setEnabled(value)
+
+
 def icons_pixmap(name: str, size: int = 16, token: str = "text-secondary"):
     """按当前主题的 token 颜色取一个图标 pixmap。"""
     from . import icons
 
     return icons.pixmap(name, size, text_color(token))
+
+
+def fit_button(button, *, max_width: int = 200) -> None:
+    """按钮文字过长时省略显示，并把完整文字放进悬停提示。
+
+    英文/俄文/阿拉伯文的界面文案普遍比中文长（1.5–2 倍）。248px 的侧栏会把
+    「Импортировать документ…」截成半句——这不是翻译问题，是排版问题；按钮自己
+    不会省略文字，所以在这里显式处理。
+    """
+    text = str(button.text() or "")
+    if not text:
+        return
+    # 用**主题正文字号**量宽度：控件此刻还没被 polish，`button.fontMetrics()`
+    # 拿到的是默认小字号，量出来偏窄，于是"该省略的没省略"，按钮里被裁成半句。
+    font = QFont(theme_module.FONT_STACK[0])
+    font.setPixelSize(theme_module.FONT_SIZES["body"])
+    metrics = QFontMetrics(font)
+    available = max(60, max_width)
+    button.setToolTip(text)
+    if metrics.horizontalAdvance(text) > available:
+        button.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, available))
 
 
 def icon_button(name: str, tooltip: str = "", *, size: int = 16,

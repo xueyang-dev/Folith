@@ -141,18 +141,17 @@ def client(tmp_path, monkeypatch, qt_app):
     from folith.desktop import paths as desktop_paths
     from folith.qt import adapter, window as window_module
 
-    # This suite opens the settings dialog, which persists the client's task and
-    # delivery defaults.  The window builds `QSettings("Folith", "QtDesktop")`
-    # itself, and on macOS that resolves to the tester's real preferences file
-    # no matter what `setDefaultFormat` says — so redirect that symbol at an
-    # explicit INI store and leave the real settings alone.
-    from PySide6.QtCore import QSettings as _QSettings
+    # 界面语言是**用户设置**：开发者本机存过 en/ru 时，这一整套中文断言会全挂。
+    # 用例环境固定成基准语言，测完再还原（不污染用户设置）。
+    from PySide6.QtCore import QSettings
 
-    settings_file = tmp_path / "qt-client-settings.ini"
-    monkeypatch.setattr(
-        window_module, "QSettings",
-        lambda *args, **kwargs: _QSettings(
-            str(settings_file), _QSettings.Format.IniFormat))
+    from folith.qt import i18n as i18n_module
+
+    settings = QSettings("Folith", "QtDesktop")
+    saved_language = settings.value("appearance/language")
+    settings.remove("appearance/language")
+    settings.sync()
+    i18n_module.set_language("zh-CN")
 
     paths = desktop_paths.resolve_paths()
     config = adapter.EngineConfig(
@@ -171,6 +170,12 @@ def client(tmp_path, monkeypatch, qt_app):
     from qt_workers import drain_job_workers
 
     drain_job_workers(core)
+    if saved_language is None:
+        settings.remove("appearance/language")
+    else:
+        settings.setValue("appearance/language", saved_language)
+    settings.sync()
+    i18n_module.set_language("zh-CN")
     main.timer.stop()
     main._closing_accepted = True
     main.close()
@@ -1173,6 +1178,62 @@ def test_unsafe_exit_offers_force_quit_and_says_what_it_guarantees(client, monke
     assert any("只保证已经落盘的结果可以恢复" in text for text in notices), notices
 
 
+def test_settings_dialog_keeps_untouched_preferences(client, monkeypatch):
+    """打开设置→保存，不得把用户没动过的偏好重置成默认值。
+
+    真实缺陷：`open_settings` 只把 `config` 交给对话框，**没有**把当前的主题/语言
+    偏好带进去，而对话框里的 `theme_preference` 初值是「跟随系统」——于是用户
+    只是进去看一眼再保存，主题偏好就被静默改掉了。语言偏好如果重复这个写法，
+    后果一样。
+    """
+    from folith.qt import i18n, window as window_module
+
+    window = client["window"]
+    # `MainWindow` 用的是真实的 QSettings("Folith","QtDesktop")：写完必须还原，
+    # 否则"语言=en"会污染**同进程后续用例**（后续窗口按 en 渲染，中文断言全挂）。
+    saved_theme = window.settings.value(window.THEME_KEY)
+    saved_language = window.settings.value(window.LANGUAGE_KEY)
+    window.settings.setValue(window.THEME_KEY, "dark")
+    window.apply_theme_preference()
+    window.settings.setValue(window.LANGUAGE_KEY, "en")
+
+    captured: dict = {}
+
+    class _FakeDialog:
+        def __init__(self, config, runner, parent=None):
+            self.config = config
+            self.theme_preference = ""
+            self.language_preference = ""
+
+        def set_language_preference(self, code):
+            self.language_preference = i18n.normalize(code)
+
+        def exec(self):
+            captured["theme"] = self.theme_preference
+            captured["language"] = self.language_preference
+            return True
+
+    monkeypatch.setattr(window_module, "EngineDialog", _FakeDialog)
+    window.open_settings()
+
+    try:
+        assert captured["theme"] == "dark", captured
+        assert captured["language"] == "en", captured
+        assert str(window.settings.value(window.THEME_KEY)) == "dark"
+        assert str(window.settings.value(window.LANGUAGE_KEY)) == "en"
+    finally:
+        from folith.qt import i18n as i18n_module
+
+        for key, value in ((window.THEME_KEY, saved_theme),
+                           (window.LANGUAGE_KEY, saved_language)):
+            if value is None:
+                window.settings.remove(key)
+            else:
+                window.settings.setValue(key, value)
+        window.apply_theme_preference()
+        i18n_module.set_language(i18n_module.DEFAULT_LANGUAGE)
+
+
 def test_window_theme_preference_round_trips(client):
     """设置里的主题偏好要能持久化，并且切换立即改变样式表。"""
     from folith.qt import theme
@@ -1954,6 +2015,48 @@ def test_retranslate_keeps_uncommitted_editor_text(client):
         stub.stop()
 
 
+def test_task_menu_actions_follow_the_current_page(client):
+    """菜单动作要按上下文置灰：首页上点「开始 / 继续翻译」「冻结并保存交付…」
+    此前不会有任何反应——菜单看起来坏了一半。
+
+    这里不重写一套状态判断，只断言"菜单 = 工作台按钮的同一个真值"。
+    """
+    adapter = client["adapter"]
+    core = client["core"]
+    window = client["window"]
+    app = client["app"]
+    tmp = client["tmp"]
+
+    window.show_home()
+    app.processEvents()
+    actions = window.menu_actions
+    assert actions["home"].isEnabled() is False, "已经在任务列表，就不该再给入口"
+    for key in ("start", "pause", "cancel", "reload", "submit", "deliver"):
+        assert actions[key].isEnabled() is False, key
+
+    source = tmp / "menu-state.docx"
+    source.write_bytes(_make_docx(["第一段。"]))
+    job_id = adapter.import_documents(
+        [source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    state = core.load_job_state(job_id) or {}
+    state["paras"] = ["第一段。"]
+    state["pairs"] = [{"source": "第一段。", "target": "A paragraph.",
+                       "reviewed": True, "segment_uid": "s1"}]
+    state["p1_done"] = True
+    state["p2_done"] = True
+    core.save_job_state(job_id, state)
+
+    window.open_job(job_id)
+    app.processEvents()
+    assert actions["home"].isEnabled() is True
+    assert actions["reload"].isEnabled() is True
+    assert actions["submit"].isEnabled() is True
+
+    window.show_home()
+    app.processEvents()
+    assert actions["submit"].isEnabled() is False
+
+
 def test_macos_menu_roles_and_standard_shortcuts(client):
     """macOS 菜单约定：关于/设置/退出要有菜单角色，关闭窗口要有 ⌘W。
 
@@ -2029,6 +2132,42 @@ def test_dialogs_never_block_a_scripted_run(client, monkeypatch):
     diagnostics.show()
     monkeypatch.setattr(diagnostics, "_choose_path", lambda: "", raising=False)
     diagnostics.close()
+
+    # 4) 首页侧栏的「新建项目…」与「帮助 → OCR 与外部工具状态」此前**没有**自动化
+    #    守卫（会弹出没人点的输入框/提示框）。现在两条都必须直接说明、不挂起。
+    window = client["window"]
+    window.create_project()
+    assert window.status.currentMessage(), "新建项目应给出说明而不是弹框"
+    window.show_tools()
+    assert "工具状态" in window.status.currentMessage(), \
+        window.status.currentMessage()
+
+
+def test_main_window_confirm_uses_the_apps_own_dialog(client, monkeypatch):
+    """`_confirm` 必须走应用自己的确认框（系统 QMessageBox 与产品主题割裂）。
+
+    这里不打开真窗口：把 `prompts.ConfirmDialog.ask` 换成一个记录器，
+    断言标题/按钮文字/危险语义原样传进去。
+    """
+    from folith.qt import prompts
+
+    calls: list[dict] = []
+
+    def fake_ask(parent, title, message, **kwargs):
+        calls.append({"parent": parent, "title": title, "message": message,
+                      **kwargs})
+        return False
+
+    monkeypatch.setattr(prompts.ConfirmDialog, "ask", staticmethod(fake_ask))
+    window = client["window"]
+    monkeypatch.delenv("FOLITH_QT_NONINTERACTIVE", raising=False)
+    monkeypatch.delenv("FOLITH_EXIT_FORCE_PROMPT", raising=False)
+
+    assert window._confirm("删除任务", "确定删除吗？",
+                           yes="永久删除", no="取消") is False
+    assert calls and calls[-1]["title"] == "删除任务"
+    assert calls[-1]["yes"] == "永久删除"
+    assert calls[-1]["no"] == "取消"
 
 
 def test_busy_dialog_always_leaves_a_way_out(client, monkeypatch):
@@ -2781,8 +2920,23 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     job_b = delivered("stale-b", "B 的译文。", with_pdf=False)
 
     def assets() -> list[str]:
-        return [window.workbench.asset_list.item(index).text()
-                for index in range(window.workbench.asset_list.count())]
+        """只取**文件行**：清单里还有按用途分组的小标题行（不可选中）。"""
+        names = []
+        for index in range(window.workbench.asset_list.count()):
+            item = window.workbench.asset_list.item(index)
+            data = item.data(Qt.ItemDataRole.UserRole) or {}
+            if data.get("kind") == "asset":
+                names.append(item.text())
+        return names
+
+    def group_titles() -> list[str]:
+        titles = []
+        for index in range(window.workbench.asset_list.count()):
+            item = window.workbench.asset_list.item(index)
+            data = item.data(Qt.ItemDataRole.UserRole) or {}
+            if data.get("kind") == "header":
+                titles.append(item.text())
+        return titles
 
     window.open_job(job_a)
     window.refresh_workbench(force=True)
@@ -2807,7 +2961,18 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     snapshot_b = adapter.delivery_snapshots(job_b)[-1]
     expected_b = [str(item.get("name")) for item in snapshot_b.get("assets") or []]
     assert "translation.pdf" not in expected_b, expected_b   # B 没声明 PDF
-    assert names_b == expected_b, (names_b, expected_b)
+    # 清单按用途分组，组内顺序与 manifest 不同 → 比集合，不比顺序；
+    # 要钉住的是"A 的文件一个都不能留在 B 的清单里"。
+    assert sorted(names_b) == sorted(expected_b), (names_b, expected_b)
+    assert "translation.pdf" not in names_b, names_b
+    # 清单按用途分组：分组标题存在，且**只有**文件行会被当成资产（A 的 PDF 不能借
+    # 标题行的身份留下来）。标题行不可选中，否则"打开"会指向一个不存在的文件。
+    assert group_titles(), "交付清单缺少分组标题"
+    for index in range(window.workbench.asset_list.count()):
+        item = window.workbench.asset_list.item(index)
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        if data.get("kind") == "header":
+            assert not (item.flags() & Qt.ItemFlag.ItemIsSelectable), item.text()
 
 
 def test_switching_jobs_clears_the_search_but_keeps_the_status_filter(client):

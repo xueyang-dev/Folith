@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
+from . import i18n
 from . import adapter
 from . import icons
 from . import style as style_module
@@ -130,6 +131,225 @@ def _elide(text: str, limit: int = 90) -> str:
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
+# ================= 交付资产清单 =================
+#: 交付文件分组（顺序即界面顺序）：译文在前，其次是术语、证据与记录。
+#: Web 界面里"交付"是一列带图标、带大小、按用途分组的文件，而不是一串文件名。
+DELIVERY_GROUPS: tuple[tuple[str, str, str], ...] = (
+    ("translation", "译文与对照", "file-text"),
+    ("terms", "术语表", "file-sheet"),
+    ("evidence", "证据与清理", "file-code"),
+    ("record", "交付记录", "file-code"),
+    ("report", "报告", "file-text"),
+    ("image", "图片与预览", "image"),
+    ("other", "其它文件", "file"),
+)
+
+#: 已知交付文件 -> (分组, 图标)。未知文件按后缀取图标并归入"其它文件"。
+DELIVERY_ASSET_KINDS: dict[str, tuple[str, str]] = {
+    "translation.docx": ("translation", "file-text"),
+    "bilingual.docx": ("translation", "file-text"),
+    "translation.pdf": ("translation", "file-text"),
+    "terms.xlsx": ("terms", "file-sheet"),
+    "segment_evidence.jsonl": ("evidence", "file-code"),
+    "source_cleanup.json": ("evidence", "file-code"),
+    "delivery_manifest.json": ("record", "file-code"),
+}
+
+DELIVERY_SUFFIX_ICONS = {
+    ".docx": "file-text", ".doc": "file-text", ".pdf": "file-text",
+    ".xlsx": "file-sheet", ".xls": "file-sheet", ".csv": "file-sheet",
+    ".json": "file-code", ".jsonl": "file-code", ".xml": "file-code",
+    ".md": "file-text", ".txt": "file-text",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
+    ".epub": "file-text",
+}
+
+
+def _asset_kind(name: str) -> tuple[str, str]:
+    """交付文件名 -> (分组 key, 图标名)。"""
+    base = str(name or "").split("/")[-1]
+    known = DELIVERY_ASSET_KINDS.get(base)
+    if known is not None:
+        return known
+    lowered = base.lower()
+    for suffix, icon in DELIVERY_SUFFIX_ICONS.items():
+        if lowered.endswith(suffix):
+            return "image" if icon == "image" else "other", icon
+    return "other", "file"
+
+
+def _human_size(size) -> str:
+    """字节数 -> `36.5 KB`。取不到大小就返回 `—`，不猜一个数。"""
+    try:
+        value = float(size)
+    except (TypeError, ValueError):
+        return "—"
+    if value < 0:
+        return "—"
+    if value < 1024:
+        return f"{int(value)} B"
+    for unit, divisor in (("KB", 1024), ("MB", 1024 ** 2), ("GB", 1024 ** 3)):
+        if value < divisor * 1024 or unit == "GB":
+            return f"{value / divisor:.1f} {unit}"
+    return f"{value:.0f} B"
+
+
+def _asset_summary(assets: list[dict]) -> str:
+    total = 0
+    known = 0
+    for asset in assets:
+        size = asset.get("size")
+        if isinstance(size, (int, float)):
+            total += int(size)
+            known += 1
+    text = f"{len(assets)} 个文件"
+    if known:
+        text += f" · {_human_size(total)}"
+    return text
+
+
+def _frozen_at_label(value) -> str:
+    """快照 `created_at`（ISO UTC）-> 本地 `YYYY-MM-DD HH:MM`，取不到就不显示。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        from datetime import datetime
+
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if moment.tzinfo is not None:
+            moment = moment.astimezone()
+        return moment.strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return text[:16].replace("T", " ")
+
+
+def _asset_rows(latest: dict | None, *, resolve=None) -> list[dict]:
+    """把快照 manifest 变成"分组标题 + 文件行"的展示数据。
+
+    纯函数（路径探测由调用方通过 `resolve` 注入），因此能脱离窗口单测。
+    """
+    assets = [item for item in ((latest or {}).get("assets") or [])
+              if str(item.get("name") or "")]
+    if not assets:
+        return []
+    grouped: dict[str, list[dict]] = {}
+    for asset in assets:
+        group, icon = _asset_kind(str(asset.get("name")))
+        grouped.setdefault(group, []).append({"asset": asset, "icon": icon})
+    rows: list[dict] = []
+    for group, title, _group_icon in DELIVERY_GROUPS:
+        items = grouped.get(group)
+        if not items:
+            continue
+        rows.append({"kind": "header", "title": title,
+                     "meta": _asset_summary([item["asset"] for item in items])})
+        for item in items:
+            asset = item["asset"]
+            name = str(asset.get("name"))
+            missing = False
+            if resolve is not None:
+                try:
+                    path = resolve(name)
+                except Exception:  # noqa: BLE001 - 快照读不到就按缺失显示
+                    path = None
+                missing = not (path and getattr(path, "is_file", lambda: False)())
+            size = asset.get("size")
+            rows.append({
+                "kind": "asset", "title": name, "icon": item["icon"],
+                "size": int(size) if isinstance(size, (int, float)) else None,
+                "missing": missing,
+                "meta": "文件缺失" if missing else _human_size(size),
+                "sha256": str(asset.get("sha256") or ""),
+            })
+    return rows
+
+
+class _TaskCard(Card):
+    """首页卡片视图里的一张任务卡：单击选中、双击打开。
+
+    与表格共用同一份选中状态（卡片只是把表格行"画"成卡片），因此底部动作
+    （打开/移动/删除）在两种视图下语义一致，不需要第二套选择逻辑。
+    """
+
+    clicked = Signal(str)
+    activated = Signal(str)
+
+    def __init__(self, row: adapter.JobRow, *, tone: str,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("taskCard")
+        self.job_id = row.job_id
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(i18n.tr('单击选中；双击打开任务'))
+        self._selected = False
+        # 属性一开始就要有值：QSS 的 [selected="true"] 与外部探测都读它，
+        # 只在状态变化时设置会留下"未定义"的中间态。
+        self.setProperty("selected", "false")
+
+        column = QVBoxLayout(self)
+        column.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
+                                  theme_module.SPACE["md"], theme_module.SPACE["md"])
+        column.setSpacing(theme_module.SPACE["xs"])
+
+        title = QLabel(row.title or "未命名任务")
+        title.setObjectName("taskCardTitle")
+        title.setToolTip(row.title or "")
+        self.chip = Chip(_elide(i18n.tr_dynamic(row.status_label) or "—", 12), tone)
+
+        file_icon = QLabel()
+        file_icon.setPixmap(icons.pixmap("file-text", 16,
+                                         style_module.text_color("text-secondary")))
+        file_icon.setFixedSize(16, 16)
+
+        top = QHBoxLayout()
+        top.setSpacing(theme_module.SPACE["sm"])
+        top.addWidget(file_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(title, 1)
+        top.addWidget(self.chip, 0, Qt.AlignmentFlag.AlignTop)
+
+        meta_parts = [part for part in (
+            row.target_lang or "",
+            f"{row.segment_count} 段" if row.segment_count else "",
+            (row.updated_at or "").replace("T", " ")[:16] or "",
+        ) if part]
+        meta = QLabel(" · ".join(meta_parts))
+        meta.setObjectName("taskCardMeta")
+        meta.setToolTip(row.title or "")
+
+        # 旧界面首页卡片右下角有"查看项目 →"：这里给一个可见的打开入口，
+        # 而不是只靠"双击"这种没有提示的隐藏操作。点击仍然由卡片本身接收。
+        open_hint = QLabel(i18n.tr('打开任务 →'))
+        open_hint.setObjectName("link")
+
+        footer = QHBoxLayout()
+        footer.setSpacing(theme_module.SPACE["sm"])
+        footer.addWidget(open_hint)
+        footer.addStretch(1)
+
+        column.addLayout(top)
+        column.addWidget(meta)
+        column.addStretch(1)
+        column.addLayout(footer)
+
+    def set_selected(self, selected: bool) -> None:
+        if selected == self._selected:
+            return
+        self._selected = selected
+        self.setProperty("selected", "true" if selected else "false")
+        style_module.repolish(self)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.job_id)
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.activated.emit(self.job_id)
+        super().mouseDoubleClickEvent(event)
+
+
 class HomeView(QWidget):
     """任务库：品牌栏 + 指标芯片 + 状态化任务表 + 空状态。"""
 
@@ -163,13 +383,14 @@ class HomeView(QWidget):
         brand_row.addStretch(1)
 
         # ---- 侧栏动作（全部是真实入口，不放没实现的导航） -------------------
-        self.import_button = QPushButton("导入文档…")
+        self.import_button = QPushButton(i18n.tr('导入文档…'))
         self.import_button.setObjectName("primaryAction")
         self.import_button.setIcon(icons.icon("upload", 16, style_module.text_color("text-on-accent")))
         self.import_button.setIconSize(QSize(16, 16))
         self.import_button.setMinimumHeight(theme_module.CONTROL["lg"])
         self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.import_button.clicked.connect(self.importRequested.emit)
+        style_module.fit_button(self.import_button, max_width=168)
 
         def nav_button(label: str, icon_name: str) -> QPushButton:
             button = QPushButton(label)
@@ -177,15 +398,17 @@ class HomeView(QWidget):
             button.setIcon(icons.icon(icon_name, 16, style_module.text_color("text-secondary")))
             button.setIconSize(QSize(16, 16))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
+            # 侧栏是固定宽度：长语言（英/俄/阿）必须省略显示，否则按钮被截断
+            style_module.fit_button(button, max_width=168)
             return button
 
-        self.refresh_button = nav_button("刷新任务", "refresh")
+        self.refresh_button = nav_button(i18n.tr('刷新任务'), "refresh")
         self.refresh_button.clicked.connect(self.refreshRequested.emit)
-        self.project_button = nav_button("新建项目…", "plus")
+        self.project_button = nav_button(i18n.tr('新建项目…'), "plus")
         self.project_button.clicked.connect(self.createProjectRequested.emit)
-        self.manage_projects_button = nav_button("项目…", "folder")
+        self.manage_projects_button = nav_button(i18n.tr('项目…'), "folder")
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
-        self.settings_button = nav_button("设置…", "settings")
+        self.settings_button = nav_button(i18n.tr('设置…'), "settings")
         self.settings_button.clicked.connect(self.settingsRequested.emit)
 
         sidebar = QWidget()
@@ -199,14 +422,14 @@ class HomeView(QWidget):
         side.addSpacing(theme_module.SPACE["md"])
         side.addWidget(self.import_button)
         side.addSpacing(theme_module.SPACE["sm"])
-        side.addWidget(style_module.SectionLabel("任务"))
+        side.addWidget(style_module.SectionLabel(i18n.tr('任务')))
         side.addWidget(self.refresh_button)
         side.addSpacing(theme_module.SPACE["sm"])
-        side.addWidget(style_module.SectionLabel("项目"))
+        side.addWidget(style_module.SectionLabel(i18n.tr('项目')))
         side.addWidget(self.manage_projects_button)
         side.addWidget(self.project_button)
         side.addSpacing(theme_module.SPACE["sm"])
-        side.addWidget(style_module.SectionLabel("应用"))
+        side.addWidget(style_module.SectionLabel(i18n.tr('应用')))
         side.addWidget(self.settings_button)
         side.addStretch(1)
 
@@ -216,36 +439,37 @@ class HomeView(QWidget):
         engine_layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
                                          theme_module.SPACE["md"], theme_module.SPACE["md"])
         engine_layout.setSpacing(theme_module.SPACE["xs"])
-        self.engine_label = QLabel("模型：未配置")
+        self.engine_label = QLabel(i18n.tr('模型：未配置'))
         self.engine_label.setObjectName("caption")
         self.engine_label.setWordWrap(True)
-        self.setup_chip = Chip("未配置", "warn")
+        self.setup_chip = Chip(i18n.tr('未配置'), "warn")
         chip_row = QHBoxLayout()
         chip_row.setSpacing(theme_module.SPACE["sm"])
         chip_row.addWidget(self.setup_chip)
         chip_row.addStretch(1)
-        self.setup_button = QPushButton("配置模型连接…")
+        self.setup_button = QPushButton(i18n.tr('配置模型连接…'))
         self.setup_button.setObjectName("subtleAction")
+        style_module.fit_button(self.setup_button, max_width=148)
         self.setup_button.clicked.connect(self.settingsRequested.emit)
-        engine_layout.addWidget(style_module.SectionLabel("AI 引擎"))
+        engine_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 引擎')))
         engine_layout.addWidget(self.engine_label)
         engine_layout.addLayout(chip_row)
         engine_layout.addWidget(self.setup_button)
         side.addWidget(engine_card)
 
         # ---- 页头 ----------------------------------------------------------
-        title = QLabel("任务库")
+        title = QLabel(i18n.tr('任务库'))
         title.setObjectName("displayTitle")
-        subtitle = QLabel("导入 PDF / DOCX，翻译、审校，然后交付。")
+        subtitle = QLabel(i18n.tr('导入 PDF / DOCX，翻译、审校，然后交付。'))
         subtitle.setObjectName("subtitle")
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
 
-        self.refresh_icon_button = style_module.icon_button("refresh", "刷新任务")
+        self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
         self.refresh_icon_button.clicked.connect(self.refreshRequested.emit)
-        self.settings_icon_button = style_module.icon_button("settings", "设置…")
+        self.settings_icon_button = style_module.icon_button("settings", i18n.tr('设置…'))
         self.settings_icon_button.clicked.connect(self.settingsRequested.emit)
         header_actions = QHBoxLayout()
         header_actions.setSpacing(theme_module.SPACE["sm"])
@@ -260,24 +484,24 @@ class HomeView(QWidget):
 
         # ---- 首次运行提示（只有未配置模型时出现） --------------------------
         self.setup_banner = style_module.NoticeStrip(tone="warn")
-        self.setup_banner.set_action("配置模型连接…", self.settingsRequested.emit)
+        self.setup_banner.set_action(i18n.tr('配置模型连接…'), self.settingsRequested.emit)
         self.setup_banner.setVisible(False)
 
         # ---- 指标卡 --------------------------------------------------------
-        self.kpi_total = style_module.KpiCard("任务总数")
-        self.kpi_active = style_module.KpiCard("运行中")
-        self.kpi_delivered = style_module.KpiCard("已交付")
-        self.kpi_errored = style_module.KpiCard("有错误")
+        self.kpi_total = style_module.KpiCard(i18n.tr('任务总数'))
+        self.kpi_active = style_module.KpiCard(i18n.tr('运行中'))
+        self.kpi_delivered = style_module.KpiCard(i18n.tr('已交付'))
+        self.kpi_errored = style_module.KpiCard(i18n.tr('有错误'))
         kpis = QHBoxLayout()
         kpis.setSpacing(theme_module.SPACE["md"])
         for card in (self.kpi_total, self.kpi_active, self.kpi_delivered, self.kpi_errored):
             kpis.addWidget(card, 1)
 
         # ---- 区块标题 + 项目筛选 -------------------------------------------
-        self.section_title = QLabel("任务列表")
+        self.section_title = QLabel(i18n.tr('任务列表'))
         self.section_title.setObjectName("sectionTitle")
-        self.metric_jobs = Chip("0 个任务", "muted")
-        self.metric_active = Chip("0 个运行中", "info")
+        self.metric_jobs = Chip(i18n.tr('0 个任务'), "muted")
+        self.metric_active = Chip(i18n.tr('0 个运行中'), "info")
         self.metric_active.setVisible(False)
         filter_row = QHBoxLayout()
         filter_row.setSpacing(theme_module.SPACE["sm"])
@@ -285,16 +509,24 @@ class HomeView(QWidget):
         filter_row.addWidget(self.metric_jobs)
         filter_row.addWidget(self.metric_active)
         filter_row.addStretch(1)
-        filter_row.addWidget(style_module.SectionLabel("项目"))
+        # 表格 / 卡片：旧界面首页是"按项目分组的卡片"，表格适合几十个任务横着扫。
+        # 两种视图共用同一份选中状态，切换不丢选择。
+        self.view_switch = style_module.SegmentedControl(
+            [("table", i18n.tr("表格")), ("cards", i18n.tr("卡片"))])
+        self._view_mode = "table"
+        self.view_switch.changed.connect(self._set_view_mode)
+        filter_row.addWidget(self.view_switch)
+        filter_row.addWidget(style_module.SectionLabel(i18n.tr('项目')))
         self.project_filter = QComboBox()
-        self.project_filter.addItem("全部项目", "")
+        self.project_filter.addItem(i18n.tr('全部项目'), "")
         self.project_filter.setMinimumWidth(160)
         self.project_filter.currentIndexChanged.connect(self._apply_filter)
         filter_row.addWidget(self.project_filter)
 
         # ---- 任务表 --------------------------------------------------------
         self.table = QTableWidget(0, len(self.COLUMNS), self)
-        self.table.setHorizontalHeaderLabels(list(self.COLUMNS))
+        self.table.setHorizontalHeaderLabels(
+            [i18n.tr(column) for column in self.COLUMNS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         # 多选：任务多起来以后，逐个删除/改归属太慢（旧界面也支持批量）。
         self.table.setSelectionMode(
@@ -324,6 +556,23 @@ class HomeView(QWidget):
         self.table.installEventFilter(self)
         self.table.doubleClicked.connect(lambda _index: self._open_selected())
 
+        # ---- 卡片视图（按项目分组） ------------------------------------------
+        self.card_page = QWidget()
+        self.card_page.setObjectName("pageCanvas")
+        self.card_layout = QVBoxLayout(self.card_page)
+        self.card_layout.setContentsMargins(0, 0, theme_module.SPACE["sm"], 0)
+        self.card_layout.setSpacing(theme_module.SPACE["lg"])
+        self.card_scroll = QScrollArea()
+        self.card_scroll.setWidgetResizable(True)
+        self.card_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.card_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.card_scroll.viewport().setAutoFillBackground(False)
+        self.card_scroll.setWidget(self.card_page)
+        self._cards: dict[str, _TaskCard] = {}
+        self._project_names: dict[str, str] = {}
+        self._card_columns_applied = 0
+
         # ---- 空状态 --------------------------------------------------------
         self.empty_card = Card()
         empty_layout = QVBoxLayout(self.empty_card)
@@ -333,13 +582,13 @@ class HomeView(QWidget):
         empty_icon = QLabel()
         empty_icon.setPixmap(icons.pixmap("file-text", 40, style_module.text_color("text-muted")))
         empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_title = QLabel("还没有任务")
+        empty_title = QLabel(i18n.tr('还没有任务'))
         empty_title.setObjectName("sectionTitle")
         empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label = QLabel("点击「导入文档…」选择 PDF 或 DOCX，即可开始翻译。")
+        self.empty_label = QLabel(i18n.tr('点击「导入文档…」选择 PDF 或 DOCX，即可开始翻译。'))
         self.empty_label.setObjectName("hint")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_button = QPushButton("导入文档…")
+        self.empty_button = QPushButton(i18n.tr('导入文档…'))
         self.empty_button.setObjectName("primaryAction")
         self.empty_button.setIcon(icons.icon("upload", 16, style_module.text_color("text-on-accent")))
         self.empty_button.setIconSize(QSize(16, 16))
@@ -363,16 +612,17 @@ class HomeView(QWidget):
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.empty_page)
         self.stack.addWidget(self.table)
+        self.stack.addWidget(self.card_scroll)
 
         # ---- 底部动作 + 状态 ------------------------------------------------
-        self.open_button = QPushButton("打开任务")
+        self.open_button = QPushButton(i18n.tr('打开任务'))
         self.open_button.setObjectName("primaryAction")
         self.open_button.setIcon(icons.icon("arrow-right", 16, style_module.text_color("text-on-accent")))
         self.open_button.setIconSize(QSize(16, 16))
-        self.move_button = QPushButton("移动到项目…")
+        self.move_button = QPushButton(i18n.tr('移动到项目…'))
         self.move_button.setIcon(icons.icon("folder", 16, style_module.text_color("text-secondary")))
         self.move_button.setIconSize(QSize(16, 16))
-        self.delete_button = QPushButton("删除任务")
+        self.delete_button = QPushButton(i18n.tr('删除任务'))
         self.delete_button.setObjectName("dangerAction")
         self.delete_button.setIcon(icons.icon("trash", 16, style_module.text_color("danger")))
         self.delete_button.setIconSize(QSize(16, 16))
@@ -416,9 +666,15 @@ class HomeView(QWidget):
 
     def set_projects(self, projects: list[dict]) -> None:
         current = self.project_filter.currentData() or ""
+        self._project_names = {
+            str(project.get("project_id") or ""):
+                (str(project.get("name") or i18n.tr("未命名项目"))
+                 + (i18n.tr("（未分类）") if project.get("is_system") else ""))
+            for project in projects
+        }
         self.project_filter.blockSignals(True)
         self.project_filter.clear()
-        self.project_filter.addItem("全部项目", "")
+        self.project_filter.addItem(i18n.tr('全部项目'), "")
         for project in projects:
             self.project_filter.addItem(str(project.get("name") or "未命名项目"),
                                         project.get("project_id") or "")
@@ -432,17 +688,22 @@ class HomeView(QWidget):
     def set_engine_problem(self, problem: str, model_label: str = "") -> None:
         """模型连接状态：侧栏引擎卡 + 主区提示条（同一份信息，两处都看得见）。"""
         if problem:
-            detail = (f"尚未配置可用的模型连接：{problem}。"
-                      + (f"当前：{model_label}。" if model_label else "")
-                      + "配置并测试连接后即可开始翻译。")
+            detail = i18n.tr("尚未配置可用的模型连接：{v0}。", v0=problem)
+            if model_label:
+                detail += i18n.tr("当前：{v0}。", v0=model_label)
+            detail += i18n.tr("配置并测试连接后即可开始翻译。")
             self.setup_banner.set_text(detail)
             self.setup_banner.setVisible(True)
             self.setup_chip.set_tone("warn")
-            self.engine_label.setText(f"模型：{model_label}" if model_label else "模型：未配置")
+            self.engine_label.setText(
+                i18n.tr("模型：{v0}", v0=model_label) if model_label
+                else i18n.tr("模型：未配置"))
         else:
             self.setup_banner.setVisible(False)
             self.setup_chip.set_tone("ok")
-            self.engine_label.setText(f"模型：{model_label}" if model_label else "模型：已配置")
+            self.engine_label.setText(
+                i18n.tr("模型：{v0}", v0=model_label) if model_label
+                else i18n.tr("模型：已配置"))
 
     def _visible_rows(self) -> list[adapter.JobRow]:
         project = self.project_filter.currentData() or ""
@@ -466,11 +727,11 @@ class HomeView(QWidget):
         rows = self._visible_rows()
         self._refresh_logo()
         tokens = theme_module.tokens(current_theme())
-        self.metric_jobs.setText(f"{len(rows)} 个任务")
+        self.metric_jobs.setText(i18n.tr('{v0} 个任务', v0=len(rows)))
         active = [row for row in rows if row.active]
         self.metric_active.setVisible(bool(active))
         if active:
-            self.metric_active.setText(f"{len(active)} 个运行中")
+            self.metric_active.setText(i18n.tr('{v0} 个运行中', v0=len(active)))
         # 指标卡：只用行里**确实存在**的字段（不猜状态字符串）
         delivered = [row for row in rows if getattr(row, "snapshot_version", None)]
         errored = [row for row in rows if str(getattr(row, "error", "") or "").strip()]
@@ -483,8 +744,8 @@ class HomeView(QWidget):
             tone = _status_tone(row)
             values = (
                 row.title,
-                ("● " if row.active else "") + row.status_label,
-                row.target_lang or "—",
+                ("● " if row.active else "") + i18n.tr_dynamic(row.status_label),
+                i18n.tr_dynamic(row.target_lang) if row.target_lang else "—",
                 str(row.segment_count) if row.segment_count else "—",
                 (row.updated_at or "").replace("T", " ")[:19] or "—",
             )
@@ -505,12 +766,125 @@ class HomeView(QWidget):
                 if row.active:
                     item.setForeground(QColor(tokens["accent"]))
                 self.table.setItem(row_index, column, item)
-        self.stack.setCurrentWidget(self.table if rows else self.empty_page)
+        self._fill_cards(rows)
+        self._reflow_stack(rows)
         row_count_changed = len(rows) != self._last_row_count
         self._last_row_count = len(rows)
         if row_count_changed and self.table.hasFocus():
             self._select_current_row_for_keyboard()
+        self._sync_card_selection()
         self._selection_changed()
+
+    # -- 视图切换 / 卡片视图 ------------------------------------------------
+    def _reflow_stack(self, rows: list[adapter.JobRow] | None = None) -> None:
+        """按"有没有任务 + 当前视图"决定显示哪一页（空列表永远显示空状态）。"""
+        rows = self._visible_rows() if rows is None else rows
+        if not rows:
+            self.stack.setCurrentWidget(self.empty_page)
+        elif self._view_mode == "cards":
+            self.stack.setCurrentWidget(self.card_scroll)
+        else:
+            self.stack.setCurrentWidget(self.table)
+
+    def _set_view_mode(self, value: str) -> None:
+        self._view_mode = value if value in ("table", "cards") else "table"
+        self._reflow_stack()
+        self._sync_card_selection()
+
+    def set_view_mode(self, value: str) -> None:
+        """给窗口/测试用：切换视图时同步分段控件的选中态。"""
+        self._set_view_mode(value)
+        self.view_switch.set_value(self._view_mode)
+
+    def _card_columns(self) -> int:
+        # 先看视图自己的宽度（滚动区在首次填充时往往还没被布局到最终尺寸）。
+        width = self.width() or self.card_scroll.viewport().width()
+        if width >= 1240:
+            return 3
+        if width >= 880:
+            return 2
+        return 1
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        """窗口宽度跨过断点时重排卡片：否则列数会和可用宽度脱节。"""
+        super().resizeEvent(event)
+        if self._view_mode != "cards" or not self._cards:
+            return
+        columns = self._card_columns()
+        if columns != self._card_columns_applied:
+            self._fill_cards(self._visible_rows())
+            self._sync_card_selection()
+
+    def _project_label(self, project_id: str) -> str:
+        if not project_id:
+            return "未归属项目"
+        return self._project_names.get(project_id) or "未命名项目"
+
+    def _fill_cards(self, rows: list[adapter.JobRow]) -> None:
+        """按项目分组重建卡片页：分组标题 + 网格任务卡（选中态与表格同步）。"""
+        while self.card_layout.count():
+            item = self.card_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                # 先摘出布局树再排队销毁：只 deleteLater() 的话旧卡片会一直挂到
+                # 事件循环回收那一刻，期间和新卡片叠在一起（看起来像重影）。
+                widget.setParent(None)
+                widget.deleteLater()
+        self._cards = {}
+
+        groups: dict[str, list[adapter.JobRow]] = {}
+        for row in rows:
+            groups.setdefault(row.project_id or "", []).append(row)
+
+        columns = self._card_columns()
+        self._card_columns_applied = columns
+        for project_id, items in groups.items():
+            section = QWidget()
+            section_layout = QVBoxLayout(section)
+            section_layout.setContentsMargins(0, 0, 0, 0)
+            section_layout.setSpacing(theme_module.SPACE["sm"])
+            heading_row = QHBoxLayout()
+            heading_row.setSpacing(theme_module.SPACE["sm"])
+            heading = QLabel(self._project_label(project_id))
+            heading.setObjectName("groupHeading")
+            heading_row.addWidget(heading)
+            heading_row.addWidget(Chip(i18n.tr('{v0} 个任务', v0=len(items)), "muted"))
+            heading_row.addStretch(1)
+            section_layout.addLayout(heading_row)
+
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(theme_module.SPACE["md"])
+            grid.setVerticalSpacing(theme_module.SPACE["md"])
+            for position, row in enumerate(items):
+                card = _TaskCard(row, tone=_status_tone(row), parent=section)
+                card.clicked.connect(self._select_job_from_card)
+                card.activated.connect(self._open_job_from_card)
+                grid.addWidget(card, position // columns, position % columns)
+                self._cards[row.job_id] = card
+            for column in range(columns):
+                grid.setColumnStretch(column, 1)
+            section_layout.addLayout(grid)
+            self.card_layout.addWidget(section)
+        self.card_layout.addStretch(1)
+
+    def _select_job_from_card(self, job_id: str) -> None:
+        for row_index in range(self.table.rowCount()):
+            item = self.table.item(row_index, 0)
+            if item is not None and str(item.data(
+                    Qt.ItemDataRole.UserRole) or "") == job_id:
+                self.table.clearSelection()
+                self.table.selectRow(row_index)
+                return
+
+    def _open_job_from_card(self, job_id: str) -> None:
+        self._select_job_from_card(job_id)
+        self.openRequested.emit(job_id)
+
+    def _sync_card_selection(self) -> None:
+        selected = set(self.selected_job_ids())
+        for job_id, card in self._cards.items():
+            card.set_selected(job_id in selected)
 
     def selected_job_ids(self) -> list[str]:
         """当前选中的任务（按列表顺序，去重）。"""
@@ -562,9 +936,12 @@ class HomeView(QWidget):
         self.move_button.setEnabled(bool(ids))
         self.delete_button.setEnabled(bool(ids))
         self.move_button.setText(
-            f"移动到项目…（{len(ids)} 个）" if len(ids) > 1 else "移动到项目…")
+            i18n.tr("移动到项目…（{v0} 个）", v0=len(ids)) if len(ids) > 1
+            else i18n.tr("移动到项目…"))
+        self._sync_card_selection()
         self.delete_button.setText(
-            f"删除任务（{len(ids)} 个）" if len(ids) > 1 else "删除任务")
+            i18n.tr("删除任务（{v0} 个）", v0=len(ids)) if len(ids) > 1
+            else i18n.tr("删除任务"))
 
     def _move_selected(self) -> None:
         ids = self.selected_job_ids()
@@ -655,7 +1032,7 @@ class WorkbenchView(QWidget):
         self._autosave.timeout.connect(self.flush_draft)
 
         # ---- 头部卡片 ------------------------------------------------------
-        self.back_button = QPushButton("任务列表")
+        self.back_button = QPushButton(i18n.tr('任务列表'))
         self.back_button.setObjectName("ghostAction")
         self.back_button.setIcon(icons.icon("arrow-left", 16,
                                             style_module.text_color("text-secondary")))
@@ -667,26 +1044,35 @@ class WorkbenchView(QWidget):
         self.status_label.setObjectName("hint")
 
         self.chip_state = Chip("—", "muted")
-        self.chip_progress = Chip("0/0 段", "muted")
-        self.chip_review = Chip("审校 0/0", "muted")
-        self.chip_blocking = Chip("必须处理 0", "muted")
+        self.chip_progress = Chip(i18n.tr('0/0 段'), "muted")
+        self.chip_review = Chip(i18n.tr('审校 0/0'), "muted")
+        self.chip_blocking = Chip(i18n.tr('必须处理 0'), "muted")
 
         def _icon_button(button: QPushButton, name: str, token: str = "text-secondary"):
             button.setIcon(icons.icon(name, 16, style_module.text_color(token)))
             button.setIconSize(QSize(16, 16))
             return button
 
-        self.start_button = _icon_button(QPushButton("开始翻译"), "play", "text-on-accent")
+        self.start_button = _icon_button(QPushButton(i18n.tr('开始翻译')), "play", "text-on-accent")
         self.start_button.setObjectName("primaryAction")
-        self.pause_button = _icon_button(QPushButton("暂停"), "pause")
-        self.cancel_button = _icon_button(QPushButton("取消任务"), "stop", "danger")
+        self.pause_button = _icon_button(QPushButton(i18n.tr('暂停')), "pause")
+        self.cancel_button = _icon_button(QPushButton(i18n.tr('取消任务')), "stop", "danger")
         self.cancel_button.setObjectName("dangerAction")
-        self.retry_button = _icon_button(QPushButton("重试当前步骤"), "refresh")
+        self.retry_button = _icon_button(QPushButton(i18n.tr('重试当前步骤')), "refresh")
         for button, signal in ((self.start_button, self.startRequested),
                                (self.pause_button, self.pauseRequested),
                                (self.cancel_button, self.cancelRequested),
                                (self.retry_button, self.retryRequested)):
             button.clicked.connect(signal.emit)
+
+        # 审校动作：`review_all_button` 是 Header 上的"推荐下一步"，
+        # `review_selected_button` 留在工具栏（它跟当前选区绑定）。
+        self.review_selected_button = _icon_button(QPushButton(i18n.tr('审校所选段落')), "shield-check")
+        self.review_selected_button.setEnabled(False)
+        self.review_selected_button.clicked.connect(
+            lambda: self.reviewSelectedRequested.emit(self.selected_indexes()))
+        self.review_all_button = _icon_button(QPushButton(i18n.tr('审校全部段落')), "shield-check")
+        self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
 
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
@@ -719,6 +1105,11 @@ class WorkbenchView(QWidget):
         for button in (self.start_button, self.pause_button,
                        self.cancel_button, self.retry_button):
             actions.addWidget(button)
+        # 推荐下一步放在最右（旧界面 Header 的主动作位）：审校全部段落是
+        # "翻完还没审"状态下唯一该点的那件事，工具栏只留与选区有关的动作。
+        actions.addWidget(self.review_all_button)
+        self.header_actions_bar = QWidget()
+        self.header_actions_bar.setLayout(actions)
 
         header_card = Card(raised=True)
         header_layout = QVBoxLayout(header_card)
@@ -727,11 +1118,11 @@ class WorkbenchView(QWidget):
         header_layout.setSpacing(theme_module.SPACE["sm"])
         header_layout.addLayout(top)
         header_layout.addLayout(meta)
-        header_layout.addLayout(actions)
+        header_layout.addWidget(self.header_actions_bar)
 
         # ---- 翻译标签页 ----------------------------------------------------
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("搜索原文或译文，或输入段号…")
+        self.search_edit.setPlaceholderText(i18n.tr('搜索原文或译文，或输入段号…'))
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._filters_changed)
 
@@ -743,35 +1134,34 @@ class WorkbenchView(QWidget):
         # 分段控件（Web 界面的"全部/待审校/已审校"）：保留 status_buttons 映射，
         # 因为 set_status_filter() 仍然按名字设置选中态。
         self.status_segments = style_module.SegmentedControl(
-            [("全部", "全部"), ("待审校", "待审校"), ("已审校", "已审校")])
+            [("全部", i18n.tr("全部")), ("待审校", i18n.tr("待审校")),
+             ("已审校", i18n.tr("已审校"))])
         self.status_segments.changed.connect(self.set_status_filter)
         self.status_buttons: dict[str, QPushButton] = {
             name: self.status_segments.button(name) for name in ("全部", "待审校", "已审校")}
 
-        self.only_edited_box = QCheckBox("只看人工修改")
+        self.only_edited_box = style_module.CheckBox(i18n.tr('只看人工修改'))
         self.only_edited_box.toggled.connect(self._filters_changed)
-        self.only_issues_box = QCheckBox("只看必须处理")
+        self.only_issues_box = style_module.CheckBox(i18n.tr('只看必须处理'))
         self.only_issues_box.toggled.connect(self._filters_changed)
-
-        self.review_selected_button = _icon_button(QPushButton("审校所选段落"), "shield-check")
-        self.review_selected_button.setEnabled(False)
-        self.review_selected_button.clicked.connect(
-            lambda: self.reviewSelectedRequested.emit(self.selected_indexes()))
-        self.review_all_button = _icon_button(QPushButton("审校全部段落"), "shield-check")
-        self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(theme_module.SPACE["sm"])
         toolbar.addWidget(self.search_edit, 1)
         toolbar.addWidget(self.status_segments)
+        # "筛选"分组标签：两个复选框原来和分段控件并排，读起来像散落的开关，
+        # 旧界面这里是"筛选 ▾"一个入口。
+        toolbar.addWidget(style_module.SectionLabel(i18n.tr('筛选')))
         toolbar.addWidget(self.only_edited_box)
         toolbar.addWidget(self.only_issues_box)
         toolbar.addStretch(1)
         toolbar.addWidget(self.review_selected_button)
-        toolbar.addWidget(self.review_all_button)
+        self.toolbar_bar = QWidget()
+        self.toolbar_bar.setLayout(toolbar)
 
         self.segment_list = QTableWidget(0, len(self.COLUMNS), self)
-        self.segment_list.setHorizontalHeaderLabels(list(self.COLUMNS))
+        self.segment_list.setHorizontalHeaderLabels(
+            [i18n.tr(column) for column in self.COLUMNS])
         self.segment_list.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
         self.segment_list.setSelectionMode(
@@ -796,7 +1186,7 @@ class WorkbenchView(QWidget):
             lambda row, *_rest: self._row_selected(row))
 
         # ---- 右侧检查器 ----------------------------------------------------
-        self.segment_status = QLabel("尚未选择段落")
+        self.segment_status = QLabel(i18n.tr('尚未选择段落'))
         self.segment_status.setObjectName("hint")
         self.fact_state = QLabel("—")
         self.fact_review = QLabel("—")
@@ -807,35 +1197,34 @@ class WorkbenchView(QWidget):
                       self.fact_terms, self.fact_excluded):
             label.setWordWrap(True)
 
-        self.prev_button = _icon_button(QPushButton("上一段"), "chevron-left")
-        self.next_button = _icon_button(QPushButton("下一段"), "chevron-right")
+        self.prev_button = _icon_button(QPushButton(i18n.tr('上一段')), "chevron-left")
+        self.next_button = _icon_button(QPushButton(i18n.tr('下一段')), "chevron-right")
         self.prev_button.clicked.connect(lambda: self._step(-1))
         self.next_button.clicked.connect(lambda: self._step(1))
-        self.discard_draft_button = _icon_button(QPushButton("放弃草稿"), "x", "text-secondary")
+        self.discard_draft_button = _icon_button(QPushButton(i18n.tr('放弃草稿')), "x", "text-secondary")
         self.discard_draft_button.setObjectName("ghostAction")
         self.discard_draft_button.setToolTip(
-            "删除这段未提交的草稿，编辑器回到当前已提交的译文")
+            i18n.tr('删除这段未提交的草稿，编辑器回到当前已提交的译文'))
         self.discard_draft_button.clicked.connect(
             lambda: self.discardDraftRequested.emit(self._current_index))
-        self.copy_source_button = _icon_button(QPushButton("复制原文到译文"), "copy", "text-secondary")
+        self.copy_source_button = _icon_button(QPushButton(i18n.tr('复制原文到译文')), "copy", "text-secondary")
         self.copy_source_button.setObjectName("ghostAction")
         self.copy_source_button.clicked.connect(self._copy_source_to_target)
-        self.save_next_button = _icon_button(QPushButton("保存并进入下一段"), "save", "text-secondary")
+        self.save_next_button = _icon_button(QPushButton(i18n.tr('保存并进入下一段')), "save", "text-secondary")
         self.save_next_button.clicked.connect(self.save_and_next)
-        self.submit_button = _icon_button(QPushButton("保存并提交（⌘S）"), "save", "text-on-accent")
+        self.submit_button = _icon_button(QPushButton(i18n.tr('保存并提交（⌘S）')), "save", "text-on-accent")
         self.submit_button.setObjectName("primaryAction")
         self.submit_button.clicked.connect(self._submit)
-        self.retranslate_button = _icon_button(QPushButton("重译本段"), "sparkles", "text-secondary")
-        self.retranslate_button.setToolTip("只重译这一段，并刷新它的审校状态")
+        self.retranslate_button = _icon_button(QPushButton(i18n.tr('重译本段')), "sparkles", "text-secondary")
+        self.retranslate_button.setToolTip(i18n.tr('只重译这一段，并刷新它的审校状态'))
         self.retranslate_button.clicked.connect(
             lambda: self.retranslateRequested.emit(self._current_index))
-        self.exclude_button = _icon_button(QPushButton("排除本段"), "eye-off", "text-secondary")
+        self.exclude_button = _icon_button(QPushButton(i18n.tr('排除本段')), "eye-off", "text-secondary")
         self.exclude_button.setToolTip(
-            "排除后本段从工作台移出，不进入译文与交付；原文与当前译文完整保留，"
-            "可在「交付」页的已排除清单里恢复")
+            i18n.tr('排除后本段从工作台移出，不进入译文与交付；原文与当前译文完整保留，可在「交付」页的已排除清单里恢复'))
         self.exclude_button.clicked.connect(
             lambda: self.excludeRequested.emit(self._current_index))
-        self.review_button = _icon_button(QPushButton("审校本段"), "shield-check", "text-secondary")
+        self.review_button = _icon_button(QPushButton(i18n.tr('审校本段')), "shield-check", "text-secondary")
         self.review_button.clicked.connect(
             lambda: self.reviewCurrentRequested.emit(self._current_index))
 
@@ -850,20 +1239,27 @@ class WorkbenchView(QWidget):
         edit_row.addWidget(self.copy_source_button)
         edit_row.addWidget(self.discard_draft_button)
 
-        facts = QFormLayout()
-        facts.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        facts.addRow(QLabel("状态"), self.fact_state)
-        facts.addRow(QLabel("审校"), self.fact_review)
-        facts.addRow(QLabel("来源"), self.fact_source)
-        facts.addRow(QLabel("相关术语"), self.fact_terms)
+        # 段落事实：与设置页同一套"标签在左、值在右"的小表（此前是右对齐标签列，
+        # 中文两字标签会浮在中间，值列起点还随标签长度跳）。
+        facts = QGridLayout()
+        facts.setContentsMargins(0, 0, 0, 0)
+        facts.setHorizontalSpacing(theme_module.SPACE["lg"])
+        facts.setVerticalSpacing(theme_module.SPACE["xs"])
+        for row_index, (name, value) in enumerate((
+                ("状态", self.fact_state), ("审校", self.fact_review),
+                ("来源", self.fact_source), ("相关术语", self.fact_terms))):
+            facts.addWidget(style_module.field_label(name), row_index, 0,
+                            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            facts.addWidget(value, row_index, 1)
+        facts.setColumnStretch(1, 1)
 
         self.source_view = QPlainTextEdit()
         self.source_view.setReadOnly(True)
         self.source_view.setObjectName("sourceView")
-        self.source_view.setPlaceholderText("原文")
+        self.source_view.setPlaceholderText(i18n.tr('原文'))
         self.source_view.setMaximumHeight(120)
         self.target_edit = QPlainTextEdit()
-        self.target_edit.setPlaceholderText("译文（可直接编辑；切换段落或退出时自动保留草稿）")
+        self.target_edit.setPlaceholderText(i18n.tr('译文（可直接编辑；切换段落或退出时自动保留草稿）'))
         self.target_edit.textChanged.connect(self._text_changed)
 
         inspector = Card()
@@ -873,12 +1269,12 @@ class WorkbenchView(QWidget):
         inspector_layout.setSpacing(theme_module.SPACE["sm"])
         inspector_layout.addWidget(self.segment_status)
         inspector_layout.addLayout(nav_row)
-        inspector_layout.addWidget(style_module.SectionLabel("原文"))
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('原文')))
         inspector_layout.addWidget(self.source_view)
-        inspector_layout.addWidget(style_module.SectionLabel("译文"))
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('译文')))
         inspector_layout.addWidget(self.target_edit, 1)
 
-        inspector_layout.addWidget(style_module.SectionLabel("编辑动作"))
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('编辑动作')))
         edit_grid = QGridLayout()
         edit_grid.setHorizontalSpacing(theme_module.SPACE["sm"])
         edit_grid.setVerticalSpacing(theme_module.SPACE["sm"])
@@ -888,7 +1284,7 @@ class WorkbenchView(QWidget):
         edit_grid.addWidget(self.discard_draft_button, 2, 0, 1, 2)
         inspector_layout.addLayout(edit_grid)
 
-        inspector_layout.addWidget(style_module.SectionLabel("审校与段落"))
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('审校与段落')))
         review_grid = QGridLayout()
         review_grid.setHorizontalSpacing(theme_module.SPACE["sm"])
         review_grid.setVerticalSpacing(theme_module.SPACE["sm"])
@@ -897,10 +1293,13 @@ class WorkbenchView(QWidget):
         review_grid.addWidget(self.exclude_button, 1, 0, 1, 2)
         inspector_layout.addLayout(review_grid)
 
-        inspector_layout.addWidget(style_module.SectionLabel("段落事实"))
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
         inspector_layout.addLayout(facts)
-        inspector_layout.addWidget(style_module.SectionLabel("检查项"))
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('检查项')))
         self.qa_view = QTextBrowser()
+        # 检查项是只读的"报告面"，不是输入框：给它一个沉底面板样式，
+        # 否则默认会画出一圈聚焦边框，看起来像可以打字。
+        self.qa_view.setObjectName("qaView")
         self.qa_view.setOpenExternalLinks(True)
         self.qa_view.setMinimumHeight(70)
         inspector_layout.addWidget(self.qa_view, 1)
@@ -922,32 +1321,86 @@ class WorkbenchView(QWidget):
         translation_split.setStretchFactor(0, 1)
         translation_split.setStretchFactor(1, 0)
         translation_split.setSizes([720, 460])
+        self.translation_split = translation_split
         self.inspector_scroll = inspector_scroll
 
         translation_page = QWidget()
         translation_layout = QVBoxLayout(translation_page)
         translation_layout.setContentsMargins(0, 8, 0, 0)
         translation_layout.setSpacing(8)
-        translation_layout.addLayout(toolbar)
-        translation_layout.addWidget(translation_split, 1)
+        translation_layout.addWidget(self.toolbar_bar)
+        translation_layout.addWidget(self.translation_split, 1)
+        # 没有段落时正文只放一段说明：空表格 + 空检查器看起来像加载失败，
+        # 而这个状态下用户真正要做的事只有 Header 上那一个动作。
+        self.no_segments_card = Card()
+        no_segments_layout = QVBoxLayout(self.no_segments_card)
+        no_segments_layout.setContentsMargins(0, 0, 0, 0)
+        no_segments_layout.setSpacing(0)
+        self.no_segments_state = style_module.EmptyState(
+            icon="file-text", title=i18n.tr('还没有可编辑的段落'),
+            hint=i18n.tr('这份文档目前没有切分出的段落。点上方「开始翻译」会导入并切分正文；进度会自动保存，可以随时离开再回来。'))
+        self.no_segments_state.setObjectName("emptyState")
+        no_segments_layout.addWidget(self.no_segments_state)
+        translation_layout.addWidget(self.no_segments_card, 1)
 
         # ---- 交付标签页 ----------------------------------------------------
-        self.delivery_label = QLabel("交付状态：—")
+        # 交付清单按 Web 界面的表达重做：一行一个文件（类型图标 + 名称 + 大小），
+        # 按用途分组；没有冻结交付、没有排除段落时给明确的空状态，而不是一块空白列表。
+        self.delivery_label = QLabel(i18n.tr('交付状态：—'))
         self.delivery_label.setWordWrap(True)
-        self.deliver_button = QPushButton("审校完成后冻结交付")
+        self.deliver_button = QPushButton(i18n.tr('审校完成后冻结交付'))
         self.deliver_button.setObjectName("primaryAction")
         self.deliver_button.clicked.connect(self.deliverRequested.emit)
-        self.export_button = QPushButton("导出当前译文副本…")
+        self.export_button = QPushButton(i18n.tr('导出当前译文副本…'))
+        self.export_button.setIcon(icons.icon("download", 16))
+        self.export_button.setIconSize(QSize(16, 16))
         self.export_button.clicked.connect(self.exportRequested.emit)
-        self.save_snapshot_button = QPushButton("保存冻结交付文件…")
+        self.save_snapshot_button = QPushButton(i18n.tr('保存冻结交付文件…'))
+        self.save_snapshot_button.setIcon(icons.icon("save", 16))
+        self.save_snapshot_button.setIconSize(QSize(16, 16))
         self.save_snapshot_button.clicked.connect(self._save_snapshot)
-        self.open_asset_button = QPushButton("用默认应用打开")
+        self.open_asset_button = QPushButton(i18n.tr('用默认应用打开'))
+        self.open_asset_button.setIcon(icons.icon("external-link", 16))
+        self.open_asset_button.setIconSize(QSize(16, 16))
         self.open_asset_button.clicked.connect(self._open_asset)
-        self.reveal_asset_button = QPushButton("在 Finder 中显示")
+        self.reveal_asset_button = QPushButton(i18n.tr('在 Finder 中显示'))
+        self.reveal_asset_button.setIcon(icons.icon("folder", 16))
+        self.reveal_asset_button.setIconSize(QSize(16, 16))
         self.reveal_asset_button.clicked.connect(self._reveal_asset)
         self.asset_list = QListWidget()
-        self.asset_list.setMaximumHeight(180)
+        self.asset_list.setObjectName("assetList")
+        self.asset_list.setItemDelegate(style_module.AssetRowDelegate(self.asset_list))
+        self.asset_list.setMouseTracking(True)
+        self.asset_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.asset_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.asset_list.setMinimumHeight(0)
         self.asset_list.itemDoubleClicked.connect(self._reveal_asset)
+        self.asset_list.currentItemChanged.connect(self._asset_selection_changed)
+
+        self.asset_header_label = style_module.SectionLabel(i18n.tr('冻结交付文件'))
+        self.asset_meta = QLabel("")
+        self.asset_meta.setObjectName("assetMeta")
+        asset_header = QHBoxLayout()
+        asset_header.setSpacing(theme_module.SPACE["sm"])
+        asset_header.addWidget(self.asset_header_label)
+        asset_header.addStretch(1)
+        asset_header.addWidget(self.asset_meta)
+
+        self.asset_notice = style_module.NoticeStrip("", tone="warn")
+        self.asset_notice.setVisible(False)
+        self.asset_empty = style_module.EmptyState(
+            icon="package", title=i18n.tr('尚未生成冻结交付'),
+            hint=i18n.tr('完成翻译与审校后点「冻结交付」，这里会列出交付包里的每个文件、大小与用途；冻结后的版本不可修改。'))
+        self.asset_empty.setVisible(False)
+
+        asset_footer = QHBoxLayout()
+        asset_footer.setSpacing(theme_module.SPACE["sm"])
+        self.asset_hint = QLabel(i18n.tr('双击文件可在 Finder 中显示'))
+        self.asset_hint.setObjectName("hint")
+        asset_footer.addWidget(self.asset_hint)
+        asset_footer.addStretch(1)
+        asset_footer.addWidget(self.open_asset_button)
+        asset_footer.addWidget(self.reveal_asset_button)
 
         delivery_actions = QHBoxLayout()
         delivery_actions.setSpacing(8)
@@ -955,13 +1408,6 @@ class WorkbenchView(QWidget):
         delivery_actions.addWidget(self.export_button)
         delivery_actions.addWidget(self.save_snapshot_button)
         delivery_actions.addStretch(1)
-        asset_actions = QVBoxLayout()
-        asset_actions.addWidget(self.open_asset_button)
-        asset_actions.addWidget(self.reveal_asset_button)
-        asset_actions.addStretch(1)
-        asset_row = QHBoxLayout()
-        asset_row.addWidget(self.asset_list, 1)
-        asset_row.addLayout(asset_actions)
 
         delivery_card = Card()
         delivery_layout = QVBoxLayout(delivery_card)
@@ -969,47 +1415,70 @@ class WorkbenchView(QWidget):
         delivery_layout.setSpacing(10)
         delivery_layout.addWidget(self.delivery_label)
         delivery_layout.addLayout(delivery_actions)
-        delivery_layout.addWidget(QLabel("冻结交付文件（双击在 Finder 中显示）"))
-        delivery_layout.addLayout(asset_row)
+        delivery_layout.addLayout(asset_header)
+        delivery_layout.addWidget(self.asset_notice)
+        delivery_layout.addWidget(self.asset_list)
+        delivery_layout.addWidget(self.asset_empty)
+        delivery_layout.addLayout(asset_footer)
 
         # 已排除段落：它们已不在工作台里，恢复必须从这里进行。
         self.excluded_list = QListWidget()
         self.excluded_list.setMaximumHeight(140)
-        self.restore_excluded_button = QPushButton("恢复所选段落")
+        self.restore_excluded_button = QPushButton(i18n.tr('恢复所选段落'))
         self.restore_excluded_button.clicked.connect(self._restore_excluded)
         self.excluded_hint = QLabel(
-            "被排除的段落不进入译文与交付；原文与排除时的译文完整保留。"
-            "交付包里会附上这份排除清单。")
+            i18n.tr('被排除的段落不进入译文与交付；原文与排除时的译文完整保留。交付包里会附上这份排除清单。'))
         self.excluded_hint.setObjectName("hint")
         self.excluded_hint.setWordWrap(True)
         excluded_actions = QHBoxLayout()
         excluded_actions.addWidget(self.excluded_list, 1)
         excluded_actions.addWidget(self.restore_excluded_button)
+        self.excluded_empty = style_module.EmptyState(
+            icon="check-circle", title=i18n.tr('没有被排除的段落'),
+            hint=i18n.tr('排除的段落会出现在这里，并附在交付包中；恢复后段落回到工作台。'))
         excluded_card = Card()
         excluded_layout = QVBoxLayout(excluded_card)
         excluded_layout.setContentsMargins(16, 14, 16, 14)
         excluded_layout.setSpacing(8)
-        self.excluded_title = QLabel("已排除段落（0）")
+        self.excluded_title = QLabel(i18n.tr('已排除段落（0）'))
         self.excluded_title.setObjectName("cardTitle")
         excluded_layout.addWidget(self.excluded_title)
         excluded_layout.addWidget(self.excluded_hint)
         excluded_layout.addLayout(excluded_actions)
+        excluded_layout.addWidget(self.excluded_empty)
+
+        # 交付页内容随清单长度变化：套一层滚动区，窗口不高时整页滚动，
+        # 而不是把最后一组文件挤成半行。
+        delivery_content = QWidget()
+        delivery_content.setObjectName("pageCanvas")
+        delivery_content_layout = QVBoxLayout(delivery_content)
+        delivery_content_layout.setContentsMargins(0, 8, 0, 0)
+        delivery_content_layout.setSpacing(theme_module.SPACE["md"])
+        delivery_content_layout.addWidget(delivery_card)
+        delivery_content_layout.addWidget(excluded_card)
+        delivery_content_layout.addStretch(1)
+        delivery_scroll = QScrollArea()
+        delivery_scroll.setWidgetResizable(True)
+        delivery_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        delivery_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        delivery_scroll.viewport().setAutoFillBackground(False)
+        delivery_scroll.setWidget(delivery_content)
 
         delivery_page = QWidget()
         delivery_page_layout = QVBoxLayout(delivery_page)
-        delivery_page_layout.setContentsMargins(0, 8, 0, 0)
-        delivery_page_layout.addWidget(delivery_card)
-        delivery_page_layout.addWidget(excluded_card)
-        delivery_page_layout.addStretch(1)
+        delivery_page_layout.setContentsMargins(0, 0, 0, 0)
+        delivery_page_layout.addWidget(delivery_scroll)
+        # 还没有清单时"打开/显示"就该是灰的，而不是点了没反应。
+        self._asset_selection_changed()
 
         self.tabs = QTabWidget()
         self.tabs.setIconSize(QSize(16, 16))
         self.tabs.addTab(translation_page,
                          icons.icon("translate", 16, style_module.text_color("text-secondary")),
-                         "翻译")
+                         i18n.tr('翻译'))
         self.tabs.addTab(delivery_page,
                          icons.icon("package", 16, style_module.text_color("text-secondary")),
-                         "交付")
+                         i18n.tr('交付'))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 14)
@@ -1017,7 +1486,7 @@ class WorkbenchView(QWidget):
         layout.addWidget(header_card)
         layout.addWidget(self.tabs, 1)
 
-        next_shortcut = QAction("下一段", self)
+        next_shortcut = QAction(i18n.tr('下一段'), self)
         next_shortcut.setShortcut(QKeySequence("Ctrl+Return"))
         next_shortcut.triggered.connect(lambda: self._step(1))
         self.addAction(next_shortcut)
@@ -1113,8 +1582,35 @@ class WorkbenchView(QWidget):
         return [row for row in self._all_rows if row.index in visible]
 
     # ================= 渲染 =================
+    def _sync_segment_placeholder(self) -> None:
+        """有段落才显示网格与检查器；没有段落时正文换成一段说明。
+
+        判据用 `_all_rows`（总段数）而不是过滤后的 `_rows`：筛选结果为空时
+        表格空着是**正确**的，不能把它说成"这份文档没有段落"。
+        """
+        has_rows = bool(self._all_rows)
+        self.toolbar_bar.setVisible(has_rows)
+        self.translation_split.setVisible(has_rows)
+        self.no_segments_card.setVisible(not has_rows)
+        if has_rows:
+            return
+        state = self._state or {}
+        if state.get("excluded_segments"):
+            title = "所有段落都被排除了"
+            hint = ("被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，"
+                    "原文与当前译文都完整保留。")
+        elif state.get("paras") or state.get("pairs"):
+            title = "当前筛选下没有段落"
+            hint = "清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。"
+        else:
+            title = "还没有可编辑的段落"
+            hint = ("这份文档目前没有切分出的段落。点上方「开始翻译」会导入并切分正文；"
+                    "进度会自动保存，可以随时离开再回来。")
+        self.no_segments_state.set_text(title, hint)
+
     def _render_segments(self) -> None:
         """按可见集合更新网格；重建时按稳定段身份恢复选中，不触碰编辑器。"""
+        self._sync_segment_placeholder()
         self._rows = self._visible_rows()
         if self.segment_list.rowCount() != len(self._rows):
             self.segment_list.blockSignals(True)
@@ -1150,7 +1646,7 @@ class WorkbenchView(QWidget):
         if number.text() != number_text:
             number.setText(number_text)
         number.setForeground(QColor(_tone_color(tokens, tone)))
-        number.setToolTip(row.status)
+        number.setToolTip(i18n.tr_dynamic(row.status))
         source_text = _elide(row.source, 160)
         if source.text() != source_text:
             source.setText(source_text)
@@ -1170,16 +1666,21 @@ class WorkbenchView(QWidget):
         status = str(runtime.get("headline_status") or "")
         label = str(runtime.get("headline") or "")
         detail = str(runtime.get("detail") or "")
-        # 头部已经有状态芯片了：这里只放"最近一次活动/提示"，不重复状态。
-        self.status_label.setText(detail or label or "")
         if str(runtime.get("status") or "") in ("failed", "stalled", "interrupted"):
             self.phase_label.setObjectName("statusError")
         else:
             self.phase_label.setObjectName("hint")
         style_module.repolish(self.phase_label)
 
-        self.chip_state.setText(status or "—")
+        self.chip_state.setText(i18n.tr_dynamic(status) or "—")
         self.chip_state.set_tone(RUNTIME_STATUS_TONES.get(status, "muted"))
+        # 状态芯片说了"已完成"，右边再写一遍"已完成"就是同一句话读两次：
+        # 只有运行区带来的信息**超出**芯片时才显示这一行文字。
+        note = detail or label or ""
+        if note == self.chip_state.text():
+            note = ""
+        self.status_label.setText(note)
+        self.status_label.setVisible(bool(note))
 
         completed = int(runtime.get("progress_completed") or 0)
         total = int(runtime.get("progress_total") or 0)
@@ -1191,20 +1692,22 @@ class WorkbenchView(QWidget):
         stage_progress = runtime.get("stage_progress") or {}
         stage_total = int(stage_progress.get("total") or 0)
         if total:
-            self.chip_progress.setText(f"{completed}/{total} 段")
+            self.chip_progress.setText(i18n.tr('{v0}/{v1} 段', v0=completed, v1=total))
             self.chip_progress.set_tone("info" if completed < total else "ok")
             self.progress.setRange(0, total)
             self.progress.setValue(min(completed, total))
         elif stage_total:
             done = int(stage_progress.get("completed") or 0)
             unit = str(stage_progress.get("unit") or "")
-            self.chip_progress.setText(f"{done}/{stage_total} {unit}".strip())
+            self.chip_progress.setText(i18n.tr(
+                "{v0}/{v1} {v2}", v0=done, v1=stage_total,
+                v2=i18n.tr_dynamic(unit)).strip())
             self.chip_progress.set_tone("info" if done < stage_total else "ok")
             self.progress.setRange(0, stage_total)
             self.progress.setValue(min(done, stage_total))
         elif pairs_count:
             # 既没有单位进度也没有批次进度时，至少给出真实的段落数，而不是一个"—"。
-            self.chip_progress.setText(f"{pairs_count} 段")
+            self.chip_progress.setText(i18n.tr('{v0} 段', v0=pairs_count))
             self.chip_progress.set_tone("muted")
             self.progress.setRange(0, 1)
             self.progress.setValue(1 if status == "已完成" else 0)
@@ -1217,40 +1720,52 @@ class WorkbenchView(QWidget):
         pairs = self._state.get("pairs") or []
         reviewed = sum(1 for pair in pairs if pair.get("reviewed"))
         if pairs:
-            text = f"审校 {reviewed}/{len(pairs)}"
+            text = i18n.tr("审校 {v0}/{v1}", v0=reviewed, v1=len(pairs))
             tone = "ok" if reviewed == len(pairs) else "muted"
             # 标记数不等于门禁结论：恢复/旧格式数据里可能"全标了 reviewed"但当前
             # 审校收据已失效。此时必须说出来，否则用户以为已经可以交付。
             readiness = adapter.review_readiness(self.job_id, self._state)
             if readiness.get("required") and not readiness.get("ready"):
-                text += "（需重新审校）"
+                text += i18n.tr("（需重新审校）")
                 tone = "warn"
             self.chip_review.setText(text)
             self.chip_review.set_tone(tone)
         else:
-            self.chip_review.setText("审校 —")
+            self.chip_review.setText(i18n.tr('审校 —'))
             self.chip_review.set_tone("muted")
 
         # 计数用核心自己的规则：检查项以 `resolved` 表示是否已解决，
         # 而不是 `status == "open"`（按后者会把已解决的阻断项也算进来）。
         blocking = adapter.unresolved_blocking(self.job_id, self._state)
-        self.chip_blocking.setText(f"必须处理 {len(blocking)}")
+        self.chip_blocking.setText(i18n.tr('必须处理 {v0}', v0=len(blocking)))
         self.chip_blocking.set_tone("danger" if blocking else "muted")
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
-        # * `available_actions` 是核心给出的可执行动作（resume/retry/pause/cancel/…）；
-        # * 暂停是管线能力（pause_requested），何时可用同样由核心的动作表决定；
+        # * `available_actions` 是核心给出的可执行动作（resume/retry/cancel/…）；
+        # * 暂停是管线能力（pause_requested），只在真正运行时出现；
         # * 停滞任务核心也提供 cancel，因此取消按钮必须跟着动作走——否则用户
         #   在"暂无运行信号"时反而看不到取消入口。
-        # Architecture Phase 3: 这里只做**呈现**（哪个按钮、什么文案、什么布局），
-        # 不再从 status 字面量重新推导"哪个动作合法"。
-        actions = set(runtime.get("available_actions") or ())
+        actions = set(runtime.get("available_actions") or [])
+        raw_status = str(runtime.get("status") or "")
+        running = raw_status in ("running", "pausing", "cancelling",
+                                 "resume_requested", "starting", "queued",
+                                 "waiting_external", "waiting_manual")
         self.start_button.setVisible("resume" in actions)
         self.start_button.setText(
             "继续翻译" if self._state.get("p1_done") else "开始翻译")
-        self.pause_button.setVisible("pause" in actions)
-        self.cancel_button.setVisible("cancel" in actions)
+        self.pause_button.setVisible(running and raw_status == "running")
+        self.cancel_button.setVisible(running or "cancel" in actions)
         self.retry_button.setVisible("retry" in actions)
+        # 审校全部段落是 Header 上的"推荐下一步"：有段落、且任务没在跑时才给。
+        self.review_all_button.setVisible(bool(self._all_rows) and not running)
+        self._sync_header_actions()
+
+    def _sync_header_actions(self) -> None:
+        """动作区没有可见按钮时整行收掉：空白的一行比没有这一行更像没做完。"""
+        buttons = (self.start_button, self.pause_button, self.cancel_button,
+                   self.retry_button, self.review_all_button)
+        self.header_actions_bar.setVisible(
+            any(not button.isHidden() for button in buttons))
 
     def _render_delivery(self, *, force: bool = False) -> None:
         """刷新交付面板：有节流，但**绝不显示上一个任务的内容**。
@@ -1274,31 +1789,122 @@ class WorkbenchView(QWidget):
         self._delivery_rendered = True
         self._delivery_preview_at = now
         self._delivery_key = key
-        status = preview.get("status_label") or "—"
+        status = i18n.tr_dynamic(preview.get("status_label")) or "—"
         issues = preview.get("issues") or []
-        self.delivery_label.setText(
-            f"交付状态：{status}"
-            + (f"；阻断 {len(issues)} 项：{_elide('；'.join(str(i) for i in issues), 200)}"
-               if issues else "；交付文件按任务声明生成，冻结后不可修改。"))
+        detail = (i18n.tr("；阻断 {v0} 项：{v1}", v0=len(issues),
+                          v1=_elide("；".join(str(i) for i in issues), 200))
+                  if issues
+                  else i18n.tr("；交付文件按任务声明生成，冻结后不可修改。"))
+        self.delivery_label.setText(i18n.tr("交付状态：{v0}", v0=status) + detail)
         self.deliver_button.setEnabled(bool(preview.get("can_deliver")))
         snapshot = preview.get("snapshot") or {}
         if snapshot.get("current"):
             self.deliver_button.setText(
-                f"已冻结交付 v{snapshot.get('latest', {}).get('snapshot_version')}")
+                i18n.tr('已冻结交付 v{v0}', v0=snapshot.get('latest', {}).get('snapshot_version')))
         elif preview.get("can_deliver"):
             self.deliver_button.setText(
-                f"冻结交付（生成 v{len(self._snapshots) + 1}）")
+                i18n.tr('冻结交付（生成 v{v0}）', v0=len(self._snapshots) + 1))
         else:
-            self.deliver_button.setText("审校完成后冻结交付")
+            self.deliver_button.setText(i18n.tr('审校完成后冻结交付'))
         self.export_button.setEnabled(bool(self._state.get("p2_done")))
         latest = self._snapshots[-1] if self._snapshots else None
         self.save_snapshot_button.setEnabled(latest is not None)
         if latest is not None:
             self.save_snapshot_button.setText(
-                f"保存冻结交付文件 v{latest.get('snapshot_version')}…")
+                i18n.tr('保存冻结交付文件 v{v0}…', v0=latest.get('snapshot_version')))
         self.asset_list.clear()
-        for item in (snapshot.get("latest") or {}).get("assets") or []:
-            self.asset_list.addItem(str(item.get("name")))
+        self._fill_delivery_assets(snapshot.get("latest"), snapshot=snapshot)
+
+    def _fill_delivery_assets(self, latest: dict | None, *, snapshot: dict | None = None) -> None:
+        """渲染交付文件清单：分组 + 图标 + 大小；空/缺失/不完整各自有话可说。"""
+        latest = latest or {}
+        assets = [item for item in (latest.get("assets") or []) if item.get("name")]
+
+        def resolve(name: str):
+            version = latest.get("snapshot_version")
+            if not self.job_id or not version:
+                return None
+            return adapter.core.delivery_snapshot_asset_path(self.job_id, version, name)
+
+        rows = _asset_rows(latest, resolve=resolve if self.job_id else None)
+        self.asset_list.clear()
+        selected_name = self._selected_asset_name()
+        for row in rows:
+            item = QListWidgetItem(str(row.get("title") or ""))
+            item.setData(Qt.ItemDataRole.UserRole, row)
+            if row.get("kind") == "header":
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+            else:
+                item.setToolTip(
+                    i18n.tr("{v0}\n大小：{v1}", v0=row.get("title"),
+                            v1=_human_size(row.get("size")))
+                    + (i18n.tr("\n校验：sha256 {v0}…",
+                               v0=str(row.get("sha256"))[:16])
+                       if row.get("sha256") else "")
+                    + (i18n.tr("\n文件在磁盘上找不到；快照本身不可修改，"
+                               "请重新冻结交付。")
+                       if row.get("missing") else ""))
+            self.asset_list.addItem(item)
+
+        version = latest.get("snapshot_version")
+        frozen_at = _frozen_at_label(latest.get("created_at"))
+        if not rows:
+            self.asset_list.setVisible(False)
+            self.asset_empty.setVisible(True)
+            self.asset_meta.setText("")
+            self.asset_header_label.setText(i18n.tr('冻结交付文件'))
+        else:
+            self.asset_list.setVisible(True)
+            self.asset_empty.setVisible(False)
+            self.asset_header_label.setText(i18n.tr('冻结交付文件'))
+            summary = _asset_summary(
+                [item for item in (latest.get("assets") or []) if item.get("name")])
+            self.asset_meta.setText(
+                " · ".join(part for part in (
+                    f"v{version}" if version else "", summary,
+                    f"冻结于 {frozen_at}" if frozen_at else "") if part))
+            # 行高由委托固定：这里按真实行数给列表一个刚好放得下的高度，
+            # 少量文件时不出现"最后一行只露一半"的内部滚动条；文件很多时
+            # 才退回滚动（上限 14 行）。
+            headers = sum(1 for row in rows if row.get("kind") == "header")
+            files = len(rows) - headers
+            natural = (headers * style_module.AssetRowDelegate.HEADER_HEIGHT
+                       + files * style_module.AssetRowDelegate.ROW_HEIGHT + 2)
+            cap = 14 * style_module.AssetRowDelegate.ROW_HEIGHT
+            self.asset_list.setFixedHeight(min(natural, cap))
+
+        missing = [row for row in rows
+                   if row.get("kind") == "asset" and row.get("missing")]
+        if missing:
+            names = "、".join(str(row.get("title")) for row in missing[:3])
+            more = f" 等 {len(missing)} 个" if len(missing) > 3 else ""
+            self.asset_notice.set_text(
+                i18n.tr('快照里有 {v0} 个文件在磁盘上缺失（{v1}{v2}）：冻结快照不可修改，请重新冻结交付或从备份恢复。', v0=len(missing), v1=names, v2=more))
+        elif (snapshot or {}).get("integrity") is False and rows:
+            self.asset_notice.set_text(i18n.tr('冻结交付完整性校验未通过：请重新冻结交付。'))
+        else:
+            self.asset_notice.set_text("")
+
+        # 选回用户刚才选中的文件（刷新是每秒发生的，选择不能被轮询清掉）。
+        for index in range(self.asset_list.count()):
+            item = self.asset_list.item(index)
+            data = item.data(Qt.ItemDataRole.UserRole) or {}
+            if data.get("kind") == "asset" and item.text() == selected_name:
+                self.asset_list.setCurrentItem(item)
+                break
+        self._asset_selection_changed()
+
+    def _asset_selection_changed(self, *_args) -> None:
+        """选中态决定"打开/在 Finder 中显示"是否可用（点分组标题不算选中文件）。"""
+        selectable = bool(self._selected_asset_name())
+        if selectable == getattr(self, "_asset_selectable", None):
+            return
+        self._asset_selectable = selectable
+        tip = "" if selectable else "先选择一个交付文件"
+        self.open_asset_button.setEnabled(selectable)
+        self.reveal_asset_button.setEnabled(selectable)
+        self.open_asset_button.setToolTip(tip)
+        self.reveal_asset_button.setToolTip(tip)
 
     def _render_excluded(self) -> None:
         records = adapter.excluded_segments(self.job_id, self._state) \
@@ -1316,22 +1922,33 @@ class WorkbenchView(QWidget):
         self._excluded_signature = signature
         if not unchanged:
             self._rebuild_excluded(records)
-        self.excluded_title.setText(f"已排除段落（{len(records)}）")
+        self.excluded_title.setText(i18n.tr('已排除段落（{v0}）', v0=len(records)))
         self.restore_excluded_button.setEnabled(
             any(record.get("restorable", True) for record in records))
+        # 空清单不留一块空白列表：换成一句"没有被排除的段落"。只在状态变化时
+        # 切换可见性，避免每次轮询都动一遍可见性与控件树。
+        has_records = bool(records)
+        if has_records != getattr(self, "_excluded_has_records", None):
+            self._excluded_has_records = has_records
+            self.excluded_list.setVisible(has_records)
+            self.excluded_hint.setVisible(has_records)
+            self.restore_excluded_button.setVisible(has_records)
+            self.excluded_empty.setVisible(not has_records)
 
     def _rebuild_excluded(self, records: list[dict]) -> None:
         self.excluded_list.clear()
         for record in records:
-            item = QListWidgetItem(
-                f"第 {(record.get('segment_index') or 0) + 1} 段 · "
-                f"{_elide(record.get('source'), 60)}"
-                + (f" · {record['reason']}" if record.get("reason") else ""))
+            item = QListWidgetItem(i18n.tr(
+                "第 {v0} 段 · {v1}{v2}",
+                v0=(record.get("segment_index") or 0) + 1,
+                v1=_elide(record.get("source"), 60),
+                v2=(f" · {record['reason']}" if record.get("reason") else "")))
             item.setData(Qt.ItemDataRole.UserRole, record.get("excluded_id"))
-            item.setToolTip("原文：" + str(record.get("source") or "")
-                            + "\n排除时的译文：" + str(record.get("target") or ""))
+            item.setToolTip(i18n.tr(
+                "原文：{v0}\n排除时的译文：{v1}",
+                v0=record.get("source") or "", v1=record.get("target") or ""))
             self.excluded_list.addItem(item)
-        self.excluded_title.setText(f"已排除段落（{len(records)}）")
+        self.excluded_title.setText(i18n.tr('已排除段落（{v0}）', v0=len(records)))
         self.restore_excluded_button.setEnabled(
             any(record.get("restorable", True) for record in records))
 
@@ -1343,7 +1960,7 @@ class WorkbenchView(QWidget):
 
     def _render_segment_detail(self) -> None:
         if not (0 <= self._current_index < len(self._all_rows)) or not self._rows:
-            self.segment_status.setText("尚未选择段落")
+            self.segment_status.setText(i18n.tr('尚未选择段落'))
             self.qa_view.setHtml("")
             self.submit_button.setEnabled(False)
             self.review_button.setEnabled(False)
@@ -1384,7 +2001,7 @@ class WorkbenchView(QWidget):
                 break
         self.fact_excluded.setText("已排除" if row.excluded else "未排除")
         if reason:
-            self.fact_excluded.setText(f"已排除（{reason}）")
+            self.fact_excluded.setText(i18n.tr('已排除（{v0}）', v0=reason))
         pair = None
         pairs = self._state.get("pairs") or []
         if 0 <= row.index < len(pairs):
@@ -1415,8 +2032,8 @@ class WorkbenchView(QWidget):
             self.qa_view.setHtml(f"<ul>{rows_html}</ul>{suffix}")
         else:
             self.qa_view.setHtml(
-                "<p>没有未解决的检查项。</p>"
-                + (f"<p>本段有 {resolved_count} 项已解决。</p>"
+                i18n.tr("<p>没有未解决的检查项。</p>")
+                + (i18n.tr("<p>本段有 {v0} 项已解决。</p>", v0=resolved_count)
                    if resolved_count else ""))
 
     # ================= 选择 / 编辑器 =================
@@ -1441,7 +2058,7 @@ class WorkbenchView(QWidget):
             return
         if row.excluded:
             self._current_index = row.index
-            self.segment_status.setText("该段落已被排除，不参与翻译与交付。")
+            self.segment_status.setText(i18n.tr('该段落已被排除，不参与翻译与交付。'))
             return
         if self._dirty and self._loaded_uid:
             self.flush_draft()
@@ -1494,11 +2111,12 @@ class WorkbenchView(QWidget):
             self.draftSaved.emit(self.job_id, self._loaded_uid, text)
             adapter.save_draft(self.job_id, self._loaded_uid, text, committed)
         except Exception as exc:  # noqa: BLE001 - never lose the text silently
-            self.segment_status.setText(f"草稿保存失败：{exc}")
+            self.segment_status.setText(i18n.tr('草稿保存失败：{v0}', v0=exc))
             return False
         self._dirty = False
+        marker = i18n.tr(" · 已保存草稿")
         self.segment_status.setText(
-            self.segment_status.text().split(" · 已保存草稿")[0] + " · 已保存草稿")
+            self.segment_status.text().split(marker)[0] + marker)
         return True
 
     def draft_text(self) -> str:
@@ -1624,13 +2242,27 @@ class WorkbenchView(QWidget):
                     self.job_id, latest.get("snapshot_version"), name))
         return ""
 
-    def _selected_asset_name(self) -> str:
+    def _selected_asset_item(self):
+        """当前选中的**文件**行；选中分组标题或没有选择时返回 None。"""
         item = self.asset_list.currentItem()
         if item is not None:
-            return item.text()
+            data = item.data(Qt.ItemDataRole.UserRole) or {}
+            if data.get("kind") == "asset" and data.get("title"):
+                return item
         if self.asset_list.count():
-            return self.asset_list.item(0).text()
-        return ""
+            for index in range(self.asset_list.count()):
+                candidate = self.asset_list.item(index)
+                data = candidate.data(Qt.ItemDataRole.UserRole) or {}
+                if data.get("kind") == "asset":
+                    return candidate
+        return None
+
+    def _selected_asset_name(self) -> str:
+        item = self._selected_asset_item()
+        if item is None:
+            return ""
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        return str(data.get("title") or item.text())
 
     def _open_asset(self) -> None:
         path = self._asset_path(self._selected_asset_name())

@@ -23,15 +23,17 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QInputDialog, QLabel, QMainWindow, QMessageBox,
-    QProgressDialog, QStackedWidget, QStatusBar, QWidget,
+    QApplication, QFileDialog, QLabel, QMainWindow, QStackedWidget, QStatusBar,
+    QWidget,
 )
 
 from folith.desktop import paths as desktop_paths
 from folith.desktop import single_instance
 
+from . import i18n
 from . import adapter
 from . import bootstrap
+from . import prompts
 from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
@@ -47,7 +49,7 @@ POLL_MS = 1000
 
 
 class _NullProgress:
-    """No-op stand-in for QProgressDialog in scripted runs."""
+    """No-op stand-in for the busy dialog in scripted runs."""
 
     def close(self) -> None:
         return None
@@ -106,12 +108,18 @@ class MainWindow(QMainWindow):
         # bootstrap 都会变成局部变量，从而在本行抛 UnboundLocalError。）
         self._log = bootstrap.appender()
         self.settings = QSettings("Folith", "QtDesktop")
+        # 界面语言：环境变量优先（脚本化验收与多语言截图要用），其次是设置里保存的值。
+        # 必须在建菜单/建视图**之前**确定，否则第一屏还是上一门语言。
+        i18n.set_language(
+            os.environ.get(i18n.ENV_VAR)
+            or self.settings.value(self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE))
+        self._apply_layout_direction()
 
 
         self.data_dir_notice = bootstrap.enforce_output_dir(paths)
 
         self.identity = adapter.app_identity()
-        self.setWindowTitle("Folith — 学术翻译工作台")
+        self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
         self.resize(1180, 800)
         from . import branding
 
@@ -128,8 +136,13 @@ class MainWindow(QMainWindow):
 
         self.status = QStatusBar(self)
         self.setStatusBar(self.status)
-        self.data_label = QLabel(f"数据目录：{self.paths.data_dir}")
+        self.data_label = QLabel()
+        self.data_label.setObjectName("hint")
+        self.data_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._set_data_label()
         self.engine_label = QLabel("")
+        self.engine_label.setObjectName("hint")
         self.status.addWidget(self.data_label, 1)
         self.status.addPermanentWidget(self.engine_label)
 
@@ -201,39 +214,39 @@ class MainWindow(QMainWindow):
         self.workbench.revealRequested.connect(self.reveal_path)
         self.workbench.openAssetRequested.connect(self.open_path)
         self.workbench.draftSaved.connect(
-            lambda *_args: self._mark_dirty_status("草稿已保存"))
+            lambda *_args: self._mark_dirty_status(i18n.tr('草稿已保存')))
 
     def _build_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("文件")
+        file_menu = self.menuBar().addMenu(i18n.tr('文件'))
 
-        import_action = QAction("导入文档…", self)
+        import_action = QAction(i18n.tr('导入文档…'), self)
         import_action.setShortcut(QKeySequence.StandardKey.Open)
         import_action.triggered.connect(self.choose_import)
 
-        home_action = QAction("任务列表", self)
+        home_action = QAction(i18n.tr('任务列表'), self)
         home_action.setShortcut(QKeySequence("Ctrl+Shift+H"))
         home_action.triggered.connect(self.show_home)
 
-        settings_action = QAction("设置…", self)
+        settings_action = QAction(i18n.tr('设置…'), self)
         settings_action.setShortcut(QKeySequence("Ctrl+,"))
         # macOS 约定：设置属于应用菜单（Folith → 设置…），由菜单角色决定归属。
         settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
         settings_action.triggered.connect(self.open_settings)
 
-        close_action = QAction("关闭窗口", self)
+        close_action = QAction(i18n.tr('关闭窗口'), self)
         # 显式写 Ctrl+W：`StandardKey.Close` 在本平台解析成 Ctrl+F4，而 macOS
         # 用户期望的是 ⌘W（Qt 会把 Ctrl 映射成 ⌘）。
         close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(self.close)
 
-        about_action = QAction("关于 Folith", self)
+        about_action = QAction(i18n.tr('关于 Folith'), self)
         about_action.setMenuRole(QAction.MenuRole.AboutRole)
         about_action.triggered.connect(self.show_about)
 
-        legacy_action = QAction("接入旧数据目录…", self)
+        legacy_action = QAction(i18n.tr('接入旧数据目录…'), self)
         legacy_action.triggered.connect(self.import_legacy)
 
-        quit_action = QAction("退出 Folith", self)
+        quit_action = QAction(i18n.tr('退出 Folith'), self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.triggered.connect(self.close)
@@ -253,7 +266,7 @@ class MainWindow(QMainWindow):
             "about": about_action, "quit": quit_action,
         }
 
-        task_menu = self.menuBar().addMenu("任务")
+        task_menu = self.menuBar().addMenu(i18n.tr('任务'))
         named: dict = {}
         for key, label, slot, shortcut in (
             ("start", "开始 / 继续翻译", self.start_or_resume, "Ctrl+R"),
@@ -271,18 +284,18 @@ class MainWindow(QMainWindow):
         start_action, pause_action = named["start"], named["pause"]
         cancel_action, reload_action = named["cancel"], named["reload"]
         task_menu.addSeparator()
-        edit_action = QAction("保存并提交当前段落", self)
+        edit_action = QAction(i18n.tr('保存并提交当前段落'), self)
         edit_action.setShortcut(QKeySequence.StandardKey.Save)
         edit_action.triggered.connect(self.workbench._submit)
         task_menu.addAction(edit_action)
-        deliver_action = QAction("冻结并保存交付…", self)
+        deliver_action = QAction(i18n.tr('冻结并保存交付…'), self)
         deliver_action.triggered.connect(self.deliver)
         task_menu.addAction(deliver_action)
 
-        help_menu = self.menuBar().addMenu("帮助")
-        diagnostics_action = QAction("诊断信息…", self)
+        help_menu = self.menuBar().addMenu(i18n.tr('帮助'))
+        diagnostics_action = QAction(i18n.tr('诊断信息…'), self)
         diagnostics_action.triggered.connect(self.show_diagnostics)
-        tools_action = QAction("OCR 与外部工具状态…", self)
+        tools_action = QAction(i18n.tr('OCR 与外部工具状态…'), self)
         tools_action.triggered.connect(self.show_tools)
         help_menu.addAction(diagnostics_action)
         help_menu.addAction(tools_action)
@@ -299,6 +312,7 @@ class MainWindow(QMainWindow):
                      "deliver_pdf", "deliver_terms_xlsx", "deliver_evidence",
                      "deliver_review_report")
     THEME_KEY = "appearance/theme"
+    LANGUAGE_KEY = "appearance/language"
 
     #: Task defaults the settings dialog actually exposes.  They are *client*
     #: preferences: a new task is created from them, and an existing task keeps
@@ -315,6 +329,14 @@ class MainWindow(QMainWindow):
         "auto_term", "enable_review", "use_tm", "enable_understanding",
         "enable_source_cleanup", "enable_report"})
     TASK_DEFAULT_PREFIX = "task/"
+
+    def _apply_layout_direction(self) -> None:
+        """阿拉伯语等从右到左的界面要整体镜像，否则排版是错的（不是"没翻译"）。"""
+        app = QApplication.instance()
+        if app is None:
+            return
+        app.setLayoutDirection(Qt.LayoutDirection.RightToLeft if i18n.is_rtl()
+                               else Qt.LayoutDirection.LeftToRight)
 
     def _system_dark(self) -> bool:
         try:
@@ -391,18 +413,69 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
 
     # ================= helpers =================
+    def _set_data_label(self) -> None:
+        """状态栏左侧的数据目录：长路径中间省略，完整值放悬停提示。
+
+        原样显示会横着顶满状态栏（macOS 的 Application Support 路径很长），
+        把右侧的模型状态挤掉；这里只省略**显示**，不改变真实路径。
+        """
+        path = str(self.paths.data_dir)
+        metrics = self.data_label.fontMetrics()
+        elided = metrics.elidedText(path, Qt.TextElideMode.ElideMiddle, 420)
+        self.data_label.setText(i18n.tr('数据目录：{v0}', v0=elided))
+        self.data_label.setToolTip(
+            i18n.tr('数据目录：{v0}\n（可拖动选择并复制）', v0=path))
+
     def refresh_engine_label(self) -> None:
-        problem = self.config.connection_problem()
+        # `connection_problem()` 是适配层给的固定措辞：显示前过一遍动态词表，
+        # 否则非中文界面里"未配置"的原因永远是中文。
+        problem = i18n.tr_dynamic(self.config.connection_problem())
         if problem:
-            self.engine_label.setText(f"模型：未配置（{problem}）")
+            self.engine_label.setText(i18n.tr('模型：未配置（{v0}）', v0=problem))
+            self.engine_label.setObjectName("statusError")
         else:
             self.engine_label.setText(
-                f"模型：{self.config.provider} / {self.config.model}"
-                f" → {self.config.target_lang}")
+                i18n.tr('模型：{v0} / {v1} → {v2}', v0=self.config.provider, v1=self.config.model, v2=self.config.target_lang))
+            self.engine_label.setObjectName("hint")
+        style_module.repolish(self.engine_label)
         self.home.set_engine_problem(
             problem,
             f"{self.config.provider} / {self.config.model}"
             if self.config.provider else "")
+
+    def _sync_menu_state(self) -> None:
+        """菜单动作跟随"当前在哪一页 + 任务能不能做这件事"。
+
+        缺陷背景：菜单项此前**从不置灰**，于是在任务列表页点「开始 / 继续翻译」
+        或「冻结并保存交付…」不会有任何反应——菜单看起来坏了一半。这里不新写一套
+        状态判断，而是直接复用工作台按钮的可见性/可用性（同一个真值）。
+        """
+        actions = getattr(self, "menu_actions", None)
+        if not actions:
+            return
+        on_workbench = self.stack.currentWidget() is self.workbench
+        workbench = self.workbench
+        states = {
+            "import": True,
+            # 「任务列表」只有在任务页才有地方可去；已经在列表上时置灰。
+            "home": on_workbench,
+            "settings": True,
+            "close": True,
+            "about": True,
+            "quit": True,
+            "diagnostics": True,
+            "tools": True,
+            "start": on_workbench and not workbench.start_button.isHidden(),
+            "pause": on_workbench and not workbench.pause_button.isHidden(),
+            "cancel": on_workbench and not workbench.cancel_button.isHidden(),
+            "reload": on_workbench,
+            "submit": on_workbench and workbench.submit_button.isEnabled(),
+            "deliver": on_workbench and workbench.deliver_button.isEnabled(),
+        }
+        for key, enabled in states.items():
+            action = actions.get(key)
+            if action is not None and action.isEnabled() != bool(enabled):
+                action.setEnabled(bool(enabled))
 
     def _notice(self, message: str, *, error: bool = False) -> None:
         self.status.showMessage(message, 8000 if not error else 15000)
@@ -420,13 +493,8 @@ class MainWindow(QMainWindow):
             self._log(f"FAIL {title} detail: {_redact_for_log(detail)}")
         if _automation():
             return
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Critical)
-        box.setWindowTitle(title)
-        box.setText(message)
-        if detail:
-            box.setDetailedText(detail)
-        box.exec()
+        prompts.NoticeDialog.notify(self, title, message, tone="danger",
+                                    detail=detail)
 
     def _critical(self, title: str, message: str) -> None:
         """Blocking notice that still works in a scripted run."""
@@ -435,42 +503,20 @@ class MainWindow(QMainWindow):
                                   "detail": ""})
             print(f"[qt:{title}] {message}", file=sys.stderr, flush=True)
             return
-        QMessageBox.critical(self, title, message)
+        prompts.NoticeDialog.notify(self, title, message, tone="danger")
 
     def _confirm(self, title: str, message: str,
                  yes: str = "确定", no: str = "取消") -> bool:
         if _automation():
             return True
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle(title)
-        box.setText(message)
-        box.setStandardButtons(QMessageBox.StandardButton.Yes
-                               | QMessageBox.StandardButton.No)
-        box.button(QMessageBox.StandardButton.Yes).setText(yes)
-        box.button(QMessageBox.StandardButton.No).setText(no)
-        return box.exec() == QMessageBox.StandardButton.Yes
+        return prompts.ConfirmDialog.ask(self, title, message, yes=yes, no=no)
 
-    def _busy(self, message: str) -> QProgressDialog:
-        """等待指示器。
-
-        * 脚本化运行不弹模态（纯噪音）；
-        * 真实运行里**必须留一条出路**：以前这里是"无按钮的应用级模态"，于是
-          一个耗时动作（例如对几百段执行"审校全部段落"）会把整个应用锁住，用户
-          连取消或退出都点不到。现在提供「在后台运行」——工作照常在 worker 里
-          继续，完成后照常刷新界面，只是不再挡住用户。
-        """
+    def _busy(self, message: str):
+        """等待指示器（见 `prompts.BusyDialog`：真实运行里必须留一条出路）。"""
         if _automation():
-            # A modal progress dialog would be pure noise in a scripted run.
+            # 脚本化运行里模态进度框只是噪音。
             return _NullProgress()
-        dialog = QProgressDialog(message, "在后台运行", 0, 0, self)
-        dialog.setWindowTitle("请稍候")
-        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-        dialog.setMinimumDuration(0)
-        dialog.setAutoClose(False)
-        dialog.setAutoReset(False)
-        # 点「在后台运行」= 隐藏这个框，任务继续跑（不是取消）。
-        dialog.canceled.connect(dialog.hide)
+        dialog = prompts.BusyDialog(self, message)
         self._busy_dialogs.append(dialog)
         dialog.show()
         return dialog
@@ -509,21 +555,22 @@ class MainWindow(QMainWindow):
             rows = adapter.list_jobs()
             projects = adapter.project_options()
         except Exception as exc:  # noqa: BLE001 - the list must still render
-            self.home.set_status(f"读取任务列表失败：{exc}")
+            self.home.set_status(i18n.tr('读取任务列表失败：{v0}', v0=exc))
             return
         self.home.set_projects(projects)
         self.home.set_rows(rows)
         active = [row for row in rows if row.active]
         self.home.set_status(
-            f"共 {len(rows)} 个任务"
-            + (f"，其中 {len(active)} 个正在运行" if active else ""))
+            i18n.tr("共 {v0} 个任务", v0=len(rows))
+            + (i18n.tr("，其中 {v0} 个正在运行", v0=len(active)) if active else ""))
 
     def show_home(self) -> None:
         self.workbench.flush_draft()
         self._current_job_id = ""
         self.stack.setCurrentWidget(self.home)
         self.refresh_home()
-        self.setWindowTitle("Folith — 学术翻译工作台")
+        self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
+        self._sync_menu_state()
 
     def choose_import(self) -> None:
         """「导入文档…」：系统面板 → 建任务。
@@ -533,8 +580,7 @@ class MainWindow(QMainWindow):
         因为"能不能导入"与"能不能翻译"是两件事——模态警告会挡住导入。
         """
         if _automation():
-            self._notice("导入文档：自动化运行不打开系统面板，"
-                         "请用 import_paths 直接提供路径。")
+            self._notice(i18n.tr('导入文档：自动化运行不打开系统面板，请用 import_paths 直接提供路径。'))
             return
         paths, _ = QFileDialog.getOpenFileNames(
             self, "导入文档", str(Path.home()),
@@ -543,17 +589,16 @@ class MainWindow(QMainWindow):
             "文档 (" + " ".join(f"*{item}" for item in adapter.SOURCE_SUFFIXES) + ")")
         if not paths:
             # Cancelling must not leave a half-created task behind.
-            self._notice("已取消导入，没有创建任何任务。")
+            self._notice(i18n.tr('已取消导入，没有创建任何任务。'))
             return
-        problem = self.config.connection_problem()
+        problem = i18n.tr_dynamic(self.config.connection_problem())
         if problem:
-            self._notice(f"尚未配置模型（{problem}）：文档会先导入，"
-                         "开始翻译前请在「设置」里配置模型连接。", error=True)
+            self._notice(i18n.tr('尚未配置模型（{v0}）：文档会先导入，开始翻译前请在「设置」里配置模型连接。', v0=problem), error=True)
         self.import_paths(paths)
 
     def import_paths(self, paths: list[str], *,
                      autostart: bool | None = None) -> None:
-        busy = self._busy(f"正在导入 {len(paths)} 个文档…")
+        busy = self._busy(i18n.tr('正在导入 {v0} 个文档…', v0=len(paths)))
         project = self.home.project_filter.currentData() or None
         start_now = autostart
 
@@ -563,26 +608,26 @@ class MainWindow(QMainWindow):
             failed = [item for item in results if not item.ok]
             self.refresh_home()
             if failed:
-                self._failure("部分文档未导入",
+                self._failure(i18n.tr('部分文档未导入'),
                               "；".join(f"{item.filename}：{item.error}"
                                         for item in failed))
             if results:
                 self.home.select_job(results[0].job_id)
                 names = "、".join(item.filename for item in results[:3])
-                self._notice(f"已创建 {len(created)} 个新任务（{names}）")
+                self._notice(i18n.tr('已创建 {v0} 个新任务（{v1}）', v0=len(created), v1=names))
                 decision = start_now
                 if decision is None:
                     decision = _automation() or self._confirm(
-                        "开始翻译",
-                        f"已导入 {len(results)} 个任务：{names}。\n\n现在开始翻译吗？",
-                        yes="开始翻译", no="稍后")
+                        i18n.tr('开始翻译'),
+                        i18n.tr('已导入 {v0} 个任务：{v1}。\n\n现在开始翻译吗？', v0=len(results), v1=names),
+                        yes=i18n.tr('开始翻译'), no=i18n.tr('稍后'))
                 if decision:
                     self.open_job(results[0].job_id)
                     self.start_or_resume()
 
         def failed(message: str, detail: str) -> None:
             busy.close()
-            self._failure("导入失败", message, detail)
+            self._failure(i18n.tr('导入失败'), message, detail)
 
         self.runner.submit(adapter.import_documents, paths, self.config,
                            project_id=project,
@@ -596,7 +641,7 @@ class MainWindow(QMainWindow):
         self.workbench.flush_draft()
         state = adapter.load_state(job_id)
         if not state:
-            self._failure("无法打开任务", f"任务 {job_id} 的状态文件不可读。")
+            self._failure(i18n.tr('无法打开任务'), i18n.tr('任务 {v0} 的状态文件不可读。', v0=job_id))
             self.refresh_home()
             return
         self._current_job_id = job_id
@@ -610,7 +655,8 @@ class MainWindow(QMainWindow):
         self.workbench.load(job_id, self.config, state, rows, snapshots)
         self.stack.setCurrentWidget(self.workbench)
         self._log(f"open job {job_id}")
-        self.setWindowTitle(f"Folith — {state.get('filename') or job_id}")
+        self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
+        self._sync_menu_state()
         self.refresh_workbench(force=True)
         self.workbench.focus_editor()
 
@@ -646,7 +692,7 @@ class MainWindow(QMainWindow):
             preview = "、".join(names[:5]) + ("…" if len(names) > 5 else "")
             question = (f"将永久删除选中的 {len(ids)} 个任务及其输出目录（含交付快照）："
                         f"\n\n{preview}\n\n这个操作不可撤销。确定删除吗？")
-        if not self._confirm("删除任务", question, yes="永久删除", no="取消"):
+        if not self._confirm(i18n.tr('删除任务'), question, yes=i18n.tr('永久删除'), no=i18n.tr('取消')):
             return
         deleted: list[str] = []
         refused: list[str] = []
@@ -666,49 +712,56 @@ class MainWindow(QMainWindow):
         self.refresh_home()
         if refused:
             self._failure(
-                f"{len(refused)} 个任务未能删除",
-                "；".join(refused) + "。运行中的任务需要先取消再删除。")
+                i18n.tr('{v0} 个任务未能删除', v0=len(refused)),
+                "；".join(refused)
+                + i18n.tr("。运行中的任务需要先取消再删除。"))
         if deleted:
-            self._notice(f"已删除 {len(deleted)} 个任务"
-                         + ("：" + "、".join(deleted[:3]) if len(deleted) <= 3 else ""))
+            self._notice(
+                i18n.tr("已删除 {v0} 个任务", v0=len(deleted))
+                + (i18n.tr("：{v0}", v0="、".join(deleted[:3]))
+                   if len(deleted) <= 3 else ""))
 
     def delete_job(self, job_id: str) -> None:
         """单个删除（保留给菜单/测试等直接调用）。"""
         state = adapter.load_state(job_id)
         name = state.get("filename") or job_id
         if not self._confirm(
-                "删除任务",
-                f"将永久删除任务「{name}」及其输出目录，包括交付快照。\n\n"
-                "这个操作不可撤销。确定删除吗？",
-                yes="永久删除", no="取消"):
+                i18n.tr('删除任务'),
+                i18n.tr('将永久删除任务「{v0}」及其输出目录，包括交付快照。\n\n这个操作不可撤销。确定删除吗？', v0=name),
+                yes=i18n.tr('永久删除'), no=i18n.tr('取消')):
             return
         try:
             adapter.delete_job(job_id)
         except adapter.AdapterError as exc:
-            self._failure("无法删除", str(exc))
+            self._failure(i18n.tr('无法删除'), str(exc))
             return
         except Exception as exc:  # noqa: BLE001
-            self._failure("删除失败", f"{type(exc).__name__}: {exc}")
+            self._failure(i18n.tr('删除失败'), f"{type(exc).__name__}: {exc}")
             return
         if self._current_job_id == job_id:
             self.show_home()
         self.refresh_home()
-        self._notice(f"已删除任务「{name}」")
+        self._notice(i18n.tr('已删除任务「{v0}」', v0=name))
 
     def create_project(self) -> None:
-        name, ok = QInputDialog.getText(self, "新建项目", "项目名称：")
+        if _automation():
+            # 以前这条路径没有自动化守卫：脚本化运行会弹出一个没人点的输入框。
+            self._notice(i18n.tr('新建项目：自动化运行不弹出输入框，请改用「项目…」或命令行。'))
+            return
+        name, ok = prompts.TextInputDialog.get_text(
+            self, i18n.tr('新建项目'), i18n.tr('项目名称：'))
         if not ok or not name.strip():
             return
         try:
             project = adapter.create_project(name)
         except adapter.AdapterError as exc:
-            self._failure("无法创建项目", str(exc))
+            self._failure(i18n.tr('无法创建项目'), str(exc))
             return
         self.refresh_home()
         index = self.home.project_filter.findData(project.get("project_id"))
         if index >= 0:
             self.home.project_filter.setCurrentIndex(index)
-        self._notice(f"已创建项目「{project.get('name')}」")
+        self._notice(i18n.tr('已创建项目「{v0}」', v0=project.get('name')))
 
     def manage_projects(self) -> None:
         dialog = ProjectDialog(self)
@@ -725,7 +778,7 @@ class MainWindow(QMainWindow):
         projects = [row for row in adapter.project_rows()
                     if not row.get("archived")]
         if not projects:
-            self._notice("还没有可用项目；请先在「项目…」中新建。", error=True)
+            self._notice(i18n.tr('还没有可用项目；请先在「项目…」中新建。'), error=True)
             return
         dialog = ProjectPickerDialog(projects, job_count=len(ids), parent=self)
         if not dialog.exec():
@@ -737,7 +790,7 @@ class MainWindow(QMainWindow):
             result = adapter.assign_jobs_to_project(
                 ids, target, move_translations=dialog.move_translations())
         except adapter.AdapterError as exc:
-            self._failure("无法移动任务", str(exc))
+            self._failure(i18n.tr('无法移动任务'), str(exc))
             return
         moved = len(result.get("moved") or [])
         skipped = result.get("skipped") or []
@@ -758,22 +811,21 @@ class MainWindow(QMainWindow):
         source = self._choose_directory("选择旧数据目录")
         if not source:
             return
-        busy = self._busy("正在接入旧数据目录…")
+        busy = self._busy(i18n.tr('正在接入旧数据目录…'))
 
         def done(result) -> None:
             busy.close()
             report = result.get("report") or {}
             if isinstance(report, dict) and report.get("error"):
-                self._failure("接入失败", str(report.get("error")))
+                self._failure(i18n.tr('接入失败'), str(report.get("error")))
             else:
                 self.refresh_home()
                 self._notice(
-                    f"已接入 {len(report.get('copied_jobs') or [])} 个任务，"
-                    f"跳过 {len(report.get('skipped_conflicts') or [])} 个已存在任务。")
+                    i18n.tr('已接入 {v0} 个任务，跳过 {v1} 个已存在任务。', v0=len(report.get('copied_jobs') or []), v1=len(report.get('skipped_conflicts') or [])))
 
         def failed(message: str, detail: str) -> None:
             busy.close()
-            self._failure("接入失败", message, detail)
+            self._failure(i18n.tr('接入失败'), message, detail)
 
         self.runner.submit(adapter.import_legacy_directory, source,
                            on_done=done, on_error=failed, label="legacy-import")
@@ -797,7 +849,7 @@ class MainWindow(QMainWindow):
         if changed or force:
             state = adapter.load_state(job_id)
             if not state:
-                self._notice("任务状态不可读，已返回任务列表。", error=True)
+                self._notice(i18n.tr('任务状态不可读，已返回任务列表。'), error=True)
                 self.show_home()
                 return
             self._cached_state = state
@@ -817,12 +869,14 @@ class MainWindow(QMainWindow):
         self.workbench.apply(job_id, state, rows, runtime, snapshots,
                              refresh_delivery=force or terminal_change)
         self._sync_running_state(runtime)
+        self._sync_menu_state()
 
     def _sync_running_state(self, runtime: dict) -> None:
-        headline = str(runtime.get("headline_status") or "")
-        detail = str(runtime.get("detail") or "")
+        # 运行状态由核心给出（"正在运行"/"处理中断"…）：过一遍动态词表再显示。
+        headline = i18n.tr_dynamic(runtime.get("headline_status") or "")
+        detail = i18n.tr_dynamic(runtime.get("detail") or "")
         text = headline if not detail or detail == headline \
-            else f"{headline} · {detail}"
+            else i18n.tr("{v0} · {v1}", v0=headline, v1=detail)
         self.status.showMessage(text.strip(" ·"), 4000)
 
     def start_or_resume(self) -> None:
@@ -847,21 +901,21 @@ class MainWindow(QMainWindow):
         try:
             adapter.core.mutate_job_state(job_id, _apply_delivery)
         except Exception as exc:  # noqa: BLE001
-            self._failure("无法保存任务配置", f"{type(exc).__name__}: {exc}")
+            self._failure(i18n.tr('无法保存任务配置'), f"{type(exc).__name__}: {exc}")
             return
         state = adapter.load_state(job_id)
         file_bytes = source if not state.get("p1_done") else None
 
-        busy = self._busy("正在启动翻译任务…")
+        busy = self._busy(i18n.tr('正在启动翻译任务…'))
 
         def done(_result) -> None:
             busy.close()
-            self._notice("任务已启动")
+            self._notice(i18n.tr('任务已启动'))
             self.refresh_workbench(force=True)
 
         def failed(message: str, detail: str) -> None:
             busy.close()
-            self._failure("无法启动任务", message, detail)
+            self._failure(i18n.tr('无法启动任务'), message, detail)
 
         self.runner.submit(
             adapter.start_job, job_id,
@@ -871,38 +925,38 @@ class MainWindow(QMainWindow):
 
     def pause_job(self) -> None:
         if self._current_job_id and adapter.pause_job(self._current_job_id):
-            self._notice("已请求暂停；当前操作结束后暂停。")
+            self._notice(i18n.tr('已请求暂停；当前操作结束后暂停。'))
             self.refresh_workbench(force=True)
         else:
-            self._notice("任务当前不可暂停。", error=True)
+            self._notice(i18n.tr('任务当前不可暂停。'), error=True)
 
     def continue_job(self) -> None:
         """恢复一个被暂停的任务（由"继续翻译"按钮/菜单承担）。"""
         if self._current_job_id and adapter.continue_job(self._current_job_id):
-            self._notice("正在继续任务。")
+            self._notice(i18n.tr('正在继续任务。'))
             self.refresh_workbench(force=True)
         else:
-            self._notice("任务当前不可继续。", error=True)
+            self._notice(i18n.tr('任务当前不可继续。'), error=True)
 
     def cancel_job(self) -> None:
         job_id = self._current_job_id
         if not job_id:
             return
         if not self._confirm(
-                "取消任务",
-                "取消后已完成的进度会保留，可以稍后继续。\n\n确定取消当前任务吗？",
-                yes="取消任务", no="继续运行"):
+                i18n.tr('取消任务'),
+                i18n.tr('取消后已完成的进度会保留，可以稍后继续。\n\n确定取消当前任务吗？'),
+                yes=i18n.tr('取消任务'), no=i18n.tr('继续运行')):
             return
         adapter.cancel_job(job_id)
-        self._notice("已请求取消；正在等待当前步骤结束。")
+        self._notice(i18n.tr('已请求取消；正在等待当前步骤结束。'))
         self.refresh_workbench(force=True)
 
     def retry_job(self) -> None:
         if self._current_job_id and adapter.retry_job(self._current_job_id):
-            self._notice("已准备重试当前步骤，请点击「开始 / 继续翻译」。")
+            self._notice(i18n.tr('已准备重试当前步骤，请点击「开始 / 继续翻译」。'))
             self.refresh_workbench(force=True)
         else:
-            self._notice("当前没有可重试的失败步骤。", error=True)
+            self._notice(i18n.tr('当前没有可重试的失败步骤。'), error=True)
 
     def _run_with_busy(self, label: str, message: str, fn, *args,
                        on_done=None, **kwargs) -> None:
@@ -917,12 +971,12 @@ class MainWindow(QMainWindow):
             if on_done is not None:
                 on_done(result)
             else:
-                self._notice(f"{label}完成")
+                self._notice(i18n.tr('{v0}完成', v0=label))
             self.refresh_workbench(force=True)
 
         def failed(error: str, detail: str) -> None:
             busy.close()
-            self._failure(f"{label}失败", error, detail)
+            self._failure(i18n.tr('{v0}失败', v0=label), error, detail)
             self.refresh_workbench(force=True)
 
         self.runner.submit(fn, *args, on_done=done, on_error=failed,
@@ -936,16 +990,16 @@ class MainWindow(QMainWindow):
         try:
             adapter.submit_edit(job_id, index, text)
         except adapter.AdapterError as exc:
-            self._failure("无法提交", str(exc))
+            self._failure(i18n.tr('无法提交'), str(exc))
             return
         except Exception as exc:  # noqa: BLE001
-            self._failure("提交失败", f"{type(exc).__name__}: {exc}")
+            self._failure(i18n.tr('提交失败'), f"{type(exc).__name__}: {exc}")
             return
-        self._notice("已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。")
+        self._notice(i18n.tr('已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。'))
         self.refresh_workbench(force=True)
 
     def review_current(self, index: int) -> None:
-        self._run_with_busy("审校", "正在审校当前段落…",
+        self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校当前段落…'),
                             adapter.review_segments, self._current_job_id,
                             [index], self.config,
                             on_done=self._review_done)
@@ -965,15 +1019,16 @@ class MainWindow(QMainWindow):
             return
         self.workbench.flush_draft()
         self._run_with_busy(
-            "重译", f"正在重译第 {index + 1} 段…",
+            i18n.tr('重译'), i18n.tr('正在重译第 {v0} 段…', v0=index + 1),
             adapter.retranslate_segment, job_id, index, self.config,
             on_done=self._retranslate_done)
 
     def _retranslate_done(self, result) -> None:
         index = self.workbench.current_index()
         self._notice(
-            f"已重译第 {index + 1} 段"
-            + ("；该段审校状态已刷新" if (result or {}).get("fixed") else ""))
+            i18n.tr("已重译第 {v0} 段", v0=index + 1)
+            + (i18n.tr("；该段审校状态已刷新")
+               if (result or {}).get("fixed") else ""))
         self.refresh_workbench(force=True)
         # 新译文必须立刻出现在编辑器里：否则用户按"保存并提交"会把刚重译出来的
         # 文本又覆盖成旧的。编辑器里有未提交内容时该方法会自行跳过（保留用户输入，
@@ -990,13 +1045,12 @@ class MainWindow(QMainWindow):
         if row is None or not row.has_draft:
             return
         if not self._confirm(
-                "放弃草稿",
-                f"第 {index + 1} 段的未提交草稿将被删除，"
-                "编辑器回到当前已提交的译文。\n\n确定放弃吗？",
-                yes="放弃草稿", no="保留"):
+                i18n.tr('放弃草稿'),
+                i18n.tr('第 {v0} 段的未提交草稿将被删除，编辑器回到当前已提交的译文。\n\n确定放弃吗？', v0=index + 1),
+                yes=i18n.tr('放弃草稿'), no=i18n.tr('保留')):
             return
         adapter.clear_draft(job_id, row.segment_uid)
-        self._notice(f"已放弃第 {index + 1} 段的草稿。")
+        self._notice(i18n.tr('已放弃第 {v0} 段的草稿。', v0=index + 1))
         self.refresh_workbench(force=True)
         # 显式动作：立刻把已提交译文读回编辑器（后台刷新不会这么做）。
         self.workbench.reload_current_segment(force=True)
@@ -1006,17 +1060,16 @@ class MainWindow(QMainWindow):
         if not job_id or index < 0:
             return
         if not self._confirm(
-                "排除段落",
-                f"第 {index + 1} 段将被排除：它不进入译文与交付，"
-                "原文与当前译文会完整保留，可随时恢复。\n\n确定排除吗？",
-                yes="排除", no="取消"):
+                i18n.tr('排除段落'),
+                i18n.tr('第 {v0} 段将被排除：它不进入译文与交付，原文与当前译文会完整保留，可随时恢复。\n\n确定排除吗？', v0=index + 1),
+                yes=i18n.tr('排除'), no=i18n.tr('取消')):
             return
         try:
             adapter.exclude_segment(job_id, index)
         except adapter.AdapterError as exc:
-            self._failure("无法排除段落", str(exc))
+            self._failure(i18n.tr('无法排除段落'), str(exc))
             return
-        self._notice(f"已排除第 {index + 1} 段；交付包里会附排除清单。")
+        self._notice(i18n.tr('已排除第 {v0} 段；交付包里会附排除清单。', v0=index + 1))
         self.refresh_workbench(force=True)
 
     def include_segment(self, excluded_id: str) -> None:
@@ -1026,9 +1079,9 @@ class MainWindow(QMainWindow):
         try:
             adapter.include_segment(job_id, excluded_id)
         except adapter.AdapterError as exc:
-            self._failure("无法恢复段落", str(exc))
+            self._failure(i18n.tr('无法恢复段落'), str(exc))
             return
-        self._notice("已恢复该段落；它的审校标记需要重新确认。")
+        self._notice(i18n.tr('已恢复该段落；它的审校标记需要重新确认。'))
         self.refresh_workbench(force=True)
 
     def review_selected(self, indexes: list) -> None:
@@ -1040,9 +1093,9 @@ class MainWindow(QMainWindow):
         job_id = self._current_job_id
         valid = [int(index) for index in indexes or [] if str(index).isdigit()]
         if not job_id or not valid:
-            self._notice("请先在段落列表中选择至少两个段落。", error=True)
+            self._notice(i18n.tr('请先在段落列表中选择至少两个段落。'), error=True)
             return
-        self._run_with_busy("审校", f"正在审校所选 {len(valid)} 段…",
+        self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校所选 {v0} 段…', v0=len(valid)),
                             adapter.review_segments, job_id, valid, self.config,
                             on_done=self._review_done)
 
@@ -1050,9 +1103,9 @@ class MainWindow(QMainWindow):
         state = self._cached_state
         indexes = list(range(len(state.get("pairs") or [])))
         if not indexes:
-            self._notice("还没有可审校的段落。", error=True)
+            self._notice(i18n.tr('还没有可审校的段落。'), error=True)
             return
-        self._run_with_busy("审校", f"正在审校全部 {len(indexes)} 段…",
+        self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校全部 {v0} 段…', v0=len(indexes)),
                             adapter.review_segments, self._current_job_id,
                             indexes, self.config,
                             on_done=self._review_done)
@@ -1063,30 +1116,31 @@ class MainWindow(QMainWindow):
             return
         preview = adapter.delivery_preview(job_id, self.config)
         if not preview.get("can_deliver"):
-            self._failure("暂不能冻结交付",
-                          f"当前状态：{preview.get('status_label')}。"
-                          + ("；".join(str(item) for item in preview.get("issues") or [])
-                             or "请先完成翻译与审校。"))
+            self._failure(
+                i18n.tr('暂不能冻结交付'),
+                i18n.tr("当前状态：{v0}。",
+                        v0=i18n.tr_dynamic(preview.get("status_label")))
+                + ("；".join(str(item) for item in preview.get("issues") or [])
+                   or i18n.tr("请先完成翻译与审校。")))
             return
         if not self._confirm(
-                "冻结交付",
-                "将通过既有交付门禁生成正式交付文件，并冻结一个不可修改的快照。\n\n"
-                f"当前状态：{preview.get('status_label')}。确定继续吗？",
-                yes="冻结交付", no="取消"):
+                i18n.tr('冻结交付'),
+                i18n.tr('将通过既有交付门禁生成正式交付文件，并冻结一个不可修改的快照。\n\n当前状态：{v0}。确定继续吗？', v0=preview.get('status_label')),
+                yes=i18n.tr('冻结交付'), no=i18n.tr('取消')):
             return
 
         def done(result) -> None:
             version = result.get("version")
-            self._notice(f"已冻结交付 v{version}，共 {len(result.get('assets') or [])} 个文件。")
+            self._notice(i18n.tr('已冻结交付 v{v0}，共 {v1} 个文件。', v0=version, v1=len(result.get('assets') or [])))
             # 冻结后立刻刷新：资产清单必须马上出现在「交付」页，而不是等下一次轮询。
             self.refresh_workbench(force=True)
             if self._confirm(
-                    "保存交付文件",
-                    f"交付快照 v{version} 已生成。\n\n现在选择保存位置并写出文件吗？",
-                    yes="选择保存位置", no="稍后"):
+                    i18n.tr('保存交付文件'),
+                    i18n.tr('交付快照 v{v0} 已生成。\n\n现在选择保存位置并写出文件吗？', v0=version),
+                    yes=i18n.tr('选择保存位置'), no=i18n.tr('稍后')):
                 self.save_snapshot(int(version or 1))
 
-        self._run_with_busy("冻结交付", "正在通过交付门禁并生成快照…",
+        self._run_with_busy(i18n.tr('冻结交付'), i18n.tr('正在通过交付门禁并生成快照…'),
                             adapter.deliver, job_id, self.config, on_done=done)
 
     def export_copy(self) -> None:
@@ -1095,23 +1149,22 @@ class MainWindow(QMainWindow):
             return
         target = self._choose_directory("选择导出目录")
         if not target:
-            self._notice("已取消导出。")
+            self._notice(i18n.tr('已取消导出。'))
             return
-        overwrite = self._confirm_overwrite(job_id, target, kind="导出")
+        overwrite = self._confirm_overwrite(job_id, target, kind=i18n.tr('导出'))
         if overwrite is None:
             return
         self._run_with_busy(
-            "导出", "正在导出当前译文…",
+            i18n.tr('导出'), i18n.tr('正在导出当前译文…'),
             adapter.export_current_assets, job_id, target, self.config,
             overwrite=overwrite,
             on_done=lambda written: self._notice(
-                f"已导出 {len(written)} 个文件到 {target}（未冻结交付，仅供查看）。"))
+                i18n.tr('已导出 {v0} 个文件到 {v1}（未冻结交付，仅供查看）。', v0=len(written), v1=target)))
 
     def _choose_directory(self, title: str) -> str:
         """Native directory panel; scripted runs have no panel to show."""
         if _automation():
-            self._notice(f"{title}：自动化运行不打开系统面板，"
-                         "交付文件由调用方直接写出。")
+            self._notice(i18n.tr('{v0}：自动化运行不打开系统面板，交付文件由调用方直接写出。', v0=title))
             return ""
         return QFileDialog.getExistingDirectory(
             self, title, str(Path.home() / "Documents"))
@@ -1129,22 +1182,23 @@ class MainWindow(QMainWindow):
             else:
                 plan = adapter.delivery_save_plan(job_id, version, target)
         except Exception as exc:  # noqa: BLE001 - 让用户看到原因
-            self._failure(f"无法{kind}", f"{type(exc).__name__}: {exc}")
+            self._failure(i18n.tr('无法{v0}', v0=kind), f"{type(exc).__name__}: {exc}")
             return None
         if plan.get("missing"):
             self._failure(
-                f"{kind}的文件不完整",
-                "缺少：" + "、".join(plan["missing"])
-                + "。未写出任何内容；请检查任务配置后重试。")
+                i18n.tr('{v0}的文件不完整', v0=kind),
+                i18n.tr("缺少：{v0}。未写出任何内容；请检查任务配置后重试。",
+                        v0="、".join(plan["missing"])))
             return None
         if not plan.get("conflicts"):
             return False
         if not self._confirm(
-                "目标文件夹已有同名文件",
-                "以下文件已存在：\n\n" + "\n".join(plan["conflicts"])
-                + "\n\n覆盖它们吗？选择「取消」可另选文件夹。",
-                yes="覆盖", no="取消"):
-            self._notice(f"已取消{kind}（未覆盖任何文件）。")
+                i18n.tr('目标文件夹已有同名文件'),
+                i18n.tr("以下文件已存在：\n\n{v0}\n\n覆盖它们吗？"
+                        "选择「取消」可另选文件夹。",
+                        v0="\n".join(plan["conflicts"])),
+                yes=i18n.tr('覆盖'), no=i18n.tr('取消')):
+            self._notice(i18n.tr('已取消{v0}（未覆盖任何文件）。', v0=kind))
             return None
         return True
 
@@ -1154,19 +1208,19 @@ class MainWindow(QMainWindow):
             return
         target = self._choose_directory(f"选择交付文件保存位置（v{version}）")
         if not target:
-            self._notice("已取消保存。")
+            self._notice(i18n.tr('已取消保存。'))
             return
-        decision = self._confirm_overwrite(job_id, target, kind="保存交付文件",
+        decision = self._confirm_overwrite(job_id, target, kind=i18n.tr('保存交付文件'),
                                            version=int(version))
         if decision is None:
             return
         overwrite = decision
         self._run_with_busy(
-            "保存交付文件", "正在写出交付文件…",
+            i18n.tr('保存交付文件'), i18n.tr('正在写出交付文件…'),
             adapter.copy_delivery_assets, job_id, version, target,
             overwrite=overwrite,
             on_done=lambda written: self._notice(
-                f"已保存 {len(written)} 个文件到 {target}"))
+                i18n.tr('已保存 {v0} 个文件到 {v1}', v0=len(written), v1=target)))
 
     def reveal_path(self, path: str) -> None:
         result = adapter.reveal_in_finder(path)
@@ -1175,21 +1229,35 @@ class MainWindow(QMainWindow):
     def open_path(self, path: str) -> None:
         result = adapter.open_with_default_app(path)
         if not result.get("ok"):
-            self._failure("无法打开文件", result.get("detail") or "系统未返回原因。")
+            self._failure(i18n.tr('无法打开文件'), result.get("detail") or "系统未返回原因。")
             return
         self._notice(result.get("detail") or "已用默认应用打开。")
 
     # ================= settings / diagnostics =================
     def open_settings(self) -> None:
         dialog = EngineDialog(self.config, self.runner, self)
+        # 把**当前**偏好带进对话框：否则"打开设置 → 保存"会把用户没动过的偏好
+        # 重置成默认值（主题此前就是这样被静默重置成「跟随系统」的）。
+        dialog.theme_preference = self.theme_preference
+        # 语言偏好以**设置里保存的值**为准：运行中的模块状态可能被
+        # `FOLITH_UI_LANGUAGE` 覆盖（脚本化验收要用），但那不是用户的选择。
+        dialog.set_language_preference(str(self.settings.value(
+            self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE)))
         if dialog.exec():
             self.config = dialog.config
             self._save_client_defaults()
             self.settings.setValue(self.THEME_KEY, dialog.theme_preference)
             self.apply_theme_preference()
+            previous_language = i18n.language()
+            self.settings.setValue(self.LANGUAGE_KEY, dialog.language_preference)
+            i18n.set_language(dialog.language_preference)
+            self._apply_layout_direction()
+            if i18n.language() != previous_language:
+                self._notice(i18n.tr('界面语言已切换为「{v0}」；重启应用后整个窗口生效。',
+                                     v0=i18n.language_label(i18n.language())))
             self.refresh_home()
             self.refresh_engine_label()
-            self._notice("设置已保存。")
+            self._notice(i18n.tr('设置已保存。'))
             if self.stack.currentWidget() is self.workbench:
                 self.workbench.config = self.config
                 self.refresh_workbench(force=True)
@@ -1197,21 +1265,21 @@ class MainWindow(QMainWindow):
     def show_about(self) -> None:
         """关于：Beta 测试者最需要的那几项事实（版本/构建/位置）。"""
         identity = adapter.app_identity()
-        text = (
-            f"Folith 学术翻译工作台 {identity.get('app_version') or ''}\n"
-            f"构建：{identity.get('build_id') or '未知'}"
-            + ("（随包）" if identity.get("frozen") else "（源码运行）") + "\n\n"
-            f"数据目录：{self.paths.data_dir}\n"
-            f"日志目录：{self.paths.log_dir}\n\n"
-            "诊断信息在「帮助 → 诊断信息…」，其中不包含 API Key 与文档正文。")
+        text = "\n".join((
+            i18n.tr("Folith 学术翻译工作台 {v0}",
+                    v0=identity.get("app_version") or ""),
+            i18n.tr("构建：{v0}", v0=identity.get("build_id") or i18n.tr("未知"))
+            + (i18n.tr("（随包）") if identity.get("frozen") else i18n.tr("（源码运行）")),
+            "",
+            i18n.tr("数据目录：{v0}", v0=self.paths.data_dir),
+            i18n.tr("日志目录：{v0}", v0=self.paths.log_dir),
+            "",
+            i18n.tr("诊断信息在「帮助 → 诊断信息…」，其中不包含 API Key 与文档正文。"),
+        ))
         if _automation():
             self._notice(" · ".join(text.splitlines()[:2]))
             return
-        box = QMessageBox(self)
-        box.setWindowTitle("关于 Folith")
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setText(text)
-        box.exec()
+        prompts.NoticeDialog.notify(self, i18n.tr('关于 Folith'), text, tone="info")
 
     def show_diagnostics(self) -> None:
         from PySide6.QtCore import qVersion
@@ -1226,11 +1294,15 @@ class MainWindow(QMainWindow):
         import json
 
         report = {"ocr": adapter.ocr_status(), "tools": adapter.tools_report()}
-        box = QMessageBox(self)
-        box.setWindowTitle("OCR 与外部工具状态")
-        box.setText("随包 / 本机工具探测结果")
-        box.setDetailedText(json.dumps(report, ensure_ascii=False, indent=2))
-        box.exec()
+        detail = json.dumps(report, ensure_ascii=False, indent=2)
+        if _automation():
+            # 与 create_project 同样的漏洞：这条路径此前没有守卫，脚本化运行会挂住。
+            self._notice(i18n.tr("OCR 与外部工具状态：{v0}",
+                                 v0=" ".join(detail.split())[:120]))
+            return
+        prompts.NoticeDialog.notify(self, i18n.tr('OCR 与外部工具状态'),
+                                    i18n.tr('随包 / 本机工具探测结果'), tone="info",
+                                    detail=detail)
 
     # ================= lifecycle =================
     def _install_quit_filter(self) -> None:
@@ -1298,9 +1370,8 @@ class MainWindow(QMainWindow):
         if not self.workbench.flush_draft():
             self._exit_in_progress = False
             self._critical(
-                "编辑尚未保存",
-                "当前段落的草稿写入失败，为避免丢失内容，应用将保持打开。\n\n"
-                "请检查磁盘空间与权限后重试，或先把译文复制到别处。")
+                i18n.tr('编辑尚未保存'),
+                i18n.tr('当前段落的草稿写入失败，为避免丢失内容，应用将保持打开。\n\n请检查磁盘空间与权限后重试，或先把译文复制到别处。'))
             return
 
         job_id = self._current_job_id or None
@@ -1308,7 +1379,7 @@ class MainWindow(QMainWindow):
             report = adapter.exit_report(job_id)
         except Exception as exc:  # noqa: BLE001
             self._exit_in_progress = False
-            self._failure("退出前检查失败", f"{type(exc).__name__}: {exc}")
+            self._failure(i18n.tr('退出前检查失败'), f"{type(exc).__name__}: {exc}")
             return
 
         active = list(report.get("active_jobs") or [])
@@ -1326,15 +1397,15 @@ class MainWindow(QMainWindow):
                 lines.append(f"{drafts} 处未提交的编辑会保留为草稿，"
                              "重新打开任务即可继续。")
             lines.append("确定退出吗？")
-            if not self._confirm("退出 Folith", "\n\n".join(lines),
-                                 yes="退出", no="返回应用"):
+            if not self._confirm(i18n.tr('退出 Folith'), "\n\n".join(lines),
+                                 yes=i18n.tr('退出'), no=i18n.tr('返回应用')):
                 self._exit_in_progress = False
                 return
 
         self._stop_and_close(active, non_interactive)
 
     def _stop_and_close(self, active: list[str], non_interactive: bool) -> None:
-        busy = self._busy("正在保存并停止任务…")
+        busy = self._busy(i18n.tr('正在保存并停止任务…'))
         results: dict = {}
 
         def work() -> dict:
@@ -1357,16 +1428,16 @@ class MainWindow(QMainWindow):
                 return
             detail = []
             if pending:
-                detail.append("仍在停止中：" + "、".join(pending))
+                detail.append(i18n.tr("仍在停止中：{v0}", v0="、".join(pending)))
             if report.get("draft_count"):
                 detail.append(f"仍有 {report['draft_count']} 处草稿未落盘")
             if report.get("worker_lock_held"):
                 detail.append("worker 仍持有写入锁")
-            message = ("；".join(detail) or "退出前检查未完成") + \
-                "。\n\n选择「强制退出」只保证已落盘的结果可恢复；" \
-                "选择「继续等待」将返回应用。"
-            if self._confirm("无法安全退出", message,
-                             yes="强制退出", no="继续等待"):
+            message = ("；".join(detail) or i18n.tr("退出前检查未完成")) + \
+                i18n.tr("。\n\n选择「强制退出」只保证已落盘的结果可恢复；"
+                        "选择「继续等待」将返回应用。")
+            if self._confirm(i18n.tr('无法安全退出'), message,
+                             yes=i18n.tr('强制退出'), no=i18n.tr('继续等待')):
                 self._acquire_close(forced=True)
             else:
                 self._exit_in_progress = False
@@ -1374,7 +1445,7 @@ class MainWindow(QMainWindow):
         def failed(message: str, detail: str) -> None:
             busy.close()
             self._exit_in_progress = False
-            self._failure("停止任务失败", message, detail)
+            self._failure(i18n.tr('停止任务失败'), message, detail)
 
         self.runner.submit(work, on_done=done, on_error=failed, label="exit-stop")
 
@@ -1389,7 +1460,7 @@ class MainWindow(QMainWindow):
         self._exit_in_progress = False
         self.runner.wait_for_done(3000)
         if forced:
-            self._notice("已强制退出；只保证已经落盘的结果可以恢复。")
+            self._notice(i18n.tr('已强制退出；只保证已经落盘的结果可以恢复。'))
         if self._in_close_event:
             # 正处在 closeEvent 里：由它在本帧内直接 accept，不要再嵌套 close()。
             return

@@ -35,10 +35,13 @@ REFERENCED_LABELS = (
 
 
 def _qt_sources() -> str:
+    # `prompts.py` 是应用内对话框（确认/通知/输入/等待）唯一的文案出处：
+    # 像「在后台运行」这样的按钮文字随对话框一起从 window.py 搬了过去，
+    # 扫描范围必须跟着走，否则检查会因为"文件搬家"误报缺文字。
     return "\n".join(
         (ROOT / "folith" / "qt" / name).read_text(encoding="utf-8")
         for name in ("views.py", "window.py", "dialogs.py", "theme.py",
-                     "adapter.py"))
+                     "adapter.py", "prompts.py"))
 
 
 def test_every_label_the_kit_references_exists():

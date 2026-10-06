@@ -13,6 +13,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import i18n
 from . import bootstrap
 
 
@@ -58,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     from . import window as window_module
 
     app = window_module.build_application(sys.argv[:1])
-
+    # macOS 的"用本应用打开文件"事件可能在窗口建好之前到达：先排队，窗口就绪后再导入。
     lock = None
     if not args.allow_second_instance:
         from folith.desktop import single_instance
@@ -74,12 +75,12 @@ def main(argv: list[str] | None = None) -> int:
             # A scripted run must never wait on a modal dialog nobody can click.
             if os.environ.get("FOLITH_QT_NONINTERACTIVE") != "1" \
                     and os.environ.get("FOLITH_EXIT_FORCE_PROMPT") != "0":
-                from PySide6.QtWidgets import QMessageBox
+                from . import prompts
 
-                QMessageBox.information(
-                    None, "Folith 已在运行",
-                    "Folith 已经在这个用户下运行。\n\n"
-                    "重复启动不会重复执行任务；请切换到已经打开的窗口。")
+                prompts.NoticeDialog.notify(
+                    None, i18n.tr('Folith 已在运行'),
+                    i18n.tr('Folith 已经在这个用户下运行。\n\n重复启动不会重复执行任务；请切换到已经打开的窗口。'),
+                    tone="info")
             return 3
         try:
             lock.publish(single_instance.InstanceRecord(
