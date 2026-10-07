@@ -182,6 +182,28 @@ class Flow:
         self.app.processEvents()
         return bool(predicate()) if predicate is not None else True
 
+    def _await_review(self, core, job_id: str) -> None:
+        """Wait for the review worker to stop, then let the window refresh."""
+        self.pump(self.timeout, lambda: (
+            (core.load_runtime_state(job_id) or {}).get("status")
+            not in core.RUNTIME_ACTIVE_STATUSES), interval=0.2)
+        # The worker persists each segment's receipt before it goes idle; one
+        # refresh cycle is enough for the readiness snapshot to see it.
+        self.pump(5.0)
+
+    @staticmethod
+    def _pending_review_indexes(core, job_id: str) -> list:
+        """Segments the delivery review gate still cannot accept as current."""
+        from folith.translation_evidence import translation_review_readiness
+
+        state = core.load_job_state(job_id) or {}
+        readiness = translation_review_readiness(state)
+        return sorted(
+            set(readiness.get("missing_segment_ids") or [])
+            | set(readiness.get("stale_segment_ids") or [])
+            | set(readiness.get("failed_segment_ids") or [])
+        )
+
     # -- the flow ----------------------------------------------------------
     def run(self, adapter, core, fixtures: list[Path]) -> dict:
         report = self.report
@@ -314,17 +336,26 @@ class Flow:
             # longer than a fixed guess.  Giving up early would hand the
             # delivery gate a half-reviewed book and blame the product for a
             # harness timeout.
-            self.pump(self.timeout, lambda: (
-                (core.load_runtime_state(job_id) or {}).get("status")
-                not in core.RUNTIME_ACTIVE_STATUSES), interval=0.2)
-            self.pump(max(120.0, self.timeout / 4), lambda: all(
-                item.get("reviewed") for item in
-                (adapter.load_state(job_id).get("pairs") or [])), interval=0.5)
+            self._await_review(core, job_id)
+            # The reviewer is one independent model call per segment; a round
+            # whose response the protocol rejects is reported per segment.  A
+            # person answers that notice by pressing 审校 again for exactly
+            # those segments, so the scripted flow does the same — bounded, and
+            # reported — instead of declaring the product broken.
+            report["review_retries"] = []
+            for _ in range(2):
+                pending = self._pending_review_indexes(core, job_id)
+                if not pending:
+                    break
+                report["review_retries"].append(pending)
+                self.window.review_selected(pending)
+                self._await_review(core, job_id)
             state = adapter.load_state(job_id)
             report["review"] = {
                 "reviewed": sum(1 for item in state.get("pairs") or []
                                 if item.get("reviewed")),
                 "total": len(state.get("pairs") or []),
+                "pending_after_retries": self._pending_review_indexes(core, job_id),
             }
             self.step("reviewed", **report["review"])
 
