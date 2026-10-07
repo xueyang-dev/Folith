@@ -11,6 +11,7 @@ from typing import (
 
 from . import critical_path as _critical_path
 from . import models, terminology, translation_core
+from .review_gate import SKIPPED_LOW_RISK as _SKIPPED_LOW_RISK
 
 MAX_REQUESTS_PER_ROUND = 5
 MAX_EVIDENCE_PAYLOAD_BYTES = 24000
@@ -312,6 +313,12 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
         "stale_segment_ids": [],
         "missing_segment_ids": [],
         "failed_segment_ids": [],
+        # Segments that the deterministic pre-review gate recorded as
+        # ``skipped_low_risk``.  They are explicitly *not* independently
+        # reviewed, and are reported separately from reviewed segments so no
+        # consumer can present a skip as a pass.
+        "skipped_segment_ids": [],
+        "review_mode": str(state.get("review_mode") or "always"),
         "blocking_finding_ids": [],
         "decision_errors": [],
     }
@@ -321,6 +328,7 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
     events = [event for event in state.get("review_evidence") or []
               if isinstance(event, Mapping) and _current_translation_review(event)]
     stale_ids, missing_ids, failed_ids, current_ids = [], [], [], []
+    skipped_ids: List[int] = []
     current_events: Dict[int, Dict[str, Any]] = {}
     for segment_id in expected:
         event = current_review_event(state, segment_id)
@@ -333,6 +341,9 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
         receipt = event.get("completion_receipt") or {}
         if event.get("decision") == "failed" or receipt.get("status") == "failed":
             failed_ids.append(segment_id)
+        elif _SKIPPED_LOW_RISK in (
+                event.get("decision"), receipt.get("status")):
+            skipped_ids.append(segment_id)
         else:
             current_ids.append(segment_id)
 
@@ -392,6 +403,7 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
         "stale_segment_ids": stale_ids,
         "missing_segment_ids": missing_ids,
         "failed_segment_ids": failed_ids,
+        "skipped_segment_ids": skipped_ids,
         "blocking_finding_ids": blocking_ids,
         "decision_errors": decision_errors,
     })
@@ -1032,15 +1044,238 @@ def _packet_truth_matches(
     )
 
 
-def _reviewer_packet_view(packet: Dict[str, Any]) -> Dict[str, Any]:
-    """Return only independent-review inputs; audit and rationale stay hidden."""
+#: Review-view reductions.  Each is an *information* reduction (a piece of the
+#: reviewer request that duplicates content carried elsewhere in the same
+#: request), never a wording change, and each can be ablated independently:
+#:
+#: ``document_arc``
+#:     The enumerated whole-document narrative.  Measured at 63% 8-gram
+#:     containment inside ``summary`` (the same figure that removed it from the
+#:     generation prompt in the Translation Efficiency pass) and 100% inside the
+#:     synopsis it is sent in.
+#: ``synopsis_themes``
+#:     The theme index, 51% contained in ``summary``.
+#: ``truth_source_target``
+#:     ``translation_truth[].source/target``, which the numbered source/target
+#:     list in the user prompt already carries verbatim.  Only the identity and
+#:     provenance fields survive.
+#: ``neighbour_source_dup``
+#:     ``previous_source_context`` entries whose text is already the ``source``
+#:     of a ``previous_target_context`` entry.
+#: ``glossary_boilerplate``
+#:     Per-entry glossary metadata that carries no review constraint: a constant
+#:     129-character provenance record, the document-scale occurrence index,
+#:     advisory ``domain``/``confidence``, and a third copy of the rendering.
+#: ``knowledge_hash_dup``
+#:     ``confirmed_knowledge.glossary_hash``, already present as
+#:     ``glossary.glossary_hash`` in the same request.
+#: ``bounded_document_context``
+#:     A total character budget for document-level context, applied in priority
+#:     order.  Derived from measurement: this workload's document context is
+#:     3,424 characters, so the budget only binds for much longer documents.
+REVIEW_VIEW_REDUCTIONS = (
+    "document_arc",
+    "synopsis_themes",
+    "truth_source_target",
+    "neighbour_source_dup",
+    "glossary_boilerplate",
+    "knowledge_hash_dup",
+    "bounded_document_context",
+    "context_minimal",
+)
+DEFAULT_REVIEW_VIEW_REDUCTIONS = frozenset(REVIEW_VIEW_REDUCTIONS) - {"context_minimal"}
+
+#: Reduction ids that remove *unique* document-level context rather than
+#: duplicated content.  They are never part of the default view: they exist so
+#: the packet ablation can measure what they cost in review recall.
+REVIEW_VIEW_AGGRESSIVE_REDUCTIONS = frozenset({"context_minimal"})
+
+#: Fields dropped by ``context_minimal``: everything the reviewer does not need
+#: to judge the batch in front of it.  The batch source/target, glossary,
+#: deterministic checks and instructions all survive.
+REVIEW_VIEW_MINIMAL_CONTEXT_FIELDS = (
+    "document_profile", "document_synopsis", "section_profile", "section_digest",
+    "previous_source_context", "previous_target_context", "next_source_context",
+)
+
+#: Glossary fields the reviewer actually needs: the term, the required
+#: rendering, the forbidden alternatives, and the scope/behaviour/status
+#: constraints.  Everything else is metadata that cannot change the review.
+REVIEW_VIEW_GLOSSARY_FIELDS = (
+    "id", "source", "forbidden", "behavior", "status", "scope", "note",
+)
+
+#: Priority order for the document-context budget: earlier entries are kept
+#: whole, later ones are dropped once the budget is exhausted.
+REVIEW_VIEW_CONTEXT_BUDGET_CHARS = 4_000
+REVIEW_VIEW_SYNOPSIS_PRIORITY = (
+    "summary", "translation_notes", "themes", "entities", "terms", "status",
+)
+
+
+def _slim_synopsis(
+    synopsis: Any, reductions: frozenset,
+) -> Any:
+    if not isinstance(synopsis, Mapping):
+        return synopsis
+    kept = dict(synopsis)
+    if "document_arc" in reductions:
+        kept.pop("document_arc", None)
+    if "synopsis_themes" in reductions:
+        kept.pop("themes", None)
+    return kept
+
+
+def _slim_glossary(
+    glossary: Any, reductions: frozenset,
+) -> Any:
+    if "glossary_boilerplate" not in reductions or not isinstance(glossary, Mapping):
+        return glossary
+    entries = glossary.get("entries")
+    if not isinstance(entries, list):
+        return glossary
+    slim = []
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            slim.append(entry)
+            continue
+        item: Dict[str, Any] = {}
+        for key in REVIEW_VIEW_GLOSSARY_FIELDS:
+            value = entry.get(key)
+            if value in (None, "", [], {}):
+                continue
+            item[key] = list(value) if key == "forbidden" and isinstance(value, list) \
+                else value
+        # ``target`` and ``preferred`` are normally the same confirmed rendering;
+        # send the required one, and the other only when they disagree.
+        preferred = entry.get("preferred")
+        target = entry.get("target")
+        if preferred and target and preferred != target:
+            item["target"] = target
+            item["preferred"] = preferred
+        elif preferred or target:
+            item["target"] = preferred or target
+        slim.append(item)
+    return {**glossary, "entries": slim}
+
+
+def _slim_confirmed_knowledge(
+    knowledge: Any, glossary: Any, reductions: frozenset,
+) -> Any:
+    if "knowledge_hash_dup" not in reductions or not isinstance(knowledge, Mapping):
+        return knowledge
+    if not isinstance(glossary, Mapping) or not glossary.get("glossary_hash"):
+        return knowledge
+    if "glossary_hash" not in knowledge:
+        return knowledge
+    trimmed = dict(knowledge)
+    trimmed.pop("glossary_hash", None)
+    return trimmed
+
+
+def _slim_translation_truth(
+    truth: Any, reductions: frozenset,
+) -> Any:
+    if "truth_source_target" not in reductions or not isinstance(truth, list):
+        return truth
+    # ``source``/``target`` are rendered verbatim by the numbered list in the
+    # user prompt; keeping them here would pay for the same text twice.
+    return [
+        {key: item.get(key) for key in
+         ("segment_id", "reviewed", "target_provenance")}
+        if isinstance(item, Mapping) else item
+        for item in truth
+    ]
+
+
+def _slim_neighbour_context(
+    context: Dict[str, Any], reductions: frozenset,
+) -> Dict[str, Any]:
+    if "neighbour_source_dup" not in reductions:
+        return context
+    previous_source = context.get("previous_source_context")
+    previous_target = context.get("previous_target_context")
+    if not isinstance(previous_source, list) or not isinstance(previous_target, list):
+        return context
+    covered = {
+        _normalised_text(item.get("source"))
+        for item in previous_target if isinstance(item, Mapping)
+    }
+    context["previous_source_context"] = [
+        item for item in previous_source
+        if _normalised_text(item) not in covered
+    ]
+    return context
+
+
+def _normalised_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _apply_document_context_budget(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Bound the document-level context in the review view.
+
+    The whole point of review is the batch, not the book.  Document-level
+    fields are kept in priority order until the budget is spent; anything that
+    does not fit is dropped from the *view* (the packet keeps it for audit and
+    for the review-input fingerprint).
+    """
+    budget = REVIEW_VIEW_CONTEXT_BUDGET_CHARS
+    used = len(json.dumps({k: v for k, v in context.items()
+                           if k in REVIEW_VIEW_SYNOPSIS_PRIORITY},
+                          ensure_ascii=False, default=str))
+    if used <= budget:
+        return context
+    synopsis = context.get("document_synopsis")
+    if not isinstance(synopsis, Mapping):
+        return context
+    trimmed: Dict[str, Any] = {}
+    remaining = budget
+    for key in REVIEW_VIEW_SYNOPSIS_PRIORITY:
+        if key not in synopsis:
+            continue
+        value = synopsis[key]
+        size = len(json.dumps(value, ensure_ascii=False, default=str)) + len(key) + 4
+        if size > remaining:
+            break
+        trimmed[key] = value
+        remaining -= size
+    context = dict(context)
+    context["document_synopsis"] = trimmed
+    return context
+
+
+def _reviewer_packet_view(
+    packet: Dict[str, Any], *,
+    reductions: Optional[frozenset] = None,
+) -> Dict[str, Any]:
+    """Return only independent-review inputs; audit and rationale stay hidden.
+
+    ``reductions`` selects the measured information de-duplications applied to
+    the rendered view.  The packet itself is never modified, so the
+    review-input fingerprint and every persisted audit surface are unchanged.
+    """
+    active = DEFAULT_REVIEW_VIEW_REDUCTIONS if reductions is None else frozenset(reductions)
     memory = packet.get("project_memory") or {}
+    context = packet.get("context") or {}
+    if isinstance(context, Mapping):
+        context = _slim_neighbour_context(dict(context), active)
+        context["document_synopsis"] = _slim_synopsis(
+            context.get("document_synopsis"), active)
+        if "context_minimal" in active:
+            context = {key: value for key, value in context.items()
+                       if key not in REVIEW_VIEW_MINIMAL_CONTEXT_FIELDS}
+        elif "bounded_document_context" in active:
+            context = _apply_document_context_budget(context)
+    glossary = _slim_glossary(packet.get("glossary") or {}, active)
     return {
-        "translation_truth": packet.get("translation_truth") or [],
-        "glossary": packet.get("glossary") or {},
-        "confirmed_knowledge": memory.get("knowledge") or {},
+        "translation_truth": _slim_translation_truth(
+            packet.get("translation_truth") or [], active),
+        "glossary": glossary,
+        "confirmed_knowledge": _slim_confirmed_knowledge(
+            memory.get("knowledge") or {}, glossary, active),
         "deterministic_checks": packet.get("deterministic_checks") or [],
-        "context": packet.get("context") or {},
+        "context": context,
     }
 
 
@@ -1146,6 +1381,7 @@ def review_translation_batch_with_evidence(
     segment_ids: Optional[Sequence[int]] = None,
     review_identity: Optional[Dict[str, str]] = None,
     translation_core_packet: Optional[Dict[str, Any]] = None,
+    review_view_reductions: Optional[frozenset] = None,
 ) -> Tuple[List[Dict[str, Any]], bool, Dict[str, Any]]:
     """Review a batch with a bounded, two-state evidence protocol."""
     if call_llm is None:
@@ -1201,32 +1437,34 @@ def review_translation_batch_with_evidence(
                 "location_key 或 occurrence_key。"
             )
             packet_prompt = "\n【Translation Core 独立审校包】\n" + json.dumps(
-                _reviewer_packet_view(translation_core_packet),
+                _reviewer_packet_view(
+                    translation_core_packet, reductions=review_view_reductions),
                 ensure_ascii=False, sort_keys=True,
             )
         legacy_prompt_context = "" if translation_core_packet is not None else \
             glossary_text + "\n" + style_rules
+        # One statement of each rule.  The previous wording described the
+        # finding schema twice (a prose field list and a worked example); every
+        # field, constraint and the example survive, the repetition does not.
         system_prompt = (
             "你是一位独立的翻译审校专家，负责审查机器译文。"
             + ("这是盲审：不要提及修复候选或内部流程。" if blind else "")
-            + "只报告真实存在的问题，不要为低风险或主观偏好制造 finding。"
+            + "只报告真实存在的问题，不要为低风险或主观偏好制造 finding；"
+            "没有充分证据不要生成 blocking finding。"
             "severity 只允许 blocking、actionable、informational。"
-            "如果需要全文证据，先在 evidence_requests 中请求工具；拿到证据后再作最终判断。"
-            "严格输出 JSON 对象：{\"findings\": [...], \"evidence_requests\": "
-            "[{\"tool\": \"get_segment\", \"arguments\": {}}]}。"
-            "finding 必须使用给出的全局 segment_id；不要输出 segment_index。"
-            "每个 finding 必须包含 category、severity、summary、explanation、recommendation；"
-            "source_span 和 target_span 必须是原文/译文中的精确连续片段，无法可靠定位时为 null；"
-            "confidence 仅在检测依据支持时填写 0 到 1 的数字，否则为 null；"
-            "detector 填写检测器名称。没有充分证据不要生成 blocking finding。"
-            "每个 finding 可带 evidence_refs（证据编号数组）和 suggested_target。"
-            + identity_prompt +
-            "推荐格式：{\"segment_id\": 0, \"category\": \"semantic_accuracy\", "
+            "若需全文证据，先在 evidence_requests 请求工具"
+            "（{\"tool\": \"get_segment\", \"arguments\": {}}），拿到证据后再作最终判断。"
+            "严格输出 JSON 对象 {\"findings\": [...], \"evidence_requests\": [...]}；"
+            "finding 使用给出的全局 segment_id（不要用 segment_index），字段为 "
+            "category、severity、summary、explanation、recommendation、source_span、"
+            "target_span、confidence、detector，可带 evidence_refs 与 suggested_target；"
+            "source_span/target_span 必须是原文/译文中的精确连续片段，无法可靠定位时为 null；"
+            "confidence 为 0 到 1 的数字或 null。" + identity_prompt +
+            "示例：{\"segment_id\": 0, \"category\": \"semantic_accuracy\", "
             "\"severity\": \"actionable\", \"summary\": \"具体问题摘要\", "
-            "\"source_span\": \"原文中的精确片段或 null\", "
-            "\"target_span\": \"译文中的精确片段或 null\", "
+            "\"source_span\": null, \"target_span\": null, "
             "\"explanation\": \"为什么判定为问题\", "
-            "\"recommendation\": \"建议人工如何检查或处理\", "
+            "\"recommendation\": \"建议人工如何处理\", "
             "\"confidence\": 0.87, \"detector\": \"Semantic QA\", "
             "\"evidence_refs\": [\"E1\"]}。"
             "若无问题 findings 必须为空数组。\n" + legacy_prompt_context

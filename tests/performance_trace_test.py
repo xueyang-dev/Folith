@@ -51,6 +51,30 @@ def test_1_run_id_unique():
     assert id2.startswith("run_")
 
 
+def test_profiler_bridge_updates_ocr_completion_and_keeps_native_spans(tmp_path):
+    from folith.performance import PipelineProfiler
+    run = trace.start_run("ocr-bridge", output_dir=tmp_path)
+    profiler = PipelineProfiler(tmp_path / "performance.json", run_id=run.run_id)
+    try:
+        with trace.span("native_stage", operation="native_operation"):
+            pass
+        stage = profiler.start_stage("ocr", page_count=2, concurrency=1,
+            metadata={"actual_engine": "paddleocr"})
+        profiler.persist()
+        assert run.stages["ocr"]["status"] == "running"
+        stage.item("page-1", time.perf_counter(), metadata={"kind": "page"})
+        stage.finish()
+        assert run.stages["ocr"]["status"] == "completed"
+        assert run.stages["native_stage"]["operations"]["native_operation"]
+        trace.finish_run("ocr-bridge")
+        result = json.loads((tmp_path / "performance.json").read_text())
+        assert result["stages"]["ocr"]["metadata"]["actual_engine"] == "paddleocr"
+        assert result["stages"]["ocr"]["items"]
+        assert result["stages"]["ocr"]["page_count"] == 2
+    finally:
+        trace.finish_run("ocr-bridge")
+
+
 def test_2_span_duration(tmp_path):
     """2. span duration"""
     ctx = RunContext("task_dur", output_dir=tmp_path, level=TraceLevel.STANDARD)

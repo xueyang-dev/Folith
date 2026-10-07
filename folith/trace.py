@@ -1160,12 +1160,12 @@ class RunContext:
                     "finished_at": s_info.get("last_finished_at"),
                     "wall_time_s": s_info.get("wall_time_s", 0.0),
                     "item_count": s_info.get("items_in", 0),
-                    "page_count": self.dataset_meta.get("page_count", 0),
+                    "page_count": old_stage.get("page_count", self.dataset_meta.get("page_count", 0)),
                     "batch_count": b_count,
                     "status": s_info.get("status", "completed"),
-                    "concurrency": 1,
-                    "metadata": s_info.get("operations", {}),
-                    "items": [],
+                    "concurrency": old_stage.get("concurrency", 1),
+                    "metadata": {**(s_info.get("metadata") or {}), **s_info.get("operations", {})},
+                    "items": old_stage.get("items") or [],
                 }
             legacy = {
                 "version": 1,

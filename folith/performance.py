@@ -150,6 +150,7 @@ class PipelineProfiler:
         self.started_monotonic = time.perf_counter()
         self._lock = threading.RLock()
         self._stages: Dict[str, Dict[str, Any]] = {}
+        self._trace_stage_names = set()
 
     def start_stage(
         self,
@@ -217,7 +218,7 @@ class PipelineProfiler:
             run = trace.get_active_run()
             if run:
                 for s_name, s_rec in snapshot.get("stages", {}).items():
-                    if s_name not in run.stages:
+                    if s_name not in run.stages or s_name in self._trace_stage_names:
                         run.stages[s_name] = {
                             "stage_name": s_name,
                             "first_started_at": s_rec.get("started_at"),
@@ -229,7 +230,9 @@ class PipelineProfiler:
                             "items_out": s_rec.get("completed_item_count", 0),
                             "status": s_rec.get("status", "success"),
                             "operations": {},
+                            "metadata": dict(s_rec.get("metadata") or {}),
                         }
+                        self._trace_stage_names.add(s_name)
         except Exception:
             pass
         if target is None:

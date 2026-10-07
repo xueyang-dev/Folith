@@ -73,6 +73,12 @@ class BatchReviewSnapshot:
     section_digests: List[Dict[str, Any]] = field(default_factory=list)
     state_ref: Dict[str, Any] = field(default_factory=dict)
     base_evidence_count: int = 0
+    #: Deterministic pre-review gate verdict (``risk_selective`` mode only).
+    #: A skipped batch is never sent to the reviewer, never marked reviewed and
+    #: never promoted to translation memory.
+    review_gate_skip: bool = False
+    review_gate_reason: str = ""
+    review_gate_signals: Optional[Dict[str, Any]] = None
     created_at_s: float = field(default_factory=time.perf_counter)
 
     @classmethod
@@ -104,6 +110,9 @@ class BatchReviewSnapshot:
         section_digests: Optional[Sequence[Dict[str, Any]]] = None,
         state_ref: Optional[Dict[str, Any]] = None,
         base_evidence_count: int = 0,
+        review_gate_skip: bool = False,
+        review_gate_reason: str = "",
+        review_gate_signals: Optional[Dict[str, Any]] = None,
     ) -> "BatchReviewSnapshot":
         segment_ids = list(formal_segment_ids)
         source_texts = [str(p.get("source") or "") for p in batch_pairs]
@@ -154,6 +163,9 @@ class BatchReviewSnapshot:
             section_digests=[dict(d) for d in (section_digests or [])],
             state_ref=dict(state_ref or {}),
             base_evidence_count=int(base_evidence_count or 0),
+            review_gate_skip=bool(review_gate_skip),
+            review_gate_reason=str(review_gate_reason or ""),
+            review_gate_signals=dict(review_gate_signals or {}) or None,
             created_at_s=time.perf_counter(),
         )
 
@@ -173,6 +185,11 @@ class ReviewResult:
     repair_overlays: List[Dict[str, Any]]
     review_evidence: List[Dict[str, Any]]
     accepted_suggestions: Dict[int, str]  # local_index -> accepted suggested target
+    #: True when the deterministic pre-review gate skipped this batch.  The
+    #: result carries explicit provenance and never claims a review happened.
+    review_skipped: bool = False
+    review_skip_reason: str = ""
+    review_skip_trace: Optional[Dict[str, Any]] = None
     # Timings
     queue_wait_s: float = 0.0
     api_latency_s: float = 0.0

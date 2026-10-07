@@ -6374,6 +6374,52 @@ def _execute_batch_review(
             finished_at_s=time.perf_counter(),
             total_wall_s=0.0,
         )
+    if snapshot.review_gate_skip:
+        # Deterministic gating decided this batch does not need independent
+        # review.  Report it as skipped with explicit provenance: no review
+        # happened, so nothing is marked reviewed, approved or TM-eligible.
+        skip_event_id = (
+            f"translation-review-{job_id}-{snapshot.batch_index}-skipped-low-risk")
+        skip_trace = {
+            "blind": False,
+            "segment_ids": list(snapshot.formal_segment_ids),
+            "rounds": [],
+            "requests": [],
+            "evidence_ids": [],
+            "decision": _review_gate.SKIPPED_LOW_RISK,
+            "review_identity": {},
+            "review_mode": _review_gate.REVIEW_MODE_RISK_SELECTIVE,
+            "skip_reason": snapshot.review_gate_reason,
+            "risk_signals": dict(snapshot.review_gate_signals or {}),
+            "completion_receipt": {
+                "status": _review_gate.SKIPPED_LOW_RISK,
+                "reviewed_segment_ids": [],
+                "reviewed_unit_count": 0,
+                "finding_count": 0,
+                "evidence_ids": [],
+                "review_identity": {},
+            },
+        }
+        return _review_scheduler.ReviewResult(
+            batch_index=snapshot.batch_index,
+            offset=snapshot.offset,
+            review_succeeded=False,
+            review_failed=False,
+            rfindings=[],
+            review_trace=skip_trace,
+            review_event_id=skip_event_id,
+            formal_records=[],
+            promoted_review_events=[],
+            repair_overlays=[],
+            review_evidence=[],
+            accepted_suggestions={},
+            review_skipped=True,
+            review_skip_reason=snapshot.review_gate_reason,
+            review_skip_trace=skip_trace,
+            started_at_s=started_at,
+            finished_at_s=time.perf_counter(),
+            total_wall_s=0.0,
+        )
 
     rfindings = []
     review_failed = False
@@ -6582,8 +6628,55 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     - 确定性检查：占位符/URL/引用等保留项、残留原文、锁定术语合规，问题自动修复一轮；
     - 独立审校：actionable 建议经确定性复验后应用，blocking 记录给用户确认；
     - 翻译记忆：仅审校通过的段落入库，精确命中直接复用。
+
+    ``context_mode`` 选择上下文装配路径。**生产默认是 ``"fixed"``**：
+
+    - ``"fixed"``（``PRODUCTION_CONTEXT_MODE``，生产/稳定/默认）：现有
+      ``compile_context_packet`` 装配，渲染结果与历史版本逐字节一致；
+    - ``"dynamic_v2"``（``EXPERIMENTAL_CONTEXT_MODE``，实验/研究/显式选择）：
+      ``folith.dynamic_context`` 的多源检索装配，只改变注入的上下文，不改变
+      批次、提示词骨架、审校、TM 或状态语义。**未推广，不再扩展**；
+      见 ``docs/dynamic-context-v2-adr.md``。
+
+    缺失、未知或非法取值一律回落到 ``"fixed"``——实验路径只能由显式的
+    ``"dynamic_v2"`` 进入，不可能因为配置漂移而变成隐式路径。
     """
     state["translation_core_review_required"] = bool(enable_review)
+    # ---- context selector resolution (production default: fixed) -------------
+    # Resolved once per stage.  This is the ONLY place the mode is decided, so
+    # "is the experiment on?" has exactly one answer per run.
+    effective_context_mode = _dynamic_context.resolve_context_mode(context_mode, state)
+    try:
+        effective_context_budget = int(
+            context_budget_tokens if context_budget_tokens is not None
+            else state.get("context_budget_tokens")
+            or _dynamic_context.DEFAULT_CONTEXT_BUDGET_TOKENS)
+    except (TypeError, ValueError):
+        effective_context_budget = _dynamic_context.DEFAULT_CONTEXT_BUDGET_TOKENS
+    effective_context_budget = max(1, effective_context_budget)
+    if context_ablations is None:
+        context_ablations = state.get("context_ablations") or ()
+    effective_context_ablations = tuple(
+        name for name in (context_ablations or ())
+        if name in _dynamic_context.ABLATION_NAMES)
+    if context_offline is None:
+        context_offline = bool(state.get("context_offline"))
+    effective_context_offline = bool(context_offline)
+    # Persist the experiment configuration only when the experiment is active:
+    # a production `fixed` job's state must stay byte-identical to before, and
+    # `pipeline_config` (the serialized task configuration) never carries these
+    # keys at all.
+    if effective_context_mode != _dynamic_context.PRODUCTION_CONTEXT_MODE:
+        state["context_mode"] = effective_context_mode
+        state["context_budget_tokens"] = effective_context_budget
+        state["context_ablations"] = list(effective_context_ablations)
+        state["context_offline"] = effective_context_offline
+    # Review policy: ``always`` (the production default, unchanged) or
+    # ``risk_selective`` (deterministic pre-review gating).  Unrecognised values
+    # fall back to ``always``, so configuration can never silently weaken review.
+    effective_review_mode = _review_gate.resolve_review_mode(
+        review_mode, state.get("pipeline_config"), state)
+    state["review_mode"] = effective_review_mode
     # 严格术语治理门禁：存在待审核候选术语且未冻结（且未显式跳过）时，
     # 任何入口都禁止开始翻译。导入的锁定术语视为已固定，不构成阻塞。
     pending = [e for e in (glossary or [])
@@ -6987,6 +7080,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
 
     stats = state.setdefault("review_stats", {
         "reviewed_segments": 0, "batches_reviewed": 0,
+        "batches_skipped_low_risk": 0, "skipped_segments": 0,
         "blocking": 0, "actionable": 0, "informational": 0, "review_failed": 0,
     })
     findings_all = state.setdefault("findings", [])
@@ -7552,7 +7646,32 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             formal_segment_ids = reviewable_segment_ids
             evidence_index = None
             formal_packet = None
-            if run_review and enable_review:
+            # Deterministic pre-review gate.  In ``always`` mode this is a
+            # no-op; in ``risk_selective`` mode a batch with no deterministic
+            # risk signal is recorded as skipped instead of reviewed.  The
+            # decision is made here, before any review input is built, so a
+            # skipped batch pays neither the packet nor the request.
+            review_skipped = False
+            review_skip_reason = ""
+            review_signals = None
+            if enable_review and effective_review_mode == _review_gate.REVIEW_MODE_RISK_SELECTIVE \
+                    and formal_segment_ids:
+                review_signals = _review_gate.batch_signals_from_context(
+                    findings=findings,
+                    fixable=fixable,
+                    repair_attempted=bool(repair_overlays_to_record),
+                    batch_pairs=batch_pairs,
+                    blocked_local_indexes=blocked_local_indexes,
+                    protocol_failure=any(
+                        isinstance(item, dict) and item.get("batch") == bi
+                        for item in (state.get("translation_failures") or [])),
+                    findings_all=findings_all,
+                    segment_ids=formal_segment_ids,
+                )
+                run_review, review_skip_reason = \
+                    _review_gate.should_run_independent_review(review_signals)
+                review_skipped = not run_review
+            if run_review and enable_review and not review_skipped:
                 _translation_runtime("translation_review", f"正在审校第 {bi + 1} 批译文")
                 if formal_segment_ids:
                     with _critical_path.phase("review_input_state_copy") as _copy_sink:
@@ -7697,7 +7816,34 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 else:
                     review_succeeded = True
                 _mark("translation_semantic_review")
-            elif not run_review and enable_review and formal_segment_ids:
+            elif enable_review and review_skipped and formal_segment_ids:
+                # Explicit skip provenance.  The batch is *not* reviewed, *not*
+                # approved and *not* TM-eligible; the audit trail records the
+                # deterministic signal set that justified the decision.
+                review_event_id = (
+                    f"translation-review-{job_id}-{bi}-skipped-low-risk")
+                review_trace = {
+                    "blind": False,
+                    "segment_ids": list(formal_segment_ids),
+                    "rounds": [],
+                    "requests": [],
+                    "evidence_ids": [],
+                    "decision": _review_gate.SKIPPED_LOW_RISK,
+                    "review_identity": {},
+                    "review_mode": effective_review_mode,
+                    "skip_reason": review_skip_reason,
+                    "risk_signals": dict(review_signals or {}),
+                    "completion_receipt": {
+                        "status": _review_gate.SKIPPED_LOW_RISK,
+                        "reviewed_segment_ids": [],
+                        "reviewed_unit_count": 0,
+                        "finding_count": 0,
+                        "evidence_ids": [],
+                        "review_identity": {},
+                    },
+                }
+                _mark("translation_semantic_review_skipped")
+            elif not run_review and enable_review and formal_segment_ids and not review_skipped:
                 with commit_lock:
                     current_pairs = list(pairs) if effective_pairs is None else list(effective_pairs)
                     current_findings_all = list(findings_all)
@@ -7728,6 +7874,9 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 "section_profile": section_profile,
                 "blocked_local_indexes": blocked_local_indexes,
                 "review_succeeded": review_succeeded,
+                "review_skipped": review_skipped,
+                "review_skip_reason": review_skip_reason,
+                "review_signals": review_signals,
                 "rfindings": rfindings,
                 "review_failed": review_failed,
                 "review_trace": review_trace,
@@ -7764,6 +7913,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         section_profile = bundle["section_profile"]
         blocked_local_indexes = bundle["blocked_local_indexes"]
         review_succeeded = bundle["review_succeeded"]
+        review_skipped = bool(bundle.get("review_skipped"))
+        review_skip_reason = str(bundle.get("review_skip_reason") or "")
         rfindings = bundle["rfindings"]
         review_failed = bundle["review_failed"]
         review_trace = bundle["review_trace"]
@@ -7828,7 +7979,24 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 state.setdefault("review_evidence", []).extend(bundle["review_evidence"])
             _log_sink.traversed(len(state.get("context_packet_log") or []))
 
-        if enable_review:
+        if enable_review and review_skipped:
+            # Skipped by deterministic gating: record explicit provenance and
+            # count it separately from both "reviewed" and "not reviewed".
+            stats["batches_skipped_low_risk"] = \
+                stats.get("batches_skipped_low_risk", 0) + 1
+            stats["skipped_segments"] = (
+                stats.get("skipped_segments", 0) + len(formal_segment_ids))
+            if review_trace and review_event_id:
+                _translation_evidence.register_runtime_review_event(
+                    state, {"batch": bi, **review_trace}, [],
+                    review_event_id, formal_segment_ids,
+                    phase="risk_selective_skip", patches=_journal_patches)
+            safe_append_event({
+                "batch": bi, "offset": offset,
+                "phase": "semantic_review_skipped_low_risk",
+                "reason": review_skip_reason,
+            })
+        elif enable_review:
             stats["batches_reviewed"] += 1
             if review_failed:
                 stats["review_failed"] += 1
@@ -8083,7 +8251,12 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                         if f.get("segment_id", f.get("segment_index")) == segment_id
                     ]
                     if not p.get("from_tm"):
-                        if not review_succeeded:
+                        if review_skipped:
+                            # Not independently reviewed: explicit, and never
+                            # promoted to TM or presented as reviewed/approved.
+                            p["review_status"] = _review_gate.SKIPPED_LOW_RISK
+                            p["reviewed"] = False
+                        elif not review_succeeded:
                             p["review_status"] = "review_failed"
                             p["reviewed"] = False
                         elif seg_findings:
@@ -8091,7 +8264,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                             p["reviewed"] = False
                         else:
                             p["review_status"] = "reviewed_clean"
-                    if review_succeeded and not seg_findings and not p["from_tm"] \
+                    if review_succeeded and not review_skipped and not seg_findings \
+                            and not p["from_tm"] \
                             and _tm_eligible(p["source"], p["target"]):
                         p["reviewed"] = True
                         p["accepted_target"] = p["target"]
@@ -8189,6 +8363,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 scheduler.record_exposed_latency(exposed_s)
 
                 bundle["review_succeeded"] = rev_res.review_succeeded
+                bundle["review_skipped"] = bool(rev_res.review_skipped)
+                bundle["review_skip_reason"] = str(rev_res.review_skip_reason or "")
                 bundle["rfindings"] = rev_res.rfindings
                 bundle["review_failed"] = rev_res.review_failed
                 bundle["review_trace"] = rev_res.review_trace
@@ -8289,6 +8465,9 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                             len(state.get("review_evidence") or [])
                             + len(bundle.get("review_evidence") or [])
                         ),
+                        review_gate_skip=bool(bundle.get("review_skipped")),
+                        review_gate_reason=str(bundle.get("review_skip_reason") or ""),
+                        review_gate_signals=bundle.get("review_signals"),
                     )
                     scheduler.submit(
                         snapshot,
@@ -11278,6 +11457,7 @@ def new_job_state(filename):
         "findings": [],
         "review_stats": {
             "reviewed_segments": 0, "batches_reviewed": 0,
+            "batches_skipped_low_risk": 0, "skipped_segments": 0,
             "blocking": 0, "actionable": 0, "informational": 0, "review_failed": 0,
         },
         "tm_used_count": 0,
@@ -13150,10 +13330,16 @@ def _reset_source_dependent_state(state):
         "glossary_versions": [],
         "glossary_injection_log": [],
         "pairs": [],
+        # Structural snapshots belong to the previous source, even if the
+        # re-extraction happens to produce the same paragraph count.
+        "segment_structure_history": [],
+        "segment_structure_undo_log": [],
+        "excluded_segments": [],
         "findings": [],
         "has_blocking": False,
         "review_stats": {
             "reviewed_segments": 0, "batches_reviewed": 0,
+            "batches_skipped_low_risk": 0, "skipped_segments": 0,
             "blocking": 0, "actionable": 0,
             "informational": 0, "review_failed": 0,
         },
