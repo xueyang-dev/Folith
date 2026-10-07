@@ -1,0 +1,40 @@
+{
+  "method": "human transcription from 400 DPI rendered crop, cross-checked against tessdata_best/std OCR drafts; poetry and severely ambiguous glyphs re-examined at 700 DPI",
+  "normalization": "Unicode NFC + whitespace collapse; original orthography preserved (no hamza/case modernization, no diacritic removal)",
+  "scope": "contiguous prose region per page (the poem on p20 was excluded; p169 includes a poem because it is inseparable from the passage)",
+  "uncertain_words_by_page": {
+    "20": [
+      "والملاحي",
+      "والمبلغ"
+    ],
+    "100": [
+      "بعمار"
+    ],
+    "50": [
+      "من/كن"
+    ],
+    "140": [
+      "بصفها"
+    ],
+    "180": [
+      "نسبة بعضية"
+    ],
+    "169": [
+      "صادا",
+      "فنديها",
+      "وننثوها"
+    ],
+    "211": [],
+    "7": [
+      "سماه"
+    ],
+    "220": [
+      "ويدب"
+    ],
+    "5": [
+      "متنعما",
+      "وقد استوفيت"
+    ]
+  },
+  "note": "GT is human-verified but not perfect; per-page uncertainty is listed. CER should be read with that caveat."
+}

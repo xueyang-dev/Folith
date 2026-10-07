@@ -100,6 +100,12 @@ benchmark/*.log
 benchmark/*.tsv
 benchmark/*.json
 benchmark/*.png
+benchmark/knowledge-feedback/
+benchmark/ocr-sources-verification/
+benchmark/ocr-vision-pilot/
+benchmark/translation-efficiency/
+benchmark/regression_evidence.txt
+benchmark/results.csv
 
 # Local Remotion video project (unedited scaffold, no render output).  Not part
 # of the product build or the release chain.
