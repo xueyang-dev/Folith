@@ -206,22 +206,52 @@ contract.
 |---|---|
 | base | `ca81f79` (`main`) |
 | branch | `fix/text-layer-reversal-routing` |
-| commits | `feat(pdf): original-layout PDF renderer v1`, `fix(ingestion): reject strongly reversed native text layers`, `test(document): cover reversal routing and the challenge corpus`, `feat(delivery): show original-layout PDF only for PDF tasks` |
-| working tree | clean |
+| `a6622d1` | `feat(pdf): original-layout PDF renderer v1` |
+| `01581cc` | `fix(ingestion): reject strongly reversed native text layers` |
+| `be16141` | `test(document): cover reversal routing and the challenge corpus` |
+| `afdd171` | `feat(delivery): show original-layout PDF only for PDF tasks` |
 
 The first commit carries the previous phase's work, which was still uncommitted
-on `main`; the three commits after it are this phase.
+on `main`; the three after it are this phase. Large generated material stays out
+of git: `benchmark/opdf/{out,jobs,corpus}/` and `benchmark/routing/samples/` are
+ignored, while the harnesses, the frozen manifests, the recorded evidence JSON
+and the reports are tracked.
 
-Large generated material stays out of git: `benchmark/opdf/{out,jobs,corpus}/`
-and `benchmark/routing/samples/` are ignored, while the harnesses, the frozen
-manifest, the recorded evidence JSON and the reports are tracked.
+### Concurrent writer in the working directory
+
+While this phase was running, another session was editing the same checkout:
+`folith/pdf_ingestion.py` gained a `marks`/`superscript_marker_census` feature
+and `folith/document_ir.py`, `folith/document_understanding.py`, `core.py` and
+`folith/text_layer_quality.py` were touched to carry it. Those edits are **not
+this phase's** and are **not** in the four commits above; one of them was briefly
+swept into `feat(delivery)` by an over-broad `git add -A` and was removed from
+that commit again (it is a local, unpushed amend), with the writer's working-tree
+state left untouched.
+
+Because that work is still uncommitted, `git status` in the main checkout is
+**not** clean, and it is not this phase's to clean up. To verify exactly what is
+delivered, the whole verification was repeated in an isolated worktree at
+`afdd171` containing only these commits — the results below are from there.
+
+### Verification in isolation (`afdd171`)
+
+* routing tests and the full regression batch: **550 passed, 2 failed, 4
+  skipped**, both failures pre-existing (section H);
+* `benchmark/routing/measure.py`: 19/19, false accepts 0, false rejects 0;
+* `benchmark/routing/route_check.py`: +3 documents / +6 pages routed to visual
+  understanding, **0** local OCR calls;
+* `benchmark/routing/negative_controls.py`: all controls behaved as expected;
+* `benchmark/opdf/acceptance.py --mode live`: **26/26 pages (100%)**, links
+  10→10, outline 20→20, zero unfinished regions.
 
 ## Remaining limitations
 
 * The gate samples first/middle/last pages only. A book whose *only* reversed
   pages fall outside that sample is not caught by the document-level verdict;
-  this shallow sampling is a deliberate pre-existing cost decision.
+  shallow sampling is a deliberate pre-existing cost decision.
 * A page whose sampled text has fewer than 8 mirrored words and no visual-order
-  evidence stays on the native path. No benchmark page is in that region; the
-  declared-language path still catches the repo's short 1882 excerpt fixture.
+  evidence stays on the native path. No benchmark page is in that region, and
+  the declared-language path still catches the repo's short 1882 excerpt fixture.
+* The main checkout carries another session's uncommitted ingestion work; this
+  phase's commits do not include it.
 * macOS/arm64 only. Windows and Linux are **not verified**.
