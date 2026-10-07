@@ -2206,19 +2206,37 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                                             profiler=None, checkpoint_dir=None,
                                             ocr_workers=None, ocr_queue_size=None,
                                             cancel_check=None,
-                                            profile_cache_dir=None):
+                                            profile_cache_dir=None,
+                                            ocr_language=None, ocr_dpi=None,
+                                            ocr_psm=None, ocr_mode=None, ocr_backend=None,
+                                            ocr_paddle_model=None, ocr_online_config=None,
+                                            source_language=None,
+                                            understanding_provider=None, spatial_engine=None):
     """Extract paragraphs together with an import-scope report.
 
     Returns ``(paragraphs, warnings, report)``.  The report is what makes the
     import honest: it states how much text was read, which parts of the
     document were *not* included in translation, and that the export is a
     regenerated translation document rather than a format-faithful round trip.
+
+    ``ocr_language`` / ``ocr_dpi`` / ``ocr_psm`` are the user's OCR
+    configuration; they are forwarded to the OCR stage and recorded in the
+    extraction report.
+
+    ``ocr_mode`` (``auto`` / ``force`` / ``off``) and ``source_language``
+    implement the ingestion contract: a PDF text layer is used only when the
+    quality gate accepts it, ``force`` always OCRs, and ``off`` never does.  The
+    declared source language feeds the gate; it is never used to re-detect or
+    override the user's language.
     """
+    resolved_ocr_mode = normalize_ocr_mode(ocr_mode)
     warnings = []
     paragraphs = []
     unsupported = []
     facts = {}
     ocr_used = False
+    text_layer_report = {}
+    ocr_trigger = ""
     name = (filename or "").lower()
     try:
         if name.endswith(".pdf"):
@@ -2233,19 +2251,105 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                     status="completed", text_pages=int(facts.get("text_pages") or 0),
                     empty_pages=int(facts.get("empty_pages") or 0),
                 )
+            # Text existence is not text quality: judge the layer before
+            # trusting it, and let the user's ocr_mode override the verdict.
+            text_layer_report = _text_layer_quality.assess_pdf_text_layer(
+                file_bytes, source_language=source_language, max_pages=3)
+            # Sampling is deliberately shallow (first/middle/last).  If those
+            # pages are empty but the document does have text pages elsewhere,
+            # the layer is partial, not absent — do not silently force OCR on a
+            # real digital document because its first/last page happens to be a
+            # cover.
+            if (text_layer_report.get("status") == "absent"
+                    and int(facts.get("text_pages") or 0) > 0):
+                text_layer_report = {
+                    **text_layer_report, "status": "uncertain",
+                    "reasons": [*(text_layer_report.get("reasons") or []),
+                                "text_layer_partial_sampling"],
+                }
+            use_text_layer, ocr_trigger, mode_warning = _text_layer_decision(
+                text_layer_report, resolved_ocr_mode)
+            if mode_warning:
+                warnings.append(mode_warning)
             layout_stage = profiler.start_stage(
                 "layout_recovery", concurrency=1,
-                metadata={"backend": "PyMuPDF", "page_count": facts.get("pages")},
+                metadata={"backend": "PyMuPDF", "page_count": facts.get("pages"),
+                          "ocr_mode": resolved_ocr_mode,
+                          "text_layer_quality": text_layer_report.get("status")},
             ) if profiler is not None else None
-            paragraphs = [clean_xml_chars(p) for p in extract_pdf_paragraphs(file_bytes)]
+            paragraphs = []
+            if use_text_layer:
+                paragraphs = [clean_xml_chars(p)
+                              for p in extract_pdf_paragraphs(file_bytes)]
+                if not paragraphs and resolved_ocr_mode != "off":
+                    # The gate accepted the layer but extraction produced
+                    # nothing usable; fall through to OCR instead of shipping an
+                    # empty document.
+                    use_text_layer = False
+                    ocr_trigger = "text_layer_empty_after_extraction"
             if layout_stage is not None:
                 layout_stage.record["item_count"] = len(paragraphs)
                 layout_stage.record["page_count"] = int(facts.get("pages") or 0)
                 layout_stage.finish(status="completed")
             ocr_details = {}
-            if not paragraphs:
+            visual_indices = []
+            if use_text_layer and resolved_ocr_mode != "off":
+                with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
+                    visual_indices = [i for i,p in enumerate(pdf)
+                                      if not p.get_text().strip() and p.get_images()]
+            if (not use_text_layer or visual_indices) and (understanding_provider is not None
+                                      or ocr_backend is None
+                                      or _ocr_backends.normalize_backend(ocr_backend) == "online"):
+                from folith.document_understanding import VLMDocumentProvider, understand_visual_pdf, understand_mixed_pdf
+                from folith.spatial_index import SpatialTextIndex
+                if understanding_provider is None:
+                    config = ocr_online_config
+                    if config is None or isinstance(config, dict):
+                        config, error = resolve_ocr_online_config(config)
+                        if error:
+                            raise ValueError(error["message"])
+                    understanding_provider = VLMDocumentProvider(config, cancel_check=cancel_check)
+                if spatial_engine is None:
+                    command = _find_tesseract()
+                    def spatial_engine(page):
+                        index = SpatialTextIndex(page.page_id)
+                        if not command:
+                            index.error = "Local spatial engine unavailable"
+                            return index
+                        # Single cheap recognition pass. No quality retries,
+                        # OCR repair, or dependency on installed language packs.
+                        blocks, error = _ocr_page_with_tesseract(
+                            command, page.image, ocr_language or "eng", psm=ocr_psm)
+                        if error:
+                            index.error = str(error)
+                            return index
+                        return SpatialTextIndex.from_ocr(page, blocks or [],
+                                                        image_width=page.image_width,
+                                                        image_height=page.image_height)
+                understand = understand_mixed_pdf if visual_indices else understand_visual_pdf
+                args = (filename, file_bytes, visual_indices, understanding_provider) if visual_indices else (filename, file_bytes, understanding_provider)
+                paragraphs, document = understand(
+                    *args, spatial_engine=spatial_engine, max_pages=ocr_max_pages, dpi=150,
+                    on_progress=on_progress, cancel_check=cancel_check, checkpoint_dir=checkpoint_dir)
+                report = _build_extraction_report(filename, paragraphs, facts=facts, warnings=warnings)
+                report.update({"semantic_source":"mixed" if visual_indices else "vlm", "document_ir":document,
+                               "ocr_used":False, "ocr_mode":resolved_ocr_mode,
+                               "ocr_trigger":ocr_trigger, "pdf_text_layer_quality":text_layer_report.get("status"),
+                               "page_diagnostics":document["provenance"]["page_diagnostics"]})
+                if (ocr_max_pages is not None and len(document["provenance"]["page_diagnostics"])
+                        < (len(visual_indices) if visual_indices else len(document["pages"]))):
+                    report["status"] = "partial"
+                return paragraphs, warnings, report
+            if not use_text_layer:
                 scope = "全文" if ocr_max_pages is None else "前/中/后代表页"
-                warnings.append(f"PDF 无文本层，正在自动 OCR {scope}…")
+                if ocr_trigger == "ocr_mode_force":
+                    warnings.append(f"已按「强制 OCR」忽略文本层，正在 OCR {scope}…")
+                elif ocr_trigger == "text_layer_quality_rejected":
+                    warnings.append(
+                        f"PDF 文本层质量检测未通过（{'、'.join(text_layer_report.get('reasons') or []) or 'quality'}），"
+                        f"正在改用 OCR {scope}…")
+                else:
+                    warnings.append(f"PDF 无可用文本层，正在自动 OCR {scope}…")
                 ocr_fn = _ocr_pdf_text_with_warnings
                 ocr_kwargs = {
                     "max_pages": ocr_max_pages,
@@ -2266,6 +2370,12 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                         "profiler": profiler,
                         "return_details": True,
                         "profile_cache_dir": profile_cache_dir,
+                        "ocr_language": ocr_language,
+                        "dpi": ocr_dpi,
+                        "ocr_psm": ocr_psm,
+                        "backend": ocr_backend,
+                        "paddle_model": ocr_paddle_model,
+                        "online_config": ocr_online_config,
                     }
                     for key, value in optional_ocr_kwargs.items():
                         if supports_kwargs or key in parameters:
@@ -2278,10 +2388,19 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 else:
                     ocr_text, ocr_warnings = ocr_result
                 warnings.extend(ocr_warnings)
-                paragraphs = _ocr_text_to_paragraphs(ocr_text)
+                paragraphs = _ocr_text_to_paragraphs(
+                    ocr_text,
+                    direction=str((ocr_details or {}).get("ocr_text_direction")
+                                  or "ltr"))
                 ocr_used = True
                 if not paragraphs:
-                    warnings.append("OCR 未生成可用段落；请安装语言包或手动选择风格")
+                    # A blocking OCR error (missing language pack, no engine,
+                    # unreadable pages) already carries the precise reason; a
+                    # generic follow-up would become the surfaced message and
+                    # hide it from the user.
+                    if not (ocr_details or {}).get("ocr_error"):
+                        warnings.append(
+                            "OCR 未生成可用段落；请安装语言包或手动选择风格")
             images = int(facts.get("images") or 0)
             if images:
                 unsupported.append({
@@ -2311,28 +2430,56 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
     except Exception as exc:  # noqa: BLE001
         if "任务已请求取消" in str(exc):
             raise
-        warnings.append(f"预提取失败：{exc}")
+        warnings.append(f"预提取失败：{friendly_extraction_reason(exc)}")
+        facts["extraction_error"] = friendly_extraction_reason(exc)
+        if hasattr(exc, "diagnostics"):
+            facts["understanding_failure"] = exc.diagnostics
     report = _build_extraction_report(
         filename, paragraphs, ocr_used=ocr_used, unsupported=unsupported,
         facts=facts, warnings=warnings)
+    if facts.get("extraction_error"):
+        report["status"] = "failed"
+        report["error"] = facts["extraction_error"]
+        if facts.get("understanding_failure"):
+            report["page_diagnostics"] = [facts["understanding_failure"]]
+    # Why did this document (not) go through OCR?  Recorded as durable evidence
+    # so the UI, the audit trail and the benchmark can all answer it.
+    report["pdf_text_layer_present"] = bool(
+        (text_layer_report.get("evidence") or {}).get("pages_with_text"))
+    report["pdf_text_layer_quality"] = text_layer_report.get("status")
+    report["pdf_text_layer_quality_score"] = text_layer_report.get("score")
+    report["pdf_text_layer_rejection_reasons"] = list(
+        text_layer_report.get("reasons") or [])
+    report["pdf_text_layer_evidence"] = text_layer_report.get("evidence") or {}
+    report["ocr_mode"] = resolved_ocr_mode
+    report["ocr_trigger"] = ocr_trigger or (
+        "ocr_used" if ocr_used else "text_layer_accepted")
+    report["ocr_used"] = bool(ocr_used)
     if ocr_used:
         report["ocr"] = dict(ocr_details or {})
         report["ocr"]["paragraph_count"] = len(paragraphs)
         report["ocr"]["paragraph_confidences"] = list(
             report["ocr"].get("paragraph_confidences") or []
         )
+    if name.endswith(".pdf") and not ocr_used and paragraphs and facts.get("pages"):
+        from folith.document_understanding import native_pdf_document
+        report["document_ir"] = native_pdf_document(filename, file_bytes, paragraphs)
+        report["semantic_source"] = "native_pdf"
     return paragraphs, warnings, report
 
 
 def extract_document_paragraphs(filename, file_bytes, *, ocr_max_pages=3,
-                                 on_progress=None):
+                                 on_progress=None, ocr_mode=None,
+                                 source_language=None, ocr_backend=None):
     """Backward-compatible wrapper: ``(paragraphs, warnings)``.
 
     New callers should use :func:`extract_document_paragraphs_with_report` so
-    the import scope can be shown to the user.
+    the import scope can be shown to the user.  ``ocr_mode`` / ``source_language``
+    are forwarded so legacy callers can still pin the ingestion contract.
     """
     paragraphs, warnings, _report = extract_document_paragraphs_with_report(
-        filename, file_bytes, ocr_max_pages=ocr_max_pages, on_progress=on_progress)
+        filename, file_bytes, ocr_max_pages=ocr_max_pages, on_progress=on_progress,
+        ocr_mode=ocr_mode, source_language=source_language, ocr_backend=ocr_backend)
     return paragraphs, warnings
 
 
@@ -2460,6 +2607,12 @@ def _apply_source_segmentation(state, cleaned_paragraphs, *, mode=None):
         metadata["locked"] = True
     state["source_paragraphs"] = list(source_paragraphs)
     state["segmentation"] = metadata
+    from folith.document_ir import segment_spans
+    document = (state.get("extraction_report") or {}).get("document_ir")
+    if document:
+        state["segment_source_spans"] = segment_spans(document, source_paragraphs, segments, metadata)
+    else:
+        state.pop("segment_source_spans", None)
     return segments, metadata
 
 
@@ -2539,9 +2692,14 @@ def _filter_confirmed_source_quality(report, state, paragraphs):
 def _audit_source_quality_for_state(state):
     paragraphs = (state or {}).get("paras") or []
     if not _source_quality_gate_enabled(state):
+        semantic_source = ((state or {}).get("extraction_report") or {}).get(
+            "semantic_source")
         return {
             "version": _source_quality.VERSION,
             "status": "disabled",
+            "reason": ("vlm_semantic_source"
+                       if semantic_source in _VLM_SEMANTIC_SOURCES
+                       else "not_pdf_source"),
             "checked_count": len(paragraphs),
             "flagged_count": 0,
             "flags": [],
@@ -10899,6 +11057,8 @@ def assign_missing_segment_uids(state, *, job_id=""):
     """
     from folith.epub import bind_source_references
     bind_source_references(state)
+    from folith.document_ir import attach_pair_spans
+    attach_pair_spans(state)
     pairs = (state or {}).get("pairs")
     if not isinstance(pairs, list):
         return 0
@@ -11579,6 +11739,11 @@ def mutate_translation_segments(
         if SOURCE_REFS in current and SOURCE_REFS in following:
             merged[SOURCE_REFS] = list(dict.fromkeys(
                 current[SOURCE_REFS] + following[SOURCE_REFS]))
+        if "source_spans" in current or "source_spans" in following:
+            merged["source_spans"] = []
+            for span in list(current.get("source_spans") or []) + list(following.get("source_spans") or []):
+                if span not in merged["source_spans"]:
+                    merged["source_spans"].append(dict(span))
         merged_ids = list(dict.fromkeys(
             list(current.get("glossary_entry_ids") or []) +
             list(following.get("glossary_entry_ids") or [])))
@@ -11596,6 +11761,8 @@ def mutate_translation_segments(
         from folith.epub import SOURCE_REFS
         if SOURCE_REFS in pairs[index]:
             inserted[SOURCE_REFS] = list(pairs[index][SOURCE_REFS])
+        if state.get("segment_source_spans"):
+            inserted["source_spans"] = []
         inserted[SEGMENT_UID_FIELD] = next_segment_uid(state, job_id)
         pairs.insert(index + 1, inserted)
         paras.insert(index + 1, "")
@@ -13638,6 +13805,7 @@ def save_document_profile(job_id, profile):
     return state
 
 
+@_serialized_job_mutation
 def set_entity_translation(job_id, source_form, target, *, entity_type="other_proper_noun",
                            locked=True, actor="user", note=""):
     """Persist a human entity choice; it outranks generated continuity hints."""
@@ -14922,7 +15090,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
     # translations cannot be silently paired with corrected source segments.
     is_pdf = str(filename or state.get("filename") or "").lower().endswith(".pdf")
     if (state.get("p1_done") and not state.get("source_cleanup_done")
-            and is_pdf and enable_source_cleanup and not state.get("p2_done")):
+            and is_pdf and enable_source_cleanup and not state.get("p2_done")
+            and (state.get("extraction_report") or {}).get("semantic_source") not in {"vlm", "mixed"}):
         legacy_source = list(state.get("source_paras") or state.get("paras") or [])
         legacy_segments = list(state.get("paras") or [])
         if legacy_source:
@@ -15102,7 +15271,7 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         segment_stage = profiler.start_stage(
             "segment_build", concurrency=1, item_count=len(segments),
             metadata={
-                "source": "cleaned_paragraphs",
+                "source": "document_ir" if extraction_report.get("semantic_source") in {"vlm", "mixed"} else "cleaned_paragraphs",
                 "mode": segmentation_meta.get("mode"),
                 "paragraph_count": len(cleaned_paragraphs),
             }
@@ -15324,6 +15493,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         state["p2_done"] = True
         from folith.epub import bind_source_references
         bind_source_references(state)
+        from folith.document_ir import attach_pair_spans
+        attach_pair_spans(state)
         from folith import delivery as _delivery
         state["delivery_status"] = _delivery.compute_delivery_status(state)
         save_job_state(job_id, state)

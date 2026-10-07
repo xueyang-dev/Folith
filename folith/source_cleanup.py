@@ -41,9 +41,34 @@ REASON_OBVIOUS_LINE_JOIN = "obvious_line_join"
 REASON_STRAY_PUNCTUATION = "stray_punctuation_fragment"
 
 # 分句器会在这里断句的字符（`segmentation._SENTENCE_CHARS` 的同集合）。
-_SENTENCE_STRIP_CHARS = set(".!?。！？")
+# Arabic ``؟`` (question mark) and Urdu ``۔`` (full stop) are terminals; the
+# Arabic comma ``،`` and semicolon ``؛`` deliberately are not.
+_SENTENCE_STRIP_CHARS = set(".!?。！？؟۔")
 # 可能跟在句末标点后面的闭合引号/括号。
 _TRAILING_CLOSERS = set('"\'”’»)]}】》」』〉）］')
+
+#: Any Unicode letter run of length >= 2.  Used by the hallucination guard so it
+#: is script-aware instead of Latin-only: ``[A-Za-z]{2,}`` found zero "words" in
+#: Arabic, which silently disabled the guard for the whole document.
+_UNICODE_WORD_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+
+#: Characters from cased scripts (Latin / Greek / Cyrillic).  A character-level
+#: similarity threshold calibrated for English is too permissive for Arabic,
+#: where the shared letter inventory inflates ``SequenceMatcher`` even between
+#: unrelated texts.  Uncased scripts therefore get a stricter floor.
+_CASED_RANGES = ((0x0041, 0x024F), (0x0370, 0x03FF), (0x0400, 0x04FF))
+
+
+def _is_cased_word(word: str) -> bool:
+    return any(
+        any(start <= ord(char) <= end for start, end in _CASED_RANGES)
+        for char in word
+    )
+
+
+def _similarity_floor(source_words: Sequence[str]) -> float:
+    cased = sum(1 for word in source_words if _is_cased_word(word))
+    return 0.2 if cased * 2 >= len(source_words) else 0.5
 
 SYSTEM_PROMPT = """你是扫描版 PDF 原文的 OCR 纠错与排版整理器。
 你的工作对象是 OCR/文本层的原文，不是翻译。只做有证据的最小修复：
@@ -58,6 +83,34 @@ SYSTEM_PROMPT = """你是扫描版 PDF 原文的 OCR 纠错与排版整理器。
 其中 break_after=true 表示该项后开始新段落；如果当前请求的最后一项显然还在句子中，
 可以返回 false，它会与下一批的第一项继续合并。整个文档的最后一项必须为 true。
 """
+
+
+def _language_context(ocr_language="", source_language="", text_direction="",
+                      ocr_engine_code="", ocr_backend="tesseract") -> str:
+    """Build the per-task language block appended to :data:`SYSTEM_PROMPT`.
+
+    The cleanup contract has to hold for every source language, not only
+    English.  Telling the model the declared language and script direction keeps
+    it from applying Latin assumptions (sentence case, ``-`` hyphenation) to an
+    RTL or CJK document.
+    """
+    lines = []
+    if source_language:
+        lines.append(f"Source language: {source_language}")
+    if text_direction:
+        lines.append(f"Script direction: {str(text_direction).upper()}")
+    engine = str(ocr_engine_code or ocr_language or "").strip()
+    if engine:
+        lines.append(f"OCR backend: {ocr_backend} {engine}")
+    if not lines:
+        return ""
+    return (
+        "\n\n本次任务的原文语言上下文（只用于判断标点、断行与段落边界，"
+        "不改变上面的任何规则）：\n"
+        + "\n".join(lines)
+        + "\n原文可能是古典或历史文本：除非有明确的 OCR 错字证据，"
+        "必须保留历史拼写、用词、语法与风格，不得按现代语言习惯改写。\n"
+    )
 
 
 def _normalise_text(value: Any) -> str:
@@ -77,10 +130,14 @@ def _join(left: str, right: str) -> str:
         return right
     if not right:
         return left
+    # English hyphenation repair only applies to cased scripts: an Arabic word
+    # is never "lowercase", so ``islower()`` is False and this cannot fire on
+    # Arabic.  Do not replace it with a language-agnostic guess.
     if left.endswith(("-", "‐", "‑")) and right[:1].islower():
         return left[:-1] + right
     if ((_is_cjk(left[-1:]) and _is_cjk(right[:1]))
-            or right.startswith(tuple(",.!?;:%)]}»”’。，！？；：％）】」』"))):
+            or right.startswith(tuple(",.!?;:%)]}»”’。，！？；：％）】」』"
+                                      "،؛؟۔"))):
         return left + right
     return f"{left} {right}"
 
@@ -90,7 +147,7 @@ def _is_sentence_terminal(text: str) -> bool:
     if not value:
         return False
     value = re.sub(r"[\]\)}」』”’]+$", "", value).rstrip()
-    return value[-1:] in set('.!?"”’…:;)')
+    return value[-1:] in set('.!?"”’…:;)؟۔')
 
 
 def _is_pure_symbol_fragment(text: Any) -> bool:
@@ -248,27 +305,28 @@ def _safe_candidate(before: str, after: str) -> str:
         upper = max(160, int(len(before) * 3.0))
         if len(after) < lower or len(after) > upper:
             return before
-    source_words = re.findall(r"[A-Za-z]{2,}", before)
-    target_words = {word.casefold() for word in re.findall(r"[A-Za-z]{2,}", after)}
+    source_words = _UNICODE_WORD_RE.findall(before)
+    target_words = {word.casefold() for word in _UNICODE_WORD_RE.findall(after)}
     if len(source_words) >= 4:
         overlap = sum(word.casefold() in target_words for word in source_words)
         similarity = SequenceMatcher(None, before.casefold(), after.casefold()).ratio()
-        if overlap / len(source_words) < 0.25 and similarity < 0.2:
+        if (overlap / len(source_words) < 0.25
+                and similarity < _similarity_floor(source_words)):
             return before
     return after
 
 
 def _call_model(
     call_llm: Callable[..., Any], provider: str, api_key: str, model: str,
-    user_prompt: str, expected: int,
+    user_prompt: str, expected: int, system_prompt: str = SYSTEM_PROMPT,
 ) -> str:
     kwargs = {"temperature": 0.0, "response_format": _schema(expected)}
     try:
-        return call_llm(provider, api_key, model, SYSTEM_PROMPT, user_prompt, **kwargs)
+        return call_llm(provider, api_key, model, system_prompt, user_prompt, **kwargs)
     except TypeError:
         # Test doubles and older provider adapters may not expose
         # response_format yet.  The response is still validated strictly.
-        return call_llm(provider, api_key, model, SYSTEM_PROMPT, user_prompt,
+        return call_llm(provider, api_key, model, system_prompt, user_prompt,
                         temperature=0.0)
 
 
@@ -584,12 +642,23 @@ def cleanup_source_paragraphs(
     retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
     request_interval_seconds: float = 0.0,
     profiler: Any = None,
+    ocr_language: str = "",
+    source_language: str = "",
+    text_direction: str = "",
+    ocr_engine_code: str = "",
+    ocr_backend: str = "tesseract",
 ) -> Tuple[List[str], Dict[str, Any], List[str]]:
     """Repair OCR paragraphs and return ``(paragraphs, metadata, warnings)``.
 
     The input boundaries are preserved as indexed items in each request; the
     model may only change their text and mark joins.  A failed batch falls back
     to its deterministic input and never blocks the translation pipeline.
+
+    ``ocr_language`` / ``source_language`` / ``text_direction`` describe the
+    declared source language and are passed to the model as context, so the
+    cleanup contract is not English-only.  They are part of the checkpoint
+    fingerprint: changing the OCR language must not resume another language's
+    cleanup results.
     """
     original = [_normalise_text(item) for item in (paragraphs or [])]
     if not original:
@@ -657,6 +726,11 @@ def cleanup_source_paragraphs(
     api_latencies: Dict[int, float] = {}
     queue_waits: Dict[int, float] = {}
     checkpoint_store = _CleanupCheckpointStore(checkpoint_dir) if checkpoint_dir else None
+    language_context = _language_context(
+        ocr_language=ocr_language, source_language=source_language,
+        text_direction=text_direction, ocr_engine_code=ocr_engine_code,
+        ocr_backend=ocr_backend)
+    system_prompt = SYSTEM_PROMPT + language_context
     fingerprint = hashlib.sha256(json.dumps({
         "items": deterministic_items,
         "llm_indices": llm_indices,
@@ -666,6 +740,13 @@ def cleanup_source_paragraphs(
         "max_batch_chars": int(max_batch_chars),
         "max_batch_items": int(max_batch_items),
         "confidence_threshold": threshold,
+        "ocr_language": str(ocr_language or ""),
+        "ocr_engine_code": str(ocr_engine_code or ""),
+        "text_direction": str(text_direction or ""),
+        "source_language": str(source_language or ""),
+        # The prompt names the actual OCR engine. Preserve legacy Tesseract
+        # fingerprints while separating the newly supported Paddle prompt.
+        **({"ocr_backend": str(ocr_backend)} if ocr_backend != "tesseract" else {}),
     }, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     checkpoint_results, _checkpoint_manifest = (
         checkpoint_store.load(fingerprint) if checkpoint_store else ({}, {}))
@@ -720,7 +801,8 @@ def cleanup_source_paragraphs(
             total_gate_wait += request_gate.wait(cancel_check)
             started = time.perf_counter()
             try:
-                response = _call_model(call_llm, provider, api_key, model, prompt, expected)
+                response = _call_model(call_llm, provider, api_key, model, prompt,
+                                       expected, system_prompt)
                 total_api_latency += time.perf_counter() - started
                 check_cancel()
                 return _decode(response, expected), retry_count, total_api_latency, total_gate_wait
@@ -1029,6 +1111,10 @@ def cleanup_source_paragraphs(
         "resumed_batches": resumed_batches,
         "checkpoint_dir": str(checkpoint_store.directory) if checkpoint_store else "",
         "checkpoint_stats": checkpoint_store.stats() if checkpoint_store else {},
+        "ocr_language": str(ocr_language or ""),
+        "ocr_engine_code": str(ocr_engine_code or ""),
+        "text_direction": str(text_direction or ""),
+        "source_language": str(source_language or ""),
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }
     return output, metadata, warnings

@@ -108,6 +108,74 @@ def test_source_quality_gate_is_scoped_to_pdf_jobs():
     assert not report["source_quality_findings"]
 
 
+# Short, lowercase, unpunctuated blocks that the OCR heuristics would quarantine.
+# A VLM transcribed them from the page image, so they are semantic content, not
+# rough OCR fragments.
+_VLM_SEMANTIC_BLOCKS = ["kati", "stud with ber", "5p", "A real sentence."]
+
+
+def test_source_quality_gate_is_disabled_for_vlm_and_mixed_semantic_sources():
+    for semantic_source in ("vlm", "mixed"):
+        state = core.new_job_state("scan.pdf")
+        state["paras"] = list(_VLM_SEMANTIC_BLOCKS)
+        state["extraction_report"] = {
+            "semantic_source": semantic_source,
+            "document_ir": {"blocks": [], "translation_block_ids": []},
+        }
+
+        assert core._source_quality_gate_enabled(state) is False
+        report = core._audit_source_quality_for_state(state)
+        assert report["status"] == "disabled"
+        assert report["reason"] == "vlm_semantic_source"
+        assert report["flags"] == []
+        assert report["flagged_count"] == 0
+
+
+def test_source_quality_gate_still_blocks_ocr_pdf_without_vlm_provenance():
+    # Same blocks, same PDF filename: without VLM provenance the OCR gate must
+    # keep firing (fail closed for legacy/OCR states).
+    state = core.new_job_state("scan.pdf")
+    state["paras"] = list(_VLM_SEMANTIC_BLOCKS)
+
+    assert core._source_quality_gate_enabled(state) is True
+    report = core._audit_source_quality_for_state(state)
+    assert report["status"] == "blocked"
+    assert {item["segment_index"] for item in report["flags"]} >= {0, 1, 2}
+
+
+def test_vlm_semantic_blocks_are_translated_not_quarantined(tmp_path: Path):
+    """A VLM PDF must not hold its own trusted blocks back for source review."""
+    old_output, old_call = core.OUTPUT_DIR, core.call_llm
+    core.OUTPUT_DIR = tmp_path
+
+    def llm(provider, api_key, model, system, user, temperature=0.1, **kwargs):
+        if "翻译流知识抽取器" in system:
+            return "[]"
+        return json.dumps(["已翻译。"], ensure_ascii=False)
+
+    core.call_llm = llm
+    try:
+        state = core.new_job_state("scan.pdf")
+        state["paras"] = list(_VLM_SEMANTIC_BLOCKS)
+        state["extraction_report"] = {"semantic_source": "vlm"}
+        result = core.translate_stage(
+            state, "vlm-source-quality-gate", [], "DeepSeek", "key", "model",
+            "简体中文", "", enable_review=False, use_tm=False,
+        )
+
+        assert result["source_quality_gate"]["status"] == "disabled"
+        assert result["source_quality_gate"]["flags"] == []
+        assert [pair["target_provenance"] for pair in result["pairs"]] == [
+            "generated", "generated", "generated", "generated",
+        ]
+        assert not [
+            item for item in result["findings"]
+            if item.get("type") == "source_quality_gate"
+        ]
+    finally:
+        core.OUTPUT_DIR, core.call_llm = old_output, old_call
+
+
 def test_source_quality_gate_quarantines_p16_illustration_garbage():
     paragraphs = [
         "Nineteen Years Later",

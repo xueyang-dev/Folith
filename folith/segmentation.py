@@ -46,7 +46,9 @@ _NON_TERMINAL_ABBREVIATIONS = {
     "misc", "mr", "mrs", "ms", "prof", "sr", "st", "vs", "no",
 }
 _CLOSING_CHARS = set('"\'”’»)]}】》」』〉〕）］〗〙〛')
-_SENTENCE_CHARS = set(".!?。！？؟")
+# Arabic ``؟`` and Urdu ``۔`` are sentence terminals; the Arabic comma ``،``
+# and semicolon ``؛`` are not (they never split a sentence).
+_SENTENCE_CHARS = set(".!?。！？؟۔")
 # 坏掉的 PDF 文本层会在句中留下孤立句点（``…finds herself in the. Midnight
 # Library…``），把一句话切成 ``…in the.`` + ``Midnight Library…``。冠词在英文里
 # **不可能**结束句子，所以只拒绝这三个词。
@@ -85,6 +87,26 @@ def resolve_mode(value: Any = None, fallback: Any = None,
 
 def _has_cjk(value: str) -> bool:
     return bool(_CJK_RE.search(value or ""))
+
+
+def _starts_sentence(value: str) -> bool:
+    """Whether ``value`` plausibly starts a new sentence.
+
+    Case is English-specific: an uppercase letter, a CJK character or a digit
+    all start a sentence.  Arabic, Hebrew and other uncased scripts have no
+    uppercase form, so requiring ``isupper()`` silently suppressed every
+    sentence boundary after a period in an RTL document.  Any uncased letter is
+    treated as a valid sentence start, while a lowercase Latin continuation is
+    still rejected (preserving the English behaviour).
+    """
+    if not value:
+        return False
+    if value.isupper() or value.isdigit() or _has_cjk(value):
+        return True
+    if value.isalpha():
+        # Arabic / Hebrew / CJK etc. are neither upper nor lower cased.
+        return not value.islower()
+    return value in '"\'“‘（([{'
 
 
 def _normalise_spaces(value: Any) -> str:
@@ -161,8 +183,7 @@ def _dot_is_boundary(text: str, index: int) -> bool:
         if next_index >= len(text):
             return True
         next_char = text[next_index]
-        return next_char.isupper() or _has_cjk(next_char) \
-            or next_char.isdigit() or next_char in '"\'“‘（([{'
+        return _starts_sentence(next_char)
     if len(word) == 1 and word.isalpha():
         return False
     # 冠词守卫（见 `_NON_TERMINAL_ARTICLES`）：只在句点落在 the/a/an 之后时生效，
@@ -179,8 +200,7 @@ def _dot_is_boundary(text: str, index: int) -> bool:
         if next_index >= len(text):
             return True
         next_char = text[next_index]
-        return next_char.isupper() or _has_cjk(next_char) \
-            or next_char.isdigit() or next_char in '"\'“‘（([{'
+        return _starts_sentence(next_char)
     if after and not after.isspace():
         # A period embedded in a word or URL cannot finish the sentence.
         return False
@@ -191,11 +211,10 @@ def _dot_is_boundary(text: str, index: int) -> bool:
     if next_index >= len(text):
         return True
     next_char = text[next_index]
-    # English sentence starts conventionally use an uppercase letter.  CJK
-    # text does not need a space or case distinction, but CJK terminals are
-    # handled independently by the scanner.
-    return next_char.isupper() or _has_cjk(next_char) or next_char.isdigit() \
-        or next_char in '"\'“‘（([{'
+    # English sentence starts conventionally use an uppercase letter.  Uncased
+    # scripts (Arabic / Hebrew) and CJK have no such distinction, so any letter
+    # is a valid sentence start there; see ``_starts_sentence``.
+    return _starts_sentence(next_char)
 
 
 def _boundary_end(text: str, index: int) -> int:
@@ -288,7 +307,7 @@ def _split_sentences(raw: str) -> List[str]:
             if close_pos != -1 and (close_pos - index) <= 250:
                 active_quote_close = close_pos
 
-        boundary = char in "!?。！？؟" or (char == "." and _dot_is_boundary(text, index))
+        boundary = char in "!?。！？؟۔" or (char == "." and _dot_is_boundary(text, index))
         if boundary:
             end = _boundary_end(text, index)
             # If we are inside an active quotation that closes LATER than this boundary,

@@ -112,6 +112,9 @@ def test_pdf_pipeline_persists_cleaned_source_before_translation(tmp_path: Path,
             translation_theory="", user_glossary=[], enable_review=False,
             enable_annotate=False, use_tm=False, enable_understanding=False,
             enable_source_cleanup=True,
+            # These fixtures monkeypatch extract_pdf_paragraphs to a
+            # digital text layer; pin the ingestion contract explicitly.
+            ocr_mode="off",
         )
         assert calls["cleanup"] == 1
         assert state["source_cleanup_done"] is True
@@ -161,6 +164,9 @@ def test_pdf_pipeline_translates_sentence_units_but_keeps_cleaned_paragraph(
             translation_theory="", user_glossary=[], enable_review=False,
             enable_annotate=False, use_tm=False, enable_understanding=False,
             enable_source_cleanup=True,
+            # These fixtures monkeypatch extract_pdf_paragraphs to a
+            # digital text layer; pin the ingestion contract explicitly.
+            ocr_mode="off",
         )
         assert state["source_paragraphs"] == [
             "The first sentence. The second sentence."
@@ -385,6 +391,9 @@ def test_resume_stage1_with_existing_source_paras_without_file_bytes(tmp_path: P
             translation_theory="", user_glossary=[], enable_review=False,
             enable_annotate=False, use_tm=False, enable_understanding=False,
             enable_source_cleanup=True,
+            # These fixtures monkeypatch extract_pdf_paragraphs to a
+            # digital text layer; pin the ingestion contract explicitly.
+            ocr_mode="off",
         )
         assert result["p1_done"] is True
         assert result["source_page_count"] == 12
