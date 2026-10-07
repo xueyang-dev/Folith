@@ -396,6 +396,12 @@ def assess_pdf_text_layer(file_bytes, *, source_language: Any = None,
     samples = sample_pdf_text_pages(file_bytes, max_pages=max_pages)
     report = assess_text_layer_sample(samples, source_language=source_language)
     report["sampled_pages"] = [s.get("page_index") for s in samples]
+    if report.get("status") in {"accepted", "uncertain"}:
+        try:
+            from folith.pdf_ingestion import superscript_marker_census
+            report["superscript_markers"] = superscript_marker_census(file_bytes)
+        except Exception:  # noqa: BLE001 - reporting must never gate ingestion
+            report["superscript_markers"] = {"status": "unavailable"}
     return report
 
 

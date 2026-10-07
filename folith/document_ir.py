@@ -136,9 +136,37 @@ def segment_spans(document, paragraphs, segments, metadata):
     return result
 
 
+def segment_marks(document, spans_by_segment):
+    """Project block-level footnote marks onto segments through their anchors.
+
+    Marks are joined on ``block_id`` rather than on character offsets: native
+    cleanup can merge or rewrite paragraph text, and offsets already degrade to
+    ``None`` in that case, while block identity survives.
+    """
+    blocks = {b.get('block_id'): b for b in document.get('blocks') or []}
+    result = [[] for _ in spans_by_segment or []]
+    for index, spans in enumerate(spans_by_segment or []):
+        found = []
+        seen = set()
+        for span in spans or []:
+            block_id = span.get('block_id')
+            if not block_id or block_id in seen:
+                continue
+            seen.add(block_id)
+            for mark in (blocks.get(block_id) or {}).get('marks') or []:
+                item = dict(mark)
+                item['block_id'] = block_id
+                found.append(item)
+        result[index] = found
+    return result
+
+
 def attach_pair_spans(state):
     """Pairs own anchors once translations exist, including through human edits."""
     spans = state.get('segment_source_spans') or []
+    marks = state.get('segment_source_marks') or []
     for index, pair in enumerate(state.get('pairs') or []):
         if 'source_spans' not in pair and index < len(spans):
             pair['source_spans'] = [dict(s) for s in spans[index]]
+        if 'marks' not in pair and index < len(marks) and marks[index]:
+            pair['marks'] = [dict(m) for m in marks[index]]

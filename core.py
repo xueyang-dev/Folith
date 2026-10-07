@@ -2618,9 +2618,13 @@ def _apply_source_segmentation(state, cleaned_paragraphs, *, mode=None):
     from folith.document_ir import segment_spans
     document = (state.get("extraction_report") or {}).get("document_ir")
     if document:
-        state["segment_source_spans"] = segment_spans(document, source_paragraphs, segments, metadata)
+        spans = segment_spans(document, source_paragraphs, segments, metadata)
+        state["segment_source_spans"] = spans
+        from folith.document_ir import segment_marks
+        state["segment_source_marks"] = segment_marks(document, spans)
     else:
         state.pop("segment_source_spans", None)
+        state.pop("segment_source_marks", None)
     return segments, metadata
 
 

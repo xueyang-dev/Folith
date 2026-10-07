@@ -144,6 +144,7 @@ def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None):
         document['blocks'].append({'block_id':raw['block_id'], 'type':kind if kind in BLOCK_TYPES else 'unknown',
                                    'text':raw['text'], 'reading_order':raw['reading_order'],
                                    'source_anchor':{'source_spans':[span]},
+                                   'marks':[dict(item) for item in (raw.get('marks') or [])],
                                    'styles':{'font_size':raw['font_size'], 'font_flags':raw['font_flags'], 'font_style':raw['font_style']},
                                    'provenance':{'provider':'native_pdf'}})
     provider = NativeDocumentProvider(layouts)
