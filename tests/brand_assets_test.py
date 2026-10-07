@@ -44,6 +44,7 @@ OFFICIAL_PNG = (
     "folith-lockup.png",    # 主横向组合（README 首屏、侧栏品牌位）
     "folith-mark.png",      # 图标（透明底，页面图标）
     "folith-app-icon.png",  # App 图标
+    "folith-mark-hires.png",  # 图标高清母版（用户提供，1254×1254）
 )
 # 补充变体：由 scripts/render_brand_assets.py 从 SVG 源渲染（kit 未覆盖的版位）。
 DERIVED_PNG = (
@@ -61,6 +62,7 @@ BRAND_PNG_SIZE = {
     "folith-lockup.png": (1187, 328),
     "folith-mark.png": (278, 248),
     "folith-app-icon.png": (273, 257),
+    "folith-mark-hires.png": (1254, 1254),
     "folith-logo-dark.png": (1498, 268),
     "folith-logo-stacked.png": (560, 372),
 }

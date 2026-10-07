@@ -23,6 +23,7 @@ Issues = "https://github.com/xueyang-dev/Folith/issues"
 [project.optional-dependencies]
 desktop = ["pywebview>=5.0"]
 test = ["pytest>=8,<9"]
+paddle = ["paddleocr==3.7.0", "paddlex==3.7.2", "paddlepaddle==3.3.1"]
 
 [project.scripts]
 folith = "gui:main"
@@ -40,4 +41,4 @@ include = ["folith*"]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.package-data]
-folith = ["resources/*.txt", "resources/locales/zh-CN.json", "resources/locales/en.json", "resources/locales/es.json", "resources/locales/ru.json", "resources/locales/ar.json", "resources/brand/*.svg", "resources/brand/*.png"]
+folith = ["resources/*.txt", "resources/locales/zh-CN.json", "resources/locales/en.json", "resources/locales/es.json", "resources/locales/ru.json", "resources/locales/ar.json", "resources/locales/qt-*.json", "resources/brand/*.svg", "resources/brand/*.png"]

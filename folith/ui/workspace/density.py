@@ -43,7 +43,7 @@ WORKSPACE_DENSITY_CSS = """
 [class*="st-key-workspace_term_row_"] [data-testid="stHorizontalBlock"] { align-items:center; gap:8px; flex-wrap:nowrap; }
 [class*="st-key-workspace_term_row_"] button { min-height:var(--ws-row-height); border:0 !important; border-radius:0; padding:6px; justify-content:flex-start !important; text-align:left !important; color:var(--tp-ink); background:transparent !important; }
 [class*="st-key-workspace_term_row_"] button p { font-size:12px !important; line-height:1.4; text-align:left !important; }
-[class*="st-key-workspace_term_row_"]:has(button[kind="primary"]) { background:var(--tp-primary-soft); box-shadow:inset 2px 0 var(--tp-primary); }
+[class*="st-key-workspace_term_row_"]:has(button[kind="primary"]) { background:var(--tp-primary-soft);  }
 [class*="st-key-workspace_term_row_"] button[kind="primary"],
 [class*="st-key-workspace_term_row_"] button[kind="primary"] p { color:var(--tp-primary) !important; background:transparent; }
 .tp-term-list-target, .tp-term-list-count { font-size:12px; line-height:1.5; padding:6px 0; }
@@ -74,7 +74,7 @@ WORKSPACE_DENSITY_CSS = """
 .st-key-review_queue_list [role="radiogroup"] { gap:0; }
 .st-key-review_queue_list [role="radiogroup"] > div { width:100%; }
 .st-key-review_queue_list [data-testid="stRadio"] label { border:0 !important; border-bottom:1px solid var(--tp-hairline) !important; border-radius:0 !important; background:transparent; padding:12px !important; margin:0 !important; width:100%; align-items:flex-start; }
-.st-key-review_queue_list [data-testid="stRadio"] label:has(input:checked) { background:var(--tp-primary-soft); box-shadow:inset 2px 0 var(--tp-primary); }
+.st-key-review_queue_list [data-testid="stRadio"] label:has(input:checked) { background:var(--tp-primary-soft);  }
 .st-key-review_queue_list [data-testid="stRadio"] label p { font-size:12px !important; line-height:1.65; color:var(--tp-sub); }
 .st-key-review_queue_list [data-testid="stRadio"] label strong { color:var(--tp-ink); font-size:14px; font-weight:600; }
 .tp-review-problem { font-size:13px !important; margin:0; line-height:1.6; }
@@ -82,7 +82,7 @@ WORKSPACE_DENSITY_CSS = """
 .tp-review-evidence-pair small { color:var(--tp-sub); display:block; font-size:10px; margin-bottom:4px; }
 .tp-review-evidence-pair p { font-size:12px !important; color:var(--tp-sub); margin:4px 0 0; }
 .tp-ws-recommendation, .tp-review-proposed { font-size:12px !important; line-height:1.6; margin:0; }
-.tp-review-proposed { padding:8px; background:var(--tp-primary-soft); border-left:2px solid var(--tp-primary); }
+.tp-review-proposed { padding:8px; background:var(--tp-primary-soft); }
 .st-key-review_inspector [class*="st-key-review_action_bar_"] { border:0 !important; background:transparent !important; padding:4px 0 !important; gap:8px !important; box-shadow:none !important; position:static; }
 .st-key-review_inspector [class*="st-key-review_action_bar_"] [data-testid="stHorizontalBlock"] { gap:4px; flex-wrap:nowrap; }
 .st-key-review_inspector [class*="st-key-review_action_bar_"] [data-testid="stColumn"] { min-width:0 !important; }

@@ -186,7 +186,7 @@ def render_workspace_translation_context(
         # review confidence, and document profile belong to lower frequency
         # task/review surfaces and make this panel harder to scan.
         st.markdown(
-            (_h('<div class="tp-inspector-segment-head"><div><strong>段落 #') + str(index + 1) + '</strong><span class="tp-inspector-segment-meta">' + str(escape(status_label)) + '</span></div><span class="tp-translation-inspector-position">' + str(format(index + 1, ',')) + ' / ' + str(format(len(pairs), ',')) + '</span></div>'), unsafe_allow_html=True)
+            (_h('<div class="tp-inspector-segment-head"><div><strong>段落 #') + str(index + 1) + '</strong><span class="tp-inspector-segment-meta">' + str(escape(_t(status_label))) + '</span></div><span class="tp-translation-inspector-position">' + str(format(index + 1, ',')) + ' / ' + str(format(len(pairs), ',')) + '</span></div>'), unsafe_allow_html=True)
 
         focus = st.session_state.pop(f"translation_inspector_focus_{job_id}", None)
         if focus == "qa":
@@ -365,7 +365,7 @@ def render_workspace_translation_context(
                     f'<p class="tp-inspector-context-preview" dir="{source_direction}" '
                     'style="text-align: start" '
                     f'title="{escape(str(text), quote=True)}">'
-                    f'<strong dir="ltr">{escape(label)}</strong>{escape(preview)}</p>')
+                    f'<strong dir="ltr">{escape(_t(label))}</strong>{escape(preview)}</p>')
             st.markdown(
                 (_h('<div class="tp-inspector-related-row is-context"><span class="tp-inspector-related-key">上下文</span><div class="tp-inspector-context-snippets">') + str("".join(previews)) + '</div></div>'),
                 unsafe_allow_html=True)
@@ -378,7 +378,7 @@ def render_workspace_translation_context(
                     st.markdown(
                         f'<p class="tp-inspector-preview-full" dir="{source_direction}" '
                         'style="text-align: start">'
-                        f'<strong dir="ltr">{escape(label)}</strong>{escape(str(text))}</p>',
+                        f'<strong dir="ltr">{escape(_t(label))}</strong>{escape(str(text))}</p>',
                         unsafe_allow_html=True)
         else:
             st.markdown(
@@ -480,7 +480,7 @@ def render_workspace_translation_context(
                     disabled=not api_ready or not bool(ask_decision_fn))
             with send_col:
                 ask = st.form_submit_button(
-                    "发送", icon=":material/arrow_upward:", help="发送（⌘/Ctrl + Enter）",
+                    _t("发送"), icon=":material/arrow_upward:", help="发送（⌘/Ctrl + Enter）",
                     disabled=not api_ready or not bool(ask_decision_fn),
                     width="stretch")
         if ask and question.strip() and ask_decision_fn:

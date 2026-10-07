@@ -43,6 +43,7 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 | 透明横向组合 | `folith-lockup-transparent.png` | 原图逐像素去白底 | 日间与纸面主题侧栏 |
 | 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 同一原图，仅调整文字颜色 | 夜间主题侧栏 |
 | 图标（透明底） | `folith-mark.png` | 用户提供 | 页面图标（浏览器标签页、安装入口） |
+| 图标（透明底，高清母版） | `folith-mark-hires.png` | 用户提供（1254×1254） | **桌面 / Dock 应用图标**（`scripts/build_app_icon.py` 的唯一来源） |
 | App 图标 | `folith-app-icon.png` | 用户提供 | 桌面与应用入口 |
 | 深色底横向组合 | `folith-logo-dark.png` | SVG 派生 | 旧补充素材，侧栏不再使用 |
 | 竖向组合 | `folith-logo-stacked.png` | SVG 派生 | 窄栏或正方形版位 |
@@ -57,8 +58,8 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 
 ## 2. 色板
 
-色值取自 icon mark；`app.py` 的 `:root` token 与 `gui.py` 的 Streamlit 主题
-必须与这里一致，`tests/brand_assets_test.py` 会检查：
+色值取自 icon mark；`folith/ui/theme_tokens.py` 的日间（`light`）token 与
+`gui.py` 的 Streamlit 主题必须与这里一致，`tests/brand_assets_test.py` 会检查：
 
 | 名称 | 色值 | 用途 |
 | --- | --- | --- |
@@ -70,6 +71,49 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 | Sub 次要文字 | `#3E495D` | 副标题与说明文字 |
 
 hover 和 active 只使用 Cobalt 的更深阶；语义色继续使用既有绿、橙、红。
+
+### 2.1 三套主题与语义 token（2026-10-02）
+
+界面有 **日间 / 夜间 / 纸面** 三套主题。三者是**平级的 token 集合**，不是
+"日间样式 + 覆盖"：
+
+```
+组件选择器  ->  --tp-<role>（历史角色名）  ->  --<semantic token>  ->  主题取值
+```
+
+- 取值集中在 `folith/ui/theme_tokens.py` 的 `TOKENS`：三套主题的 key 完全相同，
+  `ROLE_ALIASES` 把历史 `--tp-*` 名绑到语义 token 上，组件 CSS 无需一次性改写。
+- `folith/ui/themes.py` 生成 `:root` 并追加在样式表之后，因此靠级联生效，
+  不需要 `!important` 去修补某个主题。
+- 历史样式表里写死的字面色（`#hex`）在夜间/纸面下由 `normalize_legacy()` 归一到
+  角色引用；**`rgba()` 字面量不会被归一**，所以焦点光圈、玻璃面这类半透明色必须
+  直接写成 token（见 `--focus-halo` / `--surface-glass` / `--overlay-veil`）。
+
+**品牌蓝只属于 logo。** 日间主题的交互色就是 Cobalt；纸面主题的交互色是**墨蓝灰**
+`#4C5A66`，夜间是浅蓝 `#82ACFF`。三者都不允许把 logo 的饱和钴蓝复制到按钮、
+单选、导航当前项或状态点上。
+
+#### 纸面（Paper）取值
+
+| 语义 token | 值 | 说明 |
+| --- | --- | --- |
+| `--bg-page` | `#F2EADB` | 暖灰米白页面底，不过黄 |
+| `--bg-sidebar` | `#ECE3D2` | 比页面略深，层级自然形成 |
+| `--bg-surface` | `#FBF7EE` | 纸张面，不用纯白 |
+| `--text-primary` | `#2D2923` | 暖墨色，非纯黑 |
+| `--text-secondary` | `#5F594E` | 副标题与说明 |
+| `--text-muted` | `#6F6858` | 仍满足 4.5:1（页面底与面底都够） |
+| `--accent` | `#4C5A66` | 墨蓝灰：与品牌同色族、不同饱和度 |
+| `--accent-hover` / `--accent-active` | `#3E4B56` / `#333E48` | 只略微加深 |
+| `--accent-soft` | `#E1DCCE` | 当前项与选中面 |
+| `--text-on-accent` | `#FAF7EF` | 主按钮文字，暖白 |
+| `--border-subtle` | `rgba(70,60,45,.15)` | 克制的分隔 |
+| `--focus-ring` / `--focus-halo` | `rgba(76,90,102,.42)` / `rgba(76,90,102,.18)` | 键盘焦点可见 |
+| `--success` / `--warning` / `--danger` | `#2F6B4F` / `#8A5A17` / `#A63A31` | 低饱和状态色 |
+
+纸面**不是**「日间 + 米黄背景」：正文、面、边、强调、状态色全部重新取值，
+所以遮住 logo 也应当能感到这是一套独立的阅读主题。
+`tests/ui_preferences_test.py` 会断言纸面归一化后的组件样式表里不再出现饱和品牌蓝。
 
 ## 3. 字体与副标题
 

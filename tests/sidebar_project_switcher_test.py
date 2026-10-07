@@ -508,8 +508,12 @@ def test_project_center_lives_on_the_group_header_not_a_separate_row():
     """「项目」标题本身就是 Project Center 入口：侧栏不再有独立「项目中心」行。
 
     把它做成标题下面一个独立行，等于让同一件事在同一个分组里出现两次，还让它去和
-    selector 争同一块视觉重量。收敛之后标题必须仍然是**标题**（签名与「工作区」
-    同一套字型），只是多了 hover 与右侧 chevron。
+    selector 争同一块视觉重量。收敛之后标题必须仍然是**标题**（与侧栏其它纯标题同一
+    套字型），只是多了 hover 与右侧 chevron。
+
+    注：本轮之后侧栏里已经没有「工作区」这种 section heading 了（一级导航只剩两个
+    入口），所以"标题字型"的基准改成 `.tp-nav-label` 的**声明值**本身，而不是"页面上
+    还有另一条同款标题可供对比"。
     """
     with switcher_env():
         core.create_project("项目甲")
@@ -520,39 +524,44 @@ def test_project_center_lives_on_the_group_header_not_a_separate_row():
         assert "项目" in labels, labels
         assert "项目中心" not in labels, f"独立「项目中心」行必须退休：{labels}"
         assert _button(at, HEADER_BUTTON) is not None, "分组标题必须是可点击按钮"
-        # 「工作区」仍然是纯标题：两组标题的字型差异只体现在"能不能点"上。
-        assert "工作区" in _sidebar_markdown(at)
+        # 「工作区」这个 section heading 已退休：一级导航只有
+        # 历史任务 / 术语与翻译记忆，剩下的标题就是「当前任务」这类**功能性**小标题。
+        assert "工作区" not in _sidebar_markdown(at), \
+            "只剩两个入口后不该再人为加一个分组标题"
+        # 「当前任务」这种功能性小标题是**新建任务流程**里的，项目页没有它；
+        # 侧栏此刻只剩核心导航 + 工具区，不该再有任何分组标题。
+        assert not [m for m in at.sidebar.markdown if "tp-nav-label" in str(m.value)], \
+            "项目页侧栏里不该有任何 section heading"
 
         css = _markdown_text(at)
         head = _css_rule(
             css, '[class*="st-key-project_section_header"] .stButton button {')
         selector = _css_rule(
             css, '[class*="st-key-current_project_selector"] .stButton button {')
-        # 标题：无底色、12px/500 —— 与 `.tp-nav-label` 同一套字型、同一条水平基线。
+        # 标题：无底色、13px/600，保持低于导航的视觉层级。
         assert "background: transparent" in head, head
-        assert "font-size: 12px" in head, head
-        assert "font-weight: 500" in head, head
+        assert "font-size: 13px" in head, head
+        assert "font-weight: 600" in head, head
         assert "cursor: pointer" in head, head
         assert "justify-content: flex-start" in head, "标题必须左对齐"
-        # 17px 行盒 + `margin: 18px 0 6px`：与「工作区」标题完全对齐。
-        assert "min-height: 17px" in head, head
+        # 24px 行盒 + `margin: 0`：项目标题与选择器形成固定分组。
+        assert "min-height: 24px" in head, head
         margin = _css_rule(css, '[class*="st-key-project_section_header"] {')
-        assert "margin: 18px 0 6px" in margin, margin
-        # chevron 紧跟标题：内容**不能** flex:1（那会把 chevron 顶到侧栏最右，
-        # 读起来像一级大导航的"有下一级"列表项）。
+        assert "margin: 0" in margin, margin
+        # 标题内容占满按钮宽度：正文左边缘与 selector / 导航行的栅格起点对齐。
         inner = _css_rule(
             css, '[class*="st-key-project_section_header"] .stButton button > div {')
-        assert "flex: 0 0 auto" in inner, inner
-        # 标题里的 `p` 必须显式压回 12px：Streamlit 的 markdown 容器自带 14px
+        assert "flex: 1 1 auto" in inner, inner
+        # 标题里的 `p` 必须显式设为 13px：Streamlit 的 markdown 容器自带 14px
         # 且**不继承**按钮字号（`font-size: inherit` 在这里拿到的还是 14px）。
         head_p = _css_rule(
             css, '[class*="st-key-project_section_header"] .stButton button p {')
-        assert "font-size: 12px !important" in head_p, head_p
+        assert "font-size: 13px !important" in head_p, head_p
         # selector：中性 surface + 1px 细边 + 11px 圆角 —— 只有一条边框、一条 ring，
         # 视觉权重低于「新建任务」CTA。
-        assert "min-height: 46px" in selector, selector
-        assert "border-radius: 11px" in selector, selector
-        assert "border: 1px solid var(--tp-sidebar-line)" in selector, selector
+        assert "min-height: var(--sidebar-switcher-height)" in selector, selector
+        assert "border-radius: var(--sidebar-row-radius)" in selector, selector
+        assert "border: 1px solid var(--tp-line)" in selector, selector
         assert "background: var(--tp-surface)" in selector, selector
         ring = _css_rule(
             css,
@@ -564,10 +573,10 @@ def test_project_center_lives_on_the_group_header_not_a_separate_row():
         # 面板（列表行 + 「＋ 新建项目」）——实测 footer 因此长成一整块浅蓝卡片。
         assert ".st-key-current_project .stButton button {" not in css, \
             "selector 规则不得挂在外层容器上（会泄漏进面板）"
-        # 导航 affordance 是右侧一个 chevron，不是图标按钮。
-        arrow = _css_rule(
-            css, '[class*="st-key-project_section_header"] .stButton button::after {')
-        assert 'content: "›"' in arrow, arrow
+        # 导航 affordance 不再是箭头：`项目 ›` 与紧邻的 selector 会被读成两个并列
+        # 入口。入口本身不变（同一个按钮 + tooltip），但标题上不挂任何装饰。
+        assert 'st-key-project_section_header"] .stButton button::after' not in css, \
+            "「项目」是 section label，不再挂 chevron"
         # 旧入口的 CSS / key 全部清掉。
         assert "st-key-project_center_entry" not in css, "旧入口 CSS 必须清掉"
         source = APP_SOURCE.read_text(encoding="utf-8")

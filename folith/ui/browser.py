@@ -139,7 +139,7 @@ def build_project_card_markup(card: Dict[str, Any]) -> str:
         meta = " · ".join(part for part in (activity.get("status"),
                                             activity.get("progress")) if part)
         recent_html = (
-            (_h('<div class="tp-pcard-recent"><span class="tp-pcard-recent-label">最近</span><em title="') + str(escape(activity["title"])) + '">' + str(escape(activity["title"])) + '</em><span class="tp-pcard-recent-meta">' + str(escape(meta)) + '</span></div>')
+            (_h('<div class="tp-pcard-recent"><span class="tp-pcard-recent-label">最近</span><em title="') + str(escape(activity["title"])) + '">' + str(escape(activity["title"])) + '</em><span class="tp-pcard-recent-meta">' + str(escape(_t(meta))) + '</span></div>')
         )
     elif is_empty:
         recent_html = _h('<div class="tp-pcard-hint">可开始积累术语与翻译记忆</div>')
@@ -246,5 +246,5 @@ def build_uncategorized_strip_markup(job_count: int, meta: str) -> str:
     count_html = (('<span class="tp-uncat-count">' + str(job_count) + _h(' 个</span>'))
                   if job_count else _h('<span class="tp-uncat-count">0 个</span>'))
     return (
-        (_h('<div class="tp-uncat"><span class="tp-uncat-icon" aria-hidden="true"><span class="material-symbols-rounded">inbox</span></span><div class="tp-uncat-copy"><div class="tp-uncat-head"><span class="tp-uncat-title">未分类任务<span class="tp-uncat-tag">Inbox</span></span><span class="tp-uncat-right">') + str(count_html) + _h('<span class="tp-uncat-action">查看 →</span></span></div><div class="tp-uncat-meta">') + str(escape(meta)) + '</div></div></div>')
+        (_h('<div class="tp-uncat"><span class="tp-uncat-icon" aria-hidden="true"><span class="material-symbols-rounded">inbox</span></span><div class="tp-uncat-copy"><div class="tp-uncat-head"><span class="tp-uncat-title">未分类任务<span class="tp-uncat-tag">Inbox</span></span><span class="tp-uncat-right">') + str(count_html) + _h('<span class="tp-uncat-action">查看 →</span></span></div><div class="tp-uncat-meta">') + str(escape(_t(meta))) + '</div></div></div>')
     )

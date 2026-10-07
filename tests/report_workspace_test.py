@@ -333,3 +333,21 @@ def test_report_docx_is_editable_ooxml_with_academic_formatting():
     assert "w:firstLine" in styles and "w:line" in styles
     assert "w:tbl" in document
     assert document.count("1 引言") == 1
+
+
+def test_arabic_report_tabs_open_and_preserve_document_text(tmp_path):
+    from folith.ui.preferences import save_preferences
+    from folith.ui.i18n import tr
+    save_preferences(tmp_path, theme="light", locale="ar")
+    state = _report_state(generated=True)
+    at, old_output = _render_report(tmp_path, state, _base_artifacts())
+    try:
+        assert not at.exception
+        assert [tab.label for tab in at.tabs] == [
+            tr(label, locale="ar") for label in ("问题与修复", "当前稿件", "运行详情")]
+        at.session_state["report_tabs_reportui0000001"] = "问题与修复"
+        at.run()
+        assert not at.exception
+        assert core.load_job_state("reportui0000001")["p3_md"] == state["p3_md"]
+    finally:
+        core.OUTPUT_DIR = old_output

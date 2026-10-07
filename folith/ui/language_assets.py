@@ -412,10 +412,10 @@ def _la_guard_option(key, options):
 
 
 def _la_status_chip(status):
-    label = _language_assets.status_label(status)
+    label = _t(_language_assets.status_label(status))
     tone = {"locked": "is-ok", "provisional": "is-warn",
             "rejected": "is-danger"}.get(str(status or "").strip().casefold(), "")
-    return f'<span class="la-chip {tone}">{escape(label)}</span>'
+    return f'<span class="la-chip {tone}">{escape(_t(label))}</span>'
 
 
 def _la_confidence_label(row):
@@ -434,7 +434,7 @@ def _la_page_header(*, job_choices):
         cols = st.columns([0.74, 0.26], vertical_alignment="center")
         with cols[0]:
             st.markdown(_page_title_html(
-                "术语与翻译记忆", "维护项目语言资产，并审核 Agent 发现的候选内容"),
+                _t("术语与翻译记忆"), _t("维护项目语言资产，并审核 Agent 发现的候选内容")),
                 unsafe_allow_html=True)
         with cols[1]:
             if st.button(_t("+ 新建术语"), key="la_new_term", type="primary",
@@ -445,9 +445,9 @@ def _la_page_header(*, job_choices):
 
 def _la_tab_labels(summary):
     labels = {
-        "terms": f"术语库 {int(summary['terms']):,}",
-        "tm": f"翻译记忆 {int(summary['tm']):,}",
-        "review": f"待审核 {int(summary['review']):,}",
+        "terms": _t("术语库 {count}", count=format(int(summary["terms"]), ",")),
+        "tm": _t("翻译记忆 {count}", count=format(int(summary["tm"]), ",")),
+        "review": _t("待审核 {count}", count=format(int(summary["review"]), ",")),
     }
     conflicts = int(summary.get("conflicts") or 0)
     if conflicts:
@@ -457,8 +457,8 @@ def _la_tab_labels(summary):
 
 def _la_empty(title, detail, *, tone="info"):
     cls = "la-empty is-error" if tone == "error" else "la-empty"
-    st.markdown(f'<div class="{cls}"><strong>{escape(title)}</strong>'
-                f'<span>{escape(detail)}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="{cls}"><strong>{escape(_t(title))}</strong>'
+                f'<span>{escape(_t(detail))}</span></div>', unsafe_allow_html=True)
 
 
 def _la_key_fragment(text):
@@ -491,7 +491,7 @@ def _la_row_container(row_id, selected):
 def _la_meta_cluster(domain, scope):
     return ('<div class="la-cluster">'
             f'<span>{escape(str(domain or "—"))}</span>'
-            f'<span class="la-cluster-sub">{escape(str(scope or "—"))}</span>'
+            f'<span class="la-cluster-sub">{escape(_t(str(scope or "—")))}</span>'
             '</div>')
 
 
@@ -609,15 +609,15 @@ def _la_term_source_hint(row):
     project_names = [str(name).strip() for name in row.get("project_names") or []
                      if str(name).strip()]
     documents = row.get("documents") or []
-    return ("项目术语 · " + (project_names[0] if len(project_names) == 1
-                            else "多个项目" if project_names else
+    return (_t("项目术语") + " · " + (project_names[0] if len(project_names) == 1
+                            else _t("多个项目") if project_names else
                             documents[0] if documents else "—"))
 
 
 def _la_inspector_header(title, detail):
     head = st.columns([0.82, 0.18], vertical_alignment="top")
     with head[0]:
-        st.markdown(f'<p class="la-kicker">Inspector</p>'
+        st.markdown(f'<p class="la-kicker">{escape(_t("详情"))}</p>'
                     f'<p class="la-inspector-title">{escape(title)}</p>'
                     f'<p class="la-inspector-sub">{escape(detail)}</p>',
                     unsafe_allow_html=True)
@@ -627,7 +627,7 @@ def _la_inspector_header(title, detail):
 
 
 def _la_kv(pairs):
-    rows = "".join(f"<dt>{escape(str(label))}</dt><dd>{escape(str(value))}</dd>"
+    rows = "".join(f"<dt>{escape(_t(str(label)))}</dt><dd>{escape(str(value))}</dd>"
                    for label, value in pairs)
     st.markdown(f'<dl class="la-kv">{rows}</dl>', unsafe_allow_html=True)
 
@@ -645,12 +645,12 @@ def _la_term_inspector(row):
         term_meta.append(("可选译法", proposed))
     term_meta.extend([
         ("分类", row["domain"] or "—"),
-        ("语言方向", f"→ {row['target_lang']}" if row.get("target_lang") else "—"),
-        ("作用域", row["scope_label"]),
-        ("状态", _language_assets.status_label(row["status"])),
-        ("行为", _language_assets.behavior_label(row["behavior"])),
+        (_t("语言方向"), f"→ {_t(row['target_lang'])}" if row.get("target_lang") else "—"),
+        ("作用域", _t(row["scope_label"])),
+        ("状态", _t(_language_assets.status_label(row["status"]))),
+        (_t("行为"), _t(_language_assets.behavior_label(row["behavior"]))),
         ("使用次数", int(row["usage"])),
-        ("来源任务", f"{len(tasks)} 个任务"),
+        (_t("来源任务"), str(len(tasks)) + _t(" 个任务")),
     ])
     if project_names:
         term_meta.append(("来源项目", "、".join(project_names)))
@@ -671,8 +671,8 @@ def _la_term_inspector(row):
     if tasks:
         lines = "".join(
             f'<div class="la-occ">{escape(str(task.get("document") or "—"))}'
-            f' · {int(task.get("usage") or 0)} 次 · '
-            f'{escape(_language_assets.status_label(task.get("status")))}</div>'
+            f' · {int(task.get("usage") or 0)}{_t(" 次")} · '
+            f'{escape(_t(_language_assets.status_label(task.get("status"))))}</div>'
             for task in tasks[:6])
         st.markdown(_h('<p class="la-kicker">出现任务</p>') + lines,
                     unsafe_allow_html=True)
@@ -905,7 +905,7 @@ def _la_terms_tab(jobs, rows):
         status=_la_option_value(
             list(_language_assets.TERM_STATUS_LABELS.items()), status_label, ""),
         target_lang="" if target_lang == "全部" else target_lang)
-    _la_result_meta(f"显示 {len(filtered)} / {len(rows)} 条术语 · 点击术语名称查看详情",
+    _la_result_meta(_t("显示 {shown} / {total} 条术语 · 点击术语名称查看详情", shown=len(filtered), total=len(rows)),
                     _LA_TERMS_FILTER_DEFAULTS, clear_key="la_terms_clear_filters")
     if not filtered:
         _la_empty("没有匹配的术语。", "调整搜索词或筛选条件。")
@@ -913,7 +913,7 @@ def _la_terms_tab(jobs, rows):
     with st.container(key="la_head_row"):
         head = st.columns(_LA_TERM_TABLE_SPEC)
         for column, label in zip(head, _LA_TERM_TABLE_LABELS):
-            column.markdown(f'<div class="la-head">{label}</div>',
+            column.markdown(f'<div class="la-head">{escape(_t(label))}</div>',
                             unsafe_allow_html=True)
     with st.container(key="la_list"):
         for row in filtered:
@@ -971,7 +971,7 @@ def _la_tm_tab(projects, ordered_ids, labels, tm_rows, tm_project_id):
     with st.container(key="la_head_row"):
         head = st.columns(spec)
         for column, label in zip(head, ["原文", "译文", "状态", "操作"]):
-            column.markdown(f'<div class="la-head">{label}</div>',
+            column.markdown(f'<div class="la-head">{escape(_t(label))}</div>',
                             unsafe_allow_html=True)
     with st.container(key="la_list"):
         for row in filtered[:_la_apply_limit()]:

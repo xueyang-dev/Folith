@@ -77,8 +77,11 @@ def main():
         assert any("译页" in m.value and "智能体翻译工作台" in m.value
                    for m in at.sidebar.markdown), \
             "侧栏应显示译页 智能体翻译工作台品牌"
-        assert any("tp-provider is-unverified" in m.value for m in at.sidebar.markdown), \
-            "未经连接测试的 Provider 不应显示绿色已连接状态"
+        assert any("tp-utility-dot is-unconfigured" in m.value for m in at.sidebar.markdown), \
+            "没有 API 凭据时，Utility Bar 上的 AI 状态点必须是「未配置」而不是绿色已连接"
+        assert any(label.startswith("AI 模型：") and "API 凭据未配置" in label
+                   for label in (b.label for b in at.sidebar.button)), \
+            "AI 控件的 Tooltip 必须说明当前连接状态"
         assert any("新建翻译任务" in m.value for m in at.markdown), \
             "应直接进入四步任务工作流，不显示营销 Hero"
         sidebar_labels = [b.label for b in at.sidebar.button]
@@ -271,9 +274,10 @@ def main():
 
         # Provider 设置是独立页面，模型目录仍按 A-Z 排序并支持中转站。
         at.session_state["model_choice_DeepSeek"] = "deepseek-chat"
-        # AI Engine 管理入口**只有一个**：贴底 status module 上的「管理」。
-        # 「工作区」分组里的独立「设置」行已退休（它是同一个页面的重复入口）。
-        next(b for b in at.sidebar.button if b.label == "管理").click()
+        # 工具区的 ⚙ 是**设置**页入口（AI 引擎是它下面的一个分区）。侧栏一级
+        # 导航里没有「设置」行，也没有贴底 status module：低频设置全部收进底部
+        # Utility Bar，只占一个 36px 的 icon 控件。
+        next(b for b in at.sidebar.button if b.key == "utility_action_settings").click()
         at.run()
         assert not at.exception, f"打开设置页异常：{at.exception}"
         engine_select = next(s for s in at.selectbox if s.label == "服务商")
@@ -291,7 +295,7 @@ def main():
         at.run()
         next(b for b in at.sidebar.button if b.label == "新建任务").click()
         at.run()
-        next(b for b in at.sidebar.button if b.label == "管理").click()
+        next(b for b in at.sidebar.button if b.key == "utility_action_settings").click()
         at.run()
         assert next(s for s in at.selectbox if s.label == "模型").value == \
             "deepseek-v4-pro", "切换页面后模型选择必须保留"

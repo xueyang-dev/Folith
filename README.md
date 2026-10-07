@@ -106,12 +106,14 @@
 
 ## 🚀 快速上手 (Quick Start)
 
-界面默认使用简体中文。English、Español、Русский、العربية 为**实验功能**，四语各已补齐 1500/1500 条界面文案；尚未完成独立语言审阅及完整阿拉伯语 RTL 验收。中文 README 为当前维护版本，多语言界面不代表文档或模型输出已本地化。详见 [外观与多语言边界](docs/i18n/README.md)。
+界面默认使用简体中文。English、Español、Русский、العربية 为**实验功能**，四语各已补齐 1668/1668 条界面文案；尚未完成独立语言审阅及完整阿拉伯语 RTL 验收。中文 README 为当前维护版本，多语言界面不代表文档或模型输出已本地化。详见 [外观与多语言边界](docs/i18n/README.md)。
 
 ### 系统要求
 - Python 3.10 或更高版本
 - macOS / Windows / Linux
 - （可选）[Tesseract OCR](https://github.com/tesseract-ocr/tesseract)（如需离线识别扫描件 PDF）
+- （可选）本地 PaddleOCR / PP-OCRv5：Python 3.10–3.13，macOS Apple Silicon、Windows/Linux x86_64。安装当前源码包时使用 `python -m pip install '.[paddle]'`；默认仍使用 Tesseract。模型仅在实际 OCR 时下载，安装后可离线使用。古书实测中原版 Paddle 并未整体优于 Tesseract，详见 [OCR 安装、模型与实测限制](docs/ocr-subsystem.md)；另有 [《علم الدين》书内微调实验与独立模型](docs/paddle-arabic-finetuning.md)。
+- （可选）线上 OCR API：任务里可显式选择 OpenAI 兼容的图像转写接口（独立于翻译模型配置，可引用已有凭据）。默认关闭，只在明确选择时使用；配置与边界见[三路 OCR 来源](docs/ocr-sources.md)，实测与请求消耗见[实测记录](docs/ocr-sources-verification.md)。
 
 ### 方式 1：通过 Pip 安装发布包（推荐）
 

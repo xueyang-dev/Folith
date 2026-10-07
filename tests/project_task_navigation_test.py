@@ -9,9 +9,11 @@
     重命名 / 归档 / 删除）。后者是**纯导航**：只改路由，不碰当前 Project Context，
     也绝不展开 switcher。两者不共用同一套导航状态。管理入口收敛到标题上，所以侧栏
     里没有独立的「项目中心」行。
-    「工作区」分组只放跨项目的**资料**（历史任务 / 术语与翻译记忆）。AI Engine /
-    Model Center 不是导航行，而是贴底 status module（`provider_status`）上的
-    「管理」action —— 侧栏里不允许存在第二个指向同一页面的入口。
+    「工作区」这个 section heading 已退休：一级导航只剩跨项目的**资料**入口
+    （历史任务 / 术语与翻译记忆），两个项目自成一组，标题只是重复结构。
+    主题 / 界面语言 / AI 模型 / 设置都是 **Utility**，收在贴底的 Utility Bar 里：
+    AI 引擎不再是 status module，而是 bar 上一个 compact 控件 + 就地 Popover
+    （完整模型名、连接状态、测试连接都在面板里）；⚙ 是设置页入口。
     层级是 Workspace ▸ Project ▸ Task ▸ Run。
     路由与上下文分开：`projects_route` 说"在看列表还是某个项目"，
     `active_project_id` 是唯一的 Project Context，进管理页不会被清掉。
@@ -293,8 +295,9 @@ def test_sidebar_project_group_sits_above_the_workspace_group():
         assert not at.exception, [e.value for e in at.exception]
         labels = [re.sub(r"<[^>]+>", "", str(m.value)) for m in at.sidebar.markdown
                   if "tp-nav-label" in str(m.value)]
-        # 「项目」现在是可点击的导航入口（按钮），不再是纯标题。
-        assert labels == ["工作区"], labels
+        # 一级导航只剩「历史任务 / 术语与翻译记忆」两个入口 → 侧栏不再有任何
+        # section heading。「项目」本身就是可点击的导航入口（按钮），不是纯标题。
+        assert labels == [], labels
         assert not any("资料库" in label for label in labels), \
             "「资料库」与「项目」职责重叠，必须改成「工作区」"
         sidebar_labels = [b.label for b in at.sidebar.button]
@@ -302,17 +305,21 @@ def test_sidebar_project_group_sits_above_the_workspace_group():
         assert "项目中心" not in sidebar_labels, \
             f"独立「项目中心」行必须退休（入口在分组标题上）：{sidebar_labels}"
         assert "历史任务" in sidebar_labels
-        # 「工作区」分组只放**跨项目的资料**（历史任务 / 术语与翻译记忆）。
-        # 独立「设置」行已退休：它当时唯一的落点就是 AI Engine / Model Center，
-        # 与贴底 status module 上的「管理」完全同义。AI Engine 入口只保留后者。
-        assert "设置" not in sidebar_labels, \
-            f"独立「设置」行必须退休（AI Engine 入口在贴底 status module 上）：{sidebar_labels}"
-        assert "管理" in sidebar_labels, sidebar_labels
-        # 同组相邻：标题在上、selector 紧随其后，整组都在「工作区」那三项之前。
+        # 工具区（主题 / 界面语言 / AI 模型 / 设置）是**贴底 Utility Bar**，不是
+        # 「工作区」分组里的导航行：`外观与语言` 已退出导航，齿轮是设置页入口。
+        assert "外观与语言" not in sidebar_labels, \
+            f"「外观与语言」必须退出侧栏一级导航（它是 Utility）：{sidebar_labels}"
+        assert "设置" in sidebar_labels, \
+            f"⚙ 是设置页入口，必须出现在 Utility Bar 上：{sidebar_labels}"
+        assert any(label.startswith("AI 模型：") for label in sidebar_labels), \
+            f"AI 引擎必须收敛成一个 compact 控件：{sidebar_labels}"
+        assert "管理" not in sidebar_labels, \
+            f"旧的贴底 status module 已退休：{sidebar_labels}"
+        # 同组相邻：标题在上、selector 紧随其后，整组都在核心导航之前。
         index = sidebar_labels.index("项目")
         assert sidebar_labels[index + 1].startswith("未选择项目"), sidebar_labels
         assert index < sidebar_labels.index("历史任务"), \
-            f"「项目」分组不能混进「工作区」分组：{sidebar_labels}"
+            f"「项目」分组不能混进核心导航：{sidebar_labels}"
 
 
 def test_sidebar_context_is_unselected_without_a_real_project():
@@ -330,7 +337,12 @@ def test_sidebar_context_is_unselected_without_a_real_project():
 
 
 def test_sidebar_selector_stays_compact_without_a_project():
-    """没有项目时 selector 是**同一个 compact 控件**的中性态，不是虚线大卡片。"""
+    """没有项目时 selector 是**同一个 compact 控件**的中性态，不是虚线大卡片。
+
+    未选中态**只降对比度、不改几何**：它一条尺寸声明都不写（height / min-height /
+    padding 全部继承下面那条共用规则）。"46px 的紧凑基线"因此只存在于一个地方 ——
+    两处各写一份，就是上一版"空态与选中态像两种控件"的成因。
+    """
     with nav_env():
         at = _project_page()
         css = _markdown_text(at)
@@ -341,9 +353,17 @@ def test_sidebar_selector_stays_compact_without_a_project():
         assert rule, "必须有'未选择项目'时的 selector 样式规则"
         body = rule.group(1)
         assert "dashed" not in body, "未选中态不再使用大面积虚线卡片"
-        assert "min-height: 46px" in body, body
-        # 项目底色只在"已进入真实项目"时使用（selector 现在用中性 surface）。
+        assert "height" not in body and "padding" not in body, \
+            f"未选中态只降对比度，不重写几何：{body}"
+        assert "color: var(--tp-sub) !important" in body, body
+        # 项目底色只在"已进入真实项目"时使用（selector 现在用中性 surface）；
+        # 紧凑基线（46px）由共用规则唯一持有。
         assert "background: var(--tp-surface)" in css
+        base = re.search(
+            r'\[class\*="st-key-current_project_selector"\] '
+            r'\.stButton button\s*\{(.*?)\}', css, flags=re.S)
+        assert base and "min-height: var(--sidebar-switcher-height)" in base.group(1), \
+            "紧凑基线必须由 selector 的共用规则持有"
 
 
 def test_sidebar_reports_viewing_the_uncategorized_workspace():

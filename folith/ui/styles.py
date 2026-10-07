@@ -115,42 +115,80 @@ label, [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] label {
 [data-testid="stSlider"] [data-testid="stSliderThumbValue"] * {
  color: var(--tp-ink) !important; opacity: 1 !important;
 }
-[data-testid="stRadio"] [data-testid="stRadioOption"] > div > div > div:first-child {
- background: var(--tp-surface) !important; border: 2px solid #98a2b3 !important;
+/* Radio indicator. Streamlit paints the OUTER circle (the direct grandchild) from
+   the app theme's primaryColor, which is fixed at launch and therefore cannot
+   follow a Paper theme; the inner dot is ours. Both are tokenised here so the
+   control is "hollow ring + ink dot" in every theme instead of a cobalt donut. */
+[data-testid="stRadio"] [data-testid="stRadioOption"] > div > div:first-child {
+ background: var(--tp-surface) !important; border: 2px solid var(--tp-faint) !important;
 }
-[data-testid="stRadio"] [data-testid="stRadioOption"][data-selected="true"] > div > div > div:first-child {
+[data-testid="stRadio"] [data-testid="stRadioOption"] > div > div:first-child > div {
+ display: none !important;
+}
+[data-testid="stRadio"] [data-testid="stRadioOption"][data-selected="true"] > div > div:first-child {
  background: var(--tp-primary) !important; border-color: var(--tp-primary) !important;
 }
 [data-testid="stRadio"] [data-testid="stRadioOption"][data-selected="true"]
- > div > div > div:first-child > div {
- background: #fff !important;
+ > div > div:first-child > div {
+ display: block !important; width: 6px !important; height: 6px !important;
+ border: 0 !important; border-radius: 50% !important;
+ background: var(--tp-on-accent) !important;
 }
-[data-testid="stRadio"] [data-testid="stRadioOption"]:hover > div > div > div:first-child {
+[data-testid="stRadio"] [data-testid="stRadioOption"]:hover > div > div:first-child {
  border-color: var(--tp-primary) !important;
 }
 [data-testid="stSlider"] div:has(> [data-testid="stSliderThumbValue"]) {
  background: var(--tp-primary) !important;
 }
 a { color: var(--tp-primary); text-decoration-color: var(--tp-border); text-underline-offset: 2px; }
-a:hover { color: var(--tp-primary-hover); text-decoration-color: var(--tp-logo-blue); }
+a:hover { color: var(--tp-primary-hover); text-decoration-color: var(--tp-primary-hover); }
 hr { border-color: var(--tp-line); }
 ::selection { background: var(--tp-focus-ring); }
 
 /* ---------- Product shell ---------- */
 [data-testid="stSidebar"] {
- background: #f8faff; border-right: 1px solid var(--tp-sidebar-line);
+ background: var(--tp-canvas-soft); border-right: 1px solid var(--tp-sidebar-line);
  width: var(--tp-sidebar-width) !important; min-width: var(--tp-sidebar-width) !important;
  overflow-x: clip;
  transform: none !important;
 }
 [data-testid="stSidebarContent"] {
  padding: 20px 24px 16px; position: relative;
+ display: flex; flex-direction: column;
 }
-[data-testid="stSidebarUserContent"] > [data-testid="stVerticalBlock"] {
- min-height: calc(100dvh - 36px);
+/* 侧栏内容必须**撑满整个侧栏高度**，否则"上半部分=工作 / 下半部分=工具"不成立：
+   工具区靠 `margin-top:auto` 贴底，而 `margin-top:auto` 只对 **flex item** 生效，
+   而且只有在容器高度**确定**、确有剩余空间时才起作用。
+
+   当前 Streamlit 的 DOM 是
+   `stSidebarContent > stSidebarUserContent > div > stVerticalBlock
+    > stLayoutWrapper > 工具区`：
+   ① `stSidebarUserContent` 自身高度是 content-based（auto），因此它内部的
+      `flex-grow` 拿不到任何剩余空间 —— 必须由 `stSidebarContent` 这一层把高度
+      定下来（`flex: 1 0 auto`），再逐层往下传；
+   ② 需要 auto margin 的是工具区的 **stLayoutWrapper 父层**，不是容器自己。
+   旧规则 `stSidebarUserContent > stVerticalBlock { min-height: 100dvh-36px }`
+   因为中间多了一层 wrapper 而整体落空，工具区就停在了内容末尾。
+
+   `flex: 1 0 auto`（grow=1 / shrink=0）是关键：内容短时撑满，内容长时保持自身
+   高度溢出、由侧栏自己滚动，绝不把内部条目压扁。 */
+[data-testid="stSidebarUserContent"] {
+ display: flex; flex-direction: column; flex: 1 0 auto;
+}
+[data-testid="stSidebarUserContent"] > div {
+ display: flex; flex-direction: column; flex: 1 0 auto;
+}
+[data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] {
+ flex: 1 0 auto;
+}
+[data-testid="stSidebarUserContent"] [data-testid="stLayoutWrapper"]:has(> .st-key-sidebar_utility) {
+ margin-top: auto;
 }
 [data-testid="stSidebarHeader"] { display: none !important; }
-[data-testid="stSidebarUserContent"] { padding-top: 0; }
+/* Streamlit 在侧栏内容底部预留 6rem（96px）给页脚操作区，而本产品的侧栏底部
+   属于 **Utility Bar**：那 96px 会让工具条浮在半空、下面留一条谁也看不懂的空带。
+   这里把预留收回，只留 `stSidebarContent` 自己那 16px 底距。 */
+[data-testid="stSidebarUserContent"] { padding-top: 0; padding-bottom: 0; }
 [data-testid="stSidebarContent"] [data-testid="stVerticalBlock"] { gap: .5rem; }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { line-height: 1.5; }
 /* Streamlit 会给 markdown 容器默认注入 -16px 下边距（补偿段落默认边距），
@@ -160,14 +198,15 @@ hr { border-color: var(--tp-line); }
 }
 [data-testid="stSidebar"] .stButton > button {
  min-height: 44px; justify-content: flex-start; border-color: transparent;
- background: transparent; color: #536176; font-size: 14px; font-weight: 400;
+ background: transparent; color: var(--tp-sub); font-size: 14px; font-weight: 400;
 }
 [data-testid="stSidebar"] .stButton > button:hover {
- background: #f6f8fb; border-color: transparent; color: #202a3a;
+ background: var(--tp-tint-hover); border-color: transparent; color: var(--tp-ink);
 }
 [data-testid="stSidebar"] .stButton > button[kind="primary"] {
  background: var(--tp-primary-soft); border-color: transparent;
  color: var(--tp-brand-ink); font-weight: 500;
+ box-shadow: none;
 }
 .tp-brand {
  display: flex; flex-direction: column; align-items: center;
@@ -179,7 +218,7 @@ hr { border-color: var(--tp-line); }
  margin: 0 auto; mix-blend-mode: normal;
 }
 .tp-nav-label {
- margin: 18px 0 6px; color: #7c8799; font-size: 12px;
+ margin: 18px 0 6px; color: var(--tp-faint); font-size: 12px;
  font-weight: 500; letter-spacing: 0; line-height: 1.4;
 }
 .tp-nav-divider { height: 1px; margin: 24px 0; background: var(--tp-sidebar-line); }
@@ -191,41 +230,13 @@ hr { border-color: var(--tp-line); }
 .tp-nav-note {
  margin: 6px 0 0; color: var(--tp-faint); font-size: 11.5px; line-height: 1.4;
 }
-.st-key-new_task_action .stButton > button {
- min-height: 44px; border: 1px solid var(--tp-primary); border-radius: 10px;
- background: var(--tp-primary); color: #fff; font-size: 14px; font-weight: 650;
- box-shadow: 0 4px 12px var(--tp-focus-ring);
-}
-.st-key-new_task_action .stButton > button:hover { background: var(--tp-primary-hover); border-color: var(--tp-primary-hover); color: #fff; }
-.st-key-new_task_action .stButton > button:active { background: var(--tp-primary-active); }
-.st-key-new_task_action_in_flow .stButton > button {
- min-height: 40px; border: 1px solid #d0d5dd; border-radius: 10px;
- background: transparent; color: #344054; font-size: 14px; font-weight: 550;
- box-shadow: none;
-}
-.st-key-new_task_action_in_flow .stButton > button:hover {
- background: #f6f8fb; border-color: #98a2b3; color: #202a3a;
-}
-.st-key-new_task_action_in_flow .stButton > button:active {
- background: #eef2f6; border-color: #98a2b3;
-}
-/* 进入 Project Detail 后，页面级 Primary CTA 属于 Header 的「+ 新建任务」；
-   侧栏这一颗必须退成 secondary，不跟它抢层级（动作仍然是同一个）。 */
-.st-key-new_task_action_in_project .stButton > button {
- min-height: 40px; border: 1px solid #d0d5dd; border-radius: 10px;
- background: transparent; color: #344054; font-size: 14px; font-weight: 550;
- box-shadow: none;
-}
-.st-key-new_task_action_in_project .stButton > button:hover {
- background: #f6f8fb; border-color: #98a2b3; color: #202a3a;
-}
-.st-key-new_task_action_in_project .stButton > button:active {
- background: #eef2f6; border-color: #98a2b3;
-}
+/* 「新建任务」的三种态（默认主 CTA / 新建流程内 / 项目详情内）与侧栏四行共用的
+   左右栅格、图标列统一在下面 `Sidebar rhythm and project context` 一节里定义；
+   这里不再保留第二份，否则同一颗按钮的几何会由"最后一条同名规则"决定。 */
 .st-key-task_steps { position: relative; gap: 0 !important; margin: 0 0 6px; }
 .st-key-task_steps::before {
  content: ""; position: absolute; left: 17px; top: 24px; height: calc(100% - 48px);
- width: 1px; background: #dce2ea;
+ width: 1px; background: var(--tp-line);
 }
 .st-key-task_steps .stButton { position: relative; z-index: 1; margin: 0; }
 .st-key-task_steps .stButton > button {
@@ -242,7 +253,7 @@ hr { border-color: var(--tp-line); }
 }
 .st-key-task_steps button[data-testid="stBaseButton-primary"] {
  background: var(--tp-primary-soft) !important; border-color: transparent !important;
- box-shadow: inset 3px 0 var(--tp-primary);
+
  color: var(--tp-brand-ink) !important;
 }
 .st-key-task_steps [data-testid="stIconMaterial"] {
@@ -250,11 +261,11 @@ hr { border-color: var(--tp-line); }
  font-size: 18px;
 }
 [class*="st-key-task_step_done_"] [data-testid="stIconMaterial"] { color: var(--tp-success); }
-[class*="st-key-task_step_current_"] [data-testid="stIconMaterial"] { color: var(--tp-logo-blue); }
-[class*="st-key-task_step_pending_"] [data-testid="stIconMaterial"] { color: #a8b2c1; }
-[class*="st-key-task_step_done_"] .stButton > button { color: #344054; font-weight: 500; }
+[class*="st-key-task_step_current_"] [data-testid="stIconMaterial"] { color: var(--tp-primary); }
+[class*="st-key-task_step_pending_"] [data-testid="stIconMaterial"] { color: var(--tp-faint); }
+[class*="st-key-task_step_done_"] .stButton > button { color: var(--tp-ink); font-weight: 500; }
 [class*="st-key-task_step_current_"] .stButton > button { color: var(--tp-brand-ink); font-weight: 600; }
-[class*="st-key-task_step_pending_"] .stButton > button { color: #536176; font-weight: 400; }
+[class*="st-key-task_step_pending_"] .stButton > button { color: var(--tp-sub); font-weight: 400; }
 .tp-engine-row, .tp-summary, .tp-pipeline, .tp-confirm-card {
  border: 1px solid var(--tp-hairline-strong); border-radius: var(--tp-radius-lg);
  background: var(--tp-surface); box-shadow: var(--tp-shadow-sm);
@@ -262,45 +273,229 @@ hr { border-color: var(--tp-line); }
 .tp-engine-row { padding: 12px 14px; margin: 6px 0 18px; }
 .tp-engine-row strong { font-size: 13px; color: var(--tp-ink); }
 .tp-engine-row span { display: block; margin-top: 3px; font-size: 12px; color: var(--tp-sub); }
-.st-key-provider_status {
- position: relative; width: 100%; flex-shrink: 0;
- margin-top: auto; padding: 16px 0 4px; border-top: 1px solid var(--tp-sidebar-line);
- background: transparent;
+/* ---------- 侧栏贴底 Utility Bar（工具区）----------
+   侧栏只有两段：**上半部分 = 工作**（新建任务 / 项目 / 核心导航），**下半部分 =
+   工具**（主题 / 界面语言 / AI 模型 / 设置）。工具区被 `margin-top:auto` 压到最底，
+   中间那片留白是刻意的：它比用低频设置把侧栏填满更清楚。
+   四个控件共用一个盒子、一套状态，除了字形之外没有第二种按钮语言。 */
+.st-key-sidebar_utility {
+ position: relative; margin-top: auto !important; padding-top: 10px;
+ border-top: 1px solid var(--tp-sidebar-line); background: transparent;
+ /* 面板与 bar 之间的**受控**贴靠间距（面板是 bottom-attached，不是 floating）。
+    这里是**额外**补的一小段：Streamlit 自己已经给了约 8px 块间距，所以实测总间距
+    落在 6–12px 的目标区间里，不会出现几十像素的空洞。 */
+ --tp-utility-anchor-gap: 2px;
 }
-.st-key-provider_status [data-testid="stMarkdownContainer"] { margin-bottom: 0; }
-.tp-engine-detail { color: var(--tp-sub); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
-.tp-engine-detail span { display: block; }
-/* AI Engine 区的两行读数有明确层级：模型名是 secondary（用户配置的结果），
-   连接状态是 tertiary / status（系统对这条连接的判断，可能变化）。
-   两者同色会把"我选了什么"和"它现在通不通"压成一句话。 */
-.tp-engine-detail .tp-engine-model { color: var(--tp-sub); }
-.tp-engine-detail .tp-engine-state { color: var(--tp-faint); }
-.tp-engine-detail .tp-engine-state.is-connected { color: var(--tp-success); }
-.tp-engine-detail .tp-engine-state.is-error { color: var(--tp-danger); }
-.st-key-provider_status [data-testid="stHorizontalBlock"] {
- align-items: center; gap: 6px; flex-wrap: nowrap;
+.st-key-sidebar_utility > [data-testid="stVerticalBlock"] {
+ gap: var(--tp-utility-anchor-gap) !important;
 }
-.st-key-provider_status [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
- min-width: 0; flex: 1 1 0; width: auto;
+.st-key-utility_bar [data-testid="stHorizontalBlock"] {
+ align-items: center; gap: 4px; flex-wrap: nowrap;
 }
-.st-key-provider_status [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
- flex: 0 0 44px;
+.st-key-utility_bar [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+ flex: 1 1 0 !important; min-width: 0 !important; width: auto !important;
 }
-.st-key-provider_status .stButton > button {
- min-height: 30px; padding: 2px 0; justify-content: flex-end;
- color: var(--tp-primary); font-size: 13px; font-weight: 500;
+/* 每个 cell 恰好 36px：`st.markdown` 会把行内字形包进一个 `<p>`，它的默认下边距
+   会把 36px 的字形盒撑到 52px（bar 也就高于 40–48px 的目标）。 */
+[class*="st-key-utility_cell_"] {
+ position: relative; min-width: 0; height: 36px; margin: 0 !important;
 }
-.st-key-provider_status .stButton > button:hover { color: var(--tp-primary-hover); background: transparent; }
-.tp-provider { position: relative; padding-left: 17px; }
-.tp-provider::before {
- content: ""; position: absolute; left: 2px; top: 5px; width: 8px; height: 8px;
- border-radius: 50%; background: var(--tp-surface); border: 1px solid #98a2b3;
+[class*="st-key-utility_cell_"] > [data-testid="stVerticalBlock"] {
+ gap: 0 !important; row-gap: 0 !important; height: 36px;
 }
-.tp-provider.is-connected::before { background: var(--tp-success); border-color: var(--tp-success); }
-.tp-provider.is-error::before { background: var(--tp-danger); border-color: var(--tp-danger); }
-.tp-provider strong { display: block; color: #202a3a; font-size: 13px; font-weight: 600; }
-.tp-provider span {
- display: block; margin-top: 3px; color: #7c8799; font-size: 11px; overflow-wrap: anywhere;
+[class*="st-key-utility_cell_"] [data-testid="stElementContainer"],
+[class*="st-key-utility_cell_"] [data-testid="stMarkdown"],
+[class*="st-key-utility_cell_"] [data-testid="stMarkdown"] > div,
+[class*="st-key-utility_cell_"] [data-testid="stMarkdownContainer"] {
+ margin: 0 !important; padding: 0 !important;
+}
+[class*="st-key-utility_cell_"] p { margin: 0 !important; }
+/* 字形盒是**唯一**的可见面：36px 点击区、圆角 9px、默认透明。
+   "每个东西都有背景"是被本轮消掉的噪音，所以默认态一律不给面。 */
+.tp-utility-glyph {
+ position: relative; display: flex; align-items: center; justify-content: center;
+ box-sizing: border-box; width: 100%; height: 36px; border-radius: 9px;
+ background: transparent; color: var(--tp-sub);
+ transition: background .12s ease, color .12s ease;
+}
+.tp-utility-glyph .material-symbols-rounded {
+ font-family: "Material Symbols Rounded" !important;
+ font-size: 20px; font-weight: normal; line-height: 1; font-feature-settings: "liga";
+}
+/* 状态点 = 连接状态的**颜色语义**（绿已连接 / 黄未验证 / 红失败 / 灰未配置）。
+   它带一圈与侧栏底色相同的描边，把自己从字形上"抬"起来。它**不是** active state：
+   "当前选中"由 `.tp-utility-open` 的 tint 表达，两者互不替代。 */
+.tp-utility-dot {
+ position: absolute; top: 5px; inset-inline-end: 6px; width: 6px; height: 6px;
+ border-radius: 50%; background: var(--tp-faint);
+ box-shadow: 0 0 0 1.5px var(--tp-canvas-soft);
+}
+.tp-utility-dot.is-connected { background: var(--tp-success); }
+.tp-utility-dot.is-unverified { background: var(--tp-warn); }
+.tp-utility-dot.is-error { background: var(--tp-danger); }
+.tp-utility-dot.is-unconfigured { background: var(--tp-faint); }
+/* 交互状态：default / hover / pressed / open（当前面板或当前页面）/ focus-visible。
+   焦点环画在字形盒上 —— 真正的按钮是透明的，它的 outline 看不见。 */
+[class*="st-key-utility_cell_"]:hover .tp-utility-glyph {
+ background: var(--tp-tint-hover); color: var(--tp-ink);
+}
+[class*="st-key-utility_cell_"]:has(button:active) .tp-utility-glyph {
+ background: var(--tp-surface-sunken); color: var(--tp-ink);
+}
+[class*="st-key-utility_cell_"]:has(.tp-utility-open) .tp-utility-glyph {
+ background: var(--tp-tint-active); color: var(--tp-brand-ink);
+}
+[class*="st-key-utility_cell_"]:has(.tp-utility-open) .material-symbols-rounded {
+ font-family: "Material Symbols Rounded" !important;
+ color: var(--tp-primary);
+}
+[class*="st-key-utility_cell_"]:has(button:focus-visible) .tp-utility-glyph {
+ outline: 2px solid var(--tp-primary); outline-offset: 2px;
+}
+.tp-utility-open { display: none; }
+/* 透明点击层：铺满整个 cell，让字形与它周围的留白是同一条点击路径
+   （与 Project Switcher 的行点击层 `.switcher_pick_` 同一套路）。 */
+[class*="st-key-utility_action_"] {
+ position: absolute !important; inset: 0; z-index: 1;
+ margin: 0 !important; padding: 0 !important;
+ border: 0 !important; background: transparent !important; box-shadow: none !important;
+}
+[class*="st-key-utility_action_"] .stButton button,
+[class*="st-key-utility_action_"] .stButton > button {
+ box-sizing: border-box; width: 100%; height: 36px !important;
+ min-height: 0 !important; max-height: 36px; margin: 0; padding: 0;
+ opacity: 0; overflow: hidden; white-space: nowrap; cursor: pointer;
+ border: 0 !important; background: transparent !important; box-shadow: none !important;
+}
+/* ---------- Utility Panel：从底部工具区"长出来"的就地面板 ----------
+   它不是设置页，也不是 Card：一层 surface + 一条 hairline 边框，选择项是 compact
+   row。
+
+   为什么不是 floating popover：侧栏底部没有向下展开的物理空间，面板只能出现在
+   bar 之上；"页面上方突然浮出一张孤立卡片"正是要避免的观感。所以这里刻意把它做成
+   **bottom-attached panel**：
+
+   1. 面板底边距 bar 顶边只有 8px（`--tp-utility-anchor-gap`），而不是几十像素；
+   2. 左右按**触发它的那个 icon** 缩进（`--tp-utility-anchor` / `-anchor-end`），
+      让面板的边与 icon 对齐 —— 用户立刻看出"这个面板属于这个按钮"；
+   3. 与 bar 共用圆角语言与 surface，阴影是克制的 `shadow-md`，没有 glow / 渐变。 */
+/* 面板的 wrapper 必须**满宽**，缩进靠一条同宽的 `margin-inline-start: auto` 撑出来。
+   直接给 wrapper 写 `padding-inline` 会把面板本身压窄：Streamlit 给这类 keyed block
+   的 wrapper 写的是 content-based 宽度（`fit-content`），padding 吃掉的正是面板的
+   可用宽度，实测 187px 的侧栏里面板只剩 65px。 */
+.st-key-sidebar_utility:has(.st-key-utility_bar) >
+ [data-testid="stLayoutWrapper"]:has([class*="st-key-utility_"][class*="_panel"]) {
+ width: 100% !important; max-width: 100% !important;
+ margin-bottom: var(--tp-utility-anchor-gap) !important;
+}
+/* 触发源与面板对齐：面板左右边缘钉在触发它的那个 icon 上 —— Theme/Globe 走起边，
+   AI 走终边（`margin-inline-start:auto`），宽度按各面板内容定死。这样"这个面板属于
+   这个按钮"是**几何**上的事实，不是靠说明文字。
+   宽度是内容驱动的：主题/语言只要一行选项（多语言下 "Português (Brasil)" 这类长名
+   也不换行），AI 要放下模型名与「测试连接」。 */
+.st-key-sidebar_utility:has(.st-key-utility_theme_panel) {
+ --tp-utility-panel-width: 132px; --tp-utility-anchor: 6px;
+}
+.st-key-sidebar_utility:has(.st-key-utility_language_panel) {
+ --tp-utility-panel-width: 148px; --tp-utility-anchor: 6px;
+}
+.st-key-sidebar_utility:has(.st-key-utility_ai_panel) {
+ --tp-utility-panel-width: 158px; --tp-utility-anchor: auto;
+}
+.st-key-sidebar_utility:has(.st-key-utility_bar) >
+ [data-testid="stLayoutWrapper"]:has([class*="st-key-utility_"][class*="_panel"]) >
+ [data-testid="stVerticalBlock"] {
+ box-sizing: border-box;
+ width: var(--tp-utility-panel-width, 132px);
+ min-width: 0; max-width: 100%;
+ margin-inline-start: var(--tp-utility-anchor, 6px);
+}
+[class*="st-key-utility_"][class*="_panel"] {
+ margin: 0 !important; padding: 8px 8px 6px;
+ border: 1px solid var(--tp-sidebar-line); border-radius: 11px;
+ background: var(--tp-surface); box-shadow: var(--tp-shadow-sm);
+}
+[class*="st-key-utility_"][class*="_panel"] > [data-testid="stVerticalBlock"] { gap: 4px !important; }
+[class*="st-key-utility_"][class*="_panel"] [data-testid="stMarkdownContainer"] { margin: 0; }
+/* 面板里的 radio 必须占满整行：Streamlit 给选项组的元素容器写的是
+   `width: fit-content`，不拉满的话 32px 的行会缩成十几像素宽。 */
+[class*="st-key-utility_theme_choice_"],
+[class*="st-key-utility_language_choice_"] { width: 100% !important; }
+[class*="st-key-utility_"][class*="_panel"] [data-testid="stRadio"],
+[class*="st-key-utility_"][class*="_panel"] [data-testid="stRadioGroup"] {
+ width: 100% !important;
+}
+.tp-utility-panel-title {
+ margin: 0 !important; color: var(--tp-ink); font-size: 11.5px; font-weight: 650;
+}
+/* AI 引擎读数：完整模型名 + 连接状态只在面板里出现一次。两行紧贴在一起，
+   "模型是什么 / 它通不通"是一条读数，不是两个 section。 */
+.tp-utility-ai { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.tp-utility-ai-model {
+ color: var(--tp-ink); font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere;
+}
+.tp-utility-ai-state {
+ display: flex; align-items: center; gap: 6px;
+ color: var(--tp-faint); font-size: 11px; line-height: 1.4;
+}
+.tp-utility-ai-state .tp-utility-dot {
+ position: static; flex: 0 0 6px; width: 6px; height: 6px; box-shadow: none;
+}
+.tp-utility-ai-state.is-connected { color: var(--tp-success); }
+.tp-utility-ai-state.is-unverified { color: var(--tp-warn); }
+.tp-utility-ai-state.is-error { color: var(--tp-danger); }
+.tp-utility-ai-state.is-unconfigured { color: var(--tp-faint); }
+.tp-utility-feedback {
+ margin: 0 !important; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere;
+}
+.tp-utility-feedback.is-ok { color: var(--tp-success); }
+.tp-utility-feedback.is-bad { color: var(--tp-danger); }
+/* 面板里的动作是 **utility action**：默认 ghost（一条 hairline、无填充），hover 才
+   浮出一层浅底。它绝不能长成主色面的大按钮 —— 「测试连接」只是就地能做完的一件小事，
+   完整配置属于 ⚙。
+   `!important` 是必需的：SHARED_CSS 把侧栏里所有 secondary 按钮的底色钉成了
+   transparent，不覆盖它的话 hover 面永远是空的。 */
+[class*="st-key-utility_"][class*="_panel"] .stButton button,
+[class*="st-key-utility_"][class*="_panel"] .stButton > button {
+ justify-content: center; min-height: 30px; padding: 0 10px;
+ border: 1px solid var(--tp-hairline-strong) !important; border-radius: 8px;
+ background: transparent !important; box-shadow: none !important;
+ color: var(--tp-ink) !important; font-size: 12px; font-weight: 550;
+}
+[class*="st-key-utility_"][class*="_panel"] .stButton button:hover,
+[class*="st-key-utility_"][class*="_panel"] .stButton > button:hover {
+ border-color: var(--tp-border) !important; background: var(--tp-tint-hover) !important;
+ color: var(--tp-ink) !important;
+}
+[class*="st-key-utility_"][class*="_panel"] .stButton button:disabled,
+[class*="st-key-utility_"][class*="_panel"] .stButton > button:disabled {
+ background: transparent !important; color: var(--tp-disabled-ink) !important;
+}
+[class*="st-key-utility_"][class*="_panel"] .stButton button p,
+[class*="st-key-utility_"][class*="_panel"] .stButton > button p {
+ margin: 0; font-size: 12px !important; line-height: 1.35 !important;
+}
+[class*="st-key-utility_"][class*="_panel"] .stButton button [data-testid="stIconMaterial"] {
+ font-size: 14px;
+}
+/* 模型下拉：compact utility 控件，不是表单里的 select。 */
+[class*="st-key-utility_"][class*="_panel"] [data-baseweb="select"] > div {
+ min-height: 30px !important; border-radius: 8px !important;
+ font-size: 12px !important;
+}
+[class*="st-key-utility_"][class*="_panel"] [data-testid="stSelectbox"] { margin: 0 !important; }
+/* 设置页的「偏好」入口行：与外观页一致的一条页面级 action，不是卡片。 */
+.st-key-settings_preferences { margin: 0 0 18px; }
+.st-key-settings_preferences .stButton button,
+.st-key-settings_preferences .stButton > button {
+ justify-content: flex-start; min-height: 40px; padding: 0 12px;
+ border: 1px solid var(--tp-hairline-strong) !important; border-radius: 10px;
+ background: transparent !important; color: var(--tp-ink) !important;
+ font-size: 13.5px; font-weight: 550;
+}
+.st-key-settings_preferences .stButton button:hover,
+.st-key-settings_preferences .stButton > button:hover {
+ background: var(--tp-tint-hover) !important; border-color: var(--tp-border) !important;
 }
 .tp-title { margin: 0 0 20px; padding-bottom: 16px; border-bottom: 1px solid var(--tp-hairline-strong); }
 .tp-brand-kicker { color: var(--tp-primary); font-size: 10px; font-weight: 800; letter-spacing: .16em; margin-bottom: 12px; }
@@ -322,156 +517,257 @@ hr { border-color: var(--tp-line); }
  font-size: 12px; line-height: 1.4;
 }
 
-/* ---------- Context project selector ----------
-   侧栏这个控件是 **context selector / state action**：不是 project detail card，
-   也不是第二个管理入口。它展开的是一个**轻量下拉面板**（切换 / 搜索 / 新建项目），
-   而不是大型 Modal——Modal 会把它读成"一块管理页面"，与同组的「项目中心」重复。
+/* ---------- Sidebar rhythm and project context ----------
+   侧栏上半部分（工作）只有**三段**，几何关系全部在这一处定死：
 
-   展开态用 `.is-open` 表达（由 `.tp-nav-open` 语义标记驱动），这样触发器不需要
-   换一套样式语言：开与合是同一个 compact 控件。 */
-.st-key-current_project { margin: 0 !important; }
-/* Streamlit 把 `st.container(key=…)` 的 key 直接打在 **stVerticalBlock 自己身上**
-   （不是外面再包一层容器），所以收紧 gap 要把规则写在这个块本身；只写
-   `> [data-testid="stVerticalBlock"]` 会静默落空、退回默认 8px。 */
-.st-key-current_project[data-testid="stVerticalBlock"],
-.st-key-current_project > [data-testid="stVerticalBlock"] { row-gap: 6px; }
-/* 带 `help=` 的按钮会被 Streamlit 包进 tooltip span，`button` 因此不是 `.stButton`
-   的直接子元素——所有 selector 按钮规则都必须用后代选择器，否则样式整体失效。
+       Logo
+        ↓ 28px                          组间距
+       New Task (46px)
+        ↓ 28px                          组间距
+       项目                              section label（可点击，但只是结构标签）
+        ↓ 8px                           组内小间距
+       Project Switcher (46px)           **有边框的控件**
+        ↓ 20px                          组间距
+       历史任务 / 术语与翻译记忆          48px 行，行间 4px
+        ↓
+       flex spacer → Utility Bar（贴底，几何不变）
 
-   ⚠️ 但后代选择器**不能挂在外层容器 `.st-key-current_project` 上**：那个容器同时
-   还包着展开后的面板（列表行 + 「新建项目」footer），`.st-key-current_project
-   .stButton button` 会把 selector 的填充色 / 高度 / 圆角一并泄漏给它们——实测
-   「＋ 新建项目」因此长成一整块浅蓝卡片（它继承了 selector 的 primary-soft 面）。
-   所以样式一律钉在**触发器自己的 key 容器**
-   `[class*="st-key-current_project_selector"]` 上；而状态标记
-   `.tp-nav-empty` / `.tp-nav-open` 是触发器的**兄弟**节点（不在按钮的 key 容器里），
-   `:has()` 只能写在外层容器上、再往下指回触发器：**标记在父层、样式在按钮层**。 */
-/* 视觉权重**低于「新建任务」CTA**：CTA 是实心主色，selector 只是中性 surface +
-   1px hairline。旧的 primary-soft 填充 + #c8dcff 边框 + Streamlit 自带 focus ring
-   叠在一起，会读成"双层粗蓝框"，比 CTA 还抢眼。现在只有一条边框、一条 ring。 */
-[class*="st-key-current_project_selector"] .stButton button {
- min-height: 46px; padding: 0 10px; justify-content: flex-start;
- border: 1px solid var(--tp-sidebar-line); border-radius: 11px;
- background: var(--tp-surface); color: var(--tp-ink);
- font-size: 12.5px; font-weight: 600; text-align: left;
-}
-[class*="st-key-current_project_selector"] .stButton button:hover {
- border-color: #c8d4e4; background: var(--tp-tint-hover); color: var(--tp-ink);
-}
-/* focus ring 只留一条 2px outline：Streamlit 默认那圈 box-shadow 与边框叠起来就是
-   "双层框"，所以这里显式清掉。 */
-[class*="st-key-current_project_selector"] .stButton button:focus-visible {
- outline: 2px solid var(--tp-primary); outline-offset: 1px; box-shadow: none;
-}
-/* 没有真实项目时，selector 是**同一个 compact 控件**的中性态：文案变成
-   「未选择项目」，而不是一块大面积虚线卡片——虚线 + 46px 高度会被读成"这里
-   还有一个待填的容器"，反而比实心紧凑态更抢眼。 */
-.st-key-current_project:has(.tp-nav-empty) [class*="st-key-current_project_selector"] .stButton button {
- min-height: 46px; border: 1px solid var(--tp-sidebar-line);
- background: var(--tp-surface); color: var(--tp-sub);
- font-size: 12.5px; font-weight: 550;
-}
-.st-key-current_project:has(.tp-nav-empty) [class*="st-key-current_project_selector"] .stButton button:hover {
- background: var(--tp-tint-hover); border-color: #c8d4e4; color: var(--tp-ink);
-}
-.st-key-current_project:has(.tp-nav-empty) [class*="st-key-current_project_selector"] .stButton button [data-testid="stIconMaterial"] {
- color: #7c8799;
-}
-/* 展开中：触发器只把边框染成 primary 的浅调，指向它下面的面板；不给填充蓝。 */
-.st-key-current_project:has(.tp-nav-open) [class*="st-key-current_project_selector"] .stButton button {
- border-color: #c8dcff; background: var(--tp-tint-hover);
-}
-[class*="st-key-current_project_selector"] .stButton button > div { min-width: 0; width: 100%; }
-[class*="st-key-current_project_selector"] .stButton button p {
- overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap;
- /* 同上：markdown 容器自带 14px 且不继承，必须显式写回（并压过它的 `!important`）。 */
- font-size: 12.5px !important; line-height: 1.4 !important;
-}
-/* 图标适度缩小：它是"这是一个选择器"的提示，不该和 CTA 的图标抢重量。 */
-[class*="st-key-current_project_selector"] .stButton button [data-testid="stIconMaterial"] {
- flex: 0 0 16px; font-size: 18px; color: var(--tp-primary);
-}
-/* ---------- 侧栏「项目」分组：可点击的标题 + 上下文 selector ----------
-   Project Context（我此刻在哪个项目里工作）与 Project Center（我拥有哪些项目）
-   在认知上同属 Project，因此必须在侧栏里是**同一个分组**：同一个标题、同一个
-   容器、上下相邻，中间不再插分隔线。但它们是主次而不是并列：
+   两条硬规则：
+   ① **组内小间距、组间大间距**：8 / 20 / 28 就是全部来源；同组内部只在容器上留
+      一个 gap，不再有散落的 margin-top（散落 margin 正是上一版三个元素各自漂浮的根因）。
+   ② **New Task / Project Switcher / History / Terminology 共用同一条左右栅格**：
+      行宽 100% + 同一个 padding-inline + 同一个 24px 图标列 + 12px 图标文字间距，
+      所以四行的文字永远落在同一条纵线上。
 
-   1. 分组标题「项目」**本身就是 Project Center 的入口**：Project Center 就是
-      "所有项目"这一层，把它降成标题下面一个独立行，等于让同一件事在同一个分组里
-      出现两次，还让它去和 selector 争同一块视觉重量。所以管理入口收敛到标题上，
-      做成一个**轻量 header affordance**（右侧一个小 chevron），而不是一颗按钮卡；
-   2. 上下文 selector 是**主控件**：填充底 + 42px + 650 字重，回答"我在哪"，
-      并且是全局唯一的上下文来源。
-
-   三种错误都被这一层排除了：同组同级会被读成两个等价入口；拆到两个分组会被读成
-   两套系统；标题与独立入口各说一遍同一件事则是本轮收敛掉的重复。 */
-.st-key-project_nav_group { margin: 0 !important; }
-.st-key-project_nav_group > [data-testid="stVerticalBlock"] { gap: 4px; }
-/* 标题按钮与 `.tp-nav-label`（「工作区」那种纯标题）**刻意保持同一套字型**：
-   读者不该因为"这个能点"就把它读成一个控件。差别只在 hover 与右侧 chevron。 */
-/* 与「工作区」这类纯标题共用**同一条水平基线**：同样的上下 margin、同样的字号字重、
-   同样的 line-height（12 × 1.4 ≈ 17px），所以两者的文字落在同一条基线上。
-   读者不该因为"这个能点"就把它读成一级大导航。 */
-[class*="st-key-project_section_header"] { margin: 18px 0 6px !important; }
-/* 带 `help=` 的按钮会被 Streamlit 包进 tooltip span，`button` 不是 `.stButton`
-   的直接子元素，因此这里同样必须用后代选择器。 */
+   这里的 `!important` 不是"叠样式"，而是**顺序决定的必要声明**：`themes.SHARED_CSS`
+   在整份样式表之后注入，把侧栏里所有 secondary 按钮的底色 / 边框钉成透明（那条是
+   `:where()`，权重为 0，但带 !important）。侧栏控件要在它之后仍然成立，只能显式
+   声明优先级 —— 这是整张表里唯一必须写 `!important` 的地方。 */
+[data-testid="stSidebar"] {
+ --sidebar-gap-row:4px;         /* 同组内两行导航之间 */
+ --sidebar-gap-label:8px;       /* section label → 它下面的控件 */
+ --sidebar-gap-group:20px;      /* 一个组 → 下一个组 */
+ --sidebar-gap-section:28px;    /* Logo / New Task 之间的段间距 */
+ --sidebar-row-height:48px;     /* 导航行：normal 与 selected 完全同高 */
+ --sidebar-switcher-height:46px;
+ --sidebar-row-inset:14px;      /* 行内左右留白（四个控件共用） */
+ --sidebar-row-radius:11px;
+ --sidebar-icon-slot:24px;      /* 图标列宽（四个控件共用） */
+ --sidebar-icon-size:20px;      /* 字形大小：列宽 24px 里放 20px 字形 */
+ --sidebar-icon-gap:12px;       /* 图标列 → 文字列 */
+ --sidebar-gap-panel:6px;       /* selector 与它展开的面板之间 */
+}
+/* Only the upper navigation rhythm changes; Utility Bar retains its own layout. */
+[data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] {
+ gap:0 !important;
+}
+[data-testid="stSidebarContent"] [data-testid="stMarkdownContainer"]:has(.tp-brand) {
+ margin-bottom:var(--sidebar-gap-section) !important;
+}
+.tp-brand { padding:16px 10px 0; margin: 0; }
+:is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project) { margin: 0 0 var(--sidebar-gap-section) !important; }
+/* ---- 四个控件共用的**一条左右栅格** ----
+   行宽 / 行内留白 / 图标列 / 文字列只在这里定义一次。控件之间只允许差在
+   "surface 与高度"上，不再允许各自写一套 padding —— 那正是"每行文字起点都不同"
+   的成因。 */
+[data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project, .st-key-library_nav,
+ [class*="st-key-current_project_selector"]) .stButton button {
+ width:100%; box-sizing:border-box; margin: 0; padding:0 var(--sidebar-row-inset);
+ border-radius: var(--sidebar-row-radius);
+ text-align:start; justify-content: flex-start; box-shadow: none;
+}
+[data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project, .st-key-library_nav,
+ [class*="st-key-current_project_selector"]) button > div {
+ flex: 1 1 auto; width:100%; min-width:0;
+}
+[data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project, .st-key-library_nav,
+ [class*="st-key-current_project_selector"]) button > div > span {
+ display:flex; align-items:center; width:100%; min-width:0; gap:var(--sidebar-icon-gap);
+}
+/* 图标列：宽 24px、字形 20px 居中。`:has()` 只命中**真的有图标**的行，所以没有
+   图标的「项目」标题不会被误判成一行带图标的内容。 */
+[data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project, .st-key-library_nav,
+ [class*="st-key-current_project_selector"]) button > div > span > span:first-child:has([data-testid="stIconMaterial"]) {
+ flex: 0 0 var(--sidebar-icon-slot); width:var(--sidebar-icon-slot);
+ display:inline-flex; align-items:center; justify-content:center;
+}
+[data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project, .st-key-library_nav,
+ [class*="st-key-current_project_selector"]) button [data-testid="stIconMaterial"] {
+ width:var(--sidebar-icon-slot); flex: 0 0 var(--sidebar-icon-slot);
+ font-size: var(--sidebar-icon-size); line-height:1; margin: 0; color: var(--tp-sub);
+}
+[data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project, .st-key-library_nav,
+ [class*="st-key-current_project_selector"]) button [data-testid="stMarkdownContainer"] {
+ flex: 1 1 auto; min-width:0;
+}
+[data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+ .st-key-new_task_action_in_project, .st-key-library_nav,
+ [class*="st-key-current_project_selector"]) button p {
+ margin: 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+ /* Streamlit 的 markdown 容器**不继承**按钮字号（自己写死 14px），所以标签字号
+    必须在这里显式钉住，否则按钮写的 13px 是无效的。 */
+ font-size: 14px !important; line-height:1.4 !important;
+}
+/* ---- New Task：filled action surface（侧栏唯一的主色填充） ----
+   它是**动作**，不是导航：实心 accent + on-accent 文字，权重高于任何一行导航。
+   进入页面级 CTA 的场景（新建流程内 / 项目详情）退成次级：无填充、一条 hairline。 */
+.st-key-new_task_action .stButton > button {
+ height: var(--sidebar-switcher-height); min-height: var(--sidebar-switcher-height);
+ border: 1px solid var(--tp-primary) !important; background: var(--tp-primary) !important;
+ color: var(--tp-on-accent) !important; font-size: 14px; font-weight: 650;
+}
+.st-key-new_task_action .stButton > button:hover {
+ background: var(--tp-primary-hover) !important; border-color: var(--tp-primary-hover) !important;
+ color: var(--tp-on-accent) !important;
+}
+.st-key-new_task_action .stButton > button:active { background: var(--tp-primary-active) !important; }
+.st-key-new_task_action_in_flow .stButton > button {
+ height: 40px; min-height: 40px;
+ border: 1px solid var(--tp-line) !important; background: transparent !important;
+ color: var(--tp-ink) !important; font-size: 14px; font-weight: 550;
+}
+.st-key-new_task_action_in_flow .stButton > button:hover {
+ background: var(--tp-tint-hover) !important; border-color: var(--tp-faint) !important;
+ color: var(--tp-ink) !important;
+}
+.st-key-new_task_action_in_flow .stButton > button:active {
+ background: var(--tp-surface-sunken) !important; border-color: var(--tp-faint) !important;
+}
+/* 进入 Project Detail 后，页面级 Primary CTA 属于 Header 的「+ 新建任务」；
+   侧栏这一颗必须退成 secondary，不跟它抢层级（动作仍然是同一个）。 */
+.st-key-new_task_action_in_project .stButton > button {
+ height: 40px; min-height: 40px;
+ border: 1px solid var(--tp-line) !important; background: transparent !important;
+ color: var(--tp-ink) !important; font-size: 14px; font-weight: 550;
+}
+.st-key-new_task_action_in_project .stButton > button:hover {
+ background: var(--tp-tint-hover) !important; border-color: var(--tp-faint) !important;
+ color: var(--tp-ink) !important;
+}
+.st-key-new_task_action_in_project .stButton > button:active {
+ background: var(--tp-surface-sunken) !important; border-color: var(--tp-faint) !important;
+}
+/* ---- 核心导航：**同一个组件**的三态 ----
+   normal / hover / selected 只差底色与字色。height / width / padding / margin /
+   border 一律相同 —— selected 绝不会变成一张更大的卡片。 */
+[data-testid="stSidebar"] .st-key-library_nav { gap:var(--sidebar-gap-row) !important; }
+[data-testid="stSidebar"] .st-key-library_nav .stButton button {
+ height: var(--sidebar-row-height); min-height: var(--sidebar-row-height);
+ border: 1px solid transparent; background: transparent;
+ /* 三级层次靠字色也读得出来：normal(sub) < selected(brand-ink)，底色只管"你在这里"。
+    `!important` 是必要的：SHARED_CSS 的 `:where()` 把侧栏 secondary 按钮的字色钉成
+    ink（0 权重 + !important），不显式声明优先级的话 normal 会和 selected 一样深。 */
+ color: var(--tp-sub) !important; font-size: 14px; font-weight: 400;
+}
+[data-testid="stSidebar"] .st-key-library_nav .stButton button:hover {
+ background: var(--tp-tint-hover) !important; border-color: transparent !important;
+ color: var(--tp-ink);
+}
+[data-testid="stSidebar"] .st-key-library_nav .stButton button[kind="primary"] {
+ /* 比 New Task 的实心 accent **弱得多**的一层 tint：只是"你在这里"，不是动作。 */
+ background: var(--tp-tint-active) !important; border-color: transparent !important;
+ color: var(--tp-brand-ink) !important; font-weight: 500;
+}
+/* ---- 「项目」：section label，不是第二个入口 ----
+   它仍然是 Project Center 的入口（点它进列表页、tooltip 说明能力），但**不挂
+   chevron**：`项目 ›` 与紧邻的 selector 会被读成两个并列入口。affordance 只用
+   文字本身表达：hover 升到 ink + 下划线。 */
+.st-key-project_nav_group {
+ margin: 0 0 var(--sidebar-gap-group) !important;
+ gap:var(--sidebar-gap-label) !important;
+}
+[class*="st-key-project_section_header"] { margin: 0 !important; }
 [class*="st-key-project_section_header"] .stButton button {
- display: flex; align-items: center; justify-content: flex-start;
- min-height: 17px; height: 17px; margin: 0; padding: 0;
+ display:flex; align-items:center; justify-content: flex-start;
+ min-height: 24px; height: 24px; margin: 0; padding:0;
  border: 0; border-radius: 6px; background: transparent;
- color: #7c8799; cursor: pointer;
- font-size: 12px; font-weight: 500; letter-spacing: 0; line-height: 1.4;
- text-align: left;
+ /* 结构标签的对比度必须**显式**低于导航：SHARED_CSS 的 `:where()` 把侧栏 secondary
+    按钮的字色钉成 ink（0 权重 + !important），不写 !important 的话「项目」会和
+    「历史任务」一样深，又变成一行正文。 */
+ color: var(--tp-faint) !important;
+ font-size: 13px; font-weight: 600; text-align:start; cursor: pointer;
 }
 [class*="st-key-project_section_header"] .stButton button:hover {
- border: 0; background: transparent; color: #202a3a;
+ color: var(--tp-ink) !important; background: transparent;
 }
-/* hover 只给**轻微变色 + 标题下划线 + chevron 右移**：一律不加卡片底，标题的视觉
-   权重必须低于 selector。下划线只给 `p`（标题文字），不给 `::after`（chevron）。 */
 [class*="st-key-project_section_header"] .stButton button:hover p {
- text-decoration: underline; text-decoration-thickness: 1px;
- text-underline-offset: 2px;
+ text-decoration:underline; text-underline-offset:2px;
 }
-[class*="st-key-project_section_header"] .stButton button:focus-visible {
- outline: 2px solid var(--tp-primary); outline-offset: 1px;
-}
-/* 内容**不撑满整行**：`flex: 1` 会把 chevron 顶到侧栏最右，那是"还有下一级的导航
-   列表项"的语法，会让标题被读成一级大导航。这里让内容 hug 文字，chevron 紧跟其后。
-   点击区域仍然是整行（按钮本身是 stretch 宽）。 */
 [class*="st-key-project_section_header"] .stButton button > div {
- flex: 0 0 auto; min-width: 0; width: auto;
+ flex: 1 1 auto; min-width:0; width:100%;
+}
+/* 标题没有图标列，所以它不参与"图标 + 文字"的栅格；但内容仍然必须**左对齐**：
+   Streamlit 的按钮内层是 `justify-content: center`，不显式拉直的话，一个短标题
+   会漂到行中央（这就是「项目」看起来不像 section label 的原因）。 */
+[class*="st-key-project_section_header"] .stButton button > div > span {
+ display:flex; align-items:center; justify-content:flex-start;
+ width:100%; min-width:0;
 }
 [class*="st-key-project_section_header"] .stButton button p {
- overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap;
- /* Streamlit 给 button 里的 markdown 容器打了正文级 14px，且**不继承**按钮字号
-    （所以 `font-size: inherit` 在这里拿到的还是 14px）。不显式写回 12px，标题会比
-    「工作区」大一号，还会在 17px 的行盒里溢出。`!important` 是必需的：Streamlit
-    的 markdown 容器规则带了它。 */
- font-size: 12px !important; line-height: 1.4 !important;
+ margin: 0; font-size: 13px !important; line-height: 1.4 !important;
 }
-/* 右侧 chevron 是这个标题**唯一**的导航 affordance：极小、低对比，hover 才升到
-   primary 并向右轻移。它绝不能长成按钮卡片——标题的视觉权重必须低于 selector，
-   也不该贴到侧栏最右（那是"列表项有下一级"的语法，会把标题抬成一级大导航）。 */
-[class*="st-key-project_section_header"] .stButton button::after {
- content: "›"; flex: 0 0 auto; margin-left: 3px;
- color: #c3cbd8; font-size: 13px; font-weight: 600; line-height: 1;
- transition: color .12s ease, transform .12s ease;
-}
-[class*="st-key-project_section_header"] .stButton button:hover::after {
- color: var(--tp-primary); transform: translateX(2px);
-}
-/* `.tp-nav-current` 是**空的语义标记**（与 `.tp-nav-empty` 同一套路）：CSS 用它把
-   标题切成"当前页"态——文字升到 ink、chevron 上色。刻意不复用 `--tp-primary-soft`：
-   那个填充底是 selector"已进入某个项目"的语法，两者同时出现会被读成两个等价入口。 */
-.tp-nav-current { display: none; }
-[class*="st-key-project_section_header"] [data-testid="stElementContainer"]:has(.tp-nav-current) {
- display: none;
+.tp-nav-current { display:none; }
+[class*="st-key-project_section_header"] [data-testid="stElementContainer"]:has(.tp-nav-current),
+.st-key-current_project > [data-testid="stElementContainer"]:has(:is(.tp-nav-empty, .tp-nav-open)) {
+ display:none;
 }
 [class*="st-key-project_section_header"]:has(.tp-nav-current) .stButton button {
- color: var(--tp-brand-ink);
+ color: var(--tp-ink);
 }
-[class*="st-key-project_section_header"]:has(.tp-nav-current) .stButton button::after {
- color: var(--tp-primary);
+/* ---- Project Switcher：**完整的控件**，不是一行裸文字 ----
+   它是 context selector（输入类 affordance），所以有 surface + 一条 hairline；
+   导航行没有边框。这**两类 affordance 不能混**：
+
+       Project Switcher = bordered control
+       Navigation       = borderless navigation row
+
+   三件事同时成立，用户才读得出"这里能点开"：① 满宽 + 固定 46px 高；
+   ② 极轻的 surface + 1px hairline；③ 最右侧一个 chevron（folder 只表达 project，
+   打开这件事只有 chevron 才表达）。内部固定成
+   `[icon 24px] [label flex:1] [chevron]`，绝不居中 —— 居中会让整行的文字起点
+   和下面两行导航错开。 */
+.st-key-current_project { margin: 0 !important; gap:var(--sidebar-gap-panel) !important; }
+[class*="st-key-current_project_selector"] .stButton button {
+ height: var(--sidebar-switcher-height); min-height: var(--sidebar-switcher-height);
+ width:100%; box-sizing:border-box; padding:0 var(--sidebar-row-inset);
+ border: 1px solid var(--tp-line) !important; border-radius: var(--sidebar-row-radius);
+ background: var(--tp-surface) !important; color: var(--tp-ink) !important;
+ font-size: 13px; font-weight: 500; text-align:start; justify-content: flex-start;
+ box-shadow: none;
+}
+[class*="st-key-current_project_selector"] .stButton button p {
+ font-size: 13px !important;
+}
+/* hover：只把面和边稍微压深一档，不换语言（不是 Primary Action）。 */
+[class*="st-key-current_project_selector"] .stButton button:hover {
+ background: var(--tp-tint-hover) !important; border-color: var(--tp-border-strong) !important;
+}
+/* 未选中：**同一个控件**的中性态，只降文字与图标的对比度，几何完全不变
+   （height / padding 一条都不写，避免"空态是另一种控件"）。 */
+.st-key-current_project:has(.tp-nav-empty) [class*="st-key-current_project_selector"] .stButton button {
+ color: var(--tp-sub) !important;
+}
+/* 展开中：soft accent 面 + accent-subtle 边框；不是亮蓝粗框，也没有左侧竖条。 */
+.st-key-current_project:has(.tp-nav-open) [class*="st-key-current_project_selector"] .stButton button {
+ background: var(--tp-tint-active) !important; border-color: var(--tp-border) !important;
+}
+/* 右侧 chevron：`▾` 始终贴最右（label 已经 flex:1，所以它天然靠右）。 */
+[class*="st-key-current_project_selector"] .stButton button::after {
+ content:"▾"; margin-inline-start:var(--sidebar-icon-gap); flex: 0 0 auto;
+ color: var(--tp-sub); font-size: 11px; line-height:1;
+}
+.st-key-current_project:has(.tp-nav-open) [class*="st-key-current_project_selector"] .stButton button::after {
+ transform:rotate(180deg);
+}
+[class*="st-key-current_project_selector"] .stButton button:focus-visible {
+ outline: 2px solid var(--tp-primary); outline-offset:2px; box-shadow: none;
 }
 /* ---------- 新建任务的「项目上下文」context block ----------
    它回答的是"这个任务会落在哪里"，不是"我拥有哪个项目"。因此：
@@ -561,7 +857,7 @@ hr { border-color: var(--tp-line); }
  overflow-x: hidden;
  margin: 4px 0 2px !important; padding: 8px 8px 6px;
  border: 1px solid var(--tp-hairline-strong); border-radius: 12px;
- background: var(--tp-surface); box-shadow: 0 8px 20px rgba(15, 35, 70, .07);
+ background: var(--tp-surface); box-shadow: var(--tp-shadow-md);
 }
 [class*="switcher_panel"][data-testid="stVerticalBlock"],
 [class*="switcher_panel"] [data-testid="stVerticalBlock"] { min-width: 0; }
@@ -639,7 +935,7 @@ hr { border-color: var(--tp-line); }
 }
 [class*="switcher_row_"]:focus-within .tp-switch-row {
  background: var(--tp-tint-hover);
- outline: 2px solid var(--tp-focus-ring);
+ outline: 2px solid var(--tp-primary);
  outline-offset: 2px;
 }
 /* 透明点击层：铺满整行，让"名称 / 空白 / 计数"是同一条点击路径。 */
@@ -871,29 +1167,30 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
  box-shadow: none; transition: border-color .15s ease, background .15s ease, color .15s ease;
 }
 .stButton > button:hover, [data-testid="stDownloadButton"] > button:hover {
- border-color: #c9d2df; color: #202a3a; background: #f7f9fc;
+ border-color: var(--tp-border-strong); color: var(--tp-ink); background: var(--tp-tint-hover);
 }
 .stButton > button[kind="primary"],
 button[data-testid="stBaseButton-primary"] {
- background: var(--tp-primary); border: 1px solid var(--tp-primary); color: #fff;
+ background: var(--tp-primary); border: 1px solid var(--tp-primary); color: var(--tp-on-accent);
  border-radius: 9px; box-shadow: none;
 }
 .stButton > button[kind="primary"]:hover,
 button[data-testid="stBaseButton-primary"]:hover {
- background: var(--tp-primary-hover); border-color: var(--tp-primary-hover); color: #fff;
+ background: var(--tp-primary-hover); border-color: var(--tp-primary-hover); color: var(--tp-on-accent);
 }
 .stButton > button[kind="primary"]:active,
 button[data-testid="stBaseButton-primary"]:active {
- background: var(--tp-primary-active); border-color: var(--tp-primary-active); color: #fff;
+ background: var(--tp-primary-active); border-color: var(--tp-primary-active); color: var(--tp-on-accent);
 }
 .stButton > button:disabled,
 button[data-testid="stBaseButton-primary"]:disabled {
  opacity: 1; cursor: not-allowed; box-shadow: none;
- background: #d9e5f6 !important; border-color: #d9e5f6 !important; color: #8ca2c0 !important;
+ background: var(--tp-disabled-bg) !important; border-color: var(--tp-disabled-bg) !important;
+ color: var(--tp-disabled-ink) !important;
 }
 .stButton button:focus-visible, [data-testid="stDownloadButton"] button:focus-visible,
 button[data-baseweb="tab"]:focus-visible, summary:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important;
+ outline: 3px solid var(--tp-primary) !important;
  outline-offset: 2px;
 }
 
@@ -975,7 +1272,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stTextArea"] textarea {
- border-radius: var(--tp-radius-md) !important; border-color: #dce2ea !important;
+ border-radius: var(--tp-radius-md) !important; border-color: var(--tp-line) !important;
  background: var(--tp-surface) !important; color: var(--tp-ink) !important;
  caret-color: var(--tp-ink) !important;
 }
@@ -989,12 +1286,12 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
 [data-testid="stTextInput"] input:focus,
 [data-testid="stNumberInput"] input:focus,
 [data-testid="stTextArea"] textarea:focus {
- border-color: #69a7f8 !important;
- box-shadow: 0 0 0 3px rgba(18,103,232,.14) !important;
+ border-color: var(--tp-primary) !important;
+ box-shadow: 0 0 0 3px var(--tp-focus-halo) !important;
 }
 .stSelectbox .react-aria-ComboBox > div {
  min-height: 44px; border-radius: var(--tp-radius-md) !important;
- border: 1px solid #dce2ea !important;
+ border: 1px solid var(--tp-line) !important;
  background: var(--tp-surface) !important; color: var(--tp-ink) !important;
  box-shadow: none !important;
 }
@@ -1013,12 +1310,12 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  color: var(--tp-ink) !important; fill: currentColor !important; visibility: visible !important;
 }
 [data-baseweb="select"] > div:focus-within {
- border-color: #69a7f8 !important;
- box-shadow: 0 0 0 3px rgba(18,103,232,.14) !important;
+ border-color: var(--tp-primary) !important;
+ box-shadow: 0 0 0 3px var(--tp-focus-halo) !important;
 }
 .stSelectbox .react-aria-ComboBox > div:focus-within {
- border-color: #69a7f8 !important;
- box-shadow: 0 0 0 3px rgba(18,103,232,.14) !important;
+ border-color: var(--tp-primary) !important;
+ box-shadow: 0 0 0 3px var(--tp-focus-halo) !important;
 }
 [role="listbox"] {
  background: var(--tp-surface) !important; color: var(--tp-ink) !important;
@@ -1079,7 +1376,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
 }
 .st-key-source_documents [data-testid="stFileUploaderDropzone"]:focus-within {
  border-color: var(--tp-primary); background: var(--tp-primary-soft);
- box-shadow: inset 0 0 0 1px rgba(18,103,232,.08), 0 0 0 3px rgba(18,103,232,.14);
+ box-shadow: inset 0 0 0 1px var(--tp-focus-halo), 0 0 0 3px var(--tp-focus-halo);
 }
 .st-key-source_documents:has([data-testid="stFileChip"]) .tp-upload-copy {
  display: none !important;
@@ -1223,11 +1520,11 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
 .st-key-task_action_bar {
  /* margin-top 保证最后一个控件与操作栏之间始终有间距 */
  margin: 48px 0 0; padding: 15px 0; min-height: var(--action-bar-height);
- border-top: 1px solid #e3e8ef; background: rgba(247,248,250,.96);
+ border-top: 1px solid var(--tp-hairline-strong); background: var(--tp-overlay-veil);
  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 .st-key-task_action_bar [data-testid="stHorizontalBlock"] { align-items: center; }
-.tp-autosave { color: #667085; font-size: 12px; }
+.tp-autosave { color: var(--tp-sub); font-size: 12px; }
 .tp-autosave.is-saved { color: var(--tp-success); }
 .st-key-task_action_bar button[data-testid="stBaseButton-primary"] {
  min-width: 180px; min-height: 48px; height: 48px;
@@ -1237,27 +1534,9 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
 .st-key-task_action_bar button[data-testid="stBaseButton-secondary"] {
  min-height: 48px; height: 48px; border-radius: 9px; font-size: 15px; font-weight: 500;
 }
-.st-key-library_nav .stButton > button {
- display: flex; align-items: center; justify-content: flex-start;
- min-height: 48px; height: 48px; gap: 14px; padding-inline: 10px;
- border-radius: var(--tp-radius-md); color: #536176; font-size: 14px;
- font-weight: 400; text-align: left;
-}
-.st-key-library_nav .stButton > button > div { width: 100%; }
-.st-key-library_nav .stButton > button [data-testid="stIconMaterial"] { flex: 0 0 18px; }
-.st-key-library_nav .stButton > button [data-testid="stMarkdownContainer"] { flex: 1 1 auto; min-width: 0; }
-.st-key-library_nav .stButton > button > div > span {
- display: grid; grid-template-columns: 18px minmax(0,1fr); column-gap: 14px;
- align-items: center; width: 100%;
-}
-.st-key-library_nav .stButton > button [data-testid="stIconMaterial"] {
- width: 18px; margin: 0; color: #667085; font-size: 18px;
-}
-.st-key-library_nav .stButton > button:hover { background: #f6f8fb; color: #202a3a; }
-.st-key-library_nav .stButton > button[kind="primary"] {
- background: var(--tp-primary-soft); color: var(--tp-brand-ink); font-weight: 500;
-}
-.st-key-library_nav .stButton > button p { margin: 0; }
+/* 侧栏核心导航行的几何（高度 / 行内留白 / 图标列 / 三态底色）统一在
+   `Sidebar rhythm and project context` 一节里定义；这里原来那份 `.st-key-library_nav`
+   副本已删除 —— 同一条行由两处规则决定，正是"选中态突然变高"的成因。 */
 /* ---------- Translation strategy ---------- */
 .st-key-preset_cards { margin-top: 0; }
 .st-key-preset_cards [data-testid="stHorizontalBlock"] { align-items: stretch; gap: 12px; }
@@ -1424,7 +1703,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  pointer-events: auto !important;
 }
 [class*="st-key-preset_card_"] .stButton > button:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important; outline-offset: 2px;
+ outline: 3px solid var(--tp-primary) !important; outline-offset: 2px;
 }
 /* 项目卡片：整卡可点，进入 Project Overview。与预设卡同一套覆盖层手法。
    下面这条规则**只声明 `position: relative`**：它是紧随其后的 `.stButton` 绝对
@@ -1456,7 +1735,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  width: 100% !important; height: 100% !important; display: block !important;
 }
 [class*="st-key-project_row_"] .stButton button:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important; outline-offset: 2px;
+ outline: 3px solid var(--tp-primary) !important; outline-offset: 2px;
 }
 /* ---- Project 管理页 / 项目详情 ----
    卡片 = 一眼看清"这个项目现在在做什么"。它只有**三个区**，中间用留白而不是
@@ -1485,7 +1764,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  border-radius: 999px; font-size: 11.5px; font-weight: 500; line-height: 1;
  background: #eef2f7; color: #475467; border: 1px solid transparent;
 }
-.tp-chip.is-system { background: #eef4ff; color: #1d4ed8; border-color: #d6e2ff; }
+.tp-chip.is-system { background: var(--tp-primary-soft); color: var(--tp-primary); border-color: var(--tp-border); }
 .tp-chip.is-archived { background: #f4f5f7; color: #667085; border-color: #e4e7ec; }
 .tp-chip.is-empty { background: #fff7ed; color: #b45309; border-color: #fde3c0; }
 .tp-pcard-row {
@@ -1623,7 +1902,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  width: 100% !important; height: 100% !important; display: block !important;
 }
 .st-key-project_uncategorized .stButton button:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important; outline-offset: 2px;
+ outline: 3px solid var(--tp-primary) !important; outline-offset: 2px;
 }
 .tp-uncat { display: flex; align-items: center; gap: 12px; min-width: 0; }
 /* 图标是**系统图标**：中性 sunken 底 + 灰字形，不用项目的 primary 蓝——
@@ -1869,7 +2148,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  color: var(--tp-primary-hover);
 }
 .st-key-project_section [class*="st-key-project_empty_cta_"] .stButton button:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important; outline-offset: 2px;
+ outline: 3px solid var(--tp-primary) !important; outline-offset: 2px;
 }
 .st-key-project_section [class*="st-key-project_empty_cta_"] .stButton button [data-testid="stIconMaterial"] {
  font-size: 15px;
@@ -1902,7 +2181,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  color: var(--tp-primary-hover);
 }
 .st-key-project_section [class*="st-key-project_view_cta_"] .stButton button:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important; outline-offset: 2px;
+ outline: 3px solid var(--tp-primary) !important; outline-offset: 2px;
 }
 .st-key-project_section [class*="st-key-project_view_cta_"] .stButton button [data-testid="stIconMaterial"] {
  font-size: 15px;
@@ -2039,7 +2318,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
 }
 [class*="st-key-inbox_row_"] .stButton button:focus-visible,
 [class*="st-key-projrow_"] .stButton button:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important; outline-offset: 2px;
+ outline: 3px solid var(--tp-primary) !important; outline-offset: 2px;
 }
 .tp-taskrow { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .tp-taskrow-head { display: flex; align-items: baseline; justify-content: space-between; padding-right: 34px; min-width: 0; }
@@ -2059,7 +2338,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
  display: inline-flex; align-items: center; gap: 6px;
 }
 .tp-taskrow-meta.is-success { color: #027a48; }
-.tp-taskrow-meta.is-info { color: #1d4ed8; }
+.tp-taskrow-meta.is-info { color: var(--tp-primary); }
 .tp-taskrow-meta.is-danger { color: #b42318; }
 .tp-taskrow-meta.is-warning { color: #b54708; }
 .tp-taskrow-meta.is-neutral { color: #667085; }
@@ -2159,7 +2438,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: non
 .tp-project-badge {
  display: inline-flex; align-items: center; height: 22px; padding: 0 9px;
  border-radius: 999px; font-size: 11.5px; font-weight: 600;
- background: #eef4ff; color: #1d4ed8; border: 1px solid #d6e2ff;
+ background: var(--tp-primary-soft); color: var(--tp-primary); border: 1px solid var(--tp-border);
 }
 .tp-project-badge.is-archived {
  background: #f2f4f7; color: #667085; border-color: #e4e7ec;
@@ -2539,7 +2818,7 @@ div[data-testid="stPopoverBody"]:has([class*="st-key-pd_menu_body"]) {
 }
 .st-key-strategy_advanced:has(.stButton > button:hover) .tp-advanced-trigger { background: #f8fafc; }
 .st-key-strategy_advanced .stButton > button:focus-visible {
- outline: 3px solid var(--tp-focus-ring) !important; outline-offset: -3px;
+ outline: 3px solid var(--tp-primary) !important; outline-offset: -3px;
 }
 .tp-strategy-state {
  padding: 0; margin: 0 0 22px;
@@ -2613,11 +2892,11 @@ div[data-testid="stPopoverBody"]:has([class*="st-key-pd_menu_body"]) {
 .st-key-output_options [data-testid="stToggle"] [role="switch"],
 .st-key-academic_output_options [data-testid="stToggle"] [role="switch"] {
  width: 36px !important; min-width: 36px !important; height: 20px !important;
- background: #c6ceda !important; border-color: #c6ceda !important;
+ background: var(--tp-border-strong) !important; border-color: var(--tp-border-strong) !important;
 }
 label:has(input[role="switch"]) > div:first-of-type {
  width: 36px !important; min-width: 36px !important; height: 20px !important;
- background: #c6ceda !important; border-color: #c6ceda !important;
+ background: var(--tp-border-strong) !important; border-color: var(--tp-border-strong) !important;
 }
 label:has(input[role="switch"]) > div:first-of-type > div {
  width: 16px !important; height: 16px !important;
@@ -2626,7 +2905,7 @@ label[data-selected="true"]:has(input[role="switch"]) > div:first-of-type {
  background: var(--tp-primary) !important; border-color: var(--tp-primary) !important;
 }
 label:has(input[type="checkbox"]:not([role="switch"])) > div:first-of-type {
- background: var(--tp-surface) !important; border-color: #98a2b3 !important;
+ background: var(--tp-surface) !important; border-color: var(--tp-faint) !important;
 }
 label[data-selected="true"]:has(input[type="checkbox"]:not([role="switch"])) > div:first-of-type {
  background: var(--tp-primary) !important; border-color: var(--tp-primary) !important;
@@ -2666,7 +2945,7 @@ label:has(input[type="checkbox"]:not([role="switch"]):focus-visible) > div:first
 }
 .st-key-strategy_advanced [data-testid="stCheckbox"] label[data-selected="true"] svg,
 .st-key-output_options [data-testid="stCheckbox"] label[data-selected="true"] svg {
- stroke: #fff !important;
+ stroke: var(--tp-on-accent) !important;
 }
 .st-key-output_options [data-testid="stCaptionContainer"] {
  margin: -8px 0 0; color: var(--tp-sub); font-size: 12px;
@@ -2878,13 +3157,13 @@ label:has(input[type="checkbox"]:not([role="switch"]):focus-visible) > div:first
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label[data-selected] > div:first-of-type,
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label:has(input:checked) > div:first-of-type,
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label:has(input[aria-checked="true"]) > div:first-of-type {
- background: var(--tp-primary, #2563eb) !important; border-color: var(--tp-primary, #2563eb) !important;
+ background: var(--tp-primary) !important; border-color: var(--tp-primary) !important;
 }
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label[data-selected="true"] svg,
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label[data-selected] svg,
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label:has(input:checked) svg,
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label:has(input[aria-checked="true"]) svg {
- stroke: #ffffff !important; fill: none !important; width: 12px !important; height: 12px !important;
+ stroke: var(--tp-on-accent) !important; fill: none !important; width: 12px !important; height: 12px !important;
  stroke-width: 2.5px !important; display: block !important; visibility: visible !important;
 }
 [class*="st-key-delivery_row_"] [data-testid="stCheckbox"] label:has(input:focus-visible) > div:first-of-type {
@@ -2900,7 +3179,7 @@ label:has(input[type="checkbox"]:not([role="switch"]):focus-visible) > div:first
  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tp-delivery-title-fmt {
- font-weight: 600; color: var(--tp-primary, #2563eb);
+ font-weight: 600; color: var(--tp-primary);
 }
 .tp-format-badge {
  display: inline-flex; align-items: center; justify-content: center; height: 20px; min-height: 20px;
@@ -3076,6 +3355,18 @@ label:has(input[type="checkbox"]:not([role="switch"]):focus-visible) > div:first
  .tp-brand { padding: 10px 4px; margin-bottom: 12px; }
  .tp-brand-logo { width: 142px; }
  [data-testid="stSidebar"] .stButton > button { min-height: 40px; font-size: 12px; }
+ /* 窄屏下侧栏行整体压一档。侧栏四行的高宽由 `Sidebar rhythm` 一节以更高权重给了
+    值，所以这里的压缩必须写回同一组选择器，否则窄屏会退回 48px。 */
+ [data-testid="stSidebar"] .st-key-library_nav .stButton button,
+ [data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+  .st-key-new_task_action_in_project, [class*="st-key-current_project_selector"]) .stButton button {
+  height: 40px; min-height: 40px;
+ }
+ [data-testid="stSidebar"] .st-key-library_nav .stButton button p,
+ [data-testid="stSidebar"] :is(.st-key-new_task_action, .st-key-new_task_action_in_flow,
+  .st-key-new_task_action_in_project, [class*="st-key-current_project_selector"]) .stButton button p {
+  font-size: 13px !important;
+ }
  [data-testid="stMainBlockContainer"] { width: 100%; padding: 1rem .875rem 3rem; }
  [data-testid="stMainBlockContainer"] {
   width: calc(100% - var(--tp-sidebar-width)); max-width:none;
@@ -3397,7 +3688,7 @@ _WORKSPACE_CSS = """
 .st-key-workspace_nav [class~="st-key-workspace_nav_item_delivery_attention"] button:not([kind="primary"]) {
  color:#a5342a !important; }
 .st-key-workspace_nav [class~="st-key-workspace_nav_item_delivery_active"] button:not([kind="primary"]) {
- color:#1d4ed8 !important; }
+ color:var(--tp-primary) !important; }
 .st-key-workspace_nav [class~="st-key-workspace_nav_item_delivery_attention"] button:not([kind="primary"]) span[data-testid="stIconMaterial"] {
  color:#c0392b !important; }
 .st-key-workspace_nav [class~="st-key-workspace_nav_item_delivery_pending"] button:not([kind="primary"]),
@@ -3482,12 +3773,12 @@ _WORKSPACE_CSS = """
 .tp-version-compare-status.is-warning { background:#fff7e6; color:#8a5a00; }
 .tp-version-compare-status.is-success { background:#eaf8f1; color:#147a4a; }
 .tp-version-technical { margin-top:8px; color:var(--tp-faint); font-size:10px; line-height:1.45; }
-.tp-truth-banner { margin:0 0 18px; padding:14px 16px; border:1px solid #bdd5fb; border-left:4px solid var(--tp-primary); border-radius:10px; background:#f5f9ff; }
+.tp-truth-banner { margin:0 0 18px; padding:14px 16px; border:1px solid #bdd5fb; border-radius:10px; background:#f5f9ff; }
 .tp-truth-banner strong { display:block; color:var(--tp-brand-ink); font-size:14px; }
 .tp-truth-banner p { margin:5px 0 0; color:var(--tp-sub); font-size:12px; line-height:1.55; }
 .tp-truth-banner small { display:block; margin-top:7px; color:#536176; font-size:11px; line-height:1.45; }
 .tp-truth-kicker { display:block; margin-bottom:5px; color:var(--tp-primary); font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
-.tp-transport-alert { margin:12px 0; padding:12px 14px; border:1px solid #efc1bd; border-left:4px solid var(--tp-danger); border-radius:9px; background:#fff7f6; color:#7f1d1d; }
+.tp-transport-alert { margin:12px 0; padding:12px 14px; border:1px solid #efc1bd; border-radius:9px; background:#fff7f6; color:#7f1d1d; }
 .tp-transport-alert strong { display:block; font-size:12px; }
 .tp-transport-alert p { margin:5px 0; color:#7f1d1d; font-size:12px; line-height:1.5; }
 .tp-transport-alert span { color:#9f3d37; font-size:11px; line-height:1.45; }
@@ -3608,19 +3899,14 @@ _WORKSPACE_CSS = """
 }
 [class*="st-key-cat_row_"]:last-child { border-bottom:0; }
 [class*="st-key-cat_row_"]:hover { background:var(--tp-tint-hover); }
-/* Active 段落：整行淡蓝底 + 3px 蓝条。只靠段号胶囊太弱——用户需要"我正在操作
-   哪一段"是整行的感知，而不是一个 18px 的方块。
+/* Active 段落：以整行背景与段号状态标示当前操作的段落。
 
    注意：`.is-active` 落在行内的标记 span 上（那是服务端渲染的，
    不需要把数据再往容器层传一遍）。所以这里必须用 `:has()` 从行容器向下看，
    不能写成 `[class*="st-key-cat_row_"].is-active`——那样永远匹配不到，
-   active 会静默失效（实测就是这样：段号变了、蓝条和底色都没出现）。 */
+   active 会静默失效（实测就是这样：段号变了、底色没出现）。 */
 [class*="st-key-cat_row_"]:has(> [data-testid="stElementContainer"] .is-active) {
  background:var(--tp-tint-active);
-}
-[class*="st-key-cat_row_"]:has(> [data-testid="stElementContainer"] .is-active)::before {
- content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
- background:var(--tp-primary);
 }
 [class*="st-key-cat_row_"]:has(> [data-testid="stElementContainer"] .is-active):hover {
  background:#e8f0ff;
@@ -3823,9 +4109,9 @@ _WORKSPACE_CSS = """
 .tp-issues-summary .is-blocking b { color:#b42318; }
 .tp-issues-summary .is-actionable b { color:var(--tp-warn); }
 .tp-issue-row { margin:10px 0 0; padding:9px 10px; border-radius:8px;
- background:var(--tp-warn-soft); border-left:3px solid var(--tp-warn); }
-.tp-issue-row.is-blocking { background:var(--tp-danger-soft); border-left-color:var(--tp-danger); }
-.tp-issue-row.is-informational { background:var(--tp-canvas-soft); border-left-color:#98a2b3; }
+ background:var(--tp-warn-soft); }
+.tp-issue-row.is-blocking { background:var(--tp-danger-soft); }
+.tp-issue-row.is-informational { background:var(--tp-canvas-soft); }
 .tp-issue-row-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
 .tp-issue-row-head strong { color:var(--tp-ink); font-size:11.5px; font-weight:650;
  line-height:1.4; }
@@ -3854,11 +4140,11 @@ _WORKSPACE_CSS = """
 .tp-review-readiness {
  display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px 24px;
  margin:0 0 12px; padding:16px 18px; border:1px solid #edd39d;
- border-left:4px solid #c47b00; border-radius:12px; background:#fffaf0;
+ border-radius:12px; background:#fffaf0;
 }
-.tp-review-readiness.is-success { border-color:#b8dfcc; border-left-color:var(--tp-success); background:#f3fbf7; }
-.tp-review-readiness.is-danger { border-color:#efc1bd; border-left-color:var(--tp-danger); background:#fff8f7; }
-.tp-review-readiness.is-neutral { border-color:var(--tp-line); border-left-color:#8a94a6; background:#fbfcfe; }
+.tp-review-readiness.is-success { border-color:#b8dfcc; background:#f3fbf7; }
+.tp-review-readiness.is-danger { border-color:#efc1bd; background:#fff8f7; }
+.tp-review-readiness.is-neutral { border-color:var(--tp-line); background:#fbfcfe; }
 .tp-review-readiness > div:first-child > span { color:var(--tp-sub); font-size:10px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
 .tp-review-readiness > div:first-child > strong { display:block; margin-top:4px; color:var(--tp-ink); font-size:19px; line-height:1.3; }
 .tp-review-readiness > div:first-child > p { margin:5px 0 0; max-width:64ch; color:var(--tp-sub); font-size:12px; line-height:1.55; }
@@ -3887,12 +4173,12 @@ _WORKSPACE_CSS = """
 }
 .tp-review-compare-label { margin:18px 0 7px; color:var(--tp-sub); font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }
 .tp-review-compare-text { min-height:160px; padding:14px 15px; border:1px solid var(--tp-line); border-radius:10px; background:#fff; color:var(--tp-ink); font-size:14px; line-height:1.75; white-space:pre-wrap; overflow-wrap:anywhere; }
-.tp-review-suggestion { margin-top:14px; padding:13px 15px; border:1px solid #bfd6fa; border-left:3px solid var(--tp-primary); border-radius:9px; background:#f6f9ff; }
+.tp-review-suggestion { margin-top:14px; padding:13px 15px; border:1px solid #bfd6fa; border-radius:9px; background:#f6f9ff; }
 .tp-review-suggestion span { color:var(--tp-primary); font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
 .tp-review-suggestion p { margin:6px 0 0; color:var(--tp-ink); font-size:14px; line-height:1.7; white-space:pre-wrap; }
 .tp-review-diagnostic-label { margin-top:18px; color:var(--tp-sub); font-size:11px; font-weight:750; letter-spacing:.02em; }
 .tp-review-diagnostic-copy { margin:6px 0 0; color:var(--tp-ink); font-size:14px; line-height:1.7; white-space:pre-wrap; }
-.tp-review-summary { padding:12px 14px; border-left:3px solid #f59e0b; border-radius:0 8px 8px 0; background:#fff9eb; color:#5f4600; }
+.tp-review-summary { padding:12px 14px; border-radius:0 8px 8px 0; background:#fff9eb; color:#5f4600; }
 .tp-review-span { padding:1px 3px; border-radius:3px; background:#fff0bd; box-shadow:inset 0 -1px 0 #e5b93f; }
 .tp-review-location-note { margin:6px 0 0; color:var(--tp-faint); font-size:11px; line-height:1.5; }
 .tp-review-legacy { margin:14px 0; padding:10px 12px; border:1px solid #d9e2ef; border-radius:8px; background:#f8fafc; color:var(--tp-sub); font-size:12px; line-height:1.55; }
@@ -3906,7 +4192,7 @@ _WORKSPACE_CSS = """
 .tp-review-evidence-row b { color:var(--tp-ink); text-align:right; }
 .tp-review-evidence-label { margin-top:16px; color:var(--tp-sub); font-size:11px; font-weight:750; }
 .tp-review-evidence-copy { margin:5px 0 0; color:var(--tp-ink); font-size:12px; line-height:1.65; white-space:pre-wrap; }
-.tp-review-inspector-status { padding:12px 13px; border:1px solid #c9dcfb; border-left:3px solid var(--tp-primary); border-radius:9px; background:#f7faff; }
+.tp-review-inspector-status { padding:12px 13px; border:1px solid #c9dcfb; border-radius:9px; background:#f7faff; }
 .tp-review-inspector-status > span { display:block; color:var(--tp-primary); font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
 .tp-review-inspector-status > strong { display:block; margin-top:4px; color:var(--tp-ink); font-size:14px; }
 .tp-review-inspector-status > p { margin:5px 0 0; color:var(--tp-sub); font-size:11px; line-height:1.5; }
@@ -3924,27 +4210,27 @@ _WORKSPACE_CSS = """
 [class*="st-key-review_primary_action_"] .stButton > button { min-height:38px; white-space:normal; }
 [class*="st-key-review_action_bar_"] {
  position:sticky; top:8px; z-index:4; margin:0 0 14px; padding:8px 10px;
- border:1px solid #c9dcfb; border-radius:10px; background:rgba(248,251,255,.96);
- box-shadow:0 4px 14px rgba(24,55,105,.08); backdrop-filter:blur(7px);
+ border:1px solid var(--tp-glass-border); border-radius:10px; background:var(--tp-surface-glass);
+ box-shadow:0 4px 14px var(--tp-glass-shadow); backdrop-filter:blur(7px);
 }
 [class*="st-key-review_action_bar_"] .stButton > button { min-height:40px; white-space:normal; }
 .tp-queue-item { padding:11px 10px; border-bottom:1px solid var(--tp-line-subtle); }
 .tp-queue-item strong { display:block; color:var(--tp-ink); font-size:13px; line-height:1.4; }
 .tp-queue-item span { display:block; margin-top:4px; color:var(--tp-sub); font-size:11px; line-height:1.35; }
-.tp-queue-item.is-selected { margin:0 -10px; padding-left:20px; border-left:3px solid var(--tp-primary); background:#eef5ff; }
+.tp-queue-item.is-selected { margin:0 -10px; padding-left:20px; background:#eef5ff; }
 .tp-segment-label { color:var(--tp-sub); font-size:12px; font-weight:650; }
-.tp-finding-reason { margin:14px 0; padding:13px 15px; border-left:3px solid #f59e0b; border-radius:0 8px 8px 0; background:#fff9eb; color:#6c4d00; font-size:13px; line-height:1.6; }
+.tp-finding-reason { margin:14px 0; padding:13px 15px; border-radius:0 8px 8px 0; background:#fff9eb; color:#6c4d00; font-size:13px; line-height:1.6; }
 .tp-text-card { min-height:130px; padding:14px; border:1px solid var(--tp-line); border-radius:10px; background:#fbfcfe; }
 .tp-text-card label { display:block; margin-bottom:9px; color:var(--tp-sub); font-size:11px !important; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
 .tp-text-card p { margin:0; color:var(--tp-ink); font-size:14px; line-height:1.7; white-space:pre-wrap; }
 .tp-evidence-card { padding:13px; border:1px solid var(--tp-line); border-radius:10px; background:#fff; }
 .tp-evidence-card p { margin:0; color:var(--tp-sub); font-size:12px; line-height:1.6; }
 .tp-delivery-header { padding:20px 22px; border:1px solid var(--tp-line); border-radius:14px; background:#fff; }
-.tp-risk-acceptance { margin:18px 0 12px; padding:16px 17px; border:1px solid #efc1bd; border-left:4px solid var(--tp-danger); border-radius:10px; background:#fff8f7; }
+.tp-risk-acceptance { margin:18px 0 12px; padding:16px 17px; border:1px solid #efc1bd; border-radius:10px; background:#fff8f7; }
 .tp-risk-acceptance > span { color:#b42318; font-size:10px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
 .tp-risk-acceptance h3 { margin:4px 0 0; color:#7f1d1d; font-size:18px !important; }
 .tp-risk-acceptance p { margin:6px 0 0; color:#6f3130; font-size:12px; line-height:1.55; }
-.tp-term-focus { margin:0 0 14px; padding:12px 14px; border:1px solid #c9dcfb; border-left:3px solid var(--tp-primary); border-radius:9px; background:#f7faff; }
+.tp-term-focus { margin:0 0 14px; padding:12px 14px; border:1px solid #c9dcfb; border-radius:9px; background:#f7faff; }
 .tp-term-focus span { display:block; color:var(--tp-primary); font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
 .tp-term-focus strong { display:block; margin-top:4px; color:var(--tp-ink); font-size:14px; }
 .tp-term-focus p { margin:4px 0 0; color:var(--tp-sub); font-size:11px; }
@@ -3954,10 +4240,10 @@ _WORKSPACE_CSS = """
 .tp-report-meta-chips { display:flex; flex-wrap:wrap; gap:7px; margin-top:14px; }
 .tp-report-meta-chip { display:inline-flex; align-items:center; gap:5px; padding:5px 9px; border:1px solid var(--tp-line); border-radius:999px; background:#fff; color:var(--tp-sub); font-size:11px; line-height:1.2; }
 .tp-report-meta-chip strong { color:var(--tp-ink); font-weight:700; }
-.tp-report-overall { margin-bottom:14px; padding:18px 20px; border:1px solid #c9dcfb; border-left:4px solid var(--tp-primary); border-radius:12px; background:#f8fbff; }
-.tp-report-overall.is-danger { border-color:#f1c2bf; border-left-color:var(--tp-danger); background:#fff7f6; }
-.tp-report-overall.is-warning { border-color:#edd39d; border-left-color:#c47b00; background:#fffaf0; }
-.tp-report-overall.is-success { border-color:#b8dfcc; border-left-color:var(--tp-success); background:#f3fbf7; }
+.tp-report-overall { margin-bottom:14px; padding:18px 20px; border:1px solid #c9dcfb; border-radius:12px; background:#f8fbff; }
+.tp-report-overall.is-danger { border-color:#f1c2bf; background:#fff7f6; }
+.tp-report-overall.is-warning { border-color:#edd39d; background:#fffaf0; }
+.tp-report-overall.is-success { border-color:#b8dfcc; background:#f3fbf7; }
 .tp-report-overall-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .tp-report-overall-head h3 { margin:0; color:var(--tp-ink); font-size:21px !important; }
 .tp-report-overall-grid { display:grid; grid-template-columns:minmax(0,1.6fr) .8fr 1fr; gap:18px; margin-top:16px; padding-top:14px; border-top:1px solid var(--tp-line-subtle); }
@@ -3979,7 +4265,7 @@ _WORKSPACE_CSS = """
 .tp-report-outline a.is-subsection { padding-left:16px; }
 .tp-report-body a:target + h1, .tp-report-body a:target + h2,
 .tp-report-body a:target + h3, .tp-report-body a:target + h4 {
- margin-left:-10px; padding-left:8px; border-left:2px solid var(--tp-primary);
+ background:var(--tp-primary-soft);
 }
 .tp-report-issues { margin-top:4px; }
 .tp-report-issues-head { display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
@@ -4005,12 +4291,10 @@ _WORKSPACE_CSS = """
 .tp-report-issue-meta strong { color:var(--tp-ink); font-size:12px; font-weight:600; line-height:1.55; }
 .tp-report-issue-next { display:inline-flex; align-items:center; min-height:32px; padding:0 8px; color:var(--tp-primary); font-size:11px; font-weight:750; white-space:nowrap; }
 [class*="st-key-report_issue_row_action_"] .stButton > button { min-height:36px; white-space:nowrap; }
-[class*="st-key-report_issue_row_"]:not([class*="st-key-report_issue_row_action_"]) { margin:0; padding:15px 0 15px 14px; border-bottom:1px solid var(--tp-line-subtle); border-left:3px solid #d5a12c; }
+[class*="st-key-report_issue_row_"]:not([class*="st-key-report_issue_row_action_"]) { margin:0; padding:15px 0 15px 14px; border-bottom:1px solid var(--tp-line-subtle); }
 [class*="st-key-report_issue_row_"]:not([class*="st-key-report_issue_row_action_"]) .stHorizontalBlock { align-items:flex-start; }
-[class*="st-key-report_issue_row_blocker_"] { border-left-color:var(--tp-danger); }
-[class*="st-key-report_issue_row_human_review_"] { border-left-color:var(--tp-primary); }
 .tp-report-issues-empty { margin-top:14px; padding:15px 0; color:var(--tp-sub); font-size:13px; }
-[class*="st-key-report_recommended_"] { margin-top:24px; padding:17px 19px; border:1px solid #b9d3f8; border-left:4px solid var(--tp-primary); border-radius:12px; background:#f8fbff; }
+[class*="st-key-report_recommended_"] { margin-top:24px; padding:17px 19px; border:1px solid #b9d3f8; border-radius:12px; background:#f8fbff; }
 [class*="st-key-report_recommended_"] .stHorizontalBlock { align-items:center; }
 .tp-report-recommended-copy { min-width:0; }
 .tp-report-recommended-kicker { color:var(--tp-primary); font-size:11px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
@@ -4029,7 +4313,7 @@ _WORKSPACE_CSS = """
 .tp-report-body p, .tp-report-body li { max-width:72ch; color:#283548; font-size:15px; line-height:1.9; }
 .tp-report-body p { margin:0 0 1em; }
 .tp-report-body ul, .tp-report-body ol { margin:0 0 1em; padding-left:1.5em; }
-.tp-report-body blockquote { max-width:72ch; margin:18px 0; padding:12px 18px; border-left:3px solid #b7cdf0; border-radius:0 8px 8px 0; background:#f7faff; color:#43536b; }
+.tp-report-body blockquote { max-width:72ch; margin:18px 0; padding:12px 18px; border-radius:0 8px 8px 0; background:#f7faff; color:#43536b; }
 .tp-report-body blockquote p { color:#43536b; font-size:14px; line-height:1.75; }
 .tp-report-body table { display:block; max-width:100%; overflow-x:auto; margin:18px 0 22px; border-collapse:collapse; }
 .tp-report-body th, .tp-report-body td { min-width:110px; padding:8px 10px; border:1px solid var(--tp-line); font-size:13px; line-height:1.6; text-align:left; }
@@ -4209,7 +4493,6 @@ _WORKSPACE_CSS = """
     gap: 8px;
     padding: 6px 10px;
     border: 1px solid #fae4be;
-    border-left: 3px solid #d97706;
     border-radius: 6px;
     background: #fffdf8;
     color: #92400e;
@@ -4280,7 +4563,7 @@ _WORKSPACE_CSS = """
     padding: 0 2px !important;
     min-height: auto !important;
     height: 24px !important;
-    color: var(--tp-primary, #004cfd) !important;
+    color: var(--tp-primary) !important;
     font-size: 11.5px !important;
     font-weight: 500 !important;
     text-decoration: none !important;
@@ -4495,12 +4778,12 @@ _WORKSPACE_CSS = """
 .tp-asset-copy span { display:block; margin-top:2px; color:var(--tp-sub); font-size:10.5px; }
 .tp-empty { padding:34px 20px; border:1px dashed #cbd5e1; border-radius:12px; background:#fbfcfe; color:var(--tp-sub); text-align:center; }
 .tp-tech-detail { color:var(--tp-sub); font-size:12px; }
-.tp-readiness-card { margin:0 0 14px; padding:17px 18px 15px; border:1px solid #edd39d; border-left:4px solid #c47b00; border-radius:12px; background:#fffaf0; }
-.tp-readiness-card.is-success { border-color:#b8dfcc; border-left-color:var(--tp-success); background:#f3fbf7; }
-.tp-readiness-card.is-danger { border-color:#efc1bd; border-left-color:var(--tp-danger); background:#fff8f7; }
-.tp-readiness-card.is-info { border-color:#b9d3f8; border-left-color:var(--tp-primary); background:#f5f9ff; }
+.tp-readiness-card { margin:0 0 14px; padding:17px 18px 15px; border:1px solid #edd39d; border-radius:12px; background:#fffaf0; }
+.tp-readiness-card.is-success { border-color:#b8dfcc; background:#f3fbf7; }
+.tp-readiness-card.is-danger { border-color:#efc1bd; background:#fff8f7; }
+.tp-readiness-card.is-info { border-color:#b9d3f8; background:#f5f9ff; }
 .tp-readiness-card.is-info .tp-readiness-kicker { color:var(--tp-brand-ink); }
-.tp-readiness-card.is-neutral { border-color:var(--tp-line); border-left-color:#94a3b8; background:#f8fafc; }
+.tp-readiness-card.is-neutral { border-color:var(--tp-line); background:#f8fafc; }
 .tp-readiness-card.is-warning .tp-readiness-kicker { color:#8a5a00; }
 .tp-readiness-card.is-success .tp-readiness-kicker { color:#147a4a; }
 .tp-readiness-card.is-danger .tp-readiness-kicker { color:#b42318; }
@@ -4558,10 +4841,10 @@ _WORKSPACE_CSS = """
 .tp-next-action-kicker { color:var(--tp-primary); font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
 .tp-next-action-copy strong { display:block; margin-top:4px; color:var(--tp-ink); font-size:14px; }
 .tp-next-action-copy p { margin:4px 0 0; color:var(--tp-sub); font-size:12px; line-height:1.45; }
-[class*="st-key-delivery_next_action_"] { margin:0 0 14px; padding:13px 15px; border:1px solid #c9dcfb; border-left:3px solid var(--tp-primary); border-radius:10px; background:#f7faff; }
+[class*="st-key-delivery_next_action_"] { margin:0 0 14px; padding:13px 15px; border:1px solid #c9dcfb; border-radius:10px; background:#f7faff; }
 [class*="st-key-delivery_next_action_"] [data-testid="stHorizontalBlock"] { align-items:center; gap:16px; }
 [class*="st-key-delivery_next_action_"] .stButton > button { min-height:34px; white-space:normal; }
-.tp-impact-panel { margin:0 0 14px; padding:15px 16px 13px; border:1px solid #edd39d; border-left:3px solid #c47b00; border-radius:10px; background:#fffaf0; }
+.tp-impact-panel { margin:0 0 14px; padding:15px 16px 13px; border:1px solid #edd39d; border-radius:10px; background:#fffaf0; }
 .tp-impact-panel > strong { display:block; color:#714c00; font-size:14px; }
 .tp-impact-panel > p { margin:4px 0 0; color:#8a5a00; font-size:12px; line-height:1.45; }
 .tp-impact-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:12px; }
@@ -4580,7 +4863,7 @@ _WORKSPACE_CSS = """
 .tp-qa-rule { border-radius:8px; }
 .tp-qa-source { margin-top:6px; color:var(--tp-faint); font-size:10px; line-height:1.45; }
 .tp-qa-rule .stExpander { margin-top:4px; }
-.tp-qa-work-summary { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 0 10px; padding:13px 14px; border:1px solid #f0d5a1; border-left:3px solid #c47b00; border-radius:9px; background:#fffaf0; }
+.tp-qa-work-summary { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 0 10px; padding:13px 14px; border:1px solid #f0d5a1; border-radius:9px; background:#fffaf0; }
 .tp-qa-work-summary strong { color:#714c00; font-size:13px; }
 .tp-qa-work-summary span { color:#8a5a00; font-size:11px; text-align:right; }
 .tp-connection-summary {
@@ -4614,16 +4897,16 @@ _WORKSPACE_CSS = """
 [class*="st-key-translation_search_"] input:focus-visible:not([aria-invalid="true"]),
 [class*="st-key-case_search_"] input:focus:not([aria-invalid="true"]),
 [class*="st-key-case_search_"] input:focus-visible:not([aria-invalid="true"]) {
- border-color:#69a7f8 !important;
- box-shadow:0 0 0 3px rgba(18,103,232,.14) !important;
+ border-color:var(--tp-primary) !important;
+ box-shadow:0 0 0 3px var(--tp-focus-halo) !important;
 }
 [class*="st-key-translation_search_"] [data-testid="stTextInputRootElement"]:focus-within {
- border-color:#69a7f8 !important;
- box-shadow:0 0 0 3px rgba(18,103,232,.14) !important;
+ border-color:var(--tp-primary) !important;
+ box-shadow:0 0 0 3px var(--tp-focus-halo) !important;
 }
 [class*="st-key-case_search_"] [data-testid="stTextInputRootElement"]:focus-within {
- border-color:#69a7f8 !important;
- box-shadow:0 0 0 3px rgba(18,103,232,.14) !important;
+ border-color:var(--tp-primary) !important;
+ box-shadow:0 0 0 3px var(--tp-focus-halo) !important;
 }
 @media (min-width: 761px) and (max-width: 1199px) {
  [data-testid="stMainBlockContainer"]:has(.tp-workspace-shell) {
@@ -4753,7 +5036,7 @@ _WORKSPACE_CSS = """
  content:"·"; margin-right:6px; color:#c3ccd8;
 }
 .tp-banner-metric.is-done { color:#147a4a; font-weight:650; }
-.tp-banner-metric.is-active { color:#1d4ed8; font-weight:650; }
+.tp-banner-metric.is-active { color:var(--tp-primary); font-weight:650; }
 .tp-banner-metric.is-attention { color:var(--tp-warn); font-weight:650; }
 .tp-banner-metric.is-blocked { color:#b42318; font-weight:700; }
 .tp-banner-metric.is-muted { color:var(--tp-faint); }
@@ -4804,8 +5087,8 @@ _WORKSPACE_CSS = """
 .tp-runtime-hud-progress > span.is-paused { color:#b77918; font-weight:550; }
 .tp-runtime-hud-progress > span.is-danger { color:var(--tp-danger,#dc2626); font-weight:550; }
 .tp-runtime-hud-progress > span.is-warning { color:#b77918; font-weight:550; }
-.tp-execution-progress { height:5px; flex:1; background:var(--tp-hairline-strong,#e2e8f0); border-radius:2px; overflow:hidden; }
-.tp-execution-progress > i { display:block; height:100%; width:0; background:var(--tp-primary,#2563eb); transition:width .25s ease; }
+.tp-execution-progress { height:5px; flex:1; background:var(--tp-hairline-strong); border-radius:2px; overflow:hidden; }
+.tp-execution-progress > i { display:block; height:100%; width:0; background:var(--tp-primary); transition:width .25s ease; }
 .tp-execution-progress.is-drawer { margin:8px 0; }
 .tp-execution-progress.is-indeterminate > i { width:24%; animation:tpExecutionWait 1.8s ease-in-out infinite; }
 @keyframes tpExecutionWait { from { transform:translateX(-100%); } to { transform:translateX(420%); } }
@@ -4848,7 +5131,7 @@ _WORKSPACE_CSS = """
  width:100% !important; max-width:none !important;
  height:100% !important; max-height:none !important; margin:0 !important;
  border-radius:0 !important; border:0 !important; border-left:1px solid var(--tp-hairline-strong) !important;
- box-shadow:-18px 0 40px rgba(16, 34, 61, .14) !important;
+ box-shadow:var(--tp-shadow-lg) !important;
  overflow-y:auto !important; background:var(--tp-surface) !important;
 }
 [data-testid="stDialog"] [role="dialog"] > div { padding:18px 20px 24px !important; }
@@ -4865,7 +5148,7 @@ _WORKSPACE_CSS = """
 .tp-runtime-drawer-progress > div:first-child { display:flex; justify-content:space-between; gap:12px; color:var(--tp-sub); font-size:11px; }
 .tp-runtime-drawer-progress strong { color:var(--tp-ink); font-variant-numeric:tabular-nums; }
 .tp-runtime-drawer-progress .tp-runtime-bar { display:block; width:100%; height:6px; margin-top:8px; background:#e7eef9; }
-.tp-runtime-drawer-issue { margin:14px 0; padding:11px 12px; border-left:3px solid var(--tp-danger); background:#fff7f6; }
+.tp-runtime-drawer-issue { margin:14px 0; padding:11px 12px; background:#fff7f6; }
 .tp-runtime-drawer-issue > span { display:block; color:var(--tp-danger); font-size:11px; font-weight:700; }
 .tp-runtime-drawer-issue strong { display:block; margin-top:4px; color:var(--tp-ink); font-size:13px; line-height:1.45; }
 .tp-runtime-drawer-issue small { display:block; margin-top:7px; color:var(--tp-sub); font-size:11px; line-height:1.45; }
@@ -5283,9 +5566,6 @@ _WORKSPACE_CSS = """
 [class*="st-key-cat_row_"]:has(> [data-testid="stElementContainer"] .is-active) {
  background:#f1f6fd;
 }
-[class*="st-key-cat_row_"]:has(> [data-testid="stElementContainer"] .is-active)::before {
- width:2px; background:var(--tp-primary);
-}
 [class*="st-key-cat_row_"]:has(> [data-testid="stElementContainer"] .is-active):hover {
  background:#edf4fd;
 }
@@ -5402,7 +5682,7 @@ _WORKSPACE_CSS = """
 [data-testid="stMainBlockContainer"]:has(.tp-workspace-shell) .tp-empty-block {
  width:min(100%, 780px); box-sizing:border-box; margin:28px auto 16px;
  padding:22px 24px; border:1px solid var(--tp-hairline-strong);
- border-left:3px solid var(--tp-primary); border-radius:var(--tp-radius-md);
+ border-radius:var(--tp-radius-md);
  background:var(--tp-surface-sunken);
 }
 [data-testid="stMainBlockContainer"]:has(.tp-workspace-shell) .tp-empty-block strong { font-size:15px; }
@@ -5619,7 +5899,7 @@ _LANGUAGE_ASSETS_CSS = """
  [class*="st-key-la_row_"] { border-bottom:0; }
 [class*="st-key-la_row_"]:hover { background:var(--tp-tint-hover); }
 [class*="st-key-la_row_"]:has(.la-sel-flag) { background:var(--tp-tint-active);
- box-shadow: inset 2px 0 0 var(--tp-primary); }
+  }
 .la-sel-flag { display:none; }
 [class*="st-key-la_row_"] [data-testid="stHorizontalBlock"] { align-items:center; }
 [class*="st-key-la_row_"] [data-testid="stVerticalBlock"] { gap:0; }
@@ -6060,13 +6340,9 @@ _TASK_CREATION_CSS = """
  min-width: 144px; min-height: 40px; height: 40px; border-radius: var(--tp-radius-md);
  font-size: 14px; font-weight: 700;
 }
-.st-key-new_task_action_in_flow .stButton button {
- min-height: 36px; height: 36px; border: 1px solid var(--tp-hairline-strong);
- background: transparent; color: var(--tp-sub); box-shadow: none; font-size: 13px;
-}
-.st-key-new_task_action_in_flow .stButton button:hover {
- border-color: var(--tp-border); background: var(--tp-primary-soft); color: var(--tp-brand-ink);
-}
+/* 侧栏「新建任务」在新建流程内的样子由 `Sidebar rhythm and project context` 一节
+   统一规定（40px、一条 hairline、普通文字色）。这里原来的 36px 副本已删除：它排在
+   整张表最后，会把侧栏 CTA 的高度和字色从统一栅格里拽出去。 */
 @media (max-width: 860px) {
  .st-key-task_settings_grid [data-testid="stHorizontalBlock"] { display: block !important; }
  .st-key-task_settings_grid [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
@@ -6082,13 +6358,23 @@ _TASK_CREATION_CSS = """
 
 
 
-def get_combined_css(theme: str = "light", locale: str = "zh-CN") -> str:
-    from .themes import apply_theme
-    """Return the complete concatenated design system stylesheet string."""
-    return apply_theme((_CSS + _WORKSPACE_CSS + _LANGUAGE_ASSETS_CSS
+def raw_stylesheet() -> str:
+    """The literal component stylesheet, before any theme is applied.
+
+    Kept public so the theme regression test can prove that *this* document —
+    the only place a hard-coded colour can hide — carries no saturated blue once
+    it is normalized for Paper mode.
+    """
+    return (_CSS + _WORKSPACE_CSS + _LANGUAGE_ASSETS_CSS
             + _TASK_CREATION_CSS + _CAT_GRID_DENSITY_CSS
             + _WORKSPACE_VISUAL_CSS + _CAT_SCROLL_CSS + _CHROME_COMPACTION_CSS
-            + WORKSPACE_DENSITY_CSS + _AUDIT_REFINEMENT_CSS), theme, locale)
+            + WORKSPACE_DENSITY_CSS + _AUDIT_REFINEMENT_CSS + _ICON_TOOL_LABEL_CSS)
+
+
+def get_combined_css(theme: str = "light", locale: str = "zh-CN") -> str:
+    """Return the complete concatenated design system stylesheet string."""
+    from .themes import apply_theme
+    return apply_theme(raw_stylesheet(), theme, locale)
 
 
 def _cat_grid_density_css() -> str:
@@ -6330,7 +6616,7 @@ _AUDIT_REFINEMENT_CSS = """
   height:auto !important; max-height:calc(100dvh - 210px) !important;
   overflow-y:auto !important; margin:0 !important;
   background:var(--tp-surface); border-radius:8px;
-  box-shadow:0 8px 28px rgba(30,50,80,.16);
+  box-shadow:var(--tp-shadow-lg);
  }
  .st-key-workspace_topbar .tp-workspace-meta { flex-wrap:wrap; white-space:normal; }
 }
@@ -6355,3 +6641,16 @@ def inject_design_system(theme: str = "light", locale: str = "zh-CN") -> None:
     direction = "rtl" if locale == "ar" else "ltr"
     st.html(f'''<script>document.documentElement.lang="{locale}";
         document.documentElement.dir="{direction}";</script>''', unsafe_allow_javascript=True)
+
+# Keep descriptive widget labels in the accessibility tree without widening
+# the existing icon tools. Streamlit renders Material icons in a separate span.
+_ICON_TOOL_LABEL_CSS = """
+[class*="st-key-cat_source_pdf_"] button p,
+[class*="st-key-cat_actions_"] > div > button p,
+[class*="st-key-cat_actions_"] button[data-testid="stPopoverButton"] p,
+[class*="st-key-tp_card_"] [data-testid="stDownloadButton"] button p {
+ position:absolute !important; width:1px !important; height:1px !important;
+ padding:0 !important; margin:-1px !important; overflow:hidden !important;
+ clip-path:inset(50%) !important; white-space:nowrap !important; border:0 !important;
+}
+"""

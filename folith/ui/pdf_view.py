@@ -40,13 +40,19 @@ def render_pdf_preview_fragment(job_id: str, state: Dict[str, Any]) -> None:
         elif 0 <= hl_seg_idx < len(paras):
             text = str(paras[hl_seg_idx] or "")
         if text:
-            hit_page, rects = pdf_preview.get_cached_segment_location(
+            source_locations = pdf_preview.get_segment_source_locations(job_id, hl_seg_idx)
+            current_location = next((location for location in source_locations
+                                     if location[0] == current_page), None)
+            hit_page, rects = current_location or pdf_preview.get_cached_segment_location(
                 job_id, hl_seg_idx, text, start_page_hint=current_page
             )
             if hit_page is not None:
                 if hit_page == current_page:
                     highlight_rects = rects
-                    focused_hint = f"第 {hl_seg_idx + 1} 段已高亮"
+                    # A source without line geometry locates the page but cannot
+                    # highlight it; say so instead of implying a highlight.
+                    focused_hint = (f"第 {hl_seg_idx + 1} 段已高亮" if rects
+                                    else f"第 {hl_seg_idx + 1} 段在本页（仅定位页面）")
                 else:
                     focused_hint = f"第 {hl_seg_idx + 1} 段在第 {hit_page + 1} 页"
 

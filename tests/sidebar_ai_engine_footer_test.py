@@ -1,24 +1,18 @@
-"""侧栏 AI Engine status module：重复导航收敛的回归测试。
+"""侧栏信息架构：**上半部分 = 工作**，**下半部分 = 工具**。
 
-产品决策（本文件守住的边界）：
+产品决策（本文件守住的边界，取代了旧的「AI Engine 贴底 status module」）：
 
-1. 「工作区」分组只放**跨项目的资料**：历史任务 / 术语与翻译记忆。
-   独立「⚙ 设置」行已退休 —— 当前产品没有独立的 General Settings 信息架构，
-   它当时唯一的落点就是 AI Engine / Model Center，与贴底 status module 上的
-   「管理」完全同义。同一个页面在侧栏出现两个入口，正是要消除的重复导航。
-2. AI Engine 区是 **runtime status module**，不是「工作区」分组里的第四行导航：
-
-       ○ AI引擎                        管理
-       deepseek-v4-flash-0731
-       尚未验证连接
-
-   - 「AI引擎」是 status label（不是可点击的导航项）
-   - 「管理」是**唯一**的 action，进入 AI Engine / Model Center
-   - 模型名是 secondary text，连接状态是 tertiary/status text
-   - 整块**不是** clickable card，也不套用 `.st-key-library_nav` 的导航行样式
-3. 侧栏里**只能有一个**指向 Model Center 的入口（`manage_provider`）。
-   Model Center 自身的 route（`app_view == "settings"`）与功能不变 —— 主工作区里
-   那些「前往设置 / 配置 API Key」的就地按钮仍然用它。
+1. 低频的系统偏好不再与核心工作入口同级。侧栏一级导航只剩
+   新建任务 / 项目 / 历史任务 / 术语与翻译记忆；`外观与语言` **不再是导航行**。
+2. 主题 / 界面语言 / AI 模型 / 设置 收进贴底的 compact Utility Bar：四个等权、
+   icon-only 的控件，每个 36px 点击区，各自有可访问名与 Tooltip。
+3. 前三个是 **就地面板**（anchor 在各自的 icon 上），只有 ⚙ 是页面入口：
+   - 侧栏**不再常驻**显示完整模型名与连接状态；
+   - 完整模型名、连接状态、切换模型、测试连接只在 AI 面板里出现一次。
+4. AI 的**连接状态**（颜色点）与**当前选中**（tint）是两件不同的事。
+5. **Quick Control ≠ Full Configuration**：AI 面板里**没有**任何去设置页的入口
+   （「管理 AI 引擎」已删除），⚙ 是完整设置页的唯一入口 —— 不允许两个入口做同一件事。
+6. 四个字形来自同一套 Material Symbols（界面语言用 Globe，不再用「文」排版字形）。
 
 运行：`python -m pytest tests/sidebar_ai_engine_footer_test.py -q`
 """
@@ -26,6 +20,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import shutil
 import sys
 import tempfile
@@ -38,14 +33,14 @@ sys.path.insert(0, str(ROOT))
 import core  # noqa: E402
 
 APP_PATH = ROOT / "app.py"
-
+STYLES_PATH = ROOT / "folith" / "ui" / "styles.py"
 MODEL_CENTER_VIEW = "settings"
 
 
 @contextmanager
 def sidebar_env():
     """隔离的输出目录；应用与核心层共用同一个 `core.OUTPUT_DIR`。"""
-    tmp = Path(tempfile.mkdtemp(prefix="sidebar-ai-engine-"))
+    tmp = Path(tempfile.mkdtemp(prefix="sidebar-ia-"))
     old_output = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
     try:
@@ -57,7 +52,7 @@ def sidebar_env():
 
 def _app():
     from streamlit.testing.v1 import AppTest
-    return AppTest.from_file(str(APP_PATH), default_timeout=60)
+    return AppTest.from_file(str(APP_PATH), default_timeout=90)
 
 
 def _sidebar_labels(at):
@@ -68,37 +63,33 @@ def _sidebar_markup(at):
     return "\n".join(str(m.value) for m in at.sidebar.markdown)
 
 
-def _sidebar_button(at, label):
-    return next((b for b in at.sidebar.button if b.label == label), None)
+def _sidebar_button(at, key):
+    return next((b for b in at.sidebar.button if b.key == key), None)
 
 
 # ================= 结构契约（AST）=================
 
 
+def _source_tree():
+    return ast.parse(APP_PATH.read_text(encoding="utf-8"))
+
+
+def _node_by_name(name):
+    for node in ast.walk(_source_tree()):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"app.py 必须有 `{name}`")
+
+
 def _sidebar_block():
-    """`with st.sidebar:` 块 —— 侧栏的重复入口只能从结构上守。"""
-    tree = ast.parse(APP_PATH.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
+    for node in ast.walk(_source_tree()):
         if isinstance(node, ast.With) and ast.unparse(node.items[0].context_expr) == "st.sidebar":
             return node
     raise AssertionError("app.py 必须有一个 `with st.sidebar:` 块")
 
 
-def _settings_assignments(node):
-    """把 `app_view` 设成 Model Center 的赋值语句（在给定子树里）。"""
-    found = []
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Assign) or len(child.targets) != 1:
-            continue
-        target = ast.unparse(child.targets[0])
-        value = ast.unparse(child.value).replace('"', "'")
-        if target == "st.session_state.app_view" and value == "'settings'":
-            found.append(child)
-    return found
-
-
 def _button_labels(node):
-    """侧栏块里所有按钮的第一个位置参数（`st.button` / `col.button` 都算）。"""
+    """给定子树里所有按钮的第一个位置参数（`st.button` / `col.button` 都算）。"""
     labels = []
     for call in (n for n in ast.walk(node) if isinstance(n, ast.Call)):
         if ast.unparse(call.func).endswith(".button") and call.args:
@@ -109,163 +100,306 @@ def _button_labels(node):
     return labels
 
 
-def test_sidebar_source_has_no_standalone_settings_nav_row():
-    """G1：侧栏源码里不再渲染「设置」行；AI Engine 的 action 仍叫「管理」。"""
+def test_workspace_group_is_only_core_work_entries():
+    """G1：「工作区」标题退休，一级导航只剩 历史任务 / 术语与翻译记忆。"""
     block = _sidebar_block()
     labels = _button_labels(block)
-    assert "'设置'" not in labels, \
-        f"独立「设置」导航行必须退休（它只是 Model Center 的别名）：{labels}"
-    assert "'管理'" in labels, f"AI Engine status module 必须保留「管理」action：{labels}"
     assert "'历史任务'" in labels and "'术语与翻译记忆'" in labels, labels
+    assert "'外观与语言'" not in labels, \
+        f"「外观与语言」必须退出侧栏一级导航（它是 Utility，不是工作入口）：{labels}"
+    assert "'工作区'" not in labels, \
+        f"只剩两个入口时不该再人为加一个分组标题：{labels}"
+    source = ast.unparse(block)
+    assert 'tp-nav-label">工作区' not in source, \
+        "「工作区」这个 section heading 必须退休（只剩两个入口，标题只是重复结构）"
 
 
-def test_manage_action_has_no_tooltip_wrapper():
-    """「管理」**不能**带 `help=`。
+def test_sidebar_renders_a_bottom_utility_bar_with_four_controls():
+    """G2：贴底 Utility Bar 恰好四个控件，且每一个都自带可访问名与 Tooltip。"""
+    cell = _node_by_name("_utility_cell")
+    # 唯一一颗按钮：可访问名 = 第一个位置参数（真实文案），并且必须带 tooltip。
+    buttons = [call for call in ast.walk(cell)
+               if isinstance(call, ast.Call) and ast.unparse(call.func).endswith(".button")]
+    assert len(buttons) == 1, [ast.unparse(call) for call in buttons]
+    button = buttons[0]
+    assert ast.unparse(button.args[0]) == "label", ast.unparse(button)
+    keywords = {kw.arg for kw in button.keywords}
+    assert "help" in keywords, "每个工具控件都必须有 Tooltip（icon-only 也要可发现）"
+    assert "width" in keywords, "点击区必须铺满 cell"
+    bar = _node_by_name("_sidebar_utility_bar")
+    calls = [call for call in ast.walk(bar)
+             if isinstance(call, ast.Call) and ast.unparse(call.func) == "_utility_cell"]
+    assert len(calls) == 4, [ast.unparse(call) for call in calls]
+    assert [ast.unparse(kw.value) for call in calls for kw in call.keywords
+            if kw.arg == "name"] == ["'theme'", "'language'", "'ai'", "'settings'"]
+    assert [ast.unparse(kw.value) for call in calls for kw in call.keywords
+            if kw.arg == "glyph"] == ["'contrast'", "'language'", "'memory'", "'settings'"], \
+        "四个字形必须来自同一套图标体系（界面语言用 Globe）"
+    block = _sidebar_block()
+    assert any(isinstance(n, ast.Call) and ast.unparse(n.func) == "_sidebar_utility_bar"
+               for n in ast.walk(block)), "Utility Bar 必须由侧栏渲染"
 
-    带 tooltip 的按钮会被 Streamlit 包进 `stTooltipHoverTarget`，`button` 就不再是
-    `.stButton` 的直接子元素；而把「管理」压成右对齐文字 action 的那条规则
-    （`.st-key-provider_status .stButton > button`）用的是**直接子选择器** —— 一旦
-    加上 tooltip 它会静默落空，整块 status module 退回 Streamlit 默认的描边按钮。
-    要么保持无 tooltip，要么把那条 CSS 改成 `.stButton button` 后代写法。
+
+def test_utility_panel_is_anchored_to_the_bar_not_floating():
+    """G3：面板是 bottom-attached panel —— 紧贴 bar、按 icon 对齐、阴影克制。
+
+    侧栏底部没有向下展开的空间，面板只能出现在 bar 之上；如果它飘在页面上方、离
+    触发它的 icon 几十像素远，就会被读成"一张孤立卡片"。这里用 CSS 契约钉住三件事：
+    ① 与 bar 的间距是 8px 级；② 左右按触发源缩进（Theme/Globe 起边、AI 终边）；
+    ③ 只有一层轻阴影，没有 glow / 渐变 / 大圆角。
     """
-    block = _sidebar_block()
-    manage = [call for call in (n for n in ast.walk(block) if isinstance(n, ast.Call))
-              if ast.unparse(call.func).endswith(".button") and call.args
-              and "管理" in ast.unparse(call.args[0])]
-    assert len(manage) == 1, [ast.unparse(c) for c in manage]
-    assert not any(kw.arg == "help" for kw in manage[0].keywords), \
-        "「管理」带 tooltip 会让 `.stButton > button` 直接子选择器静默失效"
-    css = APP_PATH.read_text(encoding="utf-8")
-    styles_file = ROOT / "folith" / "ui" / "styles.py"
-    if styles_file.is_file():
-        css += "\n" + styles_file.read_text(encoding="utf-8")
-    assert ".st-key-provider_status .stButton > button {" in css, \
-        "这条直接子选择器仍然存在，所以上面的约束是必需的"
+    styles = STYLES_PATH.read_text(encoding="utf-8")
+    panel = next(chunk for chunk in styles.split('\n\n')
+                 if '[class*="st-key-utility_"][class*="_panel"] {' in chunk
+                 and 'border-radius' in chunk)
+    assert "var(--tp-utility-anchor-gap)" in styles, "面板与 bar 之间必须有受控的贴靠间距"
+    assert "margin-bottom: var(--tp-utility-anchor-gap) !important" in styles
+    assert "var(--tp-utility-anchor" in styles and "var(--tp-utility-panel-width" in styles, \
+        "面板左右边缘必须按触发它的 icon 对齐，宽度按内容定死"
+    # AI 走终边（auto margin 靠右），Theme / Globe 走起边（贴左）。
+    assert ".st-key-sidebar_utility:has(.st-key-utility_ai_panel) {" in styles
+    assert "--tp-utility-anchor: auto;" in styles, "AI 面板必须靠右对齐 AI icon"
+    assert "--tp-utility-anchor: 6px;" in styles, "主题/语言面板必须靠左对齐 icon"
+    for name in ("theme", "language", "ai"):
+        assert f".st-key-sidebar_utility:has(.st-key-utility_{name}_panel)" in styles, name
+    # 克制的浮层语言：轻阴影、无 glow/渐变。断言只看规则体，不看注释。
+    body = panel.split('{', 1)[1].rsplit('}', 1)[0]
+    assert "box-shadow: var(--tp-shadow-sm)" in body, body
+    assert "gradient" not in body and "glow" not in body, body
+    assert "border-radius: 11px" in body, body
+    # 点击区与面板同为 36px 级的紧凑控件：模型下拉 30px、动作 30px。
+    assert "min-height: 30px" in styles
 
 
-def test_sidebar_has_exactly_one_entry_into_the_model_center():
-    """G7：侧栏只能有一个指向 Model Center 的入口，且它归「管理」所有。"""
-    block = _sidebar_block()
-    assignments = _settings_assignments(block)
-    assert len(assignments) == 1, \
-        f"侧栏里指向 Model Center 的入口必须恰好一个，实际 {len(assignments)} 个"
+def test_utility_tooltips_carry_state_and_labels_stay_out_of_the_bar():
+    """G3b：四个 Tooltip 就是需求里那四条文案；Label 不进 bar。"""
+    bar = _node_by_name("_sidebar_utility_bar")
+    labels = sorted(ast.unparse(kw.value) for call in ast.walk(bar)
+                    if isinstance(call, ast.Call) and ast.unparse(call.func) == "_utility_cell"
+                    for kw in call.keywords if kw.arg == "label")
+    assert labels == sorted([
+        "_t('外观：{v0}', v0=theme_label)",
+        "_t('界面语言：{v0}', v0=locale_label)",
+        "_t('AI 模型：{v0}', v0=model_name) + ' · ' + _t(view['label'])",
+        "_t('设置')",
+    ]), labels
+    # AI 的 Tooltip 额外带连接状态（icon 旁边的点只是提示，文案才是说明）。
+    assert "' · '" in [label for label in labels if "AI 模型" in label][0]
 
-    guard = next((node for node in ast.walk(block)
-                  if isinstance(node, ast.If)
-                  and "manage_provider" in ast.unparse(node.test)), None)
-    assert guard is not None, "「管理」按钮的点击分支必须存在"
-    guarded = _settings_assignments(guard)
-    assert len(guarded) == 1, "「管理」必须且只能设置一次 Model Center 路由"
-    assert guarded[0] is assignments[0] or \
-        guard.lineno <= assignments[0].lineno <= (guard.end_lineno or guard.lineno), \
-        "唯一的路由赋值必须落在「管理」的分支里，不能被别的入口偷偷复用"
+
+def test_utility_bar_is_pinned_to_the_bottom():
+    """G3c：bar 被压到侧栏底部（大面积留白是设计的一部分），面板在其正上方。"""
+    styles = STYLES_PATH.read_text(encoding="utf-8")
+    assert ".st-key-sidebar_utility {" in styles, "Utility Bar 的容器 key 必须保留"
+    assert "margin-top: auto" in styles.split(".st-key-sidebar_utility {")[1].split("}")[0], \
+        "Utility Bar 必须被压到侧栏底部"
+    bar = ast.unparse(_node_by_name("_sidebar_utility_bar"))
+    assert bar.index("_UTILITY_POPOVERS[open_panel]['panel']") < bar.index("'utility_bar'"), \
+        "面板必须先于 bar 渲染（DOM 在上方，视觉上仍贴住 bar）"
+
+
+def test_ai_panel_is_a_quick_control_with_no_settings_duplicate():
+    """G4：AI 面板是 **Quick Control**，不含任何去设置页的重复入口。
+
+    ⚙ 已经是完整设置页的唯一入口；面板里再放一个「管理 AI 引擎 →」就是同一件事
+    的第二条入口。改个名字不算解决 —— 所以这里同时禁掉"指向设置页"和"叫管理"。
+    """
+    panel = _node_by_name("_utility_panel_ai")
+    labels = _button_labels(panel)
+    assert labels == ["'测试连接'"], \
+        f"AI 面板只留「测试连接」这一个就地动作：{labels}"
+    assert "'管理'" not in labels, "旧的「管理」行已经退休"
+    assert not any("管理" in label for label in labels), \
+        f"「管理 AI 引擎」这类跳转必须删除（换个名字也不行）：{labels}"
+    source = ast.unparse(panel)
+    assert "_open_provider_settings" not in source, \
+        "AI 面板不得包含去设置页的跳转（那是 ⚙ 的职责）"
+    assert "arrow_forward" not in source, "面板里不该再有「→ 去别处」的导航 affordance"
+    # 侧栏本身**不得**渲染服务商 / 模型配置控件（那是设置页面的职责）。
+    block = ast.unparse(_sidebar_block())
+    for forbidden in ("provider_choice", "selectbox"):
+        assert forbidden not in block, f"侧栏不该内嵌完整配置控件：{forbidden}"
+    assert "manage_provider" not in APP_PATH.read_text(encoding="utf-8"), \
+        "旧的贴底 status module 已退休，不该留下死 key"
+    assert "utility_ai_manage" not in APP_PATH.read_text(encoding="utf-8"), \
+        "重复入口退役后不该留下死 key"
+
+
+def test_all_four_glyphs_come_from_one_icon_system():
+    """G4b：四个字形同属一套 Material Symbols（界面语言不再是「文」排版字形）。"""
+    bar = _node_by_name("_sidebar_utility_bar")
+    glyphs = [ast.unparse(kw.value) for call in ast.walk(bar)
+              if isinstance(call, ast.Call) and ast.unparse(call.func) == "_utility_cell"
+              for kw in call.keywords if kw.arg == "glyph"]
+    assert glyphs == ["'contrast'", "'language'", "'memory'", "'settings'"], glyphs
+    # `language` 是 Material Symbols 的 Globe 字形（不是 emoji，也不是「文」）。
+    assert "'文'" not in glyphs, "界面语言必须换成 Globe，不再用排版字形"
+    cell = _node_by_name("_utility_cell")
+    source = ast.unparse(cell)
+    assert "material-symbols-rounded" in source, "字形必须走现有 icon system"
+    assert "tp-utility-cjk" not in source, "排版字形这条特例已经退休"
+    styles = STYLES_PATH.read_text(encoding="utf-8")
+    assert ".tp-utility-cjk" not in styles, "排版字形的样式也应一并退休"
+
+
+def test_connection_status_and_selected_state_are_separate_styles():
+    """G5：状态点表达连接状态；"当前选中"用 tint 表达，两者互不替代。"""
+    styles = STYLES_PATH.read_text(encoding="utf-8")
+    assert ".tp-utility-dot.is-connected" in styles
+    assert ".tp-utility-dot.is-unverified" in styles
+    assert ".tp-utility-dot.is-error" in styles
+    assert ".tp-utility-dot.is-unconfigured" in styles
+    assert ":has(.tp-utility-open)" in styles, \
+        "当前选中/面板展开必须有自己的视觉语法，不能借用状态色"
 
 
 # ================= 运行时契约（AppTest）=================
 
 
-def test_ai_engine_footer_still_renders_as_a_status_module():
-    """G2：贴底 status module 仍在，并且不是导航行样式。"""
+def test_sidebar_keeps_full_model_name_out_of_the_default_view():
+    """G6：默认侧栏只有一个 AI 字形 + 状态点；完整模型名只属于 AI 面板。"""
     with sidebar_env():
         at = _app()
         at.run()
         assert not at.exception, [e.value for e in at.exception]
+        labels = _sidebar_labels(at)
+        assert "外观：日间模式" in labels, labels
+        assert "界面语言：简体中文" in labels, labels
+        assert "设置" in labels, labels
+        assert "外观与语言" not in labels, labels
+        assert "工作区" not in labels, labels
+        assert any(label.startswith("AI 模型：") for label in labels), labels
 
         markup = _sidebar_markup(at)
-        assert "tp-provider" in markup and "AI引擎" in markup, \
-            "AI Engine status module 必须仍在侧栏渲染"
-        assert "tp-engine-detail" in markup, "模型名与连接状态必须仍在模块内"
-
-        # 它必须是 status module，而不是「工作区」分组的第四行导航：
-        # 标题用 status label 的语法，而不是 `.tp-nav-label` 那种分组标题。
-        assert "AI引擎" not in _sidebar_labels(at), \
-            "「AI引擎」是 status label，不能变成可点击的导航项"
-        assert 'tp-nav-label">AI引擎' not in markup, \
-            "AI Engine 区不能伪装成「工作区」分组里的一个分组标题"
-        source = APP_PATH.read_text(encoding="utf-8")
-        styles_file = ROOT / "folith" / "ui" / "styles.py"
-        if styles_file.is_file():
-            source += "\n" + styles_file.read_text(encoding="utf-8")
-        assert 'st-key-provider_status' in source, "status module 的容器 key 必须保留"
-        assert '.st-key-library_nav .stButton > button' in source, \
-            "「工作区」导航行样式仍服务于 历史任务 / 术语与翻译记忆"
+        assert "tp-utility-glyph" in markup and "tp-utility-dot" in markup, markup
+        # 常驻区**没有**模型名与状态文案（它们只在 Popover 里出现）。
+        assert "deepseek-flash" not in markup, \
+            f"完整模型名不该常驻侧栏：{markup}"
 
 
-def test_manage_action_still_opens_the_model_center():
-    """G3：点击「管理」进入现有 AI Engine / Model Center 页面。"""
+def test_ai_popover_reveals_model_state_and_test_connection():
+    """G7：AI 面板里才有完整模型名 / 连接状态 / 测试连接，且状态点跟随结果变化。"""
     with sidebar_env():
         at = _app()
         at.run()
-        manage = _sidebar_button(at, "管理")
-        assert manage is not None, _sidebar_labels(at)
-        manage.click()
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        assert at.session_state["app_view"] == MODEL_CENTER_VIEW, \
-            "「管理」必须进入 AI Engine / Model Center"
-        assert any(s.label == "服务商" for s in at.selectbox), \
-            "Model Center 必须渲染服务商选择"
-        assert any(s.label == "模型" for s in at.selectbox), "Model Center 必须渲染模型选择"
-
-
-def test_model_center_route_is_unaffected_by_the_removed_row():
-    """G4：删掉「设置」行不影响 Model Center 自身的 route。"""
-    with sidebar_env():
-        at = _app()
-        at.run()
-        at.session_state["app_view"] = MODEL_CENTER_VIEW
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        assert any(s.label == "服务商" for s in at.selectbox), \
-            "直接落到 Model Center 路由仍应渲染配置页"
-
-        # 主工作区里的就地入口（新建任务第 4 步的「前往设置」）也仍然工作。
-        at2 = _app()
-        at2.run()
-        assert any(b.label == "前往设置" for b in at2.button), \
-            "工作流内的 AI 配置入口不应被这次收敛影响"
-
-
-def test_current_model_is_shown_in_the_footer():
-    """G5：AI Engine 当前模型仍正确显示。"""
-    with sidebar_env():
-        at = _app()
-        at.run()
-        assert "deepseek-v4-flash" in _sidebar_markup(at), \
-            "侧栏应显示当前默认模型"
-
-        at.session_state["model_choice_DeepSeek"] = "deepseek-v4-pro"
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        markup = _sidebar_markup(at)
-        assert "deepseek-v4-pro" in markup, markup
-        assert "deepseek-v4-flash" not in markup, "切换模型后侧栏不得残留旧模型名"
-        assert "tp-engine-model" in markup, "模型名必须带 secondary 语义 class"
-
-
-def test_connection_state_is_shown_in_the_footer():
-    """G6：connection state 仍正确显示，并带有 status 语义。"""
-    with sidebar_env():
-        at = _app()
-        at.run()
-        assert "API 凭据未配置" in _sidebar_markup(at), \
-            "未配置凭据时应显示凭据缺失状态"
-
         at.session_state["api_key_DeepSeek"] = "sk-sidebar-test"
-        at.session_state["provider_connection_status"] = "unverified"
         at.run()
-        markup = _sidebar_markup(at)
-        assert "尚未验证连接" in markup, markup
-        assert "tp-engine-state" in markup and "is-unverified" in markup, markup
+        _sidebar_button(at, "utility_action_ai").click().run()
+        assert not at.exception, [e.value for e in at.exception]
 
+        markup = _sidebar_markup(at)
+        assert "tp-utility-ai-model" in markup and "deepseek-flash" in markup, markup
+        assert "尚未验证连接" in markup, markup
+        assert "tp-utility-dot is-unverified" in markup, markup
+
+        core.test_provider = lambda *args, **kwargs: (True, "响应「OK」· 耗时 0.4s")
+        _sidebar_button(at, "utility_ai_test").click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["provider_connection_status"] == "connected"
+        markup = _sidebar_markup(at)
+        assert "tp-utility-dot is-connected" in markup, markup
+        assert "tp-utility-feedback is-ok" in markup, markup
+
+
+def test_ai_popover_switches_model_without_duplicating_configuration():
+    """G8：切换模型复用 `model_choice_*`，并且把连接状态退回未验证。"""
+    with sidebar_env():
+        at = _app()
+        at.run()
         at.session_state["provider_connection_status"] = "connected"
         at.run()
-        markup = _sidebar_markup(at)
-        assert "连接正常" in markup, markup
-        assert "is-connected" in markup, markup
+        _sidebar_button(at, "utility_action_ai").click().run()
+        at.sidebar.selectbox(key="utility_model_choice_DeepSeek_deepseek-flash") \
+            .set_value("deepseek-v4-pro").run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["model_choice_DeepSeek"] == "deepseek-v4-pro"
+        assert at.session_state["provider_connection_status"] == "unverified", \
+            "换模型后连接状态必须回到未验证"
 
-        at.session_state["provider_connection_status"] = "error"
+
+def test_ai_panel_offers_no_route_to_settings():
+    """G9：面板里不存在去设置页的按钮 —— 完整配置只能从 ⚙ 进入。"""
+    with sidebar_env():
+        at = _app()
         at.run()
-        markup = _sidebar_markup(at)
-        assert "连接失败" in markup, markup
-        assert "is-error" in markup, markup
+        _sidebar_button(at, "utility_action_ai").click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        panel_keys = [b.key for b in at.sidebar.button if b.key and b.key.startswith("utility_ai")]
+        assert panel_keys == ["utility_ai_test"], panel_keys
+        assert at.session_state["app_view"] != MODEL_CENTER_VIEW, \
+            "打开 AI 面板不该顺带进入设置页"
+        # ⚙ 仍然是唯一能进设置页的控件，并且它**直接**导航（没有中间菜单）。
+        _sidebar_button(at, "utility_action_settings").click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["app_view"] == MODEL_CENTER_VIEW
+        assert any(s.label == "服务商" for s in at.selectbox), "设置页必须渲染服务商选择"
+        assert any(s.label == "模型" for s in at.selectbox), "设置页必须渲染模型选择"
+
+
+def test_theme_popover_switches_and_persists_without_a_settings_trip():
+    """G10：主题在 Popover 里就近切换，立即生效并写进 `ui_preferences.json`。"""
+    with sidebar_env() as tmp:
+        at = _app()
+        at.run()
+        assert at.session_state["ui_theme"] == "light"
+        _sidebar_button(at, "utility_action_theme").click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        at.sidebar.radio(key="utility_theme_choice_light").set_value("paper").run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["ui_theme"] == "paper"
+        assert json.loads((tmp / "ui_preferences.json").read_text(encoding="utf-8")) == \
+            {"theme": "paper", "locale": "zh-CN"}
+        # Paper 的 token 必须立刻生效（不是只改了状态）。
+        css = next(item.value for item in at.markdown if item.value.startswith("<style>"))
+        assert "--bg-page:#f2eadb" in css, "纸面模式的语义 token 必须立即注入"
+        assert "外观：纸面模式" in _sidebar_labels(at), _sidebar_labels(at)
+
+
+def test_language_popover_switches_and_persists_without_a_settings_trip():
+    """G11：界面语言同样就近切换，并复用自己的会话键与偏好文件。"""
+    with sidebar_env() as tmp:
+        at = _app()
+        at.run()
+        _sidebar_button(at, "utility_action_language").click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        at.sidebar.radio(key="utility_language_choice_zh-CN").set_value("en").run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["ui_locale"] == "en"
+        assert json.loads((tmp / "ui_preferences.json").read_text(encoding="utf-8")) == \
+            {"theme": "light", "locale": "en"}
+        assert "Interface language: English" in _sidebar_labels(at), _sidebar_labels(at)
+        assert "Settings" in _sidebar_labels(at), _sidebar_labels(at)
+
+
+def test_utility_popovers_are_mutually_exclusive_and_close_on_toggle():
+    """G12：四个控件是同级：同时只开一个面板，再点一次收起。"""
+    with sidebar_env():
+        at = _app()
+        at.run()
+        _sidebar_button(at, "utility_action_theme").click().run()
+        assert at.session_state["utility_theme_open"] is True
+        _sidebar_button(at, "utility_action_language").click().run()
+        assert at.session_state["utility_language_open"] is True
+        assert at.session_state["utility_theme_open"] is False, \
+            "打开语言面板必须收起主题面板（同级控件不是一个栈）"
+        _sidebar_button(at, "utility_action_language").click().run()
+        assert at.session_state["utility_language_open"] is False, "再点一次收起"
+
+
+def test_gear_opens_settings_and_settings_owns_the_full_preference_entry():
+    """G13：⚙ 进入「设置」；外观与语言的完整配置是设置页下的一行入口。"""
+    with sidebar_env():
+        at = _app()
+        at.run()
+        _sidebar_button(at, "utility_action_settings").click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["app_view"] == MODEL_CENTER_VIEW
+        page = "\n".join(str(item.value) for item in at.markdown)
+        assert "tp-settings-section-head" in page and "偏好" in page, page
+        entry = next((b for b in at.button if b.key == "settings_appearance_entry"), None)
+        assert entry is not None and entry.label == "外观与语言", \
+            [b.label for b in at.button]
+        entry.click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["app_view"] == "appearance"
+        assert at.title[0].value == "外观与语言"

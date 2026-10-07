@@ -8,6 +8,28 @@ from streamlit.testing.v1 import AppTest
 APP = Path(__file__).resolve().parents[1] / 'app.py'
 
 
+def test_saved_gemini_reviewer_uses_default_endpoint_when_saved_again(monkeypatch, tmp_path):
+    monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
+    cfg = {'provider': 'DeepSeek', 'model': 'deepseek-v4-flash', 'api_key': 'main-key',
+           'reviewer': {'provider': 'Gemini', 'model': 'gemini-review-model',
+                        'api_key': 'review-key', 'base_url': 'https://stale.example.com/v1'}}
+    monkeypatch.setattr(core, 'load_provider_config', lambda: cfg)
+    monkeypatch.setattr(core, 'fetch_provider_models',
+                        lambda *a, **k: (True, ['available-model'], 'ok'))
+    saved = []
+    monkeypatch.setattr(core, 'save_provider_config', lambda *a, **k: saved.append(k))
+    at = AppTest.from_file(str(APP), default_timeout=30).run()
+    assert at.session_state['reviewer_base_url'] == ''
+    at.session_state['app_view'] = 'settings'
+    at.run()
+    assert not at.exception
+    assert not any(item.label == '审校 API 地址（可选）' for item in at.text_input)
+    next(button for button in at.button if button.label == '保存配置').click().run()
+    assert saved[-1]['reviewer']['base_url'] == ''
+    assert saved[-1]['reviewer']['provider'] == 'Gemini'
+    assert not at.exception
+
+
 def test_go_catalog_refresh_cache_failure_and_connection_change(monkeypatch, tmp_path):
     monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
     monkeypatch.setattr(core, 'load_provider_config', lambda: None)
@@ -80,11 +102,15 @@ def test_reviewer_catalog_uses_separate_credentials_and_clears_on_provider_chang
     at.session_state['reviewer_mode'] = 'separate'
     at.session_state['reviewer_provider_choice'] = 'Gemini'
     at.session_state['reviewer_api_key'] = 'gemini-review-key'
+    at.session_state['reviewer_base_url'] = 'https://stale-review.example.com/v1'
     at.run()
     assert ('Gemini', 'gemini-review-key', None) in calls
+    assert at.session_state['reviewer_base_url'] == ''
+    assert not any(item.label == '审校 API 地址（可选）' for item in at.text_input)
     assert 'review-new-model' in next(s for s in at.selectbox if s.label == '审校模型').options
     assert any(b.label == '获取审校模型' for b in at.button)
     next(s for s in at.selectbox if s.label == '审校服务商').select('Moonshot (Kimi)').run()
+    assert any(item.label == '审校 API 地址（可选）' for item in at.text_input)
     assert at.session_state['reviewer_api_key'] == ''
     assert not any(p == 'Moonshot (Kimi)' and key == 'gemini-review-key' for p, key, base in calls)
     assert not at.exception

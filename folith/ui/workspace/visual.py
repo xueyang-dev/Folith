@@ -7,7 +7,7 @@ WORKSPACE_VISUAL_CSS = """
 [data-testid="stMainBlockContainer"]:has(.st-key-workspace_document_col) {
  --tp-ws-control-main:32px; --tp-ws-control-compact:28px;
  --tp-ws-divider:var(--tp-hairline-strong);
- --tp-ws-rail-bg:#f8faff; --tp-ws-selected:var(--tp-primary-soft);
+ --tp-ws-rail-bg:var(--tp-canvas-soft); --tp-ws-selected:var(--tp-primary-soft);
 }
 /* The rails have one boundary, not a surface for every section. */
 .st-key-workspace_document_col { padding:4px 10px 8px 0; }
@@ -37,7 +37,7 @@ WORKSPACE_VISUAL_CSS = """
 }
 .st-key-workspace_document_col .stButton button p { font-size:11px !important; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:left; }
 .st-key-workspace_document_col .stButton button > div { min-width:0; justify-content:flex-start; }
-.st-key-workspace_document_col .stButton button[kind="primary"] { color:var(--tp-primary); background:var(--tp-primary-soft); border-left:2px solid var(--tp-primary); }
+.st-key-workspace_document_col .stButton button[kind="primary"] { color:var(--tp-primary); background:var(--tp-primary-soft); }
 /* Main toolbar icons retain their accessible text and native help tooltip. */
 .st-key-translation_toolbar [data-testid="stHorizontalBlock"] { flex-wrap:nowrap !important; gap:6px; }
 .st-key-translation_toolbar [data-testid="stColumn"] { min-width:32px !important; }
@@ -115,7 +115,7 @@ WORKSPACE_VISUAL_CSS = """
 .st-key-translation_inspector .tp-translation-decision-empty span { color:#24845c; margin-right:5px; }
 .st-key-translation_inspector .tp-translation-decision-row { padding:10px 0; border-bottom:1px solid var(--tp-ws-divider); }
 .st-key-translation_inspector .tp-translation-decision-title { font-size:13px; font-weight:650; }
-.st-key-translation_inspector .tp-translation-decision-pair { display:grid; gap:5px; padding:8px 10px; margin-top:8px; background:var(--tp-primary-soft); border-left:2px solid var(--tp-border); }
+.st-key-translation_inspector .tp-translation-decision-pair { display:grid; gap:5px; padding:8px 10px; margin-top:8px; background:var(--tp-primary-soft); }
 .st-key-translation_inspector .tp-translation-decision-side { display:flex; flex-direction:column; gap:2px; }
 .st-key-translation_inspector .tp-translation-decision-side > span { color:var(--tp-sub); font-size:10px; }
 .st-key-translation_inspector .tp-translation-decision-side strong { font-size:12px; line-height:1.5; font-weight:500; overflow-wrap:anywhere; }

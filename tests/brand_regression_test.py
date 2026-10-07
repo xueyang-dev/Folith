@@ -108,6 +108,21 @@ LEGACY_LINE_ALLOWLIST = {
     "folith/trace.py": ("FOLIOTHREAD_",),
     "folith/llm_transport.py": ("FOLIOTHREAD_",),
     "folith/ocr_backends.py": ("FOLIOTHREAD_",),
+    "folith/ocr_paddle.py": ("FOLIOTHREAD_",),
+    "docs/ocr-subsystem.md": ("FOLIOTHREAD_",),
+    # Desktop work already in this checkout records compatibility identifiers
+    # and historical evidence. Keep these exceptions file- and line-specific:
+    # ordinary product prose in these files is still scanned.
+    "folith/desktop/paths.py": ('version("foliothread")', "FOLIOTHREAD_"),
+    "docs/desktop-d0/environment.md": ("FolioThread/venv",),
+    "docs/desktop-d0/evidence-log.md": (
+        "FolioThread/venv", 'version("foliothread")'),
+    "docs/desktop-d2/evidence-log.md": (
+        "FOLIOTHREAD_", "foliothread-app-icon.png", "`foliothread-*`"),
+    "scripts/release_checks.py": ('"/FolioThread/venv"',),
+    "scripts/write_desktop_build_info.py": ("editable `foliothread 0.4.0`",),
+    "scripts/build_app_icon.py": ("legacy `foliothread-app-icon.png`",),
+    "scripts/d0_slice_runner.py": ("FOLIOTHREAD_",),
     "folith/request_control.py": ("FOLIOTHREAD_",),
     "folith/section_scheduler.py": ("FOLIOTHREAD_",),
     "scripts/llm_transport_benchmark.py": ("FOLIOTHREAD_",),
@@ -175,6 +190,14 @@ def test_public_brand_constants_are_canonical():
 def test_legacy_brand_hits_are_allowlisted():
     hits = _legacy_hits()
     assert not hits, "发现未归类的旧品牌命中：\n" + "\n".join(hits)
+
+
+def test_technical_allowlist_does_not_allow_product_brand_prose(tmp_path, monkeypatch):
+    path = tmp_path / "folith" / "ocr_paddle.py"
+    path.parent.mkdir()
+    path.write_text('device = "FOLIOTHREAD_OCR_DEVICE"\n# Welcome to FolioThread\n')
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+    assert _legacy_hits() == ["folith/ocr_paddle.py:2: # Welcome to FolioThread"]
 
 
 if __name__ == "__main__":
