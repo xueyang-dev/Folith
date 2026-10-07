@@ -1,0 +1,3778 @@
+{
+ "arms": {
+  "A_nocontext": {
+   "label": "A_nocontext",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "distant",
+    "tm",
+    "summary",
+    "local",
+    "entity",
+    "knowledge",
+    "rule"
+   ],
+   "context_budget_tokens": 1800,
+   "batches": 61,
+   "review_calls": 61,
+   "failed_batches": 0,
+   "findings_total": 27,
+   "findings_by_severity": {
+    "actionable": 6,
+    "informational": 21
+   },
+   "findings_by_type": {
+    "None": 27
+   },
+   "rows": [
+    {
+     "batch": 0,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 1,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“governments and scientific institutions”被合并译为“政府科研机构”，弱化了政府与科研机构两类主体的并列关系",
+       "segment_id": 5
+      }
+     ]
+    },
+    {
+     "batch": 2,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 3,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“New Space”未按术语库译为“新太空”，而译为“新航天”",
+       "segment_id": 13
+      }
+     ]
+    },
+    {
+     "batch": 4,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“Earth observation”译为“对地观测”，与文档术语表中统一使用的“地球观测”不一致。",
+       "segment_id": 16
+      }
+     ]
+    },
+    {
+     "batch": 5,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "同一单元内 space 的译法不统一：seg20 作“航天”，seg21 作“太空”。",
+       "segment_id": 21
+      }
+     ]
+    },
+    {
+     "batch": 6,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "相邻段落中“space”的中文处理不统一（本段“太空”vs. 第27段“航天”）",
+       "segment_id": 24
+      }
+     ]
+    },
+    {
+     "batch": 7,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "actionable": 1,
+      "informational": 1
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "EUMETSAT 译名与文档既定译名不一致（“欧洲气象卫星应用组织”应为“欧洲气象卫星开发组织”）",
+       "segment_id": 31
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“European Union Space Programme”译为“欧盟航天计划”，与文档既定译名“欧盟空间计划”不一致",
+       "segment_id": 31
+      }
+     ]
+    },
+    {
+     "batch": 8,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“Earth observation”此处译为“对地观测”，与文档其他部分统一使用的“地球观测”不一致",
+       "segment_id": 32
+      }
+     ]
+    },
+    {
+     "batch": 9,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "译文缺少介词“在”，导致句子成分残缺、语法不通",
+       "segment_id": 37
+      }
+     ]
+    },
+    {
+     "batch": 10,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 11,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 12,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 13,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "同一单元内 space 的译法不统一（“航天活动”“太空经济”“太空交通管理”混用）",
+       "segment_id": 53
+      }
+     ]
+    },
+    {
+     "batch": 14,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 15,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 16,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 17,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "vertidromes 译为“垂直起降机场”，与 vertiports“垂直起降场”并置易造成术语混淆",
+       "segment_id": 71
+      }
+     ]
+    },
+    {
+     "batch": 18,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "情态词 possibly/potentially 被译为“有望”，带有预期/乐观色彩，略微强化了原文的不确定性",
+       "segment_id": 72
+      }
+     ]
+    },
+    {
+     "batch": 19,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "定语“城市空中交通”辖域易被误读为仅修饰“技术”",
+       "segment_id": 78
+      }
+     ]
+    },
+    {
+     "batch": 20,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 21,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 22,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 23,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 24,
+     "failed": false,
+     "findings": 3,
+     "severities": {
+      "informational": 3
+     },
+     "types": {
+      "None": 3
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“human supervision”直译为“人类监督”，中文技术/政策文体中更常用“人工监督”或“人员监督”。",
+       "segment_id": 96
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "情态动词“could”译为“可以”，偏向“能力/许可”，未充分体现原文的可能性推断语气。",
+       "segment_id": 97
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“public acceptance”译为“公众接受”，作为并列名词项宜用“公众接受度”。",
+       "segment_id": 99
+      }
+     ]
+    },
+    {
+     "batch": 25,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 26,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 27,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 28,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 29,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 30,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "informational": 1,
+      "actionable": 1
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "UAS 译名与术语库/文档术语约定不一致",
+       "segment_id": 120
+      },
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“autonomous transportation” 译为“自动驾驶运输”易致语义偏移",
+       "segment_id": 121
+      }
+     ]
+    },
+    {
+     "batch": 31,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 32,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "informational": 2
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "「Uncrewed aircraft」译为「无人驾驶航空器」，与全文／术语库的「无人航空」「无人航空器系统」用词不统一",
+       "segment_id": 128
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "「agricultural land」译为「农田」，语义范围略有收窄",
+       "segment_id": 128
+      }
+     ]
+    },
+    {
+     "batch": 33,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "UAS 译为“无人机系统（UAS）”，与文内规定的统一译名“无人航空器系统（UAS）”不一致",
+       "segment_id": 134
+      }
+     ]
+    },
+    {
+     "batch": 34,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 35,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 36,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 37,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 38,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 39,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 40,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 41,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 42,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 43,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "actionable": 1,
+      "informational": 1
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“ESA”在相邻段落中先后译为“欧洲航天局（ESA）”与“欧空局”，同一机构称谓不统一",
+       "segment_id": 174
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“human lunar exploration programme”译为“人类月球探索计划”，未体现“载人”含义",
+       "segment_id": 172
+      }
+     ]
+    },
+    {
+     "batch": 44,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 45,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 46,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 47,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 48,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“prepare landing sites”译为“为着陆场做准备”，语义角色略有偏移",
+       "segment_id": 192
+      }
+     ]
+    },
+    {
+     "batch": 49,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 50,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 51,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 52,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 53,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "情态动词 could 译为“可以”，弱化了原文的不确定性",
+       "segment_id": 211
+      }
+     ]
+    },
+    {
+     "batch": 54,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 55,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "情态词 could 被译为“可以”，可能性语气弱化为能力性表述",
+       "segment_id": 218
+      }
+     ]
+    },
+    {
+     "batch": 56,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“存续”用于描述设备在月球极端条件下“survive”略显生硬，与中文技术报告的惯用表达不完全贴合",
+       "segment_id": 225
+      }
+     ]
+    },
+    {
+     "batch": 57,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 58,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 59,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 60,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    }
+   ],
+   "wall_s": 145.17
+  },
+  "B_fixed": {
+   "label": "B_fixed",
+   "context_mode": "fixed",
+   "ablations": [],
+   "context_budget_tokens": null,
+   "batches": 61,
+   "review_calls": 61,
+   "failed_batches": 0,
+   "findings_total": 15,
+   "findings_by_severity": {
+    "actionable": 6,
+    "informational": 9
+   },
+   "findings_by_type": {
+    "None": 15
+   },
+   "rows": [
+    {
+     "batch": 0,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 1,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "机构名 European Space Agency (ESA) 译为“欧洲航天局”，与术语库/上下文建议译名“欧洲空间局（ESA）”不一致",
+       "segment_id": 7
+      }
+     ]
+    },
+    {
+     "batch": 2,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "actionable": 1,
+      "informational": 1
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“European Space Operations Centre”译为“欧洲空间运行中心”，与术语库（及通行译法）“欧洲空间操作中心”不一致",
+       "segment_id": 9
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“have contributed significantly to Germany’s role as a centre for…”的“role”语义略有压缩，但未构成误译",
+       "segment_id": 10
+      }
+     ]
+    },
+    {
+     "batch": 3,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 4,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“institutional space programmes”译为“机构性航天计划”较为生硬，且未体现该词在航天经济语境中与“商业市场”相对的“公共/政府机构需求”含义。",
+       "segment_id": 19
+      }
+     ]
+    },
+    {
+     "batch": 5,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 6,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 7,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "EUMETSAT 的中文译名与文档既定术语不一致（\"欧洲气象卫星应用组织\" vs \"欧洲气象卫星开发组织\"）",
+       "segment_id": 31
+      }
+     ]
+    },
+    {
+     "batch": 8,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 9,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 10,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 11,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 12,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 13,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 14,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 15,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 16,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 17,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "actionable": 1,
+      "informational": 1
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "vertiports / vertidromes 被译为两个不同中文名称，易被误读为两类不同设施，且与术语规范不一致",
+       "segment_id": 71
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“could potentially” 的双重弱化语气译为“有望”，确定性略被提升",
+       "segment_id": 68
+      }
+     ]
+    },
+    {
+     "batch": 18,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "比较状语“相较传统航空技术”的辖域可能被缩窄，仅修饰“降低噪声水平”",
+       "segment_id": 72
+      }
+     ]
+    },
+    {
+     "batch": 19,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 20,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 21,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 22,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 23,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 24,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 25,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 26,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "vertidrome 译为“垂直起降机场”，与文档/章节既定的“垂直起降场”统一译法不一致",
+       "segment_id": 104
+      }
+     ]
+    },
+    {
+     "batch": 27,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 28,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“或有可能”表达冗余，语义重叠",
+       "segment_id": 115
+      }
+     ]
+    },
+    {
+     "batch": 29,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 30,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 31,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "同一段落内 \"inspection\" 译法不统一：前文 infrastructure inspection 译为“巡检”，此处 conventional inspection methods 译为“检查方法”，后文 human inspection 又作“人工检查”。",
+       "segment_id": 125
+      }
+     ]
+    },
+    {
+     "batch": 32,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 33,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 34,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 35,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“aircraft”在相邻段落中分别译为“航空器”和“飞行器”，同一文本内术语不统一。",
+       "segment_id": 141
+      }
+     ]
+    },
+    {
+     "batch": 36,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 37,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 38,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 39,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 40,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 41,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 42,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 43,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“human lunar exploration programme”译为“人类月球探索计划”，可能误读为“人类的/人类共有的月球探索”，与原文“载人月球探索”含义不符",
+       "segment_id": 172
+      }
+     ]
+    },
+    {
+     "batch": 44,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 45,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 46,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 47,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 48,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 49,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 50,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“本地资源”与后文 ISRU（原位资源利用）术语不一致，宜统一为“就地资源/原位资源”",
+       "segment_id": 199
+      }
+     ]
+    },
+    {
+     "batch": 51,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 52,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 53,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "情态词 could 译为“可以”，弱化了原文的不确定性",
+       "segment_id": 211
+      }
+     ]
+    },
+    {
+     "batch": 54,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 55,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 56,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 57,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 58,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 59,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 60,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    }
+   ],
+   "wall_s": 106.84
+  },
+  "C_dynamic": {
+   "label": "C_dynamic",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "distant"
+   ],
+   "context_budget_tokens": 1800,
+   "batches": 61,
+   "review_calls": 61,
+   "failed_batches": 1,
+   "findings_total": 11,
+   "findings_by_severity": {
+    "actionable": 5,
+    "informational": 6
+   },
+   "findings_by_type": {
+    "None": 11
+   },
+   "rows": [
+    {
+     "batch": 0,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“OECD”未按术语库/建议术语处理为“OECD”，而译为“经合组织”，与术语条目目标不一致",
+       "segment_id": 0
+      }
+     ]
+    },
+    {
+     "batch": 1,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 2,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“European Astronaut Centre”译为“欧洲航天员中心”，与术语库/前文约定“欧洲宇航员中心”不一致",
+       "segment_id": 9
+      }
+     ]
+    },
+    {
+     "batch": 3,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 4,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“贡献出灵活性”搭配生硬，且与并列宾语（解决方案）语义层级不匹配",
+       "segment_id": 18
+      }
+     ]
+    },
+    {
+     "batch": 5,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 6,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“太空生成数据”缺少结构助词，名词短语读起来生硬、易产生歧义",
+       "segment_id": 24
+      }
+     ]
+    },
+    {
+     "batch": 7,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 8,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 9,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 10,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 11,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 12,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 13,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 14,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 15,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 16,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 17,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 18,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 19,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 20,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 21,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 22,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 23,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 24,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 25,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 26,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 27,
+     "failed": true,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 28,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 29,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 30,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“autonomous transportation”译为“自动化运输”，混淆了 autonomous（自主）与 automated（自动化）",
+       "segment_id": 121
+      }
+     ]
+    },
+    {
+     "batch": 31,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 32,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 33,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“取决于公众接受”缺少名词化后缀，读起来语义不完整",
+       "segment_id": 135
+      }
+     ]
+    },
+    {
+     "batch": 34,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 35,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 36,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 37,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 38,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 39,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 40,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 41,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“与其……更可能……”句式搭配不成立，属翻译腔",
+       "segment_id": 164
+      }
+     ]
+    },
+    {
+     "batch": 42,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 43,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 44,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 45,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“significant industrial participation from European companies”被译为“欧洲企业大力参与工业研制”，额外加入了原文没有的“研制”义，并以“大力”弱化了原文对参与程度的客观描述。",
+       "segment_id": 178
+      }
+     ]
+    },
+    {
+     "batch": 46,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 47,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 48,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 49,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 50,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 51,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“which may support”的情态被译为“进而支持”，丢失了“可能/或将”的不确定性",
+       "segment_id": 205
+      }
+     ]
+    },
+    {
+     "batch": 52,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 53,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 54,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 55,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "情态动词 could 被译为能力性“能够”，把可能性表述成确定能力",
+       "segment_id": 218
+      }
+     ]
+    },
+    {
+     "batch": 56,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 57,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 58,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 59,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“will be shaped by”译为“将取决于”，弱化了原文“受……塑造/影响”的语义，并与前文“will depend on”的中文表达重复",
+       "segment_id": 237
+      }
+     ]
+    },
+    {
+     "batch": 60,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    }
+   ],
+   "wall_s": 111.84
+  },
+  "D_dynamic_distant": {
+   "label": "D_dynamic_distant",
+   "context_mode": "dynamic_v2",
+   "ablations": [],
+   "context_budget_tokens": 1800,
+   "batches": 61,
+   "review_calls": 61,
+   "failed_batches": 4,
+   "findings_total": 13,
+   "findings_by_severity": {
+    "actionable": 3,
+    "informational": 10
+   },
+   "findings_by_type": {
+    "None": 13
+   },
+   "rows": [
+    {
+     "batch": 0,
+     "failed": true,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 1,
+     "failed": true,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 2,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "ESA 中文译名与上文已审校译文不一致（欧洲空间局 vs 欧洲航天局）",
+       "segment_id": 8
+      }
+     ]
+    },
+    {
+     "batch": 3,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 4,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 5,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 6,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“太空所生成数据”定语结构生硬，建议补出“的”字使搭配更符合中文书面语习惯",
+       "segment_id": 24
+      }
+     ]
+    },
+    {
+     "batch": 7,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 8,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 9,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 10,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 11,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 12,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 13,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "译文‘日益不仅被视为’语序不自然，建议调整以符合中文表达习惯。",
+       "segment_id": 52
+      }
+     ]
+    },
+    {
+     "batch": 14,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 15,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 16,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 17,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "「eVTOL」为按规范有意保留的英文缩写，不属于未翻译的源语残留",
+       "segment_id": 69
+      }
+     ]
+    },
+    {
+     "batch": 18,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 19,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“aircraft”在紧邻的已审校段落中译为“航空器”，此处却译为“飞行器”，同一概念用词不统一",
+       "segment_id": 79
+      }
+     ]
+    },
+    {
+     "batch": 20,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 21,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 22,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 23,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 24,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“public acceptance”译为“公众接受”，与本节术语表中“公众接受度”不一致",
+       "segment_id": 99
+      }
+     ]
+    },
+    {
+     "batch": 25,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 26,
+     "failed": true,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 27,
+     "failed": true,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 28,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 29,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“较少的公众接受度和乘客安全相关挑战”搭配易产生歧义",
+       "segment_id": 119
+      }
+     ]
+    },
+    {
+     "batch": 30,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 31,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“inspection”在相邻已审校段落（segment 123）译为“巡检”，此处译为“检查”，同一文档内同一概念译名不统一。",
+       "segment_id": 125
+      }
+     ]
+    },
+    {
+     "batch": 32,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 33,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 34,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 35,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 36,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 37,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "vertidrome 译为“垂直起降站”，与文档术语规范建议的“垂直起降场”不一致",
+       "segment_id": 150
+      }
+     ]
+    },
+    {
+     "batch": 38,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 39,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 40,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 41,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“low Earth orbit”宜采用航天领域通行译名“近地轨道”",
+       "segment_id": 167
+      }
+     ]
+    },
+    {
+     "batch": 42,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 43,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 44,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 45,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“for astronauts”被误扩为统领全句的功能对象，导致“推进、发电、热控”等被表述成提供给航天员",
+       "segment_id": 178
+      }
+     ]
+    },
+    {
+     "batch": 46,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 47,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 48,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 49,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 50,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 51,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "第二个情态词 may 未在译文中体现，可能性语气略有弱化",
+       "segment_id": 205
+      }
+     ]
+    },
+    {
+     "batch": 52,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 53,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 54,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 55,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 56,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“存续”用于设备语境搭配欠自然",
+       "segment_id": 225
+      }
+     ]
+    },
+    {
+     "batch": 57,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 58,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 59,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 60,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    }
+   ],
+   "wall_s": 112.21
+  },
+  "D_budget_tiny_600": {
+   "label": "D_budget_tiny_600",
+   "context_mode": "dynamic_v2",
+   "ablations": [],
+   "context_budget_tokens": 600,
+   "batches": 61,
+   "review_calls": 62,
+   "failed_batches": 2,
+   "findings_total": 22,
+   "findings_by_severity": {
+    "actionable": 4,
+    "informational": 18
+   },
+   "findings_by_type": {
+    "None": 22
+   },
+   "rows": [
+    {
+     "batch": 0,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "OECD 未按术语库统一处理，译名与术语库不一致",
+       "segment_id": 0
+      }
+     ]
+    },
+    {
+     "batch": 1,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 2,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 3,
+     "failed": true,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 4,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 5,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 6,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“space”在同一文本内的译法在“太空”与“航天”之间不一致",
+       "segment_id": 24
+      }
+     ]
+    },
+    {
+     "batch": 7,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 8,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 9,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 10,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 11,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 12,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 13,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 14,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "informational": 2
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“平衡创新与可持续性和安全”并列结构含混，读起来易被切分为“平衡创新与可持续性／和 安全”",
+       "segment_id": 56
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“更具竞争力、可持续和互联互通”中“更具”与形容词搭配不够规范，宜补足为名词性表述",
+       "segment_id": 58
+      }
+     ]
+    },
+    {
+     "batch": 15,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 16,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 17,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "vertiports/vertidromes 被分别译为“垂直起降场/垂直起降站”，可能被误读为两类不同设施",
+       "segment_id": 71
+      }
+     ]
+    },
+    {
+     "batch": 18,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 19,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 20,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 21,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 1,
+     "detail": []
+    },
+    {
+     "batch": 22,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 23,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 24,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 25,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“general aviation aircraft”译为“通用航空航空器”，出现“航空”连用重复，表达拗口",
+       "segment_id": 101
+      }
+     ]
+    },
+    {
+     "batch": 26,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“Vertidromes”译作“垂直起降站”，与项目术语说明建议的“垂直起降场”不一致",
+       "segment_id": 104
+      }
+     ]
+    },
+    {
+     "batch": 27,
+     "failed": true,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 28,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 29,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 30,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 31,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 32,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 33,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“UAS”译为“无人机系统”，与文档既定术语“无人航空器系统（UAS）”不一致",
+       "segment_id": 134
+      }
+     ]
+    },
+    {
+     "batch": 34,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 35,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "actionable": 1,
+      "informational": 1
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“aircraft”在相邻段落中分别译为“航空器”和“飞行器”，术语不统一",
+       "segment_id": 141
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“Electric propulsion”译为“电力推进”，与约定术语“电推进”不一致",
+       "segment_id": 143
+      }
+     ]
+    },
+    {
+     "batch": 36,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "定语从句嵌套导致中文句子结构生硬，主谓关系易被误读",
+       "segment_id": 147
+      }
+     ]
+    },
+    {
+     "batch": 37,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 1,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "译文保留了源语词 vertidrome，需确认是否为首次出现的括注",
+       "segment_id": 150
+      }
+     ]
+    },
+    {
+     "batch": 38,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 39,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 40,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "情态词 could 被译为确定性表述“就能”，削弱了原文的不确定性",
+       "segment_id": 161
+      }
+     ]
+    },
+    {
+     "batch": 41,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "actionable": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "actionable",
+       "type": null,
+       "summary": "“low Earth orbit”宜采用通行术语“近地轨道”而非直译“低地球轨道”",
+       "segment_id": 167
+      }
+     ]
+    },
+    {
+     "batch": 42,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 43,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 44,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 45,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“for astronauts”的修饰范围被缩小，仅覆盖末项服务",
+       "segment_id": 178
+      }
+     ]
+    },
+    {
+     "batch": 46,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 47,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“使得许多任务完全依赖人工直接控制变得低效”句子结构嵌套，易被误读为“使许多任务变得低效”",
+       "segment_id": 188
+      }
+     ]
+    },
+    {
+     "batch": 48,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 49,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 50,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 51,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 52,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 53,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "情态词 could 译为“可以”，弱化了原文的可能性/不确定性",
+       "segment_id": 211
+      }
+     ]
+    },
+    {
+     "batch": 54,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 55,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "情态词 could 译为“可以”，由可能性变为能力/许可，弱化了原文的不确定性",
+       "segment_id": 218
+      }
+     ]
+    },
+    {
+     "batch": 56,
+     "failed": false,
+     "findings": 2,
+     "severities": {
+      "informational": 2
+     },
+     "types": {
+      "None": 2
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“存续”用于设备不自然，宜改为“存活/维持运行”类表述",
+       "segment_id": 225
+      },
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“构成极端条件”搭配略显生硬，present 更宜译为“呈现/存在”",
+       "segment_id": 224
+      }
+     ]
+    },
+    {
+     "batch": 57,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“scientific preservation”译为“科学保护”语义偏笼统，建议明确为对科学价值/科学遗址的保护",
+       "segment_id": 229
+      }
+     ]
+    },
+    {
+     "batch": 58,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    },
+    {
+     "batch": 59,
+     "failed": false,
+     "findings": 1,
+     "severities": {
+      "informational": 1
+     },
+     "types": {
+      "None": 1
+     },
+     "deterministic": 0,
+     "detail": [
+      {
+       "severity": "informational",
+       "type": null,
+       "summary": "“will be shaped by”译为“将取决于”，确定性略强于原文",
+       "segment_id": 237
+      }
+     ]
+    },
+    {
+     "batch": 60,
+     "failed": false,
+     "findings": 0,
+     "severities": {},
+     "types": {},
+     "deterministic": 0,
+     "detail": []
+    }
+   ],
+   "wall_s": 117.22
+  }
+ }
+}

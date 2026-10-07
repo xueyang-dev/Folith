@@ -736,9 +736,6 @@ def compile_context_packet(
     current = [item for item in current if item]
     raw_previous_source_count = len(previous_source or [])
     raw_next_source_count = len(next_source or [])
-    previous_source = _dedupe_strings(previous_source, exclude=current, limit=8)
-    next_source = _dedupe_strings(
-        next_source, exclude=[*current, *previous_source], limit=8)
     raw_previous_targets = list(previous_target or [])
     previous_target: List[Dict[str, Any]] = []
     seen_target = set()
@@ -753,6 +750,17 @@ def compile_context_packet(
         previous_target.append(item)
         if len(previous_target) >= 8:
             break
+    # A paragraph that is about to be sent again as the "原文" of its accepted
+    # translation must not also be sent as a bare previous-source bullet: same
+    # text twice in one prompt, and the second copy carries strictly more
+    # information (it is attached to the accepted target).
+    accepted_sources = [item.get("source") for item in previous_target
+                        if str(item.get("source") or "").strip()]
+    previous_source = _dedupe_strings(
+        previous_source, exclude=[*current, *accepted_sources], limit=8)
+    next_source = _dedupe_strings(
+        next_source, exclude=[*current, *previous_source, *accepted_sources],
+        limit=8)
     try:
         budget = max(1200, int(context_budget_chars or DEFAULT_CONTEXT_BUDGET_CHARS))
     except (TypeError, ValueError):
@@ -800,6 +808,62 @@ def _compact_profile(profile: Dict[str, Any]) -> str:
     return "\n".join(lines)[:1800] or "{}"
 
 
+# Prompt-cost categories.  Every rendered context section belongs to exactly one
+# bucket so a run can report *where* input tokens go instead of only a total.
+# The mapping is deliberately coarse: it exists to steer optimization, not to
+# bill anyone.
+PROMPT_COST_CATEGORIES = {
+    "【文档画像】": "document_context",
+    "【全文概要】": "document_context",
+    "【当前语义单元摘要】": "document_context",
+    "【当前单元翻译提示】": "document_context",
+    "【文体与翻译规则】": "style",
+    "【锁定术语与范围规则（项目人工锁定优先）】": "glossary",
+    "【专名/实体连续性提示（仅作建议；人工实体选择优先）】": "entities",
+    "【前文原文上下文】": "neighbor_context",
+    "【前文已接受译文连续性】": "neighbor_context",
+    "【后文原文上下文】": "neighbor_context",
+    # dynamic_v2-only sections.  A `fixed` packet never carries these keys, so
+    # they never appear in a production prompt or its cost report.
+    "【翻译记忆参考（近似匹配，仅供一致译法参考）】": "tm",
+    "【远距离相关段落（历史上下文，仅供一致性参考）】": "distant_context",
+    "【项目知识反馈（人工确认优先）】": "project_knowledge",
+}
+CURRENT_BATCH_TITLE = "【待翻译段落（按序号返回等长数组）】"
+
+
+def _render_entity_hints(hints: Sequence[Dict[str, Any]]) -> str:
+    """Render advisory entity continuity hints in the compactest useful form.
+
+    The section header already states that these are suggestions and that human
+    decisions win, so repeating a constant provenance/precedence string on every
+    line is pure prompt noise.  Only the fields that differ per entity and can
+    change the translation survive: the pair itself, its type, aliases and an
+    optional identity note.
+    """
+    lines = []
+    for item in hints:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source_form") or "").strip()
+        target = str(item.get("preferred_target") or "").strip()
+        if not source and not target:
+            continue
+        line = f"- {source} -> {target}"
+        entity_type = str(item.get("entity_type") or "").strip()
+        if entity_type:
+            line += f"（{entity_type}）"
+        aliases = [str(alias).strip() for alias in item.get("aliases") or []
+                   if str(alias).strip()]
+        if aliases:
+            line += f"；别名：{'、'.join(aliases)}"
+        note = str(item.get("note") or "").strip()
+        if note:
+            line += f"；说明：{note}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _render_context_packet(packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """Render a packet and return prompt text plus bounded-context diagnostics."""
     profile = _compact_profile(packet.get("document_profile") or {})
@@ -814,17 +878,16 @@ def _render_context_packet(packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
          _clean(packet.get("locked_glossary"), 2200)),
         ("【当前语义单元摘要】", _clean(digest.get("summary"), 1600)),
         ("【当前单元翻译提示】", "、".join(digest.get("translation_notes") or [])),
+        # One whole-document narrative and one local narrative.  The synopsis
+        # also carries `document_arc`, which is a second whole-document
+        # narrative produced from the same section digests; measured 8-gram
+        # containment against `summary` is >60%, so shipping both bought a
+        # restatement for the price of a full section.  `document_arc` stays in
+        # the persisted synopsis for review/UI; it is simply not repeated in
+        # every batch prompt.
         ("【全文概要】", _clean(synopsis.get("summary"), 2400)),
-        ("【全文发展/论证】", _clean(synopsis.get("document_arc"), 1600)),
-        ("【专名/实体连续性提示（仅作建议；人工实体选择优先）】", "\n".join(
-            f"- {item.get('source_form', '')} -> {item.get('preferred_target', '')}"
-            f"（{item.get('entity_type', 'proper noun')}；"
-            f"{item.get('provenance', 'generated_observation')}；"
-            f"优先级：{item.get('precedence', 'entity_continuity_hint')}）"
-            + (f"；别名：{'、'.join(item.get('aliases') or [])}" if item.get("aliases") else "")
-            + (f"；身份说明：{item.get('note')}" if item.get("note") else "")
-            for item in packet.get("entity_hints") or []
-        )),
+        ("【专名/实体连续性提示（仅作建议；人工实体选择优先）】",
+         _render_entity_hints(packet.get("entity_hints") or [])),
         ("【前文原文上下文】", "\n".join(
             f"- {item}" for item in packet.get("previous_source_context") or [])),
         ("【前文已接受译文连续性】", "\n".join(
@@ -834,6 +897,33 @@ def _render_context_packet(packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
         ("【后文原文上下文】", "\n".join(
             f"- {item}" for item in packet.get("next_source_context") or [])),
     ]
+    # dynamic_v2-only sections.  Appended after the fixed sections and before
+    # the current batch so the source batch stays last and authoritative.  When
+    # these keys are absent (every `fixed` packet) the rendered output is
+    # byte-identical to the pre-dynamic renderer.
+    dynamic_sections = []
+    tm_items = packet.get("tm_context") or []
+    if tm_items:
+        dynamic_sections.append((
+            "【翻译记忆参考（近似匹配，仅供一致译法参考）】",
+            "\n".join(
+                f"- 相似度 {float(item.get('similarity') or 0):.2f}｜原文：{item.get('source', '')}"
+                f"\n  参考译文：{item.get('target', '')}"
+                for item in tm_items if isinstance(item, dict))))
+    distant_items = packet.get("distant_context") or []
+    if distant_items:
+        dynamic_sections.append((
+            "【远距离相关段落（历史上下文，仅供一致性参考）】",
+            "\n".join(
+                f"- {item.get('source', '')}"
+                for item in distant_items if isinstance(item, dict))))
+    knowledge_items = [str(item).strip() for item in packet.get("project_knowledge") or []
+                       if str(item).strip()]
+    if knowledge_items:
+        dynamic_sections.append((
+            "【项目知识反馈（人工确认优先）】",
+            "\n".join(f"- {item}" for item in knowledge_items)))
+    sections.extend(dynamic_sections)
     try:
         budget = max(1200, int(packet.get("context_budget_chars") or
                                DEFAULT_CONTEXT_BUDGET_CHARS))
@@ -842,6 +932,7 @@ def _render_context_packet(packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
     rendered_sections: List[str] = []
     used = 0
     truncated = False
+    section_chars: Dict[str, int] = {}
     for title, body in sections:
         body = str(body or "").strip()
         if not body:
@@ -856,11 +947,14 @@ def _render_context_packet(packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
             if not body:
                 truncated = True
                 break
-            rendered_sections.append(f"{title}\n{body}…")
+            clipped = f"{title}\n{body}…"
+            rendered_sections.append(clipped)
+            section_chars[title] = len(clipped)
             used = budget
             truncated = True
             break
         rendered_sections.append(full)
+        section_chars[title] = len(full)
         used += len(full) + 2
     prefix_text = "\n\n".join(rendered_sections)
     if len(prefix_text) > budget:
@@ -870,15 +964,25 @@ def _render_context_packet(packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
         prefix_text = prefix_text[:budget]
         truncated = True
     current = packet.get("current_batch") or []
-    current_section = "【待翻译段落（按序号返回等长数组）】\n" + "\n".join(
+    current_section = CURRENT_BATCH_TITLE + "\n" + "\n".join(
         f"{index + 1}. {source}" for index, source in enumerate(current))
     rendered = "\n\n".join([prefix_text, current_section]) if prefix_text \
         else current_section
+    # Coarse prompt-cost buckets.  Character counts, not tokens: the caller
+    # converts with the same estimator the usage ledger already uses.
+    category_chars: Dict[str, int] = {}
+    for title, count in section_chars.items():
+        category = PROMPT_COST_CATEGORIES.get(title, "other")
+        category_chars[category] = category_chars.get(category, 0) + count
+    category_chars["source"] = len(current_section)
     return rendered, {
         "context_budget_chars": budget,
         "context_prefix_chars": len(prefix_text),
         "context_truncated": truncated,
         "dedupe_removed_count": int(packet.get("context_dedupe_removed_count") or 0),
+        "section_chars": section_chars,
+        "category_chars": category_chars,
+        "source_chars": len(current_section),
     }
 
 
@@ -887,10 +991,19 @@ def render_context_packet(packet: Dict[str, Any]) -> str:
     return _render_context_packet(packet)[0]
 
 
+def render_context_packet_with_stats(
+        packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Render a packet together with the per-category prompt-cost split.
+
+    Callers that account for prompt tokens use this instead of rendering twice.
+    """
+    return _render_context_packet(packet)
+
+
 def context_metadata(packet: Dict[str, Any]) -> Dict[str, Any]:
     """Small audit record; do not persist full prompt text in job state."""
     rendered, render_stats = _render_context_packet(packet)
-    return {
+    metadata = {
         "section_id": (packet.get("section_digest") or {}).get("unit_id"),
         "previous_source_count": len(packet.get("previous_source_context") or []),
         "previous_target_segments": [
@@ -909,3 +1022,11 @@ def context_metadata(packet: Dict[str, Any]) -> Dict[str, Any]:
         "current_batch_chars": sum(len(item) for item in packet.get("current_batch") or []),
         "entity_hint_count": len(packet.get("entity_hints") or []),
     }
+    # Experimental-selector keys are attached ONLY to a dynamic_v2 packet.  A
+    # production `fixed` packet never carries `context_mode`, so its audit record
+    # is unchanged and stays byte-comparable with the accepted baseline.
+    # See docs/dynamic-context-v2-adr.md.
+    if packet.get("context_mode") == "dynamic_v2":
+        metadata["context_mode"] = "dynamic_v2"
+        metadata["dynamic_context"] = packet.get("dynamic_diagnostics") or {}
+    return metadata

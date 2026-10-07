@@ -46,6 +46,7 @@ from folith import translation_evidence as _translation_evidence
 from folith import checkpoint as _checkpoint
 from folith import snapshots as _snapshots
 from folith import entity_registry as _entity_registry
+from folith import dynamic_context as _dynamic_context
 from folith import model_roles as _model_roles
 from folith import pdf_ingestion as _pdf_ingestion
 from folith import source_cleanup as _source_cleanup
@@ -5499,10 +5500,159 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             if is_rate_limited(e):
                 controller.note_rate_limited()
 
+    if prompt_stats is not None:
+        prompt_stats.append(_translation_prompt_cost(
+            segments=segments, system_prompt=sys_prompt, user_prompt=user_prompt,
+            render_stats=render_stats, attempt=3, output_chars=0, failed=True))
     raise RuntimeError(
         f"批次翻译失败（{len(segments)} 段）："
         f"{last_err or '模型返回格式异常或数量不匹配'}"
     )
+
+
+DYNAMIC_CONTEXT_RECORD_LIMIT = 600
+
+
+def _record_dynamic_context_batch(state, batch_index, offset, segment_count, packet):
+    """Append one compact experimental record for a dynamic_v2 batch.
+
+    Counts, candidate ids and provenance only: never prompt text, never secrets.
+    Bounded so an experimental run cannot bloat persisted job state.
+    """
+    diagnostics = (packet or {}).get("dynamic_diagnostics") or {}
+    if not diagnostics:
+        return None
+    try:
+        rendered, render_stats = _context.render_context_packet_with_stats(packet)
+        prompt_chars = len(rendered)
+        category_chars = dict(render_stats.get("category_chars") or {})
+    except Exception:
+        prompt_chars = 0
+        category_chars = {}
+    try:
+        source_chars = sum(len(str(item or ""))
+                           for item in (packet or {}).get("current_batch") or [])
+    except Exception:
+        source_chars = 0
+    record = {
+        "batch": int(batch_index),
+        "offset": int(offset),
+        "segment_count": int(segment_count),
+        "experiment_id": diagnostics.get("experiment_id") or "",
+        "context_mode": "dynamic_v2",
+        "context_budget_tokens": int(diagnostics.get("context_budget_tokens") or 0),
+        "offline": bool(diagnostics.get("offline")),
+        "ablations": list(diagnostics.get("ablations") or []),
+        "candidate_counts": dict(diagnostics.get("candidate_counts") or {}),
+        "selected_ids": list(diagnostics.get("selected_ids") or []),
+        "selected_by_source": {
+            key: list(value) for key, value
+            in (diagnostics.get("selected_by_source") or {}).items()},
+        "selected_tokens_by_source": dict(
+            diagnostics.get("selected_tokens_by_source") or {}),
+        "total_selected_tokens": int(diagnostics.get("selected_tokens_total") or 0),
+        "rejected_count": int(diagnostics.get("rejected_count") or 0),
+        "mandatory_over_budget": bool(diagnostics.get("mandatory_over_budget")),
+        "dedupe_removed_count": int(diagnostics.get("dedupe_removed_count") or 0),
+        "fallback": bool(diagnostics.get("fallback")),
+        "fallback_reason": str(diagnostics.get("fallback_reason") or ""),
+        "distant_stats": dict(diagnostics.get("distant_stats") or {}),
+        "distant_retrieved": int(diagnostics.get("distant_retrieved") or 0),
+        "distant_selected": int(diagnostics.get("distant_selected") or 0),
+        "selected_scores": dict(diagnostics.get("selected_scores") or {}),
+        "profile": dict(diagnostics.get("profile") or {}),
+        "source_chars": int(source_chars),
+        "context_chars": int(render_stats.get("context_prefix_chars") or 0)
+        if prompt_chars else 0,
+        "prompt_chars": int(prompt_chars),
+        "prompt_tokens_estimate": _usage_estimate(prompt_chars),
+        "source_tokens_estimate": _usage_estimate(source_chars),
+        "batch_source_tokens": _usage_estimate(source_chars),
+        "wall_s": 0.0,
+        "category_chars": category_chars,
+    }
+    records = state.setdefault("dynamic_context_records", [])
+    if not isinstance(records, list):
+        records = []
+        state["dynamic_context_records"] = records
+    records.append(record)
+    if len(records) > DYNAMIC_CONTEXT_RECORD_LIMIT:
+        del records[:len(records) - DYNAMIC_CONTEXT_RECORD_LIMIT]
+    return record
+
+
+def _usage_estimate(chars):
+    """ceil(chars / 4) using the shared usage-ledger estimator."""
+    try:
+        return int(_usage.estimate_tokens(chars))
+    except Exception:
+        return 0
+
+
+def _translation_prompt_cost(segments, system_prompt, user_prompt, render_stats,
+                             attempt, output_chars, failed=False, cache="miss"):
+    """One compact, text-free prompt cost record for a translation request.
+
+    Counts only.  The prompt text itself is never stored or logged here, so this
+    stays usable under the existing privacy/debug conventions.
+    """
+    category_chars = dict((render_stats or {}).get("category_chars") or {})
+    system_chars = len(str(system_prompt or ""))
+    user_chars = len(str(user_prompt or ""))
+    categories = {
+        "instructions": system_chars,
+        "source": int((render_stats or {}).get("source_chars") or 0),
+    }
+    for name, chars in category_chars.items():
+        if name == "source":
+            continue
+        categories[name] = categories.get(name, 0) + int(chars or 0)
+    accounted = sum(categories.values())
+    if user_chars > accounted:
+        categories["other"] = categories.get("other", 0) + (user_chars - accounted)
+    return {
+        "segment_count": len(segments),
+        "source_chars": sum(len(str(item or "")) for item in segments),
+        "prompt_chars": system_chars + user_chars,
+        "output_chars": int(output_chars or 0),
+        "category_chars": categories,
+        "attempt": int(attempt),
+        "failed": bool(failed),
+        "cache": cache,
+    }
+
+
+def _record_translation_prompt_cost(state, records):
+    """Aggregate per-request prompt cost into the job state (counts only).
+
+    Callers hold the stage's commit lock, so this stays a plain accumulation.
+    """
+    records = [item for item in (records or []) if isinstance(item, dict)]
+    if not records:
+        return
+    sink = state.setdefault("translation_prompt_cost", {
+        "requests": 0, "failed_requests": 0, "segments": 0,
+        "prompt_chars": 0, "output_chars": 0, "source_chars": 0,
+        "cache_hits": 0, "cache_misses": 0,
+        "category_chars": {}, "requests_by_segment_count": {},
+    })
+    for item in records:
+        sink["requests"] = int(sink.get("requests") or 0) + 1
+        if item.get("failed"):
+            sink["failed_requests"] = int(sink.get("failed_requests") or 0) + 1
+        if str(item.get("cache") or "") == "hit":
+            sink["cache_hits"] = int(sink.get("cache_hits") or 0) + 1
+        else:
+            sink["cache_misses"] = int(sink.get("cache_misses") or 0) + 1
+        for key in ("segments", "prompt_chars", "output_chars", "source_chars"):
+            source_key = "segment_count" if key == "segments" else key
+            sink[key] = int(sink.get(key) or 0) + int(item.get(source_key) or 0)
+        for name, chars in (item.get("category_chars") or {}).items():
+            bucket = sink.setdefault("category_chars", {})
+            bucket[name] = int(bucket.get(name) or 0) + int(chars or 0)
+        counts = sink.setdefault("requests_by_segment_count", {})
+        size = str(int(item.get("segment_count") or 0))
+        counts[size] = int(counts.get(size) or 0) + 1
 
 
 def repair_batch(sources, targets, findings, glossary_text, style_rules, target_lang,
@@ -6940,6 +7090,40 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 _workflow_errors.raise_if_fatal(exc, job_id)
                 raise
 
+    # ---- experimental context selector runtime (dynamic_v2 only) ------------
+    # Nothing in this block exists for the production `fixed` path: no index, no
+    # lock, no candidate generation, no dynamic budget.  `_dynamic_runtime` stays
+    # None unless the run explicitly opted into the experiment, which makes the
+    # isolation observable rather than merely intended.
+    _dynamic_runtime = (
+        {"index": None, "index_ready": False}
+        if effective_context_mode == _dynamic_context.EXPERIMENTAL_CONTEXT_MODE
+        else None
+    )
+    _dynamic_index_lock = threading.Lock() if _dynamic_runtime is not None else None
+
+    def _dynamic_distant_index():
+        if _dynamic_runtime is None:  # production path never reaches this
+            return None
+        if _dynamic_runtime["index_ready"]:
+            return _dynamic_runtime["index"]
+        with _dynamic_index_lock:
+            if not _dynamic_runtime["index_ready"]:
+                try:
+                    index = _dynamic_context.DistantIndex.build(
+                        paras,
+                        document_profile=document_profile,
+                        glossary_entries=glossary,
+                        entity_records=registry.to_list(),
+                    )
+                except Exception:
+                    # A broken index must not break translation: dynamic_v2 then
+                    # simply contributes no distant candidates.
+                    index = None
+                _dynamic_runtime["index"] = index
+                _dynamic_runtime["index_ready"] = True
+        return _dynamic_runtime["index"]
+
     inherited_base_url = getattr(_LLM_CTX, "base_url", None)
     inherited_reasoning = getattr(_LLM_CTX, "reasoning_effort", None)
     inherited_job_id = getattr(_RUNTIME_CTX, "job_id", job_id)
@@ -7062,20 +7246,67 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _term_dur_ms = (time.perf_counter() - _term_t0) * 1000.0
             trace.record_terminology_lookup(matches=len(selected), duration_ms=_term_dur_ms, job_id=job_id)
             glossary_text = _glossary_block(selected)
+            # Experimental-selector bookkeeping; stays inert for `fixed`.
+            _dynamic_batch_record = None
+            _dynamic_batch_started = 0.0
             with trace.span("translation", operation="context_build", job_id=job_id, items_in=len(texts)):
-                context_packet = _context.compile_context_packet(
-                    document_profile=document_profile,
-                    document_synopsis=document_synopsis,
-                    section_digest=section_digest,
-                    glossary_text=glossary_text,
-                    previous_source=ctx_prev,
-                    previous_target=previous_target,
-                    next_source=ctx_next,
-                    current_batch=texts,
-                    style_rules=style_rules,
-                    entity_hints=entity_hints,
-                    context_budget_chars=max(5200, min(12000, effective_max_chars * 3)),
-                )
+                if effective_context_mode == _dynamic_context.EXPERIMENTAL_CONTEXT_MODE:
+                    # EXPERIMENTAL / RESEARCH / OPT-IN ONLY (not promoted, not
+                    # extended).  Same packet shape, same renderer, same
+                    # batch/protocol downstream; only *which* context is injected
+                    # differs.  The production branch below is byte-identical to
+                    # the accepted baseline.
+                    context_packet = _dynamic_context.build_dynamic_packet(
+                        current_batch=texts,
+                        offset=offset,
+                        total_segments=len(paras),
+                        previous_source=ctx_prev,
+                        next_source=ctx_next,
+                        previous_target=previous_target,
+                        glossary_entries=selected,
+                        entity_hints=entity_hints,
+                        knowledge_hints=provisional_hints,
+                        tm=tm,
+                        tm_lang=_tm_lang,
+                        document_profile=document_profile,
+                        document_synopsis=document_synopsis,
+                        section_digest=section_digest,
+                        section_profile=section_profile,
+                        style_rules=style_rules,
+                        entity_records=registry.to_list(),
+                        source_segments=paras,
+                        pairs=pairs_to_query,
+                        blocked_segment_ids=sorted(blocked_source_indexes),
+                        local_segment_ids=sorted(
+                            list(range(max(0, offset - 2), offset))
+                            + list(range(offset + len(batch),
+                                         min(len(paras), offset + len(batch) + 2)))),
+                        distant_index=_dynamic_distant_index(),
+                        token_budget=effective_context_budget,
+                        ablations=effective_context_ablations,
+                        offline=effective_context_offline,
+                        experiment_id=str(state.get("experiment_id") or ""),
+                    )
+                    _dynamic_batch_record = _record_dynamic_context_batch(
+                        state, bi, offset, len(texts), context_packet)
+                    _dynamic_batch_started = time.perf_counter()
+                else:
+                    # PRODUCTION PATH (context_mode = "fixed", the default).
+                    # Unchanged from the accepted baseline; the experimental
+                    # selector is never consulted here.
+                    context_packet = _context.compile_context_packet(
+                        document_profile=document_profile,
+                        document_synopsis=document_synopsis,
+                        section_digest=section_digest,
+                        glossary_text=glossary_text,
+                        previous_source=ctx_prev,
+                        previous_target=previous_target,
+                        next_source=ctx_next,
+                        current_batch=texts,
+                        style_rules=style_rules,
+                        entity_hints=entity_hints,
+                        context_budget_chars=max(5200, min(12000, effective_max_chars * 3)),
+                    )
             review_context = _runtime_review_context(
                 state, offset, len(batch), glossary_text, style_rules, target_lang)
 
@@ -7148,6 +7379,11 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
 
             batch_sources = [p["source"] for p in batch_pairs]
             batch_targets = [p["target"] for p in batch_pairs]
+            if _dynamic_batch_record is not None:
+                # Stamp the real generation wall time on the experimental record
+                # now that the batch's provider work is finished.
+                _dynamic_batch_record["wall_s"] = round(
+                    time.perf_counter() - _dynamic_batch_started, 3)
             for p in batch_pairs:
                 p["glossary_entry_ids"] = list(injected_ids)
                 p["glossary_hash_used"] = frozen_hash

@@ -1,0 +1,4449 @@
+{
+ "fixture": "/Users/xueyang/Dev/FolioThread/benchmark/translation-efficiency/workload.json",
+ "arms": {
+  "A_nocontext": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "A_nocontext/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 75,
+    "adoption_rate": 0.8242,
+    "adoption_rate_ci95": [
+     0.7333,
+     0.8888
+    ],
+    "fully_adopted_entries": 11,
+    "partially_adopted_entries": 2,
+    "unadopted_entries": 2,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 1,
+      "adoption_rate": 0.5,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 12,
+      "adoption_rate": 0.48,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "A_nocontext/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 46,
+    "adoption_rate": 0.807,
+    "adoption_rate_ci95": [
+     0.6866,
+     0.8887
+    ],
+    "fully_adopted_entries": 25,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 4,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 3,
+      "adoption_rate": 0.3,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9025,
+    "identical_segments": 38,
+    "mean_length_ratio": 0.9975
+   }
+  },
+  "B_fixed": {
+   "context_mode": "fixed",
+   "segments": 239,
+   "glossary": {
+    "label": "B_fixed/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 74,
+    "adoption_rate": 0.8132,
+    "adoption_rate_ci95": [
+     0.721,
+     0.88
+    ],
+    "fully_adopted_entries": 12,
+    "partially_adopted_entries": 2,
+    "unadopted_entries": 1,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 1,
+      "adoption_rate": 0.5,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 10,
+      "adoption_rate": 0.4,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "B_fixed/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 48,
+    "adoption_rate": 0.8421,
+    "adoption_rate_ci95": [
+     0.7264,
+     0.9146
+    ],
+    "fully_adopted_entries": 27,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 2,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 3,
+      "adoption_rate": 0.3,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9145,
+    "identical_segments": 50,
+    "mean_length_ratio": 1.0029
+   }
+  },
+  "C_dynamic": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "C_dynamic/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 74,
+    "adoption_rate": 0.8132,
+    "adoption_rate_ci95": [
+     0.721,
+     0.88
+    ],
+    "fully_adopted_entries": 11,
+    "partially_adopted_entries": 2,
+    "unadopted_entries": 2,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 11,
+      "adoption_rate": 0.44,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 2,
+      "adoption_rate": 0.6667,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "C_dynamic/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 47,
+    "adoption_rate": 0.8246,
+    "adoption_rate_ci95": [
+     0.7063,
+     0.9018
+    ],
+    "fully_adopted_entries": 25,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 4,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 4,
+      "adoption_rate": 0.4,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9022,
+    "identical_segments": 45,
+    "mean_length_ratio": 0.9939
+   }
+  },
+  "D_dynamic_distant": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_dynamic_distant/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 76,
+    "adoption_rate": 0.8352,
+    "adoption_rate_ci95": [
+     0.7457,
+     0.8975
+    ],
+    "fully_adopted_entries": 12,
+    "partially_adopted_entries": 2,
+    "unadopted_entries": 1,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 1,
+      "adoption_rate": 0.5,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 12,
+      "adoption_rate": 0.48,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_dynamic_distant/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 45,
+    "adoption_rate": 0.7895,
+    "adoption_rate_ci95": [
+     0.6671,
+     0.8753
+    ],
+    "fully_adopted_entries": 24,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 5,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 4,
+      "adoption_rate": 0.4,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9049,
+    "identical_segments": 41,
+    "mean_length_ratio": 0.9996
+   }
+  },
+  "D_term_only": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_term_only/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 72,
+    "adoption_rate": 0.7912,
+    "adoption_rate_ci95": [
+     0.6968,
+     0.8621
+    ],
+    "fully_adopted_entries": 10,
+    "partially_adopted_entries": 2,
+    "unadopted_entries": 3,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 1,
+      "adoption_rate": 0.5,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 10,
+      "adoption_rate": 0.4,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_term_only/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 45,
+    "adoption_rate": 0.7895,
+    "adoption_rate_ci95": [
+     0.6671,
+     0.8753
+    ],
+    "fully_adopted_entries": 23,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 6,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 4,
+      "adoption_rate": 0.4,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9068,
+    "identical_segments": 40,
+    "mean_length_ratio": 0.9982
+   }
+  },
+  "D_entity_only": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_entity_only/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 78,
+    "adoption_rate": 0.8571,
+    "adoption_rate_ci95": [
+     0.7708,
+     0.9146
+    ],
+    "fully_adopted_entries": 12,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 2,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 14,
+      "adoption_rate": 0.56,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_entity_only/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 48,
+    "adoption_rate": 0.8421,
+    "adoption_rate_ci95": [
+     0.7264,
+     0.9146
+    ],
+    "fully_adopted_entries": 26,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 3,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 5,
+      "adoption_rate": 0.5,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9113,
+    "identical_segments": 46,
+    "mean_length_ratio": 0.9966
+   }
+  },
+  "D_budget_small": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_budget_small/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 78,
+    "adoption_rate": 0.8571,
+    "adoption_rate_ci95": [
+     0.7708,
+     0.9146
+    ],
+    "fully_adopted_entries": 14,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 0,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 12,
+      "adoption_rate": 0.48,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_budget_small/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 49,
+    "adoption_rate": 0.8596,
+    "adoption_rate_ci95": [
+     0.7468,
+     0.9271
+    ],
+    "fully_adopted_entries": 27,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 2,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 4,
+      "adoption_rate": 0.4,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9155,
+    "identical_segments": 54,
+    "mean_length_ratio": 0.9971
+   }
+  },
+  "D_budget_large": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_budget_large/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 74,
+    "adoption_rate": 0.8132,
+    "adoption_rate_ci95": [
+     0.721,
+     0.88
+    ],
+    "fully_adopted_entries": 10,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 4,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 12,
+      "adoption_rate": 0.48,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_budget_large/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 43,
+    "adoption_rate": 0.7544,
+    "adoption_rate_ci95": [
+     0.629,
+     0.8477
+    ],
+    "fully_adopted_entries": 22,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 7,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 4,
+      "adoption_rate": 0.4,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9011,
+    "identical_segments": 45,
+    "mean_length_ratio": 0.9976
+   }
+  },
+  "D_no_summary": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_no_summary/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 62,
+    "adoption_rate": 0.6813,
+    "adoption_rate_ci95": [
+     0.5799,
+     0.768
+    ],
+    "fully_adopted_entries": 10,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 4,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 3,
+      "adoption_rate": 0.12,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_no_summary/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 43,
+    "adoption_rate": 0.7544,
+    "adoption_rate_ci95": [
+     0.629,
+     0.8477
+    ],
+    "fully_adopted_entries": 24,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 5,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 1,
+      "adoption_rate": 0.1,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.8936,
+    "identical_segments": 35,
+    "mean_length_ratio": 0.9933
+   }
+  },
+  "D_no_local": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_no_local/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 71,
+    "adoption_rate": 0.7802,
+    "adoption_rate_ci95": [
+     0.6848,
+     0.853
+    ],
+    "fully_adopted_entries": 10,
+    "partially_adopted_entries": 2,
+    "unadopted_entries": 3,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 1,
+      "adoption_rate": 0.5,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 9,
+      "adoption_rate": 0.36,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_no_local/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 43,
+    "adoption_rate": 0.7544,
+    "adoption_rate_ci95": [
+     0.629,
+     0.8477
+    ],
+    "fully_adopted_entries": 23,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 6,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 2,
+      "adoption_rate": 0.2,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9078,
+    "identical_segments": 45,
+    "mean_length_ratio": 1.0032
+   }
+  },
+  "D_budget_tiny_600": {
+   "context_mode": "dynamic_v2",
+   "segments": 239,
+   "glossary": {
+    "label": "D_budget_tiny_600/glossary",
+    "entries": 15,
+    "total_occurrences": 91,
+    "adopted_occurrences": 73,
+    "adoption_rate": 0.8022,
+    "adoption_rate_ci95": [
+     0.7089,
+     0.8711
+    ],
+    "fully_adopted_entries": 12,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 2,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": "OECD The Space Economy at a Glance 2026",
+      "expected": "OECD《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Germany",
+      "expected": "德国",
+      "occurrences": 42,
+      "adopted": 42,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Agency (ESA)",
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Astronaut Centre",
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Cologne",
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Space Operations Centre",
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Darmstadt",
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European Organisation for the Exploitation of Meteorological Satellites (EUMETSAT)",
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "New Space",
+      "expected": "新太空",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Urban Air Mobility",
+      "expected": "城市空中交通",
+      "occurrences": 4,
+      "adopted": 4,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "uncrewed aircraft systems, or UAS",
+      "expected": "无人航空器系统（UAS）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Uncrewed aviation",
+      "expected": "无人航空",
+      "occurrences": 6,
+      "adopted": 6,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "UAM",
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 25,
+      "adopted": 9,
+      "adoption_rate": 0.36,
+      "forbidden_used": 0
+     },
+     {
+      "source": "Artemis",
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": "European lunar initiatives",
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "entities": {
+    "label": "D_budget_tiny_600/entities",
+    "entries": 30,
+    "total_occurrences": 57,
+    "adopted_occurrences": 47,
+    "adoption_rate": 0.8246,
+    "adoption_rate_ci95": [
+     0.7063,
+     0.9018
+    ],
+    "fully_adopted_entries": 26,
+    "partially_adopted_entries": 1,
+    "unadopted_entries": 3,
+    "forbidden_renderings_used": 0,
+    "rows": [
+     {
+      "source": null,
+      "expected": "OECD",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "《2026年太空经济概览》",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "太空经济",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间局（ESA）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国",
+      "occurrences": 14,
+      "adopted": 14,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲宇航员中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "科隆",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲空间操作中心",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "达姆施塔特",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲气象卫星开发组织（EUMETSAT）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "EUMETSAT",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "独立进入太空的能力",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "人工智能",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "地球",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲",
+      "occurrences": 3,
+      "adopted": 3,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "城市空中交通（UAM）",
+      "occurrences": 10,
+      "adopted": 3,
+      "adoption_rate": 0.3,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "德国研究机构",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "更高自主化水平",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "公众接受度",
+      "occurrences": 1,
+      "adopted": 0,
+      "adoption_rate": 0.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球",
+      "occurrences": 2,
+      "adopted": 2,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "火星",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲服务舱（ESM）",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "美国国家航空航天局",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座飞船",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "猎户座",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "月球探索",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "阿尔忒弥斯计划",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     },
+     {
+      "source": null,
+      "expected": "欧洲月球倡议",
+      "occurrences": 1,
+      "adopted": 1,
+      "adoption_rate": 1.0,
+      "forbidden_used": 0
+     }
+    ]
+   },
+   "reference_drift": {
+    "segments": 239,
+    "mean_similarity": 0.9049,
+    "identical_segments": 46,
+    "mean_length_ratio": 0.9987
+   }
+  }
+ }
+}

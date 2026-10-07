@@ -1,0 +1,127 @@
+{
+ "summary": [
+  {
+   "arm": "A_nocontext",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 0,
+   "distant_selected": 0,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "B_fixed",
+   "context_mode": "fixed",
+   "offline": false,
+   "batches": 0,
+   "distant_retrieved": 0,
+   "distant_selected": 0,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "C_dynamic",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 0,
+   "distant_selected": 0,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_dynamic_distant",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 471,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_term_only",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 471,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_entity_only",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 471,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_budget_small",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 299,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_budget_large",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 471,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_no_summary",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 471,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_no_local",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 471,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  },
+  {
+   "arm": "D_budget_tiny_600",
+   "context_mode": "dynamic_v2",
+   "offline": false,
+   "batches": 61,
+   "distant_retrieved": 471,
+   "distant_selected": 171,
+   "fallback_batches": 0,
+   "mandatory_over_budget_batches": 0,
+   "problems": []
+  }
+ ],
+ "problems": [],
+ "result": "PASS"
+}

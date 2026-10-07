@@ -1,0 +1,4017 @@
+{
+ "schema": "dynamic-context-ab/compare/1",
+ "generated_at": "2026-10-06T11:48:25",
+ "fixture": "/Users/xueyang/Dev/FolioThread/benchmark/translation-efficiency/workload.json",
+ "arms": [
+  "A_nocontext",
+  "B_fixed",
+  "C_dynamic",
+  "D_dynamic_distant",
+  "D_term_only",
+  "D_entity_only",
+  "D_budget_small",
+  "D_budget_large",
+  "D_no_summary",
+  "D_no_local",
+  "D_budget_tiny_600"
+ ],
+ "wiring": {
+  "A_nocontext": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "B_fixed": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "C_dynamic": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_dynamic_distant": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_term_only": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_entity_only": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_budget_small": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_budget_large": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_no_summary": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_no_local": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  },
+  "D_budget_tiny_600": {
+   "supported": true,
+   "missing": [],
+   "verified": true,
+   "reason": ""
+  }
+ },
+ "unwired_arms": [],
+ "metric_table": {
+  "segments": {
+   "label": "segments",
+   "values": {
+    "A_nocontext": 239,
+    "B_fixed": 239,
+    "C_dynamic": 239,
+    "D_dynamic_distant": 239,
+    "D_term_only": 239,
+    "D_entity_only": 239,
+    "D_budget_small": 239,
+    "D_budget_large": 239,
+    "D_no_summary": 239,
+    "D_no_local": 239,
+    "D_budget_tiny_600": 239
+   }
+  },
+  "prompt_tokens": {
+   "label": "total input tokens",
+   "values": {
+    "A_nocontext": 28217,
+    "B_fixed": 65555,
+    "C_dynamic": 65049,
+    "D_dynamic_distant": 90506,
+    "D_term_only": 90264,
+    "D_entity_only": 90049,
+    "D_budget_small": 76169,
+    "D_budget_large": 90685,
+    "D_no_summary": 68230,
+    "D_no_local": 76402,
+    "D_budget_tiny_600": 57840
+   }
+  },
+  "completion_tokens": {
+   "label": "total output tokens",
+   "values": {
+    "A_nocontext": 14242,
+    "B_fixed": 14147,
+    "C_dynamic": 14034,
+    "D_dynamic_distant": 15102,
+    "D_term_only": 14090,
+    "D_entity_only": 12806,
+    "D_budget_small": 14903,
+    "D_budget_large": 14323,
+    "D_no_summary": 14624,
+    "D_no_local": 13794,
+    "D_budget_tiny_600": 14659
+   }
+  },
+  "context_tokens_prompt_cost": {
+   "label": "context tokens (prompt cost)",
+   "values": {
+    "A_nocontext": 2300,
+    "B_fixed": 39620,
+    "C_dynamic": 39187,
+    "D_dynamic_distant": 64271,
+    "D_term_only": 64301,
+    "D_entity_only": 64451,
+    "D_budget_small": 49668,
+    "D_budget_large": 64477,
+    "D_no_summary": 42427,
+    "D_no_local": 50519,
+    "D_budget_tiny_600": 31964
+   }
+  },
+  "context_tokens_selected": {
+   "label": "context tokens (selected)",
+   "values": {
+    "A_nocontext": 779,
+    "B_fixed": null,
+    "C_dynamic": 37223,
+    "D_dynamic_distant": 61812,
+    "D_term_only": 61820,
+    "D_entity_only": 61983,
+    "D_budget_small": 47360,
+    "D_budget_large": 61979,
+    "D_no_summary": 40193,
+    "D_no_local": 48580,
+    "D_budget_tiny_600": 29858
+   }
+  },
+  "tokens_per_segment": {
+   "label": "tokens / segment",
+   "values": {
+    "A_nocontext": 118.06,
+    "B_fixed": 274.29,
+    "C_dynamic": 272.17,
+    "D_dynamic_distant": 378.69,
+    "D_term_only": 377.67,
+    "D_entity_only": 376.77,
+    "D_budget_small": 318.7,
+    "D_budget_large": 379.44,
+    "D_no_summary": 285.48,
+    "D_no_local": 319.67,
+    "D_budget_tiny_600": 242.01
+   }
+  },
+  "api_requests": {
+   "label": "API request count",
+   "values": {
+    "A_nocontext": 98,
+    "B_fixed": 97,
+    "C_dynamic": 97,
+    "D_dynamic_distant": 98,
+    "D_term_only": 97,
+    "D_entity_only": 96,
+    "D_budget_small": 99,
+    "D_budget_large": 98,
+    "D_no_summary": 97,
+    "D_no_local": 97,
+    "D_budget_tiny_600": 97
+   }
+  },
+  "wall_s": {
+   "label": "wall time (s)",
+   "values": {
+    "A_nocontext": 947.91,
+    "B_fixed": 759.9,
+    "C_dynamic": 654.31,
+    "D_dynamic_distant": 775.27,
+    "D_term_only": 888.17,
+    "D_entity_only": 725.11,
+    "D_budget_small": 729.97,
+    "D_budget_large": 659.81,
+    "D_no_summary": 650.62,
+    "D_no_local": 724.16,
+    "D_budget_tiny_600": 620.52
+   }
+  },
+  "terminology_violations": {
+   "label": "terminology violations",
+   "values": {
+    "A_nocontext": 0,
+    "B_fixed": 0,
+    "C_dynamic": 0,
+    "D_dynamic_distant": 0,
+    "D_term_only": 0,
+    "D_entity_only": 0,
+    "D_budget_small": 0,
+    "D_budget_large": 0,
+    "D_no_summary": 0,
+    "D_no_local": 0,
+    "D_budget_tiny_600": 0
+   }
+  },
+  "entities_repeated": {
+   "label": "repeated proper names",
+   "values": {
+    "A_nocontext": 0,
+    "B_fixed": 0,
+    "C_dynamic": 0,
+    "D_dynamic_distant": 0,
+    "D_term_only": 0,
+    "D_entity_only": 0,
+    "D_budget_small": 0,
+    "D_budget_large": 0,
+    "D_no_summary": 0,
+    "D_no_local": 0,
+    "D_budget_tiny_600": 0
+   }
+  },
+  "entities_multi_rendering": {
+   "label": "names with >1 rendering",
+   "values": {
+    "A_nocontext": 0,
+    "B_fixed": 0,
+    "C_dynamic": 0,
+    "D_dynamic_distant": 0,
+    "D_term_only": 0,
+    "D_entity_only": 0,
+    "D_budget_small": 0,
+    "D_budget_large": 0,
+    "D_no_summary": 0,
+    "D_no_local": 0,
+    "D_budget_tiny_600": 0
+   }
+  },
+  "omissions_empty_targets": {
+   "label": "omissions / empty targets",
+   "values": {
+    "A_nocontext": 0,
+    "B_fixed": 0,
+    "C_dynamic": 0,
+    "D_dynamic_distant": 0,
+    "D_term_only": 0,
+    "D_entity_only": 0,
+    "D_budget_small": 0,
+    "D_budget_large": 0,
+    "D_no_summary": 0,
+    "D_no_local": 0,
+    "D_budget_tiny_600": 0
+   }
+  },
+  "omissions_incomplete": {
+   "label": "omissions / truncated findings",
+   "values": {
+    "A_nocontext": 0,
+    "B_fixed": 0,
+    "C_dynamic": 0,
+    "D_dynamic_distant": 0,
+    "D_term_only": 0,
+    "D_entity_only": 0,
+    "D_budget_small": 0,
+    "D_budget_large": 0,
+    "D_no_summary": 0,
+    "D_no_local": 0,
+    "D_budget_tiny_600": 0
+   }
+  },
+  "numbers_missing_in_target": {
+   "label": "number errors",
+   "values": {
+    "A_nocontext": 0,
+    "B_fixed": 0,
+    "C_dynamic": 0,
+    "D_dynamic_distant": 0,
+    "D_term_only": 0,
+    "D_entity_only": 0,
+    "D_budget_small": 0,
+    "D_budget_large": 0,
+    "D_no_summary": 0,
+    "D_no_local": 0,
+    "D_budget_tiny_600": 0
+   }
+  },
+  "dates_missing_in_target": {
+   "label": "date errors",
+   "values": {
+    "A_nocontext": 0,
+    "B_fixed": 0,
+    "C_dynamic": 0,
+    "D_dynamic_distant": 0,
+    "D_term_only": 0,
+    "D_entity_only": 0,
+    "D_budget_small": 0,
+    "D_budget_large": 0,
+    "D_no_summary": 0,
+    "D_no_local": 0,
+    "D_budget_tiny_600": 0
+   }
+  },
+  "repeated_terms": {
+   "label": "repeated terms tracked",
+   "values": {
+    "A_nocontext": 6,
+    "B_fixed": 6,
+    "C_dynamic": 6,
+    "D_dynamic_distant": 6,
+    "D_term_only": 6,
+    "D_entity_only": 6,
+    "D_budget_small": 6,
+    "D_budget_large": 6,
+    "D_no_summary": 6,
+    "D_no_local": 6,
+    "D_budget_tiny_600": 6
+   }
+  },
+  "repeated_terms_multi_rendering": {
+   "label": "terms with >1 rendering",
+   "values": {
+    "A_nocontext": 6,
+    "B_fixed": 6,
+    "C_dynamic": 6,
+    "D_dynamic_distant": 6,
+    "D_term_only": 6,
+    "D_entity_only": 6,
+    "D_budget_small": 6,
+    "D_budget_large": 6,
+    "D_no_summary": 6,
+    "D_no_local": 6,
+    "D_budget_tiny_600": 6
+   }
+  }
+ },
+ "arm_summaries": {
+  "A_nocontext": {
+   "label": "A_nocontext",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "distant",
+    "tm",
+    "summary",
+    "local",
+    "entity",
+    "knowledge",
+    "rule"
+   ],
+   "context_budget_tokens": 1800,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 947.91,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 28217,
+   "completion_tokens": 14242,
+   "total_tokens": 42459,
+   "context_tokens_selected": 779,
+   "context_tokens_prompt_cost": 2300,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 118.06,
+   "api_requests": 98,
+   "api_requests_by_role": {
+    "translation": 61,
+    "auxiliary": 37
+   },
+   "calls_summary": {
+    "total_calls": 98,
+    "total_latency_s": 1904.0885,
+    "by_role": {
+     "translation": {
+      "calls": 61,
+      "latency_s": 966.0756,
+      "latency_max_s": 193.4522,
+      "user_chars": 43261,
+      "system_chars": 27023,
+      "completion_chars": 9302,
+      "latency_mean_s": 15.8373
+     },
+     "auxiliary": {
+      "calls": 37,
+      "latency_s": 938.0129,
+      "latency_max_s": 57.562,
+      "user_chars": 28887,
+      "system_chars": 13542,
+      "completion_chars": 47509,
+      "latency_mean_s": 25.3517
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 61,
+     "prompt_tokens": 17594,
+     "completion_tokens": 2351,
+     "total_tokens": 19945
+    },
+    "auxiliary": {
+     "calls": 37,
+     "prompt_tokens": 10623,
+     "completion_tokens": 11891,
+     "total_tokens": 22514
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 549,
+    "glossary": 8649
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "f547ada60fcf15a2",
+    "target_chars": 8459,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 3,
+    "findings_by_severity": {
+     "informational": 3
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 5,
+     "informational": 3,
+     "review_failed": 0
+    }
+   }
+  },
+  "B_fixed": {
+   "label": "B_fixed",
+   "context_mode": "fixed",
+   "ablations": [],
+   "context_budget_tokens": null,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 759.9,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 65555,
+   "completion_tokens": 14147,
+   "total_tokens": 79702,
+   "context_tokens_selected": null,
+   "context_tokens_prompt_cost": 39620,
+   "context_tokens_source": "translation_prompt_cost.category_chars/4",
+   "tokens_per_segment": 274.29,
+   "api_requests": 97,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 35
+   },
+   "calls_summary": {
+    "total_calls": 97,
+    "total_latency_s": 1217.9675,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 467.6032,
+      "latency_max_s": 16.8537,
+      "user_chars": 194262,
+      "system_chars": 27522,
+      "completion_chars": 9481,
+      "latency_mean_s": 7.542
+     },
+     "auxiliary": {
+      "calls": 35,
+      "latency_s": 750.3643,
+      "latency_max_s": 45.4581,
+      "user_chars": 27465,
+      "system_chars": 12810,
+      "completion_chars": 46960,
+      "latency_mean_s": 21.439
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 55472,
+     "completion_tokens": 2394,
+     "total_tokens": 57866
+    },
+    "auxiliary": {
+     "calls": 35,
+     "prompt_tokens": 10083,
+     "completion_tokens": 11753,
+     "total_tokens": 21836
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 88299,
+    "style": 4026,
+    "glossary": 8709,
+    "neighbor_context": 55147,
+    "entities": 2299
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 0,
+   "quality": {
+    "segments": 239,
+    "target_digest": "234cbf714c22c834",
+    "target_chars": 8505,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 6,
+    "findings_by_severity": {
+     "informational": 6
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 5,
+     "informational": 6,
+     "review_failed": 0
+    }
+   }
+  },
+  "C_dynamic": {
+   "label": "C_dynamic",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "distant"
+   ],
+   "context_budget_tokens": 1800,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 654.31,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 65049,
+   "completion_tokens": 14034,
+   "total_tokens": 79083,
+   "context_tokens_selected": 37223,
+   "context_tokens_prompt_cost": 39187,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 272.17,
+   "api_requests": 97,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 35
+   },
+   "calls_summary": {
+    "total_calls": 97,
+    "total_latency_s": 1145.1465,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 500.4038,
+      "latency_max_s": 25.2973,
+      "user_chars": 192556,
+      "system_chars": 27522,
+      "completion_chars": 9456,
+      "latency_mean_s": 8.071
+     },
+     "auxiliary": {
+      "calls": 35,
+      "latency_s": 644.7427,
+      "latency_max_s": 41.3462,
+      "user_chars": 27164,
+      "system_chars": 12810,
+      "completion_chars": 46554,
+      "latency_mean_s": 18.4212
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 55044,
+     "completion_tokens": 2383,
+     "total_tokens": 57427
+    },
+    "auxiliary": {
+     "calls": 35,
+     "prompt_tokens": 10005,
+     "completion_tokens": 11651,
+     "total_tokens": 21656
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 88299,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 56589,
+    "project_knowledge": 4253,
+    "entities": 1346
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "35ce0d718389cd96",
+    "target_chars": 8428,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 7,
+    "findings_by_severity": {
+     "informational": 7
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 2,
+     "informational": 7,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_dynamic_distant": {
+   "label": "D_dynamic_distant",
+   "context_mode": "dynamic_v2",
+   "ablations": [],
+   "context_budget_tokens": 1800,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 775.27,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 90506,
+   "completion_tokens": 15102,
+   "total_tokens": 105608,
+   "context_tokens_selected": 61812,
+   "context_tokens_prompt_cost": 64271,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 378.69,
+   "api_requests": 98,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 36
+   },
+   "calls_summary": {
+    "total_calls": 98,
+    "total_latency_s": 1350.9896,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 591.6896,
+      "latency_max_s": 26.6314,
+      "user_chars": 293000,
+      "system_chars": 27522,
+      "completion_chars": 9511,
+      "latency_mean_s": 9.5434
+     },
+     "auxiliary": {
+      "calls": 36,
+      "latency_s": 759.3,
+      "latency_max_s": 40.9566,
+      "user_chars": 28191,
+      "system_chars": 13176,
+      "completion_chars": 50750,
+      "latency_mean_s": 21.0917
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 80151,
+     "completion_tokens": 2401,
+     "total_tokens": 82552
+    },
+    "auxiliary": {
+     "calls": 36,
+     "prompt_tokens": 10355,
+     "completion_tokens": 12701,
+     "total_tokens": 23056
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 88299,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 55413,
+    "distant_context": 101293,
+    "project_knowledge": 4457,
+    "entities": 1362
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "da308ed2a8d788d4",
+    "target_chars": 8477,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 6,
+    "findings_by_severity": {
+     "informational": 6
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 4,
+     "informational": 6,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_term_only": {
+   "label": "D_term_only",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "distant_entities"
+   ],
+   "context_budget_tokens": 1800,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 888.17,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 90264,
+   "completion_tokens": 14090,
+   "total_tokens": 104354,
+   "context_tokens_selected": 61820,
+   "context_tokens_prompt_cost": 64301,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 377.67,
+   "api_requests": 97,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 35
+   },
+   "calls_summary": {
+    "total_calls": 97,
+    "total_latency_s": 1563.6412,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 698.8598,
+      "latency_max_s": 189.568,
+      "user_chars": 293121,
+      "system_chars": 27522,
+      "completion_chars": 9492,
+      "latency_mean_s": 11.2719
+     },
+     "auxiliary": {
+      "calls": 35,
+      "latency_s": 864.7814,
+      "latency_max_s": 215.2151,
+      "user_chars": 27455,
+      "system_chars": 12810,
+      "completion_chars": 46730,
+      "latency_mean_s": 24.708
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 80184,
+     "completion_tokens": 2395,
+     "total_tokens": 82579
+    },
+    "auxiliary": {
+     "calls": 35,
+     "prompt_tokens": 10080,
+     "completion_tokens": 11695,
+     "total_tokens": 21775
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 88299,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 55395,
+    "distant_context": 101504,
+    "entities": 1563,
+    "project_knowledge": 4181
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "078dafd4fab815dd",
+    "target_chars": 8465,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 5,
+    "findings_by_severity": {
+     "informational": 5
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 4,
+     "informational": 5,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_entity_only": {
+   "label": "D_entity_only",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "distant_terms"
+   ],
+   "context_budget_tokens": 1800,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 725.11,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 90049,
+   "completion_tokens": 12806,
+   "total_tokens": 102855,
+   "context_tokens_selected": 61983,
+   "context_tokens_prompt_cost": 64451,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 376.77,
+   "api_requests": 96,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 34
+   },
+   "calls_summary": {
+    "total_calls": 96,
+    "total_latency_s": 1183.308,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 471.6064,
+      "latency_max_s": 29.1477,
+      "user_chars": 293730,
+      "system_chars": 27522,
+      "completion_chars": 9471,
+      "latency_mean_s": 7.6066
+     },
+     "auxiliary": {
+      "calls": 34,
+      "latency_s": 711.7016,
+      "latency_max_s": 38.0037,
+      "user_chars": 26343,
+      "system_chars": 12444,
+      "completion_chars": 41607,
+      "latency_mean_s": 20.9324
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 80339,
+     "completion_tokens": 2393,
+     "total_tokens": 82732
+    },
+    "auxiliary": {
+     "calls": 34,
+     "prompt_tokens": 9710,
+     "completion_tokens": 10413,
+     "total_tokens": 20123
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 88299,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 55266,
+    "distant_context": 102460,
+    "project_knowledge": 4028,
+    "entities": 1491
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "d47ab3cc2a947d73",
+    "target_chars": 8451,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 6,
+    "findings_by_severity": {
+     "informational": 6
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 3,
+     "informational": 6,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_budget_small": {
+   "label": "D_budget_small",
+   "context_mode": "dynamic_v2",
+   "ablations": [],
+   "context_budget_tokens": 900,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 729.97,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 76169,
+   "completion_tokens": 14903,
+   "total_tokens": 91072,
+   "context_tokens_selected": 47360,
+   "context_tokens_prompt_cost": 49668,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 318.7,
+   "api_requests": 99,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 37
+   },
+   "calls_summary": {
+    "total_calls": 99,
+    "total_latency_s": 1219.6025,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 505.241,
+      "latency_max_s": 19.3817,
+      "user_chars": 234533,
+      "system_chars": 27522,
+      "completion_chars": 9487,
+      "latency_mean_s": 8.149
+     },
+     "auxiliary": {
+      "calls": 37,
+      "latency_s": 714.3615,
+      "latency_max_s": 44.201,
+      "user_chars": 28918,
+      "system_chars": 13542,
+      "completion_chars": 49976,
+      "latency_mean_s": 19.3071
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 65539,
+     "completion_tokens": 2396,
+     "total_tokens": 67935
+    },
+    "auxiliary": {
+     "calls": 37,
+     "prompt_tokens": 10630,
+     "completion_tokens": 12507,
+     "total_tokens": 23137
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 74052,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 54026,
+    "distant_context": 60015,
+    "project_knowledge": 3348,
+    "entities": 969
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "5c909e9dfce13269",
+    "target_chars": 8455,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 6,
+    "findings_by_severity": {
+     "informational": 6
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 3,
+     "informational": 6,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_budget_large": {
+   "label": "D_budget_large",
+   "context_mode": "dynamic_v2",
+   "ablations": [],
+   "context_budget_tokens": 3600,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 659.81,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 90685,
+   "completion_tokens": 14323,
+   "total_tokens": 105008,
+   "context_tokens_selected": 61979,
+   "context_tokens_prompt_cost": 64477,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 379.44,
+   "api_requests": 98,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 36
+   },
+   "calls_summary": {
+    "total_calls": 98,
+    "total_latency_s": 1139.0173,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 486.3624,
+      "latency_max_s": 17.2898,
+      "user_chars": 293829,
+      "system_chars": 27522,
+      "completion_chars": 9493,
+      "latency_mean_s": 7.8446
+     },
+     "auxiliary": {
+      "calls": 36,
+      "latency_s": 652.6549,
+      "latency_max_s": 45.0911,
+      "user_chars": 28087,
+      "system_chars": 13176,
+      "completion_chars": 47664,
+      "latency_mean_s": 18.1293
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 80357,
+     "completion_tokens": 2396,
+     "total_tokens": 82753
+    },
+    "auxiliary": {
+     "calls": 36,
+     "prompt_tokens": 10328,
+     "completion_tokens": 11927,
+     "total_tokens": 22255
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 88299,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 55723,
+    "distant_context": 101559,
+    "project_knowledge": 4218,
+    "entities": 1849
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "bf3ba8b9c77ba490",
+    "target_chars": 8460,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 5,
+    "findings_by_severity": {
+     "informational": 5
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 4,
+     "informational": 5,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_no_summary": {
+   "label": "D_no_summary",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "summary"
+   ],
+   "context_budget_tokens": 1800,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 650.62,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 68230,
+   "completion_tokens": 14624,
+   "total_tokens": 82854,
+   "context_tokens_selected": 40193,
+   "context_tokens_prompt_cost": 42427,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 285.48,
+   "api_requests": 97,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 35
+   },
+   "calls_summary": {
+    "total_calls": 97,
+    "total_latency_s": 1186.7934,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 545.4882,
+      "latency_max_s": 33.6274,
+      "user_chars": 205279,
+      "system_chars": 27522,
+      "completion_chars": 9457,
+      "latency_mean_s": 8.7982
+     },
+     "auxiliary": {
+      "calls": 35,
+      "latency_s": 641.3052,
+      "latency_max_s": 47.0535,
+      "user_chars": 27191,
+      "system_chars": 12810,
+      "completion_chars": 48895,
+      "latency_mean_s": 18.323
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 58220,
+     "completion_tokens": 2385,
+     "total_tokens": 60605
+    },
+    "auxiliary": {
+     "calls": 35,
+     "prompt_tokens": 10010,
+     "completion_tokens": 12239,
+     "total_tokens": 22249
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 549,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 55265,
+    "distant_context": 101451,
+    "entities": 1906,
+    "project_knowledge": 4275
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "df867e7444d281e0",
+    "target_chars": 8423,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 3,
+    "findings_by_severity": {
+     "informational": 3
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 4,
+     "informational": 3,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_no_local": {
+   "label": "D_no_local",
+   "context_mode": "dynamic_v2",
+   "ablations": [
+    "local"
+   ],
+   "context_budget_tokens": 1800,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 724.16,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 76402,
+   "completion_tokens": 13794,
+   "total_tokens": 90196,
+   "context_tokens_selected": 48580,
+   "context_tokens_prompt_cost": 50519,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 319.67,
+   "api_requests": 97,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 35
+   },
+   "calls_summary": {
+    "total_calls": 97,
+    "total_latency_s": 1185.2266,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 470.5368,
+      "latency_max_s": 18.3248,
+      "user_chars": 237669,
+      "system_chars": 27522,
+      "completion_chars": 9515,
+      "latency_mean_s": 7.5893
+     },
+     "auxiliary": {
+      "calls": 35,
+      "latency_s": 714.6898,
+      "latency_max_s": 40.4581,
+      "user_chars": 27457,
+      "system_chars": 12810,
+      "completion_chars": 45507,
+      "latency_mean_s": 20.4197
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 66320,
+     "completion_tokens": 2404,
+     "total_tokens": 68724
+    },
+    "auxiliary": {
+     "calls": 35,
+     "prompt_tokens": 10082,
+     "completion_tokens": 11390,
+     "total_tokens": 21472
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 88299,
+    "style": 4026,
+    "glossary": 2233,
+    "distant_context": 101392,
+    "entities": 1785,
+    "project_knowledge": 4341
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "d36f653eb16a5824",
+    "target_chars": 8507,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 6,
+    "findings_by_severity": {
+     "informational": 6
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 3,
+     "informational": 6,
+     "review_failed": 0
+    }
+   }
+  },
+  "D_budget_tiny_600": {
+   "label": "D_budget_tiny_600",
+   "context_mode": "dynamic_v2",
+   "ablations": [],
+   "context_budget_tokens": 600,
+   "offline": false,
+   "segments": 239,
+   "wall_s": 620.52,
+   "error": null,
+   "dropped_kwargs": [],
+   "wiring": {
+    "supported": true,
+    "missing": [],
+    "verified": true,
+    "reason": ""
+   },
+   "prompt_tokens": 57840,
+   "completion_tokens": 14659,
+   "total_tokens": 72499,
+   "context_tokens_selected": 29858,
+   "context_tokens_prompt_cost": 31964,
+   "context_tokens_source": "dynamic_context_records.total_selected_tokens",
+   "tokens_per_segment": 242.01,
+   "api_requests": 97,
+   "api_requests_by_role": {
+    "translation": 62,
+    "auxiliary": 35
+   },
+   "calls_summary": {
+    "total_calls": 97,
+    "total_latency_s": 1096.0813,
+    "by_role": {
+     "translation": {
+      "calls": 62,
+      "latency_s": 486.3912,
+      "latency_max_s": 18.5927,
+      "user_chars": 163515,
+      "system_chars": 27522,
+      "completion_chars": 9513,
+      "latency_mean_s": 7.845
+     },
+     "auxiliary": {
+      "calls": 35,
+      "latency_s": 609.6901,
+      "latency_max_s": 32.5134,
+      "user_chars": 27388,
+      "system_chars": 12810,
+      "completion_chars": 48983,
+      "latency_mean_s": 17.4197
+     }
+    }
+   },
+   "usage_by_role": {
+    "translation": {
+     "calls": 62,
+     "prompt_tokens": 47777,
+     "completion_tokens": 2399,
+     "total_tokens": 50176
+    },
+    "auxiliary": {
+     "calls": 35,
+     "prompt_tokens": 10063,
+     "completion_tokens": 12260,
+     "total_tokens": 22323
+    }
+   },
+   "prompt_cost_categories": {
+    "instructions": 27023,
+    "source": 33829,
+    "document_context": 36263,
+    "style": 4026,
+    "glossary": 2233,
+    "neighbor_context": 44773,
+    "distant_context": 34289,
+    "entities": 1811,
+    "project_knowledge": 4458
+   },
+   "prompt_cost_requests": 61,
+   "dynamic_records": 61,
+   "quality": {
+    "segments": 239,
+    "target_digest": "a8a575dbd631b2d9",
+    "target_chars": 8469,
+    "empty_targets": 0,
+    "omissions": 0,
+    "incomplete_findings": 0,
+    "deterministic_findings": 6,
+    "findings_by_severity": {
+     "informational": 6
+    },
+    "terminology_violations": 0,
+    "terminology_by_severity": {},
+    "terminology_violations_blocking": 0,
+    "numbers_total": 1,
+    "numbers_missing_in_target": 0,
+    "dates_total": 1,
+    "dates_missing_in_target": 0,
+    "entities_repeated": 0,
+    "entities_multi_rendering": 0,
+    "entity_rows": [],
+    "repeated_terms": 6,
+    "repeated_terms_multi_rendering": 6,
+    "repeated_term_rows": [
+     {
+      "source_form": "Germany",
+      "occurrences": 42,
+      "distinct_renderings": 42
+     },
+     {
+      "source_form": "European Space Agency (ESA)",
+      "occurrences": 2,
+      "distinct_renderings": 2
+     },
+     {
+      "source_form": "Urban Air Mobility",
+      "occurrences": 4,
+      "distinct_renderings": 4
+     },
+     {
+      "source_form": "Uncrewed aviation",
+      "occurrences": 6,
+      "distinct_renderings": 6
+     },
+     {
+      "source_form": "UAM",
+      "occurrences": 25,
+      "distinct_renderings": 25
+     },
+     {
+      "source_form": "Artemis",
+      "occurrences": 3,
+      "distinct_renderings": 3
+     }
+    ],
+    "review_stats": {
+     "reviewed_segments": 0,
+     "batches_reviewed": 0,
+     "batches_skipped_low_risk": 0,
+     "skipped_segments": 0,
+     "blocking": 0,
+     "actionable": 2,
+     "informational": 6,
+     "review_failed": 0
+    }
+   }
+  }
+ },
+ "per_source": {
+  "A_nocontext": {
+   "distant_segment": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "glossary": {
+    "candidates_total": 153,
+    "selected_total": 153,
+    "selected_tokens_total": 779,
+    "batches_with_candidates": 56,
+    "batches_with_selected": 56,
+    "batches_selected_and_injected": 56,
+    "quality_association": {
+     "batches_present": 56,
+     "batches_absent": 5,
+     "segments_present": 219,
+     "segments_absent": 20,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "rule": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "B_fixed": {},
+  "C_dynamic": {
+   "distant_segment": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 27,
+    "selected_total": 27,
+    "selected_tokens_total": 206,
+    "batches_with_candidates": 20,
+    "batches_with_selected": 20,
+    "batches_selected_and_injected": 20,
+    "quality_association": {
+     "batches_present": 20,
+     "batches_absent": 41,
+     "segments_present": 78,
+     "segments_absent": 161,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 349,
+    "selected_total": 349,
+    "selected_tokens_total": 13573,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 154,
+    "selected_total": 154,
+    "selected_tokens_total": 803,
+    "batches_with_candidates": 49,
+    "batches_with_selected": 49,
+    "batches_selected_and_injected": 49,
+    "quality_association": {
+     "batches_present": 49,
+     "batches_absent": 12,
+     "segments_present": 191,
+     "segments_absent": 48,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 183,
+    "selected_tokens_total": 21671,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_dynamic_distant": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 471,
+    "selected_tokens_total": 24790,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 235,
+     "segments_absent": 4,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 27,
+    "selected_total": 27,
+    "selected_tokens_total": 221,
+    "batches_with_candidates": 18,
+    "batches_with_selected": 18,
+    "batches_selected_and_injected": 18,
+    "quality_association": {
+     "batches_present": 18,
+     "batches_absent": 43,
+     "segments_present": 70,
+     "segments_absent": 169,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 343,
+    "selected_total": 343,
+    "selected_tokens_total": 13295,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 164,
+    "selected_total": 164,
+    "selected_tokens_total": 865,
+    "batches_with_candidates": 46,
+    "batches_with_selected": 46,
+    "batches_selected_and_injected": 46,
+    "quality_association": {
+     "batches_present": 46,
+     "batches_absent": 15,
+     "segments_present": 181,
+     "segments_absent": 58,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 183,
+    "selected_tokens_total": 21671,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_term_only": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 471,
+    "selected_tokens_total": 24843,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 235,
+     "segments_absent": 4,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 32,
+    "selected_total": 32,
+    "selected_tokens_total": 238,
+    "batches_with_candidates": 23,
+    "batches_with_selected": 23,
+    "batches_selected_and_injected": 23,
+    "quality_association": {
+     "batches_present": 23,
+     "batches_absent": 38,
+     "segments_present": 90,
+     "segments_absent": 149,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 343,
+    "selected_total": 343,
+    "selected_tokens_total": 13290,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 151,
+    "selected_total": 151,
+    "selected_tokens_total": 808,
+    "batches_with_candidates": 46,
+    "batches_with_selected": 46,
+    "batches_selected_and_injected": 46,
+    "quality_association": {
+     "batches_present": 46,
+     "batches_absent": 15,
+     "segments_present": 179,
+     "segments_absent": 60,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 183,
+    "selected_tokens_total": 21671,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_entity_only": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 471,
+    "selected_tokens_total": 25085,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 235,
+     "segments_absent": 4,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 30,
+    "selected_total": 30,
+    "selected_tokens_total": 233,
+    "batches_with_candidates": 21,
+    "batches_with_selected": 21,
+    "batches_selected_and_injected": 21,
+    "quality_association": {
+     "batches_present": 21,
+     "batches_absent": 40,
+     "segments_present": 82,
+     "segments_absent": 157,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 343,
+    "selected_total": 343,
+    "selected_tokens_total": 13258,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 144,
+    "selected_total": 144,
+    "selected_tokens_total": 766,
+    "batches_with_candidates": 47,
+    "batches_with_selected": 47,
+    "batches_selected_and_injected": 47,
+    "quality_association": {
+     "batches_present": 47,
+     "batches_absent": 14,
+     "segments_present": 183,
+     "segments_absent": 56,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 183,
+    "selected_tokens_total": 21671,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_budget_small": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 299,
+    "selected_tokens_total": 14542,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 235,
+     "segments_absent": 4,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 18,
+    "selected_total": 18,
+    "selected_tokens_total": 153,
+    "batches_with_candidates": 14,
+    "batches_with_selected": 14,
+    "batches_selected_and_injected": 14,
+    "quality_association": {
+     "batches_present": 14,
+     "batches_absent": 47,
+     "segments_present": 54,
+     "segments_absent": 185,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 343,
+    "selected_total": 337,
+    "selected_tokens_total": 12950,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 108,
+    "selected_total": 108,
+    "selected_tokens_total": 626,
+    "batches_with_candidates": 45,
+    "batches_with_selected": 45,
+    "batches_selected_and_injected": 45,
+    "quality_association": {
+     "batches_present": 45,
+     "batches_absent": 16,
+     "segments_present": 175,
+     "segments_absent": 64,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 147,
+    "selected_tokens_total": 18119,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_budget_large": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 471,
+    "selected_tokens_total": 24847,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 235,
+     "segments_absent": 4,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 38,
+    "selected_total": 38,
+    "selected_tokens_total": 309,
+    "batches_with_candidates": 23,
+    "batches_with_selected": 23,
+    "batches_selected_and_injected": 23,
+    "quality_association": {
+     "batches_present": 23,
+     "batches_absent": 38,
+     "segments_present": 90,
+     "segments_absent": 149,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 347,
+    "selected_total": 347,
+    "selected_tokens_total": 13367,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 150,
+    "selected_total": 150,
+    "selected_tokens_total": 815,
+    "batches_with_candidates": 47,
+    "batches_with_selected": 47,
+    "batches_selected_and_injected": 47,
+    "quality_association": {
+     "batches_present": 47,
+     "batches_absent": 14,
+     "segments_present": 183,
+     "segments_absent": 56,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 183,
+    "selected_tokens_total": 21671,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_no_summary": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 471,
+    "selected_tokens_total": 24828,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 235,
+     "segments_absent": 4,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 42,
+    "selected_total": 42,
+    "selected_tokens_total": 301,
+    "batches_with_candidates": 27,
+    "batches_with_selected": 27,
+    "batches_selected_and_injected": 27,
+    "quality_association": {
+     "batches_present": 27,
+     "batches_absent": 34,
+     "segments_present": 103,
+     "segments_absent": 136,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 343,
+    "selected_total": 343,
+    "selected_tokens_total": 13263,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 152,
+    "selected_total": 152,
+    "selected_tokens_total": 831,
+    "batches_with_candidates": 47,
+    "batches_with_selected": 47,
+    "batches_selected_and_injected": 47,
+    "quality_association": {
+     "batches_present": 47,
+     "batches_absent": 14,
+     "segments_present": 183,
+     "segments_absent": 56,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_no_local": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 471,
+    "selected_tokens_total": 24838,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 235,
+     "segments_absent": 4,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "entity": {
+    "candidates_total": 37,
+    "selected_total": 37,
+    "selected_tokens_total": 271,
+    "batches_with_candidates": 26,
+    "batches_with_selected": 26,
+    "batches_selected_and_injected": 26,
+    "quality_association": {
+     "batches_present": 26,
+     "batches_absent": 35,
+     "segments_present": 102,
+     "segments_absent": 137,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 162,
+    "selected_total": 162,
+    "selected_tokens_total": 830,
+    "batches_with_candidates": 49,
+    "batches_with_selected": 49,
+    "batches_selected_and_injected": 49,
+    "quality_association": {
+     "batches_present": 49,
+     "batches_absent": 12,
+     "segments_present": 191,
+     "segments_absent": 48,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 183,
+    "selected_tokens_total": 21671,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  },
+  "D_budget_tiny_600": {
+   "distant_segment": {
+    "candidates_total": 471,
+    "selected_total": 171,
+    "selected_tokens_total": 8268,
+    "batches_with_candidates": 60,
+    "batches_with_selected": 41,
+    "batches_selected_and_injected": 41,
+    "quality_association": {
+     "batches_present": 41,
+     "batches_absent": 20,
+     "segments_present": 161,
+     "segments_absent": 78,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "entity": {
+    "candidates_total": 38,
+    "selected_total": 38,
+    "selected_tokens_total": 279,
+    "batches_with_candidates": 26,
+    "batches_with_selected": 26,
+    "batches_selected_and_injected": 26,
+    "quality_association": {
+     "batches_present": 26,
+     "batches_absent": 35,
+     "segments_present": 102,
+     "segments_absent": 137,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "glossary": {
+    "candidates_total": 29,
+    "selected_total": 29,
+    "selected_tokens_total": 116,
+    "batches_with_candidates": 29,
+    "batches_with_selected": 29,
+    "batches_selected_and_injected": 29,
+    "quality_association": {
+     "batches_present": 29,
+     "batches_absent": 32,
+     "segments_present": 113,
+     "segments_absent": 126,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "local_context": {
+    "candidates_total": 343,
+    "selected_total": 282,
+    "selected_tokens_total": 10708,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 60,
+    "batches_selected_and_injected": 60,
+    "quality_association": {
+     "batches_present": 60,
+     "batches_absent": 1,
+     "segments_present": 238,
+     "segments_absent": 1,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=60, batches_without=1; need >= 3 each)"
+    }
+   },
+   "project_knowledge": {
+    "candidates_total": 165,
+    "selected_total": 165,
+    "selected_tokens_total": 859,
+    "batches_with_candidates": 47,
+    "batches_with_selected": 47,
+    "batches_selected_and_injected": 47,
+    "quality_association": {
+     "batches_present": 47,
+     "batches_absent": 14,
+     "segments_present": 183,
+     "segments_absent": 56,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "rule": {
+    "candidates_total": 61,
+    "selected_total": 61,
+    "selected_tokens_total": 854,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 61,
+    "batches_selected_and_injected": 61,
+    "quality_association": {
+     "batches_present": 61,
+     "batches_absent": 0,
+     "segments_present": 239,
+     "segments_absent": 0,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": null,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": null,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=61, batches_without=0; need >= 3 each)"
+    }
+   },
+   "summary": {
+    "candidates_total": 183,
+    "selected_total": 68,
+    "selected_tokens_total": 8774,
+    "batches_with_candidates": 61,
+    "batches_with_selected": 43,
+    "batches_selected_and_injected": 43,
+    "quality_association": {
+     "batches_present": 43,
+     "batches_absent": 18,
+     "segments_present": 167,
+     "segments_absent": 72,
+     "terminology_rate_present": 0.0,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": 0.0,
+     "entity_deviation_rate_present": 0.0,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": true,
+     "verdict": "no material difference in terminology violation rate"
+    }
+   },
+   "tm": {
+    "candidates_total": 0,
+    "selected_total": 0,
+    "selected_tokens_total": 0,
+    "batches_with_candidates": 0,
+    "batches_with_selected": 0,
+    "batches_selected_and_injected": 0,
+    "quality_association": {
+     "batches_present": 0,
+     "batches_absent": 61,
+     "segments_present": 0,
+     "segments_absent": 239,
+     "terminology_rate_present": null,
+     "terminology_rate_absent": 0.0,
+     "terminology_delta": null,
+     "entity_deviation_rate_present": null,
+     "entity_deviation_rate_absent": 0.0,
+     "measurable": false,
+     "verdict": "not measurable (n too small: batches_with_source=0, batches_without=61; need >= 3 each)"
+    }
+   }
+  }
+ },
+ "batch_coverage": {
+  "A_nocontext": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 0,
+   "distant_selected": 0,
+   "distant_injected": 0,
+   "share_retrieved": 0.0,
+   "share_selected": 0.0,
+   "share_injected": 0.0,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "B_fixed": {},
+  "C_dynamic": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 0,
+   "distant_selected": 0,
+   "distant_injected": 0,
+   "share_retrieved": 0.0,
+   "share_selected": 0.0,
+   "share_injected": 0.0,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_dynamic_distant": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 60,
+   "distant_injected": 60,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.9836,
+   "share_injected": 0.9836,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_term_only": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 60,
+   "distant_injected": 60,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.9836,
+   "share_injected": 0.9836,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_entity_only": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 60,
+   "distant_injected": 60,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.9836,
+   "share_injected": 0.9836,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_budget_small": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 60,
+   "distant_injected": 60,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.9836,
+   "share_injected": 0.9836,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_budget_large": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 60,
+   "distant_injected": 60,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.9836,
+   "share_injected": 0.9836,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_no_summary": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 60,
+   "distant_injected": 60,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.9836,
+   "share_injected": 0.9836,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_no_local": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 60,
+   "distant_injected": 60,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.9836,
+   "share_injected": 0.9836,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  },
+  "D_budget_tiny_600": {
+   "batches_total": 61,
+   "distant_candidates_retrieved": 60,
+   "distant_selected": 41,
+   "distant_injected": 41,
+   "share_retrieved": 0.9836,
+   "share_selected": 0.6721,
+   "share_injected": 0.6721,
+   "injection_definition": "selected distant candidates in a batch that did not report fallback"
+  }
+ },
+ "distant_distance": {
+  "A_nocontext": {
+   "available": false,
+   "count": 0,
+   "provenance": [],
+   "histogram": {},
+   "min": null,
+   "max": null,
+   "mean": null,
+   "p25": null,
+   "median": null,
+   "p75": null,
+   "p90": null
+  },
+  "B_fixed": {},
+  "C_dynamic": {
+   "available": false,
+   "count": 0,
+   "provenance": [],
+   "histogram": {},
+   "min": null,
+   "max": null,
+   "mean": null,
+   "p25": null,
+   "median": null,
+   "p75": null,
+   "p90": null
+  },
+  "D_dynamic_distant": {
+   "available": true,
+   "count": 471,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 232.0,
+   "mean": 48.151,
+   "p25": 11.5,
+   "median": 27.0,
+   "p75": 61.5,
+   "p90": 144.0,
+   "histogram": {
+    "0-4": 36,
+    "5-8": 57,
+    "9-16": 70,
+    "17-32": 105,
+    "33-64": 88,
+    "65-128": 58,
+    "129+": 57
+   }
+  },
+  "D_term_only": {
+   "available": true,
+   "count": 471,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 232.0,
+   "mean": 48.166,
+   "p25": 11.5,
+   "median": 27.0,
+   "p75": 61.5,
+   "p90": 144.0,
+   "histogram": {
+    "0-4": 36,
+    "5-8": 57,
+    "9-16": 70,
+    "17-32": 104,
+    "33-64": 89,
+    "65-128": 58,
+    "129+": 57
+   }
+  },
+  "D_entity_only": {
+   "available": true,
+   "count": 471,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 232.0,
+   "mean": 44.643,
+   "p25": 10.5,
+   "median": 24.0,
+   "p75": 55.5,
+   "p90": 135.0,
+   "histogram": {
+    "0-4": 37,
+    "5-8": 62,
+    "9-16": 73,
+    "17-32": 113,
+    "33-64": 85,
+    "65-128": 49,
+    "129+": 52
+   }
+  },
+  "D_budget_small": {
+   "available": true,
+   "count": 299,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 232.0,
+   "mean": 35.873,
+   "p25": 8.0,
+   "median": 18.0,
+   "p75": 42.0,
+   "p90": 100.0,
+   "histogram": {
+    "0-4": 31,
+    "5-8": 47,
+    "9-16": 57,
+    "17-32": 68,
+    "33-64": 47,
+    "65-128": 32,
+    "129+": 17
+   }
+  },
+  "D_budget_large": {
+   "available": true,
+   "count": 471,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 232.0,
+   "mean": 48.142,
+   "p25": 11.5,
+   "median": 27.0,
+   "p75": 61.5,
+   "p90": 144.0,
+   "histogram": {
+    "0-4": 36,
+    "5-8": 57,
+    "9-16": 70,
+    "17-32": 105,
+    "33-64": 88,
+    "65-128": 58,
+    "129+": 57
+   }
+  },
+  "D_no_summary": {
+   "available": true,
+   "count": 471,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 232.0,
+   "mean": 48.151,
+   "p25": 11.5,
+   "median": 27.0,
+   "p75": 61.5,
+   "p90": 144.0,
+   "histogram": {
+    "0-4": 36,
+    "5-8": 57,
+    "9-16": 70,
+    "17-32": 105,
+    "33-64": 88,
+    "65-128": 58,
+    "129+": 57
+   }
+  },
+  "D_no_local": {
+   "available": true,
+   "count": 471,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 232.0,
+   "mean": 48.166,
+   "p25": 11.5,
+   "median": 27.0,
+   "p75": 61.5,
+   "p90": 144.0,
+   "histogram": {
+    "0-4": 36,
+    "5-8": 57,
+    "9-16": 70,
+    "17-32": 104,
+    "33-64": 89,
+    "65-128": 58,
+    "129+": 57
+   }
+  },
+  "D_budget_tiny_600": {
+   "available": true,
+   "count": 171,
+   "provenance": [
+    "selected_ids.distance_online"
+   ],
+   "min": 3.0,
+   "max": 178.0,
+   "mean": 38.158,
+   "p25": 10.0,
+   "median": 26.0,
+   "p75": 56.0,
+   "p90": 96.0,
+   "histogram": {
+    "0-4": 15,
+    "5-8": 21,
+    "9-16": 26,
+    "17-32": 35,
+    "33-64": 40,
+    "65-128": 32,
+    "129+": 2
+   }
+  }
+ },
+ "analysis_notes": {
+  "A_nocontext": [
+   "distance distribution unavailable: distant retrieval ablated in this arm; nothing to reconstruct"
+  ],
+  "B_fixed": [
+   "fixed mode emits no dynamic_context_records; per-source and distance tables are unavailable for this arm"
+  ],
+  "C_dynamic": [
+   "distance distribution unavailable: distant retrieval ablated in this arm; nothing to reconstruct"
+  ],
+  "D_dynamic_distant": [],
+  "D_term_only": [],
+  "D_entity_only": [],
+  "D_budget_small": [],
+  "D_budget_large": [],
+  "D_no_summary": [],
+  "D_no_local": [],
+  "D_budget_tiny_600": []
+ },
+ "privacy": "no provider secrets and no rendered prompt text are stored; records carry counts, ids and provenance only"
+}
