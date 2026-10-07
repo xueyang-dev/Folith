@@ -183,24 +183,27 @@ class Flow:
         return bool(predicate()) if predicate is not None else True
 
     def _await_review(self, core, job_id: str) -> bool:
-        """Wait until the review worker has processed every expected segment.
+        """Wait until the review action the window started has really finished.
 
-        Idle runtime status alone is not completion: the worker goes idle
-        between batches, and a segment can be *expected* by the gate long
-        before its receipt lands.  Poll the cheap runtime state, and only when
-        the worker is idle ask the gate itself whether anything is still
-        waiting for a receipt.  ``failed`` receipts are terminal (the retry
-        loop below handles them), so they do not keep this loop spinning.
+        The window's own task runner is the authority.  Runtime state only
+        tracks the translation pipeline, and a receipt-based signal cannot tell
+        a re-review of already-reviewed segments from an idle app - waiting on
+        either one would start a second review on top of a running one and
+        deadlock on the task state lock.
         """
-        deadline = time.monotonic() + self.timeout
+        # The task is queued before ``review_all``/``review_selected`` returns;
+        # give the pool a moment to show it as running.
+        self.pump(30.0, lambda: self.window.runner.busy, interval=0.1)
+        if not self.pump(self.timeout, lambda: not self.window.runner.busy,
+                         interval=0.5):
+            return False
+        # The gate decides whether every expected segment has a receipt.
+        deadline = time.monotonic() + 60.0
         while time.monotonic() < deadline:
             self.app.processEvents()
-            runtime = core.load_runtime_state(job_id) or {}
-            if runtime.get("status") not in core.RUNTIME_ACTIVE_STATUSES:
-                if not self._missing_review_indexes(core, job_id):
-                    return True
+            if not self._missing_review_indexes(core, job_id):
+                return True
             time.sleep(0.5)
-        self.app.processEvents()
         return False
 
     @staticmethod
