@@ -404,6 +404,8 @@ def read_runtime_view(
         "queued": "正在恢复任务",
         "starting": "正在恢复任务",
         "running": "正在运行",
+        "pausing": "正在暂停",
+        "paused": "已暂停",
         "waiting_external": "正在运行",
         "stalled": "暂无运行信号",
         "interrupted": "上次运行已中断",

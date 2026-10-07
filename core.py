@@ -4188,12 +4188,7 @@ def project_name_for_id(project_id):
 
 # 任务正在运行的状态：此时它已经读取过一个项目的记忆，改归属会让同一个任务
 # 在两套记忆之间漂移，因此这些状态一律拒绝移动。
-_ACTIVE_RUNTIME_STATUSES = {
-    "resume_requested", "queued", "starting", "running",
-    "waiting_external", "cancelling", "pausing", "paused",
-}
-
-
+# 集合只有一个来源：`RUNTIME_ACTIVE_STATUSES`（历史上这里曾有一份逐字重复的副本）。
 def job_is_active(job_id, state=None):
     """任务是否正在运行（不可改归属）。"""
     try:
@@ -4201,7 +4196,7 @@ def job_is_active(job_id, state=None):
         status = view.get("runtime_status") or view.get("status")
     except Exception:  # 运行状态不可读时不阻止用户操作，由后续流程兜底
         return False
-    return str(status or "") in _ACTIVE_RUNTIME_STATUSES
+    return str(status or "") in RUNTIME_ACTIVE_STATUSES
 
 
 def assign_jobs_to_project(job_ids, project_id_or_name, *,
@@ -8522,6 +8517,50 @@ def get_job_runtime_status(job_id, state=None):
     return runtime
 
 
+#: Canonical runtime-action policy: one status -> the actions a user may take.
+#: Every product surface (Qt workbench, Streamlit runtime strip, CLI) renders
+#: from this table instead of re-deriving legality from status literals.
+#: ``pause``/``continue`` are runtime capabilities (``request_job_pause`` /
+#: ``continue_job``), not presentation choices, which is why they live here.
+RUNTIME_ACTIONS = {
+    "resume_requested": ("details",),
+    "queued": ("cancel", "details"),
+    "starting": ("cancel", "details"),
+    "running": ("pause", "cancel", "details"),
+    "waiting_external": ("pause", "cancel", "details"),
+    "stalled": ("retry", "cancel", "details"),
+    "interrupted": ("resume", "retry", "details"),
+    "failed": ("retry", "resume", "details"),
+    "pausing": ("cancel", "details"),
+    "paused": ("continue", "resume", "cancel", "details"),
+    "cancelling": ("details",),
+    "cancelled": ("resume", "details"),
+    "idle_incomplete": ("resume",),
+    "waiting_manual": ("view",),
+    "completed": ("view",),
+}
+
+#: The single action a surface should emphasise for a status (or ``None``).
+PRIMARY_RUNTIME_ACTIONS = {
+    "idle_incomplete": "resume", "interrupted": "resume",
+    "cancelled": "resume", "failed": "retry", "stalled": "retry",
+}
+
+
+def runtime_actions_for_status(status):
+    """Return the canonical user actions for one runtime status.
+
+    Read-only and side-effect free: it is the policy shared by every frontend,
+    so it must not depend on the caller or on presentation concerns.
+    """
+    return list(RUNTIME_ACTIONS.get(str(status or ""), ()))
+
+
+def primary_runtime_action_for_status(status):
+    """Return the emphasised action for a status, or ``None``."""
+    return PRIMARY_RUNTIME_ACTIONS.get(str(status or ""))
+
+
 def build_job_runtime_view(job_id, state=None):
     """Canonical user-facing runtime view shared by every product surface."""
     state = state if isinstance(state, dict) else load_job_state(job_id)
@@ -8542,18 +8581,6 @@ def build_job_runtime_view(job_id, state=None):
         "pausing": "正在暂停", "paused": "已暂停", "failed": "当前步骤失败", "cancelling": "正在取消", "cancelled": "任务已取消",
         "completed": "已完成", "idle_incomplete": "未完成",
         "waiting_manual": "待术语确认",
-    }
-    actions = {
-        "resume_requested": ["details"], "queued": ["cancel", "details"],
-        "starting": ["cancel", "details"],
-        "running": ["cancel", "details"],
-        "waiting_external": ["cancel", "details"],
-        "stalled": ["retry", "cancel", "details"],
-        "interrupted": ["resume", "retry", "details"],
-        "failed": ["retry", "resume", "details"],
-        "pausing": ["cancel", "details"], "paused": ["resume", "cancel", "details"], "cancelling": ["details"], "cancelled": ["resume", "details"],
-        "idle_incomplete": ["resume"], "waiting_manual": ["view"],
-        "completed": ["view"],
     }
     events = read_runtime_events(job_id, 5, visibility="user") \
         or runtime.get("events") or []
@@ -8596,10 +8623,7 @@ def build_job_runtime_view(job_id, state=None):
         detail = error.get("message") if isinstance(error, dict) else str(error)
     else:
         detail = runtime.get("phase_label") or ""
-    primary_action = {
-        "idle_incomplete": "resume", "interrupted": "resume",
-        "cancelled": "resume", "failed": "retry", "stalled": "retry",
-    }.get(status)
+    primary_action = primary_runtime_action_for_status(status)
     return {
         "status": status,
         "workflow_outcomes": workflow_outcomes(state or {}),
@@ -8616,7 +8640,7 @@ def build_job_runtime_view(job_id, state=None):
         "progress_completed": completed,
         "progress_total": total,
         "stage_progress": runtime.get("stage_progress") or {},
-        "available_actions": actions.get(status, []),
+        "available_actions": runtime_actions_for_status(status),
         "primary_action": primary_action,
         "show_no_worker_warning": status in {
             "idle_incomplete", "interrupted", "cancelled"},
