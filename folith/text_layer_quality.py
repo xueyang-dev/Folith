@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from .textual import normalize_language
 
-TEXT_LAYER_QUALITY_VERSION = 1
+TEXT_LAYER_QUALITY_VERSION = 2
 
 #: score >= ACCEPT and no hard reason -> accepted
 ACCEPT_THRESHOLD = 0.70
@@ -33,6 +33,30 @@ REJECT_THRESHOLD = 0.45
 #: a usable layer needs at least this many characters on a median sampled page
 MIN_MEDIAN_CHARS = 40
 MIN_TOTAL_CHARS = 20
+
+#: Order evidence is only meaningful once the sample really is Arabic script.
+#: Measured on the routing benchmark: every clean Arabic sample reports
+#: arabic_ratio >= 0.87, so this floor never excludes a usable Arabic layer,
+#: while a Latin document (ratio 0.0) can never be judged by Arabic rules.
+ARABIC_SCRIPT_MIN_LETTERS = 40
+ARABIC_SCRIPT_MIN_RATIO = 0.5
+
+#: Reversal is only declared when the script was *inferred* from the text.  Both
+#: a floor on the number of mirrored dictionary words and a wide ratio are
+#: required, because a two-word sample can reach an infinite ratio by accident.
+#: Measured separation on the benchmark: clean Arabic tops out at 2 mirrored
+#: words and a ratio of 0.05; the degraded scans start at 25 mirrored words and
+#: a ratio of 8.33.
+REVERSAL_MIN_HITS = 8
+REVERSAL_MIN_RATIO = 2.5
+
+#: The second, independent reversal signal: a line whose Arabic words run
+#: left-to-right in the content stream is stored in visual order.  Measured on
+#: the benchmark, clean Arabic reports 0 such lines on all 22 sampled pages and
+#: the degraded scans report 12-19 with a ratio of 1.0, so it keeps its own
+#: thresholds and does not depend on the dictionary evidence above.
+VISUAL_ORDER_MIN_RATIO = 0.6
+VISUAL_ORDER_MIN_LINES = 2
 
 ARABIC_RANGES = (
     (0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF),
@@ -129,6 +153,31 @@ def _arabic_order_evidence(tokens: Sequence[str]) -> Dict[str, Any]:
     }
 
 
+def _reversal_mode(order: Dict[str, Any], *, declared: bool) -> Optional[str]:
+    """Decide whether the order evidence is decisive, and on what grounds.
+
+    Two evidence levels, one verdict.  When the caller *declared* an Arabic-script
+    language we already know what to expect, so a sample whose common words are
+    mostly mirrored is enough.  When the script was *inferred* from the text
+    itself we have no such prior and demand both a floor on the number of
+    mirrored dictionary words and a wide ratio — a two-word sample must never
+    reject a layer just because its ratio is infinite.
+
+    Returns the mode name, or ``None`` when the evidence is not decisive.
+    """
+    reversed_hits = int(order.get("common_words_reversed") or 0)
+    forward_hits = int(order.get("common_words_forward") or 0)
+    if declared:
+        if (order.get("common_word_reversal_score", 0.0) > 0.5
+                and int(order.get("reversal_evidence_count") or 0) >= 3):
+            return "declared_language"
+        return None
+    if (reversed_hits >= REVERSAL_MIN_HITS
+            and reversed_hits / max(forward_hits, 1) >= REVERSAL_MIN_RATIO):
+        return "detected_script"
+    return None
+
+
 def _visual_order_evidence(words: Sequence[Sequence[Any]]) -> Dict[str, Any]:
     """Detect text stored in visual (left-to-right) order.
 
@@ -176,6 +225,7 @@ def assess_text_layer_sample(samples: Sequence[Dict[str, Any]],
     reasons and the evidence used to reach it.
     """
     arabic = is_arabic_script_language(source_language)
+    arabic_text = False
     sampled = [s for s in (samples or []) if isinstance(s, dict)]
     pages_with_text = sum(1 for s in sampled if str(s.get("text") or "").strip())
     texts = [str(s.get("text") or "") for s in sampled]
@@ -214,12 +264,18 @@ def assess_text_layer_sample(samples: Sequence[Dict[str, Any]],
         "control_ratio": round(controls / chars, 6) if chars else 0.0,
         "presentation_form_ratio": round(presentation / chars, 6) if chars else 0.0,
     }
+    # The script is read from the text, never guessed from nothing: a sample
+    # needs a real Arabic-letter population before Arabic order rules apply.
+    arabic_text = (arabic_letters >= ARABIC_SCRIPT_MIN_LETTERS
+                   and ratios["arabic_ratio"] >= ARABIC_SCRIPT_MIN_RATIO)
     evidence = {
         "version": TEXT_LAYER_QUALITY_VERSION,
         "sampled_pages": [s.get("page_index") for s in sampled],
         "pages_with_text": pages_with_text,
         "chars": chars,
         "median_page_chars": median_chars,
+        "arabic_letters": arabic_letters,
+        "arabic_text_detected": arabic_text,
         **ratios, **order, **visual,
     }
 
@@ -257,11 +313,32 @@ def assess_text_layer_sample(samples: Sequence[Dict[str, Any]],
         if ratios["arabic_ratio"] < 0.50:
             hard.append("arabic_script_mismatch")
             score -= 0.5
-        if (order["common_word_reversal_score"] > 0.5
-                and order["reversal_evidence_count"] >= 3):
+    # The order checks run whenever the sample *is* Arabic script, not only when
+    # the language was declared.  A mirrored layer is unusable regardless of
+    # what the caller said the document was, and requiring a declaration left
+    # the strongest corruption signal switched off for every job that did not
+    # declare one — a 1920s scan with 25 mirrored common words against 3 correct
+    # ones was accepted at score 1.0 and fed to translation as trusted source.
+    # Detecting the script is not language identification: nothing here relabels
+    # a document, and `arabic_script_mismatch` above stays tied to the
+    # declaration because only a declaration can contradict observed reality.
+    if arabic or arabic_text:
+        mode = _reversal_mode(order, declared=arabic)
+        evidence["reversal_check"] = {
+            "mode": mode,
+            "declared_language": arabic,
+            "detected_script": arabic_text,
+            "ratio": round(
+                order["common_words_reversed"]
+                / max(order["common_words_forward"], 1), 4),
+            "min_hits": REVERSAL_MIN_HITS,
+            "min_ratio": REVERSAL_MIN_RATIO,
+        }
+        if mode:
             hard.append("arabic_letter_order_reversed")
             score -= 0.8
-        if visual["visual_order_ratio"] > 0.6 and visual["visual_order_lines"] >= 2:
+        if (visual["visual_order_ratio"] > VISUAL_ORDER_MIN_RATIO
+                and visual["visual_order_lines"] >= VISUAL_ORDER_MIN_LINES):
             hard.append("arabic_word_order_reversed")
             score -= 0.6
 
@@ -323,8 +400,10 @@ def assess_pdf_text_layer(file_bytes, *, source_language: Any = None,
 
 
 __all__ = [
-    "ACCEPT_THRESHOLD", "MIN_MEDIAN_CHARS", "REJECT_THRESHOLD",
-    "TEXT_LAYER_QUALITY_VERSION",
+    "ACCEPT_THRESHOLD", "ARABIC_SCRIPT_MIN_LETTERS", "ARABIC_SCRIPT_MIN_RATIO",
+    "MIN_MEDIAN_CHARS", "REJECT_THRESHOLD", "REVERSAL_MIN_HITS",
+    "REVERSAL_MIN_RATIO", "TEXT_LAYER_QUALITY_VERSION", "VISUAL_ORDER_MIN_LINES",
+    "VISUAL_ORDER_MIN_RATIO",
     "assess_pdf_text_layer", "assess_text_layer_sample",
     "is_arabic_script_language", "sample_pdf_text_pages",
 ]
