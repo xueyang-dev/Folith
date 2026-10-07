@@ -2621,7 +2621,7 @@ def _apply_source_segmentation(state, cleaned_paragraphs, *, mode=None):
         spans = segment_spans(document, source_paragraphs, segments, metadata)
         state["segment_source_spans"] = spans
         from folith.document_ir import segment_marks
-        state["segment_source_marks"] = segment_marks(document, spans)
+        state["segment_source_marks"] = segment_marks(document, spans, segments)
     else:
         state.pop("segment_source_spans", None)
         state.pop("segment_source_marks", None)

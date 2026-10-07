@@ -418,11 +418,24 @@ def _apply_marker_decisions(blocks, block_pending, all_candidates) -> None:
         if block.get("block_type") != "text":
             continue
         lines = block.get("lines") or []
-        block["text"] = _normalise_line(
-            " ".join(line["text"] for line in lines)
-        )
-        block["marks"] = [dict(item) for line in lines
-                          for item in (line.get("marks") or [])]
+        # Record where each mark sits in the block text.  Segments are ordered
+        # slices of that text, so an offset is what lets a mark be assigned to
+        # exactly one segment instead of every sibling.
+        parts: List[str] = []
+        marks: List[Dict[str, Any]] = []
+        cursor = 0
+        for line in lines:
+            text = line["text"]
+            if parts:
+                cursor += 1  # the single space the join inserts
+            for item in line.get("marks") or []:
+                record = dict(item)
+                record["text_offset"] = cursor + int(item.get("char_start") or 0)
+                marks.append(record)
+            parts.append(text)
+            cursor += len(text)
+        block["text"] = _normalise_line(" ".join(parts))
+        block["marks"] = marks
 
 
 def _overlap(a0: float, a1: float, b0: float, b1: float) -> float:

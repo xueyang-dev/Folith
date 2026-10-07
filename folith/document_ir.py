@@ -136,28 +136,73 @@ def segment_spans(document, paragraphs, segments, metadata):
     return result
 
 
-def segment_marks(document, spans_by_segment):
-    """Project block-level footnote marks onto segments through their anchors.
+def segment_marks(document, spans_by_segment, segments=None):
+    """Project block-level footnote marks onto segments — exactly once each.
 
-    Marks are joined on ``block_id`` rather than on character offsets: native
+    Blocks are joined on ``block_id`` rather than on character offsets: native
     cleanup can merge or rewrite paragraph text, and offsets already degrade to
     ``None`` in that case, while block identity survives.
+
+    A block's text is sliced into several segments when a paragraph splits, so
+    handing every referencing segment the block's marks duplicated each mark
+    once per sibling.  When ``segments`` is supplied the mark's ``text_offset``
+    selects the single segment whose slice of the block text contains it; marks
+    whose block no segment references stay unassigned rather than being copied.
     """
     blocks = {b.get('block_id'): b for b in document.get('blocks') or []}
     result = [[] for _ in spans_by_segment or []]
+    if not segments:
+        for index, spans in enumerate(spans_by_segment or []):
+            found = []
+            seen = set()
+            for span in spans or []:
+                block_id = span.get('block_id')
+                if not block_id or block_id in seen:
+                    continue
+                seen.add(block_id)
+                for mark in (blocks.get(block_id) or {}).get('marks') or []:
+                    item = dict(mark)
+                    item['block_id'] = block_id
+                    found.append(item)
+            result[index] = found
+        return result
+
+    by_block = {}
     for index, spans in enumerate(spans_by_segment or []):
-        found = []
-        seen = set()
         for span in spans or []:
             block_id = span.get('block_id')
-            if not block_id or block_id in seen:
-                continue
-            seen.add(block_id)
-            for mark in (blocks.get(block_id) or {}).get('marks') or []:
-                item = dict(mark)
-                item['block_id'] = block_id
-                found.append(item)
-        result[index] = found
+            if block_id:
+                by_block.setdefault(block_id, [])
+                if index not in by_block[block_id]:
+                    by_block[block_id].append(index)
+
+    for block_id, indexes in by_block.items():
+        marks = (blocks.get(block_id) or {}).get('marks') or []
+        if not marks:
+            continue
+        ordered = sorted(indexes)
+        ranges = []
+        cursor = 0
+        for index in ordered:
+            length = len(segments[index] or '') if index < len(segments) else 0
+            ranges.append((cursor, cursor + length))
+            cursor += length
+        for mark in marks:
+            offset = mark.get('text_offset')
+            chosen = None
+            if isinstance(offset, int):
+                for index, (start, end) in zip(ordered, ranges):
+                    if start <= offset < end:
+                        chosen = index
+                        break
+                if chosen is None:
+                    # Past the end (or before the start): clamp inside the block.
+                    chosen = ordered[-1] if offset >= ranges[-1][1] else ordered[0]
+            if chosen is None:
+                chosen = ordered[0]
+            item = dict(mark)
+            item['block_id'] = block_id
+            result[chosen].append(item)
     return result
 
 

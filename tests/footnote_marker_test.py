@@ -138,3 +138,25 @@ def test_clustered_superscripts_are_not_footnotes():
     # the prose, so the population has no room to be a footnote sequence.
     assert pi._marker_population_is_footnote_like(
         _population([2, 3, 2, 3], gap=2, pages=[1, 1, 1, 1])) is False
+
+
+def test_split_paragraph_assigns_each_mark_to_exactly_one_segment():
+    from folith.document_ir import segment_marks
+
+    document = {"blocks": [{"block_id": "b0", "marks": [
+        {"text": "1", "text_offset": 2}, {"text": "2", "text_offset": 7}]}]}
+    spans = [[{"block_id": "b0"}], [{"block_id": "b0"}], [{"block_id": "b0"}]]
+    segments = ["abcde", "fghij", "klmno"]
+    # Handing every sibling segment the block's marks duplicated each mark once
+    # per sibling; the offset picks the single segment that holds it.
+    assert [len(item) for item in
+            segment_marks(document, spans, segments)] == [1, 1, 0]
+
+
+def test_marks_of_an_unreferenced_block_are_not_copied_around():
+    from folith.document_ir import segment_marks
+
+    document = {"blocks": [{"block_id": "b0", "marks": [
+        {"text": "1", "text_offset": 1}]}]}
+    spans = [[{"block_id": "b1"}], []]
+    assert segment_marks(document, spans, ["abc", "def"]) == [[], []]
