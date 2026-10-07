@@ -197,7 +197,7 @@ class Flow:
             self.app.processEvents()
             runtime = core.load_runtime_state(job_id) or {}
             if runtime.get("status") not in core.RUNTIME_ACTIVE_STATUSES:
-                if not self._unsettled_review_indexes(core, job_id):
+                if not self._missing_review_indexes(core, job_id):
                     return True
             time.sleep(0.5)
         self.app.processEvents()
@@ -210,11 +210,16 @@ class Flow:
         return translation_review_readiness(core.load_job_state(job_id) or {})
 
     @classmethod
-    def _unsettled_review_indexes(cls, core, job_id: str) -> list:
-        """Segments still waiting for a first receipt from the reviewer."""
+    def _missing_review_indexes(cls, core, job_id: str) -> list:
+        """Expected segments the reviewer has not produced any receipt for yet.
+
+        This is the completion signal for a review pass: while the worker is
+        still running, the segments it has not reached are ``missing``.  A
+        ``stale`` or ``failed`` receipt is terminal for the pass and is what the
+        retry loop below exists for, so it must not keep the wait spinning.
+        """
         readiness = cls._review_readiness(core, job_id)
-        return sorted(set(readiness.get("missing_segment_ids") or [])
-                      | set(readiness.get("stale_segment_ids") or []))
+        return sorted(readiness.get("missing_segment_ids") or [])
 
     @classmethod
     def _pending_review_indexes(cls, core, job_id: str) -> list:
@@ -325,14 +330,19 @@ class Flow:
             rows = adapter.segment_rows(job_id, state)
             index = 1 if len(rows) > 1 else 0
             uid = rows[index].segment_uid
+            # A person editing a real document edits *the translation*.  Writing
+            # fixture placeholder text over a real paragraph would make the
+            # reviewer flag the harness's own defect as a blocking finding, and
+            # the delivery gate would then (correctly) refuse to freeze.
+            typed = str(rows[index].target or "").strip() or TYPED
             self.window.workbench.select_segment(index)
             self.app.processEvents()
-            self.window.workbench.set_editor_text_for_test(TYPED)
+            self.window.workbench.set_editor_text_for_test(typed)
             self.app.processEvents()
             self.window.workbench.flush_draft()
             drafts = core.load_translation_drafts(job_id)
             self.step("draft-saved", segment=uid, drafts=len(drafts),
-                      text_matches=bool(drafts.get(uid, {}).get("text") == TYPED))
+                      text_matches=bool(drafts.get(uid, {}).get("text") == typed))
 
             self.window.submit_edit(index)
             self.pump(15)
@@ -346,7 +356,7 @@ class Flow:
                 "drafts_left": len(core.load_translation_drafts(job_id)),
             }
             self.step("edit-submitted", **report["edit"])
-            if pair.get("target") != TYPED or not pair.get("human_edited"):
+            if pair.get("target") != typed or not pair.get("human_edited"):
                 raise AssertionError(f"人工修改未提交：{report['edit']}")
 
             self.phase = "review"
@@ -438,7 +448,7 @@ class Flow:
                 "snapshots": len(adapter.delivery_snapshots(job_id)),
             }
             self.step("reopened", **report["reopen"])
-            if index < len(reopened) and reopened[index].target != TYPED:
+            if index < len(reopened) and reopened[index].target != typed:
                 raise AssertionError("重开后人工修改丢失")
 
             report["ok"] = True
