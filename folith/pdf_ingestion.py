@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 import fitz
 
 
-SENTENCE_TERMINAL = set('.!?"”’…:;)')
+SENTENCE_TERMINAL = set('.!?"”’…:;؟۔)')
 ORNAMENT_RE = re.compile(r"^[\s*•·▪◦‣❦❧—–\-]{1,12}$")
 PAGE_NUMBER_RE = re.compile(
     r"^\s*(?:page\s+)?\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?\s*$",
@@ -86,6 +86,8 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
     with fitz.open(stream=file_bytes, filetype="pdf") as doc:
         order = 0
         for page_number, page in enumerate(doc):
+            # Text geometry is unrotated PDF space, including rotated pages.
+            page.set_rotation(0)
             width, height = float(page.rect.width), float(page.rect.height)
             page_dict = page.get_text("dict")
             for raw_number, raw in enumerate(page_dict.get("blocks") or []):

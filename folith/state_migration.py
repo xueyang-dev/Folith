@@ -109,6 +109,17 @@ def _default_new_fields() -> Dict[str, Any]:
         "latest_delivery_snapshot_version": None,
         "exported_assets": [],
         "pipeline_config": {},
+        # Explicit OCR language contract.  Legacy tasks have no value here; the
+        # OCR stage then uses its documented compatibility fallback with a
+        # visible warning instead of silently guessing.  New tasks always write
+        # the user's selection.
+        "ocr_language": "",
+        # Ingestion contract: auto trusts a text layer only when the quality
+        # gate accepts it; force always OCRs; off never does.  Legacy tasks
+        # default to auto, which is the pre-existing behaviour for a clean
+        # layer and the fixed behaviour for a broken one.
+        "ocr_mode": "auto",
+        "ocr_config": {},
         "translator_config": {},
         "reviewer_config": {},
         "delivery_config": {},

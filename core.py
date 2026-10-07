@@ -614,6 +614,39 @@ def _find_tesseract():
     return ""
 
 
+# LibreOffice stays optional: it is only used for the render QA.  GUI launchers
+# receive a small PATH, so the standard install locations are checked explicitly
+# (roadmap §3.4/§14: "补 Applications / Windows 安装位置发现并验证桌面 PATH").
+_SOFFICE_CANDIDATES = (
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "/Applications/LibreOffice.app/Contents/MacOS/libreoffice",
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    "/usr/bin/soffice",
+    "/usr/bin/libreoffice",
+    "/usr/local/bin/soffice",
+    "/snap/bin/libreoffice",
+)
+
+
+def _find_soffice():
+    """Find LibreOffice even when the app was launched from Finder/Explorer.
+
+    Missing LibreOffice must stay an accurate NOT_RUN; this function never
+    invents an engine, it only reports what is actually installed.
+    """
+    configured = os.environ.get("FOLIOTHREAD_SOFFICE_CMD", "").strip()
+    candidates = [configured, shutil.which("soffice"), shutil.which("libreoffice")]
+    candidates.extend(_SOFFICE_CANDIDATES)
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return ""
+
+
 def _tesseract_languages(command):
     """Return installed OCR languages, ignoring Tesseract control models."""
     try:
@@ -633,11 +666,15 @@ def _tesseract_languages(command):
     return languages
 
 
-def _select_tesseract_language(installed):
-    """Choose a useful installed language set without assuming chi_sim exists."""
+def _legacy_select_tesseract_language(installed):
+    """Legacy auto-selection, kept only for tasks with no explicit language.
+
+    New tasks always carry a user-selected ``ocr_language``; this path exists so
+    an old checkpoint can still resume.  It is never used to override an
+    explicit selection, and the caller records a visible warning that no OCR
+    language was configured.
+    """
     installed = set(installed or [])
-    # The product handles Chinese and English documents most often.  Keep both
-    # when available, but do not make a missing chi_sim pack break English OCR.
     for preferred in (
         ("chi_sim", "eng"),
         ("eng",),
@@ -654,6 +691,142 @@ def _select_tesseract_language(installed):
             return "+".join(preferred)
     fallback = sorted(installed - {"osd", "snum"})
     return fallback[0] if fallback else ""
+
+
+def _select_tesseract_language(installed):
+    """Deprecated: use an explicit OCR language from the task configuration."""
+    return _legacy_select_tesseract_language(installed)
+
+
+def _effective_ocr_config(ocr_language, ocr_dpi, ocr_psm, saved_config=None,
+                          ocr_quality=None):
+    """Resolve the effective OCR configuration from UI, state and environment.
+
+    Returns ``(language, dpi, psm, quality, resolved)``.  ``language`` is
+    ``None`` only for a legacy task that never had an explicit selection; the
+    OCR stage then uses its documented compatibility fallback with a warning.
+    """
+    saved = saved_config if isinstance(saved_config, dict) else {}
+    # An explicit empty string means "not provided" (the UI always sends a key),
+    # so it must not override a language already persisted with the task.
+    language = (ocr_language if str(ocr_language or "").strip()
+                else saved.get("ocr_language"))
+    if language is None:
+        language = os.environ.get("FOLIOTHREAD_OCR_LANGUAGE", "")
+    language = str(language or "").strip() or None
+
+    quality = ocr_quality if ocr_quality is not None else saved.get("ocr_quality")
+    quality = _ocr_language.normalize_quality(quality) if quality else ""
+    dpi_value = ocr_dpi if ocr_dpi is not None else saved.get("ocr_dpi")
+    if dpi_value is None:
+        dpi_value = (_ocr_language.dpi_for_quality(quality)
+                     if quality else OCR_DPI_BASELINE)
+    try:
+        dpi_value = int(dpi_value)
+    except (TypeError, ValueError):
+        dpi_value = OCR_DPI_BASELINE
+    dpi_value = max(72, min(dpi_value, 600))
+    if not quality:
+        quality = _ocr_language.quality_for_dpi(dpi_value)
+
+    psm_value = ocr_psm if ocr_psm is not None else saved.get("ocr_psm")
+    try:
+        psm_value = int(psm_value) if psm_value is not None else _ocr_language.DEFAULT_PSM
+    except (TypeError, ValueError):
+        psm_value = _ocr_language.DEFAULT_PSM
+    resolved = (_ocr_language.try_resolve_ocr_language(language)
+                if language else None)
+    return language, dpi_value, psm_value, quality, resolved
+
+
+def _effective_ocr_source(ocr_backend, saved_config=None, *, ocr_paddle_model=None,
+                          ocr_online=None, prefer_saved=False):
+    """Resolve the effective OCR *source* configuration for one task run.
+
+    Returns ``(backend_name, paddle_model_id, online_descriptor, online_config)``.
+    ``online_descriptor`` is the secret-free snapshot to persist with the task;
+    ``online_config`` carries the credential for this run and is never stored.
+
+    Precedence: an explicit caller value, then the value saved with the task,
+    then the historical Tesseract default.  ``prefer_saved`` reverses the first
+    two for a *resume*, because the OCR source saved with an in-flight task must
+    not change underneath it — a rescan is the explicit route to change it.  A
+    missing model resource or an incomplete online connection is reported here
+    rather than silently degraded.
+    """
+    saved = saved_config if isinstance(saved_config, dict) else {}
+
+    def _pick(explicit, saved_key, default=None):
+        if prefer_saved and saved:
+            # A task that is already running keeps its own OCR source; a task
+            # stored before this setting existed keeps the historical default.
+            value = saved.get(saved_key)
+            return value if value is not None else default
+        if explicit is not None:
+            return explicit
+        if saved.get(saved_key) is not None:
+            return saved.get(saved_key)
+        return default
+
+    backend_name = _ocr_backends.normalize_backend(
+        _pick(ocr_backend, "ocr_backend", "tesseract" if saved else "online"))
+    model_id = str(_pick(ocr_paddle_model, "ocr_paddle_model", "") or "").strip() \
+        or _ocr_models.OFFICIAL_MODEL_ID
+    option = _ocr_models.try_resolve(model_id)
+    if option is None:
+        raise ValueError(f"找不到已注册的 Paddle 模型「{model_id}」；请重新选择模型。")
+    model_id = option.model_id
+    descriptor_source = _pick(ocr_online, "ocr_online")
+    if backend_name != "online":
+        return backend_name, model_id, (descriptor_source
+                                        if isinstance(descriptor_source, dict) else None), None
+    config, error = resolve_ocr_online_config(descriptor_source)
+    if error is not None or (config is not None and config.unavailable_reason()):
+        # Native sources need no remote credentials. Validate only when a page
+        # actually requires visual understanding, rather than blocking DOCX or
+        # native PDF translation because the visual profile is not configured.
+        descriptor = descriptor_source if isinstance(descriptor_source, dict) else {}
+        return backend_name, model_id, descriptor, descriptor
+    return backend_name, model_id, config.describe(), config
+
+
+def _resolve_ocr_language_config(ocr_language, installed):
+    """Resolve the requested OCR language against the installed packs.
+
+    Returns ``(resolved, warnings, error)``.  ``error`` is a blocking report when
+    the requested pack is missing — the caller must not fall back to another
+    language, because that produces plausible-looking but poisoned OCR text.
+    """
+    installed_set = set(installed or [])
+    if str(ocr_language or "").strip():
+        resolved = _ocr_language.resolve_ocr_language(ocr_language)
+        report = _ocr_language.validate_language_packs(
+            resolved.engine_code, installed_set)
+        if not report["ok"]:
+            return resolved, [], {
+                "error": "language_pack_missing",
+                "message": _ocr_language.missing_pack_message(
+                    resolved.engine_code, installed_set),
+                "missing": list(report["missing"]),
+                "installed_languages": sorted(installed_set),
+                **resolved.to_dict(),
+            }
+        return resolved, [], None
+    # Legacy task with no explicit OCR language.  Choose the old default but say
+    # so out loud; a newly created task never reaches this branch.
+    legacy_code = _legacy_select_tesseract_language(installed_set)
+    if not legacy_code:
+        return None, [], {
+            "error": "no_language_pack",
+            "message": ("Tesseract 未找到可用语言包（至少需要 eng 或 chi_sim），"
+                        "无法执行 OCR。"),
+            "installed_languages": sorted(installed_set),
+        }
+    resolved = _ocr_language.resolve_ocr_language(legacy_code)
+    warning = (
+        f"该任务未显式设置 OCR 语言，已按旧任务兼容规则使用 {resolved.label}"
+        f"（{resolved.engine_code}）。如需其他语言，请重新扫描并选择 OCR 语言。")
+    return resolved, [warning], None
 
 
 def _ocr_workers_default():
@@ -698,10 +871,12 @@ def _runtime_float_option(explicit, saved, env_name, default, *, minimum=0.0, ma
     return max(minimum, min(value, maximum))
 
 
-def _ocr_runtime_metadata(language, workers, backend=None, command=""):
+def _ocr_runtime_metadata(language, workers, backend=None, command="",
+                          paddle_model=None, online_config=None):
     """Describe the provider actually executing OCR, not only a config value."""
     resolved, resolve_warnings = _ocr_backends.resolve_backend(
-        backend, tesseract_command=command, language=language)
+        backend, tesseract_command=command, language=language,
+        paddle_model=paddle_model, online_config=online_config)
     info = resolved.runtime_info(language).to_dict()
     metadata = {**info, "language": language, "workers": workers}
     warnings = list(resolve_warnings)
@@ -714,116 +889,85 @@ def _ocr_runtime_metadata(language, workers, backend=None, command=""):
     return metadata, warnings
 
 
+def ocr_engine_status(engine, language="eng", *, paddle_model=None, online_config=None):
+    """Availability report for one OCR source.
+
+    Configuration only: the online source is never probed with a billable
+    recognition request.
+    """
+    name = _ocr_backends.normalize_backend(engine)
+    if name == "paddle":
+        backend = _ocr_backends.PaddleOCRBackend(language, model_id=paddle_model)
+        status = backend.status()
+        return {**status, "ok": backend.available(), "capabilities": backend.capabilities(),
+                "source": "paddle",
+                "quality_note": backend.quality_note() if status["state"] != "unsupported" else ""}
+    if name == "online":
+        status = ocr_online_status(online_config)
+        return {**status, "capabilities": {"line_boxes": False, "word_boxes": False,
+                                           "geometry": False},
+                "quality_note": ("VLM 提取原文结构；本地文字框提供尽力而为的高亮，无法匹配时只定位到原页。")}
+    if name == "auto" and not _find_tesseract():
+        status = ocr_engine_status("paddle", language, paddle_model=paddle_model)
+        return {**status, "message": "Auto：Tesseract 未安装；将使用 PaddleOCR。 " + status.get("message", "")}
+    return ocr_language_status(language)
+
+
 def ocr_backend_report():
-    """Diagnostics: which backends exist and what device they would really use."""
+    """Diagnostics: which sources exist and what will really execute them."""
     command = _find_tesseract()
     version = _ocr_backend_version("tesseract", command) if command else ""
-    return _ocr_backends.backend_report(tesseract_command=command,
-                                        tesseract_version=version)
+    return _ocr_backends.backend_report(
+        tesseract_command=command, tesseract_version=version,
+        online_config=resolve_ocr_online_config()[0],
+        paddle_models=_ocr_backends.paddle_model_report())
 
 
-def _ocr_join_lines(left, right):
-    left = re.sub(r"\s+", " ", str(left or "").strip())
-    right = re.sub(r"\s+", " ", str(right or "").strip())
-    if not left:
-        return right
-    if not right:
-        return left
-    if left.endswith(("-", "‐", "‑")) and right[:1].islower():
-        return left[:-1] + right
-    if (re.search(r"[\u3400-\u9fff]$", left)
-            or re.match(r"[\u3400-\u9fff]", right)):
-        return left + right
-    return f"{left} {right}"
+def ocr_language_options():
+    """Selectable OCR languages for the task UI (single + explicit pairs)."""
+    return _ocr_language.ocr_language_options()
 
 
-def _parse_tesseract_tsv(payload):
-    """Convert word-level TSV into paragraph-like blocks with real confidence."""
-    rows = {}
-    try:
-        reader = csv.DictReader(str(payload or "").splitlines(), delimiter="\t")
-        for row in reader:
-            text = str(row.get("text") or "").strip()
-            if not text:
-                continue
-            try:
-                key = (
-                    int(row.get("block_num") or 0),
-                    int(row.get("par_num") or 0),
-                    int(row.get("line_num") or 0),
-                )
-                confidence = float(row.get("conf") or -1)
-                left = float(row.get("left") or 0)
-                top = float(row.get("top") or 0)
-                width = float(row.get("width") or 0)
-                height = float(row.get("height") or 0)
-            except (TypeError, ValueError):
-                continue
-            rows.setdefault(key, []).append({
-                "text": text, "confidence": confidence,
-                "left": left, "top": top, "right": left + width,
-                "bottom": top + height,
-            })
-    except (TypeError, ValueError):
-        return []
-    grouped = {}
-    for (block_num, par_num, line_num), words in rows.items():
-        words.sort(key=lambda word: (word["left"], word["top"]))
-        valid = [word["confidence"] for word in words if word["confidence"] >= 0]
-        grouped.setdefault((block_num, par_num), []).append({
-            "line_num": line_num,
-            "text": _ocr_join_lines("", " ".join(word["text"] for word in words)),
-            "confidence": sum(valid) / len(valid) if valid else None,
-            "top": min(word["top"] for word in words),
-            "bottom": max(word["bottom"] for word in words),
-        })
-    blocks = []
-    for key, lines in grouped.items():
-        lines.sort(key=lambda line: line["line_num"])
-        text = ""
-        confidences = []
-        for line in lines:
-            text = _ocr_join_lines(text, line["text"])
-            if line["confidence"] is not None:
-                confidences.append(line["confidence"])
-        if not text:
-            continue
-        blocks.append({
-            "text": text,
-            "confidence": sum(confidences) / len(confidences) if confidences else None,
-            "low_confidence_ratio": (
-                sum(1 for value in confidences if value < OCR_CONFIDENCE_THRESHOLD_DEFAULT)
-                / len(confidences) if confidences else None
-            ),
-            "top": min(line["top"] for line in lines),
-            "bottom": max(line["bottom"] for line in lines),
-        })
-    return blocks
+def ocr_quality_options():
+    """Selectable scan-quality profiles (Standard / High / Historical)."""
+    return _ocr_language.quality_options()
 
 
-def _ocr_page_with_tesseract(command, png_bytes, language):
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        tmp.write(png_bytes)
-        tmp.flush()
-        tmp_path = tmp.name
-    try:
-        proc = subprocess.run(
-            [command, tmp_path, "stdout", "-l", language, "--psm", "3", "tsv"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
-        )
-        if proc.returncode != 0:
-            detail = (proc.stderr or "").strip().splitlines()
-            return None, detail[-1][:180] if detail else "无输出"
-        blocks = _parse_tesseract_tsv(proc.stdout)
-        if not blocks:
-            return None, "未生成带置信度的 OCR 文本"
-        return blocks, None
-    except subprocess.TimeoutExpired:
-        return None, "超过 120 秒"
-    except Exception as exc:  # noqa: BLE001 - one page must not abort the book
-        return None, str(exc)[:180]
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+def ocr_quality_dpi(quality):
+    """Map a named scan-quality profile to its rasterization DPI."""
+    return _ocr_language.dpi_for_quality(quality)
+
+
+def installed_ocr_languages():
+    """Installed Tesseract packs, for the visible language-pack validation."""
+    command = _find_tesseract()
+    return _tesseract_languages(command) if command else []
+
+
+def ocr_language_status(ocr_language):
+    """Availability report for one OCR language selection (for the UI)."""
+    installed = installed_ocr_languages()
+    resolved = _ocr_language.try_resolve_ocr_language(ocr_language)
+    if resolved is None:
+        return {"ok": False, "message": "请选择扫描文字语言。",
+                "installed_languages": installed}
+    report = _ocr_language.validate_language_packs(
+        resolved.engine_code, installed)
+    return {
+        **report,
+        "label": resolved.label,
+        "direction": resolved.direction,
+        "message": ("" if report["ok"]
+                    else _ocr_language.missing_pack_message(
+                        resolved.engine_code, installed)),
+    }
+
+
+# Stable internal entry points used by existing tests/benchmarks.
+from folith.ocr_tesseract import (
+    _ocr_join_lines, _order_line_words, _iter_tesseract_tsv_rows,
+    _parse_tesseract_tsv, _ocr_page_with_tesseract,
+)
 
 
 def _ocr_checkpoint_path(checkpoint_dir):
@@ -894,6 +1038,219 @@ def _ocr_backend_version(backend, command=""):
     return _OCR_BACKEND_VERSION_CACHE[key]
 
 
+# ================= OCR 来源：线上 OCR 配置 =================
+# The online OCR connection is deliberately separate from the translation model
+# configuration: switching the translator must never change which service reads
+# the page images.  A task may *reference* the saved translation credentials, but
+# the OCR profile has its own file and its own model.
+OCR_ONLINE_CONFIG_FILE = "ocr_online_config.json"
+OCR_ONLINE_CREDENTIAL_SOURCES = ("ocr_profile", "translation_profile")
+OCR_ONLINE_DEFAULT_MAX_TOKENS = _ocr_online.DEFAULT_MAX_TOKENS
+OCR_ONLINE_MIN_MAX_TOKENS = _ocr_online.MIN_MAX_TOKENS
+OCR_ONLINE_MAX_MAX_TOKENS = _ocr_online.MAX_MAX_TOKENS
+OCR_ONLINE_REASONING_MODES = tuple(_ocr_online.REASONING_MODES)
+OCR_ONLINE_CREDENTIAL_LABELS = {
+    "ocr_profile": "使用 OCR 专用凭据",
+    "translation_profile": "引用已保存的翻译模型凭据",
+}
+
+
+def ocr_online_config_path():
+    return OUTPUT_DIR / OCR_ONLINE_CONFIG_FILE
+
+
+def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
+                           max_tokens=_ocr_online.DEFAULT_MAX_TOKENS,
+                           temperature=0.0, reasoning_mode="provider_default",
+                           timeout_s=_ocr_online.DEFAULT_TIMEOUT_S,
+                           max_retries=_ocr_online.DEFAULT_MAX_RETRIES):
+    """Persist the OCR-only connection (0600), mirroring provider_config.json."""
+    _ensure_output_dir()
+    normalized = _ocr_online.OnlineOCRConfig(
+        provider=provider, model=model, api_key=api_key, base_url=base_url or "",
+        max_tokens=max_tokens, temperature=temperature,
+        reasoning_mode=reasoning_mode, timeout_s=timeout_s,
+        max_retries=max_retries).normalized()
+    payload = {
+        "provider": normalized.provider,
+        "model": normalized.model,
+        "api_key": normalized.api_key,
+        "base_url": normalize_openai_base_url(normalized.base_url) or "",
+        "max_tokens": normalized.max_tokens,
+        "temperature": normalized.temperature,
+        "reasoning_mode": normalized.reasoning_mode,
+        "timeout_s": normalized.timeout_s,
+        "max_retries": normalized.max_retries,
+    }
+    path = ocr_online_config_path()
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+    try:
+        temporary.chmod(0o600)
+    except OSError:
+        pass
+    temporary.replace(path)
+    return path
+
+
+def load_ocr_online_config():
+    """Credential-bearing OCR connection profile; never enters a task snapshot."""
+    try:
+        path = ocr_online_config_path()
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        return {
+            "provider": str(data.get("provider") or ""),
+            "model": str(data.get("model") or ""),
+            "api_key": str(data.get("api_key") or ""),
+            "base_url": normalize_openai_base_url(data.get("base_url")) or "",
+            "max_tokens": int(data.get("max_tokens") or _ocr_online.DEFAULT_MAX_TOKENS),
+            "temperature": float(data.get("temperature") or 0.0),
+            "reasoning_mode": str(data.get("reasoning_mode") or "provider_default"),
+            "timeout_s": float(data.get("timeout_s") or _ocr_online.DEFAULT_TIMEOUT_S),
+            "max_retries": int(data.get("max_retries") or _ocr_online.DEFAULT_MAX_RETRIES),
+        }
+    except Exception:  # noqa: BLE001 - a damaged profile is "not configured"
+        return None
+
+
+def _resolve_online_ocr_base_url(provider, base_url):
+    base = str(base_url or "").strip()
+    if provider and provider in PROVIDERS:
+        return resolve_openai_base_url(provider, base or None)
+    normalized = normalize_openai_base_url(base)
+    if not normalized:
+        raise ValueError("线上 OCR 缺少有效的服务地址（需要 http(s)://…/v1）")
+    return normalized
+
+
+def resolve_ocr_online_config(saved=None, *, descriptor=None):
+    """Build the runtime online OCR config from a task descriptor + credentials.
+
+    ``descriptor`` is the secret-free snapshot persisted with the task.  The
+    credential itself always comes from disk (the OCR profile, or the saved
+    translation profile when the task explicitly references it) so it is never
+    written into job state, the cache identity, logs or reports.
+    """
+    snapshot = descriptor if isinstance(descriptor, dict) else (
+        saved if isinstance(saved, dict) else {})
+    default_source = "ocr_profile" if load_ocr_online_config() else "translation_profile"
+    source = str(snapshot.get("credential_source") or default_source)
+    if source not in OCR_ONLINE_CREDENTIAL_SOURCES:
+        source = "ocr_profile"
+    profile = (load_provider_config() or {} if source == "translation_profile"
+               else load_ocr_online_config() or {})
+    provider = str(snapshot.get("provider") or profile.get("provider") or "")
+    model = str(snapshot.get("model") or profile.get("model") or "")
+    base_url = str(snapshot.get("base_url") or profile.get("base_url") or "")
+    try:
+        resolved_base = _resolve_online_ocr_base_url(provider, base_url)
+    except ValueError as exc:
+        return None, {"error": "invalid_base_url", "message": str(exc)}
+    config = _ocr_online.OnlineOCRConfig(
+        provider=provider,
+        base_url=resolved_base,
+        model=model,
+        api_key=str(profile.get("api_key") or ""),
+        max_tokens=int(snapshot.get("max_tokens") or profile.get("max_tokens")
+                       or _ocr_online.DEFAULT_MAX_TOKENS),
+        temperature=float(snapshot.get("temperature")
+                          if snapshot.get("temperature") is not None
+                          else profile.get("temperature") or 0.0),
+        reasoning_mode=str(snapshot.get("reasoning_mode") or profile.get("reasoning_mode")
+                           or ("thinking_disabled" if provider == "OpenCode Go"
+                               and model == "deepseek-v4.1-flash" else "provider_default")),
+        prompt_version=str(snapshot.get("prompt_version")
+                           or _ocr_online.ONLINE_PROMPT_VERSION),
+        timeout_s=float(snapshot.get("timeout_s") or profile.get("timeout_s")
+                        or _ocr_online.DEFAULT_TIMEOUT_S),
+        max_retries=int(snapshot.get("max_retries") if snapshot.get("max_retries") is not None
+                        else profile.get("max_retries") or _ocr_online.DEFAULT_MAX_RETRIES),
+        proxy_bypass=bool((PROVIDERS.get(provider) or {}).get("proxy_bypass")),
+        credential_source=source,
+    ).normalized()
+    return config, None
+
+
+def ocr_online_status(saved=None):
+    """Configuration-only status for the settings UI.
+
+    Never issues a recognition request: checking a connection must not cost
+    money or send a page image anywhere.
+    """
+    config, error = resolve_ocr_online_config(saved)
+    if error is not None:
+        return {"ok": False, "state": "unconfigured", "message": error["message"],
+                "source": _ocr_online.ONLINE_OCR_BACKEND}
+    if config is None:
+        return {"ok": False, "state": "unconfigured", "message": "线上 OCR 未配置。",
+                "source": _ocr_online.ONLINE_OCR_BACKEND}
+    reason = config.unavailable_reason()
+    return {
+        "ok": not reason,
+        "state": "configured" if not reason else "unconfigured",
+        "message": reason or "已配置；识别时会实际请求该服务。",
+        "source": _ocr_online.ONLINE_OCR_BACKEND,
+        **config.describe(),
+    }
+
+
+def ocr_source_options():
+    """The three OCR sources the task UI offers, in the documented order."""
+    return [
+        {"value": "tesseract", "label": "Tesseract",
+         "description": "本机 Tesseract；默认来源，无需额外运行时。"},
+        {"value": "paddle", "label": "PaddleOCR",
+         "description": "本机 PP-OCRv5，可选任务级模型（含阿拉伯语微调模型）。"},
+        {"value": "online", "label": "线上 OCR API",
+         "description": "OpenAI 兼容图像转写接口；页面图像会发送到所配置的服务。"},
+        {"value": "auto", "label": "自动（仅本地）",
+         "description": "优先 Tesseract；未安装时回退 PaddleOCR。不会自动使用线上服务。"},
+    ]
+
+
+def ocr_source_label(value):
+    name = _ocr_backends.normalize_backend(value)
+    return {"tesseract": "Tesseract", "paddle": "PaddleOCR",
+            "online": "线上 OCR API", "auto": "自动（仅本地）"}.get(name, name)
+
+
+def paddle_model_options():
+    """Selectable PaddleOCR model sets (official + locally exported models)."""
+    return _ocr_models.model_options()
+
+
+def resolve_paddle_model(model_id):
+    """Resolve a task-level Paddle model selection, failing on an unknown id."""
+    return _ocr_models.try_resolve(model_id)
+
+
+def ocr_paddle_model_status(model_id, language="eng"):
+    """Availability of one Paddle model set for one OCR language."""
+    option = _ocr_models.try_resolve(model_id)
+    if option is None:
+        return {"ok": False, "state": "model_unavailable",
+                "message": f"找不到已注册的 Paddle 模型「{model_id}」。",
+                "model_id": str(model_id or "")}
+    language_ok = _ocr_models.language_supported(option, language)
+    backend = _ocr_backends.PaddleOCRBackend(language, model_id=option.model_id)
+    status = backend.status()
+    if not language_ok:
+        return {**status, "ok": False, "model_id": option.model_id,
+                "language_supported": False,
+                "message": (f"模型「{option.label}」只在"
+                            f"{_ocr_models.language_scope_label(option)}上验证过，"
+                            "不能用于当前 OCR 语言。")}
+    return {**status, "ok": backend.available(), "model_id": option.model_id,
+            "language_supported": True,
+            "language_scope": _ocr_models.language_scope_label(option),
+            "resource_dir": str(_ocr_models.resource_base(option))}
+
+
 def _ocr_page_quality_ok(record, *, min_confidence=None, min_density=None):
     """Quality signal that decides whether a page needs a higher-DPI retry.
 
@@ -938,12 +1295,21 @@ def _ocr_pdf_text_with_warnings(
     file_bytes, max_pages=None, on_progress=None, *, workers=None, queue_size=None,
     checkpoint_dir=None, cancel_check=None, profiler=None, return_details=False,
     dpi=None, adaptive_dpi=None, backend=None, profile_cache_dir=None,
+    ocr_language=None, ocr_psm=None, paddle_model=None, online_config=None,
 ):
     """OCR a scanned PDF with the local backend and return ``(text, warnings)``.
 
     ``max_pages=3`` is used by the quick-profile preview.  ``None`` means all
     pages and is used by the actual translation pipeline.  The function never
     sends page images or OCR text anywhere; it only invokes the local engine.
+
+    ``ocr_language`` is the **user-selected** OCR language (a Tesseract code or
+    registry key, optionally a ``ara+eng`` combination).  It is never inferred
+    from the installed packs or the document.  When it names a pack that is not
+    installed the function fails visibly and returns no text, because OCR run
+    with the wrong pack produces plausible-looking text that poisons every later
+    stage.  ``None`` is only for legacy tasks and is handled with an explicit
+    warning.
 
     Durable caching is page-granular (``ocr_cache/manifest.json`` plus one file
     per page).  Because a page is keyed by *page index* rather than by the
@@ -960,42 +1326,102 @@ def _ocr_pdf_text_with_warnings(
     ``adaptive_dpi`` is an opt-in experiment: a low-DPI first pass, with a
     higher-DPI rerun only for pages whose quality signal fails.
     """
-    command = _find_tesseract()
-    if not command:
-        result = ("", [
-            "未找到本机 Tesseract OCR。请安装 Tesseract，或设置 "
-            "FOLIOTHREAD_TESSERACT_CMD 指向 tesseract 可执行文件。"
-        ], {})
-        return result if return_details else result[:2]
-
     warnings = []
-    installed = _tesseract_languages(command)
-    language = _select_tesseract_language(installed)
-    if not language:
-        result = ("", [
-            "Tesseract 未找到可用语言包（至少需要 eng 或 chi_sim），无法执行 OCR。"
-        ], {})
+    command = _find_tesseract()
+    requested_engine = _ocr_backends.normalize_backend(backend)
+    try:
+        effective_psm = int(ocr_psm) if ocr_psm is not None else _ocr_language.DEFAULT_PSM
+    except (TypeError, ValueError):
+        effective_psm = _ocr_language.DEFAULT_PSM
+    version = _ocr_backend_version("tesseract", command) if command else ""
+    try:
+        resolved_backend, backend_warnings = _ocr_backends.resolve_backend(
+            requested_engine, tesseract_command=command, tesseract_version=version,
+            page_ocr=_ocr_page_with_tesseract, language=ocr_language or "eng",
+            psm=effective_psm, paddle_model=paddle_model,
+            online_config=online_config)
+    except _ocr_backends.OCRUnavailable as exc:
+        result = ("", [str(exc)], {"ocr_error": exc.code,
+                  "requested_engine": requested_engine, "actual_engine": None,
+                  "ocr_source": requested_engine})
         return result if return_details else result[:2]
-
-    workers = max(1, min(int(workers or _ocr_workers_default()), 8))
-    queue_size = max(1, min(int(queue_size or _ocr_queue_size_default(workers)), 32))
-    _tesseract_version = _ocr_backend_version("tesseract", command)
-    # One contract for every backend; an unavailable request falls back to
-    # Tesseract with a visible warning rather than silently claiming success.
-    resolved_backend, backend_warnings = _ocr_backends.resolve_backend(
-        backend, tesseract_command=command, tesseract_version=_tesseract_version,
-        page_ocr=_ocr_page_with_tesseract, language=language)
     warnings.extend(backend_warnings)
-    runtime_metadata, runtime_warnings = _ocr_runtime_metadata(
-        language, workers, backend=resolved_backend.name, command=command)
-    warnings.extend(runtime_warnings)
-    backend_name = str(runtime_metadata.get("backend") or "tesseract")
-    backend_model = str(runtime_metadata.get("model") or "")
-    backend_version = str(runtime_metadata.get("backend_version")
-                          or _tesseract_version)
-    runtime_metadata = {**runtime_metadata, "backend": backend_name,
-                        "backend_version": backend_version}
+    installed = []
+    if resolved_backend.name == "tesseract":
+        if not command:
+            result = ("", ["未找到本机 Tesseract OCR。请安装 Tesseract，或设置 FOLIOTHREAD_TESSERACT_CMD。"],
+                      {"ocr_error": "runtime_missing", "requested_engine": requested_engine})
+            return result if return_details else result[:2]
+        installed = _tesseract_languages(command)
+        resolved_language, language_warnings, language_error = _resolve_ocr_language_config(ocr_language, installed)
+        if language_error is not None:
+            details = {**{k: v for k, v in language_error.items() if k not in {"error", "message"}},
+                "ocr_error": language_error["error"], "installed_languages": list(installed or []),
+                "installed_language_available": False, "ocr_backend": "tesseract", "requested_engine": requested_engine}
+            result = ("", [language_error["message"]], details)
+            return result if return_details else result[:2]
+        warnings.extend(language_warnings)
+    else:
+        try:
+            resolved_language = _ocr_language.resolve_ocr_language(ocr_language or "eng")
+        except ValueError as exc:
+            result = ("", [str(exc)], {"ocr_error": "unsupported", "requested_engine": requested_engine})
+            return result if return_details else result[:2]
+    language = resolved_language.engine_code
+    text_direction_value = resolved_language.direction
+    workers = max(1, min(int(workers or _ocr_workers_default()), resolved_backend.max_workers))
+    queue_size = max(1, min(int(queue_size or _ocr_queue_size_default(workers)), 32))
+    runtime_metadata = resolved_backend.runtime_info(language).to_dict()
+    runtime_metadata.update(requested_engine=requested_engine, actual_engine=resolved_backend.name,
+        ocr_source=resolved_backend.name,
+        workers=workers, fallbacks=backend_warnings, confidence_kind=resolved_backend.capabilities()["confidence_kind"])
+    configured_device = str(os.environ.get("FOLIOTHREAD_OCR_DEVICE", "auto")).lower()
+    if resolved_backend.name == "tesseract" and configured_device not in {"", "auto", "cpu"}:
+        warnings.append(f"OCR 配置请求 device={configured_device}，但当前 Tesseract runtime 实际使用 CPU。")
+    backend_name = resolved_backend.name
+    backend_model = runtime_metadata["model"]
+    backend_version = runtime_metadata["backend_version"]
+    if runtime_metadata.get("model_version") == "models_not_installed":
+        try:
+            if cancel_check and cancel_check():
+                raise RuntimeError("任务已请求取消")
+            resolved_backend.load(on_progress, cancel_check=cancel_check)
+            runtime_metadata.update(resolved_backend.runtime_info(language).to_dict())
+        except _ocr_backends.OCRUnavailable as exc:
+            result = ("", [str(exc)], {**runtime_metadata, "ocr_error": exc.code})
+            resolved_backend.close()
+            return result if return_details else result[:2]
+    model_version = runtime_metadata.get("model_version") or ""
+    cache_backend_version = backend_version
+    if model_version:
+        cache_backend_version += "|models=" + model_version
+    if runtime_metadata.get("inference_config"):
+        cache_backend_version += "|config=" + runtime_metadata["inference_config"]
+    # Backend-specific, secret-free configuration that changes the bytes of a
+    # page: the Paddle model set, or the online target/model/prompt/parameters.
+    # It is empty for the historical Tesseract default, so pages cached before
+    # this contract existed stay reusable.
+    cache_backend_options = _ocr_backends.backend_options(backend_name, runtime_metadata)
+    runtime_metadata["backend_options"] = cache_backend_options
+    if resolved_backend.capabilities().get("geometry") is False:
+        warnings.append("该 OCR 来源只返回文字、不返回行框；原页对照只能定位页面，无法按坐标高亮。")
     base_dpi = max(72, int(dpi or OCR_DPI_BASELINE))
+    language_metadata = {
+        **resolved_language.to_dict(),
+        "ocr_language_label": resolved_language.label,
+        "ocr_language_engine_code": runtime_metadata.get("engine_language", language),
+        "ocr_text_direction": text_direction_value,
+        "ocr_direction": text_direction_value,
+        "ocr_dpi": base_dpi,
+        "ocr_psm": effective_psm,
+        "ocr_backend": backend_name,
+        "ocr_source": backend_name,
+        "ocr_config_version": _ocr_language.OCR_CONFIG_VERSION,
+        "installed_languages": list(installed or []),
+        "installed_language_available": True,
+        "explicit_ocr_language": bool(str(ocr_language or "").strip()),
+    }
+    runtime_metadata = {**runtime_metadata, **language_metadata}
     adaptive = (_ocr_env_flag("FOLIOTHREAD_OCR_ADAPTIVE_DPI", False)
                 if adaptive_dpi is None else bool(adaptive_dpi))
     first_dpi = OCR_ADAPTIVE_LOW_DPI if adaptive else base_dpi
@@ -1019,21 +1445,30 @@ def _ocr_pdf_text_with_warnings(
         return _OCRPageIdentity(
             source_sha256=source_hash, page_index=int(index),
             backend=backend_name, model=backend_model,
-            backend_version=backend_version, language=language,
-            dpi=int(dpi_value), preprocessing_version=_OCR_PREPROCESSING_VERSION)
+            backend_version=cache_backend_version, language=language,
+            dpi=int(dpi_value), preprocessing_version=_OCR_PREPROCESSING_VERSION,
+            psm=effective_psm, direction=text_direction_value,
+            ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
+            backend_options=cache_backend_options)
 
     def _load_cached(loader_dpi):
         records, _manifest = cache.load(
             source_sha256=source_hash, indices=indices, language=language,
             backend=backend_name, model=backend_model,
-            backend_version=backend_version, dpi=int(loader_dpi))
+            backend_version=cache_backend_version, dpi=int(loader_dpi),
+            psm=effective_psm, direction=text_direction_value,
+            ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
+            backend_options=cache_backend_options)
         if profile_cache is not None:
             missing = [index for index in indices if str(index) not in records]
             if missing:
                 extra, _ = profile_cache.load(
                     source_sha256=source_hash, indices=missing, language=language,
                     backend=backend_name, model=backend_model,
-                    backend_version=backend_version, dpi=int(loader_dpi))
+                    backend_version=cache_backend_version, dpi=int(loader_dpi),
+                    psm=effective_psm, direction=text_direction_value,
+                    ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
+                    backend_options=cache_backend_options)
                 for key, record in extra.items():
                     records.setdefault(key, record)
         return records
@@ -1064,9 +1499,10 @@ def _ocr_pdf_text_with_warnings(
                     page_records[key] = record
                     dpi_by_page[key] = first_dpi
             legacy_pages = _read_legacy_ocr_pages(
-                legacy_path, source_sha256=source_hash, indices=indices,
+                None if model_version else legacy_path, source_sha256=source_hash, indices=indices,
                 language=language, backend=backend_name, model=backend_model,
-                dpi=base_dpi)
+                dpi=base_dpi, psm=effective_psm, direction=text_direction_value,
+                ocr_config_version=_ocr_language.OCR_CONFIG_VERSION)
             for key, record in legacy_pages.items():
                 if key not in page_records:
                     page_records[key] = record
@@ -1090,31 +1526,56 @@ def _ocr_pdf_text_with_warnings(
             stop_event = threading.Event()
             worker_errors = []
             completed_pages = cached_pages
+            failure_count = 0
+            retried_pages = 0
             dpi_used_by_page = {}
+            page_timings = {}
+            page_requests = {}
             adaptive_retried = []
             # Constant-size run record: written once when the run starts so a
             # crash leaves evidence of what was in flight, then once at the end.
             cache.write_manifest(
                 source_sha256=source_hash, indices=indices, language=language,
                 backend=backend_name, model=backend_model,
-                backend_version=backend_version, dpi=first_dpi, status="running",
+                backend_version=cache_backend_version, dpi=first_dpi, status="running",
                 completed_pages=cached_pages,
+                psm=effective_psm, direction=text_direction_value,
+                ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
+                backend_options=cache_backend_options,
                 extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
-                       "first_dpi": first_dpi, "retry_dpi": retry_dpi})
+                       "first_dpi": first_dpi, "retry_dpi": retry_dpi,
+                       **language_metadata})
 
             def check_cancel():
                 if cancel_check and cancel_check():
                     raise RuntimeError("任务已请求取消")
+
+            def progress_source_label():
+                """Name the source that is *actually* reading the pages."""
+                if backend_name == "online":
+                    return f"线上 OCR API · {runtime_metadata.get('model') or ''}".strip()
+                model_label = str(runtime_metadata.get("model_label") or "")
+                if backend_name == "paddleocr" and runtime_metadata.get(
+                        "model_id") not in {None, "", "official"} and model_label:
+                    return f"{resolved_backend.display_name} · {model_label}"
+                return resolved_backend.display_name
 
             def emit_page_progress():
                 if not on_progress:
                     return
                 with queue_lock:
                     current = completed_pages
+                    failed = failure_count
+                    retried = retried_pages
+                detail = ""
+                if failed:
+                    detail += f"，失败 {failed} 页"
+                if retried:
+                    detail += f"，重试 {retried} 次"
                 try:
                     on_progress(
                         f"【阶段一】扫描 PDF OCR（{current}/{len(indices)} 页；"
-                        f"workers={workers}；device={runtime_metadata['device']}）…"
+                        f"{progress_source_label()} · {resolved_language.label}{detail}）…"
                     )
                 except Exception:  # noqa: BLE001 - UI progress is optional
                     pass
@@ -1124,12 +1585,17 @@ def _ocr_pdf_text_with_warnings(
                 nonlocal completed_pages
                 if not pass_indices:
                     return []
+                check_cancel()
+                resolved_backend.load(on_progress, cancel_check=cancel_check)
+                runtime_metadata.update(resolved_backend.runtime_info(language).to_dict())
+                if ocr_stage is not None:
+                    ocr_stage.record["metadata"].update(runtime_metadata)
                 work_queue = queue.Queue(maxsize=queue_size)
                 local_failed = []
                 pass_completed = 0
 
                 def ocr_worker():
-                    nonlocal completed_pages, pass_completed
+                    nonlocal completed_pages, pass_completed, failure_count, retried_pages
                     while True:
                         task = work_queue.get()
                         try:
@@ -1138,37 +1604,34 @@ def _ocr_pdf_text_with_warnings(
                             idx, png_bytes, enqueued_at, page_width, page_height = task
                             check_cancel()
                             started = time.perf_counter()
-                            blocks, error = resolved_backend.ocr_page(
+                            evidence = resolved_backend.recognize_page(
                                 png_bytes, page_index=idx, page_number=idx + 1,
                                 language=language, dpi=pass_dpi)
-                            if not error:
-                                # Store the lean mapping; backend/device/provider
-                                # are recorded once per page, not per block.
-                                blocks = [block.to_dict() for block in blocks]
+                            error = evidence.error
+                            page_timings[str(idx)] = evidence.timings
+                            if getattr(evidence, "request", None):
+                                with page_lock:
+                                    page_requests[str(idx)] = dict(evidence.request)
+                                    if int(evidence.request.get("attempt_count") or 1) > 1:
+                                        retried_pages += int(evidence.request["attempt_count"]) - 1
                             finished = time.perf_counter()
                             if error:
                                 with page_lock:
                                     local_failed.append((idx + 1, error))
+                                    failure_count += 1
                             else:
-                                record = {
-                                    "page_number": idx + 1,
-                                    "page_width": page_width,
-                                    "page_height": page_height,
-                                    "dpi": pass_dpi,
-                                    "backend": backend_name,
-                                    "device": runtime_metadata.get("device"),
-                                    "provider": runtime_metadata.get("provider"),
-                                    "execution_provider": runtime_metadata.get(
-                                        "execution_provider"),
-                                    "blocks": blocks,
-                                }
+                                record = evidence.to_record(page_width, page_height)
                                 with page_lock:
                                     page_records[str(idx)] = record
                                     dpi_by_page[str(idx)] = pass_dpi
                                     dpi_used_by_page[str(idx)] = pass_dpi
                                     # Page-granular durability: this write holds
                                     # only the page that just finished.
-                                    cache.store_page(_identity(idx, pass_dpi), record)
+                                    stored = cache.store_page(_identity(idx, pass_dpi), record)
+                                    if cache.directory is not None and stored is None:
+                                        message = "OCR 页面缓存写入失败；检查可用磁盘空间，恢复时该页需重新识别。"
+                                        if message not in warnings:
+                                            warnings.append(message)
                             with queue_lock:
                                 pass_completed += 1
                                 completed_pages += 1
@@ -1235,6 +1698,8 @@ def _ocr_pdf_text_with_warnings(
                 finally:
                     if worker_errors:
                         stop_event.set()
+                    if stop_event.is_set():
+                        resolved_backend.close()
                     for _ in threads:
                         while True:
                             try:
@@ -1278,14 +1743,18 @@ def _ocr_pdf_text_with_warnings(
                 cache.write_manifest(
                     source_sha256=source_hash, indices=indices, language=language,
                     backend=backend_name, model=backend_model,
-                    backend_version=backend_version, dpi=first_dpi,
+                    backend_version=cache_backend_version, dpi=first_dpi,
                     status="cancelled" if cancelled else "completed",
                     completed_pages=sum(1 for index in indices
                                         if str(index) in page_records),
                     failed_pages=len(failed_pages),
+                    psm=effective_psm, direction=text_direction_value,
+                    ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
+                    backend_options=cache_backend_options,
                     extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
                            "first_dpi": first_dpi, "retry_dpi": retry_dpi,
                            "retried_pages": adaptive_retried,
+                           **language_metadata,
                            "dpi_used_by_page": {
                                key: dpi_used_by_page[key]
                                for key in sorted(dpi_used_by_page)}})
@@ -1294,6 +1763,7 @@ def _ocr_pdf_text_with_warnings(
                 sample = "；".join(f"第 {page} 页：{detail}" for page, detail in failed_pages[:3])
                 more = f"（另有 {len(failed_pages) - 3} 页失败）" if len(failed_pages) > 3 else ""
                 warnings.append(f"OCR 部分页面失败：{sample}{more}")
+            postprocess_started = time.perf_counter()
             paragraph_confidences = []
             chunks = []
             repeated = {}
@@ -1310,15 +1780,27 @@ def _ocr_pdf_text_with_warnings(
                     all_blocks.append((idx, height, block, text, normalized))
             repeat_threshold = max(2, int((len(indices) * 0.2) + 0.999)) if len(indices) > 1 else 99
             by_page = {}
+            geometry_pages = 0
+            coordinate_less_pages = 0
             for idx, height, block, text, normalized in all_blocks:
-                top = float(block.get("top") or 0)
-                bottom = float(block.get("bottom") or 0)
-                is_edge = top < height * 0.12 or bottom > height * 0.88
+                mapped = block.get("bbox_pdf")
+                # A block whose geometry is explicitly unknown must never be
+                # treated as "at the top of the page": that would silently drop
+                # repeated body lines as if they were running heads.
+                known = bool(block.get("geometry_known", True)) and bool(mapped)
+                top = float(mapped[1] if mapped else block.get("top") or 0)
+                bottom = float(mapped[3] if mapped else block.get("bottom") or 0)
+                is_edge = known and (top < height * 0.12 or bottom > height * 0.88)
+                if known:
+                    geometry_pages += 1
                 if _OCR_PAGE_NUMBER_RE.fullmatch(text) and is_edge:
                     continue
                 if repeated.get(normalized, 0) >= repeat_threshold and is_edge:
                     continue
                 by_page.setdefault(idx, []).append((text, block.get("confidence")))
+            for record in page_records.values():
+                if record.get("geometry_known") is False:
+                    coordinate_less_pages += 1
             for idx in indices:
                 page_chunks = by_page.get(idx) or []
                 if not page_chunks:
@@ -1327,13 +1809,33 @@ def _ocr_pdf_text_with_warnings(
                 paragraph_confidences.extend(conf for _, conf in page_chunks)
             valid_confidences = [float(value) for value in paragraph_confidences
                                  if value is not None]
+            completed_indices = [index for index in indices
+                                 if str(index) in page_records]
+            usage_totals = {"reported": False, "prompt_tokens": None,
+                            "completion_tokens": None, "reasoning_tokens": None,
+                            "total_tokens": None, "amount": None}
+            usage_unknown_pages = []
+            for key in sorted(page_requests, key=lambda value: int(value)):
+                record = page_requests[key].get("usage") or {}
+                if not record.get("reported"):
+                    usage_unknown_pages.append(int(key) + 1)
+                    continue
+                usage_totals["reported"] = True
+                for field in ("prompt_tokens", "completion_tokens",
+                              "reasoning_tokens", "total_tokens", "amount"):
+                    current = usage_totals[field]
+                    reported = record.get(field)
+                    if reported is None:
+                        continue
+                    usage_totals[field] = (current or 0) + reported
             details = {
                 **runtime_metadata,
                 "page_count": len(indices),
-                "completed_pages": sum(1 for index in indices if str(index) in page_records),
-                "page_order": [index + 1 for index in indices
-                               if str(index) in page_records],
+                "completed_pages": len(completed_indices),
+                "page_order": [index + 1 for index in completed_indices],
                 "failed_pages": len(failed_pages),
+                # Never let a partly recognised book be reported as complete.
+                "all_pages_completed": len(completed_indices) == len(indices),
                 "checkpoint_file": str(cache.manifest_path) if cache.manifest_path else "",
                 "ocr_cache_dir": str(cache.directory) if cache.directory else "",
                 "ocr_cache_stats": cache.stats(),
@@ -1346,23 +1848,46 @@ def _ocr_pdf_text_with_warnings(
                 "ocr_dpi_used_by_page": {key: dpi_by_page[key]
                                          for key in sorted(dpi_by_page)},
                 "ocr_cached_pages": cached_pages,
+                "ocr_geometry_blocks": geometry_pages,
+                "ocr_pages_without_geometry": coordinate_less_pages,
+                "ocr_usage": usage_totals,
+                "ocr_usage_unknown_pages": usage_unknown_pages,
+                "ocr_retried_requests": int(retried_pages),
+                "ocr_page_requests": {key: page_requests[key]
+                                      for key in sorted(page_requests, key=lambda v: int(v))},
                 "paragraph_confidences": paragraph_confidences,
                 "mean_confidence": (
                     sum(valid_confidences) / len(valid_confidences)
                     if valid_confidences else None
                 ),
-                "confidence_threshold": OCR_CONFIDENCE_THRESHOLD_DEFAULT,
+                "confidence_threshold": OCR_CONFIDENCE_THRESHOLD_DEFAULT if backend_name == "tesseract" else None,
+                "postprocessing_s": time.perf_counter() - postprocess_started,
+                "model_load_s": getattr(resolved_backend, "load_seconds", 0.0),
+                "page_timings": page_timings,
+                "evidence_version": 1,
+                "raw_evidence_directory": str(cache.pages_dir) if cache.pages_dir else "",
+                "cache_identity": _identity(0, first_dpi).to_dict(),
+                "page_failures": [{"page_number": n, "error": e} for n, e in failed_pages],
             }
             text = "\n\n".join(chunks)
             if not text:
                 warnings.append("OCR 未识别到有效文本。")
             result = (text, warnings, details)
             return result if return_details else result[:2]
+    except _ocr_backends.OCRUnavailable as exc:
+        result = ("", [str(exc)], {**runtime_metadata, "ocr_error": exc.code})
+        return result if return_details else result[:2]
     except Exception as exc:  # noqa: BLE001 - caller can show a recoverable warning
         if "任务已请求取消" in str(exc):
             raise
-        result = ("", [f"OCR 处理 PDF 失败：{str(exc)[:240]}"], {})
+        # 同样是"给用户看的第一句"：把已知失败模式（加密/损坏/不完整）翻译成
+        # 可执行的中文，技术原文仍写进运行时技术日志。
+        result = ("", [f"OCR 处理 PDF 失败："
+                       f"{friendly_extraction_reason(str(exc)[:240])}"], {})
         return result if return_details else result[:2]
+
+    finally:
+        resolved_backend.close()
 
 
 def _ocr_pdf_text(file_bytes, max_pages=3):
@@ -1371,7 +1896,7 @@ def _ocr_pdf_text(file_bytes, max_pages=3):
     return text
 
 
-def _ocr_text_to_paragraphs(text):
+def _ocr_text_to_paragraphs(text, direction="ltr"):
     """Turn Tesseract page/block output into translation-ready paragraphs."""
     paragraphs = []
     for block in re.split(r"\n\s*\n", str(text or "")):
@@ -1381,7 +1906,10 @@ def _ocr_text_to_paragraphs(text):
             continue
         merged = lines[0]
         for line in lines[1:]:
-            if merged.endswith("-") and line[:1].islower():
+            # Hyphenation repair is a cased-script (English) rule; uncased RTL
+            # scripts never match ``islower()`` and fall through to a space join.
+            if (str(direction or "ltr") != "rtl" and merged.endswith("-")
+                    and line[:1].islower()):
                 merged = merged[:-1] + line
             elif re.search(r"[\u3400-\u9fff]$", merged) or \
                     re.match(r"[\u3400-\u9fff]", line):
@@ -1585,6 +2113,59 @@ def _pdf_extraction_facts(file_bytes):
     return facts
 
 
+_GENERIC_EXTRACTION_WARNING = "OCR 未生成可用段落"
+
+
+#: 已知的提取失败模式 -> 用户能照着做的中文说明。技术原文仍然保留在警告里
+#: （写进运行时技术日志与诊断包），但**呈现给用户的第一句**必须是他能行动的内容：
+#: 之前损坏的 DOCX 会把 zipfile 的英文异常原样抛到界面上（"There is no item named
+#: '[Content_Types].xml' …"），加密 PDF 则显示 "document closed or encrypted"。
+_EXTRACTION_FAILURE_HINTS = (
+    ("encrypt", "这个 PDF 已加密，无法读取；请先解除密码保护再导入。"),
+    ("password", "这个 PDF 已加密，无法读取；请先解除密码保护再导入。"),
+    ("content_types", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
+    ("not a zip file", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
+    ("failed to open stream", "无法读取这个 PDF：文件可能损坏，或它不是真正的 PDF。"),
+    ("no objects found", "无法读取这个 PDF：文件可能损坏，或它不是真正的 PDF。"),
+    ("cannot open", "无法读取这个文件：它可能已损坏，或不是支持的文档格式。"),
+    ("eof marker", "无法读取这个 PDF：文件不完整（可能没有下载或复制完整）。"),
+    ("syntax error", "无法解析这个 PDF：文件可能已损坏。"),
+)
+
+#: 文档里确实没有文本（不是错误，而是没有可翻译的内容）。
+_NO_TEXT_REASON = ("文档里没有可翻译的文本：可能是空文档，或内容都在图片/表格里；"
+                   "扫描件请在设置里启用 OCR 后重新导入。")
+
+
+def friendly_extraction_reason(text):
+    """把提取失败的原始信息翻译成可执行的中文说明（无法识别时保留原文）。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return _NO_TEXT_REASON
+    lowered = raw.casefold()
+    for needle, reason in _EXTRACTION_FAILURE_HINTS:
+        if needle in lowered:
+            return reason
+    return raw
+
+
+def extraction_failure_detail(warnings):
+    """Most specific reason for a failed extraction.
+
+    The OCR path can append a generic follow-up ("OCR 未生成可用段落…") *after* a
+    precise blocking error ("OCR 语言包未安装：Deutsch（deu）…").  Surfacing only
+    the last warning hides the actual cause — the user is told to install a
+    language pack without being told which one, or that English was used.  Prefer
+    a concrete reason; fall back to the last warning when every entry is generic.
+    """
+    items = [str(item or "").strip() for item in warnings or []]
+    items = [item for item in items if item]
+    for warning in reversed(items):
+        if _GENERIC_EXTRACTION_WARNING not in warning:
+            return warning
+    return items[-1] if items else "未知提取错误"
+
+
 def _build_extraction_report(filename, paragraphs, *, ocr_used=False,
                              unsupported=None, facts=None, warnings=None):
     values = [str(item or "") for item in paragraphs or []]
@@ -1763,7 +2344,9 @@ def cleanup_source_paragraphs(paragraphs, provider, api_key, model, *,
                               confidence_threshold=None, checkpoint_dir=None,
                               cancel_check=None, max_retries=None,
                               retry_backoff_seconds=None,
-                              request_interval_seconds=None, profiler=None):
+                              request_interval_seconds=None, profiler=None,
+                              ocr_language="", source_language="",
+                              text_direction="", ocr_engine_code="", ocr_backend="tesseract"):
     """Repair OCR characters/line breaks while preserving indexed source items.
 
     This compatibility wrapper keeps the cleanup contract in the core API so
@@ -1812,6 +2395,11 @@ def cleanup_source_paragraphs(paragraphs, provider, api_key, model, *,
                                else _source_cleanup.DEFAULT_RETRY_BACKOFF_SECONDS),
         request_interval_seconds=request_interval_seconds or 0.0,
         profiler=profiler,
+        ocr_language=ocr_language or "",
+        source_language=source_language or "",
+        text_direction=text_direction or "",
+        ocr_engine_code=ocr_engine_code or "",
+        ocr_backend=ocr_backend,
     )
 
 
@@ -1880,9 +2468,29 @@ def audit_source_quality(paragraphs):
     return _source_quality.audit_source_segments(paragraphs)
 
 
+# Extraction provenances that produce trusted semantic blocks rather than rough
+# OCR.  `mixed` means every page was read by the VLM (native PDF pages keep their
+# text layer); neither carries OCR-fragment risk.
+_VLM_SEMANTIC_SOURCES = frozenset({"vlm", "mixed"})
+
+
 def _source_quality_gate_enabled(state):
-    """Apply the OCR admission gate to PDF source extraction only."""
-    return str((state or {}).get("filename") or "").lower().endswith(".pdf")
+    """Apply the OCR admission gate to rough OCR/text-layer PDF sources only.
+
+    A PDF whose semantics came from the VLM document-understanding path holds
+    trusted semantic blocks, not OCR fragments.  The OCR-era heuristics
+    (isolated numerals, lowercase stubs, unmatched brackets, short spaced-dash
+    runs) would quarantine perfectly valid short headings and paragraph blocks
+    merely because the file is a PDF.  Provenance comes from
+    ``extraction_report.semantic_source``, which stage 1 persists before any
+    consumer asks for the gate; legacy states without the field keep the gate
+    (fail closed).
+    """
+    state = state or {}
+    if not str(state.get("filename") or "").lower().endswith(".pdf"):
+        return False
+    semantic_source = (state.get("extraction_report") or {}).get("semantic_source")
+    return semantic_source not in _VLM_SEMANTIC_SOURCES
 
 
 def _confirmed_source_quality_indexes(state, paragraphs):
@@ -9921,7 +10529,7 @@ def run_libreoffice_render_qa(job_id, state=None):
         _reset_final_qa(state, "LibreOffice render rerun; author and Word reviews reset")
         if current_qa.get("structural_qa") in {"PASS", "FAIL"}:
             state["final_qa"]["structural_qa"] = current_qa["structural_qa"]
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    soffice = _find_soffice()
     if not soffice:
         qa = _finalization.normalize_final_qa(state.get("final_qa"))
         qa.update({"libreoffice_render": "NOT_RUN", "rendered_at": None,
@@ -11971,7 +12579,9 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                       max_batch_items=None, parallelism=None, ocr_workers=None,
                       ocr_queue_size=None, confidence_threshold=None,
                       max_retries=None, request_interval_seconds=None,
-                      segmentation_mode=None,
+                      segmentation_mode=None, ocr_language=None, ocr_dpi=None,
+                      ocr_psm=None, ocr_quality=None, ocr_mode=None, ocr_backend=None,
+                      ocr_paddle_model=None, ocr_online=None,
                       _allow_active=False):
     """Re-extract and LLM-clean a saved PDF without running later stages.
 
@@ -11979,6 +12589,11 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
     invalidates every artifact derived from the previous source text, including
     partial translation pairs, so the next resume cannot pair old translations
     with newly merged or corrected source paragraphs.
+
+    ``ocr_language`` may change the OCR language for the rescan.  Because the
+    OCR checkpoint identity and the cleanup fingerprint both include the
+    language, the old pages are never reused, and every source-derived artifact
+    is reset below.
     """
     if not str(job_id or "").strip():
         raise ValueError("缺少任务 ID")
@@ -11999,6 +12614,32 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
     old_base_url = getattr(_LLM_CTX, "base_url", None)
     effective_cleanup_base_url = base_url if base_url is not None else old_base_url
     saved_config = state.get("pipeline_config") or {}
+    effective_ocr_language, effective_ocr_dpi, effective_ocr_psm, \
+        effective_ocr_quality, resolved_ocr = _effective_ocr_config(
+            ocr_language, ocr_dpi, ocr_psm, saved_config, ocr_quality)
+    previous_ocr_language = str(saved_config.get("ocr_language") or "")
+    ocr_language_changed = (
+        str(effective_ocr_language or "") != previous_ocr_language)
+    effective_ocr_backend, effective_paddle_model, effective_online_descriptor, \
+        effective_online_config = _effective_ocr_source(
+            ocr_backend, saved_config, ocr_paddle_model=ocr_paddle_model,
+            ocr_online=ocr_online)
+    previous_ocr_backend = _ocr_backends.normalize_backend(
+        saved_config.get("ocr_backend", "tesseract"))
+    previous_paddle_model = str(saved_config.get("ocr_paddle_model") or "official")
+    # A different online target/model/prompt/parameter set is a different OCR
+    # configuration even though the source name ("online") is unchanged.
+    previous_online_descriptor = saved_config.get("ocr_online") \
+        if isinstance(saved_config.get("ocr_online"), dict) else {}
+    previous_online_key = str(previous_online_descriptor.get("cache_options") or "")
+    effective_online_key = str((effective_online_descriptor or {}).get("cache_options") or "")
+    ocr_source_changed = (effective_ocr_backend != previous_ocr_backend
+                          or effective_paddle_model != previous_paddle_model
+                          or effective_online_key != previous_online_key)
+    effective_ocr_mode = normalize_ocr_mode(
+        ocr_mode if ocr_mode is not None else saved_config.get("ocr_mode"))
+    previous_ocr_mode = normalize_ocr_mode(saved_config.get("ocr_mode"))
+    ocr_mode_changed = effective_ocr_mode != previous_ocr_mode
     effective_parallelism = _runtime_int_option(
         parallelism, saved_config.get("source_cleanup_concurrency"),
         "FOLIOTHREAD_LLM_CLEANUP_CONCURRENCY",
@@ -12053,9 +12694,19 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                 ocr_workers=effective_ocr_workers,
                 ocr_queue_size=effective_ocr_queue_size,
                 cancel_check=lambda: _runtime_cancel_requested(job_id),
-                profile_cache_dir=ocr_profile_cache_dir(source))
+                profile_cache_dir=ocr_profile_cache_dir(source),
+                ocr_language=effective_ocr_language,
+                ocr_dpi=effective_ocr_dpi,
+                ocr_psm=effective_ocr_psm,
+                ocr_mode=effective_ocr_mode,
+                ocr_backend=effective_ocr_backend,
+                ocr_paddle_model=effective_paddle_model,
+                ocr_online_config=effective_online_config,
+                source_language=(state.get("source_lang")
+                                 or (resolved_ocr.label if resolved_ocr else "")))
         if not raw_paragraphs:
-            detail = extraction_warnings[-1] if extraction_warnings else "未知提取错误"
+            detail = (extraction_failure_detail(extraction_warnings)
+                      if extraction_warnings else _NO_TEXT_REASON)
             raise ValueError(f"未提取到有效文本：{detail}")
 
         report("【阶段一】使用最新纠错功能整理 OCR 错字与断行…")
@@ -12074,18 +12725,28 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             return call_llm(
                 provider_name, api_key_value, model_name, system_prompt,
                 user_prompt, **inherited_kwargs, **kwargs)
-        cleaned, cleanup_meta, cleanup_warnings = cleanup_source_paragraphs(
-            raw_paragraphs, provider, api_key, model, call_llm_fn=cleanup_call,
-            on_progress=report, max_batch_chars=max_batch_chars,
-            max_batch_items=max_batch_items, parallelism=effective_parallelism,
-            confidence_by_index=((extraction_report.get("ocr") or {}).get(
-                "paragraph_confidences") if isinstance(extraction_report, dict) else None),
-            confidence_threshold=effective_confidence_threshold,
-            checkpoint_dir=job_dir(job_id),
-            cancel_check=lambda: _runtime_cancel_requested(job_id),
-            max_retries=effective_max_retries,
-            request_interval_seconds=effective_request_interval,
-            profiler=profiler)
+        if extraction_report.get("semantic_source") in {"vlm", "mixed"}:
+            cleaned, cleanup_meta, cleanup_warnings = raw_paragraphs, {
+                "status":"skipped", "reason":"vlm_semantics_no_ocr_repair"}, []
+        else:
+            cleaned, cleanup_meta, cleanup_warnings = cleanup_source_paragraphs(
+                raw_paragraphs, provider, api_key, model, call_llm_fn=cleanup_call,
+                on_progress=report, max_batch_chars=max_batch_chars,
+                max_batch_items=max_batch_items, parallelism=effective_parallelism,
+                confidence_by_index=((extraction_report.get("ocr") or {}).get(
+                    "paragraph_confidences") if isinstance(extraction_report, dict) else None),
+                confidence_threshold=effective_confidence_threshold,
+                checkpoint_dir=job_dir(job_id),
+                cancel_check=lambda: _runtime_cancel_requested(job_id),
+                max_retries=effective_max_retries,
+                request_interval_seconds=effective_request_interval,
+                profiler=profiler,
+                ocr_language=effective_ocr_language or "",
+                source_language=(resolved_ocr.label if resolved_ocr else ""),
+                text_direction=(resolved_ocr.direction if resolved_ocr else ""),
+                ocr_engine_code=(resolved_ocr.engine_code if resolved_ocr else ""),
+                    ocr_backend=((extraction_report.get("ocr") or {}).get("actual_engine") or effective_ocr_backend))
+        state["extraction_report"] = extraction_report
         cleanup_meta = dict(cleanup_meta or {})
         segments, segmentation_meta = _apply_source_segmentation(
             state, cleaned, mode=segmentation_mode)
@@ -12098,6 +12759,31 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             "confidence_threshold": effective_confidence_threshold,
             "ocr_workers": effective_ocr_workers,
             "ocr_queue_size": effective_ocr_queue_size,
+            "ocr_language": effective_ocr_language or "",
+            "ocr_language_engine_code": (
+                resolved_ocr.engine_code if resolved_ocr else ""),
+            "ocr_language_label": resolved_ocr.label if resolved_ocr else "",
+            "ocr_text_direction": resolved_ocr.direction if resolved_ocr else "",
+            "ocr_dpi": effective_ocr_dpi,
+            "ocr_psm": effective_ocr_psm,
+            "ocr_quality": effective_ocr_quality,
+            "ocr_language_changed": ocr_language_changed,
+            "previous_ocr_language": previous_ocr_language,
+            "ocr_mode": effective_ocr_mode,
+            "ocr_mode_changed": ocr_mode_changed,
+            "previous_ocr_mode": previous_ocr_mode,
+            "ocr_source": effective_ocr_backend,
+            "ocr_source_changed": ocr_source_changed,
+            "previous_ocr_source": previous_ocr_backend,
+            "ocr_paddle_model": effective_paddle_model,
+            "previous_ocr_paddle_model": previous_paddle_model,
+            "ocr_online": effective_online_descriptor or {},
+            "previous_ocr_online": previous_online_descriptor,
+            "ocr_actual_engine": (extraction_report or {}).get("ocr", {}).get("actual_engine"),
+            "ocr_actual_model": (extraction_report or {}).get("ocr", {}).get("model"),
+            "ocr_trigger": (extraction_report or {}).get("ocr_trigger"),
+            "pdf_text_layer_quality": (extraction_report or {}).get(
+                "pdf_text_layer_quality"),
             "max_batch_chars": max_batch_chars,
             "max_batch_items": max_batch_items,
             "paragraph_count": len(cleaned),
@@ -12133,8 +12819,44 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         except Exception as exc:  # noqa: BLE001 - extraction already succeeded
             _append_runtime_technical_log(job_id, f"source page count: {exc}")
         pipeline_config = state.get("pipeline_config")
-        if isinstance(pipeline_config, dict):
-            pipeline_config["enable_source_cleanup"] = True
+        if not isinstance(pipeline_config, dict):
+            pipeline_config = {}
+            state["pipeline_config"] = pipeline_config
+        pipeline_config["enable_source_cleanup"] = True
+        # The rescan is the moment the OCR language can legitimately change; the
+        # new configuration is persisted so a later resume reuses it.
+        pipeline_config["ocr_language"] = effective_ocr_language or ""
+        pipeline_config["ocr_language_engine_code"] = (
+            resolved_ocr.engine_code if resolved_ocr else "")
+        pipeline_config["ocr_language_label"] = (
+            resolved_ocr.label if resolved_ocr else "")
+        pipeline_config["ocr_text_direction"] = (
+            resolved_ocr.direction if resolved_ocr else "")
+        pipeline_config["ocr_dpi"] = effective_ocr_dpi
+        pipeline_config["ocr_psm"] = effective_ocr_psm
+        pipeline_config["ocr_quality"] = effective_ocr_quality
+        pipeline_config["ocr_backend"] = effective_ocr_backend
+        pipeline_config["ocr_mode"] = effective_ocr_mode
+        pipeline_config["ocr_paddle_model"] = effective_paddle_model
+        if effective_online_descriptor:
+            pipeline_config["ocr_online"] = dict(effective_online_descriptor)
+        else:
+            pipeline_config.pop("ocr_online", None)
+        state["ocr_mode"] = effective_ocr_mode
+        state["ocr_language"] = effective_ocr_language or ""
+        state["ocr_config"] = {
+            "ocr_language": effective_ocr_language or "",
+            "ocr_language_engine_code": resolved_ocr.engine_code if resolved_ocr else "",
+            "ocr_language_label": resolved_ocr.label if resolved_ocr else "",
+            "ocr_text_direction": resolved_ocr.direction if resolved_ocr else "",
+            "ocr_dpi": effective_ocr_dpi,
+            "ocr_psm": effective_ocr_psm,
+            "ocr_quality": effective_ocr_quality,
+            "ocr_backend": effective_ocr_backend,
+            "ocr_mode": effective_ocr_mode,
+            "ocr_paddle_model": effective_paddle_model,
+            "ocr_online": dict(effective_online_descriptor or {}),
+        }
         save_source(job_id, source)
         state["performance"] = profiler.persist()
         trace.finish_run(job_id=job_id, status="checkpointed")
@@ -13811,6 +14533,9 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                      source_cleanup_request_interval=None,
                      segmentation_mode=None,
                      translation_concurrency=None,
+                     ocr_language=None, ocr_dpi=None, ocr_psm=None,
+                     ocr_quality=None, ocr_mode=None, ocr_backend=None,
+                     ocr_paddle_model=None, ocr_online=None,
                      on_status=None, on_caption=None):
     """执行单个文档的完整流程；每个里程碑实时落盘，刷新/重启后均可继续。
 
@@ -13833,6 +14558,31 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         state, segmentation_mode)
     previous_performance = state.get("performance")
     saved_runtime_config = state.get("pipeline_config") or {}
+    effective_ocr_language, effective_ocr_dpi, effective_ocr_psm, \
+        effective_ocr_quality, resolved_ocr = _effective_ocr_config(
+            ocr_language, ocr_dpi, ocr_psm, saved_runtime_config, ocr_quality)
+    effective_ocr_backend, effective_paddle_model, effective_online_descriptor, \
+        effective_online_config = _effective_ocr_source(
+            ocr_backend, saved_runtime_config, ocr_paddle_model=ocr_paddle_model,
+            ocr_online=ocr_online, prefer_saved=bool(saved_runtime_config))
+    if (effective_ocr_backend == "online" and not effective_online_descriptor
+            and not load_ocr_online_config()):
+        try:
+            visual_base = _resolve_online_ocr_base_url(
+                provider, translator_base_url or getattr(_LLM_CTX, "base_url", None) or "")
+            effective_online_config = _ocr_online.OnlineOCRConfig(
+                provider=provider, model=model, api_key=api_key, base_url=visual_base,
+                credential_source="translation_profile",
+                reasoning_mode=("thinking_disabled" if provider == "OpenCode Go"
+                                and model == "deepseek-v4.1-flash" else "provider_default"))
+            effective_online_descriptor = effective_online_config.describe()
+        except ValueError:
+            pass  # A native document does not require a valid visual endpoint.
+    effective_ocr_mode = normalize_ocr_mode(
+        ocr_mode if ocr_mode is not None else saved_runtime_config.get("ocr_mode"))
+    effective_source_language = str(
+        state.get("source_lang")
+        or (resolved_ocr.label if resolved_ocr else "") or "")
     effective_cleanup_concurrency = _runtime_int_option(
         source_cleanup_concurrency,
         saved_runtime_config.get("source_cleanup_concurrency"),
@@ -13908,6 +14658,15 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                                       if isinstance(options, dict) else None),
             segmentation_mode=(options.get("segmentation_mode", segmentation_mode)
                                if isinstance(options, dict) else segmentation_mode),
+            ocr_language=(options.get("ocr_language") if isinstance(options, dict) else None),
+            ocr_dpi=(options.get("ocr_dpi") if isinstance(options, dict) else None),
+            ocr_psm=(options.get("ocr_psm") if isinstance(options, dict) else None),
+            ocr_quality=(options.get("ocr_quality") if isinstance(options, dict) else None),
+            ocr_mode=(options.get("ocr_mode") if isinstance(options, dict) else None),
+            ocr_backend=(options.get("ocr_backend") if isinstance(options, dict) else None),
+            ocr_paddle_model=(options.get("ocr_paddle_model")
+                              if isinstance(options, dict) else None),
+            ocr_online=(options.get("ocr_online") if isinstance(options, dict) else None),
             _allow_active=True)
 
     # ---- 项目记忆注入（蓝图 §3.2 的跨任务复用）----
@@ -14097,11 +14856,43 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             "source_cleanup_confidence_threshold": effective_cleanup_confidence_threshold,
             "source_cleanup_max_retries": effective_cleanup_max_retries,
             "source_cleanup_request_interval": effective_cleanup_request_interval,
+            # The explicit OCR language contract travels with the task, so a
+            # resume re-OCRs with the same language / direction / DPI / PSM.
+            "ocr_language": effective_ocr_language or "",
+            "ocr_language_engine_code": (
+                resolved_ocr.engine_code if resolved_ocr else ""),
+            "ocr_language_label": resolved_ocr.label if resolved_ocr else "",
+            "ocr_text_direction": resolved_ocr.direction if resolved_ocr else "",
+            "ocr_dpi": effective_ocr_dpi,
+            "ocr_psm": effective_ocr_psm,
+            "ocr_quality": effective_ocr_quality,
+            "ocr_backend": effective_ocr_backend,
+            "ocr_mode": effective_ocr_mode,
+            "ocr_paddle_model": effective_paddle_model,
         })
+        if effective_online_descriptor:
+            pipeline_config["ocr_online"] = dict(effective_online_descriptor)
+        else:
+            pipeline_config.pop("ocr_online", None)
     else:
         pipeline_config.pop("enable_source_cleanup", None)
     state["pipeline_config"] = pipeline_config
     state["quality_mode"] = bool(strict_terminology_governance)
+    state["ocr_language"] = effective_ocr_language or ""
+    state["ocr_mode"] = effective_ocr_mode
+    state["ocr_config"] = {
+        "ocr_language": effective_ocr_language or "",
+        "ocr_language_engine_code": resolved_ocr.engine_code if resolved_ocr else "",
+        "ocr_language_label": resolved_ocr.label if resolved_ocr else "",
+        "ocr_text_direction": resolved_ocr.direction if resolved_ocr else "",
+        "ocr_dpi": effective_ocr_dpi,
+        "ocr_psm": effective_ocr_psm,
+        "ocr_quality": effective_ocr_quality,
+        "ocr_backend": effective_ocr_backend,
+        "ocr_mode": effective_ocr_mode,
+        "ocr_paddle_model": effective_paddle_model,
+        "ocr_online": dict(effective_online_descriptor or {}),
+    }
     # Persist the selected mode before extraction starts.  If the worker is
     # cancelled while rasterizing/OCRing, the resumed call keeps the same CAT
     # contract even when the process environment or UI defaults changed.
@@ -14146,7 +14937,12 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                 cancel_check=lambda: _runtime_cancel_requested(job_id),
                 max_retries=effective_cleanup_max_retries,
                 request_interval_seconds=effective_cleanup_request_interval,
-                profiler=profiler)
+                profiler=profiler,
+                ocr_language=effective_ocr_language or "",
+                source_language=(resolved_ocr.label if resolved_ocr else ""),
+                text_direction=(resolved_ocr.direction if resolved_ocr else ""),
+                ocr_engine_code=(resolved_ocr.engine_code if resolved_ocr else ""),
+                ocr_backend=(((state.get("extraction_report") or {}).get("ocr") or {}).get("actual_engine") or effective_ocr_backend))
             segments, segmentation_meta = _apply_source_segmentation(
                 state, cleaned, mode=effective_segmentation_mode)
             state["source_paras"] = legacy_source
@@ -14226,7 +15022,15 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                     ocr_workers=effective_ocr_workers,
                     ocr_queue_size=effective_ocr_queue_size,
                     cancel_check=lambda: _runtime_cancel_requested(job_id),
-                    profile_cache_dir=ocr_profile_cache_dir(file_bytes))
+                    profile_cache_dir=ocr_profile_cache_dir(file_bytes),
+                    ocr_language=effective_ocr_language,
+                    ocr_dpi=effective_ocr_dpi,
+                    ocr_psm=effective_ocr_psm,
+                    ocr_mode=effective_ocr_mode,
+                    ocr_backend=effective_ocr_backend,
+                    ocr_paddle_model=effective_paddle_model,
+                    ocr_online_config=effective_online_config,
+                    source_language=effective_source_language)
 
             raw_paragraphs = list(paragraphs)
             # Persist the extraction boundary before remote cleanup starts.  If the
@@ -14242,7 +15046,10 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             "output_count": len(raw_paragraphs),
         }
         cleanup_warnings = []
-        if filename.lower().endswith(".pdf") and enable_source_cleanup and paragraphs:
+        if extraction_report.get("semantic_source") in {"vlm", "mixed"}:
+            cleanup_meta["reason"] = "vlm_semantics_no_ocr_repair"
+        if (filename.lower().endswith(".pdf") and enable_source_cleanup and paragraphs
+                and extraction_report.get("semantic_source") not in {"vlm", "mixed"}):
             if on_status:
                 on_status("【阶段一】LLM 原文纠错与断行整理…")
             paragraphs, cleanup_meta, cleanup_warnings = cleanup_source_paragraphs(
@@ -14256,10 +15063,17 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                 cancel_check=lambda: _runtime_cancel_requested(job_id),
                 max_retries=effective_cleanup_max_retries,
                 request_interval_seconds=effective_cleanup_request_interval,
-                profiler=profiler)
+                profiler=profiler,
+                ocr_language=effective_ocr_language or "",
+                source_language=(resolved_ocr.label if resolved_ocr else ""),
+                text_direction=(resolved_ocr.direction if resolved_ocr else ""),
+                ocr_engine_code=(resolved_ocr.engine_code if resolved_ocr else ""),
+                ocr_backend=((extraction_report.get("ocr") or {}).get("actual_engine") or effective_ocr_backend))
         elif profiler is not None:
-            profiler.skipped("deterministic_cleanup", metadata={"reason": "source_cleanup_disabled"})
-            profiler.skipped("llm_cleanup", metadata={"reason": "source_cleanup_disabled"})
+            reason = ("vlm_semantics_no_ocr_repair" if extraction_report.get("semantic_source")
+                      in {"vlm", "mixed"} else "source_cleanup_disabled")
+            profiler.skipped("deterministic_cleanup", metadata={"reason": reason})
+            profiler.skipped("llm_cleanup", metadata={"reason": reason})
 
         for warning in extraction_warnings:
             if warning not in warnings:
@@ -14271,7 +15085,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
         if not paragraphs:
             save_job_state(job_id, state)
-            detail = extraction_warnings[-1] if extraction_warnings else "未知提取错误"
+            detail = (extraction_failure_detail(extraction_warnings)
+                      if extraction_warnings else _NO_TEXT_REASON)
             raise ValueError(f"未提取到有效文本：{detail}")
         cleaned_paragraphs = list(paragraphs)
         segments, segmentation_meta = _apply_source_segmentation(

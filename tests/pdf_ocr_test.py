@@ -26,7 +26,7 @@ def test_scanned_pdf_uses_ocr_fallback(monkeypatch):
     progress = []
 
     paragraphs, warnings = core.extract_document_paragraphs(
-        "scan.pdf", b"fake-pdf", ocr_max_pages=3,
+        "scan.pdf", b"fake-pdf", ocr_backend="tesseract", ocr_max_pages=3,
         on_progress=progress.append)
 
     assert calls == [(b"fake-pdf", 3)]
@@ -40,7 +40,7 @@ def test_missing_tesseract_returns_actionable_warning(monkeypatch):
     monkeypatch.setattr(core, "_find_tesseract", lambda: "")
 
     paragraphs, warnings = core.extract_document_paragraphs(
-        "scan.pdf", b"fake-pdf")
+        "scan.pdf", b"fake-pdf", ocr_backend="tesseract")
 
     assert paragraphs == []
     assert any("未找到本机 Tesseract OCR" in warning for warning in warnings)
@@ -48,9 +48,36 @@ def test_missing_tesseract_returns_actionable_warning(monkeypatch):
 
 
 def test_tesseract_language_selection_does_not_require_chinese_pack():
-    assert core._select_tesseract_language(["eng", "osd"]) == "eng"
-    assert core._select_tesseract_language(["chi_sim", "eng"]) == "chi_sim+eng"
-    assert core._select_tesseract_language(["osd", "snum"]) == ""
+    # Legacy compatibility helper, used only when a task predates the explicit
+    # OCR language contract.
+    assert core._legacy_select_tesseract_language(["eng", "osd"]) == "eng"
+    assert core._legacy_select_tesseract_language(["chi_sim", "eng"]) == "chi_sim+eng"
+    assert core._legacy_select_tesseract_language(["osd", "snum"]) == ""
+
+
+def test_explicit_ocr_language_overrides_installed_pack_preference(
+        monkeypatch):
+    """The bug this phase fixes: eng installed must not beat a chosen ara."""
+    calls = []
+
+    def engine(_command, _png, language, **_kwargs):
+        calls.append(language)
+        return ([{"text": "نص", "confidence": 99.0, "left": 1.0, "top": 1.0,
+                  "right": 2.0, "bottom": 2.0}], None)
+
+    import fitz
+    document = fitz.open()
+    document.new_page()
+    pdf_bytes = document.tobytes()
+    document.close()
+    monkeypatch.setattr(core, "_find_tesseract", lambda: "fake-tesseract")
+    monkeypatch.setattr(core, "_tesseract_languages",
+                        lambda _cmd: ["chi_sim", "eng", "ara"])
+    monkeypatch.setattr(core, "_ocr_backend_version", lambda *_a, **_k: "5.0.0")
+    monkeypatch.setattr(core, "_ocr_page_with_tesseract", engine)
+    core._ocr_pdf_text_with_warnings(
+        pdf_bytes, workers=1, queue_size=1, ocr_language="ara")
+    assert calls == ["ara"]
 
 
 def test_pipeline_persists_full_document_ocr(tmp_path: Path, monkeypatch):
@@ -78,7 +105,7 @@ def test_pipeline_persists_full_document_ocr(tmp_path: Path, monkeypatch):
         result = core.run_job_pipeline(
             "ocr-pipeline-test", "scan.pdf", pdf_bytes,
             provider="DeepSeek", api_key="k", model="m",
-            target_lang="简体中文", auto_term=False, enable_report=False,
+            target_lang="简体中文", ocr_backend="tesseract", auto_term=False, enable_report=False,
             translation_theory="", user_glossary=[], enable_review=False,
             enable_annotate=False, use_tm=False, enable_understanding=False,
             delivery_config={"deliver_report": False},

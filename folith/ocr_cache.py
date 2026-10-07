@@ -35,8 +35,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
-OCR_CACHE_VERSION = 2
+OCR_CACHE_VERSION = 3
 OCR_PREPROCESSING_VERSION = 1
+#: Bumped when the OCR configuration contract changes shape, so a page produced
+#: under an older contract is never silently reused.
+OCR_CONFIG_VERSION = 1
 
 #: The one legacy identity that ``ocr_checkpoint.json`` could ever have produced.
 #: Reusing those pages is not a guess: the legacy code path hard-coded exactly
@@ -72,9 +75,21 @@ class OCRPageIdentity:
     language: str
     dpi: int
     preprocessing_version: int = OCR_PREPROCESSING_VERSION
+    #: Page segmentation mode and the declared script direction are part of the
+    #: result identity: the same page OCR'd with ``--psm 6`` or read as RTL is a
+    #: different result and must not be served from another configuration.
+    psm: int = 3
+    direction: str = "ltr"
+    ocr_config_version: int = OCR_CONFIG_VERSION
+    #: Non-secret descriptor of backend-specific configuration that changes the
+    #: bytes of a page: the selected Paddle model set, or the online service
+    #: target + model + prompt/parameter version.  Empty means "the historical
+    #: default", and is deliberately *omitted* from the key material so pages
+    #: cached by the pre-existing Tesseract configuration remain reusable.
+    backend_options: str = ""
 
     def key(self) -> str:
-        return _sha256_text(json.dumps({
+        material = {
             "source_sha256": self.source_sha256,
             "page_index": int(self.page_index),
             "backend": self.backend,
@@ -83,7 +98,13 @@ class OCRPageIdentity:
             "language": self.language,
             "dpi": int(self.dpi),
             "preprocessing_version": int(self.preprocessing_version),
-        }, ensure_ascii=False, sort_keys=True))
+            "psm": int(self.psm),
+            "direction": str(self.direction),
+            "ocr_config_version": int(self.ocr_config_version),
+        }
+        if str(self.backend_options or ""):
+            material["backend_options"] = str(self.backend_options)
+        return _sha256_text(json.dumps(material, ensure_ascii=False, sort_keys=True))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -95,6 +116,10 @@ class OCRPageIdentity:
             "language": self.language,
             "dpi": int(self.dpi),
             "preprocessing_version": int(self.preprocessing_version),
+            "psm": int(self.psm),
+            "direction": str(self.direction),
+            "ocr_config_version": int(self.ocr_config_version),
+            "backend_options": str(self.backend_options or ""),
         }
 
 
@@ -142,6 +167,10 @@ class OCRPageCache:
         backend_version: str,
         dpi: int,
         preprocessing_version: int = OCR_PREPROCESSING_VERSION,
+        psm: int = 3,
+        direction: str = "ltr",
+        ocr_config_version: int = OCR_CONFIG_VERSION,
+        backend_options: str = "",
     ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
         """Return ``({str(index): record}, manifest)`` for the reusable pages.
 
@@ -160,9 +189,14 @@ class OCRPageCache:
             elif (manifest.get("backend"), manifest.get("model"),
                   str(manifest.get("backend_version") or ""),
                   int(manifest.get("dpi") or 0),
-                  int(manifest.get("preprocessing_version") or 0)) != (
+                  int(manifest.get("preprocessing_version") or 0),
+                  int(manifest.get("psm") or 0),
+                  str(manifest.get("direction") or ""),
+                  int(manifest.get("ocr_config_version") or 0),
+                  str(manifest.get("backend_options") or "")) != (
                       backend, model, str(backend_version or ""), int(dpi),
-                      int(preprocessing_version)):
+                      int(preprocessing_version), int(psm), str(direction),
+                      int(ocr_config_version), str(backend_options or "")):
                 manifest = {}
         if self.pages_dir is None or not self.pages_dir.is_dir():
             return {}, manifest or {}
@@ -172,7 +206,10 @@ class OCRPageCache:
                 source_sha256=source_sha256, page_index=int(index),
                 backend=backend, model=model, backend_version=backend_version,
                 language=language, dpi=int(dpi),
-                preprocessing_version=int(preprocessing_version))
+                preprocessing_version=int(preprocessing_version),
+                psm=int(psm), direction=str(direction),
+                ocr_config_version=int(ocr_config_version),
+                backend_options=str(backend_options or ""))
             path = self.page_path(identity)
             if not path.is_file():
                 continue
@@ -239,6 +276,10 @@ class OCRPageCache:
         completed_pages: int = 0,
         failed_pages: int = 0,
         preprocessing_version: int = OCR_PREPROCESSING_VERSION,
+        psm: int = 3,
+        direction: str = "ltr",
+        ocr_config_version: int = OCR_CONFIG_VERSION,
+        backend_options: str = "",
         extra: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Write the constant-size run record (never one entry per page)."""
@@ -253,6 +294,10 @@ class OCRPageCache:
             "backend_version": str(backend_version or ""),
             "dpi": int(dpi),
             "preprocessing_version": int(preprocessing_version),
+            "psm": int(psm),
+            "direction": str(direction),
+            "ocr_config_version": int(ocr_config_version),
+            "backend_options": str(backend_options or ""),
             "requested_indices": [int(index) for index in indices],
             "requested_page_count": len(list(indices)),
             "completed_pages": int(completed_pages),
@@ -302,6 +347,9 @@ def read_legacy_checkpoint_pages(
     model: str,
     dpi: int,
     preprocessing_version: int = OCR_PREPROCESSING_VERSION,
+    psm: int = 3,
+    direction: str = "ltr",
+    ocr_config_version: int = OCR_CONFIG_VERSION,
 ) -> Dict[str, Dict[str, Any]]:
     """Adopt pages from a v1 ``ocr_checkpoint.json`` — only when identity matches.
 
@@ -314,6 +362,10 @@ def read_legacy_checkpoint_pages(
             or int(dpi) != int(LEGACY_OCR_IDENTITY["dpi"])
             or int(preprocessing_version) != int(
                 LEGACY_OCR_IDENTITY["preprocessing_version"])):
+        return {}
+    # The legacy format also predates PSM / direction / OCR config versioning;
+    # it could only have been produced with the historical defaults.
+    if int(psm) != 3 or str(direction) != "ltr" or int(ocr_config_version) < 1:
         return {}
     if path is None:
         return {}

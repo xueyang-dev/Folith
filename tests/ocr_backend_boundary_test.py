@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 import types
+import pytest
 
 import core
 from folith import ocr_backends
@@ -46,44 +47,39 @@ def test_tesseract_is_the_default_backend():
     assert info.gpu_name is None
 
 
-def test_unavailable_backend_falls_back_with_a_visible_warning(monkeypatch):
+def test_explicit_unavailable_backend_never_falls_back(monkeypatch):
     monkeypatch.setitem(sys.modules, "paddleocr", None)
-    backend, warnings = ocr_backends.resolve_backend(
-        "paddleocr", tesseract_command="/bin/t")
-    assert isinstance(backend, ocr_backends.TesseractBackend)
-    assert warnings and "paddleocr" in warnings[0]
-    assert "回退" in warnings[0]
+    with pytest.raises(ocr_backends.OCRUnavailable, match="未安装"):
+        ocr_backends.resolve_backend("paddle", tesseract_command="/bin/t")
 
 
 def test_unknown_backend_name_is_reported_not_ignored():
-    backend, warnings = ocr_backends.resolve_backend(
-        "definitely-not-a-backend", tesseract_command="/bin/t")
-    assert isinstance(backend, ocr_backends.TesseractBackend)
-    assert warnings and "未知的 OCR backend" in warnings[0]
+    with pytest.raises(ocr_backends.OCRUnavailable, match="未知的 OCR backend"):
+        ocr_backends.resolve_backend("definitely-not-a-backend", tesseract_command="/bin/t")
 
 
-def test_cuda_installed_but_cpu_selected_is_not_reported_as_gpu(monkeypatch):
-    monkeypatch.setitem(sys.modules, "paddle",
-                        _fake_paddle("cpu", cuda_compiled=True))
-    info = ocr_backends.PaddleOCRBackend().runtime_info("en")
+def test_paddle_metadata_does_not_import_or_infer_a_gpu(monkeypatch):
+    monkeypatch.setitem(sys.modules, "paddle", _fake_paddle("gpu:0", cuda_compiled=True))
+    info = ocr_backends.PaddleOCRBackend().runtime_info("eng")
     assert info.device == "cpu"
     assert info.execution_provider == "native_cpu"
     assert info.gpu_name is None
 
 
-def test_gpu_is_reported_only_when_the_runtime_selects_it(monkeypatch):
-    monkeypatch.setitem(sys.modules, "paddle",
-                        _fake_paddle("gpu:0", cuda_compiled=True))
-    info = ocr_backends.PaddleOCRBackend().runtime_info("en")
+def test_paddle_reports_the_device_selected_by_its_session():
+    backend = ocr_backends.PaddleOCRBackend()
+    backend.device = "gpu:0"
+    info = backend.runtime_info("eng")
     assert info.device == "gpu:0"
     assert info.execution_provider == "cuda"
 
 
-def test_paddle_without_paddle_installed_degrades_to_cpu(monkeypatch):
+def test_absent_paddle_diagnostics_do_not_initialize_it(monkeypatch):
     monkeypatch.setitem(sys.modules, "paddle", None)
-    info = ocr_backends.PaddleOCRBackend().runtime_info("en")
-    assert info.device == "cpu"
-    assert info.execution_provider == "native_cpu"
+    backend = ocr_backends.PaddleOCRBackend()
+    assert not backend.available()
+    assert backend.status()["state"] == "runtime_missing"
+    assert backend._engine is None
 
 
 def test_block_contract_carries_geometry_confidence_page_and_provenance():

@@ -6,8 +6,8 @@ Folith's OCR was Tesseract-shaped all the way through: the extractor produced
 Tesseract TSV dicts, the runtime metadata hard-coded ``device=cpu``, and there
 was no place to put an accelerated backend even if one existed.  This module
 gives every backend one contract so that swapping engines is a configuration
-change rather than a rewrite — while keeping Tesseract as the zero-extra-model
-fallback that always works.
+change rather than a rewrite — while keeping Tesseract as the default local
+engine when its executable and requested language data are installed.
 
 The block contract
 ------------------
@@ -26,138 +26,87 @@ instead of a silent claim.
 """
 from __future__ import annotations
 
+import inspect
+import hashlib
+import re
+import subprocess
+from pathlib import Path
 import os
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 TESSERACT_BACKEND = "tesseract"
 PADDLEOCR_BACKEND = "paddleocr"
+ONLINE_OCR_BACKEND = "online"
+
+#: Values a task may store for the OCR source.  ``auto`` keeps its historical
+#: local-only meaning: it prefers Tesseract and falls back to PaddleOCR, and it
+#: never silently sends page images to a remote service.
+SUPPORTED_BACKENDS = ("auto", "tesseract", "paddle", "online")
 
 
-@dataclass(frozen=True)
-class OCRBlock:
-    """Backend-independent OCR block."""
-
-    text: str
-    left: float
-    top: float
-    right: float
-    bottom: float
-    confidence: Optional[float]
-    page_index: int
-    page_number: int
-    backend: str
-    device: str
-    provider: str
-    model: str
-    backend_version: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Lean mapping used by the existing cleanup/segmentation path."""
-        return {
-            "text": self.text,
-            "confidence": self.confidence,
-            "left": self.left,
-            "top": self.top,
-            "right": self.right,
-            "bottom": self.bottom,
-        }
-
-    def to_contract_dict(self) -> Dict[str, Any]:
-        """Full block contract: geometry, confidence, page identity, provenance."""
-        return {
-            **self.to_dict(),
-            "page_index": self.page_index,
-            "page_number": self.page_number,
-            "backend": self.backend,
-            "device": self.device,
-            "provider": self.provider,
-            "model": self.model,
-            "backend_version": self.backend_version,
-        }
-
-    @classmethod
-    def from_legacy(cls, block: Dict[str, Any], *, page_index: int, page_number: int,
-                    backend: str, device: str, provider: str, model: str,
-                    backend_version: str = "") -> "OCRBlock":
-        try:
-            confidence = float(block.get("confidence"))
-        except (TypeError, ValueError):
-            confidence = None
-
-        def _coord(key: str) -> float:
-            try:
-                return float(block.get(key) or 0.0)
-            except (TypeError, ValueError):
-                return 0.0
-
-        return cls(
-            text=str(block.get("text") or ""),
-            left=_coord("left"), top=_coord("top"),
-            right=_coord("right"), bottom=_coord("bottom"),
-            confidence=confidence, page_index=int(page_index),
-            page_number=int(page_number), backend=backend, device=device,
-            provider=provider, model=model, backend_version=backend_version,
-        )
-
-
-@dataclass
-class OCRRuntimeInfo:
-    """What will actually execute OCR — recorded in the performance artifact."""
-
-    backend: str
-    model: str
-    device: str
-    provider: str
-    execution_provider: str
-    gpu_name: Optional[str] = None
-    backend_version: str = ""
-    extra: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "backend": self.backend,
-            "model": self.model,
-            "device": self.device,
-            "provider": self.provider,
-            "execution_provider": self.execution_provider,
-            "gpu_name": self.gpu_name,
-            "backend_version": self.backend_version,
-            **self.extra,
-        }
-
-
-class OCRBackend:
-    """Interface every OCR backend implements."""
-
-    name = "abstract"
-
-    def available(self) -> bool:
-        raise NotImplementedError
-
-    def runtime_info(self, language: str) -> OCRRuntimeInfo:
-        raise NotImplementedError
-
-    def ocr_page(self, png_bytes: bytes, *, page_index: int, page_number: int,
-                 language: str, dpi: int) -> Tuple[List[OCRBlock], Optional[str]]:
-        raise NotImplementedError
+from folith.ocr_evidence import OCRBlock, OCRRuntimeInfo, OCRBackend
+from folith.ocr_online import ONLINE_OCR_BACKEND as _ONLINE_NAME, OnlineOCRConfig
 
 
 class TesseractBackend(OCRBackend):
-    """Zero-extra-model fallback. Always CPU, always honest about it."""
+    """Default local engine; preserves the existing TSV recognition logic."""
 
     name = TESSERACT_BACKEND
+    display_name = "Tesseract"
 
     def __init__(self, command: str, version: str = "",
-                 page_ocr: Optional[Callable[..., Any]] = None) -> None:
+                 page_ocr: Optional[Callable[..., Any]] = None,
+                 psm: Optional[int] = None) -> None:
         self.command = str(command or "")
         self.version = str(version or "")
         self._page_ocr = page_ocr
+        self.psm = psm
+        self._page_ocr_params: Optional[set] = None
+        self._model_versions = {}
 
     def available(self) -> bool:
         return bool(self.command)
 
-    def runtime_info(self, language: str) -> OCRRuntimeInfo:
+    def capabilities(self):
+        from folith.ocr_language import OCR_LANGUAGE_REGISTRY
+        return {**super().capabilities(),
+                "languages": [value["tesseract"] for value in OCR_LANGUAGE_REGISTRY.values()],
+                "platforms": ["macOS", "Windows", "Linux"]}
+
+    def _accepted_params(self) -> Optional[set]:
+        if self._page_ocr is None:
+            return set()
+        if self._page_ocr_params is None:
+            try:
+                parameters = inspect.signature(self._page_ocr).parameters
+            except (TypeError, ValueError):
+                return None  # unknown: pass nothing optional
+            if any(parameter.kind == inspect.Parameter.VAR_KEYWORD
+                   for parameter in parameters.values()):
+                return None
+            self._page_ocr_params = set(parameters)
+        return self._page_ocr_params
+
+    def _model_version(self, language):
+        if language in self._model_versions:
+            return self._model_versions[language]
+        root = os.environ.get("TESSDATA_PREFIX", "")
+        if not root and Path(self.command).is_file():
+            try:
+                result = subprocess.run([self.command, "--list-langs"], capture_output=True,
+                                        text=True, timeout=10)
+                match = re.search(r'in "([^"]+)"', result.stdout + result.stderr)
+                root = match.group(1) if match else ""
+            except (OSError, subprocess.TimeoutExpired):
+                root = ""
+        paths = [Path(root) / (code + ".traineddata") for code in language.split("+")] if root else []
+        # This small one-time read substitutes for rerunning page OCR on resume.
+        value = ";".join(path.name + "=" + hashlib.sha256(path.read_bytes()).hexdigest()
+                         for path in paths if path.is_file())
+        self._model_versions[language] = value
+        return value
+
+    def runtime_info(self, language: str, *, include_model_version=True) -> OCRRuntimeInfo:
         return OCRRuntimeInfo(
             backend=self.name,
             model="tesseract-lstm",
@@ -166,14 +115,20 @@ class TesseractBackend(OCRBackend):
             execution_provider="native_cpu",
             gpu_name=None,
             backend_version=self.version,
-            extra={"language": language},
+            extra={"language": language, "model_version": self._model_version(language) if include_model_version else "not_inspected"},
         )
 
     def ocr_page(self, png_bytes: bytes, *, page_index: int, page_number: int,
                  language: str, dpi: int) -> Tuple[List[OCRBlock], Optional[str]]:
         if self._page_ocr is None:
             return [], "Tesseract backend 未绑定页面 OCR 实现"
-        blocks, error = self._page_ocr(self.command, png_bytes, language)
+        accepted = self._accepted_params()
+        kwargs: Dict[str, Any] = {}
+        # ``psm`` is only forwarded to an implementation that declares it, so
+        # lightweight test doubles keep the historical 3-argument signature.
+        if self.psm is not None and (accepted is None or "psm" in accepted):
+            kwargs["psm"] = self.psm
+        blocks, error = self._page_ocr(self.command, png_bytes, language, **kwargs)
         if error:
             return [], error
         info = self.runtime_info(language)
@@ -186,170 +141,141 @@ class TesseractBackend(OCRBackend):
         ], None
 
 
-class PaddleOCRBackend(OCRBackend):
-    """Optional accelerated backend.
-
-    ``available()`` is the only thing that may claim the backend exists, and it
-    is driven by a real import.  ``runtime_info()`` asks PaddlePaddle which
-    device it actually selected — CUDA being installed is never treated as
-    evidence that OCR will run on the GPU.
-    """
-
-    name = PADDLEOCR_BACKEND
-
-    def __init__(self, language: str = "en") -> None:
-        self.language = str(language or "en")
-        self._engine = None
-        self._import_error = ""
-
-    # -- availability -----------------------------------------------------
-    def available(self) -> bool:
-        try:
-            import paddleocr  # noqa: F401
-            return True
-        except Exception as exc:  # noqa: BLE001 - optional dependency
-            self._import_error = str(exc)[:200]
-            return False
-
-    def unavailable_reason(self) -> str:
-        if self.available():
-            return ""
-        return self._import_error or "paddleocr 未安装"
-
-    # -- runtime facts ----------------------------------------------------
-    def runtime_info(self, language: str) -> OCRRuntimeInfo:
-        device = "cpu"
-        gpu_name = None
-        version = ""
-        try:
-            import paddle  # type: ignore
-            version = str(getattr(paddle, "__version__", "") or "")
-            selected = ""
-            try:
-                selected = str(paddle.device.get_device() or "")
-            except Exception:  # noqa: BLE001
-                selected = ""
-            if selected:
-                device = selected
-        except Exception:  # noqa: BLE001
-            device = "cpu"
-        if device.startswith("gpu") or device.startswith("cuda"):
-            execution_provider = "cuda"
-        elif device.startswith("xpu"):
-            execution_provider = "xpu"
-        else:
-            device = "cpu"
-            execution_provider = "native_cpu"
-        return OCRRuntimeInfo(
-            backend=self.name,
-            model="paddleocr",
-            device=device,
-            provider="paddleocr",
-            execution_provider=execution_provider,
-            gpu_name=gpu_name,
-            backend_version=version,
-            extra={"language": language, "requested_language": self.language},
-        )
-
-    # -- page OCR ---------------------------------------------------------
-    def ocr_page(self, png_bytes: bytes, *, page_index: int, page_number: int,
-                 language: str, dpi: int) -> Tuple[List[OCRBlock], Optional[str]]:
-        engine, error = self._ensure_engine(language)
-        if engine is None:
-            return [], error
-        import io
-
-        import numpy as np  # type: ignore
-        from PIL import Image  # type: ignore
-
-        try:
-            image = np.array(Image.open(io.BytesIO(png_bytes)).convert("RGB"))
-            raw = engine.ocr(image, cls=True)
-        except Exception as exc:  # noqa: BLE001 - one page must not abort the book
-            return [], str(exc)[:180]
-        info = self.runtime_info(language)
-        blocks: List[OCRBlock] = []
-        for line in (raw or [[]])[0] or []:
-            try:
-                box, (text, confidence) = line[0], line[1]
-                xs = [float(point[0]) for point in box]
-                ys = [float(point[1]) for point in box]
-            except (TypeError, ValueError, IndexError):
-                continue
-            if not str(text or "").strip():
-                continue
-            blocks.append(OCRBlock(
-                text=str(text), left=min(xs), top=min(ys),
-                right=max(xs), bottom=max(ys), confidence=float(confidence) * 100.0,
-                page_index=page_index, page_number=page_number,
-                backend=info.backend, device=info.device, provider=info.provider,
-                model=info.model, backend_version=info.backend_version,
-            ))
-        return blocks, None
-
-    def _ensure_engine(self, language: str):
-        if self._engine is not None:
-            return self._engine, None
-        try:
-            from paddleocr import PaddleOCR  # type: ignore
-        except Exception as exc:  # noqa: BLE001
-            return None, f"paddleocr 不可用：{str(exc)[:160]}"
-        try:
-            self._engine = PaddleOCR(use_angle_cls=True, lang=str(language or "en"),
-                                     show_log=False)
-        except TypeError:
-            try:
-                self._engine = PaddleOCR(use_angle_cls=True, lang=str(language or "en"))
-            except Exception as exc:  # noqa: BLE001
-                return None, f"paddleocr 初始化失败：{str(exc)[:160]}"
-        except Exception as exc:  # noqa: BLE001
-            return None, f"paddleocr 初始化失败：{str(exc)[:160]}"
-        return self._engine, None
+from folith.ocr_paddle import PaddleOCRBackend, OCRUnavailable
 
 
 def resolve_backend(requested: Optional[str] = None, *,
                     tesseract_command: str = "", tesseract_version: str = "",
                     page_ocr: Optional[Callable[..., Any]] = None,
-                    language: str = "eng") -> Tuple[OCRBackend, List[str]]:
+                    language: str = "eng",
+                    psm: Optional[int] = None,
+                    paddle_model: Optional[str] = None,
+                    online_config: Optional[OnlineOCRConfig] = None
+                    ) -> Tuple[OCRBackend, List[str]]:
     """Return ``(backend, warnings)``; never silently pretends a backend ran.
 
-    An unavailable requested backend produces a warning naming the reason and
-    falls back to Tesseract, which is the documented zero-extra-model path.
+    Explicit selection never falls back. Auto prefers Tesseract and records a
+    fallback to Paddle only when the Tesseract executable is absent. The online
+    source is only ever used when it is explicitly selected.
     """
     warnings: List[str] = []
-    name = str(requested or os.environ.get("FOLIOTHREAD_OCR_BACKEND") or "").strip()
-    fallback = TesseractBackend(tesseract_command, tesseract_version, page_ocr)
-    if not name or name == TESSERACT_BACKEND:
-        return fallback, warnings
-    if name == PADDLEOCR_BACKEND:
-        candidate = PaddleOCRBackend(language)
+    name = normalize_backend(requested)
+    fallback = TesseractBackend(tesseract_command, tesseract_version, page_ocr, psm)
+    if name == "auto":
+        if fallback.available():
+            return fallback, []
+        candidate = PaddleOCRBackend(language, model_id=paddle_model)
         if candidate.available():
-            return candidate, warnings
-        warnings.append(
-            f"请求的 OCR backend「{name}」不可用（{candidate.unavailable_reason()}），"
-            "已回退到 Tesseract CPU。")
-        return fallback, warnings
-    warnings.append(f"未知的 OCR backend「{name}」，已回退到 Tesseract CPU。")
-    return fallback, warnings
+            return candidate, ["Auto fallback: tesseract -> paddleocr; reason=tesseract_runtime_unavailable"]
+        return fallback, []
+    if name == TESSERACT_BACKEND:
+        return fallback, []
+    if name == "paddle":
+        candidate = PaddleOCRBackend(language, model_id=paddle_model)
+        if not candidate.available():
+            status = candidate.status()
+            raise OCRUnavailable(status["state"], status["message"])
+        return candidate, []
+    if name == ONLINE_OCR_BACKEND:
+        from folith.ocr_online import OnlineOCRBackend
+        candidate = OnlineOCRBackend(online_config or OnlineOCRConfig())
+        if not candidate.available():
+            raise OCRUnavailable("unconfigured", candidate.unavailable_reason())
+        return candidate, []
+    raise OCRUnavailable("unsupported", f"未知的 OCR backend：{name}")
+
+
+def normalize_backend(value=None):
+    name = str(value or "tesseract").strip().lower().replace("-", "_")
+    if name in {"paddleocr", "paddle_ocr"}:
+        name = "paddle"
+    if name in {"online_ocr", "online_api", "openai_ocr", "api"}:
+        name = ONLINE_OCR_BACKEND
+    if name not in SUPPORTED_BACKENDS:
+        raise OCRUnavailable("unsupported", f"未知的 OCR backend：{name}")
+    return name
+
+
+def backend_options(backend_name: str, metadata: Dict[str, Any]) -> str:
+    """Non-secret cache identity for backend-specific configuration.
+
+    Returns ``""`` for the historical Tesseract default so pages cached before
+    this contract existed remain reusable. A Paddle model selection and every
+    online configuration produce a distinct value.
+    """
+    name = str(backend_name or "")
+    if name == "paddleocr":
+        model_id = str((metadata or {}).get("model_id") or "")
+        if model_id and model_id != "official":
+            return (f"paddle_model={model_id};"
+                    f"root={str((metadata or {}).get('model_resource_dir') or '')}")
+        return ""
+    if name == ONLINE_OCR_BACKEND:
+        online = (metadata or {}).get("online") or {}
+        return str(online.get("cache_options") or "")
+    return ""
+
 
 
 def backend_report(*, tesseract_command: str = "",
-                   tesseract_version: str = "") -> List[Dict[str, Any]]:
-    """Availability + honest runtime facts for every known backend."""
+                   tesseract_version: str = "",
+                   online_config: Optional[OnlineOCRConfig] = None,
+                   paddle_models: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
+    """Availability + honest runtime facts for every known backend.
+
+    Configuration status only: no model is loaded and no billable online
+    request is issued.
+    """
     report = []
     tesseract = TesseractBackend(tesseract_command, tesseract_version)
     report.append({
         "backend": tesseract.name,
         "available": tesseract.available(),
-        "runtime": tesseract.runtime_info("eng").to_dict(),
+        "runtime": tesseract.runtime_info("eng", include_model_version=False).to_dict(),
         "default": True,
+        "capabilities": tesseract.capabilities(),
     })
     paddle = PaddleOCRBackend()
     report.append({
         "backend": paddle.name,
         "available": paddle.available(),
-        "runtime": paddle.runtime_info("eng").to_dict() if paddle.available() else {},
+        "runtime": paddle.runtime_info("eng", include_model_version=False).to_dict() if paddle.available() else {},
         "unavailable_reason": paddle.unavailable_reason(),
         "default": False,
+        "capabilities": paddle.capabilities(),
+        **paddle.status(),
+    })
+    if paddle_models is not None:
+        report[-1]["models"] = list(paddle_models)
+    from folith.ocr_online import OnlineOCRBackend
+    online = OnlineOCRBackend(online_config or OnlineOCRConfig())
+    report.append({
+        "backend": online.name,
+        "available": online.available(),
+        "runtime": online.runtime_info("eng", include_model_version=False).to_dict(),
+        "unavailable_reason": online.unavailable_reason(),
+        "default": False,
+        "remote": True,
+        "capabilities": online.capabilities(),
+        **online.status(),
     })
     return report
+
+
+def paddle_model_report(language: str = "eng") -> List[Dict[str, Any]]:
+    """Per-model availability for the Paddle source, for the settings UI."""
+    from folith import ocr_models
+    entries = []
+    for option in ocr_models.known_models():
+        backend = PaddleOCRBackend(language, model_id=option.model_id)
+        status = backend.status()
+        entries.append({
+            **option.to_dict(),
+            "available": backend.available(),
+            "state": status.get("state"),
+            "message": status.get("message"),
+            "language_supported": ocr_models.language_supported(option, language),
+            "language_scope": ocr_models.language_scope_label(option),
+            "resource_root": str(ocr_models.resource_root(option)),
+        })
+    return entries
