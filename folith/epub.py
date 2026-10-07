@@ -37,12 +37,67 @@ def _normal(value: Any) -> str:
     return " ".join(_text(value).split())
 
 
+def _bind_from_paragraph_ranges(pairs, origins, paragraph_ranges, cleaned) -> bool:
+    """Attach raw-paragraph references from the persisted segment→paragraph map.
+
+    ``segmentation.paragraph_ranges`` is the same positional contract the CAT
+    list itself uses, so an exclusion that maintains it (the segment leaves the
+    map with the pair) can still bind images.  The map is only trusted when it
+    still describes the current text: joining a paragraph's segments has to
+    reproduce that cleaned paragraph.  A split or merge breaks that, so those
+    keep failing closed instead of binding an image to the wrong paragraph.
+    """
+    if not isinstance(paragraph_ranges, list) or not paragraph_ranges:
+        return False
+    owner: dict = {}
+    by_paragraph: dict = {}
+    for row in paragraph_ranges:
+        if not isinstance(row, dict):
+            return False
+        start, end = row.get("start"), row.get("end")
+        paragraph_index = row.get("paragraph_index")
+        if isinstance(start, bool) or isinstance(end, bool) \
+                or not isinstance(start, int) or not isinstance(end, int) \
+                or not isinstance(paragraph_index, int):
+            return False
+        if not 0 <= paragraph_index < len(origins) or start > end:
+            return False
+        indexes = []
+        for index in range(max(0, start), min(end, len(pairs))):
+            if index in owner:
+                return False
+            owner[index] = paragraph_index
+            indexes.append(index)
+        by_paragraph[paragraph_index] = indexes
+    if set(owner) != set(range(len(pairs))):
+        return False
+    for paragraph_index, indexes in by_paragraph.items():
+        if not indexes:
+            continue
+        joined = _normal(" ".join(str(pairs[index].get("source") or "")
+                                  for index in indexes))
+        if paragraph_index >= len(cleaned) \
+                or joined != _normal(cleaned[paragraph_index]):
+            return False
+    changed = False
+    for index, paragraph_index in owner.items():
+        if SOURCE_REFS not in pairs[index]:
+            pairs[index][SOURCE_REFS] = list(dict.fromkeys(origins[paragraph_index]))
+            changed = True
+    return changed
+
+
 def bind_source_references(state: dict) -> bool:
     """Attach raw paragraph ordinals before an edit changes CAT ordinals.
 
     Only a verified, unedited initial segmentation can be backfilled. Existing
     references are copied by edits and never recomputed from current ordinals.
     No source parsing or filesystem writes are needed here.
+
+    An exclusion is not "unedited" — the pair is gone — but its positional map
+    is maintained, so it is bound from ``segmentation.paragraph_ranges``
+    instead of being refused: otherwise excluding one structural fragment would
+    silently cost the task its image/text association for every other paragraph.
     """
     if not isinstance(state, dict):
         return False
@@ -50,8 +105,6 @@ def bind_source_references(state: dict) -> bool:
     if any(not isinstance(pair, dict) for pair in pairs):
         return False
     if not pairs or all(SOURCE_REFS in pair for pair in pairs):
-        return False
-    if state.get("segment_structure_history") or state.get("excluded_segments"):
         return False
     raw = state.get("source_paras") or []
     cleaned = state.get("source_paragraphs") or []
@@ -71,6 +124,13 @@ def bind_source_references(state: dict) -> bool:
     ):
         return False
     meta = state.get("segmentation") or {}
+    if state.get("segment_structure_history"):
+        # A recorded structure edit (split/merge/source rewrite) means the map
+        # below is stale by construction: never backfill from it.
+        return False
+    if state.get("excluded_segments"):
+        return _bind_from_paragraph_ranges(
+            pairs, origins, meta.get("paragraph_ranges") or [], cleaned)
     units, rebuilt = segmentation.segment_paragraphs(
         cleaned, mode=meta.get("mode") or "paragraph",
         source_lang=state.get("source_lang"))

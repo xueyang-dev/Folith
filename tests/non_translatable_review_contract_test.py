@@ -309,3 +309,57 @@ def test_real_six_segment_acceptance_state_no_longer_dead_ends(tmp_path, monkeyp
     assert ready["missing_segment_ids"] == []
     _, ok, errors = delivery.approve_delivery(refreshed)
     assert ok and not errors, errors
+
+
+# --------------------------------------------------------------------------
+# Test 6 — an exclusion must not cost the task its EPUB image/text binding
+# --------------------------------------------------------------------------
+def _excluded_binding_state(**extra):
+    state = {
+        "source_paras": ["Alpha one.", "Beta two.", "Gamma three."],
+        "source_paragraphs": ["Alpha one.", "Beta two.", "Gamma three."],
+        "source_cleanup": {},
+        "segmentation": {
+            "mode": "sentence",
+            # The middle unit was excluded, so its paragraph range is empty and
+            # everything after it shifted down by one - exactly what the
+            # deterministic exclusion pass maintains.
+            "paragraph_ranges": [
+                {"paragraph_index": 0, "start": 0, "end": 1},
+                {"paragraph_index": 1, "start": 1, "end": 1},
+                {"paragraph_index": 2, "start": 1, "end": 2},
+            ],
+        },
+        "excluded_segments": [{"excluded_id": "x000000", "source": "Beta two."}],
+        "pairs": [{"source": "Alpha one."}, {"source": "Gamma three."}],
+    }
+    state.update(extra)
+    return state
+
+
+def test_excluded_segment_still_binds_epub_source_references():
+    from folith import epub
+
+    state = _excluded_binding_state()
+    assert epub.bind_source_references(state) is True
+    assert state["pairs"][0][epub.SOURCE_REFS] == [0]
+    assert state["pairs"][1][epub.SOURCE_REFS] == [2]
+    # Re-binding is a no-op, so the delivery path can call it unconditionally.
+    assert epub.bind_source_references(state) is False
+
+
+def test_stale_or_edited_structure_is_never_backfilled():
+    from folith import epub
+
+    # A recorded structure edit means the map is stale by construction.
+    assert epub.bind_source_references(
+        _excluded_binding_state(segment_structure_history=[{"operation": "merge"}])) is False
+    # A map that no longer describes the current text is refused too: the
+    # joined segments of paragraph 2 do not reproduce "Gamma three." any more.
+    state = _excluded_binding_state()
+    state["pairs"][1]["source"] = "Delta four."
+    assert epub.bind_source_references(state) is False
+    # And a map that does not cover every remaining unit is refused.
+    state = _excluded_binding_state()
+    state["pairs"].append({"source": "Extra."})
+    assert epub.bind_source_references(state) is False
