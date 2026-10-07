@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "groups": {
+    "clean_arabic": [
+      {
+        "id": "arabic-wikipedia-language",
+        "file": "samples/arabic-wikipedia-language.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "public:https://ar.wikipedia.org/api/rest_v1/page/pdf/%D8%A7%D9%84%D9%84%D8%BA%D8%A9_%D8%A7%D9%84%D8%B9%D8%B1%D8%A8%D9%8A%D8%A9",
+        "bytes": 1961898,
+        "sha256": "1dbad3f8b75ee9e8c151ca43efc741ba1da5bfce704706f85ab2f6125c489dbe"
+      },
+      {
+        "id": "arabic-wikipedia-cairo",
+        "file": "samples/arabic-wikipedia-cairo.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "public:https://ar.wikipedia.org/api/rest_v1/page/pdf/%D8%A7%D9%84%D9%82%D8%A7%D9%87%D8%B1%D8%A9",
+        "bytes": 2693428,
+        "sha256": "170fadb8e3e5608bd31c88933c073f6dde3dc8bdd76b1813a0076040a83d5a78"
+      },
+      {
+        "id": "arabic-rtl-fixture",
+        "file": "samples/arabic-rtl-fixture.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/opdf/corpus/arabic-rtl.pdf",
+        "bytes": 280829,
+        "sha256": "c2c06a18ad0bc9f0a508f490247dde54d85ed6fb76e80e583e842e89611b8a9c"
+      },
+      {
+        "id": "rtl-fixture",
+        "file": "samples/rtl-fixture.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/vlm-migration/rtl.pdf",
+        "bytes": 213223,
+        "sha256": "dc6418dbe17de114a4c4008e17637075dd4d496c5ef753953228f33fa67139a0"
+      },
+      {
+        "id": "arabic-mixed-fixture",
+        "file": "samples/arabic-mixed-fixture.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/paddle-smoke/arabic-mixed.pdf",
+        "bytes": 213223,
+        "sha256": "7a552198014df714778f4eeb22b539eccc76fbcab2478ef0c987ee517246823b"
+      },
+      {
+        "id": "rtl-repaired-fixture",
+        "file": "samples/rtl-repaired-fixture.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/vlm-migration/rtl-repaired/jobs/after-rtl/source.bin",
+        "bytes": 213223,
+        "sha256": "dc6418dbe17de114a4c4008e17637075dd4d496c5ef753953228f33fa67139a0"
+      },
+      {
+        "id": "constructed-arabic-paragraphs",
+        "file": "samples/constructed-arabic-paragraphs.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "constructed:real Arabic prose from arabic-wikipedia-language, typeset with Typst (verified correct text layer)",
+        "bytes": 28646,
+        "sha256": "7b01b362ca0cb8ec8f25439ead874935beb79c0da17957e0cc4c22222f4c0417"
+      },
+      {
+        "id": "constructed-arabic-numerals",
+        "file": "samples/constructed-arabic-numerals.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "constructed:real Arabic prose from arabic-wikipedia-language, typeset with Typst (verified correct text layer)",
+        "bytes": 30076,
+        "sha256": "37ce3d8151610d7e26c9bc68b16db0007f280c0496e2bdc53a0d1b65b9cc7741"
+      },
+      {
+        "id": "constructed-arabic-mixed-script",
+        "file": "samples/constructed-arabic-mixed-script.pdf",
+        "group": "clean_arabic",
+        "expect": "accepted",
+        "provenance": "constructed:real Arabic prose from arabic-wikipedia-language, typeset with Typst (verified correct text layer)",
+        "bytes": 40787,
+        "sha256": "e9d06dc569a7f5f09c77df158fc6b1de096c524b972de98a0611915674bf01f0"
+      }
+    ],
+    "degraded_reversed": [
+      {
+        "id": "challenge-historical",
+        "file": "samples/challenge-historical.pdf",
+        "group": "degraded_reversed",
+        "expect": "rejected",
+        "provenance": "repo:benchmark/opdf/corpus/challenge-historical.pdf",
+        "bytes": 49777,
+        "sha256": "e5f325618e1e472b3cb7388157cc883b37e3d31e205a8a61c78e8ae76447ba54"
+      },
+      {
+        "id": "historical-scan",
+        "file": "samples/historical-scan.pdf",
+        "group": "degraded_reversed",
+        "expect": "rejected",
+        "provenance": "repo:benchmark/vlm-migration/historical.pdf",
+        "bytes": 49809,
+        "sha256": "5d653465d39325d8d71c6bbbe59f964aa6de2bc9706552a125a2eb103fc65a77"
+      },
+      {
+        "id": "historical-subset-4p",
+        "file": "samples/historical-subset-4p.pdf",
+        "group": "degraded_reversed",
+        "expect": "rejected",
+        "provenance": "repo:.audit/ocr-sources-verification/subset-5-120-220-300.pdf",
+        "bytes": 340399,
+        "sha256": "8b05c3c58c606035235e8401d12f30799a70f67c4cd4a0fa989b772c1b5e0b5f"
+      }
+    ],
+    "ambiguous": [
+      {
+        "id": "english-native",
+        "file": "samples/english-native.pdf",
+        "group": "ambiguous",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/opdf/corpus/native-english.pdf",
+        "bytes": 53207,
+        "sha256": "6adfa41025efaca4da20c0da8c58b38c0ab80d721b7c38e1381fe6aa213117dc"
+      },
+      {
+        "id": "english-arxiv-2col",
+        "file": "samples/english-arxiv-2col.pdf",
+        "group": "ambiguous",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/opdf/corpus/arxiv-attention.pdf",
+        "bytes": 2120268,
+        "sha256": "441a7537ac8ab595cfaa3717878bc8ecaa135de4bcd314dbf7c1bf1ab2f26f89"
+      },
+      {
+        "id": "english-report",
+        "file": "samples/english-report.pdf",
+        "group": "ambiguous",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/opdf/corpus/report-middle-east.pdf",
+        "bytes": 1295036,
+        "sha256": "796bed77c9523515e4190176969384da73c635829341f99302f0ad58c062137c"
+      },
+      {
+        "id": "english-book",
+        "file": "samples/english-book.pdf",
+        "group": "ambiguous",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/opdf/corpus/book-fighter-pilot.pdf",
+        "bytes": 2646384,
+        "sha256": "8e80396ad46aa7dd5c01529db4bc40f808cce9f0d4355359095082618b2ad3ce"
+      },
+      {
+        "id": "mixed-novel",
+        "file": "samples/mixed-novel.pdf",
+        "group": "ambiguous",
+        "expect": "accepted",
+        "provenance": "repo:benchmark/opdf/corpus/novel-midnight-library.pdf",
+        "bytes": 11219583,
+        "sha256": "5445f57d5375b1325d953211e536b5a67693978776a7be2f153d8e2bb4bb73f5"
+      },
+      {
+        "id": "scan-no-text-layer",
+        "file": "samples/scan-no-text-layer.pdf",
+        "group": "ambiguous",
+        "expect": "absent",
+        "provenance": "repo:benchmark/opdf/corpus/scan-clean.pdf",
+        "bytes": 38699,
+        "sha256": "0f2787bcc53d2f836f362e2cf5c6fae2e30133a81e0bd2240f205db811bd7570"
+      },
+      {
+        "id": "app-arabic-export",
+        "file": "samples/app-arabic-export.pdf",
+        "group": "ambiguous",
+        "expect": "rejected",
+        "provenance": "repo:exports/arabic-acceptance-20261001/en-to-ar-translation.pdf",
+        "bytes": 1826263,
+        "sha256": "8953acb7ed3436c16fe85b5542ab048511cd9e4e2a147c83a07a22bd87c33e01"
+      }
+    ]
+  },
+  "notes": {
+    "app-arabic-export": "The application's own Arabic PDF export. Its text layer carries a stray U+0006, so the pre-existing control-character rule rejects it. Recorded so the rejection is attributed to its real cause, not to this change.",
+    "scan-no-text-layer": "No text layer at all: the gate reports 'absent', which routes to visual understanding for a different reason than a quality rejection."
+  }
+}

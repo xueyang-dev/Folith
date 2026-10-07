@@ -1,0 +1,233 @@
+{
+  "samples": {
+    "degraded": [
+      "challenge-historical",
+      "historical-scan",
+      "historical-subset-4p"
+    ],
+    "clean": [
+      "arabic-wikipedia-language",
+      "arabic-wikipedia-cairo",
+      "arabic-rtl-fixture",
+      "rtl-fixture",
+      "arabic-mixed-fixture",
+      "rtl-repaired-fixture",
+      "constructed-arabic-paragraphs",
+      "constructed-arabic-numerals",
+      "constructed-arabic-mixed-script"
+    ]
+  },
+  "controls": {
+    "baseline": {
+      "degraded_rejected": true,
+      "clean_accepted": true,
+      "verdicts": {
+        "arabic-wikipedia-language": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "clean_arabic"
+        },
+        "arabic-wikipedia-cairo": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "clean_arabic"
+        },
+        "arabic-rtl-fixture": {
+          "status": "accepted",
+          "reasons": [
+            "arabic_presentation_forms"
+          ],
+          "group": "clean_arabic"
+        },
+        "rtl-fixture": {
+          "status": "accepted",
+          "reasons": [
+            "arabic_presentation_forms"
+          ],
+          "group": "clean_arabic"
+        },
+        "arabic-mixed-fixture": {
+          "status": "accepted",
+          "reasons": [
+            "arabic_presentation_forms"
+          ],
+          "group": "clean_arabic"
+        },
+        "rtl-repaired-fixture": {
+          "status": "accepted",
+          "reasons": [
+            "arabic_presentation_forms"
+          ],
+          "group": "clean_arabic"
+        },
+        "constructed-arabic-paragraphs": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "clean_arabic"
+        },
+        "constructed-arabic-numerals": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "clean_arabic"
+        },
+        "constructed-arabic-mixed-script": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "clean_arabic"
+        },
+        "challenge-historical": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_letter_order_reversed",
+            "arabic_word_order_reversed"
+          ],
+          "group": "degraded_reversed"
+        },
+        "historical-scan": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_letter_order_reversed",
+            "arabic_word_order_reversed"
+          ],
+          "group": "degraded_reversed"
+        },
+        "historical-subset-4p": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_letter_order_reversed",
+            "arabic_word_order_reversed"
+          ],
+          "group": "degraded_reversed"
+        },
+        "english-native": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "ambiguous"
+        },
+        "english-arxiv-2col": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "ambiguous"
+        },
+        "english-report": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "ambiguous"
+        },
+        "english-book": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "ambiguous"
+        },
+        "mixed-novel": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "ambiguous"
+        },
+        "scan-no-text-layer": {
+          "status": "absent",
+          "reasons": [
+            "no_text_layer"
+          ],
+          "group": "ambiguous"
+        },
+        "app-arabic-export": {
+          "status": "rejected",
+          "reasons": [
+            "control_characters",
+            "arabic_presentation_forms"
+          ],
+          "group": "ambiguous"
+        }
+      }
+    },
+    "nc1_order_checks_disabled": {
+      "degraded_accepted_again": [
+        "challenge-historical",
+        "historical-scan",
+        "historical-subset-4p"
+      ],
+      "detected": true,
+      "verdicts": {
+        "challenge-historical": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "degraded_reversed"
+        },
+        "historical-scan": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "degraded_reversed"
+        },
+        "historical-subset-4p": {
+          "status": "accepted",
+          "reasons": [],
+          "group": "degraded_reversed"
+        }
+      }
+    },
+    "nc2_floor_too_high": {
+      "dictionary_reason_gone": true,
+      "still_rejected_by_visual": [
+        "challenge-historical",
+        "historical-scan",
+        "historical-subset-4p"
+      ],
+      "verdicts": {
+        "challenge-historical": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_word_order_reversed"
+          ],
+          "group": "degraded_reversed"
+        },
+        "historical-scan": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_word_order_reversed"
+          ],
+          "group": "degraded_reversed"
+        },
+        "historical-subset-4p": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_word_order_reversed"
+          ],
+          "group": "degraded_reversed"
+        }
+      }
+    },
+    "nc3_ratio_too_permissive": {
+      "clean_false_rejects": [
+        "arabic-wikipedia-language",
+        "arabic-wikipedia-cairo"
+      ],
+      "detected": true,
+      "verdicts": {
+        "arabic-wikipedia-language": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_letter_order_reversed"
+          ],
+          "group": "clean_arabic"
+        },
+        "arabic-wikipedia-cairo": {
+          "status": "rejected",
+          "reasons": [
+            "arabic_letter_order_reversed"
+          ],
+          "group": "clean_arabic"
+        }
+      }
+    },
+    "nc4_hit_floor": {
+      "without_floor": "rejected",
+      "with_shipped_floor": "accepted",
+      "detected": true,
+      "verdicts": {
+        "ratio": 3.0
+      }
+    }
+  },
+  "all_detected": true
+}
