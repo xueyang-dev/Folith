@@ -157,3 +157,40 @@ def test_delivery_page_missing_notice_allows_snapshot_and_downloads(tmp_path, mo
     editor = next(item for item in at.text_area
                   if item.key == f"translation_editor_{assets.segment_id(job_id, 0)}")
     assert editor.value == ""
+
+
+def test_blocked_delivery_uses_nonempty_count_and_a_compact_error(tmp_path, monkeypatch):
+    """Missing cells remain exportable only when the actual target gate passes."""
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "blockeddeliveryui"
+    state = core.new_job_state("report.docx")
+    state.update(
+        p1_done=True, p2_done=True, report_enabled=False,
+        paras=["First paragraph", "Second paragraph", "Third paragraph"],
+        pairs=[{"source": "First paragraph", "target": ""},
+               {"source": "Second paragraph", "target": '["raw model response"]'},
+               {"source": "Third paragraph", "target": "第三段译文。"}],
+    )
+    core.save_job_state(job_id, state)
+    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"),
+                           default_timeout=30).run()
+    at.session_state["active_job_id"] = job_id
+    at.session_state["app_view"] = "workspace"
+    at.session_state["workspace_mode"] = True
+    at.session_state["workspace_section"] = "delivery"
+    at.run()
+    assert not at.exception, at.exception
+    notices = "\n".join(item.value for item in at.warning)
+    assert "当前暂不可导出" in notices
+    assert "可以继续导出" not in notices
+    page = "\n".join(item.value for item in at.markdown)
+    assert "2 / 3 段已翻译" in page
+    assert "3 / 3 段已翻译" not in page
+    assert "个阻塞问题（审校）" in page
+    assert any("交付文件暂不可生成" in item.value for item in at.error)
+    assert not any("Translation Target Invariant" in item.value for item in at.error)
+    assert not at.download_button
+    assert not any(button.key == f"workspace_delivery_final_{job_id}"
+                   and not button.disabled for button in at.button)

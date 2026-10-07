@@ -276,14 +276,25 @@ def load_project(root: Path, project_id: str) -> Optional[Dict[str, Any]]:
 
 
 def save_project(root: Path, project: Mapping[str, Any]) -> Dict[str, Any]:
+    """Atomically persist one project record.
+
+    The temporary name is unique per call: the previous fixed
+    ``project.json.tmp`` let two concurrent saves share one temp path, so one
+    writer's ``replace`` could publish the other's half-written file.  Callers
+    that must also serialise the surrounding read → mutate → write window use
+    ``core.project_mutation_lock`` (see ``folith/store_lock.py``).
+    """
     normalized = normalize_project(project)
     normalized["updated_at"] = _now_iso()
     d = project_dir(root, normalized["project_id"])
     d.mkdir(parents=True, exist_ok=True)
-    tmp = d / (PROJECT_FILE + ".tmp")
-    tmp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
-    tmp.replace(d / PROJECT_FILE)
+    tmp = d / f"{PROJECT_FILE}.{uuid.uuid4().hex}.tmp"
+    try:
+        tmp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
+                       encoding="utf-8")
+        tmp.replace(d / PROJECT_FILE)
+    finally:
+        tmp.unlink(missing_ok=True)
     return normalized
 
 

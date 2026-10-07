@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from functools import wraps
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import translation_target, workflow_errors
@@ -504,7 +505,7 @@ def approve_delivery(state: Dict[str, Any], note: str = "", actor: str = "user",
     return state, True, []
 
 
-def retranslate_segments(
+def _retranslate_segments_locked(
     job_id: str,
     indexes: List[int],
     provider: str,
@@ -516,11 +517,16 @@ def retranslate_segments(
     on_status=None,
     on_caption=None,
     actor: str = "user",
+    base_url: str = "",
 ) -> Tuple[Dict[str, Any], List[int]]:
     """重新翻译指定段落（抽取自 scripts/fix_segments.py 的能力）。
 
     每段：前后文 + 批次翻译 + 完整性把关 + 自动修复一轮；
     保留并关闭该段旧问题，另存最终复验 findings，重算统计与交付状态。
+
+    ``base_url`` 是自定义中转站的地址。管线在 worker 线程里用
+    ``set_llm_base_url`` 设置它；定点重译必须自己带上（否则在别的线程调用时
+    会解析失败），并且失败要能被调用方看见——见下面的 ``failures``。
     """
     import core
 
@@ -545,6 +551,7 @@ def retranslate_segments(
     glossary_text = core.glossary_block(glossary)
 
     fixed: List[int] = []
+    failures: List[Dict[str, Any]] = []
     stopped = None
     for idx in indexes:
         src = pairs[idx]["source"]
@@ -604,6 +611,7 @@ def retranslate_segments(
             if workflow_errors.fatal_reason(e):
                 stopped = e
                 break
+            failures.append({"segment_index": idx, "error": str(e)})
             if on_caption:
                 on_caption(f"⚠️ 段 {idx} 重译失败：{str(e)[:120]}")
 
@@ -633,4 +641,30 @@ def retranslate_segments(
     core.save_job_state(job_id, state)
     if stopped is not None:
         workflow_errors.raise_if_fatal(stopped, job_id)
+    if failures and not fixed:
+        # 一段都没成功时必须报出来：否则调用方只看到 fixed=[]，与"没有需要重译
+        # 的段落"无法区分（自定义中转站没带地址时就是这样静默失败的）。
+        raise ValueError(
+            "定点重译失败：" + "；".join(
+                f"第 {item['segment_index'] + 1} 段 {item['error'][:160]}"
+                for item in failures))
+    if failures and on_caption:
+        on_caption(f"⚠️ {len(failures)} 段未能重译，其余已更新")
     return state, fixed
+@wraps(_retranslate_segments_locked)
+def retranslate_segments(*args, **kwargs):
+    """Serialized entry point for a targeted re-translation.
+
+    Architecture Phase 2: the whole load → re-translate → save transaction runs
+    under the task's state mutation lock, so a concurrent edit from another
+    surface can neither be lost nor silently overwrite this result.  A call made
+    from the task's own worker is passed straight through (the worker already
+    owns the task through ``.worker.lock``).
+    """
+    import core
+
+    job_id = args[0] if args else kwargs.get("job_id")
+    if core._runtime_job_id() == job_id:
+        return _retranslate_segments_locked(*args, **kwargs)
+    with core.job_state_mutation_lock(job_id):
+        return _retranslate_segments_locked(*args, **kwargs)

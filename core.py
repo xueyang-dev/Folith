@@ -9,6 +9,7 @@ import json
 import csv
 import inspect
 from functools import wraps
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 import os
 import queue
@@ -60,13 +61,21 @@ from folith import finalization as _finalization
 from folith import rendered_qa as _rendered_qa
 from folith import project as _project
 from folith import translation_memory as _tm_scope
+from folith import translation_cache as _translation_cache
+from folith import knowledge_cache as _knowledge_cache_module
 from folith import usage as _usage
 from folith import llm_transport as _llm_transport
 from folith import request_control as _request_control
 from folith import workflow_errors as _workflow_errors
 from folith import job_lock as _job_lock
+from folith import store_lock as _store_lock
 from folith import review_scheduler as _review_scheduler
+from folith import review_gate as _review_gate
 from folith import ocr_backends as _ocr_backends
+from folith import ocr_language as _ocr_language
+from folith import ocr_models as _ocr_models
+from folith import ocr_online as _ocr_online
+from folith import text_layer_quality as _text_layer_quality
 from folith.ocr_cache import (
     OCRPageCache as _OCRPageCache,
     OCRPageIdentity as _OCRPageIdentity,
@@ -313,6 +322,82 @@ def _exclusive_job_execution(job_id_position):
                 execution_lock.close()
         return execute
     return decorate
+
+
+# ================= 权威状态的跨进程事务锁 =================
+# `state.json` / `project.json` 的原子替换只保证"文件不会被写坏"，不保证
+# "读 → 改 → 写"整体是一个事务：两个进程可以各自读到同一版本，然后互相覆盖
+# （丢失更新）。这里提供唯一的、按存储对象划分的跨进程事务锁；锁文件命名、
+# 语义、锁序与超时行为集中在 `folith/store_lock.py` 里说明。
+#
+# 锁序只有一种：**state 锁 → project 锁**。worker 不参与该锁（它的独占性由
+# `.worker.lock` 提供），因此不会出现反向的 project → state 嵌套。
+
+
+def job_state_lock_path(job_id):
+    """`<output>/.locks/<job_id>.state.lock` — one task's state transaction lock.
+
+    Outside the task directory on purpose: acquiring the lock must never
+    re-create (and therefore "resurrect") a task that was just deleted.
+    """
+    return _store_lock.state_lock_path(OUTPUT_DIR, job_id)
+
+
+def project_lock_path(project_id):
+    """`<projects>/.locks/<id>.project.lock` — kept out of the project directory."""
+    return _store_lock.project_lock_path(
+        _project.projects_root(OUTPUT_DIR), str(project_id))
+
+
+@contextmanager
+def job_state_mutation_lock(job_id, *, timeout=None):
+    """Hold one task's state lock for the whole ``with`` block (cross-process)."""
+    with _store_lock.mutation_lock(
+            job_state_lock_path(job_id), timeout=timeout,
+            purpose=f"任务「{job_id}」的状态"):
+        yield
+
+
+@contextmanager
+def project_mutation_lock(project_id, *, timeout=None):
+    """Hold one project's lock for the whole ``with`` block (cross-process)."""
+    with _store_lock.mutation_lock(
+            project_lock_path(project_id), timeout=timeout,
+            purpose=f"项目「{project_id}」的数据"):
+        yield
+
+
+def mutate_job_state(job_id, mutate, *, timeout=None):
+    """Run ``mutate(state)`` as one serialized load → mutate → save transaction.
+
+    ``mutate`` receives the freshly loaded authoritative state and returns
+    whatever the caller needs; the state is saved exactly once, inside the lock.
+    """
+    with job_state_mutation_lock(job_id, timeout=timeout):
+        state = load_job_state(job_id)
+        if state is None:
+            raise ValueError(f"找不到任务 {job_id}")
+        result = mutate(state)
+        save_job_state(job_id, state)
+        return result
+
+
+def _serialized_job_mutation(function):
+    """Serialize a public task mutation across processes.
+
+    The decorated function keeps its own load → mutate → save structure; the lock
+    spans the entire call, which is exactly the transaction window that used to
+    be unprotected.  A call made from the task's own worker is skipped: the
+    worker already owns the task through ``.worker.lock``, and skipping it keeps
+    the lock order strictly one-directional.
+    """
+    @wraps(function)
+    def execute(job_id, *args, **kwargs):
+        if _runtime_job_id() == job_id:
+            return function(job_id, *args, **kwargs)
+        with job_state_mutation_lock(job_id):
+            return function(job_id, *args, **kwargs)
+    return execute
 
 
 def _runtime_cancel_requested(job_id):
@@ -1409,6 +1494,75 @@ def _docx_unsupported_parts(document):
     except Exception:  # noqa: BLE001
         return parts
     return parts
+
+
+#: OCR ingestion modes.  ``auto`` trusts the text layer only when it passes the
+#: quality gate; ``force`` ignores the text layer body and always OCRs; ``off``
+#: never OCRs.  The mode is a user decision and is never overridden by the gate.
+OCR_MODES = ("auto", "force", "off")
+DEFAULT_OCR_MODE = "auto"
+_OCR_MODE_ALIASES = {
+    "auto": "auto", "automatic": "auto", "自动": "auto", "自动检测": "auto",
+    "force": "force", "forced": "force", "force_ocr": "force",
+    "强制": "force", "强制ocr": "force", "强制识别": "force",
+    "off": "off", "none": "off", "text": "off", "text_layer": "off",
+    "text_only": "off", "text_layer_only": "off", "关闭": "off",
+    "仅文本层": "off", "不ocr": "off",
+}
+
+
+def normalize_ocr_mode(value, default=DEFAULT_OCR_MODE):
+    """Resolve a user/configured OCR mode without allowing an unknown value."""
+    text = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if text in _OCR_MODE_ALIASES:
+        return _OCR_MODE_ALIASES[text]
+    for alias, mode in _OCR_MODE_ALIASES.items():
+        if alias and alias in text:
+            return mode
+    return default
+
+
+def ocr_mode_options():
+    """Selectable OCR modes for the task UI."""
+    return [
+        {"value": "auto", "label": "Auto", "label_zh": "自动（推荐）",
+         "help": "文本层通过质量检测才直接使用，否则自动 OCR。"},
+        {"value": "force", "label": "Force OCR", "label_zh": "强制 OCR",
+         "help": "忽略 PDF 文本层正文，始终重新 OCR（历史扫描/隐藏坏文本层）。"},
+        {"value": "off", "label": "Text layer only", "label_zh": "仅文本层",
+         "help": "显式不 OCR；适用于数字原生 PDF 或调试。"},
+    ]
+
+
+def _text_layer_decision(quality, ocr_mode):
+    """Return ``(use_text_layer, trigger, warning)`` for one document.
+
+    ``force`` and ``off`` are hard user contracts and are checked first, so the
+    automatic gate can never override them.
+    """
+    status = str((quality or {}).get("status") or "absent")
+    mode = normalize_ocr_mode(ocr_mode)
+    if mode == "force":
+        return False, "ocr_mode_force", ""
+    if mode == "off":
+        warning = ""
+        if status == "rejected":
+            warning = ("OCR 模式为「仅文本层」：文本层质量检测未通过，"
+                       "但按设置未执行 OCR，正文可能不可用。")
+        elif status == "absent":
+            warning = ("OCR 模式为「仅文本层」：该 PDF 没有可用文本层，"
+                       "按设置未执行 OCR，可能提取不到正文。")
+        return True, "ocr_mode_text_layer_only", warning
+    # auto
+    if status == "accepted":
+        return True, "text_layer_accepted", ""
+    if status == "uncertain":
+        return True, "text_layer_uncertain", (
+            "PDF 含有文本层，但其提取质量不确定；已按「自动」使用文本层。"
+            "如结果异常，请在任务设置中改用「强制 OCR」。")
+    if status == "absent":
+        return False, "no_text_layer", ""
+    return False, "text_layer_quality_rejected", ""
 
 
 def _pdf_extraction_facts(file_bytes):
@@ -3708,7 +3862,8 @@ def ensure_default_project():
 def ensure_system_project():
     """把系统工作区落盘（幂等）。只有变更路径调用它。"""
     _project.migrate_legacy_layout(OUTPUT_DIR)
-    _project.ensure_system_project(OUTPUT_DIR)
+    with project_mutation_lock(_project.SYSTEM_PROJECT_ID):
+        _project.ensure_system_project(OUTPUT_DIR)
     _migrate_legacy_system_tm()
     return system_project_view()
 
@@ -3783,17 +3938,52 @@ def validate_project_name(name, *, exclude=""):
     return cleaned
 
 
+def _serialized_project_mutation(function):
+    """Serialize a public project mutation across processes.
+
+    The decorated function takes the project id first and keeps its own
+    load → mutate → save structure; the lock spans the entire call.  Nested
+    acquisitions (an outer transaction that calls :func:`save_project`) are
+    re-entrant on the same thread.
+    """
+    @wraps(function)
+    def execute(project_id, *args, **kwargs):
+        with project_mutation_lock(project_id):
+            return function(project_id, *args, **kwargs)
+    return execute
+
+
+def _create_project_record(project):
+    """Create a brand-new project record under its transaction lock.
+
+    Creation is a separate path from :func:`save_project` on purpose: an update
+    must never be able to re-create a project another surface deleted, while a
+    genuine create must still be able to write a directory that does not exist
+    yet.
+    """
+    project_id = str((project or {}).get("project_id") or "")
+    if not project_id:
+        raise ValueError("项目记录缺少 project_id")
+    with project_mutation_lock(project_id):
+        return _project.save_project(OUTPUT_DIR, project)
+
+
 def create_project(name, description=""):
     """创建项目；返回项目记录。
 
     ID 是现场生成的 UUIDv4，**不由名称派生**：改名不换 ID，同名不同项目也不会
     互相覆盖。名称仍要求唯一（人工入口用名称检索）。
+
+    The record itself is written under the new project's own transaction lock in
+    :func:`_create_project_record`; a cross-process *name* uniqueness race (two
+    surfaces creating the same name at the same instant) remains a documented,
+    pre-existing limitation of the name index, not of the state store.
     """
     cleaned = validate_project_name(name)
     project = _project.empty_project(
         _project.new_project_id(), cleaned,
         description=str(description or "").strip()[:PROJECT_DESCRIPTION_LIMIT])
-    return _project.save_project(OUTPUT_DIR, project)
+    return _create_project_record(project)
 
 
 def load_project(project_id):
@@ -3802,7 +3992,23 @@ def load_project(project_id):
 
 
 def save_project(project):
-    return _project.save_project(OUTPUT_DIR, project)
+    """Persist an **existing** project record inside its transaction lock.
+
+    The existence re-check under the lock is what makes a concurrent delete
+    deterministic: a save that loaded the record before the delete cannot
+    resurrect it — it fails with an actionable error instead.  Creating a new
+    project goes through :func:`create_project` (the system workspace may be
+    created implicitly, because its id is fixed and its record is legitimately
+    allowed not to exist on disk yet).
+    """
+    project_id = str((project or {}).get("project_id") or "")
+    if not project_id:
+        raise ValueError("项目记录缺少 project_id")
+    with project_mutation_lock(project_id):
+        if (not _project.is_system_project_id(project_id)
+                and load_project(project_id) is None):
+            raise ValueError("项目已被删除，本次修改未生效。")
+        return _project.save_project(OUTPUT_DIR, project)
 
 
 def require_project(project_id):
@@ -3822,6 +4028,7 @@ def require_project(project_id):
     return project
 
 
+@_serialized_project_mutation
 def rename_project(project_id, name):
     """改名（**不改 ID**）。返回更新后的项目。"""
     project = require_project(project_id)
@@ -3829,6 +4036,7 @@ def rename_project(project_id, name):
     return save_project(_project.set_metadata(project, name=cleaned))
 
 
+@_serialized_project_mutation
 def update_project(project_id, *, name=None, description=None):
     """更新项目基本信息（名称 / 描述）。名称变化走同一套唯一性校验。"""
     project = require_project(project_id)
@@ -3839,6 +4047,7 @@ def update_project(project_id, *, name=None, description=None):
     return save_project(updated)
 
 
+@_serialized_project_mutation
 def archive_project(project_id, archived=True):
     """归档 / 恢复项目。归档可恢复，不删除任务，也不删除项目记忆。
 
@@ -3853,6 +4062,7 @@ def archive_project(project_id, archived=True):
     return save_project(_project.set_archived(project, bool(archived)))
 
 
+@_serialized_project_mutation
 def restore_project(project_id):
     """恢复已归档项目（`archive_project(id, False)` 的语义化入口）。"""
     return archive_project(project_id, False)
@@ -3928,6 +4138,7 @@ def resolve_project_ref(project_id_or_name, *, create=False, description=""):
     raise ValueError(f"项目不存在：{label}")
 
 
+@_serialized_job_mutation
 def assign_job_to_project(job_id, project_id_or_name):
     """把任务归入项目（人工动作）。
 
@@ -4011,33 +4222,37 @@ def assign_jobs_to_project(job_ids, project_id_or_name, *,
     moved, skipped, tm_added = [], [], 0
     target_tm = load_tm(target["project_id"])
     for job_id in job_ids or []:
-        state = load_job_state(job_id)
-        if state is None:
-            skipped.append({"job_id": job_id, "reason": "任务不存在"})
-            continue
-        if resolved_project_id(state) == target["project_id"]:
-            skipped.append({"job_id": job_id, "reason": "已在该项目中"})
-            continue
-        if job_is_active(job_id, state):
-            skipped.append({"job_id": job_id, "reason": "任务正在运行，无法改归属"})
-            continue
-        if move_translations:
-            job_lang = state_target_lang(state)
-            for pair in state.get("pairs") or []:
-                source = str(pair.get("source") or "")
-                target_text = str(pair.get("target") or "")
-                if not pair.get("reviewed") or not _tm_eligible(source, target_text):
-                    continue
-                key = tm_scope_key(job_lang, source)
-                if not key:
-                    continue  # 目标语言无法证明：不迁移记忆，也不猜
-                if key in target_tm:
-                    continue  # 目标项目已有该语言下的译法：不覆盖
-                tm_put(target_tm, source, target_text, job_lang)
-                tm_added += 1
-        state["project_id"] = target["project_id"]
-        save_job_state(job_id, state)
-        moved.append(job_id)
+        # One task at a time, each under its own store lock: a batch move can
+        # never lose a concurrent edit to a task in the list, and it never holds
+        # more than one task lock (so no lock-ordering cycle is possible).
+        with job_state_mutation_lock(job_id):
+            state = load_job_state(job_id)
+            if state is None:
+                skipped.append({"job_id": job_id, "reason": "任务不存在"})
+                continue
+            if resolved_project_id(state) == target["project_id"]:
+                skipped.append({"job_id": job_id, "reason": "已在该项目中"})
+                continue
+            if job_is_active(job_id, state):
+                skipped.append({"job_id": job_id, "reason": "任务正在运行，无法改归属"})
+                continue
+            if move_translations:
+                job_lang = state_target_lang(state)
+                for pair in state.get("pairs") or []:
+                    source = str(pair.get("source") or "")
+                    target_text = str(pair.get("target") or "")
+                    if not pair.get("reviewed") or not _tm_eligible(source, target_text):
+                        continue
+                    key = tm_scope_key(job_lang, source)
+                    if not key:
+                        continue  # 目标语言无法证明：不迁移记忆，也不猜
+                    if key in target_tm:
+                        continue  # 目标项目已有该语言下的译法：不覆盖
+                    tm_put(target_tm, source, target_text, job_lang)
+                    tm_added += 1
+            state["project_id"] = target["project_id"]
+            save_job_state(job_id, state)
+            moved.append(job_id)
     if tm_added:
         save_tm(target_tm, target["project_id"])
     return {"project": target, "moved": moved, "skipped": skipped,
@@ -4060,21 +4275,27 @@ def promote_job_to_project(job_id, *, actor="user", state=None):
     if project is None:
         raise ValueError("这个任务还没有归入任何项目；请先把任务移入一个项目。")
 
-    frozen = state.get("glossary_frozen") or {}
-    glossary_source = frozen.get("entries") or state.get("glossary") or []
-    human_actions = [item for item in state.get("human_actions") or []
-                     if isinstance(item, dict)
-                     and str(item.get("record_type") or "") == "human_decision"]
+    with project_mutation_lock(project["project_id"]):
+        # Re-read inside the lock: the merge must be applied to the *current*
+        # project record, never to a copy read before the lock was taken.
+        current = project_for_job(job_id, state) or project
+        frozen = state.get("glossary_frozen") or {}
+        glossary_source = frozen.get("entries") or state.get("glossary") or []
+        human_actions = [item for item in state.get("human_actions") or []
+                         if isinstance(item, dict)
+                         and str(item.get("record_type") or "") == "human_decision"]
 
-    merged = _project.merge_confirmed_knowledge(
-        project,
-        glossary=glossary_source,
-        style_rules=state.get("confirmed_style_rules") or [],
-        human_decisions=human_actions,
-        source_job_id=job_id,
-        actor=actor,
-    )
-    return _project.save_project(OUTPUT_DIR, merged)
+        merged = _project.merge_confirmed_knowledge(
+            current,
+            glossary=glossary_source,
+            style_rules=state.get("confirmed_style_rules") or [],
+            human_decisions=human_actions,
+            source_job_id=job_id,
+            actor=actor,
+        )
+        # `save_project` re-enters the lock and refuses to resurrect a project
+        # that was deleted while this promotion was being prepared.
+        return save_project(merged)
 
 
 def project_memory_view(project=None):
@@ -4098,6 +4319,7 @@ def _project_backup_dir():
     return _project.projects_root(OUTPUT_DIR) / "_deleted"
 
 
+@_serialized_project_mutation
 def delete_project(project_id, *, confirm_name, move_jobs_to=None, cascade=False):
     """删除项目（永久，不可逆），删除前先写可恢复备份。
 
@@ -4174,6 +4396,7 @@ def list_project_conflicts(project_id):
     return _project.pending_conflicts(project)
 
 
+@_serialized_project_mutation
 def resolve_project_conflict(project_id, conflict_id, *, adopt_incoming=True,
                              actor="用户"):
     """处理一条待决冲突：采纳导入版本，或保留本地版本。
@@ -4255,10 +4478,22 @@ def import_project_memory(raw, *, name=None, description=""):
     payload = _project.validate_memory_payload(payload)
     source_name = str(name or (payload.get("project") or {}).get("name") or "").strip()
     existing = find_project_by_name(source_name) if source_name else None
-    project, report, imported_tm = _project.import_memory(
-        existing, payload, name=name, project_id=_project.new_project_id(),
-        description=description)
-    saved = save_project(project)
+    # The target id is known before the write, so the whole import (re-read the
+    # current record, merge, save) is one serialized transaction.  A brand-new
+    # project uses a freshly generated id and the create path instead.
+    project_id = ((existing or {}).get("project_id")
+                  or _project.new_project_id())
+    creating = existing is None
+    with project_mutation_lock(project_id):
+        if not creating:
+            existing = load_project(project_id)
+            if existing is None:
+                raise ValueError("项目已被删除，本次导入未生效。")
+        project, report, imported_tm = _project.import_memory(
+            existing, payload, name=name, project_id=project_id,
+            description=description)
+        saved = (_create_project_record(project) if creating
+                 else save_project(project))
 
     if imported_tm:
         current = load_tm(saved["project_id"])
@@ -9275,6 +9510,7 @@ def current_translation_hash(state=None):
     })
 
 
+@_serialized_job_mutation
 def generate_report_qa(job_id, state=None, *, save_file=False):
     """Build the concise QA report and bind it to current artifact hashes."""
     from folith import academic_evidence, academic_writer
@@ -9330,6 +9566,7 @@ def generate_report_qa(job_id, state=None, *, save_file=False):
     return value
 
 
+@_serialized_job_mutation
 def save_compliance_record(job_id, state=None):
     """Persist the current compliance and language-constraint artifacts."""
     from folith import academic_evidence, academic_writer, compliance
@@ -9417,6 +9654,7 @@ def _mark_case_downstream_stale(job_id, state, case_id, reason, *, actor="user",
     return state
 
 
+@_serialized_job_mutation
 def review_academic_case(job_id, case_id, status, note="", actor="user"):
     """Record one author decision without changing provenance or content."""
     state = load_job_state(job_id)
@@ -9462,6 +9700,7 @@ def review_academic_case(job_id, case_id, status, note="", actor="user"):
     return state, True, "已保存案例审校状态"
 
 
+@_serialized_job_mutation
 def replace_rejected_case(job_id, case_id, *, actor="user"):
     """Replace one author-rejected case from the already validated pool."""
     from folith import academic_writer, academic_quality, case_provenance
@@ -9564,6 +9803,7 @@ def replace_rejected_case(job_id, case_id, *, actor="user"):
     return state, True, [str(candidate.get("case_id"))]
 
 
+@_serialized_job_mutation
 def update_synthetic_baseline(job_id, case_id, text, *, status="modified", note="", actor="user"):
     """Modify or reject a synthetic baseline; never mutate translation truth."""
     state = load_job_state(job_id)
@@ -9601,6 +9841,7 @@ def update_synthetic_baseline(job_id, case_id, text, *, status="modified", note=
     return state, True, "已保存模拟初译决定"
 
 
+@_serialized_job_mutation
 def record_final_qa(job_id, field, status, note="", actor="user"):
     """Persist one of the four independent final-QA facts."""
     if field not in _finalization.QA_FIELDS:
@@ -9626,6 +9867,7 @@ def record_final_qa(job_id, field, status, note="", actor="user"):
     return state
 
 
+@_serialized_job_mutation
 def run_libreoffice_render_qa(job_id, state=None):
     """Render through LibreOffice, then run separate deterministic PDF QA."""
     state = state or load_job_state(job_id)
@@ -10049,6 +10291,7 @@ def assign_missing_segment_uids(state, *, job_id=""):
     return assigned
 
 
+@_serialized_job_mutation
 def confirm_source_quality_segment(job_id, index, *, actor="user", note=""):
     """Record that a person checked one flagged PDF segment against its source.
 
@@ -10351,6 +10594,7 @@ def translation_visible_indexes(state, search="", status_filter="全部",
     return visible
 
 
+@_serialized_job_mutation
 def save_translation_edit(job_id, index, target, actor="user"):
     """Save one human translation edit through the state/business layer.
 
@@ -10435,6 +10679,7 @@ def _recheck_delivery_invariants_for_segments(state, indexes, *, actor="user"):
     return report
 
 
+@_serialized_job_mutation
 def restore_translation_edit(job_id, index, actor="user"):
     """Restore the translation state that existed before the first edit."""
     from folith import delivery as _delivery
@@ -10465,6 +10710,7 @@ def restore_translation_edit(job_id, index, actor="user"):
     return state
 
 
+@_serialized_job_mutation
 def mutate_translation_segments(
     job_id, index, operation, *, source_text=None, source_a=None,
     source_b=None, target_a=None, target_b=None, exclude_reason=None,
@@ -10847,6 +11093,7 @@ def mutate_translation_segments(
     return state
 
 
+@_serialized_job_mutation
 def undo_translation_segment_structure(job_id, *, actor="user"):
     """撤销最近一次段落结构操作，恢复到操作前的原文/译文。
 
@@ -10964,6 +11211,10 @@ def delete_job(job_id, *, allow_active=False):
 
     正在运行的任务默认拒绝删除：worker 还在往这个目录写状态，删掉会留下一个
     半写状态并让运行时报错。返回是否真的删除。
+
+    The removal happens under the task's state transaction lock, so a concurrent
+    ``save_job_state`` from another surface can neither be lost nor resurrect the
+    deleted task directory (the atomic replace would otherwise re-create it).
     """
     if not str(job_id or "").strip():
         return False
@@ -10972,8 +11223,11 @@ def delete_job(job_id, *, allow_active=False):
         return False
     if not allow_active and job_is_active(job_id):
         raise ValueError("任务正在运行，无法删除；请先取消或等它结束。")
-    shutil.rmtree(d)
-    _job_repo.invalidate_cache(job_id)
+    with job_state_mutation_lock(job_id):
+        if not d.exists():
+            return False
+        shutil.rmtree(d)
+        _job_repo.invalidate_cache(job_id)
     return True
 
 
@@ -11077,10 +11331,21 @@ def resolve_job_id(job_ref):
 
 
 def save_source(job_id, file_bytes):
-    """留存源文件，刷新页面后即使不重新上传也能继续（如重做阶段一）。"""
+    """留存源文件，刷新页面后即使不重新上传也能继续（如重做阶段一）。
+
+    **原子写入**：`write_bytes` 会先截断再写，而读取方（另一个 worker、启动前的
+    `load_source`、OCR 阶段）可能正好落在截断与写入之间，读到 0 字节的"空源文件"
+    ——随后 `fitz.open(stream=b"")` 只会报 "Cannot open empty stream"，把一次并发
+    读写变成一次无法解释的提取失败（实测出现过）。临时文件 + `replace` 让读者要么
+    看到旧内容、要么看到完整新内容。
+    """
     d = job_dir(job_id)
     d.mkdir(parents=True, exist_ok=True)
-    (d / "source.bin").write_bytes(file_bytes)
+    target = d / "source.bin"
+    payload = bytes(file_bytes or b"")
+    temp = d / f".source.bin.{uuid.uuid4().hex}.tmp"
+    temp.write_bytes(payload)
+    temp.replace(target)
 
 
 def load_source(job_id):
@@ -11088,6 +11353,7 @@ def load_source(job_id):
     return p.read_bytes() if p.is_file() else None
 
 
+@_serialized_job_mutation
 def save_report_template(job_id, filename, template_bytes):
     """Parse and persist the uploaded DOCX template before academic stages run."""
     from folith import report_template
@@ -11117,6 +11383,7 @@ def save_report_template(job_id, filename, template_bytes):
     return contract
 
 
+@_serialized_job_mutation
 def clear_report_template(job_id):
     """Remove the saved report template and its contract from a task."""
     directory = job_dir(job_id)
@@ -11169,6 +11436,7 @@ def _bytes(value):
     return value.getvalue() if hasattr(value, "getvalue") else bytes(value)
 
 
+@_serialized_job_mutation
 def report_docx_bytes(job_id, state=None, frozen_assets=None):
     """Render the structured report with its template, or use the legacy fallback."""
     if frozen_assets and frozen_assets.get("stage3_report.docx"):
@@ -12051,6 +12319,7 @@ def task_status_label(state, job_id=""):
 
 
 # ================= 术语审核状态（草稿 / 锁定 / 拒绝 / 冻结）=================
+@_serialized_job_mutation
 def save_glossary_draft(job_id, entries):
     """保存术语审核草稿（不冻结）。刷新/重启后从 TERMS_PREPARED 恢复。"""
     state = load_job_state(job_id)
@@ -12077,6 +12346,7 @@ def _glossary_mutation_note(action, detail, actor):
     }
 
 
+@_serialized_job_mutation
 def update_glossary_entry(job_id, entry_id, *, preferred=None, domain=None,
                           status=None, note=None, actor="user"):
     """原地修改一条术语条目并生成新的术语版本。返回 (state, ok, message)。
@@ -12132,6 +12402,7 @@ def update_glossary_entry(job_id, entry_id, *, preferred=None, domain=None,
     return frozen or state, True, f"已更新术语并生成新的术语版本{suffix}"
 
 
+@_serialized_job_mutation
 def delete_glossary_entry(job_id, entry_id, actor="user"):
     """删除一条术语条目并生成新的术语版本。返回 (state, ok, message)。"""
     state = load_job_state(job_id)
@@ -12152,6 +12423,7 @@ def delete_glossary_entry(job_id, entry_id, actor="user"):
     return frozen or state, True, "已删除该术语并生成新的术语版本"
 
 
+@_serialized_job_mutation
 def add_glossary_entry(job_id, source, target, *, domain="", scope="document",
                        status="locked", actor="user"):
     """在指定任务中新增一条术语并生成新的术语版本。
@@ -12325,6 +12597,7 @@ def _apply_glossary_staleness(state, job_id=None):
     return state, stale
 
 
+@_serialized_job_mutation
 def set_glossary_entry_status(job_id, entry_ids, status):
     """批量修改术语状态（candidate/provisional/locked/rejected）。"""
     if status not in ("candidate", "provisional", "locked", "rejected"):
@@ -12473,6 +12746,7 @@ def review_knowledge_candidate(job_id, candidate_id, decision, actor="user"):
     return state, True, "已拒绝该知识候选"
 
 
+@_serialized_job_mutation
 def confirm_translation_style_rule(
     job_id, rule, actor, *, actor_type, note="", source_finding_id="",
 ):
@@ -12525,6 +12799,7 @@ def confirm_translation_style_rule(
     return state, record
 
 
+@_serialized_job_mutation
 def freeze_glossary(job_id, entries=None, frozen_by="user"):
     """冻结术语表：生成新版本 + 确定性 glossary_hash。
 
@@ -12575,6 +12850,7 @@ def freeze_glossary(job_id, entries=None, frozen_by="user"):
     return state
 
 
+@_serialized_job_mutation
 def unfreeze_glossary(job_id):
     """返回修改：解除冻结（翻译开始前），回到 TERMS_PREPARED；旧冻结版本保留。"""
     state = load_job_state(job_id)
@@ -12591,6 +12867,7 @@ def unfreeze_glossary(job_id):
     return state
 
 
+@_serialized_job_mutation
 def save_document_profile(job_id, profile):
     """人工填写/修改文档画像后保存。"""
     state = load_job_state(job_id)
@@ -12652,6 +12929,7 @@ def preview_entity_repair(state, source_form, target):
     return consistency.preview(record, state.get("pairs") or [], target)
 
 
+@_serialized_job_mutation
 def apply_entity_repair(job_id, source_form, target, preview, *, actor="user"):
     """Apply only the exact before/after edits the operator reviewed."""
     from folith import consistency
@@ -12693,6 +12971,7 @@ def apply_entity_repair(job_id, source_form, target, preview, *, actor="user"):
     return state, indexes
 
 
+@_serialized_job_mutation
 def accept_entity_variants(job_id, source_form, *, actor="user"):
     from folith import consistency
     if _job_execution_alive(job_id):
@@ -12749,6 +13028,7 @@ def workflow_outcomes(state):
     }
 
 
+@_serialized_job_mutation
 def prepare_workflow_retry(job_id, part):
     if _job_execution_alive(job_id):
         raise RuntimeError("任务仍在执行，请等待后台处理结束")
@@ -12795,6 +13075,7 @@ def write_profile_artifacts(job_id, document_profile, style_profile):
         return None
 
 
+@_serialized_job_mutation
 def bypass_freeze(job_id, frozen_by="user"):
     """快速模式跳过人工冻结：允许以 provisional 术语直接翻译（记录审计标记）。"""
     state = load_job_state(job_id)
@@ -12857,6 +13138,7 @@ def _promote_human_reviewed_segment(state, segment_id, actor):
         save_tm(tm, tm_project_id(state))
 
 
+@_serialized_job_mutation
 def decide_translation_review_finding(
     job_id, finding_id, decision, actor, *, actor_type, note="",
 ):
@@ -12933,6 +13215,7 @@ def _targeted_final_review_ids(state, limit=8):
         selected.items(), key=lambda item: (item[1], item[0]))[:bounded_limit]]
 
 
+@_serialized_job_mutation
 def review_translation_segments(
     job_id, indexes, provider, api_key, model, target_lang, *, style_rules="",
     call_llm_fn=None, base_url=None, review_focus="", focus_findings=None,
@@ -13187,6 +13470,7 @@ def _run_targeted_final_review(
         return state
 
 
+@_serialized_job_mutation
 def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
     """Legacy action surface; Core findings route through HumanDecision."""
     from folith import delivery as _delivery
@@ -13220,6 +13504,7 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
     return state
 
 
+@_serialized_job_mutation
 def approve_delivery(job_id, note="", accept_blocking=False, actor="user",
                      target_lang="", provider="", model=""):
     """人工交付确认 -> final + immutable snapshot."""
@@ -13338,12 +13623,24 @@ def retranslate_segments(job_id, indexes, provider, api_key, model, target_lang,
                          style_rules="", glossary=None, on_status=None,
                          on_caption=None, actor="user", reviewer_provider=None,
                          reviewer_api_key=None, reviewer_model=None,
-                         reviewer_base_url=None):
-    """定点重译（抽取自 scripts/fix_segments.py 的能力）。"""
+                         reviewer_base_url=None, translator_base_url=None):
+    """定点重译（抽取自 scripts/fix_segments.py 的能力）。
+
+    ``translator_base_url`` 与管线同名同义：自定义中转站必须显式传入，否则
+    在非管线线程里调用会解析不到地址（此前会静默失败）。
+    """
     from folith import delivery as _delivery
-    state, fixed = _delivery.retranslate_segments(
-        job_id, indexes, provider, api_key, model, target_lang,
-        style_rules, glossary, on_status, on_caption, actor)
+    old_base_url = getattr(_LLM_CTX, "base_url", None)
+    if translator_base_url is not None:
+        set_llm_base_url(translator_base_url)
+    try:
+        state, fixed = _delivery.retranslate_segments(
+            job_id, indexes, provider, api_key, model, target_lang,
+            style_rules, glossary, on_status, on_caption, actor,
+            base_url=translator_base_url or "")
+    finally:
+        if translator_base_url is not None:
+            set_llm_base_url(old_base_url)
     if fixed and state.get("translation_core_review_required"):
         review_provider = provider if reviewer_provider is None else reviewer_provider
         review_api_key = api_key if reviewer_api_key is None else reviewer_api_key
@@ -13376,6 +13673,7 @@ def academic_status_label(state):
     return labels.get(status, status)
 
 
+@_serialized_job_mutation
 def invalidate_academic_report(job_id, scope="all", section_id=None):
     """Invalidate academic artifacts only; translation stages remain intact."""
     from folith import academic_writer
@@ -13402,6 +13700,7 @@ def load_academic_artifact(job_id, name):
         return None
 
 
+@_serialized_job_mutation
 def record_human_evidence(job_id, question_id, answer, interface="academic_workspace"):
     """Record a human author answer for an open evidence question.
 
