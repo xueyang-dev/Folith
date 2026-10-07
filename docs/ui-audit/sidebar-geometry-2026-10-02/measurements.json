@@ -1,0 +1,1432 @@
+{
+  "01-no-project-history": {
+    "brand": {
+      "x": 24,
+      "y": 20,
+      "w": 187,
+      "h": 62.1,
+      "bottom": 82.1
+    },
+    "newTask": {
+      "label": "new-task",
+      "box": {
+        "x": 24,
+        "y": 110.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 156.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 123.3,
+        "w": 121,
+        "h": 19.6,
+        "bottom": 142.9
+      },
+      "text": "add新建任务",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(0, 76, 253)",
+        "border": "1px solid rgb(0, 76, 253)",
+        "borderRadius": "11px",
+        "color": "rgb(255, 255, 255)",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "inline-flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(255, 255, 255)",
+        "flex": "0 1 auto"
+      }
+    },
+    "header": {
+      "label": "section-label",
+      "box": {
+        "x": 24,
+        "y": 184.1,
+        "w": 187,
+        "h": 24,
+        "bottom": 208.1
+      },
+      "iconBox": null,
+      "iconSlotBox": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "bottom": 0
+      },
+      "textBox": {
+        "x": 24,
+        "y": 187,
+        "w": 26,
+        "h": 18.2,
+        "bottom": 205.2
+      },
+      "text": "项目",
+      "css": {
+        "height": "24px",
+        "minHeight": "24px",
+        "width": "187px",
+        "padding": "0px",
+        "background": "rgba(0, 0, 0, 0)",
+        "border": "0px none rgba(0, 0, 0, 0)",
+        "borderRadius": "6px",
+        "color": "rgb(138, 148, 166)",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(138, 148, 166)",
+        "flex": "0 1 auto"
+      }
+    },
+    "switcher": {
+      "label": "switcher",
+      "box": {
+        "x": 24,
+        "y": 216.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 262.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 230,
+        "w": 103.7,
+        "h": 18.2,
+        "bottom": 248.2
+      },
+      "text": "folder未选择项目",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(255, 255, 255)",
+        "border": "1px solid rgb(222, 227, 234)",
+        "borderRadius": "11px",
+        "color": "rgb(102, 112, 133)",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "\"▾\"",
+        "transform": "none",
+        "color": "rgb(102, 112, 133)",
+        "flex": "0 0 auto"
+      }
+    },
+    "navRows": [
+      {
+        "label": "nav0",
+        "box": {
+          "x": 24,
+          "y": 282.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 330.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 296.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 315.9
+        },
+        "text": "history历史任务",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgb(238, 244, 255)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(11, 31, 59)",
+          "fontSize": "14px",
+          "fontWeight": "500",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(11, 31, 59)",
+          "flex": "0 1 auto"
+        }
+      },
+      {
+        "label": "nav1",
+        "box": {
+          "x": 24,
+          "y": 334.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 382.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 348.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 367.9
+        },
+        "text": "menu_book术语与翻译记忆",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(102, 112, 133)",
+          "fontSize": "14px",
+          "fontWeight": "400",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(102, 112, 133)",
+          "flex": "0 1 auto"
+        }
+      }
+    ],
+    "utility": {
+      "x": 24,
+      "y": 837,
+      "w": 187,
+      "h": 47,
+      "bottom": 884
+    },
+    "rhythm": {
+      "brandToNewTask": 28,
+      "newTaskToLabel": 28,
+      "labelToSwitcher": 8,
+      "switcherToNav": 20,
+      "navRowGap": 4,
+      "navToUtilitySpacer": 454.9
+    },
+    "textColumn": {
+      "switcherIconX": null,
+      "headerTextX": 24
+    },
+    "navGroupGap": "4px",
+    "sidebarWidth": 236
+  },
+  "02-no-project-library": {
+    "brand": {
+      "x": 24,
+      "y": 20,
+      "w": 187,
+      "h": 62.1,
+      "bottom": 82.1
+    },
+    "newTask": {
+      "label": "new-task",
+      "box": {
+        "x": 24,
+        "y": 110.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 156.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 123.3,
+        "w": 121,
+        "h": 19.6,
+        "bottom": 142.9
+      },
+      "text": "add新建任务",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(0, 76, 253)",
+        "border": "1px solid rgb(0, 76, 253)",
+        "borderRadius": "11px",
+        "color": "rgb(255, 255, 255)",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "inline-flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(255, 255, 255)",
+        "flex": "0 1 auto"
+      }
+    },
+    "header": {
+      "label": "section-label",
+      "box": {
+        "x": 24,
+        "y": 184.1,
+        "w": 187,
+        "h": 24,
+        "bottom": 208.1
+      },
+      "iconBox": null,
+      "iconSlotBox": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "bottom": 0
+      },
+      "textBox": {
+        "x": 24,
+        "y": 187,
+        "w": 26,
+        "h": 18.2,
+        "bottom": 205.2
+      },
+      "text": "项目",
+      "css": {
+        "height": "24px",
+        "minHeight": "24px",
+        "width": "187px",
+        "padding": "0px",
+        "background": "rgba(0, 0, 0, 0)",
+        "border": "0px none rgba(0, 0, 0, 0)",
+        "borderRadius": "6px",
+        "color": "rgb(138, 148, 166)",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(138, 148, 166)",
+        "flex": "0 1 auto"
+      }
+    },
+    "switcher": {
+      "label": "switcher",
+      "box": {
+        "x": 24,
+        "y": 216.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 262.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 230,
+        "w": 103.7,
+        "h": 18.2,
+        "bottom": 248.2
+      },
+      "text": "folder未选择项目",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(255, 255, 255)",
+        "border": "1px solid rgb(222, 227, 234)",
+        "borderRadius": "11px",
+        "color": "rgb(102, 112, 133)",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "\"▾\"",
+        "transform": "none",
+        "color": "rgb(102, 112, 133)",
+        "flex": "0 0 auto"
+      }
+    },
+    "navRows": [
+      {
+        "label": "nav0",
+        "box": {
+          "x": 24,
+          "y": 282.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 330.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 296.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 315.9
+        },
+        "text": "history历史任务",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(102, 112, 133)",
+          "fontSize": "14px",
+          "fontWeight": "400",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(102, 112, 133)",
+          "flex": "0 1 auto"
+        }
+      },
+      {
+        "label": "nav1",
+        "box": {
+          "x": 24,
+          "y": 334.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 382.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 348.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 367.9
+        },
+        "text": "menu_book术语与翻译记忆",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgb(238, 244, 255)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(11, 31, 59)",
+          "fontSize": "14px",
+          "fontWeight": "500",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(11, 31, 59)",
+          "flex": "0 1 auto"
+        }
+      }
+    ],
+    "utility": {
+      "x": 24,
+      "y": 837,
+      "w": 187,
+      "h": 47,
+      "bottom": 884
+    },
+    "rhythm": {
+      "brandToNewTask": 28,
+      "newTaskToLabel": 28,
+      "labelToSwitcher": 8,
+      "switcherToNav": 20,
+      "navRowGap": 4,
+      "navToUtilitySpacer": 454.9
+    },
+    "textColumn": {
+      "switcherIconX": null,
+      "headerTextX": 24
+    },
+    "navGroupGap": "4px",
+    "sidebarWidth": 236
+  },
+  "03-project-history": {
+    "brand": {
+      "x": 24,
+      "y": 20,
+      "w": 187,
+      "h": 62.1,
+      "bottom": 82.1
+    },
+    "newTask": {
+      "label": "new-task",
+      "box": {
+        "x": 24,
+        "y": 110.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 156.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 123.3,
+        "w": 121,
+        "h": 19.6,
+        "bottom": 142.9
+      },
+      "text": "add新建任务",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(0, 76, 253)",
+        "border": "1px solid rgb(0, 76, 253)",
+        "borderRadius": "11px",
+        "color": "rgb(255, 255, 255)",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "inline-flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(255, 255, 255)",
+        "flex": "0 1 auto"
+      }
+    },
+    "header": {
+      "label": "section-label",
+      "box": {
+        "x": 24,
+        "y": 184.1,
+        "w": 187,
+        "h": 24,
+        "bottom": 208.1
+      },
+      "iconBox": null,
+      "iconSlotBox": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "bottom": 0
+      },
+      "textBox": {
+        "x": 24,
+        "y": 187,
+        "w": 26,
+        "h": 18.2,
+        "bottom": 205.2
+      },
+      "text": "项目",
+      "css": {
+        "height": "24px",
+        "minHeight": "24px",
+        "width": "187px",
+        "padding": "0px",
+        "background": "rgba(0, 0, 0, 0)",
+        "border": "0px none rgba(0, 0, 0, 0)",
+        "borderRadius": "6px",
+        "color": "rgb(138, 148, 166)",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(138, 148, 166)",
+        "flex": "0 1 auto"
+      }
+    },
+    "switcher": {
+      "label": "switcher",
+      "box": {
+        "x": 24,
+        "y": 216.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 262.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 230,
+        "w": 103.7,
+        "h": 18.2,
+        "bottom": 248.2
+      },
+      "text": "folder_openMidnight ",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(255, 255, 255)",
+        "border": "1px solid rgb(222, 227, 234)",
+        "borderRadius": "11px",
+        "color": "rgb(19, 28, 46)",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "\"▾\"",
+        "transform": "none",
+        "color": "rgb(102, 112, 133)",
+        "flex": "0 0 auto"
+      }
+    },
+    "navRows": [
+      {
+        "label": "nav0",
+        "box": {
+          "x": 24,
+          "y": 282.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 330.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 296.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 315.9
+        },
+        "text": "history历史任务",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgb(238, 244, 255)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(11, 31, 59)",
+          "fontSize": "14px",
+          "fontWeight": "500",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(11, 31, 59)",
+          "flex": "0 1 auto"
+        }
+      },
+      {
+        "label": "nav1",
+        "box": {
+          "x": 24,
+          "y": 334.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 382.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 348.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 367.9
+        },
+        "text": "menu_book术语与翻译记忆",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(102, 112, 133)",
+          "fontSize": "14px",
+          "fontWeight": "400",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(102, 112, 133)",
+          "flex": "0 1 auto"
+        }
+      }
+    ],
+    "utility": {
+      "x": 24,
+      "y": 837,
+      "w": 187,
+      "h": 47,
+      "bottom": 884
+    },
+    "rhythm": {
+      "brandToNewTask": 28,
+      "newTaskToLabel": 28,
+      "labelToSwitcher": 8,
+      "switcherToNav": 20,
+      "navRowGap": 4,
+      "navToUtilitySpacer": 454.9
+    },
+    "textColumn": {
+      "switcherIconX": null,
+      "headerTextX": 24
+    },
+    "navGroupGap": "4px",
+    "sidebarWidth": 236
+  },
+  "04-switcher-open": {
+    "brand": {
+      "x": 24,
+      "y": 20,
+      "w": 187,
+      "h": 62.1,
+      "bottom": 82.1
+    },
+    "newTask": {
+      "label": "new-task",
+      "box": {
+        "x": 24,
+        "y": 110.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 156.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 123.3,
+        "w": 121,
+        "h": 19.6,
+        "bottom": 142.9
+      },
+      "text": "add新建任务",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(0, 76, 253)",
+        "border": "1px solid rgb(0, 76, 253)",
+        "borderRadius": "11px",
+        "color": "rgb(255, 255, 255)",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "inline-flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(255, 255, 255)",
+        "flex": "0 1 auto"
+      }
+    },
+    "header": {
+      "label": "section-label",
+      "box": {
+        "x": 24,
+        "y": 184.1,
+        "w": 187,
+        "h": 24,
+        "bottom": 208.1
+      },
+      "iconBox": null,
+      "iconSlotBox": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "bottom": 0
+      },
+      "textBox": {
+        "x": 24,
+        "y": 187,
+        "w": 26,
+        "h": 18.2,
+        "bottom": 205.2
+      },
+      "text": "项目",
+      "css": {
+        "height": "24px",
+        "minHeight": "24px",
+        "width": "187px",
+        "padding": "0px",
+        "background": "rgba(0, 0, 0, 0)",
+        "border": "0px none rgba(0, 0, 0, 0)",
+        "borderRadius": "6px",
+        "color": "rgb(138, 148, 166)",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(138, 148, 166)",
+        "flex": "0 1 auto"
+      }
+    },
+    "switcher": {
+      "label": "switcher",
+      "box": {
+        "x": 24,
+        "y": 216.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 262.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 230,
+        "w": 103.7,
+        "h": 18.2,
+        "bottom": 248.2
+      },
+      "text": "folder未选择项目",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(238, 244, 255)",
+        "border": "1px solid rgb(185, 209, 255)",
+        "borderRadius": "11px",
+        "color": "rgb(102, 112, 133)",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "\"▾\"",
+        "transform": "matrix(-1, 0, 0, -1, 0, 0)",
+        "color": "rgb(102, 112, 133)",
+        "flex": "0 0 auto"
+      }
+    },
+    "navRows": [
+      {
+        "label": "nav0",
+        "box": {
+          "x": 24,
+          "y": 528.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 576.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 544.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 560.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 544.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 560.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 542.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 561.9
+        },
+        "text": "history历史任务",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgb(238, 244, 255)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(11, 31, 59)",
+          "fontSize": "14px",
+          "fontWeight": "500",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(11, 31, 59)",
+          "flex": "0 1 auto"
+        }
+      },
+      {
+        "label": "nav1",
+        "box": {
+          "x": 24,
+          "y": 580.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 628.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 596.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 612.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 596.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 612.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 594.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 613.9
+        },
+        "text": "menu_book术语与翻译记忆",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(102, 112, 133)",
+          "fontSize": "14px",
+          "fontWeight": "400",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(102, 112, 133)",
+          "flex": "0 1 auto"
+        }
+      }
+    ],
+    "utility": {
+      "x": 24,
+      "y": 837,
+      "w": 187,
+      "h": 47,
+      "bottom": 884
+    },
+    "rhythm": {
+      "brandToNewTask": 28,
+      "newTaskToLabel": 28,
+      "labelToSwitcher": 8,
+      "switcherToNav": 266,
+      "navRowGap": 4,
+      "navToUtilitySpacer": 208.9
+    },
+    "textColumn": {
+      "switcherIconX": null,
+      "headerTextX": 24
+    },
+    "navGroupGap": "4px",
+    "sidebarWidth": 236
+  },
+  "05-switcher-hover": {
+    "brand": {
+      "x": 24,
+      "y": 20,
+      "w": 187,
+      "h": 62.1,
+      "bottom": 82.1
+    },
+    "newTask": {
+      "label": "new-task",
+      "box": {
+        "x": 24,
+        "y": 110.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 156.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 125.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 141.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 123.3,
+        "w": 121,
+        "h": 19.6,
+        "bottom": 142.9
+      },
+      "text": "add新建任务",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(0, 76, 253)",
+        "border": "1px solid rgb(0, 76, 253)",
+        "borderRadius": "11px",
+        "color": "rgb(255, 255, 255)",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "inline-flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(255, 255, 255)",
+        "flex": "0 1 auto"
+      }
+    },
+    "header": {
+      "label": "section-label",
+      "box": {
+        "x": 24,
+        "y": 184.1,
+        "w": 187,
+        "h": 24,
+        "bottom": 208.1
+      },
+      "iconBox": null,
+      "iconSlotBox": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "bottom": 0
+      },
+      "textBox": {
+        "x": 24,
+        "y": 187,
+        "w": 26,
+        "h": 18.2,
+        "bottom": 205.2
+      },
+      "text": "项目",
+      "css": {
+        "height": "24px",
+        "minHeight": "24px",
+        "width": "187px",
+        "padding": "0px",
+        "background": "rgba(0, 0, 0, 0)",
+        "border": "0px none rgba(0, 0, 0, 0)",
+        "borderRadius": "6px",
+        "color": "rgb(138, 148, 166)",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "none",
+        "transform": "none",
+        "color": "rgb(138, 148, 166)",
+        "flex": "0 1 auto"
+      }
+    },
+    "switcher": {
+      "label": "switcher",
+      "box": {
+        "x": 24,
+        "y": 216.1,
+        "w": 187,
+        "h": 46,
+        "bottom": 262.1
+      },
+      "iconBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "iconSlotBox": {
+        "x": 39,
+        "y": 231.1,
+        "w": 24,
+        "h": 16,
+        "bottom": 247.1
+      },
+      "textBox": {
+        "x": 75,
+        "y": 230,
+        "w": 103.7,
+        "h": 18.2,
+        "bottom": 248.2
+      },
+      "text": "folder未选择项目",
+      "css": {
+        "height": "46px",
+        "minHeight": "46px",
+        "width": "187px",
+        "padding": "0px 14px",
+        "background": "rgb(247, 249, 252)",
+        "border": "1px solid rgb(201, 210, 223)",
+        "borderRadius": "11px",
+        "color": "rgb(102, 112, 133)",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "justifyContent": "flex-start",
+        "display": "flex"
+      },
+      "after": {
+        "content": "\"▾\"",
+        "transform": "none",
+        "color": "rgb(102, 112, 133)",
+        "flex": "0 0 auto"
+      }
+    },
+    "navRows": [
+      {
+        "label": "nav0",
+        "box": {
+          "x": 24,
+          "y": 282.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 330.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 298.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 314.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 296.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 315.9
+        },
+        "text": "history历史任务",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgb(238, 244, 255)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(11, 31, 59)",
+          "fontSize": "14px",
+          "fontWeight": "500",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(11, 31, 59)",
+          "flex": "0 1 auto"
+        }
+      },
+      {
+        "label": "nav1",
+        "box": {
+          "x": 24,
+          "y": 334.1,
+          "w": 187,
+          "h": 48,
+          "bottom": 382.1
+        },
+        "iconBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "iconSlotBox": {
+          "x": 39,
+          "y": 350.1,
+          "w": 24,
+          "h": 16,
+          "bottom": 366.1
+        },
+        "textBox": {
+          "x": 75,
+          "y": 348.3,
+          "w": 121,
+          "h": 19.6,
+          "bottom": 367.9
+        },
+        "text": "menu_book术语与翻译记忆",
+        "css": {
+          "height": "48px",
+          "minHeight": "48px",
+          "width": "187px",
+          "padding": "0px 14px",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "11px",
+          "color": "rgb(102, 112, 133)",
+          "fontSize": "14px",
+          "fontWeight": "400",
+          "justifyContent": "flex-start",
+          "display": "inline-flex"
+        },
+        "after": {
+          "content": "none",
+          "transform": "none",
+          "color": "rgb(102, 112, 133)",
+          "flex": "0 1 auto"
+        }
+      }
+    ],
+    "utility": {
+      "x": 24,
+      "y": 837,
+      "w": 187,
+      "h": 47,
+      "bottom": 884
+    },
+    "rhythm": {
+      "brandToNewTask": 28,
+      "newTaskToLabel": 28,
+      "labelToSwitcher": 8,
+      "switcherToNav": 20,
+      "navRowGap": 4,
+      "navToUtilitySpacer": 454.9
+    },
+    "textColumn": {
+      "switcherIconX": null,
+      "headerTextX": 24
+    },
+    "navGroupGap": "4px",
+    "sidebarWidth": 236
+  }
+}

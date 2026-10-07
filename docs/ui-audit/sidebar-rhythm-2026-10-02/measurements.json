@@ -1,0 +1,1257 @@
+[
+  {
+    "case": "dark-en-empty-history",
+    "rows": [
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "addNew task",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "Projects",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(27, 37, 49)",
+        "border": "rgb(59, 75, 93)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folderNo project selected",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "historyTask history",
+        "w": 187,
+        "x": 24,
+        "y": 282.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_bookTerms & translation memory",
+        "w": 187,
+        "x": 24,
+        "y": 336.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Appearance: Dark mode",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Interface language: English",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "AI model: deepseek-flash · API credentials missing",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Settings",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "dark-en-open",
+    "rows": [
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "addNew task",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "Projects",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(20, 30, 40)",
+        "border": "rgb(78, 96, 117)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folderNo project selected",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 21,
+        "text": "Switch to 未分类任务",
+        "w": 167,
+        "x": 33,
+        "y": 278.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 21,
+        "text": "Switch to Folith Release",
+        "w": 167,
+        "x": 33,
+        "y": 318.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 63,
+        "text": "Switch to 国际教材本地化 / International textbook localization",
+        "w": 167,
+        "x": 33,
+        "y": 358.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 40,
+        "text": "addNew project",
+        "w": 169,
+        "x": 33,
+        "y": 415.140625
+      },
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "historyTask history",
+        "w": 187,
+        "x": 24,
+        "y": 488.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_bookTerms & translation memory",
+        "w": 187,
+        "x": 24,
+        "y": 542.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Appearance: Dark mode",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Interface language: English",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "AI model: deepseek-flash · API credentials missing",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Settings",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "dark-en-open-updated",
+    "rows": [
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "addNew task",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "Projects",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(20, 30, 40)",
+        "border": "rgb(78, 96, 117)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folder_open国际教材本地化 / International textbook localization",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 63,
+        "text": "Switch to 国际教材本地化 / International textbook localization",
+        "w": 167,
+        "x": 33,
+        "y": 278.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 21,
+        "text": "Switch to Unassigned tasks",
+        "w": 167,
+        "x": 33,
+        "y": 318.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 21,
+        "text": "Switch to Folith Release",
+        "w": 167,
+        "x": 33,
+        "y": 358.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 40,
+        "text": "addNew project",
+        "w": 169,
+        "x": 33,
+        "y": 415.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "historyTask history",
+        "w": 187,
+        "x": 24,
+        "y": 488.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_bookTerms & translation memory",
+        "w": 187,
+        "x": 24,
+        "y": 542.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Appearance: Dark mode",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Interface language: English",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "AI model: deepseek-flash · API credentials missing",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Settings",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "paper-es-empty-terminology",
+    "rows": [
+      {
+        "bg": "rgb(225, 220, 206)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "addNueva tarea",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "Proyectos",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(251, 247, 238)",
+        "border": "rgba(70, 60, 45, 0.15)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folderNingún proyecto seleccionado",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "historyHistorial de tareas",
+        "w": 187,
+        "x": 24,
+        "y": 282.140625
+      },
+      {
+        "bg": "rgb(225, 220, 206)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_bookTérminos y memoria de traducción",
+        "w": 187,
+        "x": 24,
+        "y": 336.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Apariencia: Modo papel",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Idioma de la interfaz: Español",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Modelo de IA: deepseek-flash · Faltan las credenciales API",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Ajustes",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "paper-es-open",
+    "rows": [
+      {
+        "bg": "rgb(225, 220, 206)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "addNueva tarea",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "Proyectos",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(233, 223, 203)",
+        "border": "rgba(70, 60, 45, 0.28)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folderNingún proyecto seleccionado",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 42,
+        "text": "Cambiar a Tareas sin proyecto",
+        "w": 167,
+        "x": 33,
+        "y": 278.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 21,
+        "text": "Cambiar a Folith Release",
+        "w": 167,
+        "x": 33,
+        "y": 318.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 63,
+        "text": "Cambiar a 国际教材本地化 / International textbook localization",
+        "w": 167,
+        "x": 33,
+        "y": 358.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 40,
+        "text": "addNuevo proyecto",
+        "w": 169,
+        "x": 33,
+        "y": 415.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "historyHistorial de tareas",
+        "w": 187,
+        "x": 24,
+        "y": 488.140625
+      },
+      {
+        "bg": "rgb(225, 220, 206)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_bookTérminos y memoria de traducción",
+        "w": 187,
+        "x": 24,
+        "y": 542.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Apariencia: Modo papel",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Idioma de la interfaz: Español",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Modelo de IA: deepseek-flash · Faltan las credenciales API",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Ajustes",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "light-ru-history-empty",
+    "rows": [
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "addНовая задача",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "Проекты",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(255, 255, 255)",
+        "border": "rgb(222, 227, 234)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folderПроект не выбран",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "historyИстория задач",
+        "w": 187,
+        "x": 24,
+        "y": 282.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_bookТермины и память переводов",
+        "w": 187,
+        "x": 24,
+        "y": 336.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Оформление: Светлый режим",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Язык интерфейса: Русский",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Модель ИИ: deepseek-flash · Учётные данные API не настроены",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "Настройки",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "dark-ar-history-empty",
+    "rows": [
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 48,
+        "text": "addمهمة جديدة",
+        "w": 187,
+        "x": 1069,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 24,
+        "text": "المشاريع",
+        "w": 187,
+        "x": 1069,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(27, 37, 49)",
+        "border": "rgb(59, 75, 93)",
+        "direction": "rtl",
+        "h": 46,
+        "text": "folderلم يُحدد مشروع",
+        "w": 187,
+        "x": 1069,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 48,
+        "text": "historyسجل المهام",
+        "w": 187,
+        "x": 1069,
+        "y": 282.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 48,
+        "text": "menu_bookالمصطلحات وذاكرة الترجمة",
+        "w": 187,
+        "x": 1069,
+        "y": 336.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "المظهر: الوضع الداكن",
+        "w": 43.75,
+        "x": 1212.25,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "لغة الواجهة: العربية",
+        "w": 43.75,
+        "x": 1164.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "نموذج الذكاء الاصطناعي: deepseek-flash · بيانات اعتماد API غير مُعدّة",
+        "w": 43.75,
+        "x": 1116.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "الإعدادات",
+        "w": 43.75,
+        "x": 1069,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "dark-ar-open",
+    "rows": [
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 48,
+        "text": "addمهمة جديدة",
+        "w": 187,
+        "x": 1069,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 24,
+        "text": "المشاريع",
+        "w": 187,
+        "x": 1069,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(20, 30, 40)",
+        "border": "rgb(78, 96, 117)",
+        "direction": "rtl",
+        "h": 46,
+        "text": "folderلم يُحدد مشروع",
+        "w": 187,
+        "x": 1069,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 21,
+        "text": "التبديل إلى مهام غير مصنفة",
+        "w": 167,
+        "x": 1078,
+        "y": 278.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 21,
+        "text": "التبديل إلى Folith Release",
+        "w": 167,
+        "x": 1078,
+        "y": 318.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 63,
+        "text": "التبديل إلى 国际教材本地化 / International textbook localization",
+        "w": 167,
+        "x": 1078,
+        "y": 358.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 40,
+        "text": "addمشروع جديد",
+        "w": 169,
+        "x": 1078,
+        "y": 415.140625
+      },
+      {
+        "bg": "rgb(32, 56, 85)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 48,
+        "text": "historyسجل المهام",
+        "w": 187,
+        "x": 1069,
+        "y": 488.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 48,
+        "text": "menu_bookالمصطلحات وذاكرة الترجمة",
+        "w": 187,
+        "x": 1069,
+        "y": 542.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "المظهر: الوضع الداكن",
+        "w": 43.75,
+        "x": 1212.25,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "لغة الواجهة: العربية",
+        "w": 43.75,
+        "x": 1164.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "نموذج الذكاء الاصطناعي: deepseek-flash · بيانات اعتماد API غير مُعدّة",
+        "w": 43.75,
+        "x": 1116.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "rtl",
+        "h": 36,
+        "text": "الإعدادات",
+        "w": 43.75,
+        "x": 1069,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "light-zh-history-empty-final",
+    "rows": [
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "add新建任务",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "项目",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(255, 255, 255)",
+        "border": "rgb(222, 227, 234)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folder未选择项目",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "history历史任务",
+        "w": 187,
+        "x": 24,
+        "y": 282.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_book术语与翻译记忆",
+        "w": 187,
+        "x": 24,
+        "y": 336.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "外观：日间模式",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "界面语言：简体中文",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "AI 模型：deepseek-flash · API 凭据未配置",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "设置",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "light-zh-open-final",
+    "rows": [
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "add新建任务",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "项目",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(242, 244, 247)",
+        "border": "rgb(201, 210, 223)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folder未选择项目",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 21,
+        "text": "切换到未分类任务",
+        "w": 167,
+        "x": 33,
+        "y": 278.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 21,
+        "text": "切换到Folith Release",
+        "w": 167,
+        "x": 33,
+        "y": 318.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 63,
+        "text": "切换到国际教材本地化 / International textbook localization",
+        "w": 167,
+        "x": 33,
+        "y": 358.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 40,
+        "text": "add新建项目",
+        "w": 169,
+        "x": 33,
+        "y": 415.140625
+      },
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "history历史任务",
+        "w": 187,
+        "x": 24,
+        "y": 488.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_book术语与翻译记忆",
+        "w": 187,
+        "x": 24,
+        "y": 542.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "外观：日间模式",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "界面语言：简体中文",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "AI 模型：deepseek-flash · API 凭据未配置",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "设置",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  },
+  {
+    "case": "light-zh-hover-final",
+    "style": {
+      "bg": "rgb(247, 249, 252)",
+      "border": "rgb(201, 210, 223)",
+      "h": 46,
+      "hover": true,
+      "open": false
+    }
+  },
+  {
+    "case": "light-zh-terminology-empty-final",
+    "rows": [
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "add新建任务",
+        "w": 187,
+        "x": 24,
+        "y": 106.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 24,
+        "text": "项目",
+        "w": 187,
+        "x": 24,
+        "y": 178.140625
+      },
+      {
+        "bg": "rgb(255, 255, 255)",
+        "border": "rgb(222, 227, 234)",
+        "direction": "ltr",
+        "h": 46,
+        "text": "folder未选择项目",
+        "w": 187,
+        "x": 24,
+        "y": 212.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "history历史任务",
+        "w": 187,
+        "x": 24,
+        "y": 282.140625
+      },
+      {
+        "bg": "rgb(238, 244, 255)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 48,
+        "text": "menu_book术语与翻译记忆",
+        "w": 187,
+        "x": 24,
+        "y": 336.140625
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "外观：日间模式",
+        "w": 43.75,
+        "x": 24,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "界面语言：简体中文",
+        "w": 43.75,
+        "x": 71.75,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "AI 模型：deepseek-flash · API 凭据未配置",
+        "w": 43.75,
+        "x": 119.5,
+        "y": 668
+      },
+      {
+        "bg": "rgba(0, 0, 0, 0)",
+        "border": "rgba(0, 0, 0, 0)",
+        "direction": "ltr",
+        "h": 36,
+        "text": "设置",
+        "w": 43.75,
+        "x": 167.25,
+        "y": 668
+      }
+    ]
+  }
+]
