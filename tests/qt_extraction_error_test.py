@@ -46,9 +46,12 @@ def test_real_scan_with_missing_pack_reports_the_pack(tmp_path):
 
     manifest = d0_fixtures.build(["pdf_scanned"], tmp_path / "fixtures")
     fixture = Path(manifest["inputs"]["pdf_scanned"]["path"])
+    # The local engine is named explicitly: an unspecified source now resolves to
+    # the online engine for a new task (see `_effective_ocr_source`), and this
+    # test is about the *local* pack that is missing.
     paragraphs, warnings, report = core.extract_document_paragraphs_with_report(
         fixture.name, fixture.read_bytes(), ocr_language="Deutsch",
-        ocr_mode="always")
+        ocr_mode="always", ocr_backend="tesseract")
     assert paragraphs == []
     joined = "\n".join(warnings)
     assert "Deutsch" in joined and "deu" in joined, joined
