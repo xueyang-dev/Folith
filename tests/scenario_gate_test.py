@@ -301,8 +301,15 @@ def test_scenario_100_page_pdf_translate_and_resume(fixtures):
         assert readiness["ready"] is True, readiness
         # 已提交的批次必须原样复用，而不是从零重译
         assert state["pairs"][0]["target"] == first_target
-        assert [{k: v for k, v in pair.items() if k != "epub_source_paragraphs"}
-                for pair in state["pairs"][:committed]] == partial["pairs"]
+        # Derived metadata attached at finalization (`document_ir.attach_pair_spans`
+        # writes `source_spans`, the EPUB binder writes `epub_source_paragraphs`)
+        # is excluded: this assertion is about the committed *translations* being
+        # reused instead of retranslated.
+        derived = {"epub_source_paragraphs", "source_spans"}
+        assert [{k: v for k, v in pair.items() if k not in derived}
+                for pair in state["pairs"][:committed]] == [
+                    {k: v for k, v in pair.items() if k not in derived}
+                    for pair in partial["pairs"]]
         # 恢复只需处理剩余段落：翻译调用数必须小于整篇所需批次数
         assert resumed.calls["translate"] < full_total / 4, (
             f"恢复应跳过已提交批次，实际调用 {resumed.calls['translate']} 次")
