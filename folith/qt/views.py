@@ -695,12 +695,18 @@ class HomeView(QWidget):
             self.setup_banner.set_text(detail)
             self.setup_banner.setVisible(True)
             self.setup_chip.set_tone("warn")
+            self.setup_chip.setText(i18n.tr("未配置"))
             self.engine_label.setText(
                 i18n.tr("模型：{v0}", v0=model_label) if model_label
                 else i18n.tr("模型：未配置"))
         else:
             self.setup_banner.setVisible(False)
             self.setup_chip.set_tone("ok")
+            # The chip's *text* used to stay at its construction value, so a
+            # correctly configured client still showed 「未配置」 next to a green
+            # chip while the status bar said the model was ready.  Only the tone
+            # was being updated here.
+            self.setup_chip.setText(i18n.tr("已配置"))
             self.engine_label.setText(
                 i18n.tr("模型：{v0}", v0=model_label) if model_label
                 else i18n.tr("模型：已配置"))

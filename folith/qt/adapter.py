@@ -111,6 +111,7 @@ class EngineConfig:
     deliver_bilingual_docx: bool = True
     deliver_pdf: bool = False
     deliver_original_pdf: bool = False
+    deliver_epub: bool = False
     deliver_terms_xlsx: bool = True
     deliver_evidence: bool = True
     deliver_review_report: bool = False
@@ -322,9 +323,15 @@ def import_documents(
     ``folith.application.commands.import_document``.
     """
     results: list[ImportedFile] = []
-    sources = settings_sources(config, {}, user_defaults=user_defaults)
     for raw_path in paths:
         name, payload = read_source_file(raw_path)
+        # The settings layer must be resolved **with the filename**: the
+        # original-layout PDF gate reads the source type, and resolving the
+        # layer with an empty state made that gate answer "not applicable" for
+        # every new task — a ticked 原排版译文 PDF（Beta）was dropped right here,
+        # so the artifact could never be produced for a fresh PDF task.
+        sources = settings_sources(config, {"filename": name},
+                                   user_defaults=user_defaults)
         imported = _commands.import_document(
             name, payload, sources, project_id=project_id,
             source_path=str(Path(raw_path)))
@@ -424,6 +431,7 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
             "deliver_bilingual_docx": config.deliver_bilingual_docx,
             "deliver_pdf": config.deliver_pdf,
             "deliver_original_pdf": deliver_original_pdf,
+            "deliver_epub": config.deliver_epub,
             "deliver_terms_xlsx": config.deliver_terms_xlsx,
             "deliver_evidence": config.deliver_evidence,
             "deliver_review_report": config.deliver_review_report,
@@ -915,6 +923,8 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None) -> dict:
         names.append("translation.pdf")
     if configured.get("deliver_original_pdf"):
         names.append("original_layout.pdf")
+    if configured.get("deliver_epub"):
+        names.append("translation.epub")
     if configured.get("deliver_terms_xlsx"):
         names.append("terms.xlsx")
     if configured.get("deliver_evidence"):

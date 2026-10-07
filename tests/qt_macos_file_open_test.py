@@ -283,8 +283,15 @@ def test_bundle_declares_every_supported_document_type():
     assert all(entry["CFBundleTypeRole"] in {"Viewer", "Editor"} for entry in declared)
     assert "com.adobe.pdf" in utis, utis
     assert "org.openxmlformats.wordprocessingml.document" in utis, utis
-    # .txt / .md 走 public.plain-text 家族
-    assert "public.plain-text" in utis, utis
-    # 声明必须覆盖契约里的每一种格式：按后缀把 UTI 归属算清楚，不做"大概齐"
-    covered = {".pdf", ".docx", ".doc", ".txt", ".md"}
-    assert {suffix for suffix in adapter.SUPPORTED_SUFFIXES} <= covered, adapter.SUPPORTED_SUFFIXES
+    # 声明必须**恰好等于**契约：多声明一种 UTI，Finder 就会把本应用列进那种文件的
+    # 候选程序，而导入层会拒绝它——用户双击后只得到"不支持的文件类型"。
+    # 本轮真机验收就是这样发现 `.txt` / `.md` / `.doc` 被声明却打不开的。
+    ingestible = {
+        ".pdf": "com.adobe.pdf",
+        ".docx": "org.openxmlformats.wordprocessingml.document",
+    }
+    assert set(adapter.SUPPORTED_SUFFIXES) == set(ingestible), adapter.SUPPORTED_SUFFIXES
+    assert utis == set(ingestible.values()), utis
+    for unsupported in ("public.plain-text", "net.daringfireball.markdown",
+                        "com.microsoft.word.doc"):
+        assert unsupported not in utis, f"{unsupported} 会被声明成可打开，但导入层拒绝它"

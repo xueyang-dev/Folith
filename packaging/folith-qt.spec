@@ -155,6 +155,10 @@ coll = COLLECT(
 # 默认应用应该是用户的阅读器/编辑器，不是本应用。
 # 与 `adapter.SUPPORTED_SUFFIXES`（= 共享应用层的 `SOURCE_SUFFIXES`）逐项对应；
 # `tests/qt_macos_file_open_test.py` 会核对两边不漂移。
+# 只声明**真正能导入**的类型：早先这里还声明了 `public.plain-text` /
+# `net.daringfireball.markdown` 与 `com.microsoft.word.doc`，但导入层只接受
+# `.pdf` / `.docx`，Finder 于是会把本应用列为 .txt/.md/.doc 的候选程序，双击后
+# 只得到"不支持的文件类型"。声明必须等于能力。
 DOCUMENT_TYPES = [
     {"CFBundleTypeName": "PDF document",
      "CFBundleTypeRole": "Viewer",
@@ -163,12 +167,7 @@ DOCUMENT_TYPES = [
     {"CFBundleTypeName": "Word document",
      "CFBundleTypeRole": "Editor",
      "LSHandlerRank": "Alternate",
-     "LSItemContentTypes": ["org.openxmlformats.wordprocessingml.document",
-                            "com.microsoft.word.doc"]},
-    {"CFBundleTypeName": "Plain text",
-     "CFBundleTypeRole": "Editor",
-     "LSHandlerRank": "Alternate",
-     "LSItemContentTypes": ["public.plain-text", "net.daringfireball.markdown"]},
+     "LSItemContentTypes": ["org.openxmlformats.wordprocessingml.document"]},
 ]
 
 info_plist = {

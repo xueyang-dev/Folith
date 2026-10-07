@@ -309,7 +309,8 @@ class MainWindow(QMainWindow):
     # Delivery defaults are a *client* preference (they are copied into each new
     # task's own delivery_config, which stays the single source of truth).
     DELIVERY_KEYS = ("deliver_plain_docx", "deliver_bilingual_docx",
-                     "deliver_pdf", "deliver_original_pdf", "deliver_terms_xlsx",
+                     "deliver_pdf", "deliver_original_pdf", "deliver_epub",
+                     "deliver_terms_xlsx",
                      "deliver_evidence", "deliver_review_report")
     THEME_KEY = "appearance/theme"
     LANGUAGE_KEY = "appearance/language"

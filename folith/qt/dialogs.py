@@ -332,9 +332,14 @@ class EngineDialog(QDialog):
         self.deliver_pdf_box = style_module.CheckBox(i18n.tr('译文 PDF（translation.pdf）'))
         self.deliver_pdf_box.setChecked(
             bool(getattr(self.config, "deliver_pdf", False)))
+        self.deliver_epub_box = style_module.CheckBox(
+            i18n.tr('EPUB 电子书（translation.epub）'))
+        self.deliver_epub_box.setChecked(
+            bool(getattr(self.config, "deliver_epub", False)))
         for box in (self.deliver_plain_box, self.deliver_bilingual_box,
                     self.deliver_terms_box, self.deliver_evidence_box,
-                    self.deliver_pdf_box, self.deliver_original_pdf_box):
+                    self.deliver_pdf_box, self.deliver_original_pdf_box,
+                    self.deliver_epub_box):
             delivery_body.addWidget(box)
         outer.addWidget(delivery)
         outer.addStretch(1)
@@ -539,6 +544,7 @@ class EngineDialog(QDialog):
         "reviewer_base_url", "ocr_language", "ocr_mode", "ocr_backend",
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_terms_xlsx",
         "deliver_evidence", "deliver_pdf", "deliver_original_pdf",
+        "deliver_epub",
     })
 
     def _collect(self) -> adapter.EngineConfig:
@@ -586,6 +592,7 @@ class EngineDialog(QDialog):
         config.deliver_evidence = self.deliver_evidence_box.isChecked()
         config.deliver_pdf = self.deliver_pdf_box.isChecked()
         config.deliver_original_pdf = self.deliver_original_pdf_box.isChecked()
+        config.deliver_epub = self.deliver_epub_box.isChecked()
         return config
 
     def _save(self) -> None:

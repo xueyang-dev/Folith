@@ -28,7 +28,7 @@
 | `folith/qt/window.py` `MainWindow.open_external_files()` | 唯一的外部入口：按 `adapter.SUPPORTED_SUFFIXES`（共享应用层的 `SOURCE_SUFFIXES` 别名）分类，支持的先回任务列表再走正常导入，不支持的如实说明。 |
 | `folith/qt/app.py` `ExternalFileQueue` | 启动期间的时序缓冲。`QFileOpenEvent` 可能在主窗口建好**之前**到达，argv 更是一定早于窗口；没有缓冲就会丢路径。`attach()` 时一次性冲刷。 |
 | `folith/qt/app.py` `--help` 位置参数 | `Folith 论文.pdf` 这种用法进同一个队列。 |
-| `packaging/folith-qt.spec` `CFBundleDocumentTypes` | 让 Finder /「打开方式」把 PDF / DOCX / DOC / TXT / MD 交给本应用。`LSHandlerRank = Alternate`：只做**候选**处理程序，不抢系统默认——PDF/DOCX 的默认应用应该是用户的阅读器/编辑器。 |
+| `packaging/folith-qt.spec` `CFBundleDocumentTypes` | 让 Finder /「打开方式」把 **PDF / DOCX** 交给本应用。`LSHandlerRank = Alternate`：只做**候选**处理程序，不抢系统默认——PDF/DOCX 的默认应用应该是用户的阅读器/编辑器。声明**恰好等于**导入层能接受的类型（`SOURCE_SUFFIXES`）；早先多声明的 DOC / TXT / MD 已删除，理由见下。 |
 
 ## 验证
 
@@ -50,12 +50,19 @@ venv/bin/python -m pytest tests/qt_macos_file_open_test.py -q     # 14 passed
 
 ## 边界（如实记录）
 
-- **应用已经在运行时不会转发**：Qt 客户端用单实例锁（`folith.desktop.single_instance`），
-  第二个实例被拒绝后只做窗口激活，**没有**把文件转发给已运行实例的通道。所以"Folith 开着，
-  再双击另一个文档"目前不会导入。要做需要 IPC，属独立范围，本轮没做。
-- **冻结 `.app` 上的真实双击未验证**：本轮改动在源码层完成并通过测试，但候选 `.app`
-  是上一轮构建的（不含本改动）。`CFBundleDocumentTypes` 的实际生效需要重新构建 + 在
-  Finder 里真实点击一次，属人工验证项。
-- **UTI 归属是声明式**：`.doc` 用 `com.microsoft.word.doc`、`.md` 用
-  `net.daringfireball.markdown`；`.txt` 由 `public.plain-text` 覆盖。测试钉的是"声明覆盖了
-  契约里的每一种后缀"，不是"每种 UTI 在现代 macOS 上都解析成同一个后缀"。
+- **应用已经在运行时不会转发 argv**：Qt 客户端用单实例锁（`folith.desktop.single_instance`），
+  **第二个进程**被拒绝后只做窗口激活，命令行参数里的文件会被丢弃
+  （`Folith 论文.pdf` 直接跑可执行文件时如此）。
+  但 **Finder 双击 /「打开方式」/ `open -a` 不经过这条路**：LaunchServices 把文档作为
+  Apple Event 投给**已运行**的实例，Qt 转成 `QFileOpenEvent`，文件照常导入。
+  2026-10-07 在本机 `/Applications` 的冻结候选上实测确认：Folith 开着时
+  `open -a /Applications/Folith.app <pdf>` 只保留一个进程（PID 不变），任务数 +1，
+  并弹出「已导入 1 个任务…现在开始翻译吗？」。要转发**第二个进程**的 argv 仍需 IPC，
+  属独立范围。
+- **冻结 `.app` 上的真实双击已实测**（2026-10-07）：`CFBundleDocumentTypes` 在
+  `/Applications/Folith.app/Contents/Info.plist` 中生效，`QFileOpenEvent` 路径在冻结包内
+  可用。声明已收窄为 PDF / DOCX——`.txt` / `.md` / `.doc` 从未被导入层接受，声明它们只会
+  让 Finder 把本应用列为候选、双击后报「不支持的文件类型」。
+- **UTI 归属是声明式**：`.pdf` 用 `com.adobe.pdf`、`.docx` 用
+  `org.openxmlformats.wordprocessingml.document`。测试钉的是"声明**恰好等于**契约里的
+  每一种后缀"，不是"每种 UTI 在现代 macOS 上都解析成同一个后缀"。
