@@ -507,6 +507,8 @@ def run_case(config: CaseConfig) -> Dict[str, Any]:
             "semantic_review_done": "knowledge_feedback",
             "semantic_review_skipped": "knowledge_feedback",
             "knowledge_feedback_done": "state_commit",
+            "knowledge_feedback_skipped": "state_commit",
+            "knowledge_feedback_cache_hit": "state_commit",
             "state_commit_done": "commit_tail",
         }
 

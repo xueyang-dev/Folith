@@ -52,6 +52,58 @@ def _persist(tmp_path, job_id, state=None):
 
 # ---------------------------------------------------------------- 排除 / 恢复
 
+@pytest.mark.parametrize("translated", [False, True])
+def test_pdf_rescan_invalidates_old_structure_undo_and_exclusions(
+        tmp_path, monkeypatch, translated):
+    import fitz
+
+    job_id = "rescan-structure-history"
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    document = fitz.open()
+    page = document.new_page()
+    sources = ["Alpha source.", "Beta source.", "Gamma source."]
+    for index, text in enumerate(sources):
+        page.insert_text((72, 100 + index * 60), text)
+    core.save_source(job_id, document.tobytes())
+    document.close()
+    state = _state()
+    state["paras"] = sources
+    for pair, source in zip(state["pairs"], sources):
+        pair["source"] = source
+    core.save_job_state(job_id, state)
+    core.mutate_translation_segments(job_id, 1, "exclude")
+    core.undo_translation_segment_structure(job_id)
+    core.mutate_translation_segments(job_id, 0, "merge")
+    excluded = core.mutate_translation_segments(job_id, 1, "exclude")
+    excluded_id = excluded["excluded_segments"][0]["excluded_id"]
+    assert excluded["segment_structure_history"]
+    assert excluded["segment_structure_undo_log"]
+
+    monkeypatch.setattr(
+        core._source_cleanup, "cleanup_source_paragraphs",
+        lambda paragraphs, *a, **k: (paragraphs, {"status": "completed"}, []))
+    rescanned = core.rescan_pdf_source(
+        job_id, provider="DeepSeek", api_key="offline-key", model="offline-model",
+        ocr_mode="off", segmentation_mode="paragraph")
+    assert rescanned["paras"] == sources
+    assert rescanned["pairs"] == []
+    assert rescanned["segment_structure_history"] == []
+    assert rescanned["segment_structure_undo_log"] == []
+    assert core.excluded_segments_summary(rescanned)["count"] == 0
+    if translated:
+        rescanned["pairs"] = [{"source": source, "target": f"新译文{index}"}
+                              for index, source in enumerate(sources)]
+        rescanned["p2_done"] = True
+        core.save_job_state(job_id, rescanned)
+    assert not core.can_undo_translation_segment_structure(rescanned)["available"]
+    with pytest.raises(ValueError, match="没有可撤销"):
+        core.undo_translation_segment_structure(job_id)
+    with pytest.raises(ValueError):
+        core.mutate_translation_segments(job_id, 0, "include", excluded_id=excluded_id)
+    saved = core.load_job_state(job_id)
+    assert saved["paras"] == sources
+    assert saved["pairs"] == rescanned["pairs"]
+
 def test_exclude_removes_segment_from_work_list_but_keeps_a_restorable_record(
         tmp_path):
     job_id = "segmentlifecycle01"
@@ -441,7 +493,7 @@ def test_extraction_report_notes_ocr_uncertainty_for_scanned_pdf(monkeypatch):
 
     monkeypatch.setattr(core, "_ocr_pdf_text_with_warnings", fake_ocr)
     _paragraphs, _warnings, report = core.extract_document_paragraphs_with_report(
-        "scan.pdf", b"fake-pdf")
+        "scan.pdf", b"fake-pdf", ocr_backend="tesseract")
 
     assert report["format"] == "pdf"
     assert report["extracted"]["ocr_used"] is True
@@ -467,7 +519,10 @@ def test_legacy_extract_helper_still_returns_two_tuple(monkeypatch):
     """旧调用点必须继续拿到 `(paragraphs, warnings)`，不能因为加了报告就崩。"""
     monkeypatch.setattr(core, "extract_pdf_paragraphs",
                         lambda _bytes: ["Only one paragraph."])
-    paragraphs, warnings = core.extract_document_paragraphs("doc.pdf", b"pdf")
+    # The fake document has no real text layer; pin the ingestion contract so
+    # the test exercises the legacy two-tuple wrapper, not the OCR path.
+    paragraphs, warnings = core.extract_document_paragraphs(
+        "doc.pdf", b"pdf", ocr_mode="off")
     assert paragraphs == ["Only one paragraph."]
     assert isinstance(warnings, list)
 

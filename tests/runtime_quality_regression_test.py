@@ -287,8 +287,14 @@ def test_auxiliary_model_and_adaptive_feedback_policy_are_audited(tmp_path):
                               "model": "cheap-model"},
         )
         policy = result["knowledge_feedback_policy"]
-        assert policy["interval"] == 2
-        assert policy["skipped_batches"] == [1]
+        # 16 paragraphs at the default batch size is a 4-batch document.  Only
+        # the first and final batch are observed: no batch carries a name-like
+        # form the project does not already hold and the periodic checkpoint
+        # (interval 4) does not fall inside a 4-batch document.
+        assert policy["interval"] == 4
+        assert policy["observed_batches"] == [0, 3]
+        assert policy["skipped_batches"] == [1, 2]
+        assert policy["skip_reasons"] == {"no_signal": 2}
         assert any(provider == "DeepSeek" and model == "cheap-model"
                    for provider, model, system in calls
                    if "翻译流知识抽取器" in system)

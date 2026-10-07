@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import fitz
 import pytest
+import stat
 
 import core
 from folith import academic_writer, finalization, rendered_qa
@@ -49,6 +50,10 @@ def test_libreoffice_unavailable_is_not_run_and_keeps_docx_binding(tmp_path, mon
     job_id, _state_value = _state(tmp_path)
     monkeypatch.setattr(core, "report_docx_bytes", lambda *args, **kwargs: b"docx")
     monkeypatch.setattr(core.shutil, "which", lambda _name: None)
+    # Also neutralize the explicit install locations: this test asserts the
+    # "LibreOffice unavailable" state and must not depend on the host machine.
+    monkeypatch.setattr(core, "_SOFFICE_CANDIDATES", ())
+    monkeypatch.delenv("FOLIOTHREAD_SOFFICE_CMD", raising=False)
 
     state, qa = core.run_libreoffice_render_qa(job_id)
 
@@ -66,7 +71,13 @@ def test_successful_render_records_engine_hashes_and_pdf_facts(tmp_path, monkeyp
     job_id, _state_value = _state(tmp_path, "stage5qa000002")
     pdf = _pdf_bytes()
     monkeypatch.setattr(core, "report_docx_bytes", lambda *args, **kwargs: b"docx-pass")
-    monkeypatch.setattr(core.shutil, "which", lambda _name: "/fake/soffice")
+    # Discovery verifies the binary exists, so provide a real (fake) executable
+    # through the documented override instead of a phantom PATH entry.
+    fake_soffice = tmp_path / "soffice"
+    fake_soffice.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_soffice.chmod(fake_soffice.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(core.shutil, "which", lambda _name: None)
+    monkeypatch.setenv("FOLIOTHREAD_SOFFICE_CMD", str(fake_soffice))
 
     def fake_run(command, **_kwargs):
         if command[1] == "--version":

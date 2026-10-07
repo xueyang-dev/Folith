@@ -76,9 +76,17 @@ const viewportHeight = Number(heightArg || 900);
       if (await btn.count()) { await btn.click(); await page.waitForTimeout(3000); }
       else console.error('[warn] 未找到语言资产按钮');
     } else if (view === 'settings') {
-      const btn = sidebar.locator('[class*="st-key-manage_provider"] button, button:has-text("管理")').first();
+      // ⚙（设置页）是 Utility Bar 上最后一个控件；AI 引擎是设置页下的一个分区。
+      const btn = sidebar.locator('[class*="st-key-utility_action_settings"] button, button:has-text("设置")').first();
       if (await btn.count()) { await btn.click(); await page.waitForTimeout(3000); }
-      else console.error('[warn] 未找到设置管理按钮');
+      else console.error('[warn] 未找到设置按钮');
+    } else if (view === 'appearance') {
+      // 「外观与语言」是 URL 可分享的页面（`?view=appearance`）。侧栏里的入口
+      // 是 Utility Bar 的主题 Popover →「更多外观设置」，走 URL 更稳定。
+      await page.goto(url + (url.includes('?') ? '&' : '?') + 'view=appearance',
+                      { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForSelector('[data-testid="stAppViewContainer"]', { timeout: 30000 });
+      await page.waitForTimeout(3500);
     }
   } else if (section) {
     const history = sidebar.locator('button:has-text("历史任务")').first();

@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover
     fitz = None
 
 import core
+from folith.ocr_cache import OCRPageCache
 
 
 # Cache rendered page images in memory (LRU) to prevent expensive re-rendering
@@ -25,7 +26,7 @@ _IMAGE_CACHE_MAX_ENTRIES = 128
 _IMAGE_CACHE: collections.OrderedDict[Tuple[Any, ...], bytes] = collections.OrderedDict()
 
 # Cache segment -> (page_index, rects) mapping
-_SEGMENT_PAGE_CACHE: Dict[Tuple[str, int, str], Tuple[Optional[int], List[Any]]] = {}
+_SEGMENT_PAGE_CACHE: Dict[Tuple[Any, ...], Tuple[Optional[int], List[Any]]] = {}
 
 
 def has_pdf_source(job_id: str) -> bool:
@@ -129,11 +130,112 @@ def find_segment_page_and_rects(
                 if rects:
                     # Return primitive rect coordinates (x0, y0, x1, y1)
                     return page_idx, [[r.x0, r.y0, r.x1, r.y1] for r in rects]
-        return None, []
+        return _find_ocr_location(job_id, queries, page_order)
     except Exception:
         return None, []
     finally:
         doc.close()
+
+
+def _find_ocr_location(job_id, queries, page_order):
+    """Match retained logical OCR lines and highlight their source rectangles.
+
+    Uses the extraction's exact cache identity, never whichever engine file
+    happens to be newest. Cleanup paraphrases without a matching phrase remain
+    unmapped. Boxes identify source lines, not fabricated word-level alignment.
+
+    A backend may return text with **no** geometry (the online transcriber).
+    Those lines are kept for matching but never produce a rectangle: highlighting
+    a placeholder coordinate would point at the wrong place on the page. When the
+    text is found but no line has real geometry, the page is returned with an
+    empty rect list so the reviewer can still open the original page.
+    """
+    state = core.load_job_state(job_id) or {}
+    ocr = (state.get("extraction_report") or {}).get("ocr") or {}
+    identity = dict(ocr.get("cache_identity") or {})
+    directory = ocr.get("ocr_cache_dir")
+    if not identity or not directory:
+        return None, []
+    identity.pop("page_index", None)
+    cache = OCRPageCache(directory)
+    for page_index in page_order:
+        params = {**identity, "dpi": (ocr.get("ocr_dpi_used_by_page") or {}).get(
+            str(page_index), identity["dpi"])}
+        records, _ = cache.load(indices=[page_index], **params)
+        record = records.get(str(page_index)) or {}
+        lines = []
+        scale = record.get("pixels_to_points", 0)
+        for block in record.get("blocks") or []:
+            for line in block.get("lines") or []:
+                text = re.sub(r"\s+", " ", str(line.get("text") or "")).strip()
+                if not text:
+                    continue
+                known = bool(line.get("geometry_known", True)) and bool(
+                    line.get("bbox_pdf") or scale)
+                if not known:
+                    # Keep the text for phrase matching, but mark it as
+                    # un-highlightable rather than inventing a rectangle.
+                    lines.append((text, None))
+                    continue
+                left, top, right, bottom = (float(line[key]) for key in
+                                            ("left", "top", "right", "bottom"))
+                if right <= left or bottom <= top:
+                    lines.append((text, None))
+                    continue
+                lines.append((text, [left * scale, top * scale,
+                                     right * scale, bottom * scale]))
+        text = " ".join(line[0] for line in lines)
+        for query in queries:
+            start = text.find(query)
+            if start < 0:
+                continue
+            end = start + len(query)
+            cursor = 0
+            rects = []
+            for value, rect in lines:
+                if rect is not None and cursor < end and cursor + len(value) > start:
+                    rects.append(rect)
+                cursor += len(value) + 1
+            # A text-only match still locates the page; it simply cannot
+            # highlight. Returning the page is strictly better than telling the
+            # reviewer "not found" for text that OCR did read.
+            return page_index, rects
+    return None, []
+
+
+def get_segment_source_locations(job_id, segment_index):
+    """Resolve all persisted spans, including cross-page segments.
+
+    An empty rectangle list is a usable page anchor, never a search failure.
+    Existing legacy jobs without anchors continue through text search.
+    """
+    from folith.document_ir import normalized_bbox
+    state = core.load_job_state(job_id) or {}
+    pairs = state.get("pairs") or []
+    if segment_index < 0:
+        return []
+    if segment_index < len(pairs) and "source_spans" in pairs[segment_index]:
+        spans = pairs[segment_index]["source_spans"]
+    else:
+        all_spans = state.get("segment_source_spans") or []
+        spans = all_spans[segment_index] if segment_index < len(all_spans) else []
+    document = (state.get("extraction_report") or {}).get("document_ir") or {}
+    pages = {p["page_id"]:p for p in document.get("pages") or []}
+    locations = {}
+    for span in spans or []:
+        page = pages.get(span.get("page_id"))
+        if page is None:
+            continue
+        index = page["page_index"]
+        rects = locations.setdefault(index, [])
+        box = (normalized_bbox(span.get("bbox"))
+               if span.get("grounding_quality") in {"exact", "strong", "approximate"} else None)
+        if box:
+            rect = [box[0]*page["width"], box[1]*page["height"],
+                    box[2]*page["width"], box[3]*page["height"]]
+            if rect not in rects:
+                rects.append(rect)
+    return list(locations.items())
 
 
 def get_cached_segment_location(
@@ -143,7 +245,15 @@ def get_cached_segment_location(
     start_page_hint: int = 0,
 ) -> Tuple[Optional[int], List[Any]]:
     """Return cached or computed (page_index, rects) for a segment."""
-    cache_key = (job_id, segment_index, (segment_text or "").strip()[:80])
+    locations = get_segment_source_locations(job_id, segment_index)
+    if locations:
+        return locations[0]
+    manifest = core.job_dir(job_id) / "ocr_cache" / "manifest.json"
+    try:
+        stamp = manifest.stat().st_mtime_ns
+    except OSError:
+        stamp = None
+    cache_key = (job_id, segment_index, (segment_text or "").strip(), stamp)
     if cache_key in _SEGMENT_PAGE_CACHE:
         return _SEGMENT_PAGE_CACHE[cache_key]
     location = find_segment_page_and_rects(job_id, segment_text, start_page_hint)

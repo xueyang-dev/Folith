@@ -788,13 +788,26 @@ def test_external_evidence_attack_and_prompt_scan():
     assert provider.fetch_evidence("Skopos") == []
     assert terminology.get_provider("unknown!!").fetch_evidence("x") == []
     # 代码库扫描：模型 prompt 不得要求模型生成引用来源 URL
+    import ast
+    import inspect
     import subprocess
+    # Only the URL literals in these model-discovery functions are transport
+    # configuration. The same domains elsewhere (including prompts) stay scanned.
+    transport_url_lines = set()
+    for function in (core._fetch_gemini_models, core.fetch_provider_models):
+        source_lines, first_line = inspect.getsourcelines(function)
+        for node in ast.walk(ast.parse("".join(source_lines))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                    and node.value.startswith(("http://", "https://")):
+                transport_url_lines.add(first_line + node.lineno - 1)
     hits = subprocess.run(
         ["rg", "-n", "https?://", "core.py", "folith/", "scripts/"],
         capture_output=True, text=True).stdout
     prompt_files = []
     for line in hits.splitlines():
         path = line.split(":", 1)[0]
+        if path == "core.py" and int(line.split(":", 2)[1]) in transport_url_lines:
+            continue
         # Verified DOI/repository URLs belong in the deterministic literature
         # registry; this scan is only a guard against asking a model to invent
         # citation URLs in prompts.

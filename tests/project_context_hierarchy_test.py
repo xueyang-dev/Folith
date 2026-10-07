@@ -202,24 +202,25 @@ def test_sidebar_project_group_holds_context_and_management():
         at = _project_page()
         assert not at.exception, [e.value for e in at.exception]
         nav = [re.sub(r"<[^>]+>", "", value) for value in _sidebar_nav_labels(at)]
-        # 「项目」不再是纯标题（它是 Project Center 导航入口），所以只剩「工作区」。
-        assert nav == ["工作区"], nav
+        # 「项目」不再是纯标题（它是 Project Center 导航入口），而侧栏一级导航现在
+        # 只剩两个入口 —— 「工作区」这个 section heading 已退休，所以没有任何标题。
+        assert nav == [], nav
         assert not any("项目上下文" in value for value in nav), nav
         assert not any("当前项目" in value for value in nav), nav
         buttons = _sidebar_button_labels(at)
         assert "项目" in buttons, buttons
         # Project Center 的入口收敛到标题上：不再有独立的「项目中心」行。
         assert "项目中心" not in buttons, f"独立「项目中心」行必须退休：{buttons}"
-        # 同组相邻：标题在上、selector 紧随其后，整组都在「工作区」那三项之前。
+        # 同组相邻：标题在上、selector 紧随其后，整组都在核心导航入口之前。
         index = buttons.index("项目")
         assert buttons[index + 1].startswith("未选择项目"), \
             f"上下文 selector 必须紧邻分组标题：{buttons}"
         assert index < buttons.index("历史任务"), \
-            f"「项目」分组不能混进「工作区」分组：{buttons}"
+            f"「项目」分组不能混进核心导航：{buttons}"
 
 
 def test_project_center_header_is_lighter_than_the_selector():
-    """selector 是主控件；Project Center 入口是**分组标题**——高度 / 字号 / 字重更低，
+    """selector 是主控件；Project Center 入口是**分组标题**——尺寸更小、颜色更弱，
     且是标题字型（无底色、无卡片），不是第二颗按钮。"""
     with ctx_env():
         at = _project_page()
@@ -230,27 +231,28 @@ def test_project_center_header_is_lighter_than_the_selector():
             css, '[class*="st-key-project_section_header"] .stButton button')
         # selector：中性 surface + 1px 细边 + 46px + 11px 圆角（主控件，但不抢 CTA）。
         assert "background: var(--tp-surface)" in selector, selector
-        assert "min-height: 46px" in selector, selector
-        assert "border-radius: 11px" in selector, selector
-        assert "font-weight: 600" in selector, selector
-        # 标题：透明底、17px、500 字重，与「工作区」那种纯标题同一套字型、同一条基线。
+        assert "min-height: var(--sidebar-switcher-height)" in selector, selector
+        assert "border-radius: var(--sidebar-row-radius)" in selector, selector
+        assert "font-weight: 500" in selector, selector
+        # 标题：透明底、24px 行高、600 字重，保持低于导航的视觉层级。
         assert "background: transparent" in head, head
-        assert "min-height: 17px" in head, head
-        assert "font-size: 12px" in head, head
-        assert "font-weight: 500" in head, head
+        assert "min-height: 24px" in head, head
+        assert "font-size: 13px" in head, head
+        assert "font-weight: 600" in head, head
         assert "justify-content: flex-start" in head, head
-        assert "min-height: 46px" not in head, head
+        assert "min-height: var(--sidebar-switcher-height)" not in head, head
         assert "cursor: pointer" in head, head
-        # 导航 affordance 只有右侧一个 chevron。
-        arrow = _css_rule(
-            css, '[class*="st-key-project_section_header"] .stButton button::after {')
-        assert 'content: "›"' in arrow, arrow
+        # 导航 affordance **不加装饰**：`项目 ›` 会和紧邻的 selector 一起被读成两个
+        # 并列入口，所以 ::after 不再承担箭头；入口仍然是同一个按钮（点击进列表页，
+        # affordance 由 hover 的 ink + 下划线表达）。
+        assert 'st-key-project_section_header"] .stButton button::after' not in css, \
+            "「项目」是 section label，不再挂 chevron"
         # 当前页态只升文字色 + chevron 上色，绝不复制 selector 的填充控件观感。
         current = _css_rule(
             css,
             '[class*="st-key-project_section_header"]:has(.tp-nav-current) .stButton button {')
         assert "--tp-primary-soft" not in current, current
-        assert "color: var(--tp-brand-ink)" in current, current
+        assert "color: var(--tp-ink)" in current, current
 
 
 def test_project_center_current_marker_shows_only_on_the_list_page():
@@ -328,7 +330,7 @@ def test_context_selector_is_one_compact_control_in_both_states():
         body = rule[1].split("}")[0]
         assert "dashed" not in body, "未选中态不再使用大面积虚线卡片"
         # 两种状态共用同一个容器与同一条高度基线（compact）。
-        assert "min-height: 46px" in body, body
+        assert "height:" not in body and "padding:" not in body, body
 
 
 # ================= 2. 新建任务：只读上下文，不再有第二个选择器 =================
