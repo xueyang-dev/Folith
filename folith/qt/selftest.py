@@ -182,22 +182,44 @@ class Flow:
         self.app.processEvents()
         return bool(predicate()) if predicate is not None else True
 
-    def _await_review(self, core, job_id: str) -> None:
-        """Wait for the review worker to stop, then let the window refresh."""
-        self.pump(self.timeout, lambda: (
-            (core.load_runtime_state(job_id) or {}).get("status")
-            not in core.RUNTIME_ACTIVE_STATUSES), interval=0.2)
-        # The worker persists each segment's receipt before it goes idle; one
-        # refresh cycle is enough for the readiness snapshot to see it.
-        self.pump(5.0)
+    def _await_review(self, core, job_id: str) -> bool:
+        """Wait until the review worker has processed every expected segment.
+
+        Idle runtime status alone is not completion: the worker goes idle
+        between batches, and a segment can be *expected* by the gate long
+        before its receipt lands.  Poll the cheap runtime state, and only when
+        the worker is idle ask the gate itself whether anything is still
+        waiting for a receipt.  ``failed`` receipts are terminal (the retry
+        loop below handles them), so they do not keep this loop spinning.
+        """
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            runtime = core.load_runtime_state(job_id) or {}
+            if runtime.get("status") not in core.RUNTIME_ACTIVE_STATUSES:
+                if not self._unsettled_review_indexes(core, job_id):
+                    return True
+            time.sleep(0.5)
+        self.app.processEvents()
+        return False
 
     @staticmethod
-    def _pending_review_indexes(core, job_id: str) -> list:
-        """Segments the delivery review gate still cannot accept as current."""
+    def _review_readiness(core, job_id: str) -> dict:
         from folith.translation_evidence import translation_review_readiness
 
-        state = core.load_job_state(job_id) or {}
-        readiness = translation_review_readiness(state)
+        return translation_review_readiness(core.load_job_state(job_id) or {})
+
+    @classmethod
+    def _unsettled_review_indexes(cls, core, job_id: str) -> list:
+        """Segments still waiting for a first receipt from the reviewer."""
+        readiness = cls._review_readiness(core, job_id)
+        return sorted(set(readiness.get("missing_segment_ids") or [])
+                      | set(readiness.get("stale_segment_ids") or []))
+
+    @classmethod
+    def _pending_review_indexes(cls, core, job_id: str) -> list:
+        """Segments the delivery review gate still cannot accept as current."""
+        readiness = cls._review_readiness(core, job_id)
         return sorted(
             set(readiness.get("missing_segment_ids") or [])
             | set(readiness.get("stale_segment_ids") or [])
@@ -329,14 +351,12 @@ class Flow:
 
             self.phase = "review"
             self.window.review_all()
-            # Same reasoning: wait on the cheap runtime state, then check the
-            # per-segment review flags once.  The budget is the flow timeout,
-            # not a fixed 300 s: an independent reviewer call per segment is
-            # the normal cost, and a real document's review legitimately runs
-            # longer than a fixed guess.  Giving up early would hand the
-            # delivery gate a half-reviewed book and blame the product for a
-            # harness timeout.
-            self._await_review(core, job_id)
+            # The budget is the flow timeout, not a fixed 300 s: an independent
+            # reviewer call per segment is the normal cost, and a real
+            # document's review legitimately runs longer than a fixed guess.
+            # Giving up early would hand the delivery gate a half-reviewed book
+            # and blame the product for a harness timeout.
+            settled = self._await_review(core, job_id)
             # The reviewer is one independent model call per segment; a round
             # whose response the protocol rejects is reported per segment.  A
             # person answers that notice by pressing 审校 again for exactly
@@ -345,16 +365,17 @@ class Flow:
             report["review_retries"] = []
             for _ in range(2):
                 pending = self._pending_review_indexes(core, job_id)
-                if not pending:
+                if not pending or not settled:
                     break
                 report["review_retries"].append(pending)
                 self.window.review_selected(pending)
-                self._await_review(core, job_id)
+                settled = self._await_review(core, job_id)
             state = adapter.load_state(job_id)
             report["review"] = {
                 "reviewed": sum(1 for item in state.get("pairs") or []
                                 if item.get("reviewed")),
                 "total": len(state.get("pairs") or []),
+                "settled": settled,
                 "pending_after_retries": self._pending_review_indexes(core, job_id),
             }
             self.step("reviewed", **report["review"])

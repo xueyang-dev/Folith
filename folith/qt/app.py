@@ -217,7 +217,15 @@ def main(argv: list[str] | None = None) -> int:
             fixtures = [Path(item).expanduser() for item in args.selftest_source]
         else:
             fixtures = selftest.build_fixtures(out_dir, args.selftest_fixture)
-        flow = selftest.Flow(main_window, app, out_dir=out_dir, timeout=900.0,
+        # One independent reviewer call per segment is the normal cost, so a
+        # real document's review legitimately outlives a fixed 15-minute guess.
+        # The budget is a harness limit, never a product one, and it is
+        # overridable for acceptance runs on large real documents.
+        try:
+            timeout = float(os.environ.get("FOLITH_QT_SELFTEST_TIMEOUT") or 1800.0)
+        except ValueError:
+            timeout = 1800.0
+        flow = selftest.Flow(main_window, app, out_dir=out_dir, timeout=timeout,
                              screenshot=args.selftest_screenshot)
         report = flow.run(adapter, adapter.core, fixtures)
         report["identity"] = adapter.app_identity()
