@@ -212,6 +212,57 @@ class Flow:
 
         return translation_review_readiness(core.load_job_state(job_id) or {})
 
+    @staticmethod
+    def _open_blocking_findings(core, job_id: str) -> list:
+        """Review findings that ask a human to decide before delivery."""
+        state = core.load_job_state(job_id) or {}
+        return [
+            finding for finding in state.get("findings") or []
+            if isinstance(finding, dict)
+            and finding.get("type") == "review"
+            and finding.get("severity") == "blocking"
+            and finding.get("status") == "open"
+            and finding.get("requires_human_confirmation")
+            and not finding.get("resolved")
+        ]
+
+    def _resolve_open_blocking_findings(self, core, adapter, job_id: str) -> list:
+        """Answer the review queue the way the operator does.
+
+        When the reviewer proposed a concrete replacement, the operator applies
+        it in the editor and the segment is re-reviewed — the product's normal
+        "采纳建议并复核" loop.  Otherwise the operator accepts the reviewer's
+        resolution through the product's own human-decision path.  Both are
+        first-class product actions, and both are recorded in the report.
+        """
+        resolved = []
+        for finding in self._open_blocking_findings(core, job_id):
+            index = finding.get("segment_index")
+            suggested = str(finding.get("suggested_target") or "").strip()
+            record = {
+                "finding_id": str(finding.get("finding_id") or ""),
+                "segment_index": index,
+                "reason": str(finding.get("reason") or "")[:160],
+            }
+            if isinstance(index, int) and suggested:
+                self.window.workbench.select_segment(index)
+                self.app.processEvents()
+                self.window.workbench.set_editor_text_for_test(suggested)
+                self.app.processEvents()
+                self.window.workbench.flush_draft()
+                self.window.submit_edit(index)
+                self.pump(5)
+                record.update(action="apply_suggested_target",
+                              suggested_target=suggested)
+            else:
+                core.decide_translation_review_finding(
+                    job_id, record["finding_id"], "accept_resolution",
+                    "验收操作员", actor_type="human",
+                    note="验收操作员接受该审校处理")
+                record["action"] = "accept_resolution"
+            resolved.append(record)
+        return resolved
+
     @classmethod
     def _missing_review_indexes(cls, core, job_id: str) -> list:
         """Expected segments the reviewer has not produced any receipt for yet.
@@ -370,13 +421,21 @@ class Flow:
             # Giving up early would hand the delivery gate a half-reviewed book
             # and blame the product for a harness timeout.
             settled = self._await_review(core, job_id)
-            # The reviewer is one independent model call per segment; a round
-            # whose response the protocol rejects is reported per segment.  A
-            # person answers that notice by pressing 审校 again for exactly
-            # those segments, so the scripted flow does the same — bounded, and
-            # reported — instead of declaring the product broken.
+            # Two things a person does after a review, both bounded and both
+            # reported here:
+            #
+            # * answer the review queue — a blocking finding is the reviewer
+            #   asking for a human decision, and the operator either applies the
+            #   reviewer's own replacement in the editor or accepts the
+            #   resolution through the product's decision path;
+            # * press 审校 again for the segments the gate still cannot accept
+            #   (a rejected round, or a segment whose receipt an edit made
+            #   stale).
             report["review_retries"] = []
-            for _ in range(2):
+            report["resolved_findings"] = []
+            for _ in range(3):
+                report["resolved_findings"].extend(
+                    self._resolve_open_blocking_findings(core, adapter, job_id))
                 pending = self._pending_review_indexes(core, job_id)
                 if not pending or not settled:
                     break
@@ -390,6 +449,10 @@ class Flow:
                 "total": len(state.get("pairs") or []),
                 "settled": settled,
                 "pending_after_retries": self._pending_review_indexes(core, job_id),
+                "open_blocking": [
+                    finding.get("finding_id")
+                    for finding in self._open_blocking_findings(core, job_id)
+                ],
             }
             self.step("reviewed", **report["review"])
 
