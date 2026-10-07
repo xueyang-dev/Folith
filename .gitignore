@@ -111,6 +111,3 @@ benchmark/results.csv
 # of the product build or the release chain.
 video/
 
-# Downloaded Tesseract model weights.  `scripts/stage_tesseract_payload.py`
-# re-fetches them and verifies the sha256 recorded in packaging/tessdata/README.json.
-packaging/tessdata/*.traineddata
