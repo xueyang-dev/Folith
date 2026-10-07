@@ -12225,6 +12225,11 @@ def delivery_snapshot_status(job_id, state=None):
     }
 
 
+def delivery_snapshot_asset_path(job_id, version, name):
+    """On-disk path of a delivered asset, for native open / reveal actions."""
+    return _snapshots.asset_path(job_dir(job_id), version, name)
+
+
 def delivery_snapshot_assets(job_id, version):
     manifest = next((item for item in list_delivery_snapshots(job_id)
                      if item.get("snapshot_version") == int(version)), None)

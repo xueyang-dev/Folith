@@ -203,6 +203,11 @@ def latest_snapshot(job_root: Path):
     return snapshots[-1] if snapshots else None
 
 
+def asset_path(job_root: Path, version: int, name: str) -> Path:
+    """On-disk path of one snapshot asset (the only place the layout lives)."""
+    return snapshot_root(job_root) / f"v{int(version)}" / str(name)
+
+
 def load_asset(job_root: Path, version: int, name: str) -> Optional[bytes]:
     manifest = next((item for item in list_snapshots(job_root)
                      if item.get("snapshot_version") == int(version)), None)
