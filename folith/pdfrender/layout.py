@@ -211,6 +211,10 @@ class Item:
     line_height: float = 1.22
     size_source: str = "span"      # 'span' | 'line' | 'default'
     skipped_reason: str = ""
+    #: Footnote/superscript marks belonging to this pair.  They never appear in
+    #: ``target``: the translation text stays clean and the renderer restores
+    #: the mark from this provenance.
+    marks: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -228,6 +232,8 @@ class Slot:
     pieces: list[Piece] = field(default_factory=list)
     limit_bottom: float = 0.0
     regions: list[Region] = field(default_factory=list)
+    #: Marks anchored to this slot; each source mark is assigned to at most one.
+    marks: list[dict] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -488,9 +494,16 @@ def build_items(state, source: SourceDocument, *, mode: str = "translated") -> l
                     quality="approximate", block_id=None,
                     page_source_text=source_text))
 
+        pair_marks = pair.get("marks")
+        if pair_marks is None:
+            marks_by_segment = state.get("segment_source_marks") or []
+            pair_marks = marks_by_segment[index] if index < len(marks_by_segment) else []
+        pair_marks = [dict(m) for m in (pair_marks or []) if isinstance(m, dict)]
+
         item = Item(
             segment_index=index, target=target, source=source_text,
             regions=regions,
+            marks=pair_marks,
             direction="ltr",
             block_type="paragraph",
         )
@@ -662,7 +675,70 @@ def build_slots(pieces: list[Piece], source: SourceDocument) -> list[Slot]:
             slot.limit_bottom = max(limit, slot.source_box[3])
             slot.box = (slot.box[0], slot.source_box[1],
                         slot.box[2], slot.limit_bottom)
+    _assign_slot_marks(slots)
     return slots
+
+
+def _assign_slot_marks(slots: list[Slot]) -> None:
+    """Give every source mark to exactly one slot on its own page.
+
+    Source bbox only decides *which* translated slot owns the mark — where the
+    mark is drawn inside that slot is decided by typesetting, so a reflowed
+    translation does not carry the mark to its old absolute coordinates.  A
+    mark whose page has no slot stays unassigned and is reported instead of
+    being dropped silently.
+    """
+    claimed: set[tuple] = set()
+    for slot in slots:
+        for piece in slot.pieces:
+            for mark in piece.item.marks:
+                key = (piece.item.segment_index, str(mark.get("bbox")),
+                       str(mark.get("text")))
+                if key in claimed:
+                    continue
+                bbox = mark.get("bbox")
+                if not bbox or len(bbox) != 4:
+                    continue
+                centre = ((float(bbox[0]) + float(bbox[2])) / 2.0,
+                          (float(bbox[1]) + float(bbox[3])) / 2.0)
+                if not _contains(slot.source_box, centre):
+                    continue
+                claimed.add(key)
+                slot.marks.append(dict(mark, segment_index=piece.item.segment_index))
+    # A mark can sit just outside every box (marks trail the sentence).  Give
+    # the leftovers to the nearest slot on the same page rather than losing
+    # them, but never to a slot on another page.
+    for slot in slots:
+        for piece in slot.pieces:
+            for mark in piece.item.marks:
+                key = (piece.item.segment_index, str(mark.get("bbox")),
+                       str(mark.get("text")))
+                if key in claimed:
+                    continue
+                bbox = mark.get("bbox")
+                if not bbox or len(bbox) != 4:
+                    continue
+                centre = ((float(bbox[0]) + float(bbox[2])) / 2.0,
+                          (float(bbox[1]) + float(bbox[3])) / 2.0)
+                nearest = min(
+                    (other for other in slots
+                     if other.page_index == piece.region.page_index),
+                    key=lambda other: _distance(other.source_box, centre),
+                    default=None)
+                if nearest is None:
+                    continue
+                claimed.add(key)
+                nearest.marks.append(dict(mark, segment_index=piece.item.segment_index))
+
+
+def _contains(rect, point) -> bool:
+    return (rect[0] <= point[0] <= rect[2]) and (rect[1] <= point[1] <= rect[3])
+
+
+def _distance(rect, point) -> float:
+    dx = max(rect[0] - point[0], 0.0, point[0] - rect[2])
+    dy = max(rect[1] - point[1], 0.0, point[1] - rect[3])
+    return (dx * dx + dy * dy) ** 0.5
 
 
 def widen_to_column(source_page: SourcePage, slot: Slot) -> tuple:

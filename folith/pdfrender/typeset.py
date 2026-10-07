@@ -312,17 +312,67 @@ class Block:
     paragraph_indent: float = 0.0
     weight: str = "regular"
     italic: bool = False
+    #: Footnote/superscript marks restored after this block's text.  Each entry
+    #: is the persisted source provenance; the marker size is derived from the
+    #: *translated* body size, never copied from the source page.
+    marks: list = field(default_factory=list)
+
+
+#: The marker's own size relative to the body, taken from the source
+#: (marker span size / body size), clamped so a badly measured source cannot
+#: produce an unreadable or oversized marker.
+MARKER_SCALE_MIN = 0.45
+MARKER_SCALE_MAX = 0.80
+MARKER_SCALE_DEFAULT = 0.62
+#: Baseline raise for the restored marker, in ems of the marker's own size.
+MARKER_RAISE_EM = 0.34
+
+
+def marker_runs(block: Block) -> list[tuple[str, float, float]]:
+    """``(text, size_pt, baseline_em)`` for each mark restored on this block.
+
+    The mark is anchored to the translated text it belongs to, so the size is a
+    function of the translated body size rather than the source page's absolute
+    numbers.  Order follows the source's own mark order.
+    """
+    runs = []
+    for mark in block.marks or []:
+        text = str((mark or {}).get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            size = float(mark.get("size") or 0.0)
+            body = float(mark.get("body_size") or 0.0)
+        except (TypeError, ValueError):
+            size = body = 0.0
+        scale = (size / body) if body > 0 else MARKER_SCALE_DEFAULT
+        scale = min(max(scale, MARKER_SCALE_MIN), MARKER_SCALE_MAX)
+        runs.append((text, max(1.0, block.size * scale), MARKER_RAISE_EM))
+    return runs
 
 
 def _styled_body(block: Block) -> str:
     """Typst content for one block, without the enclosing block container."""
-    color = '"#' + "".join(f"{max(0, min(255, round(c * 255))):02x}" for c in block.color) + '"'
+    color = '"#' + "".join(f"{max(0, min(255, round(c * 255))):02x}" for c in block.color)
+    color += '"'
     align = {"start": "start", "left": "start", "right": "end",
              "center": "center", "justify": "start"}.get(block.align, "start")
     indent = (f"first-line-indent: {block.paragraph_indent:.2f}pt,"
               if block.paragraph_indent else "")
     weight = ', weight: "bold"' if block.weight == "bold" else ""
     style = ', style: "italic"' if block.italic else ""
+    body = _escape(block.text)
+    for text, size, raise_em in marker_runs(block):
+        # ``typographic: false`` is deliberate: the OpenType superscript feature
+        # either merges the digit into the surrounding run or leaves it on the
+        # baseline, so a restored mark came out as a subscript.  With the
+        # feature off the mark is its own smaller run, and Typst's y axis points
+        # down, so raising it takes a negative baseline.
+        # Keeping the mark in the paragraph flow is what makes it wrap with the
+        # sentence it annotates instead of drifting to the old source
+        # coordinates.
+        body += (f'#super(size: {size:.2f}pt, typographic: false, '
+                 f'baseline: -{raise_em:.2f}em)[{_escape(text)}]')
     return (
         f"#set text(font: ({', '.join(_quoted(f) for f in block.families)}), "
         f"size: {block.size:.2f}pt, fill: rgb({color}), "
@@ -331,7 +381,7 @@ def _styled_body(block: Block) -> str:
         f"{'true' if block.align == 'justify' else 'false'}"
         f"{',' + indent if indent else ''})\n"
         f"#text(dir: {block.direction})[\n"
-        f"#align({align})[{_escape(block.text)}]\n]\n"
+        f"#align({align})[{body}]\n]\n"
     )
 
 

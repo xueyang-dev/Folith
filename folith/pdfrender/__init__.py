@@ -241,6 +241,14 @@ def _page_cache_key(source_text: str, resolved, mode: str, settings: dict) -> st
             "size": round(entry["size"], 3),
             "height": round(entry["height"], 2),
             "source_box": [round(v, 2) for v in entry["slot"].source_box],
+            # Restored markers are part of the page's content: leaving them out
+            # served a stale page whenever only a mark changed.
+            "marks": [{
+                "text": str(mark.get("text") or ""),
+                "bbox": [round(float(v), 2) for v in (mark.get("bbox") or [])],
+                "size": round(float(mark.get("size") or 0.0), 3),
+                "body_size": round(float(mark.get("body_size") or 0.0), 3),
+            } for mark in (entry["slot"].marks or [])],
             "pieces": [{
                 "segment": piece.item.segment_index,
                 "text": piece.text,
@@ -306,7 +314,7 @@ def _block_for(slot: layout.Slot, *, size: float, families, color, direction,
                 else max(4.0, height)),
         text=slot.text, size=size, families=list(families), color=color,
         direction=direction, align=align, line_height=line_height,
-        weight=weight, italic=italic,
+        weight=weight, italic=italic, marks=list(slot.marks or []),
     )
 
 
@@ -670,9 +678,30 @@ def _build_report(source_bytes, output_bytes, items, slots, page_reports,
         "unfinished": unfinished,
         "untranslated": list(untranslated),
         "missing_glyphs": font_notes,
+        "markers": _marker_evidence(items, slots),
         "source_page_sizes": source_sizes,
         "bytes": len(output_bytes),
         "output_sha256": hashlib.sha256(output_bytes).hexdigest(),
+    }
+
+
+def _marker_evidence(items, slots) -> dict:
+    """Marker restoration evidence, with the two failure modes kept apart.
+
+    ``unlocated_source_marks`` are upstream: the segment never resolved to a
+    source region, so no renderer could place its mark.  ``unplaced_renderer_marks``
+    are this renderer's own failures.  Reporting them as one number would hide
+    which stage to fix.
+    """
+    source_total = sum(len(item.marks or []) for item in items)
+    unlocated = sum(len(item.marks or []) for item in items
+                    if item.skipped_reason == "no_verified_region")
+    placed = sum(len(slot.marks or []) for slot in slots)
+    return {
+        "source_marks": source_total,
+        "restored_marks": placed,
+        "unlocated_source_marks": unlocated,
+        "unplaced_renderer_marks": max(0, source_total - unlocated - placed),
     }
 
 
