@@ -87,3 +87,113 @@ jobs:
           PY
           "$RUNNER_TEMP/folith/bin/folith" --help
           "$RUNNER_TEMP/folith/bin/python" "$GITHUB_WORKSPACE/scripts/release_smoke.py"
+
+  desktop-macos:
+    name: macOS desktop build and release checks
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[test]"
+          python -m pip install -r requirements-desktop-build.txt
+      - name: Install the OCR engine used to stage the bundled payload
+        run: brew install tesseract
+      - name: Build the desktop bundle
+        run: bash scripts/build_desktop.sh
+      - name: Desktop gate (frozen app, handshake, lifecycle, diagnostics)
+        env:
+          FOLITH_D0_FROZEN_GUI: "1"
+          FOLITH_DESKTOP_FROZEN_APP: ${{ github.workspace }}/dist/desktop/Folith.app/Contents/MacOS/Folith
+        run: |
+          python -m pytest tests/desktop_handshake_test.py tests/desktop_frozen_test.py             tests/desktop_single_instance_test.py tests/desktop_exit_flow_test.py             tests/desktop_diagnostics_test.py tests/desktop_legacy_import_test.py             tests/desktop_tool_discovery_test.py tests/desktop_app_identity_test.py             tests/desktop_file_actions_test.py tests/desktop_dmg_test.py             tests/desktop_release_plumbing_test.py tests/desktop_release_checks_test.py             tests/desktop_release_notes_test.py tests/gui_launcher_test.py -q
+      - name: Build the DMG
+        run: bash scripts/build_dmg.sh
+      - name: End-to-end reproducibility sweep
+        env:
+          FOLITH_DESKTOP_FROZEN_APP: ${{ github.workspace }}/dist/desktop/Folith.app/Contents/MacOS/Folith
+        run: python scripts/desktop_e2e_sweep.py --skip-slow
+      - name: Release checks and manifest
+        run: python scripts/release_checks.py --mount --out build/desktop/release-manifest.json
+      - name: Verify the release notes match the manifest
+        run: python scripts/release_notes.py --check
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: folith-macos-desktop
+          path: |
+            dist/desktop/*.dmg
+            build/desktop/release-manifest.json
+            build/desktop/dmg_record.json
+            build/desktop/e2e-sweep/sweep.json
+          if-no-files-found: error
+
+  qt-macos:
+    # The Qt candidate is built in one interpreter environment: the same venv
+    # that runs the tests, builds the app, the DMG, the manifest and the notes.
+    # The retired shell's chain installed dependencies with setup-python and then
+    # called a script expecting $ROOT/venv (MAC-03), so this job creates the venv
+    # it uses and installs the real desktop dependency set.
+    name: macOS Qt candidate (build, frozen flow, DMG, release checks)
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Create the build interpreter and install dependencies
+        run: |
+          python -m venv venv
+          venv/bin/python -m pip install --upgrade pip
+          venv/bin/python -m pip install -r requirements.txt
+          venv/bin/python -m pip install PySide6 pytest
+      - name: Qt client tests (adapter, window, release plumbing)
+        run: |
+          venv/bin/python -m pytest tests/qt_client_adapter_test.py \
+            tests/qt_client_window_test.py tests/qt_release_plumbing_test.py -q
+      - name: Install the OCR engine used to stage the bundled payload
+        run: brew install tesseract
+      - name: Build the Qt bundle
+        run: bash scripts/build_qt_desktop.sh
+      - name: Frozen main flow (import/translate/edit/review/deliver/exit/reopen)
+        run: |
+          venv/bin/python scripts/qt_desktop_probe.py \
+            --data-dir "$RUNNER_TEMP/qt-probe/data" \
+            --out "$RUNNER_TEMP/qt-probe/report.json" --fixture both
+      - name: Frozen bundled OCR baseline (eng/chi_sim/ara, no Homebrew on PATH)
+        run: |
+          venv/bin/python scripts/qt_ocr_baseline_runner.py \
+            --out "$RUNNER_TEMP/qt-ocr" \
+            --frozen-app "$GITHUB_WORKSPACE/dist/qt-desktop/Folith.app/Contents/MacOS/Folith"
+      - name: Build the DMG
+        run: bash scripts/build_qt_dmg.sh
+      - name: Release manifest and generated notes for this candidate
+        run: |
+          venv/bin/python scripts/qt_release_checks.py --write
+          venv/bin/python scripts/qt_release_checks.py --write-notes
+          venv/bin/python scripts/qt_release_checks.py --check-notes
+      - name: DMG acceptance probe (mount, install a copy, run)
+        run: |
+          venv/bin/python scripts/qt_dmg_probe.py \
+            --dmg "$(ls dist/qt-desktop/*.dmg | head -1)" \
+            --out "$RUNNER_TEMP/qt-dmg"
+      - name: Upload the Qt candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: folith-qt-macos
+          path: |
+            dist/qt-desktop/*.dmg
+            build/qt-desktop/release-manifest.json
+            build/qt-desktop/dmg_record.json
+            build/qt-desktop/desktop_build_info.json
+            build/qt-desktop/native_min_os_bundle.json
+            docs/qt-beta/release-notes.md
+          if-no-files-found: error

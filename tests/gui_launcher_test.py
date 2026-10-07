@@ -11,8 +11,10 @@
 一度造成这个用例约 1/3 的运行概率性失败。
 """
 import errno
+import os
 import socket
 import sys
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -140,3 +142,176 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# --- 桌面 / 源码分派（roadmap §3.1「源码 CLI 保留解释器启动路径」） ----------
+
+
+class _FakeProc:
+    """Minimal stand-in for the Streamlit child process."""
+
+    def __init__(self):
+        self.waited = False
+        self.terminated = False
+        self._alive = True
+
+    def wait(self, timeout=None):  # noqa: D401 - 模拟子进程
+        self.waited = True
+        self._alive = False
+        return 0
+
+    def poll(self):
+        return None if self._alive else 0
+
+    def terminate(self):
+        self.terminated = True
+        self._alive = False
+
+    def kill(self):
+        self.terminated = True
+        self._alive = False
+
+
+def _dispatch_probe(monkeypatch, argv, *, frozen):
+    """记录 main() 走的是桌面路径还是源码路径，不真正启动任何东西。"""
+    calls = {"desktop": 0, "popened": [], "waited": False}
+
+    def fake_run_desktop(args):
+        calls["desktop"] += 1
+        return 7
+
+    monkeypatch.setattr(gui, "run_desktop", fake_run_desktop)
+    from folith.desktop import paths as desktop_paths
+
+    # gui.main() imports this module locally, so patch the module itself.
+    monkeypatch.setattr(desktop_paths, "is_frozen", lambda: frozen)
+    monkeypatch.setattr(gui, "_check_streamlit", lambda: True)
+    monkeypatch.setattr(gui, "pick_port", lambda port: 8600)
+    monkeypatch.setattr(gui, "wait_ready", lambda url: True)
+
+    proc = _FakeProc()
+
+    def fake_popen(cmd, *args, **kwargs):
+        calls["popened"].append(cmd)
+        return proc
+
+    monkeypatch.setattr(gui.subprocess, "Popen", fake_popen)
+    code = gui.main(argv)
+    calls["waited"] = proc.waited
+    return code, calls
+
+
+def test_legacy_flag_keeps_the_interpreter_launch_path(monkeypatch):
+    code, calls = _dispatch_probe(monkeypatch, ["--legacy", "--no-browser"], frozen=True)
+    assert calls["desktop"] == 0, "--legacy must never open a desktop window"
+    assert calls["popened"], "the source path must spawn the Streamlit server"
+    command = calls["popened"][0]
+    assert command[:3] == [sys.executable, "-m", "streamlit"]
+    assert code == 0
+
+
+def test_frozen_without_legacy_uses_the_desktop_path(monkeypatch):
+    code, calls = _dispatch_probe(monkeypatch, [], frozen=True)
+    assert calls["desktop"] == 1 and code == 7
+    assert not calls["popened"], "the frozen app must not spawn a second Streamlit server"
+
+
+def test_explicit_desktop_flag_uses_the_desktop_path_in_source_mode(monkeypatch):
+    code, calls = _dispatch_probe(monkeypatch, ["--desktop"], frozen=False)
+    assert calls["desktop"] == 1 and code == 7
+
+
+def test_source_mode_without_flags_stays_on_the_source_path(monkeypatch):
+    code, calls = _dispatch_probe(monkeypatch, ["--no-browser"], frozen=False)
+    assert calls["desktop"] == 0
+    assert calls["popened"], "source runs keep the existing interpreter launch path"
+    assert code == 0
+
+
+# --- 桌面模式退出码契约（roadmap §3.1「失败显示原因和日志入口」） ------------
+
+
+class _FakeDesktopService:
+    """Minimal desktop service so the exit-code contract can be tested."""
+
+    def __init__(self, **kwargs):
+        self.paths = types.SimpleNamespace(
+            data_dir=Path("/tmp/folith-exit-test/data"),
+            log_dir=Path("/tmp/folith-exit-test/logs"),
+            service_log=Path("/tmp/folith-exit-test/logs/service.log"),
+            launcher_log=Path("/tmp/folith-exit-test/logs/launcher.log"))
+        self.stopped = False
+        self.running = False
+
+    def start(self):
+        identity = types.SimpleNamespace(instance_id="test-instance", startup_token="token")
+        service = types.SimpleNamespace(pid=os.getpid(), port=51999)
+        evidence = types.SimpleNamespace(instance_id="test-instance", service_pid=os.getpid(),
+                                        port=51999, app_version="0.5.0", build_id="test-build")
+        return types.SimpleNamespace(url="http://127.0.0.1:51999", identity=identity,
+                                     service=service, evidence=evidence, paths=self.paths)
+
+    def stop(self):
+        self.stopped = True
+        return types.SimpleNamespace(launcher_child_gone=True, service_pid_gone=True,
+                                     port_released=True, acknowledged=True,
+                                     residual_pids=[])
+
+
+class _FakeInstanceLock:
+    def __init__(self, paths):
+        self.paths = paths
+
+    def acquire(self):
+        return True
+
+    def record(self):
+        return None
+
+    def publish(self, record):
+        return None
+
+    def release(self):
+        return None
+
+
+def _desktop_run(monkeypatch, *, pywebview=True, window_ok=True, script=None):
+    """Run run_desktop against fakes; `script` triggers the automation-load path."""
+
+    from folith.desktop import diagnostics as desktop_diagnostics
+    from folith.desktop import launcher as desktop_launcher
+    from folith.desktop import single_instance
+
+    monkeypatch.setattr(desktop_launcher, "DesktopService", _FakeDesktopService)
+    monkeypatch.setattr(single_instance, "AppInstanceLock", _FakeInstanceLock)
+    monkeypatch.setattr(single_instance, "build_record", lambda identity, service: object())
+    monkeypatch.setattr(desktop_diagnostics, "write_diagnostics",
+                        lambda paths, pywebview_version=None: paths.log_dir / "diagnostics.json")
+    monkeypatch.setattr(gui, "_check_pywebview", lambda: pywebview)
+    monkeypatch.setattr(gui, "open_native_window", lambda url, **kwargs: window_ok)
+
+    class Args:
+        # Only the attributes run_desktop actually reads.
+        ready_timeout = 1.0
+        browser = False
+        no_browser = False
+        automation_script = script
+        automation_result = None
+
+    return gui.run_desktop(Args())
+
+
+def test_missing_pywebview_fails_with_code_3(monkeypatch):
+    assert _desktop_run(monkeypatch, pywebview=False) == 3
+
+
+def test_window_creation_failure_fails_with_code_4(monkeypatch):
+    assert _desktop_run(monkeypatch, window_ok=False) == 4
+
+
+def test_automation_script_failure_fails_with_code_8(monkeypatch):
+    assert _desktop_run(monkeypatch, script="/definitely/missing/probe.py") == 8
+
+
+def test_healthy_desktop_run_returns_zero(monkeypatch):
+    assert _desktop_run(monkeypatch, script=None) == 0

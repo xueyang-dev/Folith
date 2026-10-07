@@ -1,0 +1,28 @@
+{
+  "dataset": "tesseract-ocr/tessdata_fast",
+  "languages": [
+    {
+      "bytes": 4113088,
+      "file": "eng.traineddata",
+      "language": "eng",
+      "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+      "source": "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+    },
+    {
+      "bytes": 2469156,
+      "file": "chi_sim.traineddata",
+      "language": "chi_sim",
+      "sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
+      "source": "https://github.com/tesseract-ocr/tessdata_fast/raw/main/chi_sim.traineddata"
+    },
+    {
+      "bytes": 1432056,
+      "file": "ara.traineddata",
+      "language": "ara",
+      "sha256": "e3206d3dc87fd50c24a0fb9f01838615911d25168f4e64415244b67d2bb3e729",
+      "source": "https://github.com/tesseract-ocr/tessdata_fast/raw/main/ara.traineddata"
+    }
+  ],
+  "licence": "Apache-2.0",
+  "note": "Pinned OCR baseline for the desktop build (roadmap §3.4). All three packs are tessdata_fast; the packs installed by Homebrew on the development machine were NOT usable with tesseract 5.5.0 for chi_sim (load failed), so the build must use these verified files."
+}
