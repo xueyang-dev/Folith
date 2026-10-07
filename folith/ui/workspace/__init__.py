@@ -20,7 +20,7 @@ from folith.ui.workspace.inspector import (
     render_workspace_inspector_fragment,
 )
 from folith.ui.workspace.runtime import (
-    render_runtime_strip_fragment,
+    refresh_workspace_on_runtime_stop,
 )
 from folith.ui.workspace.translation import (
     render_translation_workspace_fragment,
@@ -40,6 +40,6 @@ __all__ = [
     "render_translation_segment_actions",
     "render_workspace_translation_context",
     "render_workspace_inspector_fragment",
-    "render_runtime_strip_fragment",
+    "refresh_workspace_on_runtime_stop",
     "render_translation_workspace_fragment",
 ]

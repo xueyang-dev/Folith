@@ -25,6 +25,12 @@ from folith import translation_planner as _planner
 from folith.textual import text_direction
 from folith.ui.i18n import tr as _t, html_literal as _h, localized_formatter as _localized_formatter
 
+#: 段落结构编辑被禁用的运行态：worker 正在产出段落。成员派生自唯一的活动状态
+#: 集合（排除暂停两态与请求态，它们没有正在执行的段落操作）。
+_STRUCTURE_BLOCKING_STATUSES = (
+    core.RUNTIME_ACTIVE_STATUSES
+    - {"resume_requested", "cancelling", "pausing", "paused"})
+
 CAT_GRID_ROWS = 40
 
 
@@ -165,10 +171,12 @@ def render_translation_segment_actions(
     else:
         runtime_view = core.get_job_runtime_status(job_id, state)
         runtime_status = runtime_view.get("status") or "idle"
-        blocked = runtime_status in {"running", "waiting_external", "queued", "starting"}
+        # 只有"worker 正在产出段落"的运行态才需要禁用结构编辑；暂停两态没有
+        # 正在执行的段落操作。成员来自唯一的活动状态集合。
+        blocked = runtime_status in _STRUCTURE_BLOCKING_STATUSES
 
     with st.popover(
-            "", icon=":material/more_horiz:", help=_t("更多段落操作"),
+            _t("更多段落操作"), icon=":material/more_horiz:", help=_t("更多段落操作"),
             key=f"cat_actions_{job_id}_{index}", use_container_width=True):
         # Primary row tools are icons; cleanup and destructive actions stay in overflow.
         source_text = str(pair.get("source") or "").strip()

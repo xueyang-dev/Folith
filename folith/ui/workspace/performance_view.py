@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import streamlit as st
 
 from folith.trace import trace
+from folith.application import commands as _app_commands
 from folith.ui.i18n import tr as _t, html_literal as _h, localized_formatter as _localized_formatter
 
 # Stage display name mapping (internal identifiers -> friendly Chinese)
@@ -250,27 +251,32 @@ def _map_stage_explanation(stage: Optional[str]) -> str:
 
 
 def _map_status(status: Optional[str]) -> Tuple[str, str]:
-    """Return friendly status text and color code."""
+    """Return friendly status text and the *theme token* for its colour.
+
+    These values land in inline HTML, which the theme layer never rewrites, so
+    they must be tokens rather than literals — otherwise a cobalt "running" dot
+    follows the user into Paper mode.
+    """
     s = str(status or "").strip().lower()
     if s in {"paused", "pausing"}:
-        return ("已暂停" if s == "paused" else "正在暂停"), "#64748b"
+        return ("已暂停" if s == "paused" else "正在暂停"), "var(--tp-sub)"
     if s == "waiting_external":
-        return "等待模型响应", "#d97706"
+        return "等待模型响应", "var(--tp-warn)"
     if s == "running":
-        return "正在运行", "#2563eb"
+        return "正在运行", "var(--tp-primary)"
     elif s in {"completed", "success"}:
-        return "已完成", "#16a34a"
+        return "已完成", "var(--tp-success)"
     elif s in {"failed", "error"}:
-        return "运行失败", "#dc2626"
+        return "运行失败", "var(--tp-danger)"
     elif s == "cancelling":
-        return "正在取消", "#ea580c"
+        return "正在取消", "var(--tp-warn)"
     elif s == "cancelled":
-        return "已取消", "#64748b"
+        return "已取消", "var(--tp-sub)"
     elif s in {"interrupted", "stalled"}:
-        return "已中断", "#d97706"
+        return "已中断", "var(--tp-warn)"
     elif s in {"waiting_manual"}:
-        return "待确认", "#0284c7"
-    return "准备中", "#4f46e5"
+        return "待确认", "var(--tp-primary)"
+    return "准备中", "var(--tp-faint)"
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -451,7 +457,7 @@ def _render_simple_view(
 
     # 5. Header: Status & Stage
     st.markdown(
-        (_h('<div style="margin-bottom: 14px;"><div class="tp-runtime-drawer-kicker" style="font-size: 0.78em; font-weight: 600; text-transform: uppercase; color: gray; letter-spacing: 0.5px; margin-bottom: 6px;">运行概要</div><div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;"><span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: ') + str(status_color) + ';"></span><span style="font-size: 0.9em; font-weight: 600; color: ' + str(status_color) + ';">' + str(escape(status_label)) + '</span></div><div style="font-size: 1.35em; font-weight: 700; color: var(--text-color, #1e293b); line-height: 1.25;">' + str(escape(stage_title)) + _h('</div><div style="display: flex; gap: 14px; font-size: 0.82em; color: gray; margin-top: 6px;"><span>任务阶段：<strong>') + str(escape(pipeline_label)) + _h('</strong></span></div><div style="font-size: 0.83em; color: #475569; background: rgba(37, 99, 235, 0.05); border-left: 3px solid #2563eb; padding: 7px 11px; border-radius: 4px; margin-top: 10px; line-height: 1.45;">💡 <strong>阶段说明</strong>：') + str(escape(stage_explanation)) + '</div></div>'),
+        (_h('<div style="margin-bottom: 14px;"><div class="tp-runtime-drawer-kicker" style="font-size: 0.78em; font-weight: 600; text-transform: uppercase; color: var(--tp-faint); letter-spacing: 0.5px; margin-bottom: 6px;">运行概要</div><div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;"><span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: ') + str(status_color) + ';"></span><span style="font-size: 0.9em; font-weight: 600; color: ' + str(status_color) + ';">' + str(escape(status_label)) + '</span></div><div style="font-size: 1.35em; font-weight: 700; color: var(--tp-ink); line-height: 1.25;">' + str(escape(stage_title)) + _h('</div><div style="display: flex; gap: 14px; font-size: 0.82em; color: var(--tp-faint); margin-top: 6px;"><span>任务阶段：<strong>') + str(escape(pipeline_label)) + _h('</strong></span></div><div style="font-size: 0.83em; color: var(--tp-sub); background: var(--tp-primary-soft); padding: 7px 11px; border-radius: 4px; margin-top: 10px; line-height: 1.45;">💡 <strong>阶段说明</strong>：') + str(escape(stage_explanation)) + '</div></div>'),
         unsafe_allow_html=True,
     )
 
@@ -472,7 +478,7 @@ def _render_simple_view(
     detail_msg = stage_explanation
 
     st.markdown(
-        (_h('<div style="background: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.12); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px;"><div style="font-size: 0.78em; font-weight: 600; text-transform: uppercase; color: gray; letter-spacing: 0.5px; margin-bottom: 4px;">当前步骤</div><div style="font-size: 0.95em; font-weight: 600; margin-bottom: 4px;">') + str(escape(stage_title)) + '</div><div style="font-size: 0.85em; color: gray; line-height: 1.45;">' + str(escape(str(detail_msg))) + '</div></div>'),
+        (_h('<div style="background: var(--tp-surface-sunken); border: 1px solid var(--tp-hairline-strong); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px;"><div style="font-size: 0.78em; font-weight: 600; text-transform: uppercase; color: var(--tp-faint); letter-spacing: 0.5px; margin-bottom: 4px;">当前步骤</div><div style="font-size: 0.95em; font-weight: 600; margin-bottom: 4px;">') + str(escape(stage_title)) + '</div><div style="font-size: 0.85em; color: var(--tp-faint); line-height: 1.45;">' + str(escape(str(detail_msg))) + '</div></div>'),
         unsafe_allow_html=True,
     )
 
@@ -484,7 +490,7 @@ def _render_simple_view(
     events = [e for e in events if not e.get("stage") or str(e["stage"]).lower() in {model["stage"], model["operation_id"]}]
 
     st.markdown(
-        _h('<div style="font-size: 0.78em; font-weight: 600; text-transform: uppercase; color: gray; letter-spacing: 0.5px; margin-bottom: 8px;">最近活动</div>'),
+        _h('<div style="font-size: 0.78em; font-weight: 600; text-transform: uppercase; color: var(--tp-faint); letter-spacing: 0.5px; margin-bottom: 8px;">最近活动</div>'),
         unsafe_allow_html=True,
     )
     if events:
@@ -493,47 +499,27 @@ def _render_simple_view(
             clk = _format_clock(ev.get("timestamp") or ev.get("at"))
             msg = _map_activity_event(ev, total_batches_hint=total_batches_hint)
             st.markdown(
-                f'<div style="display: flex; gap: 12px; font-size: 0.85em; padding: 5px 0; border-bottom: 1px solid rgba(128,128,128,0.08); align-items: baseline;">'
-                f'<span style="font-family: monospace; color: gray; flex-shrink: 0;">{escape(clk)}</span>'
-                f'<span style="color: var(--text-color, #334155);">{escape(msg)}</span>'
+                f'<div style="display: flex; gap: 12px; font-size: 0.85em; padding: 5px 0; border-bottom: 1px solid var(--tp-hairline-strong); align-items: baseline;">'
+                f'<span style="font-family: monospace; color: var(--tp-faint); flex-shrink: 0;">{escape(clk)}</span>'
+                f'<span style="color: var(--tp-sub);">{escape(msg)}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
         st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
     else:
         st.markdown(
-            _h('<div style="font-size: 0.85em; color: gray; padding: 4px 0 10px 0;">暂无最近活动</div>'),
+            _h('<div style="font-size: 0.85em; color: var(--tp-faint); padding: 4px 0 10px 0;">暂无最近活动</div>'),
             unsafe_allow_html=True,
         )
 
     # 9. Canonical Bottom Action Button
+    # 动作合法性来自唯一的运行时动作策略（`core.runtime_actions_for_status`）；
+    # 这里只决定按钮顺序、文案与回调，不再从 status 字面量推导"哪些动作合法"。
     import core
+    actions = set(core.runtime_actions_for_status(raw_status))
+    primary_action = core.primary_runtime_action_for_status(raw_status)
     if (view.get("runtime") or {}).get("segment_operation") and raw_status not in core.RUNTIME_ACTIVE_STATUSES:
         st.caption(_t("段落操作已停止；请返回原段落查看结果或重试。"))
-    elif raw_status in {"running", "waiting_external", "starting", "queued", "resume_requested"}:
-        if st.button(_t("取消任务"), key=f"btn_cancel_{job_id}", type="secondary", width="stretch"):
-            if callable(on_cancel):
-                on_cancel()
-            else:
-                core.request_job_cancel(job_id)
-                st.rerun()
-    elif raw_status == "cancelling":
-        st.button(_t("正在取消…"), key=f"btn_cancelling_{job_id}", disabled=True, width="stretch")
-    elif raw_status in {"failed", "stalled"}:
-        if st.button(_t("重试当前步骤"), key=f"btn_retry_{job_id}", type="primary", width="stretch"):
-            if callable(on_retry):
-                on_retry()
-            else:
-                core.retry_job_step(job_id)
-                st.session_state.pop("runtime_drawer_job_id", None)
-                st.rerun()
-    elif raw_status in {"interrupted", "cancelled", "idle_incomplete"}:
-        if st.button(_t("继续处理"), key=f"btn_resume_{job_id}", type="primary", width="stretch"):
-            if callable(on_resume):
-                on_resume()
-            else:
-                st.session_state.pop("runtime_drawer_job_id", None)
-                st.rerun()
     elif raw_status in {"completed", "success"}:
         if st.button(_t("查看结果"), key=f"btn_view_{job_id}", type="primary", width="stretch"):
             st.session_state.pop("runtime_drawer_job_id", None)
@@ -541,6 +527,31 @@ def _render_simple_view(
             st.session_state["active_job_id"] = job_id
             st.session_state["workspace_section"] = "report" if state and state.get("p2_done") else "translation"
             st.rerun()
+    elif primary_action == "retry" and "retry" in actions:
+        if st.button(_t("重试当前步骤"), key=f"btn_retry_{job_id}", type="primary", width="stretch"):
+            if callable(on_retry):
+                on_retry()
+            else:
+                _app_commands.retry_job(job_id)
+                st.session_state.pop("runtime_drawer_job_id", None)
+                st.rerun()
+    elif primary_action == "resume" and "resume" in actions:
+        if st.button(_t("继续处理"), key=f"btn_resume_{job_id}", type="primary", width="stretch"):
+            if callable(on_resume):
+                on_resume()
+            else:
+                st.session_state.pop("runtime_drawer_job_id", None)
+                st.rerun()
+    elif "cancel" in actions:
+        if st.button(_t("取消任务"), key=f"btn_cancel_{job_id}", type="secondary", width="stretch"):
+            if callable(on_cancel):
+                on_cancel()
+            else:
+                _app_commands.cancel_job(job_id)
+                st.rerun()
+    elif raw_status in {"cancelling", "resume_requested", "pausing", "starting", "queued"}:
+        st.button(_t("正在取消…") if raw_status == "cancelling" else _t("正在恢复…"),
+                  key=f"btn_pending_{job_id}", disabled=True, width="stretch")
 
     # 10. Secondary Low-weight Entry: 高级诊断 >
     st.markdown("<div style='text-align: center; margin-top: 10px;'>", unsafe_allow_html=True)

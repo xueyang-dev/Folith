@@ -64,8 +64,22 @@ from folith.ui.workspace import translation as _translation_ui
 from folith.ui import session as _ui_session
 from folith.ui import browser as _browser
 from folith import profiler
-from folith.ui.i18n import tr as _t, html_literal as _h, localized_formatter as _localized_formatter, current_locale as _current_ui_locale
+from folith.ui.i18n import (tr as _t, html_literal as _h, localized_formatter as _localized_formatter,
+                            current_locale as _current_ui_locale, LANGUAGES as _UI_LANGUAGES)
 from folith.ui import preferences as _preferences
+# Architecture Phase 1: the shared, frontend-neutral job contract.  Streamlit
+# only translates its own UI values into `JobConfig`; every default, resume
+# precedence rule, normalization and validation lives in that module.
+from folith.application import JobConfig as _JobConfig
+from folith.application.settings import (
+    DEFAULT_STYLE_RULES as _DEFAULT_STYLE_RULES,
+    SettingsSources as _SettingsSources,
+    resolve_effective_settings as _resolve_settings,
+)
+# Architecture Phase 3: the shared application command surface.  Streamlit keeps
+# its layout and labels but no longer owns a second implementation of the
+# runtime/product actions.
+from folith.application import commands as _application_commands
 
 # Older Streamlit versions (including the Python 3.9-compatible line) do not
 # expose persist_state; widget keys provide the fallback there.
@@ -3120,7 +3134,7 @@ def _render_runtime_drawer_content(job_id):
 
     def _do_retry():
         _close_runtime_drawer()
-        core.retry_job_step(job_id)
+        _application_commands.retry_job(job_id)
         _resume_job(job_id, state)
         st.rerun()
 
@@ -3130,7 +3144,7 @@ def _render_runtime_drawer_content(job_id):
         st.rerun()
 
     def _do_cancel():
-        core.request_job_cancel(job_id)
+        _application_commands.cancel_job(job_id)
         st.rerun()
 
     from folith.ui.workspace.performance_view import render_performance_drawer
@@ -3155,13 +3169,50 @@ else:
             _render_runtime_drawer_content(job_id)
 
 
+# 运行区只决定**布局与文案**："哪个动作合法"来自唯一的运行时动作策略
+# `core.runtime_actions_for_status`（Architecture Phase 3：Streamlit 不再从
+# status 字面量重新推导可用动作）。
+_RUNTIME_ACTION_LABELS = {
+    "resume": "继续处理", "retry": "重试当前步骤", "cancel": "取消",
+    "pause": "暂停任务", "continue": "继续任务",
+}
+_RUNTIME_ACTION_BUTTON_KEYS = {
+    "resume": "runtime_resume_{job}", "retry": "runtime_retry_{job}",
+    "cancel": "runtime_cancel_{job}", "pause": "runtime_pause_{job}",
+    "continue": "runtime_continue_{job}",
+}
+#: 动作列/暂停列各自渲染的动作，顺序即布局顺序（主动作排在最前）。
+_RUNTIME_PRIMARY_SLOTS = ("resume", "retry", "cancel")
+_RUNTIME_SECONDARY_SLOTS = ("pause", "continue")
+#: 没有可执行动作的过渡状态显示一句只读提示，而不是空白。
+_RUNTIME_TRANSITION_HINTS = {
+    "resume_requested": ("正在恢复…", "runtime_resuming_{job}"),
+    "pausing": ("正在暂停…", "runtime_pausing_{job}"),
+    "cancelling": ("正在取消…", "runtime_cancelling_{job}"),
+}
 # 这些运行状态下，Banner 内的运行区会给出自己的主动作（继续处理 / 重试 /
-# 放弃 / 正在恢复…），调用方不得再渲染第二个 canonical 主动作按钮。
-_RUNTIME_ACTION_STATUSES = frozenset({
-    "resume_requested", "queued", "starting", "running", "waiting_external",
-    "cancelling", "interrupted", "idle_incomplete", "cancelled", "stalled",
-    "failed",
-})
+# 取消 / 正在恢复…），调用方不得再渲染第二个 canonical 主动作按钮。
+# 由动作策略推导，不再手写清单。
+_RUNTIME_ACTION_STATUSES = frozenset(
+    status for status in core.RUNTIME_ACTIONS
+    if status not in {"idle", "completed", "waiting_manual"})
+
+
+def _apply_runtime_action(action, job_id, state):
+    """执行一个 canonical 运行动作（做什么＝产品语义，委托给共享应用命令）。"""
+    if action == "resume":
+        _resume_job(job_id, state)
+    elif action == "retry":
+        _application_commands.retry_job(job_id)
+        _resume_job(job_id, core.load_job_state(job_id) or state)
+    elif action == "cancel":
+        _application_commands.cancel_job(job_id)
+    elif action == "pause":
+        _application_commands.pause_job(job_id)
+    elif action == "continue":
+        if not _application_commands.continue_job(job_id):
+            _resume_job(job_id, core.load_job_state(job_id) or state)
+    st.rerun()
 
 
 @st.fragment(run_every="2s")
@@ -3178,52 +3229,43 @@ def _render_runtime_strip(job_id, state, view=None):
     model = runtime_presentation(view, state)
     st.markdown(hud_html(model), unsafe_allow_html=True)
 
+    # 合法性来自唯一策略；本函数只决定布局、文案与按钮顺序。
+    try:
+        actions = set(core.runtime_actions_for_status(status))
+        primary_action = core.primary_runtime_action_for_status(status)
+    except AttributeError:  # 兼容只注入了 read_runtime_view 的旧渲染探针
+        actions, primary_action = set(), None
+    # "继续任务"（worker 存活）比"继续处理"（已停止、从检查点恢复）更精确；
+    # core.resume_job 对 paused 任务本身也会转到 continue_job，因此不同时渲染两者。
+    primary_slots = [action for action in _RUNTIME_PRIMARY_SLOTS
+                     if action in actions
+                     and not (action == "resume" and "continue" in actions)]
+    secondary_slots = [action for action in _RUNTIME_SECONDARY_SLOTS if action in actions]
+
     with st.container(key=f"workspace_runtime_actions_{job_id}"):
         action_col, pause_col, detail_col = st.columns([1, 1, 1], gap="small")
         with action_col:
-            if status in {"resume_requested", "queued", "starting"}:
-                st.button(_t("正在恢复…"), key=f"runtime_resuming_{job_id}",
-                          disabled=True, width="content")
-            elif status == "paused":
-                if st.button(_t("取消"), key=f"runtime_cancel_{job_id}", width="content"):
-                    core.request_job_cancel(job_id)
-                    st.rerun()
-            elif status == "cancelling":
-                st.button(_t("正在取消…"), key=f"runtime_cancelling_{job_id}",
-                          disabled=True, width="content")
-            elif status in {"running", "waiting_external"}:
-                if st.button(_t("取消"), key=f"runtime_cancel_{job_id}",
-                             width="content"):
-                    core.request_job_cancel(job_id)
-                    st.rerun()
-            elif status in {"interrupted", "idle_incomplete", "cancelled"}:
-                if st.button(_t("继续处理"), type="primary",
-                             key=f"runtime_resume_{job_id}", width="content"):
-                    _resume_job(job_id, state)
-                    st.rerun()
-            elif status == "stalled" and core.is_job_worker_alive(job_id):
-                if st.button(_t("放弃当前运行"), type="primary",
-                             key=f"runtime_abandon_{job_id}", width="content"):
-                    core.request_job_cancel(job_id)
-                    st.rerun()
-            elif status in {"failed", "stalled"}:
-                if st.button(_t("重试当前步骤"), type="primary",
-                             key=f"runtime_retry_{job_id}", width="content"):
-                    core.retry_job_step(job_id)
-                    _resume_job(job_id, core.load_job_state(job_id) or state)
-                    st.rerun()
+            for action in primary_slots:
+                label = _RUNTIME_ACTION_LABELS[action]
+                if action == "cancel" and status == "stalled":
+                    label = "放弃当前运行"
+                if st.button(
+                        _t(label),
+                        type="primary" if action == primary_action else "secondary",
+                        key=_RUNTIME_ACTION_BUTTON_KEYS[action].format(job=job_id),
+                        width="content"):
+                    _apply_runtime_action(action, job_id, state)
+            if not primary_slots:
+                hint = _RUNTIME_TRANSITION_HINTS.get(status)
+                if hint:
+                    st.button(_t(hint[0]), key=hint[1].format(job=job_id),
+                              disabled=True, width="content")
         with pause_col:
-            if status in {"running", "waiting_external"}:
-                if st.button(_t("暂停任务"), key=f"runtime_pause_{job_id}", width="content"):
-                    core.request_job_pause(job_id)
-                    st.rerun()
-            elif status == "pausing":
-                st.button(_t("正在暂停…"), key=f"runtime_pausing_{job_id}", disabled=True, width="content")
-            elif status == "paused":
-                if st.button(_t("继续任务"), key=f"runtime_continue_{job_id}", width="content"):
-                    if not core.continue_job(job_id):
-                        _resume_job(job_id, core.load_job_state(job_id) or state)
-                    st.rerun()
+            for action in secondary_slots:
+                if st.button(
+                        _t(_RUNTIME_ACTION_LABELS[action]), width="content",
+                        key=_RUNTIME_ACTION_BUTTON_KEYS[action].format(job=job_id)):
+                    _apply_runtime_action(action, job_id, state)
         with detail_col:
             drawer_open = st.session_state.get(_RUNTIME_DRAWER_KEY) == job_id
             if st.button(_t("运行详情 →" if not drawer_open else "运行详情 · 已打开"),
@@ -3980,19 +4022,25 @@ def _analyze_translation_decisions(job_id, index, state):
     decisions = _translation_decisions.parse_analysis_response(
         raw, source, target, _translation_segment_id(job_id, index, pair))
 
-    # Re-read before persisting so analysis cannot overwrite a concurrent edit.
-    latest = core.load_job_state(job_id) or state
-    latest_pairs = latest.get("pairs") or []
-    if not 0 <= index < len(latest_pairs):
-        raise RuntimeError("分析期间段落结构发生变化；结果未保存。")
-    latest_pair = latest_pairs[index]
-    if _translation_decisions.pair_fingerprint(
-            latest_pair.get("source"), latest_pair.get("target")) != \
-            _translation_decisions.pair_fingerprint(source, target):
-        raise RuntimeError("分析期间译文已变化；结果未保存，请重新审视当前版本。")
-    latest_pair["translation_decision_analysis"] = \
-        _translation_decisions.make_cached_analysis(source, target, decisions)
-    core.save_job_state(job_id, latest)
+    # Re-read *inside* the state transaction lock and re-validate before
+    # persisting, so analysis cannot overwrite a concurrent edit from another
+    # surface (Streamlit session, Qt client, CLI).
+    decisions_out = decisions
+
+    def _persist_analysis(latest):
+        latest_pairs = latest.get("pairs") or []
+        if not 0 <= index < len(latest_pairs):
+            raise RuntimeError("分析期间段落结构发生变化；结果未保存。")
+        latest_pair = latest_pairs[index]
+        if _translation_decisions.pair_fingerprint(
+                latest_pair.get("source"), latest_pair.get("target")) != \
+                _translation_decisions.pair_fingerprint(source, target):
+            raise RuntimeError("分析期间译文已变化；结果未保存，请重新审视当前版本。")
+        latest_pair["translation_decision_analysis"] = \
+            _translation_decisions.make_cached_analysis(
+                source, target, decisions_out)
+
+    core.mutate_job_state(job_id, _persist_analysis)
     return decisions
 
 
@@ -5721,6 +5769,140 @@ def _render_source_exclusion_panel(job_id, state, source_paras, quality_gate):
             st.rerun()
 
 
+def _render_source_rescan_panel(job_id, state):
+    """「重新扫描 PDF」入口：显示当前 OCR 语言，并允许修改后重扫。
+
+    修改 OCR 语言会重新 OCR 并使旧的原文派生结果（清洗、分句、译文对齐）按
+    state contract 失效；这一点在按钮上明确写出，不做隐式行为。
+    """
+    filename = str(state.get("filename") or "")
+    if not filename.lower().endswith(".pdf"):
+        return
+    current = state.get("ocr_config") or {}
+    current_language = str(current.get("ocr_language")
+                           or state.get("ocr_language") or "eng")
+    current_quality = str(current.get("ocr_quality") or "standard")
+    current_dpi = current.get("ocr_dpi") or 0
+    current_mode = core.normalize_ocr_mode(
+        current.get("ocr_mode") or state.get("ocr_mode"))
+    direction = str(current.get("ocr_text_direction") or "")
+    mode_options = core.ocr_mode_options()
+    mode_labels = {str(item["value"]): f"{item['label']} · {item['label_zh']}"
+                   for item in mode_options}
+    mode_values = [str(item["value"]) for item in mode_options]
+    options = core.ocr_language_options()
+    labels = {str(item["value"]): str(item["label"]) for item in options}
+    values = [str(item["value"]) for item in options]
+    if current_language not in labels:
+        values.append(current_language)
+        labels[current_language] = current_language
+    quality_options = core.ocr_quality_options()
+    quality_labels = {str(item["value"]): f"{item['label']} · {item['dpi']} DPI"
+                      for item in quality_options}
+    quality_values = [str(item["value"]) for item in quality_options]
+    if current_quality not in quality_labels:
+        quality_values.append(current_quality)
+        quality_labels[current_quality] = current_quality
+    with st.expander(_t("重新扫描 PDF（OCR 模式 / 语言 / 扫描质量）"), expanded=False):
+        st.caption(_t('当前 OCR：{v0} · {v1} · {v2}{v3}。修改 OCR 模式或语言会重新识别'
+                   '整份 PDF，并使已有译文对齐失效。',
+                   v0=mode_labels.get(current_mode, current_mode),
+                   v1=labels.get(current_language, current_language),
+                   v2=quality_labels.get(current_quality, current_quality),
+                   v3=(f" · {direction.upper()}" if direction else "")))
+        engine_key = f"rescan_ocr_backend_{job_id}"
+        source_options = core.ocr_source_options()
+        source_values = [str(item["value"]) for item in source_options]
+        source_labels = {str(item["value"]): str(item["label"]) for item in source_options}
+        st.session_state.setdefault(engine_key, current.get("ocr_backend") or "tesseract")
+        if st.session_state.get(engine_key) not in source_values:
+            st.session_state[engine_key] = "tesseract"
+        picked_engine = st.selectbox(
+            _t("OCR 来源"), source_values, key=engine_key,
+            help=_t("更换来源会重新识别整份 PDF；线上 OCR 会把页面图像发送到所配置的服务。"),
+            format_func=lambda value: source_labels.get(value, value))
+        picked_paddle_model = "official"
+        rescan_online_descriptor = None
+        if picked_engine == "paddle":
+            paddle_key = f"rescan_ocr_paddle_model_{job_id}"
+            models = core.paddle_model_options()
+            model_labels = {str(item["model_id"]): str(item["label"]) for item in models}
+            model_values = [str(item["model_id"]) for item in models]
+            st.session_state.setdefault(
+                paddle_key, current.get("ocr_paddle_model") or "official")
+            if st.session_state.get(paddle_key) not in model_labels:
+                st.session_state[paddle_key] = "official"
+            picked_paddle_model = st.selectbox(
+                _t("Paddle 模型"), model_values, key=paddle_key,
+                format_func=lambda value: model_labels.get(value, value))
+            model_status = core.ocr_paddle_model_status(picked_paddle_model, current_language)
+            if model_status.get("message"):
+                (st.caption if model_status.get("ok") else st.warning)(
+                    _t(model_status["message"]))
+        elif picked_engine == "online":
+            with st.expander(_t("线上 OCR 连接与模型"), expanded=False):
+                _render_ocr_online_settings(key_prefix=f"rescan_{job_id}_")
+            rescan_online_descriptor = _session_ocr_online_descriptor(
+                key_prefix=f"rescan_{job_id}_")
+        rescan_mode_key = f"rescan_ocr_mode_{job_id}"
+        st.session_state.setdefault(rescan_mode_key, current_mode)
+        picked_mode = st.selectbox(
+            _t("OCR mode / OCR 模式"), mode_values, key=rescan_mode_key,
+            help=_t("Auto：文本层通过质量检测才使用，否则自动 OCR。"
+                 "Force OCR：忽略文本层，始终重新 OCR。Text layer only：不 OCR。"),
+            format_func=lambda value: mode_labels.get(value, value))
+        ocr_col, quality_col = st.columns(2, gap="medium")
+        rescan_lang_key = f"rescan_ocr_language_{job_id}"
+        rescan_quality_key = f"rescan_ocr_quality_{job_id}"
+        st.session_state.setdefault(rescan_lang_key, current_language)
+        st.session_state.setdefault(rescan_quality_key, current_quality)
+        with ocr_col:
+            picked = st.selectbox(
+                _t("OCR language / 扫描文字语言"), values,
+                key=rescan_lang_key,
+                format_func=lambda value: labels.get(value, value))
+        with quality_col:
+            picked_quality = st.selectbox(
+                _t("OCR quality / 扫描质量"), quality_values,
+                key=rescan_quality_key,
+                format_func=lambda value: quality_labels.get(value, value))
+        status = core.ocr_engine_status(
+            picked_engine, picked, paddle_model=picked_paddle_model,
+            online_config=rescan_online_descriptor)
+        if status.get("quality_note"):
+            st.caption(_t(status["quality_note"]))
+        if not status.get("ok"):
+            st.warning(_t(status.get("message") or "OCR 语言包不可用。"))
+        busy = core.is_job_worker_alive(job_id) or core.job_is_active(job_id)
+        if busy:
+            st.caption(_t("任务正在运行，完成后才能重新扫描。"))
+        if st.button(_t("重新扫描 PDF 原文"), key=f"rescan_source_{job_id}",
+                     disabled=busy or not status.get("ok"), width="stretch",
+                     icon=":material/refresh:"):
+            rescan_options = {
+                "ocr_language": picked,
+                "ocr_backend": picked_engine,
+                "ocr_paddle_model": picked_paddle_model,
+                "ocr_online": rescan_online_descriptor,
+                "ocr_quality": picked_quality,
+                "ocr_dpi": core.ocr_quality_dpi(picked_quality),
+                "ocr_mode": picked_mode,
+            }
+
+            def _request_rescan(latest, _options=rescan_options):
+                latest["source_rescan_requested"] = True
+                latest["source_rescan_options"] = dict(_options)
+
+            # The request is persisted inside the state transaction lock so a
+            # concurrent edit from another surface cannot be overwritten by the
+            # snapshot this rerun happened to render.
+            core.mutate_job_state(job_id, _request_rescan)
+            _resume_job(job_id, core.load_job_state(job_id) or state)
+            _set_workspace_flash(
+                "已开始重新扫描；完成后请检查原文与译文对齐。", "success")
+            st.rerun()
+
+
 def _render_translation_scope_strip(job_id, state):
     """Keep rare structural undo available without reserving a status row."""
     undo = core.can_undo_translation_segment_structure(state)
@@ -6905,7 +7087,10 @@ def _render_workspace_qa(job_id, state):
     if structural in {"PASS", "FAIL", "NOT_RUN"} and structural != qa.get("structural_qa"):
         qa["structural_qa"] = structural
         state["final_qa"] = qa
-        core.save_job_state(job_id, state)
+        # Persist only this change onto the current authoritative state, inside
+        # its transaction lock: the rendered snapshot may be older than disk.
+        core.mutate_job_state(
+            job_id, lambda latest, _qa=qa: latest.__setitem__("final_qa", _qa))
     st.markdown(_h('<h3 class="tp-qa-heading">独立最终质量事实</h3>'), unsafe_allow_html=True)
     qa_rows = [
         ("structural_qa", "DOCX 结构检查", structural, "文档结构、段落与确定性规则"),
@@ -7690,12 +7875,12 @@ def _render_report_status_card(job_id, view):
         progress_html = (f'<div class="tp-report-status-progress" aria-label="报告生成步骤 {escape(progress)}">'
                           f'<i style="width:{progress_pct}%"></i></div>')
     st.markdown(
-        ('<div class="tp-report-overall is-' + str(view["tone"]) + _h('"><div class="tp-report-overall-head"><div><div class="tp-report-toolbar-kicker">报告状态</div><h3>') + str(escape(view["overall_label"])) + '</h3></div>' + str(_workspace_status_badge(view["overall_label"], view["tone"])) + _h('</div><div class="tp-report-overall-grid"><div><span>当前阶段</span><strong>') + str(escape(current_step)) + _h('</strong></div><div><span>生成步骤</span><strong>') + str(escape(progress)) + _h('</strong></div><div><span>最近运行信号</span><strong>') + str(escape(_runtime_clock(signal))) + '</strong></div></div>' + str(progress_html) + '<p class="tp-report-overall-detail">' + str(escape(detail)) + '</p></div>'), unsafe_allow_html=True)
+        ('<div class="tp-report-overall is-' + str(view["tone"]) + _h('"><div class="tp-report-overall-head"><div><div class="tp-report-toolbar-kicker">报告状态</div><h3>') + str(escape(_t(view["overall_label"]))) + '</h3></div>' + str(_workspace_status_badge(view["overall_label"], view["tone"])) + _h('</div><div class="tp-report-overall-grid"><div><span>当前阶段</span><strong>') + str(escape(_t(current_step))) + _h('</strong></div><div><span>生成步骤</span><strong>') + str(escape(progress)) + _h('</strong></div><div><span>最近运行信号</span><strong>') + str(escape(_runtime_clock(signal))) + '</strong></div></div>' + str(progress_html) + '<p class="tp-report-overall-detail">' + str(escape(detail)) + '</p></div>'), unsafe_allow_html=True)
     if view["overall"] == "running":
         with st.popover(_t("更多操作"), use_container_width=False):
             if st.button(_t("取消任务"), type="secondary", width="stretch",
                          key=f"report_cancel_{job_id}"):
-                core.request_job_cancel(job_id)
+                _application_commands.cancel_job(job_id)
                 st.rerun()
 
 
@@ -7861,17 +8046,20 @@ def _render_report_draft(job_id, state, view, artifacts, report, headings):
 def _render_report_runtime_details(job_id, view, artifacts):
     runtime = view["runtime"]
     runtime_status = runtime.get("runtime_status") or runtime.get("status")
-    if runtime_status in {"interrupted", "idle_incomplete", "cancelled"}:
+    # 动作合法性来自唯一策略；这里只决定提示语气与按钮文案。
+    actions = set(core.runtime_actions_for_status(runtime_status))
+    if "resume" in actions and runtime_status in {
+            "interrupted", "idle_incomplete", "cancelled"}:
         st.info(_t("这次运行没有完成；已保存的报告产物仍然保留，可以从当前检查点继续。"))
         if st.button(_t("继续处理"), type="primary", key=f"report_runtime_resume_{job_id}",
                      width="stretch"):
             _resume_job(job_id, core.load_job_state(job_id) or {})
             st.rerun()
-    elif runtime_status in {"failed", "stalled"}:
+    elif "retry" in actions:
         st.error(_t("报告运行未完成。查看下方阶段和技术详情后，可以重试当前步骤。"))
         if st.button(_t("重试当前步骤"), type="primary", key=f"report_runtime_retry_{job_id}",
                      width="stretch"):
-            core.retry_job_step(job_id)
+            _application_commands.retry_job(job_id)
             _resume_job(job_id, core.load_job_state(job_id) or {})
             st.rerun()
 
@@ -8281,12 +8469,21 @@ def _render_workspace_delivery(job_id, state, overview=None):
                         if updated_config != delivery_config:
                             state["delivery_config"] = updated_config
                             core._invalidate_final_delivery_state(state)
-                            core.save_job_state(job_id, state)
+
+                            def _apply_delivery(latest, _config=dict(updated_config)):
+                                latest["delivery_config"] = dict(_config)
+                                core._invalidate_final_delivery_state(latest)
+
+                            core.mutate_job_state(job_id, _apply_delivery)
                             st.rerun()
 
         # Action Strip
         if missing_indexes:
-            st.warning(_t('有 {v0} 段尚无译文。可以继续导出；双语对照中的译文保持空白。', v0=len(missing_indexes)))
+            missing_notice = (
+                '有 {v0} 段尚无译文。可以继续导出；双语对照中的译文保持空白。'
+                if translation_truth_gate_pass else
+                '有 {v0} 段尚无译文。当前暂不可导出，请先完成翻译并处理译文检查问题。')
+            st.warning(_t(missing_notice, v0=len(missing_indexes)))
             with st.expander(_t("查看缺译段落"), expanded=False):
                 st.caption(_t("段落编号：" + "、".join(str(index + 1) for index in missing_indexes)))
         if blockers and hard_gate_reasons:
@@ -8735,12 +8932,18 @@ def _render_workspace_shell(job_id, state):
     segmentation_migration = (state.get("segmentation") or {}).get("migration") or {}
     if segmentation_migration.get("version") and not segmentation_migration.get("persisted"):
         segmentation_migration["persisted"] = True
-        core.save_job_state(job_id, state)
+
+        def _persist_migration(latest):
+            migration = (latest.get("segmentation") or {}).get("migration") or {}
+            if migration.get("version"):
+                migration["persisted"] = True
+
+        core.mutate_job_state(job_id, _persist_migration)
     _render_workspace_fragment(job_id, state)
 
 
 def _render_live_workspace(job_id):
-    """Render workspace shell stably; live progress is isolated to render_runtime_strip_fragment."""
+    """Render workspace shell stably; live progress is isolated to `_render_runtime_strip`."""
     _render_workspace_shell(job_id, core.load_job_state(job_id) if job_id else None)
 
 # ================= Product shell / state =================
@@ -12295,91 +12498,140 @@ elif st.session_state.get("report_template_removed"):
     research_settings.pop("report_template_contract", None)
 
 
-def _pipeline_kwargs(state=None):
-    """Build the current UI configuration for a new or resumed worker."""
-    state = state if isinstance(state, dict) else {}
-    saved = state.get("pipeline_config") or {}
-    academic_state = state.get("academic_state") or {}
-    persisted = bool(saved or state.get("p1_done") or state.get("p2_done")
-                     or academic_state.get("artifacts"))
-    resume_report = saved.get("enable_report") if saved else \
-        state.get("report_enabled", enable_report) if persisted else enable_report
-    if state and (academic_state.get("artifacts") or academic_state.get(
-            "current_stage") not in {None, "", "not_started"}):
-        resume_report = True
-    resume_annotate = saved.get("enable_annotate") if "enable_annotate" in saved \
-        else state.get("enable_annotate", enable_annotate) if persisted else enable_annotate
-    delivery = state.get("delivery_config") or output_config
-    delivery = core.normalize_delivery_config(
-        delivery, enable_report=resume_report, enable_annotate=resume_annotate)
-    saved_reasoning = saved.get("reasoning_effort", reasoning_effort)
-    effective_reasoning = (saved_reasoning
-                           if saved_reasoning in core.reasoning_effort_options(
-                               ai_provider, ai_model) else "")
-    understanding_default = strategy_config.get("enable_understanding", True)
-    if persisted and "enable_understanding" not in saved:
-        understanding_default = bool(
-            state.get("profile_done") or state.get("understanding_done")
-            or state.get("quality_mode"))
-    return {
+def _settings_sources(state=None):
+    """Raw configuration layers for one web action.
+
+    Architecture Phase 4: this is a *translation* of widgets, session state and
+    stored preferences into named layers — never a second implementation of
+    "which value wins".  Precedence, defaults and resume behaviour belong to
+    :func:`folith.application.settings.resolve_effective_settings`.
+
+    * ``explicit``        — what the user currently has selected (session state),
+    * ``user_defaults``   — the strategy/delivery presets behind those choices,
+    * ``provider_profile``— ``provider_config.json`` (where the connection lives),
+    * ``job_state``       — the persisted task, which decides a resume.
+    """
+    batch_size, max_batch_chars = _batch_params(strategy_config)
+    explicit = {
         "provider": ai_provider,
         "api_key": api_key,
         "model": ai_model,
-        "reasoning_effort": effective_reasoning,
-        "target_lang": saved.get("target_lang") or state.get("target_lang") or target_lang,
-        "auto_term": saved.get("auto_term", auto_term),
-        "enable_report": bool(resume_report),
-        "translation_theory": saved.get("translation_theory") or
-        state.get("theory") or translation_theory,
-        "user_glossary": state.get("glossary") or user_glossary,
-        "style_rules": saved.get("style_rules", style_rules),
-        "enable_review": saved.get("enable_review", enable_review),
-        "enable_annotate": bool(resume_annotate),
-        "use_tm": saved.get("use_tm", use_tm),
-        "enable_understanding": saved.get(
-            "enable_understanding", understanding_default),
-        "enable_source_cleanup": saved.get(
-            "enable_source_cleanup",
-            str(state.get("filename") or "").lower().endswith(".pdf")
-            if persisted else None),
-        "batch_size": _batch_params(saved or strategy_config)[0],
-        "max_batch_chars": _batch_params(saved or strategy_config)[1],
-        "segmentation_mode": (
-            saved.get("segmentation_mode")
-            or ((state.get("segmentation") or {}).get("mode")
-                if (state.get("segmentation") or {}).get("locked") else None)
-            or strategy_config.get("segmentation_mode", "sentence")),
-        "translation_concurrency": int(saved.get("translation_concurrency") or strategy_config.get("translation_concurrency", 4)),
         "translator_base_url": api_base,
-        "strict_terminology_governance": saved.get(
-            "strict_terminology_governance", state.get(
-                "quality_mode", strict_terminology_governance)),
-        **({
-            "reviewer_provider": reviewer_provider,
-            "reviewer_model": reviewer_model,
-            "reviewer_api_key": reviewer_api_key,
-            "reviewer_base_url": reviewer_base_url,
-        } if reviewer_mode == "separate" else {}),
-        "research_settings": state.get("research_settings") or research_settings,
-        "literature_sources": state.get("literature_sources") or literature_sources,
-        "delivery_config": delivery,
+        "reasoning_effort": reasoning_effort,
+        "reviewer_mode": reviewer_mode,
+        "reviewer_provider": reviewer_provider,
+        "reviewer_model": reviewer_model,
+        "reviewer_api_key": reviewer_api_key,
+        "reviewer_base_url": reviewer_base_url,
+        "target_lang": target_lang,
+        "auto_term": auto_term,
+        "translation_theory": translation_theory,
+        "user_glossary": user_glossary,
+        "style_rules": style_rules,
+        "enable_review": enable_review,
+        "enable_annotate": enable_annotate,
+        "enable_report": enable_report,
+        "use_tm": use_tm,
+        "ocr_language": st.session_state.get("ocr_language"),
+        "ocr_quality": st.session_state.get("ocr_quality"),
+        "ocr_mode": st.session_state.get("ocr_mode"),
+        "ocr_backend": st.session_state.get("ocr_backend"),
+        "ocr_paddle_model": st.session_state.get("ocr_paddle_model"),
+        "ocr_online": _session_ocr_online_descriptor(),
+        "research_settings": research_settings,
+        "literature_sources": literature_sources,
     }
+    user_defaults = {
+        "enable_understanding": strategy_config.get("enable_understanding", True),
+        "strict_terminology_governance":
+            strategy_config.get("strict_terminology_governance", False),
+        "segmentation_mode": strategy_config.get("segmentation_mode", "sentence"),
+        "translation_concurrency": strategy_config.get("translation_concurrency", 4),
+        "batch_size": batch_size,
+        "max_batch_chars": max_batch_chars,
+        "delivery_config": output_config,
+    }
+    profile = core.load_provider_config() or {}
+    reviewer = profile.get("reviewer")
+    reviewer = reviewer if isinstance(reviewer, dict) else {}
+    provider_profile = {
+        "provider": profile.get("provider") or "",
+        "model": profile.get("model") or "",
+        "api_key": profile.get("api_key") or "",
+        "translator_base_url": profile.get("base_url") or None,
+        "reasoning_effort": profile.get("reasoning_effort") or "",
+        "reviewer_mode": "separate" if reviewer.get("provider") else "same",
+        "reviewer_provider": reviewer.get("provider") or "",
+        "reviewer_model": reviewer.get("model") or "",
+        "reviewer_api_key": reviewer.get("api_key") or "",
+        "reviewer_base_url": reviewer.get("base_url") or "",
+    }
+    explicit_values = {key: value for key, value in explicit.items()
+                       if value is not None}
+    # Deliberately left to the core's own rule: the web surface does not pin
+    # these, and the contract's `None` semantics carry that meaning explicitly.
+    explicit_values.update({
+        "enable_source_cleanup": None, "ocr_dpi": None, "ocr_psm": None,
+    })
+    return _SettingsSources(
+        explicit=explicit_values,
+        user_defaults=user_defaults,
+        provider_profile=provider_profile,
+        job_state=state if isinstance(state, dict) else {},
+    )
+
+
+def _pipeline_kwargs(state=None):
+    """Build the current UI configuration for a new or resumed worker.
+
+    Architecture Phase 1: the effective configuration is resolved by the shared
+    application contract (``folith.application.JobConfig``); this function is a
+    thin frontend adapter and no longer owns a second implementation of the
+    job contract.
+    """
+    return _resolve_settings(_settings_sources(state)).to_job_config() \
+        .to_pipeline_kwargs()
+
 
 
 def _resume_job(job_id, state):
-    return core.resume_job(
-        job_id, state.get("filename") or "当前任务",
-        _pipeline_kwargs(state), base_url=api_base)
+    """Resume a stopped task through the shared application command.
+
+    The command re-reads the authoritative state under the Phase 2 transaction
+    lock, resolves the same JobConfig the UI would, and owns the "resume rather
+    than start" decision — Streamlit no longer assembles the call itself.  The
+    task's own filename comes from the state the command loads.
+    """
+    try:
+        return _application_commands.start_job(
+            job_id, _settings_sources(state),
+            filename=str((state or {}).get("filename") or ""))
+    except _application_commands.ApplicationError as exc:
+        # A refused resume must be visible and must not take the page down.
+        st.error(_t(str(exc)))
+        return False
 
 # ================= Main views =================
 setup_placeholder = st.empty()
 with setup_placeholder.container():
     if app_view == "settings":
-        _page_title(_t("AI 引擎"), _t("配置一次，所有新任务自动使用当前连接"))
+        # 「设置」是**工具区**的完整配置落点（侧栏 Utility Bar 上的 ⚙）。它不伪装成
+        # 第四个资料库，也不是 AI Engine 的别名：AI 引擎只是它下面的一个分区，
+        # 外观与语言在这里有完整入口（Sidebar 上只留 Popover 快速切换）。
+        _page_title(_t("设置"), _t("界面偏好与 AI 引擎；配置一次，所有新任务自动使用当前连接"))
+        with st.container(key="settings_preferences"):
+            st.markdown(
+                _h('<div class="tp-settings-section-head">偏好'
+                '<span>主题与界面语言的完整设置</span></div>'),
+                unsafe_allow_html=True)
+            if st.button(_t("外观与语言"), key="settings_appearance_entry",
+                         icon=":material/contrast:", width="stretch"):
+                _open_appearance_page()
+                st.rerun()
         if not core.is_onboarded():
             st.caption(_t("首次使用：选择服务商 → 填写 API 密钥与模型 → 保存配置 → 点击「测试连接」通过后即可开始翻译。"))
         st.markdown(
-            _h('<div class="tp-settings-section-head">连接设置'
+            _h('<div class="tp-settings-section-head">AI 引擎'
             '<span>选择服务商并确认模型可用</span></div>'),
             unsafe_allow_html=True)
         pc1, pc2 = st.columns(2)
@@ -13148,19 +13400,24 @@ if tasks:
             if style_selection:
                 core.write_profile_artifacts(job_id, doc_profile, style_selection)
                 if doc_profile and doc_profile.get("domain"):
-                    job_state = core.load_job_state(job_id) or {}
-                    if not job_state.get("profile_done"):
-                        job_state["document_profile"] = doc_profile
-                        job_state["profile_done"] = True
-                        core.save_job_state(job_id, job_state)
+                    def _persist_profile(latest, _profile=doc_profile):
+                        if not latest.get("profile_done"):
+                            latest["document_profile"] = _profile
+                            latest["profile_done"] = True
+
+                    core.mutate_job_state(job_id, _persist_profile)
             if task["file_bytes"] is not None:
                 st.session_state.source_parse_state = "parsing"
-            if file_bytes is None:
-                started = core.resume_job(
-                    job_id, filename, _pipeline_kwargs(state), base_url=api_base)
-            else:
-                started = core.start_job_worker(
-                    job_id, filename, file_bytes, _pipeline_kwargs(state), base_url=api_base)
+            # Start/resume through the shared application command: it owns the
+            # transaction-prepared state, the resolved JobConfig and the
+            # start-vs-resume decision for every frontend.
+            try:
+                started = _application_commands.start_job(
+                    job_id, _settings_sources(state), filename=filename,
+                    file_bytes=file_bytes)
+            except _application_commands.ApplicationError as exc:
+                st.error(_t(str(exc)))
+                continue
             if started or core.is_job_worker_alive(job_id):
                 started_jobs.append(job_id)
                 st.session_state.active_job_id = job_id

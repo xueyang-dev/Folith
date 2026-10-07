@@ -237,10 +237,29 @@ def test_pdf_fragment_rerun_isolation():
 
 
 def test_runtime_strip_isolation():
-    """Invariant: Runtime status bar polling (2s) is isolated and does not trigger translation re-evaluations."""
+    """Invariant: Runtime status bar polling (2s) is isolated and does not trigger translation re-evaluations.
+
+    Architecture Phase 3 removed the duplicate strip that used to live in
+    ``folith.ui.workspace.runtime``: it was unreachable, and its resume calls had
+    an invalid signature.  There is now exactly one strip implementation
+    (``app.py::_render_runtime_strip``, a 2-second polling fragment), and this
+    module keeps only the "reload once when a run stops" helper the shell uses.
+    """
+    import ast
+    from pathlib import Path
+
     from folith.ui.workspace import runtime
     from folith.ui.workspace import translation
 
-    # Verify runtime strip has 2s polling isolated to itself
-    assert callable(runtime.render_runtime_strip_fragment)
-    assert runtime.render_runtime_strip_fragment is not translation.render_translation_workspace_fragment
+    # The one live responsibility of this module is the stop/reload helper.
+    assert callable(runtime.refresh_workspace_on_runtime_stop)
+    # No second strip implementation is allowed to reappear here.
+    assert not hasattr(runtime, "render_runtime_strip_fragment")
+    # The live strip is a self-contained polling fragment and is a different
+    # function from the translation workspace fragment.
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text())
+    strip = next(node for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name == "_render_runtime_strip")
+    decorators = [ast.unparse(item) for item in strip.decorator_list]
+    assert any("st.fragment" in item and "run_every" in item for item in decorators), decorators
+    assert not hasattr(translation, "_render_runtime_strip")
