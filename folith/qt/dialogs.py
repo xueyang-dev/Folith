@@ -321,9 +321,14 @@ class EngineDialog(QDialog):
         self.deliver_evidence_box = style_module.CheckBox(i18n.tr('段落证据 JSONL（segment_evidence.jsonl）'))
         self.deliver_evidence_box.setChecked(bool(getattr(self.config, "deliver_evidence", True)))
         self.deliver_original_pdf_box = style_module.CheckBox(
-            i18n.tr('原排版译文 PDF（original_layout.pdf）'))
+            i18n.tr('原排版译文 PDF（Beta，original_layout.pdf）'))
         self.deliver_original_pdf_box.setChecked(
             bool(getattr(self.config, "deliver_original_pdf", False)))
+        # This dialog edits client defaults before a file is chosen, so it
+        # cannot know the source type; the hint states the constraint and the
+        # import mapping drops the option for a non-PDF source.
+        self.deliver_original_pdf_box.setToolTip(
+            i18n.tr('仅 PDF 任务可用：按原文件的版式重建译文页面。'))
         self.deliver_pdf_box = style_module.CheckBox(i18n.tr('译文 PDF（translation.pdf）'))
         self.deliver_pdf_box.setChecked(
             bool(getattr(self.config, "deliver_pdf", False)))

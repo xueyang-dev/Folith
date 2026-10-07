@@ -12,10 +12,10 @@ from streamlit.testing.v1 import AppTest
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
-def _step3_app(*, research=False):
+def _step3_app(*, research=False, source_name="source.docx"):
     at = AppTest.from_file(str(APP_PATH), default_timeout=30)
     at.run()
-    at.session_state["task_files"] = [{"name": "source.docx", "bytes": b"source"}]
+    at.session_state["task_files"] = [{"name": source_name, "bytes": b"source"}]
     at.session_state["task_step"] = 3
     if research:
         at.session_state["translation_preset"] = "学术增强"
@@ -66,7 +66,7 @@ def test_manual_delivery_change_marks_preset_and_complete_overwrites_it():
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
         "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx"))
     assert not config["deliver_jsonl"]
-    assert any("将生成 7 个文件" in item.value
+    assert any("将生成 6 个文件" in item.value
                and "TMX ×1" in item.value and "TBX ×1" in item.value
                for item in at.markdown)
 
@@ -200,24 +200,26 @@ def test_preset_complete_selected_counts_correct():
     assert config["deliver_plain_docx"] is True
     assert config["deliver_bilingual_docx"] is True
     assert config["deliver_pdf"] is True
-    assert config["deliver_original_pdf"] is True
+    assert config["deliver_original_pdf"] is False
     assert config["deliver_terms_xlsx"] is True
     assert config["deliver_tmx"] is True
     assert config["deliver_tbx"] is True
 
     # checkbox values match config
     for key in ("deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
-                 "deliver_original_pdf", "deliver_terms_xlsx", "deliver_tmx",
-                 "deliver_tbx"):
+                 "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx"):
         cb = next((c for c in at.checkbox if c.key == key), None)
         assert cb is not None, f"checkbox {key} not found"
         assert cb.value is True, f"checkbox {key} should be checked for complete preset"
 
     footer = _footer_file_count(at)
-    assert footer == 7, f"complete preset should generate 7 files, got {footer}"
+    # The fixture is a DOCX task, so the PDF-only original-layout artifact is
+    # not offered here; the count is asserted so a silently added or dropped
+    # artifact cannot pass.
+    assert footer == 6, f"complete preset should generate 6 files, got {footer}"
 
-    assert any("译文文件" in m.value and "已选 4" in m.value for m in at.markdown), \
-        "complete preset: 译文文件 should show 已选 4"
+    assert any("译文文件" in m.value and "已选 3" in m.value for m in at.markdown), \
+        "complete preset (DOCX task): 译文文件 should show 已选 3"
     assert any("语言资产" in m.value and "已选 3" in m.value for m in at.markdown), \
         "complete preset: 语言资产 should show 已选 3"
 
@@ -302,3 +304,35 @@ def test_delivery_cards_and_confirmation_localize_visible_copy(tmp_path, monkeyp
     runtime = next(item.value for item in at.markdown if 'class="tp-confirm-card tp-runtime-card"' in item.value)
     assert not re.search('[\u4e00-\u9fff]', runtime)
 
+
+# ---------------------------------------------------------------------------
+# The original-layout PDF is a PDF-task artifact (routing follow-up)
+# ---------------------------------------------------------------------------
+def test_original_layout_option_is_absent_for_a_docx_task():
+    at = _step3_app(source_name="source.docx")
+    assert not any(item.key == "deliver_original_pdf" for item in at.checkbox)
+    assert not any("原排版译文" in str(item.value) for item in at.markdown)
+
+
+def test_original_layout_option_is_a_beta_row_for_a_pdf_task():
+    at = _step3_app(source_name="book.pdf")
+    row = next(item for item in at.checkbox if item.key == "deliver_original_pdf")
+    assert row.value is False, "the option must stay off by default"
+    copy = " ".join(str(item.value) for item in at.markdown)
+    assert "原排版译文" in copy and "Beta" in copy
+
+
+def test_complete_preset_offers_the_original_layout_only_for_pdf_tasks():
+    at = _step3_app(source_name="book.pdf")
+    next(item for item in at.selectbox if item.label == "交付方案").select("complete")
+    at.run()
+    assert not at.exception
+    assert "将生成 7 个文件" in " ".join(str(item.value) for item in at.markdown)
+    assert at.session_state["output_config"]["deliver_original_pdf"] is True
+
+    docx = _step3_app(source_name="source.docx")
+    next(item for item in docx.selectbox if item.label == "交付方案").select("complete")
+    docx.run()
+    assert not docx.exception
+    assert docx.session_state["output_config"]["deliver_original_pdf"] is False
+    assert "将生成 6 个文件" in " ".join(str(item.value) for item in docx.markdown)

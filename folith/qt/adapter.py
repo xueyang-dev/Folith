@@ -377,6 +377,11 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
     is the same code the Streamlit app uses.
     """
     state = state if isinstance(state, dict) else {}
+    # The original-layout PDF rebuilds the source document's own pages, so it
+    # only exists for a PDF task.  A saved client preference must not travel
+    # into a DOCX job and promise an artifact that will never be produced.
+    deliver_original_pdf = bool(config.deliver_original_pdf) and (
+        core.original_layout_pdf_applicable(state.get("filename")))
     try:
         base_url = config.translator_base_url()
     except ValueError:
@@ -418,7 +423,7 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
             "deliver_plain_docx": config.deliver_plain_docx,
             "deliver_bilingual_docx": config.deliver_bilingual_docx,
             "deliver_pdf": config.deliver_pdf,
-            "deliver_original_pdf": config.deliver_original_pdf,
+            "deliver_original_pdf": deliver_original_pdf,
             "deliver_terms_xlsx": config.deliver_terms_xlsx,
             "deliver_evidence": config.deliver_evidence,
             "deliver_review_report": config.deliver_review_report,

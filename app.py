@@ -580,6 +580,33 @@ def _delivery_selected_count(config, items):
     return sum(1 for item in items if bool(config.get(item["key"])))
 
 
+def _task_source_is_pdf() -> bool:
+    """Whether the task being configured has a PDF source.
+
+    The delivery options are chosen before the job exists, so the pending
+    upload is the only source of truth available here.
+    """
+    files = st.session_state.get("task_files") or []
+    names = [str(item.get("name") or "") for item in files
+             if isinstance(item, dict)]
+    if not names:
+        existing = str(st.session_state.get("active_job_id") or "").strip()
+        if existing:
+            try:
+                state = core.load_job_state(existing) or {}
+            except Exception:  # noqa: BLE001 - a missing job has no source type
+                state = {}
+            return core.original_layout_pdf_applicable(
+                state.get("filename") or "")
+        return False
+    return any(name.lower().endswith(".pdf") for name in names)
+
+
+def _delivery_items_for_source(items, source_is_pdf: bool):
+    if source_is_pdf:
+        return tuple(items)
+    return tuple(item for item in items if not item.get("pdf_only"))
+
 
 _DELIVERY_TRANSLATION_ITEMS = (
     {
@@ -605,10 +632,12 @@ _DELIVERY_TRANSLATION_ITEMS = (
         "disambig_fmt": True,
     },
     {
-        "key": "deliver_original_pdf", "title": "原排版译文", "format": "PDF",
+        "key": "deliver_original_pdf", "title": "原排版译文（Beta）", "format": "PDF",
         "detail": "保留原文件的版式、图形与表格，译文就位；未完成的区域会在页面上标出。",
         "file_units": (("PDF", 1),),
         "disambig_fmt": True,
+        # Only a PDF source has page geometry to rebuild from.
+        "pdf_only": True,
     },
     {
         "key": "deliver_epub", "title": "译文电子书", "format": "EPUB",
@@ -754,8 +783,10 @@ def _render_delivery_item(item, *, group_key, index, config, disabled=False):
 
 
 def _render_delivery_group(title, subtitle, items, config, *, group_key,
-                           research_visible=False, after_rows=None):
+                           research_visible=False, after_rows=None,
+                           source_is_pdf=True):
     """Render a single vertical delivery group and its selected count."""
+    items = _delivery_items_for_source(items, source_is_pdf)
     count_items = [item for item in items if not item.get("nested")]
     selected = _delivery_selected_count(config, count_items)
     extra_result = None
@@ -13794,11 +13825,18 @@ with setup_placeholder.container():
                 st.session_state["output_annotate"] = False
             with st.container(key="delivery_panels"):
                 panel_left, panel_right = st.columns(2, gap="small")
+                source_is_pdf = _task_source_is_pdf()
+                # A saved or preset choice cannot apply to a non-PDF source;
+                # clear it so the summary and the job config do not claim an
+                # artifact that will never exist.
+                if not source_is_pdf and output_config.get("deliver_original_pdf"):
+                    output_config["deliver_original_pdf"] = False
+                    st.session_state["deliver_original_pdf"] = False
                 with panel_left:
                     _render_delivery_group(
                         "译文文件", "最终译文与审校用文档",
                         _DELIVERY_TRANSLATION_ITEMS, output_config,
-                        group_key="translation")
+                        group_key="translation", source_is_pdf=source_is_pdf)
                 with panel_right:
                     _render_delivery_group(
                         "语言资产", "术语、翻译记忆与结构化数据",
