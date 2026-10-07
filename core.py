@@ -4262,6 +4262,26 @@ def tm_path(project_id=None):
     return _project.project_dir(OUTPUT_DIR, project_id) / "translation_memory.json"
 
 
+def translation_cache_path(project_id=None):
+    """精确译文执行缓存的存储路径；与翻译记忆同级、同样**按项目隔离**。
+
+    这个文件是派生缓存：删掉它只会多花 API 调用，不会影响翻译真值、TM 语义、
+    顺序或交付。放在项目旁边是为了让「同一项目 + 同一原文 + 同一配置」在
+    重跑、恢复和应用重启后仍然免费。
+    """
+    return tm_path(project_id).with_name("translation_cache.json")
+
+
+def knowledge_cache_path(project_id=None):
+    """知识反馈观测缓存的存储路径；与 TM / 精确译文缓存同级、同样按项目隔离。
+
+    这个文件只保存「远程抽取计算」的规范化结果；合并、去重、优先级、事件与
+    发现仍然每次重放，所以删掉它只会多花 API 调用，不会影响项目知识、翻译
+    真值、顺序或交付。
+    """
+    return tm_path(project_id).with_name("knowledge_cache.json")
+
+
 def _tm_eligible(source, target):
     """翻译记忆资格：源文必须有字母/数字（纯符号装饰行不入库），译文非空。"""
     return has_textual_content(source) \
@@ -5379,14 +5399,28 @@ def _native_translation_response_format(provider, model, expected):
 
 
 def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, target_lang,
-                    provider, api_key, model, context_packet=None, call_llm_fn=None):
-    """翻译一个语义批次，返回与 segments 等长的译文列表；失败抛出 RuntimeError。"""
+                    provider, api_key, model, context_packet=None, call_llm_fn=None,
+                    prompt_stats=None, result_cache=None):
+    """翻译一个语义批次，返回与 segments 等长的译文列表；失败抛出 RuntimeError。
+
+    ``prompt_stats`` (optional list) collects one compact cost record per real
+    provider request: counts and a key fingerprint only, never prompt text.
+
+    ``result_cache`` (optional ``folith.translation_cache.TranslationResultCache``)
+    reuses an identical, already-paid computation.  The identity is the rendered
+    request itself, so any change that would change what the model sees — source,
+    glossary, context, style, model, generation settings — is a miss by
+    construction.  A cache hit skips the provider call only; ordering, TM,
+    review and persistence are untouched.
+    """
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(segments))
+    render_stats = {}
     if context_packet is not None:
         # Keep the system prefix invariant across batches.  Glossary/style are
         # carried once in the ordered context packet below.
         sys_prompt = _translator_system("", "", target_lang)
-        user_prompt = _context.render_context_packet(context_packet)
+        user_prompt, render_stats = _context.render_context_packet_with_stats(
+            context_packet)
     else:
         sys_prompt = _translator_system(glossary_text, style_rules, target_lang)
         context = ""
@@ -5395,9 +5429,32 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
         if ctx_next:
             context += "【后文上下文】：\n" + "\n".join(f"- {s}" for s in ctx_next) + "\n\n"
         user_prompt = f"{context}待翻译段落（按序号返回等长译文数组）：\n{numbered}"
+        render_stats = {
+            "category_chars": {
+                "glossary": len(glossary_text or ""),
+                "style": len(style_rules or ""),
+                "neighbor_context": len(context),
+            },
+            "source_chars": len(numbered),
+        }
     call_fn = call_llm_fn or call_llm
     response_format = _native_translation_response_format(
         provider, model, len(segments))
+    cache_key = None
+    if result_cache is not None:
+        cache_key = _translation_cache.prompt_fingerprint(
+            provider=provider, model=model, system_prompt=sys_prompt,
+            user_prompt=user_prompt, temperature=0.3,
+            response_format=response_format)
+        cached = result_cache.get(cache_key)
+        if cached is not None and len(cached) == len(segments):
+            if prompt_stats is not None:
+                prompt_stats.append(_translation_prompt_cost(
+                    segments=segments, system_prompt=sys_prompt,
+                    user_prompt=user_prompt, render_stats=render_stats,
+                    attempt=0, output_chars=sum(len(item) for item in cached),
+                    cache="hit"))
+            return list(cached)
     # Rate limiting is handled by the shared provider controller: it paces
     # request starts and pushes one cooldown every worker observes, instead of
     # each worker sleeping a fixed 15 s and then stampeding the provider.
@@ -5421,8 +5478,19 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
                 call_fn, provider, api_key, model, sys_prompt, user_prompt,
                 temperature=0.3, response_format=response_format)
             controller.note_success()
-            return _translation_protocol.parse_translation_response(
+            targets = _translation_protocol.parse_translation_response(
                 res, len(segments))
+            if result_cache is not None and cache_key is not None:
+                # Only a fully parsed, count-matching batch is cacheable.  A
+                # partial or malformed reply never reaches this line.
+                result_cache.put(cache_key, targets)
+            if prompt_stats is not None:
+                prompt_stats.append(_translation_prompt_cost(
+                    segments=segments, system_prompt=sys_prompt,
+                    user_prompt=user_prompt, render_stats=render_stats,
+                    attempt=_attempt + 1, output_chars=len(str(res or "")),
+                    cache="miss"))
+            return targets
         except Exception as e:
             _workflow_errors.raise_if_fatal(e, _runtime_job_id())
             if "任务已请求取消" in str(e):
@@ -6352,7 +6420,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                     auxiliary_config=None, knowledge_feedback_interval=None,
                     translation_concurrency=None, profiler=None,
                     review_overlap=None, max_review_in_flight=None,
-                    review_overlap_strategy=None):
+                    review_overlap_strategy=None, use_translation_cache=True,
+                    review_mode=None, use_knowledge_cache=True,
+                    context_mode=None, context_budget_tokens=None,
+                    context_ablations=None, context_offline=None):
     """阶段二：语义批次翻译 + 确定性检查/修复 + 独立审校 + 翻译记忆。
 
     对齐 localize-anything 经验：
@@ -6411,6 +6482,20 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             save_tm(tm, _tm_project)
             state["tm_recovered_count"] = state.get("tm_recovered_count", 0) + pending_events
             save_job_state(job_id, state)
+    # Exact execution cache.  Separate from TM on purpose: TM is reviewed
+    # linguistic memory, this is "the same request was already paid for".
+    # Losing it costs API calls, never correctness, so it fails open and is
+    # written on the same cadence as the state snapshot.
+    _result_cache = (_translation_cache.load(translation_cache_path(_tm_project))
+                     if use_translation_cache
+                     else _translation_cache.TranslationResultCache())
+    # Knowledge-feedback observation reuse.  Same project scoping as TM and the
+    # exact translation cache: the remote extraction is a pure function of the
+    # rendered request, so a repeated batch must not be paid for twice.  The
+    # local merge always re-runs, so this can never skip state reconstruction.
+    _knowledge_cache = (_knowledge_cache_module.load(
+        knowledge_cache_path(_tm_project)) if use_knowledge_cache
+        else _knowledge_cache_module.KnowledgeObservationCache())
     paras = state["paras"]
     pairs = state["pairs"]
     # Source cleanup repairs text, but a repair pass cannot prove that every
@@ -6478,6 +6563,41 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     _pending_tm_entries = []
     _pending_tm_window = {"batch": None, "offset": 0}
 
+    def _flush_result_cache():
+        """Persist cache entries added since the last flush.
+
+        Only writes when there is something new; the file is a derived side
+        cache, so a failed write is a missed optimisation, never an error.
+        """
+        if not use_translation_cache or not _result_cache.dirty():
+            return
+        started = time.perf_counter()
+        started_cpu = time.thread_time()
+        _translation_cache.save(_result_cache, translation_cache_path(_tm_project))
+        finished = time.perf_counter()
+        _critical_path.profiler().record(
+            "commit_translation_cache_flush", finished - started,
+            cpu_s=time.thread_time() - started_cpu)
+        _critical_path.count("translation_cache_flush_count")
+
+    def _flush_knowledge_cache():
+        """Persist extraction results added since the last flush.
+
+        A derived side cache: a failed write is a missed optimisation, never an
+        error, and the merge path does not depend on it.
+        """
+        if not use_knowledge_cache or not _knowledge_cache.dirty():
+            return
+        started = time.perf_counter()
+        started_cpu = time.thread_time()
+        _knowledge_cache_module.save(_knowledge_cache,
+                                     knowledge_cache_path(_tm_project))
+        finished = time.perf_counter()
+        _critical_path.profiler().record(
+            "commit_knowledge_cache_flush", finished - started,
+            cpu_s=time.thread_time() - started_cpu)
+        _critical_path.count("knowledge_cache_flush_count")
+
     def _flush_tm_promotions():
         """Persist accumulated promotions, paired with their evidence events.
 
@@ -6540,6 +6660,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _journal_bytes_written = _state_journal.size(job_id)
             _refresh_budget()
         _flush_tm_promotions()
+        _flush_result_cache()
+        _flush_knowledge_cache()
         _pending_snapshot_batches = 0
         _last_snapshot_at = time.perf_counter()
         _snapshot_stats["taken"] += 1
@@ -6670,21 +6792,32 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             batch_size=effective_batch_size, total_batches=len(batches)),
     }
     # Knowledge extraction is a continuity aid, not a second translation pass.
-    # In strict/review mode it remains per-batch; in ordinary mode it observes
-    # every batch until continuity exists, then observes at a bounded interval.
+    # Its per-batch cost is bounded by a deterministic local trigger rather than
+    # by the review mode: a batch is observed when it carries a name-like form
+    # the project does not already hold, plus a periodic checkpoint that bounds
+    # staleness for term hints.  Measured on the committed workload this keeps
+    # 100% of proper-name continuity knowledge and 88.5% of prompt-injected
+    # items at 42.6% of the calls.  An explicit ``knowledge_feedback_interval``
+    # of 1 (or strict ``quality_mode``) restores the mandatory every-batch path.
     if knowledge_feedback_interval is None:
-        feedback_interval = 1 if (enable_review or state.get("quality_mode")) else 2
+        feedback_interval = _knowledge.KNOWLEDGE_FEEDBACK_INTERVAL
     else:
         try:
             feedback_interval = max(1, int(knowledge_feedback_interval))
         except (TypeError, ValueError):
             feedback_interval = 1
+    force_knowledge_feedback = bool(
+        state.get("quality_mode") or feedback_interval <= 1)
     state["knowledge_feedback_policy"] = {
         "interval": feedback_interval,
-        "force_every_batch": bool(enable_review or state.get("quality_mode")),
+        "force_every_batch": force_knowledge_feedback,
         "batch_count": len(batches),
         "observed_batches": [],
         "skipped_batches": [],
+        "skip_reasons": {},
+        "signal_batches": [],
+        "cache_hits": 0,
+        "cache_misses": 0,
     }
     registry = _entity_registry.EntityRegistry(state.get("entity_registry") or [])
 
@@ -6950,13 +7083,19 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _mark("_setup")
             if to_translate:
                 _translation_runtime("translation_generation", f"正在翻译第 {offset + 1}–{offset + len(batch)} 段")
+                # Per-request prompt cost, aggregated by the caller after the
+                # batch commits.  Counts only: the prompt text never leaves the
+                # request assembly.
+                batch_prompt_cost = []
                 try:
                     targets = translate_batch(texts, ctx_prev, ctx_next, glossary_text, style_rules,
                                               target_lang, translator_config["provider"],
                                               translator_config["api_key"],
                                               translator_config["model"],
                                               context_packet=context_packet,
-                                              call_llm_fn=translator_call)
+                                              call_llm_fn=translator_call,
+                                              prompt_stats=batch_prompt_cost,
+                                              result_cache=_result_cache)
                 except RuntimeError as batch_error:
                     _workflow_errors.raise_if_fatal(batch_error, job_id)
                     if "任务已请求取消" in str(batch_error):
@@ -6988,13 +7127,17 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                                 [t], ctx_prev, ctx_next, glossary_text, style_rules, target_lang,
                                 translator_config["provider"], translator_config["api_key"],
                                 translator_config["model"], context_packet=single_packet,
-                                call_llm_fn=translator_call)[0])
+                                call_llm_fn=translator_call,
+                                prompt_stats=batch_prompt_cost,
+                                result_cache=_result_cache)[0])
                     except Exception as single_error:
                         failure["reason"] = str(single_error)[:500]
                         with commit_lock:
                             _save_translation_failure()
                         raise
                     failure["recovered"] = True
+                with commit_lock:
+                    _record_translation_prompt_cost(state, batch_prompt_cost)
                 for (i, src), tgt in zip(to_translate, targets):
                     cleaned_tgt = clean_xml_chars(tgt).replace('\n', ' ')
                     batch_pairs[i] = {"source": src, "target": cleaned_tgt,
@@ -7533,14 +7676,40 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             if (not pair.get("from_tm") and not local_findings
                     and offset + j not in review_bad_segments):
                 accepted_for_knowledge.append(j)
-        knowledge_due = _knowledge.feedback_due(
-            bi, len(batches),
+        # Everything the project already knows about a name-like form: the
+        # frozen glossary, the entity registry (including aliases) and the
+        # provisional candidate queue.  Recomputed per batch because the queue
+        # grows; the sets are small and the check is a casefolded membership
+        # test, so this never reaches the provider.
+        _knowledge_known_forms = {
+            str(entry.get("source") or "").casefold()
+            for entry in glossary if isinstance(entry, dict)
+        }
+        _knowledge_known_forms.update(
+            str(item.get("source") or item.get("source_expression") or "").casefold()
+            for item in (state.get("knowledge_candidates") or [])
+            if isinstance(item, dict))
+        for _record in registry.records:
+            _knowledge_known_forms.add(
+                str(_record.get("source_form") or "").casefold())
+            _knowledge_known_forms.update(
+                str(alias or "").casefold()
+                for alias in _record.get("aliases") or [])
+        _knowledge_known_forms.discard("")
+        knowledge_due, knowledge_reason = _knowledge.should_run_knowledge_feedback(
+            batch_index=bi, batch_count=len(batches),
             interval=feedback_interval,
-            existing_candidates=state.get("knowledge_candidates") or [],
-            force_every_batch=bool(enable_review or state.get("quality_mode")),
+            sources=[batch_sources[j] for j in accepted_for_knowledge],
+            known_forms=_knowledge_known_forms,
+            accepted_count=len(accepted_for_knowledge),
+            force_every_batch=force_knowledge_feedback,
         )
-        if knowledge_due and accepted_for_knowledge:
-            state["knowledge_feedback_policy"]["observed_batches"].append(bi)
+        knowledge_cache_hit = False
+        if knowledge_due:
+            _policy = state["knowledge_feedback_policy"]
+            _policy["observed_batches"].append(bi)
+            if knowledge_reason == "new_named_entity":
+                _policy["signal_batches"].append(bi)
             knowledge_segment_ids = [offset + j for j in accepted_for_knowledge]
             knowledge_source_context = [
                 "" if index in blocked_source_indexes else source
@@ -7556,7 +7725,9 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 else:
                     knowledge_pair_context.append(pair)
             # The only provider call on the commit path; timed apart so a slow
-            # auxiliary model is never mistaken for commit CPU.
+            # auxiliary model is never mistaken for commit CPU.  A cache hit
+            # skips the remote call and still runs the full merge below.
+            _knowledge_hits_before = _knowledge_cache.hits
             with _critical_path.phase("commit_knowledge_llm") as _kb_sink:
                 knowledge_candidates, knowledge_events, knowledge_warning = \
                     _knowledge.observe_batch(
@@ -7569,14 +7740,21 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                         call_llm=auxiliary_call, segment_ids=knowledge_segment_ids,
                         observation_provenance=(
                             "reviewed" if review_succeeded else "generated_continuity"
-                        ))
+                        ),
+                        cache=_knowledge_cache)
+                knowledge_cache_hit = (
+                    _knowledge_cache.hits > _knowledge_hits_before)
+                if knowledge_cache_hit:
+                    _critical_path.count("knowledge_feedback_cache_hit")
                 _kb_sink.traversed(len(knowledge_segment_ids))
                 _kb_sink.received(sum(len(batch_sources[j])
                                       for j in accepted_for_knowledge))
                 _critical_path.count("knowledge_observe_batch_calls")
         else:
-            if not knowledge_due:
-                state["knowledge_feedback_policy"]["skipped_batches"].append(bi)
+            state["knowledge_feedback_policy"]["skipped_batches"].append(bi)
+            reasons = state["knowledge_feedback_policy"].setdefault(
+                "skip_reasons", {})
+            reasons[knowledge_reason] = reasons.get(knowledge_reason, 0) + 1
             knowledge_candidates, knowledge_events, knowledge_warning = \
                 state.get("knowledge_candidates") or [], [], None
         for event in knowledge_events:
@@ -7620,10 +7798,31 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 "type": "extract_failed", "batch": bi, "offset": offset,
                 "reason": knowledge_warning,
             })
-        safe_append_event({
-            "batch": bi, "offset": offset, "phase": "knowledge_feedback_done",
-            "candidate_count": len(knowledge_candidates),
-        })
+        # Provenance distinguishes three outcomes: a live model call, a replay
+        # of an identical already-paid request, and a batch the policy skipped.
+        # None of them is ever recorded as one of the others.
+        if not knowledge_due:
+            safe_append_event({
+                "batch": bi, "offset": offset, "phase": "knowledge_feedback_skipped",
+                "reason": knowledge_reason,
+            })
+        elif knowledge_cache_hit:
+            _policy = state["knowledge_feedback_policy"]
+            _policy["cache_hits"] = _policy.get("cache_hits", 0) + 1
+            safe_append_event({
+                "batch": bi, "offset": offset,
+                "phase": "knowledge_feedback_cache_hit",
+                "candidate_count": len(knowledge_candidates),
+                "reason": knowledge_reason,
+            })
+        else:
+            _policy = state["knowledge_feedback_policy"]
+            _policy["cache_misses"] = _policy.get("cache_misses", 0) + 1
+            safe_append_event({
+                "batch": bi, "offset": offset, "phase": "knowledge_feedback_done",
+                "candidate_count": len(knowledge_candidates),
+                "reason": knowledge_reason,
+            })
         _knowledge_finished = time.perf_counter()
         _record_batch_stage("knowledge_feedback", bi,
                             (_knowledge_started, _knowledge_finished),
@@ -7999,6 +8198,14 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         # stage: the stages share a single performance.json, so closing them
         # together must not re-serialize every prior stage eight times.
         profiler.persist()
+    if use_translation_cache:
+        with commit_lock:
+            _flush_result_cache()
+            state["translation_cache"] = _result_cache.stats()
+    if use_knowledge_cache:
+        with commit_lock:
+            _flush_knowledge_cache()
+            state["knowledge_cache"] = _knowledge_cache.stats()
     return state
 
 

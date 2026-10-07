@@ -120,6 +120,8 @@ def recovery_summary(job_root: Path, state: Dict[str, Any]) -> Dict[str, Any]:
         "semantic_review_done": "独立审校完成",
         "semantic_review_skipped": "独立审校已跳过",
         "knowledge_feedback_done": "知识反馈完成",
+        "knowledge_feedback_skipped": "知识反馈已跳过（本地触发条件未满足）",
+        "knowledge_feedback_cache_hit": "知识反馈复用（相同请求已付费）",
         "state_commit_done": "进度已保存",
         "tm_promotion_done": "翻译记忆已同步",
     }

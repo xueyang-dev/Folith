@@ -34,11 +34,16 @@ def _parse_array(text: Any) -> Optional[List[Any]]:
     return None
 
 
+#: Extraction runs at a fixed sampling temperature.  It participates in the
+#: reuse fingerprint, so raising it here correctly invalidates stored results.
+FEEDBACK_TEMPERATURE = 0.1
+
+
 def _call(call_llm: Callable, provider: str, api_key: str, model: str,
           system_prompt: str, user_prompt: str) -> Any:
     try:
         return call_llm(provider, api_key, model, system_prompt, user_prompt,
-                        temperature=0.1)
+                        temperature=FEEDBACK_TEMPERATURE)
     except TypeError:
         return call_llm(provider, api_key, model, system_prompt, user_prompt)
 
@@ -51,8 +56,18 @@ def extract_observations(
     model: str,
     call_llm: Optional[Callable] = None,
     segment_ids: Optional[Sequence[int]] = None,
+    cache: Optional[Any] = None,
 ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-    """Extract terms/entities whose translation choices may matter later."""
+    """Extract terms/entities whose translation choices may matter later.
+
+    ``cache`` (a ``folith.knowledge_cache.KnowledgeObservationCache``) reuses an
+    identical, already-paid extraction.  The identity is the rendered request
+    itself, so any change that would change what the model sees — the segment
+    ids, the source text, the target text, the system prompt, the provider, the
+    model, the temperature — is a miss by construction.  A hit skips the
+    provider call only: the caller still runs the full merge, so project state,
+    ordering, precedence and provenance are unchanged.
+    """
     if not sources or not targets:
         return [], None
     if call_llm is None:
@@ -76,6 +91,14 @@ def extract_observations(
         "segment_id 必须使用给出的全局编号。"
         "不要修改任何术语表，不要输出解释。"
     )
+    cache_key = None
+    if cache is not None:
+        cache_key = cache.key_for(
+            provider=provider, model=model, system_prompt=system_prompt,
+            user_prompt=numbered, temperature=FEEDBACK_TEMPERATURE)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return [dict(item) for item in cached], None
     try:
         parsed = _parse_array(_call(
             call_llm, provider, api_key, model, system_prompt, numbered))
@@ -121,6 +144,10 @@ def extract_observations(
         observations.append({"source_expression": source,
                              "observed_target": target, "kind": kind,
                              "segment_id": segment_id})
+    if cache is not None and cache_key is not None:
+        # A valid (possibly empty) observation list is a real result: resending
+        # the identical bytes would only buy the same answer again.
+        cache.put(cache_key, observations, provider=provider, model=model)
     return observations, None
 
 
@@ -247,6 +274,7 @@ def observe_batch(
     call_llm: Optional[Callable] = None,
     segment_ids: Optional[Sequence[int]] = None,
     observation_provenance: str = "generated_continuity",
+    cache: Optional[Any] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
     """Return updated candidate queue, auditable events, and a non-fatal warning."""
     segment_ids = list(segment_ids) if segment_ids is not None \
@@ -273,7 +301,7 @@ def observe_batch(
     valid_segment_ids = [item[2] for item in valid]
     observations, warning = extract_observations(
         valid_sources, valid_targets, provider, api_key, model, call_llm=call_llm,
-        segment_ids=valid_segment_ids)
+        segment_ids=valid_segment_ids, cache=cache)
     if invalid_count:
         invalid_warning = f"知识反馈跳过 {invalid_count} 个不合格译文段"
         warning = f"{warning}；{invalid_warning}" if warning else invalid_warning
@@ -454,6 +482,134 @@ def feedback_due(batch_index: int, batch_count: int, *, interval: int = 1,
     if not active_candidates:
         return True
     return index % every == 0
+
+
+#: Default cadence for the bounded periodic sweep that backstops the local
+#: signal.  Measured on the committed 239-segment workload: the signal alone
+#: keeps 100% of proper-name continuity knowledge but lets generic term hints
+#: drift; a 4-batch checkpoint restores 88.5% of prompt-injected items at
+#: 42.6% of the calls (see docs/knowledge-feedback-efficiency-pass.md).
+KNOWLEDGE_FEEDBACK_INTERVAL = 4
+
+#: Sentence-initial capitals are masked before name detection, otherwise every
+#: sentence opener looks like a proper noun.
+_SENTENCE_START_RE = re.compile(r"(?:^|[.!?。！？]\s+|\n\s*)([A-Z][\w'’\-]*)")
+_CAPITALISED_RUN_RE = re.compile(
+    r"\b[A-Z][\w'’\-]*(?:\s+(?:of|the|and|for|de|van|von|del|la|le)?\s*"
+    r"[A-Z][\w'’\-]*)*\b")
+_ACRONYM_RE = re.compile(r"\b[A-Z]{2,8}\b")
+_MASK_CHAR = "\u0000"
+
+
+def named_source_forms(text: Any, limit: int = 40) -> List[str]:
+    """Proper-noun and acronym candidates in one source segment, provider-free.
+
+    Deliberately crude: this only has to be *specific enough* to decide whether
+    a model call may discover something new.  Missing a form costs one
+    checkpoint-bounded delay, never correctness, because the periodic sweep is
+    the backstop.
+    """
+    value = str(text or "")
+    if not value:
+        return []
+    masked = list(value)
+    for match in _SENTENCE_START_RE.finditer(value):
+        for index in range(match.start(1), match.end(1)):
+            masked[index] = _MASK_CHAR
+    scrubbed = "".join(masked)
+    forms: List[str] = []
+    seen = set()
+    for match in _CAPITALISED_RUN_RE.finditer(scrubbed):
+        form = match.group(0).strip()
+        key = form.casefold()
+        if 2 < len(form) <= 80 and key not in seen:
+            seen.add(key)
+            forms.append(form)
+    for match in _ACRONYM_RE.finditer(value):
+        form = match.group(0)
+        key = form.casefold()
+        if key not in seen:
+            seen.add(key)
+            forms.append(form)
+    return forms[:max(0, int(limit or 0))]
+
+
+def batch_knowledge_signals(
+    sources: Sequence[str],
+    *,
+    known_forms: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """Deterministic evidence that a batch can produce new project knowledge.
+
+    The measured high-value product of knowledge feedback is proper-name
+    continuity: an entity hint survives into later batches and is what keeps a
+    name rendering stable.  A name the project already holds — in the frozen
+    glossary, the entity registry or the provisional candidate queue — cannot
+    produce a new hint, so re-sending the batch would only ask the model to
+    rediscover what is already stored.  The signal therefore is exactly one
+    question: does this batch contain a name-like form the project does not
+    already know?
+    """
+    known = {str(item or "").casefold() for item in (known_forms or ())}
+    known.discard("")
+    fresh: List[str] = []
+    for text in sources or ():
+        for form in named_source_forms(text):
+            key = form.casefold()
+            if key in known or key in fresh:
+                continue
+            fresh.append(key)
+    return {
+        "named_forms": [form for form in fresh],
+        "has_signal": bool(fresh),
+    }
+
+
+def should_run_knowledge_feedback(
+    *,
+    batch_index: int,
+    batch_count: int,
+    interval: int = KNOWLEDGE_FEEDBACK_INTERVAL,
+    sources: Sequence[str] = (),
+    known_forms: Optional[Iterable[str]] = None,
+    accepted_count: int = 0,
+    force_every_batch: bool = False,
+) -> Tuple[bool, str]:
+    """Decide whether a batch should invoke the expensive knowledge extractor.
+
+    Returns ``(run, reason)``; the reason is persisted in the feedback policy
+    ledger so a batch that never issued a request can never be read as
+    "feedback completed" (the phase event is emitted from the same decision).
+
+    Rules, in order:
+
+    1. nothing accepted to observe -> ``no_accepted_segments``;
+    2. mandatory mode (explicit ``interval <= 1`` or ``force_every_batch``)
+       -> ``mandatory``;
+    3. first and final batch -> bootstrap/close;
+    4. periodic checkpoint -> bounded staleness for term hints;
+    5. a name-like form the project does not already know -> ``new_named_entity``;
+    6. otherwise -> ``no_signal``.
+    """
+    try:
+        index = max(0, int(batch_index))
+        total = max(0, int(batch_count))
+        every = max(1, int(interval or 1))
+    except (TypeError, ValueError):
+        index, total, every = 0, 0, 1
+    if int(accepted_count or 0) <= 0:
+        return False, "no_accepted_segments"
+    if force_every_batch or every <= 1:
+        return True, "mandatory"
+    if index == 0:
+        return True, "first_batch"
+    if total > 0 and index == total - 1:
+        return True, "final_batch"
+    if every > 1 and index % every == 0:
+        return True, "checkpoint"
+    if batch_knowledge_signals(sources, known_forms=known_forms)["has_signal"]:
+        return True, "new_named_entity"
+    return False, "no_signal"
 
 
 def discard_candidates_for_segments(

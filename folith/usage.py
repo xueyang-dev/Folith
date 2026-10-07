@@ -29,6 +29,22 @@ def _estimate_tokens(chars: int) -> int:
     return int(math.ceil(max(0, chars) / 4.0)) if chars else 0
 
 
+def estimate_tokens(chars: int) -> int:
+    """Public form of the ledger's character-based token estimate.
+
+    The same ``ceil(chars / 4)`` rule the usage ledger applies to provider
+    replies.  Context budgeting uses it so a context budget and the recorded
+    prompt cost are expressed in one unit.  It is an estimate for comparing
+    pipeline choices, never a billing figure.
+    """
+    return _estimate_tokens(chars)
+
+
+def estimate_text_tokens(text: Any) -> int:
+    """Convenience wrapper: estimate the tokens of a text value."""
+    return _estimate_tokens(len(str(text or "")))
+
+
 def empty_usage() -> Dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
