@@ -79,3 +79,32 @@ tmp/
 /BUGFIX_drafts_pending.md
 /DELIVERY_REDESIGN_ANALYSIS.md
 /DELIVERY_REDESIGN_SUMMARY.md
+
+# Downloaded optional OCR model weights (benchmark evidence is retained separately).
+benchmark/paddle-models/
+
+# Benchmark working area: the harness scripts and their notes are tracked, the
+# page renders, model weights and logs they produce are not (they are large and
+# reproducible from the scripts).
+benchmark/pages/
+benchmark/pages_preview/
+benchmark/vlm-migration/
+benchmark/tessdata_best/
+benchmark/tessdata_std/
+benchmark/tessdata_fast/
+benchmark/work/
+benchmark/engine-comparison/
+benchmark/paddle-finetune/
+benchmark/paddle-smoke/
+benchmark/*.log
+benchmark/*.tsv
+benchmark/*.json
+benchmark/*.png
+
+# Local Remotion video project (unedited scaffold, no render output).  Not part
+# of the product build or the release chain.
+video/
+
+# Downloaded Tesseract model weights.  `scripts/stage_tesseract_payload.py`
+# re-fetches them and verifies the sha256 recorded in packaging/tessdata/README.json.
+packaging/tessdata/*.traineddata
