@@ -421,8 +421,12 @@ def test_extraction_report_records_the_real_ocr_configuration(
     monkeypatch.setattr(core, "_ocr_pdf_text_with_warnings", fake_ocr)
     monkeypatch.setattr(core, "_pdf_extraction_facts", lambda _b: {})
     monkeypatch.setattr(core, "extract_pdf_paragraphs", lambda _b: [])
+    # The local engine is named explicitly: an unspecified source resolves to the
+    # online engine for a new task, which fails before the local OCR entry point
+    # this test replaces.
     _paragraphs, _warnings, report = core.extract_document_paragraphs_with_report(
-        "scan.pdf", b"%PDF-fake", ocr_language="ara", ocr_dpi=300, ocr_psm=13)
+        "scan.pdf", b"%PDF-fake", ocr_language="ara", ocr_dpi=300, ocr_psm=13,
+        ocr_backend="tesseract")
     assert captured["ocr_language"] == "ara"
     assert captured["dpi"] == 300 and captured["ocr_psm"] == 13
     ocr = report["ocr"]

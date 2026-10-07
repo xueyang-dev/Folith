@@ -49,6 +49,26 @@ LEGACY_ALLOWLIST_FILES = {
 # Current docs and source files may mention a legacy token only when the whole line is
 # an explicit package, path, environment variable, schema, or published-repo reference.
 LEGACY_LINE_ALLOWLIST = {
+    # Technical identifiers and evidence paths, not brand prose: environment
+    # variable names, the legacy asset fallbacks, the project schema id and the
+    # absolute paths recorded in verification evidence.
+    "folith/application/settings.py": ("FOLIOTHREAD_",),
+    "folith/store_lock.py": ("FOLIOTHREAD_STATE_LOCK_TIMEOUT",),
+    "folith/qt/branding.py": ("foliothread-favicon.png", "foliothread-logo.png"),
+    "folith/qt/dialogs.py": ("~/Dev/FolioThread/",),
+    "scripts/qt_beta_chain.sh": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/platform-migration-readiness-audit.md": ("foliothread-project-v1",),
+    "docs/qt-beta/computer-use-acceptance-2026-10-05.md": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/qt-beta/handoff-loop-prompt.md": ("/Users/xueyang/Dev/FolioThread",),
+    "docs/qt-spike/evidence-log.md": ("~/Dev/FolioThread/",),
+    "docs/dynamic-context-v2-evidence/comparison.json": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/dynamic-context-v2-evidence/consistency.json": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/dynamic-context-v2-evidence/report.md": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/architecture-foundation-phase0-2.md": ("FOLIOTHREAD", "FolioThread"),
+    "docs/architecture-foundation-phase4.md": ("FOLIOTHREAD"),
+    "docs/desktop-d1/d1-13-diagnostics-adversarial-bundle.json": ("FolioThread"),
+    "docs/desktop-d1/d1-14-unsafe-import-evidence.json": ("FolioThread"),
+    "docs/desktop-handover.md": ("FOLIOTHREAD", "FolioThread"),
     "README.md": (
         "foliothread-0.4.0",
         "foliothread-0.5.0",
@@ -140,7 +160,10 @@ def _iter_text_files():
         rel = _relative(path)
         if rel.startswith((".git/", "venv/", ".venv/", "outputs/", "dist/",
                            "build/", ".pytest_cache/", ".audit/", ".workbuddy/",
-                           ".workbuddy-ai/", ".localize-anything/", "exports/", "tmp/", "skills/", "tests/")):
+                           ".workbuddy-ai/", ".localize-anything/", "exports/", "tmp/", "skills/", "tests/",
+                           # Generated working areas (see .gitignore): benchmark output
+                           # and the local video scaffold are not shipped source.
+                           "benchmark/", "video/")):
             continue
         if rel.endswith(".egg-info/SOURCES.txt") or ".egg-info/" in rel:
             continue
