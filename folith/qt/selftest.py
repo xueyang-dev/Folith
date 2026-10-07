@@ -405,18 +405,24 @@ class Flow:
         return report
 
 
-def engine_from_env(adapter):
+def engine_from_env(adapter, base=None):
     """Build the engine config for a scripted run.
 
     The controlled endpoint's URL must be supplied by the caller; the client
-    never invents a model connection.
+    never invents a model connection.  ``base`` is the config the window loaded
+    from the client's own preferences: the scripted run must keep the user's
+    delivery/task choices (which formats to freeze), otherwise it would verify a
+    delivery set nobody asked for.  Only the connection and the flow switches
+    are overridden here.
     """
+    import dataclasses
+
     url = os.environ.get("FOLITH_QT_SELFTEST_BASE_URL", "").strip()
     if not url:
         raise SystemExit("FOLITH_QT_SELFTEST_BASE_URL is required for --selftest")
     language = os.environ.get("FOLITH_QT_SELFTEST_OCR_LANGUAGE", "").strip()
     mode = os.environ.get("FOLITH_QT_SELFTEST_OCR_MODE", "auto").strip() or "auto"
-    return adapter.EngineConfig(
+    connection = dict(
         provider=os.environ.get("FOLITH_QT_SELFTEST_PROVIDER", "自定义中转站"),
         model=os.environ.get("FOLITH_QT_SELFTEST_MODEL", "stub-model"),
         api_key=os.environ.get("FOLITH_QT_SELFTEST_API_KEY", "stub-key"),
@@ -429,6 +435,9 @@ def engine_from_env(adapter):
         ocr_language=language,
         ocr_mode=mode,
     )
+    if base is None:
+        return adapter.EngineConfig(**connection)
+    return dataclasses.replace(base, **connection)
 
 
 def write_report(report: dict, path: str | None) -> None:

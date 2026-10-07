@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest:
         from . import selftest
 
-        config = selftest.engine_from_env(adapter)
+        config = selftest.engine_from_env(adapter, main_window.config)
         main_window.config = config
         main_window.refresh_engine_label()
         out_dir = Path(args.result).parent if args.result else paths.log_dir

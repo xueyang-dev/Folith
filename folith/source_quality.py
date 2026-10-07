@@ -136,6 +136,9 @@ _LINE_WRAP_REASONS = {
     "未闭合且非标题的短片段",
 }
 
+# The only reasons a sentence-final single lowercase word may carry.
+_SENTENCE_TAIL_REASONS = frozenset({"小写且未闭合的短片段", "孤立短词"})
+
 
 def is_integrated_line_continuation(fragment: str, preceding: str, segment: str) -> bool:
     """Recognize a short PDF wrap joined back to its preceding line or container.
@@ -153,7 +156,15 @@ def is_integrated_line_continuation(fragment: str, preceding: str, segment: str)
         reasons == ["孤立超短缩写或字母杂质"]
         and tail.isupper() and previous.isupper()
     )
-    if not (is_wrap or is_caps_wrap):
+    # A single lowercase word that carries its own sentence-final punctuation
+    # and reappears verbatim right after the preceding line inside the same
+    # container is a PDF wrap tail, not isolated OCR noise.  Without the
+    # terminal punctuation a bare token such as ``kati`` keeps its flags.
+    is_sentence_tail = (
+        set(reasons) <= _SENTENCE_TAIL_REASONS
+        and bool(_TERMINAL_RE.search(tail))
+    )
+    if not (is_wrap or is_caps_wrap or is_sentence_tail):
         return False
 
     if re.search(r"[.!?。！？]$", previous):
@@ -273,4 +284,113 @@ def audit_source_segments(paragraphs: Sequence[str]) -> Dict[str, Any]:
     }
 
 
-__all__ = ["VERSION", "audit_source_segments"]
+# ---------------------------------------------------------------------------
+# Quarantine disposition
+# ---------------------------------------------------------------------------
+# The gate above answers "is this a suspicious fragment?".  It deliberately
+# does not answer what should happen next, which left the pipeline in a
+# dead-end: the quarantined unit could neither be translated nor reviewed nor
+# delivered.  The disposition below is the deterministic follow-up decision.
+#
+# ``non_translatable_structural`` — the unit is a structural artifact the
+# document IR (or the page geometry) already proves is not body prose.  It is
+# removed from the working set through the canonical exclusion contract, so it
+# never reaches the translator, the reviewer, the TM or the metrics.
+#
+# ``integrated_admission`` — the unit is a verified wrap/number that the gate
+# mis-read because segmentation cut it out of a longer, gate-passing container.
+# The flag is withdrawn and the unit is translated as ordinary text.
+#
+# ``quarantined`` — everything else keeps today's behaviour: source-only,
+# review and delivery blocked until a human confirms or excludes it.
+NON_TRANSLATABLE_BLOCK_TYPES = frozenset({
+    "equation", "page_number", "footer", "header",
+})
+_ORDINAL_RE = re.compile(r"\d{1,4}[.)]?")
+_STRUCTURAL_CONTAINER_TYPES = frozenset({"heading", "title"})
+_MARGIN_GAP = 0.02
+
+
+def _normalised_bbox(values) -> tuple:
+    if not isinstance(values, (list, tuple)) or len(values) != 4:
+        return ()
+    try:
+        x0, y0, x1, y1 = (float(item) for item in values)
+    except (TypeError, ValueError):
+        return ()
+    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+
+def is_outside_body_column(block_bbox, body_bbox, *, gap: float = _MARGIN_GAP) -> bool:
+    """Whether a block sits entirely outside the body text column.
+
+    Publisher stamps, running heads and rotated margin text are laid out
+    outside the column every body paragraph shares, so geometry alone proves
+    they are marginalia rather than a fragment of the text flow.
+    """
+    block = _normalised_bbox(block_bbox)
+    body = _normalised_bbox(body_bbox)
+    if not block or not body:
+        return False
+    bx0, by0, bx1, by1 = block
+    px0, py0, px1, py1 = body
+    left_of_column = bx1 <= px0 - gap
+    right_of_column = bx0 >= px1 + gap
+    above_column = by1 <= py0 - gap
+    below_column = by0 >= py1 + gap
+    return bool(left_of_column or right_of_column or above_column or below_column)
+
+
+def classify_quarantined_segment(*, text, block_type="", container_text="",
+                                 preceding_text="", block_bbox=None,
+                                 body_bbox=None) -> Dict[str, Any]:
+    """Decide what a source-quality flag means for one translation unit.
+
+    Every input is existing per-unit metadata: the flagged text, the grounded
+    IR block type/text/box it came from, the preceding unit's text, and the
+    document's body column.  No model is involved and no text is rewritten.
+    """
+    value = _normalise(text)
+    container = _normalise(container_text) or value
+    kind = _normalise(block_type).lower()
+    if not value:
+        return {"disposition": "quarantined", "evidence": [], "block_type": kind}
+
+    structural: List[str] = []
+    if kind in NON_TRANSLATABLE_BLOCK_TYPES:
+        structural.append(f"ir_block_type:{kind}")
+    if (kind in _STRUCTURAL_CONTAINER_TYPES and container != value
+            and _ORDINAL_RE.fullmatch(value)
+            and is_integrated_numeric_fragment(value, container)):
+        structural.append("heading_ordinal")
+    if is_outside_body_column(block_bbox, body_bbox):
+        structural.append("outside_body_column")
+    if structural:
+        return {"disposition": "non_translatable_structural",
+                "evidence": structural, "block_type": kind}
+
+    admitted: List[str] = []
+    if is_integrated_numeric_fragment(value, container):
+        admitted.append("integrated_numeric")
+    if preceding_text:
+        preceding = _normalise(preceding_text)
+        if preceding and is_integrated_line_continuation(value, preceding, container):
+            admitted.append("integrated_line_continuation")
+    if admitted:
+        return {"disposition": "integrated_admission",
+                "evidence": admitted, "block_type": kind}
+
+    return {"disposition": "quarantined", "evidence": [], "block_type": kind}
+
+
+
+__all__ = [
+    "VERSION",
+    "audit_source_segments",
+    "classify_quarantined_segment",
+    "is_integrated_line_continuation",
+    "is_integrated_numeric_fragment",
+    "is_outside_body_column",
+    "NON_TRANSLATABLE_BLOCK_TYPES",
+]
+

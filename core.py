@@ -52,6 +52,7 @@ from folith import pdf_ingestion as _pdf_ingestion
 from folith import source_cleanup as _source_cleanup
 from folith import segmentation as _segmentation
 from folith import source_quality as _source_quality
+from folith import document_ir as _document_ir
 from folith import translation_protocol as _translation_protocol
 from folith import persistence_profiler as _persistence_profiler
 from folith import critical_path as _critical_path
@@ -2701,7 +2702,163 @@ def _filter_confirmed_source_quality(report, state, paragraphs):
     return report
 
 
-def _audit_source_quality_for_state(state):
+def _grounded_block_index(state):
+    """Map IR block ids to the blocks that carry their text and geometry."""
+    document = ((state or {}).get("extraction_report") or {}).get("document_ir")
+    blocks = document.get("blocks") if isinstance(document, dict) else None
+    return {
+        str(block.get("block_id")): block
+        for block in blocks or []
+        if isinstance(block, dict) and block.get("block_id")
+    }
+
+
+def _block_bbox(block):
+    anchor = (block or {}).get("source_anchor") or {}
+    spans = anchor.get("source_spans") or []
+    if spans and isinstance(spans[0], dict):
+        return _document_ir.normalized_bbox(spans[0].get("bbox"))
+    return None
+
+
+def _body_text_bbox(state):
+    """Robust body text column of the grounded paragraph blocks.
+
+    Percentiles rather than a bounding union: publisher stamps and rotated
+    margin text are sometimes typed as ``paragraph`` too, and a single outlier
+    must not widen the column until the margin counts as "inside" it.
+    """
+    boxes = []
+    for block in _grounded_block_index(state).values():
+        if str(block.get("type") or "") != "paragraph":
+            continue
+        box = _block_bbox(block)
+        if box:
+            boxes.append(box)
+    if not boxes:
+        return None
+
+    def pick(values, fraction):
+        ordered = sorted(values)
+        position = int(round(fraction * (len(ordered) - 1)))
+        return ordered[max(0, min(position, len(ordered) - 1))]
+
+    return [
+        pick([box[0] for box in boxes], 0.10),
+        pick([box[1] for box in boxes], 0.05),
+        pick([box[2] for box in boxes], 0.90),
+        pick([box[3] for box in boxes], 0.95),
+    ]
+
+
+def _segment_source_quality_evidence(state, index, paragraphs=None):
+    """Resolve the grounded container that decides one flagged segment.
+
+    The IR block is preferred because it is the verified extraction unit; the
+    cleaned paragraph is the fallback for sources without document IR.
+    """
+    paragraphs = (paragraphs if paragraphs is not None
+                  else (state or {}).get("paras") or [])
+    pair = None
+    pairs = (state or {}).get("pairs") or []
+    if 0 <= index < len(pairs) and isinstance(pairs[index], dict):
+        pair = pairs[index]
+    text = ""
+    if 0 <= index < len(paragraphs):
+        text = str(paragraphs[index] or "")
+    if not text and pair is not None:
+        text = str(pair.get("source") or "")
+
+    document = ((state or {}).get("extraction_report") or {}).get("document_ir")
+    blocks = document.get("blocks") if isinstance(document, dict) else None
+    spans = (pair or {}).get("source_spans") or []
+    if not spans and isinstance(blocks, list):
+        # Pre-pair stage: `segment_source_spans` is the positional mapping the
+        # segmentation step itself persisted, so it stays correct where the
+        # raw block order does not (one block can yield several segments).
+        persisted = (state or {}).get("segment_source_spans") or []
+        if 0 <= index < len(persisted) and isinstance(persisted[index], list):
+            spans = persisted[index]
+
+    by_id = _grounded_block_index(state)
+    block = None
+    for span in spans:
+        if not isinstance(span, dict):
+            continue
+        block = by_id.get(str(span.get("block_id") or ""))
+        if block is not None:
+            break
+    return {
+        "text": text,
+        "block_type": str((block or {}).get("type") or ""),
+        "container_text": str((block or {}).get("text") or "") or text,
+        "block_bbox": _block_bbox(block),
+        "body_bbox": _body_text_bbox(state),
+        "preceding_text": (str(paragraphs[index - 1] or "")
+                           if index > 0 and index - 1 < len(paragraphs) else ""),
+    }
+
+
+def _source_quality_dispositions(state, report, paragraphs=None):
+    """Classify every current source-quality flag into a deterministic outcome."""
+    outcomes = {}
+    body_bbox = _body_text_bbox(state)
+    for flag in (report or {}).get("flags") or []:
+        if not isinstance(flag, dict):
+            continue
+        index = flag.get("segment_index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        evidence = _segment_source_quality_evidence(state, index, paragraphs)
+        if evidence["body_bbox"] is None:
+            evidence["body_bbox"] = body_bbox
+        outcomes[index] = _source_quality.classify_quarantined_segment(
+            text=flag.get("text") or evidence["text"],
+            block_type=evidence["block_type"],
+            container_text=evidence["container_text"],
+            preceding_text=evidence["preceding_text"],
+            block_bbox=evidence["block_bbox"],
+            body_bbox=evidence["body_bbox"],
+        )
+    return outcomes
+
+
+def _apply_source_quality_admissions(state, report):
+    """Withdraw flags that are verified wrap/number continuations, not fragments.
+
+    A segment cut out of a longer, gate-passing container is ordinary source
+    text.  Keeping the flag would send it to the human-confirmation dead-end,
+    so the admission is recorded on the report for audit and the flag is
+    dropped.  The translated unit itself is untouched.
+    """
+    outcomes = _source_quality_dispositions(state, report)
+    admitted = {
+        index: outcome for index, outcome in outcomes.items()
+        if outcome.get("disposition") == "integrated_admission"
+    }
+    if not admitted:
+        return report
+    report["flags"] = [
+        flag for flag in report.get("flags") or []
+        if flag.get("segment_index") not in admitted
+    ]
+    report["clusters"] = [
+        [index for index in cluster if index not in admitted]
+        for cluster in report.get("clusters") or []
+        if any(index not in admitted for index in cluster)
+    ]
+    report["admissions"] = [
+        {"segment_index": index, "evidence": list(outcome.get("evidence") or []),
+         "block_type": outcome.get("block_type") or ""}
+        for index, outcome in sorted(admitted.items())
+    ]
+    report["admitted_count"] = len(admitted)
+    report["flagged_count"] = len(report["flags"])
+    report["status"] = "blocked" if report["flags"] else "passed"
+    return report
+
+
+def _audit_source_quality_for_state(state, *, apply_admissions=True):
     paragraphs = (state or {}).get("paras") or []
     if not _source_quality_gate_enabled(state):
         semantic_source = ((state or {}).get("extraction_report") or {}).get(
@@ -2730,14 +2887,16 @@ def _audit_source_quality_for_state(state):
     output_inputs = cleanup.get("output_input_indices")
     paragraph_ranges = segmentation.get("paragraph_ranges") or []
     if not raw_paragraphs or not paragraph_ranges:
-        return report
+        return (_apply_source_quality_admissions(state, report)
+                if apply_admissions else report)
     if not isinstance(output_inputs, list):
         # Safe for old jobs only when the stored raw and cleaned paragraph
         # arrays still have a direct one-to-one relationship.
         if len(raw_paragraphs) == len((state or {}).get("source_paragraphs") or []):
             output_inputs = [[index] for index in range(len(raw_paragraphs))]
         else:
-            return report
+            return (_apply_source_quality_admissions(state, report)
+                    if apply_admissions else report)
 
     segments_by_paragraph = {}
     for row in paragraph_ranges:
@@ -2863,7 +3022,10 @@ def _audit_source_quality_for_state(state):
     if report["flags"]:
         report["status"] = "blocked"
     report["source_lineage_flags"] = lineage_flags
-    return _filter_confirmed_source_quality(report, state, paragraphs)
+    report = _filter_confirmed_source_quality(report, state, paragraphs)
+    if apply_admissions:
+        report = _apply_source_quality_admissions(state, report)
+    return report
 
 
 def _source_quality_finding(flag):
@@ -11928,6 +12090,150 @@ def _segment_source_list(state):
     return [str(item or "") for item in (state or {}).get("paras") or []]
 
 
+def _excluded_segment_record(state, index, *, reason, actor, source="",
+                             target="", pair=None, in_pairs=False,
+                             before_source="", after_source=""):
+    """构造一条 ``excluded_segments`` 记录。
+
+    人工「排除本段」与系统判定的不可翻译段落共用同一份记录形状：交付清单、
+    恢复入口与撤销日志都按它读取，两条路径不能各自长出一套字段。
+    """
+    excluded_id_value = f"x{int(state.get('exclusion_seq') or 0):06d}"
+    state["exclusion_seq"] = int(state.get("exclusion_seq") or 0) + 1
+    return {
+        "excluded_id": excluded_id_value,
+        "index": index,
+        "source": str(source or ""),
+        "target": str(target or ""),
+        "pair": json.loads(json.dumps(pair)) if isinstance(pair, dict) else None,
+        "in_pairs": bool(in_pairs),
+        "before_source": str(before_source or ""),
+        "after_source": str(after_source or ""),
+        "reason": str(reason or "").strip(),
+        "excluded_at": _finalization.now_iso(),
+        "excluded_by": str(actor or "user"),
+    }
+
+
+def _shift_paragraph_ranges(paragraph_ranges, removed_index):
+    """把被移出的段落从 ``segmentation.paragraph_ranges`` 中剔除。
+
+    段落区间是「清洗后段落 → 翻译单元」的位置契约；少了一段之后，后面每一段都
+    要前移一位，包含它的区间则收窄一格。留着旧区间会让原文血缘审计把门禁结论
+    落到错误的段落上。
+    """
+    shifted = []
+    for row in paragraph_ranges or []:
+        if not isinstance(row, dict):
+            continue
+        start, end = row.get("start"), row.get("end")
+        if not (isinstance(start, int) and isinstance(end, int)):
+            shifted.append(dict(row))
+            continue
+        if start > removed_index:
+            start -= 1
+        if end > removed_index:
+            end -= 1
+        shifted.append({**row, "start": start, "end": max(start, end)})
+    return shifted
+
+
+def _drop_segment_at(state, index):
+    """从工作列表中移出一个段落，并同步它的位置型派生产物。"""
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    if pairs:
+        pairs.pop(index)
+    if 0 <= index < len(paras):
+        paras.pop(index)
+    for key in ("segment_source_spans", "segment_source_marks"):
+        values = state.get(key)
+        if isinstance(values, list) and 0 <= index < len(values):
+            values.pop(index)
+    segmentation = state.get("segmentation")
+    if isinstance(segmentation, dict) and segmentation.get("paragraph_ranges"):
+        segmentation["paragraph_ranges"] = _shift_paragraph_ranges(
+            segmentation["paragraph_ranges"], index)
+        segmentation["output_segment_count"] = len(paras)
+
+
+def _non_translatable_exclusions(state, *, paragraphs=None):
+    """系统判定的「无需翻译」段落，按索引从大到小返回。
+
+    只做判定，不改状态；调用方负责在**位置契约尚未建成**时应用，避免让已存在
+    的译文/审校按错位索引漂移。判定依据全部来自既有的段落元数据：IR 区块类型与
+    版面几何、以及既有 source-quality 语义谓词。
+    """
+    report = _audit_source_quality_for_state(state, apply_admissions=False)
+    outcomes = _source_quality_dispositions(state, report, paragraphs)
+    return sorted(
+        (index for index, outcome in outcomes.items()
+         if outcome.get("disposition") == "non_translatable_structural"),
+        reverse=True,
+    ), outcomes
+
+
+def _auto_exclude_non_translatable_segments(job_id, state):
+    """把系统已证明不可翻译的段落移出工作列表。
+
+    复用既有「排除」契约（``state["excluded_segments"]`` + 移出 pairs/paras），
+    因此这些段落不会进入翻译、不写翻译记忆、不计入审校与质量指标、不需要审校，
+    交付时以「已排除」如实登记；但它们**不会**被标成 translated/reviewed/approved
+    ——排除不是审校通过。
+    """
+    pairs = state.get("pairs") or []
+    if pairs:
+        # The positional translation contract already exists; a silent index
+        # shift here would misalign persisted findings, review evidence and
+        # delivery assets.  Exclusion is only decided while the list is built.
+        return []
+    indexes, outcomes = _non_translatable_exclusions(state)
+    if not indexes:
+        return []
+    paragraphs = state.get("paras") or []
+    sources = _segment_source_list(state)
+    records = []
+    for index in indexes:
+        if not 0 <= index < len(paragraphs):
+            continue
+        outcome = outcomes.get(index) or {}
+        evidence = "、".join(str(item) for item in outcome.get("evidence") or [])
+        record = _excluded_segment_record(
+            state, index,
+            reason=("系统判定为无需翻译的结构性片段"
+                    f"（{evidence or 'non_translatable'}）"),
+            actor="system:source_quality",
+            source=str(paragraphs[index] or ""),
+            target="",
+            pair=None, in_pairs=False,
+            before_source=sources[index - 1] if index > 0 else "",
+            after_source=(sources[index + 1]
+                          if index + 1 < len(sources) else ""),
+        )
+        _drop_segment_at(state, index)
+        records.append(record)
+    state["excluded_segments"] = list(
+        state.get("excluded_segments") or []) + records
+    audit = list(state.get("source_quality_auto_exclusions") or [])
+    audit.extend({
+        "index": record["index"],
+        "excluded_id": record["excluded_id"],
+        "evidence": list((outcomes.get(record["index"]) or {}).get("evidence") or []),
+        "block_type": (outcomes.get(record["index"]) or {}).get("block_type") or "",
+        "excluded_at": record["excluded_at"],
+        "excluded_by": record["excluded_by"],
+    } for record in records)
+    state["source_quality_auto_exclusions"] = audit
+    state["source_quality_gate"] = _audit_source_quality_for_state(state)
+    for record in records:
+        _append_runtime_technical_log(
+            job_id,
+            "source quality: auto-excluded non-translatable segment "
+            f"#{record['index']} ({record['excluded_id']}) "
+            f"reason={record['reason']}")
+    return records
+
+
 def _exclusion_restore_index(state, record):
     """被排除段落应当插回的位置：优先后锚点，其次前锚点，最后退回原索引。"""
     sources = _segment_source_list(state)
@@ -12410,21 +12716,16 @@ def mutate_translation_segments(
         target_value = str(pairs[index].get("target") or "") if pairs else ""
         if not normalized(source_value) and not normalized(target_value):
             raise ValueError("该段落没有内容，无需排除；如需清理空段请使用「删除空段」。")
-        excluded_id_value = f"x{int(state.get('exclusion_seq') or 0):06d}"
-        state["exclusion_seq"] = int(state.get("exclusion_seq") or 0) + 1
-        excluded_record = {
-            "excluded_id": excluded_id_value,
-            "index": index,
-            "source": source_value,
-            "target": target_value,
-            "pair": json.loads(json.dumps(pairs[index])) if pairs else None,
-            "in_pairs": bool(pairs),
-            "before_source": sources[index - 1] if index > 0 else "",
-            "after_source": sources[index + 1] if index + 1 < len(sources) else "",
-            "reason": str(exclude_reason or "").strip(),
-            "excluded_at": _finalization.now_iso(),
-            "excluded_by": str(actor or "user"),
-        }
+        excluded_record = _excluded_segment_record(
+            state, index,
+            reason=exclude_reason, actor=actor,
+            source=source_value, target=target_value,
+            pair=(pairs[index] if pairs else None), in_pairs=bool(pairs),
+            before_source=sources[index - 1] if index > 0 else "",
+            after_source=(sources[index + 1]
+                          if index + 1 < len(sources) else ""),
+        )
+        excluded_id_value = excluded_record["excluded_id"]
         state["excluded_segments"] = list(
             state.get("excluded_segments") or []) + [excluded_record]
         excluded_ids_added = [excluded_id_value]
@@ -13425,6 +13726,7 @@ def _reset_source_dependent_state(state):
             "last_change": None,
         },
         "source_quality_gate": {},
+        "source_quality_auto_exclusions": [],
     })
 
 
@@ -13663,10 +13965,14 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             "source_cleanup_done": True,
             "segmentation": segmentation_meta,
             "extraction_report": extraction_report,
-            "source_quality_gate": _audit_source_quality_for_state(state),
             "p1_done": True,
             "source_page_count": 0,
         })
+        # The rescan rebuilt the positional contract, so the deterministic
+        # non-translatable admission runs here too (after the reset above).
+        _auto_exclude_non_translatable_segments(job_id, state)
+        state["source_quality_gate"] = _audit_source_quality_for_state(state)
+        cleanup_meta["segment_count"] = len(state.get("paras") or [])
         try:
             with fitz.open(stream=source, filetype="pdf") as source_pdf:
                 state["source_page_count"] = source_pdf.page_count
@@ -15806,11 +16112,6 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             state["segmentation"] = segmentation_meta
             state["source_cleanup"] = cleanup_meta
             state["source_cleanup_done"] = True
-            state["source_quality_gate"] = _audit_source_quality_for_state(state)
-            cleanup_meta.update({
-                "paragraph_count": len(cleaned),
-                "segment_count": len(segments),
-            })
             for warning in cleanup_warnings:
                 if warning not in warnings:
                     warnings.append(warning)
@@ -15826,7 +16127,15 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                 state["segmentation"] = segmentation_meta
                 state["source_cleanup"] = cleanup_meta
                 state["source_cleanup_done"] = True
-                state["source_quality_gate"] = _audit_source_quality_for_state(state)
+            # Deterministic non-translatable admission runs after any source
+            # reset, so its exclusion ledger is never discarded with the old
+            # translation contract.
+            _auto_exclude_non_translatable_segments(job_id, state)
+            state["source_quality_gate"] = _audit_source_quality_for_state(state)
+            cleanup_meta.update({
+                "paragraph_count": len(cleaned),
+                "segment_count": len(state.get("paras") or []),
+            })
             state["p1_done"] = True
             save_job_state(job_id, state)
 
@@ -15947,6 +16256,13 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         cleaned_paragraphs = list(paragraphs)
         segments, segmentation_meta = _apply_source_segmentation(
             state, cleaned_paragraphs, mode=effective_segmentation_mode)
+        state["paras"] = segments
+        # Segments the system can already prove are not translatable leave the
+        # working set before the translation contract is built, so they never
+        # become a translation request, a review obligation or a delivery
+        # notice.
+        _auto_exclude_non_translatable_segments(job_id, state)
+        segments = state.get("paras") or []
         state["source_cleanup"] = cleanup_meta
         state["source_cleanup_done"] = True
         state["source_cleanup"].update({
@@ -15963,7 +16279,6 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                 "paragraph_count": len(cleaned_paragraphs),
             }
         ) if profiler is not None else None
-        state["paras"] = segments
         state["source_quality_gate"] = _audit_source_quality_for_state(state)
         if segment_stage is not None:
             for index in range(len(segments)):
