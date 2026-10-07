@@ -91,7 +91,8 @@ MARKER_RAISE_EM_MIN = 0.12
 # 文档级准入：真正的脚注角标数量多、编号基本递增、并在正文中分散出现；
 # 数学指数往往集中在一小段公式里。三者取其二即可排除公式型误判。
 MARKER_MIN_COUNT = 3
-MARKER_MIN_ORDER_RATIO = 0.8
+#: 编号重置只可能落在很小的值上；跌回一个大数字说明这些不是脚注编号。
+MARKER_RESET_MAX = 3
 MARKER_MIN_MEDIAN_GAP = 40
 MARKER_MIN_PAGES = 3
 MARKER_RAISE_EM_MAX = 1.5
@@ -156,14 +157,19 @@ def _page_body_metrics(page_dict: Dict[str, Any]):
 
 
 def _marker_population_is_footnote_like(candidates: Sequence[Dict[str, Any]]) -> bool:
-    """文档级准入：排除数学指数一类的上标数字。"""
+    """文档级准入：排除数学指数一类的上标数字。
+
+    编号会在章节边界重新从 1 开始，所以"序列必须单调"这条判据会把一本正常的书
+    整体否掉——实测一份阿拉伯语语料（自带 4,2,1,5,5 的残段编号）叠加正文角标
+    后，单调比只有 0.7，于是全文角标被静默放弃。改成只否决"跌回一个大数字"：
+    那才是普通数值混进来的特征，而重新从 1 开始是合法的编号重置。
+    """
     if len(candidates) < MARKER_MIN_COUNT:
         return False
     values = [int(item["text"]) for item in candidates]
-    ordered = sum(1 for a, b in zip(values, values[1:]) if b >= a)
-    ratio = ordered / max(1, len(values) - 1)
-    if ratio < MARKER_MIN_ORDER_RATIO:
-        return False
+    for previous, current in zip(values, values[1:]):
+        if current < previous and current > MARKER_RESET_MAX:
+            return False
     positions = [int(item.get("doc_position") or 0) for item in candidates]
     gaps = [b - a for a, b in zip(positions, positions[1:]) if b > a]
     median_gap = statistics.median(gaps) if gaps else 0

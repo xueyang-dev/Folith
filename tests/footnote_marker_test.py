@@ -109,3 +109,32 @@ def test_marker_census_reports_markers_without_note_text():
     assert census["marker_pages"] == [1, 2, 3, 4]
     assert census["footnote_body_candidates"] == 0
     assert census["note"]
+
+
+def _population(values, *, gap=100, pages=None):
+    return [
+        {"text": str(value), "doc_position": index * gap,
+         "page_number": (pages or [index + 1 for index in range(len(values))])[index]}
+        for index, value in enumerate(values)
+    ]
+
+
+def test_chapter_numbering_reset_is_still_a_footnote_sequence():
+    # Footnote numbering restarts per chapter.  A strict "must be monotone"
+    # rule silently disabled marker handling for a whole document, so a reset
+    # back to 1..N has to stay admissible.
+    assert pi._marker_population_is_footnote_like(
+        _population([1, 2, 3, 1, 2, 3])) is True
+
+
+def test_dropping_back_to_a_large_number_is_not_a_footnote_sequence():
+    # 20 -> 7 is not a numbering restart; these are ordinary values.
+    assert pi._marker_population_is_footnote_like(
+        _population([5, 20, 7])) is False
+
+
+def test_clustered_superscripts_are_not_footnotes():
+    # Maths exponents cluster inside a formula instead of spreading through
+    # the prose, so the population has no room to be a footnote sequence.
+    assert pi._marker_population_is_footnote_like(
+        _population([2, 3, 2, 3], gap=2, pages=[1, 1, 1, 1])) is False
