@@ -110,6 +110,7 @@ class EngineConfig:
     deliver_plain_docx: bool = True
     deliver_bilingual_docx: bool = True
     deliver_pdf: bool = False
+    deliver_original_pdf: bool = False
     deliver_terms_xlsx: bool = True
     deliver_evidence: bool = True
     deliver_review_report: bool = False
@@ -417,6 +418,7 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
             "deliver_plain_docx": config.deliver_plain_docx,
             "deliver_bilingual_docx": config.deliver_bilingual_docx,
             "deliver_pdf": config.deliver_pdf,
+            "deliver_original_pdf": config.deliver_original_pdf,
             "deliver_terms_xlsx": config.deliver_terms_xlsx,
             "deliver_evidence": config.deliver_evidence,
             "deliver_review_report": config.deliver_review_report,
@@ -906,6 +908,8 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None) -> dict:
         names.append("bilingual.docx")
     if configured.get("deliver_pdf"):
         names.append("translation.pdf")
+    if configured.get("deliver_original_pdf"):
+        names.append("original_layout.pdf")
     if configured.get("deliver_terms_xlsx"):
         names.append("terms.xlsx")
     if configured.get("deliver_evidence"):

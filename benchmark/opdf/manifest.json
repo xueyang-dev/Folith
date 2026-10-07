@@ -1,0 +1,566 @@
+{
+  "version": 1,
+  "frozen_at": "2026-10-07",
+  "notes": "The page set is fixed before any acceptance run. Pages may not be removed and the denominator may not change to improve the pass rate; a page that fails stays in the corpus and is reported.",
+  "acceptance_page_count": 26,
+  "challenge_page_count": 1,
+  "samples": [
+    {
+      "id": "arxiv-attention",
+      "title": "Attention Is All You Need (arXiv:1706.03762v7)",
+      "source": "public:https://arxiv.org/pdf/1706.03762v7",
+      "lang": "en",
+      "target_lang": "简体中文",
+      "features": [
+        "native",
+        "two-column",
+        "formula",
+        "table",
+        "links",
+        "toc"
+      ],
+      "expected": "Two-column academic page. Title/abstract spans both columns. Equations are vector drawings and must survive text removal untouched. Table rules and the TOC-derived bookmarks must survive. Links (citations/URLs) must stay valid.",
+      "pages": [
+        1,
+        8
+      ],
+      "file": "corpus/arxiv-attention.pdf",
+      "sha256": "441a7537ac8ab595cfaa3717878bc8ecaa135de4bcd314dbf7c1bf1ab2f26f89",
+      "bytes": 2120268,
+      "page_count": 8,
+      "toc_entries": 20,
+      "total_links": 10,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 1,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 2857,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 3,
+          "links": 0
+        },
+        {
+          "index": 1,
+          "page_id": "p2",
+          "source_page": 2,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 4255,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 1
+        },
+        {
+          "index": 2,
+          "page_id": "p3",
+          "source_page": 3,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 1826,
+          "has_text_layer": true,
+          "images": 1,
+          "drawings": 0,
+          "links": 1
+        },
+        {
+          "index": 3,
+          "page_id": "p4",
+          "source_page": 4,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 2507,
+          "has_text_layer": true,
+          "images": 2,
+          "drawings": 8,
+          "links": 2
+        },
+        {
+          "index": 4,
+          "page_id": "p5",
+          "source_page": 5,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 3192,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 1,
+          "links": 2
+        },
+        {
+          "index": 5,
+          "page_id": "p6",
+          "source_page": 6,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 3472,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 3,
+          "links": 1
+        },
+        {
+          "index": 6,
+          "page_id": "p7",
+          "source_page": 7,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 3320,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 7,
+          "page_id": "p8",
+          "source_page": 8,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 3193,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 8,
+          "links": 3
+        }
+      ]
+    },
+    {
+      "id": "book-fighter-pilot",
+      "title": "When the Sky Was Ours — A Fighter Pilot's Odyssey, pp. 7-12",
+      "source": "repo:outputs/56b0ecebf5a56a2f/source.bin",
+      "lang": "en",
+      "target_lang": "简体中文",
+      "features": [
+        "native",
+        "single-column",
+        "cross-page-paragraph",
+        "toc",
+        "links"
+      ],
+      "expected": "Single-column continuous prose. Pages 9->10 and 11->12 continue one paragraph, so the segment mapping must survive a page break. Chapter headings are large and bold; body text is 15pt LiberationSerif.",
+      "pages": [
+        7,
+        12
+      ],
+      "file": "corpus/book-fighter-pilot.pdf",
+      "sha256": "8e80396ad46aa7dd5c01529db4bc40f808cce9f0d4355359095082618b2ad3ce",
+      "bytes": 2646384,
+      "page_count": 6,
+      "toc_entries": 2,
+      "total_links": 0,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 7,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 1966,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 1,
+          "page_id": "p2",
+          "source_page": 8,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 1448,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 2,
+          "page_id": "p3",
+          "source_page": 9,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 2164,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 3,
+          "page_id": "p4",
+          "source_page": 10,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 203,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 4,
+          "page_id": "p5",
+          "source_page": 11,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 1726,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 5,
+          "page_id": "p6",
+          "source_page": 12,
+          "width": 612.0,
+          "height": 792.0,
+          "rotation": 0,
+          "chars": 134,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        }
+      ]
+    },
+    {
+      "id": "report-middle-east",
+      "title": "Middle East Aviation 2025 report, pp. 4-9",
+      "source": "repo:outputs/c537f06f797b24ad/source.bin",
+      "lang": "en",
+      "target_lang": "العربية",
+      "features": [
+        "native",
+        "graphics",
+        "table",
+        "images",
+        "heading"
+      ],
+      "expected": "Colour branding bands, shaded table rows and two embedded chart images. Removing the source text must not damage the bands, the shading or the charts. Translated text is Arabic, so it must be shaped RTL and stay searchable.",
+      "pages": [
+        4,
+        9
+      ],
+      "file": "corpus/report-middle-east.pdf",
+      "sha256": "796bed77c9523515e4190176969384da73c635829341f99302f0ad58c062137c",
+      "bytes": 1295036,
+      "page_count": 6,
+      "toc_entries": 0,
+      "total_links": 0,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 4,
+          "width": 595.276,
+          "height": 841.89,
+          "rotation": 0,
+          "chars": 1806,
+          "has_text_layer": true,
+          "images": 1,
+          "drawings": 6,
+          "links": 0
+        },
+        {
+          "index": 1,
+          "page_id": "p2",
+          "source_page": 5,
+          "width": 595.276,
+          "height": 841.89,
+          "rotation": 0,
+          "chars": 690,
+          "has_text_layer": true,
+          "images": 2,
+          "drawings": 6,
+          "links": 0
+        },
+        {
+          "index": 2,
+          "page_id": "p3",
+          "source_page": 6,
+          "width": 595.276,
+          "height": 841.89,
+          "rotation": 0,
+          "chars": 1367,
+          "has_text_layer": true,
+          "images": 1,
+          "drawings": 13,
+          "links": 0
+        },
+        {
+          "index": 3,
+          "page_id": "p4",
+          "source_page": 7,
+          "width": 595.276,
+          "height": 841.89,
+          "rotation": 0,
+          "chars": 1029,
+          "has_text_layer": true,
+          "images": 3,
+          "drawings": 1,
+          "links": 0
+        },
+        {
+          "index": 4,
+          "page_id": "p5",
+          "source_page": 8,
+          "width": 595.276,
+          "height": 841.89,
+          "rotation": 0,
+          "chars": 695,
+          "has_text_layer": true,
+          "images": 2,
+          "drawings": 5,
+          "links": 0
+        },
+        {
+          "index": 5,
+          "page_id": "p6",
+          "source_page": 9,
+          "width": 595.276,
+          "height": 841.89,
+          "rotation": 0,
+          "chars": 1707,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 2,
+          "links": 0
+        }
+      ]
+    },
+    {
+      "id": "novel-midnight-library",
+      "title": "The Midnight Library (Matt Haig), pp. 8-9",
+      "source": "repo:outputs/586f32a79a54e8f4/source.bin",
+      "lang": "en",
+      "target_lang": "简体中文",
+      "features": [
+        "mixed",
+        "images"
+      ],
+      "expected": "This book is a mixed PDF: most pages carry a text layer, a few are image-only. Native text objects and scanned pixels must be handled separately.",
+      "pages": [
+        8,
+        9
+      ],
+      "file": "corpus/novel-midnight-library.pdf",
+      "sha256": "5445f57d5375b1325d953211e536b5a67693978776a7be2f153d8e2bb4bb73f5",
+      "bytes": 11219583,
+      "page_count": 2,
+      "toc_entries": 0,
+      "total_links": 0,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 8,
+          "width": 357.6,
+          "height": 565.6,
+          "rotation": 0,
+          "chars": 12,
+          "has_text_layer": false,
+          "images": 2,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 1,
+          "page_id": "p2",
+          "source_page": 9,
+          "width": 373.6,
+          "height": 567.2,
+          "rotation": 0,
+          "chars": 271,
+          "has_text_layer": true,
+          "images": 2,
+          "drawings": 0,
+          "links": 0
+        }
+      ]
+    },
+    {
+      "id": "scan-clean",
+      "title": "Clean scanned English page (repo fixture)",
+      "source": "repo:benchmark/vlm-migration/clean_scan.pdf",
+      "lang": "en",
+      "target_lang": "简体中文",
+      "features": [
+        "scan",
+        "no-text-layer"
+      ],
+      "expected": "One full-page raster with no text layer. Only regions with verified geometry may be covered; anything else must be reported, never silently skipped.",
+      "pages": [
+        1,
+        1
+      ],
+      "file": "corpus/scan-clean.pdf",
+      "sha256": "0f2787bcc53d2f836f362e2cf5c6fae2e30133a81e0bd2240f205db811bd7570",
+      "bytes": 38699,
+      "page_count": 1,
+      "toc_entries": 0,
+      "total_links": 0,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 1,
+          "width": 595.0,
+          "height": 600.0,
+          "rotation": 0,
+          "chars": 0,
+          "has_text_layer": false,
+          "images": 1,
+          "drawings": 0,
+          "links": 0
+        }
+      ]
+    },
+    {
+      "id": "native-english",
+      "title": "Minimal native English page (repo fixture)",
+      "source": "repo:benchmark/vlm-migration/native.pdf",
+      "lang": "en",
+      "target_lang": "العربية",
+      "features": [
+        "native",
+        "single-column"
+      ],
+      "expected": "Small native control page; translated to Arabic.",
+      "pages": [
+        1,
+        1
+      ],
+      "file": "corpus/native-english.pdf",
+      "sha256": "6adfa41025efaca4da20c0da8c58b38c0ab80d721b7c38e1381fe6aa213117dc",
+      "bytes": 53207,
+      "page_count": 1,
+      "toc_entries": 0,
+      "total_links": 0,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 1,
+          "width": 595.0,
+          "height": 600.0,
+          "rotation": 0,
+          "chars": 115,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        }
+      ]
+    },
+    {
+      "id": "arabic-rtl",
+      "title": "Arabic RTL native page + Arabic/English mixed page (repo fixtures)",
+      "source": "repo-merge:benchmark/vlm-migration/rtl.pdf+benchmark/paddle-smoke/arabic-mixed.pdf",
+      "lang": "ar",
+      "target_lang": "简体中文",
+      "features": [
+        "native",
+        "rtl",
+        "arabic"
+      ],
+      "expected": "Source is Arabic. The renderer must remove Arabic source text and place Chinese target text without leaving RTL source ghosts.",
+      "pages": [
+        1,
+        2
+      ],
+      "file": "corpus/arabic-rtl.pdf",
+      "sha256": "c2c06a18ad0bc9f0a508f490247dde54d85ed6fb76e80e583e842e89611b8a9c",
+      "bytes": 280829,
+      "page_count": 2,
+      "toc_entries": 0,
+      "total_links": 0,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 1,
+          "width": 595.0,
+          "height": 600.0,
+          "rotation": 0,
+          "chars": 136,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        },
+        {
+          "index": 1,
+          "page_id": "p2",
+          "source_page": 1,
+          "width": 595.0,
+          "height": 600.0,
+          "rotation": 0,
+          "chars": 136,
+          "has_text_layer": true,
+          "images": 0,
+          "drawings": 0,
+          "links": 0
+        }
+      ]
+    }
+  ],
+  "challenge": [
+    {
+      "id": "challenge-historical",
+      "title": "1920s printed Arabic page with a rejected text layer",
+      "source": "repo:benchmark/vlm-migration/historical.pdf",
+      "lang": "ar",
+      "target_lang": "简体中文",
+      "features": [
+        "scan",
+        "degraded",
+        "bad-text-layer"
+      ],
+      "expected": "The recorded text layer is rejected (reversed letters/words). Grounding may abstain; the page must then be reported as unfinished rather than erased.",
+      "pages": [
+        1,
+        1
+      ],
+      "file": "corpus/challenge-historical.pdf",
+      "sha256": "e5f325618e1e472b3cb7388157cc883b37e3d31e205a8a61c78e8ae76447ba54",
+      "bytes": 49777,
+      "page_count": 1,
+      "toc_entries": 0,
+      "total_links": 0,
+      "page_detail": [
+        {
+          "index": 0,
+          "page_id": "p1",
+          "source_page": 1,
+          "width": 383.76,
+          "height": 573.1,
+          "rotation": 0,
+          "chars": 942,
+          "has_text_layer": true,
+          "images": 2,
+          "drawings": 0,
+          "links": 0
+        }
+      ]
+    }
+  ]
+}

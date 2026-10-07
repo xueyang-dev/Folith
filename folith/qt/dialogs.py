@@ -320,12 +320,16 @@ class EngineDialog(QDialog):
         self.deliver_terms_box.setChecked(bool(getattr(self.config, "deliver_terms_xlsx", True)))
         self.deliver_evidence_box = style_module.CheckBox(i18n.tr('段落证据 JSONL（segment_evidence.jsonl）'))
         self.deliver_evidence_box.setChecked(bool(getattr(self.config, "deliver_evidence", True)))
+        self.deliver_original_pdf_box = style_module.CheckBox(
+            i18n.tr('原排版译文 PDF（original_layout.pdf）'))
+        self.deliver_original_pdf_box.setChecked(
+            bool(getattr(self.config, "deliver_original_pdf", False)))
         self.deliver_pdf_box = style_module.CheckBox(i18n.tr('译文 PDF（translation.pdf）'))
         self.deliver_pdf_box.setChecked(
             bool(getattr(self.config, "deliver_pdf", False)))
         for box in (self.deliver_plain_box, self.deliver_bilingual_box,
                     self.deliver_terms_box, self.deliver_evidence_box,
-                    self.deliver_pdf_box):
+                    self.deliver_pdf_box, self.deliver_original_pdf_box):
             delivery_body.addWidget(box)
         outer.addWidget(delivery)
         outer.addStretch(1)
@@ -529,7 +533,7 @@ class EngineDialog(QDialog):
         "reviewer_provider", "reviewer_model", "reviewer_api_key",
         "reviewer_base_url", "ocr_language", "ocr_mode", "ocr_backend",
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_terms_xlsx",
-        "deliver_evidence", "deliver_pdf",
+        "deliver_evidence", "deliver_pdf", "deliver_original_pdf",
     })
 
     def _collect(self) -> adapter.EngineConfig:
@@ -576,6 +580,7 @@ class EngineDialog(QDialog):
         config.deliver_terms_xlsx = self.deliver_terms_box.isChecked()
         config.deliver_evidence = self.deliver_evidence_box.isChecked()
         config.deliver_pdf = self.deliver_pdf_box.isChecked()
+        config.deliver_original_pdf = self.deliver_original_pdf_box.isChecked()
         return config
 
     def _save(self) -> None:

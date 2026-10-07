@@ -97,6 +97,7 @@ DELIVERY_CONFIG_DEFAULTS = {
     "deliver_plain_docx": True,
     "deliver_bilingual_docx": True,
     "deliver_pdf": False,
+    "deliver_original_pdf": False,
     "deliver_epub": False,
     "deliver_terms_xlsx": True,
     "deliver_tbx": False,
@@ -2336,6 +2337,12 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 report.update({"semantic_source":"mixed" if visual_indices else "vlm", "document_ir":document,
                                "ocr_used":False, "ocr_mode":resolved_ocr_mode,
                                "ocr_trigger":ocr_trigger, "pdf_text_layer_quality":text_layer_report.get("status"),
+                               # The routing decision must be explainable in the
+                               # same shape as the native path: this branch is
+                               # exactly where a rejected layer ends up.
+                               "pdf_text_layer_quality_score":text_layer_report.get("score"),
+                               "pdf_text_layer_rejection_reasons":list(text_layer_report.get("reasons") or []),
+                               "pdf_text_layer_evidence":text_layer_report.get("evidence") or {},
                                "page_diagnostics":document["provenance"]["page_diagnostics"]})
                 if (ocr_max_pages is not None and len(document["provenance"]["page_diagnostics"])
                         < (len(visual_indices) if visual_indices else len(document["pages"]))):
@@ -13158,6 +13165,10 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
         bundle = {}
         pairs = state.get("pairs") or []
         glossary = state.get("glossary") or []
+        # Requested artifacts that cannot exist for this source.  Initialised
+        # outside the translation branch because the delivery manifest is built
+        # for a job without completed translations as well.
+        skipped_assets: Dict[str, str] = {}
         if state.get("source_cleanup_done"):
             bundle["source_cleanup.json"] = (
                 json.dumps(state.get("source_cleanup") or {},
@@ -13174,6 +13185,30 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
             if config["deliver_pdf"]:
                 bundle["translation.pdf"] = translations_to_pdf(
                     pairs, target_lang=state.get("target_lang") or target_lang)
+            if config["deliver_original_pdf"]:
+                # The original-layout PDF keeps the source document's page
+                # geometry and carries the translated text in place.  It only
+                # exists for a PDF source; a failure on a real PDF is surfaced,
+                # never silently replaced by the reflow PDF.
+                if not _is_pdf_source(filename, source):
+                    skipped_assets["original_layout.pdf"] = (
+                        "original-layout rendering requires a PDF source")
+                else:
+                    from folith import pdfrender as _pdfrender
+                    cache_dir = job_dir(job_id) / "original_pdf_cache"
+                    try:
+                        rendered = _pdfrender.render_original_layout(
+                            job_id, state, source, page_cache_dir=cache_dir)
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "原排版 PDF 生成失败："
+                            f"{type(exc).__name__}: {exc}") from exc
+                    bundle["original_layout.pdf"] = rendered.data
+                    bundle["original_layout_report.json"] = (
+                        json.dumps({k: v for k, v in rendered.report.items()
+                                    if not str(k).startswith("_")},
+                                   ensure_ascii=False, indent=2) + "\n"
+                    ).encode("utf-8")
             if config["deliver_epub"]:
                 from folith.epub import build_translation_epub
                 epub_bytes, epub_report = build_translation_epub(
@@ -13232,7 +13267,8 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
             snapshot_state, job_id, target_lang, provider, model,
             generated_assets=generated_assets, source_filename=filename,
             translator_config=state.get("translator_config"),
-            reviewer_config=state.get("reviewer_config"))
+            reviewer_config=state.get("reviewer_config"),
+            skipped_assets=skipped_assets)
         bundle["delivery_manifest.json"] = (
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         return bundle
@@ -13285,6 +13321,24 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     bundle["delivery_manifest.json"] = (
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     return bundle
+
+
+def _is_pdf_source(filename, source):
+    """True when the job's source artifact is a PDF."""
+    if source and bytes(source[:5]) == b"%PDF-":
+        return True
+    return str(filename or "").lower().endswith(".pdf")
+
+
+def original_layout_pdf_applicable(filename, source=None):
+    """Whether the original-layout PDF can exist for this task source.
+
+    The renderer works from the source document's own page geometry, so the
+    option is meaningful for PDF tasks only.  Both shells ask this before
+    offering it, and the delivery bundle uses it before building the artifact,
+    so a stale saved choice on a DOCX task can never be honoured silently.
+    """
+    return _is_pdf_source(filename, source)
 
 
 def build_delivery_assets(job_id, state=None, target_lang="", provider="", model=""):

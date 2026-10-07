@@ -66,7 +66,7 @@ def test_manual_delivery_change_marks_preset_and_complete_overwrites_it():
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
         "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx"))
     assert not config["deliver_jsonl"]
-    assert any("将生成 6 个文件" in item.value
+    assert any("将生成 7 个文件" in item.value
                and "TMX ×1" in item.value and "TBX ×1" in item.value
                for item in at.markdown)
 
@@ -200,22 +200,24 @@ def test_preset_complete_selected_counts_correct():
     assert config["deliver_plain_docx"] is True
     assert config["deliver_bilingual_docx"] is True
     assert config["deliver_pdf"] is True
+    assert config["deliver_original_pdf"] is True
     assert config["deliver_terms_xlsx"] is True
     assert config["deliver_tmx"] is True
     assert config["deliver_tbx"] is True
 
     # checkbox values match config
     for key in ("deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
-                 "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx"):
+                 "deliver_original_pdf", "deliver_terms_xlsx", "deliver_tmx",
+                 "deliver_tbx"):
         cb = next((c for c in at.checkbox if c.key == key), None)
         assert cb is not None, f"checkbox {key} not found"
         assert cb.value is True, f"checkbox {key} should be checked for complete preset"
 
     footer = _footer_file_count(at)
-    assert footer == 6, f"complete preset should generate 6 files, got {footer}"
+    assert footer == 7, f"complete preset should generate 7 files, got {footer}"
 
-    assert any("译文文件" in m.value and "已选 3" in m.value for m in at.markdown), \
-        "complete preset: 译文文件 should show 已选 3"
+    assert any("译文文件" in m.value and "已选 4" in m.value for m in at.markdown), \
+        "complete preset: 译文文件 should show 已选 4"
     assert any("语言资产" in m.value and "已选 3" in m.value for m in at.markdown), \
         "complete preset: 语言资产 should show 已选 3"
 
@@ -299,3 +301,4 @@ def test_delivery_cards_and_confirmation_localize_visible_copy(tmp_path, monkeyp
     assert tr('基础检查', locale=locale) in summary
     runtime = next(item.value for item in at.markdown if 'class="tp-confirm-card tp-runtime-card"' in item.value)
     assert not re.search('[\u4e00-\u9fff]', runtime)
+

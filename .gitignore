@@ -107,7 +107,18 @@ benchmark/translation-efficiency/
 benchmark/regression_evidence.txt
 benchmark/results.csv
 
+# Original-layout PDF renderer corpus: the frozen manifest and the harness are
+# tracked; the materialised PDFs, the job states they produce and the rendered
+# output are large and reproducible from prepare_corpus.py + build_jobs.py.
+benchmark/opdf/out/
+benchmark/opdf/jobs/
+benchmark/opdf/corpus/
+
 # Local Remotion video project (unedited scaffold, no render output).  Not part
 # of the product build or the release chain.
 video/
 
+# Text-layer routing benchmark: the manifest, the harness and the recorded
+# evidence are tracked; the materialised sample PDFs are not (24 MB, rebuilt by
+# prepare_samples.py from the recorded repo paths and public URLs).
+benchmark/routing/samples/

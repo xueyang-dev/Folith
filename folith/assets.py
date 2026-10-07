@@ -263,6 +263,7 @@ def build_delivery_manifest(
     source_filename: str = "",
     translator_config: Optional[Dict[str, Any]] = None,
     reviewer_config: Optional[Dict[str, Any]] = None,
+    skipped_assets: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """生成交付清单（统计与任务状态一致）。"""
     stats = state.get("review_stats") or {}
@@ -314,6 +315,9 @@ def build_delivery_manifest(
         ],
         "delivery_status": state.get("delivery_status") or "draft",
         "generated_assets": list(generated_assets or []),
+        # A requested artifact that cannot exist for this source must say so
+        # here rather than quietly disappearing from the bundle.
+        "skipped_assets": dict(skipped_assets or {}),
         "created_at": _now_iso(),
     }
 

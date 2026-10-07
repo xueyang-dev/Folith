@@ -460,7 +460,8 @@ def _default_output_config():
 # standard translation bundle.
 _DELIVERY_OUTPUT_KEYS = (
     "enable_annotate", "enable_report", "deliver_plain_docx",
-    "deliver_bilingual_docx", "deliver_pdf", "deliver_epub", "deliver_terms_xlsx",
+    "deliver_bilingual_docx", "deliver_pdf", "deliver_original_pdf",
+    "deliver_epub", "deliver_terms_xlsx",
     "deliver_tbx", "deliver_tmx", "deliver_jsonl", "deliver_evidence",
     "deliver_cases", "deliver_academic_workspace", "deliver_review_report",
 )
@@ -497,7 +498,8 @@ _DELIVERY_PRESETS = {
         "label": "完整交付",
         "description": "同时提供分享、审校与 CAT 工具需要的语言资产。",
         "outputs": ("deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
-                    "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx"),
+                    "deliver_original_pdf", "deliver_terms_xlsx", "deliver_tmx",
+                    "deliver_tbx"),
     },
     "custom": {
         "label": "自定义",
@@ -512,7 +514,8 @@ _DELIVERY_PRESET_CONFIGS = {
     if key != "custom"
 }
 _DELIVERY_WIDGET_KEYS = (
-    "deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf", "deliver_epub",
+    "deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
+    "deliver_original_pdf", "deliver_epub",
     "output_annotate", "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx",
     "deliver_jsonl", "output_report", "deliver_evidence", "deliver_cases",
     "deliver_academic_workspace", "deliver_review_report",
@@ -577,6 +580,7 @@ def _delivery_selected_count(config, items):
     return sum(1 for item in items if bool(config.get(item["key"])))
 
 
+
 _DELIVERY_TRANSLATION_ITEMS = (
     {
         "key": "deliver_plain_docx", "title": "纯译文", "format": "DOCX",
@@ -597,6 +601,12 @@ _DELIVERY_TRANSLATION_ITEMS = (
     {
         "key": "deliver_pdf", "title": "纯译文", "format": "PDF",
         "detail": "适合分享、打印与最终交付。",
+        "file_units": (("PDF", 1),),
+        "disambig_fmt": True,
+    },
+    {
+        "key": "deliver_original_pdf", "title": "原排版译文", "format": "PDF",
+        "detail": "保留原文件的版式、图形与表格，译文就位；未完成的区域会在页面上标出。",
         "file_units": (("PDF", 1),),
         "disambig_fmt": True,
     },
@@ -1931,6 +1941,9 @@ def _summary_html(filename, target_lang, preset_label, glossary_name,
         artifacts.append(("description", "双语对照", "原文与译文并列，适合审校", "DOCX"))
     if output_config.get("deliver_pdf"):
         artifacts.append(("picture_as_pdf", "纯译文", "适合分享、打印与最终交付", "PDF"))
+    if output_config.get("deliver_original_pdf"):
+        artifacts.append(("picture_as_pdf", "原排版译文",
+                          "保留原版式、图形与表格，译文就位", "PDF"))
     if output_config.get("deliver_epub"):
         artifacts.append(("menu_book", "译文电子书", "保留原图，支持调整字号", "EPUB"))
     if output_config.get("deliver_terms_xlsx"):
@@ -5099,11 +5112,13 @@ def _render_workspace_delivery_context(job_id, state):
         # Quick download actions for frozen snapshot
         with st.expander(_t("快捷下载"), expanded=False):
             assets = core.build_delivery_assets(job_id, state)
-            for key in ("translation.docx", "translation.pdf", "translation.epub", "bilingual.docx"):
+            for key in ("translation.docx", "translation.pdf", "original_layout.pdf",
+                        "translation.epub", "bilingual.docx"):
                 data = (assets or {}).get(key)
                 if data:
                     label = {"translation.docx": "译文 DOCX",
                              "translation.pdf": "译文 PDF",
+                             "original_layout.pdf": "原排版译文 PDF",
                              "translation.epub": "译文 EPUB",
                              "bilingual.docx": "双语对照"}.get(key, key)
                     mime = {".pdf": "application/pdf", ".epub": "application/epub+zip"}.get(
@@ -9000,7 +9015,10 @@ def _render_workspace_delivery(job_id, state, overview=None):
 
     labels = {
         "translation.docx": "最终译文", "bilingual.docx": "双语对照",
-        "translation.pdf": "最终译文 PDF", "annotated_bilingual.docx": "双语对照 · 标注增强版",
+        "translation.pdf": "最终译文 PDF",
+        "original_layout.pdf": "原排版译文 PDF",
+        "original_layout_report.json": "原排版渲染报告",
+        "annotated_bilingual.docx": "双语对照 · 标注增强版",
         "translation.epub": "译文电子书 EPUB", "epub_export_report.json": "EPUB 图文导出说明",
         "terms.xlsx": "术语表 XLSX", "terms.tbx": "标准术语库 TBX",
         "memory.tmx": "翻译记忆 TMX", "bilingual.jsonl": "结构化双语数据",

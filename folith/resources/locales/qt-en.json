@@ -95,6 +95,7 @@
  "单击选中；双击打开任务": "Click to select; double-click to open the task",
  "单独配置": "Configure separately",
  "卡片": "Cards",
+ "原排版译文 PDF（original_layout.pdf）": "Original-layout translation PDF (original_layout.pdf)",
  "原文": "Source",
  "原文：{v0}\n排除时的译文：{v1}": "Source: {v0}\nTranslation when excluded: {v1}",
  "双击文件可在 Finder 中显示": "Double-click a file to reveal it in Finder",

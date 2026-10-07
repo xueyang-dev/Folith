@@ -10,3 +10,8 @@ openai>=1.60
 google-genai>=1.0
 pandas>=2.0
 openpyxl>=3.1
+# Original-layout PDF renderer: Typst typesets the translated text (correct
+# Arabic shaping with a base-character, searchable text layer) and fontTools is
+# used to pick a font family that actually covers the target script.
+typst>=0.15
+fonttools>=4.50
