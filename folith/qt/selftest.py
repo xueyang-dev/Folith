@@ -308,11 +308,16 @@ class Flow:
             self.phase = "review"
             self.window.review_all()
             # Same reasoning: wait on the cheap runtime state, then check the
-            # per-segment review flags once.
-            self.pump(300, lambda: (
+            # per-segment review flags once.  The budget is the flow timeout,
+            # not a fixed 300 s: an independent reviewer call per segment is
+            # the normal cost, and a real document's review legitimately runs
+            # longer than a fixed guess.  Giving up early would hand the
+            # delivery gate a half-reviewed book and blame the product for a
+            # harness timeout.
+            self.pump(self.timeout, lambda: (
                 (core.load_runtime_state(job_id) or {}).get("status")
                 not in core.RUNTIME_ACTIVE_STATUSES), interval=0.2)
-            self.pump(60, lambda: all(
+            self.pump(max(120.0, self.timeout / 4), lambda: all(
                 item.get("reviewed") for item in
                 (adapter.load_state(job_id).get("pairs") or [])), interval=0.5)
             state = adapter.load_state(job_id)
@@ -330,8 +335,9 @@ class Flow:
             # delivery_status=draft for a delivery that did succeed.
             # Snapshot files are cheap to list; the final state needs a full
             # parse, so it is polled coarsely.
-            self.pump(300, lambda: bool(adapter.delivery_snapshots(job_id)))
-            self.pump(60, lambda: adapter.load_state(job_id).get("delivery_status")
+            self.pump(self.timeout, lambda: bool(adapter.delivery_snapshots(job_id)))
+            self.pump(max(120.0, self.timeout / 4),
+                      lambda: adapter.load_state(job_id).get("delivery_status")
                       == "final", interval=0.5)
             snapshots = adapter.delivery_snapshots(job_id)
             latest = snapshots[-1] if snapshots else {}
