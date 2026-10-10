@@ -244,6 +244,13 @@ class MainWindow(QMainWindow):
         self.workbench.entityRepairRequested.connect(self.apply_entity_repair)
         self.workbench.entityAcceptRequested.connect(self.accept_entity_variants)
         self.workbench.rescanRequested.connect(self.rescan_source)
+        self.workbench.caseApproveRequested.connect(self.approve_case)
+        self.workbench.caseExcludeRequested.connect(self.exclude_case)
+        self.workbench.caseReplaceRequested.connect(self.replace_case)
+        self.workbench.caseBaselineSaveRequested.connect(
+            lambda case_id, text: self.update_case_baseline(case_id, text, reject=False))
+        self.workbench.caseBaselineRejectRequested.connect(
+            lambda case_id, text: self.update_case_baseline(case_id, text, reject=True))
         self.workbench.qaRenderRequested.connect(self.run_render_qa)
         self.workbench.qaFactToggled.connect(self.set_final_qa_fact)
         self.workbench.revealLogRequested.connect(
@@ -1336,6 +1343,43 @@ class MainWindow(QMainWindow):
     # ================= 学术专业模式 =================
     def academic_mode(self) -> bool:
         return str(self.settings.value(self.ACADEMIC_KEY, "false")).lower() in ("1", "true", "yes")
+
+    def _case_action(self, fn, *args, done: str, failure: str, **kwargs) -> bool:
+        job_id = self._current_job_id
+        if not job_id:
+            return False
+        try:
+            fn(job_id, *args, **kwargs)
+        except adapter.AdapterError as exc:
+            self._failure(failure, str(exc))
+            return False
+        self._notice(done)
+        self.refresh_workbench(force=True)
+        return True
+
+    def approve_case(self, case_id: str) -> None:
+        self._case_action(adapter.review_case, case_id, "approved",
+                          done=i18n.tr('已批准纳入该案例。'), failure=i18n.tr('无法批准案例'))
+
+    def exclude_case(self, case_id: str) -> None:
+        if _automation():
+            reason, ok = "自动化运行排除", True
+        else:
+            reason, ok = prompts.TextInputDialog.get_text(
+                self, i18n.tr('排除案例'), i18n.tr('说明为什么不纳入本次分析…'))
+        if not ok:
+            return
+        self._case_action(adapter.review_case, case_id, "rejected", reason,
+                          done=i18n.tr('已排除该案例。'), failure=i18n.tr('无法排除案例'))
+
+    def replace_case(self, case_id: str) -> None:
+        self._case_action(adapter.replace_rejected_case, case_id,
+                          done=i18n.tr('已从合格池替换该案例。'), failure=i18n.tr('无法替换案例'))
+
+    def update_case_baseline(self, case_id: str, text: str, *, reject: bool) -> None:
+        self._case_action(adapter.update_case_baseline, case_id, text, reject=reject,
+                          done=i18n.tr('已拒绝模拟初译。') if reject else i18n.tr('已保存模拟初译。'),
+                          failure=i18n.tr('无法保存模拟初译'))
 
     def run_render_qa(self) -> None:
         job_id = self._current_job_id

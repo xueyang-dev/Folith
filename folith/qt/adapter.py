@@ -1344,6 +1344,62 @@ def set_final_qa_fact(job_id: str, field: str, confirmed: bool) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 学术专业模式：案例终审 =================
+
+CASE_ARTIFACTS = ("selected_cases", "evidence", "argument_plan", "case_analysis_plans",
+                  "outline", "literature_sources")
+
+
+def case_views(job_id: str, state: dict | None = None) -> list[dict]:
+    from folith import workspace_cases as _cases
+
+    state = state if state is not None else load_state(job_id)
+    artifacts = {name: core.load_academic_artifact(job_id, name) or {}
+                 for name in CASE_ARTIFACTS}
+    return _cases.case_views(job_id, state, artifacts)
+
+
+def _case_result(result, failure: str):
+    """核心的案例动作返回 (state, ok, message_or_errors)。"""
+    state, ok, detail = result
+    if not ok:
+        if isinstance(detail, (list, tuple)):
+            detail = detail[0] if detail else failure
+        raise AdapterError(str(detail or failure))
+    return state
+
+
+def translation_truth(job_id: str, state: dict | None = None) -> dict:
+    """案例引用依据：当前译文真值的版本信息。"""
+    state = state if state is not None else load_state(job_id)
+    try:
+        return dict(core.translation_truth_view(job_id, state))
+    except Exception:  # noqa: BLE001 - 横幅信息拿不到时页面照常工作
+        return {}
+
+
+def review_case(job_id: str, case_id: str, status: str, note: str = "") -> dict:
+    """人工终审一个案例：批准纳入 / 排除（排除必须写原因）。"""
+    if status not in ("approved", "rejected"):
+        raise AdapterError(f"不支持的案例决定：{status}")
+    if status == "rejected" and not str(note or "").strip():
+        raise AdapterError("请填写排除原因。")
+    return _case_result(core.review_academic_case(
+        job_id, case_id, status, str(note or "").strip(), actor="user"), "无法记录案例决定")
+
+
+def replace_rejected_case(job_id: str, case_id: str) -> dict:
+    return _case_result(core.replace_rejected_case(job_id, case_id, actor="user"),
+                        "无法从合格池替换案例")
+
+
+def update_case_baseline(job_id: str, case_id: str, text: str, *, reject: bool = False) -> dict:
+    """修改或拒绝合成对照的模拟初译（不改变译文真值）。"""
+    return _case_result(core.update_synthetic_baseline(
+        job_id, case_id, text, status="rejected" if reject else "modified", actor="user"),
+        "无法保存模拟初译")
+
+
 # ================= 翻译风格（基础风格 + 微调 + 智能画像） =================
 #
 # 旧向导的"智能风格画像"：抽样读几段原文 → 一次模型调用给出文档画像与风格推荐 →

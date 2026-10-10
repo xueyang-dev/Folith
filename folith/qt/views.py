@@ -29,6 +29,7 @@ from . import i18n
 from . import adapter
 from . import icons
 from .activity_panel import ActivityPanel
+from .cases_panel import CasesPanel
 from .followup_panel import FollowupPanel
 from .qa_panel import QAPanel
 from .review_panel import ReviewPanel
@@ -1115,6 +1116,11 @@ class WorkbenchView(QWidget):
     entityRepairRequested = Signal(str, str, list)
     entityAcceptRequested = Signal(str)
     rescanRequested = Signal(dict)
+    caseApproveRequested = Signal(str)
+    caseExcludeRequested = Signal(str)
+    caseReplaceRequested = Signal(str)
+    caseBaselineSaveRequested = Signal(str, str)
+    caseBaselineRejectRequested = Signal(str, str)
     qaRenderRequested = Signal()
     qaFactToggled = Signal(str, bool)
     restoreRequested = Signal(int)             # 恢复人工修改之前的译文
@@ -1176,6 +1182,7 @@ class WorkbenchView(QWidget):
         self._terms_key: tuple = ()
         self._followup_key: tuple = ()
         self._qa_key: tuple = ()
+        self._cases_key: tuple = ()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -1748,13 +1755,23 @@ class WorkbenchView(QWidget):
                          icons.icon("package", 16, style_module.text_color("text-secondary")),
                          i18n.tr('交付'))
         # 学术专业模式的页：默认隐藏，设置里主动打开（或任务本身已带着学术产物）才出现。
+        self.cases_panel = CasesPanel()
+        self.cases_panel.approveRequested.connect(self.caseApproveRequested.emit)
+        self.cases_panel.excludeRequested.connect(self.caseExcludeRequested.emit)
+        self.cases_panel.replaceRequested.connect(self.caseReplaceRequested.emit)
+        self.cases_panel.baselineSaveRequested.connect(self.caseBaselineSaveRequested.emit)
+        self.cases_panel.baselineRejectRequested.connect(self.caseBaselineRejectRequested.emit)
+        self.cases_panel.editRequested.connect(self.show_segment_for_edit)
+        self.tabs.addTab(self.cases_panel,
+                         icons.icon("file-text", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('案例'))
         self.qa_panel = QAPanel()
         self.qa_panel.renderRequested.connect(self.qaRenderRequested.emit)
         self.qa_panel.factToggled.connect(self.qaFactToggled.emit)
         self.tabs.addTab(self.qa_panel,
                          icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
                          i18n.tr('合规与 QA'))
-        self._academic_widgets = [self.qa_panel]
+        self._academic_widgets = [self.cases_panel, self.qa_panel]
         self._academic_mode = False
         self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.addTab(self.followup_panel,
@@ -1831,6 +1848,7 @@ class WorkbenchView(QWidget):
         self._render_terms()
         self._render_followup()
         self._sync_academic_tabs()
+        self._render_cases()
         self._render_qa()
         self._render_activity()
 
@@ -1839,6 +1857,8 @@ class WorkbenchView(QWidget):
         self._academic_mode = bool(on)
         self._sync_academic_tabs()
         self._qa_key = ()
+        self._cases_key = ()
+        self._render_cases()
         self._render_qa()
 
     def academic_visible(self) -> bool:
@@ -1851,6 +1871,20 @@ class WorkbenchView(QWidget):
             index = self.tabs.indexOf(widget)
             if index >= 0 and self.tabs.isTabVisible(index) != visible:
                 self.tabs.setTabVisible(index, visible)
+
+    def _render_cases(self) -> None:
+        if not self.job_id or not self.academic_visible():
+            return
+        key = (self.job_id, id(self._state))
+        if key == self._cases_key:
+            return
+        self._cases_key = key
+        try:
+            views = adapter.case_views(self.job_id, self._state)
+            truth = adapter.translation_truth(self.job_id, self._state)
+        except Exception:  # noqa: BLE001 - 学术页坏了不能拖垮翻译页
+            views, truth = [], {}
+        self.cases_panel.apply(views, truth)
 
     def _render_qa(self) -> None:
         if not self.job_id or not self.academic_visible():
