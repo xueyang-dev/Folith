@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
 
         self.home = HomeView(self)
         self.workbench = WorkbenchView(self)
+        self.workbench.set_academic_mode(self.academic_mode())
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.home)
         self.stack.addWidget(self.workbench)
@@ -243,6 +244,8 @@ class MainWindow(QMainWindow):
         self.workbench.entityRepairRequested.connect(self.apply_entity_repair)
         self.workbench.entityAcceptRequested.connect(self.accept_entity_variants)
         self.workbench.rescanRequested.connect(self.rescan_source)
+        self.workbench.qaRenderRequested.connect(self.run_render_qa)
+        self.workbench.qaFactToggled.connect(self.set_final_qa_fact)
         self.workbench.revealLogRequested.connect(
             lambda job_id: self.reveal_path(adapter.technical_log_path(job_id)))
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
@@ -360,6 +363,7 @@ class MainWindow(QMainWindow):
                      "deliver_pdf", "deliver_original_pdf", "deliver_epub",
                      "deliver_terms_xlsx",
                      "deliver_evidence", "deliver_review_report")
+    ACADEMIC_KEY = "workspace/academic_mode"
     THEME_KEY = "appearance/theme"
     LANGUAGE_KEY = "appearance/language"
 
@@ -1329,6 +1333,31 @@ class MainWindow(QMainWindow):
         self.refresh_workbench(force=True)
         self.start_or_resume()
 
+    # ================= 学术专业模式 =================
+    def academic_mode(self) -> bool:
+        return str(self.settings.value(self.ACADEMIC_KEY, "false")).lower() in ("1", "true", "yes")
+
+    def run_render_qa(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        self._run_with_busy(
+            i18n.tr('页面预检'), i18n.tr('正在用 LibreOffice 渲染页面…'),
+            adapter.run_render_qa, job_id,
+            on_done=lambda _r: self._notice(i18n.tr('页面预检已完成。')))
+
+    def set_final_qa_fact(self, field: str, confirmed: bool) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.set_final_qa_fact(job_id, field, confirmed)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法记录'), str(exc))
+            return
+        self._notice(i18n.tr('已确认。') if confirmed else i18n.tr('已撤销确认。'))
+        self.refresh_workbench(force=True)
+
     def rescan_source(self, options: dict) -> None:
         """重新扫描 PDF 原文：登记请求 → 继续（核心在继续时执行并使旧派生结果失效）。"""
         job_id = self._current_job_id
@@ -1765,7 +1794,10 @@ class MainWindow(QMainWindow):
         # `FOLITH_UI_LANGUAGE` 覆盖（脚本化验收要用），但那不是用户的选择。
         dialog.set_language_preference(str(self.settings.value(
             self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE)))
+        dialog.set_academic_preference(self.academic_mode())
         if dialog.exec():
+            self.settings.setValue(self.ACADEMIC_KEY, "true" if dialog.academic_preference else "false")
+            self.workbench.set_academic_mode(dialog.academic_preference)
             self.config = dialog.config
             self._save_client_defaults()
             self.settings.setValue(self.THEME_KEY, dialog.theme_preference)

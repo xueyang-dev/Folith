@@ -30,6 +30,7 @@ from . import adapter
 from . import icons
 from .activity_panel import ActivityPanel
 from .followup_panel import FollowupPanel
+from .qa_panel import QAPanel
 from .review_panel import ReviewPanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
@@ -1114,6 +1115,8 @@ class WorkbenchView(QWidget):
     entityRepairRequested = Signal(str, str, list)
     entityAcceptRequested = Signal(str)
     rescanRequested = Signal(dict)
+    qaRenderRequested = Signal()
+    qaFactToggled = Signal(str, bool)
     restoreRequested = Signal(int)             # 恢复人工修改之前的译文
     structureRequested = Signal(str, int)     # 操作名（见 adapter.STRUCTURE_OPERATIONS / "undo"）, 段索引
     deliverRequested = Signal()
@@ -1172,6 +1175,7 @@ class WorkbenchView(QWidget):
         self._review_key: tuple = ()
         self._terms_key: tuple = ()
         self._followup_key: tuple = ()
+        self._qa_key: tuple = ()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -1743,12 +1747,23 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(delivery_page,
                          icons.icon("package", 16, style_module.text_color("text-secondary")),
                          i18n.tr('交付'))
+        # 学术专业模式的页：默认隐藏，设置里主动打开（或任务本身已带着学术产物）才出现。
+        self.qa_panel = QAPanel()
+        self.qa_panel.renderRequested.connect(self.qaRenderRequested.emit)
+        self.qa_panel.factToggled.connect(self.qaFactToggled.emit)
+        self.tabs.addTab(self.qa_panel,
+                         icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('合规与 QA'))
+        self._academic_widgets = [self.qa_panel]
+        self._academic_mode = False
+        self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.addTab(self.followup_panel,
                          icons.icon("check-circle", 16, style_module.text_color("text-secondary")),
                          i18n.tr('收尾'))
         self.tabs.addTab(self.activity_panel,
                          icons.icon("clock", 16, style_module.text_color("text-secondary")),
                          i18n.tr('活动'))
+        self._sync_academic_tabs()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 12, 20, 12)
@@ -1815,7 +1830,51 @@ class WorkbenchView(QWidget):
         self._render_review()
         self._render_terms()
         self._render_followup()
+        self._sync_academic_tabs()
+        self._render_qa()
         self._render_activity()
+
+    # ================= 学术专业模式 =================
+    def set_academic_mode(self, on: bool) -> None:
+        self._academic_mode = bool(on)
+        self._sync_academic_tabs()
+        self._qa_key = ()
+        self._render_qa()
+
+    def academic_visible(self) -> bool:
+        """打开了模式，或这个任务自己就带着学术产物（否则会被交付门禁卡住而无处下手）。"""
+        return self._academic_mode or adapter.task_needs_academic(self._state or {})
+
+    def _sync_academic_tabs(self) -> None:
+        visible = self.academic_visible()
+        for widget in self._academic_widgets:
+            index = self.tabs.indexOf(widget)
+            if index >= 0 and self.tabs.isTabVisible(index) != visible:
+                self.tabs.setTabVisible(index, visible)
+
+    def _render_qa(self) -> None:
+        if not self.job_id or not self.academic_visible():
+            return
+        key = (self.job_id, id(self._state))
+        if key == self._qa_key:
+            return
+        self._qa_key = key
+        try:
+            view = adapter.qa_view(self.job_id, self._state)
+        except Exception:  # noqa: BLE001 - 学术页坏了不能拖垮翻译页
+            view = {}
+        self.qa_panel.apply(view)
+
+    def _tab_changed(self, index: int) -> None:
+        """打开"合规与 QA"页时，把 DOCX 结构检查的最新结论记下（和旧界面一样，写入只发生在这里）。"""
+        if self.tabs.widget(index) is not self.qa_panel or not self.job_id:
+            return
+        try:
+            view = adapter.qa_view(self.job_id, self._state)
+            if view.get("sync_needed"):
+                adapter.sync_structural_qa(self.job_id, view["structural_value"])
+        except Exception:  # noqa: BLE001
+            pass
 
     def _render_followup(self) -> None:
         """收尾页随任务状态对象重算（它要读检查点与实体登记，不放在每秒轮询里）。"""

@@ -125,6 +125,7 @@ class EngineDialog(QDialog):
 
         self.theme_preference = theme_module.FOLLOW_SYSTEM
         self.language_preference = i18n.language()
+        self.academic_preference = False
 
         # 对话框自己的标题栏已经写着「设置」；内容区里再放一个 22px 的 pageTitle
         # 是同一句话说两遍，还白占一行高度。改用 section(16px)。
@@ -323,6 +324,14 @@ class EngineDialog(QDialog):
         self.cleanup_box.setChecked(self.config.enable_source_cleanup)
         self.report_box = style_module.CheckBox(i18n.tr('生成实践报告（需要更长的运行时间）'))
         self.report_box.setChecked(self.config.enable_report)
+        # 实践报告 / 案例 / 终稿 QA 是专用能力：默认不出现，用户主动打开"学术专业模式"才显示。
+        self.academic_box = style_module.CheckBox(
+            i18n.tr('学术专业模式：显示实践报告、案例与终稿 QA'))
+        self.academic_box.setToolTip(
+            i18n.tr('默认关闭。打开后，工作台出现报告 / 案例 / 合规与 QA 页，下面的「生成实践报告」也可用。'))
+        self.academic_box.setChecked(bool(self.academic_preference or self.config.enable_report))
+        self.academic_box.toggled.connect(self._academic_toggled)
+        self.report_box.setVisible(self.academic_box.isChecked())
         # 两列网格：六项都是单行短句，一列排下来会白占半屏。
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -334,6 +343,7 @@ class EngineDialog(QDialog):
             grid.addWidget(box, position // 2, position % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
+        workflow_body.addWidget(self.academic_box)
         workflow_body.addLayout(grid)
         outer.addWidget(workflow)
 
@@ -681,6 +691,17 @@ class EngineDialog(QDialog):
             card.setChecked(name == current)
 
     # -- behaviour ---------------------------------------------------------
+    def set_academic_preference(self, on: bool) -> None:
+        """窗口把**当前**偏好带进对话框（原因同 set_language_preference）。"""
+        self.academic_preference = bool(on)
+        self.academic_box.setChecked(bool(on) or bool(self.config.enable_report))
+
+    def _academic_toggled(self, on: bool) -> None:
+        """关掉学术专业模式就不再生成实践报告（避免一个看不见的选项悄悄生效）。"""
+        self.report_box.setVisible(on)
+        if not on:
+            self.report_box.setChecked(False)
+
     def _provider_changed(self, provider: str) -> None:
         models = self.config.models_for(provider)
         self.model_box.clear()
@@ -800,6 +821,7 @@ class EngineDialog(QDialog):
                                           i18n.tr('无法保存设置：{v0}', v0=exc), tone="danger")
             return
         self.config = config
+        self.academic_preference = self.academic_box.isChecked()
         self.theme_preference = str(
             self.theme_box.currentData() or theme_module.FOLLOW_SYSTEM)
         self.language_preference = str(

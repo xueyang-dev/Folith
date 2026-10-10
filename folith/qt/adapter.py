@@ -1269,6 +1269,81 @@ def split_parts(value: str) -> tuple[str, str]:
     return first.strip(), remainder.strip()
 
 
+# ================= 学术专业模式：合规与最终 QA =================
+#
+# 实践报告 / 案例 / 终稿 QA 是专用能力，默认不出现；用户在设置里主动打开"学术专业模式"
+# 才会显示这些页（已经要求报告的任务无论如何都能看到，否则会被交付门禁卡住而无处下手）。
+# 这里只读取核心已有的事实并交给 ``folith.workspace_qa`` 整形，不另判断。
+
+
+def task_needs_academic(state: dict) -> bool:
+    """这个任务自己是否已经带着学术产物（旧任务/已启用报告的任务）。"""
+    if state.get("report_enabled"):
+        return True
+    academic = state.get("academic_state")
+    if isinstance(academic, dict) and academic.get("artifacts"):
+        return True
+    qa = dict(state.get("final_qa") or {})
+    return any(str(qa.get(key) or "") not in ("", "NOT_RUN", "NOT_CONFIRMED", "None")
+               for key in ("structural_qa", "libreoffice_render",
+                           "author_visual_review", "word_final_review"))
+
+
+def qa_view(job_id: str, state: dict | None = None) -> dict:
+    from folith import compliance as _compliance
+    from folith import workspace_qa as _qa
+
+    state = state if state is not None else load_state(job_id)
+    compliance_view = core.compliance_profile_view(job_id, state)
+    profile = _compliance.compliance_profile(
+        str(state.get("compliance_profile_id") or _compliance.DEFAULT_PROFILE_ID))
+    structural = _qa.structural_qa(
+        state, core.load_academic_artifact(job_id, "final_docx_validation"))
+    render_record = core.load_academic_artifact(job_id, "libreoffice_render") or {}
+    view = _qa.qa_view(state, compliance_view, profile, structural, render_record)
+    view["p2_done"] = bool(state.get("p2_done"))
+    view["sync_needed"] = bool(
+        structural in {"PASS", "FAIL", "NOT_RUN"}
+        and structural != (state.get("final_qa") or {}).get("structural_qa"))
+    view["structural_value"] = structural
+    return view
+
+
+def sync_structural_qa(job_id: str, structural: str) -> None:
+    """把"DOCX 结构检查"的最新结论记进 final_qa（和旧界面一样，只记一项、在状态锁内）。"""
+    if structural not in ("PASS", "FAIL", "NOT_RUN"):
+        return
+
+    def _set(latest: dict) -> None:
+        from folith import finalization as _finalization
+
+        qa = _finalization.normalize_final_qa(latest.get("final_qa"))
+        qa["structural_qa"] = structural
+        latest["final_qa"] = qa
+
+    core.mutate_job_state(job_id, _set)
+
+
+def run_render_qa(job_id: str) -> dict:
+    """LibreOffice 页面预检。没装 LibreOffice 时如实报告，不伪造通过。"""
+    try:
+        return core.run_libreoffice_render_qa(job_id)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def set_final_qa_fact(job_id: str, field: str, confirmed: bool) -> dict:
+    """作者视觉复核 / Word 最终复核：人工确认或撤销确认。"""
+    if field not in ("author_visual_review", "word_final_review"):
+        raise AdapterError(f"这一项不能手动确认：{field}")
+    try:
+        return core.record_final_qa(
+            job_id, field, "CONFIRMED" if confirmed else "NOT_CONFIRMED",
+            "人工在最终 QA 工作区记录", actor="user")
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
 # ================= 翻译风格（基础风格 + 微调 + 智能画像） =================
 #
 # 旧向导的"智能风格画像"：抽样读几段原文 → 一次模型调用给出文档画像与风格推荐 →
