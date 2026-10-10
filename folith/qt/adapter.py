@@ -903,6 +903,111 @@ def unresolved_blocking(job_id: str, state: dict | None = None) -> list[dict]:
     return list(_delivery.unresolved_blocking(state))
 
 
+# ================= 审校队列（人工处置） =================
+#
+# 审校页复用 ``folith.workbench_view``（与界面框架无关的只读投影，旧界面也用它）
+# 来生成队列，处置动作全部走核心已有的 HumanDecision 路径；这里不另存一份决定。
+
+#: ``mark_findings_resolved`` 认识的两个人工动作。
+RESOLVE_CONFIRMED = "human_fixed"      # 人工核对后确认问题已解决
+RESOLVE_PRESERVED = "preserved"        # 人工确认保留当前译文
+
+
+def source_review_projection(state: dict) -> dict:
+    """把"当前原文质量门禁"的发现并进队列（旧任务也能看到）。"""
+    projected = dict(state or {})
+    gate = core._audit_source_quality_for_state(projected)
+    projected["source_quality_gate"] = gate
+    findings = list(projected.get("findings") or [])
+    existing = {
+        (item.get("segment_index"), str(item.get("source_span") or ""))
+        for item in findings
+        if isinstance(item, dict) and item.get("type") == "source_quality_gate"
+        and not item.get("resolved")
+    }
+    for flag in gate.get("flags") or []:
+        if not isinstance(flag, dict):
+            continue
+        key = (flag.get("segment_index"), str(flag.get("text") or ""))
+        if key not in existing:
+            findings.append(core._source_quality_finding(flag))
+            existing.add(key)
+    projected["findings"] = findings
+    return projected
+
+
+def review_queue(job_id: str, state: dict | None = None) -> dict:
+    """审校页的整个视图模型：就绪状态、筛选计数、队列项。"""
+    from folith import workbench_view as _workbench_view
+
+    state = state if state is not None else load_state(job_id)
+    return _workbench_view.review_workbench_view(source_review_projection(state))
+
+
+def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,
+                     note: str = "") -> dict:
+    """人工处置发现项（确认已解决 / 保留当前译文）。
+
+    核心的 ``mark_findings_resolved`` 会把 Translation Core 的发现项转成
+    HumanDecision，旧式发现项走 delivery.mark_findings——两种都在这一个入口里。
+    """
+    if action not in (RESOLVE_CONFIRMED, RESOLVE_PRESERVED):
+        raise AdapterError(f"不支持的处置动作：{action}")
+    ids = [str(item) for item in finding_ids if str(item or "").strip()]
+    if not ids:
+        raise AdapterError("这一项没有可记录人工决定的标识；请先修改译文或重新审校该段。")
+    try:
+        state = core.mark_findings_resolved(
+            job_id, ids, action,
+            note or ("人工核对后确认问题已解决" if action == RESOLVE_CONFIRMED
+                     else "人工确认保留当前译文"))
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    if state is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    return state
+
+
+def apply_suggested_translation(job_id: str, item: dict, note: str = "") -> dict:
+    """应用审校给出的建议译文。
+
+    要求重新审校的任务里，Translation Core 的发现项先记一条"请求修订"决定，
+    再写入译文；其余情况写完译文后直接把发现项记为已解决。返回里的
+    ``needs_review`` 告诉调用方：这一段还需要重新审校。
+    """
+    suggested = str(item.get("suggested_target") or "").strip()
+    index = item.get("segment_index")
+    if not suggested or not isinstance(index, int):
+        raise AdapterError("这一项没有可应用的建议译文。")
+    state = load_state(job_id)
+    required = bool(
+        translation_evidence.translation_review_readiness(state).get("required"))
+    core_finding = bool(item.get("core_finding"))
+    try:
+        if required and core_finding and item.get("requires_human_confirmation"):
+            core.decide_translation_review_finding(
+                job_id, item["core_finding_id"], "request_revision", "user",
+                actor_type="human", note=note or "应用建议译文并重新审校")
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    submit_edit(job_id, index, suggested, actor="reviewer")
+    if not required or not core_finding:
+        resolve_findings(job_id, [item.get("finding_id")], RESOLVE_CONFIRMED,
+                         note or "应用建议译文")
+    return {"needs_review": bool(required), "index": index}
+
+
+def confirm_source_segment(job_id: str, index: int, note: str) -> dict:
+    """人工回看原页后确认一段疑似残片是有效正文（之后才能重译/审校）。"""
+    if not str(note or "").strip():
+        raise AdapterError("请写下核对依据（例如：原页正文清晰可读，且与前后句连续）。")
+    try:
+        return core.confirm_source_quality_segment(
+            job_id, int(index), actor="user", note=str(note).strip())
+    except (RuntimeError, ValueError, IndexError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
 # ================= delivery =================
 
 

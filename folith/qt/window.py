@@ -231,6 +231,9 @@ class MainWindow(QMainWindow):
         self.workbench.discardDraftRequested.connect(self.discard_draft)
         self.workbench.excludeRequested.connect(self.exclude_segment)
         self.workbench.includeRequested.connect(self.include_segment)
+        self.workbench.findingResolveRequested.connect(self.resolve_findings)
+        self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
+        self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
         self.workbench.exportRequested.connect(self.export_copy)
         self.workbench.saveSnapshotRequested.connect(self.save_snapshot)
@@ -1229,6 +1232,57 @@ class MainWindow(QMainWindow):
             return
         self._notice(i18n.tr('已恢复该段落；它的审校标记需要重新确认。'))
         self.refresh_workbench(force=True)
+
+    # ================= 审校页：人工处置 =================
+    def resolve_findings(self, finding_ids: list, action: str, note: str) -> None:
+        """人工确认已解决 / 保留当前译文：写一条人工决定，不改译文。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.resolve_findings(job_id, finding_ids, action, note)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法记录人工决定'), str(exc))
+            return
+        self._notice(i18n.tr('已保留当前译文。该决定已记录。')
+                     if action == adapter.RESOLVE_PRESERVED
+                     else i18n.tr('已确认问题解决。该决定已记录。'))
+        self.refresh_workbench(force=True)
+
+    def apply_suggestion(self, item: dict, note: str) -> None:
+        """应用审校的建议译文；要求重新审校时顺手重审这一段。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        self.workbench.flush_draft()
+        try:
+            result = adapter.apply_suggested_translation(job_id, item, note)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法应用建议译文'), str(exc))
+            return
+        index = int(result["index"])
+        if result.get("needs_review"):
+            self._notice(i18n.tr('建议译文已应用，正在重新审校第 {v0} 段…', v0=index + 1))
+            self.refresh_workbench(force=True)
+            self.review_selected([index])
+            return
+        self._notice(i18n.tr('建议译文已应用。'))
+        self.refresh_workbench(force=True)
+        self.workbench.reload_current_segment()
+
+    def confirm_source_segment(self, index: int, note: str) -> None:
+        """回看原页后确认一段疑似残片是有效正文，然后重译这一段。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.confirm_source_segment(job_id, index, note)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法确认原文'), str(exc))
+            return
+        self._notice(i18n.tr('原文已确认，正在重新翻译第 {v0} 段…', v0=index + 1))
+        self.refresh_workbench(force=True)
+        self.retranslate_segment(index)
 
     def review_selected(self, indexes: list) -> None:
         """Review only the segments the user selected (a subset is legitimate).

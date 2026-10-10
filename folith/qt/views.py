@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from . import i18n
 from . import adapter
 from . import icons
+from .review_panel import ReviewPanel
 from .setup_panel import TaskSetupPanel
 from . import style as style_module
 from . import theme as theme_module
@@ -1090,6 +1091,10 @@ class WorkbenchView(QWidget):
     openAssetRequested = Signal(str)
     setupStartRequested = Signal(dict)      # 译前准备的「开始翻译」载荷
     setupCreateProjectRequested = Signal()  # 译前准备里点「新建项目…」
+    # 审校页：人工处置（由窗口层调用适配器写状态）
+    findingResolveRequested = Signal(list, str, str)    # finding_ids, action, note
+    suggestionApplyRequested = Signal(dict, str)        # queue item, note
+    sourceConfirmRequested = Signal(int, str)           # segment index, note
 
     COLUMNS = ("段", "原文", "译文")
 
@@ -1118,6 +1123,7 @@ class WorkbenchView(QWidget):
         self._only_edited = False
         self._only_issues = False
         self._excluded_signature: tuple | None = None
+        self._review_key: tuple = ()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -1622,6 +1628,17 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(translation_page,
                          icons.icon("translate", 16, style_module.text_color("text-secondary")),
                          i18n.tr('翻译'))
+        self.review_panel = ReviewPanel()
+        self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
+        self.review_panel.applySuggestionRequested.connect(self.suggestionApplyRequested.emit)
+        self.review_panel.confirmSourceRequested.connect(self.sourceConfirmRequested.emit)
+        self.review_panel.reviewAllRequested.connect(self.reviewAllRequested.emit)
+        self.review_panel.reviewRequested.connect(self.reviewSelectedRequested.emit)
+        self.review_panel.retranslateRequested.connect(self.retranslateRequested.emit)
+        self.review_panel.editRequested.connect(self.show_segment_for_edit)
+        self.tabs.addTab(self.review_panel,
+                         icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('审校'))
         self.tabs.addTab(delivery_page,
                          icons.icon("package", 16, style_module.text_color("text-secondary")),
                          i18n.tr('交付'))
@@ -1687,6 +1704,25 @@ class WorkbenchView(QWidget):
         self._render_runtime()
         self._render_delivery(force=refresh_delivery)
         self._render_segment_detail()
+        self._render_review()
+
+    def _render_review(self) -> None:
+        """审校页只在状态真的换了对象时重算（队列要过一遍原文质量门禁）。"""
+        key = (self.job_id, id(self._state))
+        if key == self._review_key:
+            return
+        self._review_key = key
+        try:
+            view = adapter.review_queue(self.job_id, self._state)
+        except Exception:  # noqa: BLE001 - 审校页坏了不能拖垮翻译页
+            view = {}
+        self.review_panel.apply(view)
+
+    def show_segment_for_edit(self, index: int) -> None:
+        """从审校页跳到翻译页的某一段（用户要自己改译文）。"""
+        self.tabs.setCurrentIndex(0)
+        self.select_segment(int(index))
+        self.focus_editor()
 
     # ================= 过滤（复用核心语义） =================
     def set_status_filter(self, name: str) -> None:
