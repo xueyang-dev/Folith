@@ -649,7 +649,6 @@ from folith.engine.projects import (  # noqa: F401  (re-export: core keeps its p
     resolve_project_ref,
     resolved_project_id,
     restore_project,
-    restore_translation_edit,
     save_project,
     system_project_id,
     system_project_view,
@@ -703,6 +702,7 @@ from folith.engine.glossary_ops import (  # noqa: F401  (re-export: core keeps i
     write_profile_artifacts,
 )
 from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its public surface)
+    restore_translation_edit,
     _auto_exclude_non_translatable_segments,
     _drop_segment_at,
     _excluded_segment_record,
