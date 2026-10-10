@@ -1189,6 +1189,61 @@ class SegmentSplitDialog(QDialog):
                 "target_b": self.target_b.toPlainText()}
 
 
+class NewTermDialog(QDialog):
+    """新建术语：术语保存在所选任务的术语表里，并生成新的术语版本。"""
+
+    def __init__(self, jobs: list[tuple[str, str]], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('新建术语'))
+        self.setMinimumWidth(460)
+        hint = QLabel(i18n.tr('术语保存在所选任务的术语表里，并生成新的术语版本。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        self.job_box = style_module.ComboBox()
+        for job_id, name in jobs:
+            self.job_box.addItem(name, job_id)
+        self.source_edit = QLineEdit()
+        self.target_edit = QLineEdit()
+        self.domain_edit = QLineEdit()
+        self.error = QLabel("")
+        self.error.setObjectName("statusError")
+        self.error.setVisible(False)
+        form = QFormLayout()
+        form.addRow(i18n.tr('保存到任务'), self.job_box)
+        form.addRow(i18n.tr('原术语'), self.source_edit)
+        form.addRow(i18n.tr('推荐译法'), self.target_edit)
+        form.addRow(i18n.tr('分类 / 领域（可选）'), self.domain_edit)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(i18n.tr('创建术语'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(form)
+        layout.addWidget(self.error)
+        layout.addWidget(buttons)
+
+    def _accept(self) -> None:
+        if not self.job_box.currentData():
+            self._fail(i18n.tr('还没有可保存的任务。'))
+        elif not self.source_edit.text().strip() or not self.target_edit.text().strip():
+            self._fail(i18n.tr('请同时填写「原术语」和「推荐译法」。'))
+        else:
+            self.accept()
+
+    def _fail(self, text: str) -> None:
+        self.error.setText(text)
+        self.error.setVisible(True)
+
+    def values(self) -> dict:
+        return {"job_id": str(self.job_box.currentData() or ""),
+                "source": self.source_edit.text().strip(),
+                "target": self.target_edit.text().strip(),
+                "domain": self.domain_edit.text().strip()}
+
+
 class ProjectDialog(QDialog):
     """项目管理：新建 / 重命名 / 归档 / 删除（保护由核心执行）。"""
 

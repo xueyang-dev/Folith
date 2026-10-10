@@ -381,6 +381,7 @@ class HomeView(QWidget):
     refreshRequested = Signal()
     createProjectRequested = Signal()
     manageProjectsRequested = Signal()
+    libraryRequested = Signal()
     moveToProjectRequested = Signal(list)
     settingsRequested = Signal()
 
@@ -432,6 +433,9 @@ class HomeView(QWidget):
         self.project_button.clicked.connect(self.createProjectRequested.emit)
         self.manage_projects_button = nav_button(i18n.tr('项目…'), "folder")
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
+        self.library_button = nav_button(i18n.tr('术语与记忆…'), "file-sheet")
+        self.library_button.setToolTip(i18n.tr('跨任务浏览术语与翻译记忆，并审核 Agent 发现的候选词条'))
+        self.library_button.clicked.connect(self.libraryRequested.emit)
         self.settings_button = nav_button(i18n.tr('设置…'), "settings")
         self.settings_button.clicked.connect(self.settingsRequested.emit)
 
@@ -492,6 +496,7 @@ class HomeView(QWidget):
         side.addSpacing(theme_module.SPACE["md"])
         side.addWidget(style_module.SectionLabel(i18n.tr('项目')))
         side.addWidget(self.manage_projects_button)
+        side.addWidget(self.library_button)
         side.addWidget(self.project_button)
         side.addSpacing(theme_module.SPACE["md"])
         side.addWidget(style_module.SectionLabel(i18n.tr('应用')))

@@ -1344,6 +1344,90 @@ def set_final_qa_fact(job_id: str, field: str, confirmed: bool) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 语言资产库（术语 / 翻译记忆 / 待审核） =================
+#
+# 旧界面的"语言资产管理中心"：跨任务浏览术语、查看各项目的翻译记忆，并审核 Agent 在
+# 翻译中发现的候选词条（knowledge_candidates）。后者在 Qt 里原来完全没有入口——候选
+# 词条永远待审。行模型来自 ``folith.language_assets``（与界面框架无关），这里只负责
+# 把任务/项目/记忆读出来喂给它，并把审核决定交给核心。
+
+LIBRARY_TABS = (("candidates", "待审核"), ("terms", "术语库"), ("tm", "翻译记忆"))
+CANDIDATE_DECISIONS = {"project_term": "接受为项目术语", "task_only": "仅用于本任务",
+                       "rejected": "拒绝"}
+
+
+def library_data(tm_project_id: str = "") -> dict:
+    from folith import language_assets as _assets
+
+    jobs = list(core.list_jobs())
+    projects = core.list_active_project_options() + [
+        p for p in core.list_projects() if p.get("archived_at")]
+    ordered = [str(p["project_id"]) for p in projects] or [core.SYSTEM_PROJECT_ID]
+    labels = {str(p["project_id"]): p["name"] for p in projects}
+    if tm_project_id not in ordered:
+        tm_project_id = ordered[0]
+    tm_rows = _assets.build_tm_rows(core.load_tm(tm_project_id))
+    task_rows = _assets.build_term_rows(jobs)
+    by_project = {str(p.get("project_id")): p for p in projects}
+    by_job = {str(j.get("job_id")): j for j in jobs}
+    for row in task_rows:
+        job = by_job.get(str(row.get("job_id") or "")) or {}
+        row["project_id"] = core.resolved_project_id(job.get("state") or {})
+        project = by_project.get(row["project_id"])
+        row["project_name"] = str((project or {}).get("name") or "未分类")
+    project_rows = _assets.build_project_term_rows(projects, task_rows=task_rows)
+    terms = _assets.group_terms([*task_rows, *project_rows])
+    candidates = _assets.build_candidate_rows(jobs)
+    return {
+        "terms": terms, "tm": tm_rows, "candidates": candidates,
+        "projects": [{"project_id": pid, "name": labels.get(pid, pid)} for pid in ordered],
+        "tm_project_id": tm_project_id,
+        "jobs": [(str(j.get("job_id")), str((j.get("state") or {}).get("filename") or "?"))
+                 for j in jobs],
+        "summary": {"candidates": len(candidates), "terms": len(terms), "tm": len(tm_rows),
+                    "conflicts": sum(1 for c in candidates if c["has_conflict"])},
+    }
+
+
+def decide_candidate(row: dict, decision: str) -> str:
+    """审核一条候选词条；"接受为项目术语"还会把任务提升进项目记忆。返回说明。"""
+    if decision not in CANDIDATE_DECISIONS:
+        raise AdapterError(f"不支持的审核决定：{decision}")
+    try:
+        state, ok, message = core.review_knowledge_candidate(
+            row["job_id"], row["candidate_id"], decision)
+    except (RuntimeError, ValueError, KeyError) as exc:
+        raise AdapterError(f"处理失败：{exc}") from exc
+    if not ok:
+        raise AdapterError(str(message or "处理失败"))
+    if decision == "project_term":
+        try:
+            project = core.promote_job_to_project(row["job_id"], actor="用户", state=state)
+        except Exception as exc:  # noqa: BLE001 - 候选已写入任务术语表，提升失败要如实说
+            raise AdapterError(f"候选已接受并写入任务术语表，但提升到项目记忆失败：{exc}") from exc
+        if project is None:
+            raise AdapterError("候选已接受并写入任务术语表，但项目记忆不可用")
+        message = f"{message}；已提升到项目「{project.get('name') or '未命名项目'}」"
+    return str(message or "")
+
+
+def decide_candidates(rows: Sequence[dict], decision: str) -> dict:
+    """批量审核：逐条处理，失败的不拖累其余的。"""
+    done, failed = 0, []
+    for row in rows:
+        try:
+            decide_candidate(row, decision)
+            done += 1
+        except AdapterError as exc:
+            failed.append(f"{row.get('source')}（{exc}）")
+    return {"done": done, "failed": failed}
+
+
+def clear_project_memory(project_id: str) -> None:
+    """清空某个项目的翻译记忆（只影响这个项目）。"""
+    core.save_tm({}, project_id)
+
+
 # ================= 学术专业模式：实践报告 =================
 #
 # 报告页的"一个整体状态 + 按「该做什么」分组的问题 + 清理过的当前稿件"——和旧界面同一套

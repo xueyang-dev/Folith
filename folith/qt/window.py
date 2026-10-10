@@ -39,6 +39,7 @@ from . import theme as theme_module
 from . import views as views_module
 from .dialogs import (DiagnosticsDialog, EngineDialog,
                       ProjectDialog, ProjectPickerDialog)
+from .library_view import LibraryView
 from .views import HomeView, WorkbenchView
 from .workers import TaskRunner
 
@@ -133,6 +134,8 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.home)
         self.stack.addWidget(self.workbench)
+        self.library = LibraryView(self)
+        self.stack.addWidget(self.library)
         self.setCentralWidget(self.stack)
 
         # 状态栏：左 = 瞬时消息，右 = 常驻属性。用 style.StatusBar（不是裸 QStatusBar）：
@@ -215,6 +218,13 @@ class MainWindow(QMainWindow):
         self.home.refreshRequested.connect(self.refresh_home)
         self.home.createProjectRequested.connect(self.create_project)
         self.home.manageProjectsRequested.connect(self.manage_projects)
+        self.home.libraryRequested.connect(self.show_library)
+        self.library.backRequested.connect(self.show_home)
+        self.library.refreshRequested.connect(self.refresh_library)
+        self.library.decideRequested.connect(self.decide_candidates)
+        self.library.openJobRequested.connect(self.open_library_job)
+        self.library.newTermRequested.connect(self.new_library_term)
+        self.library.clearMemoryRequested.connect(self.clear_project_memory)
         self.home.moveToProjectRequested.connect(self.move_to_project)
         self.home.settingsRequested.connect(self.open_settings)
 
@@ -632,6 +642,78 @@ class MainWindow(QMainWindow):
         self.home.set_rows(rows)
         # 脚注不再重复"共 N 个任务"（指标条已经报了数）：留空 → 脚注显示选中摘要。
         self.home.set_status("")
+
+    # ================= 语言资产库 =================
+    def show_library(self) -> None:
+        self.workbench.flush_draft()
+        self._current_job_id = ""
+        self.stack.setCurrentWidget(self.library)
+        self.setWindowTitle(i18n.tr('Folith — 术语与翻译记忆'))
+        self._sync_menu_state()
+        self.refresh_library(self.library.tm_project_id())
+
+    def refresh_library(self, tm_project_id: str = "") -> None:
+        """读取全部任务的术语、候选和各项目记忆（任务多时较慢，放到后台）。"""
+        self._run_with_busy(
+            i18n.tr('读取语言资产'), i18n.tr('正在读取术语与翻译记忆…'),
+            adapter.library_data, tm_project_id or "",
+            on_done=self.library.apply)
+
+    def decide_candidates(self, rows: list, decision: str) -> None:
+        if not rows:
+            return
+        label = i18n.tr_dynamic(adapter.CANDIDATE_DECISIONS.get(decision, decision))
+        if len(rows) > 1 and not self._confirm(
+                i18n.tr('批量审核'),
+                i18n.tr('将对 {v0} 条候选执行「{v1}」。\n\n确定继续吗？', v0=len(rows), v1=label),
+                yes=i18n.tr('继续'), no=i18n.tr('取消')):
+            return
+
+        def done(result) -> None:
+            ok, bad = result["done"], result["failed"]
+            if bad:
+                self._notice(i18n.tr('{v0} 条已处理，{v1} 条未处理：{v2}', v0=ok, v1=len(bad), v2=bad[0]),
+                             error=not ok)
+            else:
+                self._notice(i18n.tr('已处理 {v0} 条候选。', v0=ok))
+            self.refresh_library(self.library.tm_project_id())
+
+        self._run_with_busy(
+            i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+            adapter.decide_candidates, rows, decision, on_done=done)
+
+    def open_library_job(self, job_id: str, index: int) -> None:
+        self.open_job(job_id)
+        if index >= 0 and self.stack.currentWidget() is self.workbench:
+            self.workbench.show_segment_for_edit(index)
+
+    def new_library_term(self) -> None:
+        jobs = self.library._data.get("jobs") or []
+        if not jobs:
+            self._notice(i18n.tr('还没有任务，先导入文档再添加术语。'), error=True)
+            return
+        dialog = dialogs.NewTermDialog(jobs, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        try:
+            adapter.add_glossary_entry(values["job_id"], values["source"], values["target"],
+                                       domain=values["domain"])
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法新增术语'), str(exc))
+            return
+        self._notice(i18n.tr('已创建术语。'))
+        self.refresh_library(self.library.tm_project_id())
+
+    def clear_project_memory(self, project_id: str) -> None:
+        if not project_id or not self._confirm(
+                i18n.tr('清空翻译记忆'),
+                i18n.tr('这会删除所选项目的全部翻译记忆，且不可恢复。其他项目不受影响。\n\n确定清空吗？'),
+                yes=i18n.tr('清空'), no=i18n.tr('取消')):
+            return
+        adapter.clear_project_memory(project_id)
+        self._notice(i18n.tr('已清空该项目的翻译记忆。'))
+        self.refresh_library(project_id)
 
     def show_home(self) -> None:
         self.workbench.flush_draft()
