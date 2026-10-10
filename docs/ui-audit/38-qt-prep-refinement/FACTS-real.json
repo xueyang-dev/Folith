@@ -1,0 +1,682 @@
+{
+ "platform": "cocoa",
+ "dpr": 2.0,
+ "cases": {
+  "real-default-light": {
+   "theme": "light",
+   "window": [
+    1180,
+    815
+   ],
+   "viewport": [
+    1129,
+    639
+   ],
+   "panel": [
+    1129,
+    904
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 265,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": false,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 3 个文件 · DOCX ×2 · XLSX ×1",
+   "delivery_preset": "standard",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": false,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13,
+   "entry_expanded": [
+    false,
+    false
+   ]
+  },
+  "real-docexpanded-light": {
+   "theme": "light",
+   "window": [
+    1180,
+    815
+   ],
+   "viewport": [
+    1129,
+    639
+   ],
+   "panel": [
+    1129,
+    1156
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 517,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 3 个文件 · DOCX ×2 · XLSX ×1",
+   "delivery_preset": "standard",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": false,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-advanced-light": {
+   "theme": "light",
+   "window": [
+    1180,
+    815
+   ],
+   "viewport": [
+    1129,
+    639
+   ],
+   "panel": [
+    1129,
+    1346
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 707,
+   "vscroll_pos": 707,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 3 个文件 · DOCX ×2 · XLSX ×1",
+   "delivery_preset": "standard",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-delivery-light": {
+   "theme": "light",
+   "window": [
+    1180,
+    815
+   ],
+   "viewport": [
+    1129,
+    639
+   ],
+   "panel": [
+    1129,
+    1539
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 900,
+   "vscroll_pos": 900,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 7 个文件 · DOCX ×3 · EPUB ×1 · XLSX ×1 · TBX ×1 · MD ×1",
+   "delivery_preset": "custom",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-custom-light": {
+   "theme": "light",
+   "window": [
+    1180,
+    815
+   ],
+   "viewport": [
+    1129,
+    639
+   ],
+   "panel": [
+    1129,
+    1542
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 903,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 7 个文件 · DOCX ×3 · EPUB ×1 · XLSX ×1 · TBX ×1 · MD ×1",
+   "delivery_preset": "custom",
+   "strategy_note": "标准模式 · 已自定义",
+   "restore_visible": true,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-narrow-light": {
+   "theme": "light",
+   "window": [
+    962,
+    817
+   ],
+   "viewport": [
+    911,
+    641
+   ],
+   "panel": [
+    911,
+    1542
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 901,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 7 个文件 · DOCX ×3 · EPUB ×1 · XLSX ×1 · TBX ×1 · MD ×1",
+   "delivery_preset": "custom",
+   "strategy_note": "标准模式 · 已自定义",
+   "restore_visible": true,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     290,
+     55
+    ],
+    "标准": [
+     289,
+     55
+    ],
+    "学术增强": [
+     290,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-default-dark": {
+   "theme": "dark",
+   "window": [
+    1180,
+    817
+   ],
+   "viewport": [
+    1129,
+    641
+   ],
+   "panel": [
+    1129,
+    904
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 263,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": false,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 3 个文件 · DOCX ×2 · XLSX ×1",
+   "delivery_preset": "standard",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": false,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13,
+   "entry_expanded": [
+    true,
+    true
+   ]
+  },
+  "real-docexpanded-dark": {
+   "theme": "dark",
+   "window": [
+    1180,
+    817
+   ],
+   "viewport": [
+    1129,
+    641
+   ],
+   "panel": [
+    1129,
+    1156
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 515,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 3 个文件 · DOCX ×2 · XLSX ×1",
+   "delivery_preset": "standard",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": false,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-advanced-dark": {
+   "theme": "dark",
+   "window": [
+    1180,
+    817
+   ],
+   "viewport": [
+    1129,
+    641
+   ],
+   "panel": [
+    1129,
+    1346
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 705,
+   "vscroll_pos": 705,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 3 个文件 · DOCX ×2 · XLSX ×1",
+   "delivery_preset": "standard",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-delivery-dark": {
+   "theme": "dark",
+   "window": [
+    1180,
+    817
+   ],
+   "viewport": [
+    1129,
+    641
+   ],
+   "panel": [
+    1129,
+    1539
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 898,
+   "vscroll_pos": 898,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 7 个文件 · DOCX ×3 · EPUB ×1 · XLSX ×1 · TBX ×1 · MD ×1",
+   "delivery_preset": "custom",
+   "strategy_note": "当前使用「标准」默认配置",
+   "restore_visible": false,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-custom-dark": {
+   "theme": "dark",
+   "window": [
+    1180,
+    817
+   ],
+   "viewport": [
+    1129,
+    641
+   ],
+   "panel": [
+    1129,
+    1542
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 901,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 7 个文件 · DOCX ×3 · EPUB ×1 · XLSX ×1 · TBX ×1 · MD ×1",
+   "delivery_preset": "custom",
+   "strategy_note": "标准模式 · 已自定义",
+   "restore_visible": true,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     362,
+     55
+    ],
+    "标准": [
+     363,
+     55
+    ],
+    "学术增强": [
+     362,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-narrow-dark": {
+   "theme": "dark",
+   "window": [
+    962,
+    817
+   ],
+   "viewport": [
+    911,
+    641
+   ],
+   "panel": [
+    911,
+    1542
+   ],
+   "hscroll_max": 0,
+   "vscroll_max": 901,
+   "vscroll_pos": 0,
+   "doc_summary": "视觉理解 · 自动判断 · 含文档画像",
+   "doc_expanded": true,
+   "doc_warning": "",
+   "doc_warning_hidden": true,
+   "delivery_summary": "将生成 7 个文件 · DOCX ×3 · EPUB ×1 · XLSX ×1 · TBX ×1 · MD ×1",
+   "delivery_preset": "custom",
+   "strategy_note": "标准模式 · 已自定义",
+   "restore_visible": true,
+   "advanced_expanded": true,
+   "ocr_quality_hidden": true,
+   "glossary_full": "未使用（可选，用于保持术语一致）",
+   "glossary_shown": "未使用（可选，用于保持术语一致）",
+   "annotate_checked": false,
+   "bilingual_checked": true,
+   "mode_buttons": {
+    "快速": [
+     290,
+     55
+    ],
+    "标准": [
+     289,
+     55
+    ],
+    "学术增强": [
+     290,
+     55
+    ]
+   },
+   "start_button": [
+    102,
+    30
+   ],
+   "footer_visible": true,
+   "left_baseline_x": 13
+  },
+  "real-docx-collapsed-light": {
+   "entry_expanded": [
+    true,
+    true
+   ],
+   "doc_summary": "文本层解析 · 含文档画像",
+   "doc_expanded": false,
+   "ocr_box_hidden": true,
+   "ocr_quality_hidden": true,
+   "hscroll_max": 0,
+   "panel": [
+    1129,
+    904
+   ]
+  },
+  "real-docx-docexpanded-light": {
+   "doc_summary": "文本层解析 · 含文档画像",
+   "doc_expanded": true,
+   "ocr_box_hidden": true,
+   "ocr_quality_hidden": true,
+   "understanding_box_hidden": false,
+   "panel": [
+    1129,
+    955
+   ]
+  },
+  "real-localocr-collapsed-dark": {
+   "state": "collapsed",
+   "backend": "本机 OCR · Tesseract",
+   "quality_hidden": false,
+   "doc_summary": "本机 OCR · Tesseract · 自动判断 · 含文档画像",
+   "doc_warning": "未指定识别语言，本机 OCR 会退回英语",
+   "doc_warning_hidden": false,
+   "doc_expanded": false
+  },
+  "real-localocr-dark": {
+   "state": "expanded",
+   "backend": "本机 OCR · Tesseract",
+   "quality_hidden": false,
+   "doc_summary": "本机 OCR · Tesseract · 自动判断 · 含文档画像",
+   "doc_warning": "未指定识别语言，本机 OCR 会退回英语",
+   "doc_warning_hidden": false,
+   "doc_expanded": true
+  }
+ }
+}

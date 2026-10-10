@@ -1,0 +1,51 @@
+{
+  "round": "r4 — Desktop UI Precision Refinement（工作台 + 设置页密度）",
+  "date": "2026-10-09",
+  "窗口几何一致性": {
+    "before_frame(01-home-table-selected)": [221, 88, 1180, 761],
+    "after_frame(01-home-table-selected)": [221, 88, 1180, 761],
+    "结论": "共有键的窗口帧逐值相同 → before/after 截图可直接对照（见 geometry.json）"
+  },
+  "phase2_工作台": {
+    "页头工具区高度": {"before": 164, "after": 59, "单位": "px(逻辑)", "量法": "同一几何探针 tmp/workbench_probe.py"},
+    "翻译列表可视行数": {"before": 13, "after": 18, "窗口同为 1180x733", "来源": "before/06-workbench-scroll.png 与 after/06-workbench-scroll.png 逐行可数"},
+    "双栏": {"split_sizes": [739, 400], "窄窗 940x660": {"split_sizes": [499, 400], "inspector_w": 400, "结论": "双栏不覆盖、不裁剪，检查器保持可读宽度"}},
+    "保留项": "批次进度 / 审校完成 / 必须处理 / 审校全部段落 / 双栏编辑器 / 草稿 / 段落导航 全部保留"
+  },
+  "phase3_设置页": {
+    "默认尺寸": {"before": "820x720", "after": "780x640"},
+    "默认尺寸下可见性": {
+      "模型连接卡": "y=102..476 (374px) 完整可见（含 连通性·测试连接·状态）",
+      "独立审校模型卡": "y=484..583 (99px) 完整可见（含单选行）",
+      "纵向滚动条": "max=0 → 零滚动",
+      "before 对照": "before/07-settings-dialog.png（740x620）连'测试连接'都被底栏裁断，'独立审校模型'整卡在折叠线以下"
+    },
+    "控件高度": "QLineEdit/QPushButton/QComboBox sizeHint 全部 30px（CONTROL['md']，此前因 QSS min-height 语义渲染成 40px）",
+    "保留项": "全部功能说明 / API Key 显隐 / 保存逻辑未动"
+  },
+  "phase4_首页微调": {
+    "卡片打开入口": {
+      "before": "每张卡的「打开任务 →」为 accent 蓝 #82acff（107 张卡同时喊）",
+      "after": "text-muted rgba(235,235,245,.38)，像素均值 #3b3b3d（标题 #989898 / meta #545458）",
+      "根因": "全局 QLabel#link 规则在 Qt 的'短选择器 vs 后代选择器'比拼中压过 QFrame#taskCard QLabel#link → 后代规则是死规则"
+    },
+    "状态栏颜色语义": {
+      "before": "『数据目录（relative）已更正为 …』这条已自动修复的告知信息被 error=True 画成 danger 红 #ffaaa4",
+      "after": "常态 text-secondary #ebebf5；错误色只留给真正的失败（显式 set_message_error(True)）"
+    },
+    "侧栏对齐": "实拍复核无可观察问题 → 按『不为产生差异而修改』原则未动"
+  },
+  "qss_基线": {
+    "light": "3fc89a55c0da1a98",
+    "paper": "972e1bef35c1d5ab",
+    "dark": "1311fed0545cbc7c",
+    "不变量": "light/paper 零夜间规则泄漏（逐 token 扫描命中 0）；light/paper 哈希相对 29 号审计漂移属预期（控件高度是主题无关共享块）"
+  },
+  "回归": {
+    "文件数": 12,
+    "用例数": 230,
+    "结果": "230 passed / 0 failed",
+    "app_boot": "通过",
+    "日志": "/tmp/qa-run/r4/*.log"
+  }
+}

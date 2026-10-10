@@ -245,10 +245,11 @@ def build_pdf_scenario(
     版面刻意采用真实排版惯例，使运行时能恢复段落边界：
 
     - 每段首行缩进 `_PDF_INDENT`：`reconstruct_paragraph_records` 据此判定
-      新段落开始（`pdf_ingestion.py:397`）；
+      新段落开始（`pdf_ingestion.reconstruct_paragraph_records`，参照取该块所属
+      列的左边界）；
     - 行在单词边界折行，因此跨行拼接应当插入空格而不是粘连；
-    - 固定位置注入一处 `can-` / `opy` 断词，验证 `_join_text`
-      （`pdf_ingestion.py:312`）的去连字符还原；
+    - 固定位置注入一处 `can-` / `opy` 断词，验证去连字符还原
+      （`pdf_ingestion._join_text`）；
     - 重复页眉与页码页脚用于验证 `classify_blocks` 的版面噪声剔除。
     """
     paragraphs = _body_paragraphs(pages * paragraphs_per_page)
@@ -294,6 +295,216 @@ def build_pdf_scenario(
             "word": "canopy",
             "joined": "canopy",
         },
+    }
+
+
+# ================= 场景四：多栏 + 悬挂缩进 PDF =================
+#
+# 现有 pdf_100p 场景是「单栏、统一左边距、首行缩进」——恰好是
+# `reconstruct_paragraph_records` 里缩进判据唯一成立的版面，所以嵌套窄栏与悬挂
+# 缩进这两类真实期刊排版从未进入回归语料：全局左边距会把它们的每一行都判成
+# 「段首缩进」，于是逐行成段。本场景按真实版式重建这两种情形。
+#
+# 第 2 页末尾再加第三类：**确定性续行**——同段文字被版面切成两行，而
+# role / 缩进 / 长度那套判据都够不着。正例之外还有两条负数对照（排版不同、
+# 右行大写起首），因为"能合回去"和"不乱合"是同一处改动的两面。
+
+_COLUMN_BODY_X0 = 72.0
+_COLUMN_INDENT = 14.0            # 首行缩进与列表续行缩进共用同一量级
+_COLUMN_BODY_FONT = 9.5
+#: 行距刻意取字号（9.5pt）的 ~1.6 倍，与真实期刊一致（实测量：11.7pt 正文配
+#: ~20pt 行距）。这不只是"好看"：PyMuPDF 只在行距接近字号时把连续行并成一个
+#: block，宽松行距下一行一个 block——正是缺陷在真实文件里表现出的形状。收紧到
+#: 12.5 会把整个摘要并成一个 block，反而掩盖被修的路径。
+_COLUMN_LINE_HEIGHT = 15.0
+_COLUMN_META_LABEL = "ARTICLE DATA"
+_COLUMN_META_ROWS = (
+    "Received: 01 January 2024",
+    "Accepted: 20 February 2024",
+    "Volume: 4",
+    # 刻意超过 40 字符：它是唯一能触发"左栏末行接进右栏首行"误合并的行，
+    # 让跨列不合并这条判据在语料里被真正压到。
+    "Corresponding author: canopy@example.org, Department of Ecology",
+)
+_COLUMN_ABSTRACT_X0 = 232.0
+_COLUMN_ABSTRACT_WIDTH = 54
+_COLUMN_ABSTRACT = (
+    "The canopy records show that the watcher measured leaf area across three "
+    "growing seasons and reported a consistent decline in the upper storey of "
+    "the restored plot, which the following section relates to the irrigation "
+    "schedule that the station adopted after the second survey and to the "
+    "archived correspondence with the district team, whose own measurements "
+    "were taken with a different instrument and a different sampling interval."
+)
+
+#: 「左移换列」：右栏这个框的末行不以句末收尾，紧随其后的左栏标签又满足合并的
+#: 其余全部条件——唯一该拦下它的证据是**横移 160pt**。跨列判据原先只判右移
+#: （位移量取有符号值，负数恒成立），于是右栏末行会被接进左栏标签（真实期刊实测：
+#: x0 419.88 → 54.48，拼成 "…Zagazig University ARTICLE DATA"）。
+_COLUMN_LEFTWARD_BOX = (
+    "Archived correspondence with the district team is filed under the",
+    "restoration survey and the instrument log",
+)
+_COLUMN_LEFTWARD_LABEL = "SUBJECT TERMS"
+_COLUMN_BODY_PARAGRAPHS = (
+    "The station archives every measurement taken by the watcher, and the "
+    "archive is the basis on which the regional office reviews the restoration "
+    "programme each season, so that the recorded decline can be checked "
+    "against the irrigation schedule and against the earlier survey.",
+    "A second paragraph continues the report and keeps its own boundary, so a "
+    "judgement that simply abandons the indent test would fuse it with the "
+    "paragraph above and be caught here rather than in production, where the "
+    "damage is a paragraph that mixes two topics.",
+)
+_COLUMN_LIST_INTRO = "There are Four principles under review:"
+_COLUMN_LIST_ITEMS = (
+    ("a", "First principle of the framework: the watcher records the canopy "
+          "height at every station and compares it with the archived leaf area "
+          "index of the plot, using the same instrument and the same sampling "
+          "interval that the earlier survey used, so that the two records can "
+          "be compared without a further correction."),
+    ("b", "Second principle of the framework: the station reports the "
+          "irrigation schedule to the regional office and archives the "
+          "correspondence with the district team, together with the instrument "
+          "log and the sampling notes, so that a later review can reconstruct "
+          "the conditions under which each measurement was taken."),
+)
+
+#: 「确定性续行」——方案 2 的提取期断行整理——的四类形状。
+#:
+#: 前两条**必须**合成一段，且都刻意躲开原有那条 role/缩进/长度判据：
+#: 第一条首行只有 22 字符（长度阈值 `> 40` 够不着）；第二条续行缩进 20pt，
+#: 而 20pt 是本页**唯一**的缩进行 → 解不出列边界，缩进判据会把它当成段首缩进。
+_COLUMN_CONTINUATION_MERGED = (
+    ("The station archive is", "kept in the regional office.", 0.0),
+    ("The regional office reviews the", "archived correspondence each season.",
+     20.0),
+)
+_COLUMN_CONTINUATION_HEADING_SIZE = 13.0
+#: 后两条**必须**保持分开，分别压住"排版一致"与"右行小写起首"这两条门槛。
+_COLUMN_CONTINUATION_KEPT = (
+    # 真标题与它引出的正文排版不同（13pt vs 9.5pt）→ 不得合并。
+    ("Restoration findings", _COLUMN_CONTINUATION_HEADING_SIZE,
+     "the watcher recorded the decline in the upper storey."),
+    # 同栏、同排版，但右行以大写起首 → 不是续行。
+    ("The archived correspondence", _COLUMN_BODY_FONT,
+     "Station records confirm the decline."),
+)
+
+
+def build_pdf_columns_scenario(path: Path) -> dict:
+    """生成「多栏前置区 + 悬挂缩进列表」PDF，页数固定为 2。
+
+    版面（与真实期刊一致）：
+
+    - 第 1 页上半是双栏前置区：左栏 `_COLUMN_META_ROWS`（列起点 = 正文左边距），
+      右栏摘要（独立列起点 `_COLUMN_ABSTRACT_X0`，整段是一段）；
+    - 摘要之后、正文之前还有一对**左移换列**：右栏框（`_COLUMN_LEFTWARD_BOX`）
+      的末行不以句末收尾，紧接着阅读顺序拐回左栏标签
+      （`_COLUMN_LEFTWARD_LABEL`）。这是"换列不成段"判据的向左一侧；
+    - 第 1 页下半是通栏正文，每段首行缩进 `_COLUMN_INDENT`；
+    - 第 2 页是悬挂缩进列表：条目首行在正文左边距，**续行缩进**到
+      `_COLUMN_BODY_X0 + _COLUMN_INDENT`；
+    - 第 2 页末尾还有「确定性续行」四例：前两例是**必须**合成的断行续行，
+      后两例是**必须**保持分开的负数对照（见 `_COLUMN_CONTINUATION_*`）。
+    """
+    document = fitz.open()
+    font = _COLUMN_BODY_FONT
+    line_height = _COLUMN_LINE_HEIGHT
+
+    page = document.new_page(width=595, height=842)  # A4
+    page.insert_text((_COLUMN_BODY_X0, 60), _RUNNING_HEADER, fontsize=8)
+    page.insert_text((540, 812), "1", fontsize=8)
+    page.insert_text((_COLUMN_BODY_X0, 100),
+                     "Column Layout Fixture: Restoration Report", fontsize=13)
+    page.insert_text((_COLUMN_BODY_X0, 150), _COLUMN_META_LABEL, fontsize=font)
+    row_y = 165.0
+    for row in _COLUMN_META_ROWS:
+        page.insert_text((_COLUMN_BODY_X0, row_y), row, fontsize=font)
+        row_y += line_height
+    abstract_lines = _wrap_line(_COLUMN_ABSTRACT, _COLUMN_ABSTRACT_WIDTH)
+    abstract_y = 150.0
+    for line in abstract_lines:
+        page.insert_text((_COLUMN_ABSTRACT_X0, abstract_y), line, fontsize=font)
+        abstract_y += line_height
+    # 「左移换列」（见 `_COLUMN_LEFTWARD_BOX`）：右栏的框之后，阅读顺序拐回左栏。
+    # 框的末行不以句末收尾、标签又刚好不缩进，所以合并的其余条件全部满足——只剩
+    # "横移 160pt"这一条能拦下它。插入顺序即 reading_order，故这对必须紧跟在摘要
+    # 之后、通栏正文之前。
+    leftward_y = abstract_y
+    for line in _COLUMN_LEFTWARD_BOX:
+        page.insert_text((_COLUMN_ABSTRACT_X0, leftward_y), line, fontsize=font)
+        leftward_y += line_height
+    page.insert_text((_COLUMN_BODY_X0, leftward_y + line_height),
+                     _COLUMN_LEFTWARD_LABEL, fontsize=font)
+    body_y = max(row_y, leftward_y + line_height * 2) + line_height * 2
+    for paragraph in _COLUMN_BODY_PARAGRAPHS:
+        for index, line in enumerate(_wrap_line(paragraph)):
+            x = _COLUMN_BODY_X0 + (_COLUMN_INDENT if index == 0 else 0.0)
+            page.insert_text((x, body_y), line, fontsize=font)
+            body_y += line_height
+        body_y += line_height
+
+    page = document.new_page(width=595, height=842)
+    page.insert_text((_COLUMN_BODY_X0, 60), _RUNNING_HEADER, fontsize=8)
+    page.insert_text((540, 812), "2", fontsize=8)
+    list_y = 100.0
+    page.insert_text((_COLUMN_BODY_X0, list_y), _COLUMN_LIST_INTRO, fontsize=font)
+    list_y += line_height * 1.5
+    for marker, sentence in _COLUMN_LIST_ITEMS:
+        for index, line in enumerate(_wrap_line(f"{marker}. {sentence}")):
+            # 悬挂缩进：首行在正文左边距，续行整体右移。
+            x = _COLUMN_BODY_X0 + (_COLUMN_INDENT if index else 0.0)
+            page.insert_text((x, list_y), line, fontsize=font)
+            list_y += line_height
+        list_y += line_height
+    for first, second, indent in _COLUMN_CONTINUATION_MERGED:
+        page.insert_text((_COLUMN_BODY_X0, list_y), first, fontsize=font)
+        list_y += line_height
+        page.insert_text((_COLUMN_BODY_X0 + indent, list_y), second,
+                         fontsize=font)
+        list_y += line_height * 1.6
+    for first, size, second in _COLUMN_CONTINUATION_KEPT:
+        page.insert_text((_COLUMN_BODY_X0, list_y), first, fontsize=size)
+        list_y += line_height
+        page.insert_text((_COLUMN_BODY_X0, list_y), second, fontsize=font)
+        list_y += line_height * 1.6
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document.save(str(path))
+    document.close()
+
+    return {
+        "kind": "pdf-columns",
+        "content_sha256": content_sha256(
+            [_COLUMN_ABSTRACT] + list(_COLUMN_BODY_PARAGRAPHS)
+            + [_COLUMN_LIST_INTRO]
+            + [f"{marker}. {sentence}" for marker, sentence in _COLUMN_LIST_ITEMS]
+            + [first for first, _second, _indent in _COLUMN_CONTINUATION_MERGED]
+            + [second for _first, second, _indent in _COLUMN_CONTINUATION_MERGED]
+            + [first for first, _size, _second in _COLUMN_CONTINUATION_KEPT]
+            + [second for _first, _size, second in _COLUMN_CONTINUATION_KEPT]
+            + list(_COLUMN_LEFTWARD_BOX) + [_COLUMN_LEFTWARD_LABEL]),
+        "path": path.name,
+        "pages": 2,
+        # 期望的**恢复**段落数（不是"生成的行数"）：本场景的价值恰恰在于它与行数
+        # 不等——HEAD 口径会得到 36，只做列局部化得 22，再加确定性续行才是 20。
+        # 逐条形状由 tests/pdf_column_layout_test.py 钉住。
+        "paragraphs": 20,
+        "running_header": _RUNNING_HEADER,
+        "abstract": _COLUMN_ABSTRACT,
+        "meta_rows": list(_COLUMN_META_ROWS),
+        "body_paragraphs": list(_COLUMN_BODY_PARAGRAPHS),
+        "list_intro": _COLUMN_LIST_INTRO,
+        "list_items": [f"{marker}. {sentence}"
+                       for marker, sentence in _COLUMN_LIST_ITEMS],
+        "continuation_merged": [f"{first} {second}"
+                                for first, second, _indent
+                                in _COLUMN_CONTINUATION_MERGED],
+        "continuation_kept": [[first, second] for first, _size, second
+                              in _COLUMN_CONTINUATION_KEPT],
+        "leftward_box": " ".join(_COLUMN_LEFTWARD_BOX),
+        "leftward_label": _COLUMN_LEFTWARD_LABEL,
     }
 
 
@@ -402,6 +613,9 @@ def build_all(out_dir: Path, *, only: set[str] | None = None) -> dict:
         scenarios["docx_20p"] = build_docx_scenario(out_dir / "scenario-20p.docx")
     if only is None or "pdf" in only:
         scenarios["pdf_100p"] = build_pdf_scenario(out_dir / "scenario-100p.pdf")
+    if only is None or "pdf" in only:
+        scenarios["pdf_columns"] = build_pdf_columns_scenario(
+            out_dir / "scenario-columns.pdf")
     if only is None or "terms" in only:
         scenarios["terms_dense"] = build_terminology_scenario(
             out_dir / "scenario-terms.docx", out_dir / "scenario-terms.glossary.json")

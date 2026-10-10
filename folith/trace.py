@@ -441,6 +441,7 @@ class RunContext:
         self.perf_root = self.output_dir / ".performance"
         self.run_dir = self.perf_root / "runs" / self.run_id
         self.events_path = self.run_dir / "events.jsonl"
+        self.requests_path = self.run_dir / "requests.jsonl"
         self.resources_path = self.run_dir / "resources.jsonl"
         self.summary_path = self.run_dir / "summary.json"
         self.stages_path = self.run_dir / "stages.json"
@@ -451,6 +452,10 @@ class RunContext:
         # Locks and streaming handles
         self._lock = threading.RLock()
         self._events_file = None
+        self._requests_file = None
+        self._request_events_count = 0
+        self._request_sequence = 0
+        self._active_requests: Dict[int, Dict[str, Any]] = {}
         self._events_count = 0
         self._span_stage_map: Dict[str, str] = {}
         self._sampler = ResourceSampler(self.resources_path, interval=1.5)
@@ -512,6 +517,7 @@ class RunContext:
         if self.level != TraceLevel.OFF:
             self.run_dir.mkdir(parents=True, exist_ok=True)
             self._events_file = self.events_path.open("a", encoding="utf-8")
+            self._requests_file = self.requests_path.open("a", encoding="utf-8")
             self._sampler.start()
 
     def set_dataset_info(self, **kwargs: Any) -> None:
@@ -602,6 +608,88 @@ class RunContext:
             op_rec["wall_time_ms"] = round(op_rec["wall_time_ms"] + span.duration_ms, 3)
             op_rec["cpu_time_ms"] = round(op_rec["cpu_time_ms"] + span.cpu_time_ms, 3)
 
+    def _write_request_event(self, event: Dict[str, Any]) -> None:
+        if self._requests_file is None:
+            return
+        try:
+            self._requests_file.write(json.dumps({"run_id": self.run_id, "task_id": self.job_id, **event}, ensure_ascii=False) + "\n")
+            self._request_events_count += 1
+            if self._request_events_count % 25 == 0 or event.get("status") == "error":
+                self._requests_file.flush()
+        except Exception:
+            pass  # Diagnostics must not replace the provider/storage failure.
+
+    def record_point(self, event: str, **fields: Any) -> None:
+        """Persist a timing boundary; callers supply counts/identifiers only."""
+        with self._lock:
+            self._write_request_event({"event": event, "timestamp": _now_iso(),
+                                       "monotonic": time.perf_counter(), **fields})
+
+    def record_run_configuration(self, config: Dict[str, Any], *, resume: bool = False) -> None:
+        if self._requests_file is None:
+            return
+        from folith.desktop.paths import app_version, build_id
+        scalar_keys = (
+            "target_lang", "auto_term", "enable_report", "enable_review", "enable_annotate",
+            "use_tm", "strict_terminology_governance", "batch_size", "max_batch_chars",
+            "enable_understanding", "enable_source_cleanup", "translation_concurrency",
+            "knowledge_feedback_interval", "segmentation_mode", "reasoning_effort",
+            "source_cleanup_concurrency", "source_cleanup_max_retries", "ocr_workers",
+            "ocr_queue_size", "ocr_backend", "ocr_mode", "review_overlap", "max_review_in_flight",
+        )
+        snapshot = {key: config[key] for key in scalar_keys if key in config
+                    and isinstance(config[key], (str, int, float, bool, type(None)))}
+        for role in ("translator", "reviewer", "auxiliary"):
+            role_config = config.get(role)
+            if isinstance(role_config, dict):
+                snapshot[role] = {key: role_config[key] for key in ("provider", "model", "reasoning_effort")
+                                  if isinstance(role_config.get(key), str)}
+        self.record_point("run_configuration", configuration=snapshot, resume=resume,
+                          app_version=app_version(), build_id=build_id(),
+                          build_identity_scope="artifact_or_git_head_excludes_uncommitted_changes")
+
+    def begin_http_attempt(self, request: Any) -> None:
+        with self._lock:
+            active = self._active_requests.get(threading.get_ident())
+            if active is None:
+                return
+            attempt = active.get("http_attempts", 0) + 1
+            active["http_attempts"] = attempt
+            request.extensions["folith_trace_attempt"] = (active["logical_request_id"], attempt)
+            self.record_point("http_attempt_started", logical_request_id=active["logical_request_id"],
+                              attempt=attempt, role=active["role"], batch_id=active["batch_id"])
+
+    def record_http_response(self, response: Any) -> None:
+        identity = response.request.extensions.get("folith_trace_attempt")
+        if identity is not None:
+            self.record_point("http_response_headers", logical_request_id=identity[0],
+                              attempt=identity[1], status_code=response.status_code)
+
+    def begin_model_request(self, provider: str, model: str, *, role: str = "unknown", batch_id: Any = None, prompt_cost: Optional[Dict[str, Any]] = None, system_chars: Optional[int] = None,
+                            user_chars: Optional[int] = None, segment_count: Optional[int] = None) -> None:
+        if self._requests_file is None:
+            return
+        with self._lock:
+            self._request_sequence += 1
+            rec = {"logical_request_id": f"{self.run_id}/request/{self._request_sequence}", "started_at": _now_iso(),
+                   "started_monotonic": time.perf_counter(), "provider": provider,
+                   "model": model, "role": role, "batch_id": batch_id,
+                   "system_chars": system_chars, "user_chars": user_chars,
+                   "segment_count": segment_count}
+            if prompt_cost is not None:
+                rec["prompt_cost"] = dict(prompt_cost)
+            self._active_requests[threading.get_ident()] = rec
+            self._write_request_event({"event": "request_started", **rec,
+                                       "job_in_flight": len(self._active_requests)})
+
+    def end_model_request(self) -> None:
+        with self._lock:
+            rec = self._active_requests.pop(threading.get_ident(), None)
+            if rec is not None:
+                self._write_request_event({"event": "request_finished", **rec,
+                    "finished_at": _now_iso(), "finished_monotonic": time.perf_counter(),
+                    "job_in_flight": len(self._active_requests)})
+
     def record_model_call(
         self,
         provider: str,
@@ -642,7 +730,9 @@ class RunContext:
             "metadata": sanitize_metadata(metadata or {}),
         }
         with self._lock:
+            rec.update(self._active_requests.get(threading.get_ident(), {}))
             self.model_calls.append(rec)
+            self._write_request_event({"event": "model_call", **rec})
 
     def record_batch(
         self,
@@ -746,6 +836,7 @@ class RunContext:
         }
         with self._lock:
             self.retries.append(rec)
+            self._write_request_event({"event": "retry", **rec})
 
     def finish(self, status: str = "success", failure_reason: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
@@ -760,7 +851,16 @@ class RunContext:
             # Stop sampler
             resource_summary = self._sampler.stop()
 
+            self.record_point("run_finished", status=status,
+                              open_logical_request_ids=[r["logical_request_id"] for r in self._active_requests.values()])
             # Close event stream
+            if self._requests_file:
+                try:
+                    self._requests_file.flush()
+                    self._requests_file.close()
+                except Exception:
+                    pass
+                self._requests_file = None
             if self._events_file:
                 try:
                     self._events_file.flush()

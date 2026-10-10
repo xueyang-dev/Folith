@@ -180,7 +180,7 @@ def main():
             ":material/check_circle:", "完成步骤应使用完成状态节点"
         assert all(any(text in m.value for m in at.markdown) for text in (
             "适合快速产出可读初稿", "适合大多数正式翻译任务",
-            "适合论文、报告及需要证据追踪的材料", "深度研究",
+            "适合论文、报告及需要证据追踪的材料", "精细",
             "翻译 → 基础检查", "术语增强 → 翻译 → 基础检查",
             "全文理解 → 术语治理 → 翻译 → 独立审校 → 研究证据",
             "包含", "速度", "成本", "审校深度", "高", "中", "低", "基础", "深度",
@@ -213,7 +213,7 @@ def main():
         at.run()
         assert not any("标准 · 已调整" in m.value for m in at.markdown), \
             "恢复标准预设后应恢复默认配置状态"
-        next(b for b in at.button if b.label == "选择深度研究预设").click()
+        next(b for b in at.button if b.label == "选择精细预设").click()
         at.run()
         next(b for b in at.button if b.label == "下一步").click()
         at.run()

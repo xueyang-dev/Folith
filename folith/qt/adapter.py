@@ -40,6 +40,7 @@ from folith.application import (
 )
 from folith.application import commands as _commands
 from folith.application import read_models as _read_models
+from folith.application import task_setup as _task_setup
 from folith.application.settings import (
     DEFAULT_STYLE_RULES as _DEFAULT_STYLE_RULES,
     SettingsSources as _SettingsSources,
@@ -1371,6 +1372,21 @@ OCR_MODE_CHOICES = (("自动判断", "auto"),
                     ("从不识别（仅用文本层）", "off"))
 
 
+#: 「扫描件的页面怎么读成文字」。取值仍是核心认识的那三个，**但 `online` 的含义在
+#: 2026-10-07 的 VLM 迁移之后变了**：
+#:
+#: * `online` —— 走 `VLMDocumentProvider` 的**结构化视觉理解**（`core.py:2304` 用
+#:   `normalize_backend(ocr_backend) == "online"` 触发它），不是"线上 OCR 转写"；
+#: * `tesseract` / `paddle` —— 本机 OCR，迁移报告明确为"显式选择才用"的遗留路径
+#:   （`docs/vlm-migration.md` 的 KEEP TEMPORARILY）。
+#:
+#: 旧标签「联网识别（默认）」是 10-06 本地化提交 `ecc46cc` 留下的，比 VLM 路径早一天，
+#: 于是成了最容易被误读的一处文案：用户以为自己还在用 OCR。**别再按标签字面理解。**
+OCR_BACKEND_CHOICES = (("视觉理解（VLM，默认）", "online"),
+                       ("本机 OCR · Tesseract", "tesseract"),
+                       ("本机 OCR · PaddleOCR", "paddle"))
+
+
 #: 「自动判断」在配置里用空串表示（核心按文档自动判断语言）。
 OCR_LANGUAGE_AUTO = "自动判断"
 
@@ -1542,3 +1558,171 @@ def create_project(name: str) -> dict:
     except ValueError as exc:
         raise AdapterError(str(exc)) from exc
     return core.create_project(cleaned)
+
+
+# ================= 译前准备（pre-translation setup） =================
+#
+# 任务「导入」之后、「开始翻译」之前，界面提供与 Streamlit 版一致的准备步骤。
+# 这里只做两件事：把当前任务设置读成一个纯值视图（回填），把面板选择写回任务
+# （委托共享命令 `apply_task_setup`）。判断谁赢的规则不在这一层。
+
+def _pick(state: dict, key: str, fallback):
+    value = state.get(key)
+    return fallback if value is None else value
+
+
+def task_started(job_id: str) -> bool:
+    """任务是否已经跑过（有段落 / p1 / p2 / pipeline_config）。"""
+    state = load_state(job_id)
+    return bool(state.get("p1_done") or state.get("p2_done")
+                or state.get("pipeline_config") or state.get("source_paras"))
+
+
+def task_setup_view(config: EngineConfig, job_id: str) -> dict:
+    """「译前准备」面板的当前值（用于回填）。纯值，无 Qt 对象。"""
+    state = load_state(job_id)
+    filename = str(state.get("filename") or "")
+    started = task_started(job_id)
+    # A not-yet-started task that never recorded a choice is a *decision not yet
+    # made*, not "the import's accidental defaults": the import path freezes the
+    # EngineConfig values (``enable_review`` on, ``enable_understanding`` off,
+    # evidence on), which match no preset.  The Streamlit wizard opens such a
+    # task on 标准 + 标准交付 (app.py: ``_PRESET_CONFIGS[preset_label]`` with
+    # the default label 标准); the Qt panel must agree, otherwise "和之前一致"
+    # would be false and the user's first look would be a custom-looking task.
+    saved_preset = str(state.get("strategy_preset") or "")
+    pending = not started and not saved_preset
+    if pending:
+        strategy = dict(_task_setup.STRATEGY_PRESETS["标准"])
+        preset = "标准"
+        delivery = dict(_task_setup.DELIVERY_PRESET_CONFIGS["standard"])
+    else:
+        strategy = {
+            "auto_term": bool(_pick(state, "auto_term", config.auto_term)),
+            "use_tm": bool(_pick(state, "use_tm", config.use_tm)),
+            "enable_understanding": bool(_pick(
+                state, "enable_understanding", config.enable_understanding)),
+            "enable_review": bool(_pick(state, "enable_review", config.enable_review)),
+            "strict_terminology_governance": bool(_pick(
+                state, "strict_terminology_governance", False)),
+            "segmentation_mode": str(_pick(
+                state, "segmentation_mode", config.segmentation_mode) or "sentence"),
+            "translation_concurrency": int(_pick(
+                state, "translation_concurrency", config.translation_concurrency) or 4),
+            "batch_profile": str(_pick(state, "batch_profile", "保守") or "保守"),
+        }
+        preset = saved_preset or _task_setup.strategy_preset_for(strategy)
+        delivery = dict(state.get("delivery_config") or {})
+        if not delivery:
+            delivery = _task_setup.default_delivery_config()
+    return {
+        "job_id": job_id,
+        "filename": filename,
+        "started": started,
+        "is_pdf": filename.lower().endswith(".pdf"),
+        "target_lang": str(_pick(state, "target_lang", config.target_lang)),
+        "project_id": state.get("project_id"),
+        "strategy": strategy,
+        "strategy_preset": preset,
+        "delivery": delivery,
+        "delivery_preset": _task_setup.delivery_preset_for(delivery),
+        "translation_theory": str(_pick(
+            state, "translation_theory", config.translation_theory)),
+        "style_rules": str(_pick(state, "style_rules", config.style_rules)),
+        "ocr": {
+            "mode": normalize_ocr_mode(_pick(state, "ocr_mode", config.ocr_mode)),
+            "backend": str(_pick(state, "ocr_backend", config.ocr_backend) or "online"),
+            "language": str(_pick(state, "ocr_language", config.ocr_language) or ""),
+            "quality": str(_pick(state, "ocr_quality", "standard") or "standard"),
+        },
+        "glossary_count": len(state.get("glossary") or []),
+        "glossary_name": str(state.get("glossary_name") or ""),
+    }
+
+
+def apply_task_setup(config: EngineConfig, job_id: str, setup: dict) -> None:
+    """把面板选择写回任务；已开始的任务由核心拒绝（转成 AdapterError）。"""
+    strategy = dict(setup.get("strategy") or {})
+    # `enable_report` / `enable_annotate` 在契约里是**顶层**设置：核心的
+    # `normalize_delivery_config(..., enable_report=, enable_annotate=)` 会用顶层
+    # 取值覆盖交付包里的同名字段。所以面板勾的"翻译实践报告"和"标记术语"必须同时
+    # 写进顶层，否则用户勾了报告、交付包里却是关的（交付包里的那个值会被丢掉）。
+    delivery = dict(setup.get("delivery") or {})
+    if not delivery.get("deliver_bilingual_docx"):
+        delivery["enable_annotate"] = False
+    explicit = {
+        "filename": setup.get("filename"),
+        "target_lang": setup.get("target_lang") or config.target_lang,
+        "auto_term": bool(strategy.get("auto_term")),
+        "use_tm": bool(strategy.get("use_tm")),
+        "enable_understanding": bool(strategy.get("enable_understanding")),
+        "enable_review": bool(strategy.get("enable_review")),
+        "strict_terminology_governance": bool(
+            strategy.get("strict_terminology_governance")),
+        "segmentation_mode": str(strategy.get("segmentation_mode") or "sentence"),
+        "translation_concurrency": int(strategy.get("translation_concurrency") or 4),
+        "batch_profile": str(strategy.get("batch_profile") or "保守"),
+        "strategy_preset": str(setup.get("strategy_preset") or ""),
+        "translation_theory": str(
+            setup.get("translation_theory") or config.translation_theory),
+        "style_rules": str(setup.get("style_rules") or config.style_rules),
+        "enable_report": bool(delivery.get("enable_report")),
+        "enable_annotate": bool(delivery.get("enable_annotate")),
+        "delivery_config": delivery,
+    }
+    if setup.get("is_pdf"):
+        ocr = dict(setup.get("ocr") or {})
+        explicit.update({
+            "ocr_language": str(ocr.get("language") or ""),
+            "ocr_mode": str(ocr.get("mode") or "auto"),
+            "ocr_backend": str(ocr.get("backend") or "online"),
+            "ocr_quality": str(ocr.get("quality") or "standard"),
+        })
+    try:
+        _commands.apply_task_setup(
+            job_id, _SettingsSources(explicit=explicit),
+            target_lang=explicit["target_lang"],
+            project_id=setup.get("project_id"))
+    except _commands.ApplicationError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def setup_choices() -> dict:
+    """译前准备面板需要的目录（预设 / 交付项 / OCR / 项目 / 目标语言）。"""
+    return {
+        "strategy_presets": [
+            {"key": key,
+             "label": _task_setup.STRATEGY_PRESET_LABELS.get(key, key),
+             # 一行摘要给紧凑的桌面面板；Web 端的卡片另有更长的文案。
+             "description": _task_setup.STRATEGY_PRESET_SUMMARIES.get(key, ""),
+             "config": dict(value)}
+            for key, value in _task_setup.STRATEGY_PRESETS.items()],
+        "batch_profiles": [
+            {"key": key,
+             "label": _task_setup.BATCH_PROFILE_LABELS.get(key, key),
+             "hint": str(value.get("hint") or "")}
+            for key, value in _task_setup.BATCH_PROFILES.items()],
+        "delivery_presets": [
+            {"key": key, "label": str(value["label"]),
+             "description": str(value["description"])}
+            for key, value in _task_setup.DELIVERY_PRESETS.items()],
+        "translation_items": [dict(item) for item in _task_setup.DELIVERY_TRANSLATION_ITEMS],
+        "asset_items": [dict(item) for item in _task_setup.DELIVERY_ASSET_ITEMS],
+        "research_items": [dict(item) for item in _task_setup.DELIVERY_RESEARCH_ITEMS],
+        "research_strategy_presets": sorted(_task_setup.RESEARCH_STRATEGY_PRESETS),
+        "delivery_preset_configs": {
+            key: dict(value) for key, value in _task_setup.DELIVERY_PRESET_CONFIGS.items()},
+        "default_delivery": _task_setup.default_delivery_config(),
+        "stemming_unit_options": [("按句", "sentence"), ("按段", "paragraph")],
+        "ocr_languages": ocr_language_choices(),
+        "ocr_modes": [dict(label=label, value=value) for label, value in OCR_MODE_CHOICES],
+        "ocr_backends": [dict(label=label, value=value)
+                         for label, value in OCR_BACKEND_CHOICES],
+        "ocr_quality": [
+            {"label": "标准 · 220 DPI", "value": "standard"},
+            {"label": "高质量 · 300 DPI", "value": "high"},
+            {"label": "历史/难认扫描 · 350 DPI", "value": "historical"},
+        ],
+        "target_languages": list(TARGET_LANGUAGES),
+        "projects": project_options(),
+    }

@@ -1,0 +1,22 @@
+{
+  "PDF": {
+    "job_id": "201d3acaeb3b946e",
+    "pairs": 0,
+    "translated": 0,
+    "p1": true,
+    "p2": false,
+    "translation_status": "failed",
+    "review": "SKIPPED（翻译未全部完成）",
+    "ui_consistent": false
+  },
+  "DOCX": {
+    "job_id": "256c5c2b64cf4f1e",
+    "pairs": 0,
+    "translated": 0,
+    "p1": true,
+    "p2": false,
+    "translation_status": "failed",
+    "review": "SKIPPED（翻译未全部完成）",
+    "ui_consistent": false
+  }
+}

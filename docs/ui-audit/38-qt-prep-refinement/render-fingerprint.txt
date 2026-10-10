@@ -1,0 +1,8 @@
+0a7f504802368f5f  folith/qt/setup_panel.py
+fe996d509b9682d7  folith/qt/style.py
+df373aa2124c4b47  folith/qt/theme.py
+663436d8f821fd69  folith/qt/icons.py
+4ec72a8031830324  folith/qt/i18n.py
+b9a63c3c42fd6092  folith/application/task_setup.py
+cdd6b18114d7602b  folith/qt/adapter.py
+170fbaf1f9f11f83  folith/resources/locales/qt-zh-CN.json

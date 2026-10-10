@@ -1,0 +1,38 @@
+{
+  "fixture": "同一份夹具、同一次几何：~/Library/Application Support/Folith/data（107 个任务）、1180x761 frame @ (221,88)、dpr 2.0、非前台窗口。before/ 与 after/ 的 geometry.json 逐字段相同（见 geometry.json）。",
+  "notes": [
+    "图像量取的坐标是源图像素，已折半成 logical px。",
+    "「KPI 卡面」= 主区顶部连续 70 logical px 的 #242426 面（1x 下即为 35px），是四张 69px 指标卡留下的痕迹。",
+    "after 的区块几何取自 tmp/layout_probe.py（在 1180x800 的 Qt 内容区上量），与真实截图差一个 28pt 原生标题栏。"
+  ],
+  "home_layout": [
+    {"item": "侧栏宽度", "before": "247 px", "after": "231 px", "source": "图像量取（y=560 扫描线，#202022 连续段）"},
+    {"item": "侧栏内容左内边距", "before": "16 px", "after": "12 px", "source": "图像量取（y=1400 扫描线首个跳变）"},
+    {"item": "KPI 区块", "before": "四张卡，主区顶部占 70 px（y=177 h=70，#242426）", "after": "无卡面；内联统计条 17 px（y=111）", "source": "图像量取 + layout_probe"},
+    {"item": "任务区起点 y", "before": "276", "after": "140", "source": "Phase 1 探针 / layout_probe"},
+    {"item": "任务表可视高度", "before": "425 px", "after": "572 px（+147，+35%）", "source": "layout_probe"},
+    {"item": "表头区占窗口比例", "before": "36%", "after": "18%", "source": "（表格起点 y）/ 内容高"},
+    {"item": "行高", "before": "40 px", "after": "36 px", "source": "theme.CONTROL['row']"},
+    {"item": "表头高", "before": "34 px", "after": "30 px", "source": "theme.CONTROL['header']"},
+    {"item": "卡片高度", "before": "≈99 px（3 行：标题 / meta / 打开任务）", "after": "65 px（2 行）", "source": "card_probe（107 张卡，高度集合唯一）"},
+    {"item": "卡片列数（1180 宽）", "before": "1（整幅宽堆叠）", "after": "2（每张 435 px）", "source": "card_probe"},
+    {"item": "首屏完整可见卡片", "before": "≈4–5", "after": "14", "source": "card_probe"},
+    {"item": "底栏：瞬时消息 vs 常驻路径", "before": "同一起点 x=2，两条文本逐字穿插", "after": "msg_right=873 / path_left=879 → 不重叠", "source": "statusbar_probe"},
+    {"item": "底栏重复文本", "before": "启动时同一路径左右各印一遍", "after": "消息含该路径时常驻标签自动收起，消息清掉后回来", "source": "statusbar_probe + 右半区墨量 19862→14617 px"},
+    {"item": "窄窗（956x640）", "before": "—", "after": "副标题省略为「…然后…」，统计条/表格/脚注/底栏互不重叠", "source": "layout_probe"}
+  ],
+  "qss_baseline": {
+    "comment": "light / paper 的 sha256 本轮**有意**变动：KpiCard 换成了 StatStrip，而这几条规则是主题无关的共享块。真正不变的不变量是「夜间专属规则不得泄进浅色/纸面」——本轮复核通过（见 night_leak_check）。",
+    "before": {"light": "72fbdfa39eda1203", "paper": "b9f388d2b924cf62"},
+    "after": {"light": "43252d7e2a0b19f4", "paper": "72d6f04d687b4e03", "dark": "31aba2bb0c6590de"},
+    "night_leak_check": "light / paper 的 QSS 里 #1c1c1e / #202022 / #242426 / #2a2a2d / rgba(255,255,255 命中数均为 0"
+  },
+  "phase5_unified_titlebar": {
+    "decision": "不采用（保留原生标题栏）",
+    "evidence": {
+      "A_native": "标题栏显示窗口身份「Folith — 学术翻译工作台」，无控件，AppKit 中性石墨灰，与内容区无接缝",
+      "B_unified": "setUnifiedTitleAndToolBarOnMac(True) + QToolBar：标题退化成「任务库」（丢掉品牌/窗口身份），两个图标被挤到标题栏最右且垂直方向贴边",
+      "revert_and_native_behaviour": "C 回退后标题复原；全屏 1470x923 → 回普通 1180x733，traffic light 与拖拽/缩放均正常（toolbar/facts.json）"
+    }
+  }
+}

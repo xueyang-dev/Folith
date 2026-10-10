@@ -17,6 +17,17 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 
+
+def _as_color(value) -> QColor:
+    """token 值 → QColor。走 :func:`folith.qt.theme.qcolor`，因为 token 里存在
+    ``rgba(...)`` 形式（``QColor("rgba(...)")`` 会静默变成黑色）。"""
+    if isinstance(value, QColor):
+        return value
+    from .theme import qcolor
+
+    return qcolor(value)
+
+
 #: 24×24 网格上的描边指令：
 #:   ("line", x1, y1, x2, y2)                 直线
 #:   ("poly", [(x, y), ...], closed)          折线（closed=True 时闭合）
@@ -162,7 +173,7 @@ def pixmap(name: str, size: int = 16, color: str | QColor = "#000000",
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     scale = size / _GRID
     painter.scale(scale, scale)
-    pen = QPen(QColor(color) if not isinstance(color, QColor) else color)
+    pen = QPen(_as_color(color))
     width = (stroke if stroke is not None else _STROKE)
     pen.setWidthF(width)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -170,7 +181,7 @@ def pixmap(name: str, size: int = 16, color: str | QColor = "#000000",
     painter.setPen(pen)
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.drawPath(path)
-    brush = QColor(color) if not isinstance(color, QColor) else color
+    brush = _as_color(color)
     painter.setBrush(brush)
     painter.setPen(Qt.PenStyle.NoPen)
     for dot in dots:

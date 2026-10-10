@@ -1,0 +1,104 @@
+{
+  "model_calls": 120,
+  "calls_by_role": {
+    "translation": 120
+  },
+  "failed_model_calls": 0,
+  "logical_requests_started": 120,
+  "logical_requests_finished": 120,
+  "unclosed_logical_request_ids": [],
+  "logical_peak_in_flight": 1,
+  "logical_latency_s": {
+    "count": 120,
+    "sum": 3.214403120044153,
+    "p50": 0.027923750021727756,
+    "p95": 0.03034791809914168,
+    "max": 0.030685707984957844
+  },
+  "http_attempts_observed": 120,
+  "http_response_statuses": {
+    "200": 120
+  },
+  "http_attempts_without_response_headers": 0,
+  "outer_retries_observed": 0,
+  "provider_usage_calls": 120,
+  "usage_unavailable_calls": 0,
+  "provider_tokens_observed": {
+    "prompt_tokens": 1440,
+    "completion_tokens": 240,
+    "cached_tokens": 0,
+    "total_tokens": 1680
+  },
+  "translation_prompt_components_chars": null,
+  "batch_waits": {
+    "translation": {
+      "queue_wait_s": {
+        "count": 120,
+        "sum": 0.0014827527338638902,
+        "p50": 9.729497833177447e-06,
+        "p95": 2.0794002921320498e-05,
+        "max": 2.641702303662896e-05
+      },
+      "worker_wall_s": {
+        "count": 120,
+        "sum": 3.221668616926763,
+        "p50": 0.02800024949829094,
+        "p95": 0.03044052528566681,
+        "max": 0.030737167049665004
+      },
+      "ready_to_commit_wait_s": {
+        "count": 120,
+        "sum": 0.0018702532397583127,
+        "p50": 1.2061995221301913e-05,
+        "p95": 2.6504223933443426e-05,
+        "max": 3.6165991332381964e-05
+      },
+      "commit_wall_s": {
+        "count": 120,
+        "sum": 0.0020974157960154116,
+        "p50": 1.1646014172583818e-05,
+        "p95": 4.6931285760365425e-05,
+        "max": 8.004100527614355e-05
+      }
+    }
+  },
+  "incomplete_batches": [],
+  "run_configuration": [
+    {
+      "run_id": "run_20261008_200420_50b23a05",
+      "task_id": "synthetic-2",
+      "event": "run_configuration",
+      "timestamp": "2026-10-08T20:04:20.687+00:00",
+      "monotonic": 420106.221899125,
+      "configuration": {
+        "batch_size": 4,
+        "translation_concurrency": 1,
+        "translator": {
+          "provider": "synthetic",
+          "model": "fixed-response"
+        }
+      },
+      "resume": false,
+      "app_version": "0.5.0",
+      "build_id": "git:de3475c",
+      "build_identity_scope": "artifact_or_git_head_excludes_uncommitted_changes"
+    }
+  ],
+  "milestones": [
+    {
+      "run_id": "run_20261008_200420_50b23a05",
+      "task_id": "synthetic-2",
+      "event": "milestone",
+      "timestamp": "2026-10-08T20:04:23.916+00:00",
+      "monotonic": 420109.450765791,
+      "phase": "synthetic_work_complete"
+    }
+  ],
+  "run_finished": true,
+  "limitations": [
+    "HTTP hooks end at response headers; actual HTTP in-flight duration and TTFT are unavailable.",
+    "Prompt components count logical outer calls, including failed calls; SDK retransmission bytes and billing are not measured.",
+    "Usage totals include only returned provider usage; failed HTTP attempts may have unobserved usage.",
+    "Review-overlap worker result readiness precedes its separate review; ready-to-commit includes that review."
+  ]
+}

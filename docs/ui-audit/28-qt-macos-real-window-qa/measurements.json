@@ -1,0 +1,75 @@
+{
+  "harness": {
+    "tool": "tmp/real_window_qa.py",
+    "platform": "cocoa",
+    "system_color_scheme": "ColorScheme.Dark",
+    "requested_theme": "system",
+    "resolved_theme": "dark",
+    "device_pixel_ratio": 2.0,
+    "screen_available": "1470x843",
+    "window": "1180x800 logical → 2360x1522 device（含 56 device px 原生标题栏）",
+    "capture": "screencapture -x -o -l <CGWindowID>（含原生标题栏、不含阴影），全部尺寸校验通过",
+    "can_become_frontmost": false,
+    "note": "本环境无法把进程变成前台应用（NSApp.activate / activateWithOptions: 均返回 False）→ 标题栏按**非活动**窗口渲染。所有数值均为 2× device 像素，取自窗口服务合成后的真实像素。"
+  },
+  "baselines": {
+    "sha256_build_qss_16": {
+      "light": "72fbdfa39eda1203",
+      "paper": "b9f388d2b924cf62",
+      "dark": "b4e511fd97ab0207"
+    },
+    "frozen_light_paper_note": "light / paper 与上一轮冻结基线逐字节相同（夜间本轮有改动，故 dark 变化）"
+  },
+  "table_selection": {
+    "issue": "token 写 rgba(130,172,255,.18)，真实窗口渲成 ≈ 等效 alpha .44 的饱和蓝块",
+    "root_cause": "Qt 把 ::item:selected 的背景叠加了三层：QSS 规则 + 基样式 + selection-background-color",
+    "measured": {
+      "before": { "rgb": "#495b82", "equivalent_alpha": 0.441, "sample": "01-home-table-selected.png 竖扫 x=700, y=788..866" },
+      "after": { "rgb": "#2e3546", "equivalent_alpha": 0.18, "sample": "01-home-table-selected.png 竖扫 x=700, y=788..866" }
+    },
+    "expected_from_token": "#2e3546（rgba(130,172,255,.18) 合成在 #1C1C1E 上）",
+    "verdict": "after 与 token 精确一致（逐通道误差 ≤1）"
+  },
+  "table_row_hover": {
+    "issue": "::item:hover 是「格」级选择器，鼠标停在「状态」列时只有那一格亮起一块方块",
+    "measured": {
+      "before_bbox": "(1126,948)-(1705,1027) → 580×80 device = 恰好一列 × 一行",
+      "before_hovered_cell": "#313133（≈ 两层 .05 叠加）",
+      "before_rest_of_row": "#1c1c1e（页面底色，完全没有 hover）",
+      "after_bbox": "(544,948)-(2289,1027) → 1745×80 device = 整个表格视口宽度 × 一行",
+      "after_anywhere_in_row": "#282829（单层 rgba(255,255,255,.05) 合成在 #1C1C1E 上）"
+    },
+    "fix": "夜间交 RowDelegate 按「行」铺色（_hover_row 由 view 的 entered 信号 + viewport Leave 事件过滤器维护），QSS 的格级 hover 置 transparent",
+    "verdict": "before = 一格误亮；after = 整行均匀，且单层"
+  },
+  "surfaces": {
+    "page": "#1c1c1e",
+    "sidebar": "#202022",
+    "sidebar_divider": "#2c2c2e",
+    "card_surface": "#242426",
+    "surface_sunken": "#1a1a1c",
+    "table_header_band": "#212123",
+    "table_header_bottom_rule": "#333335",
+    "row_hairline": "#28282a",
+    "kpi_card_edge_delta_vs_page": 8,
+    "note": "层级靠面：page → card（Δ8）→ sunken；分隔靠 1 device px 反光线"
+  },
+  "segmented_control": {
+    "track": "#1a1a1c",
+    "track_outline": "#28282a",
+    "active_segment": "#242426",
+    "active_segment_outline": "#333335",
+    "inactive_label": "#9c9ca3",
+    "size": "track 高 80 device px（40 logical），active 胶囊 60 device px（30 logical）",
+    "verdict": "选中面（#242426）+ 描边（#333335）双重信号，在 2× 裁切下可读 → 不改"
+  },
+  "titlebar": {
+    "folith_inactive": "#28282b",
+    "folith_active_earlier_round": "#373739",
+    "native_reference_textedit_inactive": "#272729",
+    "native_reference_bare_qt_active": "#373738",
+    "titlebar_height_device_px": 56,
+    "step_to_content": 12,
+    "verdict": "两个变体都与 AppKit 自绘值吻合（非 Folith 引入的色差）→ 不改"
+  }
+}

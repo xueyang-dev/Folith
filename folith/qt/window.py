@@ -23,8 +23,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QLabel, QMainWindow, QStackedWidget, QStatusBar,
-    QWidget,
+    QApplication, QFileDialog, QMainWindow, QSizePolicy, QStackedWidget, QWidget,
 )
 
 from folith.desktop import paths as desktop_paths
@@ -134,21 +133,38 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.workbench)
         self.setCentralWidget(self.stack)
 
-        self.status = QStatusBar(self)
+        # 状态栏：左 = 瞬时消息，右 = 常驻属性。用 style.StatusBar（不是裸 QStatusBar）：
+        # Qt 会把 `showMessage` 的临时消息**画在状态栏自己的 paintEvent 上**（一条整宽带），
+        # 而"显示消息时隐藏普通控件"只对已经在屏幕上的控件生效——启动时先 showMessage
+        # 再 show() 窗口，左侧控件会被重新显示，于是两条文本**叠印在同一 x 上**
+        # （真实窗口实测：数据目录那一行整行读不出来）。StatusBar 把消息写进真实
+        # QLabel，宽度由布局决定，结构上不可能重叠；currentMessage() 语义不变。
+        self.status = style_module.StatusBar(self)
         self.setStatusBar(self.status)
-        self.data_label = QLabel()
-        self.data_label.setObjectName("hint")
+        self.data_label = style_module.ElideLabel(
+            "", mode=Qt.TextElideMode.ElideMiddle)
+        self.data_label.setObjectName("statusPath")
+        # 常驻区的宽度策略与左侧消息标签**相反**：消息要"占满剩余宽度"（Ignored），
+        # 路径要"按自己的内容、不超过上限"（Preferred + 上限）。上限保证窄窗时它
+        # 不会把瞬时消息挤没；溢出由 ElideLabel 中间省略，完整路径在悬停提示里。
+        self.data_label.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                      QSizePolicy.Policy.Preferred)
+        self.data_label.setMaximumWidth(340)
         self.data_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
         self._set_data_label()
-        self.engine_label = QLabel("")
-        self.engine_label.setObjectName("hint")
-        self.status.addWidget(self.data_label, 1)
-        self.status.addPermanentWidget(self.engine_label)
+        # 模型状态**不再**出现在底栏：它同时出现在顶部提示条与侧栏引擎块里，
+        # 而底栏是"刚刚发生了什么"的位置，不是"当前配置是什么"的位置。
+        self.status.addPermanentWidget(self.data_label)
+        # 让状态栏知道哪一条是"常驻属性"：瞬时消息若已经含了同样的路径就把它收起，
+        # 否则同一句话会在底栏左右各印一遍（见 StatusBar._sync_permanent）。
+        self.status.set_permanent_widget(self.data_label)
 
         self._current_job_id = ""
         self._cached_state: dict = {}
         self._cached_signature = ""
+        #: 「译前准备」的目录（`adapter.setup_choices`）在一个进程里只需读一次。
+        self._setup_choices_loaded = False
         self._home_counter = 0
         self._exit_in_progress = False
         self._closing_accepted = False
@@ -171,7 +187,12 @@ class MainWindow(QMainWindow):
         self.refresh_home()
         self.refresh_engine_label()
         if self.data_dir_notice:
-            self._notice(self.data_dir_notice, error=True)
+            # `enforce_output_dir` 是**替用户把相对路径改回数据目录并成功了**
+            # （返回的是"已更正为 …"），属于告知性的信息而不是失败。
+            # 之前这里传 error=True，于是这条正常信息在底栏被画成 danger 红 ——
+            # 红色语义是"出错了"，会让用户以为翻译链路有问题。
+            # status_bar_only：这条与"当前任务"无关，不能长期留在工作台的运行说明行里。
+            self._notice(self.data_dir_notice, status_bar_only=True)
 
         try:
             QApplication.styleHints().colorSchemeChanged.connect(
@@ -197,6 +218,9 @@ class MainWindow(QMainWindow):
 
         self.workbench.backRequested.connect(self.show_home)
         self.workbench.startRequested.connect(self.start_or_resume)
+        self.workbench.setupStartRequested.connect(self.start_from_setup)
+        self.workbench.setupCreateProjectRequested.connect(
+            self.create_project_from_setup)
         self.workbench.pauseRequested.connect(self.pause_job)
         self.workbench.cancelRequested.connect(self.cancel_job)
         self.workbench.retryRequested.connect(self.retry_job)
@@ -415,33 +439,28 @@ class MainWindow(QMainWindow):
 
     # ================= helpers =================
     def _set_data_label(self) -> None:
-        """状态栏左侧的数据目录：长路径中间省略，完整值放悬停提示。
+        """状态栏右侧的数据目录：整条路径**中间省略**，完整值放悬停提示。
 
-        原样显示会横着顶满状态栏（macOS 的 Application Support 路径很长），
-        把右侧的模型状态挤掉；这里只省略**显示**，不改变真实路径。
+        长度不写死：`ElideLabel` 按布局实际分给它的宽度省略，窗口变窄时自动收，
+        所以它在任何窗口宽度下都不会去挤左边的瞬时消息（也读得出来是"在哪一段"）。
         """
         path = str(self.paths.data_dir)
-        metrics = self.data_label.fontMetrics()
-        elided = metrics.elidedText(path, Qt.TextElideMode.ElideMiddle, 420)
-        self.data_label.setText(i18n.tr('数据目录：{v0}', v0=elided))
+        self.data_label.setText(path)
         self.data_label.setToolTip(
             i18n.tr('数据目录：{v0}\n（可拖动选择并复制）', v0=path))
 
     def refresh_engine_label(self) -> None:
-        # `connection_problem()` 是适配层给的固定措辞：显示前过一遍动态词表，
-        # 否则非中文界面里"未配置"的原因永远是中文。
+        """把引擎状态交给**唯一**的呈现处：侧栏底部的引擎块。
+
+        底栏此前也印一份"模型：未配置（…）"，与顶部提示条、侧栏引擎卡三处同说一件
+        事。现在顶部提示条只说**阻塞**（模型缺失 + 配置入口）、侧栏块说**当前是什么**、
+        底栏只说"刚刚发生了什么"——信息不缺，重复消失。
+        """
         problem = i18n.tr_dynamic(self.config.connection_problem())
-        if problem:
-            self.engine_label.setText(i18n.tr('模型：未配置（{v0}）', v0=problem))
-            self.engine_label.setObjectName("statusError")
-        else:
-            self.engine_label.setText(
-                i18n.tr('模型：{v0} / {v1} → {v2}', v0=self.config.provider, v1=self.config.model, v2=self.config.target_lang))
-            self.engine_label.setObjectName("hint")
-        style_module.repolish(self.engine_label)
         self.home.set_engine_problem(
             problem,
-            f"{self.config.provider} / {self.config.model}"
+            (f"{self.config.provider} / {self.config.model}"
+             + (f" → {self.config.target_lang}" if self.config.target_lang else ""))
             if self.config.provider else "")
 
     def _sync_menu_state(self) -> None:
@@ -478,12 +497,23 @@ class MainWindow(QMainWindow):
             if action is not None and action.isEnabled() != bool(enabled):
                 action.setEnabled(bool(enabled))
 
-    def _notice(self, message: str, *, error: bool = False) -> None:
+    def _notice(self, message: str, *, error: bool = False,
+                status_bar_only: bool = False) -> None:
+        """一条"刚刚发生了什么"的告知。
+
+        ``status_bar_only``：只进底栏（8s 自动消失）。工作台工具区的那行说明是
+        **当前任务**的运行落点——启动期与任务无关的告知（例如数据目录被自动
+        修正）写进去以后没有过期机制，会一直留着，看起来像这条带子坏了。
+        真正需要用户处理的错误仍走 :meth:`_failure`，不会被这里隐藏。
+        """
         self.status.showMessage(message, 8000 if not error else 15000)
-        self.workbench.status_label.setText(message)
+        self.status.set_message_error(error)
+        if not status_bar_only:
+            self.workbench.status_label.setText(message)
 
     def _mark_dirty_status(self, text: str) -> None:
         self.status.showMessage(text, 3000)
+        self.status.set_message_error(False)
 
     def _failure(self, title: str, message: str, detail: str = "") -> None:
         self.failures.append({"title": title, "message": message,
@@ -560,10 +590,8 @@ class MainWindow(QMainWindow):
             return
         self.home.set_projects(projects)
         self.home.set_rows(rows)
-        active = [row for row in rows if row.active]
-        self.home.set_status(
-            i18n.tr("共 {v0} 个任务", v0=len(rows))
-            + (i18n.tr("，其中 {v0} 个正在运行", v0=len(active)) if active else ""))
+        # 脚注不再重复"共 N 个任务"（指标条已经报了数）：留空 → 脚注显示选中摘要。
+        self.home.set_status("")
 
     def show_home(self) -> None:
         self.workbench.flush_draft()
@@ -616,14 +644,20 @@ class MainWindow(QMainWindow):
                 self.home.select_job(results[0].job_id)
                 names = "、".join(item.filename for item in results[:3])
                 self._notice(i18n.tr('已创建 {v0} 个新任务（{v1}）', v0=len(created), v1=names))
+                # 交互路径**不再问"现在开始翻译吗"**：直接打开任务并停在「译前准备」，
+                # 由译者在那里定策略与产出物，再点面板里的「开始翻译」。这一问一答原先
+                # 用一句"是/稍后"顶替了整步准备，答"是"就会用导入时的默认值开跑。
+                # 自动化路径（`autostart=True` 或非交互运行）保持直接开跑，供测试与
+                # 无人值守使用。
                 decision = start_now
                 if decision is None:
-                    decision = _automation() or self._confirm(
-                        i18n.tr('开始翻译'),
-                        i18n.tr('已导入 {v0} 个任务：{v1}。\n\n现在开始翻译吗？', v0=len(results), v1=names),
-                        yes=i18n.tr('开始翻译'), no=i18n.tr('稍后'))
-                if decision:
+                    decision = _automation()
+                # 已经在看这个任务时**不要**重复 open_job：这个完成回调是异步的
+                # （worker 线程排队回主线程），重复载入会把工作台已有的选择与编辑器
+                # 内容再重置一次（实测：编辑器被清空、正文变成空态）。
+                if self._current_job_id != results[0].job_id:
                     self.open_job(results[0].job_id)
+                if decision:
                     self.start_or_resume()
 
         def failed(message: str, detail: str) -> None:
@@ -653,6 +687,9 @@ class MainWindow(QMainWindow):
         self._last_runtime_status = ""
         rows = adapter.segment_rows(job_id, state)
         snapshots = adapter.delivery_snapshots(job_id)
+        # 「译前准备」的数据必须先于 load 填进去：load 内部会立刻决定正文区放
+        # 准备面板还是段落网格，晚一步就会先闪一下上一个任务的面。
+        self._load_setup(job_id, state)
         self.workbench.load(job_id, self.config, state, rows, snapshots)
         self.stack.setCurrentWidget(self.workbench)
         self._log(f"open job {job_id}")
@@ -764,6 +801,37 @@ class MainWindow(QMainWindow):
             self.home.project_filter.setCurrentIndex(index)
         self._notice(i18n.tr('已创建项目「{v0}」', v0=project.get('name')))
 
+    def create_project_from_setup(self) -> None:
+        """译前准备里的「新建项目…」：建完之后把它选为本次任务的归属。
+
+        与首页入口 `create_project` 共用同一套动作——同样的自动化守卫、同样的名称
+        对话框、同样的 `adapter.create_project`。区别只在收尾：这里要把结果填回准备
+        面板的选择器，否则用户建完项目、面板还停在「未分类」，看不出刚做了什么。
+
+        归属**不在这一步落盘**：它随「开始翻译」经 `apply_task_setup` 写进任务状态，
+        与面板上其它选择走同一条路径。所以这里只选中，不调 `assign_jobs_to_project`
+        ——那条路是给"已经存在的任务改归属"用的，而准备阶段的任务归属尚未生效。
+        """
+        if _automation():
+            self._notice(i18n.tr('新建项目：自动化运行不弹出输入框，请改用「项目…」或命令行。'))
+            return
+        name, ok = prompts.TextInputDialog.get_text(
+            self, i18n.tr('新建项目'), i18n.tr('项目名称：'))
+        if not ok or not name.strip():
+            return
+        try:
+            project = adapter.create_project(name)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法创建项目'), str(exc))
+            return
+        self.workbench.add_setup_project(
+            str(project.get("project_id") or ""), str(project.get("name") or ""))
+        # 首页持有自己的项目副本（筛选器 + 「移入项目」菜单），建完要一起刷新，
+        # 否则回到首页看不到新项目。`set_projects` 会保留当前筛选，不会串页。
+        self.refresh_home()
+        self._notice(i18n.tr('已创建项目「{v0}」，已选为本次任务的归属。',
+                             v0=project.get('name')))
+
     def open_external_files(self, paths: list[str]) -> None:
         """处理**应用外部**交来的文档（Finder 打开方式 / Dock 拖放 / `open -a` / argv）。
 
@@ -869,6 +937,30 @@ class MainWindow(QMainWindow):
                 self._home_counter = 0
                 self.refresh_home()
 
+    @staticmethod
+    def _state_started(state: dict) -> bool:
+        """任务是否已经开始——与 ``adapter.task_started`` 同一条规则。
+
+        这里用**已经读到内存的 state** 判断，避免为每次后台轮询多读一次磁盘。
+        """
+        return bool(state.get("p1_done") or state.get("p2_done")
+                    or state.get("pipeline_config") or state.get("source_paras"))
+
+    def _load_setup(self, job_id: str, state: dict) -> None:
+        """给工作台准备「译前准备」数据；已开始的任务则收起准备面。
+
+        目录（预设 / 交付项 / OCR / 项目 / 目标语言）在进程内只读一次；视图每次
+        按任务状态重建。``set_setup`` 在数据未变时不动面板，所以后台轮询不会把
+        用户正在准备面板上勾选的内容重置掉。
+        """
+        if self._state_started(state):
+            self.workbench.set_setup(None)
+            return
+        if not self._setup_choices_loaded:
+            self.workbench.set_setup_choices(adapter.setup_choices())
+            self._setup_choices_loaded = True
+        self.workbench.set_setup(adapter.task_setup_view(self.config, job_id))
+
     def refresh_workbench(self, *, force: bool = False) -> None:
         job_id = self._current_job_id
         if not job_id:
@@ -884,6 +976,10 @@ class MainWindow(QMainWindow):
             self._cached_state = state
             self._cached_signature = signature
         state = self._cached_state
+        # 任务一开始，「译前准备」就让位给段落网格：状态变了才重算，且这一句必须
+        # 在 apply 之前——apply 会立刻决定正文区放哪一面。
+        if changed or force:
+            self._load_setup(job_id, state)
         rows = adapter.segment_rows(job_id, state)
         runtime = adapter.runtime_view(job_id, state)
         snapshots = adapter.delivery_snapshots(job_id) if (changed or force) \
@@ -907,6 +1003,27 @@ class MainWindow(QMainWindow):
         text = headline if not detail or detail == headline \
             else i18n.tr("{v0} · {v1}", v0=headline, v1=detail)
         self.status.showMessage(text.strip(" ·"), 4000)
+
+    def start_from_setup(self, setup: dict) -> None:
+        """「译前准备」面板的「开始翻译」：先写回选择，再启动任务。
+
+        顺序不能反：`apply_task_setup` 把面板的策略/产出物写进任务状态，任务启动时
+        才会用上它们。写回失败（例如任务其实已经跑过）就如实报错并停在这里，不静默
+        启动一个没被配置过的任务。
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.apply_task_setup(self.config, job_id, setup)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法保存译前设置'), str(exc))
+            self.refresh_workbench(force=True)
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._failure(i18n.tr('无法保存译前设置'), f"{type(exc).__name__}: {exc}")
+            return
+        self.start_or_resume()
 
     def start_or_resume(self) -> None:
         job_id = self._current_job_id
@@ -1292,7 +1409,8 @@ class MainWindow(QMainWindow):
                 self.refresh_workbench(force=True)
 
     def show_about(self) -> None:
-        """关于：Beta 测试者最需要的那几项事实（版本/构建/位置）。"""
+        """关于：版本与构建。位置/日志/运行事实属于支持信息，由「诊断信息」承载
+        （那里有可复制、可在 Finder 里显示的完整呈现），不在关于里再印一遍路径。"""
         identity = adapter.app_identity()
         text = "\n".join((
             i18n.tr("Folith 学术翻译工作台 {v0}",
@@ -1300,10 +1418,8 @@ class MainWindow(QMainWindow):
             i18n.tr("构建：{v0}", v0=identity.get("build_id") or i18n.tr("未知"))
             + (i18n.tr("（随包）") if identity.get("frozen") else i18n.tr("（源码运行）")),
             "",
-            i18n.tr("数据目录：{v0}", v0=self.paths.data_dir),
-            i18n.tr("日志目录：{v0}", v0=self.paths.log_dir),
-            "",
-            i18n.tr("诊断信息在「帮助 → 诊断信息…」，其中不包含 API Key 与文档正文。"),
+            i18n.tr("数据与日志位置、版本与运行事实见「帮助 → 诊断信息…」；"
+                    "其中不包含 API Key 与文档正文。"),
         ))
         if _automation():
             self._notice(" · ".join(text.splitlines()[:2]))

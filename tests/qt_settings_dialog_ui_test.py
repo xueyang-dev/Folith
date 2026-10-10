@@ -144,6 +144,44 @@ def test_ocr_backend_shows_labels_but_collects_core_values(app):
         dialog.close()
 
 
+def test_ocr_backend_labels_come_from_the_shared_source(app):
+    """设置页与译前面板必须用**同一份**标签。
+
+    这里曾是手抄的第二份副本（另写了一遍那三个元组），改一处漏一处 —— 而 `online`
+    的含义在 VLM 迁移后变过一次，正是这种副本最容易把用户带偏。
+    """
+    dialog = _dialog(app)
+    try:
+        labels = [dialog.ocr_backend_box.itemText(i)
+                  for i in range(dialog.ocr_backend_box.count())]
+        assert labels == [label for label, _ in adapter.OCR_BACKEND_CHOICES]
+        assert labels[0] == "视觉理解（VLM，默认）"
+    finally:
+        dialog.close()
+
+
+def test_every_settings_tab_page_paints_its_own_background(app):
+    """标签页的滚动页面必须自带底色，否则内容比视口短时会露出**纯黑**。
+
+    `QScrollArea` 的 viewport 是透明的（`setAutoFillBackground(False)`），页面自己没有
+    背景规则时，剩下的那片就没人画。「扫描件识别」是唯一内容短到会露出来的一栏 ——
+    所以这个缺陷在浅色主题下一直存在，只是此前没人翻到那一页。修法复用既有的
+    `QWidget#pageCanvas`（值与 `QDialog` 同为 `bg-page`），不新增 QSS。
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    dialog = _dialog(app)
+    try:
+        areas = dialog.findChildren(QScrollArea)
+        assert areas, "设置页应当有滚动区"
+        for area in areas:
+            page = area.widget()
+            assert page is not None
+            assert page.objectName() == "pageCanvas", "页面缺底色会在浅色下露黑"
+    finally:
+        dialog.close()
+
+
 def test_secret_field_hides_the_key_until_revealed(app):
     dialog = _dialog(app)
     try:

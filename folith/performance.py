@@ -37,6 +37,7 @@ class StageHandle:
         self.name = name
         self.record = record
         self.started_monotonic = time.perf_counter()
+        self.record["started_monotonic"] = self.started_monotonic
         self._finished = False
 
     def item(
@@ -54,6 +55,8 @@ class StageHandle:
         finished = finished_monotonic or time.perf_counter()
         item = {
             "item_id": str(item_id),
+            "started_monotonic": started_monotonic,
+            "finished_monotonic": finished,
             "wall_time_s": _safe_float(finished - started_monotonic),
             "queue_wait_s": _safe_float(queue_wait_s),
             "api_latency_s": _safe_float(api_latency_s),
@@ -84,6 +87,7 @@ class StageHandle:
                 return self.record
             finished_monotonic = time.perf_counter()
             self.record["finished_at"] = _now_iso()
+            self.record["finished_monotonic"] = finished_monotonic
             self.record["wall_time_s"] = _safe_float(
                 finished_monotonic - self.started_monotonic
             )
@@ -104,6 +108,18 @@ class StageHandle:
                 # If per_item wall time sum is recorded and smaller than container wall time,
                 # record active_wall_time_s to distinguish batch loop span from stage active duration
                 item_wall_sum = self.record.get("per_item", {}).get("wall_time_s", {}).get("sum", 0.0)
+                self.record["item_wall_sum_s"] = item_wall_sum
+                intervals = sorted((item["started_monotonic"], item["finished_monotonic"])
+                                   for item in items)
+                union = 0.0
+                left, right = intervals[0]
+                for start, end in intervals[1:]:
+                    if start > right:
+                        union += max(0.0, right - left)
+                        left, right = start, end
+                    else:
+                        right = max(right, end)
+                self.record["interval_union_s"] = _safe_float(union + max(0.0, right - left))
                 if item_wall_sum > 0:
                     self.record["active_wall_time_s"] = item_wall_sum
                 else:
@@ -126,6 +142,8 @@ class StageHandle:
                 if not self.record.get("batch_count"):
                     self.record["batch_count"] = completed_batches
             else:
+                self.record["item_wall_sum_s"] = None
+                self.record["interval_union_s"] = None
                 self.record["active_wall_time_s"] = self.record["wall_time_s"]
             self._finished = True
         if persist:

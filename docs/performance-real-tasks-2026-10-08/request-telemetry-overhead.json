@@ -1,0 +1,63 @@
+{
+  "kind": "synthetic_fixed_latency",
+  "logical_calls": 120,
+  "simulated_latency_s": 0.02,
+  "order": "off/standard/standard/off",
+  "warmup_excluded": [
+    {
+      "level": "off",
+      "wall_time_s": 4.0255182920373045,
+      "startup_s": 0.0002234170096926391,
+      "loop_s": 3.2253877079929225,
+      "finish_s": 0.7999071670346893,
+      "main_thread_cpu_s": 0.568916542
+    },
+    {
+      "level": "standard",
+      "wall_time_s": 3.284940999990795,
+      "startup_s": 0.021898708015214652,
+      "loop_s": 3.2596687919576652,
+      "finish_s": 0.003373500017914921,
+      "main_thread_cpu_s": 0.06489062500000009
+    }
+  ],
+  "runs": [
+    {
+      "level": "off",
+      "wall_time_s": 3.264101750042755,
+      "startup_s": 0.0009165420196950436,
+      "loop_s": 3.2627965830033645,
+      "finish_s": 0.0003886250196956098,
+      "main_thread_cpu_s": 0.019415541999999952
+    },
+    {
+      "level": "standard",
+      "wall_time_s": 3.321948542026803,
+      "startup_s": 0.04471137502696365,
+      "loop_s": 3.2738275839947164,
+      "finish_s": 0.0034095830051228404,
+      "main_thread_cpu_s": 0.04229424999999998
+    },
+    {
+      "level": "standard",
+      "wall_time_s": 3.2710873750038445,
+      "startup_s": 0.04034595802659169,
+      "loop_s": 3.2287700829911046,
+      "finish_s": 0.001971333986148238,
+      "main_thread_cpu_s": 0.064124917
+    },
+    {
+      "level": "off",
+      "wall_time_s": 3.2572509170277044,
+      "startup_s": 0.0005280000041238964,
+      "loop_s": 3.256399584002793,
+      "finish_s": 0.0003233330207876861,
+      "main_thread_cpu_s": 0.019778750000000067
+    }
+  ],
+  "median_off_s": 3.26067633353523,
+  "median_standard_s": 3.2965179585153237,
+  "observed_wall_overhead_percent": 1.099208302629484,
+  "reconstruction_matches": true,
+  "limitation": "Synthetic replay includes sampler and finish cost; not production/API overhead."
+}

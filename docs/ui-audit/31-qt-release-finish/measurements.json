@@ -1,0 +1,56 @@
+{
+  "round": "r5 — 桌面端发布前收尾（release-finish pass）",
+  "date": "2026-10-09",
+  "method": "真实 macOS Cocoa 窗口（screencapture -o -l，dpr=2）+ offscreen 焦点/语义探针",
+  "data": "107 个真实任务（复制到 /tmp/r5/data，原目录只读）",
+  "task1_theme_preview": {
+    "before": {
+      "card_rendered_size": [120, 30],
+      "content_needed_px": 69,
+      "clipped": true,
+      "symptom": "色块占满整卡、主题名与色块叠印、第三张卡的主题名整行裁掉"
+    },
+    "after": {
+      "card_rendered_size": [124, 84],
+      "swatch": [108, 40],
+      "caption_clipped": false,
+      "clipped": false,
+      "scroll_max": 0
+    },
+    "root_cause": "泛用 QSS `QPushButton { min-height: 30px }` 会覆盖 setFixedSize 设下的最小高度（Qt 的 QSS min/max 指内容盒），78px 的色卡被压成 30px；且 QPushButton:focus（0 个 id）压不过 #themeCard（1 个 id），键盘焦点不可见",
+    "focus_border_pixel": { "unfocused": "#303032", "focused": "#82acff", "platform": "offscreen（真窗口在本沙箱无法激活，焦点环渲染不出，见 README 剩余问题）" }
+  },
+  "task2_filter_toolbar": {
+    "checkbox_gap_px": { "before": -3, "after": 8 },
+    "label_gap_px": { "before": 6, "after": 8 },
+    "group_separation_px": { "before": 8, "after": 12 },
+    "toolbar_height_px": { "before": 39, "after": 32 },
+    "search_min_width": { "before": null, "after": 200 },
+    "root_cause": "QHBoxLayout 按「样式内容的内缩框」给 QLabel/QCheckBox 分配槽位，比控件整框窄 11px（110→99），两颗复选框互相压住 3px；WA_LayoutUsesWidgetRect 后 shortfall 实测 11px → 0"
+  },
+  "task3_notice_roles": {
+    "workbench_status_label_at_startup": { "before": "数据目录（relative）已更正为 …（长期留存）", "after": "''" },
+    "bottom_bar": "瞬时消息 8s 自动消失（StatusBar._expire），右侧常驻路径在消息含同文时自动收起",
+    "top_banner": "阻塞原因 + 解决方法（维持现状；改文案会牵动 5 个语言文件，未动）"
+  },
+  "task4_engineering_strings": {
+    "appearance_hint": "folith.ui.theme_tokens → 品牌配色（用户语言）",
+    "about_dialog": "数据目录/日志目录两行路径移除，指向 帮助→诊断信息（那里有可复制/可显示的完整呈现）",
+    "data_dir_notice": "「数据目录（relative）已更正为 …」→「数据目录已更正为 …」；内部原因（relative/inside bundle）只进启动日志"
+  },
+  "regression": {
+    "files": 12,
+    "passed": 230,
+    "failed": 0,
+    "app_boot": "pass",
+    "logs": "/tmp/qa-run/r5-final/"
+  },
+  "qss_invariant": {
+    "night_rules_leaked_into_light_or_paper": 0,
+    "sha256_16": { "light": "c3b8fa9900246d85", "paper": "c18f15e21272c328", "dark": "4c31f48927321f38" }
+  },
+  "tab_order": {
+    "workbench": "搜索框 → 分段筛选 → 只看人工修改 → 只看必须处理 → 审校所选段落 → 段落表 → …",
+    "appearance": "色卡1 → 色卡2 → 色卡3 → 主题下拉 → 保存 → 取消"
+  }
+}

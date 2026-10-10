@@ -1,0 +1,215 @@
+{
+  "platform": "cocoa",
+  "system_color_scheme": "ColorScheme.Dark",
+  "requested_theme": "system",
+  "resolved_theme": "dark",
+  "device_pixel_ratio": 2.0,
+  "screen_available": "1470x843",
+  "jobs": 107,
+  "can_become_frontmost": false,
+  "shots": [
+    {
+      "shot": "00-on-screen",
+      "kind": "on_screen",
+      "region": [
+        191,
+        58,
+        1240,
+        821
+      ],
+      "ok": false
+    },
+    {
+      "probe": "hover_row",
+      "wanted": -1,
+      "delegate": "RowDelegate",
+      "actual": -1
+    },
+    {
+      "shot": "01-home-table-selected",
+      "kind": "full_window",
+      "window_id": 25547,
+      "expected": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "shot": "01-home-table-selected",
+      "kind": "client",
+      "ok": true
+    },
+    {
+      "shot": "00-on-screen",
+      "kind": "on_screen",
+      "region": [
+        191,
+        58,
+        1240,
+        821
+      ],
+      "ok": false
+    },
+    {
+      "probe": "on_screen_level",
+      "level": null,
+      "sample": "not on top"
+    },
+    {
+      "probe": "hover_row",
+      "wanted": 3,
+      "delegate": "RowDelegate",
+      "actual": 3
+    },
+    {
+      "shot": "02-home-row-hover",
+      "kind": "full_window",
+      "window_id": 25547,
+      "expected": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "shot": "02-home-row-hover",
+      "kind": "client",
+      "ok": true
+    },
+    {
+      "shot": "03-home-cards",
+      "kind": "full_window",
+      "window_id": 25547,
+      "expected": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "shot": "03-home-cards",
+      "kind": "client",
+      "ok": true
+    },
+    {
+      "shot": "04-menu-macos",
+      "kind": "full_window",
+      "window_id": 25552,
+      "expected": [
+        316,
+        410
+      ],
+      "got": [
+        316,
+        410
+      ],
+      "ok": true
+    },
+    {
+      "shot": "04-menu",
+      "kind": "full_window",
+      "window_id": 25547,
+      "expected": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "shot": "04-menu",
+      "kind": "client",
+      "ok": true
+    },
+    {
+      "probe": "hover_row",
+      "wanted": -1,
+      "delegate": "RowDelegate",
+      "actual": -1
+    },
+    {
+      "shot": "05-home-primary-pressed",
+      "kind": "full_window",
+      "window_id": 25547,
+      "expected": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "shot": "05-home-primary-pressed",
+      "kind": "client",
+      "ok": true
+    },
+    {
+      "shot": "06-workbench-scroll",
+      "kind": "full_window",
+      "window_id": 25547,
+      "expected": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "shot": "06-workbench-scroll",
+      "kind": "client",
+      "ok": true
+    },
+    {
+      "shot": "07-settings-dialog",
+      "kind": "full_window",
+      "window_id": 25556,
+      "expected": [
+        1480,
+        1296
+      ],
+      "got": [
+        1480,
+        1296
+      ],
+      "ok": true
+    },
+    {
+      "shot": "08-main-window-inactive",
+      "kind": "full_window",
+      "window_id": 25547,
+      "expected": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    }
+  ],
+  "window_number": 25547,
+  "demoted_window_level": null
+}

@@ -1,0 +1,43 @@
+恢复的真实文档: {'验收 样本.pdf': '1KB', '验收 样本.docx': '36KB'}
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+连接预检: 通过
+  导入: ok=True created=False 验收 样本.pdf
+  导入: ok=True created=False 验收 样本.docx
+== PDF: 201d3acaeb ==
+  OUTPUT_DIR=/private/tmp/r7/data runtime_exists=False
+  启动前 runtime: status=idle_incomplete actions=['resume']
+  start_job: True
+    [PDF] status=queued 0/0
+    [PDF] status=running 0/0
+    [PDF] status=waiting_external 0/0
+    [PDF] status=running 0/0
+    [PDF] status=waiting_external 0/0
+    [PDF] status=running 0/0
+    [PDF] status=failed 0/0
+  翻译: pairs=0 有译文=0 p1=True p2=False
+== DOCX: 256c5c2b64 ==
+  OUTPUT_DIR=/private/tmp/r7/data runtime_exists=True
+  启动前 runtime: status=interrupted actions=['details', 'resume', 'retry']
+  retry_job: True
+  start_job: True
+    [DOCX] status=queued 0/0
+    [DOCX] status=running 0/0
+    [DOCX] status=waiting_external 0/0
+    [DOCX] status=running 0/0
+    [DOCX] status=waiting_external 0/0
+    [DOCX] status=running 0/0
+    [DOCX] status=failed 0/0
+  翻译: pairs=0 有译文=0 p1=True p2=False
+== UI 一致性终检 ==
+qt.qpa.fonts: Populating font family aliases took 77 ms. Replace uses of missing font family "SF Pro Text" with one that exists to avoid this cost. 
+/Users/xueyang/Dev/FolioThread/folith/qt/style.py:944: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+  PDF: 进度芯片 '0/1 批次' 审校芯片 '审校 —' 表行 3/3 → ✗
+  DOCX: 进度芯片 '0/1 批次' 审校芯片 '审校 —' 表行 3/3 → ✗
+报告: /tmp/r7/e2e-report.json

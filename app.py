@@ -80,6 +80,10 @@ from folith.application.settings import (
 # its layout and labels but no longer owns a second implementation of the
 # runtime/product actions.
 from folith.application import commands as _application_commands
+# The pre-translation presets and the delivery catalog have exactly one source
+# of truth (frontend-neutral) — the Qt client offers the same preparation step
+# and must not grow a second, drifting copy of these tables.
+from folith.application import task_setup as _task_setup
 
 # Older Streamlit versions (including the Python 3.9-compatible line) do not
 # expose persist_state; widget keys provide the fallback there.
@@ -407,133 +411,30 @@ def _open_provider_settings():
     st.session_state.app_view = "settings"
 
 
-_PRESET_CONFIGS = {
-    "快速": {
-        "auto_term": False, "use_tm": True,
-        "enable_understanding": False,
-        "enable_review": False, "strict_terminology_governance": False,
-        "segmentation_mode": "sentence", "translation_concurrency": 4,
-        "batch_profile": "保守",
-    },
-    "标准": {
-        "auto_term": True, "use_tm": True,
-        "enable_understanding": True,
-        "enable_review": False, "strict_terminology_governance": False,
-        "segmentation_mode": "sentence", "translation_concurrency": 4,
-        "batch_profile": "保守",
-    },
-    "学术增强": {
-        "auto_term": True, "use_tm": True,
-        "enable_understanding": True,
-        "enable_review": True, "strict_terminology_governance": True,
-        "segmentation_mode": "sentence", "translation_concurrency": 4,
-        "batch_profile": "保守",
-    },
-}
+# 译前准备的两套目录（策略预设 / 批次档）由前端中立模块持有：Qt 现在也提供同一步
+# 准备界面，两份常量必然漂移，所以保留这里的名字作为别名，真源只有一份。
+_PRESET_CONFIGS = _task_setup.STRATEGY_PRESETS
+BATCH_PROFILES = _task_setup.BATCH_PROFILES
+_batch_params = _task_setup.batch_params
 
-# 批次策略：批次越大 → 调用次数越少 → 越快，但单次返回项数不符或截断的风险越高。
-# 实测（本仓库 82 段文档）：保守 32 批，均衡 17 批，快速 13 批。
-BATCH_PROFILES = {
-    "保守": {"batch_size": 4, "max_batch_chars": 2400,
-             "hint": "每批最多 4 段 / 2400 字符；调用次数最多，单次响应最稳"},
-    "均衡": {"batch_size": 6, "max_batch_chars": 4800,
-             "hint": "每批最多 6 段 / 4800 字符；调用次数约减半"},
-    "快速": {"batch_size": 8, "max_batch_chars": 6400,
-             "hint": "每批最多 8 段 / 6400 字符；最快，但更容易出现返回项数不符"},
-}
-
-
-def _batch_params(config):
-    """把批次策略映射为 (batch_size, max_batch_chars)。"""
-    profile = BATCH_PROFILES.get(str((config or {}).get("batch_profile") or "保守"),
-                                 BATCH_PROFILES["保守"])
-    return profile["batch_size"], profile["max_batch_chars"]
-
-def _default_output_config():
-    return core.default_delivery_config()
-
-
-# Step 03 keeps the persisted `delivery_config` keys used by the export
-# pipeline, but presents them through a smaller, user-facing preset model.
-# The research-only keys are intentionally off in the ordinary delivery
-# presets: they are additional products, not invisible files hidden behind a
-# standard translation bundle.
-_DELIVERY_OUTPUT_KEYS = (
-    "enable_annotate", "enable_report", "deliver_plain_docx",
-    "deliver_bilingual_docx", "deliver_pdf", "deliver_original_pdf",
-    "deliver_epub", "deliver_terms_xlsx",
-    "deliver_tbx", "deliver_tmx", "deliver_jsonl", "deliver_evidence",
-    "deliver_cases", "deliver_academic_workspace", "deliver_review_report",
-)
-_DELIVERY_RESEARCH_KEYS = (
-    "enable_report", "deliver_evidence", "deliver_cases",
-    "deliver_academic_workspace", "deliver_review_report",
-)
-
-
-def _delivery_config_for_outputs(*selected):
-    """Return a complete export config for a UI delivery preset."""
-    config = core.default_delivery_config()
-    for key in _DELIVERY_OUTPUT_KEYS:
-        config[key] = False
-    for key in selected:
-        if key in config:
-            config[key] = True
-    return config
-
-
-_DELIVERY_PRESETS = {
-    "compact": {
-        "label": "精简交付",
-        "description": "只保留最终译文，适合快速分享或内部查看。",
-        "outputs": ("deliver_plain_docx",),
-    },
-    "standard": {
-        "label": "标准交付",
-        "description": "适合大多数正式翻译任务。",
-        "outputs": ("deliver_plain_docx", "deliver_bilingual_docx",
-                    "deliver_terms_xlsx"),
-    },
-    "complete": {
-        "label": "完整交付",
-        "description": "同时提供分享、审校与 CAT 工具需要的语言资产。",
-        "outputs": ("deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
-                    "deliver_original_pdf", "deliver_terms_xlsx", "deliver_tmx",
-                    "deliver_tbx"),
-    },
-    "custom": {
-        "label": "自定义",
-        "description": "按你的交付对象和下游工具手动配置。",
-        "outputs": (),
-    },
-}
-_DELIVERY_PRESET_KEYS = tuple(_DELIVERY_PRESETS)
-_DELIVERY_PRESET_CONFIGS = {
-    key: _delivery_config_for_outputs(*value["outputs"])
-    for key, value in _DELIVERY_PRESETS.items()
-    if key != "custom"
-}
-_DELIVERY_WIDGET_KEYS = (
-    "deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
-    "deliver_original_pdf", "deliver_epub",
-    "output_annotate", "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx",
-    "deliver_jsonl", "output_report", "deliver_evidence", "deliver_cases",
-    "deliver_academic_workspace", "deliver_review_report",
-)
-
-
-# These are the strategy names that currently unlock the research-product
-# section. Keeping the mapping here makes the Step 02 -> Step 03 dependency
-# explicit and gives future research-grade strategies one place to join.
-_RESEARCH_STRATEGY_PRESETS = frozenset({"学术增强", "研究与报告", "研究级", "深度研究"})
+# 交付目录（预设 + 产物清单）也只有一份真源，见 task_setup。
+_default_output_config = _task_setup.default_delivery_config
+_DELIVERY_OUTPUT_KEYS = _task_setup.DELIVERY_OUTPUT_KEYS
+_DELIVERY_RESEARCH_KEYS = _task_setup.DELIVERY_RESEARCH_KEYS
+_delivery_config_for_outputs = _task_setup.delivery_config_for_outputs
+_DELIVERY_PRESETS = _task_setup.DELIVERY_PRESETS
+_DELIVERY_PRESET_KEYS = _task_setup.DELIVERY_PRESET_KEYS
+_DELIVERY_PRESET_CONFIGS = _task_setup.DELIVERY_PRESET_CONFIGS
+_DELIVERY_WIDGET_KEYS = _task_setup.DELIVERY_WIDGET_KEYS
+_RESEARCH_STRATEGY_PRESETS = _task_setup.RESEARCH_STRATEGY_PRESETS
 
 
 def _research_outputs_visible(preset_label=None, strategy_config=None):
+    """Step 02 → Step 03 的研究产物可见性；session 默认值留在这一层。"""
     preset_label = preset_label or st.session_state.get(
         "translation_preset", "标准")
     config = strategy_config or st.session_state.get("strategy_config") or {}
-    return (preset_label in _RESEARCH_STRATEGY_PRESETS
-            or bool(config.get("research_outputs_enabled")))
+    return _task_setup.research_outputs_visible(preset_label, config)
 
 
 def _delivery_preset_label(key, *, current=None, modified=False, locale=None):
@@ -602,98 +503,10 @@ def _task_source_is_pdf() -> bool:
     return any(name.lower().endswith(".pdf") for name in names)
 
 
-def _delivery_items_for_source(items, source_is_pdf: bool):
-    if source_is_pdf:
-        return tuple(items)
-    return tuple(item for item in items if not item.get("pdf_only"))
-
-
-_DELIVERY_TRANSLATION_ITEMS = (
-    {
-        "key": "deliver_plain_docx", "title": "纯译文", "format": "DOCX",
-        "detail": "仅包含目标语言译文。",
-        "file_units": (("DOCX", 1),),
-        "disambig_fmt": True,
-    },
-    {
-        "key": "deliver_bilingual_docx", "title": "双语对照", "format": "DOCX",
-        "detail": "原文与译文并列，适合审校。",
-        "file_units": (("DOCX", 1),),
-    },
-    {
-        "key": "enable_annotate", "title": "标记术语与翻译难点", "format": "",
-        "detail": "标出生僻词、专业术语和疑难句。", "nested": True,
-        "file_units": (("DOCX", 1),),
-    },
-    {
-        "key": "deliver_pdf", "title": "纯译文", "format": "PDF",
-        "detail": "适合分享、打印与最终交付。",
-        "file_units": (("PDF", 1),),
-        "disambig_fmt": True,
-    },
-    {
-        "key": "deliver_original_pdf", "title": "原排版译文（Beta）", "format": "PDF",
-        "detail": "保留原文件的版式、图形与表格，译文就位；未完成的区域会在页面上标出。",
-        "file_units": (("PDF", 1),),
-        "disambig_fmt": True,
-        # Only a PDF source has page geometry to rebuild from.
-        "pdf_only": True,
-    },
-    {
-        "key": "deliver_epub", "title": "译文电子书", "format": "EPUB",
-        "detail": "保留原图与段落顺序，支持阅读器调整字号；适用于普通 PDF / DOCX。",
-        "file_units": (("EPUB", 1),),
-    },
-)
-_DELIVERY_ASSET_ITEMS = (
-    {
-        "key": "deliver_terms_xlsx", "title": "术语表", "format": "XLSX",
-        "detail": "便于人工查看、编辑和交付。",
-        "file_units": (("XLSX", 1),),
-    },
-    {
-        "key": "deliver_tmx", "title": "翻译记忆", "format": "TMX",
-        "detail": "可导入 Trados、memoQ 等 CAT 工具。",
-        "file_units": (("TMX", 1),),
-    },
-    {
-        "key": "deliver_tbx", "title": "标准术语库", "format": "TBX",
-        "detail": "用于术语管理与跨系统交换。",
-        "file_units": (("TBX", 1),),
-    },
-    {
-        "key": "deliver_jsonl", "title": "结构化数据", "format": "JSONL",
-        "detail": "用于 AI、自动化与二次处理。",
-        "file_units": (("JSONL", 1),),
-    },
-)
-_DELIVERY_RESEARCH_ITEMS = (
-    {
-        "key": "enable_report", "title": "翻译实践报告", "format": "DOCX + MD",
-        "detail": "基于项目数据、案例和引用证据生成。",
-        "file_units": (("DOCX", 1), ("MD", 1)),
-    },
-    {
-        "key": "deliver_evidence", "title": "翻译过程证据", "format": "JSONL",
-        "detail": "保存批次翻译、审校与修订的可追溯证据。",
-        "file_units": (("JSONL", 1),),
-    },
-    {
-        "key": "deliver_cases", "title": "案例候选", "format": "JSON",
-        "detail": "导出符合资格的真实修订案例。",
-        "file_units": (("JSON", 1),),
-    },
-    {
-        "key": "deliver_academic_workspace", "title": "学术写作工作区", "format": "ZIP",
-        "detail": "打包论证大纲与写作素材。",
-        "file_units": (("ZIP", 1),),
-    },
-    {
-        "key": "deliver_review_report", "title": "审校报告", "format": "MD",
-        "detail": "记录审校发现与处理结果。",
-        "file_units": (("MD", 1),),
-    },
-)
+_delivery_items_for_source = _task_setup.delivery_items_for_source
+_DELIVERY_TRANSLATION_ITEMS = _task_setup.DELIVERY_TRANSLATION_ITEMS
+_DELIVERY_ASSET_ITEMS = _task_setup.DELIVERY_ASSET_ITEMS
+_DELIVERY_RESEARCH_ITEMS = _task_setup.DELIVERY_RESEARCH_ITEMS
 
 
 def _delivery_items_for_summary(config, *, research_visible=False):
@@ -881,11 +694,7 @@ _PRESET_OUTPUTS = {
     "学术增强": dict(_DELIVERY_PRESET_CONFIGS["standard"]),
 }
 
-_PRESET_DISPLAY_NAMES = {
-    "快速": "快速",
-    "标准": "标准",
-    "学术增强": "深度研究",
-}
+_PRESET_DISPLAY_NAMES = _task_setup.STRATEGY_PRESET_LABELS
 
 
 def _apply_preset(label):

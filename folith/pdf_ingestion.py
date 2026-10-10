@@ -10,7 +10,7 @@ import math
 import re
 import statistics
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import fitz
 
@@ -37,6 +37,22 @@ SKIPPED_ROLES = {
     "caption", "footnote", "header", "footer", "page_number", "ornament", "image",
 }
 JOINABLE_ROLES = {"body", "quote", "bibliography"}
+
+#: PyMuPDF span flags 的 bold 位（bit 4）。``_font_metrics`` 把它按 ``max()`` 聚合，
+#: 所以**一个**加粗 span 就能把整行/整块点亮——单看这一位不足以断言"这块是标题"。
+FONT_FLAG_BOLD = 16
+
+#: 加粗要算「整块的排版」必须覆盖过半**字符**（见 :func:`_bold_share`）。
+BOLD_DOMINANCE_MIN = 0.5
+
+#: 加粗分支的字号下限（相对正文）：**比正文还小**的加粗文本不是标题。
+#:
+#: 本仓实测：一篇期刊的摘要在窄栏里排 10.75pt（正文 11.7pt，0.92×），字体回退在
+#: 个别字符上换成了带 bold 位的替代字体 → ``font_flags`` 的 max() 把整行点亮，
+#: 整段摘要被逐行判成 ``heading``。标题从定义上不小于它统领的正文，所以这一条
+#: 不会有真标题被误伤；0.92× 同时还在 ``header``/``footer`` 的 0.9× 阈值之上，
+#: 所以它落进 ``quote`` 是唯一正确的归宿。
+HEADING_BOLD_MIN_SIZE_RATIO = 0.98
 
 
 def _bbox(value: Sequence[Any]) -> Dict[str, float]:
@@ -74,6 +90,29 @@ def _font_metrics(spans: Sequence[Dict[str, Any]]) -> Tuple[float, int, List[str
         max(flags) if flags else 0,
         sorted(set(fonts)),
     )
+
+
+def _bold_share(spans: Sequence[Dict[str, Any]]) -> float:
+    """加粗 span 覆盖的**字符**占比（按 span 文本长度加权）。
+
+    ``_font_metrics`` 的 ``font_flags`` 用 ``max()`` 聚合：一个加粗 span 就能把整行
+    点亮。真实 PDF 里这常常不是排版意图——本仓实测一篇期刊摘要的引文里，字体回退把
+    个别字符换成带 bold 位的替代字体，于是相邻行的 ``font_flags`` 在 4 / 20 之间交替
+    而字号完全相同（10.746），整段引文被逐行判成 ``heading``。
+
+    标题的加粗是**整块**的排版属性，所以这里按字符加权——与 ``font_size`` 取
+    ``median`` 同源：要么整块是加粗的，要么不是。
+    """
+    total = 0
+    bold = 0
+    for span in spans:
+        text = str(span.get("text") or "")
+        if not text.strip():
+            continue
+        total += len(text)
+        if int(span.get("flags") or 0) & FONT_FLAG_BOLD:
+            bold += len(text)
+    return (bold / total) if total else 0.0
 
 
 # --- 脚注/尾注角标（superscript reference marks）---------------------------
@@ -392,6 +431,9 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
                         "font_size": size,
                         "font_flags": flags,
                         "font_style": fonts,
+                        # 加粗是"整块的排版"还是"个别 span 的强调"：见 _bold_share。
+                        # 与 font_flags（max）并存，让 heading 判据能区分两者。
+                        "bold_share": round(_bold_share(all_spans), 4),
                         "relative_width": block_box["width"] / width if width else 0.0,
                         "page_width": width,
                         "page_height": height,
@@ -464,6 +506,90 @@ def _is_sentence_terminal(text: str) -> bool:
     return value[-1] in SENTENCE_TERMINAL
 
 
+def _is_cjk(value: str) -> bool:
+    return any("\u3400" <= char <= "\u9fff" for char in value or "")
+
+
+#: 「句内标点」：以它们收尾的行是**在短语中间被切断**的直接证据。
+#:
+#: 这里刻意不必与 `source_cleanup._is_unfinished_line` 完全同口径。那个判据服务
+#: 的是"模型可以改写这一行"的准入，它排除逗号是因为**改写**可能把真标点删掉；
+#: 本路径只做拼接（`_join_text` 除了行末连字符不删任何字符），所以逗号可以收。
+#:
+#: 注意**不能**把全角句末（`。！？`）算进来：它们虽不在 pdf_ingestion 的
+#: `SENTENCE_TERMINAL`（那是给拉丁/阿拉伯系用的）里，但同样是句末，收进来会把
+#: 中文段落逐段粘起来。
+INLINE_PUNCTUATION = set(",，、")
+
+
+def _ends_open(text: str) -> bool:
+    """这一行是否"明显还没写完"：不是句末，且以字母 / CJK / 句内标点收尾。
+
+    只认最强的一类证据，比 `source_cleanup._is_unfinished_line` 多收一类句内标点
+    （理由见 :data:`INLINE_PUNCTUATION`）；以 ``’`` ``—`` 收尾的行仍然不收。
+    """
+    value = _normalise_line(text)
+    if not value or _is_sentence_terminal(value):
+        return False
+    last = value[-1:]
+    return last.isalpha() or _is_cjk(last) or last in INLINE_PUNCTUATION
+
+
+def _starts_continuation(left: str, right: str) -> bool:
+    """右行是否"明显是左行的续行"：以小写字母开头，或两侧同为 CJK。
+
+    CJK 分支必须同时看左边，否则「中文段落不以句号收尾」时任何两段都会被并起来。
+    """
+    head = _normalise_line(right)[:1]
+    if not head:
+        return False
+    if head.islower():
+        return True
+    return _is_cjk(_normalise_line(left)[-1:]) and _is_cjk(head)
+
+
+def _is_obvious_continuation(
+    previous: Dict[str, Any], current: Dict[str, Any]
+) -> bool:
+    """两行是否构成「确定性断行整理」意义上的一处续行。
+
+    这是 ``source_cleanup.obvious_line_join`` 的**提取期等价物**。放在这里的理由：
+    这几条证据全部只依赖版面与首尾字符，不需要模型；而模型那一步（原始文本整理）
+    是 opt-in 的，断行却是版面的确定事实 —— 不该等到模型那一步才生效。
+
+    与合并判据里那套 role / 缩进口径**故意不同**的两点：
+
+    * 不看 role：role 是**跨块**的标签，而"这段文字是否连续"是版面事实，两者不该
+      互相牵制。曾经的具体表现是同一段引文里的行因字体回退被逐行判成 ``quote`` /
+      ``heading``（本仓实测同段引文里 flag 4 与 20 交替、字号完全相同 10.746）；
+      那个误判的**源头**已由 :func:`_bold_heading_evidence` 修掉，但本路径依旧不把
+      role 当门槛——窄栏里 role 与"是否连续"本来就是两件事。
+    * 不看 ``is_indented``：悬挂缩进的续行**本来就该**缩进；而列边界解不出来的
+      窄栏（本仓实测作者单位栏 x0=63.8，落在全局左边距 54.5 右侧）整列都会被误判
+      成"段首缩进"。
+
+    取而代之的门槛是**排版一致**：真标题与它引出的正文排版不同，而同一段文字逐行
+    的字号只会轻微抖动。没有这一条，一个不以标点收尾的短标题会被并进下一段。
+    """
+    left = _normalise_line(previous.get("text"))
+    right = _normalise_line(current.get("text"))
+    if not left or not right:
+        return False
+    if len(left) >= CONTINUATION_MAX_PREV_CHARS:
+        return False
+    if not _ends_open(left):
+        return False
+    if not _starts_continuation(left, right):
+        return False
+    previous_size = float(previous.get("font_size") or 0)
+    current_size = float(current.get("font_size") or 0)
+    if previous_size <= 0 or current_size <= 0:
+        return False
+    return abs(previous_size - current_size) <= (
+        max(previous_size, current_size) * CONTINUATION_SIZE_TOLERANCE
+    )
+
+
 def _body_left_edge(text_blocks: Sequence[Dict[str, Any]]) -> float:
     counts = Counter(
         round(float(block.get("x0") or 0), 1) for block in text_blocks
@@ -475,6 +601,131 @@ def _body_left_edge(text_blocks: Sequence[Dict[str, Any]]) -> float:
         x for x, count in counts.items() if count >= max(1, max_count * 0.45)
     ]
     return min(candidates) if candidates else counts.most_common(1)[0][0]
+
+
+#: 一个左边界要算"文本列"，至少要由连续这么多个同起点的块支撑。
+#
+#: 「首行缩进」与「列边界」在缩进量上无法区分——本仓实测的期刊版式里，正文列
+#: 左边界 49.08、列表续行缩进 66.60（1.5em），与常见的段落缩进同量级。能区分的
+#: 是**持续性**：段落缩进是"缩进一行、下一行退回正文边界"，成不了连续 run；
+#: 栏、窄框和悬挂缩进的续行则是连续多行同起点。所以用 run 而不是缩进量来判列，
+#: 也避免了"两行短段落"把缩进值顶成列的假阳性。
+COLUMN_EDGE_MIN_RUN = 2
+
+#: 列边界的纵向作用域容差（正文行距只有几 pt，收紧会把同栏判成不相邻）。
+COLUMN_EDGE_SLACK_MIN = 16.0
+COLUMN_EDGE_SLACK_EM = 1.5
+
+#: 参照换成列边界后，「起点正好落在某条列边界上」有两种含义：悬挂缩进的续行
+#: （相对本段首行只横移一个缩进量）和换到另一列（横移上百 pt）。用位移量区分。
+#: 位移取**绝对值**——换列可能是向右（接下一栏）也可能是向左（回到上一栏）。
+COLUMN_JUMP_MIN = 36.0
+COLUMN_JUMP_EM = 3.5
+
+#: 「确定性断行整理」的规模上限，与 ``source_cleanup.obvious_line_join`` 同口径：
+#: 超过这个长度的"未结句行"更可能是真的段落（或表格行），不再自动续行。
+CONTINUATION_MAX_PREV_CHARS = 180
+
+#: 续行对的字号容忍度（相对字号）。同一段引文/正文的逐行字号会因字体回退而轻微
+#: 抖动（本仓实测 9.69 vs 9.23，差值 4.8%），而**真标题与它引出的正文排版不同**——
+#: 这条容忍度就是"排版一致"与"标题不同"之间的分界线。取 6% 是为了覆盖前者、
+#: 拦住后者（实测真标题 13pt vs 正文 9.5pt，差值 37%）。
+CONTINUATION_SIZE_TOLERANCE = 0.06
+
+
+def _page_left_edges(
+    text_blocks: Sequence[Dict[str, Any]],
+) -> Dict[int, Dict[float, List[Tuple[float, float]]]]:
+    """每页的候选列左边界，附带支撑它的纵向区间。
+
+    ``_body_left_edge`` 给的是**全文档**一个左边距；只要某段内容的列起点不等于
+    它，整列都会被当成"段首缩进"，于是逐行成段（实测：双栏前置区的摘要 11 行变
+    11 段、悬挂缩进列表每个续行都成一段）。这里按页给出若干列起点作为每块自己
+    的参照，而不替换掉那个全局值——全局值仍是 ``_line_groups`` 与 ``quote`` 的
+    口径，保持不变。
+
+    记录纵向区间是为了让边界只在**它自己所在的那一片版面上**生效：同一个页面上
+    存在互不相邻的窄栏时（本仓实测：左栏元数据 54.6 与正文列 49.1 同页），不按
+    纵向剪裁就会把正文的缩进段认领到无关的栏上去。
+    """
+    by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for block in text_blocks:
+        by_page[int(block.get("page_number") or 0)].append(block)
+    edges: Dict[int, Dict[float, List[Tuple[float, float]]]] = {}
+    for page, items in by_page.items():
+        ordered = sorted(items, key=lambda item: item.get("reading_order", 0))
+        supported: Dict[float, List[Tuple[float, float]]] = defaultdict(list)
+        index = 0
+        while index < len(ordered):
+            x0 = round(float(ordered[index].get("x0") or 0), 1)
+            stop = index + 1
+            while stop < len(ordered) and round(
+                float(ordered[stop].get("x0") or 0), 1
+            ) == x0:
+                stop += 1
+            if stop - index >= COLUMN_EDGE_MIN_RUN:
+                for item in ordered[index:stop]:
+                    supported[x0].append(
+                        (float(item.get("y0") or 0), float(item.get("y1") or 0))
+                    )
+            index = stop
+        edges[page] = dict(supported)
+    return edges
+
+
+def _local_left_edge(
+    block: Dict[str, Any],
+    page_edges: Mapping[int, Mapping[float, Sequence[Tuple[float, float]]]],
+    fallback: float,
+    slack: float,
+) -> float:
+    """该块所属文本列的左边界：不右于该块 x0 的最大候选边界。
+
+    ``slack`` 用于跨过相邻行之间与块之间的竖向间隙（排版行距只有几 pt），否则
+    同一栏的支撑区间会因为 7pt 的行距而判成不相邻。
+    """
+    page = int(block.get("page_number") or 0)
+    x0 = round(float(block.get("x0") or 0), 1)
+    y0 = float(block.get("y0") or 0) - slack
+    y1 = float(block.get("y1") or 0) + slack
+    best: Optional[float] = None
+    for edge, spans in (page_edges.get(page) or {}).items():
+        if edge > x0:
+            continue
+        if not any(span_y0 <= y1 and y0 <= span_y1 for span_y0, span_y1 in spans):
+            continue
+        if best is None or edge > best:
+            best = edge
+    return best if best is not None else fallback
+
+
+def _bold_heading_evidence(
+    block: Dict[str, Any], font_size: float, body_size: float
+) -> bool:
+    """加粗能不能当作"这块是标题"的证据。
+
+    原来的判据只有 ``font_flags & FONT_FLAG_BOLD`` 这一个条件，而 ``font_flags`` 是
+    span flags 的 ``max()``——**一个**加粗 span 就足以把整块点亮。本仓实测的形状
+    （期刊摘要里的引文，相邻行 flag 4 / 20 交替、字号完全相同 10.746）正是这样被
+    逐行判成标题的。所以加粗要同时满足：
+
+    * :data:`BOLD_DOMINANCE_MIN`——加粗覆盖过半**字符**，即它是整块的排版而不是
+      个别 span 的强调；
+    * :data:`HEADING_BOLD_MIN_SIZE_RATIO`——不比正文小；加粗且更小的文本是强调、
+      引文或注释，不是标题。
+
+    没有 ``bold_share`` 的块（测试里手工构造的块、以及更早版本写下的状态块）保持
+    旧行为：只看 flags 位。
+    """
+    if not int(block.get("font_flags") or 0) & FONT_FLAG_BOLD:
+        return False
+    share = block.get("bold_share")
+    if share is not None and float(share) < BOLD_DOMINANCE_MIN:
+        return False
+    return (
+        float(font_size or 0)
+        >= float(body_size or 0) * HEADING_BOLD_MIN_SIZE_RATIO
+    )
 
 
 def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -489,6 +740,7 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if block.get("page_number")
     }
     body_x0 = _body_left_edge(text_blocks)
+    page_edges = _page_left_edges(text_blocks)
     sizes = [
         float(block.get("font_size") or 0)
         for block in text_blocks
@@ -551,7 +803,14 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ):
             role = "header" if block["y0"] < page_height * 0.2 else "footer"
         elif (
-            (font_size >= body_size * 1.18 or block.get("font_flags", 0) & 16)
+            (
+                font_size >= body_size * 1.18
+                # 加粗只有在"整块加粗且不小于正文"时才算标题的证据：见
+                # _bold_heading_evidence。单看 font_flags 的 bold 位会让一个加粗
+                # span 把整行判成标题（实测：期刊摘要引文的相邻行 flag 4/20 交替、
+                # 字号完全相同，整段被逐行判成 heading）。
+                or _bold_heading_evidence(block, font_size, body_size)
+            )
             and len(text) <= 220
             and len(block.get("lines") or []) <= 4
             and not _is_sentence_terminal(text)
@@ -561,6 +820,12 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             role = "quote"
         block["role"] = role
         block["body_x0"] = body_x0
+        # 该块自己所属列的左边界。合并判据用它当参照，缩进才有意义——用全文档
+        # 左边距会让任何列起点不等于它的内容整列被当成段首缩进。
+        block["local_body_x0"] = _local_left_edge(
+            block, page_edges, body_x0,
+            max(COLUMN_EDGE_SLACK_MIN, body_size * COLUMN_EDGE_SLACK_EM),
+        )
         block["body_font_size"] = body_size
         block["near_image"] = near_image
         for line in block.get("lines") or []:
@@ -649,6 +914,10 @@ def reconstruct_paragraph_records(
         for group in _line_groups(block):
             if not group["text"] or group["role"] in SKIPPED_ROLES:
                 continue
+            column_x0 = float(
+                block.get("local_body_x0") or block.get("body_x0")
+                or block.get("x0") or 0
+            )
             current = {
                 "text": group["text"],
                 "role": group["role"],
@@ -658,6 +927,8 @@ def reconstruct_paragraph_records(
                 "last_y1": group["last_y1"],
                 "page_height": group["page_height"],
                 "reading_order": current_order,
+                "column_x0": column_x0,
+                "font_size": float(block.get("font_size") or 0),
                 "marks": [dict(item) for item in (group.get("marks") or [])],
             }
             if records:
@@ -666,11 +937,25 @@ def reconstruct_paragraph_records(
                     previous["role"] in JOINABLE_ROLES
                     and role in JOINABLE_ROLES
                 )
-                body_x0 = float(
-                    block.get("body_x0") or block.get("x0") or 0
-                )
-                is_indented = current["first_line_x0"] >= body_x0 + max(
+                is_indented = current["first_line_x0"] >= column_x0 + max(
                     2.0, float(block.get("body_font_size") or 10) * 0.14
+                )
+                # 参照换成列边界之后，"不缩进"不再等于"同一列"。位移量区分两者：
+                # 悬挂缩进的续行相对本段首行只右移一个缩进量（实测 1.5em 量级），
+                # 而换列会横移上百 pt。没有这条，左栏末行会被接进右栏首行
+                # （实测：页 1 的 "Corresponding author" 行接进摘要首行）。
+                #
+                # 位移量取**绝对值**：换列可能向右（接下一栏）也可能向左（回到上一
+                # 栏），阅读顺序并不保证从左到右。原实现只判右移，负数恒成立，于是
+                # 实测把右栏的作者单位（x0=419.88）接进了左栏的 "ARTICLE DATA"
+                # （x0=54.48，左移 365pt）——同一行文被拼成
+                # "…Zagazig University ARTICLE DATA"。
+                column_jump = (
+                    current["first_line_x0"] - previous["first_line_x0"]
+                )
+                same_column = abs(column_jump) <= max(
+                    COLUMN_JUMP_MIN,
+                    float(block.get("body_font_size") or 10) * COLUMN_JUMP_EM,
                 )
                 page_break = (
                     current["page_numbers"][0]
@@ -680,11 +965,19 @@ def reconstruct_paragraph_records(
                 close_enough = page_break or gap <= max(
                     220.0, float(block.get("body_font_size") or 10) * 12
                 ) or intervening_image
-                if (
+                # 两条合并路径。第一条第 role/缩进/长度的原口径（**逐字不变**）；
+                # 第二条认「确定性断行整理」，用来收掉同段文字因版面被切开、
+                # 而 role 口径又够不着的位置（见 _is_obvious_continuation）。
+                role_path = (
                     same_role
                     and not is_indented
-                    and not _is_sentence_terminal(previous["text"])
                     and (len(previous["text"]) > 40 or intervening_image)
+                )
+                continuation_path = _is_obvious_continuation(previous, current)
+                if (
+                    (role_path or continuation_path)
+                    and same_column
+                    and not _is_sentence_terminal(previous["text"])
                     and close_enough
                 ):
                     previous["text"] = _join_text(

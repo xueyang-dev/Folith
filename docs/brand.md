@@ -115,6 +115,40 @@ hover 和 active 只使用 Cobalt 的更深阶；语义色继续使用既有绿�
 所以遮住 logo 也应当能感到这是一套独立的阅读主题。
 `tests/ui_preferences_test.py` 会断言纸面归一化后的组件样式表里不再出现饱和品牌蓝。
 
+#### 夜间（Night）取值（2026-10-08 改为中性 graphite）
+
+夜间**不是**冷色日间主题的再着色：macOS 的窗口 chrome（标题栏、菜单、sheet）由
+AppKit 用自己的一套中性石墨灰绘制，深蓝黑的内容区因此看起来像"Mac 窗口里嵌了一张
+网页"。夜间主题改成与 macOS 深色窗口同一亮度带的中性灰（`#1C1C1E` 即深色
+`systemGray6`），标题栏与内容区才像同一种材质。
+
+| 语义 token | 值 | 说明 |
+| --- | --- | --- |
+| `--bg-page` | `#1C1C1E` | 窗口 / 画布 |
+| `--bg-sidebar` | `#202022` | 比窗口高一档，靠亮度而非色相区分 |
+| `--bg-surface` | `#242426` | 卡片 / 输入框 |
+| `--bg-surface-subtle` / `--bg-surface-sunken` / `--bg-surface-raised` | `#212123` / `#1A1A1C` / `#2A2A2D` | 表头 / 下沉井 / 浮起面（菜单、按钮悬停） |
+| `--bg-hover` | `rgba(255,255,255,.05)` | 悬停是一场极弱的白光 |
+| `--bg-selected` | `rgba(130,172,255,.18)` | 选中 = accent 的低透明度渍，不是"另一套深蓝" |
+| `--text-primary/secondary/muted` | `rgba(255,255,255,.92)` / `rgba(235,235,245,.62)` / `(…,.38)` | 半透明文字，与原生 labelColor 同族 |
+| `--border-faint … --border-strong` | `rgba(255,255,255,.040/.055/.065/.085/.14)` | 边界是**极弱反光**，不再是蓝灰实体线 |
+| `--accent` | `#82ACFF` | 只用于主行动 / 选中 / 焦点 / 进度 / 链接 |
+| `--success/warning/danger-soft` | `rgba(…,.14)` | 状态芯片是一层色渍，不是彩色面板 |
+
+两条结构性约定（`folith/qt/style.py`）：
+
+1. **层级靠面**：`bg-page → bg-surface → bg-surface-raised` 单调递增；边框退到
+   几乎不可见，因此"页面底 + 卡片面"就是层级本身，而不是层层套框。
+2. **半透明分隔**：分隔线/悬停/选中都写成 `rgba()`，叠在哪种面上都能正确合成。
+   ⚠️ **`QColor("rgba(...)")` 在 Qt 里解析失败并静默变成黑色**，Qt 侧任何
+   token→QColor 的地方都必须走 `folith.qt.theme.qcolor()`（风格层再导出为
+   `style.qcolor`）。
+
+夜间还额外做了两处**只作用于夜间**的结构简化（`build_qss` 末尾的
+`_night_surface_rules()` 与 `style.night_mode()`）：任务表格 / 列表不再是"页面里的
+一张卡片"（透明底 + 无边框 + 无圆角），以及按下态不再变蓝。日间与纸面的样式表
+**逐字节不变**（`sha256(build_qss('light'))` 作为回归基线）。
+
 ## 3. 字体与副标题
 
 - 主字体：Manrope `400/500/600/700/800`，字标使用 `800`；

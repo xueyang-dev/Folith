@@ -1,0 +1,17 @@
+{
+  "kind": "synthetic_fixed_response",
+  "batches": 65,
+  "simulated_request_latency_s": 0.02,
+  "serial": {
+    "workers": 1,
+    "calls": 65,
+    "wall_time_s": 1.701771916996222
+  },
+  "parallel": {
+    "workers": 2,
+    "calls": 65,
+    "wall_time_s": 0.8597672919859178
+  },
+  "results_equal": true,
+  "wall_time_reduction_percent": 49.478112583766034
+}

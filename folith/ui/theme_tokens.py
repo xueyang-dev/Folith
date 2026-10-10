@@ -4,10 +4,12 @@ Why this module exists
 ----------------------
 The stylesheet in :mod:`folith.ui.styles` is a large literal CSS document.  Its
 colours used to be re-interpreted per theme by a hue/lightness heuristic that
-guessed a "role" for every ``#hex`` it found.  That works for *dark*, which is a
+guessed a "role" for every ``#hex`` it found.  That works for a theme that is a
 re-tint of the same cool palette, but it cannot express a theme whose accent is
 not a blue: in Paper every role that the heuristic resolved to ``primary`` (or to
-``primary-soft``) came back as saturated Folith blue.
+``primary-soft``) came back as saturated Folith blue.  It also cannot express
+Night, which is deliberately **not** a re-tint: it is a neutral graphite palette
+matched to the macOS dark window chrome (§ ``TOKENS['dark']``).
 
 So the direction is now one-way and explicit::
 
@@ -93,53 +95,74 @@ TOKENS: dict[str, dict[str, str]] = {
         'shadow-md': '0 2px 8px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04)',
         'shadow-lg': '0 8px 24px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.04)',
     },
+    # Night mode is a **neutral graphite** palette, not a re-tint of the cool day
+    # palette.  Rationale: on macOS the window chrome (native titlebar, menus,
+    # sheets) is drawn by AppKit in its own neutral graphite family; a blue-black
+    # content area therefore reads as "a web page inside a Mac window".  The
+    # values below sit in the same lightness band as macOS's dark window
+    # background (#1C1C1E is the dark-mode systemGray6) so the titlebar and the
+    # content area read as one material.
+    #
+    # Two structural rules the component layer relies on:
+    #   * surfaces carry the hierarchy — the ladder below is monotone and every
+    #     step is a *neutral* gray (R=G, B at most +2, matching #1C1C1E);
+    #   * separators/borders/hovers/text-muted are translucent white, not opaque
+    #     gray-blue lines.  A translucent hairline composites over whatever
+    #     surface it is drawn on, which is what makes it read as a weak
+    #     reflection instead of a drawn box.
     'dark': {
-        'bg-page': '#111820',
-        'bg-sidebar': '#17212c',
-        'bg-surface': '#1b2531',
-        'bg-surface-subtle': '#17212c',
-        'bg-surface-sunken': '#141e28',
-        'bg-surface-raised': '#22303e',
-        'bg-hover': '#253343',
-        'bg-selected': '#203855',
-        'text-primary': '#e6edf5',
-        'text-secondary': '#b6c3d3',
-        'text-muted': '#97a8bc',
-        'text-on-accent': '#111820',
-        'border-faint': '#2c3a49',
-        'border-hairline': '#2c3a49',
-        'border-divider': '#22303e',
-        'border-subtle': '#3b4b5d',
-        'border-strong': '#4e6075',
-        'border-sidebar': '#344457',
+        # --- surfaces (window → sidebar → card → raised control/popover) ---
+        'bg-page': '#1C1C1E',
+        'bg-sidebar': '#202022',
+        'bg-surface': '#242426',
+        'bg-surface-subtle': '#212123',
+        'bg-surface-sunken': '#1A1A1C',
+        'bg-surface-raised': '#2A2A2D',
+        'bg-hover': 'rgba(255,255,255,.05)',
+        # selection = the accent as a wash; there is no separate "selected navy".
+        'bg-selected': 'rgba(130,172,255,.18)',
+        # --- text ---
+        'text-primary': 'rgba(255,255,255,.92)',
+        'text-secondary': 'rgba(235,235,245,.62)',
+        'text-muted': 'rgba(235,235,245,.38)',
+        'text-on-accent': '#131316',
+        # --- separators / borders (weak reflections, never blue-gray lines) ---
+        'border-faint': 'rgba(255,255,255,.040)',
+        'border-hairline': 'rgba(255,255,255,.055)',
+        'border-divider': 'rgba(255,255,255,.065)',
+        'border-subtle': 'rgba(255,255,255,.085)',
+        'border-strong': 'rgba(255,255,255,.14)',
+        'border-sidebar': 'rgba(255,255,255,.055)',
+        # --- accent (interaction only: action, selection, focus, progress) ---
         'accent': '#82acff',
         'accent-hover': '#a1c0ff',
         'accent-active': '#b6ceff',
-        'accent-soft': '#203855',
-        'accent-soft-hover': '#29476b',
-        'accent-border': '#4c709e',
+        'accent-soft': 'rgba(130,172,255,.16)',
+        'accent-soft-hover': 'rgba(130,172,255,.24)',
+        'accent-border': 'rgba(130,172,255,.34)',
         'focus-ring': 'rgba(130,172,255,.30)',
         'focus-halo': 'rgba(130,172,255,.22)',
+        # --- status (pastel ink + a tint wash, not a saturated coloured panel) ---
         'success': '#80d9af',
-        'success-soft': '#193c30',
+        'success-soft': 'rgba(128,217,175,.14)',
         'warning': '#f2c97c',
-        'warning-soft': '#3a3021',
+        'warning-soft': 'rgba(242,201,124,.14)',
         'danger': '#ffaaa4',
-        'danger-soft': '#40282c',
-        'brand-navy': '#e6edf5',
-        'brand-ink': '#e6edf5',
+        'danger-soft': 'rgba(255,170,164,.14)',
+        'brand-navy': '#f2f2f7',
+        'brand-ink': '#f2f2f7',
         'brand-logo-blue': '#82acff',
         'brand-cyan': '#00e8fe',
         'brand-azure': '#0088fd',
-        'disabled-bg': '#243040',
-        'disabled-ink': '#5d6a7b',
-        'overlay-veil': 'rgba(17,24,32,.94)',
-        'surface-glass': 'rgba(27,37,49,.96)',
-        'glass-border': '#3b4b5d',
+        'disabled-bg': '#232325',
+        'disabled-ink': 'rgba(235,235,245,.28)',
+        'overlay-veil': 'rgba(28,28,30,.94)',
+        'surface-glass': 'rgba(36,36,38,.96)',
+        'glass-border': 'rgba(255,255,255,.07)',
         'glass-shadow': 'rgba(0,0,0,.35)',
-        'shadow-sm': '0 1px 2px rgba(0,0,0,.30)',
-        'shadow-md': '0 2px 8px rgba(0,0,0,.36), 0 1px 2px rgba(0,0,0,.28)',
-        'shadow-lg': '0 10px 26px rgba(0,0,0,.44), 0 2px 6px rgba(0,0,0,.30)',
+        'shadow-sm': '0 1px 2px rgba(0,0,0,.28)',
+        'shadow-md': '0 2px 8px rgba(0,0,0,.34), 0 1px 2px rgba(0,0,0,.26)',
+        'shadow-lg': '0 10px 26px rgba(0,0,0,.42), 0 2px 6px rgba(0,0,0,.28)',
     },
     'paper': {
         'bg-page': '#f2eadb',

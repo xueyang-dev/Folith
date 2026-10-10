@@ -30,7 +30,9 @@ RADIUS = {"xs": 4, "sm": 6, "md": 10, "lg": 14, "pill": 999}
 #: 间距阶梯（px）：4 的倍数，界面里所有 padding/margin 都从这取，避免"每处随手写一个数"。
 SPACE = {"xxs": 2, "xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "xxl": 32}
 #: 控件高度（px）：Web 界面里按钮/输入框都在 30–34，Qt 默认 22 显得"很挤"。
-CONTROL = {"sm": 26, "md": 30, "lg": 34, "row": 40, "header": 34}
+#: 行高/表头在 2026-10-09 的构图精修里从 40/34 收到 36/30：一屏能多显示两行任务，
+#: 表头也更接近 macOS 表格的观感（它只是列名，不需要 34px 的体重）。
+CONTROL = {"sm": 26, "md": 30, "lg": 34, "row": 36, "header": 30}
 FONT_STACK = ("SF Pro Text", "Helvetica Neue", "PingFang SC",
               "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC")
 MONO_STACK = ("SF Mono", "Menlo", "Monaco", "Courier New")
@@ -68,3 +70,29 @@ def tokens(theme: str) -> dict[str, str]:
 
 def label(theme: str) -> str:
     return THEME_LABELS.get(theme, theme)
+
+
+@lru_cache(maxsize=64)
+def qcolor(value: str):
+    """token 值 → ``QColor``。
+
+    语义 token 里有一半是带 alpha 的 ``rgba(...)``（夜间主题的分隔线、悬停底色、
+    次要文字就是这么写的）；**``QColor("rgba(...)")`` 在 Qt 里解析失败并静默变成
+    黑色**，所以任何拿 token 去构造 QColor 的地方都必须走这里，不能直接 ``QColor(t[a])``。
+
+    带缓存是因为委托会在每行／每格的 ``paint`` 里调用它。
+    """
+    from PySide6.QtGui import QColor
+
+    text = str(value or "").strip()
+    if text.lower().startswith("rgba(") or text.lower().startswith("rgb("):
+        numbers = [part.strip() for part in text.partition("(")[2].rstrip(")").split(",")]
+        try:
+            red, green, blue = (int(float(part)) for part in numbers[:3])
+            alpha = float(numbers[3]) if len(numbers) > 3 else 1.0
+        except (TypeError, ValueError):
+            return QColor(text)
+        color = QColor(red, green, blue)
+        color.setAlphaF(max(0.0, min(1.0, alpha if alpha <= 1 else alpha / 255)))
+        return color
+    return QColor(text)

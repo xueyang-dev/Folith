@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
@@ -33,11 +33,16 @@ from .workers import TaskRunner
 
 
 def _panel(title: str, hint: str = "") -> tuple[Card, QVBoxLayout]:
-    """一张带标题的卡片 + 竖排内容区（层级靠"面"，不靠边框堆叠）。"""
+    """一张带标题的卡片 + 竖排内容区（层级靠"面"，不靠边框堆叠）。
+
+    内边距 12 / 间距 8：这两处直接乘上"每张选项卡卡数 × 字段数"，
+    是设置页纵向长度的主要来源（原先 14 / 10）。
+    """
     card = Card()
     outer = QVBoxLayout(card)
-    outer.setContentsMargins(16, 14, 16, 14)
-    outer.setSpacing(10)
+    outer.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
+                             theme_module.SPACE["md"], theme_module.SPACE["md"])
+    outer.setSpacing(theme_module.SPACE["sm"])
     heading = QLabel(title)
     heading.setObjectName("cardTitle")
     outer.addWidget(heading)
@@ -58,7 +63,7 @@ def _field(label: str, widget: QWidget, hint: str = "") -> QWidget:
     holder = QWidget()
     column = QVBoxLayout(holder)
     column.setContentsMargins(0, 0, 0, 0)
-    column.setSpacing(4)
+    column.setSpacing(theme_module.SPACE["xxs"])
     column.addWidget(style_module.field_label(label))
     column.addWidget(widget)
     if hint:
@@ -70,7 +75,14 @@ def _field(label: str, widget: QWidget, hint: str = "") -> QWidget:
 
 
 def _scroll_page(inner: QWidget) -> QScrollArea:
-    """标签页内容放进滚动区：设置页最长的一栏不该把整个对话框顶出屏幕。"""
+    """标签页内容放进滚动区：设置页最长的一栏不该把整个对话框顶出屏幕。
+
+    页面必须自带底色：`QScrollArea` 的 viewport 按约定是透明的（上面那行
+    `setAutoFillBackground(False)`），内容比视口短时**剩下的那片就没有人画**——
+    浅色主题下是纯黑。「扫描件识别」是唯一内容短到会露出来的一栏，所以此前没人看见。
+    复用既有的 `QWidget#pageCanvas`（值与 `QDialog` 同为 `bg-page`），不新增 QSS。
+    """
+    inner.setObjectName("pageCanvas")
     area = QScrollArea()
     area.setWidgetResizable(True)
     area.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -81,9 +93,14 @@ def _scroll_page(inner: QWidget) -> QScrollArea:
 
 
 def _set_status(label: QLabel, text: str, tone: str = "muted") -> None:
-    """内联状态文字：成功/失败要有颜色，不能都是同一撮灰字。"""
+    """内联状态文字：成功/失败要有颜色，不能都是同一撮灰字。
+
+    空文本时整行收掉：设置页底部原先常驻一条**空的**状态标签，在内容区与
+    「取消 / 保存」之间留出一条谁也说不清用途的空带（实测约 29px）。
+    """
     label.setText(text)
     label.setObjectName({"ok": "statusOk", "danger": "statusError"}.get(tone, "hint"))
+    label.setVisible(bool(str(text).strip()))
     style_module.repolish(label)
 
 
@@ -94,19 +111,25 @@ class EngineDialog(QDialog):
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(i18n.tr('设置'))
+        # 820×720 → 780×640：常规 Mac 窗口里能放下，且不必靠"更大的窗口"来掩盖
+        # 控件过高的问题（真正的修法是缩控件，见 style.box）。
         self.setMinimumWidth(680)
-        self.resize(820, 720)
+        self.resize(780, 640)
         self.config = config
         self.runner = runner
         self._status = QLabel("")
         self._status.setWordWrap(True)
         self._status.setObjectName("hint")
+        # 空状态标签整行收掉（原因见 _set_status）。
+        self._status.setVisible(False)
 
         self.theme_preference = theme_module.FOLLOW_SYSTEM
         self.language_preference = i18n.language()
 
+        # 对话框自己的标题栏已经写着「设置」；内容区里再放一个 22px 的 pageTitle
+        # 是同一句话说两遍，还白占一行高度。改用 section(16px)。
         title = QLabel(i18n.tr('设置'))
-        title.setObjectName("pageTitle")
+        title.setObjectName("sectionTitle")
         subtitle = QLabel(i18n.tr('模型连接、任务默认值与外观。配置保存在本机，仅当前用户可读。'))
         subtitle.setObjectName("hint")
 
@@ -124,7 +147,7 @@ class EngineDialog(QDialog):
                     i18n.tr('任务与交付'))
         tabs.addTab(_scroll_page(self._build_ocr_tab()),
                     icons.icon("eye", 16, style_module.text_color("text-secondary")),
-                    i18n.tr('扫描件 OCR'))
+                    i18n.tr('扫描件识别'))
         tabs.addTab(_scroll_page(self._build_appearance_tab()),
                     icons.icon("image", 16, style_module.text_color("text-secondary")),
                     i18n.tr('外观'))
@@ -144,8 +167,8 @@ class EngineDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, theme_module.SPACE["md"], 20, theme_module.SPACE["md"])
+        layout.setSpacing(theme_module.SPACE["sm"])
         layout.addLayout(header)
         layout.addWidget(tabs, 1)
         layout.addWidget(self._status)
@@ -155,18 +178,18 @@ class EngineDialog(QDialog):
     def _build_connection_tab(self) -> QWidget:
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 10, 0, 0)
-        page_layout.setSpacing(12)
+        page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        page_layout.setSpacing(theme_module.SPACE["sm"])
         connection_card, body = _panel(
             i18n.tr('模型连接'), i18n.tr('译文与审校都通过这里的模型调用；API Key 只保存在本机。'))
 
-        self.provider_box = QComboBox()
+        self.provider_box = style_module.ComboBox()
         self.provider_box.addItems(list(self.config.providers.keys()))
         if self.config.provider:
             self.provider_box.setCurrentText(self.config.provider)
         self.provider_box.currentTextChanged.connect(self._provider_changed)
 
-        self.model_box = QComboBox()
+        self.model_box = style_module.ComboBox()
         self.model_box.setEditable(True)
         self.model_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.model_box.setCurrentText(self.config.model)
@@ -199,7 +222,7 @@ class EngineDialog(QDialog):
         self.base_edit = QLineEdit(self.config.base_url)
         self.base_edit.setPlaceholderText(i18n.tr('http(s)://主机/v1'))
 
-        self.target_box = QComboBox()
+        self.target_box = style_module.ComboBox()
         self.target_box.setEditable(True)
         self.target_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.target_box.addItems(list(adapter.TARGET_LANGUAGES))
@@ -215,7 +238,7 @@ class EngineDialog(QDialog):
         test_row = QWidget()
         test_layout = QHBoxLayout(test_row)
         test_layout.setContentsMargins(0, 0, 0, 0)
-        test_layout.setSpacing(10)
+        test_layout.setSpacing(theme_module.SPACE["sm"])
         test_layout.addWidget(self.test_button)
         test_layout.addWidget(self.test_label, 1)
 
@@ -242,12 +265,12 @@ class EngineDialog(QDialog):
         mode_row = QWidget()
         mode_layout = QHBoxLayout(mode_row)
         mode_layout.setContentsMargins(0, 0, 0, 0)
-        mode_layout.setSpacing(16)
+        mode_layout.setSpacing(theme_module.SPACE["md"])
         mode_layout.addWidget(self.reviewer_same_radio)
         mode_layout.addWidget(self.reviewer_separate_radio)
         mode_layout.addStretch(1)
 
-        self.reviewer_provider_box = QComboBox()
+        self.reviewer_provider_box = style_module.ComboBox()
         self.reviewer_provider_box.addItems([""] + list(self.config.providers.keys()))
         self.reviewer_provider_box.setCurrentText(self.config.reviewer_provider)
         self.reviewer_model_edit = QLineEdit(self.config.reviewer_model)
@@ -257,7 +280,7 @@ class EngineDialog(QDialog):
         self.reviewer_fields = QWidget()
         reviewer_fields_layout = QVBoxLayout(self.reviewer_fields)
         reviewer_fields_layout.setContentsMargins(0, 0, 0, 0)
-        reviewer_fields_layout.setSpacing(10)
+        reviewer_fields_layout.setSpacing(theme_module.SPACE["sm"])
         reviewer_fields_layout.addWidget(_field(i18n.tr('提供商'), self.reviewer_provider_box))
         reviewer_fields_layout.addWidget(_field(i18n.tr('模型名'), self.reviewer_model_edit))
         reviewer_fields_layout.addWidget(_field(i18n.tr('API 密钥'), self.reviewer_key_field))
@@ -279,18 +302,22 @@ class EngineDialog(QDialog):
     def _build_task_tab(self) -> QWidget:
         page = QWidget()
         outer = QVBoxLayout(page)
-        outer.setContentsMargins(0, 10, 0, 0)
-        outer.setSpacing(12)
+        outer.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        outer.setSpacing(theme_module.SPACE["sm"])
 
         workflow, workflow_body = _panel(
             i18n.tr('翻译流程'), i18n.tr('这些是新建任务的默认值；已有任务保留它自己保存的选择。'))
-        self.auto_term_box = style_module.CheckBox(i18n.tr('自动抽取并注入术语'))
+        # 文案与「译前准备 · 翻译设置」逐字一致（同一个开关在两个面上必须同名）：
+        # 这里曾经用「自动抽取并注入术语 / 完成后自动审校 / 复用翻译记忆」这套旧词，
+        # 而准备面板用「自动识别术语 / 译后自动审校 / 使用翻译记忆」——同一个开关两个
+        # 名字，用户会以为是两件事。准备面板那份措辞更短、更适合窄控件，以它为准。
+        self.auto_term_box = style_module.CheckBox(i18n.tr('自动识别术语'))
         self.auto_term_box.setChecked(self.config.auto_term)
-        self.review_box = style_module.CheckBox(i18n.tr('完成后自动审校'))
+        self.review_box = style_module.CheckBox(i18n.tr('译后自动审校'))
         self.review_box.setChecked(self.config.enable_review)
-        self.tm_box = style_module.CheckBox(i18n.tr('复用翻译记忆'))
+        self.tm_box = style_module.CheckBox(i18n.tr('使用翻译记忆'))
         self.tm_box.setChecked(self.config.use_tm)
-        self.understanding_box = style_module.CheckBox(i18n.tr('先建立文档画像（更慢，术语更准）'))
+        self.understanding_box = style_module.CheckBox(i18n.tr('建立文档画像'))
         self.understanding_box.setChecked(self.config.enable_understanding)
         self.cleanup_box = style_module.CheckBox(i18n.tr('对 PDF 原文做模型纠错（更慢）'))
         self.cleanup_box.setChecked(self.config.enable_source_cleanup)
@@ -365,38 +392,40 @@ class EngineDialog(QDialog):
     def _build_ocr_tab(self) -> QWidget:
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 10, 0, 0)
-        page_layout.setSpacing(12)
+        page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        page_layout.setSpacing(theme_module.SPACE["sm"])
         ocr_card, body = _panel(
-            i18n.tr('扫描件 OCR'), i18n.tr('只影响没有文本层的扫描件；文本层 PDF 与 DOCX 不走 OCR。'))
-        self.ocr_language_box = QComboBox()
+            i18n.tr('扫描件识别'),
+            i18n.tr('只影响没有可用文本层的页面（扫描件）；文本层 PDF 与 DOCX 不走这一步。'))
+        self.ocr_language_box = style_module.ComboBox()
         # 可编辑：既能从核心注册表里选（30 项，带中文标签），也能直接填语言代码。
         self.ocr_language_box.setEditable(True)
         self.ocr_language_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         for label, value in adapter.ocr_language_choices():
             self.ocr_language_box.addItem(label, value)
         self._select_ocr_language(self.config.ocr_language)
-        self.ocr_mode_box = QComboBox()
+        self.ocr_mode_box = style_module.ComboBox()
         # 标签给用户看，data 给核心用：两者必须对齐，否则核心会静默回退成 auto
         # （历史缺陷：界面写 always/never，核心只认 force/off）。
         for label, mode in adapter.OCR_MODE_CHOICES:
             self.ocr_mode_box.addItem(label, mode)
         self.ocr_mode_box.setCurrentText(
             adapter.ocr_mode_label(self.config.ocr_mode))
-        self.ocr_backend_box = QComboBox()
+        self.ocr_backend_box = style_module.ComboBox()
         # 取值仍然是核心认识的那三个，但显示的是人话（此前直接显示 online / tesseract）。
-        for label, value in (("联网识别（默认）", "online"),
-                             ("Tesseract（本机）", "tesseract"),
-                             ("PaddleOCR（本机）", "paddle")):
+        # 标签取自 adapter 的**同一份**真源：这里曾手抄第二条副本，改一处漏一处。
+        for label, value in adapter.OCR_BACKEND_CHOICES:
             self.ocr_backend_box.addItem(label, value)
         index = self.ocr_backend_box.findData(self.config.ocr_backend or "online")
         self.ocr_backend_box.setCurrentIndex(index if index >= 0 else 0)
-        body.addWidget(_field(i18n.tr('识别语言'), self.ocr_language_box))
+        # 顺序与译前面板一致：来源是主决定，语言/mode 是它的参数。
+        body.addWidget(_field(i18n.tr('提取来源'), self.ocr_backend_box))
         body.addWidget(_field(i18n.tr('何时识别'), self.ocr_mode_box))
-        body.addWidget(_field(i18n.tr('识别引擎'), self.ocr_backend_box))
+        body.addWidget(_field(i18n.tr('识别语言'), self.ocr_language_box))
 
         notice = style_module.NoticeStrip(
-            i18n.tr('扫描件需要本机或随包安装 Tesseract 语言包。Beta 基线为 eng / chi_sim / ara；缺少语言包时会明确报错，不会静默改用英语。'), tone="info")
+            i18n.tr('选「本机 OCR」时需要本机或随包安装 Tesseract 语言包，Beta 基线为 eng / chi_sim / ara，'
+                    '缺少时会明确报错、不会静默改用英语。默认的「视觉理解」不需要语言包。'), tone="info")
         page_layout.addWidget(ocr_card)
         page_layout.addWidget(notice)
         page_layout.addStretch(1)
@@ -405,12 +434,12 @@ class EngineDialog(QDialog):
     def _build_appearance_tab(self) -> QWidget:
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 10, 0, 0)
-        page_layout.setSpacing(12)
+        page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        page_layout.setSpacing(theme_module.SPACE["sm"])
         card, body = _panel(
             i18n.tr('界面主题'),
-            i18n.tr('「跟随系统」随 macOS 浅色/深色外观自动切换。三套主题与旧界面共用同一份品牌 token（folith.ui.theme_tokens），因此不存在两套配色。'))
-        self.theme_box = QComboBox()
+            i18n.tr('「跟随系统」随 macOS 浅色/深色外观自动切换。三套主题共用同一份品牌配色，切换不会影响已导入的任务与译文。'))
+        self.theme_box = style_module.ComboBox()
         for name in (theme_module.FOLLOW_SYSTEM, *theme_module.theme_names()):
             self.theme_box.addItem(theme_module.label(name), name)
         index = self.theme_box.findData(self.theme_preference)
@@ -420,7 +449,7 @@ class EngineDialog(QDialog):
         body.addWidget(_field(i18n.tr('主题'), self.theme_box))
         body.addWidget(_field(i18n.tr('预览'), previews, i18n.tr('点一张色卡即可选中对应主题。')))
 
-        self.language_box = QComboBox()
+        self.language_box = style_module.ComboBox()
         for code, label in i18n.available_languages():
             self.language_box.addItem(label, code)
         self._select_language(self.language_preference)
@@ -447,10 +476,15 @@ class EngineDialog(QDialog):
         此前色卡是"只能用来看"的方框——它长得像按钮却不是按钮，点了没有反应。
         现在每张卡就是主题选择器：选中态用 accent 描边（状态由 `_sync_theme_cards`
         跟随下拉框同步），下拉框仍然是保存时的唯一真值。
+
+        ⚠️ 卡片尺寸由 :data:`style.THEME_CARD` 与 QSS 的 ``#themeCard`` 共同约束
+        （QSS 的 min-height 会覆盖 setFixedSize，见 style.py 注释）。内边距 / 间隙 /
+        色块高度全部取自同一份常量，主题名不再贴着色块，也不会被裁掉。
         """
+        spec = style_module.THEME_CARD
         holder = QWidget()
         row = QHBoxLayout(holder)
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(0, 0, 0, theme_module.SPACE["xs"])
         row.setSpacing(10)
         self._theme_cards: dict[str, QPushButton] = {}
         for name in theme_module.theme_names():
@@ -458,34 +492,37 @@ class EngineDialog(QDialog):
             card = QPushButton()
             card.setObjectName("themeCard")
             card.setCheckable(True)
-            card.setFixedSize(120, 78)
+            card.setFixedSize(spec["width"], spec["height"])
             card.setCursor(Qt.CursorShape.PointingHandCursor)
             card.setToolTip(i18n.tr('使用「{v0}」主题', v0=theme_module.label(name)))
             card.clicked.connect(
                 lambda _checked=False, value=name: self._pick_theme(value))
             inner = QVBoxLayout(card)
-            inner.setContentsMargins(7, 7, 7, 7)
-            inner.setSpacing(5)
+            inner.setContentsMargins(spec["pad"], spec["pad"], spec["pad"], spec["pad"])
+            inner.setSpacing(spec["gap"])
             swatch = QFrame()
-            swatch.setFixedHeight(34)
+            swatch.setFixedHeight(spec["swatch"])
             swatch.setStyleSheet(
                 f"QFrame {{ background: {tokens['bg-surface']};"
                 f" border: 1px solid {tokens['border-subtle']};"
-                f" border-radius: 8px; }}")
+                f" border-radius: {theme_module.RADIUS['sm']}px; }}")
             swatch_layout = QVBoxLayout(swatch)
             swatch_layout.setContentsMargins(8, 8, 8, 8)
             swatch_layout.setSpacing(0)
             accent = QFrame()
-            accent.setFixedHeight(9)
+            accent.setFixedHeight(spec["accent"])
             accent.setStyleSheet(
                 f"QFrame {{ background: {tokens['accent']}; border: none;"
-                f" border-radius: 4px; }}")
+                f" border-radius: {theme_module.RADIUS['xs']}px; }}")
             swatch_layout.addWidget(accent)
             caption = QLabel(theme_module.label(name))
             caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            caption.setFixedHeight(16)
+            # 说明文字用**当前主题**的文字色：卡片本身长在当前主题的面上，
+            # 只有色块才用被预览主题的 token（否则浅色模式下"夜间"这张卡的
+            # 主题名会拿夜间的浅灰字，落在白底上几乎看不见——真实截图实测）。
             caption.setStyleSheet(
-                f"QLabel {{ color: {tokens['text-secondary']}; font-size: 11px;"
+                f"QLabel {{ color: {style_module.text_color('text-secondary')};"
+                f" font-size: {theme_module.FONT_SIZES['caption']}px;"
                 f" background: transparent; }}")
             inner.addWidget(swatch)
             inner.addWidget(caption)
@@ -1028,15 +1065,15 @@ class ProjectDialog(QDialog):
                 if column in (1, 2):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if column == 1:
-                    item.setForeground(QColor(tokens["text-secondary"]))
+                    item.setForeground(style_module.qcolor(tokens["text-secondary"]))
                 if column == 2:
                     # 颜色表达语义：使用中=成功、归档/系统=中性（不要用红色吓人）
-                    item.setForeground(QColor(
+                    item.setForeground(style_module.qcolor(
                         tokens["text-muted"]
                         if (project["archived"] or project["is_system"])
                         else tokens["success"]))
                 if column == 3:
-                    item.setForeground(QColor(tokens["text-secondary"]))
+                    item.setForeground(style_module.qcolor(tokens["text-secondary"]))
                 self.table.setItem(index, column, item)
         self._selection_changed()
 

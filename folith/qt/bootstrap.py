@@ -88,7 +88,14 @@ def enforce_output_dir(paths: DesktopPaths) -> str:
     reason = ("relative" if not current.is_absolute()
               else "inside the install directory")
     core.OUTPUT_DIR = paths.data_dir
-    return f"数据目录（{reason}）已更正为 {paths.data_dir}"
+    # 界面上只说"改到了哪"（用户语言）；"为什么会被改"（相对路径 / 装在包内）
+    # 是实现细节，只进启动日志给支持人员看。
+    try:
+        appender("qt-client.log")(
+            f"OUTPUT_DIR corrected ({reason}): {current} -> {paths.data_dir}")
+    except OSError:
+        pass
+    return f"数据目录已更正为 {paths.data_dir}"
 
 
 def appender(name: str = "qt-client.log"):

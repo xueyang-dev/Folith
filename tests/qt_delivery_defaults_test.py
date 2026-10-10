@@ -152,10 +152,17 @@ def test_delivery_keys_persist_epub():
     assert "deliver_epub" in MainWindow.DELIVERY_KEYS
 
 
-# ---------------------------------------------------------------- 3. chip
+# ------------------------------------------------- 3. 引擎状态（侧栏底部）
+
+# 断言对象从 `setup_chip`（一枚「未配置」芯片）换成了 `engine_label` + `engine_dot`：
+# 2026-10-09 的构图精修把侧栏那张 100px 高的引擎卡改成"状态点 + 状态词 + 模型串 +
+# 入口"，芯片被去掉。要守的性质没变，而且更强了：**文字与颜色必须来自同一份状态**
+# （旧用例只看了文字，芯片色调可以单独跑偏）。
+# 为什么状态词本身就够用：芯片当年存在的理由是"文字曾停在构造值不动，绿芯片旁边
+# 写着未配置"；现在 `set_engine_problem` 是唯一写这两处的地方，所以直接断言它。
 
 
-def test_engine_chip_reports_the_configured_state():
+def test_engine_state_reports_the_configured_state():
     from PySide6.QtWidgets import QApplication
 
     QApplication.instance() or QApplication([])
@@ -165,11 +172,20 @@ def test_engine_chip_reports_the_configured_state():
     home = views.HomeView()
     try:
         home.set_engine_problem("", "OpenCode Go / deepseek-v4.1-flash")
-        assert home.setup_chip.text() == i18n.tr("已配置")
-        assert home.setup_chip.text() != i18n.tr("未配置")
+        assert home.engine_label.text() == i18n.tr("已配置")
+        assert home.engine_label.text() != i18n.tr("未配置")
+        assert home.engine_dot.property("state") == "ok"
+        # 模型串是常驻属性：配好了就必须看得见（否则侧栏只剩一个"已配置"）
+        assert home.engine_model.isVisible() or "deepseek" in home.engine_model.fullText()
+        assert home.setup_button.text() == i18n.tr("更改模型连接…")
 
         home.set_engine_problem("缺少 API Key", "OpenCode Go / deepseek-v4.1-flash")
-        assert home.setup_chip.text() == i18n.tr("未配置")
+        assert home.engine_label.text() == i18n.tr("未配置")
+        assert home.engine_dot.property("state") == "warn"
+        assert home.setup_button.text() == i18n.tr("配置模型连接…")
+        # 阻塞时顶部提示条必须出现，并且带着配置入口（不能只报错不给路）
+        assert home.setup_banner.isVisible() or home.setup_banner.text()
+        assert home.setup_banner.action_button().text() == i18n.tr("配置模型连接…")
     finally:
         home.deleteLater()
 

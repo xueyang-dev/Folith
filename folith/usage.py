@@ -9,6 +9,7 @@ comparing pipeline choices, never for billing.
 from __future__ import annotations
 
 import math
+import contextvars
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -16,6 +17,7 @@ from typing import Any, Dict, Optional
 
 SCHEMA_VERSION = 1
 _LOCK = threading.RLock()
+CURRENT_ROLE = contextvars.ContextVar("folith_llm_role", default="unknown")
 
 
 def _nonnegative_int(value: Any) -> int:
@@ -158,6 +160,7 @@ def tracked_call(call_fn, ledger: Dict[str, Any], *, role: str):
     def invoke(provider, api_key, model, system_prompt, user_prompt, **kwargs):
         started = time.perf_counter()
         result = ""
+        role_token = CURRENT_ROLE.set(role)
         try:
             result = call_fn(provider, api_key, model, system_prompt, user_prompt, **kwargs)
             record_call(ledger, role=role, provider=provider, model=model,
@@ -171,4 +174,6 @@ def tracked_call(call_fn, ledger: Dict[str, Any], *, role: str):
                         completion=result, latency_seconds=time.perf_counter() - started,
                         success=False)
             raise
+        finally:
+            CURRENT_ROLE.reset(role_token)
     return invoke

@@ -1,0 +1,38 @@
+{
+  "before_dark_home_table": {
+    "canvas_pixels": 165960,
+    "blue_tinted_pixels": 165557,
+    "blue_share": 0.9976,
+    "top_colors": [
+      "#182030",
+      "#101820",
+      "#203850",
+      "#102028",
+      "#283848"
+    ]
+  },
+  "after_dark_home_table": {
+    "canvas_pixels": 164880,
+    "blue_tinted_pixels": 10562,
+    "blue_share": 0.0641,
+    "top_colors": [
+      "#181818",
+      "#202020",
+      "#485880",
+      "#282828",
+      "#80a8f8"
+    ]
+  },
+  "after_light_home_table": {
+    "canvas_pixels": 164880,
+    "blue_tinted_pixels": 14014,
+    "blue_share": 0.085,
+    "top_colors": [
+      "#f8f8f8",
+      "#f0f0f8",
+      "#e8f0f8",
+      "#e8f0f0",
+      "#f0f0f0"
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "snapshots": [
+    {
+      "name": "A-native-titlebar",
+      "want": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "name": "B-unified-toolbar",
+      "want": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    },
+    {
+      "name": "C-reverted",
+      "want": [
+        2360,
+        1522
+      ],
+      "got": [
+        2360,
+        1522
+      ],
+      "ok": true
+    }
+  ],
+  "toolbar_height": 28,
+  "frame_height": 761,
+  "content_height": 733,
+  "is_fullscreen_capable": true,
+  "fullscreen_size": [
+    1470,
+    923
+  ],
+  "back_to_normal": [
+    1180,
+    733
+  ]
+}

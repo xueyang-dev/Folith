@@ -6,7 +6,7 @@ import core
 
 
 def test_translate_stage_concurrent_execution(tmp_path: Path, monkeypatch):
-    core.OUTPUT_DIR = tmp_path
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     paragraphs = [f"Paragraph number {i} with some content." for i in range(12)]
     job_id = "test-concurrent-job-01"
     state = core.new_job_state("doc.txt")
@@ -29,7 +29,7 @@ def test_translate_stage_concurrent_execution(tmp_path: Path, monkeypatch):
         call_order.append(len(results))
         return json.dumps(results)
 
-    core.call_llm = mock_llm
+    monkeypatch.setattr(core, "call_llm", mock_llm)
 
     result = core.translate_stage(
         state, job_id, glossary=[], provider="DeepSeek", api_key="k",
@@ -52,8 +52,8 @@ def test_translate_stage_concurrent_execution(tmp_path: Path, monkeypatch):
         assert e["batch"] == idx
 
 
-def test_translate_stage_serial_execution(tmp_path: Path):
-    core.OUTPUT_DIR = tmp_path
+def test_translate_stage_serial_execution(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     paragraphs = [f"Item {i}" for i in range(6)]
     job_id = "test-serial-job-01"
     state = core.new_job_state("doc.txt")
@@ -65,7 +65,7 @@ def test_translate_stage_serial_execution(tmp_path: Path):
         results = [f"T: {line.split('. ', 1)[1]}" for line in lines]
         return json.dumps(results)
 
-    core.call_llm = mock_llm
+    monkeypatch.setattr(core, "call_llm", mock_llm)
 
     result = core.translate_stage(
         state, job_id, glossary=[], provider="DeepSeek", api_key="k",
@@ -81,7 +81,7 @@ def test_translate_stage_serial_execution(tmp_path: Path):
 
 
 def test_paragraph_segmentation_mode_preserves_full_paragraphs(tmp_path: Path, monkeypatch):
-    core.OUTPUT_DIR = tmp_path
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     raw_paragraphs = [
         "First sentence. Second sentence in same paragraph.",
         "Another sentence here. And one more.",
@@ -98,7 +98,7 @@ def test_paragraph_segmentation_mode_preserves_full_paragraphs(tmp_path: Path, m
         results = [f"译: {line.split('. ', 1)[1]}" for line in lines]
         return json.dumps(results)
 
-    core.call_llm = mock_llm
+    monkeypatch.setattr(core, "call_llm", mock_llm)
 
     state = core.run_job_pipeline(
         job_id, "test.pdf", b"%PDF-1.4",

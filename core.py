@@ -16,6 +16,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import tempfile
 import unicodedata
@@ -35,7 +36,7 @@ import pandas as pd
 from defusedxml import ElementTree as ET
 from docx import Document
 from google import genai
-from openai import OpenAI
+from openai import OpenAI, DefaultHttpxClient
 
 from folith import models as _models
 from folith import state_migration as _state_migration
@@ -3082,6 +3083,15 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             raise RuntimeError("任务已请求取消")
         _runtime_telemetry_request_started(runtime_job_id)
     _llm_started = time.perf_counter()
+    _request_run = trace.get_active_run(runtime_job_id)
+    if _request_run:
+        _request_run.begin_model_request(provider, model, role=_usage.CURRENT_ROLE.get(),
+                                        batch_id=getattr(_LLM_CTX, "batch_id", None),
+                                        prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
+                                        system_chars=len(system_prompt or ""),
+                                        user_chars=len(user_prompt or ""),
+                                        segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
+                                            "segment_count", getattr(_LLM_CTX, "input_segments", None)))
     try:
         result = _call_llm_transport(
             cfg, provider, api_key, model, system_prompt, user_prompt,
@@ -3101,6 +3111,7 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
                 provider=provider, model=model, duration_s=_llm_dur,
                 input_chars=len(system_prompt or "") + len(user_prompt or ""),
                 status="error", error_type=type(exc).__name__,
+                metadata={"usage_available": False},
             )
             run.record_error(
                 stage="model_request", operation=model,
@@ -3111,12 +3122,27 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             # 看到的是真实结果而不是一个永远不会结束的在途请求。
             _runtime_telemetry_request_failed(runtime_job_id)
         raise exc
+    finally:
+        if _request_run:
+            _request_run.end_model_request()
     _record_llm_thread_stats(time.perf_counter() - _llm_started, failed=False)
     if runtime_job_id:
         _runtime_telemetry_request_finished(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
     return result
+
+
+def _trace_http_request(request):
+    run = trace.get_active_run(_runtime_job_id())
+    if run:
+        run.begin_http_attempt(request)
+
+
+def _trace_http_response(response):
+    run = trace.get_active_run(_runtime_job_id())
+    if run:
+        run.record_http_response(response)
 
 
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
@@ -3161,6 +3187,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
                     cached_tokens=getattr(usage, "cached_content_token_count", 0) if usage else 0,
                     total_tokens=getattr(usage, "total_token_count", 0) if usage else 0,
                     ttft_s=None,
+                    metadata={"usage_available": usage is not None},
                 )
         finally:
             if not _llm_transport.client_pool_enabled():
@@ -3186,12 +3213,16 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
 
     def _build_openai_client():
         build_kwargs = dict(kwargs)
-        bypass_client = None
+        # Keep SDK defaults on the ordinary route and the existing bypass
+        # transport on the proxy-free route; hooks never inspect bodies/headers.
+        client_type = httpx.Client if proxy_bypass else DefaultHttpxClient
+        client_kwargs = {"timeout": _llm_transport.OPENAI_TIMEOUT,
+                         "event_hooks": {"request": [_trace_http_request],
+                                         "response": [_trace_http_response]}}
         if proxy_bypass:
-            # 该接口经用户本地代理时 TLS 失败：显式关闭环境代理。
-            bypass_client = httpx.Client(
-                trust_env=False, timeout=_llm_transport.OPENAI_TIMEOUT)
-            build_kwargs["http_client"] = bypass_client
+            client_kwargs["trust_env"] = False
+        bypass_client = client_type(**client_kwargs)
+        build_kwargs["http_client"] = bypass_client
         try:
             return OpenAI(**build_kwargs)
         except BaseException:
@@ -3255,6 +3286,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
                 cached_tokens=getattr(pt_details, "cached_tokens", 0) if pt_details else 0,
                 total_tokens=getattr(usage, "total_tokens", 0) if usage else 0,
                 ttft_s=None,
+                metadata={"usage_available": usage is not None},
             )
     finally:
         if not _llm_transport.client_pool_enabled():
@@ -5647,10 +5679,17 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
                 operation_label=f"正在重试翻译请求（第 {_attempt + 1}/3 次尝试）",
             )
         try:
-            controller.acquire(cancel_check)
-            res = _invoke_llm(
-                call_fn, provider, api_key, model, sys_prompt, user_prompt,
-                temperature=0.3, response_format=response_format)
+            with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
+                controller.acquire(cancel_check)
+            previous_cost = getattr(_LLM_CTX, "prompt_cost", None)
+            _LLM_CTX.prompt_cost = _translation_prompt_cost(
+                segments, sys_prompt, user_prompt, render_stats, _attempt + 1, 0)
+            try:
+                res = _invoke_llm(
+                    call_fn, provider, api_key, model, sys_prompt, user_prompt,
+                    temperature=0.3, response_format=response_format)
+            finally:
+                _LLM_CTX.prompt_cost = previous_cost
             controller.note_success()
             targets = _translation_protocol.parse_translation_response(
                 res, len(segments))
@@ -5670,8 +5709,10 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             if "任务已请求取消" in str(e):
                 raise
             last_err = e
-            if is_rate_limited(e):
-                controller.note_rate_limited()
+            backoff = controller.note_rate_limited() if is_rate_limited(e) else 0.0
+            if _attempt < 2:
+                trace.record_retry("translation", "translate_batch", _attempt + 2,
+                                   backoff, type(e).__name__, job_id=_runtime_job_id())
 
     if prompt_stats is not None:
         prompt_stats.append(_translation_prompt_cost(
@@ -5780,7 +5821,7 @@ def _translation_prompt_cost(segments, system_prompt, user_prompt, render_stats,
         if name == "source":
             continue
         categories[name] = categories.get(name, 0) + int(chars or 0)
-    accounted = sum(categories.values())
+    accounted = sum(categories.values()) - system_chars
     if user_chars > accounted:
         categories["other"] = categories.get("other", 0) + (user_chars - accounted)
     return {
@@ -5845,7 +5886,8 @@ def repair_batch(sources, targets, findings, glossary_text, style_rules, target_
     cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
-            controller.acquire(cancel_check)
+            with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
+                controller.acquire(cancel_check)
             res = _invoke_llm(
                 call_fn, provider, api_key, model, sys_prompt, user_prompt,
                 temperature=0.2, response_format=response_format)
@@ -5881,7 +5923,8 @@ def review_translation_batch(sources, targets, glossary_text, style_rules, targe
     cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
-            controller.acquire(cancel_check)
+            with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
+                controller.acquire(cancel_check)
             res = call_llm(provider, api_key, model, sys_prompt, user_prompt, temperature=0.2)
             controller.note_success()
             arr = parse_json_array(res)
@@ -6226,7 +6269,8 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
     cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
-            controller.acquire(cancel_check)
+            with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
+                controller.acquire(cancel_check)
             res = call_llm(provider, api_key, model, sys_prompt, user_prompt, temperature=0.2)
             controller.note_success()
             arr = parse_json_array(res)
@@ -6259,7 +6303,10 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
             if is_rate_limited(e):
                 # Shared provider cooldown instead of a local fixed sleep, so
                 # annotation retries cannot stampede alongside translation.
-                controller.note_rate_limited()
+                backoff = controller.note_rate_limited()
+                if _attempt < 2:
+                    trace.record_retry("annotation", "annotate_batch", _attempt + 2,
+                                       backoff, type(e).__name__, job_id=_runtime_job_id())
                 continue
             return AnnotationBatchResult(status="request_failed", error=str(e)[:500])
     return AnnotationBatchResult(status="request_failed", error="请求限流，重试次数已用尽")
@@ -6289,6 +6336,66 @@ def _compose_spans(spans, text_len):
         if covering:
             composed.append((a, b, min(covering)[1]))
     return composed
+
+
+def _batch_timing(job_id, stage, batch_id, phase, **metadata):
+    run = trace.get_active_run(job_id)
+    if run:
+        run.record_point("batch_timing", stage=stage, batch_id=batch_id, phase=phase, **metadata)
+
+
+def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers):
+    """Bounded requests; shared state is only changed by the ordered consumer."""
+    inherited_base = getattr(_LLM_CTX, "base_url", None)
+    inherited_reasoning = getattr(_LLM_CTX, "reasoning_effort", None)
+
+    def request(task):
+        bi, offset, pairs, indexes = task
+        _RUNTIME_CTX.job_id = job_id
+        _LLM_CTX.base_url = inherited_base
+        _LLM_CTX.reasoning_effort = inherited_reasoning
+        _LLM_CTX.batch_id = bi + 1
+        _LLM_CTX.input_segments = len(indexes)
+        token = _usage.CURRENT_ROLE.set("annotation")
+        _batch_timing(job_id, "annotation", bi + 1, "worker_started", segment_count=len(pairs))
+        try:
+            if job_id:
+                _runtime_pause_checkpoint(job_id)
+                if _runtime_cancel_requested(job_id):
+                    raise RuntimeError("任务已请求取消")
+            with trace.span("annotation", operation="batch", job_id=job_id,
+                            metadata={"batch_id": bi + 1, "offset": offset, "segment_count": len(pairs)}):
+                items = annotate_batch([pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
+            _batch_timing(job_id, "annotation", bi + 1, "result_ready")
+            return task, items
+        except BaseException as exc:
+            _batch_timing(job_id, "annotation", bi + 1, "worker_failed", error_type=type(exc).__name__)
+            raise
+        finally:
+            _usage.CURRENT_ROLE.reset(token)
+            _RUNTIME_CTX.__dict__.clear()
+            _LLM_CTX.__dict__.clear()
+
+    pending = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ft-annot") as executor:
+        try:
+            for i in range(min(workers, len(tasks))):
+                _batch_timing(job_id, "annotation", tasks[i][0] + 1, "queued")
+                pending[i] = executor.submit(request, tasks[i])
+            for i in range(len(tasks)):
+                if job_id:
+                    _runtime_pause_checkpoint(job_id)
+                    if _runtime_cancel_requested(job_id):
+                        raise RuntimeError("任务已请求取消")
+                yield pending.pop(i).result()
+                # Refill only after the consumer has durably committed this result.
+                next_i = i + workers
+                if next_i < len(tasks):
+                    _batch_timing(job_id, "annotation", tasks[next_i][0] + 1, "queued")
+                    pending[next_i] = executor.submit(request, tasks[next_i])
+        finally:
+            for future in pending.values():
+                future.cancel()
 
 
 def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
@@ -6329,64 +6436,75 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
             stage_progress={"completed": done_offset, "total": len(pairs), "unit": "段"}
         )
 
-    # 1) LLM 标注
-    for bi in range(len(batches)):
-        offset = sum(len(b) for b in batches[:bi])
-        if bi < start_bi and offset not in failed_offsets:
+    tasks = []
+    offset = 0
+    for bi, batch in enumerate(batches):
+        batch_offset = offset
+        offset += len(batch)
+        if bi < start_bi and batch_offset not in failed_offsets:
             continue
-        if job_id:
-            _runtime_pause_checkpoint(job_id)
-            if _runtime_cancel_requested(job_id):
-                raise RuntimeError("任务已请求取消")
-        batch_srcs = batches[bi]
-        slice_pairs = pairs[offset:offset + len(batch_srcs)]
-        if on_caption and bi % 10 == 0:
-            on_caption(f"🎨 自动标注第 {offset + 1}-{offset + len(slice_pairs)} 段"
-                       f"（共 {len(pairs)} 段，批次 {bi + 1}/{len(batches)}）...")
-        eligible_local_indexes = [
-            index for index in range(len(slice_pairs))
-            if offset + index not in blocked_source_indexes
-        ]
-        eligible_pairs = [slice_pairs[index] for index in eligible_local_indexes]
-        if not eligible_pairs:
+        slice_pairs = pairs[batch_offset:offset]
+        indexes = [i for i in range(len(slice_pairs)) if batch_offset + i not in blocked_source_indexes]
+        tasks.append((bi, batch_offset, slice_pairs, indexes))
+    workers = min(2, max(1, int((state.get("pipeline_config") or {}).get("translation_concurrency", 2))))
+    run = trace.get_active_run(job_id)
+    if run:
+        run.record_point("annotation_plan", concurrency=workers, batch_count=len(batches),
+                         pending_batch_count=len(tasks), segment_count=len(pairs), batch_size=ANNOT_BATCH_SIZE)
+    results = _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers)
+    # 1) LLM 标注：请求有界并发，按原批次顺序保存。
+    try:
+        for (bi, offset, slice_pairs, eligible_local_indexes), items in results:
+            if job_id:
+                _runtime_pause_checkpoint(job_id)
+                if _runtime_cancel_requested(job_id):
+                    raise RuntimeError("任务已请求取消")
+            if on_caption and bi % 10 == 0:
+                on_caption(f"🎨 自动标注第 {offset + 1}-{offset + len(slice_pairs)} 段"
+                           f"（共 {len(pairs)} 段，批次 {bi + 1}/{len(batches)}）...")
+            _batch_timing(job_id, "annotation", bi + 1, "commit_started")
+            if items is None:
+                state["annotations"] = annotations
+                state["annotations_done_offset"] = offset + len(slice_pairs)
+                save_job_state(job_id, state)
+                _batch_timing(job_id, "annotation", bi + 1, "commit_finished")
+                continue
+            batch_results[str(offset)] = {
+                "status": getattr(items, "status", "success" if items else "empty"),
+                "error": getattr(items, "error", ""),
+                "segment_count": len(slice_pairs),
+            }
+            if batch_results[str(offset)]["status"] in {"success", "empty"}:
+                for gi in range(offset, offset + len(slice_pairs)):
+                    annotations.pop(gi, None)
+            for item in items:
+                local_index = item.get("seg")
+                if (not isinstance(local_index, int)
+                        or not 0 <= local_index < len(eligible_local_indexes)):
+                    continue
+                gi = offset + eligible_local_indexes[local_index]
+                src, tgt, atype, note = item["src"], item["tgt"], item["type"], item["note"]
+                src_span = _find_span(pairs[gi]["source"], src)
+                tgt_span = _find_span(pairs[gi]["target"], tgt) if tgt else None
+                # 原文片段必须能精确匹配定位，绝不允许整段粗暴兜底；译文未定位时不强制整段染色
+                if src_span is None:
+                    continue
+                annotations.setdefault(gi, []).append(
+                    {"type": atype, "src_span": list(src_span),
+                     "tgt_span": list(tgt_span) if tgt_span else None, "note": note})
+            # 每批落盘：断点粒度 = 一个批次
             state["annotations"] = annotations
-            state["annotations_done_offset"] = offset + len(slice_pairs)
+            state["annotations_done_offset"] = max(done_offset, offset + len(slice_pairs))
             save_job_state(job_id, state)
-            continue
-        items = annotate_batch(eligible_pairs, target_lang, provider, api_key, model)
-        batch_results[str(offset)] = {
-            "status": getattr(items, "status", "success" if items else "empty"),
-            "error": getattr(items, "error", ""),
-            "segment_count": len(slice_pairs),
-        }
-        if batch_results[str(offset)]["status"] in {"success", "empty"}:
-            for gi in range(offset, offset + len(slice_pairs)):
-                annotations.pop(gi, None)
-        for item in items:
-            local_index = item.get("seg")
-            if (not isinstance(local_index, int)
-                    or not 0 <= local_index < len(eligible_local_indexes)):
-                continue
-            gi = offset + eligible_local_indexes[local_index]
-            src, tgt, atype, note = item["src"], item["tgt"], item["type"], item["note"]
-            src_span = _find_span(pairs[gi]["source"], src)
-            tgt_span = _find_span(pairs[gi]["target"], tgt) if tgt else None
-            # 原文片段必须能精确匹配定位，绝不允许整段粗暴兜底；译文未定位时不强制整段染色
-            if src_span is None:
-                continue
-            annotations.setdefault(gi, []).append(
-                {"type": atype, "src_span": list(src_span),
-                 "tgt_span": list(tgt_span) if tgt_span else None, "note": note})
-        # 每批落盘：断点粒度 = 一个批次
-        state["annotations"] = annotations
-        state["annotations_done_offset"] = max(done_offset, offset + len(slice_pairs))
-        save_job_state(job_id, state)
-        if job_id:
-            update_runtime_state(
-                job_id, heartbeat=True,
-                stage_progress={"completed": min(offset + len(slice_pairs), len(pairs)),
-                                "total": len(pairs), "unit": "段"}
-            )
+            _batch_timing(job_id, "annotation", bi + 1, "commit_finished")
+            if job_id:
+                update_runtime_state(
+                    job_id, heartbeat=True,
+                    stage_progress={"completed": min(offset + len(slice_pairs), len(pairs)),
+                                    "total": len(pairs), "unit": "段"}
+                )
+    finally:
+        results.close()
 
     # 2) 术语表确定性覆盖：专业名词（特殊译法）-> 黄色（受停用词、长度和全文频次控制）
     term_counts = {}
@@ -6427,6 +6545,9 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
     state["annotations_status"] = "partial" if failed_batches else "success"
     state["annotations_failed_batches"] = failed_batches
     save_job_state(job_id, state)
+    run = trace.get_active_run(job_id)
+    if run:
+        run.record_point("milestone", phase="annotation_complete")
     if job_id:
         update_runtime_state(
             job_id, heartbeat=True,
@@ -7294,6 +7415,11 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     )
     effective_concurrency = max(1, min(int(effective_concurrency), max(1, len(batches) - start_batch)))
     state["batch_plan"]["concurrency"] = effective_concurrency
+    run = trace.get_active_run(job_id)
+    if run:
+        run.record_point("translation_plan", concurrency=effective_concurrency,
+                         batch_count=len(batches), resume_start_batch=start_batch + 1,
+                         segment_count=len(paras))
 
     checkpoint_lock = threading.RLock()
     commit_lock = threading.RLock()
@@ -7396,6 +7522,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     inherited_job_id = getattr(_RUNTIME_CTX, "job_id", job_id)
 
     def _process_batch_payload(bi, run_review=True, effective_pairs=None):
+        _LLM_CTX.batch_id = bi + 1
         if inherited_base_url is not None:
             _LLM_CTX.base_url = inherited_base_url
         if inherited_reasoning is not None:
@@ -8071,6 +8198,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
 
     def _commit_batch(bundle):
         bi = bundle["bi"]
+        _LLM_CTX.batch_id = bi + 1
         offset = bundle["offset"]
         # Captured before anything in this batch touches state: the journal
         # describes the delta against exactly this baseline, and no save happens
@@ -8489,6 +8617,32 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _pending_tm_window["offset"] = offset
 
 
+    def _prepare_batch(bi, run_review=True, effective_pairs=None, *, already_queued=False):
+        if not already_queued:
+            _batch_timing(job_id, "translation", bi + 1, "queued")
+        _batch_timing(job_id, "translation", bi + 1, "worker_started", review_in_worker=run_review)
+        try:
+            bundle = _process_batch_payload(bi, run_review, effective_pairs)
+            _batch_timing(job_id, "translation", bi + 1, "result_ready", review_in_worker=run_review)
+            return bundle
+        except BaseException as exc:
+            _batch_timing(job_id, "translation", bi + 1, "worker_failed", error_type=type(exc).__name__)
+            raise
+
+    def _submit_batch(executor, bi):
+        _batch_timing(job_id, "translation", bi + 1, "queued")
+        return executor.submit(_prepare_batch, bi, already_queued=True)
+
+    def _commit_batch_with_timing(bundle):
+        bi = bundle["bi"]
+        _batch_timing(job_id, "translation", bi + 1, "commit_started")
+        status = "failed"
+        try:
+            _commit_batch(bundle)
+            status = "completed"
+        finally:
+            _batch_timing(job_id, "translation", bi + 1, "commit_finished", status=status)
+
     overlap_active = (
         review_overlap_enabled(review_overlap, state.get("pipeline_config"))
         and bool(enable_review)
@@ -8571,7 +8725,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                     bundle["llm_stats"].get("failures", 0) + rev_res.llm_failures
                 )
 
-                _commit_batch(bundle)
+                _commit_batch_with_timing(bundle)
                 staged_pairs.pop(target_bi, None)
 
             try:
@@ -8592,7 +8746,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                             effective_pairs.extend(staged_pairs[prev_bi])
 
                     gen_start = time.perf_counter()
-                    bundle = _process_batch_payload(
+                    bundle = _prepare_batch(
                         bi, run_review=False, effective_pairs=effective_pairs
                     )
                     gen_end = time.perf_counter()
@@ -8669,14 +8823,14 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 _runtime_pause_checkpoint(job_id)
                 if _runtime_cancel_requested(job_id):
                     raise RuntimeError("任务已请求取消")
-                bundle = _process_batch_payload(bi)
-                _commit_batch(bundle)
+                bundle = _prepare_batch(bi)
+                _commit_batch_with_timing(bundle)
         else:
             window = min(len(batches) - start_batch, effective_concurrency * 2)
             futures = {}
             with ThreadPoolExecutor(max_workers=effective_concurrency, thread_name_prefix="ft-trans") as executor:
                 for bi in range(start_batch, start_batch + window):
-                    futures[bi] = executor.submit(_process_batch_payload, bi)
+                    futures[bi] = _submit_batch(executor, bi)
 
                 for bi in range(start_batch, len(batches)):
                     _runtime_pause_checkpoint(job_id)
@@ -8686,10 +8840,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                         raise RuntimeError("任务已请求取消")
                     next_bi = bi + window
                     if next_bi < len(batches):
-                        futures[next_bi] = executor.submit(_process_batch_payload, next_bi)
+                        futures[next_bi] = _submit_batch(executor, next_bi)
 
                     bundle = futures[bi].result()
-                    _commit_batch(bundle)
+                    _commit_batch_with_timing(bundle)
                     del futures[bi]
     finally:
         # Mandatory immediate snapshot on leaving the loop: normal completion,
@@ -8702,6 +8856,15 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 or (_journal_enabled
                     and _journal_seq > _state_journal.cursor(state)):
             _flush_state_snapshot("loop_exit")
+        if sys.exc_info()[1] is not None and profiler is not None:
+            error = sys.exc_info()[1]
+            status = "cancelled" if "请求取消" in str(error) else "failed"
+            try:
+                for stage in _translation_stages.values():
+                    stage.finish(status=status, persist=False)
+                profiler.persist()
+            except Exception:
+                pass  # Keep the original workflow/storage failure authoritative.
 
     # 全局冲突检测（跨批次），与批内结果去重
     batch_conflict_keys = {(f.get("type"), f.get("entry_id"),
@@ -13646,12 +13809,35 @@ def original_layout_pdf_applicable(filename, source=None):
     return _is_pdf_source(filename, source)
 
 
+@contextmanager
+def _delivery_timing(job_id, state, operation):
+    run = trace.get_active_run(job_id)
+    owns_run = run is None or run.finished_at is not None
+    if owns_run:
+        try:
+            run = trace.start_run(job_id, filename=state.get("filename", ""), output_dir=job_dir(job_id))
+        except OSError:
+            # Export can still succeed in memory when its diagnostic storage fails.
+            run = None
+    status = "failed"
+    try:
+        with trace.span("delivery", operation=operation, job_id=job_id):
+            yield
+        status = "completed"
+        if run:
+            run.record_point("milestone", phase=operation + "_complete")
+    finally:
+        if owns_run and run:
+            trace.finish_run(job_id, status=status)
+
+
 def build_delivery_assets(job_id, state=None, target_lang="", provider="", model=""):
     state = state or load_job_state(job_id) or {}
-    return _delivery_asset_bundle(
-        job_id, state, target_lang or state.get("target_lang") or "",
-        provider or state.get("provider") or "",
-        model or state.get("model") or "")
+    with _delivery_timing(job_id, state, "delivery_assets"):
+        return _delivery_asset_bundle(
+            job_id, state, target_lang or state.get("target_lang") or "",
+            provider or state.get("provider") or "",
+            model or state.get("model") or "")
 
 
 def _reset_source_dependent_state(state):
@@ -14060,29 +14246,30 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
 
 
 def create_delivery_snapshot(job_id, state, target_lang="", provider="", model=""):
-    validation = validate_delivery_translation_state(state)
-    _record_delivery_validation_findings(state, validation)
-    if validation["blocking"]:
-        save_job_state(job_id, state)
-        raise RuntimeError("最终交付未通过 Translation Target Invariant")
-    source = load_source(job_id)
-    frozen = state.get("glossary_frozen") or {}
-    source_hash = hashlib.sha256(source).hexdigest() if source else \
-        str(frozen.get("source_hash") or "")
-    manifest = _snapshots.create_snapshot(
-        job_dir(job_id), job_id, state,
-        _delivery_asset_bundle(job_id, state, target_lang, provider, model),
-        source_identity={
-            "filename": state.get("filename", ""),
-            "source_hash": source_hash,
-            "source_page_count": state.get("source_page_count"),
-        },
-        active_terminology_version={
-            "version": frozen.get("version"),
-            "glossary_hash": frozen.get("glossary_hash"),
-            "status": "已冻结" if frozen else "未冻结",
-        })
-    return manifest
+    with _delivery_timing(job_id, state, "delivery_snapshot"):
+        validation = validate_delivery_translation_state(state)
+        _record_delivery_validation_findings(state, validation)
+        if validation["blocking"]:
+            save_job_state(job_id, state)
+            raise RuntimeError("最终交付未通过 Translation Target Invariant")
+        source = load_source(job_id)
+        frozen = state.get("glossary_frozen") or {}
+        source_hash = hashlib.sha256(source).hexdigest() if source else \
+            str(frozen.get("source_hash") or "")
+        manifest = _snapshots.create_snapshot(
+            job_dir(job_id), job_id, state,
+            _delivery_asset_bundle(job_id, state, target_lang, provider, model),
+            source_identity={
+                "filename": state.get("filename", ""),
+                "source_hash": source_hash,
+                "source_page_count": state.get("source_page_count"),
+            },
+            active_terminology_version={
+                "version": frozen.get("version"),
+                "glossary_hash": frozen.get("glossary_hash"),
+                "status": "已冻结" if frozen else "未冻结",
+            })
+        return manifest
 
 
 def list_delivery_snapshots(job_id):
@@ -14216,6 +14403,16 @@ def task_status_label(state, job_id=""):
                     final_qa.get("author_visual_review") != "CONFIRMED" or
                     final_qa.get("word_final_review") != "CONFIRMED"):
                 return "暂不满足交付条件"
+        # 首页标签必须与交付门禁同一判据：`approve_delivery` 在审校回执
+        # 失效（missing/stale/failed）时会拒绝进入 final，若这里仍然宣称
+        # "可以冻结交付"，用户在首页看到的承诺和点下去的结果互相矛盾
+        # （r6 状态一致性审计：647 段真实任务有 22 段 review_failed，
+        # 首页显示"可以冻结交付"，交付被门禁拒绝）。回执未就绪时如实
+        # 回到"待审校"——与工作台芯片的"（需重新审校）"同一数据源。
+        from folith.translation_evidence import translation_review_readiness
+        review = translation_review_readiness(state)
+        if review.get("required") and not review.get("ready"):
+            return "待审校"
         return "可以冻结交付"
     if state.get("p1_done") and not state.get("p2_done"):
         if (state.get("stage") == "TERMS_PREPARED" and state.get("quality_mode")
@@ -16038,6 +16235,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
     else:
         pipeline_config.pop("enable_source_cleanup", None)
     state["pipeline_config"] = pipeline_config
+    active_run.record_run_configuration({**pipeline_config, "auxiliary": auxiliary_config},
+                                        resume=bool(saved_runtime_config))
     state["quality_mode"] = bool(strict_terminology_governance)
     state["ocr_language"] = effective_ocr_language or ""
     state["ocr_mode"] = effective_ocr_mode
@@ -16508,6 +16707,7 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         state = _run_targeted_final_review(
             job_id, state, reviewer_config, target_lang, style_rules,
             enable_review=enable_review, on_status=on_status)
+        active_run.record_point("milestone", phase="translation_review_complete")
 
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
@@ -16547,6 +16747,8 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         save_job_state(job_id, state)
 
     state["stage"] = _state_migration.derive_stage(state)
-    state["performance"] = persist_performance(final_status="completed")
+    state["performance"] = persist_performance()
     save_job_state(job_id, state)
+    active_run.record_point("milestone", phase="automatic_pipeline_complete")
+    trace.finish_run(job_id=job_id, status="completed")
     return state

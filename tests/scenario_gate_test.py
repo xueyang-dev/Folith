@@ -16,6 +16,9 @@
 - **完全离线**：所有 provider 调用由 `OfflineProvider` 承接，无网络、无 API key、
   无 `pytest.mark.skip`。CI 可以直接运行。
 - **不提交二进制 fixture**：文档由 `scripts/make_scenario_fixtures.py` 确定性重建。
+  该脚本另外生成一个**版面专用**语料 `scenario-columns.pdf`（多栏前置区 + 悬挂
+  缩进列表），它不是第四个端到端场景，只钉住 PDF 段落边界判据，由
+  `tests/pdf_column_layout_test.py` 消费。
 - **不声称翻译质量**：离线 provider 产出的是"结构有效"的译文，用于驱动状态机。
   语言质量评估属于 `eval/`，见 `eval/README.md`。
 

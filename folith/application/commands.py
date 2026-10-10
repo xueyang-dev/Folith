@@ -27,6 +27,7 @@ from folith.application.settings import (
     SettingsSources,
     resolve_effective_settings,
 )
+from folith.application.task_setup import PANEL_STATE_KEYS
 
 
 class ApplicationError(RuntimeError):
@@ -183,6 +184,63 @@ def _apply_task_defaults(state: dict, contract: JobConfig) -> None:
     state["style_rules"] = contract.style_rules
     state["translation_theory"] = contract.translation_theory
     state["segmentation_mode"] = contract.segmentation_mode
+
+
+def apply_task_setup(
+    job_id: str,
+    values: "SettingsSources | Mapping[str, Any]",
+    *,
+    target_lang: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> bool:
+    """Persist the pre-translation choices for a task that has not started.
+
+    Why this exists: :func:`resolve_effective_settings` makes a task's *saved*
+    decision authoritative, and :func:`import_document` already freezes several
+    of those keys into the state when the task is created (the delivery config,
+    target language, understanding / source-cleanup, the report / annotate
+    flags).  A preparation surface that only changed the caller's live values
+    would therefore be ignored by the very task it was configuring — the user
+    would pick a product and get the imported default.  Writing the choices
+    back here keeps exactly one saved decision per task, the same shape the
+    import path produces.
+
+    Refuses once the task has started (``p1_done`` / ``p2_done`` / persisted
+    segments / a saved ``pipeline_config``): the preparation panel must never
+    silently rewrite a task that is running or has already produced segments.
+    """
+    core = _core()
+    job_id = _require_text(job_id, "缺少任务标识")
+    with core.job_state_mutation_lock(job_id):
+        state = core.load_job_state(job_id)
+        if not state:
+            raise JobNotFoundError(f"任务 {job_id} 不存在。")
+        if (state.get("p1_done") or state.get("p2_done")
+                or state.get("pipeline_config") or state.get("source_paras")):
+            raise CommandRejected("任务已经开始，译前设置不能再修改。")
+        # Resolve against an EMPTY state: preparing a task means the panel's
+        # choice *becomes* the task's decision, so the values the import saved
+        # must not win over the ones the user just picked.  (Letting a saved
+        # decision win is right for resume and exactly wrong for preparation.)
+        contract = JobConfig.from_settings(resolve_effective_settings(
+            as_settings_sources(values).with_state({})))
+        state["delivery_config"] = dict(contract.delivery_config)
+        _apply_task_defaults(state, contract)
+        # The panel's own round-trip keys: the resolver reads some of them back,
+        # the rest only let the panel reopen with the user's choices intact.
+        explicit = dict(as_settings_sources(values).explicit or {})
+        for key in PANEL_STATE_KEYS:
+            if key in explicit and explicit[key] is not None:
+                state[key] = explicit[key]
+        if target_lang is not None:
+            text = str(target_lang).strip()
+            if text:
+                state["target_lang"] = text
+        if project_id is not None:
+            resolved, _stale = core.task_project_id_for_new_job(project_id)
+            state["project_id"] = resolved
+        core.save_job_state(job_id, state)
+    return True
 
 
 # ---------------------------------------------------------------------------
