@@ -239,6 +239,7 @@ class MainWindow(QMainWindow):
         self.workbench.entityPreviewRequested.connect(self.preview_entity_repair)
         self.workbench.entityRepairRequested.connect(self.apply_entity_repair)
         self.workbench.entityAcceptRequested.connect(self.accept_entity_variants)
+        self.workbench.rescanRequested.connect(self.rescan_source)
         self.workbench.revealLogRequested.connect(
             lambda job_id: self.reveal_path(adapter.technical_log_path(job_id)))
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
@@ -1262,6 +1263,25 @@ class MainWindow(QMainWindow):
             self._failure(i18n.tr('无法补跑'), str(exc))
             return
         self._notice(i18n.tr('已标记需要补跑的部分，正在继续处理…'))
+        self.refresh_workbench(force=True)
+        self.start_or_resume()
+
+    def rescan_source(self, options: dict) -> None:
+        """重新扫描 PDF 原文：登记请求 → 继续（核心在继续时执行并使旧派生结果失效）。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if not self._confirm(
+                i18n.tr('重新扫描 PDF 原文'),
+                i18n.tr('将用新的设置重新读取整份 PDF。已有译文与新原文的对齐会失效，需要重新翻译与审校；视觉理解会重新请求模型。\n\n确定重新扫描吗？'),
+                yes=i18n.tr('重新扫描'), no=i18n.tr('取消'), ):
+            return
+        try:
+            adapter.request_source_rescan(job_id, **options)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法重新扫描'), str(exc))
+            return
+        self._notice(i18n.tr('已开始重新扫描；完成后请检查原文与译文对齐。'))
         self.refresh_workbench(force=True)
         self.start_or_resume()
 

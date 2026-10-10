@@ -1113,6 +1113,7 @@ class WorkbenchView(QWidget):
     entityPreviewRequested = Signal(str, str)
     entityRepairRequested = Signal(str, str, list)
     entityAcceptRequested = Signal(str)
+    rescanRequested = Signal(dict)
     restoreRequested = Signal(int)             # 恢复人工修改之前的译文
     structureRequested = Signal(str, int)     # 操作名（见 adapter.STRUCTURE_OPERATIONS / "undo"）, 段索引
     deliverRequested = Signal()
@@ -1729,6 +1730,7 @@ class WorkbenchView(QWidget):
         self.followup_panel.previewRequested.connect(self.entityPreviewRequested.emit)
         self.followup_panel.repairRequested.connect(self.entityRepairRequested.emit)
         self.followup_panel.acceptRequested.connect(self.entityAcceptRequested.emit)
+        self.followup_panel.rescanRequested.connect(self.rescanRequested.emit)
         self.activity_panel = ActivityPanel()
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))

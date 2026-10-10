@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from . import adapter
 from . import i18n
 from . import style as style_module
 from .style import Card
@@ -32,12 +33,14 @@ class FollowupPanel(QWidget):
     previewRequested = Signal(str, str)             # source, target
     repairRequested = Signal(str, str, list)        # source, target, preview
     acceptRequested = Signal(str)                   # source
+    rescanRequested = Signal(dict)                  # backend / mode / language / quality
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._view: dict = {}
         self._preview: list[dict] = []
         self._busy = False
+        self._rescan_seeded = False
 
         def label(wrap: bool = True, muted: bool = False) -> QLabel:
             widget = QLabel("")
@@ -115,6 +118,45 @@ class FollowupPanel(QWidget):
         entity.addLayout(entity_buttons)
         self.entity_card = entity_card
 
+        # ---- 重新扫描 PDF ---------------------------------------------------
+        self.rescan_title = QLabel(i18n.tr('重新扫描 PDF 原文'))
+        self.rescan_title.setObjectName("sectionTitle")
+        self.rescan_hint = label(muted=True)
+        self.rescan_hint.setText(i18n.tr(
+            '更换提取来源、识别语言或扫描精度后重新读取整份 PDF。已有译文与新原文的对齐会失效，需要重新翻译与审校。'))
+        self.rescan_backend = style_module.ComboBox()
+        for text, value in adapter.OCR_BACKEND_CHOICES:
+            self.rescan_backend.addItem(i18n.tr(text), value)
+        self.rescan_mode = style_module.ComboBox()
+        for text, value in adapter.OCR_MODE_CHOICES:
+            self.rescan_mode.addItem(i18n.tr(text), value)
+        self.rescan_language = style_module.ComboBox()
+        for text, value in adapter.ocr_language_choices():
+            self.rescan_language.addItem(i18n.tr_dynamic(text), value)
+        self.rescan_quality = style_module.ComboBox()
+        for text, value in adapter.OCR_QUALITY_CHOICES:
+            self.rescan_quality.addItem(i18n.tr_dynamic(text), value)
+        self.rescan_status = label(muted=True)
+        self.rescan_button = QPushButton(i18n.tr('重新扫描 PDF 原文'))
+        self.rescan_button.clicked.connect(self._emit_rescan)
+        for box in (self.rescan_backend, self.rescan_language):
+            box.currentIndexChanged.connect(self._rescan_changed)
+        rescan_card = Card()
+        rescan = QVBoxLayout(rescan_card)
+        rescan.setContentsMargins(16, 14, 16, 14)
+        rescan.setSpacing(8)
+        for widget in (self.rescan_title, self.rescan_hint):
+            rescan.addWidget(widget)
+        for caption, box in ((i18n.tr('提取来源'), self.rescan_backend),
+                             (i18n.tr('何时识别'), self.rescan_mode),
+                             (i18n.tr('识别语言'), self.rescan_language),
+                             (i18n.tr('识别精度'), self.rescan_quality)):
+            rescan.addWidget(style_module.field_label(caption))
+            rescan.addWidget(box)
+        rescan.addWidget(self.rescan_status)
+        rescan.addWidget(self.rescan_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.rescan_card = rescan_card
+
         self.empty = label(muted=True)
         self.empty.setText(i18n.tr('没有需要收尾的事项：理解、标注和专名译法都已处理。'))
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -127,6 +169,7 @@ class FollowupPanel(QWidget):
         column.addWidget(recovery_card)
         column.addWidget(retry_card)
         column.addWidget(entity_card)
+        column.addWidget(rescan_card)
         column.addWidget(self.empty)
         column.addStretch(1)
         scroll = QScrollArea()
@@ -194,6 +237,7 @@ class FollowupPanel(QWidget):
         self.annotation_button.setEnabled(not self._busy)
         self.retry_card.setVisible(degraded or partial)
 
+        self._apply_rescan(self._view.get("rescan") or {})
         entities = list(self._view.get("entities") or [])
         self.entity_box.blockSignals(True)
         self.entity_box.clear()
@@ -209,6 +253,39 @@ class FollowupPanel(QWidget):
             self._entity_changed()
         has_work = bool(self._view.get("has_work")) or bool(current) or degraded or partial or bool(entities)
         self.empty.setVisible(not has_work)
+
+    def _apply_rescan(self, rescan: dict) -> None:
+        available = bool(rescan.get("available"))
+        self.rescan_card.setVisible(available)
+        if not available:
+            return
+        # 只在第一次出现时带入当前设置；之后用户的选择不被后台刷新覆盖。
+        if not getattr(self, "_rescan_seeded", False):
+            self._rescan_seeded = True
+            for box, key in ((self.rescan_backend, "backend"), (self.rescan_mode, "mode"),
+                             (self.rescan_language, "language"), (self.rescan_quality, "quality")):
+                index = box.findData(rescan.get(key) or "")
+                if index >= 0:
+                    box.setCurrentIndex(index)
+        self._rescan_changed()
+
+    def _rescan_changed(self, *_args) -> None:
+        if self.rescan_card.isHidden():
+            return
+        status = adapter.rescan_engine_status(
+            str(self.rescan_backend.currentData() or ""),
+            str(self.rescan_language.currentData() or ""))
+        text = i18n.tr_dynamic(status.get("message") or "") if not status.get("ok") \
+            else i18n.tr_dynamic(status.get("quality_note") or "")
+        self.rescan_status.setText(text)
+        self.rescan_button.setEnabled(bool(status.get("ok")) and not self._busy)
+
+    def _emit_rescan(self) -> None:
+        self.rescanRequested.emit({
+            "backend": str(self.rescan_backend.currentData() or ""),
+            "mode": str(self.rescan_mode.currentData() or ""),
+            "language": str(self.rescan_language.currentData() or ""),
+            "quality": str(self.rescan_quality.currentData() or "")})
 
     def _current_source(self) -> str:
         return str(self.entity_box.currentData() or "")

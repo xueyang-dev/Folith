@@ -193,3 +193,89 @@ def test_workbench_tab_counts_the_open_items(qapp, job):
                adapter.segment_rows(job, state), [])
     text = bench.tabs.tabText(bench.tabs.indexOf(bench.followup_panel))
     assert "(1)" in text
+
+
+# --------------------------------------------------------- 重新扫描 PDF -------
+
+@pytest.fixture()
+def pdf_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    state = core.new_job_state("scan.pdf")
+    state.update(p1_done=True, p2_done=True, paras=["a"],
+                 pairs=[{"source": "a", "target": "甲"}],
+                 ocr_config={"ocr_backend": "online", "ocr_mode": "auto",
+                             "ocr_language": "ara", "ocr_quality": "high"})
+    core.save_job_state("scanjob000000001", state)
+    return "scanjob000000001"
+
+
+def test_rescan_card_is_only_for_pdf_tasks(job, pdf_job):
+    assert adapter.followup_view(job)["rescan"]["available"] is False
+    view = adapter.followup_view(pdf_job)["rescan"]
+    assert view["available"] and view["language"] == "ara" and view["quality"] == "high"
+
+
+def test_requesting_a_rescan_registers_the_options_for_the_next_run(pdf_job):
+    options = adapter.request_source_rescan(
+        pdf_job, backend="online", mode="force", language="ara", quality="historical")
+    state = adapter.load_state(pdf_job)
+    assert state["source_rescan_requested"] is True
+    assert state["source_rescan_options"] == options
+    assert options["ocr_dpi"] == core.ocr_quality_dpi("historical")
+    assert options["ocr_online"] is None, "视觉连接不随任务快照保存"
+    assert options["ocr_mode"] == "force"
+    assert state["pairs"][0]["target"] == "甲", "登记请求本身不能动译文（失效发生在执行时）"
+
+
+def test_rescan_is_refused_while_running(pdf_job, monkeypatch):
+    monkeypatch.setattr(core, "job_is_active", lambda job_id: True)
+    with pytest.raises(adapter.AdapterError, match="正在运行"):
+        adapter.request_source_rescan(pdf_job, backend="online", mode="auto",
+                                      language="", quality="standard")
+    assert "source_rescan_requested" not in adapter.load_state(pdf_job)
+
+
+def test_rescan_is_refused_for_non_pdf(job):
+    with pytest.raises(adapter.AdapterError, match="PDF"):
+        adapter.request_source_rescan(job, backend="online", mode="auto",
+                                      language="", quality="standard")
+
+
+def test_rescan_with_an_unavailable_local_engine_is_refused_with_the_reason(pdf_job, monkeypatch):
+    monkeypatch.setattr(core, "ocr_engine_status", lambda *a, **k: {
+        "ok": False, "message": "未找到 Tesseract 语言包 ara", "quality_note": ""})
+    with pytest.raises(adapter.AdapterError, match="Tesseract"):
+        adapter.request_source_rescan(pdf_job, backend="tesseract", mode="auto",
+                                      language="ara", quality="standard")
+    assert "source_rescan_requested" not in adapter.load_state(pdf_job)
+
+
+def test_panel_rescan_card_flow(qapp, pdf_job):
+    from folith.qt.followup_panel import FollowupPanel
+
+    panel = FollowupPanel()
+    panel.apply(adapter.followup_view(pdf_job))
+    assert not panel.rescan_card.isHidden()
+    assert panel.rescan_language.currentData() == "ara", "初始值取自任务当前设置"
+    seen = []
+    panel.rescanRequested.connect(seen.append)
+    panel.rescan_button.click()
+    assert seen and seen[0]["language"] == "ara" and seen[0]["quality"] == "high"
+
+
+def test_panel_keeps_the_users_rescan_choice_across_refreshes(qapp, pdf_job):
+    from folith.qt.followup_panel import FollowupPanel
+
+    panel = FollowupPanel()
+    panel.apply(adapter.followup_view(pdf_job))
+    panel.rescan_quality.setCurrentIndex(panel.rescan_quality.findData("historical"))
+    panel.apply(adapter.followup_view(pdf_job))
+    assert panel.rescan_quality.currentData() == "historical"
+
+
+def test_panel_hides_the_rescan_card_for_non_pdf_tasks(qapp, job):
+    from folith.qt.followup_panel import FollowupPanel
+
+    panel = FollowupPanel()
+    panel.apply(adapter.followup_view(job))
+    assert panel.rescan_card.isHidden()

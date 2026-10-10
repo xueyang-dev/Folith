@@ -1030,6 +1030,7 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         recovery = {}
     busy = bool(core._job_execution_alive(job_id))
     return {
+        "rescan": rescan_view(state),
         "recovery": recovery,
         "understanding": understanding,
         "annotation": annotation,
@@ -1040,6 +1041,71 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
             or annotation.get("status") == "partial" or entities
             or recovery.get("current_batch")),
     }
+
+
+def rescan_view(state: dict) -> dict:
+    """"重新扫描 PDF 原文"卡片需要的现状；非 PDF 任务不提供。"""
+    filename = str(state.get("filename") or "")
+    if not filename.lower().endswith(".pdf"):
+        return {"available": False}
+    current = state.get("ocr_config") or {}
+    return {
+        "available": True,
+        "backend": str(current.get("ocr_backend") or state.get("ocr_backend") or "online"),
+        "mode": normalize_ocr_mode(str(current.get("ocr_mode") or state.get("ocr_mode") or "")),
+        "language": str(current.get("ocr_language") or state.get("ocr_language") or ""),
+        "quality": str(current.get("ocr_quality") or state.get("ocr_quality") or "standard"),
+    }
+
+
+def rescan_engine_status(backend: str, language: str) -> dict:
+    """本机识别来源是否可用（只读配置，不发任何请求）。视觉理解由模型连接决定。"""
+    if normalize_ocr_backend(backend) == "online":
+        return {"ok": True, "message": "", "quality_note": ""}
+    status = core.ocr_engine_status(backend, language or "eng")
+    return {"ok": bool(status.get("ok")), "message": str(status.get("message") or ""),
+            "quality_note": str(status.get("quality_note") or "")}
+
+
+def normalize_ocr_backend(value: str) -> str:
+    return str(value or "online").strip().lower() or "online"
+
+
+def request_source_rescan(job_id: str, *, backend: str, mode: str, language: str,
+                          quality: str) -> dict:
+    """登记一次重新扫描（由随后的"继续"真正执行）。
+
+    核心把"请求"放在任务状态里：重新扫描会让所有由旧原文派生的结果（清洗、分句、
+    译文对齐）失效，所以必须在任务不在运行时、并且在状态事务锁里登记。
+    """
+    if core.is_job_worker_alive(job_id) or core.job_is_active(job_id):
+        raise AdapterError("任务正在运行，完成后才能重新扫描。")
+    state = load_state(job_id)
+    if not str(state.get("filename") or "").lower().endswith(".pdf"):
+        raise AdapterError("重新扫描只支持 PDF 任务。")
+    backend = normalize_ocr_backend(backend)
+    status = rescan_engine_status(backend, language)
+    if not status["ok"]:
+        raise AdapterError(status["message"] or "所选识别来源不可用。")
+    options = {
+        "ocr_language": str(language or ""),
+        "ocr_backend": backend,
+        "ocr_paddle_model": "official",
+        "ocr_online": None,
+        "ocr_quality": str(quality or "standard"),
+        "ocr_dpi": core.ocr_quality_dpi(quality or "standard"),
+        "ocr_mode": normalize_ocr_mode(mode),
+    }
+
+    def _request(latest: dict) -> None:
+        latest["source_rescan_requested"] = True
+        latest["source_rescan_options"] = dict(options)
+
+    try:
+        core.mutate_job_state(job_id, _request)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return options
 
 
 def prepare_followup_retry(job_id: str, part: str) -> dict:
@@ -1924,6 +1990,12 @@ OCR_BACKEND_CHOICES = (("视觉理解（VLM，默认）", "online"),
                        ("本机 OCR · PaddleOCR", "paddle"))
 
 
+#: 本机 OCR 的扫描精度（只对本机识别有效；视觉理解固定 150 DPI）。
+OCR_QUALITY_CHOICES = (("标准 · 220 DPI", "standard"),
+                       ("高质量 · 300 DPI", "high"),
+                       ("历史/难认扫描 · 350 DPI", "historical"))
+
+
 #: 「自动判断」在配置里用空串表示（核心按文档自动判断语言）。
 OCR_LANGUAGE_AUTO = "自动判断"
 
@@ -2255,11 +2327,8 @@ def setup_choices() -> dict:
         "ocr_modes": [dict(label=label, value=value) for label, value in OCR_MODE_CHOICES],
         "ocr_backends": [dict(label=label, value=value)
                          for label, value in OCR_BACKEND_CHOICES],
-        "ocr_quality": [
-            {"label": "标准 · 220 DPI", "value": "standard"},
-            {"label": "高质量 · 300 DPI", "value": "high"},
-            {"label": "历史/难认扫描 · 350 DPI", "value": "historical"},
-        ],
+        "ocr_quality": [dict(label=label, value=value)
+                        for label, value in OCR_QUALITY_CHOICES],
         "target_languages": list(TARGET_LANGUAGES),
         "projects": project_options(),
     }
