@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QRadioButton, QScrollArea, QTableWidget, QTableWidgetItem,
+    QPushButton, QRadioButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
     QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
@@ -389,11 +389,148 @@ class EngineDialog(QDialog):
         self.ocr_language_box.setCurrentIndex(-1)
         self.ocr_language_box.setEditText(wanted)
 
+    # -- vision connection -------------------------------------------------
+    def _build_vision_card(self) -> QWidget:
+        """扫描件默认走视觉理解：它用的模型可以和翻译模型分开。"""
+        view = adapter.vision_connection_view()
+        self._vision_view = view
+        card, body = _panel(
+            i18n.tr('视觉理解连接'),
+            i18n.tr('扫描件默认由视觉模型直接读成结构化正文。默认沿用上面的翻译模型；'
+                    '翻译模型不支持图像输入时，在这里单独配置一个支持图像的模型。'))
+        self.vision_same_radio = style_module.RadioButton(i18n.tr('沿用翻译模型（默认）'))
+        self.vision_separate_radio = style_module.RadioButton(i18n.tr('单独配置视觉模型'))
+        group = QButtonGroup(self)
+        group.addButton(self.vision_same_radio)
+        group.addButton(self.vision_separate_radio)
+        self.vision_separate_radio.setChecked(bool(view["dedicated"]))
+        self.vision_same_radio.setChecked(not view["dedicated"])
+        mode_row = QWidget()
+        mode_layout = QHBoxLayout(mode_row)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(theme_module.SPACE["md"])
+        mode_layout.addWidget(self.vision_same_radio)
+        mode_layout.addWidget(self.vision_separate_radio)
+        mode_layout.addStretch(1)
+
+        self.vision_provider_box = style_module.ComboBox()
+        self.vision_provider_box.addItems(view["providers"])
+        if view["provider"] in view["providers"]:
+            self.vision_provider_box.setCurrentText(view["provider"])
+        self.vision_model_edit = QLineEdit(view["model"])
+        self.vision_model_edit.setPlaceholderText(i18n.tr('支持图像输入的模型名'))
+        self.vision_base_edit = QLineEdit(view["base_url"])
+        self.vision_base_edit.setPlaceholderText(i18n.tr('留空使用该提供商的官方地址；自定义中转站必须填写'))
+        self.vision_key_field = style_module.SecretField("")
+        self.vision_key_edit = self.vision_key_field.line_edit
+        self.vision_key_edit.setPlaceholderText(
+            i18n.tr('已保存，留空表示沿用') if view["has_key"] else i18n.tr('保存在本机，仅当前用户可读'))
+        self.vision_tokens_box = QSpinBox()
+        self.vision_tokens_box.setRange(view["min_tokens"], view["max_tokens_limit"])
+        self.vision_tokens_box.setSingleStep(1024)
+        self.vision_tokens_box.setValue(view["max_tokens"])
+        self.vision_reasoning_box = style_module.ComboBox()
+        for mode in view["reasoning_modes"]:
+            self.vision_reasoning_box.addItem(
+                i18n.tr(adapter.VISION_REASONING_LABELS.get(mode, mode)), mode)
+        index = self.vision_reasoning_box.findData(view["reasoning_mode"])
+        self.vision_reasoning_box.setCurrentIndex(max(index, 0))
+
+        self.vision_fields = QWidget()
+        fields = QVBoxLayout(self.vision_fields)
+        fields.setContentsMargins(0, 0, 0, 0)
+        fields.setSpacing(theme_module.SPACE["sm"])
+        pair = QWidget()
+        pair_layout = QGridLayout(pair)
+        pair_layout.setContentsMargins(0, 0, 0, 0)
+        pair_layout.setHorizontalSpacing(12)
+        pair_layout.addWidget(_field(i18n.tr('服务商'), self.vision_provider_box), 0, 0)
+        pair_layout.addWidget(_field(i18n.tr('视觉模型'), self.vision_model_edit), 0, 1)
+        pair_layout.setColumnStretch(0, 1)
+        pair_layout.setColumnStretch(1, 2)
+        fields.addWidget(pair)
+        fields.addWidget(_field(i18n.tr('API 密钥'), self.vision_key_field))
+        fields.addWidget(_field(i18n.tr('API 地址'), self.vision_base_edit))
+        tail = QWidget()
+        tail_layout = QGridLayout(tail)
+        tail_layout.setContentsMargins(0, 0, 0, 0)
+        tail_layout.setHorizontalSpacing(12)
+        tail_layout.addWidget(_field(
+            i18n.tr('输出上限（tokens）'), self.vision_tokens_box,
+            i18n.tr('输出被截断时该页会判为失败，而不是保存半页文字。')), 0, 0)
+        tail_layout.addWidget(_field(i18n.tr('推理模式'), self.vision_reasoning_box), 0, 1)
+        fields.addWidget(tail)
+
+        self.vision_status = QLabel("")
+        self.vision_status.setWordWrap(True)
+        self.vision_status.setObjectName("hint")
+        body.addWidget(mode_row)
+        body.addWidget(self.vision_fields)
+        body.addWidget(self.vision_status)
+        self.vision_same_radio.toggled.connect(self._vision_mode_changed)
+        self._vision_mode_changed()
+        return card
+
+    def _vision_mode_changed(self) -> None:
+        separate = self.vision_separate_radio.isChecked()
+        self.vision_fields.setVisible(separate)
+        status = self._vision_view["status"]
+        if separate:
+            _set_status(self.vision_status, "", "muted")
+        elif status.get("ok"):
+            _set_status(self.vision_status,
+                        i18n.tr('将沿用翻译连接：{v0} · {v1}',
+                                v0=status.get("model") or "", v1=status.get("provider") or ""),
+                        "ok")
+        else:
+            _set_status(self.vision_status,
+                        i18n.tr('视觉连接尚不可用：{v0}', v0=i18n.tr_dynamic(status.get("message") or "")),
+                        "muted")
+
+    def _vision_form(self) -> dict:
+        return {"provider": self.vision_provider_box.currentText().strip(),
+                "model": self.vision_model_edit.text().strip(),
+                "api_key": self.vision_key_edit.text().strip(),
+                "base_url": self.vision_base_edit.text().strip(),
+                "max_tokens": int(self.vision_tokens_box.value()),
+                "reasoning_mode": str(self.vision_reasoning_box.currentData()
+                                      or "provider_default")}
+
+    def _vision_changed(self) -> bool:
+        view = self._vision_view
+        if self.vision_separate_radio.isChecked() != bool(view["dedicated"]):
+            return True
+        if not view["dedicated"]:
+            return False
+        form = self._vision_form()
+        return bool(form["api_key"]) or any(
+            form[key] != view[key] for key in
+            ("provider", "model", "base_url", "max_tokens", "reasoning_mode"))
+
+    def _vision_problem(self) -> str:
+        """保存前的检查：选了"单独配置"就必须配完整。"""
+        if not self.vision_separate_radio.isChecked():
+            return ""
+        form = self._vision_form()
+        return adapter.vision_connection_problem(
+            provider=form["provider"], model=form["model"], api_key=form["api_key"],
+            has_saved_key=bool(self._vision_view["has_key"]))
+
+    def _apply_vision(self) -> None:
+        """把视觉连接落盘（改过才写）。失败抛 ``AdapterError``。"""
+        if not self._vision_changed():
+            return
+        if self.vision_separate_radio.isChecked():
+            self._vision_view = adapter.save_vision_connection(**self._vision_form())
+        else:
+            self._vision_view = adapter.clear_vision_connection()
+
     def _build_ocr_tab(self) -> QWidget:
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
         page_layout.setSpacing(theme_module.SPACE["sm"])
+        page_layout.addWidget(self._build_vision_card())
         ocr_card, body = _panel(
             i18n.tr('扫描件识别'),
             i18n.tr('只影响没有可用文本层的页面（扫描件）；文本层 PDF 与 DOCX 不走这一步。'))
@@ -633,6 +770,10 @@ class EngineDialog(QDialog):
         return config
 
     def _save(self) -> None:
+        vision_problem = self._vision_problem()
+        if vision_problem:
+            _set_status(self._status, i18n.tr_dynamic(vision_problem), "danger")
+            return
         config = self._collect()
         problem = i18n.tr_dynamic(config.connection_problem())
         if problem and bootstrap.automation():
@@ -644,6 +785,11 @@ class EngineDialog(QDialog):
                     i18n.tr('{v0}。\n\n仍然保存这份配置吗？（未配置好之前无法启动翻译）', v0=problem),
                     yes=i18n.tr('仍然保存'), no=i18n.tr('返回检查'), tone="warn"):
                 return
+        try:
+            self._apply_vision()
+        except adapter.AdapterError as exc:
+            _set_status(self._status, i18n.tr_dynamic(str(exc)), "danger")
+            return
         try:
             config.save()
         except Exception as exc:  # noqa: BLE001 - the user must see the reason

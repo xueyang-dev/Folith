@@ -1008,6 +1008,93 @@ def confirm_source_segment(job_id: str, index: int, note: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 视觉理解连接（扫描件的默认路径） =================
+#
+# 扫描件默认走 VLM 结构化视觉理解（``ocr_backend == "online"``）。它用"专用视觉连接"，
+# 没有保存过就沿用翻译连接；翻译模型若不支持图像输入，抽取会明确失败而不会静默回退。
+# 所以需要一个地方单独配置视觉模型。OCR 本身只是可选的本机定位插件，不在这里配置。
+
+VISION_REASONING_LABELS = {"provider_default": "服务默认",
+                           "thinking_disabled": "关闭思考（DeepSeek 系）"}
+
+
+def vision_providers() -> list[str]:
+    """能做图像输入的连接只有 OpenAI 兼容协议这一类。"""
+    return [name for name, cfg in core.PROVIDERS.items()
+            if cfg.get("kind") in {"openai", "openai_compat"}]
+
+
+def vision_connection_view() -> dict:
+    """当前视觉连接（不含密钥）。``dedicated`` 为假表示沿用翻译连接。"""
+    profile = core.load_ocr_online_config() or {}
+    status = core.ocr_online_status()
+    return {
+        "dedicated": bool(profile),
+        "provider": str(profile.get("provider") or ""),
+        "model": str(profile.get("model") or ""),
+        "base_url": str(profile.get("base_url") or ""),
+        "max_tokens": int(profile.get("max_tokens") or core.OCR_ONLINE_DEFAULT_MAX_TOKENS),
+        "reasoning_mode": str(profile.get("reasoning_mode") or "provider_default"),
+        "has_key": bool(profile.get("api_key")),
+        "providers": vision_providers(),
+        "min_tokens": int(core.OCR_ONLINE_MIN_MAX_TOKENS),
+        "max_tokens_limit": int(core.OCR_ONLINE_MAX_MAX_TOKENS),
+        "reasoning_modes": list(core.OCR_ONLINE_REASONING_MODES),
+        "status": {"ok": bool(status.get("ok")),
+                   "message": str(status.get("message") or "").replace("线上 OCR", "视觉理解"),
+                   "model": str(status.get("model") or ""),
+                   "provider": str(status.get("provider") or "")},
+    }
+
+
+def vision_connection_problem(*, provider: str, model: str, api_key: str,
+                              has_saved_key: bool) -> str:
+    """保存专用视觉连接前的检查；返回空串表示可以保存。"""
+    if not str(provider or "").strip():
+        return "请选择视觉模型的服务商。"
+    if not str(model or "").strip():
+        return "请填写视觉模型名（需要支持图像输入）。"
+    if not str(api_key or "").strip() and not has_saved_key:
+        return "请填写视觉连接的 API Key。"
+    return ""
+
+
+def save_vision_connection(*, provider: str, model: str, api_key: str = "",
+                           base_url: str = "", max_tokens: int | None = None,
+                           reasoning_mode: str = "provider_default") -> dict:
+    """保存专用视觉连接。``api_key`` 留空表示沿用已保存的值。"""
+    saved = core.load_ocr_online_config() or {}
+    problem = vision_connection_problem(
+        provider=provider, model=model, api_key=api_key,
+        has_saved_key=bool(saved.get("api_key")))
+    if problem:
+        raise AdapterError(problem)
+    limits = (int(core.OCR_ONLINE_MIN_MAX_TOKENS), int(core.OCR_ONLINE_MAX_MAX_TOKENS))
+    tokens = int(max_tokens or saved.get("max_tokens") or core.OCR_ONLINE_DEFAULT_MAX_TOKENS)
+    tokens = max(limits[0], min(limits[1], tokens))
+    if reasoning_mode not in core.OCR_ONLINE_REASONING_MODES:
+        reasoning_mode = "provider_default"
+    try:
+        core.save_ocr_online_config(
+            provider=str(provider).strip(), model=str(model).strip(),
+            api_key=str(api_key or "").strip() or str(saved.get("api_key") or ""),
+            base_url=str(base_url or "").strip(), max_tokens=tokens,
+            reasoning_mode=reasoning_mode)
+    except (OSError, ValueError) as exc:
+        raise AdapterError(f"无法保存视觉连接：{exc}") from exc
+    return vision_connection_view()
+
+
+def clear_vision_connection() -> dict:
+    """回到"沿用翻译连接"：删除专用视觉连接文件（密钥一并清掉）。"""
+    path = core.ocr_online_config_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise AdapterError(f"无法清除视觉连接：{exc}") from exc
+    return vision_connection_view()
+
+
 # ================= 术语表（审核 / 冻结 / 逐条修订） =================
 #
 # 旧界面的"术语"工作区在 Qt 里原来完全没有。严格术语治理的任务会在候选术语未
