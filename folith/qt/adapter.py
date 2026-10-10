@@ -1344,6 +1344,156 @@ def set_final_qa_fact(job_id: str, field: str, confirmed: bool) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 学术专业模式：实践报告 =================
+#
+# 报告页的"一个整体状态 + 按「该做什么」分组的问题 + 清理过的当前稿件"——和旧界面同一套
+# 判断（``folith.workspace_report``，从旧页面搬出来，不依赖任何界面框架）。报告本身由
+# 管线生成；这里只呈现状态、让作者回答待补充的问题、按范围触发定点重建。
+
+REPORT_ARTIFACTS = (
+    "evidence", "argument_plan", "selected_cases", "outline", "report", "validation",
+    "review", "literature_sources", "literature_evidence", "literature_claims",
+    "literature_support_review", "academic_quality", "human_evidence_questions",
+    "final_docx_validation")
+
+#: 修复动作对应的失效范围（与旧界面 ``_queue_report_repair`` 一致）。
+REPORT_REPAIR_SCOPES = {"模板合规": "writer", "案例不足": "planning", "文献证据缺失": "all",
+                        "引用需要确认": "validation", "统计验证失败": "validation",
+                        "需要人工补充": "case_analysis"}
+REPORT_REPAIR_LABELS = {
+    "模板合规": "按模板重新生成", "案例不足": "重新选择案例并继续生成",
+    "文献证据缺失": "重建文献证据并继续生成", "引用需要确认": "重新验证引用并继续生成",
+    "统计验证失败": "重新验证统计并继续生成", "章节需要重新生成": "重新生成问题章节",
+    "需要人工补充": "用已提交回答继续生成"}
+
+
+def report_view(job_id: str, state: dict | None = None) -> dict:
+    from folith import workspace_report as _report
+
+    state = state if state is not None else load_state(job_id)
+    artifacts = {name: core.load_academic_artifact(job_id, name) for name in REPORT_ARTIFACTS}
+    runtime_view = core.build_job_runtime_view(job_id, state)
+    try:
+        contexts = review_queue(job_id, state)["queue_items"]
+    except Exception:  # noqa: BLE001 - 审校队列读不出来时，报告页照常显示报告自己的问题
+        contexts = []
+    view = _report.page_view(
+        job_id, state, artifacts, runtime_view=runtime_view,
+        canonical_label=core.task_status_label(state, job_id), review_contexts=contexts,
+        active_statuses=core.RUNTIME_ACTIVE_STATUSES - {"pausing", "paused"})
+
+    report = _report.clean_report_for_display(state.get("p3_md"))
+    headings = _report.report_headings(report)
+    outline = artifacts.get("outline") or {}
+    selected = artifacts.get("selected_cases") or {}
+    template = core.load_report_template(job_id) or {}
+    summary = (template or {}).get("summary") or {}
+    chapters = summary.get("chapter_count") or sum(h["level"] == 2 for h in headings) \
+        or len(outline.get("sections") or [])
+    subsections = summary.get("subsection_count") or sum(h["level"] > 2 for h in headings)
+    if not report:
+        chapters = subsections = 0
+    portfolio = selected.get("case_portfolio") or {}
+    case_count = len(selected.get("cases") or []) or int(
+        portfolio.get("selected_case_count") or len(portfolio.get("cases") or []))
+    compliance = (view["validation"].get("template_compliance") or {}).get(
+        "status", "not_configured")
+    counts = {sev: sum(1 for g in view["groups"] if g.get("severity") == sev)
+              for sev in ("blocker", "warning", "human_review")}
+    questions = [q for q in (artifacts.get("human_evidence_questions") or {}).get("questions") or []
+                 if q.get("status") == "open"]
+    sources = (artifacts.get("literature_sources") or {}).get("sources") or []
+    impact = core.dependency_impact_view(job_id, state)
+    for group in view["groups"]:
+        group["sections"] = sorted(group.get("sections") or [], key=str)
+        group["repair_label"] = REPORT_REPAIR_LABELS.get(group["category"], "")
+        group["can_repair"] = group["category"] in REPORT_REPAIR_LABELS \
+            and group.get("target") not in ("review", "runtime")
+    return {
+        **view,
+        "chips": [("章节", f"{chapters} 章 / {subsections} 节"), ("案例", f"{case_count} 个"),
+                  ("验证", _report.validation_label(view["validation"].get("status"))),
+                  ("阻塞项", str(counts["blocker"])), ("交付", view["delivery_label"])]
+                 + ([("模板", _report.validation_label(compliance))] if template else []),
+        "report_text": report,
+        "headings": headings,
+        "has_report": bool(report),
+        "template": {"present": bool(template),
+                     "name": str((template or {}).get("name") or summary.get("filename") or ""),
+                     "summary": summary},
+        "open_questions": questions,
+        "case_rows": [{"id": c.get("case_id"), "origin": c.get("case_type"),
+                       "issue": (c.get("focus") or {}).get("issue")}
+                      for c in selected.get("cases") or []],
+        "case_status": selected.get("authentic_selection_status") or "",
+        "literature": {"sources": [str(s.get("title") or s.get("source_id") or "未命名来源")
+                                   for s in sources],
+                       "evidence": len((artifacts.get("literature_evidence") or {}).get("items") or []),
+                       "claims": len((artifacts.get("literature_claims") or {}).get("items") or [])},
+        "issue_details": {g["category"]: [
+            str(i.get("reason") or i.get("message") or _report.issue_detail(g["category"], i))
+            for i in _report.issues_for_category(g["category"], artifacts)]
+            for g in view["groups"]},
+        "impact": {"stale": impact.get("status") == "stale",
+                   "reason": str(impact.get("reason") or ""),
+                   "affected": [str(i.get("label") or i.get("id")) for i in impact.get("affected") or []],
+                   "reusable": [str(i.get("label") or i.get("id")) for i in impact.get("reusable") or []]},
+        "quality_label": _report.quality_label(view["quality"]),
+        "runtime_rows": [(k, str(v)) for k, v in (
+            ("状态", runtime_view.get("headline_status") or runtime_view.get("status")),
+            ("当前步骤", runtime_view.get("current_operation") or runtime_view.get("headline")),
+            ("说明", runtime_view.get("detail")),
+            ("进度", f'{runtime_view.get("progress_completed")}/{runtime_view.get("progress_total")}'
+             if runtime_view.get("progress_total") else None),
+            ("文献", _report.literature_status(artifacts))) if v],
+    }
+
+
+def repair_report(job_id: str, category: str, sections: Sequence[str] = ()) -> dict:
+    """定点失效对应范围的学术产物（翻译阶段保持不动）；随后由调用方"继续"重新生成。"""
+    if category == "章节需要重新生成" and sections:
+        for section_id in sections:
+            core.invalidate_academic_report(job_id, "section", section_id)
+        return load_state(job_id)
+    scope = REPORT_REPAIR_SCOPES.get(category) or ("writer" if category != "章节需要重新生成" else "")
+    if not scope:
+        raise AdapterError("这类问题不能直接重新生成。")
+    try:
+        return core.invalidate_academic_report(job_id, scope)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def answer_report_question(job_id: str, question_id: str, answer: str) -> dict:
+    if not str(answer or "").strip():
+        raise AdapterError("请填写回答；无法回忆时可直接填写「不记得」。")
+    try:
+        return core.record_human_evidence(job_id, question_id, str(answer).strip())
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def attach_report_template(job_id: str, path: str) -> dict:
+    """保存报告结构模板（DOCX）：固定章节、标题层级、前后置部分与样式。"""
+    file = Path(path)
+    if file.suffix.lower() != ".docx":
+        raise AdapterError("报告模板需要是 .docx 文件。")
+    try:
+        data = file.read_bytes()
+    except OSError as exc:
+        raise AdapterError(f"无法读取文件：{exc}") from exc
+    try:
+        return core.save_report_template(job_id, file.name, data)
+    except ValueError as exc:
+        raise AdapterError(f"报告模板无法使用：{exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - TemplateParseError 等解析失败
+        raise AdapterError(f"报告模板无法使用：{exc}") from exc
+
+
+def clear_report_template(job_id: str) -> None:
+    core.clear_report_template(job_id)
+
+
 # ================= 学术专业模式：案例终审 =================
 
 CASE_ARTIFACTS = ("selected_cases", "evidence", "argument_plan", "case_analysis_plans",

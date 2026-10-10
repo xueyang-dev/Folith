@@ -32,6 +32,7 @@ from .activity_panel import ActivityPanel
 from .cases_panel import CasesPanel
 from .followup_panel import FollowupPanel
 from .qa_panel import QAPanel
+from .report_panel import ReportPanel
 from .review_panel import ReviewPanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
@@ -1116,6 +1117,11 @@ class WorkbenchView(QWidget):
     entityRepairRequested = Signal(str, str, list)
     entityAcceptRequested = Signal(str)
     rescanRequested = Signal(dict)
+    reportRepairRequested = Signal(str, list)
+    reportAnswerRequested = Signal(str, str)
+    reportRebuildRequested = Signal()
+    reportTemplateAddRequested = Signal()
+    reportTemplateRemoveRequested = Signal()
     caseApproveRequested = Signal(str)
     caseExcludeRequested = Signal(str)
     caseReplaceRequested = Signal(str)
@@ -1183,6 +1189,7 @@ class WorkbenchView(QWidget):
         self._followup_key: tuple = ()
         self._qa_key: tuple = ()
         self._cases_key: tuple = ()
+        self._report_key: tuple = ()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -1755,6 +1762,19 @@ class WorkbenchView(QWidget):
                          icons.icon("package", 16, style_module.text_color("text-secondary")),
                          i18n.tr('交付'))
         # 学术专业模式的页：默认隐藏，设置里主动打开（或任务本身已带着学术产物）才出现。
+        self.report_panel = ReportPanel()
+        self.report_panel.repairRequested.connect(self.reportRepairRequested.emit)
+        self.report_panel.answerSubmitted.connect(self.reportAnswerRequested.emit)
+        self.report_panel.rebuildRequested.connect(self.reportRebuildRequested.emit)
+        self.report_panel.templateAddRequested.connect(self.reportTemplateAddRequested.emit)
+        self.report_panel.templateRemoveRequested.connect(self.reportTemplateRemoveRequested.emit)
+        self.report_panel.openReviewRequested.connect(
+            lambda: self.tabs.setCurrentWidget(self.review_panel))
+        self.report_panel.openCasesRequested.connect(
+            lambda: self.tabs.setCurrentWidget(self.cases_panel))
+        self.tabs.addTab(self.report_panel,
+                         icons.icon("file-text", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('报告'))
         self.cases_panel = CasesPanel()
         self.cases_panel.approveRequested.connect(self.caseApproveRequested.emit)
         self.cases_panel.excludeRequested.connect(self.caseExcludeRequested.emit)
@@ -1771,7 +1791,7 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(self.qa_panel,
                          icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
                          i18n.tr('合规与 QA'))
-        self._academic_widgets = [self.cases_panel, self.qa_panel]
+        self._academic_widgets = [self.report_panel, self.cases_panel, self.qa_panel]
         self._academic_mode = False
         self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.addTab(self.followup_panel,
@@ -1848,6 +1868,7 @@ class WorkbenchView(QWidget):
         self._render_terms()
         self._render_followup()
         self._sync_academic_tabs()
+        self._render_report()
         self._render_cases()
         self._render_qa()
         self._render_activity()
@@ -1858,6 +1879,8 @@ class WorkbenchView(QWidget):
         self._sync_academic_tabs()
         self._qa_key = ()
         self._cases_key = ()
+        self._report_key = ()
+        self._render_report()
         self._render_cases()
         self._render_qa()
 
@@ -1871,6 +1894,24 @@ class WorkbenchView(QWidget):
             index = self.tabs.indexOf(widget)
             if index >= 0 and self.tabs.isTabVisible(index) != visible:
                 self.tabs.setTabVisible(index, visible)
+
+    def _render_report(self) -> None:
+        if not self.job_id or not self.academic_visible():
+            return
+        # 报告页要读取运行视图与多份学术产物：随状态对象变化时才重算，
+        # 并且只在它的页签可见时算（避免没有打开学术模式的人为它付出代价）。
+        status = str((self._last_runtime or {}).get("status") or "")
+        key = (self.job_id, id(self._state), status)
+        if key == self._report_key:
+            return
+        self._report_key = key
+        try:
+            view = adapter.report_view(self.job_id, self._state)
+        except Exception:  # noqa: BLE001 - 学术页坏了不能拖垮翻译页
+            view = {}
+        self.report_panel.apply(
+            view, busy=status in ("running", "starting", "queued"),
+            connection_ok=not (self.config.connection_problem() if self.config else "connection"))
 
     def _render_cases(self) -> None:
         if not self.job_id or not self.academic_visible():

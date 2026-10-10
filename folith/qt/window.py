@@ -244,6 +244,11 @@ class MainWindow(QMainWindow):
         self.workbench.entityRepairRequested.connect(self.apply_entity_repair)
         self.workbench.entityAcceptRequested.connect(self.accept_entity_variants)
         self.workbench.rescanRequested.connect(self.rescan_source)
+        self.workbench.reportRepairRequested.connect(self.repair_report)
+        self.workbench.reportAnswerRequested.connect(self.answer_report_question)
+        self.workbench.reportRebuildRequested.connect(self.start_or_resume)
+        self.workbench.reportTemplateAddRequested.connect(self.add_report_template)
+        self.workbench.reportTemplateRemoveRequested.connect(self.remove_report_template)
         self.workbench.caseApproveRequested.connect(self.approve_case)
         self.workbench.caseExcludeRequested.connect(self.exclude_case)
         self.workbench.caseReplaceRequested.connect(self.replace_case)
@@ -1343,6 +1348,60 @@ class MainWindow(QMainWindow):
     # ================= 学术专业模式 =================
     def academic_mode(self) -> bool:
         return str(self.settings.value(self.ACADEMIC_KEY, "false")).lower() in ("1", "true", "yes")
+
+    def repair_report(self, category: str, sections: list) -> None:
+        """定点失效对应范围的学术产物，然后继续生成（翻译阶段不动）。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.repair_report(job_id, category, sections)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法重新生成'), str(exc))
+            return
+        self._notice(i18n.tr('已标记需要重新生成的部分，正在继续处理…'))
+        self.refresh_workbench(force=True)
+        self.start_or_resume()
+
+    def answer_report_question(self, question_id: str, answer: str) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.answer_report_question(job_id, question_id, answer)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法提交回答'), str(exc))
+            return
+        self._notice(i18n.tr('回答已记录；受影响的章节会在继续生成时更新。'))
+        self.refresh_workbench(force=True)
+
+    def add_report_template(self, path: str = "") -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if not path:
+            if _automation():
+                self._notice(i18n.tr('选择报告模板：自动化运行不打开系统面板，请直接提供文件路径。'))
+                return
+            path, _ = QFileDialog.getOpenFileName(
+                self, i18n.tr('选择报告模板（DOCX）'), str(Path.home()), "DOCX (*.docx)")
+            if not path:
+                return
+        try:
+            adapter.attach_report_template(job_id, path)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法使用该模板'), str(exc))
+            return
+        self._notice(i18n.tr('报告模板已保存；之后生成的报告会按它约束章节与样式。'))
+        self.refresh_workbench(force=True)
+
+    def remove_report_template(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        adapter.clear_report_template(job_id)
+        self._notice(i18n.tr('已移除报告模板。'))
+        self.refresh_workbench(force=True)
 
     def _case_action(self, fn, *args, done: str, failure: str, **kwargs) -> bool:
         job_id = self._current_job_id
