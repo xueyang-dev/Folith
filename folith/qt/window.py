@@ -235,6 +235,8 @@ class MainWindow(QMainWindow):
         self.workbench.setupTermbaseAddRequested.connect(self.add_termbase)
         self.workbench.setupStyleProfileRequested.connect(self.run_style_profile)
         self.workbench.setupTermbaseRemoveRequested.connect(self.remove_termbase)
+        self.workbench.setupLiteratureAddRequested.connect(self.add_literature)
+        self.workbench.setupLiteratureRemoveRequested.connect(self.remove_literature)
         self.workbench.pauseRequested.connect(self.pause_job)
         self.workbench.cancelRequested.connect(self.cancel_job)
         self.workbench.retryRequested.connect(self.retry_job)
@@ -1093,6 +1095,43 @@ class MainWindow(QMainWindow):
         else:
             self._notice(i18n.tr('已添加术语库「{v0}」：{v1} 条术语。', v0=result["name"],
                                  v1=result["count"]))
+        self.refresh_workbench(force=True)
+
+    def add_literature(self, paths: list[str] | None = None) -> None:
+        """学术模式的译前准备：添加报告用的参考资料。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if not paths:
+            if _automation():
+                self._notice(i18n.tr('添加参考资料：自动化运行不打开系统面板，请直接提供文件路径。'))
+                return
+            paths, _ = QFileDialog.getOpenFileNames(
+                self, i18n.tr('选择参考资料'), str(Path.home()),
+                i18n.tr('参考资料 (*.pdf *.docx *.md *.markdown *.txt *.bib *.ris *.json)'))
+            if not paths:
+                return
+        try:
+            result = adapter.attach_literature(job_id, list(paths))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法添加参考资料'), str(exc))
+            return
+        message = i18n.tr('已添加 {v0} 条参考资料来源。', v0=result["count"])
+        if result["warnings"]:
+            message += " " + " ".join(i18n.tr_dynamic(w) for w in result["warnings"])
+        self._notice(message)
+        self.refresh_workbench(force=True)
+
+    def remove_literature(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.remove_literature(job_id)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法移除参考资料'), str(exc))
+            return
+        self._notice(i18n.tr('已移除参考资料。'))
         self.refresh_workbench(force=True)
 
     def remove_termbase(self) -> None:

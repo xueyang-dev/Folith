@@ -118,6 +118,25 @@ class FollowupPanel(QWidget):
         entity.addLayout(entity_buttons)
         self.entity_card = entity_card
 
+        # ---- 导入范围（提取报告） -------------------------------------------
+        self.extraction_title = QLabel(i18n.tr('导入范围'))
+        self.extraction_title.setObjectName("sectionTitle")
+        self.extraction_summary = label()
+        self.extraction_warning = style_module.NoticeStrip("", tone="warn")
+        self.extraction_details = label(muted=True)
+        self.extraction_details.setTextFormat(Qt.TextFormat.RichText)
+        self.extraction_note = label(muted=True)
+        self.extraction_note.setText(i18n.tr(
+            '导出是重建的译文文档，不是原文件的格式保真输出：排版、表格、图片与样式不会还原。'))
+        extraction_card = Card()
+        extraction = QVBoxLayout(extraction_card)
+        extraction.setContentsMargins(16, 14, 16, 14)
+        extraction.setSpacing(8)
+        for widget in (self.extraction_title, self.extraction_summary, self.extraction_warning,
+                       self.extraction_details, self.extraction_note):
+            extraction.addWidget(widget)
+        self.extraction_card = extraction_card
+
         # ---- 重新扫描 PDF ---------------------------------------------------
         self.rescan_title = QLabel(i18n.tr('重新扫描 PDF 原文'))
         self.rescan_title.setObjectName("sectionTitle")
@@ -170,6 +189,7 @@ class FollowupPanel(QWidget):
         column.addWidget(retry_card)
         column.addWidget(entity_card)
         column.addWidget(rescan_card)
+        column.addWidget(extraction_card)
         column.addWidget(self.empty)
         column.addStretch(1)
         scroll = QScrollArea()
@@ -238,6 +258,7 @@ class FollowupPanel(QWidget):
         self.retry_card.setVisible(degraded or partial)
 
         self._apply_rescan(self._view.get("rescan") or {})
+        self._apply_extraction(self._view.get("extraction") or {})
         entities = list(self._view.get("entities") or [])
         self.entity_box.blockSignals(True)
         self.entity_box.clear()
@@ -253,6 +274,37 @@ class FollowupPanel(QWidget):
             self._entity_changed()
         has_work = bool(self._view.get("has_work")) or bool(current) or degraded or partial or bool(entities)
         self.empty.setVisible(not has_work)
+
+    def _apply_extraction(self, report: dict) -> None:
+        available = bool(report.get("available"))
+        self.extraction_card.setVisible(available)
+        if not available:
+            return
+        text = i18n.tr('已提取 {v0} 段', v0=format(int(report.get("paragraphs") or 0), ","))
+        if report.get("pages"):
+            text += i18n.tr('、{v0} 页', v0=format(int(report["pages"]), ","))
+        text += "。"
+        if report.get("ocr_used"):
+            text += i18n.tr('正文由识别生成，可能含错字与假断行。')
+        if report.get("ocr_engine"):
+            text += " " + i18n.tr('识别引擎：{v0}', v0=report["ocr_engine"])
+        self.extraction_summary.setText(text)
+        warnings = []
+        if report.get("pages_incomplete"):
+            warnings.append(i18n.tr('该次识别未覆盖全部页面；失败页保持未完成状态，恢复后会重试这些页。'))
+        warnings.extend(i18n.tr_dynamic(item) for item in report.get("warnings") or [])
+        self.extraction_warning.set_text("\n".join(warnings))
+        unsupported = report.get("unsupported") or []
+        if unsupported:
+            rows = "".join(
+                f"<p><b>{_escape(i18n.tr_dynamic(item['label']))}</b>："
+                f"{_escape(i18n.tr_dynamic(item['detail']))}"
+                + (f"<br/><small>{_escape(item['sample'])}</small>" if item.get("sample") else "")
+                + "</p>" for item in unsupported)
+            self.extraction_details.setText(
+                f"<p>{_escape(i18n.tr('未纳入翻译'))}</p>{rows}")
+        else:
+            self.extraction_details.setText(_escape(i18n.tr('没有检测到表格、页眉页脚、脚注等未纳入的内容。')))
 
     def _apply_rescan(self, rescan: dict) -> None:
         available = bool(rescan.get("available"))

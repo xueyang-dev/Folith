@@ -13,7 +13,7 @@
 - **下线**：被测的是 Streamlit 自身的页面布局、侧栏、URL 路由、WebView 外壳等，Qt 用不同结构替代或有意不做。随 Streamlit 一起删。
 - **待迁移**：行为还需要，但 Qt 没有入口或没有测试。**这是删除前的阻塞项。**
 
-## 1. 已迁移（24）
+## 1. 已迁移（25）
 
 | 文件 | Streamlit 用例 | Qt 对应 |
 | --- | --- | --- |
@@ -40,6 +40,7 @@
 | step4_test_connection_in_place_test | 2/2 | qt_task_setup、qt_settings_dialog_ui |
 | phase35_task_policy_ui_test | 2/2 | qt_task_setup（任务级 AI 前置条件） |
 | ui_preferences_test | 7/15 | qt_settings_dialog_ui、qt_i18n、qt_client_style |
+| provider_models_ui_test | 4/4 | qt_model_discovery |
 | arabic_rtl_test | 1/7 | qt_client_window（RTL 方向）；核心用例保留 |
 
 ## 2. 保留文件，只删其中的 Streamlit 用例（17）
@@ -79,19 +80,26 @@
 | task_overview_ui_test / workbench_stage3_stage4_test | Streamlit 任务横幅与五列网格布局；Qt 用阶段栏（qt_stage） |
 | agent_inspector_ui_test | Agent 检查器，有意不迁移 |
 
-另：`desktop_release_notes_test` 是误命中（0 个 Streamlit 用例，只在文字里提到），不受影响；`provider_models_ui_test` 归入 §4。
+另：`desktop_release_notes_test` 是误命中（0 个 Streamlit 用例，只在文字里提到），不受影响；`provider_models_ui_test` 见 §4，已补 Qt 测试并归入 §1。
 
-## 4. 待迁移（阻塞删除）
+## 4. 待迁移（阻塞删除）—— 已清零（2026-10-10）
 
-| # | 行为 | 来源测试 | Qt 现状 |
-| --- | --- | --- | --- |
-| 1 | 模型列表拉取、审校员单独凭据、切换 Provider 时清空、重启后保留发现的模型和区域地址 | provider_models_ui_test（4） | `EngineDialog` 有「获取模型」按钮，**没有 Qt 测试** |
-| 2 | 学术模式新建任务时上传文献材料 | （无独立测试，属审计 D 批） | 无入口 |
-| 3 | PDF 提取报告（提取范围、警告） | app.py 新建流程 | 无入口 |
-| 4 | 历史任务排序 | history_library_test 的排序投影 | 首页只有搜索 + 状态 + 项目筛选 |
+| # | 行为 | 来源 | Qt 现在 | 测试 |
+| --- | --- | --- | --- | --- |
+| 1 | 模型列表拉取（用当前填写的密钥/地址、成功替换列表并保留已选、失败不动、审校员凭据不受影响、换提供商重置列表、发现的模型与地址进入保存的配置） | provider_models_ui_test（4） | `EngineDialog`「获取可用模型」 | qt_model_discovery_test（5） |
+| 2 | 学术模式新建任务时添加参考资料（普通资料 + 已有注册表 .json） | 旧向导 `literature_inputs` | 译前准备 → 报告打开时出现「参考资料」行；写入任务状态 `literature_sources`，开始时经设置解析进入 pipeline | qt_literature_inputs_test（5） |
+| 3 | PDF/文档提取报告（提取段数/页数、识别引擎、未覆盖页、未纳入翻译的内容、提取警告） | `_render_extraction_report` | 「检查与修复」页的「导入范围」卡片（读导入时落盘的 `extraction_report`） | qt_followup_test（+3） |
+| 4 | 历史任务排序 | history_library_test 排序投影 | 首页排序（最近更新/最早更新/名称/状态，运行中置顶，可与搜索叠加） | qt_home_cards_test（+1） |
+
+`provider_models_ui_test` 因此改归「已迁移」：已迁移 25、只删 Streamlit 用例 17、下线 16、误命中 1。
 
 ## 5. 结论
 
-**未达到删除标准，不标 ready。** 剩 4 项待迁移，都不大：#1 只缺测试，#2–#4 各是一个小入口。
-另外删除时还要一并处理非测试的依赖：`packaging/folith-desktop.spec`、`gui.py`、`scripts/arabic_acceptance_audit.py`、
-`scripts/check_ui_locales.py`、`scripts/check_release_archives.py` 里对 `app.py`/Streamlit 的引用。
+**READY —— 达到删除 Streamlit 的标准。** 待迁移已清零；按既定计划，Streamlit 先作为 `--legacy` 保留一个版本，下个版本删除。
+
+删除时的清单：
+
+1. 删除 §1 与 §3 的整个测试文件；§2 的文件只删列出的 Streamlit 用例（`qt_spike_test` / `qt_client_adapter_test` 的"不导入 Streamlit"护栏保留）；
+2. 删除 `app.py`、`folith/ui/**`（`folith/ui/workspace/presentation.py` 已改为转发 `folith/workspace_presentation.py`，调用方先改指新模块）、`gui.py` 与 `--legacy` 启动路径；
+3. 处理非测试依赖：`packaging/folith-desktop.spec`、`scripts/arabic_acceptance_audit.py`、`scripts/check_ui_locales.py`、`scripts/check_release_archives.py`；`requirements` 里移除 streamlit；
+4. 删后跑全量回归，失败集应与 HEAD 基线一致（基线失败：brand_regression、http_attempt_trace、ocr_sources、ocr_subsystem、qt_acceptance_kit、qt_release_plumbing，均与 Streamlit 无关）。

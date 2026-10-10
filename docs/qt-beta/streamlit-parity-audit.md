@@ -8,7 +8,7 @@
 3. 与 [s8-decision.md §5](s8-decision.md) 里"已知未迁移"清单对照，区分"已登记的有意延后"和"清单里没有的遗漏"。
 
 结论先行（2026-10-10 终稿）：批次 A–D 已完成，§2 的 4 个卡死点和 §3 的 10 项遗漏都已在 Qt 里有入口和测试。
-**仍未达到删除 Streamlit 的标准**：还剩 4 项待迁移，见 [streamlit-test-disposition.md §4](streamlit-test-disposition.md)。
+**已达到删除 Streamlit 的标准（READY）**，见 §6.2 与 [streamlit-test-disposition.md](streamlit-test-disposition.md)。
 下面 §1–§3 保留初稿时的状态作为记录，最新状态以 §6.1 为准。
 
 ---
@@ -155,19 +155,15 @@ Qt 比 Streamlit **多**的：退出/恢复语义、最小窗口适配、键盘�
 | C 准备类界面 | ✅（报告模板/文献归 D） | 术语库 / TMX 导入、翻译风格（基础风格 + 微调 + 智能画像）`605b32f` |
 | D 学术专业模式 | ✅ | 默认关闭，用户主动开启（设置或新建任务里勾选；带学术产物的旧任务自动显示）。QA `…`、案例、实践报告（含报告模板、问答补证据）、语言资产库 `c165453`、项目知识/冲突/记忆导入导出 `a9beb99`、PDF 原页对照 `16e5fb7` |
 
-### 6.2 仍缺（2026-10-10）
+### 6.2 收尾（2026-10-10）
 
-| 项 | 说明 |
-| --- | --- |
-| 模型发现的 Qt 测试 | 入口已有（`EngineDialog`「获取模型」），缺测试覆盖审校员凭据、切换 Provider 清空、重启保留 |
-| 新建任务时上传文献材料 | 学术模式下的准备项 |
-| PDF 提取报告 | 提取范围与警告的说明页 |
-| 历史任务排序 | 首页只有搜索 + 状态 + 项目筛选 |
-| 有意不迁移 | 性能面板、Agent 检查器、Paddle 模型选择、线上 OCR 独立来源、URL 路由、Streamlit 侧栏结构 |
+初稿后剩下的四项已补齐：模型发现的 Qt 测试、学术模式的参考资料添加、提取报告（「检查与修复」→「导入范围」）、首页排序。
 
-旧测试归类见 [streamlit-test-disposition.md](streamlit-test-disposition.md)：59 个文件中 24 已迁移、17 只删其中的 Streamlit 用例、16 随 Streamlit 下线、1 误命中、1 待迁移。
+有意不迁移：性能面板、Agent 检查器、Paddle 模型选择、线上 OCR 独立来源、URL 路由、Streamlit 侧栏结构。
 
-**删除状态：NOT READY**（补完 §6.2 前四项后可标 ready）。
+旧测试归类见 [streamlit-test-disposition.md](streamlit-test-disposition.md)：59 个文件中 25 已迁移、17 只删其中的 Streamlit 用例、16 随 Streamlit 下线、1 误命中，待迁移 0。
+
+**删除状态：READY**（按计划先以 `--legacy` 保留一个版本；删除清单见归类文档 §5）。
 
 ## 7. 本审计的局限
 

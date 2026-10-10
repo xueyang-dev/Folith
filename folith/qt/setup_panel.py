@@ -498,6 +498,8 @@ class TaskSetupPanel(QWidget):
     termbaseAddRequested = Signal()
     styleProfileRequested = Signal()
     termbaseRemoveRequested = Signal()
+    literatureAddRequested = Signal()
+    literatureRemoveRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -972,6 +974,29 @@ class TaskSetupPanel(QWidget):
             i18n.tr('根据文本特征、案例证据与可用文献确定；仅在证据充分时使用。'))
         self.theory_field.setVisible(False)
         body.addWidget(self.theory_field)
+
+        # 报告的文献证据来源（旧向导的「参考资料」）。同样只在报告打开时出现。
+        self.literature_value = ElidedLabel("—")
+        self.literature_value.setObjectName("hint")
+        self.literature_add_button = QPushButton(i18n.tr('添加参考资料…'))
+        self.literature_add_button.setToolTip(i18n.tr(
+            '支持 PDF、DOCX、Markdown、TXT、BibTeX / RIS（含 Zotero 导出）；也可导入已有文献证据注册表（.json）。'))
+        self.literature_add_button.clicked.connect(self.literatureAddRequested.emit)
+        self.literature_remove_button = QPushButton(i18n.tr('移除参考资料'))
+        self.literature_remove_button.clicked.connect(self.literatureRemoveRequested.emit)
+        self.literature_remove_button.setVisible(False)
+        literature_row = QWidget()
+        literature_layout = QHBoxLayout(literature_row)
+        literature_layout.setContentsMargins(0, 0, 0, 0)
+        literature_layout.setSpacing(theme_module.SPACE["md"])
+        literature_layout.addWidget(self.literature_value, 1)
+        literature_layout.addWidget(self.literature_add_button)
+        literature_layout.addWidget(self.literature_remove_button)
+        self.literature_field = _field(
+            i18n.tr('参考资料'), literature_row,
+            i18n.tr('报告引用的文献来源；运行时解析并记录来源位置。'))
+        self.literature_field.setVisible(False)
+        body.addWidget(self.literature_field)
         return card
 
     def _build_delivery_group(self, title: str, key: str) -> QWidget:
@@ -1145,6 +1170,18 @@ class TaskSetupPanel(QWidget):
             self.glossary_value.setToolTip(glossary_text)
             self.glossary_add_button.setText(i18n.tr('更换…') if count else i18n.tr('添加…'))
             self.glossary_remove_button.setVisible(bool(count))
+            literature = int(self._view.get("literature_count") or 0)
+            names = [str(n) for n in self._view.get("literature_names") or []]
+            if literature:
+                label = names[0] if len(names) == 1 else (
+                    i18n.tr('{name} 等 {count} 个文件', name=names[0], count=len(names))
+                    if names else "")
+                self.literature_value.setText(
+                    i18n.tr('{label} · {count} 条来源', label=label, count=literature)
+                    if label else i18n.tr('{count} 条来源', count=literature))
+            else:
+                self.literature_value.setText(i18n.tr('未添加（可选）'))
+            self.literature_remove_button.setVisible(bool(literature))
 
             self.understanding_box.setChecked(bool(strategy.get("enable_understanding")))
             self.auto_term_box.setChecked(bool(strategy.get("auto_term")))
@@ -1459,6 +1496,7 @@ class TaskSetupPanel(QWidget):
         self._research_visible = bool(visible)
         self.research_group.setVisible(visible)
         self.theory_field.setVisible(bool(visible and self._report_box_checked()))
+        self.literature_field.setVisible(bool(visible and self._report_box_checked()))
         self._sync_delivery_summary()
 
     def _sync_delivery_summary(self) -> None:

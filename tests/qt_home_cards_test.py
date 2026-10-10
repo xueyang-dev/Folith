@@ -220,3 +220,29 @@ def test_home_search_filters_by_name_status_and_project(app):
         assert home.table.rowCount() == 3
     finally:
         home.deleteLater()
+
+
+# ------------------------------------------------------------ 首页排序 -------
+
+def test_home_sort_orders_rows_and_keeps_running_tasks_first(app):
+    def row(job_id, name, updated, status="已完成", active=False):
+        item = _job(job_id, name, status=status, active=active)
+        return adapter.JobRow(**{**item.__dict__, "updated_at": updated})
+
+    home = views.HomeView()
+    home.set_projects(PROJECTS)
+    home.set_rows([row("a", "beta.docx", "2026-10-01"), row("b", "alpha.docx", "2026-10-03"),
+                   row("c", "gamma.docx", "2026-09-01", status="运行中", active=True)])
+    try:
+        def order():
+            return [home.table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                    for r in range(home.table.rowCount())]
+        assert order() == ["c", "b", "a"], "默认最近更新在前，运行中置顶"
+        home.sort_box.setCurrentIndex(home.sort_box.findData("oldest"))
+        assert order() == ["c", "a", "b"]
+        home.sort_box.setCurrentIndex(home.sort_box.findData("name"))
+        assert order() == ["c", "b", "a"]
+        home.search_edit.setText("docx")
+        assert order() == ["c", "b", "a"], "排序与搜索可以叠加"
+    finally:
+        home.deleteLater()

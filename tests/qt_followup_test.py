@@ -280,3 +280,41 @@ def test_panel_hides_the_rescan_card_for_non_pdf_tasks(qapp, job):
     panel = FollowupPanel()
     panel.apply(adapter.followup_view(job))
     assert panel.rescan_card.isHidden()
+
+
+# ------------------------------------------------------------ 导入范围 -------
+
+def _report_state(**extra):
+    report = core._build_extraction_report(
+        "scan.pdf", ["a", "b", "c"], ocr_used=True,
+        unsupported=[{"label": "表格", "detail": "2 个表格未纳入", "count": 2, "sample": "Q1 | Q2"}],
+        facts={"pages": 4}, warnings=["第 3 页文字层损坏，已改用识别"])
+    report.update(extra)
+    return {"extraction_report": report}
+
+
+def test_extraction_view_reports_scope_unsupported_and_warnings():
+    view = adapter.extraction_report_view(_report_state(
+        ocr={"ocr_used": True, "actual_engine": "vision", "all_pages_completed": False}))
+    assert view["available"] and view["paragraphs"] == 3 and view["pages"] == 4
+    assert view["ocr_used"] and view["ocr_engine"] == "vision" and view["pages_incomplete"]
+    assert view["unsupported"] == [{"label": "表格", "detail": "2 个表格未纳入", "sample": "Q1 | Q2"}]
+    assert view["warnings"] == ["第 3 页文字层损坏，已改用识别"]
+
+
+def test_tasks_without_a_report_show_nothing():
+    assert adapter.extraction_report_view({}) == {"available": False}
+    assert adapter.extraction_report_view({"extraction_report": {"x": 1}}) == {"available": False}
+
+
+def test_panel_shows_the_extraction_card(qapp):
+    from folith.qt.followup_panel import FollowupPanel
+
+    panel = FollowupPanel()
+    panel.apply({"extraction": adapter.extraction_report_view(_report_state())})
+    assert not panel.extraction_card.isHidden()
+    assert "3" in panel.extraction_summary.text() and "4" in panel.extraction_summary.text()
+    assert "表格" in panel.extraction_details.text() and "Q1 | Q2" in panel.extraction_details.text()
+    assert "文字层损坏" in panel.extraction_warning.text()
+    panel.apply({"extraction": {"available": False}})
+    assert panel.extraction_card.isHidden()

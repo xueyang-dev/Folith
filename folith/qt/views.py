@@ -379,6 +379,25 @@ class _TaskCard(Card):
         super().mouseDoubleClickEvent(event)
 
 
+HOME_SORTS = (("最近更新", "updated"), ("最早更新", "oldest"),
+              ("按名称", "name"), ("按状态", "status"))
+
+
+def sort_job_rows(rows: list[adapter.JobRow], key: str) -> list[adapter.JobRow]:
+    """首页排序。运行中的任务始终排在最前；同一键下保持原顺序（稳定排序）。"""
+    rows = list(rows)
+    if key == "oldest":
+        rows.sort(key=lambda row: row.updated_at or "")
+    elif key == "name":
+        rows.sort(key=lambda row: (row.title or row.filename or "").casefold())
+    elif key == "status":
+        rows.sort(key=lambda row: row.status_label or "")
+    else:
+        rows.sort(key=lambda row: row.updated_at or "", reverse=True)
+    rows.sort(key=lambda row: not row.active)
+    return rows
+
+
 class HomeView(QWidget):
     """任务库：品牌栏 + 指标芯片 + 状态化任务表 + 空状态。"""
 
@@ -531,11 +550,18 @@ class HomeView(QWidget):
         self.search_edit.setMaximumWidth(260)
         self.search_edit.textChanged.connect(self._apply_filter)
 
+        self.sort_box = style_module.ComboBox()
+        for label, key in HOME_SORTS:
+            self.sort_box.addItem(i18n.tr(label), key)
+        self.sort_box.setToolTip(i18n.tr('任务排序'))
+        self.sort_box.currentIndexChanged.connect(self._apply_filter)
+
         header_actions = QHBoxLayout()
         header_actions.setSpacing(theme_module.SPACE["sm"])
         header_actions.addWidget(self.search_edit)
         header_actions.addWidget(self.view_switch)
         header_actions.addWidget(self.project_filter)
+        header_actions.addWidget(self.sort_box)
         header_actions.addSpacing(theme_module.SPACE["xxs"])
         header_actions.addWidget(self.refresh_icon_button)
 
@@ -780,12 +806,15 @@ class HomeView(QWidget):
         self.engine_model.setVisible(bool(model_label))
 
     def _visible_rows(self) -> list[adapter.JobRow]:
+        return sort_job_rows(self._filtered_rows(), self.sort_box.currentData() or "updated")
+
+    def _filtered_rows(self) -> list[adapter.JobRow]:
         project = self.project_filter.currentData() or ""
         rows = self._rows if not project else [
             row for row in self._rows if (row.project_id or "") == project]
         query = self.search_edit.text().strip().casefold()
         if not query:
-            return rows
+            return list(rows)
         # 任务多了以后靠滚动找不到：按文档名、状态、语言、任务号模糊匹配（所有词都要命中）。
         words = query.split()
         matched = []
@@ -1127,6 +1156,8 @@ class WorkbenchView(QWidget):
     setupTermbaseAddRequested = Signal()
     setupStyleProfileRequested = Signal()
     setupTermbaseRemoveRequested = Signal()
+    setupLiteratureAddRequested = Signal()
+    setupLiteratureRemoveRequested = Signal()
     # 审校页：人工处置（由窗口层调用适配器写状态）
     findingResolveRequested = Signal(list, str, str)    # finding_ids, action, note
     suggestionApplyRequested = Signal(dict, str)        # queue item, note
@@ -1561,6 +1592,9 @@ class WorkbenchView(QWidget):
         self.setup_panel.termbaseAddRequested.connect(self.setupTermbaseAddRequested.emit)
         self.setup_panel.styleProfileRequested.connect(self.setupStyleProfileRequested.emit)
         self.setup_panel.termbaseRemoveRequested.connect(self.setupTermbaseRemoveRequested.emit)
+        self.setup_panel.literatureAddRequested.connect(self.setupLiteratureAddRequested.emit)
+        self.setup_panel.literatureRemoveRequested.connect(
+            self.setupLiteratureRemoveRequested.emit)
         self.setup_panel.createProjectRequested.connect(
             self.setupCreateProjectRequested.emit)
         setup_scroll = QScrollArea()

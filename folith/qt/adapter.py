@@ -1081,6 +1081,7 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
     busy = bool(core._job_execution_alive(job_id))
     return {
         "rescan": rescan_view(state),
+        "extraction": extraction_report_view(state),
         "recovery": recovery,
         "understanding": understanding,
         "annotation": annotation,
@@ -1090,6 +1091,34 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
             understanding.get("status") == "degraded"
             or annotation.get("status") == "partial" or entities
             or recovery.get("current_batch")),
+    }
+
+
+def extraction_report_view(state: dict) -> dict:
+    """导入范围：提取了多少、哪些内容没纳入翻译、提取时的警告。
+
+    读的是导入时落盘的 ``extraction_report``；旧任务没有这份报告时不显示。
+    """
+    report = (state or {}).get("extraction_report") or {}
+    if not isinstance(report, dict) or not report.get("extracted"):
+        return {"available": False}
+    extracted = report.get("extracted") or {}
+    ocr = report.get("ocr") or {}
+    if ocr.get("ocr_used") is False:
+        ocr = {}
+    pages = extracted.get("pages")
+    return {
+        "available": True,
+        "paragraphs": int(extracted.get("paragraphs") or 0),
+        "pages": pages if isinstance(pages, int) else None,
+        "ocr_used": bool(extracted.get("ocr_used")),
+        "ocr_engine": str(ocr.get("actual_engine") or ocr.get("model") or ""),
+        "pages_incomplete": bool(ocr) and not ocr.get("all_pages_completed", True),
+        "unsupported": [
+            {"label": str(item.get("label") or ""), "detail": str(item.get("detail") or ""),
+             "sample": str(item.get("sample") or "")}
+            for item in report.get("unsupported") or [] if isinstance(item, dict)],
+        "warnings": [str(item) for item in report.get("warnings") or [] if str(item).strip()],
     }
 
 
@@ -1801,6 +1830,74 @@ def attach_termbase(job_id: str, path: str) -> dict:
 
     core.mutate_job_state(job_id, _attach)
     return {"kind": "glossary", "name": file.name, "count": len(entries)}
+
+
+LITERATURE_SUFFIXES = (".pdf", ".docx", ".md", ".markdown", ".txt", ".bib", ".ris", ".json")
+
+
+def attach_literature(job_id: str, paths: list[str]) -> dict:
+    """学术模式：给尚未开始的任务添加参考资料（报告的文献证据来源）。
+
+    普通资料（PDF/DOCX/Markdown/TXT/BibTeX/RIS）走 ``build_sources_from_uploads``，
+    与旧界面同一条登记路径；``.json`` 是已有的文献证据注册表（高级用法）。
+    结果写进任务状态的 ``literature_sources``，开始时由设置解析的任务层读到。
+    """
+    from folith import literature_evidence
+
+    state = load_state(job_id)
+    if not state:
+        raise AdapterError(f"找不到任务 {job_id}")
+    if task_started(job_id) or core.job_is_active(job_id):
+        raise AdapterError("任务已经开始，不能再添加参考资料。")
+    files, registry, warnings = [], [], []
+    for raw in paths or []:
+        file = Path(raw)
+        if file.suffix.lower() not in LITERATURE_SUFFIXES:
+            raise AdapterError(f"{file.name}：不支持的格式。")
+        try:
+            data = file.read_bytes()
+        except OSError as exc:
+            raise AdapterError(f"无法读取文件：{exc}") from exc
+        if not data:
+            raise AdapterError(f"{file.name} 是空文件。")
+        if file.suffix.lower() == ".json":
+            try:
+                loaded = json.loads(data.decode("utf-8-sig"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise AdapterError(f"注册表无法导入：{exc}") from exc
+            if isinstance(loaded, dict):
+                loaded = loaded.get("sources")
+            if not isinstance(loaded, list) or not loaded \
+                    or not all(isinstance(i, dict) for i in loaded):
+                raise AdapterError("注册表无法导入：JSON 中没有可用的 sources 列表")
+            registry.extend(loaded)
+        else:
+            files.append({"name": file.name, "bytes": data})
+    sources = []
+    if files:
+        sources, warnings = literature_evidence.build_sources_from_uploads(files, core.OUTPUT_DIR)
+    sources = [*sources, *registry]
+    if not sources:
+        raise AdapterError("没有识别到可用的参考资料。" + ("".join(warnings) if warnings else ""))
+
+    def _attach(latest: dict) -> None:
+        latest["literature_sources"] = [*(latest.get("literature_sources") or []), *sources]
+        latest["literature_names"] = [*(latest.get("literature_names") or []),
+                                      *[Path(p).name for p in paths]]
+
+    core.mutate_job_state(job_id, _attach)
+    return {"count": len(sources), "warnings": list(warnings)}
+
+
+def remove_literature(job_id: str) -> None:
+    if task_started(job_id):
+        raise AdapterError("任务已经开始，不能再修改参考资料。")
+
+    def _clear(latest: dict) -> None:
+        latest["literature_sources"] = []
+        latest["literature_names"] = []
+
+    core.mutate_job_state(job_id, _clear)
 
 
 def remove_termbase(job_id: str) -> dict:
@@ -2847,6 +2944,8 @@ def task_setup_view(config: EngineConfig, job_id: str) -> dict:
         },
         "glossary_count": len(state.get("glossary") or []),
         "glossary_name": str(state.get("glossary_name") or ""),
+        "literature_count": len(state.get("literature_sources") or []),
+        "literature_names": [str(n) for n in state.get("literature_names") or []],
     }
 
 
