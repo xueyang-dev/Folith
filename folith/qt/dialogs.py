@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
     QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
@@ -1244,6 +1244,96 @@ class NewTermDialog(QDialog):
                 "domain": self.domain_edit.text().strip()}
 
 
+class ProjectKnowledgeDialog(QDialog):
+    """项目知识：记忆摘要，以及导入时发现、等待人工决定的冲突。"""
+
+    def __init__(self, project: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle(i18n.tr('项目知识 · {v0}', v0=project.get("name") or ""))
+        self.setMinimumSize(560, 420)
+        self.summary = QTextBrowser()
+        self.summary.setMaximumHeight(150)
+        self.conflicts = QListWidget()
+        self.conflicts.currentRowChanged.connect(self._sync)
+        self.adopt_button = QPushButton(i18n.tr('采纳导入版本'))
+        self.keep_button = QPushButton(i18n.tr('保留本地版本'))
+        self.keep_all_button = QPushButton(i18n.tr('全部保留本地'))
+        self.adopt_button.clicked.connect(lambda: self._resolve(True))
+        self.keep_button.clicked.connect(lambda: self._resolve(False))
+        self.keep_all_button.clicked.connect(self._keep_all)
+        self.status = QLabel("")
+        self.status.setObjectName("hint")
+        self.status.setWordWrap(True)
+        buttons = QHBoxLayout()
+        for widget in (self.adopt_button, self.keep_button, self.keep_all_button):
+            buttons.addWidget(widget)
+        buttons.addStretch(1)
+        close = QPushButton(i18n.tr('关闭'))
+        close.clicked.connect(self.accept)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.summary)
+        layout.addWidget(style_module.field_label(i18n.tr('待决冲突')))
+        layout.addWidget(self.conflicts, 1)
+        layout.addLayout(buttons)
+        layout.addWidget(self.status)
+        layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        self._conflicts: list[dict] = []
+        self.reload()
+
+    def reload(self) -> None:
+        info = adapter.project_knowledge(self.project["project_id"])
+        memory = info["memory"]
+        self._conflicts = info["conflicts"]
+        rows = ((i18n.tr('锁定术语'), memory.get("glossary_count")),
+                (i18n.tr('风格规则'), memory.get("style_rule_count")),
+                (i18n.tr('翻译记忆'), memory.get("translation_memory_count")),
+                (i18n.tr('人工决定'), memory.get("human_decision_count")),
+                (i18n.tr('提升记录'), memory.get("promotion_count")),
+                (i18n.tr('待决冲突'), memory.get("pending_conflict_count")))
+        self.summary.setHtml("<table>" + "".join(
+            f"<tr><td>{name}&nbsp;&nbsp;</td><td><b>{value or 0}</b></td></tr>" for name, value in rows)
+            + "</table>")
+        self.conflicts.clear()
+        for conflict in self._conflicts:
+            kind = i18n.tr_dynamic(adapter.CONFLICT_KIND_LABELS.get(conflict["kind"], conflict["kind"]))
+            self.conflicts.addItem(
+                f"{kind} · {conflict['source']}：{i18n.tr('本地')}「{conflict['local']}」"
+                f" ↔ {i18n.tr('导入')}「{conflict['incoming']}」")
+        if self._conflicts:
+            self.conflicts.setCurrentRow(0)
+        self._sync()
+
+    def _sync(self, *_args) -> None:
+        has = 0 <= self.conflicts.currentRow() < len(self._conflicts)
+        self.adopt_button.setEnabled(has)
+        self.keep_button.setEnabled(has)
+        self.keep_all_button.setEnabled(bool(self._conflicts))
+
+    def _resolve(self, adopt: bool) -> None:
+        row = self.conflicts.currentRow()
+        if not 0 <= row < len(self._conflicts):
+            return
+        try:
+            adapter.resolve_project_conflict(
+                self.project["project_id"], self._conflicts[row]["conflict_id"],
+                adopt_incoming=adopt)
+        except adapter.AdapterError as exc:
+            self.status.setText(str(exc))
+            return
+        self.status.setText(i18n.tr('已采纳导入版本。') if adopt else i18n.tr('已保留本地版本。'))
+        self.reload()
+
+    def _keep_all(self) -> None:
+        try:
+            handled = adapter.keep_all_local_conflicts(self.project["project_id"])
+        except adapter.AdapterError as exc:
+            self.status.setText(str(exc))
+            return
+        self.status.setText(i18n.tr('已保留本地版本：{v0} 条。', v0=handled))
+        self.reload()
+
+
 class ProjectDialog(QDialog):
     """项目管理：新建 / 重命名 / 归档 / 删除（保护由核心执行）。"""
 
@@ -1303,6 +1393,14 @@ class ProjectDialog(QDialog):
         for button in (self.new_button, self.rename_button,
                        self.archive_button, self.delete_button):
             button.setIconSize(QSize(16, 16))
+        self.knowledge_button = QPushButton(i18n.tr('项目知识…'))
+        self.export_button = QPushButton(i18n.tr('导出记忆…'))
+        self.import_button = QPushButton(i18n.tr('导入记忆…'))
+        for button in (self.knowledge_button, self.export_button, self.import_button):
+            button.setIconSize(QSize(16, 16))
+        self.knowledge_button.clicked.connect(self._open_knowledge)
+        self.export_button.clicked.connect(lambda: self._export_memory())
+        self.import_button.clicked.connect(lambda: self._import_memory())
         self.new_button.clicked.connect(self._create)
         self.rename_button.clicked.connect(self._rename)
         self.archive_button.clicked.connect(self._toggle_archive)
@@ -1318,6 +1416,10 @@ class ProjectDialog(QDialog):
         actions.addWidget(self.archive_button)
         actions.addWidget(self.delete_button)
         actions.addStretch(1)
+        memory_actions = QHBoxLayout()
+        for button in (self.knowledge_button, self.export_button, self.import_button):
+            memory_actions.addWidget(button)
+        memory_actions.addStretch(1)
 
         close_row = QHBoxLayout()
         close_row.addWidget(self.status, 1)
@@ -1332,6 +1434,7 @@ class ProjectDialog(QDialog):
         layout.addWidget(hint)
         layout.addWidget(self.table, 1)
         layout.addLayout(actions)
+        layout.addLayout(memory_actions)
         layout.addLayout(close_row)
         self.reload()
 
@@ -1382,6 +1485,8 @@ class ProjectDialog(QDialog):
     def _selection_changed(self) -> None:
         project = self.selected_project()
         system = bool(project and project.get("is_system"))
+        self.knowledge_button.setEnabled(bool(project))
+        self.export_button.setEnabled(bool(project))
         self.rename_button.setEnabled(bool(project) and not system)
         self.archive_button.setEnabled(bool(project) and not system)
         self.delete_button.setEnabled(bool(project) and not system)
@@ -1391,6 +1496,51 @@ class ProjectDialog(QDialog):
 
     def _note(self, text: str) -> None:
         self.status.setText(text)
+
+    # -- 项目知识 / 记忆导入导出 ---------------------------------------------
+    def _open_knowledge(self) -> None:
+        project = self.selected_project()
+        if project and not bootstrap.automation():
+            ProjectKnowledgeDialog(project, self).exec()
+            self.reload()
+
+    def _export_memory(self, path: str = "") -> None:
+        project = self.selected_project()
+        if not project:
+            return
+        if not path:
+            if bootstrap.automation():
+                self._note(i18n.tr('导出记忆：自动化运行不打开系统面板，请直接提供文件路径。'))
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self, i18n.tr('导出项目记忆'), str(Path.home() / f"{project['name']}-memory.json"),
+                "JSON (*.json)")
+            if not path:
+                return
+        try:
+            adapter.export_project_memory_to(project["project_id"], path)
+        except adapter.AdapterError as exc:
+            self._note(str(exc))
+            return
+        self._note(i18n.tr('已导出到 {v0}', v0=path))
+
+    def _import_memory(self, path: str = "") -> None:
+        if not path:
+            if bootstrap.automation():
+                self._note(i18n.tr('导入记忆：自动化运行不打开系统面板，请直接提供文件路径。'))
+                return
+            path, _ = QFileDialog.getOpenFileName(
+                self, i18n.tr('导入项目记忆'), str(Path.home()), "JSON (*.json)")
+            if not path:
+                return
+        try:
+            result = adapter.import_project_memory_from(path)
+        except adapter.AdapterError as exc:
+            self._note(str(exc))
+            return
+        self._note(i18n.tr('已导入到项目「{v0}」（只增不改；冲突需要在「项目知识」里决定）。',
+                           v0=result["project"].get("name") or ""))
+        self.reload()
 
     # -- actions ----------------------------------------------------------
     def _ask_name(self, title: str, label: str, text: str = "") -> tuple[str, bool]:

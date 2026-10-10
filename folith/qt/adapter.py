@@ -2565,6 +2565,61 @@ def app_identity() -> dict:
     }
 
 
+# ----- 项目知识：记忆摘要 / 冲突 / 导入导出 -----------------------------------
+#
+# 项目记忆是"跨任务复用的已确认知识"：锁定术语、已确认的风格规则、人工决定与翻译记忆。
+# 旧界面可以查看摘要、处理导入时发现的冲突（采纳导入版本或保留本地），并导出/导入。
+
+CONFLICT_KIND_LABELS = {"glossary": "术语", "style_rule": "风格规则", "translation_memory": "翻译记忆"}
+
+
+def project_knowledge(project_id: str) -> dict:
+    project = core.load_project(project_id)
+    if project is None and core.is_system_project_id(project_id):
+        project = core.system_project_view()
+    if project is None:
+        raise AdapterError("找不到这个项目。")
+    return {"memory": dict(core.project_memory_view(project)),
+            "conflicts": [dict(c) for c in core.list_project_conflicts(project["project_id"])]}
+
+
+def resolve_project_conflict(project_id: str, conflict_id: str, *, adopt_incoming: bool) -> None:
+    try:
+        core.resolve_project_conflict(project_id, conflict_id, adopt_incoming=adopt_incoming)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def keep_all_local_conflicts(project_id: str) -> int:
+    """批量处理默认保留本地版本（批量操作最容易误伤，默认取保守的一边）。"""
+    try:
+        return int(core.resolve_all_project_conflicts(project_id, adopt_incoming=False))
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def export_project_memory_to(project_id: str, path: str) -> str:
+    try:
+        text = core.export_project_memory(project_id)
+        Path(path).write_text(text, encoding="utf-8")
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise AdapterError(f"无法导出项目记忆：{exc}") from exc
+    return str(path)
+
+
+def import_project_memory_from(path: str) -> dict:
+    """导入项目记忆（只增不改；同名项目并入而不是新建重复项目）。"""
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        raise AdapterError(f"无法读取文件：{exc}") from exc
+    try:
+        project, report = core.import_project_memory(data)
+    except (ValueError, RuntimeError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return {"project": dict(project), "report": dict(report) if isinstance(report, dict) else report}
+
+
 def project_rows() -> list[dict]:
     """项目列表（含系统工作区），带任务数与归档状态。
 
