@@ -232,6 +232,13 @@ class MainWindow(QMainWindow):
         self.workbench.excludeRequested.connect(self.exclude_segment)
         self.workbench.includeRequested.connect(self.include_segment)
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
+        self.workbench.glossaryDraftRequested.connect(self.save_glossary_draft)
+        self.workbench.glossaryFreezeRequested.connect(self.freeze_glossary)
+        self.workbench.glossaryUnfreezeRequested.connect(self.unfreeze_glossary)
+        self.workbench.glossaryBypassRequested.connect(self.bypass_glossary_freeze)
+        self.workbench.glossaryEntryUpdateRequested.connect(self.update_glossary_entry)
+        self.workbench.glossaryEntryAddRequested.connect(self.add_glossary_entry)
+        self.workbench.glossaryEntryDeleteRequested.connect(self.delete_glossary_entry)
         self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
@@ -1232,6 +1239,88 @@ class MainWindow(QMainWindow):
             return
         self._notice(i18n.tr('已恢复该段落；它的审校标记需要重新确认。'))
         self.refresh_workbench(force=True)
+
+    # ================= 术语页 =================
+    def _glossary_action(self, fn, *args, done_message: str = "", failure: str = "",
+                         after=None, **kwargs) -> bool:
+        job_id = self._current_job_id
+        if not job_id:
+            return False
+        try:
+            result = fn(job_id, *args, **kwargs)
+        except adapter.AdapterError as exc:
+            self._failure(failure or i18n.tr('无法修改术语'), str(exc))
+            return False
+        message = done_message or (result if isinstance(result, str) else "")
+        if message:
+            self._notice(message)
+        self.refresh_workbench(force=True)
+        self.workbench.refresh_terms()
+        if after is not None:
+            after()
+        return True
+
+    def _continue_after_freeze(self) -> None:
+        """冻结后顺手继续翻译（旧界面也是这样）；已开始或正在运行的任务不动。"""
+        job_id = self._current_job_id
+        state = adapter.load_state(job_id) if job_id else {}
+        if not state or state.get("p2_done"):
+            return
+        try:
+            if adapter.core.job_is_active(job_id):
+                return
+        except Exception:  # noqa: BLE001
+            return
+        self.start_or_resume()
+
+    def save_glossary_draft(self, rows: list) -> None:
+        self._glossary_action(adapter.save_glossary_draft, rows,
+                              done_message=i18n.tr('术语草稿已保存。'),
+                              failure=i18n.tr('无法保存术语草稿'))
+
+    def freeze_glossary(self, rows: list) -> None:
+        self._glossary_action(adapter.freeze_glossary, rows,
+                              done_message=i18n.tr('术语已冻结。'),
+                              failure=i18n.tr('无法冻结术语'),
+                              after=self._continue_after_freeze)
+
+    def unfreeze_glossary(self) -> None:
+        self._glossary_action(adapter.unfreeze_glossary,
+                              done_message=i18n.tr('已解除冻结，可以继续修改术语。'),
+                              failure=i18n.tr('无法解除冻结'))
+
+    def bypass_glossary_freeze(self) -> None:
+        if not self._confirm(
+                i18n.tr('跳过术语冻结'),
+                i18n.tr('跳过后将直接使用暂定术语继续翻译；这个决定会被记录，之后术语变化不会自动保证全文一致。\n\n确定跳过吗？'),
+                yes=i18n.tr('跳过冻结'), no=i18n.tr('取消')):
+            return
+        self._glossary_action(adapter.bypass_glossary_freeze,
+                              done_message=i18n.tr('已跳过冻结，使用暂定术语。'),
+                              failure=i18n.tr('无法跳过冻结'),
+                              after=self._continue_after_freeze)
+
+    def update_glossary_entry(self, entry_id: str, fields: dict) -> None:
+        self._glossary_action(
+            adapter.update_glossary_entry, entry_id,
+            preferred=fields.get("preferred", ""), status=fields.get("status", ""),
+            domain=fields.get("domain", ""), note=fields.get("note", ""),
+            failure=i18n.tr('无法保存术语'))
+
+    def add_glossary_entry(self, fields: dict) -> None:
+        self._glossary_action(
+            adapter.add_glossary_entry, fields.get("source", ""),
+            fields.get("preferred", ""), domain=fields.get("domain", ""),
+            status=fields.get("status", "locked"), failure=i18n.tr('无法新增术语'))
+
+    def delete_glossary_entry(self, entry_id: str) -> None:
+        if not self._confirm(
+                i18n.tr('删除术语'),
+                i18n.tr('删除后会生成新的术语版本，受影响的译文需要重新确认。\n\n确定删除吗？'),
+                yes=i18n.tr('删除'), no=i18n.tr('取消')):
+            return
+        self._glossary_action(adapter.delete_glossary_entry, entry_id,
+                              failure=i18n.tr('无法删除术语'))
 
     # ================= 审校页：人工处置 =================
     def resolve_findings(self, finding_ids: list, action: str, note: str) -> None:

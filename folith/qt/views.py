@@ -29,6 +29,7 @@ from . import i18n
 from . import adapter
 from . import icons
 from .review_panel import ReviewPanel
+from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
 from . import style as style_module
 from . import theme as theme_module
@@ -1095,6 +1096,14 @@ class WorkbenchView(QWidget):
     findingResolveRequested = Signal(list, str, str)    # finding_ids, action, note
     suggestionApplyRequested = Signal(dict, str)        # queue item, note
     sourceConfirmRequested = Signal(int, str)           # segment index, note
+    # 术语页（暂存修改 / 冻结 / 逐条修订）
+    glossaryDraftRequested = Signal(list)
+    glossaryFreezeRequested = Signal(list)
+    glossaryUnfreezeRequested = Signal()
+    glossaryBypassRequested = Signal()
+    glossaryEntryUpdateRequested = Signal(str, dict)
+    glossaryEntryAddRequested = Signal(dict)
+    glossaryEntryDeleteRequested = Signal(str)
 
     COLUMNS = ("段", "原文", "译文")
 
@@ -1124,6 +1133,7 @@ class WorkbenchView(QWidget):
         self._only_issues = False
         self._excluded_signature: tuple | None = None
         self._review_key: tuple = ()
+        self._terms_key: tuple = ()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -1628,6 +1638,17 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(translation_page,
                          icons.icon("translate", 16, style_module.text_color("text-secondary")),
                          i18n.tr('翻译'))
+        self.terms_panel = TermsPanel()
+        self.terms_panel.draftSaveRequested.connect(self.glossaryDraftRequested.emit)
+        self.terms_panel.freezeRequested.connect(self.glossaryFreezeRequested.emit)
+        self.terms_panel.unfreezeRequested.connect(self.glossaryUnfreezeRequested.emit)
+        self.terms_panel.bypassRequested.connect(self.glossaryBypassRequested.emit)
+        self.terms_panel.entryUpdateRequested.connect(self.glossaryEntryUpdateRequested.emit)
+        self.terms_panel.entryAddRequested.connect(self.glossaryEntryAddRequested.emit)
+        self.terms_panel.entryDeleteRequested.connect(self.glossaryEntryDeleteRequested.emit)
+        self.tabs.addTab(self.terms_panel,
+                         icons.icon("file-sheet", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('术语'))
         self.review_panel = ReviewPanel()
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
         self.review_panel.applySuggestionRequested.connect(self.suggestionApplyRequested.emit)
@@ -1705,6 +1726,24 @@ class WorkbenchView(QWidget):
         self._render_delivery(force=refresh_delivery)
         self._render_segment_detail()
         self._render_review()
+        self._render_terms()
+
+    def _render_terms(self, *, force: bool = False) -> None:
+        key = (self.job_id, id(self._state))
+        if key == self._terms_key and not force:
+            return
+        self._terms_key = key
+        try:
+            view = adapter.glossary_view(self.job_id, self._state)
+        except Exception:  # noqa: BLE001 - 术语页坏了不能拖垮翻译页
+            view = {}
+        self.terms_panel.apply(self.job_id, view, force=force)
+
+    def refresh_terms(self) -> None:
+        """显式动作（保存/冻结/修订）落盘之后：丢弃暂存并按磁盘重画。"""
+        self._terms_key = ()
+        self.terms_panel.mark_clean()
+        self._render_terms(force=True)
 
     def _render_review(self) -> None:
         """审校页只在状态真的换了对象时重算（队列要过一遍原文质量门禁）。"""

@@ -25,8 +25,8 @@
 | 新建：**上传术语库（xlsx/csv/tbx）与 TMX** | `task_termbase_setting` + `parse_termbase*` + `import_tmx` | 只读展示"术语库在导入时确定" | ❌ |
 | 新建：**风格画像 / 基础风格 / 自适应画像** | `style_adjust_panel`、`style_profile_section` | `style_rules` 在配置里，界面无编辑入口 | ❌ |
 | 新建：**报告模板、文献输入、理论框架** | `report_template_input`、`literature_inputs`、`delivery_research_details` | 无（交付预设里的研究项只有开关） | ❌ |
-| 新建：**Paddle 任务级模型选择** | `paddle_model_options`、`ocr_paddle_model_status` | 只能选 Paddle 后端，不能选模型 | ❌ |
-| 新建：**线上 OCR API 配置**（地址/模型/凭据） | `save_ocr_online_config`、`ocr_online_status` | 无；`online` 在 Qt 里指 VLM，不是线上 OCR API | ❌ |
+| 新建：Paddle 任务级模型选择、线上 OCR API 作为独立来源 | `paddle_model_options`、`ocr_source_options` | 不迁移：默认路径已转为 VLM 视觉理解，OCR 只是可选的本机定位插件；Tesseract/Paddle 作为显式遗留选项保留 | ⚪ |
+| 设置：**视觉理解连接**（专用视觉模型/地址/凭据；留空则沿用翻译连接） | `_render_ocr_online_settings`（实际是 VLM 的专用连接）、`save_ocr_online_config` | 无；翻译模型不支持图像时，扫描件抽取会明确失败而没有出口 | ❌ |
 | 任务列表/状态/打开/删除/批量改归属 | 历史页 + 侧栏 | `HomeView`（状态分段 + 项目筛选） | ✅ |
 | 历史页：**搜索框**、排序 | `card_matches`、`sort_key` | 只有状态分段 + 项目筛选 | 🟡 |
 | 运行：进度、暂停/继续/取消/重试 | 运行时条 + 抽屉 | 工作台页头 + 菜单 | ✅ |
@@ -71,9 +71,12 @@
    Qt 新建任务默认不开它，但**用旧数据接入功能带进来的 Streamlit 任务会卡住**。
 3. **要求实践报告的任务无法冻结交付。** `qt/adapter.py` 的交付门禁写着"实践报告尚未完成，不能冻结交付"，
    而生成报告、补人工证据的界面都在 Streamlit。同样影响接入的旧任务。
-4. **0.5.0 CHANGELOG 里的头条功能"三路可选 OCR"在 Qt 里只通了一半。** Tesseract 可选；Paddle 不能选模型（含阿拉伯语微调模型）；
-   **线上 OCR API 完全没有配置入口**（`save_ocr_online_config` 只被 Streamlit 调用）。另外 Qt 的 `online` 取值被注释说明为 VLM 视觉理解，
-   和 CHANGELOG 里的"线上 OCR API"不是同一回事，需要产品上定名，避免用户误读。
+4. **扫描件的视觉理解连接在 Qt 里无法单独配置。** 默认路径是 VLM 结构化视觉理解（`ocr_backend=online`），它读取"专用视觉连接"，
+   没有时才沿用翻译连接；翻译模型若不支持图像输入，扫描件抽取会明确失败（迁移报告 G 节：没有静默回退）。Streamlit 里这个连接可以单独设置，
+   Qt 没有入口。
+   > 更正（2026-10-10，据 `docs/vlm-migration*.md` 与 `docs/ui-audit/36-scan-source-vs-vlm`）：本审计初稿把"线上 OCR API 配置、Paddle 模型选择"
+   > 当作头条功能缺失，这是误判。产品已转向 VLM，OCR 降级为可选的本机定位插件（只产出粗文字与区域坐标），Tesseract/Paddle 只作为显式选择的遗留路径保留，
+   > 这两项**不迁移**。真正缺的是上面这条"视觉理解连接"。
 
 ---
 
@@ -130,7 +133,7 @@ Qt 比 Streamlit **多**的：退出/恢复语义、最小窗口适配、键盘�
 
 | 批次 | 内容 | 判据 |
 | --- | --- | --- |
-| A（P0） | ① 审校发现项处置（检查器里加三个动作）② 术语审核/冻结面板（含绕过冻结）③ 线上 OCR API 与 Paddle 模型设置 ④ 旧任务进入 Qt 时，对"需要报告/需术语确认"的任务给出明确提示与出口 | 接入旧任务不再有无出口状态；`CHANGELOG` 头条功能全部可从 Qt 到达 |
+| A（P0） | ① 审校发现项处置（检查器里加三个动作）② 术语审核/冻结面板（含绕过冻结）③ 视觉理解连接设置 ④ 旧任务进入 Qt 时，对"需要报告/需术语确认"的任务给出明确提示与出口 | 接入旧任务不再有无出口状态；扫描件的视觉模型可在 Qt 里单独配置 |
 | B（日常高频） | 段落结构编辑 + 撤销 + 版本恢复；来源重扫/质量确认；实体一致性；失败恢复面板；运行日志；历史页搜索；交付快照归档下载 | §3 的 #2–#8、#10 全部有入口 |
 | C（准备类界面） | 新建任务里的术语库/TMX 上传、风格画像、报告模板与文献 | §3 #9；"准备"阶段的功能与旧向导一致 |
 | D（专用能力） | 语言资产库、项目知识/记忆/冲突、案例、QA/合规、报告 | 按产品是否继续保留 MTI 报告能力来裁剪；若不保留，在发布说明中明确下线 |

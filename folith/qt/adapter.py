@@ -1008,6 +1008,155 @@ def confirm_source_segment(job_id: str, index: int, note: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 术语表（审核 / 冻结 / 逐条修订） =================
+#
+# 旧界面的"术语"工作区在 Qt 里原来完全没有。严格术语治理的任务会在候选术语未
+# 冻结时被核心拒绝开始翻译，没有这个面板就没有出口。编辑规则沿用旧界面：
+#   * 翻译开始前：在面板里暂存修改 → 保存草稿 / 冻结并继续 / 跳过冻结；
+#   * 翻译开始后：逐条修订，每次都由核心生成新的术语版本并失效受影响的段落。
+
+GLOSSARY_STATUS_LABELS = {"candidate": "候选", "provisional": "暂定",
+                          "locked": "已锁定", "rejected": "已拒绝"}
+_GLOSSARY_FIELDS = ("source", "preferred", "status", "domain", "note")
+
+
+def glossary_view(job_id: str, state: dict | None = None) -> dict:
+    """术语页的视图模型（命中次数、状态、冻结情况）。"""
+    from folith import workspace_presentation as _presentation
+
+    state = state if state is not None else load_state(job_id)
+    rows = []
+    for row in _presentation.term_rows(state):
+        entry = row.get("entry") or {}
+        rows.append({
+            "id": row["id"],
+            "source": row["source"],
+            "preferred": row["target"],
+            "status": row["status"],
+            "domain": str(entry.get("domain") or ""),
+            "note": str(entry.get("note") or ""),
+            "occurrences": len(row.get("occurrences") or []),
+            "matched": int(row.get("matched") or 0),
+            "exception": row.get("exception") or "",
+            "read_only": bool(entry.get("read_only")),
+        })
+    frozen = state.get("glossary_frozen") or {}
+    pending = [r for r in rows if r["status"] == "candidate"]
+    quality_mode = bool(state.get("quality_mode"))
+    frozen_version = frozen.get("version") if isinstance(frozen, dict) else None
+    bypassed = bool(state.get("quality_bypass"))
+    started = bool(state.get("p2_done"))
+    return {
+        "rows": rows,
+        "frozen_version": frozen_version,
+        "frozen": bool(frozen),
+        "bypassed": bypassed,
+        "quality_mode": quality_mode,
+        "started": started,
+        # 与核心 run_job_pipeline 的开始门禁同一条件
+        "blocks_start": bool(quality_mode and pending and not frozen and not bypassed),
+        "pending_count": len(pending),
+        "can_stage": not started,
+    }
+
+
+def _merge_glossary_rows(state: dict, rows: Sequence[dict]) -> list[dict]:
+    """把面板里的暂存行合并回完整术语表（保留面板没展示的字段）。"""
+    existing = {str(e.get("id")): dict(e) for e in state.get("glossary") or []
+                if isinstance(e, dict)}
+    merged: list[dict] = []
+    for row in rows:
+        source = str(row.get("source") or "").strip()
+        preferred = str(row.get("preferred") or "").strip()
+        if not source:
+            continue
+        base = existing.get(str(row.get("id") or ""), {})
+        status = str(row.get("status") or base.get("status") or "provisional")
+        if status not in GLOSSARY_STATUS_LABELS:
+            status = "provisional"
+        base.update({
+            "source": source,
+            "preferred": preferred or base.get("preferred") or base.get("target") or "",
+            "status": status,
+            "domain": str(row.get("domain") or ""),
+            "note": str(row.get("note") or ""),
+        })
+        base["target"] = base["preferred"]
+        base["proposed_target"] = base.get("proposed_target") or base["preferred"]
+        merged.append(base)
+    return merged
+
+
+def save_glossary_draft(job_id: str, rows: Sequence[dict]) -> dict:
+    state = load_state(job_id)
+    if not state:
+        raise AdapterError(f"找不到任务 {job_id}")
+    updated = core.save_glossary_draft(job_id, _merge_glossary_rows(state, rows))
+    if updated is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    return updated
+
+
+def freeze_glossary(job_id: str, rows: Sequence[dict]) -> dict:
+    """冻结术语表（生成新版本）。冻结的是面板里**当前**的内容。"""
+    state = load_state(job_id)
+    if not state:
+        raise AdapterError(f"找不到任务 {job_id}")
+    entries = _merge_glossary_rows(state, rows)
+    if not entries:
+        raise AdapterError("术语表是空的，没有可冻结的内容。")
+    updated = core.freeze_glossary(job_id, entries=entries, frozen_by="用户")
+    if updated is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    return updated
+
+
+def unfreeze_glossary(job_id: str) -> dict:
+    state = core.unfreeze_glossary(job_id)
+    if state is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    if state.get("p2_done"):
+        raise AdapterError("翻译已经开始，不能解除冻结；请逐条修订术语，系统会生成新的术语版本。")
+    return state
+
+
+def bypass_glossary_freeze(job_id: str) -> dict:
+    """跳过人工冻结，用暂定术语继续（决定会被记录）。"""
+    state = core.bypass_freeze(job_id, "用户")
+    if state is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    return state
+
+
+def _checked(result, failure: str):
+    state, ok, message = result[0], result[1], result[2]
+    if not ok:
+        raise AdapterError(message or failure)
+    return state, message, (result[3] if len(result) > 3 else "")
+
+
+def update_glossary_entry(job_id: str, entry_id: str, *, preferred: str,
+                          status: str, domain: str = "", note: str = "") -> str:
+    """翻译开始后的逐条修订；返回核心给出的说明（含新的术语版本号）。"""
+    _state, message, _ = _checked(core.update_glossary_entry(
+        job_id, entry_id, preferred=preferred, status=status, domain=domain,
+        note=note), "无法保存术语")
+    return message
+
+
+def add_glossary_entry(job_id: str, source: str, target: str, *, domain: str = "",
+                       status: str = "locked") -> str:
+    _state, message, _ = _checked(core.add_glossary_entry(
+        job_id, source, target, domain=domain, status=status), "无法新增术语")
+    return message
+
+
+def delete_glossary_entry(job_id: str, entry_id: str) -> str:
+    _state, message, _ = _checked(core.delete_glossary_entry(job_id, entry_id),
+                                  "无法删除术语")
+    return message
+
+
 # ================= delivery =================
 
 
