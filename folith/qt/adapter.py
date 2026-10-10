@@ -1008,6 +1008,103 @@ def confirm_source_segment(job_id: str, index: int, note: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 段落结构编辑（改原文 / 拆分 / 合并 / 插入 / 删除 / 撤销） =================
+#
+# 旧界面可以在工作台里改正 OCR/分段造成的结构错误；Qt 原来只能整段"排除"。核心的
+# ``mutate_translation_segments`` 是唯一的状态层操作（段落身份、审校依赖失效、可撤销
+# 历史都在里面），这里只把它的拒绝原因（任务在运行、索引越界…）原样转成可读的话。
+
+STRUCTURE_OPERATIONS = ("source_edit", "split", "merge", "insert", "delete")
+
+
+def _structure_call(job_id: str, index: int, operation: str, **fields) -> dict:
+    try:
+        return core.mutate_translation_segments(
+            job_id, int(index), operation, actor="user", **fields)
+    except (RuntimeError, ValueError, IndexError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def edit_segment_source(job_id: str, index: int, source_text: str) -> dict:
+    text = str(source_text or "")
+    if not text.strip():
+        raise AdapterError("原文不能为空；要去掉这一段请使用「排除」或「删除空段」。")
+    return _structure_call(job_id, index, "source_edit", source_text=text)
+
+
+def split_segment(job_id: str, index: int, source_a: str, source_b: str,
+                  target_a: str = "", target_b: str = "") -> dict:
+    if not str(source_a or "").strip() or not str(source_b or "").strip():
+        raise AdapterError("拆分后的两段原文都必须填写。")
+    return _structure_call(job_id, index, "split", source_a=source_a,
+                           source_b=source_b, target_a=target_a, target_b=target_b)
+
+
+def merge_with_next(job_id: str, index: int) -> dict:
+    return _structure_call(job_id, index, "merge")
+
+
+def insert_after(job_id: str, index: int) -> dict:
+    return _structure_call(job_id, index, "insert")
+
+
+def delete_empty_segment(job_id: str, index: int) -> dict:
+    return _structure_call(job_id, index, "delete")
+
+
+def restore_original_translation(job_id: str, index: int) -> dict:
+    """把一段恢复成人工修改之前的译文（译文真值变化，下游需要重新确认）。"""
+    state = load_state(job_id)
+    pairs = state.get("pairs") or []
+    if not (0 <= int(index) < len(pairs)):
+        raise AdapterError("段落索引超出范围，请刷新后重试。")
+    pair = pairs[int(index)]
+    if not (pair.get("human_edited") or pair.get("_translation_edit_restore")):
+        raise AdapterError("这一段没有人工修改过，没有可恢复的原译。")
+    uid = core.segment_uid(pair) or str(index)
+    try:
+        updated = core.restore_translation_edit(job_id, int(index))
+    except (RuntimeError, ValueError, IndexError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    clear_draft(job_id, uid)        # 草稿基于被撤掉的那版译文，留着只会误导
+    return updated
+
+
+def structure_undo_info(state: dict) -> dict:
+    """最近一次结构操作能否撤销（界面据此决定菜单项）。"""
+    return dict(core.can_undo_translation_segment_structure(state))
+
+
+def undo_segment_structure(job_id: str) -> dict:
+    try:
+        return core.undo_translation_segment_structure(job_id, actor="user")
+    except (RuntimeError, ValueError, IndexError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def merge_preview(state: dict, index: int) -> dict | None:
+    """合并当前段和下一段的预览；最后一段没有下一段，返回 None。"""
+    pairs = state.get("pairs") or []
+    if not (0 <= index < len(pairs) - 1):
+        return None
+
+    def joined(key: str) -> str:
+        return "\n".join(item for item in (
+            str(pairs[index].get(key) or "").strip(),
+            str(pairs[index + 1].get(key) or "").strip()) if item)
+
+    return {"source": joined("source"), "target": joined("target")}
+
+
+def split_parts(value: str) -> tuple[str, str]:
+    """把一段文字按第一个换行拆成两半（拆分对话框的初始内容）。"""
+    text = str(value or "").replace("\r\n", "\n")
+    if "\n" not in text:
+        return text.strip(), ""
+    first, remainder = text.split("\n", 1)
+    return first.strip(), remainder.strip()
+
+
 # ================= 视觉理解连接（扫描件的默认路径） =================
 #
 # 扫描件默认走 VLM 结构化视觉理解（``ocr_backend == "online"``）。它用"专用视觉连接"，

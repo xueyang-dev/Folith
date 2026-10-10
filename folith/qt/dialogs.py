@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QRadioButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
+    QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
     QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
@@ -1095,6 +1095,76 @@ class ProjectPickerDialog(QDialog):
 
     def move_translations(self) -> bool:
         return self.move_tm_box.isChecked()
+
+
+class SegmentSourceDialog(QDialog):
+    """改正一段的原文（译文保持不变）。结构编辑可撤销，所以这里不再二次确认。"""
+
+    def __init__(self, source: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('修改原文'))
+        self.setMinimumWidth(560)
+        hint = QLabel(i18n.tr('只改正原文（例如 OCR 识别错误）；当前译文保持不变，该段需要重新审校。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        self.edit = QPlainTextEdit(source)
+        self.edit.setMinimumHeight(160)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText(i18n.tr('保存原文'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addWidget(self.edit, 1)
+        layout.addWidget(buttons)
+
+    def source_text(self) -> str:
+        return self.edit.toPlainText()
+
+
+class SegmentSplitDialog(QDialog):
+    """把一段拆成两个工作单元：两段原文必填，译文可以先留空。"""
+
+    def __init__(self, source: str, target: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('拆分段落'))
+        self.setMinimumWidth(720)
+        hint = QLabel(i18n.tr('把当前段落拆成两个工作单元。两段原文都必须填写；译文可暂留空。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        source_a, source_b = adapter.split_parts(source)
+        target_a, target_b = adapter.split_parts(target)
+        self.source_a = QPlainTextEdit(source_a)
+        self.source_b = QPlainTextEdit(source_b)
+        self.target_a = QPlainTextEdit(target_a)
+        self.target_b = QPlainTextEdit(target_b)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        for column, (title_a, widget_a, title_b, widget_b) in enumerate((
+                (i18n.tr('第一段原文'), self.source_a, i18n.tr('第二段原文'), self.source_b),
+                (i18n.tr('第一段译文'), self.target_a, i18n.tr('第二段译文'), self.target_b))):
+            grid.addWidget(style_module.field_label(title_a), column * 2, 0)
+            grid.addWidget(style_module.field_label(title_b), column * 2, 1)
+            grid.addWidget(widget_a, column * 2 + 1, 0)
+            grid.addWidget(widget_b, column * 2 + 1, 1)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(i18n.tr('拆分并保存'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(grid, 1)
+        layout.addWidget(buttons)
+
+    def parts(self) -> dict:
+        return {"source_a": self.source_a.toPlainText(),
+                "source_b": self.source_b.toPlainText(),
+                "target_a": self.target_a.toPlainText(),
+                "target_b": self.target_b.toPlainText()}
 
 
 class ProjectDialog(QDialog):

@@ -32,6 +32,7 @@ from folith.desktop import single_instance
 from . import i18n
 from . import adapter
 from . import bootstrap
+from . import dialogs
 from . import prompts
 from . import style as style_module
 from . import theme as theme_module
@@ -231,6 +232,8 @@ class MainWindow(QMainWindow):
         self.workbench.discardDraftRequested.connect(self.discard_draft)
         self.workbench.excludeRequested.connect(self.exclude_segment)
         self.workbench.includeRequested.connect(self.include_segment)
+        self.workbench.structureRequested.connect(self.edit_structure)
+        self.workbench.restoreRequested.connect(self.restore_translation)
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
         self.workbench.glossaryDraftRequested.connect(self.save_glossary_draft)
         self.workbench.glossaryFreezeRequested.connect(self.freeze_glossary)
@@ -1239,6 +1242,89 @@ class MainWindow(QMainWindow):
             return
         self._notice(i18n.tr('已恢复该段落；它的审校标记需要重新确认。'))
         self.refresh_workbench(force=True)
+
+    def restore_translation(self, index: int) -> None:
+        """恢复一段在第一次人工修改之前的译文。"""
+        job_id = self._current_job_id
+        if not job_id or index < 0:
+            return
+        if not self._confirm(
+                i18n.tr('恢复原译'),
+                i18n.tr('第 {v0} 段会回到第一次人工修改之前的译文，已有的人工修改和该段草稿将被丢弃；该段需要重新审校。\n\n确定恢复吗？', v0=index + 1),
+                yes=i18n.tr('恢复原译'), no=i18n.tr('取消')):
+            return
+        try:
+            adapter.restore_original_translation(job_id, index)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法恢复原译'), str(exc))
+            return
+        self._notice(i18n.tr('第 {v0} 段已恢复原译；该段需要重新审校。', v0=index + 1))
+        self.refresh_workbench(force=True)
+        self.workbench.reload_current_segment(force=True)
+
+    # ================= 段落结构编辑 =================
+    def edit_structure(self, operation: str, index: int) -> None:
+        """改原文 / 拆分 / 合并 / 插入 / 删除空段 / 撤销。
+
+        每一步都由核心的同一个状态层操作完成；任务在运行时核心会拒绝，原因原样显示。
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        # 未提交的草稿指向旧的段落身份：先落盘，结构变化后由核心统一处理。
+        self.workbench.flush_draft()
+        state = adapter.load_state(job_id)
+        pairs = state.get("pairs") or []
+        pair = pairs[index] if 0 <= index < len(pairs) else {}
+        try:
+            if operation == "source_edit":
+                dialog = dialogs.SegmentSourceDialog(str(pair.get("source") or ""), self)
+                if dialog.exec() != dialog.DialogCode.Accepted:
+                    return
+                adapter.edit_segment_source(job_id, index, dialog.source_text())
+                message = i18n.tr('已修改第 {v0} 段的原文；该段需要重新审校。', v0=index + 1)
+            elif operation == "split":
+                dialog = dialogs.SegmentSplitDialog(
+                    str(pair.get("source") or ""), str(pair.get("target") or ""), self)
+                if dialog.exec() != dialog.DialogCode.Accepted:
+                    return
+                adapter.split_segment(job_id, index, **dialog.parts())
+                message = i18n.tr('已拆分第 {v0} 段；两段都需要重新审校。', v0=index + 1)
+            elif operation == "merge":
+                preview = adapter.merge_preview(state, index)
+                if preview is None:
+                    self._notice(i18n.tr('最后一段没有下一段可合并。'), error=True)
+                    return
+                if not self._confirm(
+                        i18n.tr('合并段落'),
+                        i18n.tr('把第 {v0} 段和下一段合并成一个工作单元，并让它们重新进入待审校。\n\n合并后原文：\n{v1}\n\n可用「撤销上一次结构操作」退回。',
+                                v0=index + 1, v1=preview["source"][:600]),
+                        yes=i18n.tr('合并'), no=i18n.tr('取消')):
+                    return
+                adapter.merge_with_next(job_id, index)
+                message = i18n.tr('已合并第 {v0} 段和下一段。', v0=index + 1)
+            elif operation == "insert":
+                adapter.insert_after(job_id, index)
+                message = i18n.tr('已在第 {v0} 段后插入空段。', v0=index + 1)
+            elif operation == "delete":
+                if not self._confirm(
+                        i18n.tr('删除空段'),
+                        i18n.tr('删除第 {v0} 段（它没有任何内容）。可用「撤销上一次结构操作」退回。', v0=index + 1),
+                        yes=i18n.tr('删除'), no=i18n.tr('取消')):
+                    return
+                adapter.delete_empty_segment(job_id, index)
+                message = i18n.tr('已删除空段。')
+            elif operation == "undo":
+                adapter.undo_segment_structure(job_id)
+                message = i18n.tr('已撤销上一次结构操作；恢复的段落需要重新审校。')
+            else:
+                return
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法修改段落结构'), str(exc))
+            return
+        self._notice(message)
+        self.refresh_workbench(force=True)
+        self.workbench.reload_current_segment(force=True)
 
     # ================= 术语页 =================
     def _glossary_action(self, fn, *args, done_message: str = "", failure: str = "",

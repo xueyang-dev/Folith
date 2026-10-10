@@ -20,7 +20,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QFormLayout, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPlainTextEdit, QProgressBar,
+    QMenu, QPlainTextEdit, QProgressBar,
     QPushButton, QScrollArea, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
     QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -1082,6 +1082,8 @@ class WorkbenchView(QWidget):
     discardDraftRequested = Signal(int)
     excludeRequested = Signal(int)
     includeRequested = Signal(str)
+    restoreRequested = Signal(int)             # 恢复人工修改之前的译文
+    structureRequested = Signal(str, int)     # 操作名（见 adapter.STRUCTURE_OPERATIONS / "undo"）, 段索引
     deliverRequested = Signal()
     exportRequested = Signal()
     saveSnapshotRequested = Signal(int)
@@ -1362,6 +1364,29 @@ class WorkbenchView(QWidget):
             i18n.tr('排除后本段从工作台移出，不进入译文与交付；原文与当前译文完整保留，可在「交付」页的已排除清单里恢复'))
         self.exclude_button.clicked.connect(
             lambda: self.excludeRequested.emit(self._current_index))
+        self.restore_button = _icon_button(QPushButton(i18n.tr('恢复原译')), "refresh", "text-secondary")
+        self.restore_button.setToolTip(i18n.tr('撤销这一段的人工修改，回到修改之前的译文；该段需要重新审校'))
+        self.restore_button.clicked.connect(
+            lambda: self.restoreRequested.emit(self._current_index))
+        self.restore_button.setVisible(False)
+        self.structure_button = _icon_button(QPushButton(i18n.tr('段落结构…')), "list", "text-secondary")
+        self.structure_button.setToolTip(
+            i18n.tr('改正原文、拆分、合并、插入或删除空段；可撤销最近一次结构操作'))
+        self.structure_menu = QMenu(self.structure_button)
+        self._structure_actions: dict[str, QAction] = {}
+        for key, label in (("source_edit", '修改原文…'), ("split", '拆分本段…'),
+                           ("merge", '与下一段合并…'), ("insert", '在其后插入空段'),
+                           ("delete", '删除空段')):
+            action = self.structure_menu.addAction(i18n.tr(label))
+            action.triggered.connect(
+                lambda _checked=False, op=key:
+                self.structureRequested.emit(op, self._current_index))
+            self._structure_actions[key] = action
+        self.structure_menu.addSeparator()
+        self.undo_structure_action = self.structure_menu.addAction(i18n.tr('撤销上一次结构操作'))
+        self.undo_structure_action.triggered.connect(
+            lambda _checked=False: self.structureRequested.emit("undo", self._current_index))
+        self.structure_button.setMenu(self.structure_menu)
         self.review_button = _icon_button(QPushButton(i18n.tr('审校本段')), "shield-check", "text-secondary")
         self.review_button.clicked.connect(
             lambda: self.reviewCurrentRequested.emit(self._current_index))
@@ -1420,6 +1445,7 @@ class WorkbenchView(QWidget):
         edit_grid.addWidget(self.save_next_button, 1, 0)
         edit_grid.addWidget(self.copy_source_button, 1, 1)
         edit_grid.addWidget(self.discard_draft_button, 2, 0, 1, 2)
+        edit_grid.addWidget(self.restore_button, 3, 0, 1, 2)
         inspector_layout.addLayout(edit_grid)
 
         inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('审校与段落')))
@@ -1428,7 +1454,8 @@ class WorkbenchView(QWidget):
         review_grid.setVerticalSpacing(theme_module.SPACE["sm"])
         review_grid.addWidget(self.review_button, 0, 0)
         review_grid.addWidget(self.retranslate_button, 0, 1)
-        review_grid.addWidget(self.exclude_button, 1, 0, 1, 2)
+        review_grid.addWidget(self.exclude_button, 1, 0)
+        review_grid.addWidget(self.structure_button, 1, 1)
         inspector_layout.addLayout(review_grid)
 
         inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
@@ -2247,6 +2274,26 @@ class WorkbenchView(QWidget):
         self.restore_excluded_button.setEnabled(
             any(record.get("restorable", True) for record in records))
 
+    def _sync_structure_menu(self, row) -> None:
+        """结构菜单：哪些操作此刻可用，由这一段和最近一次操作决定。"""
+        pairs = self._state.get("pairs") or []
+        has_pair = 0 <= row.index < len(pairs)
+        editable = has_pair and not row.excluded
+        empty = has_pair and not str(pairs[row.index].get("source") or "").strip() \
+            and not str(pairs[row.index].get("target") or "").strip()
+        has_next = has_pair and row.index + 1 < len(pairs)
+        self._structure_actions["source_edit"].setEnabled(editable)
+        self._structure_actions["split"].setEnabled(editable)
+        self._structure_actions["merge"].setEnabled(editable and has_next)
+        self._structure_actions["insert"].setEnabled(has_pair)
+        self._structure_actions["delete"].setEnabled(bool(empty))
+        undo = adapter.structure_undo_info(self._state)
+        self.undo_structure_action.setEnabled(bool(undo.get("available")))
+        self.undo_structure_action.setText(
+            i18n.tr('撤销上一次结构操作：{v0}', v0=i18n.tr_dynamic(str(undo.get("label") or "")))
+            if undo.get("available") else i18n.tr('撤销上一次结构操作'))
+        self.structure_button.setEnabled(has_pair or bool(undo.get("available")))
+
     def _restore_excluded(self) -> None:
         item = self.excluded_list.currentItem()
         if item is None:
@@ -2265,6 +2312,12 @@ class WorkbenchView(QWidget):
             self.retranslate_button.setEnabled(False)
             self.exclude_button.setVisible(True)
             self.discard_draft_button.setVisible(False)
+            self.restore_button.setVisible(False)
+            for action in self._structure_actions.values():
+                action.setEnabled(False)
+            undo = adapter.structure_undo_info(self._state)
+            self.undo_structure_action.setEnabled(bool(undo.get("available")))
+            self.structure_button.setEnabled(bool(undo.get("available")))
             return
         row = next((item for item in self._all_rows
                     if item.index == self._current_index), None)
@@ -2276,7 +2329,9 @@ class WorkbenchView(QWidget):
         self.review_button.setEnabled(not row.excluded)
         self.retranslate_button.setEnabled(not row.excluded)
         self.exclude_button.setVisible(not row.excluded)
+        self._sync_structure_menu(row)
         self.discard_draft_button.setVisible(bool(row.has_draft))
+        self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
         parts = [f"段落 #{row.index + 1}",
                  f"{position + 1}/{len(self._rows)}" if position >= 0 else "—",
                  row.status]

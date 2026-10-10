@@ -1024,3 +1024,34 @@ def undo_translation_segment_structure(job_id, *, actor="user"):
     _recheck_delivery_invariants_for_segments(state, all_indexes, actor=actor)
     _c.save_job_state(job_id, state)
     return state
+
+
+@_serialized_job_mutation
+def restore_translation_edit(job_id, index, actor="user"):
+    """Restore the translation state that existed before the first edit."""
+    from folith import delivery as _delivery
+
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    pairs = state.get("pairs") or []
+    if not (0 <= index < len(pairs)):
+        raise IndexError(f"段落索引超出范围：{index}")
+    pair = pairs[index]
+    restore = pair.pop("_translation_edit_restore", None)
+    if restore is None and not pair.get("human_edited"):
+        return state
+    restore = restore or {}
+    pair["target"] = restore.get("target") or pair.get("initial_target") or ""
+    pair["reviewed"] = bool(restore.get("reviewed"))
+    pair["review_status"] = restore.get("review_status", "not_reviewed")
+    pair["target_provenance"] = restore.get("target_provenance", "generated")
+    pair["from_tm"] = bool(restore.get("from_tm"))
+    pair.pop("human_edited", None)
+    _c._recount_reviewed_segments(state)
+
+    _c._mark_translation_truth_changed(
+        job_id, state, [index], "恢复前版本也改变了 CURRENT_TRANSLATION；相关下游需要重建",
+        actor=actor, action="translation_restore")
+    _c.save_job_state(job_id, state)
+    return state
