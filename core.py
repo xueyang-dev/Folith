@@ -233,30 +233,6 @@ def _runtime_job_id():
     return getattr(_RUNTIME_CTX, "job_id", None)
 
 
-def _exclusive_job_execution(job_id_position):
-    """CLI and direct stage calls own the same lifetime lock as GUI workers."""
-    def decorate(function):
-        @wraps(function)
-        def execute(*args, **kwargs):
-            job_id = args[job_id_position] if len(args) > job_id_position else kwargs["job_id"]
-            previous = _runtime_job_id()
-            if previous == job_id:
-                return function(*args, **kwargs)
-            execution_lock = _job_lock.acquire(job_dir(job_id) / ".worker.lock", blocking=False)
-            if execution_lock is None:
-                raise RuntimeError("任务正在后台处理，请等待完成后重试。")
-            _RUNTIME_CTX.job_id = job_id
-            try:
-                return function(*args, **kwargs)
-            finally:
-                if previous is None:
-                    _RUNTIME_CTX.__dict__.pop("job_id", None)
-                else:
-                    _RUNTIME_CTX.job_id = previous
-                execution_lock.close()
-        return execute
-    return decorate
-
 
 # ================= 权威状态的跨进程事务锁 =================
 # `state.json` / `project.json` 的原子替换只保证"文件不会被写坏"，不保证
@@ -267,71 +243,6 @@ def _exclusive_job_execution(job_id_position):
 # 锁序只有一种：**state 锁 → project 锁**。worker 不参与该锁（它的独占性由
 # `.worker.lock` 提供），因此不会出现反向的 project → state 嵌套。
 
-
-def job_state_lock_path(job_id):
-    """`<output>/.locks/<job_id>.state.lock` — one task's state transaction lock.
-
-    Outside the task directory on purpose: acquiring the lock must never
-    re-create (and therefore "resurrect") a task that was just deleted.
-    """
-    return _store_lock.state_lock_path(OUTPUT_DIR, job_id)
-
-
-def project_lock_path(project_id):
-    """`<projects>/.locks/<id>.project.lock` — kept out of the project directory."""
-    return _store_lock.project_lock_path(
-        _project.projects_root(OUTPUT_DIR), str(project_id))
-
-
-@contextmanager
-def job_state_mutation_lock(job_id, *, timeout=None):
-    """Hold one task's state lock for the whole ``with`` block (cross-process)."""
-    with _store_lock.mutation_lock(
-            job_state_lock_path(job_id), timeout=timeout,
-            purpose=f"任务「{job_id}」的状态"):
-        yield
-
-
-@contextmanager
-def project_mutation_lock(project_id, *, timeout=None):
-    """Hold one project's lock for the whole ``with`` block (cross-process)."""
-    with _store_lock.mutation_lock(
-            project_lock_path(project_id), timeout=timeout,
-            purpose=f"项目「{project_id}」的数据"):
-        yield
-
-
-def mutate_job_state(job_id, mutate, *, timeout=None):
-    """Run ``mutate(state)`` as one serialized load → mutate → save transaction.
-
-    ``mutate`` receives the freshly loaded authoritative state and returns
-    whatever the caller needs; the state is saved exactly once, inside the lock.
-    """
-    with job_state_mutation_lock(job_id, timeout=timeout):
-        state = load_job_state(job_id)
-        if state is None:
-            raise ValueError(f"找不到任务 {job_id}")
-        result = mutate(state)
-        save_job_state(job_id, state)
-        return result
-
-
-def _serialized_job_mutation(function):
-    """Serialize a public task mutation across processes.
-
-    The decorated function keeps its own load → mutate → save structure; the lock
-    spans the entire call, which is exactly the transaction window that used to
-    be unprotected.  A call made from the task's own worker is skipped: the
-    worker already owns the task through ``.worker.lock``, and skipping it keeps
-    the lock order strictly one-directional.
-    """
-    @wraps(function)
-    def execute(job_id, *args, **kwargs):
-        if _runtime_job_id() == job_id:
-            return function(job_id, *args, **kwargs)
-        with job_state_mutation_lock(job_id):
-            return function(job_id, *args, **kwargs)
-    return execute
 
 
 def _runtime_cancel_requested(job_id):
@@ -687,6 +598,16 @@ from folith.engine.tm_store import (  # noqa: F401  (re-export: core keeps its p
     tm_path,
     tm_project_id,
     translation_cache_path,
+)
+from folith.engine.locks import (  # noqa: F401  (re-export: core keeps its public surface)
+    _exclusive_job_execution,
+    _serialized_job_mutation,
+    _serialized_project_mutation,
+    job_state_lock_path,
+    job_state_mutation_lock,
+    mutate_job_state,
+    project_lock_path,
+    project_mutation_lock,
 )
 
 
@@ -3575,20 +3496,6 @@ def validate_project_name(name, *, exclude=""):
         raise ValueError(f"已存在同名项目「{existing['name']}」")
     return cleaned
 
-
-def _serialized_project_mutation(function):
-    """Serialize a public project mutation across processes.
-
-    The decorated function takes the project id first and keeps its own
-    load → mutate → save structure; the lock spans the entire call.  Nested
-    acquisitions (an outer transaction that calls :func:`save_project`) are
-    re-entrant on the same thread.
-    """
-    @wraps(function)
-    def execute(project_id, *args, **kwargs):
-        with project_mutation_lock(project_id):
-            return function(project_id, *args, **kwargs)
-    return execute
 
 
 def _create_project_record(project):
