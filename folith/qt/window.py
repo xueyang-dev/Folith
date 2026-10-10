@@ -216,7 +216,6 @@ class MainWindow(QMainWindow):
         self.home.openRequested.connect(self.open_job)
         self.home.deleteRequested.connect(self.delete_jobs_requested)
         self.home.refreshRequested.connect(self.refresh_home)
-        self.home.createProjectRequested.connect(self.create_project)
         self.home.manageProjectsRequested.connect(self.manage_projects)
         self.home.libraryRequested.connect(self.show_library)
         self.library.backRequested.connect(self.show_home)
@@ -903,32 +902,12 @@ class MainWindow(QMainWindow):
         self.refresh_home()
         self._notice(i18n.tr('已删除任务「{v0}」', v0=name))
 
-    def create_project(self) -> None:
-        if _automation():
-            # 以前这条路径没有自动化守卫：脚本化运行会弹出一个没人点的输入框。
-            self._notice(i18n.tr('新建项目：自动化运行不弹出输入框，请改用「项目…」或命令行。'))
-            return
-        name, ok = prompts.TextInputDialog.get_text(
-            self, i18n.tr('新建项目'), i18n.tr('项目名称：'))
-        if not ok or not name.strip():
-            return
-        try:
-            project = adapter.create_project(name)
-        except adapter.AdapterError as exc:
-            self._failure(i18n.tr('无法创建项目'), str(exc))
-            return
-        self.refresh_home()
-        index = self.home.project_filter.findData(project.get("project_id"))
-        if index >= 0:
-            self.home.project_filter.setCurrentIndex(index)
-        self._notice(i18n.tr('已创建项目「{v0}」', v0=project.get('name')))
-
     def create_project_from_setup(self) -> None:
         """译前准备里的「新建项目…」：建完之后把它选为本次任务的归属。
 
-        与首页入口 `create_project` 共用同一套动作——同样的自动化守卫、同样的名称
-        对话框、同样的 `adapter.create_project`。区别只在收尾：这里要把结果填回准备
-        面板的选择器，否则用户建完项目、面板还停在「未分类」，看不出刚做了什么。
+        与「项目…」对话框里的新建共用同一个 `adapter.create_project`，同样有自动化
+        守卫。区别只在收尾：这里要把结果填回准备面板的选择器，否则用户建完项目、
+        面板还停在「未分类」，看不出刚做了什么。
 
         归属**不在这一步落盘**：它随「开始翻译」经 `apply_task_setup` 写进任务状态，
         与面板上其它选择走同一条路径。所以这里只选中，不调 `assign_jobs_to_project`
@@ -1179,6 +1158,15 @@ class MainWindow(QMainWindow):
         self._sync_menu_state()
 
     def _sync_running_state(self, runtime: dict) -> None:
+        # 任务还没开始时没有"运行状态"可报：核心给的"未完成 · 当前进度已保存"
+        # 对一个刚导入、还在准备的任务是错的。
+        if not self.workbench.task_started():
+            return
+        # 底栏说"刚刚发生了什么"，不复述稳态：任务已经跑完时，工作台头部的状态
+        # 芯片才是"现在是什么状态"（它可能是"待审校"，而核心的运行视图只会说"已完成"）。
+        if str(runtime.get("status") or "") not in views_module.RUNNING_STATUSES | {
+                "failed", "stalled", "interrupted", "cancelled"}:
+            return
         # 运行状态由核心给出（"正在运行"/"处理中断"…）：过一遍动态词表再显示。
         headline = i18n.tr_dynamic(runtime.get("headline_status") or "")
         detail = i18n.tr_dynamic(runtime.get("detail") or "")

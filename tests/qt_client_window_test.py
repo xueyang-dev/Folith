@@ -1204,9 +1204,13 @@ def test_settings_dialog_keeps_untouched_preferences(client, monkeypatch):
             self.config = config
             self.theme_preference = ""
             self.language_preference = ""
+            self.academic_preference = False
 
         def set_language_preference(self, code):
             self.language_preference = i18n.normalize(code)
+
+        def set_academic_preference(self, value):
+            self.academic_preference = bool(value)
 
         def exec(self):
             captured["theme"] = self.theme_preference
@@ -1214,9 +1218,11 @@ def test_settings_dialog_keeps_untouched_preferences(client, monkeypatch):
             return True
 
     monkeypatch.setattr(window_module, "EngineDialog", _FakeDialog)
-    window.open_settings()
 
     try:
+        # 调用也要在 try 里：它一旦抛错，真实 QSettings 里的 dark/en 就没人还原，
+        # 会污染同进程后续用例（以及本机上真实应用的偏好）。
+        window.open_settings()
         assert captured["theme"] == "dark", captured
         assert captured["language"] == "en", captured
         assert str(window.settings.value(window.THEME_KEY)) == "dark"
@@ -1758,11 +1764,11 @@ def test_action_buttons_follow_the_core_runtime_contract(client):
         assert views.RUNTIME_STATUS_TONES[label] == "warn"
 
 
-def test_blocking_chip_counts_only_unresolved_findings(client):
-    """「必须处理 N」必须只数**未解决**的阻断项。
+def test_blocking_count_only_counts_unresolved_findings(client):
+    """步骤条上「必须处理 N」必须只数**未解决**的阻断项。
 
     检查项用 `resolved` 布尔字段表示是否已解决；按 `status == "open"` 判断会把
-    已解决的阻断项继续算进来，于是修好之后芯片仍然是红色的"N"。
+    已解决的阻断项继续算进来，于是修好之后步骤条仍然停在"N"。
     """
     adapter = client["adapter"]
     core = client["core"]
@@ -1793,9 +1799,9 @@ def test_blocking_chip_counts_only_unresolved_findings(client):
     app.processEvents()
     workbench = window.workbench
 
-    assert workbench.chip_blocking.text() == "必须处理 1", \
-        workbench.chip_blocking.text()
-    assert workbench.chip_blocking.property("tone") == "danger"
+    review_step = workbench.stage_bar.steps["review"]
+    assert review_step.hint() == "必须处理 1", review_step.hint()
+    assert review_step.state() == "attention"
 
     # 段落检查项面板：只列未解决的，并如实说明还有多少项已解决。
     assert workbench.select_segment(0) is True
@@ -1811,8 +1817,9 @@ def test_blocking_chip_counts_only_unresolved_findings(client):
     core.save_job_state(job_id, state)
     window.refresh_workbench(force=True)
     app.processEvents()
-    assert workbench.chip_blocking.text() == "必须处理 0"
-    assert workbench.chip_blocking.property("tone") == "muted"
+    review_step = workbench.stage_bar.steps["review"]
+    assert "必须处理" not in review_step.hint(), review_step.hint()
+    assert review_step.state() == "done"
 
 
 def test_saving_settings_never_resets_fields_the_dialog_does_not_show(client):
@@ -2133,11 +2140,10 @@ def test_dialogs_never_block_a_scripted_run(client, monkeypatch):
     monkeypatch.setattr(diagnostics, "_choose_path", lambda: "", raising=False)
     diagnostics.close()
 
-    # 4) 首页侧栏的「新建项目…」与「帮助 → OCR 与外部工具状态」此前**没有**自动化
-    #    守卫（会弹出没人点的输入框/提示框）。现在两条都必须直接说明、不挂起。
+    # 4) 「帮助 → OCR 与外部工具状态」此前**没有**自动化守卫（会弹出没人点的提示框）。
+    #    现在必须直接说明、不挂起。（新建项目只剩「项目…」对话框和译前准备两个入口，
+    #    前者在上面第 2 步已覆盖。）
     window = client["window"]
-    window.create_project()
-    assert window.status.currentMessage(), "新建项目应给出说明而不是弹框"
     window.show_tools()
     assert "工具状态" in window.status.currentMessage(), \
         window.status.currentMessage()
@@ -2646,7 +2652,7 @@ def test_delivery_button_is_disabled_and_explains_when_review_is_not_ready(clien
     workbench = window.workbench
 
     assert workbench.deliver_button.isEnabled() is False
-    assert "审校未就绪" in workbench.delivery_label.text(), \
+    assert "审校未完成" in workbench.delivery_label.text(), \
         workbench.delivery_label.text()
     # 按钮文案要说明"先完成审校"，而不是给一个看起来可点的"冻结交付"。
     assert workbench.deliver_button.text() == "审校完成后冻结交付", \
@@ -3047,39 +3053,39 @@ def test_progress_follows_the_core_stage_progress(client):
     # 1) 批次进度（翻译阶段）：芯片与进度条都用核心的单位
     render({"status": "running", "headline_status": "正在运行",
             "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}})
-    assert workbench.chip_progress.text() == "2/8 批次", workbench.chip_progress.text()
+    translate = workbench.stage_bar.steps["translate"]
+    assert translate.hint() == "2/8 批次", translate.hint()
     assert (workbench.progress.value(), workbench.progress.maximum()) == (2, 8)
-    assert workbench.chip_progress.property("tone") == "info"
+    assert translate.state() == "current"
 
     # 2) 单位进度（学术写作阶段）优先
     render({"status": "running", "headline_status": "正在运行",
             "progress_completed": 3, "progress_total": 10,
             "stage_progress": {"completed": 1, "total": 4, "unit": "批次"}})
-    assert workbench.chip_progress.text() == "3/10 段"
+    assert translate.hint() == "3/10 段"
     assert (workbench.progress.value(), workbench.progress.maximum()) == (3, 10)
 
     # 3) 都没有时退回真实段落数（不假装有进度）
     render({"status": "running", "headline_status": "正在运行"},
            pairs=[{"target": "T0"}, {"target": "T1"}])
-    assert workbench.chip_progress.text() == "2 段"
+    assert translate.hint() == "2 段"
     assert (workbench.progress.value(), workbench.progress.maximum()) == (0, 1)
 
     # 4) 什么都没有：显示占位，不显示假的 0/0
     render({"status": "idle", "headline_status": "空闲"})
-    assert workbench.chip_progress.text() == "—"
+    assert translate.hint() == ""
     # 5) 完成时批次进度到满、色调转 ok
     render({"status": "completed", "headline_status": "已完成",
             "stage_progress": {"completed": 8, "total": 8, "unit": "批次"}})
-    assert workbench.chip_progress.text() == "8/8 批次"
+    assert translate.hint() == "8/8 批次"
     assert (workbench.progress.value(), workbench.progress.maximum()) == (8, 8)
-    assert workbench.chip_progress.property("tone") == "ok"
 
 
-def test_review_chip_reflects_the_gate_not_only_the_flags(client):
-    """「审校 N/M」不能只看 reviewed 标记：门禁说没就绪时必须说出来。
+def test_review_step_reflects_the_gate_not_only_the_flags(client):
+    """审校一步不能只看 reviewed 标记：门禁说没就绪时必须说出来。
 
     真实矛盾：恢复/旧格式数据里所有段落都标着 reviewed，但当前审校收据已失效——
-    芯片显示"审校 2/2"（看起来完成），交付面板却说"未审校 2 段"。
+    步骤条显示审校已完成，交付面板却说"未审校 2 段"。
     """
     adapter = client["adapter"]
     core = client["core"]
@@ -3108,20 +3114,21 @@ def test_review_chip_reflects_the_gate_not_only_the_flags(client):
 
     readiness = adapter.review_readiness(job_id, adapter.load_state(job_id))
     assert readiness["required"] is True and readiness["ready"] is False, readiness
-    assert workbench.chip_review.text() == "审校 2/2（需重新审校）", \
-        workbench.chip_review.text()
-    assert workbench.chip_review.property("tone") == "warn"
+    review_step = workbench.stage_bar.steps["review"]
+    assert review_step.state() in ("attention", "current"), review_step.state()
+    assert review_step.hint(), "门禁没就绪时必须说出缺什么，不能只是个对勾"
+    assert workbench.stage_bar.steps["deliver"].state() == "todo"
     # 与交付面板的结论一致（不再是"看起来完成"）
     assert workbench.deliver_button.isEnabled() is False
-    assert "审校未就绪" in workbench.delivery_label.text()
+    assert "审校未完成" in workbench.delivery_label.text()
 
     # 不需要审校的任务：保持原来的中性显示
     state.pop("translation_core_review_required")
     core.save_job_state(job_id, state)
     window.refresh_workbench(force=True)
     app.processEvents()
-    assert workbench.chip_review.text() == "审校 2/2", workbench.chip_review.text()
-    assert workbench.chip_review.property("tone") == "ok"
+    review_step = workbench.stage_bar.steps["review"]
+    assert review_step.state() == "done", review_step.state()
 
 
 def test_blocking_chip_and_filter_agree_on_the_same_rule(client):
@@ -3169,7 +3176,8 @@ def test_blocking_chip_and_filter_agree_on_the_same_rule(client):
 
     blocking = adapter.unresolved_blocking(job_id, adapter.load_state(job_id))
     assert [item["finding_id"] for item in blocking] == ["f-block"], blocking
-    assert workbench.chip_blocking.text() == "必须处理 1", workbench.chip_blocking.text()
+    review_step = workbench.stage_bar.steps["review"]
+    assert review_step.hint() == "必须处理 1", review_step.hint()
 
     workbench.only_issues_box.setChecked(True)
     app.processEvents()

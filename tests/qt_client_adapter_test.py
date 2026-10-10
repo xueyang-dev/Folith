@@ -1637,7 +1637,7 @@ def test_delivery_preview_never_promises_what_the_gate_refuses(adapter_env):
     assert preview["review_gate"]["required"] is True
     assert preview["review_gate"]["ready"] is False
     assert preview["review_gate"]["status"] == "not_run"
-    assert any("审校未就绪" in str(item) for item in preview["issues"]), \
+    assert any("审校未完成" in str(item) for item in preview["issues"]), \
         preview["issues"]
 
     # 与真实门禁对照：确实会被拒绝（而不是预览过于保守）。

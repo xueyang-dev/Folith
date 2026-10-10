@@ -90,7 +90,7 @@ class TermsPanel(QWidget):
 
         self.apply_row_button = button(i18n.tr('应用到所选术语'), "check")
         self.apply_row_button.clicked.connect(self._apply_row)
-        self.add_button = button(i18n.tr('新增术语'), "upload")
+        self.add_button = button(i18n.tr('添加术语'), "upload")
         self.add_button.clicked.connect(self._add_row)
         self.delete_button = button(i18n.tr('删除所选'), "trash", "danger")
         self.delete_button.clicked.connect(self._delete_row)
@@ -293,7 +293,7 @@ class TermsPanel(QWidget):
             self._banner(i18n.tr('这个任务还没有术语。'), "info")
         else:
             self._banner(
-                i18n.tr('术语在翻译开始后修改，会生成新的术语版本，并让受影响的译文和审校结果需要重新确认。')
+                i18n.tr('翻译开始后修改术语，受影响的译文和审校结果需要重新确认。')
                 if not staged else
                 i18n.tr('翻译开始前可以暂存修改；点「保存草稿」或「冻结」才会写入任务。'), "info")
         position = self._current()

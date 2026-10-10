@@ -131,7 +131,7 @@ class EngineDialog(QDialog):
         # 是同一句话说两遍，还白占一行高度。改用 section(16px)。
         title = QLabel(i18n.tr('设置'))
         title.setObjectName("sectionTitle")
-        subtitle = QLabel(i18n.tr('模型连接、任务默认值与外观。配置保存在本机，仅当前用户可读。'))
+        subtitle = QLabel(i18n.tr('模型连接、任务默认值与通用选项。配置保存在本机，仅当前用户可读。'))
         subtitle.setObjectName("hint")
 
         header = QVBoxLayout()
@@ -145,13 +145,10 @@ class EngineDialog(QDialog):
                     i18n.tr('模型连接'))
         tabs.addTab(_scroll_page(self._build_task_tab()),
                     icons.icon("package", 16, style_module.text_color("text-secondary")),
-                    i18n.tr('任务与交付'))
-        tabs.addTab(_scroll_page(self._build_ocr_tab()),
-                    icons.icon("eye", 16, style_module.text_color("text-secondary")),
-                    i18n.tr('扫描件识别'))
+                    i18n.tr('任务默认值'))
         tabs.addTab(_scroll_page(self._build_appearance_tab()),
                     icons.icon("image", 16, style_module.text_color("text-secondary")),
-                    i18n.tr('外观'))
+                    i18n.tr('通用'))
         tabs.setIconSize(QSize(16, 16))
 
         buttons = QDialogButtonBox(
@@ -223,12 +220,6 @@ class EngineDialog(QDialog):
         self.base_edit = QLineEdit(self.config.base_url)
         self.base_edit.setPlaceholderText(i18n.tr('http(s)://主机/v1'))
 
-        self.target_box = style_module.ComboBox()
-        self.target_box.setEditable(True)
-        self.target_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.target_box.addItems(list(adapter.TARGET_LANGUAGES))
-        self.target_box.setCurrentText(self.config.target_lang)
-
         self.test_button = QPushButton(i18n.tr('测试连接'))
         self.test_button.setIcon(icons.icon("check-circle", 16))
         self.test_button.setIconSize(QSize(16, 16))
@@ -244,7 +235,6 @@ class EngineDialog(QDialog):
         test_layout.addWidget(self.test_label, 1)
 
         body.addWidget(pair)
-        body.addWidget(_field(i18n.tr('目标语言'), self.target_box))
         body.addWidget(_field(i18n.tr('API 密钥'), self.key_field,
                               i18n.tr('留空表示沿用已保存的密钥；输入内容不会显示在诊断包或日志里。')))
         body.addWidget(_field(i18n.tr('API 地址'), self.base_edit))
@@ -294,6 +284,8 @@ class EngineDialog(QDialog):
 
         page_layout.addWidget(connection_card)
         page_layout.addWidget(reviewer_card)
+        # 视觉模型也是"模型连接"：扫描件由它读成正文。放在这里，所有连接一处配完。
+        page_layout.addWidget(self._build_vision_card())
         page_layout.addStretch(1)
 
         self._provider_changed(self.provider_box.currentText())
@@ -327,8 +319,6 @@ class EngineDialog(QDialog):
         # 实践报告 / 案例 / 终稿 QA 是专用能力：默认不出现，用户主动打开"学术专业模式"才显示。
         self.academic_box = style_module.CheckBox(
             i18n.tr('学术专业模式：显示实践报告、案例与终稿 QA'))
-        self.academic_box.setToolTip(
-            i18n.tr('默认关闭。打开后，工作台出现报告 / 案例 / 合规与 QA 页，下面的「生成实践报告」也可用。'))
         self.academic_box.setChecked(bool(self.academic_preference or self.config.enable_report))
         self.academic_box.toggled.connect(self._academic_toggled)
         self.report_box.setVisible(self.academic_box.isChecked())
@@ -343,7 +333,12 @@ class EngineDialog(QDialog):
             grid.addWidget(box, position // 2, position % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        workflow_body.addWidget(self.academic_box)
+        self.target_box = style_module.ComboBox()
+        self.target_box.setEditable(True)
+        self.target_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.target_box.addItems(list(adapter.TARGET_LANGUAGES))
+        self.target_box.setCurrentText(self.config.target_lang)
+        workflow_body.addWidget(_field(i18n.tr('目标语言'), self.target_box))
         workflow_body.addLayout(grid)
         outer.addWidget(workflow)
 
@@ -379,6 +374,7 @@ class EngineDialog(QDialog):
                     self.deliver_epub_box):
             delivery_body.addWidget(box)
         outer.addWidget(delivery)
+        outer.addWidget(self._build_scan_group())
         outer.addStretch(1)
         return page
 
@@ -535,12 +531,12 @@ class EngineDialog(QDialog):
         else:
             self._vision_view = adapter.clear_vision_connection()
 
-    def _build_ocr_tab(self) -> QWidget:
+    def _build_scan_group(self) -> QWidget:
+        """扫描件的提取默认值（来源 / 时机 / 语言）：新任务的默认值，和翻译流程同属一页。"""
         page = QWidget()
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(theme_module.SPACE["sm"])
-        page_layout.addWidget(self._build_vision_card())
         ocr_card, body = _panel(
             i18n.tr('扫描件识别'),
             i18n.tr('只影响没有可用文本层的页面（扫描件）；文本层 PDF 与 DOCX 不走这一步。'))
@@ -575,7 +571,6 @@ class EngineDialog(QDialog):
                     '缺少时会明确报错、不会静默改用英语。默认的「视觉理解」不需要语言包。'), tone="info")
         page_layout.addWidget(ocr_card)
         page_layout.addWidget(notice)
-        page_layout.addStretch(1)
         return page
 
     def _build_appearance_tab(self) -> QWidget:
@@ -604,6 +599,13 @@ class EngineDialog(QDialog):
             i18n.tr('界面语言'), self.language_box,
             i18n.tr('非中文界面为实验功能（尚未完成独立的语言审阅）。语言在应用启动时生效，保存后请重启；阿拉伯语会整体从右到左排版。')))
         page_layout.addWidget(card)
+
+        # 学术专业模式是整个应用的工作方式，不是"新任务的默认值"，所以不放在任务默认值里。
+        mode_card, mode_body = _panel(
+            i18n.tr('工作模式'),
+            i18n.tr('默认关闭。打开后，「更多」菜单里会出现报告、案例与合规 QA，任务默认值里也可勾选「生成实践报告」。'))
+        mode_body.addWidget(self.academic_box)
+        page_layout.addWidget(mode_card)
         page_layout.addStretch(1)
         return page
 
@@ -1194,7 +1196,7 @@ class NewTermDialog(QDialog):
 
     def __init__(self, jobs: list[tuple[str, str]], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(i18n.tr('新建术语'))
+        self.setWindowTitle(i18n.tr('添加术语'))
         self.setMinimumWidth(460)
         hint = QLabel(i18n.tr('术语保存在所选任务的术语表里，并生成新的术语版本。'))
         hint.setObjectName("hint")
@@ -1347,7 +1349,7 @@ class ProjectDialog(QDialog):
         title = QLabel(i18n.tr('项目'))
         title.setObjectName("pageTitle")
         hint = QLabel(
-            i18n.tr('项目决定任务注入哪一套记忆与术语。删除项目受核心保护：系统工作区不可删除、必须逐字输入名称、项目下仍有任务时拒绝删除、删除前会写入可恢复备份。'))
+            i18n.tr('项目决定任务使用哪一套记忆与术语。删除项目需要逐字输入名称；项目下仍有任务时不能删除，删除前会自动备份。'))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
 

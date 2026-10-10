@@ -177,12 +177,13 @@ def test_engine_state_reports_the_configured_state():
         assert home.engine_dot.property("state") == "ok"
         # 模型串是常驻属性：配好了就必须看得见（否则侧栏只剩一个"已配置"）
         assert home.engine_model.isVisible() or "deepseek" in home.engine_model.fullText()
-        assert home.setup_button.text() == i18n.tr("更改模型连接…")
+        # 侧栏底部只有「状态 + 设置…」；配置模型的入口只在阻塞时的顶部提示条里出现一次。
+        assert home.settings_button.text() == i18n.tr("设置…")
+        assert home.setup_banner.isHidden()
 
         home.set_engine_problem("缺少 API Key", "OpenCode Go / deepseek-v4.1-flash")
         assert home.engine_label.text() == i18n.tr("未配置")
         assert home.engine_dot.property("state") == "warn"
-        assert home.setup_button.text() == i18n.tr("配置模型连接…")
         # 阻塞时顶部提示条必须出现，并且带着配置入口（不能只报错不给路）
         assert home.setup_banner.isVisible() or home.setup_banner.text()
         assert home.setup_banner.action_button().text() == i18n.tr("配置模型连接…")

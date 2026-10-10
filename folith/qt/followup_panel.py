@@ -158,7 +158,7 @@ class FollowupPanel(QWidget):
         self.rescan_card = rescan_card
 
         self.empty = label(muted=True)
-        self.empty.setText(i18n.tr('没有需要收尾的事项：理解、标注和专名译法都已处理。'))
+        self.empty.setText(i18n.tr('没有待处理的事项。'))
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         content = QWidget()

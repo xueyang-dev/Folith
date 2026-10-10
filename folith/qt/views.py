@@ -37,11 +37,17 @@ from .report_panel import ReportPanel
 from .review_panel import ReviewPanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
+from .stagebar import StageBar
+from . import stage as stage_model
 from . import style as style_module
 from . import theme as theme_module
 from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
+
+#: 核心运行视图里"正在占用管线"的状态（头部进度条与暂停/取消按钮只在这些状态出现）。
+RUNNING_STATUSES = frozenset({"running", "pausing", "cancelling", "resume_requested",
+                              "starting", "queued", "waiting_external", "waiting_manual"})
 # Re-validating the whole delivery (every segment, every finding) costs ~240 ms
 # on a 400-segment job.  It must not run on every background poll tick, so it is
 # throttled; explicit actions and terminal state changes still force it.
@@ -380,7 +386,6 @@ class HomeView(QWidget):
     openRequested = Signal(str)
     deleteRequested = Signal(str)
     refreshRequested = Signal()
-    createProjectRequested = Signal()
     manageProjectsRequested = Signal()
     libraryRequested = Signal()
     moveToProjectRequested = Signal(list)
@@ -428,11 +433,8 @@ class HomeView(QWidget):
             style_module.fit_button(button, max_width=168)
             return button
 
-        self.refresh_button = nav_button(i18n.tr('刷新任务'), "refresh")
-        self.refresh_button.clicked.connect(self.refreshRequested.emit)
-        self.project_button = nav_button(i18n.tr('新建项目…'), "plus")
-        self.project_button.clicked.connect(self.createProjectRequested.emit)
         self.manage_projects_button = nav_button(i18n.tr('项目…'), "folder")
+        self.manage_projects_button.setToolTip(i18n.tr('新建、重命名、归档项目，管理项目知识'))
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
         self.library_button = nav_button(i18n.tr('术语与记忆…'), "file-sheet")
         self.library_button.setToolTip(i18n.tr('跨任务浏览术语与翻译记忆，并审核 Agent 发现的候选词条'))
@@ -455,12 +457,6 @@ class HomeView(QWidget):
         self.engine_model = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
         self.engine_model.setObjectName("engineModel")
         self.engine_model.setVisible(False)
-        self.setup_button = QPushButton(i18n.tr('配置模型连接…'))
-        self.setup_button.setObjectName("subtleAction")
-        self.setup_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        style_module.fit_button(self.setup_button, max_width=176)
-        self.setup_button.clicked.connect(self.settingsRequested.emit)
-
         engine_row = QHBoxLayout()
         engine_row.setSpacing(theme_module.SPACE["sm"])
         engine_row.addWidget(self.engine_dot, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -472,11 +468,10 @@ class HomeView(QWidget):
         footer_layout = QVBoxLayout(sidebar_footer)
         footer_layout.setContentsMargins(0, theme_module.SPACE["md"], 0, 0)
         footer_layout.setSpacing(theme_module.SPACE["xs"])
-        footer_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 引擎')))
         footer_layout.addLayout(engine_row)
         footer_layout.addWidget(self.engine_model)
         footer_layout.addSpacing(theme_module.SPACE["xxs"])
-        footer_layout.addWidget(self.setup_button)
+        footer_layout.addWidget(self.settings_button)
 
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
@@ -492,16 +487,8 @@ class HomeView(QWidget):
         side.addWidget(self.import_button)
         # 分组之间 12px、组内 4px：只在"组"上写间距，行与行之间保持同一条节奏。
         side.addSpacing(theme_module.SPACE["md"])
-        side.addWidget(style_module.SectionLabel(i18n.tr('任务')))
-        side.addWidget(self.refresh_button)
-        side.addSpacing(theme_module.SPACE["md"])
-        side.addWidget(style_module.SectionLabel(i18n.tr('项目')))
         side.addWidget(self.manage_projects_button)
         side.addWidget(self.library_button)
-        side.addWidget(self.project_button)
-        side.addSpacing(theme_module.SPACE["md"])
-        side.addWidget(style_module.SectionLabel(i18n.tr('应用')))
-        side.addWidget(self.settings_button)
         side.addStretch(1)
         side.addWidget(sidebar_footer)
 
@@ -520,8 +507,6 @@ class HomeView(QWidget):
 
         self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
         self.refresh_icon_button.clicked.connect(self.refreshRequested.emit)
-        self.settings_icon_button = style_module.icon_button("settings", i18n.tr('设置…'))
-        self.settings_icon_button.clicked.connect(self.settingsRequested.emit)
 
         # 表格 / 卡片：旧界面首页是"按项目分组的卡片"，表格适合几十个任务横着扫。
         # 两种视图共用同一份选中状态，切换不丢选择。
@@ -553,7 +538,6 @@ class HomeView(QWidget):
         header_actions.addWidget(self.project_filter)
         header_actions.addSpacing(theme_module.SPACE["xxs"])
         header_actions.addWidget(self.refresh_icon_button)
-        header_actions.addWidget(self.settings_icon_button)
 
         page_header = QHBoxLayout()
         page_header.setSpacing(theme_module.SPACE["lg"])
@@ -774,10 +758,9 @@ class HomeView(QWidget):
         三处状态的分工：顶部提示条只说**阻塞**（模型缺失，附配置入口），
         侧栏底部块说**当前引擎是什么**（常驻属性），底栏只说"刚刚发生了什么"。
 
-        ⚠️ 同一时刻只留**一个**配置入口。阻塞时入口归顶部提示条（它就在主工作区
-        正上方，说的是同一件事），侧栏退回纯状态；没有阻塞时提示条不出现，
-        入口由侧栏提供（"更改模型连接…"）。此前两处同时挂一个同名的"配置模型
-        连接…"按钮，"模型没配好"在同屏出现两遍、还抢主工作区的位置。
+        ⚠️ "配置模型连接…"只出现在顶部提示条里（它就在主工作区正上方，说的是同一
+        件事）。侧栏底部是"状态 + 设置…"：设置是整个应用的入口（模型、默认值、外观），
+        不是"更改模型"的别名，所以不再另挂一个同义按钮。
         """
         has_model = bool(model_label)
         if problem:
@@ -795,13 +778,6 @@ class HomeView(QWidget):
         style_module.repolish(self.engine_dot)
         self.engine_model.setText(model_label or "")
         self.engine_model.setVisible(bool(model_label))
-        # 入口文案跟着**阻塞**走，不跟着"有没有模型串"走：连接有问题时用户要做的
-        # 是去把它配好，而不是"更改"一个用不了的连接。
-        self.setup_button.setText(i18n.tr('配置模型连接…') if (problem or not has_model)
-                                  else i18n.tr('更改模型连接…'))
-        style_module.fit_button(self.setup_button, max_width=176)
-        # 阻塞时收起侧栏入口：顶部提示条已经在同一屏里给了同一个按钮。
-        self.setup_button.setVisible(not problem)
 
     def _visible_rows(self) -> list[adapter.JobRow]:
         project = self.project_filter.currentData() or ""
@@ -1100,8 +1076,9 @@ class WorkbenchView(QWidget):
       列表重建按稳定段身份恢复选中（§6.B）；
     * **过滤复用核心语义**：搜索/状态筛选调用 `core.translation_visible_indexes`，
       界面不另写一套筛选规则（不制造第二套真值）；
-    * **只放真正可用的入口**：标签页只有「翻译」「交付」两个；旧界面的
-      术语/审校标签页与 AGENT 改写动作在 Qt 端没有实现，因此不显示。
+    * **导航是阶段步骤条**：准备 → 翻译 → 审校 → 交付为主线，术语与"更多"
+      （原页、检查与修复、运行记录，学术模式下还有报告/案例/合规）为旁路；
+      `tabs` 只是页面容器，它的标签栏不显示（见 `show_page` / `stage.stage_view`）。
     """
 
     backRequested = Signal()
@@ -1202,13 +1179,12 @@ class WorkbenchView(QWidget):
         self._autosave.setInterval(DRAFT_AUTOSAVE_MS)
         self._autosave.timeout.connect(self.flush_draft)
 
-        # ---- 工具区：两行紧凑带（取代原来的三行 raised 大卡） ----------------
-        # 旧结构是「第一行身份、第二行芯片、第三行只有最右一个按钮的动作行」，
-        # 实测占 164px：其中动作行 64px 里 40px 是按钮、剩下 24px 是包装 QWidget
-        # 的默认边距，而整行其余宽度全是空白 —— 翻译列表因此要等到窗口 43% 处
-        # 才开始。现在压成两行，行内布局一律零边距：
-        #   第一行 = 身份与运行：返回 / 文件名 / 状态芯片 / 运行时说明 / 进度 / 运行控制
-        #   第二行 = 批次事实：批次进度 / 审校完成 / 必须处理 / 审校全部段落
+        # ---- 头部：两行 ------------------------------------------------------
+        #   第一行 = 身份与运行：返回 / 文件名 / 状态 / 运行说明 / 进度 / 动作
+        #   第二行 = 阶段步骤条（准备 → 翻译 → 审校 → 交付）
+        # 原来第二行是三个事实芯片（进度 / 审校 / 必须处理），它们各自用不同口径回答
+        # "现在怎么样"，互相对不上；这些事实现在是步骤条上每一步的一句状态，
+        # 全部来自 `stage.stage_view` 这一个出处。
         self.back_button = QPushButton(i18n.tr('任务列表'))
         self.back_button.setObjectName("ghostAction")
         self.back_button.setIcon(icons.icon("arrow-left", 16,
@@ -1227,9 +1203,6 @@ class WorkbenchView(QWidget):
         self.status_label.setObjectName("workbenchNote")
 
         self.chip_state = Chip("—", "muted")
-        self.chip_progress = Chip(i18n.tr('0/0 段'), "muted")
-        self.chip_review = Chip(i18n.tr('审校 0/0'), "muted")
-        self.chip_blocking = Chip(i18n.tr('必须处理 0'), "muted")
 
         def _icon_button(button: QPushButton, name: str, token: str = "text-secondary"):
             button.setIcon(icons.icon(name, 16, style_module.text_color(token)))
@@ -1248,20 +1221,25 @@ class WorkbenchView(QWidget):
                                (self.retry_button, self.retryRequested)):
             button.clicked.connect(signal.emit)
 
-        # 审校动作：`review_all_button` 是工具区第二行的"推荐下一步"，
-        # `review_selected_button` 留在筛选条（它跟当前选区绑定）。
+        # 审校动作：`review_selected_button` 跟当前选区绑定，留在筛选条；
+        # "审校全部段落"不再是头部常驻按钮，而是审校阶段由步骤条推荐的下一步。
         self.review_selected_button = _icon_button(QPushButton(i18n.tr('审校所选段落')), "shield-check")
         self.review_selected_button.setEnabled(False)
         self.review_selected_button.clicked.connect(
             lambda: self.reviewSelectedRequested.emit(self.selected_indexes()))
-        self.review_all_button = _icon_button(QPushButton(i18n.tr('审校全部段落')), "shield-check")
-        self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
+
+        # 推荐的下一步：随阶段变化（重试失败的审校 / 处理问题 / 冻结并交付）。
+        self.stage_action_button = _icon_button(QPushButton(""), "arrow-right", "text-on-accent")
+        self.stage_action_button.setObjectName("primaryAction")
+        self.stage_action_button.clicked.connect(self._run_stage_action)
+        self.stage_action_button.setVisible(False)
+        self._stage_action: dict | None = None
 
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(6)
-        # 160 而不是 220：它只是"精简进度指示"，批次数字已经由 chip_progress 说了，
-        # 省下的 60px 归文件名（长标题此前会被挤到只剩几十像素）。
+        # 160 而不是 220：它只是"精简进度指示"，省下的宽度归文件名
+        # （长标题此前会被挤到只剩几十像素）。只在运行时显示。
         self.progress.setFixedWidth(160)
 
         # 运行控制单独放进一个零边距容器：全部隐藏时整组收掉，不留空槽位。
@@ -1269,7 +1247,7 @@ class WorkbenchView(QWidget):
         run_controls.setContentsMargins(0, 0, 0, 0)
         run_controls.setSpacing(theme_module.SPACE["sm"])
         for button in (self.start_button, self.pause_button,
-                       self.cancel_button, self.retry_button):
+                       self.cancel_button, self.retry_button, self.stage_action_button):
             run_controls.addWidget(button)
         self.header_actions_bar = QWidget()
         self.header_actions_bar.setContentsMargins(0, 0, 0, 0)
@@ -1287,14 +1265,8 @@ class WorkbenchView(QWidget):
         identity.addWidget(self.progress)
         identity.addWidget(self.header_actions_bar)
 
-        # 批次事实 + 审校入口：这一行不做弹性占位，右侧直接收在"审校全部段落"上。
-        facts = QHBoxLayout()
-        facts.setContentsMargins(0, 0, 0, 0)
-        facts.setSpacing(theme_module.SPACE["sm"])
-        for chip in (self.chip_progress, self.chip_review, self.chip_blocking):
-            facts.addWidget(chip, 0, Qt.AlignmentFlag.AlignVCenter)
-        facts.addStretch(1)
-        facts.addWidget(self.review_all_button)
+        self.stage_bar = StageBar()
+        self.stage_bar.pageRequested.connect(self.show_page)
 
         header_card = Card()
         header_layout = QVBoxLayout(header_card)
@@ -1302,7 +1274,7 @@ class WorkbenchView(QWidget):
                                          theme_module.SPACE["lg"], theme_module.SPACE["sm"])
         header_layout.setSpacing(theme_module.SPACE["xs"])
         header_layout.addLayout(identity)
-        header_layout.addLayout(facts)
+        header_layout.addWidget(self.stage_bar)
 
         # ---- 翻译标签页 ----------------------------------------------------
         self.search_edit = QLineEdit()
@@ -1598,8 +1570,20 @@ class WorkbenchView(QWidget):
         setup_scroll.viewport().setAutoFillBackground(False)
         setup_scroll.setWidget(self.setup_panel)
         self.setup_scroll = setup_scroll
-        self.setup_scroll.setVisible(False)
-        translation_layout.addWidget(self.setup_scroll, 1)
+        # 「开始翻译」钉在滚动区下方：它是这一步唯一的主行动，不能跟着内容滚出首屏。
+        footer_bar = self.setup_panel.detach_footer()
+        footer_rule = QFrame()
+        footer_rule.setObjectName("hairline")
+        footer_rule.setFixedHeight(1)
+        self.setup_page = QWidget()
+        setup_layout = QVBoxLayout(self.setup_page)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
+        setup_layout.setSpacing(theme_module.SPACE["sm"])
+        setup_layout.addWidget(self.setup_scroll, 1)
+        setup_layout.addWidget(footer_rule)
+        setup_layout.addWidget(footer_bar)
+        self.setup_page.setVisible(False)
+        translation_layout.addWidget(self.setup_page, 1)
 
         # ---- 交付标签页 ----------------------------------------------------
         # 交付清单按 Web 界面的表达重做：一行一个文件（类型图标 + 名称 + 大小），
@@ -1729,7 +1713,10 @@ class WorkbenchView(QWidget):
         # 还没有清单时"打开/显示"就该是灰的，而不是点了没反应。
         self._asset_selection_changed()
 
+        # 页面容器：沿用 QTabWidget（页面增删、可见性、`setCurrentWidget` 都现成），
+        # 但它自己的标签栏不显示——导航由头部的阶段步骤条承担（见 `show_page`）。
         self.tabs = QTabWidget()
+        self.tabs.tabBar().setVisible(False)
         self.tabs.setIconSize(QSize(16, 16))
         self.tabs.addTab(translation_page,
                          icons.icon("translate", 16, style_module.text_color("text-secondary")),
@@ -1814,10 +1801,21 @@ class WorkbenchView(QWidget):
         self._pdf_ok = False
         self.tabs.addTab(self.followup_panel,
                          icons.icon("check-circle", 16, style_module.text_color("text-secondary")),
-                         i18n.tr('收尾'))
+                         i18n.tr('检查与修复'))
         self.tabs.addTab(self.activity_panel,
                          icons.icon("clock", 16, style_module.text_color("text-secondary")),
-                         i18n.tr('活动'))
+                         i18n.tr('运行记录'))
+        #: 页面 id → 页面。步骤条与代码里的跳转都用页面 id，不再依赖页签序号。
+        self._pages: dict[str, QWidget] = {
+            "translate": translation_page, "terms": self.terms_panel,
+            "review": self.review_panel, "deliver": delivery_page,
+            "report": self.report_panel, "cases": self.cases_panel,
+            "qa": self.qa_panel, "source": self.pdf_panel,
+            "followup": self.followup_panel, "activity": self.activity_panel,
+        }
+        self.tabs.currentChanged.connect(lambda _index: self._sync_stage_page())
+        self._followup_count = 0
+        self._terms_blocked = False
         self._sync_academic_tabs()
 
         layout = QVBoxLayout(self)
@@ -1839,6 +1837,9 @@ class WorkbenchView(QWidget):
         """Attach a job.  Only call this when switching jobs."""
         if self.job_id and self.job_id != job_id:
             self.flush_draft()
+        # 换任务总是从翻译页开始：上一个任务停在哪一页（交付、术语……）与这个任务
+        # 无关，带过来只会让人以为"怎么直接是交付页"。下一步在头部的步骤条上。
+        self.show_page("translate")
         self.job_id = job_id
         self.config = config
         self._state = state
@@ -1880,8 +1881,9 @@ class WorkbenchView(QWidget):
         self._all_rows = list(rows)
         self._render_segments()
         self._render_excluded()
-        self._render_runtime()
+        # 交付预检先于运行区：头部状态芯片要用它给出的任务状态标签。
         self._render_delivery(force=refresh_delivery)
+        self._render_runtime()
         self._render_segment_detail()
         self._render_review()
         self._render_terms()
@@ -1891,6 +1893,63 @@ class WorkbenchView(QWidget):
         self._render_cases()
         self._render_qa()
         self._render_activity()
+        self._render_stage()
+
+    # ================= 阶段与页面导航 =================
+    def show_page(self, page_id: str) -> None:
+        """切到某一页（页面 id 见 `_pages`）。步骤条、跳转链接与测试都走这一个入口。"""
+        page = self._pages.get(page_id)
+        if page is not None:
+            self.tabs.setCurrentWidget(page)
+
+    def current_page_id(self) -> str:
+        widget = self.tabs.currentWidget()
+        return next((key for key, page in self._pages.items() if page is widget), "")
+
+    def _sync_stage_page(self) -> None:
+        self.stage_bar.set_active_page(self.current_page_id())
+
+    def _sync_more_pages(self) -> None:
+        """"更多"菜单里的页面：随 PDF 来源与学术模式变化。收不收起由内容决定。"""
+        pages: list[tuple[str, str]] = []
+        if self._pdf_ok:
+            pages.append(("source", i18n.tr('原页')))
+        pages.append(("followup", i18n.tr('检查与修复')))
+        pages.append(("activity", i18n.tr('运行记录')))
+        if self.academic_visible():
+            pages.extend((("report", i18n.tr('报告')), ("cases", i18n.tr('案例')),
+                          ("qa", i18n.tr('合规与 QA'))))
+        self.stage_bar.set_more_pages(pages, badge=self._followup_count)
+
+    def _render_stage(self) -> None:
+        """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
+        view = stage_model.stage_view(
+            started=self._task_started(), runtime=self._last_runtime,
+            state=self._state, review=self.review_panel.view(),
+            delivery=self._delivery_preview, terms_blocked=self._terms_blocked)
+        self.stage_bar.set_stages(view)
+        # 术语与"更多"里的页面只对已经开始的任务有意义：准备阶段没有术语表、没有记录。
+        self.stage_bar.set_side_visible(self._task_started())
+        self._sync_stage_page()
+        self._stage_action = view.get("action")
+        action = self._stage_action
+        self.stage_action_button.setVisible(bool(action))
+        if action:
+            self.stage_action_button.setText(str(action.get("label") or ""))
+        self._sync_header_actions()
+
+    def _run_stage_action(self) -> None:
+        action = self._stage_action or {}
+        kind = action.get("kind")
+        if kind == "review_segments":
+            self.reviewSelectedRequested.emit(list(action.get("segment_ids") or []))
+        elif kind == "review_all":
+            self.reviewAllRequested.emit()
+        elif kind == "handle_finding":
+            self.show_page("review")
+            self.review_panel.select_item_id(str(action.get("item_id") or ""))
+        elif kind == "deliver":
+            self.deliverRequested.emit()
 
     # ================= 学术专业模式 =================
     def set_academic_mode(self, on: bool) -> None:
@@ -1913,6 +1972,7 @@ class WorkbenchView(QWidget):
             index = self.tabs.indexOf(widget)
             if index >= 0 and self.tabs.isTabVisible(index) != visible:
                 self.tabs.setTabVisible(index, visible)
+        self._sync_more_pages()
 
     def _render_report(self) -> None:
         if not self.job_id or not self.academic_visible():
@@ -1984,8 +2044,8 @@ class WorkbenchView(QWidget):
         count = int(bool((view.get("understanding") or {}).get("status") == "degraded")) \
             + int(bool((view.get("annotation") or {}).get("status") == "partial")) \
             + len(view.get("entities") or [])
-        index = self.tabs.indexOf(self.followup_panel)
-        self.tabs.setTabText(index, i18n.tr('收尾') + (f" ({count})" if count else ""))
+        self._followup_count = count
+        self._sync_more_pages()
 
     def _render_activity(self) -> None:
         """活动记录按事件日志的签名重读：日志没变就不碰（轮询每秒一次）。"""
@@ -2015,6 +2075,7 @@ class WorkbenchView(QWidget):
     def _sync_terms_gate(self, view: dict | None = None) -> None:
         view = view if view is not None else self.terms_panel._view
         blocked = bool((view or {}).get("blocks_start")) and self._task_started()
+        self._terms_blocked = blocked
         if not blocked:
             self.terms_gate.set_action("", None)
             self.terms_gate.set_text("")
@@ -2025,7 +2086,7 @@ class WorkbenchView(QWidget):
         self.terms_gate.set_action(i18n.tr('前往术语页'), self.show_terms)
 
     def show_terms(self) -> None:
-        self.tabs.setCurrentWidget(self.terms_panel)
+        self.show_page("terms")
 
     def refresh_terms(self) -> None:
         """显式动作（保存/冻结/修订）落盘之后：丢弃暂存并按磁盘重画。"""
@@ -2054,6 +2115,7 @@ class WorkbenchView(QWidget):
         self.pdf_panel.load(job_id if self._pdf_ok else "")
         self.tabs.setTabVisible(self.tabs.indexOf(self.pdf_panel), self._pdf_ok)
         self.view_source_button.setVisible(self._pdf_ok)
+        self._sync_more_pages()
 
     def show_source_location(self, index: int) -> None:
         """切到原页并高亮第 ``index`` 段。"""
@@ -2118,6 +2180,9 @@ class WorkbenchView(QWidget):
             return True
         return bool(self._setup_view.get("started"))
 
+    def task_started(self) -> bool:
+        return self._task_started()
+
     def set_setup(self, view: dict | None) -> None:
         """设置「译前准备」的数据（``adapter.task_setup_view``），并填进面板。"""
         self._setup_view = dict(view) if view else None
@@ -2146,7 +2211,7 @@ class WorkbenchView(QWidget):
         started = self._task_started()
         has_rows = bool(self._all_rows)
         show_setup = not started
-        self.setup_scroll.setVisible(show_setup)
+        self.setup_page.setVisible(show_setup)
         self.toolbar_bar.setVisible(started and has_rows)
         self.translation_split.setVisible(started and has_rows)
         self.no_segments_card.setVisible(started and not has_rows)
@@ -2221,89 +2286,68 @@ class WorkbenchView(QWidget):
 
     def _render_runtime(self) -> None:
         runtime = self._last_runtime or {}
-        status = str(runtime.get("headline_status") or "")
+        raw_status = str(runtime.get("status") or "")
+        headline = str(runtime.get("headline_status") or "")
         label = str(runtime.get("headline") or "")
         detail = str(runtime.get("detail") or "")
+        started = self._task_started()
+        running = raw_status in RUNNING_STATUSES
+        troubled = raw_status in ("failed", "stalled", "interrupted")
         # 运行异常时让运行时说明整行转红。旧代码是把一个**从未填过文字**的空标签
         # 换 objectName 变色（`phase_label`），用户看不到任何东西；现在颜色落在
         # 真正有文字的那一行上。属性名用 `error` 而不是 `tone`（tone 是 chip 的
         # 全局选择器，见 style.py 的说明）。
-        failed = str(runtime.get("status") or "") in ("failed", "stalled", "interrupted")
-        self.status_label.setProperty("error", "true" if failed else "false")
+        self.status_label.setProperty("error", "true" if troubled else "false")
         style_module.repolish(self.status_label)
 
-        self.chip_state.setText(i18n.tr_dynamic(status) or "—")
-        self.chip_state.set_tone(RUNTIME_STATUS_TONES.get(status, "muted"))
+        # 状态芯片只回答一件事：这个任务现在处于什么状态。
+        # * 正在运行 / 出了问题：说运行的事（核心的运行视图）；
+        # * 其余时候：用与任务列表同一个标签（`task_status_label`）。否则头部会说
+        #   "已完成"（翻译跑完了），而交付页说"待审校"（审校没过）——同一个任务
+        #   两个答案。
+        task_label = str((self._delivery_preview or {}).get("status_label") or "")
+        if started and not running and not troubled and task_label:
+            chip_raw, chip_tone = task_label, status_tone_for_label(task_label)
+        else:
+            chip_raw, chip_tone = headline, RUNTIME_STATUS_TONES.get(headline, "muted")
+        chip_text = i18n.tr_dynamic(chip_raw) or "—"
         # 状态芯片说了"已完成"，右边再写一遍"已完成"就是同一句话读两次：
-        # 只有运行区带来的信息**超出**芯片时才显示这一行文字。
+        # 只有运行区带来的信息**超出**芯片时才显示这一行文字（按原文比较，
+        # 显示时再翻译——两边都翻译后比较会因为词表不同而漏判）。
         note = detail or label or ""
-        if note == self.chip_state.text():
+        if note in (chip_raw, headline):
             note = ""
-        self.status_label.setText(note)
-        self.status_label.setVisible(bool(note))
+        note = i18n.tr_dynamic(note)
 
+        # 任务还没开始：状态芯片、运行说明、进度与运行控制整组收掉。"未完成 · 当前
+        # 进度已保存"对一个还没开始的任务是错的；「开始翻译」由准备面板承担，
+        # 两个"开始翻译"并存会让用户不确定哪个才带上刚选的策略（面板里那个会
+        # 先把选择写回任务再启动）。
+        header_visible = started
+        self.chip_state.setVisible(header_visible)
+        self.chip_state.setText(chip_text)
+        self.chip_state.set_tone(chip_tone)
+        self.status_label.setText(note if header_visible else "")
+        self.status_label.setVisible(header_visible and bool(note))
+        self.progress.setVisible(header_visible and running)
+        if not started:
+            for button in (self.start_button, self.pause_button, self.cancel_button,
+                           self.retry_button):
+                button.setVisible(False)
+            self._sync_header_actions()
+            return
+
+        # 进度条用核心自己的进度与它的单位（翻译阶段是"批次"），不另算一套。
+        # `progress_completed/total` 只在学术写作阶段才有值；此前只读它，于是普通
+        # 翻译运行期间进度条整段是空的、最后一下跳到满——不可信。
+        stage_progress = runtime.get("stage_progress") or {}
         completed = int(runtime.get("progress_completed") or 0)
         total = int(runtime.get("progress_total") or 0)
-        # 可数单元：优先翻译对（pairs）；翻译还没开始时是原文段落（paras）。
-        # 只看 pairs 的话，翻译前的任务明明有 3 行原文在列表里，进度芯片却显示
-        # "—"——同一份快照两个数字对不上（r6 状态一致性审计发现的缺口）。
-        pairs_count = len(self._state.get("pairs") or [])
-        if not pairs_count:
-            pairs_count = len(self._state.get("paras") or [])
-        # 核心在翻译阶段给出的是**批次**进度（`stage_progress`），而
-        # `progress_completed/total` 只在学术写作阶段才有值。此前界面只读后者，
-        # 于是普通翻译运行期间进度条**整段是空的**、最后一下跳到满——不可信。
-        # 现在直接用核心自己的进度与它的单位（"批次"），不另算一套。
-        stage_progress = runtime.get("stage_progress") or {}
-        stage_total = int(stage_progress.get("total") or 0)
-        if total:
-            self.chip_progress.setText(i18n.tr('{v0}/{v1} 段', v0=completed, v1=total))
-            self.chip_progress.set_tone("info" if completed < total else "ok")
-            self.progress.setRange(0, total)
-            self.progress.setValue(min(completed, total))
-        elif stage_total:
-            done = int(stage_progress.get("completed") or 0)
-            unit = str(stage_progress.get("unit") or "")
-            self.chip_progress.setText(i18n.tr(
-                "{v0}/{v1} {v2}", v0=done, v1=stage_total,
-                v2=i18n.tr_dynamic(unit)).strip())
-            self.chip_progress.set_tone("info" if done < stage_total else "ok")
-            self.progress.setRange(0, stage_total)
-            self.progress.setValue(min(done, stage_total))
-        elif pairs_count:
-            # 既没有单位进度也没有批次进度时，至少给出真实的段落数，而不是一个"—"。
-            self.chip_progress.setText(i18n.tr('{v0} 段', v0=pairs_count))
-            self.chip_progress.set_tone("muted")
-            self.progress.setRange(0, 1)
-            self.progress.setValue(1 if status == "已完成" else 0)
-        else:
-            self.chip_progress.setText("—")
-            self.chip_progress.set_tone("muted")
-            self.progress.setRange(0, 1)
-            self.progress.setValue(1 if status == "已完成" else 0)
-
-        pairs = self._state.get("pairs") or []
-        reviewed = sum(1 for pair in pairs if pair.get("reviewed"))
-        if pairs:
-            text = i18n.tr("审校 {v0}/{v1}", v0=reviewed, v1=len(pairs))
-            tone = "ok" if reviewed == len(pairs) else "muted"
-            # 标记数不等于门禁结论：恢复/旧格式数据里可能"全标了 reviewed"但当前
-            # 审校收据已失效。此时必须说出来，否则用户以为已经可以交付。
-            readiness = adapter.review_readiness(self.job_id, self._state)
-            if readiness.get("required") and not readiness.get("ready"):
-                text += i18n.tr("（需重新审校）")
-                tone = "warn"
-            self.chip_review.setText(text)
-            self.chip_review.set_tone(tone)
-        else:
-            self.chip_review.setText(i18n.tr('审校 —'))
-            self.chip_review.set_tone("muted")
-
-        # 计数用核心自己的规则：检查项以 `resolved` 表示是否已解决，
-        # 而不是 `status == "open"`（按后者会把已解决的阻断项也算进来）。
-        blocking = adapter.unresolved_blocking(self.job_id, self._state)
-        self.chip_blocking.setText(i18n.tr('必须处理 {v0}', v0=len(blocking)))
-        self.chip_blocking.set_tone("danger" if blocking else "muted")
+        if not total:
+            total = int(stage_progress.get("total") or 0)
+            completed = int(stage_progress.get("completed") or 0)
+        self.progress.setRange(0, max(total, 1))
+        self.progress.setValue(min(completed, total) if total else 0)
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
         # * `available_actions` 是核心给出的可执行动作（resume/retry/cancel/…）；
@@ -2311,38 +2355,18 @@ class WorkbenchView(QWidget):
         # * 停滞任务核心也提供 cancel，因此取消按钮必须跟着动作走——否则用户
         #   在"暂无运行信号"时反而看不到取消入口。
         actions = set(runtime.get("available_actions") or [])
-        raw_status = str(runtime.get("status") or "")
-        running = raw_status in ("running", "pausing", "cancelling",
-                                 "resume_requested", "starting", "queued",
-                                 "waiting_external", "waiting_manual")
-        # 任务未开始时，运行控制整组收掉：「开始翻译」由「译前准备」面板承担。
-        # 两个"开始翻译"并存会让用户不确定哪个才带上刚选的策略与产出物；面板里
-        # 那个是对的（它先把选择写回任务再启动）。
-        if not self._task_started():
-            for button in (self.start_button, self.pause_button,
-                           self.cancel_button, self.retry_button,
-                           self.review_all_button):
-                button.setVisible(False)
-            self._sync_header_actions()
-            return
         self.start_button.setVisible("resume" in actions)
         self.start_button.setText(
             "继续翻译" if self._state.get("p1_done") else "开始翻译")
         self.pause_button.setVisible(running and raw_status == "running")
         self.cancel_button.setVisible(running or "cancel" in actions)
         self.retry_button.setVisible("retry" in actions)
-        # 审校全部段落是 Header 上的"推荐下一步"：有段落、且任务没在跑时才给。
-        self.review_all_button.setVisible(bool(self._all_rows) and not running)
         self._sync_header_actions()
 
     def _sync_header_actions(self) -> None:
-        """运行控制整组收掉：没有可执行动作时不留一条空槽位。
-
-        ⚠️ 只统计**运行控制**（开始/暂停/取消/重试）。"审校全部段落"已经搬到
-        工具区第二行，它的可见性由 `_render_runtime` 单独决定，不再属于这一组。
-        """
+        """运行控制整组收掉：没有可执行动作时不留一条空槽位。"""
         controls = (self.start_button, self.pause_button,
-                    self.cancel_button, self.retry_button)
+                    self.cancel_button, self.retry_button, self.stage_action_button)
         self.header_actions_bar.setVisible(
             any(not button.isHidden() for button in controls))
 
@@ -2370,8 +2394,8 @@ class WorkbenchView(QWidget):
         self._delivery_key = key
         status = i18n.tr_dynamic(preview.get("status_label")) or "—"
         issues = preview.get("issues") or []
-        detail = (i18n.tr("；阻断 {v0} 项：{v1}", v0=len(issues),
-                          v1=_elide("；".join(str(i) for i in issues), 200))
+        detail = (i18n.tr("；还需处理：{v0}",
+                          v0=_elide("；".join(i18n.tr_dynamic(str(i)) for i in issues), 200))
                   if issues
                   else i18n.tr("；交付文件按任务声明生成，冻结后不可修改。"))
         self.delivery_label.setText(i18n.tr("交付状态：{v0}", v0=status) + detail)

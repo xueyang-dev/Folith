@@ -25,9 +25,9 @@ class ActivityPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._signature = ""
-        self.heading = QLabel(i18n.tr('任务活动'))
+        self.heading = QLabel(i18n.tr('运行记录'))
         self.heading.setObjectName("sectionTitle")
-        self.hint = QLabel(i18n.tr('最近发生的步骤，最新的在最下面。完整的技术日志不在这里显示，可在 Finder 中查看。'))
+        self.hint = QLabel(i18n.tr('最近的步骤，最新的在最下面。完整日志请在 Finder 中查看。'))
         self.hint.setObjectName("hint")
         self.hint.setWordWrap(True)
         self.list = QListWidget()
@@ -36,7 +36,7 @@ class ActivityPanel(QWidget):
         self.empty = QLabel(i18n.tr('还没有活动记录。任务开始运行后，这里会显示每一步。'))
         self.empty.setProperty("role", "muted")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.log_button = QPushButton(i18n.tr('在 Finder 中显示技术日志'))
+        self.log_button = QPushButton(i18n.tr('在 Finder 中显示完整日志'))
         self.log_button.setIcon(icons.icon("folder", 16, style_module.text_color("text-secondary")))
         self.log_button.setIconSize(QSize(16, 16))
         self.log_button.clicked.connect(self.revealLogRequested.emit)

@@ -67,7 +67,7 @@ class LibraryView(QWidget):
         self.back_button.clicked.connect(self.backRequested.emit)
         self.refresh_button = QPushButton(i18n.tr('刷新'))
         self.refresh_button.clicked.connect(lambda: self.refreshRequested.emit(self.tm_project_id()))
-        self.new_term_button = QPushButton(i18n.tr('新建术语…'))
+        self.new_term_button = QPushButton(i18n.tr('添加术语…'))
         self.new_term_button.clicked.connect(self.newTermRequested.emit)
         header = QHBoxLayout()
         text = QVBoxLayout()

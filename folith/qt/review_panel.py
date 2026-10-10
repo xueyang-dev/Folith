@@ -137,9 +137,9 @@ class ReviewPanel(QWidget):
             lambda: self._emit_resolve("preserved"))
         self.edit_button = button(i18n.tr('修改译文'), "translate")
         self.edit_button.clicked.connect(self._emit_edit)
-        self.review_button = button(i18n.tr('审校此段'), "shield-check")
+        self.review_button = button(i18n.tr('审校本段'), "shield-check")
         self.review_button.clicked.connect(self._emit_review)
-        self.retranslate_button = button(i18n.tr('重新翻译'), "refresh")
+        self.retranslate_button = button(i18n.tr('重译本段'), "refresh")
         self.retranslate_button.clicked.connect(self._emit_retranslate)
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
@@ -183,6 +183,10 @@ class ReviewPanel(QWidget):
         self._render_detail()
 
     # ================= 数据 =================
+    def view(self) -> dict:
+        """最近一次 `apply` 收到的视图（阶段步骤条与它共用同一份审校投影）。"""
+        return self._view
+
     def apply(self, view: dict, *, busy: bool = False) -> None:
         """用新的视图模型重画队列；保持当前选中项（按稳定标识）。"""
         self._view = view or {}
@@ -212,10 +216,12 @@ class ReviewPanel(QWidget):
         self.list.blockSignals(True)
         self.list.clear()
         for item in self._visible:
-            entry = QListWidgetItem(
-                f"{item.get('title') or ''}\n"
-                f"{i18n.tr_dynamic(str(item.get('severity_label') or ''))}"
-                f" · {str(item.get('summary') or '')[:60]}")
+            title = str(item.get("title") or "")
+            label = i18n.tr_dynamic(str(item.get("severity_label") or ""))
+            summary = str(item.get("summary") or "")[:60]
+            # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
+            second = summary if (not label or label in title) else f"{label} · {summary}"
+            entry = QListWidgetItem(f"{title}\n{second}")
             entry.setData(Qt.ItemDataRole.UserRole, item.get("id"))
             self.list.addItem(entry)
         row = next((i for i, item in enumerate(self._visible)
@@ -308,8 +314,8 @@ class ReviewPanel(QWidget):
                           suggestion=suggestion, edit=has_segment and not task)
         if task:
             self.review_button.setText(i18n.tr({
-                "failed": "重试审校此段", "stale": "重新审校此段",
-                "missing": "审校此段"}[kind]))
+                "failed": "重试审校本段", "stale": "重新审校本段",
+                "missing": "审校本段"}[kind]))
             self.edit_button.setVisible(has_segment)
         enabled = not self._busy
         self.apply_button.setEnabled(enabled and suggestion)

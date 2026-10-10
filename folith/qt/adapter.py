@@ -2093,10 +2093,10 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None) -> dict:
                 detail.append(f"{label} {count} 段")
         if review.get("blocking_finding_ids"):
             detail.append(f"阻断项 {len(review['blocking_finding_ids'])} 个")
+        # 不把核心的状态枚举（failed / missing …）原样写给用户：具体缺什么已经在
+        # `detail` 里（审校失败 N 段 / 需重新审校 N 段 …）。
         review_issues.append(
-            f"译文审校未就绪（{review.get('status') or 'unknown'}）"
-            + ("：" + "、".join(detail) if detail else "")
-            + "；完成审校后才能冻结交付")
+            "审校未完成" + (f"（{'、'.join(detail)}）" if detail else ""))
     return {
         "status_label": core.task_status_label(state, job_id),
         "delivery_status": state.get("delivery_status") or "draft",

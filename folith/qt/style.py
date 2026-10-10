@@ -426,6 +426,16 @@ QPushButton#subtleAction {{
 QPushButton#subtleAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#ghostAction {{ background: transparent; border-color: transparent; color: {t['text-secondary']}; }}
 QPushButton#ghostAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+/* 工作台步骤条右侧的旁路入口（术语 / 更多）：平时是幽灵按钮，正在看这一页时亮起 */
+QPushButton#stageUtility {{
+    background: transparent; border-color: transparent; color: {t['text-secondary']};
+    padding: {sp['xs']}px {sp['sm']}px; font-weight: 500;
+}}
+QPushButton#stageUtility:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+QPushButton#stageUtility:checked {{
+    background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['brand-ink']};
+}}
+QPushButton#stageUtility::menu-indicator {{ image: none; width: 0px; }}
 QPushButton#dangerAction {{ color: {t['danger']}; border-color: {t['border-subtle']}; background: {t['bg-surface']}; }}
 QPushButton#dangerAction:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
 /* 破坏性动作的**主按钮**：确认删除/强制退出这种"按下就回不去"的一条，

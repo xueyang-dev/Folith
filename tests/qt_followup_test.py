@@ -184,15 +184,16 @@ def test_panel_offers_the_right_annotation_retry_label(qapp):
     assert seen == ["annotation"]
 
 
-def test_workbench_tab_counts_the_open_items(qapp, job):
+def test_workbench_more_menu_counts_the_open_items(qapp, job):
     from folith.qt import views
 
     bench = views.WorkbenchView()
     state = adapter.load_state(job)
     bench.load(job, adapter.EngineConfig(target_lang="简体中文"), state,
                adapter.segment_rows(job, state), [])
-    text = bench.tabs.tabText(bench.tabs.indexOf(bench.followup_panel))
-    assert "(1)" in text
+    # 待办数挂在步骤条的"更多"上；"检查与修复"页本身在它的菜单里。
+    assert "(1)" in bench.stage_bar.more_button.text()
+    assert "followup" in bench.stage_bar.more_page_ids()
 
 
 # --------------------------------------------------------- 重新扫描 PDF -------

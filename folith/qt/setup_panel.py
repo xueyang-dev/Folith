@@ -538,7 +538,7 @@ class TaskSetupPanel(QWidget):
         column.addWidget(self._build_context_card())
         column.addWidget(self._build_strategy_card())
         column.addWidget(self._build_delivery_card())
-        column.addLayout(self._build_footer())
+        column.addWidget(self._build_footer())
         column.addStretch(1)
 
         # 高级项改动后重新计算"与预设相差几项"，并联动研究产物的可见性。
@@ -984,7 +984,7 @@ class TaskSetupPanel(QWidget):
         self._group_widgets[key] = holder
         return holder
 
-    def _build_footer(self) -> QHBoxLayout:
+    def _build_footer(self) -> QWidget:
         self.start_button = QPushButton(i18n.tr('开始翻译'))
         self.start_button.setObjectName("primaryAction")
         self.start_button.setIcon(icons.icon(
@@ -992,15 +992,28 @@ class TaskSetupPanel(QWidget):
         self.start_button.setIconSize(QSize(16, 16))
         self.start_button.clicked.connect(
             lambda: self.startRequested.emit(self.payload()))
-        self.footer_note = QLabel(i18n.tr('开始后可在工作台继续调整译文；交付内容也可在交付页查看。'))
+        self.footer_note = QLabel(i18n.tr('开始后可继续编辑译文；要生成的文件可在「交付」页查看。'))
         self.footer_note.setObjectName("hint")
         self.footer_note.setWordWrap(True)
-        row = QHBoxLayout()
+        self.footer_bar = QWidget()
+        row = QHBoxLayout(self.footer_bar)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(theme_module.SPACE["md"])
         row.addWidget(self.footer_note, 1)
         row.addWidget(self.start_button)
-        return row
+        return self.footer_bar
+
+    def detach_footer(self) -> QWidget:
+        """把底部的「开始翻译」条交给外层放到滚动区之外。
+
+        面板比窗口高、要放进滚动区；主行动若跟着内容滚动，首屏就看不到它
+        （实测 900px 高的窗口里它在第 980px）。宿主调用这个方法把它钉在滚动区下方。
+        """
+        layout = self.layout()
+        if layout is not None:
+            layout.removeWidget(self.footer_bar)
+        self.footer_bar.setParent(None)
+        return self.footer_bar
 
     # ================= 数据 =================
 
@@ -1114,15 +1127,9 @@ class TaskSetupPanel(QWidget):
         self._view = dict(view or {})
         self._loading = True
         try:
-            filename = str(self._view.get("filename") or "")
-            # 标题说"这一步是什么"，文件名放副标题：任务身份已经由工作台页头给出，
-            # 同一个文件名再当一次大标题只是重复。
+            # 文件名已经在工作台头部，这里只说"这一步要做什么"。
             self.title_label.setText(i18n.tr('译前准备'))
-            self.subtitle_label.setText(
-                i18n.tr('正在准备「{name}」：确认翻译设置与需要产出的文件，'
-                        '这些选择会保存到本任务。', name=filename)
-                if filename else
-                i18n.tr('确认翻译设置与需要产出的文件；这些选择会保存到本任务。'))
+            self.subtitle_label.setText(i18n.tr('确认设置和要生成的文件，选择会保存到本任务。'))
             strategy = self._view.get("strategy") or {}
             self._set_combo_data(self.target_box, self._view.get("target_lang"))
             self._set_combo_data(self.project_box, self._view.get("project_id"))
