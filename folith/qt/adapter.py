@@ -1008,6 +1008,56 @@ def confirm_source_segment(job_id: str, index: int, note: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= PDF 原页对照 =================
+#
+# 旧界面可以把一段译文对回 PDF 原页并高亮它的位置；Qt 原来看不到原页。定位用
+# ``folith.pdf_preview``（持久化的原文锚点优先，旧任务退回文本搜索），渲染用 PyMuPDF。
+# 没有行级坐标的来源只能定位到页，不画高亮——如实说明，不假装高亮。
+
+def pdf_available(job_id: str) -> bool:
+    from folith import pdf_preview
+
+    return bool(job_id) and pdf_preview.has_pdf_source(job_id)
+
+
+def pdf_page_count(job_id: str) -> int:
+    from folith import pdf_preview
+
+    return int(pdf_preview.get_pdf_page_count(job_id))
+
+
+def pdf_page_png(job_id: str, page: int, rects: Sequence[Sequence[float]] | None = None,
+                 dpi: int = 150) -> bytes | None:
+    from folith import pdf_preview
+
+    return pdf_preview.render_pdf_page_image(job_id, int(page), list(rects or []), dpi=int(dpi))
+
+
+def segment_pdf_location(job_id: str, index: int, state: dict | None = None,
+                         current_page: int = 0) -> dict:
+    """某一段在 PDF 里的位置：``{page, rects, hint}``（找不到时 page 为 None）。"""
+    from folith import pdf_preview
+
+    state = state if state is not None else load_state(job_id)
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    text = ""
+    if 0 <= index < len(pairs):
+        text = str(pairs[index].get("source") or "")
+    elif 0 <= index < len(paras):
+        text = str(paras[index] or "")
+    if not text:
+        return {"page": None, "rects": [], "hint": "这一段没有原文，无法定位。"}
+    locations = pdf_preview.get_segment_source_locations(job_id, index)
+    current = next((loc for loc in locations if loc[0] == current_page), None)
+    page, rects = current or pdf_preview.get_cached_segment_location(
+        job_id, index, text, start_page_hint=current_page)
+    if page is None:
+        return {"page": None, "rects": [], "hint": "没能在 PDF 里定位这一段。"}
+    return {"page": int(page), "rects": [list(r) for r in rects or []],
+            "hint": ("已高亮" if rects else "在本页（仅定位页面，没有行级坐标，不画高亮）")}
+
+
 # ================= 收尾（恢复进度 / 补跑失败步骤 / 实体译名统一） =================
 #
 # 旧界面的"长文处理收尾"：长文跑完后常留下几类尾巴——全文理解降级、标注批次失败、

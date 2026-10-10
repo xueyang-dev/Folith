@@ -31,6 +31,7 @@ from . import icons
 from .activity_panel import ActivityPanel
 from .cases_panel import CasesPanel
 from .followup_panel import FollowupPanel
+from .pdf_panel import PdfPanel
 from .qa_panel import QAPanel
 from .report_panel import ReportPanel
 from .review_panel import ReviewPanel
@@ -1446,6 +1447,11 @@ class WorkbenchView(QWidget):
         self.undo_structure_action.triggered.connect(
             lambda _checked=False: self.structureRequested.emit("undo", self._current_index))
         self.structure_button.setMenu(self.structure_menu)
+        self.view_source_button = _icon_button(QPushButton(i18n.tr('查看原位置')), "eye", "text-secondary")
+        self.view_source_button.setToolTip(i18n.tr('在 PDF 原页里定位并高亮这一段'))
+        self.view_source_button.clicked.connect(
+            lambda: self.show_source_location(self._current_index))
+        self.view_source_button.setVisible(False)
         self.review_button = _icon_button(QPushButton(i18n.tr('审校本段')), "shield-check", "text-secondary")
         self.review_button.clicked.connect(
             lambda: self.reviewCurrentRequested.emit(self._current_index))
@@ -1515,6 +1521,7 @@ class WorkbenchView(QWidget):
         review_grid.addWidget(self.retranslate_button, 0, 1)
         review_grid.addWidget(self.exclude_button, 1, 0)
         review_grid.addWidget(self.structure_button, 1, 1)
+        review_grid.addWidget(self.view_source_button, 2, 0, 1, 2)
         inspector_layout.addLayout(review_grid)
 
         inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
@@ -1799,6 +1806,12 @@ class WorkbenchView(QWidget):
         self._academic_widgets = [self.report_panel, self.cases_panel, self.qa_panel]
         self._academic_mode = False
         self.tabs.currentChanged.connect(self._tab_changed)
+        self.pdf_panel = PdfPanel()
+        self.tabs.addTab(self.pdf_panel,
+                         icons.icon("file", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('原页'))
+        self.tabs.setTabVisible(self.tabs.indexOf(self.pdf_panel), False)
+        self._pdf_ok = False
         self.tabs.addTab(self.followup_panel,
                          icons.icon("check-circle", 16, style_module.text_color("text-secondary")),
                          i18n.tr('收尾'))
@@ -1841,6 +1854,7 @@ class WorkbenchView(QWidget):
         self._current_index = -1
         self._loaded_uid = ""
         self._excluded_signature = None      # 切换任务必须重建已排除列表
+        self._load_pdf(job_id)
         self._set_editor_text("", "")
         # 搜索词只对上一个任务有意义：跟着切过去会让新任务的网格"看起来是空的"。
         # 状态筛选（待审校/已审校/只看人工修改）是"模式"，保留，且工具栏上看得见。
@@ -2030,6 +2044,23 @@ class WorkbenchView(QWidget):
         except Exception:  # noqa: BLE001 - 审校页坏了不能拖垮翻译页
             view = {}
         self.review_panel.apply(view)
+
+    def _load_pdf(self, job_id: str) -> None:
+        """PDF 任务才有「原页」页签与「查看原位置」；切换任务时判断一次。"""
+        try:
+            self._pdf_ok = adapter.pdf_available(job_id)
+        except Exception:  # noqa: BLE001 - 读不出原文时当作没有原页
+            self._pdf_ok = False
+        self.pdf_panel.load(job_id if self._pdf_ok else "")
+        self.tabs.setTabVisible(self.tabs.indexOf(self.pdf_panel), self._pdf_ok)
+        self.view_source_button.setVisible(self._pdf_ok)
+
+    def show_source_location(self, index: int) -> None:
+        """切到原页并高亮第 ``index`` 段。"""
+        if not self._pdf_ok or index < 0:
+            return
+        self.tabs.setCurrentWidget(self.pdf_panel)
+        self.pdf_panel.locate(int(index))
 
     def show_segment_for_edit(self, index: int) -> None:
         """从审校页跳到翻译页的某一段（用户要自己改译文）。"""
@@ -2556,6 +2587,7 @@ class WorkbenchView(QWidget):
         self.retranslate_button.setEnabled(not row.excluded)
         self.exclude_button.setVisible(not row.excluded)
         self._sync_structure_menu(row)
+        self.pdf_panel.set_segment(row.index)
         self.discard_draft_button.setVisible(bool(row.has_draft))
         self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
         parts = [f"段落 #{row.index + 1}",
