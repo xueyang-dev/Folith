@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from . import i18n
 from . import adapter
 from . import icons
+from .activity_panel import ActivityPanel
 from .review_panel import ReviewPanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
@@ -528,8 +529,16 @@ class HomeView(QWidget):
         self.project_filter.setToolTip(i18n.tr('按项目筛选任务'))
         self.project_filter.currentIndexChanged.connect(self._apply_filter)
 
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(i18n.tr('搜索任务：文档名、状态、语言…'))
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setMinimumWidth(180)
+        self.search_edit.setMaximumWidth(260)
+        self.search_edit.textChanged.connect(self._apply_filter)
+
         header_actions = QHBoxLayout()
         header_actions.setSpacing(theme_module.SPACE["sm"])
+        header_actions.addWidget(self.search_edit)
         header_actions.addWidget(self.view_switch)
         header_actions.addWidget(self.project_filter)
         header_actions.addSpacing(theme_module.SPACE["xxs"])
@@ -786,9 +795,24 @@ class HomeView(QWidget):
 
     def _visible_rows(self) -> list[adapter.JobRow]:
         project = self.project_filter.currentData() or ""
-        if not project:
-            return self._rows
-        return [row for row in self._rows if (row.project_id or "") == project]
+        rows = self._rows if not project else [
+            row for row in self._rows if (row.project_id or "") == project]
+        query = self.search_edit.text().strip().casefold()
+        if not query:
+            return rows
+        # 任务多了以后靠滚动找不到：按文档名、状态、语言、任务号模糊匹配（所有词都要命中）。
+        words = query.split()
+        matched = []
+        for row in rows:
+            haystack = " ".join((
+                row.title, row.filename or "", row.status_label or "",
+                row.progress_label or "", row.target_lang or "", row.job_id,
+                self.project_filter.itemText(
+                    max(self.project_filter.findData(row.project_id or ""), 0)),
+            )).casefold()
+            if all(word in haystack for word in words):
+                matched.append(row)
+        return matched
 
     def _refresh_logo(self) -> None:
         from . import branding
@@ -1082,6 +1106,7 @@ class WorkbenchView(QWidget):
     discardDraftRequested = Signal(int)
     excludeRequested = Signal(int)
     includeRequested = Signal(str)
+    revealLogRequested = Signal(str)           # job_id
     restoreRequested = Signal(int)             # 恢复人工修改之前的译文
     structureRequested = Signal(str, int)     # 操作名（见 adapter.STRUCTURE_OPERATIONS / "undo"）, 段索引
     deliverRequested = Signal()
@@ -1691,9 +1716,15 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(self.review_panel,
                          icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
                          i18n.tr('审校'))
+        self.activity_panel = ActivityPanel()
+        self.activity_panel.revealLogRequested.connect(
+            lambda: self.revealLogRequested.emit(self.job_id))
         self.tabs.addTab(delivery_page,
                          icons.icon("package", 16, style_module.text_color("text-secondary")),
                          i18n.tr('交付'))
+        self.tabs.addTab(self.activity_panel,
+                         icons.icon("clock", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('活动'))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 12, 20, 12)
@@ -1759,6 +1790,20 @@ class WorkbenchView(QWidget):
         self._render_segment_detail()
         self._render_review()
         self._render_terms()
+        self._render_activity()
+
+    def _render_activity(self) -> None:
+        """活动记录按事件日志的签名重读：日志没变就不碰（轮询每秒一次）。"""
+        if not self.job_id:
+            return
+        signature = f"{self.job_id}|{adapter.activity_signature(self.job_id)}"
+        if signature == self.activity_panel.signature():
+            return
+        try:
+            rows = adapter.activity_events(self.job_id)
+        except Exception:  # noqa: BLE001 - 活动页坏了不能拖垮翻译页
+            rows = []
+        self.activity_panel.set_rows(rows, signature=signature)
 
     def _render_terms(self, *, force: bool = False) -> None:
         key = (self.job_id, id(self._state))

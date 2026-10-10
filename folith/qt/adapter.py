@@ -1008,6 +1008,33 @@ def confirm_source_segment(job_id: str, index: int, note: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 活动记录（运行时事件） =================
+#
+# 旧界面有一个"运行抽屉"：任务卡在哪一步、最近发生了什么。Qt 原来只有诊断包。
+# 这里只读取运行时事件日志（用户可见的那一类），并折叠成人话；技术日志留在文件里，
+# 通过"在 Finder 中显示"取用。
+
+def activity_signature(job_id: str) -> str:
+    """事件日志有没有变化（避免每秒钟重读整个文件）。"""
+    try:
+        stat = core.runtime_events_path(job_id).stat()
+    except OSError:
+        return "missing"
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def activity_events(job_id: str, limit: int = 200) -> list[dict]:
+    from folith import runtime_events_view as _events
+
+    return _events.activity_rows(
+        core.read_runtime_events(job_id, limit, visibility="user"))
+
+
+def technical_log_path(job_id: str) -> str:
+    """技术日志的位置（含完整响应预览等细节，不进产品界面）。"""
+    return str(core.runtime_technical_log_path(job_id))
+
+
 # ================= 段落结构编辑（改原文 / 拆分 / 合并 / 插入 / 删除 / 撤销） =================
 #
 # 旧界面可以在工作台里改正 OCR/分段造成的结构错误；Qt 原来只能整段"排除"。核心的

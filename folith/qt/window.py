@@ -234,6 +234,8 @@ class MainWindow(QMainWindow):
         self.workbench.includeRequested.connect(self.include_segment)
         self.workbench.structureRequested.connect(self.edit_structure)
         self.workbench.restoreRequested.connect(self.restore_translation)
+        self.workbench.revealLogRequested.connect(
+            lambda job_id: self.reveal_path(adapter.technical_log_path(job_id)))
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
         self.workbench.glossaryDraftRequested.connect(self.save_glossary_draft)
         self.workbench.glossaryFreezeRequested.connect(self.freeze_glossary)

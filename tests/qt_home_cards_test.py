@@ -25,6 +25,7 @@ os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from folith.qt import adapter, style, views  # noqa: E402
@@ -188,3 +189,34 @@ def test_project_picker_uses_painted_checkbox_and_folder_icons(app):
         assert empty.selected_project() == ""
     finally:
         empty.close()
+
+
+
+# ------------------------------------------------------------ 首页搜索 -------
+
+def test_home_search_filters_by_name_status_and_project(app):
+    home = views.HomeView()
+    home.resize(1400, 900)
+    home.set_projects(PROJECTS)
+    home.set_rows([
+        _job("a1", "Skopos theory.pdf", "p1", status="已完成"),
+        _job("b2", "Annual report.docx", "p2", status="待审校"),
+        _job("c3", "论文初稿.docx", None, status="已完成"),
+    ])
+    try:
+        assert home.table.rowCount() == 3
+        home.search_edit.setText("skopos")
+        assert home.table.rowCount() == 1
+        assert home.table.item(0, 0).data(Qt.ItemDataRole.UserRole) == "a1"
+        home.search_edit.setText("已完成")
+        assert home.table.rowCount() == 2
+        home.search_edit.setText("已完成 论文")
+        assert home.table.rowCount() == 1, "多个词必须同时命中"
+        home.search_edit.setText("产品手册")      # 项目名也能搜
+        assert home.table.rowCount() == 1
+        home.search_edit.setText("没有这个")
+        assert home.table.rowCount() == 0
+        home.search_edit.clear()
+        assert home.table.rowCount() == 3
+    finally:
+        home.deleteLater()
