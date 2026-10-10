@@ -1,0 +1,385 @@
+"""Split out of core.py.
+
+Moved verbatim out of ``core.py``; ``core`` re-exports every public and private
+name defined here.  Anything still owned by ``core`` is read late-bound through
+``_c`` so that tests (and callers) that patch ``core.X`` keep working.
+"""
+
+import httpx
+import json
+import re
+from folith import llm_transport as _llm_transport
+from folith import request_control as _request_control
+from folith import translation_protocol as _translation_protocol
+from folith.trace import trace
+from urllib.parse import urlparse
+from folith.engine._link import core as _c
+
+
+def normalize_openai_base_url(base_url):
+    """接受基址或误填的 OpenAI 兼容具体端点，并统一回基址。"""
+    base = (base_url or "").strip().rstrip("/")
+    for suffix in ("/chat/completions", "/completions", "/responses", "/models"):
+        if base.endswith(suffix):
+            base = base[:-len(suffix)]
+            break
+    if not base:
+        return ""
+    parsed = urlparse(base)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return base
+
+
+def resolve_openai_base_url(provider, base_url=None):
+    """Resolve an OpenAI-compatible base URL without silently falling back.
+
+    A custom relay has no registry URL.  Falling through to the OpenAI SDK's
+    default in that case sends a relay credential to api.openai.com and turns
+    a configuration mistake into a misleading ``invalid_api_key`` response.
+    """
+    cfg = _c.PROVIDERS.get(provider) or {}
+    explicit = base_url is not None
+    if explicit and str(base_url).strip() and not normalize_openai_base_url(base_url):
+        raise ValueError("API 地址无效（需要 http(s)://…/v1）")
+    resolved = normalize_openai_base_url(
+        base_url if explicit and str(base_url).strip() else cfg.get("base_url"))
+    if cfg.get("custom_base_url") and explicit and not resolved:
+        raise ValueError("自定义中转站的 API 地址无效（需要 http(s)://…/v1）")
+    if cfg.get("custom_base_url") and not explicit and not resolved:
+        resolved = normalize_openai_base_url(getattr(_c._LLM_CTX, "base_url", None))
+    if cfg.get("custom_base_url") and not resolved:
+        raise ValueError("自定义中转站未配置有效的 API 地址（需要 http(s)://…/v1）")
+    return resolved
+
+
+def set_llm_base_url(base_url):
+    """为当前线程设置 OpenAI 兼容中转站地址（空值清除）。"""
+    _c._LLM_CTX.base_url = normalize_openai_base_url(base_url) or None
+    return _c._LLM_CTX.base_url
+
+
+def reasoning_effort_options(provider, model):
+    """Return safe reasoning-effort values for a known reasoning model.
+
+    OpenAI-compatible relays do not expose a portable capability schema.  We
+    therefore only offer the control for recognizable reasoning model names;
+    unknown custom models remain in automatic mode so an unsupported request
+    parameter cannot break translation.
+    """
+    cfg = _c.PROVIDERS.get(provider) or {}
+    if cfg.get("kind") not in {"openai", "openai_compat"}:
+        return ()
+    name = str(model or "").strip().lower()
+    if not name:
+        return ()
+    # OpenAI reasoning families and common compatible relay names.  The UI
+    # deliberately uses the portable low/medium/high subset.
+    prefixes = ("o1", "o3", "o4-mini", "gpt-5", "gpt-6", "deepseek-r1", "qwq")
+    if "-chat" in name or not name.startswith(prefixes):
+        return ()
+    return ("low", "medium", "high")
+
+
+def set_llm_reasoning_effort(value):
+    """Set or clear the per-thread Chat Completions reasoning effort."""
+    value = str(value or "").strip().lower()
+    _c._LLM_CTX.reasoning_effort = value if value in _c._REASONING_EFFORT_VALUES else None
+    return _c._LLM_CTX.reasoning_effort
+
+
+def clean_xml_chars(text):
+    if not isinstance(text, str):
+        return str(text)
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+
+
+def parse_json_array(text):
+    """从 LLM 输出中稳健地解析 JSON 数组；解析失败返回 None。
+
+    依次尝试：整体解析 -> 去掉 Markdown 代码块后解析 -> 从每个 '[' 位置做
+    raw_decode（可容忍输出前后夹带解释文字）。
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    candidate = text.strip()
+    candidate = re.sub(r'^```(?:json)?\s*', '', candidate, flags=re.DOTALL)
+    candidate = re.sub(r'\s*```$', '', candidate, flags=re.DOTALL).strip()
+
+    try:
+        obj = json.loads(candidate)
+        if isinstance(obj, list):
+            return obj
+    except Exception:
+        pass
+
+    decoder = json.JSONDecoder()
+    for m in re.finditer(r'\[', candidate):
+        try:
+            obj, _ = decoder.raw_decode(candidate[m.start():])
+        except Exception:
+            continue
+        if isinstance(obj, list):
+            return obj
+    return None
+
+
+def parse_translation_array(res, expected):
+    """Compatibility API backed by the canonical translation parser."""
+    return _translation_protocol.parse_translation_array(res, expected)
+
+
+def is_rate_limited(err):
+    s = str(err)
+    return '429' in s or 'RESOURCE_EXHAUSTED' in s or 'rate limit' in s.lower()
+
+
+def _llm_request_controller(provider, model):
+    """Shared, provider/model scoped request controller (see request_control)."""
+    return _request_control.get_request_controller(provider, model)
+
+
+def _record_llm_thread_stats(seconds, *, failed):
+    _c._LLM_LATENCY_CTX.seconds = getattr(_c._LLM_LATENCY_CTX, "seconds", 0.0) + max(0.0, seconds)
+    _c._LLM_LATENCY_CTX.requests = getattr(_c._LLM_LATENCY_CTX, "requests", 0) + 1
+    if failed:
+        _c._LLM_LATENCY_CTX.failures = getattr(_c._LLM_LATENCY_CTX, "failures", 0) + 1
+
+
+def llm_thread_stats():
+    """Cumulative provider stats for the calling thread."""
+    return {
+        "api_latency_s": float(getattr(_c._LLM_LATENCY_CTX, "seconds", 0.0) or 0.0),
+        "requests": int(getattr(_c._LLM_LATENCY_CTX, "requests", 0) or 0),
+        "failures": int(getattr(_c._LLM_LATENCY_CTX, "failures", 0) or 0),
+    }
+
+
+def llm_thread_stats_delta(before):
+    after = llm_thread_stats()
+    return {
+        "api_latency_s": max(0.0, after["api_latency_s"] - float(before.get("api_latency_s") or 0.0)),
+        "requests": max(0, after["requests"] - int(before.get("requests") or 0)),
+        "failures": max(0, after["failures"] - int(before.get("failures") or 0)),
+    }
+
+
+def reset_llm_clients():
+    """Drop every pooled provider client (closing it) so the next call rebuilds.
+
+    Ops/test hook: production never needs this because the pool identity is
+    derived from provider routing plus a credential fingerprint, both stable
+    for a process.  Tests that swap the SDK class (``core.OpenAI``) must call
+    this so a client built by a previous stub is not reused.
+    """
+    return _llm_transport.close_all_clients()
+
+
+def _trace_http_request(request):
+    run = trace.get_active_run(_c._runtime_job_id())
+    if run:
+        run.begin_http_attempt(request)
+
+
+def _trace_http_response(response):
+    run = trace.get_active_run(_c._runtime_job_id())
+    if run:
+        run.record_http_response(response)
+
+
+def _provider_error_payload(error):
+    """Extract safe, non-secret fields from SDK/http responses.
+
+    OpenAI-compatible relays do not all use the same exception shape: the
+    OpenAI SDK exposes ``status_code``/``body`` while httpx exposes a response
+    object.  Keep this extraction deliberately small and never return the raw
+    exception text to the UI (it may contain request details or credentials).
+    """
+    response = error if isinstance(error, httpx.Response) else getattr(
+        error, "response", None)
+    status_code = getattr(error, "status_code", None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, "status_code", None)
+    try:
+        status_code = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+
+    payloads = []
+    body = getattr(error, "body", None)
+    if body is not None:
+        payloads.append(body)
+    if response is not None:
+        try:
+            payloads.append(response.json())
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+    code = ""
+    message = ""
+
+    def visit(payload):
+        nonlocal code, message
+        if isinstance(payload, str):
+            stripped = payload.strip()
+            if stripped.startswith(("{", "[")):
+                try:
+                    visit(json.loads(stripped))
+                except (TypeError, ValueError):
+                    pass
+            return
+        if not isinstance(payload, dict):
+            return
+        if not code:
+            for key in ("code", "error_code", "type"):
+                value = payload.get(key)
+                if isinstance(value, (str, int)) and str(value).strip():
+                    code = str(value).strip()
+                    break
+        if not message:
+            value = payload.get("message") or payload.get("detail")
+            if isinstance(value, str) and value.strip():
+                message = value.strip()
+        for key in ("error", "detail"):
+            nested = payload.get(key)
+            if isinstance(nested, dict):
+                visit(nested)
+
+    for payload in payloads:
+        visit(payload)
+    error_text = str(error or "")
+    if status_code is None:
+        match = re.search(r"\b(401|403|408|409|429|5\d{2})\b", error_text)
+        if match:
+            status_code = int(match.group(1))
+    return {
+        "http_status": status_code,
+        "code": code,
+        "message": message,
+        "text": error_text,
+    }
+
+
+def provider_error_status(error):
+    """Return a stable, user-facing status for a provider failure.
+
+    The UI can use the ``status`` value for state styling and ``message`` for
+    the copy.  Matching provider codes/messages takes precedence over HTTP
+    status because relays commonly use HTTP 403 for both insufficient balance
+    and other permission failures.
+    """
+    info = _provider_error_payload(error)
+    http_status = info["http_status"]
+    code = info["code"].replace("-", "_").upper()
+    searchable = " ".join((info["text"], info["code"], info["message"])).lower()
+    status_suffix = f"（HTTP {http_status}）" if http_status else ""
+
+    if (code in {"INSUFFICIENT_BALANCE", "BALANCE_INSUFFICIENT"}
+            or "insufficient_balance" in searchable
+            or "insufficient balance" in searchable
+            or "余额不足" in searchable
+            or "balance is too low" in searchable):
+        return {
+            "status": "insufficient_balance",
+            "label": "余额不足",
+            "message": "余额不足，请充值或更换 API Key。",
+            "http_status": http_status,
+            "provider_code": info["code"],
+        }
+
+    if (http_status == 401 or code in {"INVALID_API_KEY", "UNAUTHORIZED"}
+            or "invalid_api_key" in searchable
+            or "incorrect api key" in searchable
+            or "unauthorized" in searchable):
+        return {
+            "status": "invalid_api_key",
+            "label": "API Key 无效",
+            "message": f"API Key 无效或已过期{status_suffix}，请检查密钥和服务商。",
+            "http_status": http_status,
+            "provider_code": info["code"],
+        }
+
+    if (http_status == 429 or code in {"RATE_LIMITED", "TOO_MANY_REQUESTS"}
+            or "rate limit" in searchable or "too many requests" in searchable):
+        return {
+            "status": "rate_limited",
+            "label": "请求受限",
+            "message": f"请求过于频繁或已达到服务商限额{status_suffix}，请稍后重试。",
+            "http_status": http_status,
+            "provider_code": info["code"],
+        }
+
+    if http_status == 403:
+        return {
+            "status": "forbidden",
+            "label": "访问被拒绝",
+            "message": "服务商拒绝了请求（HTTP 403），请检查 API 权限、余额或接口地址。",
+            "http_status": http_status,
+            "provider_code": info["code"],
+        }
+
+    if isinstance(error, httpx.RequestError):
+        return {
+            "status": "network_error",
+            "label": "无法连接服务商",
+            "message": "无法连接服务商，请检查 API 地址和网络。",
+            "http_status": http_status,
+            "provider_code": info["code"],
+        }
+
+    if http_status is not None and http_status >= 500:
+        return {
+            "status": "provider_unavailable",
+            "label": "服务商暂时不可用",
+            "message": f"服务商暂时不可用{status_suffix}，请稍后重试。",
+            "http_status": http_status,
+            "provider_code": info["code"],
+        }
+
+    return {
+        "status": "unknown",
+        "label": "API 请求失败",
+        "message": f"API 请求失败{status_suffix}，请检查服务商配置后重试。",
+        "http_status": http_status,
+        "provider_code": info["code"],
+    }
+
+
+def provider_error_message(error, action="请求失败"):
+    """Format a provider failure without leaking raw SDK/relay details."""
+    status = provider_error_status(error)
+    message = status["message"]
+    return f"{action}：{message}" if action else message
+
+
+def _fetch_gemini_models(api_key):
+    """Use Gemini's native, paginated directory instead of an OpenAI route."""
+    if not (api_key or "").strip():
+        return False, [], "请先填写 API Key"
+    models = []
+    params = {"pageSize": 1000}
+    try:
+        while True:
+            response = httpx.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key.strip(), "Accept": "application/json"},
+                params=params, timeout=20.0)
+            response.raise_for_status()
+            payload = response.json()
+            for row in payload.get("models", []):
+                name = row.get("name", "").removeprefix("models/")
+                if ("generateContent" in row.get("supportedGenerationMethods", [])
+                        and name.startswith(("gemini-", "gemma-"))
+                        and not any(part in name for part in ("tts", "native-audio"))):
+                    models.append(name)
+            if not payload.get("nextPageToken"):
+                break
+            params["pageToken"] = payload["nextPageToken"]
+    except httpx.HTTPError as exc:
+        return False, [], provider_error_message(exc, "获取模型失败")
+    except (ValueError, AttributeError, TypeError):
+        return False, [], "获取模型失败：服务商返回了无法解析的响应。"
+    models = sorted(set(models), key=str.casefold)
+    if not models:
+        return False, [], "模型目录为空或返回格式不受支持"
+    return True, models, f"已获取 {len(models)} 个可用模型"

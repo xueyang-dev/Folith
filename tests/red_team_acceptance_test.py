@@ -6,6 +6,7 @@ scope 串扰 / hash 顺序依赖 / 资产一致性 / 崩溃恢复 / 长文模拟
 """
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -793,20 +794,24 @@ def test_external_evidence_attack_and_prompt_scan():
     import subprocess
     # Only the URL literals in these model-discovery functions are transport
     # configuration. The same domains elsewhere (including prompts) stay scanned.
+    # (the functions may live in core.py or in a module split out of it, so the
+    # allow-list is keyed by repo-relative path as well as line)
     transport_url_lines = set()
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     for function in (core._fetch_gemini_models, core.fetch_provider_models):
         source_lines, first_line = inspect.getsourcelines(function)
+        function_path = os.path.relpath(inspect.getsourcefile(function), repo_root)
         for node in ast.walk(ast.parse("".join(source_lines))):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) \
                     and node.value.startswith(("http://", "https://")):
-                transport_url_lines.add(first_line + node.lineno - 1)
+                transport_url_lines.add((function_path, first_line + node.lineno - 1))
     hits = subprocess.run(
         ["rg", "-n", "https?://", "core.py", "folith/", "scripts/"],
         capture_output=True, text=True).stdout
     prompt_files = []
     for line in hits.splitlines():
         path = line.split(":", 1)[0]
-        if path == "core.py" and int(line.split(":", 2)[1]) in transport_url_lines:
+        if (path, int(line.split(":", 2)[1])) in transport_url_lines:
             continue
         # Verified DOI/repository URLs belong in the deterministic literature
         # registry; this scan is only a guard against asking a model to invent
