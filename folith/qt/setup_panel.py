@@ -35,9 +35,10 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QLineEdit, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
+from . import adapter
 from . import i18n
 from . import icons
 from . import style as style_module
@@ -494,6 +495,9 @@ class TaskSetupPanel(QWidget):
     #: 还要刷新首页的项目列表，那些都是 window 的职责（它持有对话框与其它页面）。
     #: 面板只负责发出意图，再由 window 调 `add_project()` 把结果填回来。
     createProjectRequested = Signal()
+    termbaseAddRequested = Signal()
+    styleProfileRequested = Signal()
+    termbaseRemoveRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -597,7 +601,7 @@ class TaskSetupPanel(QWidget):
         说明是"为什么只读"的上下文帮助，放进 tooltip —— 它不该再占一行，把主要
         设置往下推。取值用 :class:`ElidedLabel`：术语库名可以很长，硬裁会像排版坏了。
         """
-        hint = i18n.tr('术语库在导入时确定；此处只显示当前任务使用的术语库。')
+        hint = i18n.tr('可选：添加术语库（Excel / CSV / TBX）或翻译记忆（TMX），用于保持术语与专名一致。')
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -607,8 +611,17 @@ class TaskSetupPanel(QWidget):
         self.glossary_value = ElidedLabel("—")
         self.glossary_value.setObjectName("hint")
         self.glossary_value.setToolTip(hint)
+        self.glossary_add_button = QPushButton(i18n.tr('添加…'))
+        self.glossary_add_button.setToolTip(
+            i18n.tr('支持 Excel、CSV、TBX（术语）和 TMX（翻译记忆）。'))
+        self.glossary_add_button.clicked.connect(self.termbaseAddRequested.emit)
+        self.glossary_remove_button = QPushButton(i18n.tr('移除'))
+        self.glossary_remove_button.clicked.connect(self.termbaseRemoveRequested.emit)
+        self.glossary_remove_button.setVisible(False)
         layout.addWidget(label, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.glossary_value, 1, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.glossary_add_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.glossary_remove_button, 0, Qt.AlignmentFlag.AlignVCenter)
         return row
 
     def _build_document_section(self) -> DisclosureSection:
@@ -767,6 +780,8 @@ class TaskSetupPanel(QWidget):
             self.tm_box))
 
         body.addWidget(_hairline())
+        body.addWidget(self._build_style_section())
+        body.addWidget(_hairline())
 
         # ---- Level 3：高级设置（默认收起） --------------------------------------
         # 与「文档识别」同一个组件：折叠头、摘要位、警示位、展开体都由它提供，
@@ -812,6 +827,106 @@ class TaskSetupPanel(QWidget):
 
         # 折叠体默认收起由 DisclosureSection 自己负责（构造时已 _sync(False)）。
         return card
+
+    def _build_style_section(self) -> DisclosureSection:
+        """翻译风格：基础风格 + 四个微调 + 自定义规则，或让模型抽样后给出推荐。
+
+        不选风格时沿用设置里的风格规则（原来的行为）；选了就落成规则文本交给管线。
+        """
+        self.style_section = DisclosureSection(i18n.tr('翻译风格'))
+        layout = self.style_section.body.layout()
+        self._style_recommendation: dict = {}
+        self.style_box = style_module.ComboBox()
+        self.style_box.addItem(i18n.tr('沿用设置里的风格规则'), "")
+        for choice in adapter.style_profile_choices():
+            self.style_box.addItem(i18n.tr_dynamic(choice["name"]), choice["id"])
+            self.style_box.setItemData(self.style_box.count() - 1,
+                                       i18n.tr_dynamic(choice["summary"]), Qt.ItemDataRole.ToolTipRole)
+        self.style_box.currentIndexChanged.connect(self._style_changed)
+        layout.addWidget(_setting_row(
+            i18n.tr('基础风格'), self.style_box,
+            i18n.tr('选择后会覆盖设置里的默认风格规则；任务开始后随任务保存。')))
+
+        self.style_sliders: dict[str, QSlider] = {}
+        for key, caption, default in adapter.STYLE_ADJUSTMENTS:
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(default)
+            slider.setMinimumWidth(180)
+            slider.valueChanged.connect(self._style_changed)
+            self.style_sliders[key] = slider
+            layout.addWidget(_setting_row(i18n.tr(caption), slider))
+        self.style_custom = QLineEdit()
+        self.style_custom.setPlaceholderText(i18n.tr('补充风格约束（可选）'))
+        self.style_custom.textChanged.connect(self._style_changed)
+        layout.addWidget(self.style_custom)
+
+        self.style_profile_button = QPushButton(i18n.tr('智能画像'))
+        self.style_profile_button.setToolTip(
+            i18n.tr('抽样读几段原文，让模型推荐适合的风格（需要一次模型调用）'))
+        self.style_profile_button.clicked.connect(self.styleProfileRequested.emit)
+        self.style_accept_button = QPushButton(i18n.tr('接受推荐'))
+        self.style_accept_button.clicked.connect(self._accept_style_recommendation)
+        self.style_accept_button.setVisible(False)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.style_profile_button)
+        buttons.addWidget(self.style_accept_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        self.style_status = QLabel("")
+        self.style_status.setObjectName("hint")
+        self.style_status.setWordWrap(True)
+        self.style_status.setVisible(False)
+        layout.addWidget(self.style_status)
+        self._style_changed()
+        return self.style_section
+
+    def _style_changed(self, *_args) -> None:
+        chosen = bool(self.style_box.currentData())
+        for slider in self.style_sliders.values():
+            slider.setEnabled(chosen)
+        self.style_custom.setEnabled(chosen)
+        self.style_section.set_summary(
+            self.style_box.currentText() if chosen else i18n.tr('沿用设置'))
+
+    def style_selection(self) -> dict | None:
+        """用户选定的风格（没选返回 ``None``，沿用设置里的规则）。"""
+        base = str(self.style_box.currentData() or "")
+        if not base:
+            return None
+        return {"selected": base, "source": "user_override",
+                "adjustments": {key: slider.value() for key, slider in self.style_sliders.items()},
+                "custom_rules": self.style_custom.text().strip()}
+
+    def set_style_recommendation(self, result: dict) -> None:
+        """窗口层把智能画像的结果交回来：显示理由，并给出「接受推荐」。"""
+        recommendation = dict((result or {}).get("recommendation") or {})
+        self._style_recommendation = recommendation
+        self.style_profile_button.setEnabled(True)
+        failed = bool((result or {}).get("failed"))
+        names = {item["id"]: item["name"] for item in adapter.style_profile_choices()}
+        style_id = str(recommendation.get("recommended_style") or "general")
+        reasons = [str(r) for r in recommendation.get("reasons") or []][:3]
+        head = i18n.tr('推荐风格：{v0}（置信度 {v1}）',
+                       v0=i18n.tr_dynamic(names.get(style_id, style_id)),
+                       v1=f"{float(recommendation.get('confidence') or 0):.2f}")
+        self.style_status.setText(" · ".join([head] + reasons))
+        self.style_status.setVisible(True)
+        # 失败降级的"通用风格"不是推荐，不给「接受」
+        self.style_accept_button.setVisible(not failed)
+
+    def set_style_busy(self, busy: bool) -> None:
+        self.style_profile_button.setEnabled(not busy)
+        if busy:
+            self.style_status.setText(i18n.tr('正在读取原文并分析风格…'))
+            self.style_status.setVisible(True)
+
+    def _accept_style_recommendation(self) -> None:
+        style_id = str(self._style_recommendation.get("recommended_style") or "")
+        index = self.style_box.findData(style_id)
+        if index >= 0:
+            self.style_box.setCurrentIndex(index)
+            self.style_section.button.setChecked(True)
 
     def _build_delivery_card(self) -> Card:
         card, body = _panel(i18n.tr('交付内容'))
@@ -1021,6 +1136,8 @@ class TaskSetupPanel(QWidget):
                 glossary_text = i18n.tr('未使用（可选，用于保持术语一致）')
             self.glossary_value.setText(glossary_text)
             self.glossary_value.setToolTip(glossary_text)
+            self.glossary_add_button.setText(i18n.tr('更换…') if count else i18n.tr('添加…'))
+            self.glossary_remove_button.setVisible(bool(count))
 
             self.understanding_box.setChecked(bool(strategy.get("enable_understanding")))
             self.auto_term_box.setChecked(bool(strategy.get("auto_term")))
@@ -1406,7 +1523,9 @@ class TaskSetupPanel(QWidget):
             },
             "delivery": delivery,
             "translation_theory": str(theory),
-            "style_rules": str(self._view.get("style_rules") or ""),
+            "style_rules": (adapter.style_rules_from_selection(self.style_selection())
+                            if self.style_selection() else str(self._view.get("style_rules") or "")),
+            "style_selection": self.style_selection(),
             "ocr": {
                 "language": str(self.ocr_language_box.currentData() or ""),
                 "mode": str(self.ocr_mode_box.currentData() or "auto"),

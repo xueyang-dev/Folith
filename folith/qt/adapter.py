@@ -1269,6 +1269,137 @@ def split_parts(value: str) -> tuple[str, str]:
     return first.strip(), remainder.strip()
 
 
+# ================= 翻译风格（基础风格 + 微调 + 智能画像） =================
+#
+# 旧向导的"智能风格画像"：抽样读几段原文 → 一次模型调用给出文档画像与风格推荐 →
+# 用户接受或调整（基础风格 + 四个 0–100 的微调 + 自定义规则）→ 落成翻译用的规则文本。
+# Qt 的准备面板原来没有它，``style_rules`` 只能靠设置里的默认值。
+
+STYLE_ADJUSTMENTS = (("formality", "表达正式度", 60), ("terminology", "术语保守程度", 60),
+                     ("restructuring", "句法重构幅度", 40), ("form_preservation", "原文形式保留", 70))
+
+
+def style_profile_choices() -> list[dict]:
+    from folith.style_profile import STYLE_PROFILES
+
+    return [{"id": key, "name": str(value["name"]), "summary": str(value.get("summary") or "")}
+            for key, value in STYLE_PROFILES.items()]
+
+
+def style_rules_from_selection(selection: dict) -> str:
+    """把用户的风格选择落成管线使用的规则文本（含自定义规则）。"""
+    from folith.style_profile import profile_to_rules
+
+    selection = dict(selection or {})
+    rules = profile_to_rules(selection)
+    custom = str(selection.get("custom_rules") or "").strip()
+    if custom:
+        rules = rules.rstrip("。") + "。" + custom + "。"
+    return rules
+
+
+def quick_style_profile(job_id: str, config: EngineConfig) -> dict:
+    """抽样读原文并给出风格推荐（一次模型调用；失败降级为通用风格，不伪造成功）。"""
+    from folith import style_profile as _style_profile
+
+    problem = config.connection_problem()
+    if problem:
+        raise AdapterError(problem)
+    state = load_state(job_id)
+    filename = str(state.get("filename") or "")
+    data = core.load_source(job_id)
+    if not data:
+        raise AdapterError("找不到这个任务的原文文件，无法做智能画像。")
+    try:
+        paragraphs, warnings, _report = core.extract_document_paragraphs_with_report(
+            filename, data,
+            checkpoint_dir=core.ocr_profile_cache_dir(data),
+            ocr_language=config.ocr_language or None,
+            ocr_backend=config.ocr_backend or "online",
+            # None：只有真的走到视觉理解（扫描页）时，核心才解析视觉连接并给出明确错误
+            ocr_online_config=None,
+            ocr_mode=core.normalize_ocr_mode(config.ocr_mode),
+            source_language=config.ocr_language or None)
+    except (RuntimeError, ValueError, OSError) as exc:
+        raise AdapterError(f"无法读取原文做画像：{exc}") from exc
+    document_profile, recommendation, llm_warnings = _style_profile.quick_profile(
+        paragraphs, config.provider, config.api_key, config.model,
+        str(state.get("target_lang") or config.target_lang),
+        base_url=config.translator_base_url())
+    return {"recommendation": dict(recommendation),
+            "document_profile": dict(document_profile),
+            "warnings": list(warnings) + list(llm_warnings),
+            "failed": bool(llm_warnings)}
+
+
+# ================= 译前导入术语库 / 翻译记忆 =================
+#
+# 旧向导的"术语库"可以添加 Excel / CSV / TBX（术语）和 TMX（翻译记忆）。Qt 的译前准备
+# 面板原来只读地显示一行"术语库在导入时确定"，而 Qt 的导入根本没有这一步——术语库
+# 在 Qt 里无法导入。文件在**任务开始前**挂到任务上；开始之后术语在「术语」页里管理。
+
+TERMBASE_SUFFIXES = (".xlsx", ".csv", ".tbx", ".tmx")
+MAX_TERMBASE_BYTES = 20 * 1024 * 1024
+
+
+def attach_termbase(job_id: str, path: str) -> dict:
+    """把术语库（xlsx/csv/tbx）挂到尚未开始的任务；TMX 导入为翻译记忆。"""
+    import io
+
+    state = load_state(job_id)
+    if not state:
+        raise AdapterError(f"找不到任务 {job_id}")
+    if task_started(job_id) or core.job_is_active(job_id):
+        raise AdapterError("任务已经开始，请在「术语」页里管理术语。")
+    file = Path(path)
+    suffix = file.suffix.lower()
+    if suffix not in TERMBASE_SUFFIXES:
+        raise AdapterError("支持的格式：Excel（.xlsx）、CSV、TBX、TMX。")
+    try:
+        data = file.read_bytes()
+    except OSError as exc:
+        raise AdapterError(f"无法读取文件：{exc}") from exc
+    if not data:
+        raise AdapterError(f"{file.name} 是空文件。")
+    if len(data) > MAX_TERMBASE_BYTES:
+        raise AdapterError(f"{file.name} 超过 {MAX_TERMBASE_BYTES // (1024 * 1024)} MB。")
+    stream = io.BytesIO(data)
+    stream.name = file.name
+    try:
+        if suffix == ".tmx":
+            result = core.import_tmx(
+                stream, project_id=state.get("project_id") or None,
+                target_lang=str(state.get("target_lang") or "") or None)
+            return {"kind": "tm", "name": file.name, "count": int(result.get("added", 0)),
+                    "skipped": int(result.get("skipped", 0))}
+        parser = {".xlsx": core.parse_termbase, ".csv": core.parse_termbase_csv,
+                  ".tbx": core.parse_termbase_tbx}[suffix]
+        entries = parser(stream)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+    if not entries:
+        raise AdapterError(f"{file.name} 里没有可用的术语条目。")
+
+    def _attach(latest: dict) -> None:
+        latest["glossary"] = list(entries)
+        latest["glossary_name"] = file.name
+
+    core.mutate_job_state(job_id, _attach)
+    return {"kind": "glossary", "name": file.name, "count": len(entries)}
+
+
+def remove_termbase(job_id: str) -> dict:
+    if task_started(job_id):
+        raise AdapterError("任务已经开始，请在「术语」页里管理术语。")
+
+    def _clear(latest: dict) -> None:
+        latest["glossary"] = []
+        latest["glossary_name"] = ""
+
+    core.mutate_job_state(job_id, _clear)
+    return {"kind": "glossary", "name": "", "count": 0}
+
+
 # ================= 视觉理解连接（扫描件的默认路径） =================
 #
 # 扫描件默认走 VLM 结构化视觉理解（``ocr_backend == "online"``）。它用"专用视觉连接"，

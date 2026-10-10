@@ -1126,6 +1126,9 @@ class WorkbenchView(QWidget):
     openAssetRequested = Signal(str)
     setupStartRequested = Signal(dict)      # 译前准备的「开始翻译」载荷
     setupCreateProjectRequested = Signal()  # 译前准备里点「新建项目…」
+    setupTermbaseAddRequested = Signal()
+    setupStyleProfileRequested = Signal()
+    setupTermbaseRemoveRequested = Signal()
     # 审校页：人工处置（由窗口层调用适配器写状态）
     findingResolveRequested = Signal(list, str, str)    # finding_ids, action, note
     suggestionApplyRequested = Signal(dict, str)        # queue item, note
@@ -1553,6 +1556,9 @@ class WorkbenchView(QWidget):
         self.setup_panel = TaskSetupPanel()
         self.setup_panel.startRequested.connect(self.setupStartRequested.emit)
         # 建项目要弹输入框、写盘、刷新首页列表 —— 那些是 window 的职责，这里只转发。
+        self.setup_panel.termbaseAddRequested.connect(self.setupTermbaseAddRequested.emit)
+        self.setup_panel.styleProfileRequested.connect(self.setupStyleProfileRequested.emit)
+        self.setup_panel.termbaseRemoveRequested.connect(self.setupTermbaseRemoveRequested.emit)
         self.setup_panel.createProjectRequested.connect(
             self.setupCreateProjectRequested.emit)
         setup_scroll = QScrollArea()

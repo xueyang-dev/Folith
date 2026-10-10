@@ -222,6 +222,9 @@ class MainWindow(QMainWindow):
         self.workbench.setupStartRequested.connect(self.start_from_setup)
         self.workbench.setupCreateProjectRequested.connect(
             self.create_project_from_setup)
+        self.workbench.setupTermbaseAddRequested.connect(self.add_termbase)
+        self.workbench.setupStyleProfileRequested.connect(self.run_style_profile)
+        self.workbench.setupTermbaseRemoveRequested.connect(self.remove_termbase)
         self.workbench.pauseRequested.connect(self.pause_job)
         self.workbench.cancelRequested.connect(self.cancel_job)
         self.workbench.retryRequested.connect(self.retry_job)
@@ -966,6 +969,66 @@ class MainWindow(QMainWindow):
         """
         return bool(state.get("p1_done") or state.get("p2_done")
                     or state.get("pipeline_config") or state.get("source_paras"))
+
+    def run_style_profile(self) -> None:
+        """智能画像：后台抽样读原文并请求一次模型，结果交回准备面板。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        panel = self.workbench.setup_panel
+        panel.set_style_busy(True)
+
+        def done(result) -> None:
+            panel.set_style_recommendation(result)
+            for warning in (result or {}).get("warnings") or []:
+                self._notice(i18n.tr_dynamic(str(warning)), error=True)
+
+        def failed(message: str, detail: str) -> None:
+            panel.set_style_busy(False)
+            panel.style_status.setText(i18n.tr_dynamic(message))
+            self._failure(i18n.tr('智能画像未完成'), message, detail)
+
+        self.runner.submit(adapter.quick_style_profile, job_id, self.config,
+                           on_done=done, on_error=failed, label="style-profile")
+
+    def add_termbase(self, path: str = "") -> None:
+        """译前准备里添加术语库（xlsx/csv/tbx）或翻译记忆（tmx）。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if not path:
+            if _automation():
+                self._notice(i18n.tr('添加术语库：自动化运行不打开系统面板，请直接提供文件路径。'))
+                return
+            path, _ = QFileDialog.getOpenFileName(
+                self, i18n.tr('选择术语库文件'), str(Path.home()),
+                i18n.tr('术语库与翻译记忆 (*.xlsx *.csv *.tbx *.tmx)'))
+            if not path:
+                return
+        try:
+            result = adapter.attach_termbase(job_id, path)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法添加术语库'), str(exc))
+            return
+        if result["kind"] == "tm":
+            self._notice(i18n.tr('已导入 {v0} 条翻译记忆（跳过 {v1} 条）。', v0=result["count"],
+                                 v1=result.get("skipped", 0)))
+        else:
+            self._notice(i18n.tr('已添加术语库「{v0}」：{v1} 条术语。', v0=result["name"],
+                                 v1=result["count"]))
+        self.refresh_workbench(force=True)
+
+    def remove_termbase(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.remove_termbase(job_id)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法移除术语库'), str(exc))
+            return
+        self._notice(i18n.tr('已移除术语库。'))
+        self.refresh_workbench(force=True)
 
     def _load_setup(self, job_id: str, state: dict) -> None:
         """给工作台准备「译前准备」数据；已开始的任务则收起准备面。
