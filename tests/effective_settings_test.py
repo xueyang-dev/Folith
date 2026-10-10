@@ -327,7 +327,11 @@ def test_secrets_are_redacted_even_when_they_come_from_the_profile():
 
 def test_environment_fallbacks_are_real_core_reads():
     """The documented environment layer must not drift from core's own reads."""
-    source = (ROOT / "core.py").read_text("utf-8")
+    # core.py plus the clusters split out of it (folith/engine)
+    source = "\n".join(
+        path.read_text("utf-8")
+        for path in [ROOT / "core.py", *sorted((ROOT / "folith" / "engine").glob("*.py"))]
+    )
     for name in ENVIRONMENT_FALLBACKS:
         assert name in source, f"{name} is no longer read by core"
 
