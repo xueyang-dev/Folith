@@ -234,6 +234,11 @@ class MainWindow(QMainWindow):
         self.workbench.includeRequested.connect(self.include_segment)
         self.workbench.structureRequested.connect(self.edit_structure)
         self.workbench.restoreRequested.connect(self.restore_translation)
+        self.workbench.followupRetryRequested.connect(self.followup_retry)
+        self.workbench.followupResumeRequested.connect(self.start_or_resume)
+        self.workbench.entityPreviewRequested.connect(self.preview_entity_repair)
+        self.workbench.entityRepairRequested.connect(self.apply_entity_repair)
+        self.workbench.entityAcceptRequested.connect(self.accept_entity_variants)
         self.workbench.revealLogRequested.connect(
             lambda job_id: self.reveal_path(adapter.technical_log_path(job_id)))
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
@@ -1243,6 +1248,63 @@ class MainWindow(QMainWindow):
             self._failure(i18n.tr('无法恢复段落'), str(exc))
             return
         self._notice(i18n.tr('已恢复该段落；它的审校标记需要重新确认。'))
+        self.refresh_workbench(force=True)
+
+    # ================= 收尾 =================
+    def followup_retry(self, part: str) -> None:
+        """补跑失败的理解摘要 / 标注批次：先标记要补跑的部分，再用"继续"启动。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.prepare_followup_retry(job_id, part)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法补跑'), str(exc))
+            return
+        self._notice(i18n.tr('已标记需要补跑的部分，正在继续处理…'))
+        self.refresh_workbench(force=True)
+        self.start_or_resume()
+
+    def preview_entity_repair(self, source: str, target: str) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            preview = adapter.entity_repair_preview(job_id, source, target)
+        except adapter.AdapterError as exc:
+            self.workbench.followup_panel.set_preview([])
+            self._notice(str(exc), error=True)
+            return
+        self.workbench.followup_panel.set_preview(preview)
+
+    def apply_entity_repair(self, source: str, target: str, preview: list) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if not self._confirm(
+                i18n.tr('统一译名'),
+                i18n.tr('将把「{v0}」统一译为「{v1}」，共修改 {v2} 段；受影响段落的审校和标注会失效，需要重新审校。\n\n确定统一吗？',
+                        v0=source, v1=target, v2=len(preview)),
+                yes=i18n.tr('统一译名'), no=i18n.tr('取消')):
+            return
+        try:
+            adapter.apply_entity_repair(job_id, source, target, preview)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法统一译名'), str(exc))
+            return
+        self._notice(i18n.tr('已统一「{v0}」的译名，并记录为人工决定。', v0=source))
+        self.refresh_workbench(force=True)
+
+    def accept_entity_variants(self, source: str) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.accept_entity_variants(job_id, source)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法确认译法'), str(exc))
+            return
+        self._notice(i18n.tr('已确认「{v0}」的这些译法符合各自语境。', v0=source))
         self.refresh_workbench(force=True)
 
     def restore_translation(self, index: int) -> None:

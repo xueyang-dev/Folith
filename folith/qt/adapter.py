@@ -1008,6 +1008,77 @@ def confirm_source_segment(job_id: str, index: int, note: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+# ================= 收尾（恢复进度 / 补跑失败步骤 / 实体译名统一） =================
+#
+# 旧界面的"长文处理收尾"：长文跑完后常留下几类尾巴——全文理解降级、标注批次失败、
+# 同一个专名在不同段译法不一。Qt 原来只有一个"重试"按钮，看不到尾巴是什么。
+
+FOLLOWUP_PARTS = ("understanding", "annotation")
+
+
+def followup_view(job_id: str, state: dict | None = None) -> dict:
+    state = state if state is not None else load_state(job_id)
+    outcomes = core.workflow_outcomes(state)
+    understanding, annotation = outcomes["understanding"], outcomes["annotation"]
+    try:
+        entities = [dict(item) for item in core.entity_consistency_queue(state)]
+    except Exception:  # noqa: BLE001 - 实体登记缺失/损坏时不应拖垮整个页面
+        entities = []
+    try:
+        recovery = dict(core.recovery_summary(job_id, state))
+    except Exception:  # noqa: BLE001
+        recovery = {}
+    busy = bool(core._job_execution_alive(job_id))
+    return {
+        "recovery": recovery,
+        "understanding": understanding,
+        "annotation": annotation,
+        "entities": entities,
+        "busy": busy,
+        "has_work": bool(
+            understanding.get("status") == "degraded"
+            or annotation.get("status") == "partial" or entities
+            or recovery.get("current_batch")),
+    }
+
+
+def prepare_followup_retry(job_id: str, part: str) -> dict:
+    """标记要补跑的步骤；真正的运行由调用方随后用"继续"启动。"""
+    if part not in FOLLOWUP_PARTS:
+        raise AdapterError(f"未知的补跑步骤：{part}")
+    try:
+        return core.prepare_workflow_retry(job_id, part)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def entity_repair_preview(job_id: str, source: str, target: str) -> list[dict]:
+    if not str(target or "").strip():
+        return []
+    try:
+        return list(core.preview_entity_repair(load_state(job_id), source, target))
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def apply_entity_repair(job_id: str, source: str, target: str,
+                        preview: Sequence[dict]) -> dict:
+    """只应用用户看过的那组 before/after（核心会拒绝与预览不一致的改动）。"""
+    if not preview:
+        raise AdapterError("没有可应用的修改。")
+    try:
+        return core.apply_entity_repair(job_id, source, target, list(preview))
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def accept_entity_variants(job_id: str, source: str) -> dict:
+    try:
+        return core.accept_entity_variants(job_id, source)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
 # ================= 活动记录（运行时事件） =================
 #
 # 旧界面有一个"运行抽屉"：任务卡在哪一步、最近发生了什么。Qt 原来只有诊断包。

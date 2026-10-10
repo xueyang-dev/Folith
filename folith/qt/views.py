@@ -29,6 +29,7 @@ from . import i18n
 from . import adapter
 from . import icons
 from .activity_panel import ActivityPanel
+from .followup_panel import FollowupPanel
 from .review_panel import ReviewPanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
@@ -1107,6 +1108,11 @@ class WorkbenchView(QWidget):
     excludeRequested = Signal(int)
     includeRequested = Signal(str)
     revealLogRequested = Signal(str)           # job_id
+    followupRetryRequested = Signal(str)       # "understanding" | "annotation"
+    followupResumeRequested = Signal()
+    entityPreviewRequested = Signal(str, str)
+    entityRepairRequested = Signal(str, str, list)
+    entityAcceptRequested = Signal(str)
     restoreRequested = Signal(int)             # 恢复人工修改之前的译文
     structureRequested = Signal(str, int)     # 操作名（见 adapter.STRUCTURE_OPERATIONS / "undo"）, 段索引
     deliverRequested = Signal()
@@ -1161,6 +1167,7 @@ class WorkbenchView(QWidget):
         self._excluded_signature: tuple | None = None
         self._review_key: tuple = ()
         self._terms_key: tuple = ()
+        self._followup_key: tuple = ()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -1716,12 +1723,21 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(self.review_panel,
                          icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
                          i18n.tr('审校'))
+        self.followup_panel = FollowupPanel()
+        self.followup_panel.retryRequested.connect(self.followupRetryRequested.emit)
+        self.followup_panel.resumeRequested.connect(self.followupResumeRequested.emit)
+        self.followup_panel.previewRequested.connect(self.entityPreviewRequested.emit)
+        self.followup_panel.repairRequested.connect(self.entityRepairRequested.emit)
+        self.followup_panel.acceptRequested.connect(self.entityAcceptRequested.emit)
         self.activity_panel = ActivityPanel()
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))
         self.tabs.addTab(delivery_page,
                          icons.icon("package", 16, style_module.text_color("text-secondary")),
                          i18n.tr('交付'))
+        self.tabs.addTab(self.followup_panel,
+                         icons.icon("check-circle", 16, style_module.text_color("text-secondary")),
+                         i18n.tr('收尾'))
         self.tabs.addTab(self.activity_panel,
                          icons.icon("clock", 16, style_module.text_color("text-secondary")),
                          i18n.tr('活动'))
@@ -1790,7 +1806,25 @@ class WorkbenchView(QWidget):
         self._render_segment_detail()
         self._render_review()
         self._render_terms()
+        self._render_followup()
         self._render_activity()
+
+    def _render_followup(self) -> None:
+        """收尾页随任务状态对象重算（它要读检查点与实体登记，不放在每秒轮询里）。"""
+        key = (self.job_id, id(self._state))
+        if key == self._followup_key:
+            return
+        self._followup_key = key
+        try:
+            view = adapter.followup_view(self.job_id, self._state)
+        except Exception:  # noqa: BLE001 - 收尾页坏了不能拖垮翻译页
+            view = {}
+        self.followup_panel.apply(view)
+        count = int(bool((view.get("understanding") or {}).get("status") == "degraded")) \
+            + int(bool((view.get("annotation") or {}).get("status") == "partial")) \
+            + len(view.get("entities") or [])
+        index = self.tabs.indexOf(self.followup_panel)
+        self.tabs.setTabText(index, i18n.tr('收尾') + (f" ({count})" if count else ""))
 
     def _render_activity(self) -> None:
         """活动记录按事件日志的签名重读：日志没变就不碰（轮询每秒一次）。"""
