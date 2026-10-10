@@ -251,3 +251,34 @@ def test_after_translation_edits_go_straight_to_the_core(panel):
     panel.apply_row_button.click()
     assert seen and seen[0][0] == "t1" and seen[0][1]["preferred"] == "功能目的论"
     assert not panel.is_dirty(), "翻译开始后不再暂存"
+
+
+# ------------------------------------------------- 工作台：门禁提示 ----------
+
+def _bench(qapp):
+    from folith.qt import views
+
+    return views.WorkbenchView()
+
+
+def test_workbench_points_at_the_terms_tab_when_candidates_block_the_start(qapp, job):
+    bench = _bench(qapp)
+    state = adapter.load_state(job)
+    bench.load(job, adapter.EngineConfig(target_lang="简体中文"), state,
+               adapter.segment_rows(job, state), [])
+    assert not bench.terms_gate.isHidden(), "被术语门禁挡住时必须有提示"
+    assert "冻结" in bench.terms_gate.text()
+    bench.terms_gate.action_button().click()
+    assert bench.tabs.currentWidget() is bench.terms_panel
+
+
+def test_workbench_shows_no_gate_notice_once_frozen(qapp, job):
+    rows = _rows(job)
+    for row in rows:
+        row["status"] = "locked"
+    adapter.freeze_glossary(job, rows)
+    bench = _bench(qapp)
+    state = adapter.load_state(job)
+    bench.load(job, adapter.EngineConfig(target_lang="简体中文"), state,
+               adapter.segment_rows(job, state), [])
+    assert bench.terms_gate.isHidden()

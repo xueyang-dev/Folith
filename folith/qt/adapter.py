@@ -1319,7 +1319,8 @@ GATE_HINTS: tuple[tuple[str, str], ...] = (
     ("review gate=failed", "有段落审校失败，请重试后再交付"),
     ("review gate=", "译文审校未就绪，不能冻结交付"),
     ("未解决", "仍有未解决的阻断问题，需要先处理或明确接受风险"),
-    ("report", "实践报告尚未完成，不能冻结交付"),
+    ("report", "实践报告尚未完成，不能冻结交付。报告的案例复核与终稿 QA 暂时只能在旧界面完成"
+               "（命令行运行 python gui.py --legacy）"),
     ("Translation Target Invariant", "译文未通过交付完整性检查"),
     ("尚未完成", "翻译尚未完成，不能冻结交付"),
 )

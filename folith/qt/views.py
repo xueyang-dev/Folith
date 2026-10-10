@@ -1638,6 +1638,10 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(translation_page,
                          icons.icon("translate", 16, style_module.text_color("text-secondary")),
                          i18n.tr('翻译'))
+        # 严格术语治理：核心在候选术语未冻结时拒绝开始翻译。没有这条提示，任务只会
+        # 停在"待术语确认"，用户不知道该去哪里。
+        self.terms_gate = style_module.NoticeStrip("", tone="warn")
+        self.terms_gate.setVisible(False)
         self.terms_panel = TermsPanel()
         self.terms_panel.draftSaveRequested.connect(self.glossaryDraftRequested.emit)
         self.terms_panel.freezeRequested.connect(self.glossaryFreezeRequested.emit)
@@ -1668,6 +1672,7 @@ class WorkbenchView(QWidget):
         layout.setContentsMargins(20, 12, 20, 12)
         layout.setSpacing(10)
         layout.addWidget(header_card)
+        layout.addWidget(self.terms_gate)
         layout.addWidget(self.tabs, 1)
 
         next_shortcut = QAction(i18n.tr('下一段'), self)
@@ -1738,6 +1743,22 @@ class WorkbenchView(QWidget):
         except Exception:  # noqa: BLE001 - 术语页坏了不能拖垮翻译页
             view = {}
         self.terms_panel.apply(self.job_id, view, force=force)
+        self._sync_terms_gate(view)
+
+    def _sync_terms_gate(self, view: dict | None = None) -> None:
+        view = view if view is not None else self.terms_panel._view
+        blocked = bool((view or {}).get("blocks_start")) and self._task_started()
+        if not blocked:
+            self.terms_gate.set_action("", None)
+            self.terms_gate.set_text("")
+            return
+        self.terms_gate.set_text(i18n.tr(
+            '严格术语治理：还有 {v0} 个候选术语未确认，翻译不会开始。冻结术语表后才能继续。',
+            v0=(view or {}).get("pending_count", 0)))
+        self.terms_gate.set_action(i18n.tr('前往术语页'), self.show_terms)
+
+    def show_terms(self) -> None:
+        self.tabs.setCurrentWidget(self.terms_panel)
 
     def refresh_terms(self) -> None:
         """显式动作（保存/冻结/修订）落盘之后：丢弃暂存并按磁盘重画。"""
