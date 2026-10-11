@@ -590,13 +590,13 @@ QPushButton#segment:checked {{
    ⚠️ `:checked` 必须写在 `:hover` **之后**：两者 id 数与伪类数相同，平手时 Qt 取
    后出现的那条；`:checked:hover` 再显式写一条，避免悬停把选中态洗回静止色。 */
 QPushButton#presetOption {{
-    background: {t['bg-surface-sunken']};
+    background: {t['bg-surface']};
     border: 1px solid {t['border-hairline']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['lg']}px;
     padding: 0;
 }}
 QPushButton#presetOption:hover {{
-    background: {t['bg-surface-subtle']}; border-color: {t['border-strong']};
+    background: {t['bg-surface']}; border-color: {t['border-strong']};
 }}
 QPushButton#presetOption:checked {{
     background: {t['bg-surface-raised']}; border-color: {t['accent']};
@@ -607,6 +607,33 @@ QPushButton#presetOption:checked:hover {{
 QPushButton#presetOption:focus {{ border-color: {t['accent']}; }}
 QLabel#presetTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#presetDesc {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+
+/* 译前准备：macOS「系统设置」式的分组列表。分组是一块圆角面，行之间是从标题起的
+   缩进发丝线（不穿过左侧图标块）；分组上方是一行小标题。 */
+QFrame#settingsGroup {{
+    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['lg']}px;
+}}
+QFrame#settingsGroup QWidget#groupRow, QFrame#settingsGroup QLabel {{ background: transparent; }}
+QFrame#rowRule {{ background: {t['border-divider']}; border: none; }}
+QLabel#rowTitle {{ font-size: {f['body']}px; color: {t['text-primary']}; }}
+QLabel#rowValue {{ font-size: {f['body'] - 1}px; color: {t['text-secondary']}; }}
+QLabel#groupHeader {{
+    font-size: {f['caption']}px; font-weight: 600; color: {t['text-secondary']};
+    padding-left: 4px;
+}}
+QPushButton#settingsGroupHeader {{
+    background: transparent; border: none; border-radius: {r['lg']}px; padding: 0;
+    min-height: 44px;
+}}
+QPushButton#settingsGroupHeader:hover {{ background: {t['bg-hover']}; }}
+QPushButton#settingsGroupHeader:focus {{ border: 1px solid {t['accent']}; }}
+QPushButton#rowAction {{
+    background: {t['control-bg']}; border: 1px solid {t['control-border']};
+    border-radius: 13px; padding: 2px 12px; min-height: 22px;
+    font-size: {f['caption'] + 1}px; color: {t['text-primary']};
+}}
+QPushButton#rowAction:hover {{ background: {t['bg-hover']}; }}
 
 /* 「高级设置」折叠头：整行可点的一节标题。静止时没有盒子（它是一行标题，不是
    按钮），悬停才浮一点底色；字号仍由内部的 #sectionLabel 决定。

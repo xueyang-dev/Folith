@@ -828,11 +828,8 @@ def test_a_long_translated_description_lives_in_the_tooltip(data_env, qt_app):
 
 
 def test_the_card_keeps_one_left_baseline(data_env, qt_app):
-    """卡片里所有区块与行共享同一条左基线（参差是"手工拼出来"的味道）。
-
-    折叠头是唯一有过内缩的地方（内边距给了 4px 悬停余量），它和「内容处理」这种
-    区块标题必须对齐；行高亮铺满整行，所以去掉左右内边距不会让悬停变小。
-    """
+    """分组里的折叠行：标题与展开后的每一行共享同一条左基线（都在图标块之后），
+    折叠头本身铺满整行（悬停高亮不被内边距切窄）。参差是"手工拼出来"的味道。"""
     from PySide6.QtCore import QPoint
 
     panel = _panel(data_env, qt_app, show=False)
@@ -842,16 +839,19 @@ def test_the_card_keeps_one_left_baseline(data_env, qt_app):
     qt_app.processEvents()
     try:
         # 默认配置时状态行是隐藏的；只比较屏幕上真的有的行。
-        widgets = [panel.strategy_note] if panel.strategy_note.isVisibleTo(panel) else []
-        widgets += [panel.advanced_toggle, panel.advanced_label,
+        widgets = [panel.advanced_label,
                    panel.seg_mode_seg.parent(), panel.auto_term_box.parent(),
                    panel.tm_box.parent(), panel.review_box.parent(),
                    panel.strict_terms_box.parent(), panel.concurrency_box.parent(),
                    panel.batch_seg.parent()]
         edges = {w.mapTo(panel, QPoint(0, 0)).x() for w in widgets}
         assert len(edges) == 1, f"左基线不齐：{sorted(edges)}"
-        # 折叠头仍然占满整行（悬停区没被内边距切窄）
-        assert panel.advanced_toggle.width() == panel.batch_seg.parent().width()
+        # 折叠头铺满整行；标题在图标块之后。
+        assert panel.advanced_toggle.width() == panel.advanced_section.width()
+        tile = panel.advanced_section.icon_tile
+        assert tile is not None
+        assert tile.mapTo(panel, QPoint(0, 0)).x() < panel.advanced_label.mapTo(
+            panel, QPoint(0, 0)).x()
     finally:
         panel.close()
 

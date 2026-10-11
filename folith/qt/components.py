@@ -484,3 +484,92 @@ __all__ = [
     "BADGE_TONES", "DocThumb", "FilterChips", "GradientCanvas", "IconBadge", "MetricCards",
     "ProgressLine", "SearchBar", "SectionCard", "StatusDot", "nav_item", "relative_time",
 ]
+
+
+# --------------------------------------------------------------------------
+# Settings rows (macOS System Settings style)
+# --------------------------------------------------------------------------
+class IconTile(QWidget):
+    """设置行左侧的彩色圆角图标块：实心底（``tile-*`` token）+ 白色线性图标。
+
+    与 :class:`IconBadge`（淡底圆形、彩色图标）不同：这是 macOS「系统设置」那种
+    一眼能扫到的行标识，每一行一种颜色，图标本身用 ``tile-ink``（各主题都是浅色）画在色块上。
+    """
+
+    def __init__(self, icon_name: str, color: str = "tile-blue", *, size: int = 28,
+                 icon_size: int | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._icon_name = icon_name
+        self._color = color
+        self._icon_size = icon_size or round(size * 0.6)
+
+    def color(self) -> str:
+        return self._color
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme_module.qcolor(tokens.get(self._color, tokens["accent"])))
+        radius = self.width() * 0.24
+        painter.drawRoundedRect(QRectF(self.rect()), radius, radius)
+        icon = icons.icon(self._icon_name, self._icon_size, tokens["tile-ink"])
+        side = self._icon_size
+        left = (self.width() - side) // 2
+        top = (self.height() - side) // 2
+        icon.paint(painter, left, top, side, side, Qt.AlignmentFlag.AlignCenter)
+        painter.end()
+
+
+class Switch(style_module.CheckBox):
+    """iOS / macOS 风格的开关：药丸形轨道 + 圆形滑块。
+
+    仍然是 ``QCheckBox``（``isChecked`` / ``setChecked`` / ``stateChanged`` 不变），
+    只是画法不同；文字不画在开关上——设置行自己的标题就是它的标签
+    （无障碍名由 :meth:`setAccessibleName` 提供）。
+    """
+
+    TRACK = QSize(38, 22)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("", parent)
+        self.setFixedSize(self.TRACK)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        return QSize(self.TRACK)
+
+    def hitButton(self, pos) -> bool:  # noqa: N802 - Qt 命名
+        return self.rect().contains(pos)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        track = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        on = self.isChecked()
+        if not self.isEnabled():
+            fill = tokens["disabled-bg"]
+        else:
+            fill = tokens["accent"] if on else tokens["border-strong"]
+        painter.setBrush(theme_module.qcolor(fill))
+        painter.drawRoundedRect(track, track.height() / 2, track.height() / 2)
+        knob = track.height() - 4
+        x = track.right() - 2 - knob if on else track.left() + 2
+        painter.setBrush(theme_module.qcolor(tokens["tile-ink"]))
+        painter.drawEllipse(QRectF(x, track.top() + 2, knob, knob))
+        if self.hasFocus():
+            pen = painter.pen()
+            ring = theme_module.qcolor(tokens["accent"])
+            ring.setAlpha(120)
+            from PySide6.QtGui import QPen
+
+            painter.setPen(QPen(ring, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(track, track.height() / 2, track.height() / 2)
+            painter.setPen(pen)
+        painter.end()
