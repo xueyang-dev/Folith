@@ -591,6 +591,10 @@ def engine_from_env(adapter, base=None):
     # engine; scanned jobs otherwise correctly use the normal VLM default.
     if os.environ.get("FOLITH_QT_SELFTEST_OCR") == "1":
         connection["ocr_backend"] = "tesseract"
+        # This probe checks scanned text and bundled language packs, so its
+        # delivery must not request formats that need a native text source.
+        connection["deliver_epub"] = False
+        connection["deliver_original_pdf"] = False
     if base is None:
         return adapter.EngineConfig(**connection)
     return dataclasses.replace(base, **connection)

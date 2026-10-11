@@ -147,7 +147,12 @@ def client(tmp_path, monkeypatch, qt_app):
 
     from folith.qt import i18n as i18n_module
 
-    settings = QSettings("Folith", "QtDesktop")
+    # Use the real persistence API against a private file; these tests must
+    # not change the developer's native task/delivery preferences.
+    settings_file = str(tmp_path / "client-settings.ini")
+    monkeypatch.setattr(window_module, "QSettings",
+                        lambda *args: QSettings(settings_file, QSettings.Format.IniFormat))
+    settings = window_module.QSettings("Folith", "QtDesktop")
     saved_language = settings.value("appearance/language")
     settings.remove("appearance/language")
     settings.sync()
