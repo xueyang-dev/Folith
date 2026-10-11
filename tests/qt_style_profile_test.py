@@ -177,3 +177,35 @@ def test_profile_button_asks_the_window_and_shows_busy_state(panel):
     assert not panel.style_profile_button.isEnabled()
     panel.set_style_busy(False)
     assert panel.style_profile_button.isEnabled()
+
+
+def test_style_is_a_collapsed_row_without_manual_sliders(qapp):
+    """风格不是核心设置：默认收起、沿用设置；展开后没有人工调节的滑块，示例只有一句。"""
+    from folith.qt.setup_panel import TaskSetupPanel
+
+    panel = TaskSetupPanel()
+    panel.resize(1100, 1200)
+    panel.show()
+    qapp.processEvents()
+    try:
+        section = panel.style_section
+        assert section.isVisible() and not section.is_expanded()
+        assert section.summary_label.text() == "沿用设置"
+        # 它和「文档识别」同在「输入与上下文」卡片里，排在核心设置之后。
+        assert section.parent() is panel.doc_section.parent()
+        assert all(slider.isHidden() for slider in panel.style_sliders.values())
+        section.button.setChecked(True)
+        panel._pick_style_card("literary")
+        qapp.processEvents()
+        assert section.summary_label.text() == panel.style_box.currentText()
+        assert all(slider.isHidden() for slider in panel.style_sliders.values())
+        # 选中风格仍按它的默认强度写进任务配置。
+        selection = panel.style_selection()
+        assert selection["selected"] == "literary"
+        assert set(selection["adjustments"]) == set(panel.style_sliders)
+        assert panel.style_sample_row.isVisible() and panel.style_sample.text()
+        samples = [label for label in panel.findChildren(type(panel.style_sample))
+                   if label.objectName() == "styleSample" and label.isVisible()]
+        assert len(samples) == 1, "页面上同一时刻只有一句示例"
+    finally:
+        panel.close()

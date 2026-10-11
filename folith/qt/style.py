@@ -357,16 +357,6 @@ QLabel#eyebrow {{ font-size: {f['caption']}px; font-weight: 600; color: {t['acce
 QLabel#continueTitle {{ font-size: {f['title']}px; font-weight: 700; color: {t['text-primary']}; }}
 QLabel#continueStatus {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* ================= 译前准备：翻译风格（Golden Gate） ================= */
-QFrame#styleHeroCard {{
-    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['lg']}px;
-}}
-QLabel#heroTitle {{ font-size: {f['title'] + 4}px; font-weight: 700; color: {t['text-primary']}; }}
-QFrame#recoStrip {{
-    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['md']}px;
-}}
-QFrame#recoStrip QLabel {{ background: transparent; }}
 QFrame#styleCard {{
     background: {t['bg-surface']}; border: 1px solid {t['border-subtle']};
     border-radius: {r['lg']}px;
@@ -378,28 +368,10 @@ QFrame#styleCard QLabel {{ background: transparent; }}
 QLabel#styleCardTitle {{ font-size: {f['body']}px; font-weight: 700; color: {t['text-primary']}; }}
 QLabel#styleCardSummary {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#radioRing {{ border: 1.5px solid {t['border-strong']}; border-radius: 9px; background: transparent; }}
-QFrame#styleCard QLabel#styleSample {{
+QLabel#styleSample {{
     background: {t['bg-surface-sunken']}; border-radius: {r['sm'] + 2}px;
     padding: {sp['sm']}px {sp['md']}px; font-size: {f['caption'] + 1}px; color: {t['text-primary']};
 }}
-QLabel#traitLabel {{ font-size: {f['micro']}px; color: {t['text-secondary']}; }}
-QFrame#styleCard QLabel#fitChip {{
-    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
-    border-radius: 9px; padding: 1px 8px; font-size: {f['micro']}px; color: {t['text-secondary']};
-}}
-QFrame#tunePanel {{
-    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['lg']}px;
-}}
-QFrame#tunePanel QLabel {{ background: transparent; }}
-QLabel#tuneName {{ font-size: {f['body'] - 1}px; font-weight: 500; color: {t['text-primary']}; }}
-QLabel#tuneValue {{ font-size: {f['caption']}px; font-weight: 600; color: {t['accent']}; }}
-QPushButton#chipButton {{
-    background: {t['control-bg']}; border: 1px solid {t['control-border']};
-    border-radius: 13px; padding: 2px 10px; min-height: 20px; font-size: {f['caption']}px;
-    color: {t['text-primary']}; font-weight: 500;
-}}
-QPushButton#chipButton:hover {{ background: {t['bg-hover']}; }}
 QPushButton#linkAction:checked {{ color: {t['text-muted']}; }}
 QSlider::groove:horizontal {{ height: 4px; background: {t['bg-surface-sunken']}; border-radius: 2px; }}
 QSlider::sub-page:horizontal {{ background: {t['accent']}; border-radius: 2px; }}

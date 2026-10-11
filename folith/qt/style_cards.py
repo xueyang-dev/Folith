@@ -1,11 +1,14 @@
-"""译前准备里的「基础风格」卡片组（Golden Gate 版式）。
+"""译前准备里的「基础风格」卡片组。
 
-一张卡 = 图标徽标 + 风格名与摘要 + 示例译文 + 四格特征刻度 + 适用场景标签。
+一张卡只有三样东西：图标、风格名、一行摘要。适用场景放在悬停提示里；
+示例译文不再每张卡各印一段，而是由面板在卡片下方只显示**选中**风格的那一句
+（:meth:`StyleCardGrid.sample_for`），页面上同一时刻只有一段示例。
 
 设计约束：
 
-* **与语言无关的识别方式**：图标是线性图形（不是"学/技/文"这样的汉字块），特征用
-  5 格刻度表达，界面切换到任何语言都能读；文字全部经 ``i18n.tr`` 显示。
+* **与语言无关的识别方式**：图标是线性图形（不是"学/技/文"这样的汉字块），
+  文字全部经 ``i18n.tr`` 显示。特征等级（:func:`trait_levels`）只用来把「微调」
+  滑块放到所选风格的位置，不再画在卡片上。
 * **示例译文是目标语言的示意**，不是模型输出：同一句英文原文在各风格下的写法，
   只为目标语言是简体中文 / 日语 / 西班牙语时提供；其它目标语言不显示示例块。
 * 卡片只发 ``picked(style_id)``；真正的选中状态仍然由 ``TaskSetupPanel.style_box``
@@ -13,9 +16,8 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy,
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QVBoxLayout, QWidget)
 
 from . import components
@@ -142,38 +144,6 @@ def profile_params(style_id: str) -> dict:
     return dict((STYLE_PROFILES.get(style_id) or {}).get("params") or {})
 
 
-class TraitMeter(QWidget):
-    """5 格刻度（第 n 格以内填强调色，其余是沉底色）。"""
-
-    SEGMENTS = 5
-
-    def __init__(self, level: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._level = max(0, min(self.SEGMENTS, int(level)))
-        self.setFixedHeight(4)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-
-    def level(self) -> int:
-        return self._level
-
-    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
-        tokens = theme_module.tokens(style_module.current_theme())
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(Qt.PenStyle.NoPen)
-        gap = 3.0
-        width = (self.width() - gap * (self.SEGMENTS - 1)) / self.SEGMENTS
-        on = theme_module.qcolor(tokens["accent"])
-        off = theme_module.qcolor(tokens["bg-surface-sunken"])
-        rtl = self.isRightToLeft()
-        for index in range(self.SEGMENTS):
-            slot = (self.SEGMENTS - 1 - index) if rtl else index
-            painter.setBrush(on if index < self._level else off)
-            painter.drawRoundedRect(QRectF(slot * (width + gap), 0, width, self.height()), 2, 2)
-        painter.end()
-
-
 class StyleCard(QFrame):
     """一张可选的风格卡（键盘可达：Tab 聚焦、空格/回车选中）。"""
 
@@ -192,12 +162,12 @@ class StyleCard(QFrame):
         self._selected = False
 
         column = QVBoxLayout(self)
-        column.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["lg"],
-                                  theme_module.SPACE["lg"], theme_module.SPACE["lg"])
-        column.setSpacing(theme_module.SPACE["md"])
+        column.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
+                                  theme_module.SPACE["md"], theme_module.SPACE["md"])
+        column.setSpacing(0)
 
         icon_name, tone = STYLE_ICONS.get(style_id, ("translate", "muted"))
-        badge = components.IconBadge(icon_name, tone, size=36, icon_size=18)
+        badge = components.IconBadge(icon_name, tone, size=32, icon_size=16)
         title = style_module.ElideLabel(name, mode=Qt.TextElideMode.ElideRight)
         title.setObjectName("styleCardTitle")
         self.summary_label = QLabel(summary)
@@ -219,50 +189,14 @@ class StyleCard(QFrame):
         head.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignTop)
         column.addLayout(head)
 
-        self.sample_label = QLabel("")
-        self.sample_label.setObjectName("styleSample")
-        self.sample_label.setWordWrap(True)
-        self.sample_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.sample_label.setMinimumHeight(56)
-        self.sample_label.setAlignment(Qt.AlignmentFlag.AlignLeading | Qt.AlignmentFlag.AlignTop)
-        column.addWidget(self.sample_label)
-
-        levels = trait_levels(profile_params(style_id))
-        traits = QGridLayout()
-        traits.setHorizontalSpacing(theme_module.SPACE["lg"])
-        traits.setVerticalSpacing(theme_module.SPACE["sm"])
-        self.meters: dict[str, TraitMeter] = {}
-        for position, (key, label) in enumerate(TRAITS):
-            cell = QVBoxLayout()
-            cell.setSpacing(4)
-            caption = style_module.ElideLabel(i18n.tr(label), mode=Qt.TextElideMode.ElideRight)
-            caption.setObjectName("traitLabel")
-            meter = TraitMeter(levels[key])
-            meter.setAccessibleName(f"{i18n.tr(label)} {levels[key]}/5")
-            cell.addWidget(caption)
-            cell.addWidget(meter)
-            traits.addLayout(cell, position // 2, position % 2)
-            self.meters[key] = meter
-        column.addLayout(traits)
-
-        fits = QHBoxLayout()
-        fits.setSpacing(4)
-        for fit in STYLE_FITS.get(style_id, ()):
-            chip = QLabel(i18n.tr(fit))
-            chip.setObjectName("fitChip")
-            chip.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-            fits.addWidget(chip)
-        fits.addStretch(1)
-        column.addLayout(fits)
+        fits = [i18n.tr(fit) for fit in STYLE_FITS.get(style_id, ())]
+        if fits:
+            self.setToolTip(" · ".join(fits))
         # 同一行的卡片被网格拉成一样高：多出来的高度留在卡片底部，不去撑大标签。
         column.addStretch(1)
         for child in self.findChildren(QWidget):
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._sync()
-
-    def set_sample(self, text: str) -> None:
-        self.sample_label.setText(text)
-        self.sample_label.setVisible(bool(text))
 
     def is_selected(self) -> bool:
         return self._selected
@@ -310,6 +244,7 @@ class StyleCardGrid(QWidget):
             card.picked.connect(self.picked.emit)
             self.cards[card.style_id] = card
         self._columns = 0
+        self._samples: dict[str, str] = {}
         self._relayout(2)
 
     def columns(self) -> int:
@@ -341,6 +276,8 @@ class StyleCardGrid(QWidget):
             card.set_selected(key == style_id)
 
     def set_sample_language(self, lang: str) -> None:
-        samples = SAMPLES.get(lang) or {}
-        for key, card in self.cards.items():
-            card.set_sample(samples.get(key, ""))
+        self._samples = dict(SAMPLES.get(lang) or {})
+
+    def sample_for(self, style_id: str) -> str:
+        """所选风格的示例译文（目标语言没有示例时为空）。"""
+        return self._samples.get(style_id, "")

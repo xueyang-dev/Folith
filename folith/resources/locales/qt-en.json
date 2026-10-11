@@ -1101,5 +1101,6 @@
   "选「本机 OCR」时需要本机或随包安装 Tesseract 语言包，Beta 基线为 eng / chi_sim / ara，缺少时会明确报错、不会静默改用英语。默认的「视觉理解」不需要语言包。": "Local OCR requires installed or bundled Tesseract language packs. The Beta baseline is eng / chi_sim / ara. Missing packs produce an explicit error, without silently using English. Default visual understanding needs no language packs.",
   "高级设置": "Advanced settings",
   "高级设置 · 审校与执行参数": "Advanced settings · Review and execution",
-  "导入 PDF、DOCX、EPUB、TXT 或 Markdown，翻译、审校，然后交付。": "Import PDF, DOCX, EPUB, TXT or Markdown, translate, review, then deliver."
+  "导入 PDF、DOCX、EPUB、TXT 或 Markdown，翻译、审校，然后交付。": "Import PDF, DOCX, EPUB, TXT or Markdown, translate, review, then deliver.",
+  "示例": "Example"
 }

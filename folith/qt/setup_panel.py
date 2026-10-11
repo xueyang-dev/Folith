@@ -531,11 +531,12 @@ class TaskSetupPanel(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["md"])
+        # 页头（「译前准备」+ 说明）不再显示：工作台顶部的阶段条已经标出「准备」。
+        self.title_label.setVisible(False)
+        self.subtitle_label.setVisible(False)
         column.addLayout(head)
-        # Golden Gate：风格是这一页的主角，放在最前；目标语言等上下文紧随其后。
-        context_card = self._build_context_card()
-        column.addWidget(self._build_style_card())
-        column.addWidget(context_card)
+        # 核心设置在前：目标语言 / 项目 / 术语库，风格是其中一行收起的折叠项。
+        column.addWidget(self._build_context_card())
         column.addWidget(self._build_strategy_card())
         column.addWidget(self._build_delivery_card())
         column.addWidget(self._build_footer())
@@ -597,6 +598,8 @@ class TaskSetupPanel(QWidget):
         body.addWidget(_hairline())
         self.doc_section = self._build_document_section()
         body.addWidget(self.doc_section)
+        body.addWidget(_hairline())
+        body.addWidget(self._build_style_card())
         return card
 
     def _build_glossary_row(self) -> QWidget:
@@ -832,52 +835,53 @@ class TaskSetupPanel(QWidget):
         return card
 
     def _build_style_section(self) -> DisclosureSection:
-        """兼容入口：旧版的「翻译风格」折叠节。
+        """「翻译风格」折叠节本身（摘要由 :meth:`_style_changed` 维护）。
 
-        Golden Gate 版式里风格是译前准备的第一张卡（见 :meth:`_build_style_card`），
-        这里只保留折叠节对象本身（摘要仍由 :meth:`_style_changed` 维护），不再放进页面。
+        内容由 :meth:`_build_style_card` 填进来，放在「输入与上下文」的最后一行。
         """
         self.style_section = DisclosureSection(i18n.tr('翻译风格'))
-        self.style_section.setVisible(False)
         return self.style_section
 
-    def _build_style_card(self) -> Card:
-        """翻译风格（译前准备的主角）：智能推荐 → 基础风格卡片 → 微调 → 补充约束。
+    def _build_style_card(self) -> QWidget:
+        """翻译风格：「输入与上下文」里的一行折叠项（默认收起，摘要是当前风格）。
 
-        真值仍是 ``style_box``（隐藏的下拉框，"沿用设置"在第 0 项）：卡片、推荐与
-        测试都通过它读写，所以任务配置、``style_selection()`` 的语义保持不变。
+        风格不是核心设置：足够强的模型会自己判断语气与措辞，所以默认「沿用设置」，
+        这一行收起时只读出答案。展开后是风格卡片、「智能画像」、所选风格的一句示例
+        和一行可选的补充约束——不再有人工调节的滑块。
+
+        真值仍是 ``style_box``（隐藏的下拉框，"沿用设置"在第 0 项）；四个强度值
+        （``style_sliders``）保留为**不显示**的内部状态：选中风格时自动放到该风格的
+        默认位置，随任务配置一起保存，配置格式与旧版一致。
         """
         from . import style_cards
 
         self._build_style_section()
         self._style_recommendation: dict = {}
-        card = Card()
-        card.setObjectName("styleHeroCard")
-        body = QVBoxLayout(card)
-        body.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["xl"],
-                                theme_module.SPACE["xl"], theme_module.SPACE["xl"])
-        body.setSpacing(theme_module.SPACE["lg"])
+        section = self.style_section
+        section.setVisible(True)
+        inner = section.body_layout
+        inner.setSpacing(theme_module.SPACE["md"])
 
-        eyebrow = QLabel(i18n.tr('翻译风格'))
-        eyebrow.setObjectName("eyebrow")
-        hero = QLabel(i18n.tr('这份文档要译成什么样？'))
-        hero.setObjectName("heroTitle")
-        hero.setWordWrap(True)
-        hero_hint = QLabel(i18n.tr('选一种基础风格，再按需微调。卡片里用同一句原文示范各风格的效果。'))
-        hero_hint.setObjectName("hint")
-        hero_hint.setWordWrap(True)
-        heading = QVBoxLayout()
-        heading.setSpacing(theme_module.SPACE["xs"])
-        heading.addWidget(eyebrow)
-        heading.addWidget(hero)
-        heading.addWidget(hero_hint)
-        body.addLayout(heading)
-
-        # ---- 智能画像（推荐条） ------------------------------------------------
+        # ---- 入口：智能画像 / 沿用设置（说明进悬停提示） ------------------------
         self.style_profile_button = QPushButton(i18n.tr('智能画像'))
+        self.style_profile_button.setObjectName("linkAction")
+        self.style_profile_button.setIcon(icons.icon("sparkles", 14, "accent"))
         self.style_profile_button.setToolTip(
             i18n.tr('抽样读几段原文，让模型推荐适合的风格（需要一次模型调用）'))
         self.style_profile_button.clicked.connect(self.styleProfileRequested.emit)
+        self.style_inherit_button = QPushButton(i18n.tr('沿用设置'))
+        self.style_inherit_button.setObjectName("linkAction")
+        self.style_inherit_button.setCheckable(True)
+        self.style_inherit_button.setToolTip(i18n.tr('沿用设置里的风格规则'))
+        self.style_inherit_button.clicked.connect(lambda: self.style_box.setCurrentIndex(0))
+        actions = QHBoxLayout()
+        actions.setSpacing(theme_module.SPACE["md"])
+        actions.addStretch(1)
+        actions.addWidget(self.style_profile_button)
+        actions.addWidget(self.style_inherit_button)
+        inner.addLayout(actions)
+
+        # 推荐结果只在用过「智能画像」之后才出现。
         self.style_accept_button = QPushButton(i18n.tr('接受推荐'))
         self.style_accept_button.setObjectName("primaryAction")
         self.style_accept_button.clicked.connect(self._accept_style_recommendation)
@@ -886,30 +890,13 @@ class TaskSetupPanel(QWidget):
         self.style_status.setObjectName("hint")
         self.style_status.setWordWrap(True)
         self.style_status.setVisible(False)
-        reco_idle = QLabel(i18n.tr('抽样读几段原文，让模型推荐适合的风格（需要一次模型调用）'))
-        reco_idle.setObjectName("hint")
-        reco_idle.setWordWrap(True)
-        self._style_reco_idle = reco_idle
-        reco = QFrame()
-        reco.setObjectName("recoStrip")
-        reco_row = QHBoxLayout(reco)
-        reco_row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"] + 2,
-                                    theme_module.SPACE["md"], theme_module.SPACE["sm"] + 2)
+        reco_row = QHBoxLayout()
         reco_row.setSpacing(theme_module.SPACE["md"])
-        from . import components
-
-        reco_row.addWidget(components.IconBadge("sparkles", "accent", size=30, icon_size=16),
-                           0, Qt.AlignmentFlag.AlignVCenter)
-        reco_text = QVBoxLayout()
-        reco_text.setSpacing(0)
-        reco_text.addWidget(reco_idle)
-        reco_text.addWidget(self.style_status)
-        reco_row.addLayout(reco_text, 1)
-        reco_row.addWidget(self.style_profile_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        reco_row.addWidget(self.style_status, 1)
         reco_row.addWidget(self.style_accept_button, 0, Qt.AlignmentFlag.AlignVCenter)
-        body.addWidget(reco)
+        inner.addLayout(reco_row)
 
-        # ---- 基础风格卡片 ------------------------------------------------------
+        # ---- 风格卡片 ----------------------------------------------------------
         self.style_box = style_module.ComboBox()
         self.style_box.addItem(i18n.tr('沿用设置里的风格规则'), "")
         choices = adapter.style_profile_choices()
@@ -919,113 +906,49 @@ class TaskSetupPanel(QWidget):
                                        i18n.tr_dynamic(choice["summary"]), Qt.ItemDataRole.ToolTipRole)
         self.style_box.setVisible(False)
         self.style_box.currentIndexChanged.connect(self._style_changed)
-
-        base_title = QLabel(i18n.tr('基础风格'))
-        base_title.setObjectName("sectionTitle")
-        self.style_inherit_button = QPushButton(i18n.tr('沿用设置里的风格规则'))
-        self.style_inherit_button.setObjectName("linkAction")
-        self.style_inherit_button.setCheckable(True)
-        self.style_inherit_button.setToolTip(
-            i18n.tr('选择后会覆盖设置里的默认风格规则；任务开始后随任务保存。'))
-        self.style_inherit_button.clicked.connect(lambda: self.style_box.setCurrentIndex(0))
-        base_row = QHBoxLayout()
-        base_row.setSpacing(theme_module.SPACE["md"])
-        base_row.addWidget(base_title)
-        base_row.addStretch(1)
-        base_row.addWidget(self.style_inherit_button)
-        body.addLayout(base_row)
-        self.style_sample_caption = QLabel(
-            i18n.tr('示例原文：{v0}', v0=style_cards.SAMPLE_SOURCE))
-        self.style_sample_caption.setObjectName("hint")
-        self.style_sample_caption.setWordWrap(True)
-        body.addWidget(self.style_sample_caption)
         self.style_cards = style_cards.StyleCardGrid(choices)
         self.style_cards.picked.connect(self._pick_style_card)
-        body.addWidget(self.style_cards)
+        inner.addWidget(self.style_cards)
 
-        # ---- 微调 --------------------------------------------------------------
-        tune_title = QLabel(i18n.tr('微调'))
-        tune_title.setObjectName("sectionTitle")
-        self.style_reset_button = QPushButton(i18n.tr('恢复默认'))
-        self.style_reset_button.setObjectName("linkAction")
-        self.style_reset_button.clicked.connect(self._reset_style_tune)
-        tune_head = QHBoxLayout()
-        tune_head.addWidget(tune_title)
-        tune_head.addStretch(1)
-        tune_head.addWidget(self.style_reset_button)
-        body.addLayout(tune_head)
-        ends = {"formality": ("口语", "正式"), "terminology": ("灵活意译", "严格沿用"),
-                "restructuring": ("贴近原文", "自然重写"), "form_preservation": ("自由", "严格")}
-        tune = QFrame()
-        tune.setObjectName("tunePanel")
-        tune_grid = QGridLayout(tune)
-        tune_grid.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"],
-                                     theme_module.SPACE["lg"], theme_module.SPACE["md"])
-        tune_grid.setHorizontalSpacing(theme_module.SPACE["xl"])
-        tune_grid.setVerticalSpacing(theme_module.SPACE["md"])
-        self.style_sliders: dict[str, QSlider] = {}
-        self._style_slider_values: dict[str, QLabel] = {}
-        for position, (key, caption, default) in enumerate(adapter.STYLE_ADJUSTMENTS):
-            slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setRange(0, 100)
-            slider.setValue(default)
-            slider.setMinimumWidth(180)
-            slider.setAccessibleName(i18n.tr(caption))
-            slider.valueChanged.connect(self._style_changed)
-            self.style_sliders[key] = slider
-            value = QLabel(str(default))
-            value.setObjectName("tuneValue")
-            self._style_slider_values[key] = value
-            slider.valueChanged.connect(lambda v, label=value: label.setText(str(v)))
-            name = QLabel(i18n.tr(caption))
-            name.setObjectName("tuneName")
-            top = QHBoxLayout()
-            top.addWidget(name)
-            top.addStretch(1)
-            top.addWidget(value)
-            low, high = ends.get(key, ("", ""))
-            low_label = QLabel(i18n.tr(low))
-            low_label.setObjectName("faint")
-            high_label = QLabel(i18n.tr(high))
-            high_label.setObjectName("faint")
-            bottom = QHBoxLayout()
-            bottom.addWidget(low_label)
-            bottom.addStretch(1)
-            bottom.addWidget(high_label)
-            cell = QVBoxLayout()
-            cell.setSpacing(4)
-            cell.addLayout(top)
-            cell.addWidget(slider)
-            cell.addLayout(bottom)
-            tune_grid.addLayout(cell, position // 2, position % 2)
-        tune_grid.setColumnStretch(0, 1)
-        tune_grid.setColumnStretch(1, 1)
-        body.addWidget(tune)
+        # 示例：只显示**选中**风格的那一句（原文在悬停提示里）。
+        sample_caption = QLabel(i18n.tr('示例'))
+        sample_caption.setObjectName("faint")
+        self.style_sample = QLabel("")
+        self.style_sample.setObjectName("styleSample")
+        self.style_sample.setWordWrap(True)
+        self.style_sample.setTextFormat(Qt.TextFormat.PlainText)
+        self.style_sample.setToolTip(
+            i18n.tr('示例原文：{v0}', v0=style_cards.SAMPLE_SOURCE))
+        self.style_sample_row = QWidget()
+        sample_row = QHBoxLayout(self.style_sample_row)
+        sample_row.setContentsMargins(0, 0, 0, 0)
+        sample_row.setSpacing(theme_module.SPACE["md"])
+        sample_row.addWidget(sample_caption, 0, Qt.AlignmentFlag.AlignTop)
+        sample_row.addWidget(self.style_sample, 1)
+        inner.addWidget(self.style_sample_row)
 
-        # ---- 补充风格约束 ------------------------------------------------------
-        extra_title = QLabel(i18n.tr('补充风格约束（可选）'))
-        extra_title.setObjectName("sectionTitle")
+        # ---- 补充约束（可选；占位文字就是说明） -----------------------------------
         self.style_custom = QLineEdit()
         self.style_custom.setPlaceholderText(
             i18n.tr('例如：产品名保留原文；界面名称加引号；不使用感叹号。'))
+        self.style_custom.setToolTip(i18n.tr('补充风格约束（可选）'))
         self.style_custom.textChanged.connect(self._style_changed)
-        chips = QHBoxLayout()
-        chips.setSpacing(theme_module.SPACE["xs"] + 2)
-        self._style_custom_chips: list[QPushButton] = []
-        for hint in ('产品名保留原文', '界面名称加引号', '使用敬语称呼读者'):
-            chip = QPushButton("+ " + i18n.tr(hint))
-            chip.setObjectName("chipButton")
-            chip.clicked.connect(lambda _c=False, text=i18n.tr(hint): self._append_style_rule(text))
-            chips.addWidget(chip)
-            self._style_custom_chips.append(chip)
-        chips.addStretch(1)
-        body.addWidget(extra_title)
-        body.addWidget(self.style_custom)
-        body.addLayout(chips)
+        inner.addWidget(self.style_custom)
+
+        # ---- 风格强度：内部状态，不显示 ------------------------------------------
+        self.style_sliders: dict[str, QSlider] = {}
+        for key, caption, default in adapter.STYLE_ADJUSTMENTS:
+            slider = QSlider(Qt.Orientation.Horizontal, section)
+            slider.setRange(0, 100)
+            slider.setValue(default)
+            slider.setAccessibleName(i18n.tr(caption))
+            slider.setVisible(False)
+            slider.valueChanged.connect(self._style_changed)
+            self.style_sliders[key] = slider
 
         self._sync_style_samples()
         self._style_changed()
-        return card
+        return section
 
     def _pick_style_card(self, style_id: str) -> None:
         index = self.style_box.findData(style_id)
@@ -1045,40 +968,29 @@ class TaskSetupPanel(QWidget):
             if key in levels:
                 slider.setValue(levels[key] * 20)
 
-    def _reset_style_tune(self) -> None:
-        style_id = str(self.style_box.currentData() or "")
-        if style_id:
-            self._apply_style_preset(style_id)
-            return
-        for key, _caption, default in adapter.STYLE_ADJUSTMENTS:
-            self.style_sliders[key].setValue(default)
-
-    def _append_style_rule(self, text: str) -> None:
-        current = self.style_custom.text().strip()
-        if text in current:
-            return
-        separator = i18n.tr("；") if current else ""
-        self.style_custom.setText(current + separator + text)
-
     def _sync_style_samples(self) -> None:
         from . import style_cards
 
         lang = style_cards.sample_language(self.target_box.currentText()) \
             if hasattr(self, "target_box") else ""
         self.style_cards.set_sample_language(lang)
-        self.style_sample_caption.setVisible(bool(lang))
+        self._sync_style_sample()
+
+    def _sync_style_sample(self) -> None:
+        """示例只跟着选中的风格走；沿用设置或目标语言没有示例时整行收起。"""
+        text = self.style_cards.sample_for(str(self.style_box.currentData() or ""))
+        self.style_sample.setText(text)
+        self.style_sample_row.setVisible(bool(text))
 
     def _style_changed(self, *_args) -> None:
         chosen = bool(self.style_box.currentData())
         for slider in self.style_sliders.values():
             slider.setEnabled(chosen)
         self.style_custom.setEnabled(chosen)
-        for chip in getattr(self, "_style_custom_chips", []):
-            chip.setEnabled(chosen)
         if hasattr(self, "style_cards"):
             self.style_cards.set_selected(str(self.style_box.currentData() or ""))
             self.style_inherit_button.setChecked(not chosen)
-            self.style_reset_button.setEnabled(chosen)
+            self._sync_style_sample()
         self.style_section.set_summary(
             self.style_box.currentText() if chosen else i18n.tr('沿用设置'))
 
@@ -1105,7 +1017,6 @@ class TaskSetupPanel(QWidget):
                        v1=f"{float(recommendation.get('confidence') or 0):.2f}")
         self.style_status.setText(" · ".join([head] + reasons))
         self.style_status.setVisible(True)
-        self._style_reco_idle.setVisible(False)
         # 失败降级的"通用风格"不是推荐，不给「接受」
         self.style_accept_button.setVisible(not failed)
 
@@ -1116,15 +1027,13 @@ class TaskSetupPanel(QWidget):
         self.style_accept_button.setVisible(False)
         self.style_status.setText("")
         self.style_status.setVisible(False)
-        self._style_reco_idle.setVisible(True)
 
     def set_style_busy(self, busy: bool) -> None:
         self.style_profile_button.setEnabled(not busy)
         if busy:
             self.style_status.setText(i18n.tr('正在读取原文并分析风格…'))
             self.style_status.setVisible(True)
-            self._style_reco_idle.setVisible(False)
-
+    
     def _accept_style_recommendation(self) -> None:
         style_id = str(self._style_recommendation.get("recommended_style") or "")
         index = self.style_box.findData(style_id)
@@ -1223,11 +1132,14 @@ class TaskSetupPanel(QWidget):
         self.footer_note = QLabel(i18n.tr('开始后可继续编辑译文；要生成的文件可在「交付」页查看。'))
         self.footer_note.setObjectName("hint")
         self.footer_note.setWordWrap(True)
+        # 底栏只留主行动：这句说明不影响"现在要不要开始"。
+        self.footer_note.setVisible(False)
         self.footer_bar = QWidget()
         row = QHBoxLayout(self.footer_bar)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(theme_module.SPACE["md"])
         row.addWidget(self.footer_note, 1)
+        row.addStretch(1)
         row.addWidget(self.start_button)
         return self.footer_bar
 

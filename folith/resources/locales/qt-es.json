@@ -1101,5 +1101,6 @@
   "选「本机 OCR」时需要本机或随包安装 Tesseract 语言包，Beta 基线为 eng / chi_sim / ara，缺少时会明确报错、不会静默改用英语。默认的「视觉理解」不需要语言包。": "El OCR local requiere paquetes de idioma de Tesseract instalados o incluidos. La base Beta es eng / chi_sim / ara. Si falta un paquete, se informa del error sin cambiar silenciosamente al inglés. La comprensión visual predeterminada no necesita paquetes de idioma.",
   "高级设置": "Ajustes avanzados",
   "高级设置 · 审校与执行参数": "Ajustes avanzados · Revisión y ejecución",
-  "导入 PDF、DOCX、EPUB、TXT 或 Markdown，翻译、审校，然后交付。": "Importa PDF, DOCX, EPUB, TXT o Markdown, traduce, revisa y entrega."
+  "导入 PDF、DOCX、EPUB、TXT 或 Markdown，翻译、审校，然后交付。": "Importa PDF, DOCX, EPUB, TXT o Markdown, traduce, revisa y entrega.",
+  "示例": "Ejemplo"
 }
