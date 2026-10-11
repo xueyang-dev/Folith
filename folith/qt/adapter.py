@@ -869,6 +869,158 @@ def findings(job_id: str, state: dict | None = None) -> list[dict]:
     return list(state.get("findings") or [])
 
 
+# ================= 工作台右栏：本段的参考与 AI 辅助 =================
+#
+# 右侧操作栏回答"这一段要注意什么、能参考什么"。数据全部来自任务状态，不调用
+# 模型；只有「询问 Agent」是一次显式的模型调用，而且只回答、不改写译文
+# （docs/agent-inspector-workspace.md："询问 Agent 是自由问答入口，不提供预置
+# 改写动作或自动写回"）。
+
+#: 本段术语最多列这么多条（命中太多时先列附在段上的，再按原文出现顺序）。
+SEGMENT_TERM_LIMIT = 12
+
+
+def _glossary_entries(state: dict) -> list[dict]:
+    entries = state.get("glossary") or []
+    if not entries:
+        frozen = state.get("glossary_frozen") or {}
+        entries = (frozen.get("entries") or []) if isinstance(frozen, dict) else []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _term_in(term: str, text: str) -> bool:
+    """术语是否出现在原文里：拉丁字母按整词匹配（不把 "art" 算进 "start"），其余按子串。"""
+    import re
+
+    term = str(term or "").strip()
+    if not term:
+        return False
+    if re.search(r"[A-Za-z]", term):
+        return re.search(rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])", text,
+                         re.IGNORECASE) is not None
+    return term in text
+
+
+def segment_terms(state: dict, index: int) -> list[dict]:
+    """本段相关的术语：附在这一段上的 + 原文里出现的（翻译之后新加的术语也算）。
+
+    每条：``source`` / ``target``（首选译名）/ ``forbidden_hits``（译文里出现的
+    禁用译名）/ ``status``。被否决的术语不列。
+    """
+    pairs = state.get("pairs") or []
+    if not 0 <= index < len(pairs):
+        return []
+    pair = pairs[index] or {}
+    source = str(pair.get("source") or "")
+    target = str(pair.get("target") or "")
+    attached = {str(item) for item in pair.get("glossary_entry_ids") or []}
+    rows: list[tuple[int, int, dict]] = []
+    for entry in _glossary_entries(state):
+        if str(entry.get("status") or "") == "rejected":
+            continue
+        term = str(entry.get("source") or "")
+        hit = str(entry.get("id") or "") in attached
+        if not (hit or _term_in(term, source)):
+            continue
+        preferred = str(entry.get("preferred") or entry.get("target") or "")
+        forbidden = [str(item) for item in entry.get("forbidden") or [] if str(item or "")]
+        position = source.lower().find(term.lower()) if term else -1
+        rows.append((0 if hit else 1, position if position >= 0 else len(source), {
+            "id": str(entry.get("id") or ""), "source": term, "target": preferred,
+            "status": str(entry.get("status") or ""),
+            "forbidden_hits": [item for item in forbidden if item in target],
+        }))
+    rows.sort(key=lambda item: (item[0], item[1]))
+    return [row for _rank, _position, row in rows[:SEGMENT_TERM_LIMIT]]
+
+
+def segment_context(state: dict, index: int) -> dict:
+    """前后各一段（跳过已排除的）：原文与当前译文。"""
+    pairs = state.get("pairs") or []
+
+    def neighbour(step: int) -> dict | None:
+        position = index + step
+        while 0 <= position < len(pairs):
+            pair = pairs[position] or {}
+            if not pair.get("excluded"):
+                return {"index": position, "source": str(pair.get("source") or ""),
+                        "target": str(pair.get("target") or "")}
+            position += step
+        return None
+
+    return {"previous": neighbour(-1), "next": neighbour(1)}
+
+
+def segment_decisions(state: dict, index: int) -> list[dict]:
+    """本段的翻译决策痕迹（最多 3 条，本地规则，不调用模型）。
+
+    与 Streamlit 检查器同一套（:mod:`folith.translation_decisions`）：是中性观察，
+    不是错误；与检查项重复的不再列出。已有的深度分析缓存会合并进来。
+    """
+    from folith import translation_decisions as _decisions
+
+    pairs = state.get("pairs") or []
+    if not 0 <= index < len(pairs):
+        return []
+    pair = pairs[index] or {}
+    findings = [item for item in state.get("findings") or []
+                if isinstance(item, dict) and item.get("segment_index") == index
+                and not item.get("resolved")]
+    blocked = any(isinstance(item, dict) and item.get("segment_index") == index
+                  for item in ((state.get("source_quality_gate") or {}).get("flags") or []))
+    try:
+        heuristic = _decisions.detect_translation_decisions(
+            pair.get("source"), pair.get("target"), index,
+            qa_findings=findings, source_quality_blocked=blocked)
+        cached = _decisions.cached_analysis(pair, pair.get("source"), pair.get("target"))
+        merged = _decisions.merge_decisions(
+            heuristic, (cached or {}).get("decisions") or [], findings)
+    except Exception:  # noqa: BLE001 - 痕迹只是参考，坏数据不能拖垮工作台
+        return []
+    return [dict(item) for item in merged[:3]]
+
+
+def ask_about_segment(job_id: str, index: int, question: str,
+                      config: EngineConfig) -> str:
+    """询问 Agent：就这一段的原文与当前译文回答译者的问题（只回答，不改写）。"""
+    question = str(question or "").strip()
+    if not question:
+        raise AdapterError("请先写下要问的问题。")
+    problem = config.connection_problem()
+    if problem:
+        raise AdapterError(problem)
+    state = load_state(job_id)
+    pairs = state.get("pairs") or []
+    if not 0 <= index < len(pairs):
+        raise AdapterError("这一段已不存在，请重新选择段落。")
+    pair = pairs[index] or {}
+    traces = segment_decisions(state, index)
+    context = segment_context(state, index)
+    neighbours = "\n".join(
+        f"{label}：{item['source']} → {item['target']}"
+        for label, item in (("上一段", context["previous"]), ("下一段", context["next"]))
+        if item)
+    system = (
+        "你是翻译决策审视助手。回答译者提出的问题，解释原文、当前译文和"
+        "可见翻译取舍；使用中性措辞，不把策略差异自动判为错误。除非用户明确"
+        "询问替代处理方式，否则不要生成改写译文。不要声称没有提供的证据。"
+        "用译者提问所用的语言回答，简洁具体。")
+    prompt = (f"原文：\n{pair.get('source', '')}\n\n当前译文：\n{pair.get('target', '')}"
+              + (f"\n\n前后文：\n{neighbours}" if neighbours else "")
+              + f"\n\n本段已有痕迹：\n{json.dumps(traces, ensure_ascii=False)}"
+              + f"\n\n译者的问题：\n{question}")
+    try:
+        answer = core.call_llm(config.provider, config.api_key, config.model, system,
+                               prompt, temperature=0.2,
+                               base_url=config.translator_base_url() or None)
+    except Exception as exc:  # noqa: BLE001 - 把模型错误原样告诉用户
+        raise AdapterError(f"Agent 没有回答：{exc}") from exc
+    answer = str(answer or "").strip()
+    if not answer:
+        raise AdapterError("Agent 没有返回内容，请稍后再试。")
+    return answer
+
+
 def review_readiness(job_id: str, state: dict | None = None) -> dict:
     """审校就绪状态（与交付门禁用的是**同一个**函数）。
 

@@ -91,6 +91,25 @@ class InlineSegmentEditor(QWidget):
         self.footer.setVisible(False)
         self.hide()
 
+        # 展开行的原文：只读、可选中（选中一个词即可「加入术语库」）。与编辑框同为
+        # 视口上的浮层，由工作台按原文格摆放；表格本身在这一格不再画字。
+        self.source_view = QPlainTextEdit(table.viewport())
+        self.source_view.setObjectName("inlineSource")
+        self.source_view.setReadOnly(True)
+        self.source_view.setFrameShape(QPlainTextEdit.Shape.NoFrame)
+        self.source_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.source_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.source_view.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.source_view.hide()
+
+    def set_source(self, text: str) -> None:
+        if self.source_view.toPlainText() != (text or ""):
+            self.source_view.setPlainText(text or "")
+
+    def hide_all(self) -> None:
+        self.hide()
+        self.source_view.hide()
+
     def add_footer_button(self, button) -> None:
         self._footer_layout.addWidget(button)
 
@@ -124,7 +143,10 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
 
     def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt 命名
         super().initStyleOption(option, index)
-        if index.row() == self.active_row:
+        if index.row() == self.active_row and index.column() == 1:
+            # 原文由可选中的浮层显示（见 InlineSegmentEditor.source_view），这里不画字。
+            option.text = ""
+        elif index.row() == self.active_row:
             option.features |= QStyleOptionViewItem.ViewItemFeature.WrapText
             option.displayAlignment = (Qt.AlignmentFlag.AlignTop
                                        | Qt.AlignmentFlag.AlignLeft)
@@ -134,9 +156,9 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
 def source_height(table: QAbstractItemView, text: str, width: int) -> int:
     """原文在展开行里整段换行所需的高度。"""
     metrics = QFontMetrics(table.font())
-    rect = metrics.boundingRect(QRect(0, 0, max(40, width - 2 * CELL_PAD), 100000),
+    rect = metrics.boundingRect(QRect(0, 0, max(40, width - 2 * CELL_PAD - 10), 100000),
                                 int(Qt.TextFlag.TextWordWrap), text or " ")
-    return rect.height() + 2 * CELL_PAD + 4
+    return rect.height() + 2 * CELL_PAD + 12
 
 
 def install_repositioning(table: QTableWidget, callback) -> None:

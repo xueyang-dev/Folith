@@ -1820,10 +1820,10 @@ def test_blocking_count_only_counts_unresolved_findings(client):
     # 段落检查项面板：只列未解决的，并如实说明还有多少项已解决。
     assert workbench.select_segment(0) is True
     app.processEvents()
-    html = workbench.qa_view.toHtml()
+    html = "\n".join(workbench.attention_list.texts())
     assert "尚未解决的问题" in html
-    assert "已经解决的问题" not in html.split("已解决")[0]
-    assert "1 项已解决" in html, html[-300:]
+    assert "已经解决的问题" not in html
+    assert "1 项已解决" in html, html
 
     # 全部解决后芯片归零、色调不再是危险色。
     for item in state["findings"]:

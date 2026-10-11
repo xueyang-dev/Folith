@@ -23,7 +23,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
+    QApplication, QDialog, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
 )
 
 from folith.desktop import paths as desktop_paths
@@ -286,6 +286,8 @@ class MainWindow(QMainWindow):
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
         self.workbench.supplementRequested.connect(self.supplement_delivery)
+        self.workbench.termAddRequested.connect(self.add_term_from_selection)
+        self.workbench.askAgentRequested.connect(self.ask_agent)
         self.workbench.exportRequested.connect(self.export_copy)
         self.workbench.saveSnapshotRequested.connect(self.save_snapshot)
         self.workbench.editSubmitted.connect(self.submit_edit)
@@ -1994,6 +1996,41 @@ class MainWindow(QMainWindow):
 
         self._run_with_busy(i18n.tr('冻结交付'), i18n.tr('正在通过交付门禁并生成快照…'),
                             adapter.deliver, job_id, self.config, on_done=done)
+
+    def add_term_from_selection(self, source: str, target: str) -> None:
+        """工作台「加入术语库」：原文/译文里选中的词预先填好，确认后写进本任务术语表。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        from .dialogs import NewTermDialog
+
+        name = str((self._cached_state or {}).get("filename") or job_id)
+        dialog = NewTermDialog([(job_id, name)], self)
+        dialog.source_edit.setText(source)
+        dialog.target_edit.setText(target)
+        (dialog.target_edit if source and not target else dialog.source_edit).setFocus()
+        if _automation() or dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        self.add_glossary_entry({"source": values["source"], "preferred": values["target"],
+                                 "domain": values["domain"], "status": "locked"})
+
+    def ask_agent(self, index: int, question: str) -> None:
+        """询问 Agent：后台问一次模型，回答交回工作台（只回答，不改写译文）。"""
+        job_id = self._current_job_id
+        if not job_id or index < 0:
+            return
+
+        def done(answer: str) -> None:
+            if self._current_job_id == job_id:
+                self.workbench.set_agent_answer(index, answer)
+
+        def failed(message: str, _detail: str) -> None:
+            if self._current_job_id == job_id:
+                self.workbench.set_agent_answer(index, i18n.tr_dynamic(message))
+
+        self.runner.submit(adapter.ask_about_segment, job_id, index, question, self.config,
+                           on_done=done, on_error=failed, label="ask-agent")
 
     def supplement_delivery(self, key: str) -> None:
         """补生成一个当初没选的交付文件（例如电子书），冻结为新的交付版本。"""

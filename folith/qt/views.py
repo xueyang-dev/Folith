@@ -43,6 +43,7 @@ from .stagebar import StageBar
 from . import stage as stage_model
 from . import style as style_module
 from . import theme as theme_module
+from . import segment_assist
 from . import segment_editor
 from .style import Card, Chip
 
@@ -1503,6 +1504,8 @@ class WorkbenchView(QWidget):
     exportRequested = Signal()
     saveSnapshotRequested = Signal(int)
     refreshRequested = Signal()
+    termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
+    askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
     draftSaved = Signal(str, str, str)      # job_id, segment_uid, text
     editSubmitted = Signal(int)
     revealRequested = Signal(str)
@@ -1559,6 +1562,8 @@ class WorkbenchView(QWidget):
         self._only_issues = False
         self._excluded_signature: tuple | None = None
         self._review_key: tuple = ()
+        self._review_items: list[dict] = []
+        self._assist_index = -1
         self._terms_key: tuple = ()
         self._followup_key: tuple = ()
         self._qa_key: tuple = ()
@@ -1883,6 +1888,31 @@ class WorkbenchView(QWidget):
 
         self.selection_title = QLabel(i18n.tr('尚未选择段落'))
         self.selection_title.setObjectName("cardTitle")
+
+        # 看 → 查 → 改 → 记：译者处理一段的顺序（见 segment_assist）。
+        self.attention_list = segment_assist.AttentionList()
+        self.attention_list.preserveRequested.connect(
+            lambda item: self.findingResolveRequested.emit(
+                [str(item.get("finding_id") or "")], adapter.RESOLVE_PRESERVED,
+                "工作台：保留当前译文"))
+        self.attention_list.acceptRequested.connect(
+            lambda item: self.suggestionApplyRequested.emit(item, "工作台：采用建议译文"))
+        self.term_list = segment_assist.TermList()
+        self.term_list.insertRequested.connect(self._insert_into_target)
+        self.term_add_button = _icon_button(QPushButton(i18n.tr('加入术语库…')), "plus",
+                                            "text-secondary")
+        self.term_add_button.setToolTip(
+            i18n.tr('先在原文或译文里选中词语，再点这里；也可以直接填写'))
+        self.term_add_button.clicked.connect(self._request_term_add)
+        self.context_view = segment_assist.ContextView()
+        self.context_view.jumpRequested.connect(self.select_segment)
+        self.ask_box = segment_assist.AskAgentBox()
+        self.ask_box.askRequested.connect(
+            lambda question: self.askAgentRequested.emit(self._current_index, question))
+        for button in (self.term_add_button,):
+            button.setObjectName("panelAction")
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
         inspector = Card()
         inspector_layout = QVBoxLayout(inspector)
         inspector_layout.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"],
@@ -1895,36 +1925,43 @@ class WorkbenchView(QWidget):
         inspector_layout.addWidget(self.segment_status)
         self.segment_status.setWordWrap(True)
 
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
-        for button in (self.review_button, self.review_selected_button,
-                       self.retranslate_button):
-            inspector_layout.addWidget(button)
         # 只对单独一段有意义的部分：选多段时整组收起。
         self.single_segment_section = QWidget()
         single = QVBoxLayout(self.single_segment_section)
         single.setContentsMargins(0, 0, 0, 0)
         single.setSpacing(theme_module.SPACE["sm"])
-        single.addWidget(style_module.SectionLabel(i18n.tr('段落操作')))
+        single.addWidget(style_module.SectionLabel(i18n.tr('需要注意')))
+        single.addWidget(self.attention_list)
+        single.addWidget(style_module.SectionLabel(i18n.tr('术语')))
+        single.addWidget(self.term_list)
+        single.addWidget(self.term_add_button)
+        single.addWidget(style_module.SectionLabel(i18n.tr('前后文')))
+        single.addWidget(self.context_view)
+        inspector_layout.addWidget(self.single_segment_section)
+
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
+        for button in (self.review_button, self.review_selected_button,
+                       self.retranslate_button):
+            inspector_layout.addWidget(button)
+        inspector_layout.addWidget(self.ask_box)
+
+        self.segment_ops_section = QWidget()
+        ops = QVBoxLayout(self.segment_ops_section)
+        ops.setContentsMargins(0, 0, 0, 0)
+        ops.setSpacing(theme_module.SPACE["sm"])
+        ops.addWidget(style_module.SectionLabel(i18n.tr('段落操作')))
         for button in (self.copy_source_button, self.restore_button, self.exclude_button,
                        self.structure_button, self.view_source_button):
-            single.addWidget(button)
-        single.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
-        single.addLayout(facts)
-        single.addWidget(style_module.SectionLabel(i18n.tr('检查项')))
-        self.qa_view = QTextBrowser()
-        # 检查项是只读的"报告面"，不是输入框：给它一个沉底面板样式，
-        # 否则默认会画出一圈聚焦边框，看起来像可以打字。
-        self.qa_view.setObjectName("qaView")
-        self.qa_view.setOpenExternalLinks(True)
-        self.qa_view.setMinimumHeight(70)
-        single.addWidget(self.qa_view, 1)
-        inspector_layout.addWidget(self.single_segment_section, 1)
+            ops.addWidget(button)
+        ops.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
+        ops.addLayout(facts)
+        inspector_layout.addWidget(self.segment_ops_section)
         self.multi_hint = QLabel(i18n.tr('按住 ⇧ 或 ⌘ 点选可以多选；批量操作会作用于所有选中的段落。'))
         self.multi_hint.setObjectName("hint")
         self.multi_hint.setWordWrap(True)
         self.multi_hint.setVisible(False)
         inspector_layout.addWidget(self.multi_hint)
-        inspector_layout.addStretch(0)
+        inspector_layout.addStretch(1)
 
         # 检查器的内容比小屏更高（实测 minimumSizeHint ≈609pt）：直接塞进 splitter 会把主窗口的
         # 最小高度顶到 902pt——在 1440×900 的 Mac 上（可用高度约 875pt）窗口装不下，窗口底部的
@@ -2559,6 +2596,7 @@ class WorkbenchView(QWidget):
             view = adapter.review_queue(self.job_id, self._state)
         except Exception:  # noqa: BLE001 - 审校页坏了不能拖垮翻译页
             view = {}
+        self._review_items = list(view.get("queue_items") or [])
         self.review_panel.apply(view)
 
     def _load_pdf(self, job_id: str) -> None:
@@ -3097,7 +3135,9 @@ class WorkbenchView(QWidget):
     def _render_segment_detail(self) -> None:
         if not (0 <= self._current_index < len(self._all_rows)) or not self._rows:
             self.segment_status.setText(i18n.tr('尚未选择段落'))
-            self.qa_view.setHtml("")
+            self.attention_list.set_items([], [])
+            self.term_list.set_terms([])
+            self.context_view.set_context({})
             self.submit_button.setEnabled(False)
             self.review_button.setEnabled(False)
             for label in (self.fact_state, self.fact_review, self.fact_source,
@@ -3170,20 +3210,20 @@ class WorkbenchView(QWidget):
         self.fact_terms.setText("、".join(label for label in labels if label) or "—")
         all_findings = [item for item in adapter.findings(self.job_id, self._state)
                         if item.get("segment_index") == row.index]
-        open_findings = [item for item in all_findings if not item.get("resolved")]
-        resolved_count = len(all_findings) - len(open_findings)
-        if open_findings:
-            rows_html = "".join(
-                f"<li>[{item.get('severity') or 'info'}] "
-                f"{str(item.get('summary') or item.get('reason') or '')}</li>"
-                for item in open_findings)
-            suffix = f"<p>另有 {resolved_count} 项已解决。</p>" if resolved_count else ""
-            self.qa_view.setHtml(f"<ul>{rows_html}</ul>{suffix}")
-        else:
-            self.qa_view.setHtml(
-                i18n.tr("<p>没有未解决的检查项。</p>")
-                + (i18n.tr("<p>本段有 {v0} 项已解决。</p>", v0=resolved_count)
-                   if resolved_count else ""))
+        open_count = sum(1 for item in all_findings if not item.get("resolved"))
+        resolved_count = len(all_findings) - open_count
+        # 可处置的检查项用审校队列里的同一份（带 finding_id / 建议译文 / 能否决定），
+        # 这样「保留译文」「采用建议」与审校页走同一条路径。
+        self._render_review()
+        queue = [item for item in self._review_items
+                 if item.get("kind") == "finding" and item.get("segment_index") == row.index]
+        self.attention_list.set_items(
+            queue, adapter.segment_decisions(self._state, row.index), resolved_count)
+        self.term_list.set_terms(adapter.segment_terms(self._state, row.index))
+        self.context_view.set_context(adapter.segment_context(self._state, row.index))
+        if self._assist_index != row.index:
+            self._assist_index = row.index
+            self.ask_box.reset()
 
     # ================= 选择 / 编辑器 =================
     def _position_of_loaded_segment(self) -> int | None:
@@ -3269,7 +3309,7 @@ class WorkbenchView(QWidget):
         editor = self.inline_editor
         position = self._active_position
         if not (0 <= position < self.segment_list.rowCount()) or position >= len(self._rows):
-            editor.hide()
+            editor.hide_all()
             return
         table = self.segment_list
         source_width = table.columnWidth(1)
@@ -3285,9 +3325,22 @@ class WorkbenchView(QWidget):
             table.setRowHeight(position, height)
         rect = table.visualRect(table.model().index(position, 2))
         if not rect.isValid() or rect.bottom() < 0 or rect.top() > table.viewport().height():
-            editor.hide()
+            editor.hide_all()
             return
         editor.setGeometry(rect.adjusted(4, 4, -4, -4))
+        source_rect = table.visualRect(table.model().index(position, 1))
+        editor.set_source(self._rows[position].source)
+        editor.source_view.setGeometry(source_rect.adjusted(
+            segment_editor.CELL_PAD + 1, 2, -2, -2))
+        from folith.textual import text_direction
+
+        editor.source_view.setLayoutDirection(
+            Qt.LayoutDirection.RightToLeft
+            if text_direction(self._rows[position].source, None) == "rtl"
+            else Qt.LayoutDirection.LeftToRight)
+        if not editor.source_view.isVisible():
+            editor.source_view.show()
+            editor.source_view.raise_()
         if not editor.isVisible():
             editor.show()
             editor.raise_()
@@ -3382,6 +3435,8 @@ class WorkbenchView(QWidget):
         self.review_selected_button.setVisible(multiple)
         self.review_button.setVisible(not multiple)
         self.single_segment_section.setVisible(not multiple)
+        self.segment_ops_section.setVisible(not multiple)
+        self.ask_box.setVisible(not multiple)
         self.segment_status.setVisible(not multiple)
         self.multi_hint.setVisible(multiple)
         for button in (self.retranslate_button, self.copy_source_button,
@@ -3443,6 +3498,24 @@ class WorkbenchView(QWidget):
         target = position + delta
         if 0 <= target < len(self._rows):
             self._select_only(target)
+
+    def _insert_into_target(self, text: str) -> None:
+        """把术语译名插到译文光标处（只改编辑框，保存仍由用户决定）。"""
+        if not text or self._active_position < 0:
+            return
+        self.target_edit.insertPlainText(text)
+        self.target_edit.setFocus()
+
+    def _request_term_add(self) -> None:
+        """加入术语库：原文取原文里选中的词，译文取编辑框里选中的词（可留空再填）。"""
+        source = self.inline_editor.source_view.textCursor().selectedText().strip()
+        target = self.target_edit.textCursor().selectedText().strip()
+        self.termAddRequested.emit(source, target)
+
+    def set_agent_answer(self, index: int, text: str) -> None:
+        """窗口把「询问 Agent」的回答交回来；用户已经换段时丢掉。"""
+        if index == self._current_index:
+            self.ask_box.set_answer(text)
 
     def _select_only(self, position: int) -> None:
         """选中这一行、且只选它。

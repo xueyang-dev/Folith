@@ -517,6 +517,29 @@ QPushButton#panelAction {{
 QPushButton#panelAction:hover {{ background: {t['bg-hover']}; }}
 QPushButton#panelAction:disabled {{ color: {t['text-muted']}; }}
 QPushButton#panelAction::menu-indicator {{ subcontrol-position: right center; right: {sp['sm']}px; }}
+/* 展开行的原文浮层：看起来就是表格里的字，只是可以选中 */
+QPlainTextEdit#inlineSource {{
+    background: transparent; border: none; padding: 0; color: {t['text-primary']};
+}}
+QPlainTextEdit#inlineSource:focus {{ border: none; }}
+/* 右栏：术语、前后文、需要注意 */
+QPushButton#termChip {{
+    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
+    color: {t['text-primary']}; text-align: left; padding: 2px {sp['sm']}px; min-height: 0;
+}}
+QPushButton#termChip:hover {{ border-color: {t['accent']}; }}
+QWidget#contextRow {{
+    background: transparent; border: 1px solid {t['border-hairline']};
+    border-radius: {r['sm']}px;
+}}
+QWidget#contextRow:hover {{ background: {t['bg-hover']}; }}
+QLabel#contextSource {{ color: {t['text-secondary']}; }}
+QLabel#contextTarget {{ color: {t['text-primary']}; }}
+QLabel#forbiddenTerm {{ color: {t['danger']}; }}
+QWidget#attentionItem {{
+    background: {t['bg-surface-subtle']}; border-radius: {r['sm']}px;
+}}
+QLabel#agentAnswer {{ color: {t['text-primary']}; }}
 /* 就地编辑的保存条：未保存是普通提示色，草稿基于旧译文是危险色 */
 QLabel#inlineState {{ color: {t['accent']}; }}
 QLabel#inlineState[error="true"] {{ color: {t['danger']}; }}
