@@ -509,6 +509,17 @@ QPushButton#subtleAction {{
 QPushButton#subtleAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#ghostAction {{ background: transparent; border-color: transparent; color: {t['text-secondary']}; }}
 QPushButton#ghostAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+/* 工作台右侧操作栏：一行一个动作，左对齐、无边框，悬停才浮出底色 */
+QPushButton#panelAction {{
+    background: transparent; border-color: transparent; color: {t['text-primary']};
+    text-align: left; padding-left: {sp['sm']}px;
+}}
+QPushButton#panelAction:hover {{ background: {t['bg-hover']}; }}
+QPushButton#panelAction:disabled {{ color: {t['text-muted']}; }}
+QPushButton#panelAction::menu-indicator {{ subcontrol-position: right center; right: {sp['sm']}px; }}
+/* 就地编辑的保存条：未保存是普通提示色，草稿基于旧译文是危险色 */
+QLabel#inlineState {{ color: {t['accent']}; }}
+QLabel#inlineState[error="true"] {{ color: {t['danger']}; }}
 /* 工作台步骤条右侧的旁路入口（术语 / 更多）：平时是幽灵按钮，正在看这一页时亮起 */
 QPushButton#stageUtility {{
     background: transparent; border-color: transparent; color: {t['text-secondary']};

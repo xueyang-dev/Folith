@@ -43,6 +43,7 @@ from .stagebar import StageBar
 from . import stage as stage_model
 from . import style as style_module
 from . import theme as theme_module
+from . import segment_editor
 from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
@@ -1445,12 +1446,16 @@ class HomeView(QWidget):
 
 
 class WorkbenchView(QWidget):
-    """多段工作台：CAT 网格 + 右侧检查器 + 交付标签页。
+    """多段工作台：就地编辑的双语网格 + 右侧操作栏 + 交付标签页。
 
     设计要点（对应验收项）：
 
-    * **网格是虚拟的**：只存在一个活动编辑器（右侧检查器里），所以 200 段、
-      16k 字符的文档不会创建大量重型编辑控件（§6.B）；
+    * **译文在网格里改**（docs/agent-inspector-workspace.md："一个内容只能有一个
+      可写位置"）：当前行展开，译文格就是编辑框；右侧操作栏作用于选中的行，
+      不重复原文与译文；
+    * **网格是虚拟的**：只存在一个活动编辑器（浮在当前行上，见
+      :mod:`folith.qt.segment_editor`），所以几千段的文档也不会创建大量重型
+      编辑控件（§6.B）；
     * **后台刷新不重建正在输入的编辑器**：同一段落再次被选中时不触碰编辑器，
       列表重建按稳定段身份恢复选中（§6.B）；
     * **过滤复用核心语义**：搜索/状态筛选调用 `core.translation_visible_indexes`，
@@ -1724,7 +1729,6 @@ class WorkbenchView(QWidget):
         toolbar.addWidget(self.only_edited_box)
         toolbar.addWidget(self.only_issues_box)
         toolbar.addStretch(1)
-        toolbar.addWidget(self.review_selected_button)
         # ⚠️ Qt 布局坑（macOS + QSS 主题实测）：QHBoxLayout 给 QLabel / QCheckBox
         # 分配的槽位比控件自身的 sizeHint **窄**（复选框 110→99、"筛选"标签 24→22），
         # 于是两颗复选框互相压住 3px —— "只看人工修改"的末字被下一颗的方框盖住。
@@ -1747,7 +1751,8 @@ class WorkbenchView(QWidget):
             QAbstractItemView.EditTrigger.NoEditTriggers)
         self.segment_list.setShowGrid(False)
         self.segment_list.setWordWrap(False)
-        self.segment_list.setItemDelegate(style_module.RowDelegate(self.segment_list))
+        self.row_delegate = segment_editor.WorkbenchRowDelegate(self.segment_list)
+        self.segment_list.setItemDelegate(self.row_delegate)
         self.segment_list.verticalHeader().setVisible(False)
         self.segment_list.verticalHeader().setDefaultSectionSize(26)
         self.segment_list.horizontalHeader().setHighlightSections(False)
@@ -1758,6 +1763,10 @@ class WorkbenchView(QWidget):
             1, QHeaderView.ResizeMode.Stretch)
         self.segment_list.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.Stretch)
+        # 译文就地编辑：唯一的编辑框浮在表格上，跟着当前行走（见 segment_editor）。
+        self.inline_editor = segment_editor.InlineSegmentEditor(self.segment_list)
+        self._active_position = -1
+        segment_editor.install_repositioning(self.segment_list, self._place_inline_editor)
         self.segment_list.itemSelectionChanged.connect(self._selection_changed)
         self.segment_list.currentCellChanged.connect(
             lambda row, *_rest: self._row_selected(row))
@@ -1778,7 +1787,7 @@ class WorkbenchView(QWidget):
         self.next_button = _icon_button(QPushButton(i18n.tr('下一段')), "chevron-right")
         self.prev_button.clicked.connect(lambda: self._step(-1))
         self.next_button.clicked.connect(lambda: self._step(1))
-        self.discard_draft_button = _icon_button(QPushButton(i18n.tr('放弃草稿')), "x", "text-secondary")
+        self.discard_draft_button = QPushButton(i18n.tr('放弃修改'))
         self.discard_draft_button.setObjectName("ghostAction")
         self.discard_draft_button.setToolTip(
             i18n.tr('删除这段未提交的草稿，编辑器回到当前已提交的译文'))
@@ -1787,9 +1796,11 @@ class WorkbenchView(QWidget):
         self.copy_source_button = _icon_button(QPushButton(i18n.tr('复制原文到译文')), "copy", "text-secondary")
         self.copy_source_button.setObjectName("ghostAction")
         self.copy_source_button.clicked.connect(self._copy_source_to_target)
-        self.save_next_button = _icon_button(QPushButton(i18n.tr('保存并进入下一段')), "save", "text-secondary")
+        self.save_next_button = QPushButton(i18n.tr('保存并下一段'))
+        self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一段（⌘↩）'))
         self.save_next_button.clicked.connect(self.save_and_next)
-        self.submit_button = _icon_button(QPushButton(i18n.tr('保存并提交（⌘S）')), "save", "text-on-accent")
+        self.submit_button = QPushButton(i18n.tr('保存'))
+        self.submit_button.setToolTip(i18n.tr('保存并提交这一段（⌘S）'))
         self.submit_button.setObjectName("primaryAction")
         self.submit_button.clicked.connect(self._submit)
         self.retranslate_button = _icon_button(QPushButton(i18n.tr('重译本段')), "sparkles", "text-secondary")
@@ -1834,15 +1845,18 @@ class WorkbenchView(QWidget):
             lambda: self.reviewCurrentRequested.emit(self._current_index))
 
         nav_row = QHBoxLayout()
+        nav_row.setSpacing(theme_module.SPACE["xs"])
         nav_row.addWidget(self.prev_button)
         nav_row.addWidget(self.next_button)
         nav_row.addStretch(1)
 
-        edit_row = QHBoxLayout()
-        edit_row.addWidget(self.submit_button)
-        edit_row.addWidget(self.save_next_button)
-        edit_row.addWidget(self.copy_source_button)
-        edit_row.addWidget(self.discard_draft_button)
+        # 编辑框下面那一条：只在改过之后出现（未保存 / 放弃 / 保存并下一段 / 保存）。
+        self.target_edit = self.inline_editor.edit
+        self.target_edit.textChanged.connect(self._text_changed)
+        self.target_edit.commitAndNext.connect(self._commit_and_next)
+        self.target_edit.escaped.connect(self.segment_list.setFocus)
+        for button in (self.discard_draft_button, self.save_next_button, self.submit_button):
+            self.inline_editor.add_footer_button(button)
 
         # 段落事实：与设置页同一套"标签在左、值在右"的小表（此前是右对齐标签列，
         # 中文两字标签会浮在中间，值列起点还随标签长度跳）。
@@ -1858,59 +1872,59 @@ class WorkbenchView(QWidget):
             facts.addWidget(value, row_index, 1)
         facts.setColumnStretch(1, 1)
 
-        self.source_view = QPlainTextEdit()
-        self.source_view.setReadOnly(True)
-        self.source_view.setObjectName("sourceView")
-        self.source_view.setPlaceholderText(i18n.tr('原文'))
-        self.source_view.setMaximumHeight(120)
-        self.target_edit = QPlainTextEdit()
-        self.target_edit.setPlaceholderText(i18n.tr('译文（可直接编辑；切换段落或退出时自动保留草稿）'))
-        self.target_edit.textChanged.connect(self._text_changed)
+        # ---- 右侧操作栏 ------------------------------------------------------
+        # 译文只在中间改；右栏回答"对选中的段落能做什么、它现在怎么样"。按钮作用于
+        # 表格里选中的行：选一行时是这一段的全部操作，选多行时只留能批量做的（审校）。
+        for button in (self.review_button, self.review_selected_button, self.retranslate_button,
+                       self.copy_source_button, self.restore_button, self.exclude_button,
+                       self.structure_button, self.view_source_button):
+            button.setObjectName("panelAction")
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
+        self.selection_title = QLabel(i18n.tr('尚未选择段落'))
+        self.selection_title.setObjectName("cardTitle")
         inspector = Card()
         inspector_layout = QVBoxLayout(inspector)
         inspector_layout.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"],
                                             theme_module.SPACE["lg"], theme_module.SPACE["md"])
         inspector_layout.setSpacing(theme_module.SPACE["sm"])
+        title_row = QHBoxLayout()
+        title_row.addWidget(self.selection_title, 1)
+        title_row.addLayout(nav_row)
+        inspector_layout.addLayout(title_row)
         inspector_layout.addWidget(self.segment_status)
-        inspector_layout.addLayout(nav_row)
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('原文')))
-        inspector_layout.addWidget(self.source_view)
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('译文')))
-        inspector_layout.addWidget(self.target_edit, 1)
+        self.segment_status.setWordWrap(True)
 
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('编辑动作')))
-        edit_grid = QGridLayout()
-        edit_grid.setHorizontalSpacing(theme_module.SPACE["sm"])
-        edit_grid.setVerticalSpacing(theme_module.SPACE["sm"])
-        edit_grid.addWidget(self.submit_button, 0, 0, 1, 2)
-        edit_grid.addWidget(self.save_next_button, 1, 0)
-        edit_grid.addWidget(self.copy_source_button, 1, 1)
-        edit_grid.addWidget(self.discard_draft_button, 2, 0, 1, 2)
-        edit_grid.addWidget(self.restore_button, 3, 0, 1, 2)
-        inspector_layout.addLayout(edit_grid)
-
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('审校与段落')))
-        review_grid = QGridLayout()
-        review_grid.setHorizontalSpacing(theme_module.SPACE["sm"])
-        review_grid.setVerticalSpacing(theme_module.SPACE["sm"])
-        review_grid.addWidget(self.review_button, 0, 0)
-        review_grid.addWidget(self.retranslate_button, 0, 1)
-        review_grid.addWidget(self.exclude_button, 1, 0)
-        review_grid.addWidget(self.structure_button, 1, 1)
-        review_grid.addWidget(self.view_source_button, 2, 0, 1, 2)
-        inspector_layout.addLayout(review_grid)
-
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
-        inspector_layout.addLayout(facts)
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('检查项')))
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
+        for button in (self.review_button, self.review_selected_button,
+                       self.retranslate_button):
+            inspector_layout.addWidget(button)
+        # 只对单独一段有意义的部分：选多段时整组收起。
+        self.single_segment_section = QWidget()
+        single = QVBoxLayout(self.single_segment_section)
+        single.setContentsMargins(0, 0, 0, 0)
+        single.setSpacing(theme_module.SPACE["sm"])
+        single.addWidget(style_module.SectionLabel(i18n.tr('段落操作')))
+        for button in (self.copy_source_button, self.restore_button, self.exclude_button,
+                       self.structure_button, self.view_source_button):
+            single.addWidget(button)
+        single.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
+        single.addLayout(facts)
+        single.addWidget(style_module.SectionLabel(i18n.tr('检查项')))
         self.qa_view = QTextBrowser()
         # 检查项是只读的"报告面"，不是输入框：给它一个沉底面板样式，
         # 否则默认会画出一圈聚焦边框，看起来像可以打字。
         self.qa_view.setObjectName("qaView")
         self.qa_view.setOpenExternalLinks(True)
         self.qa_view.setMinimumHeight(70)
-        inspector_layout.addWidget(self.qa_view, 1)
+        single.addWidget(self.qa_view, 1)
+        inspector_layout.addWidget(self.single_segment_section, 1)
+        self.multi_hint = QLabel(i18n.tr('按住 ⇧ 或 ⌘ 点选可以多选；批量操作会作用于所有选中的段落。'))
+        self.multi_hint.setObjectName("hint")
+        self.multi_hint.setWordWrap(True)
+        self.multi_hint.setVisible(False)
+        inspector_layout.addWidget(self.multi_hint)
+        inspector_layout.addStretch(0)
 
         # 检查器的内容比小屏更高（实测 minimumSizeHint ≈609pt）：直接塞进 splitter 会把主窗口的
         # 最小高度顶到 902pt——在 1440×900 的 Mac 上（可用高度约 875pt）窗口装不下，窗口底部的
@@ -1931,7 +1945,7 @@ class WorkbenchView(QWidget):
         # 检查器 400（原 460）：它是**编辑当前一段**的面板，不该比段落列表还宽。
         # 旧值下窗口缩到 940 宽时 splitter 给出 [455, 460] —— 右侧比左侧还宽，
         # 而左侧正是用户要扫的段落表。列表给一个最小宽度，保证它先拿到空间。
-        translation_split.setSizes([720, 400])
+        translation_split.setSizes([860, 300])
         self.segment_list.setMinimumWidth(360)
         self.translation_split = translation_split
         self.inspector_scroll = inspector_scroll
@@ -2265,9 +2279,10 @@ class WorkbenchView(QWidget):
         layout.addWidget(header_card)
         layout.addLayout(body, 1)
 
+        # ⌘↩：编辑框里由编辑框自己接住（保存并进入下一段）；焦点在表格时是"下一段"。
         next_shortcut = QAction(i18n.tr('下一段'), self)
         next_shortcut.setShortcut(QKeySequence("Ctrl+Return"))
-        next_shortcut.triggered.connect(lambda: self._step(1))
+        next_shortcut.triggered.connect(self._commit_and_next)
         self.addAction(next_shortcut)
 
     # ================= 数据 =================
@@ -2678,6 +2693,9 @@ class WorkbenchView(QWidget):
         if self.segment_list.rowCount() != len(self._rows):
             self.segment_list.blockSignals(True)
             self._painted.clear()  # 下面会换成全新的空单元格，旧缓存不再对应屏幕内容
+            # 行全部重建：展开行要在选回当前段之后重新展开（位置可能变了）。
+            self._active_position = -1
+            self.row_delegate.active_row = -1
             self.segment_list.setRowCount(len(self._rows))
             for position, row in enumerate(self._rows):
                 self.segment_list.setItem(position, 0, QTableWidgetItem(""))
@@ -2693,9 +2711,14 @@ class WorkbenchView(QWidget):
                 target = 0 if self._rows else -1
             if target >= 0:
                 self.segment_list.selectRow(target)
+                # 选回的是同一格时 Qt 不发 currentCellChanged：展开行要自己补上。
+                self._row_selected(target)
+            else:
+                self._activate_position(-1)
             return
         for position, row in enumerate(self._rows):
             self._paint_row(position, row)
+        self._place_inline_editor()
 
     def _paint_row(self, position: int, row: adapter.SegmentRow) -> None:
         look = (current_theme(), i18n.language())
@@ -2719,7 +2742,8 @@ class WorkbenchView(QWidget):
             number.setText(number_text)
         number.setForeground(style_module.qcolor(_tone_color(tokens, tone)))
         number.setToolTip(i18n.tr_dynamic(row.status))
-        source_text = _elide(row.source, 160)
+        # 展开行显示整段原文（委托负责换行）；其余行一行一段。
+        source_text = row.source if position == self._active_position else _elide(row.source, 160)
         if source.text() != source_text:
             source.setText(source_text)
         target_text = _elide(row.draft_text if row.has_draft else row.target, 160)
@@ -3083,6 +3107,8 @@ class WorkbenchView(QWidget):
             self.exclude_button.setVisible(True)
             self.discard_draft_button.setVisible(False)
             self.restore_button.setVisible(False)
+            self._activate_position(-1)
+            self._sync_operation_panel()
             for action in self._structure_actions.values():
                 action.setEnabled(False)
             undo = adapter.structure_undo_info(self._state)
@@ -3096,15 +3122,17 @@ class WorkbenchView(QWidget):
         position = next((index for index, item in enumerate(self._rows)
                          if item.index == row.index), -1)
         self.submit_button.setEnabled(not row.excluded)
+        self.copy_source_button.setEnabled(not row.excluded)
         self.review_button.setEnabled(not row.excluded)
         self.retranslate_button.setEnabled(not row.excluded)
         self.exclude_button.setVisible(not row.excluded)
         self._sync_structure_menu(row)
         self.pdf_panel.set_segment(row.index)
-        self.discard_draft_button.setVisible(bool(row.has_draft))
         self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
-        parts = [f"段落 #{row.index + 1}",
-                 f"{position + 1}/{len(self._rows)}" if position >= 0 else "—",
+        self._sync_inline_footer()
+        self._sync_operation_panel()
+        # 段号已经在操作栏标题里（"第 N 段"），这一行只说位置与状态。
+        parts = [f"{position + 1}/{len(self._rows)}" if position >= 0 else "—",
                  row.status]
         if row.human_edited and row.status != "人工修改":
             parts.append("人工修改")
@@ -3168,8 +3196,10 @@ class WorkbenchView(QWidget):
 
     def _row_selected(self, position: int) -> None:
         if position < 0 or position >= len(self._rows):
+            self._activate_position(-1)
             return
         row = self._rows[position]
+        self._activate_position(-1 if row.excluded else position)
         if row.segment_uid == self._loaded_uid:
             # Same segment: the editor owns the text.  Refreshing the grid or the
             # facts must not reload it (that would clear the cursor, the undo
@@ -3196,11 +3226,6 @@ class WorkbenchView(QWidget):
 
         self._loading = True
         try:
-            self.source_view.setPlainText(source or "")
-            direction = Qt.LayoutDirection.RightToLeft \
-                if text_direction(source or "", language) == "rtl" \
-                else Qt.LayoutDirection.LeftToRight
-            self.source_view.setLayoutDirection(direction)
             if self.target_edit.toPlainText() != (target or ""):
                 self.target_edit.setPlainText(target or "")
             self.target_edit.setLayoutDirection(
@@ -3213,10 +3238,92 @@ class WorkbenchView(QWidget):
         self._dirty = False
 
     def _text_changed(self) -> None:
+        self._place_inline_editor()
         if self._loading:
             return
         self._dirty = True
+        self._sync_inline_footer()
         self._autosave.start()
+
+    # ---- 就地编辑：当前行展开、编辑框跟随 ----------------------------------
+    def _activate_position(self, position: int) -> None:
+        """把网格里的第 ``position`` 行设为展开的编辑行（-1 = 收起）。"""
+        previous = self._active_position
+        if previous == position:
+            self._place_inline_editor()
+            return
+        self._active_position = position
+        self.row_delegate.active_row = position
+        if 0 <= previous < self.segment_list.rowCount():
+            self.segment_list.setRowHeight(previous, segment_editor.ROW_HEIGHT)
+            self._painted.pop(previous, None)
+            if previous < len(self._rows):
+                self._paint_row(previous, self._rows[previous])
+        if 0 <= position < len(self._rows):
+            self._painted.pop(position, None)
+            self._paint_row(position, self._rows[position])
+        self._place_inline_editor()
+
+    def _place_inline_editor(self) -> None:
+        """按当前行的单元格位置摆放编辑框，并让这一行刚好容下原文与译文。"""
+        editor = self.inline_editor
+        position = self._active_position
+        if not (0 <= position < self.segment_list.rowCount()) or position >= len(self._rows):
+            editor.hide()
+            return
+        table = self.segment_list
+        source_width = table.columnWidth(1)
+        target_width = table.columnWidth(2)
+        footer = segment_editor.FOOTER_HEIGHT if editor.footer.isVisibleTo(editor) else 0
+        cap = max(160, int(table.viewport().height() * 0.6))
+        wanted = max(segment_editor.source_height(table, self._rows[position].source,
+                                                  source_width),
+                     editor.editor_height(target_width - 8) + footer + 8,
+                     segment_editor.ROW_HEIGHT)
+        height = min(wanted, cap)
+        if table.rowHeight(position) != height:
+            table.setRowHeight(position, height)
+        rect = table.visualRect(table.model().index(position, 2))
+        if not rect.isValid() or rect.bottom() < 0 or rect.top() > table.viewport().height():
+            editor.hide()
+            return
+        editor.setGeometry(rect.adjusted(4, 4, -4, -4))
+        if not editor.isVisible():
+            editor.show()
+            editor.raise_()
+
+    def _sync_inline_footer(self) -> None:
+        """改过（或有草稿）才出现保存条；没改时编辑框下面什么都没有。"""
+        row = next((item for item in self._all_rows
+                    if item.index == self._current_index), None)
+        has_draft = bool(row and row.has_draft)
+        stale = bool(row and row.stale_draft)
+        visible = bool(self._dirty or has_draft)
+        if stale:
+            text = i18n.tr('⚠ 草稿基于旧译文')
+        elif visible:
+            text = i18n.tr('● 未保存')
+        else:
+            text = ""
+        self.inline_editor.state_label.setText(text)
+        self.inline_editor.state_label.setProperty("error", "true" if stale else "false")
+        style_module.repolish(self.inline_editor.state_label)
+        self.discard_draft_button.setVisible(has_draft)
+        was = self.inline_editor.footer.isVisibleTo(self.inline_editor)
+        self.inline_editor.set_footer_visible(visible)
+        if was != visible:
+            self._place_inline_editor()
+
+    def _commit_and_next(self) -> None:
+        """⌘↩：改过就保存并进入下一段，没改就只是下一段。"""
+        row = next((item for item in self._all_rows
+                    if item.index == self._current_index), None)
+        if self._dirty or (row is not None and row.has_draft):
+            self.save_and_next()
+        else:
+            self._step(1)
+        if self._active_position >= 0:
+            self.target_edit.setFocus()
 
     def flush_draft(self) -> bool:
         """Persist the uncommitted editor text through the core's draft file."""
@@ -3261,9 +3368,40 @@ class WorkbenchView(QWidget):
 
     def _selection_changed(self) -> None:
         indexes = self.selected_indexes()
-        self.review_selected_button.setEnabled(len(indexes) > 1)
+        multiple = len(indexes) > 1
+        self.review_selected_button.setEnabled(multiple)
         self.review_selected_button.setText(
-            f"审校所选 {len(indexes)} 段" if len(indexes) > 1 else "审校所选段落")
+            i18n.tr('审校所选 {v0} 段', v0=len(indexes)) if multiple
+            else i18n.tr('审校所选段落'))
+        self._sync_operation_panel()
+
+    def _sync_operation_panel(self) -> None:
+        """右侧操作栏跟着选区走：选一段 = 这一段的全部操作；选多段 = 只留批量审校。"""
+        indexes = self.selected_indexes()
+        multiple = len(indexes) > 1
+        self.review_selected_button.setVisible(multiple)
+        self.review_button.setVisible(not multiple)
+        self.single_segment_section.setVisible(not multiple)
+        self.segment_status.setVisible(not multiple)
+        self.multi_hint.setVisible(multiple)
+        for button in (self.retranslate_button, self.copy_source_button,
+                       self.structure_button):
+            button.setVisible(not multiple)
+        if multiple:
+            self.selection_title.setText(i18n.tr('已选 {v0} 段', v0=len(indexes)))
+            self.exclude_button.setVisible(False)
+            self.restore_button.setVisible(False)
+            self.view_source_button.setVisible(False)
+        elif 0 <= self._current_index:
+            self.selection_title.setText(i18n.tr('第 {v0} 段', v0=self._current_index + 1))
+            row = next((item for item in self._all_rows
+                        if item.index == self._current_index), None)
+            if row is not None:
+                self.exclude_button.setVisible(not row.excluded)
+                self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
+            self.view_source_button.setVisible(bool(getattr(self, "_pdf_ok", False)))
+        else:
+            self.selection_title.setText(i18n.tr('尚未选择段落'))
 
     def _copy_source_to_target(self) -> None:
         """把原文放进编辑器（只改未提交内容，不写业务真值）。"""
@@ -3304,7 +3442,17 @@ class WorkbenchView(QWidget):
                          if row.index == self._current_index), -1)
         target = position + delta
         if 0 <= target < len(self._rows):
-            self.segment_list.selectRow(target)
+            self._select_only(target)
+
+    def _select_only(self, position: int) -> None:
+        """选中这一行、且只选它。
+
+        扩展多选模式下 ``selectRow`` 会**追加**到现有选区：逐段前进时选区越滚越大，
+        右侧操作栏就会误以为用户多选了几段。
+        """
+        self.segment_list.setCurrentCell(position, 0)
+        self.segment_list.clearSelection()
+        self.segment_list.selectRow(position)
 
     def _submit(self) -> None:
         if self._current_index < 0:
@@ -3329,7 +3477,7 @@ class WorkbenchView(QWidget):
     def select_segment(self, index: int) -> bool:
         for position, row in enumerate(self._rows):
             if row.index == index:
-                self.segment_list.selectRow(position)
+                self._select_only(position)
                 return True
         return False
 

@@ -36,7 +36,7 @@
 | 提取：**提取报告、原页 PDF 对照/高亮** | `extraction_report`、`pdf_preview`、`ui/pdf_view.py` | 无 | ❌ |
 | 提取：**来源重扫**（改 OCR 参数后重扫） | `source_rescan_panel`、`rescan_pdf_source` | 无 | ❌ |
 | 提取：**来源质量问题确认** | `confirm_source_quality_segment` | 只能"排除"该段 | 🟡 |
-| 译文编辑：网格、编辑器、保存并下一段、复制原文、重译、搜索/筛选 | CAT 网格 + 检查器 | `WorkbenchView` | ✅ |
+| 译文编辑：网格、编辑器、保存并下一段、复制原文、重译、搜索/筛选 | 中央网格**就地编辑**（唯一编辑区，见 [agent-inspector-workspace.md](../agent-inspector-workspace.md)） | `WorkbenchView`：当前行在网格里展开编辑（`segment_editor.InlineSegmentEditor`），右侧为作用于选中行的操作栏 | ✅（2026-10-11 起；此前为"右侧编辑卡"，属于回退，曾被误标为 ✅） |
 | 译文：段落**排除/恢复** | ✅ | ✅ | ✅ |
 | 译文：段落**拆分/合并/插入/删除/改原文** | `mutate_translation_segments` 全部操作 | 只接了 `exclude`/`include` | ❌ |
 | 译文：**结构撤销、译文版本恢复** | `undo_translation_segment_structure`、`restore_translation_edit` | 无 | ❌ |
