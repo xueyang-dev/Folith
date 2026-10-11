@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""验收包生成器：把候选 DMG + 三份文档 + 一页 README 收进一个可以直接发给测试者的目录。
+"""验收包生成器：把候选 DMG、验收文档与 README 收进测试者目录。
 
 用法：
 
@@ -35,6 +35,8 @@ DOC_FILES = {
     "acceptance-quickstart.md": "acceptance-quickstart.md",
     "manual-acceptance.md": "manual-acceptance.md",
     "status.md": "status.md",
+    "freeze-0.5.0.md": "freeze-0.5.0.md",
+    "release-notes.md": "release-notes.md",
 }
 README_NAME = "README-先读我.md"
 MANIFEST_NAME = "manifest.json"
@@ -115,6 +117,7 @@ shasum -a 256 {dmg_name}
 
 打开 `acceptance-quickstart.md`（一页速览）：里面是**优先四项**、**7 条强制人工项**和**回传模板**。
 详细步骤在 `manual-acceptance.md`。当前状态与全部证据入口在 `status.md`。
+本轮范围与工程核验在 `freeze-0.5.0.md`，候选发行说明在 `release-notes.md`。
 
 **请用人工键鼠操作，不要挂载 AX 代理 / Computer Use**：macOS 上外部辅助功能扫描会触发上游 Qt 缺陷
 （QTBUG-149612）导致进程原生崩溃，这与本候选无关，且实测没有任何应用侧开关能挡住它。人工键鼠不受影响。

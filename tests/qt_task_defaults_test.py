@@ -27,14 +27,14 @@ def test_selftest_local_ocr_is_explicit_and_preserves_other_task_choices(monkeyp
     from folith.qt import adapter, selftest
     monkeypatch.setenv("FOLITH_QT_SELFTEST_BASE_URL", "http://127.0.0.1:9/v1")
     monkeypatch.delenv("FOLITH_QT_SELFTEST_OCR", raising=False)
-    base = adapter.EngineConfig(ocr_backend="online", deliver_epub=True, deliver_tmx=True)
+    base = adapter.EngineConfig(ocr_backend="online", deliver_epub=True, deliver_terms_xlsx=False)
     assert selftest.engine_from_env(adapter, base).ocr_backend == "online"
     monkeypatch.setenv("FOLITH_QT_SELFTEST_OCR", "1")
     selected = selftest.engine_from_env(adapter, base)
     assert selected.ocr_backend == "tesseract"
     assert selected.deliver_epub is False
     assert selected.deliver_original_pdf is False
-    assert selected.deliver_tmx is True
+    assert selected.deliver_terms_xlsx is False
     assert base.ocr_backend == "online"
 from PySide6.QtWidgets import QApplication  # noqa: E402
 

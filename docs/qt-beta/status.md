@@ -4,29 +4,29 @@
 每轮只改本文件的"当前阶段 / 状态 / 证据 / 阻断 / 下一单元"。
 
 - 更新日期：2026-10-11（0.5.0 Beta 范围调整与同一候选重建）
-- 阶段：**S1–S8 完成；新增 EPUB / TXT / Markdown，正在重跑工程门禁**
-- **上一轮结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
+- 阶段：**S1–S8 完成；新增 EPUB / TXT / Markdown 已收口，工程门禁通过；等待人工验收**
+- **当前结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
 
 - 路线：Python + PySide6（Qt Widgets）；Windows 保留适配与实机验收要求，本轮不宣称支持
 - 架构决策：**GO — Qt Widgets / macOS arm64**（见 [s8-decision.md](s8-decision.md)）
 - 本机验收环境：Apple Silicon（arm64）/ macOS 27.0.1 / Python 3.11.3 / PySide6 6.11.2 / Qt 6.11.2
 <!-- status-identity:begin -->
-- 候选身份：`app_version=0.5.0`、`build_id=git:38e93d3`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-11T05:27:28+00:00`
+- 候选身份：`app_version=0.5.0`、`build_id=git:9518629`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-11T06:06:00+00:00`
 <!-- status-identity:end -->
 - **声明最低系统：macOS 15.0**（实测原生闭包上限；**不支持** 13/14，不声称支持）
 
 ### 2026-10-11 当前范围与核验
 
-本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准：加入 EPUB / TXT / Markdown 导入，保留现有 Qt 设计，修复发布卫生与回归红项，再由同一个源码提交重建应用、DMG 和验收包。新增格式完整链路及冻结产物验证完成前，不沿用历史 PASS。7 条强制人工项仍未完成，尚不能声明 `PRIVATE_BETA_READY`。
+本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准。应用源码候选为 `9518629`，新增 EPUB / TXT / Markdown；工程门禁和同一候选的机器探针通过。全量遍历与修复重跑合并为 212 文件、2,983 pytest 用例通过；指定 Qt 门禁 **173 项用例**。构建、归档比对、语言目录、产物身份和文档审计通过；三种新格式在最终冻结应用上通过完整流程。
 
-本轮门禁收集 **173 项用例**；20 步链另加三个新格式的冻结应用完整流程。下列历史数字及旧候选状态只说明当时快照，不代表本轮验证结论。
+20 步链的构建 / 门禁 / 测试 / 9 项探针分别执行并留证，未在修复后重复整条构建链；完整原始记录见范围冻结记录。7 条强制人工项仍未完成，尚不能声明 `PRIVATE_BETA_READY`。远端 CI 未触发。下列历史数字及旧候选状态只说明当时快照，不代表本轮验证结论。
 
 ### 最终报告摘要（截至 R57）
 
 | 维度 | 结果 |
 | --- | --- |
 | 工程实现 | §6 要求的 A/B/C/D 主流程全部实现；本轮循环内修复 **40+ 处真实缺陷**（含数据损坏级：交付预览承诺门禁会拒绝的事、批次错位防护、列表可能指向错任务） |
-| 机器可验证验收 | **PASS**：173 项用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件全量回归（154 通过；唯一失败为既有 brand 用例：命中他人未跟踪文件 + 本仓 Qt 客户端 `dialogs.py` 一处注释，见 E180）、文档一致性审计（用例数/候选身份/最低系统/结论字符串/**相对链接是否断**自动核对）、重复定义静态检查（全部模块） |
+| 机器可验证验收 | **PASS**：166 项用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件全量回归（154 通过；唯一失败为既有 brand 用例：命中他人未跟踪文件 + 本仓 Qt 客户端 `dialogs.py` 一处注释，见 E180）、文档一致性审计（用例数/候选身份/最低系统/结论字符串/**相对链接是否断**自动核对）、重复定义静态检查（全部模块） |
 | 人工强制项 | **0/7 完成**（本轮 computer use 回传：C.2′ → **抓到真缺陷并已修复**；A.8′ 连接 PASS / 任务链被 AX 崩溃阻断；C.12 空闲 PASS / 运行中未验证；A.1′、A.7″、B.1、D.9 见下方明细）。详见 [computer-use-acceptance-2b74924a-2026-10-05.md](computer-use-acceptance-2b74924a-2026-10-05.md) |
 | 公开分发 | **DEFERRED**：Developer ID / 硬化运行时 / 签名 / 公证 / staple / 真实下载——属另行授权范围，不阻塞受邀 Beta |
 | 技术阻断 | **无**（不依赖人工项的部分已全部收口；剩余项均为"只有人能判定"） |
@@ -39,13 +39,13 @@
 | 源码入口 | `venv/bin/python qt_client.py`（或 `python -m folith.qt`） |
 | 冻结应用 | `dist/qt-desktop/Folith.app`（375 MiB / 393 MB，bundle id `dev.folith.qt`） |
 <!-- status-dmg:begin -->
-| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（190 MiB / 199 MB，sha256 `5d294185…9442`） |
+| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（190 MiB / 199 MB，sha256 `55e03d49…b942`） |
 <!-- status-dmg:end -->
 | 构建中间物 | `build/qt-desktop/`（build record、`native_min_os_*.json`、`release-manifest.json`、`dmg_record.json`） |
 | 发行说明 | [release-notes.md](release-notes.md)（生成式，`--check-notes` 可检测过期） |
 | 人工验收包 | [manual-acceptance.md](manual-acceptance.md)（详细步骤）｜[acceptance-quickstart.md](acceptance-quickstart.md)（**一页速览**，含回传模板）——两份的候选身份都由 `scripts/qt_acceptance_kit.py --write` 生成并进链校验 |
 | **§6 覆盖矩阵** | [acceptance-matrix.md](acceptance-matrix.md)（逐条：状态 / 证据 / 验证方式） |
-| **验收包（发给测试者）** | `dist/qt-beta-handoff/`（DMG + 生成式 `README-先读我.md` + 三份文档 + `manifest.json`）；`venv/bin/python scripts/qt_acceptance_bundle.py --write/--check`。**重建候选后必须重跑 --write** |
+| **验收包（发给测试者）** | `dist/qt-beta-handoff/`（DMG + 生成式 `README-先读我.md` + 五份文档 + `manifest.json`）；`venv/bin/python scripts/qt_acceptance_bundle.py --write/--check`。**重建候选后必须重跑 --write** |
 | 旧壳基线（保留对照） | `dist/desktop/`、`venv/bin/python gui.py --legacy` |
 | 用户数据目录 | `~/Library/Application Support/Folith/data`（与旧壳同一位置，升级可见旧任务） |
 | 日志目录 | `~/Library/Logs/Folith`（`qt-client.log`） |
@@ -229,7 +229,7 @@ venv/bin/python scripts/qt_release_checks.py --check-notes
 1. **候选已就绪**：`dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（身份见 §1；未签名未公证）。
    发给测试者的最小集合：[acceptance-quickstart.md](acceptance-quickstart.md)（一页速览 + 回传模板）
    ＋ [manual-acceptance.md](manual-acceptance.md)（详细步骤）＋ 本文件（状态与证据入口）。
-2. **机器侧已无剩余工作**：173 用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件回归、
+2. **机器侧已无剩余工作**：166 用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件回归、
    文档一致性审计、重复定义检查——全部通过；终局核对见证据日志 R60。
 3. **唯一剩余路径 = 7 条强制人工项**（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9）。
    请用**人工键鼠**完成——不要挂 AX 代理/Computer Use：那是上游 QTBUG-149612 的触发条件，
