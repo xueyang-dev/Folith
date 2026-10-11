@@ -359,6 +359,7 @@ class _TaskCard(Card):
         self.time_label.setToolTip((row.updated_at or "").replace("T", " ")[:16])
         unreadable = bool(str(getattr(row, "error", "") or "").strip())
         paper = components.DocThumb(66, 86, faded=unreadable)
+        self.paper = paper
         thumb_layout.addWidget(self.badge, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         thumb_layout.addWidget(self.time_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         thumb_layout.addWidget(paper, 0, 0, 2, 3, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
@@ -481,6 +482,8 @@ class HomeView(QWidget):
     openRequested = Signal(str)
     deleteRequested = Signal(str)
     refreshRequested = Signal()
+    #: 侧栏「任务库」：从项目页 / 术语页回到任务库。
+    tasksRequested = Signal()
     manageProjectsRequested = Signal()
     libraryRequested = Signal()
     moveToProjectRequested = Signal(list)
@@ -523,17 +526,20 @@ class HomeView(QWidget):
             style_module.fit_button(button, max_width=self.SIDEBAR_WIDTH - 24)
             return button
 
-        # 「任务库」就是当前这一页：常亮的导航项（不是按钮），让侧栏有"你在这里"的锚点。
+        # 侧栏是窗口级的导航：任务库 / 项目 / 术语与翻译记忆三页共用（窗口通过
+        # :meth:`take_sidebar` 把它放到页面栈左侧），当前页由 :meth:`set_current_nav` 点亮。
         self.tasks_button = nav_button(i18n.tr('任务库'), "projects", checkable=True)
         self.tasks_button.setChecked(True)
-        self.tasks_button.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.tasks_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.manage_projects_button = nav_button(i18n.tr('项目…'), "folder")
+        self.tasks_button.clicked.connect(self.tasksRequested.emit)
+        self.manage_projects_button = nav_button(i18n.tr('项目'), "folder", checkable=True)
         self.manage_projects_button.setToolTip(i18n.tr('新建、重命名、归档项目，管理项目知识'))
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
-        self.library_button = nav_button(i18n.tr('术语与记忆…'), "termbase")
+        self.library_button = nav_button(i18n.tr('术语与翻译记忆'), "termbase", checkable=True)
         self.library_button.setToolTip(i18n.tr('跨任务浏览术语与翻译记忆，并审核 Agent 发现的候选词条'))
         self.library_button.clicked.connect(self.libraryRequested.emit)
+        self._nav_buttons = {"tasks": self.tasks_button,
+                             "projects": self.manage_projects_button,
+                             "library": self.library_button}
 
         # 设置：侧栏左下角的圆形按钮（文案仍然是「设置…」，作为无障碍名称与提示）。
         self.settings_button = QToolButton()
@@ -599,6 +605,7 @@ class HomeView(QWidget):
         footer_layout.addLayout(brand_row)
 
         sidebar = QWidget()
+        self.sidebar = sidebar
         sidebar.setObjectName("sidebar")
         # Golden Gate：侧栏贴满窗口左侧（边到边），右侧一条发丝线。宽 240：底部的品牌行
         # 要放下 48px 高的字标（≈174px）和 30px 的圆形设置按钮。
@@ -857,6 +864,40 @@ class HomeView(QWidget):
         shell.setSpacing(0)
         shell.addWidget(sidebar)
         shell.addWidget(main, 1)
+        self._shell = shell
+
+        # 卡片缩略图：后台读源文件生成第一页 / 封面，好了以后换到对应卡片上。
+        from . import thumbnails
+
+        self._previews = thumbnails.loader()
+        self._previews.ready.connect(self._preview_ready)
+
+    # -- 侧栏（窗口级导航） --------------------------------------------------
+    def take_sidebar(self) -> QWidget:
+        """把侧栏交给窗口，放在整个页面栈左侧：任务库、项目、术语页都看得到它。"""
+        self._shell.removeWidget(self.sidebar)
+        return self.sidebar
+
+    def set_current_nav(self, name: str) -> None:
+        """点亮当前页对应的侧栏项（``tasks`` / ``projects`` / ``library``）。"""
+        for key, button in self._nav_buttons.items():
+            button.setChecked(key == name)
+
+    # -- 卡片缩略图 ---------------------------------------------------------
+    def _request_preview(self, job_id: str, filename: str, paper) -> None:
+        image = self._previews.request(job_id, adapter.source_path(job_id), filename)
+        if image is not None:
+            paper.set_image(image)
+
+    def _preview_ready(self, job_id: str) -> None:
+        row = next((item for item in self._rows if item.job_id == job_id), None)
+        if row is None:
+            return
+        card = self._cards.get(job_id)
+        if card is not None:
+            self._request_preview(job_id, row.filename, card.paper)
+        if getattr(self, "_continue_job_id", "") == job_id:
+            self._request_preview(job_id, row.filename, self.continue_paper)
 
     # -- 继续上次的工作 ----------------------------------------------------
     def _build_continue_card(self) -> Card:
@@ -866,7 +907,8 @@ class HomeView(QWidget):
         row.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
                                theme_module.SPACE["xl"], theme_module.SPACE["lg"])
         row.setSpacing(theme_module.SPACE["xl"])
-        row.addWidget(components.DocThumb(80, 104), 0, Qt.AlignmentFlag.AlignVCenter)
+        self.continue_paper = components.DocThumb(80, 104)
+        row.addWidget(self.continue_paper, 0, Qt.AlignmentFlag.AlignVCenter)
         text = QVBoxLayout()
         text.setSpacing(theme_module.SPACE["xs"])
         eyebrow = QLabel(i18n.tr('继续上次的工作'))
@@ -919,7 +961,10 @@ class HomeView(QWidget):
         if not show:
             self._continue_job_id = ""
             return
+        if self._continue_job_id != row.job_id:
+            self.continue_paper.set_image(None)
         self._continue_job_id = row.job_id
+        self._request_preview(row.job_id, row.filename, self.continue_paper)
         self.continue_title.setText(row.title)
         self.continue_title.setToolTip(row.title)
         meta = [part for part in (
@@ -998,6 +1043,8 @@ class HomeView(QWidget):
         target = "" if current == project_id else project_id
         index = self.project_filter.findData(target)
         self.project_filter.setCurrentIndex(max(index, 0))
+        # 侧栏在项目页 / 术语页也可见：点项目 = 回到任务库看这个项目的任务。
+        self.tasksRequested.emit()
 
     def _sync_project_nav(self, *_args) -> None:
         current = self.project_filter.currentData() or ""
@@ -1275,6 +1322,7 @@ class HomeView(QWidget):
                 card.navigate.connect(self._navigate_cards)
                 grid.addWidget(card, position // columns, position % columns)
                 self._cards[row.job_id] = card
+                self._request_preview(row.job_id, row.filename, card.paper)
             for column in range(columns):
                 grid.setColumnStretch(column, 1)
             section_layout.addLayout(grid)

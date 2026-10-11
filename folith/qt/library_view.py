@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
+    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
@@ -65,6 +65,9 @@ class LibraryView(QWidget):
         self.subtitle.setObjectName("hint")
         self.back_button = QPushButton(i18n.tr('返回任务列表'))
         self.back_button.clicked.connect(self.backRequested.emit)
+        # 窗口里左侧有共用侧栏（「任务库」就是返回入口），这里不再重复一个返回按钮；
+        # 控件保留，单独使用本页时仍可显示。
+        self.back_button.setVisible(False)
         self.refresh_button = QPushButton(i18n.tr('刷新'))
         self.refresh_button.clicked.connect(lambda: self.refreshRequested.emit(self.tm_project_id()))
         self.new_term_button = QPushButton(i18n.tr('添加术语…'))
@@ -126,7 +129,9 @@ class LibraryView(QWidget):
         cand.setContentsMargins(0, 8, 0, 0)
         cand.addLayout(filters)
         cand.addWidget(self.cand_quick)
-        cand.addWidget(self.cand_empty)
+        # 没有候选时表格隐藏，多出的高度给空状态说明，而不是把筛选分段条拉高。
+        self.cand_quick.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        cand.addWidget(self.cand_empty, 1)
         cand.addWidget(self.cand_table, 1)
         cand.addWidget(self.cand_more)
         cand.addWidget(self.cand_detail)

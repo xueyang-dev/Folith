@@ -11,7 +11,7 @@ import dataclasses
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
@@ -1336,14 +1336,18 @@ class ProjectKnowledgeDialog(QDialog):
         self.reload()
 
 
-class ProjectDialog(QDialog):
-    """项目管理：新建 / 重命名 / 归档 / 删除（保护由核心执行）。"""
+class ProjectsPanel(QWidget):
+    """项目管理：新建 / 重命名 / 归档 / 删除（保护由核心执行）。
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    窗口把它作为一页放在共用侧栏右边；:class:`ProjectDialog` 是同一内容的对话框外壳。
+    """
+
+    #: 项目被新建、改名、归档或删除之后发出（窗口据此刷新任务库与侧栏的项目列表）。
+    projectsChanged = Signal()
+
+    def __init__(self, parent: QWidget | None = None, *,
+                 margins: tuple[int, int, int, int] = (0, 0, 0, 0)) -> None:
         super().__init__(parent)
-        self.setWindowTitle(i18n.tr('项目'))
-        self.setMinimumWidth(620)
-        self.setMinimumHeight(420)
         self.changed = False
 
         title = QLabel(i18n.tr('项目'))
@@ -1423,22 +1427,20 @@ class ProjectDialog(QDialog):
             memory_actions.addWidget(button)
         memory_actions.addStretch(1)
 
-        close_row = QHBoxLayout()
-        close_row.addWidget(self.status, 1)
-        close_button = QPushButton(i18n.tr('关闭'))
-        close_button.clicked.connect(self.accept)
-        close_row.addWidget(close_button)
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setContentsMargins(*margins)
         layout.setSpacing(10)
         layout.addWidget(title)
         layout.addWidget(hint)
         layout.addWidget(self.table, 1)
         layout.addLayout(actions)
         layout.addLayout(memory_actions)
-        layout.addLayout(close_row)
+        layout.addWidget(self.status)
         self.reload()
+
+    def _mark_changed(self) -> None:
+        self.changed = True
+        self.projectsChanged.emit()
 
     # -- data -------------------------------------------------------------
     def reload(self) -> None:
@@ -1561,7 +1563,7 @@ class ProjectDialog(QDialog):
         except adapter.AdapterError as exc:
             self._note(f"无法创建项目：{exc}")
             return
-        self.changed = True
+        self._mark_changed()
         self.reload()
         self._note(f"已创建项目「{project.get('name')}」")
 
@@ -1577,7 +1579,7 @@ class ProjectDialog(QDialog):
         except adapter.AdapterError as exc:
             self._note(f"无法重命名：{exc}")
             return
-        self.changed = True
+        self._mark_changed()
         self.reload()
         self._note(f"已重命名为「{name.strip()}」")
 
@@ -1591,7 +1593,7 @@ class ProjectDialog(QDialog):
         except adapter.AdapterError as exc:
             self._note(f"无法更改归档状态：{exc}")
             return
-        self.changed = True
+        self._mark_changed()
         self.reload()
         self._note(i18n.tr("已归档「{v0}」", v0=project["name"]) if target
                    else i18n.tr("已恢复「{v0}」", v0=project["name"]))
@@ -1615,9 +1617,40 @@ class ProjectDialog(QDialog):
         except adapter.AdapterError as exc:
             self._note(f"无法删除：{exc}")
             return
-        self.changed = True
+        self._mark_changed()
         self.reload()
         backups = adapter.project_backups()
         self._note(
             i18n.tr("已删除项目「{v0}」；删除前已写入可恢复备份", v0=name)
             + (i18n.tr("（{v0}）", v0=backups[-1]) if backups else ""))
+
+
+class ProjectDialog(QDialog):
+    """项目管理的对话框外壳：内容就是 :class:`ProjectsPanel`。
+
+    窗口里项目管理已经是带侧栏的一页；对话框形态保留给单独调用（与既有用例）。
+    面板的属性与方法（``table``、``reload``、``changed``……）直接从对话框上可用。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('项目'))
+        self.setMinimumWidth(620)
+        self.setMinimumHeight(420)
+        self.panel = ProjectsPanel(self)
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_button = QPushButton(i18n.tr('关闭'))
+        close_button.clicked.connect(self.accept)
+        close_row.addWidget(close_button)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+        layout.addWidget(self.panel, 1)
+        layout.addLayout(close_row)
+
+    def __getattr__(self, name: str):
+        panel = self.__dict__.get("panel")
+        if panel is None:
+            raise AttributeError(name)
+        return getattr(panel, name)

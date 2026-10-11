@@ -23,7 +23,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QMainWindow, QSizePolicy, QStackedWidget, QWidget,
+    QApplication, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
 )
 
 from folith.desktop import paths as desktop_paths
@@ -38,7 +38,7 @@ from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
 from .dialogs import (DiagnosticsDialog, EngineDialog,
-                      ProjectDialog, ProjectPickerDialog)
+                      ProjectPickerDialog, ProjectsPanel)
 from .library_view import LibraryView
 from .views import HomeView, WorkbenchView
 from .workers import TaskRunner
@@ -136,9 +136,22 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.workbench)
         self.library = LibraryView(self)
         self.stack.addWidget(self.library)
-        self.setCentralWidget(self.stack)
+        # 项目管理是一页（不再是对话框），与任务库、术语页共用左侧侧栏。
+        self.projects = ProjectsPanel(self, margins=(20, 12, 20, 12))
+        self.stack.addWidget(self.projects)
+        # 侧栏属于窗口而不是任务库：任务库 / 项目 / 术语页切换时它一直在左侧，
+        # 「任务库」导航项就是返回入口。进入工作台时收起，把宽度留给段落网格。
+        self.sidebar = self.home.take_sidebar()
+        shell = QWidget(self)
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        shell_layout.addWidget(self.sidebar)
+        shell_layout.addWidget(self.stack, 1)
+        self.setCentralWidget(shell)
+        self.stack.currentChanged.connect(self._sync_sidebar)
 
-        # 状态栏：左 = 瞬时消息，右 = 常驻属性。用 style.StatusBar（不是裸 QStatusBar）：
+        # 状态栏只显示瞬时消息。用 style.StatusBar（不是裸 QStatusBar）：
         # Qt 会把 `showMessage` 的临时消息**画在状态栏自己的 paintEvent 上**（一条整宽带），
         # 而"显示消息时隐藏普通控件"只对已经在屏幕上的控件生效——启动时先 showMessage
         # 再 show() 窗口，左侧控件会被重新显示，于是两条文本**叠印在同一 x 上**
@@ -146,24 +159,9 @@ class MainWindow(QMainWindow):
         # QLabel，宽度由布局决定，结构上不可能重叠；currentMessage() 语义不变。
         self.status = style_module.StatusBar(self)
         self.setStatusBar(self.status)
-        self.data_label = style_module.ElideLabel(
-            "", mode=Qt.TextElideMode.ElideMiddle)
-        self.data_label.setObjectName("statusPath")
-        # 常驻区的宽度策略与左侧消息标签**相反**：消息要"占满剩余宽度"（Ignored），
-        # 路径要"按自己的内容、不超过上限"（Preferred + 上限）。上限保证窄窗时它
-        # 不会把瞬时消息挤没；溢出由 ElideLabel 中间省略，完整路径在悬停提示里。
-        self.data_label.setSizePolicy(QSizePolicy.Policy.Preferred,
-                                      QSizePolicy.Policy.Preferred)
-        self.data_label.setMaximumWidth(340)
-        self.data_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._set_data_label()
-        # 模型状态**不再**出现在底栏：它同时出现在顶部提示条与侧栏引擎块里，
-        # 而底栏是"刚刚发生了什么"的位置，不是"当前配置是什么"的位置。
-        self.status.addPermanentWidget(self.data_label)
-        # 让状态栏知道哪一条是"常驻属性"：瞬时消息若已经含了同样的路径就把它收起，
-        # 否则同一句话会在底栏左右各印一遍（见 StatusBar._sync_permanent）。
-        self.status.set_permanent_widget(self.data_label)
+        # 底栏只放"刚刚发生了什么"：不再常驻数据目录路径（它在「诊断」里，并可在
+        # Finder 中显示），没有消息时整条收起，窗口最下端不留一条空栏。
+        self.status.set_auto_hide(True)
 
         self._current_job_id = ""
         self._rows_cache: tuple | None = None  # (job_id+drafts 签名, state 对象, rows)
@@ -218,6 +216,8 @@ class MainWindow(QMainWindow):
         self.home.deleteRequested.connect(self.delete_jobs_requested)
         self.home.refreshRequested.connect(self.refresh_home)
         self.home.manageProjectsRequested.connect(self.manage_projects)
+        self.home.tasksRequested.connect(self._nav_tasks)
+        self.projects.projectsChanged.connect(self._projects_changed)
         self.home.libraryRequested.connect(self.show_library)
         self.library.backRequested.connect(self.show_home)
         self.library.refreshRequested.connect(self.refresh_library)
@@ -490,17 +490,6 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
 
     # ================= helpers =================
-    def _set_data_label(self) -> None:
-        """状态栏右侧的数据目录：整条路径**中间省略**，完整值放悬停提示。
-
-        长度不写死：`ElideLabel` 按布局实际分给它的宽度省略，窗口变窄时自动收，
-        所以它在任何窗口宽度下都不会去挤左边的瞬时消息（也读得出来是"在哪一段"）。
-        """
-        path = str(self.paths.data_dir)
-        self.data_label.setText(path)
-        self.data_label.setToolTip(
-            i18n.tr('数据目录：{v0}\n（可拖动选择并复制）', v0=path))
-
     def refresh_engine_label(self) -> None:
         """把引擎状态交给**唯一**的呈现处：侧栏底部的引擎块。
 
@@ -529,8 +518,8 @@ class MainWindow(QMainWindow):
         workbench = self.workbench
         states = {
             "import": True,
-            # 「任务列表」只有在任务页才有地方可去；已经在列表上时置灰。
-            "home": on_workbench,
+            # 「任务列表」在任务、项目、术语页都有地方可去；已经在列表上时置灰。
+            "home": self.stack.currentWidget() is not self.home,
             "settings": True,
             "close": True,
             "about": True,
@@ -652,6 +641,7 @@ class MainWindow(QMainWindow):
         self.workbench.flush_draft()
         self._current_job_id = ""
         self.stack.setCurrentWidget(self.library)
+        self._sync_sidebar()
         self.setWindowTitle(i18n.tr('Folith — 术语与翻译记忆'))
         self._sync_menu_state()
         self.refresh_library(self.library.tm_project_id())
@@ -723,6 +713,7 @@ class MainWindow(QMainWindow):
         self.workbench.flush_draft()
         self._current_job_id = ""
         self.stack.setCurrentWidget(self.home)
+        self._sync_sidebar()
         self.refresh_home()
         self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
         self._sync_menu_state()
@@ -983,11 +974,33 @@ class MainWindow(QMainWindow):
         self.import_paths(supported)
 
     def manage_projects(self) -> None:
-        dialog = ProjectDialog(self)
-        dialog.exec()
-        if dialog.changed:
-            self.refresh_home()
-            self.refresh_engine_label()
+        """「项目」：切到项目页（侧栏保持在左侧）。"""
+        self.workbench.flush_draft()
+        self._current_job_id = ""
+        self.projects.reload()
+        self.stack.setCurrentWidget(self.projects)
+        self._sync_sidebar()
+        self.setWindowTitle("Folith — " + i18n.tr('项目'))
+        self._sync_menu_state()
+
+    def _projects_changed(self) -> None:
+        # 侧栏的「最近项目」与任务库的项目筛选都读项目列表。
+        self.refresh_home()
+        self.refresh_engine_label()
+
+    def _nav_tasks(self) -> None:
+        """侧栏「任务库」：已经在任务库就只同步点亮状态，不重复刷新。"""
+        if self.stack.currentWidget() is self.home:
+            self._sync_sidebar()
+            return
+        self.show_home()
+
+    def _sync_sidebar(self, *_args) -> None:
+        current = self.stack.currentWidget()
+        self.sidebar.setVisible(current is not self.workbench)
+        self.home.set_current_nav(
+            "projects" if current is self.projects else
+            "library" if current is self.library else "tasks")
 
     def move_to_project(self, job_ids: list) -> None:
         """把一个任务改归属；运行中的任务由核心拒绝，原因如实显示。"""

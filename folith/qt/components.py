@@ -17,7 +17,8 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QKeySequence, QLinearGradient, QPainter, QShortcut
+from PySide6.QtGui import (QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath,
+                           QShortcut)
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSizePolicy, QVBoxLayout, QWidget)
 
@@ -302,8 +303,10 @@ class GradientCanvas(QWidget):
 class DocThumb(QWidget):
     """一张"纸"：白色页面 + 投影 + 标题线 + 正文行。
 
-    任务卡与"继续上次的工作"用它表示文档本身。不渲染真实页面（那要读文件、
-    很慢），只给一个与文档类型无关的、主题内的示意；`faded` 用于读不出的任务。
+    任务卡与"继续上次的工作"用它表示文档本身。真实页面（PDF 第一页 / 书封面 /
+    正文第一页）由 :mod:`folith.qt.thumbnails` 在后台生成，好了以后经
+    :meth:`set_image` 换上；在那之前、或文件读不出来时，画一张主题内的示意纸。
+    `faded` 用于读不出的任务。
     """
 
     def __init__(self, width: int = 74, height: int = 96, *, faded: bool = False,
@@ -312,7 +315,16 @@ class DocThumb(QWidget):
         self.setFixedSize(width + 12, height + 14)
         self._page = QSize(width, height)
         self._faded = faded
+        self._image: QImage | None = None
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def set_image(self, image: QImage | None) -> None:
+        """换上真实页面预览（``None`` = 回到示意纸）。"""
+        self._image = image if image is not None and not image.isNull() else None
+        self.update()
+
+    def has_image(self) -> bool:
+        return self._image is not None
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
         tokens = _tokens()
@@ -332,6 +344,9 @@ class DocThumb(QWidget):
         border = theme_module.qcolor(tokens["border-subtle"])
         painter.setPen(border)
         painter.drawRoundedRect(page, 3, 3)
+        if self._image is not None:
+            self._paint_image(painter, page, border)
+            return
         ink = theme_module.qcolor(tokens["text-primary"])
         ink.setAlpha(170)
         muted = theme_module.qcolor(tokens["text-muted"])
@@ -351,6 +366,27 @@ class DocThumb(QWidget):
             y += step
         painter.end()
 
+
+
+    def _paint_image(self, painter: QPainter, page: QRectF, border) -> None:
+        """按"铺满纸面"缩放：页面预览靠上对齐（标题在上方），封面居中裁切。"""
+        image = self._image
+        scale = max(page.width() / image.width(), page.height() / image.height())
+        width, height = image.width() * scale, image.height() * scale
+        target = QRectF(page.left() + (page.width() - width) / 2, page.top(), width, height)
+        if height > page.height() and image.width() / image.height() < 0.7:
+            # 竖长的封面：上下居中裁切，不只露出书名区域。
+            target.moveTop(page.top() - (height - page.height()) / 2)
+        path = QPainterPath()
+        path.addRoundedRect(page, 3, 3)
+        painter.save()
+        painter.setClipPath(path)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawImage(target, image)
+        painter.restore()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(border)
+        painter.drawRoundedRect(page, 3, 3)
 
 class ProgressLine(QWidget):
     """4px 圆头细进度条（QSS 的 QProgressBar 画不出圆头 + 0 高度的轨道）。"""

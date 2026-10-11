@@ -1351,6 +1351,16 @@ class StatusBar(QStatusBar):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._expire)
+        self._auto_hide = False
+
+    def set_auto_hide(self, enabled: bool) -> None:
+        """没有消息时整条状态栏收起（窗口最下端不留一条空栏或常驻路径）。"""
+        self._auto_hide = bool(enabled)
+        self._sync_visibility()
+
+    def _sync_visibility(self) -> None:
+        if self._auto_hide:
+            self.setVisible(bool(self._message))
 
     def set_permanent_widget(self, widget: QWidget | None) -> None:
         """登记右侧的常驻标签。见 :meth:`_sync_permanent`。"""
@@ -1380,6 +1390,7 @@ class StatusBar(QStatusBar):
         # 而红色语义是"出错了"。需要红色的调用方随后显式调 :meth:`set_message_error`。
         self.set_message_error(False)
         self._sync_permanent()
+        self._sync_visibility()
         self._timer.stop()
         if timeout:
             self._timer.start(int(timeout))
@@ -1393,6 +1404,7 @@ class StatusBar(QStatusBar):
         self._message = ""
         self.message_label.setText("")
         self._sync_permanent()
+        self._sync_visibility()
 
     def currentMessage(self) -> str:  # noqa: N802 - Qt 命名
         return self._message

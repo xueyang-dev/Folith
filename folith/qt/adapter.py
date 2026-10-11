@@ -1255,6 +1255,15 @@ def activity_events(job_id: str, limit: int = 200) -> list[dict]:
         core.read_runtime_events(job_id, limit, visibility="user"))
 
 
+def source_path(job_id: str) -> Path | None:
+    """任务留存的源文件（首页卡片的预览从这里读）；没有就返回 ``None``。"""
+    try:
+        path = Path(core.job_dir(job_id)) / "source.bin"
+    except Exception:  # noqa: BLE001 - 不合法的任务编号只是没有预览
+        return None
+    return path if path.is_file() else None
+
+
 def technical_log_path(job_id: str) -> str:
     """技术日志的位置（含完整响应预览等细节，不进产品界面）。"""
     return str(core.runtime_technical_log_path(job_id))
