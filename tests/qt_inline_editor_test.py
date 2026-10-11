@@ -156,3 +156,29 @@ def test_operation_panel_acts_on_the_selection(bench):
     assert "3" in view.review_selected_button.text()
     assert not view.retranslate_button.isVisibleTo(view)
     assert not view.single_segment_section.isVisibleTo(view)
+
+
+def test_filter_menu_combines_conditions(bench):
+    view, app = bench
+    from folith.qt import adapter
+
+    state = dict(view._state)
+    pairs = [dict(pair) for pair in state.get("pairs") or []]
+    pairs[0]["from_tm"] = True
+    pairs[2]["from_tm"] = True
+    state["pairs"] = pairs
+    state["findings"] = [{"segment_index": 2, "category": "terminology_consistency",
+                          "severity": "actionable", "reason": "术语", "resolved": False}]
+    state["source_quality_gate"] = {"flags": [{"segment_index": 0}]}
+    view._state = state
+    assert adapter.term_issue_indexes(state) == {2}
+    assert adapter.source_quality_indexes(state) == {0}
+
+    view.filter_actions["tm"].setChecked(True)
+    assert view.filtered_indexes() == [0, 2]
+    assert view.filter_button.text() == "筛选（1）"
+    view.filter_actions["term_issues"].setChecked(True)
+    assert view.filtered_indexes() == [2]
+    view.clear_filters()
+    assert view.filtered_indexes() == [0, 1, 2]
+    assert view.filter_button.text() == "筛选"

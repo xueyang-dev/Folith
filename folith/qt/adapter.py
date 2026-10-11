@@ -934,6 +934,23 @@ def segment_terms(state: dict, index: int) -> list[dict]:
     return [row for _rank, _position, row in rows[:SEGMENT_TERM_LIMIT]]
 
 
+def source_quality_indexes(state: dict) -> set[int]:
+    """原文质量门禁标出、还没有人工确认的段（工作台"原文质量问题"筛选）。"""
+    flags = (state.get("source_quality_gate") or {}).get("flags") or []
+    return {int(item["segment_index"]) for item in flags
+            if isinstance(item, dict) and item.get("segment_index") is not None
+            and not item.get("confirmed") and not item.get("resolved")}
+
+
+def term_issue_indexes(state: dict) -> set[int]:
+    """有未解决术语问题（未用首选译名、用了禁用译名、前后不一致）的段。"""
+    return {int(item["segment_index"]) for item in state.get("findings") or []
+            if isinstance(item, dict) and item.get("segment_index") is not None
+            and not item.get("resolved")
+            and (item.get("category") == "terminology_consistency"
+                 or item.get("type") == "glossary")}
+
+
 def segment_context(state: dict, index: int) -> dict:
     """前后各一段（跳过已排除的）：原文与当前译文。"""
     pairs = state.get("pairs") or []

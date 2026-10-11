@@ -1712,10 +1712,29 @@ class WorkbenchView(QWidget):
         self.status_buttons: dict[str, QPushButton] = {
             name: self.status_segments.button(name) for name in ("全部", "待审校", "已审校")}
 
-        self.only_edited_box = style_module.CheckBox(i18n.tr('只看人工修改'))
-        self.only_edited_box.toggled.connect(self._filters_changed)
-        self.only_issues_box = style_module.CheckBox(i18n.tr('只看必须处理'))
-        self.only_issues_box.toggled.connect(self._filters_changed)
+        # 筛选收进一个菜单：六个条件同时放在工具条上放不下，也读不过来。
+        # 勾选多个时取交集（"含项目术语"且"原文质量问题"……）。
+        self.filter_button = QToolButton()
+        self.filter_button.setObjectName("filterButton")
+        self.filter_button.setText(i18n.tr('筛选'))
+        self.filter_button.setIcon(icons.icon("filter", 16, "text-secondary"))
+        self.filter_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.filter_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.filter_menu = QMenu(self.filter_button)
+        self.filter_actions: dict[str, QAction] = {}
+        for key, label in (("edited", '只看人工修改'), ("issues", '只看必须处理'),
+                           ("terms", '含项目术语'), ("tm", '使用了翻译记忆'),
+                           ("source_quality", '原文质量问题'), ("term_issues", '术语问题')):
+            action = self.filter_menu.addAction(i18n.tr(label))
+            action.setCheckable(True)
+            action.toggled.connect(self._filters_changed)
+            self.filter_actions[key] = action
+        self.filter_menu.addSeparator()
+        clear = self.filter_menu.addAction(i18n.tr('清除全部筛选'))
+        clear.triggered.connect(self.clear_filters)
+        self.filter_button.setMenu(self.filter_menu)
+        self.only_edited_box = self.filter_actions["edited"]
+        self.only_issues_box = self.filter_actions["issues"]
 
         toolbar = QHBoxLayout()
         # 零边距：`QWidget()` 包装体的默认布局边距（macOS 上约 9–12px × 上下）
@@ -1730,18 +1749,13 @@ class WorkbenchView(QWidget):
         # 「筛选」是一组新的开关，与左侧的状态分段控件之间给一组间距离（12px），
         # 组内仍是 8px —— 三种控件挤在一起时，组边界是唯一的分组线索。
         toolbar.addSpacing(theme_module.SPACE["xs"])
-        filter_label = style_module.SectionLabel(i18n.tr('筛选'))
-        toolbar.addWidget(filter_label)
-        toolbar.addWidget(self.only_edited_box)
-        toolbar.addWidget(self.only_issues_box)
+        toolbar.addWidget(self.filter_button)
         toolbar.addStretch(1)
         # ⚠️ Qt 布局坑（macOS + QSS 主题实测）：QHBoxLayout 给 QLabel / QCheckBox
         # 分配的槽位比控件自身的 sizeHint **窄**（复选框 110→99、"筛选"标签 24→22），
         # 于是两颗复选框互相压住 3px —— "只看人工修改"的末字被下一颗的方框盖住。
         # WA_LayoutUsesWidgetRect 让布局按控件整框分配，实测 shortfall 11px → 0。
         # 只挂在这一条工具条上：设置页的复选框在竖排布局里，改全局会动那里已校准的高度。
-        for widget in (filter_label, self.only_edited_box, self.only_issues_box):
-            widget.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
         self.toolbar_bar = QWidget()
         self.toolbar_bar.setContentsMargins(0, 0, 0, 0)
         self.toolbar_bar.setLayout(toolbar)
@@ -2645,11 +2659,21 @@ class WorkbenchView(QWidget):
     def set_search(self, text: str) -> None:
         self.search_edit.setText(text)
 
-    def _filters_changed(self) -> None:
+    def _filters_changed(self, *_args) -> None:
         self._search = self.search_edit.text()
         self._only_edited = self.only_edited_box.isChecked()
         self._only_issues = self.only_issues_box.isChecked()
+        active = sum(action.isChecked() for action in self.filter_actions.values())
+        self.filter_button.setText(i18n.tr('筛选（{v0}）', v0=active) if active
+                                   else i18n.tr('筛选'))
         self._render_segments()
+
+    def clear_filters(self) -> None:
+        for action in self.filter_actions.values():
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+        self._filters_changed()
 
     def filtered_indexes(self) -> list[int]:
         """Visible segment indexes, filtered by the core's own rules."""
@@ -2664,11 +2688,21 @@ class WorkbenchView(QWidget):
             int(item["segment_index"])
             for item in adapter.unresolved_blocking(self.job_id, self._state)
             if item.get("segment_index") is not None})
-        return list(adapter.core.translation_visible_indexes(
+        visible = list(adapter.core.translation_visible_indexes(
             self._state, self._search,
             STATUS_FILTER_VALUES.get(self._status_filter, "全部"),
             filter_edited=self._only_edited, filter_issues=self._only_issues,
+            filter_terms=self.filter_actions["terms"].isChecked(),
+            filter_tm=self.filter_actions["tm"].isChecked(),
             issue_indexes=issues))
+        # 核心只有一个"问题段"集合；另外两类问题在这里取交集。
+        if self.filter_actions["source_quality"].isChecked():
+            flagged = adapter.source_quality_indexes(self._state)
+            visible = [index for index in visible if index in flagged]
+        if self.filter_actions["term_issues"].isChecked():
+            flagged = adapter.term_issue_indexes(self._state)
+            visible = [index for index in visible if index in flagged]
+        return visible
 
     def _visible_rows(self) -> list[adapter.SegmentRow]:
         visible = set(self.filtered_indexes())
