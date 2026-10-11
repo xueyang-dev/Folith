@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Folith desktop client (Qt Widgets) — source-tree entry point.
 
-The frozen Qt ``.app`` is built from this file (``packaging/folith-qt.spec``) and
-its release notes (``docs/qt-beta/release-notes.md``) describe it; testers only
-ever double-click the installed application.  The ``folith`` console script and
-the ``start.*`` launchers still run the legacy Streamlit launcher (``gui.py``),
-kept for one release.  ``dist/qt-desktop/`` holds the packaged build,
-``build/qt-desktop/`` its intermediate files; the retired Streamlit desktop shell
-keeps its own ``dist/desktop/`` baseline.
+This is the default entry for developers and for the frozen ``.app``; testers
+only ever double-click the installed application.  ``dist/qt-desktop/`` holds
+the packaged build, ``build/qt-desktop/`` its intermediate files; the retired
+Streamlit shell keeps its own ``dist/desktop/`` baseline.
 
 Usage:
     venv/bin/python qt_client.py
