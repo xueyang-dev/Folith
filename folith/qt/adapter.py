@@ -720,6 +720,41 @@ def clear_draft(job_id: str, segment_uid: str) -> None:
         core.save_translation_drafts(job_id, drafts)
 
 
+def submit_all_drafts(job_id: str) -> dict:
+    """「全部保存」：把所有未提交草稿逐段提交。
+
+    基于旧译文的草稿（译文在草稿之后被重译或改过）不自动提交——那会把较新的
+    文本覆盖掉；它们留着，由用户逐段决定。返回保存数、跳过的段与失败原因。
+    """
+    state = core.load_job_state(job_id) or {}
+    pairs = state.get("pairs") or []
+    by_uid = {core.segment_uid(pair) or str(index): index for index, pair in enumerate(pairs)}
+    saved, stale, failed = 0, [], []
+    for uid, draft in list(core.load_translation_drafts(job_id).items()):
+        index = by_uid.get(str(uid))
+        if index is None:
+            continue
+        baseline = str((draft or {}).get("baseline") or "")
+        current = str(pairs[index].get("target") or "")
+        if baseline and baseline != current:
+            stale.append(index)
+            continue
+        try:
+            submit_edit(job_id, index, str((draft or {}).get("text") or ""))
+            saved += 1
+        except AdapterError as exc:
+            failed.append((index, str(exc)))
+    return {"saved": saved, "stale": stale, "failed": failed}
+
+
+def discard_all_drafts(job_id: str) -> int:
+    """「全部丢弃」：删除所有未提交草稿，返回删除了几段。"""
+    drafts = core.load_translation_drafts(job_id)
+    if drafts:
+        core.save_translation_drafts(job_id, {})
+    return len(drafts)
+
+
 def pending_draft_count(job_id: str) -> int:
     return len(core.load_translation_drafts(job_id))
 

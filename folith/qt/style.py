@@ -536,6 +536,9 @@ QWidget#contextRow:hover {{ background: {t['bg-hover']}; }}
 QLabel#contextSource {{ color: {t['text-secondary']}; }}
 QLabel#contextTarget {{ color: {t['text-primary']}; }}
 QLabel#forbiddenTerm {{ color: {t['danger']}; }}
+QWidget#draftsBanner {{
+    background: {t['warning-soft']}; border-radius: {r['sm']}px;
+}}
 QWidget#attentionItem {{
     background: {t['bg-surface-subtle']}; border-radius: {r['sm']}px;
 }}

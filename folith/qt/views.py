@@ -1507,6 +1507,8 @@ class WorkbenchView(QWidget):
     refreshRequested = Signal()
     termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
     askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
+    saveAllDraftsRequested = Signal()
+    discardAllDraftsRequested = Signal()
     draftSaved = Signal(str, str, str)      # job_id, segment_uid, text
     editSubmitted = Signal(int)
     revealRequested = Signal(str)
@@ -1756,6 +1758,23 @@ class WorkbenchView(QWidget):
         # 于是两颗复选框互相压住 3px —— "只看人工修改"的末字被下一颗的方框盖住。
         # WA_LayoutUsesWidgetRect 让布局按控件整框分配，实测 shortfall 11px → 0。
         # 只挂在这一条工具条上：设置页的复选框在竖排布局里，改全局会动那里已校准的高度。
+        # 未提交修改必须看得见："切换段落 / 筛选 / 任务都不丢稿"的承诺在这里兑现。
+        self.drafts_banner = QWidget()
+        self.drafts_banner.setObjectName("draftsBanner")
+        self.drafts_banner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        banner = QHBoxLayout(self.drafts_banner)
+        banner.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["xs"],
+                                  theme_module.SPACE["md"], theme_module.SPACE["xs"])
+        self.drafts_label = QLabel("")
+        self.save_all_drafts_button = QPushButton(i18n.tr('全部保存'))
+        self.save_all_drafts_button.clicked.connect(self._save_all_drafts)
+        self.discard_all_drafts_button = QPushButton(i18n.tr('全部丢弃'))
+        self.discard_all_drafts_button.setObjectName("ghostAction")
+        self.discard_all_drafts_button.clicked.connect(self._discard_all_drafts)
+        banner.addWidget(self.drafts_label, 1)
+        banner.addWidget(self.discard_all_drafts_button)
+        banner.addWidget(self.save_all_drafts_button)
+        self.drafts_banner.setVisible(False)
         self.toolbar_bar = QWidget()
         self.toolbar_bar.setContentsMargins(0, 0, 0, 0)
         self.toolbar_bar.setLayout(toolbar)
@@ -1817,7 +1836,7 @@ class WorkbenchView(QWidget):
         self.copy_source_button.setObjectName("ghostAction")
         self.copy_source_button.clicked.connect(self._copy_source_to_target)
         self.save_next_button = QPushButton(i18n.tr('保存并下一段'))
-        self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一段（⌘↩）'))
+        self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一个未确认的段（⌘↩）'))
         self.save_next_button.clicked.connect(self.save_and_next)
         self.submit_button = QPushButton(i18n.tr('保存'))
         self.submit_button.setToolTip(i18n.tr('保存并提交这一段（⌘S）'))
@@ -2007,6 +2026,7 @@ class WorkbenchView(QWidget):
         translation_layout.setContentsMargins(0, 8, 0, 0)
         translation_layout.setSpacing(8)
         translation_layout.addWidget(self.toolbar_bar)
+        translation_layout.addWidget(self.drafts_banner)
         translation_layout.addWidget(self.translation_split, 1)
         # 没有段落时正文只放一段说明：空表格 + 空检查器看起来像加载失败，
         # 而这个状态下用户真正要做的事只有 Header 上那一个动作。
@@ -2803,6 +2823,23 @@ class WorkbenchView(QWidget):
         for position, row in enumerate(self._rows):
             self._paint_row(position, row)
         self._place_inline_editor()
+        self._sync_drafts_banner()
+
+    def _sync_drafts_banner(self) -> None:
+        count = sum(1 for row in self._all_rows if row.has_draft)
+        stale = sum(1 for row in self._all_rows if row.has_draft and row.stale_draft)
+        text = i18n.tr('有 {v0} 段未保存的修改。', v0=count)
+        if stale:
+            text += i18n.tr('其中 {v0} 段基于旧译文，「全部保存」会跳过它们。', v0=stale)
+        self.drafts_label.setText(text)
+        self.drafts_banner.setVisible(count > 0)
+
+    def _save_all_drafts(self) -> None:
+        self.flush_draft()
+        self.saveAllDraftsRequested.emit()
+
+    def _discard_all_drafts(self) -> None:
+        self.discardAllDraftsRequested.emit()
 
     def _paint_row(self, position: int, row: adapter.SegmentRow) -> None:
         look = (current_theme(), i18n.language())
@@ -3583,11 +3620,38 @@ class WorkbenchView(QWidget):
         self.editSubmitted.emit(self._current_index)
 
     def save_and_next(self) -> None:
-        index = self._current_index
+        """保存并进入下一个**还没确认**的段（没有就进入下一段）。
+
+        连续校对要消灭的是未完成项，不是顺序推进：已审校、已人工确认的段直接跳过。
+        """
         self._submit()
-        self._step(1)
-        if self._current_index == index:
-            self.editSubmitted.emit(index)
+        target = self._next_unconfirmed_position()
+        if target is None:
+            self._step(1)
+        else:
+            self._select_only(target)
+
+    def _next_unconfirmed_position(self) -> int | None:
+        """当前段之后（到底再从头）第一个未确认的可见段：没有译文、待翻译 / 待审校，
+        或仍有未解决的检查项。"""
+        if not self._rows:
+            return None
+        position = next((index for index, row in enumerate(self._rows)
+                         if row.index == self._current_index), -1)
+        open_issues = {int(item["segment_index"])
+                       for item in self._state.get("findings") or []
+                       if isinstance(item, dict) and not item.get("resolved")
+                       and item.get("segment_index") is not None
+                       and item.get("severity") in ("blocking", "actionable")}
+        order = list(range(position + 1, len(self._rows))) + list(range(0, max(position, 0)))
+        for candidate in order:
+            row = self._rows[candidate]
+            if row.excluded:
+                continue
+            if (not str(row.target or "").strip() or row.status in ("待翻译", "待审校")
+                    or row.index in open_issues):
+                return candidate
+        return None
 
     def focus_editor(self) -> None:
         self.target_edit.setFocus()

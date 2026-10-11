@@ -182,3 +182,39 @@ def test_filter_menu_combines_conditions(bench):
     view.clear_filters()
     assert view.filtered_indexes() == [0, 1, 2]
     assert view.filter_button.text() == "筛选"
+
+
+def test_save_and_next_skips_confirmed_segments(bench):
+    view, app = bench
+    rows = list(view._all_rows)
+    import dataclasses
+
+    view._all_rows = [dataclasses.replace(rows[0], status="待审校"),
+                      dataclasses.replace(rows[1], status="已审校", reviewed=True),
+                      dataclasses.replace(rows[2], status="待审校")]
+    view._render_segments()
+    view.select_segment(0)
+    _pump(app)
+    target = view._next_unconfirmed_position()
+    assert view._rows[target].index == 2
+
+
+def test_bulk_draft_helpers(bench):
+    view, app = bench
+    from folith.qt import adapter
+
+    job = view.job_id
+    state = adapter.load_state(job)
+    uid0 = adapter.core.segment_uid(state["pairs"][0])
+    uid1 = adapter.core.segment_uid(state["pairs"][1])
+    adapter.save_draft(job, uid0, "新译文0", "译文0")
+    adapter.save_draft(job, uid1, "新译文1", "更早的译文")   # 基于旧译文
+    view._all_rows = adapter.segment_rows(job)
+    view._render_segments()
+    assert not view.drafts_banner.isHidden()
+    assert "2 段" in view.drafts_label.text()
+    result = adapter.submit_all_drafts(job)
+    assert result["saved"] == 1 and result["stale"] == [1]
+    assert adapter.load_state(job)["pairs"][0]["target"] == "新译文0"
+    assert adapter.discard_all_drafts(job) == 1
+    assert adapter.pending_draft_count(job) == 0

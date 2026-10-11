@@ -288,6 +288,8 @@ class MainWindow(QMainWindow):
         self.workbench.deliverWithRiskRequested.connect(self.deliver_with_risk)
         self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.termAddRequested.connect(self.add_term_from_selection)
+        self.workbench.saveAllDraftsRequested.connect(self.save_all_drafts)
+        self.workbench.discardAllDraftsRequested.connect(self.discard_all_drafts)
         self.workbench.askAgentRequested.connect(self.ask_agent)
         self.workbench.exportRequested.connect(self.export_copy)
         self.workbench.saveSnapshotRequested.connect(self.save_snapshot)
@@ -2026,6 +2028,39 @@ class MainWindow(QMainWindow):
         self._run_with_busy(i18n.tr('接受风险并交付'), i18n.tr('正在通过交付门禁并生成快照…'),
                             adapter.deliver, job_id, self.config, on_done=done,
                             note=dialog.note(), accept_risk=True)
+
+    def save_all_drafts(self) -> None:
+        """提交所有未保存的修改（基于旧译文的草稿跳过，留给用户逐段决定）。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            result = adapter.submit_all_drafts(job_id)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法保存全部修改'), str(exc))
+            return
+        message = i18n.tr('已保存 {v0} 段修改。', v0=result["saved"])
+        if result["stale"]:
+            message += i18n.tr('{v0} 段基于旧译文，没有自动保存。', v0=len(result["stale"]))
+        if result["failed"]:
+            message += i18n.tr('{v0} 段保存失败：{v1}', v0=len(result["failed"]),
+                               v1=result["failed"][0][1])
+        self._notice(message, error=bool(result["failed"]))
+        self.refresh_workbench(force=True)
+        self.workbench.reload_current_segment(force=True)
+
+    def discard_all_drafts(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if not self._confirm(i18n.tr('丢弃全部修改'),
+                             i18n.tr('所有未保存的修改都会被删除，译文回到已提交的版本。确定吗？'),
+                             yes=i18n.tr('全部丢弃'), no=i18n.tr('取消')):
+            return
+        count = adapter.discard_all_drafts(job_id)
+        self._notice(i18n.tr('已丢弃 {v0} 段未保存的修改。', v0=count))
+        self.refresh_workbench(force=True)
+        self.workbench.reload_current_segment(force=True)
 
     def add_term_from_selection(self, source: str, target: str) -> None:
         """工作台「加入术语库」：原文/译文里选中的词预先填好，确认后写进本任务术语表。"""
