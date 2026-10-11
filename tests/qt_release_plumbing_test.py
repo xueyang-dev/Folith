@@ -76,6 +76,11 @@ def test_notes_are_stale_checked_against_the_current_artifact(tmp_path, monkeypa
     assert "9.9.9" in notes and "deadbeef" in notes
     assert "15.0" in notes and "不声称支持" in notes
     assert "streamlit" in notes
+    # The notes name the entry they describe, and that `folith` is not it.
+    assert "## 入口" in notes and "qt_client.py" in notes
+    assert "`folith`" in notes and "**不是**本客户端" in notes
+    # Migrated surfaces must not be listed as missing from the client.
+    assert "未迁移到 Qt" not in notes and "学术专业模式" in notes
     # The rendering is deterministic, so a stale file is detectable.
     assert release.render_notes(manifest, dmg) == notes
     manifest["app"]["app_version"] = "9.9.10"
@@ -191,7 +196,8 @@ def test_acceptance_bundle_write_and_check_catch_tampering_and_staleness(tmp_pat
 
     docs = tmp_path / "docs"
     docs.mkdir()
-    for name in ("acceptance-quickstart.md", "manual-acceptance.md", "status.md"):
+    # Every document the bundle ships, release notes included, comes from DOC_FILES.
+    for name in bundle.DOC_FILES:
         (docs / name).write_text(f"# {name}\n", encoding="utf-8")
 
     out = tmp_path / "bundle"
@@ -201,6 +207,7 @@ def test_acceptance_bundle_write_and_check_catch_tampering_and_staleness(tmp_pat
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["candidate"]["sha256"] == digest
     assert manifest["files"][dmg.name]["sha256"] == digest, "安装包的 sha 必须来自构建记录"
+    assert "release-notes.md" in manifest["files"], "测试者拿到的包里必须有发布说明"
     readme = (out / "README-先读我.md").read_text(encoding="utf-8")
     assert digest in readme and "QTBUG-149612" in readme
     assert "Gatekeeper" in readme and "不要" in readme, "必须写明一次性放行、不要全局关闭 Gatekeeper"

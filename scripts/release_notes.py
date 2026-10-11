@@ -58,10 +58,14 @@ def render(manifest: dict, dmg_record: dict) -> str:
     ) or "| (none recorded) | — |"
     blocked = [item["check"] for item in (manifest.get("checks") or []) if item["ok"] is None]
 
-    return f"""# Folith 桌面版发布说明（{version} · macOS Beta）
+    return f"""# Folith 旧桌面壳（Streamlit + pywebview）发布记录（{version} · 已退役）
 
 > 本文件由 `scripts/release_notes.py` 从发布清单自动生成，请勿手工编辑。
 > 事实来源：`build/desktop/release-manifest.json`、`build/desktop/dmg_record.json`。
+
+> **已退役，仅作历史基线。** 本产物 `{dmg_name}` 不是 {version} 的 macOS 桌面候选：
+> 当前桌面候选是 Qt 客户端（`qt_client.py` → `Folith-Qt-{version}-macos-arm64.dmg`），
+> 发布说明见 `docs/qt-beta/release-notes.md`。
 
 ## 1. 版本与产物
 

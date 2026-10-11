@@ -1,7 +1,11 @@
-# Folith 桌面版发布说明（0.5.0 · macOS Beta）
+# Folith 旧桌面壳（Streamlit + pywebview）发布记录（0.5.0 · 已退役）
 
 > 本文件由 `scripts/release_notes.py` 从发布清单自动生成，请勿手工编辑。
 > 事实来源：`build/desktop/release-manifest.json`、`build/desktop/dmg_record.json`。
+
+> **已退役，仅作历史基线。** 本产物 `Folith-0.5.0-macos-arm64.dmg` 不是 0.5.0 的 macOS 桌面候选：
+> 当前桌面候选是 Qt 客户端（`qt_client.py` → `Folith-Qt-0.5.0-macos-arm64.dmg`），
+> 发布说明见 `docs/qt-beta/release-notes.md`。
 
 ## 1. 版本与产物
 

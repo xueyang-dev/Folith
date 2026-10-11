@@ -230,6 +230,27 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "本文件由 `scripts/qt_release_checks.py --write-notes` 依据**本次构建**的清单与",
         "DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败（不做旧文本对比）。",
         "",
+        "## 入口",
+        "",
+        "- 本说明只描述 DMG 内的 `Folith.app`：Qt Widgets 原生客户端"
+        f"（bundle id `{app.get('bundle_identifier', '')}`），由 `packaging/folith-qt.spec` "
+        "从 `qt_client.py` 冻结。这是 0.5.0 Beta 唯一的桌面入口。",
+        "- 源码等价入口：`python -m folith.qt`（或 `python qt_client.py`），需另装 PySide6。",
+        "- 源码与 Pip 安装的 `folith` 命令（含兼容别名）以及 `start.sh` / `start.command` / "
+        "`start.bat` 仍启动旧 Streamlit 启动器（`gui.py`，保留一个版本），**不是**本客户端，"
+        "Pip 安装说明也不能当作本客户端的安装说明。",
+        "- 旧 Streamlit + pywebview 桌面壳（`Folith-<版本>-macos-arm64.dmg`）已退役，"
+        "`docs/desktop-d3/` 下的说明只作历史基线。",
+        "",
+        "## 本候选范围",
+        "",
+        "- 导入：PDF / DOCX / EPUB（无 DRM）/ TXT / Markdown；新格式共用任务、翻译、审校、"
+        "恢复与交付流程，不提供原文件格式写回。",
+        "- 流程：准备 → 翻译 → 人工审校 → 交付，含术语治理、项目隔离的翻译记忆、段落编辑与"
+        "结构修复、失败恢复、原页对照、交付门禁与不可变快照。",
+        "- 语言资产、项目记忆，以及学术专业模式（QA、案例、实践报告）已在本客户端提供；"
+        "学术模式默认关闭，显式开启或打开既有学术任务时可用。",
+        "",
         "## 产物",
         "",
         f"- 应用版本 / build id：`{app.get('app_version', '')}` / `{app.get('build_id', '')}`",
@@ -296,7 +317,8 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "",
         "- 真实中文输入法、系统文件面板、睡眠/唤醒、真实模型服务与干净机器验收为**人工项**，"
         "尚未闭环；自动化与冻结产物证据不能替代。",
-        "- 高级报告、案例库与完整语言资产管理界面未迁移到 Qt；保留旧实现，Qt 中不提供无效入口。",
+        "- 有意不迁移到本客户端：性能面板、Agent 检查器、Paddle 任务级模型选择、线上 OCR "
+        "独立来源；需要时只能用旧 Streamlit 启动器（保留一个版本）。",
         "- 数据目录 `~/Library/Application Support/Folith/data` 与旧壳共用；替换或删除应用"
         "不会删除用户数据。",
         "- **macOS 26/27 上的外部辅助功能扫描（AI \"Computer Use\" / VoiceOver / 窗口管理器的"

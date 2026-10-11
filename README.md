@@ -165,7 +165,26 @@ folith
 > **参数说明**：
 > - 仅启动后台服务不打开浏览器：`folith --no-browser`
 > - 局域网协同模式：`folith --lan`
-> - 原生桌面窗口支持：安装可选依赖 `python -m pip install ".[desktop]"` 后启动即可进入原生窗口模式。
+> - 原生窗口包装：安装可选依赖 `python -m pip install ".[desktop]"` 后，`folith` 会用 pywebview 窗口显示同一个 Streamlit 界面（不是下方的 Qt 客户端）。
+
+`folith` 命令与 `start.*` 脚本启动的是旧 Streamlit 启动器（`gui.py`），0.5.0 起保留一个版本；Pip 安装说明不适用于 Qt 桌面客户端。
+
+### 方式 3：macOS 桌面客户端（Qt，0.5.0 受邀 Beta）
+
+0.5.0 Beta 的桌面入口是 Qt Widgets 原生客户端，以 `Folith-Qt-0.5.0-macos-arm64.dmg` 分发：未签名、未公证，仅限受邀测试；最低 macOS 15，仅 Apple Silicon。支持 PDF / DOCX / EPUB / TXT / Markdown 导入，覆盖准备 → 翻译 → 审校 → 交付，语言资产与学术专业模式也已提供。支持范围与已知限制以 [Qt 桌面端发布说明](docs/qt-beta/release-notes.md) 为准。
+
+```bash
+# 从源码运行同一客户端（需另装 PySide6）
+python -m pip install PySide6
+python -m folith.qt          # 或 python qt_client.py
+```
+
+| 入口 | 启动的界面 | 以哪份说明为准 |
+| :--- | :--- | :--- |
+| `Folith-Qt-0.5.0-macos-arm64.dmg`、`python -m folith.qt`、`qt_client.py` | Qt 桌面客户端 | [Qt 桌面端发布说明](docs/qt-beta/release-notes.md) |
+| `folith` 命令、`start.sh` / `start.command` / `start.bat` | 旧 Streamlit 启动器（保留一个版本） | [CHANGELOG](CHANGELOG.md) |
+
+旧的 Streamlit + pywebview 桌面壳（`Folith-0.5.0-macos-arm64.dmg`）已退役，[其发布记录](docs/desktop-d3/release-notes-0.5.0.md)只作历史基线。
 
 ---
 

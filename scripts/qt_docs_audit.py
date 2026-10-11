@@ -30,6 +30,7 @@ STATUS = ROOT / "docs" / "qt-beta" / "status.md"
 MATRIX = ROOT / "docs" / "qt-beta" / "acceptance-matrix.md"
 KIT = ROOT / "docs" / "qt-beta" / "manual-acceptance.md"
 QUICKSTART = ROOT / "docs" / "qt-beta" / "acceptance-quickstart.md"
+NOTES = ROOT / "docs" / "qt-beta" / "release-notes.md"
 EVIDENCE = ROOT / "docs" / "qt-spike" / "evidence-log.md"
 DOCS_DIR = ROOT / "docs" / "qt-beta"
 #: markdown 链接 `[文字](目标)`；目标可以是相对路径（可带 #锚点）或外链。
@@ -186,6 +187,12 @@ def audit(*, check_tests: bool = True) -> dict:
         problems.append("验收清单里的候选 sha256 与构建记录不一致（验收清单必须是完整值）")
     if info["built_at"] not in status:
         problems.append("状态清单里的构建时间与构建记录不一致")
+    notes = NOTES.read_text(encoding="utf-8") if NOTES.is_file() else ""
+    if record["sha256"] not in notes or info["built_at"] not in notes:
+        problems.append(
+            "发布说明里的候选身份与构建记录不一致（重跑 qt_release_checks.py --write-notes）")
+    if "## 入口" not in notes or "qt_client.py" not in notes:
+        problems.append("发布说明没有写明它描述的入口（Qt 客户端 / 旧启动器的区分）")
 
     # ---- 3. 最低系统 ---------------------------------------------------
     measured = _measured_min_os()

@@ -58,6 +58,13 @@ def test_notes_disclose_languages_signature_and_systems():
     assert "signed_with_developer_id" in text  # blocked items are named
 
 
+def test_notes_mark_the_retired_shell_and_point_at_the_qt_candidate():
+    text = release_notes.render(SAMPLE, {})
+    assert "已退役" in text.splitlines()[0]
+    assert "docs/qt-beta/release-notes.md" in text
+    assert "macOS Beta" not in text.splitlines()[0]
+
+
 def test_notes_never_claim_a_signature_that_does_not_exist():
     text = release_notes.render(SAMPLE, {})
     assert "已签名" not in text.replace("未签名", "")
