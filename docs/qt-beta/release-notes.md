@@ -5,13 +5,13 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 
 ## 产物
 
-- 应用版本 / build id：`0.5.0` / `git:0de4b68`
-- 构建时间（UTC）：`2026-10-11T05:22:41+00:00`
+- 应用版本 / build id：`0.5.0` / `git:38e93d3`
+- 构建时间（UTC）：`2026-10-11T05:27:28+00:00`
 - 打包后端：`pyinstaller`；worktree dirty：`False`
 - 目标平台 / 架构：`macos` / `arm64`
 - 随包运行时：Python `3.11.3` / PySide6 `6.11.2` / Qt `6.11.2`
 - DMG：`Folith-Qt-0.5.0-macos-arm64.dmg`
-- DMG sha256：`dafdb9737b15c09042018689b12625ad7b4d9dff6a3b87801a5eff09560701fd`（199.5 MB）
+- DMG sha256：`5d2941853e81a230a8b624cdf03085916c3589433eff1ec81c044f150b0d9442`（199.5 MB）
 
 ## 支持的系统
 

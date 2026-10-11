@@ -11,7 +11,7 @@
 - 架构决策：**GO — Qt Widgets / macOS arm64**（见 [s8-decision.md](s8-decision.md)）
 - 本机验收环境：Apple Silicon（arm64）/ macOS 27.0.1 / Python 3.11.3 / PySide6 6.11.2 / Qt 6.11.2
 <!-- status-identity:begin -->
-- 候选身份：`app_version=0.5.0`、`build_id=git:0de4b68`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-11T05:22:41+00:00`
+- 候选身份：`app_version=0.5.0`、`build_id=git:38e93d3`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-11T05:27:28+00:00`
 <!-- status-identity:end -->
 - **声明最低系统：macOS 15.0**（实测原生闭包上限；**不支持** 13/14，不声称支持）
 
@@ -39,7 +39,7 @@
 | 源码入口 | `venv/bin/python qt_client.py`（或 `python -m folith.qt`） |
 | 冻结应用 | `dist/qt-desktop/Folith.app`（375 MiB / 393 MB，bundle id `dev.folith.qt`） |
 <!-- status-dmg:begin -->
-| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（190 MiB / 199 MB，sha256 `dafdb973…01fd`） |
+| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（190 MiB / 199 MB，sha256 `5d294185…9442`） |
 <!-- status-dmg:end -->
 | 构建中间物 | `build/qt-desktop/`（build record、`native_min_os_*.json`、`release-manifest.json`、`dmg_record.json`） |
 | 发行说明 | [release-notes.md](release-notes.md)（生成式，`--check-notes` 可检测过期） |

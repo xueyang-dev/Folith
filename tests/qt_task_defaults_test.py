@@ -21,6 +21,19 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import QSettings  # noqa: E402
+
+
+def test_selftest_local_ocr_is_explicit_and_preserves_other_task_choices(monkeypatch):
+    from folith.qt import adapter, selftest
+    monkeypatch.setenv("FOLITH_QT_SELFTEST_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.delenv("FOLITH_QT_SELFTEST_OCR", raising=False)
+    base = adapter.EngineConfig(ocr_backend="online", deliver_epub=True)
+    assert selftest.engine_from_env(adapter, base).ocr_backend == "online"
+    monkeypatch.setenv("FOLITH_QT_SELFTEST_OCR", "1")
+    selected = selftest.engine_from_env(adapter, base)
+    assert selected.ocr_backend == "tesseract"
+    assert selected.deliver_epub is True
+    assert base.ocr_backend == "online"
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import core  # noqa: E402

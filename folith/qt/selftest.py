@@ -316,7 +316,8 @@ class Flow:
             # directory to appear: the directory is created before the source is
             # written, and starting the pipeline in that window is a race.
             ok = self.pump(
-                120, lambda: len(adapter.list_jobs()) >= len(fixtures) and all(
+                120, lambda: not self.window.runner.busy
+                and len(adapter.list_jobs()) >= len(fixtures) and all(
                     adapter.core.load_source(row.job_id)
                     for row in adapter.list_jobs()))
             self.step("imported", jobs=len(adapter.list_jobs()), ok=ok)
@@ -586,6 +587,10 @@ def engine_from_env(adapter, base=None):
         ocr_language=language,
         ocr_mode=mode,
     )
+    # The existing bundled-OCR baseline flag explicitly selects the local
+    # engine; scanned jobs otherwise correctly use the normal VLM default.
+    if os.environ.get("FOLITH_QT_SELFTEST_OCR") == "1":
+        connection["ocr_backend"] = "tesseract"
     if base is None:
         return adapter.EngineConfig(**connection)
     return dataclasses.replace(base, **connection)

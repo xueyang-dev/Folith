@@ -229,19 +229,19 @@ def test_bundle_declares_only_ingestible_document_types():
     from folith.application.job_config import SOURCE_SUFFIXES
     from folith.qt import adapter
 
-    assert SOURCE_SUFFIXES == (".pdf", ".docx")
+    assert SOURCE_SUFFIXES == (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown")
     declared = {
         uti
         for entry in _spec_document_types()
         for uti in entry.get("LSItemContentTypes") or []
     }
-    # One declared UTI per ingestible suffix — no extra text/markdown/legacy
-    # Word types that would only produce "不支持的文件类型" after a double-click.
+    # Markdown aliases share one UTI; unsupported legacy Word stays excluded.
     assert declared == {
         "com.adobe.pdf",
         "org.openxmlformats.wordprocessingml.document",
+        "org.idpf.epub-container",
+        "public.plain-text",
+        "net.daringfireball.markdown",
     }
-    assert "public.plain-text" not in declared
-    assert "net.daringfireball.markdown" not in declared
     assert "com.microsoft.word.doc" not in declared
     assert adapter.SUPPORTED_SUFFIXES == SOURCE_SUFFIXES

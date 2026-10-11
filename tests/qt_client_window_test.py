@@ -31,7 +31,7 @@ os.environ["FOLITH_EXIT_FORCE_PROMPT"] = "0"
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt, QTimer  # noqa: E402
+from PySide6.QtCore import Qt, QTimer, QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
@@ -190,6 +190,9 @@ def client(tmp_path, monkeypatch, qt_app):
     # must hand it back or it would swallow the next test's Quit event.
     qt_app.removeEventFilter(main)
     main.deleteLater()
+    # processEvents alone does not dispatch DeferredDelete in this manual pump.
+    # Retained windows make each later theme application repolish every old UI.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     qt_app.processEvents()
 
 
