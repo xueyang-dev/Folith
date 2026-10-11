@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -37,6 +39,7 @@ class TermsPanel(QWidget):
     entryUpdateRequested = Signal(str, dict)    # entry id, fields
     entryAddRequested = Signal(dict)
     entryDeleteRequested = Signal(str)
+    statusRequested = Signal(list, str)         # entry ids, status（翻译开始后批量改状态）
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,6 +49,7 @@ class TermsPanel(QWidget):
         self._dirty = False
         self._busy = False
         self._message = ""
+        self._shown: list[int] = []
 
         def button(text: str, icon_name: str, token: str = "text-secondary",
                    name: str = "") -> QPushButton:
@@ -64,7 +68,7 @@ class TermsPanel(QWidget):
         self.table.setObjectName("termsTable")
         self.table.setHorizontalHeaderLabels([i18n.tr(c) for c in COLUMNS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
@@ -80,12 +84,28 @@ class TermsPanel(QWidget):
             self.status_box.addItem(i18n.tr(STATUS_LABELS[value]), value)
         self.domain_edit = QLineEdit()
         self.note_edit = QLineEdit()
+        # 禁用译名：译文里出现就报术语问题，工作台右栏也会标红。
+        self.forbidden_edit = QLineEdit()
+        self.forbidden_edit.setPlaceholderText(i18n.tr('多个用逗号或分号隔开'))
+
+        # 筛选：搜索源术语 / 按状态 / 只看冲突项（术语多时一屏看不过来）。
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(i18n.tr('搜索源术语或译名'))
+        self.search_edit.textChanged.connect(self._fill_table)
+        self.filter_box = style_module.ComboBox()
+        self.filter_box.addItem(i18n.tr('全部状态'), "")
+        for value in STATUS_ORDER:
+            self.filter_box.addItem(i18n.tr(STATUS_LABELS[value]), value)
+        self.filter_box.currentIndexChanged.connect(self._fill_table)
+        self.conflict_box = style_module.CheckBox(i18n.tr('只看冲突项'))
+        self.conflict_box.toggled.connect(self._fill_table)
         form = QFormLayout()
         form.setHorizontalSpacing(12)
         form.addRow(i18n.tr('源术语'), self.source_edit)
         form.addRow(i18n.tr('首选译名'), self.preferred_edit)
         form.addRow(i18n.tr('状态'), self.status_box)
         form.addRow(i18n.tr('领域'), self.domain_edit)
+        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
         form.addRow(i18n.tr('备注'), self.note_edit)
 
         self.apply_row_button = button(i18n.tr('应用到所选术语'), "check")
@@ -97,6 +117,10 @@ class TermsPanel(QWidget):
         self.lock_all_button = button(i18n.tr('锁定全部候选'), "shield-check")
         self.lock_all_button.setToolTip(i18n.tr('把所有「候选」和「暂定」术语一次性改为「已锁定」'))
         self.lock_all_button.clicked.connect(self._lock_candidates)
+        self.lock_selected_button = button(i18n.tr('锁定所选'), "check")
+        self.lock_selected_button.clicked.connect(lambda: self._set_selected_status("locked"))
+        self.reject_selected_button = button(i18n.tr('拒绝所选'), "x")
+        self.reject_selected_button.clicked.connect(lambda: self._set_selected_status("rejected"))
 
         self.save_button = button(i18n.tr('保存草稿'), "save")
         self.save_button.clicked.connect(lambda: self.draftSaveRequested.emit(self.rows()))
@@ -113,6 +137,7 @@ class TermsPanel(QWidget):
 
         edit_actions = QHBoxLayout()
         for widget in (self.apply_row_button, self.add_button, self.delete_button,
+                       self.lock_selected_button, self.reject_selected_button,
                        self.lock_all_button):
             edit_actions.addWidget(widget)
         edit_actions.addStretch(1)
@@ -134,6 +159,11 @@ class TermsPanel(QWidget):
         layout.setSpacing(10)
         layout.addWidget(self.banner)
         layout.addWidget(self.heading)
+        filters = QHBoxLayout()
+        filters.addWidget(self.search_edit, 1)
+        filters.addWidget(self.filter_box)
+        filters.addWidget(self.conflict_box)
+        layout.addLayout(filters)
         layout.addWidget(self.table, 1)
         layout.addWidget(editor_card)
         layout.addLayout(gate_actions)
@@ -166,11 +196,22 @@ class TermsPanel(QWidget):
     def mark_clean(self) -> None:
         self._dirty = False
 
-    def _fill_table(self) -> None:
-        selected = self.table.currentRow()
+    def _visible(self) -> list[int]:
+        """筛选后可见的行（指向 ``self._rows`` 的位置）。"""
+        query = self.search_edit.text().strip().casefold()
+        status = str(self.filter_box.currentData() or "")
+        conflicts = self.conflict_box.isChecked()
+        return [index for index, row in enumerate(self._rows)
+                if (not query or query in f"{row.get('source')}\n{row.get('preferred')}".casefold())
+                and (not status or row.get("status") == status)
+                and (not conflicts or row.get("conflict"))]
+
+    def _fill_table(self, *_args) -> None:
+        selected = self._current()
+        self._shown = self._visible()
         self.table.blockSignals(True)
-        self.table.setRowCount(len(self._rows))
-        for position, row in enumerate(self._rows):
+        self.table.setRowCount(len(self._shown))
+        for position, row in enumerate(self._rows[index] for index in self._shown):
             values = (row.get("source"), row.get("preferred") or "—",
                       i18n.tr(STATUS_LABELS.get(row.get("status"), "暂定")),
                       str(row.get("occurrences", 0)), row.get("note") or "")
@@ -180,13 +221,15 @@ class TermsPanel(QWidget):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(position, column, item)
         self.table.blockSignals(False)
-        if self._rows:
-            self.table.selectRow(min(max(selected, 0), len(self._rows) - 1))
+        if self._shown:
+            target = self._shown.index(selected) if selected in self._shown else 0
+            self.table.selectRow(target)
         self._load_form()
 
     def _refresh_counts(self) -> None:
         fresh = {row["id"]: row for row in self._view.get("rows") or []}
-        for position, row in enumerate(self._rows):
+        for position, index in enumerate(getattr(self, "_shown", [])):
+            row = self._rows[index]
             known = fresh.get(row.get("id"))
             if known is not None:
                 row["occurrences"] = known.get("occurrences", 0)
@@ -195,7 +238,31 @@ class TermsPanel(QWidget):
                     item.setText(str(row["occurrences"]))
 
     def _current(self) -> int:
-        return self.table.currentRow() if 0 <= self.table.currentRow() < len(self._rows) else -1
+        """当前行在 ``self._rows`` 里的位置（表格只显示筛选后的子集）。"""
+        shown = getattr(self, "_shown", [])
+        row = self.table.currentRow()
+        return shown[row] if 0 <= row < len(shown) else -1
+
+    def _selected(self) -> list[int]:
+        shown = getattr(self, "_shown", [])
+        rows = sorted({item.row() for item in self.table.selectedItems()})
+        return [shown[row] for row in rows if 0 <= row < len(shown)]
+
+    def _set_selected_status(self, status: str) -> None:
+        """锁定 / 拒绝所选：开始前改暂存行，开始后一次生成一个新的术语版本。"""
+        selected = self._selected()
+        if not selected:
+            return
+        if self._staged():
+            for index in selected:
+                self._rows[index]["status"] = status
+            self._dirty = True
+            self._fill_table()
+            self._sync()
+        else:
+            self.statusRequested.emit(
+                [str(self._rows[index].get("id")) for index in selected
+                 if self._rows[index].get("id")], status)
 
     def _load_form(self) -> None:
         position = self._current()
@@ -203,6 +270,7 @@ class TermsPanel(QWidget):
         for edit, key in ((self.source_edit, "source"), (self.preferred_edit, "preferred"),
                           (self.domain_edit, "domain"), (self.note_edit, "note")):
             edit.setText(str(row.get(key) or ""))
+        self.forbidden_edit.setText("、".join(str(item) for item in row.get("forbidden") or []))
         index = self.status_box.findData(row.get("status") or "provisional")
         self.status_box.setCurrentIndex(max(index, 0))
         self._sync()
@@ -212,7 +280,10 @@ class TermsPanel(QWidget):
                 "preferred": self.preferred_edit.text().strip(),
                 "status": str(self.status_box.currentData() or "provisional"),
                 "domain": self.domain_edit.text().strip(),
-                "note": self.note_edit.text().strip()}
+                "note": self.note_edit.text().strip(),
+                "forbidden": [text.strip() for text in
+                              re.split(r"[,，;；、\n]", self.forbidden_edit.text())
+                              if text.strip()]}
 
     # ================= 编辑 =================
     def _staged(self) -> bool:
@@ -244,7 +315,8 @@ class TermsPanel(QWidget):
             self._rows.append({"id": "", "occurrences": 0, **fields})
             self._dirty = True
             self._fill_table()
-            self.table.selectRow(len(self._rows) - 1)
+            if len(self._rows) - 1 in self._shown:
+                self.table.selectRow(self._shown.index(len(self._rows) - 1))
             self._sync()
         else:
             self.entryAddRequested.emit(fields)
@@ -301,6 +373,9 @@ class TermsPanel(QWidget):
         editable = not self._busy
         self.apply_row_button.setEnabled(editable and has_row)
         self.delete_button.setEnabled(editable and has_row)
+        selected = len(self._selected())
+        self.lock_selected_button.setEnabled(editable and selected > 0)
+        self.reject_selected_button.setEnabled(editable and selected > 0)
         self.add_button.setEnabled(editable)
         self.lock_all_button.setVisible(staged)
         self.lock_all_button.setEnabled(editable and total > 0)

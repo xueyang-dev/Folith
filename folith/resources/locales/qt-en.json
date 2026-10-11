@@ -1220,5 +1220,13 @@
   "按要求重译，比如：更口语一点": "Retranslate with an instruction, e.g. more conversational",
   "正在生成候选译文…": "Generating a candidate…",
   "生成": "Generate",
-  "采用": "Use"
+  "采用": "Use",
+  "全部状态": "All statuses",
+  "只看冲突项": "Conflicts only",
+  "多个用逗号或分号隔开": "Separate several with commas or semicolons",
+  "拒绝所选": "Reject selected",
+  "搜索源术语或译名": "Search source terms or renderings",
+  "无法修改术语状态": "Could not change term status",
+  "禁用译名": "Forbidden renderings",
+  "锁定所选": "Lock selected"
 }

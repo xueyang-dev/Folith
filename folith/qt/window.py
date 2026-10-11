@@ -281,6 +281,7 @@ class MainWindow(QMainWindow):
         self.workbench.glossaryBypassRequested.connect(self.bypass_glossary_freeze)
         self.workbench.glossaryEntryUpdateRequested.connect(self.update_glossary_entry)
         self.workbench.glossaryEntryAddRequested.connect(self.add_glossary_entry)
+        self.workbench.glossaryStatusRequested.connect(self.set_terms_status)
         self.workbench.glossaryEntryDeleteRequested.connect(self.delete_glossary_entry)
         self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
@@ -1868,7 +1869,12 @@ class MainWindow(QMainWindow):
             adapter.update_glossary_entry, entry_id,
             preferred=fields.get("preferred", ""), status=fields.get("status", ""),
             domain=fields.get("domain", ""), note=fields.get("note", ""),
+            forbidden=fields.get("forbidden"),
             failure=i18n.tr('无法保存术语'))
+
+    def set_terms_status(self, entry_ids: list, status: str) -> None:
+        self._glossary_action(adapter.set_terms_status, entry_ids, status,
+                              failure=i18n.tr('无法修改术语状态'))
 
     def add_glossary_entry(self, fields: dict) -> None:
         self._glossary_action(

@@ -80,7 +80,7 @@ def _glossary_mutation_note(action, detail, actor):
 
 @_serialized_job_mutation
 def update_glossary_entry(job_id, entry_id, *, preferred=None, domain=None,
-                          status=None, note=None, actor="user"):
+                          status=None, note=None, forbidden=None, actor="user"):
     """原地修改一条术语条目并生成新的术语版本。返回 (state, ok, message)。
 
     与 `save_glossary_draft` 的区别：后者是「翻译前准备术语」，会把任务阶段改回
@@ -97,8 +97,8 @@ def update_glossary_entry(job_id, entry_id, *, preferred=None, domain=None,
                    if str(item.get("id")) == str(entry_id)), None)
     if target is None:
         return state, False, "找不到该术语"
-    before = {key: target.get(key)
-              for key in ("preferred", "target", "domain", "status", "note")}
+    before = {key: (list(target.get(key) or []) if key == "forbidden" else target.get(key))
+              for key in ("preferred", "target", "domain", "status", "note", "forbidden")}
     if preferred is not None:
         text = str(preferred or "").strip()
         if not text:
@@ -114,7 +114,12 @@ def update_glossary_entry(job_id, entry_id, *, preferred=None, domain=None,
         target["status"] = status
     if note is not None:
         target["note"] = str(note or "").strip()
-    after = {key: target.get(key) for key in before}
+    if forbidden is not None:
+        # 禁用译名：译文里出现就报术语问题（见 terminology.check_glossary_compliance）。
+        target["forbidden"] = [text for text in dict.fromkeys(
+            str(item or "").strip() for item in forbidden) if text]
+    after = {key: (list(target.get(key) or []) if key == "forbidden" else target.get(key))
+             for key in before}
     if before == after:
         return state, True, "没有需要保存的改动"
     entries = normalize_glossary(entries)

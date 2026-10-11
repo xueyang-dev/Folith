@@ -2335,6 +2335,8 @@ def glossary_view(job_id: str, state: dict | None = None) -> dict:
             "occurrences": len(row.get("occurrences") or []),
             "matched": int(row.get("matched") or 0),
             "exception": row.get("exception") or "",
+            "conflict": row.get("exception") == "存在冲突" or bool(entry.get("conflict")),
+            "forbidden": [str(item) for item in entry.get("forbidden") or [] if str(item or "")],
             "read_only": bool(entry.get("read_only")),
         })
     frozen = state.get("glossary_frozen") or {}
@@ -2378,6 +2380,9 @@ def _merge_glossary_rows(state: dict, rows: Sequence[dict]) -> list[dict]:
             "domain": str(row.get("domain") or ""),
             "note": str(row.get("note") or ""),
         })
+        if "forbidden" in row:
+            base["forbidden"] = [str(item).strip() for item in row.get("forbidden") or []
+                                 if str(item or "").strip()]
         base["target"] = base["preferred"]
         base["proposed_target"] = base.get("proposed_target") or base["preferred"]
         merged.append(base)
@@ -2433,12 +2438,36 @@ def _checked(result, failure: str):
 
 
 def update_glossary_entry(job_id: str, entry_id: str, *, preferred: str,
-                          status: str, domain: str = "", note: str = "") -> str:
+                          status: str, domain: str = "", note: str = "",
+                          forbidden: Sequence[str] | None = None) -> str:
     """翻译开始后的逐条修订；返回核心给出的说明（含新的术语版本号）。"""
     _state, message, _ = _checked(core.update_glossary_entry(
         job_id, entry_id, preferred=preferred, status=status, domain=domain,
-        note=note), "无法保存术语")
+        note=note, forbidden=list(forbidden) if forbidden is not None else None),
+        "无法保存术语")
     return message
+
+
+def set_terms_status(job_id: str, entry_ids: Sequence[str], status: str) -> str:
+    """批量改术语状态（锁定 / 拒绝所选）。
+
+    翻译开始后，术语决定变化必须生成**一个**新的术语版本并让受影响的段落重新确认
+    （与逐条修订同一不变量）；开始之前只是改草稿。
+    """
+    if status not in GLOSSARY_STATUS_LABELS:
+        raise AdapterError(f"不支持的术语状态：{status}")
+    ids = [str(item) for item in entry_ids if str(item or "")]
+    if not ids:
+        raise AdapterError("没有选中术语。")
+    state = core.set_glossary_entry_status(job_id, ids, status)
+    if state is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    if state.get("p2_done"):
+        frozen = core.freeze_glossary(job_id, entries=state.get("glossary") or [],
+                                      frozen_by="用户")
+        version = ((frozen or {}).get("glossary_frozen") or {}).get("version")
+        return f"已更新 {len(ids)} 个术语" + (f"，术语版本 v{version}" if version else "")
+    return f"已更新 {len(ids)} 个术语"
 
 
 def add_glossary_entry(job_id: str, source: str, target: str, *, domain: str = "",

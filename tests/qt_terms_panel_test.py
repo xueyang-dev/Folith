@@ -282,3 +282,47 @@ def test_workbench_shows_no_gate_notice_once_frozen(qapp, job):
     bench.load(job, adapter.EngineConfig(target_lang="简体中文"), state,
                adapter.segment_rows(job, state), [])
     assert bench.terms_gate.isHidden()
+
+
+def test_forbidden_renderings_are_saved_and_flagged(job):
+    state = core.load_job_state(job)
+    entry_id = state["glossary"][0]["id"]
+    state.update(p2_done=True, pairs=[{"source": "Skopos theory matters.",
+                                       "target": "斯科波斯理论很重要。"}])
+    core.save_job_state(job, state)
+    adapter.update_glossary_entry(job, entry_id, preferred="目的论", status="locked",
+                                  forbidden=["斯科波斯理论", " "])
+    row = next(r for r in _rows(job) if r["id"] == entry_id)
+    assert row["forbidden"] == ["斯科波斯理论"]
+    terms = adapter.segment_terms(core.load_job_state(job), 0)
+    assert terms[0]["forbidden_hits"] == ["斯科波斯理论"]
+
+
+def test_batch_status_creates_one_term_version_after_translation(job):
+    state = core.load_job_state(job)
+    ids = [entry["id"] for entry in state["glossary"]]
+    state.update(p2_done=True)
+    core.save_job_state(job, state)
+    message = adapter.set_terms_status(job, ids, "locked")
+    assert "2 个术语" in message
+    assert {r["status"] for r in _rows(job)} == {"locked"}
+    assert core.load_job_state(job).get("glossary_frozen")
+
+
+def test_panel_filters_and_multi_select(panel):
+    panel.apply("j", _view([_row(1, "Skopos", "目的论"), _row(2, "Equivalence", "对等"),
+                            {**_row(3, "Norm", "规范"), "status": "locked",
+                             "conflict": True}]))
+    panel.search_edit.setText("equi")
+    assert panel.table.rowCount() == 1
+    panel.search_edit.clear()
+    panel.filter_box.setCurrentIndex(panel.filter_box.findData("locked"))
+    assert panel.table.rowCount() == 1
+    panel.filter_box.setCurrentIndex(0)
+    panel.conflict_box.setChecked(True)
+    assert panel.table.rowCount() == 1 and panel.table.item(0, 0).text() == "Norm"
+    panel.conflict_box.setChecked(False)
+    panel.table.selectAll()
+    panel.reject_selected_button.click()      # 开始前：改暂存行
+    assert {row["status"] for row in panel.rows()} == {"rejected"}
+    assert panel.is_dirty()

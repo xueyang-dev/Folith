@@ -1534,6 +1534,7 @@ class WorkbenchView(QWidget):
     glossaryBypassRequested = Signal()
     glossaryEntryUpdateRequested = Signal(str, dict)
     glossaryEntryAddRequested = Signal(dict)
+    glossaryStatusRequested = Signal(list, str)   # entry ids, status
     glossaryEntryDeleteRequested = Signal(str)
 
     COLUMNS = ("段", "原文", "译文")
@@ -2274,6 +2275,7 @@ class WorkbenchView(QWidget):
         self.terms_panel.bypassRequested.connect(self.glossaryBypassRequested.emit)
         self.terms_panel.entryUpdateRequested.connect(self.glossaryEntryUpdateRequested.emit)
         self.terms_panel.entryAddRequested.connect(self.glossaryEntryAddRequested.emit)
+        self.terms_panel.statusRequested.connect(self.glossaryStatusRequested.emit)
         self.terms_panel.entryDeleteRequested.connect(self.glossaryEntryDeleteRequested.emit)
         self.tabs.addTab(self.terms_panel,
                          icons.icon("file-sheet", 16, "text-secondary"),

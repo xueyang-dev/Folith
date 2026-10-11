@@ -1220,5 +1220,13 @@
   "按要求重译，比如：更口语一点": "Retraducir con una indicación, p. ej.: más coloquial",
   "正在生成候选译文…": "Generando una propuesta…",
   "生成": "Generar",
-  "采用": "Usar"
+  "采用": "Usar",
+  "全部状态": "Todos los estados",
+  "只看冲突项": "Solo conflictos",
+  "多个用逗号或分号隔开": "Separa varios con comas o punto y coma",
+  "拒绝所选": "Rechazar seleccionados",
+  "搜索源术语或译名": "Buscar términos o traducciones",
+  "无法修改术语状态": "No se pudo cambiar el estado del término",
+  "禁用译名": "Traducciones prohibidas",
+  "锁定所选": "Bloquear seleccionados"
 }
