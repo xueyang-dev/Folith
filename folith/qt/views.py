@@ -1492,6 +1492,7 @@ class WorkbenchView(QWidget):
     restoreRequested = Signal(int)             # 恢复人工修改之前的译文
     structureRequested = Signal(str, int)     # 操作名（见 adapter.STRUCTURE_OPERATIONS / "undo"）, 段索引
     deliverRequested = Signal()
+    supplementRequested = Signal(str)          # 补生成：交付开关键（如 deliver_epub）
     exportRequested = Signal()
     saveSnapshotRequested = Signal(int)
     refreshRequested = Signal()
@@ -2064,6 +2065,29 @@ class WorkbenchView(QWidget):
         delivery_layout.addWidget(self.asset_empty)
         delivery_layout.addLayout(asset_footer)
 
+        # 补生成：翻译完成后还能从已保存的译文生成、但当初没选的文件（例如电子书）。
+        # 不用重新翻译；点一下就走同一道交付门禁，冻结一个包含它的新版本。
+        self.supplement_card = Card()
+        supplement_layout = QVBoxLayout(self.supplement_card)
+        supplement_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                             theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        supplement_layout.setSpacing(theme_module.SPACE["sm"])
+        supplement_title = QLabel(i18n.tr('补生成交付文件'))
+        supplement_title.setObjectName("cardTitle")
+        self.supplement_hint = QLabel(
+            i18n.tr('不用重新翻译：从已完成的译文生成，交付会更新为新版本，原有文件保持不变。'))
+        self.supplement_hint.setObjectName("hint")
+        self.supplement_hint.setWordWrap(True)
+        self.supplement_grid = QGridLayout()
+        self.supplement_grid.setHorizontalSpacing(theme_module.SPACE["sm"])
+        self.supplement_grid.setVerticalSpacing(theme_module.SPACE["sm"])
+        supplement_layout.addWidget(supplement_title)
+        supplement_layout.addWidget(self.supplement_hint)
+        supplement_layout.addLayout(self.supplement_grid)
+        self.supplement_buttons: dict[str, QPushButton] = {}
+        self._supplement_keys: tuple = ()
+        self.supplement_card.setVisible(False)
+
         # 已排除段落：它们已不在工作台里，恢复必须从这里进行。
         self.excluded_list = QListWidget()
         self.excluded_list.setMaximumHeight(140)
@@ -2101,6 +2125,7 @@ class WorkbenchView(QWidget):
         delivery_content_layout.setContentsMargins(0, theme_module.SPACE["lg"], 0, 0)
         delivery_content_layout.setSpacing(theme_module.SPACE["md"])
         delivery_content_layout.addWidget(delivery_card)
+        delivery_content_layout.addWidget(self.supplement_card)
         delivery_content_layout.addWidget(excluded_card)
         delivery_content_layout.addStretch(1)
         delivery_centre = QHBoxLayout(delivery_content)
@@ -2839,6 +2864,39 @@ class WorkbenchView(QWidget):
                 i18n.tr('保存冻结交付文件 v{v0}…', v0=latest.get('snapshot_version')))
         self.asset_list.clear()
         self._fill_delivery_assets(snapshot.get("latest"), snapshot=snapshot)
+        # 补生成只在"交付已是当前版本"或"现在就能冻结"时出现：其余时候点了也会被
+        # 门禁拒绝，不如不给这个入口。
+        offer = bool(snapshot.get("current") or preview.get("can_deliver"))
+        self._fill_supplements(adapter.supplementable_outputs(self.job_id, self._state)
+                               if offer and self.job_id else [])
+
+    def _fill_supplements(self, items: list[dict]) -> None:
+        """按"还能补生成的文件"重建按钮（每秒刷新：清单没变就不动控件）。"""
+        keys = tuple(item["key"] for item in items)
+        if keys == self._supplement_keys:
+            return
+        self._supplement_keys = keys
+        while self.supplement_grid.count():
+            widget = self.supplement_grid.takeAt(0).widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self.supplement_buttons = {}
+        from .setup_panel import _FORMAT_ICONS
+
+        for index, item in enumerate(items):
+            fmt = str(item.get("format") or "")
+            title = i18n.tr(str(item.get("title") or item["key"]))
+            button = QPushButton(i18n.tr('生成{v0}', v0=title)
+                                 + (f"（{fmt}）" if fmt else ""))
+            button.setIcon(icons.icon(_FORMAT_ICONS.get(fmt.upper(), "file-text"), 16))
+            button.setIconSize(QSize(16, 16))
+            button.setToolTip(i18n.tr(str(item.get("detail") or "")))
+            button.clicked.connect(
+                lambda _checked=False, k=item["key"]: self.supplementRequested.emit(k))
+            self.supplement_buttons[item["key"]] = button
+            self.supplement_grid.addWidget(button, index // 3, index % 3)
+        self.supplement_card.setVisible(bool(items))
 
     def _fill_delivery_assets(self, latest: dict | None, *, snapshot: dict | None = None) -> None:
         """渲染交付文件清单：分组 + 图标 + 大小；空/缺失/不完整各自有话可说。"""

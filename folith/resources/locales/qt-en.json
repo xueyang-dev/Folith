@@ -1122,5 +1122,10 @@
   "原文语言": "Source language",
   "自动识别": "Detect automatically",
   "由智能画像识别，可修改": "Detected by the smart profile — you can change it",
-  "读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言（如阿拉伯语、乌尔都语、波斯语、维吾尔语）明确指定后误读更少。": "Tells the vision model which language scanned pages are in. Languages that share a script (such as Arabic, Urdu, Persian and Uyghur) are misread less often when this is set."
+  "读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言（如阿拉伯语、乌尔都语、波斯语、维吾尔语）明确指定后误读更少。": "Tells the vision model which language scanned pages are in. Languages that share a script (such as Arabic, Urdu, Persian and Uyghur) are misread less often when this is set.",
+  "补生成交付文件": "Add delivery files",
+  "不用重新翻译：从已完成的译文生成，交付会更新为新版本，原有文件保持不变。": "No retranslation needed: files are built from the finished translation, and the delivery moves to a new version with the existing files unchanged.",
+  "生成{v0}": "Generate {v0}",
+  "已生成{v0}，交付更新为 v{v1}。": "{v0} generated; the delivery is now v{v1}.",
+  "正在从已完成的译文生成，并冻结新的交付版本…": "Generating from the finished translation and freezing a new delivery version…"
 }

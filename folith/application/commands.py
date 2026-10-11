@@ -12,6 +12,7 @@ Commands accept plain Python values (never Streamlit/Qt objects), never read
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -244,6 +245,85 @@ def apply_task_setup(
 
 
 # ---------------------------------------------------------------------------
+# adding delivery files after the translation is done
+# ---------------------------------------------------------------------------
+
+def _supplementable_keys() -> dict:
+    from folith.application.task_setup import (
+        DELIVERY_ASSET_ITEMS, DELIVERY_TRANSLATION_ITEMS)
+
+    return {str(item["key"]): item
+            for item in (*DELIVERY_TRANSLATION_ITEMS, *DELIVERY_ASSET_ITEMS)}
+
+
+def enable_delivery_outputs(job_id: str, keys) -> dict:
+    """Turn on more delivery files for a task whose translation is finished.
+
+    Why this exists: :func:`apply_task_setup` refuses once a task has started,
+    so a user who later needs, say, the EPUB would otherwise have to translate
+    the whole document again.  Every file in the translation and asset groups
+    is rendered from the saved segments, so switching its flag on and freezing
+    a new delivery version is enough.  Research items (the practice report and
+    its workspace) depend on the run itself and are not offered here.
+
+    Only flags are switched *on*; nothing already delivered is removed.
+    Saving the new choice withdraws the current approval (the saved state no
+    longer matches the frozen snapshot), so the return value holds the previous
+    choice *and* approval: a caller whose delivery then fails puts both back
+    with :func:`restore_delivery_config` and the task is "delivered" again.
+    """
+    core = _core()
+    job_id = _require_text(job_id, "缺少任务标识")
+    allowed = _supplementable_keys()
+    wanted = [str(key) for key in (keys or [])]
+    unknown = [key for key in wanted if key not in allowed]
+    if unknown or not wanted:
+        raise CommandRejected("这些文件不能在翻译完成后补生成：" + "、".join(unknown or ["（未选择）"]))
+    with core.job_state_mutation_lock(job_id):
+        state = core.load_job_state(job_id)
+        if not state:
+            raise JobNotFoundError(f"任务 {job_id} 不存在。")
+        if not state.get("p2_done"):
+            raise CommandRejected("翻译完成后才能补生成交付文件。")
+        configured = state.get("delivery_config")
+        if not isinstance(configured, dict) or not configured:
+            # 旧任务没有保存交付选择，走的是历史交付包；在这里补一个开关会把整个
+            # 交付包换成另一套文件，不是用户要的"补一个"。
+            raise CommandRejected("这个任务创建于交付选择之前，不能补生成单个文件。")
+        if any(allowed[key].get("pdf_only") for key in wanted) and \
+                not core.original_layout_pdf_applicable(
+                    state.get("filename", ""), core.load_source(job_id)):
+            raise CommandRejected("原排版译文只适用于 PDF 原文。")
+        previous = {key: deepcopy(state.get(key)) for key in _DELIVERY_CHOICE_KEYS}
+        updated = dict(configured)
+        for key in wanted:
+            updated[key] = True
+        if updated != configured:
+            state["delivery_config"] = updated
+            core.save_job_state(job_id, state)
+    return previous
+
+
+#: What :func:`enable_delivery_outputs` changes, directly or through the save.
+_DELIVERY_CHOICE_KEYS = ("delivery_config", "delivery_status",
+                         "delivery_approved_by_human", "delivery_approval", "stage")
+
+
+def restore_delivery_config(job_id: str, previous: Mapping[str, Any]) -> None:
+    """Put back what :func:`enable_delivery_outputs` returned."""
+    core = _core()
+    job_id = _require_text(job_id, "缺少任务标识")
+    with core.job_state_mutation_lock(job_id):
+        state = core.load_job_state(job_id)
+        if not state:
+            return
+        for key in _DELIVERY_CHOICE_KEYS:
+            if key in previous:
+                state[key] = deepcopy(previous[key])
+        core.save_job_state(job_id, state)
+
+
+# ---------------------------------------------------------------------------
 # starting / resuming a task
 # ---------------------------------------------------------------------------
 
@@ -347,8 +427,10 @@ __all__ = [
     "cancel_job",
     "continue_job",
     "delete_job",
+    "enable_delivery_outputs",
     "import_document",
     "pause_job",
+    "restore_delivery_config",
     "resume_job",
     "retry_job",
     "start_job",

@@ -1122,5 +1122,10 @@
   "原文语言": "Idioma de origen",
   "自动识别": "Detectar automáticamente",
   "由智能画像识别，可修改": "Detectado por el perfil inteligente; puedes cambiarlo",
-  "读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言（如阿拉伯语、乌尔都语、波斯语、维吾尔语）明确指定后误读更少。": "Indica al modelo visual en qué idioma están las páginas escaneadas. Los idiomas que comparten alfabeto (como árabe, urdu, persa y uigur) se leen con menos errores si se especifica."
+  "读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言（如阿拉伯语、乌尔都语、波斯语、维吾尔语）明确指定后误读更少。": "Indica al modelo visual en qué idioma están las páginas escaneadas. Los idiomas que comparten alfabeto (como árabe, urdu, persa y uigur) se leen con menos errores si se especifica.",
+  "补生成交付文件": "Añadir archivos de entrega",
+  "不用重新翻译：从已完成的译文生成，交付会更新为新版本，原有文件保持不变。": "No hace falta volver a traducir: los archivos se generan a partir de la traducción terminada y la entrega pasa a una nueva versión sin cambiar los archivos existentes.",
+  "生成{v0}": "Generar {v0}",
+  "已生成{v0}，交付更新为 v{v1}。": "{v0} generado; la entrega es ahora la v{v1}.",
+  "正在从已完成的译文生成，并冻结新的交付版本…": "Generando a partir de la traducción terminada y congelando una nueva versión de entrega…"
 }

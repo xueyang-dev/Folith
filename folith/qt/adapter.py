@@ -2293,6 +2293,54 @@ def deliver(job_id: str, config: EngineConfig) -> dict:
     return {"manifest": manifest, "version": version, "assets": assets}
 
 
+def supplementable_outputs(job_id: str, state: dict | None = None) -> list[dict]:
+    """翻译完成后还能补生成、但这份任务还没选的交付文件（「交付」页的补生成）。
+
+    只列翻译与资产两组：它们都由已保存的译文渲染，不需要重新翻译。研究类产物
+    依赖整次运行，不在这里出现；"标记术语与翻译难点"跟随任务的标注开关，也不列。
+    """
+    state = state if state is not None else load_state(job_id)
+    configured = (state or {}).get("delivery_config")
+    if not state or not state.get("p2_done") or not isinstance(configured, dict) \
+            or not configured:
+        return []
+    current = core.normalize_delivery_config(configured)
+    items = _task_setup.delivery_items_for_source(
+        (*_task_setup.DELIVERY_TRANSLATION_ITEMS, *_task_setup.DELIVERY_ASSET_ITEMS),
+        core.original_layout_pdf_applicable(state.get("filename", ""),
+                                            core.load_source(job_id)))
+    return [{"key": str(item["key"]), "title": str(item["title"]),
+             "format": str(item.get("format") or ""),
+             "detail": str(item.get("detail") or "")}
+            for item in items
+            if not item.get("nested") and not current.get(str(item["key"]))]
+
+
+def add_delivery_outputs(job_id: str, keys: list[str], config: EngineConfig) -> dict:
+    """补生成：打开这些文件的交付开关，再走同一道交付门禁冻结一个新版本。
+
+    旧版本不动（快照不可修改）；新版本包含原来的全部文件和新加的文件。
+    门禁或生成失败时把交付选择恢复原样，任务不会停在"工作版本已偏离"。
+    """
+    wanted = [str(key) for key in keys or []]
+    offered = {item["key"] for item in supplementable_outputs(job_id)}
+    if not wanted or any(key not in offered for key in wanted):
+        raise AdapterError("这些文件已经在交付里，或这个任务不能补生成它们。")
+    preview = delivery_preview(job_id, config)
+    if not ((preview.get("snapshot") or {}).get("current") or preview.get("can_deliver")):
+        raise AdapterError(friendly_gate_message("；".join(
+            str(item) for item in preview.get("issues") or []) or "尚未完成"))
+    try:
+        previous = _commands.enable_delivery_outputs(job_id, wanted)
+    except _commands.ApplicationError as exc:
+        raise AdapterError(str(exc)) from exc
+    try:
+        return deliver(job_id, config)
+    except Exception:
+        _commands.restore_delivery_config(job_id, previous)
+        raise
+
+
 def delivery_snapshots(job_id: str) -> list[dict]:
     return core.list_delivery_snapshots(job_id)
 

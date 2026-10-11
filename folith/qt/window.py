@@ -285,6 +285,7 @@ class MainWindow(QMainWindow):
         self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
+        self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.exportRequested.connect(self.export_copy)
         self.workbench.saveSnapshotRequested.connect(self.save_snapshot)
         self.workbench.editSubmitted.connect(self.submit_edit)
@@ -1993,6 +1994,26 @@ class MainWindow(QMainWindow):
 
         self._run_with_busy(i18n.tr('冻结交付'), i18n.tr('正在通过交付门禁并生成快照…'),
                             adapter.deliver, job_id, self.config, on_done=done)
+
+    def supplement_delivery(self, key: str) -> None:
+        """补生成一个当初没选的交付文件（例如电子书），冻结为新的交付版本。"""
+        job_id = self._current_job_id
+        if not job_id or not key:
+            return
+        item = next((entry for entry in adapter.supplementable_outputs(job_id)
+                     if entry["key"] == key), None)
+        if item is None:
+            return
+        title = i18n.tr(item["title"])
+
+        def done(result) -> None:
+            self._notice(i18n.tr('已生成{v0}，交付更新为 v{v1}。',
+                                 v0=title, v1=result.get("version")))
+
+        self._run_with_busy(i18n.tr('生成{v0}', v0=title),
+                            i18n.tr('正在从已完成的译文生成，并冻结新的交付版本…'),
+                            adapter.add_delivery_outputs, job_id, [key], self.config,
+                            on_done=done)
 
     def export_copy(self) -> None:
         job_id = self._current_job_id
