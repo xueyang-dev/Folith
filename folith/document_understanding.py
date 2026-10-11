@@ -87,13 +87,33 @@ class DocumentUnderstandingError(ValueError):
         self.diagnostics = diagnostics
 
 
+def language_hint(language: str) -> str:
+    """用户声明（或确认）的原文语言 → 追加在读页提示词末尾的一句话。
+
+    共用一套字母的语言只看字形容易互相混淆（阿拉伯语 / 乌尔都语 / 波斯语 /
+    维吾尔语）；告诉模型这一页是哪种语言，并要求保持该语言自己的正字法。
+    空值不加任何提示（"自动识别"，与以前的行为一致）。
+    """
+    language = str(language or '').strip()
+    if not language:
+        return ''
+    return (f"\nThe document is written in {language}. Transcribe it in {language} "
+            f"with that language's own orthography and letter forms; do not normalise "
+            f"it into another language that shares the script.")
+
+
 class VLMDocumentProvider:
-    def __init__(self, config, *, client=None, cancel_check=None):
+    def __init__(self, config, *, client=None, cancel_check=None, language=''):
+        self.language = str(language or '').strip()
+        self.system_prompt = SYSTEM_PROMPT + language_hint(self.language)
+        # 语言提示改变了读页请求，所以它是缓存身份的一部分：换了原文语言不会复用旧结果。
         self.cache_identity = {**config.describe(), "prompt_version":PROMPT_VERSION}
+        if self.language:
+            self.cache_identity["language"] = self.language
         self.transport = OnlineOCRBackend(config, client_factory=(lambda _: client) if client is not None else None, cancel_check=cancel_check)
 
     def understand_page(self, page):
-        blocks, error = self.transport.read_image(page.image, system_prompt=SYSTEM_PROMPT,
+        blocks, error = self.transport.read_image(page.image, system_prompt=self.system_prompt,
                                                    user_prompt='Read all content on this page.', decoder=decode_semantics)
         diagnostics = dict(self.transport._last_request)
         diagnostics['prompt_version'] = PROMPT_VERSION

@@ -1118,5 +1118,9 @@
   "扫描页用本机 OCR 识别": "Scanned pages are recognized with local OCR",
   "每页都按版面理解": "Every page is read by its layout",
   "按版面理解页面，扫描页也能读取": "Pages are read by their layout; scanned pages too",
-  "未使用": "Not used"
+  "未使用": "Not used",
+  "原文语言": "Source language",
+  "自动识别": "Detect automatically",
+  "由智能画像识别，可修改": "Detected by the smart profile — you can change it",
+  "读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言（如阿拉伯语、乌尔都语、波斯语、维吾尔语）明确指定后误读更少。": "Tells the vision model which language scanned pages are in. Languages that share a script (such as Arabic, Urdu, Persian and Uyghur) are misread less often when this is set."
 }

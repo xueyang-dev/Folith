@@ -344,6 +344,8 @@ PANEL_STATE_KEYS: Tuple[str, ...] = (
     "strategy_preset", "batch_profile", "translation_concurrency",
     "enable_review", "strict_terminology_governance", "translation_theory",
     "ocr_language", "ocr_mode", "ocr_backend", "ocr_quality",
+    # 原文语言（「准备」页选择或由智能画像识别）：读扫描页时交给视觉模型。
+    "source_lang",
 )
 
 

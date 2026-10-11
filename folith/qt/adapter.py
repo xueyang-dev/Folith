@@ -29,6 +29,7 @@ from folith.desktop import file_actions
 from folith.desktop import legacy_import
 from folith.desktop import paths as desktop_paths
 from folith import translation_evidence
+from folith import source_languages as _source_languages
 # Architecture Phase 1/3: the shared, frontend-neutral application layer.  Qt only
 # translates `EngineConfig` into it and adapts desktop-specific values back out.
 from folith.application import (
@@ -1789,6 +1790,7 @@ def quick_style_profile(job_id: str, config: EngineConfig) -> dict:
         str(state.get("target_lang") or config.target_lang),
         base_url=config.translator_base_url())
     return {"recommendation": dict(recommendation),
+            "source_language": str(dict(recommendation).get("source_language") or ""),
             "document_profile": dict(document_profile),
             "warnings": list(warnings) + list(llm_warnings),
             "failed": bool(llm_warnings)}
@@ -2998,6 +3000,8 @@ def apply_task_setup(config: EngineConfig, job_id: str, setup: dict) -> None:
         "enable_report": bool(delivery.get("enable_report")),
         "enable_annotate": bool(delivery.get("enable_annotate")),
         "delivery_config": delivery,
+        # 空串 = 自动识别（不给视觉模型语言提示）。
+        "source_lang": str(setup.get("source_lang") or ""),
     }
     if setup.get("is_pdf"):
         ocr = dict(setup.get("ocr") or {})
@@ -3050,5 +3054,8 @@ def setup_choices() -> dict:
         "ocr_quality": [dict(label=label, value=value)
                         for label, value in OCR_QUALITY_CHOICES],
         "target_languages": list(TARGET_LANGUAGES),
+        # 原文语言目录（保存值即显示名）；空值"自动识别"由面板自己放在第一项。
+        "source_languages": [value for value, _english, _code in
+                             _source_languages.SOURCE_LANGUAGES],
         "projects": project_options(),
     }

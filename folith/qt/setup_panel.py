@@ -680,12 +680,35 @@ class TaskSetupPanel(QWidget):
         column.addLayout(head)
 
         options = self._build_context_card()
-        # ① 必须：目标语言（全页唯一的大号控件）
-        target = QVBoxLayout()
-        target.setSpacing(theme_module.SPACE["xs"])
-        target.addWidget(_group_header(i18n.tr('目标语言')))
-        target.addWidget(self.target_box)
-        column.addLayout(target)
+        # ① 必须：原文语言 → 目标语言（这一页仅有的两个大号控件）。
+        # 原文语言默认"自动识别"；智能画像识别出来后先填上，用户看到不对再改。
+        self.source_box = style_module.ComboBox()
+        self.source_box.setObjectName("primaryCombo")
+        self.source_box.setMinimumHeight(40)
+        self.source_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.source_box.setToolTip(i18n.tr(
+            '读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言'
+            '（如阿拉伯语、乌尔都语、波斯语、维吾尔语）明确指定后误读更少。'))
+        self.source_box.addItem(i18n.tr('自动识别'), "")
+        self.source_box.activated.connect(lambda _index: self._source_picked_by_user())
+        self.source_box.currentIndexChanged.connect(lambda _index: self._source_changed())
+        self._source_user_set = False
+        self.source_hint = QLabel(i18n.tr('由智能画像识别，可修改'))
+        self.source_hint.setObjectName("hint")
+        self.source_hint.setContentsMargins(4, 0, 0, 0)
+        self.source_hint.setVisible(False)
+        languages = QGridLayout()
+        languages.setContentsMargins(0, 0, 0, 0)
+        languages.setHorizontalSpacing(theme_module.SPACE["md"])
+        languages.setVerticalSpacing(theme_module.SPACE["xs"])
+        languages.addWidget(_group_header(i18n.tr('原文语言')), 0, 0)
+        languages.addWidget(_group_header(i18n.tr('目标语言')), 0, 1)
+        languages.addWidget(self.source_box, 1, 0)
+        languages.addWidget(self.target_box, 1, 1)
+        languages.addWidget(self.source_hint, 2, 0, 1, 2)
+        languages.setColumnStretch(0, 1)
+        languages.setColumnStretch(1, 1)
+        column.addLayout(languages)
         # ② 常用：翻译模式（一条分段轨道 + 一句话说明）
         column.addWidget(self._build_strategy_card())
         # ③ 可以不管：项目 / 术语库 / 风格 / 文档读取 / 高级设置
@@ -1161,8 +1184,44 @@ class TaskSetupPanel(QWidget):
                 "adjustments": {key: slider.value() for key, slider in self.style_sliders.items()},
                 "custom_rules": self.style_custom.text().strip()}
 
+    # -- 原文语言 ------------------------------------------------------------
+    def _source_picked_by_user(self) -> None:
+        """用户亲手选过：之后的识别结果不再覆盖，"由智能画像识别"的提示也收起。"""
+        self._source_user_set = True
+        self.source_hint.setVisible(False)
+
+    def _source_changed(self) -> None:
+        value = str(self.source_box.currentData() or "")
+        # 左栏的元信息跟着说"原文：…"（自动识别时不说）。
+        if hasattr(self, "overview"):
+            self.overview.set_document(self.overview._job_id, self.overview._filename,
+                                       source_lang=value)
+        # 本机 OCR 还没指定识别语言时，顺手用这门语言的语言包（只在列表里有它时）。
+        from folith import source_languages as _source_languages
+
+        code = _source_languages.ocr_code(value)
+        if code and not str(self.ocr_language_box.currentData() or "").strip():
+            index = self.ocr_language_box.findData(code)
+            if index >= 0:
+                self.ocr_language_box.setCurrentIndex(index)
+
+    def apply_detected_source_language(self, value: str) -> bool:
+        """智能画像识别出的原文语言：用户还没亲手选过时才填上，并说明来源。"""
+        from folith import source_languages as _source_languages
+
+        value = _source_languages.match(value)
+        if not value or self._source_user_set:
+            return False
+        index = self.source_box.findData(value)
+        if index < 0:
+            return False
+        self.source_box.setCurrentIndex(index)
+        self.source_hint.setVisible(True)
+        return True
+
     def set_style_recommendation(self, result: dict) -> None:
         """窗口层把智能画像的结果交回来：显示理由，并给出「接受推荐」。"""
+        self.apply_detected_source_language(str((result or {}).get("source_language") or ""))
         recommendation = dict((result or {}).get("recommendation") or {})
         self._style_recommendation = recommendation
         self.style_profile_button.setEnabled(True)
@@ -1342,6 +1401,12 @@ class TaskSetupPanel(QWidget):
             self.target_box.clear()
             for lang in self._choices.get("target_languages") or []:
                 self.target_box.addItem(str(lang), str(lang))
+            while self.source_box.count() > 1:
+                self.source_box.removeItem(1)
+            from folith import source_languages as _source_languages
+
+            for lang in self._choices.get("source_languages") or []:
+                self.source_box.addItem(_source_languages.display_name(lang), str(lang))
             self.project_box.clear()
             # 「未分类」（系统工作区）必须排第一：`_set_combo_data` 找不到条目时会落到
             # 第 0 项，而第 0 项若不是未分类，一个项目已归档的任务就会被**静默改归**到
@@ -1447,6 +1512,14 @@ class TaskSetupPanel(QWidget):
             self.subtitle_label.setText(i18n.tr('确认设置和要生成的文件，选择会保存到本任务。'))
             strategy = self._view.get("strategy") or {}
             self._set_combo_data(self.target_box, self._view.get("target_lang"))
+            from folith import source_languages as _source_languages
+
+            saved_source = _source_languages.match(self._view.get("source_lang"))
+            index = self.source_box.findData(saved_source) if saved_source else 0
+            self.source_box.setCurrentIndex(max(index, 0))
+            # 任务里已经保存过原文语言 = 用户（或上次的准备）确认过，识别结果不再覆盖它。
+            self._source_user_set = bool(saved_source)
+            self.source_hint.setVisible(False)
             self._set_combo_data(self.project_box, self._view.get("project_id"))
             count = int(self._view.get("glossary_count") or 0)
             name = str(self._view.get("glossary_name") or "")
@@ -1883,6 +1956,7 @@ class TaskSetupPanel(QWidget):
             "filename": str(self._view.get("filename") or ""),
             "is_pdf": bool(self._view.get("is_pdf")),
             "target_lang": self.target_box.currentText().strip(),
+            "source_lang": str(self.source_box.currentData() or ""),
             "project_id": self.project_box.currentData(),
             "strategy_preset": str(self.mode_selector.value() or ""),
             "strategy": {

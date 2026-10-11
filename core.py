@@ -1625,7 +1625,10 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                         config, error = resolve_ocr_online_config(config)
                         if error:
                             raise ValueError(error["message"])
-                    understanding_provider = VLMDocumentProvider(config, cancel_check=cancel_check)
+                    from folith import source_languages as _source_languages
+                    understanding_provider = VLMDocumentProvider(
+                        config, cancel_check=cancel_check,
+                        language=_source_languages.english_name(source_language))
                 if spatial_engine is None:
                     command = _find_tesseract()
                     def spatial_engine(page):

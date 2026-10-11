@@ -1118,5 +1118,9 @@
   "扫描页用本机 OCR 识别": "Las páginas escaneadas se reconocen con OCR local",
   "每页都按版面理解": "Cada página se interpreta por su diseño",
   "按版面理解页面，扫描页也能读取": "Las páginas se leen por su diseño, también las escaneadas",
-  "未使用": "No se usa"
+  "未使用": "No se usa",
+  "原文语言": "Idioma de origen",
+  "自动识别": "Detectar automáticamente",
+  "由智能画像识别，可修改": "Detectado por el perfil inteligente; puedes cambiarlo",
+  "读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言（如阿拉伯语、乌尔都语、波斯语、维吾尔语）明确指定后误读更少。": "Indica al modelo visual en qué idioma están las páginas escaneadas. Los idiomas que comparten alfabeto (como árabe, urdu, persa y uigur) se leen con menos errores si se especifica."
 }

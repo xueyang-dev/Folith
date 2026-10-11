@@ -198,6 +198,12 @@ def _parse_json_object(text: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _source_language_values() -> list:
+    from folith.source_languages import SOURCE_LANGUAGES
+
+    return [value for value, _english, _code in SOURCE_LANGUAGES]
+
+
 def _style_prompt(target_lang: str = "") -> str:
     lang_hint = f"（目标语言：{target_lang}）" if target_lang else ""
     profile_lines = "\n".join(
@@ -220,6 +226,7 @@ def _style_prompt(target_lang: str = "") -> str:
         '   "confidence": 0.0-1.0,\n'
         '   "sections": []\n'
         ' },\n'
+        ' "source_language": "样本的原文语言，只能是以下之一：' + "、".join(_source_language_values()) + '；混合时写主要语言，无法判断留空",\n'
         ' "style_recommendation": {\n'
         '   "document_type": "文档类型细分，如 academic_monograph",\n'
         '   "domain": ["领域标签数组"],\n'
@@ -330,6 +337,10 @@ def quick_profile(
                 raise ValueError("缺少 style_recommendation 字段")
             doc_profile = models.normalize_document_profile(doc_raw)
             style_rec = _normalize_style_recommendation(style_raw)
+            # 同一次调用顺带判断原文语言；对不上目录的写法一律留空（不猜）。
+            from folith.source_languages import match as _match_language
+
+            style_rec["source_language"] = _match_language(raw.get("source_language"))
             return doc_profile, style_rec, warnings
         except Exception as exc:  # noqa: BLE001 - LLM 输出不可控，统一降级
             # Provider failures are surfaced as actionable product copy.  Keep

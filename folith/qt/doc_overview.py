@@ -41,7 +41,9 @@ def describe(facts: dict, *, source_lang: str = "") -> tuple[str, list[tuple[str
     if facts.get("bytes"):
         meta.append(_human_size(int(facts["bytes"])))
     if source_lang:
-        meta.append(i18n.tr('原文：{v0}', v0=i18n.tr_dynamic(source_lang)))
+        from folith.source_languages import display_name
+
+        meta.append(i18n.tr('原文：{v0}', v0=display_name(source_lang)))
     notes: list[tuple[str, str]] = []
     if facts.get("encrypted"):
         notes.append(("warn", i18n.tr('文件已加密，无法读取内容')))

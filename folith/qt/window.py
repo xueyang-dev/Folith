@@ -169,6 +169,8 @@ class MainWindow(QMainWindow):
         self._cached_signature = ""
         #: 「译前准备」的目录（`adapter.setup_choices`）在一个进程里只需读一次。
         self._setup_choices_loaded = False
+        #: 本次运行里已经自动做过智能画像的任务（进入「准备」时自动做一次，不重复收费）。
+        self._auto_profiled: set[str] = set()
         self._home_counter = 0
         self._exit_in_progress = False
         self._closing_accepted = False
@@ -1082,8 +1084,12 @@ class MainWindow(QMainWindow):
         return bool(state.get("p1_done") or state.get("p2_done")
                     or state.get("pipeline_config") or state.get("source_paras"))
 
-    def run_style_profile(self) -> None:
-        """智能画像：后台抽样读原文并请求一次模型，结果交回准备面板。"""
+    def run_style_profile(self, automatic: bool = False) -> None:
+        """智能画像：后台抽样读原文并请求一次模型，结果交回准备面板。
+
+        ``automatic``：进入「准备」时自动触发的那一次。失败只写在面板的状态行里，
+        不弹对话框打断用户（用户随时可以手动再点「智能画像」）。
+        """
         job_id = self._current_job_id
         if not job_id:
             return
@@ -1096,6 +1102,8 @@ class MainWindow(QMainWindow):
                 # 另一个任务的面板（否则「接受推荐」会把 A 的风格设给 B）。
                 return
             panel.set_style_recommendation(result)
+            if automatic:
+                return
             for warning in (result or {}).get("warnings") or []:
                 self._notice(i18n.tr_dynamic(str(warning)), error=True)
 
@@ -1103,6 +1111,8 @@ class MainWindow(QMainWindow):
             if self._current_job_id == job_id:
                 panel.set_style_busy(False)
                 panel.style_status.setText(i18n.tr_dynamic(message))
+            if automatic:
+                return
             self._failure(i18n.tr('智能画像未完成'), message, detail)
 
         self.runner.submit(adapter.quick_style_profile, job_id, self.config,
@@ -1198,6 +1208,20 @@ class MainWindow(QMainWindow):
             self.workbench.set_setup_choices(adapter.setup_choices())
             self._setup_choices_loaded = True
         self.workbench.set_setup(adapter.task_setup_view(self.config, job_id))
+        self._auto_style_profile(job_id)
+
+    def _auto_style_profile(self, job_id: str) -> None:
+        """进入一个还没开始的任务时，自动抽样读一次原文：推荐风格，并识别原文语言。
+
+        只在模型连接可用时做、每个任务在本次运行里只做一次（抽样最多识别前 3 页，
+        费用有上限）；脚本化运行不自动调用模型。结果由用户在「准备」页确认或修改。
+        """
+        if job_id in self._auto_profiled or _automation():
+            return
+        if self.config.connection_problem():
+            return
+        self._auto_profiled.add(job_id)
+        self.run_style_profile(automatic=True)
 
     def refresh_workbench(self, *, force: bool = False) -> None:
         job_id = self._current_job_id
