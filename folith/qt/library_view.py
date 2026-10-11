@@ -51,6 +51,9 @@ class LibraryView(QWidget):
     openJobRequested = Signal(str, int)             # job_id, segment index (-1 = none)
     newTermRequested = Signal()
     clearMemoryRequested = Signal(str)              # project id
+    acceptEditedRequested = Signal(dict)            # candidate row（先改译名再接受）
+    termEditRequested = Signal(dict)                # term row（在所在任务里修改）
+    termDeleteRequested = Signal(dict)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -104,6 +107,9 @@ class LibraryView(QWidget):
         self.task_button = QPushButton(i18n.tr('仅用于本任务'))
         self.reject_button = QPushButton(i18n.tr('拒绝'))
         self.jump_button = QPushButton(i18n.tr('打开原文位置'))
+        self.edit_accept_button = QPushButton(i18n.tr('改译名后接受…'))
+        self.edit_accept_button.setToolTip(i18n.tr('建议译文不对时，先改成正确的译名再接受为项目术语'))
+        self.edit_accept_button.clicked.connect(self._edit_accept)
         self.accept_button.clicked.connect(lambda: self._decide("project_term"))
         self.task_button.clicked.connect(lambda: self._decide("task_only"))
         self.reject_button.clicked.connect(lambda: self._decide("rejected"))
@@ -111,8 +117,8 @@ class LibraryView(QWidget):
         self.high_button = QPushButton("")
         self.high_button.clicked.connect(self._accept_all_high)
         actions = QHBoxLayout()
-        for widget in (self.accept_button, self.task_button, self.reject_button, self.jump_button,
-                       self.high_button):
+        for widget in (self.accept_button, self.edit_accept_button, self.task_button,
+                       self.reject_button, self.jump_button, self.high_button):
             actions.addWidget(widget)
         actions.addStretch(1)
         self.cand_detail = QTextBrowser()
@@ -151,6 +157,11 @@ class LibraryView(QWidget):
         self.term_detail.setMaximumHeight(150)
         self.term_open = QPushButton(i18n.tr('打开所在任务'))
         self.term_open.clicked.connect(self._open_term_job)
+        self.term_edit = QPushButton(i18n.tr('编辑…'))
+        self.term_edit.clicked.connect(lambda: self.termEditRequested.emit(self.selected_term()))
+        self.term_delete = QPushButton(i18n.tr('删除…'))
+        self.term_delete.setObjectName("dangerAction")
+        self.term_delete.clicked.connect(lambda: self.termDeleteRequested.emit(self.selected_term()))
         term_page = QWidget()
         term = QVBoxLayout(term_page)
         term.setContentsMargins(0, 8, 0, 0)
@@ -158,7 +169,11 @@ class LibraryView(QWidget):
         term.addWidget(self.term_table, 1)
         term.addWidget(self.term_more)
         term.addWidget(self.term_detail)
-        term.addWidget(self.term_open, 0, Qt.AlignmentFlag.AlignLeft)
+        term_actions = QHBoxLayout()
+        for widget in (self.term_edit, self.term_delete, self.term_open):
+            term_actions.addWidget(widget)
+        term_actions.addStretch(1)
+        term.addLayout(term_actions)
 
         # ---- 翻译记忆 --------------------------------------------------------
         self.tm_query = QLineEdit()
@@ -289,6 +304,7 @@ class LibraryView(QWidget):
         self.accept_button.setText(i18n.tr('接受为项目术语') if count <= 1
                                    else i18n.tr('接受所选 {v0} 条为项目术语', v0=count))
         self.jump_button.setEnabled(count == 1)
+        self.edit_accept_button.setEnabled(count == 1 and not self._busy)
         self.high_button.setEnabled(not self._busy)
         if count != 1:
             self.cand_detail.setHtml(
@@ -313,6 +329,11 @@ class LibraryView(QWidget):
         picked = self.selected_candidates()
         if picked:
             self.decideRequested.emit(picked, decision)
+
+    def _edit_accept(self) -> None:
+        picked = self.selected_candidates()
+        if len(picked) == 1:
+            self.acceptEditedRequested.emit(dict(picked[0]))
 
     def _accept_all_high(self) -> None:
         rows = [r for r in self._filtered_candidates()
@@ -352,6 +373,10 @@ class LibraryView(QWidget):
     def _term_selected(self) -> None:
         row = self.selected_term()
         self.term_open.setEnabled(bool(row.get("job_id")))
+        # 编辑 / 删除作用在具体某个任务的术语表上；只来自项目记忆的术语没有任务可改。
+        editable = bool([task for task in row.get("tasks") or [] if task.get("job_id")])
+        self.term_edit.setEnabled(editable and not self._busy)
+        self.term_delete.setEnabled(editable and not self._busy)
         if not row:
             self.term_detail.setHtml("")
             return

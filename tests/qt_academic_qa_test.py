@@ -253,3 +253,20 @@ def test_a_config_that_already_generates_reports_opens_the_mode(qapp):
         assert dialog.academic_box.isChecked() and not dialog.report_box.isHidden()
     finally:
         dialog.close()
+
+
+def test_reasoning_effort_is_offered_only_for_reasoning_models(qapp):
+    from folith.qt.dialogs import EngineDialog
+    from folith.qt.workers import TaskRunner
+
+    dialog = EngineDialog(adapter.EngineConfig(provider="OpenAI", model="gpt-4o",
+                                               target_lang="简体中文"), TaskRunner())
+    assert dialog.reasoning_row.isHidden()
+    assert dialog._collect().reasoning_effort == ""
+    dialog.model_box.setCurrentText("o3")
+    assert not dialog.reasoning_row.isHidden()
+    dialog.reasoning_box.setCurrentIndex(dialog.reasoning_box.findData("high"))
+    assert dialog._collect().reasoning_effort == "high"
+    dialog.model_box.setCurrentText("gpt-4o")        # 换成不支持的模型就回到自动
+    assert dialog._collect().reasoning_effort == ""
+    assert dialog.reviewer_fetch_button.text() == "获取模型"

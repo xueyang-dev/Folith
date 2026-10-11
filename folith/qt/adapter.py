@@ -1813,6 +1813,36 @@ def decide_candidate(row: dict, decision: str) -> str:
     return str(message or "")
 
 
+def accept_candidate_with(row: dict, target: str) -> str:
+    """先改建议译文再接受为项目术语（候选的译法不对时，不必先接受再去改）。
+
+    接受后在该任务的术语表里找到这条术语，把首选译名改成用户写的（生成新的术语
+    版本），然后再提升到项目记忆——项目里存的就是改过的译名。
+    """
+    target = str(target or "").strip()
+    if not target:
+        raise AdapterError("译名不能为空。")
+    try:
+        state, ok, message = core.review_knowledge_candidate(
+            row["job_id"], row["candidate_id"], "project_term")
+    except (RuntimeError, ValueError, KeyError) as exc:
+        raise AdapterError(f"处理失败：{exc}") from exc
+    if not ok:
+        raise AdapterError(str(message or "处理失败"))
+    source = str(row.get("source") or "").strip().casefold()
+    entry = next((item for item in (core.load_job_state(row["job_id"]) or {}).get("glossary") or []
+                  if str(item.get("source") or "").strip().casefold() == source), None)
+    if entry is None:
+        raise AdapterError("候选已接受，但在任务术语表里找不到这条术语，译名没有修改。")
+    if str(entry.get("preferred") or entry.get("target") or "") != target:
+        update_glossary_entry(row["job_id"], str(entry.get("id")), preferred=target,
+                              status="locked", domain=str(entry.get("domain") or ""),
+                              note=str(entry.get("note") or ""))
+    project = core.promote_job_to_project(row["job_id"], actor="用户")
+    name = (project or {}).get("name") or "未命名项目"
+    return f"已接受「{row.get('source')} → {target}」并提升到项目「{name}」"
+
+
 def decide_candidates(rows: Sequence[dict], decision: str) -> dict:
     """批量审核：逐条处理，失败的不拖累其余的。"""
     done, failed = 0, []
@@ -3383,6 +3413,11 @@ def save_document_profile(job_id: str, profile: dict) -> dict:
 
 def _yes(value) -> str:
     return "开启" if value else "关闭"
+
+
+def reasoning_effort_options(provider: str, model: str) -> tuple[str, ...]:
+    """这个模型可选的推理强度（low / medium / high）；不认识的模型返回空（保持自动）。"""
+    return tuple(core.reasoning_effort_options(provider, model) or ())
 
 
 def task_details(config: EngineConfig, job_id: str) -> list[dict]:

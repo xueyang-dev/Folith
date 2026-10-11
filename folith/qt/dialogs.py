@@ -16,7 +16,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
     QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
     QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
     QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -234,7 +234,16 @@ class EngineDialog(QDialog):
         test_layout.addWidget(self.test_button)
         test_layout.addWidget(self.test_label, 1)
 
+        # 推理强度：只对识别得出的推理模型提供（o 系列、gpt-5、deepseek-r1 等）；
+        # 其他模型保持自动，免得发出它们不支持的参数让翻译失败。
+        self.reasoning_box = style_module.ComboBox()
+        self.reasoning_row = _field(
+            i18n.tr('推理强度'), self.reasoning_box,
+            i18n.tr('越高越仔细，也越慢、越贵。只对推理模型生效。'))
+        self.model_box.currentTextChanged.connect(lambda _text: self._sync_reasoning())
+
         body.addWidget(pair)
+        body.addWidget(self.reasoning_row)
         body.addWidget(_field(i18n.tr('API 密钥'), self.key_field,
                               i18n.tr('留空表示沿用已保存的密钥；输入内容不会显示在诊断包或日志里。')))
         body.addWidget(_field(i18n.tr('API 地址'), self.base_edit))
@@ -265,6 +274,16 @@ class EngineDialog(QDialog):
         self.reviewer_provider_box.addItems([""] + list(self.config.providers.keys()))
         self.reviewer_provider_box.setCurrentText(self.config.reviewer_provider)
         self.reviewer_model_edit = QLineEdit(self.config.reviewer_model)
+        self.reviewer_fetch_button = QPushButton(i18n.tr('获取模型'))
+        self.reviewer_fetch_button.setIcon(icons.icon("refresh", 16))
+        self.reviewer_fetch_button.setIconSize(QSize(16, 16))
+        self.reviewer_fetch_button.clicked.connect(self._fetch_reviewer_models)
+        reviewer_model_row = QWidget()
+        reviewer_model_layout = QHBoxLayout(reviewer_model_row)
+        reviewer_model_layout.setContentsMargins(0, 0, 0, 0)
+        reviewer_model_layout.setSpacing(8)
+        reviewer_model_layout.addWidget(self.reviewer_model_edit, 1)
+        reviewer_model_layout.addWidget(self.reviewer_fetch_button)
         self.reviewer_key_field = style_module.SecretField(self.config.reviewer_api_key)
         self.reviewer_key_edit = self.reviewer_key_field.line_edit
         self.reviewer_base_edit = QLineEdit(self.config.reviewer_base_url)
@@ -273,7 +292,7 @@ class EngineDialog(QDialog):
         reviewer_fields_layout.setContentsMargins(0, 0, 0, 0)
         reviewer_fields_layout.setSpacing(theme_module.SPACE["sm"])
         reviewer_fields_layout.addWidget(_field(i18n.tr('提供商'), self.reviewer_provider_box))
-        reviewer_fields_layout.addWidget(_field(i18n.tr('模型名'), self.reviewer_model_edit))
+        reviewer_fields_layout.addWidget(_field(i18n.tr('模型名'), reviewer_model_row))
         reviewer_fields_layout.addWidget(_field(i18n.tr('API 密钥'), self.reviewer_key_field))
         reviewer_fields_layout.addWidget(_field(
             i18n.tr('API 地址'), self.reviewer_base_edit,
@@ -290,6 +309,7 @@ class EngineDialog(QDialog):
 
         self._provider_changed(self.provider_box.currentText())
         self._reviewer_changed()
+        self._sync_reasoning()
         return page
 
     def _build_task_tab(self) -> QWidget:
@@ -767,6 +787,9 @@ class EngineDialog(QDialog):
             reviewer_model=self.reviewer_model_edit.text().strip(),
             reviewer_api_key=self.reviewer_key_edit.text().strip(),
             reviewer_base_url=self.reviewer_base_edit.text().strip(),
+            # 只有当前模型提供推理强度选项时才保存选择；换成不支持的模型就回到自动。
+            reasoning_effort=str(self.reasoning_box.currentData() or "")
+            if self.reasoning_box.count() > 1 else "",
         )
         # 优先取条目 data（核心取值）；没有选中条目时用输入文本（用户手填的代码）。
         index = self.ocr_language_box.currentIndex()
@@ -856,6 +879,50 @@ class EngineDialog(QDialog):
             return
         self.runner.submit(adapter.test_connection, config,
                            on_done=done, on_error=failed, label="test-connection")
+
+    def _sync_reasoning(self) -> None:
+        """按当前提供商与模型给出可选的推理强度；不认识的模型不显示这一项。"""
+        options = adapter.reasoning_effort_options(
+            self.provider_box.currentText().strip(), self.model_box.currentText().strip())
+        current = str(self.reasoning_box.currentData() or self.config.reasoning_effort or "")
+        self.reasoning_box.blockSignals(True)
+        self.reasoning_box.clear()
+        self.reasoning_box.addItem(i18n.tr('自动'), "")
+        labels = {"low": "低", "medium": "中", "high": "高"}
+        for value in options:
+            self.reasoning_box.addItem(i18n.tr(labels.get(value, value)), value)
+        index = self.reasoning_box.findData(current)
+        self.reasoning_box.setCurrentIndex(max(index, 0))
+        self.reasoning_box.blockSignals(False)
+        self.reasoning_row.setVisible(bool(options))
+
+    def _fetch_reviewer_models(self) -> None:
+        """审校模型也能像翻译模型一样从服务商拉取列表，选一个填进去。"""
+        provider = self.reviewer_provider_box.currentText().strip()
+        api_key = self.reviewer_key_edit.text().strip() or self.key_edit.text().strip()
+        base_url = self.reviewer_base_edit.text().strip()
+        self.reviewer_fetch_button.setEnabled(False)
+
+        def done(result) -> None:
+            ok, models, message = result
+            self.reviewer_fetch_button.setEnabled(True)
+            if not ok or not models:
+                _set_status(self.test_label, str(message), "danger")
+                return
+            menu = QMenu(self.reviewer_fetch_button)
+            for name in models:
+                action = menu.addAction(str(name))
+                action.triggered.connect(
+                    lambda _checked=False, text=str(name): self.reviewer_model_edit.setText(text))
+            menu.popup(self.reviewer_fetch_button.mapToGlobal(
+                self.reviewer_fetch_button.rect().bottomLeft()))
+
+        def failed(message: str, _detail: str) -> None:
+            self.reviewer_fetch_button.setEnabled(True)
+            _set_status(self.test_label, f"获取失败：{message}", "danger")
+
+        self.runner.submit(adapter.provider_models, provider, api_key, base_url,
+                           on_done=done, on_error=failed, label="fetch-reviewer-models")
 
     def _fetch_models(self) -> None:
         provider = self.provider_box.currentText().strip()
@@ -1189,6 +1256,64 @@ class SegmentSplitDialog(QDialog):
                 "source_b": self.source_b.toPlainText(),
                 "target_a": self.target_a.toPlainText(),
                 "target_b": self.target_b.toPlainText()}
+
+
+class LibraryTermDialog(QDialog):
+    """在语言资产库里修改一条术语：作用在它所在的某个任务的术语表上（生成新版本）。"""
+
+    STATUSES = (("locked", "已锁定"), ("provisional", "暂定"), ("candidate", "候选"),
+                ("rejected", "已拒绝"))
+
+    def __init__(self, row: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('编辑术语'))
+        self.setMinimumWidth(460)
+        hint = QLabel(i18n.tr('修改会生成新的术语版本，受影响段落的审校需要重新确认。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        self.task_box = style_module.ComboBox()
+        for task in row.get("tasks") or []:
+            if task.get("job_id"):
+                self.task_box.addItem(str(task.get("document") or task.get("job_id")), dict(task))
+        self.preferred_edit = QLineEdit(str(row.get("preferred") or ""))
+        self.status_box = style_module.ComboBox()
+        for value, label in self.STATUSES:
+            self.status_box.addItem(i18n.tr(label), value)
+        index = self.status_box.findData(str(row.get("status") or "locked"))
+        self.status_box.setCurrentIndex(max(index, 0))
+        self.domain_edit = QLineEdit(str(row.get("domain") or ""))
+        self.forbidden_edit = QLineEdit("、".join(row.get("forbidden") or []))
+        self.forbidden_edit.setPlaceholderText(i18n.tr('多个用逗号或分号隔开'))
+        form = QFormLayout()
+        form.addRow(i18n.tr('原术语'), QLabel(str(row.get("source") or "")))
+        form.addRow(i18n.tr('所在任务'), self.task_box)
+        form.addRow(i18n.tr('首选译名'), self.preferred_edit)
+        form.addRow(i18n.tr('状态'), self.status_box)
+        form.addRow(i18n.tr('领域'), self.domain_edit)
+        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(i18n.tr('保存术语'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def task(self) -> dict:
+        return dict(self.task_box.currentData() or {})
+
+    def values(self) -> dict:
+        import re
+
+        return {"preferred": self.preferred_edit.text().strip(),
+                "status": str(self.status_box.currentData() or "locked"),
+                "domain": self.domain_edit.text().strip(),
+                "forbidden": [text.strip() for text in
+                              re.split(r"[,，;；、\n]", self.forbidden_edit.text())
+                              if text.strip()]}
 
 
 class DocumentProfileDialog(QDialog):

@@ -227,6 +227,9 @@ class MainWindow(QMainWindow):
         self.library.openJobRequested.connect(self.open_library_job)
         self.library.newTermRequested.connect(self.new_library_term)
         self.library.clearMemoryRequested.connect(self.clear_project_memory)
+        self.library.acceptEditedRequested.connect(self.accept_candidate_edited)
+        self.library.termEditRequested.connect(self.edit_library_term)
+        self.library.termDeleteRequested.connect(self.delete_library_term)
         self.home.moveToProjectRequested.connect(self.move_to_project)
         self.home.settingsRequested.connect(self.open_settings)
 
@@ -687,6 +690,66 @@ class MainWindow(QMainWindow):
         self._run_with_busy(
             i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
             adapter.decide_candidates, rows, decision, on_done=done)
+
+    def accept_candidate_edited(self, row: dict) -> None:
+        """改译名后接受：建议译文不对时，先写对再接受为项目术语。"""
+        from PySide6.QtWidgets import QInputDialog
+
+        if _automation():
+            return
+        text, ok = QInputDialog.getText(
+            self, i18n.tr('改译名后接受'),
+            i18n.tr('「{v0}」的译名：', v0=row.get("source")), text=str(row.get("target") or ""))
+        if not ok or not str(text).strip():
+            return
+
+        def done(message: str) -> None:
+            self._notice(i18n.tr_dynamic(message))
+            self.refresh_library(self.library.tm_project_id())
+
+        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+                            adapter.accept_candidate_with, row, str(text), on_done=done)
+
+    def edit_library_term(self, row: dict) -> None:
+        if not row or _automation():
+            return
+        from .dialogs import LibraryTermDialog
+
+        dialog = LibraryTermDialog(row, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        task, values = dialog.task(), dialog.values()
+        try:
+            message = adapter.update_glossary_entry(
+                str(task.get("job_id")), str(task.get("entry_id")),
+                preferred=values["preferred"], status=values["status"],
+                domain=values["domain"], forbidden=values["forbidden"])
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法保存术语'), str(exc))
+            return
+        self._notice(i18n.tr_dynamic(message))
+        self.refresh_library(self.library.tm_project_id())
+
+    def delete_library_term(self, row: dict) -> None:
+        tasks = [task for task in (row or {}).get("tasks") or [] if task.get("job_id")]
+        if not tasks:
+            return
+        where = "、".join(str(task.get("document") or task.get("job_id")) for task in tasks)
+        if not self._confirm(
+                i18n.tr('删除术语'),
+                i18n.tr('将从这些任务的术语表里删除「{v0}」：{v1}\n\n删除会生成新的术语版本。确定吗？',
+                        v0=row.get("source"), v1=where),
+                yes=i18n.tr('删除'), no=i18n.tr('取消')):
+            return
+        failed = []
+        for task in tasks:
+            try:
+                adapter.delete_glossary_entry(str(task["job_id"]), str(task.get("entry_id")))
+            except adapter.AdapterError as exc:
+                failed.append(str(exc))
+        self._notice(i18n.tr('已删除术语。') if not failed
+                     else i18n.tr('部分任务没有删除：{v0}', v0=failed[0]), error=bool(failed))
+        self.refresh_library(self.library.tm_project_id())
 
     def open_library_job(self, job_id: str, index: int) -> None:
         self.open_job(job_id)

@@ -259,3 +259,40 @@ def test_home_exposes_the_library_entry(qapp):
     home.libraryRequested.connect(lambda: seen.append(1))
     home.library_button.click()
     assert seen == [1]
+
+
+def test_accepting_with_an_edited_rendering_promotes_the_corrected_term(workspace):
+    row = _candidate_row("volumetric sensor")
+    message = adapter.accept_candidate_with(row, "体积式传感器")
+    assert "体积式传感器" in message
+    state = adapter.load_state("libjob000000001")
+    entry = next(e for e in state["glossary"] if e["source"] == "volumetric sensor")
+    assert entry["preferred"] == "体积式传感器"
+    with pytest.raises(adapter.AdapterError):
+        adapter.accept_candidate_with(row, " ")      # 空译名在写入前就被拒绝
+
+
+def test_library_terms_can_be_edited_and_deleted_in_their_task(qapp, workspace):
+    from folith.qt.dialogs import LibraryTermDialog
+
+    view = _view()
+    edits, deletes = [], []
+    view.termEditRequested.connect(edits.append)
+    view.termDeleteRequested.connect(deletes.append)
+    for row in range(view.term_table.rowCount()):
+        view.term_table.selectRow(row)
+        if view.term_edit.isEnabled():
+            break
+    assert view.term_edit.isEnabled()
+    view.term_edit.click()
+    view.term_delete.click()
+    assert edits and deletes and edits[0]["source"] == deletes[0]["source"]
+    dialog = LibraryTermDialog(edits[0])
+    dialog.preferred_edit.setText("新译名")
+    dialog.forbidden_edit.setText("旧译名；错译名")
+    values = dialog.values()
+    assert values["preferred"] == "新译名"
+    assert values["forbidden"] == ["旧译名", "错译名"]
+    task = dialog.task()
+    message = adapter.update_glossary_entry(task["job_id"], task["entry_id"], **values)
+    assert "术语" in message
