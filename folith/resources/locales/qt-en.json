@@ -1228,5 +1228,10 @@
   "搜索源术语或译名": "Search source terms or renderings",
   "无法修改术语状态": "Could not change term status",
   "禁用译名": "Forbidden renderings",
-  "锁定所选": "Lock selected"
+  "锁定所选": "Lock selected",
+  "在原文和译文里标出对应位置": "Highlight the matching spans in the source and translation",
+  "标出 {v0}": "Highlight {v0}",
+  "正在审视…": "Examining…",
+  "让模型找出这一段值得注意的翻译取舍（一次模型调用；只说明，不改写）": "Ask the model which translation choices in this segment deserve attention (one model call; explains only, never rewrites)",
+  "进一步审视本段": "Examine this segment further"
 }

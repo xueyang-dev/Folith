@@ -1509,6 +1509,7 @@ class WorkbenchView(QWidget):
     termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
     askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
     suggestRequested = Signal(int, str)     # 按要求重译：段索引, 要求
+    analyzeRequested = Signal(int)          # 进一步审视本段
     saveAllDraftsRequested = Signal()
     discardAllDraftsRequested = Signal()
     profileEditRequested = Signal()         # 修改文档画像
@@ -1935,6 +1936,9 @@ class WorkbenchView(QWidget):
                 "工作台：保留当前译文"))
         self.attention_list.acceptRequested.connect(
             lambda item: self.suggestionApplyRequested.emit(item, "工作台：采用建议译文"))
+        self.attention_list.locateRequested.connect(self._locate_decision)
+        self.attention_list.analyzeRequested.connect(self._request_analysis)
+        self._analyzing_index = -1
         self.term_list = segment_assist.TermList()
         self.term_list.insertRequested.connect(self._insert_into_target)
         self.term_add_button = _icon_button(QPushButton(i18n.tr('加入术语库…')), "plus",
@@ -3339,11 +3343,14 @@ class WorkbenchView(QWidget):
         queue = [item for item in self._review_items
                  if item.get("kind") == "finding" and item.get("segment_index") == row.index]
         self.attention_list.set_items(
-            queue, adapter.segment_decisions(self._state, row.index), resolved_count)
+            queue, adapter.segment_decisions(self._state, row.index), resolved_count,
+            can_analyze=bool(str(row.target or "").strip()) and not row.excluded,
+            analyzing=self._analyzing_index == row.index)
         self.term_list.set_terms(adapter.segment_terms(self._state, row.index))
         self.context_view.set_context(adapter.segment_context(self._state, row.index))
         if self._assist_index != row.index:
             self._assist_index = row.index
+            self._clear_highlights()
             self.ask_box.reset()
             self.suggest_box.reset()
 
@@ -3634,6 +3641,49 @@ class WorkbenchView(QWidget):
         source = self.inline_editor.source_view.textCursor().selectedText().strip()
         target = self.target_edit.textCursor().selectedText().strip()
         self.termAddRequested.emit(source, target)
+
+    def _request_analysis(self) -> None:
+        if self._current_index < 0:
+            return
+        self._analyzing_index = self._current_index
+        self._render_segment_detail()
+        self.analyzeRequested.emit(self._current_index)
+
+    def analysis_finished(self, index: int, error: str = "") -> None:
+        """窗口通知「进一步审视」结束；结果已写进状态，随刷新出现在需要注意里。"""
+        if self._analyzing_index == index:
+            self._analyzing_index = -1
+        if index == self._current_index:
+            self._render_segment_detail()
+            if error:
+                self.segment_status.setText(error)
+
+    def _locate_decision(self, decision: dict) -> None:
+        """把决策痕迹对应的原文 / 译文片段标出来（只是高亮，不改文字、不动光标）。"""
+        from PySide6.QtGui import QTextCharFormat, QTextCursor
+        from PySide6.QtWidgets import QTextEdit
+
+        tokens = theme_module.tokens(current_theme())
+        fmt = QTextCharFormat()
+        fmt.setBackground(style_module.qcolor(tokens["accent-soft"]))
+        for widget, span in ((self.inline_editor.source_view, decision.get("source_span")),
+                             (self.target_edit, decision.get("target_span"))):
+            selections = []
+            text = widget.toPlainText()
+            start = text.find(str(span)) if span else -1
+            if start >= 0:
+                cursor = QTextCursor(widget.document())
+                cursor.setPosition(start)
+                cursor.setPosition(start + len(str(span)), QTextCursor.MoveMode.KeepAnchor)
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = cursor
+                selection.format = fmt
+                selections.append(selection)
+            widget.setExtraSelections(selections)
+
+    def _clear_highlights(self) -> None:
+        self.inline_editor.source_view.setExtraSelections([])
+        self.target_edit.setExtraSelections([])
 
     def set_suggestion(self, index: int, text: str, error: str = "") -> None:
         """窗口把「按要求重译」的候选交回来；用户已经换段时丢掉。"""

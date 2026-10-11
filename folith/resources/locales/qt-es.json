@@ -1228,5 +1228,10 @@
   "搜索源术语或译名": "Buscar términos o traducciones",
   "无法修改术语状态": "No se pudo cambiar el estado del término",
   "禁用译名": "Traducciones prohibidas",
-  "锁定所选": "Bloquear seleccionados"
+  "锁定所选": "Bloquear seleccionados",
+  "在原文和译文里标出对应位置": "Resaltar los fragmentos correspondientes en el original y la traducción",
+  "标出 {v0}": "Resaltar {v0}",
+  "正在审视…": "Examinando…",
+  "让模型找出这一段值得注意的翻译取舍（一次模型调用；只说明，不改写）": "Pide al modelo qué decisiones de traducción de este segmento merecen atención (una llamada; solo explica, no reescribe)",
+  "进一步审视本段": "Examinar más este segmento"
 }

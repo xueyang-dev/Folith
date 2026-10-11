@@ -294,6 +294,7 @@ class MainWindow(QMainWindow):
         self.workbench.discardAllDraftsRequested.connect(self.discard_all_drafts)
         self.workbench.askAgentRequested.connect(self.ask_agent)
         self.workbench.suggestRequested.connect(self.suggest_translation)
+        self.workbench.analyzeRequested.connect(self.analyze_segment)
         self.workbench.exportRequested.connect(self.export_copy)
         self.workbench.saveSnapshotRequested.connect(self.save_snapshot)
         self.workbench.editSubmitted.connect(self.submit_edit)
@@ -2111,6 +2112,24 @@ class MainWindow(QMainWindow):
         values = dialog.values()
         self.add_glossary_entry({"source": values["source"], "preferred": values["target"],
                                  "domain": values["domain"], "status": "locked"})
+
+    def analyze_segment(self, index: int) -> None:
+        """进一步审视本段：后台一次模型调用，结果缓存在这一段上（只说明，不改写）。"""
+        job_id = self._current_job_id
+        if not job_id or index < 0:
+            return
+
+        def done(_decisions) -> None:
+            if self._current_job_id == job_id:
+                self.refresh_workbench(force=True)
+                self.workbench.analysis_finished(index)
+
+        def failed(message: str, _detail: str) -> None:
+            if self._current_job_id == job_id:
+                self.workbench.analysis_finished(index, i18n.tr_dynamic(message))
+
+        self.runner.submit(adapter.analyze_segment_decisions, job_id, index, self.config,
+                           on_done=done, on_error=failed, label="analyze-segment")
 
     def suggest_translation(self, index: int, instruction: str) -> None:
         """按要求重译：后台生成一个候选译文（不写入），交回工作台让用户决定。"""

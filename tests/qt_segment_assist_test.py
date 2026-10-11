@@ -174,3 +174,40 @@ def test_suggestion_is_generated_but_not_written(monkeypatch, bench):  # noqa: F
     view.suggest_box.adopt_button.click()
     assert view.target_edit.toPlainText() == "更口语的译文"
     assert view.has_unsaved_editor_text()
+
+
+def test_deep_analysis_is_cached_and_verbatim_only(monkeypatch, bench):  # noqa: F811
+    view, app = bench
+    from folith.qt import adapter
+
+    state = adapter.load_state(view.job_id)
+    source = state["pairs"][1]["source"]
+    target = state["pairs"][1]["target"]
+    calls = []
+
+    def fake_llm(provider, api_key, model, system, prompt, **kwargs):
+        calls.append(prompt)
+        return ('{"decisions":[{"decision_type":"semantic_omission","source_span":"%s",'
+                '"target_span":"%s","reason":"省略了修饰语","confidence":0.7},'
+                '{"decision_type":"omission","source_span":"不在原文里","target_span":null,'
+                '"reason":"捏造的证据"}]}') % (source.split()[1], target)
+
+    monkeypatch.setattr(adapter.core, "call_llm", fake_llm)
+    config = adapter.EngineConfig(provider="DeepSeek", model="m", api_key="k")
+    decisions = adapter.analyze_segment_decisions(view.job_id, 1, config)
+    reasons = [item.get("reason") for item in decisions]
+    assert "省略了修饰语" in reasons
+    assert "捏造的证据" not in reasons            # 不是逐字摘录的证据被丢弃
+    assert adapter.analyze_segment_decisions(view.job_id, 1, config) == decisions
+    assert len(calls) == 1                        # 第二次直接用缓存
+
+    view.apply(view.job_id, adapter.load_state(view.job_id),
+               adapter.segment_rows(view.job_id), {}, [])
+    view.select_segment(1)
+    _pump(app)
+    assert "省略了修饰语" in " ".join(view.attention_list.texts())
+    decision = next(item for item in decisions if item.get("reason") == "省略了修饰语")
+    view._locate_decision(decision)
+    assert view.inline_editor.source_view.extraSelections()
+    assert view.target_edit.extraSelections()
+    assert view.target_edit.toPlainText() == target      # 只高亮，不改文字

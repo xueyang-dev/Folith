@@ -1032,6 +1032,57 @@ def segment_decisions(state: dict, index: int) -> list[dict]:
     return [dict(item) for item in merged[:3]]
 
 
+def analyze_segment_decisions(job_id: str, index: int, config: EngineConfig) -> list[dict]:
+    """「进一步审视本段」：让模型找出这一段值得注意的翻译取舍（最多 3 条）。
+
+    只在用户明确点了才调用；结果按"原文 + 译文"的指纹缓存在这一段上，译文改了
+    缓存自动失效。模型给出的原文/译文片段必须逐字出现在文本里，否则丢弃
+    （:func:`folith.translation_decisions.parse_analysis_response`）。
+    """
+    from folith import translation_decisions as _decisions
+
+    problem = config.connection_problem()
+    if problem:
+        raise AdapterError(problem)
+    state = load_state(job_id)
+    pairs = state.get("pairs") or []
+    if not 0 <= index < len(pairs):
+        raise AdapterError("这一段已不存在，请重新选择段落。")
+    pair = pairs[index] or {}
+    source = str(pair.get("source") or "")
+    target = str(pair.get("target") or "")
+    if not target.strip():
+        raise AdapterError("这一段还没有译文，无法审视。")
+    cached = _decisions.cached_analysis(pair, source, target)
+    if cached is not None:
+        return segment_decisions(state, index)
+    system, prompt = _decisions.analysis_prompt(source, target)
+    try:
+        raw = core.call_llm(config.provider, config.api_key, config.model, system, prompt,
+                            temperature=0.1, base_url=config.translator_base_url() or None)
+    except Exception as exc:  # noqa: BLE001 - 把模型错误原样告诉用户
+        raise AdapterError(f"审视没有完成：{exc}") from exc
+    decisions = _decisions.parse_analysis_response(
+        raw, source, target, core.segment_uid(pair) or index)
+
+    def persist(latest: dict) -> None:
+        latest_pairs = latest.get("pairs") or []
+        if not 0 <= index < len(latest_pairs):
+            raise AdapterError("审视期间段落结构发生变化，结果没有保存。")
+        current = latest_pairs[index]
+        if _decisions.pair_fingerprint(current.get("source"), current.get("target")) != \
+                _decisions.pair_fingerprint(source, target):
+            raise AdapterError("审视期间译文已经变了，结果没有保存；请对当前译文重新审视。")
+        current["translation_decision_analysis"] = _decisions.make_cached_analysis(
+            source, target, decisions)
+
+    try:
+        core.mutate_job_state(job_id, persist)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+    return segment_decisions(load_state(job_id), index)
+
+
 def suggest_translation(job_id: str, index: int, instruction: str,
                         config: EngineConfig) -> str:
     """按要求重译：按这一次的要求（"更口语一点""保留原文语序"……）生成一个候选译文。

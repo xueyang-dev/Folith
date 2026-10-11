@@ -49,6 +49,8 @@ class AttentionList(QWidget):
 
     preserveRequested = Signal(dict)      # 审校队列项：保留当前译文
     acceptRequested = Signal(dict)        # 审校队列项：采用建议译文
+    locateRequested = Signal(dict)        # 决策痕迹：在原文 / 译文里标出对应片段
+    analyzeRequested = Signal()           # 进一步审视本段（一次模型调用）
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -62,9 +64,11 @@ class AttentionList(QWidget):
         return list(self._texts)
 
     def set_items(self, findings: list[dict], decisions: list[dict],
-                  resolved_count: int = 0) -> None:
+                  resolved_count: int = 0, *, can_analyze: bool = False,
+                  analyzing: bool = False) -> None:
         _clear(self._layout)
         self._texts = []
+        self.analyze_button = None
         for item in findings:
             self._add_finding(item)
         for decision in decisions:
@@ -77,6 +81,16 @@ class AttentionList(QWidget):
             text = i18n.tr('本段另有 {v0} 项已解决。', v0=resolved_count)
             self._layout.addWidget(_wrapped(text, "hint"))
             self._texts.append(text)
+        if can_analyze:
+            button = QPushButton(i18n.tr('正在审视…') if analyzing
+                                 else i18n.tr('进一步审视本段'))
+            button.setObjectName("linkAction")
+            button.setIcon(icons.icon("sparkles", 14, "accent"))
+            button.setToolTip(i18n.tr('让模型找出这一段值得注意的翻译取舍（一次模型调用；只说明，不改写）'))
+            button.setEnabled(not analyzing)
+            button.clicked.connect(self.analyzeRequested.emit)
+            self._layout.addWidget(button, 0, Qt.AlignmentFlag.AlignLeft)
+            self.analyze_button = button
 
     def _add_finding(self, item: dict) -> None:
         severity = str(item.get("severity") or "informational")
@@ -125,15 +139,32 @@ class AttentionList(QWidget):
     def _add_decision(self, decision: dict) -> None:
         label = str(decision.get("label") or decision.get("decision_type") or "")
         reason = str(decision.get("reason") or "")
+        holder = QWidget()
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(2)
         row = QHBoxLayout()
         row.setSpacing(theme_module.SPACE["xs"])
         row.addWidget(icons.IconLabel("sparkles", 14, "text-muted"), 0,
                       Qt.AlignmentFlag.AlignTop)
         text = f"{label}：{reason}" if reason else label
         row.addWidget(_wrapped(text, "decisionText"), 1)
-        holder = QWidget()
-        holder.setLayout(row)
-        row.setContentsMargins(0, 0, 0, 0)
+        column.addLayout(row)
+        # 证据：原文与译文里对应的片段（逐字摘录，模型给不出准确片段的条目已被丢弃）。
+        source_span = str(decision.get("source_span") or "")
+        target_span = str(decision.get("target_span") or "")
+        if source_span or target_span:
+            evidence = " → ".join(part for part in (
+                f"“{source_span}”" if source_span else "",
+                f"“{target_span}”" if target_span else "") if part)
+            locate = QPushButton(i18n.tr('标出 {v0}', v0=evidence))
+            locate.setObjectName("termChip")
+            locate.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            locate.setMinimumWidth(1)
+            locate.setToolTip(i18n.tr('在原文和译文里标出对应位置'))
+            locate.clicked.connect(lambda _checked=False, data=dict(decision):
+                                   self.locateRequested.emit(data))
+            column.addWidget(locate)
         self._layout.addWidget(holder)
         self._texts.append(text)
 
