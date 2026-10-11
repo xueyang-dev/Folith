@@ -141,7 +141,86 @@ def test_artifact_check_accepts_the_real_candidate_when_present():
     assert report["ok"] is True, report["problems"]
     assert report["bundle"]["CFBundleIdentifier"] == "dev.folith.qt"
     assert report["manifest"]["build_id"] == report["build_record"]["build_id"]
-    assert report["shipped_sources_newer_than_binary"] == []
+    assert report["shipped_sources"]["changed"] == []
+
+
+def _git_repo_with_a_build(tmp_path):
+    """A tiny repo whose clean commit stands in for the build commit."""
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True, text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    (tmp_path / "folith").mkdir()
+    (tmp_path / "folith" / "engine.py").write_text("X = 1\n", encoding="utf-8")
+    (tmp_path / "core.py").write_text("Y = 1\n", encoding="utf-8")
+    (tmp_path / "qt_client.py").write_text("Z = 1\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("docs\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "build")
+    commit = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+                            check=True, capture_output=True, text=True).stdout.strip()
+    binary = tmp_path / "Folith"
+    binary.write_bytes(b"binary")
+    return commit, binary
+
+
+def test_artifact_check_compares_shipped_sources_by_content(tmp_path):
+    """切分支/重新 clone 只改修改时间，不能被当成"需要重建"；真改了内容必须被抓到。"""
+    import os
+
+    import qt_artifact_check as check
+
+    commit, binary = _git_repo_with_a_build(tmp_path)
+    record = {"commit": commit, "worktree_dirty": False}
+    # Every shipped file is now newer than the binary, but byte-identical.
+    future = binary.stat().st_mtime + 3600
+    for name in ("folith/engine.py", "core.py", "qt_client.py"):
+        os.utime(tmp_path / name, (future, future))
+    facts, problems = check.shipped_source_drift(record, binary, tmp_path)
+    assert facts["method"] == "git-content" and problems == [], problems
+
+    # Docs are not shipped; editing them is not drift.
+    (tmp_path / "README.md").write_text("changed\n", encoding="utf-8")
+    assert check.shipped_source_drift(record, binary, tmp_path)[1] == []
+
+    # A real edit and a new untracked module are both drift.
+    (tmp_path / "core.py").write_text("Y = 2\n", encoding="utf-8")
+    (tmp_path / "folith" / "new module.py").write_text("", encoding="utf-8")
+    facts, problems = check.shipped_source_drift(record, binary, tmp_path)
+    assert facts["changed"] == ["core.py", "folith/new module.py"]
+    assert problems and "rebuild required" in problems[0]
+
+
+def test_artifact_check_fails_when_the_build_commit_is_unknown(tmp_path):
+    """查不到来源 commit 的候选不能算一致，也不能悄悄退回到修改时间。"""
+    import qt_artifact_check as check
+
+    _, binary = _git_repo_with_a_build(tmp_path)
+    facts, problems = check.shipped_source_drift(
+        {"commit": "0" * 40, "worktree_dirty": False}, binary, tmp_path)
+    assert facts["method"] == "git-content"
+    assert problems and "not in this repository" in problems[0]
+
+
+def test_artifact_check_falls_back_to_mtime_for_a_dirty_build(tmp_path):
+    """dirty 构建的内容不等于任何 commit：只能比较修改时间，并写明原因。"""
+    import os
+
+    import qt_artifact_check as check
+
+    commit, binary = _git_repo_with_a_build(tmp_path)
+    record = {"commit": commit, "worktree_dirty": True}
+    facts, problems = check.shipped_source_drift(record, binary, tmp_path)
+    assert facts["method"] == "mtime" and facts["reason"] == "dirty build"
+    future = binary.stat().st_mtime + 3600
+    os.utime(tmp_path / "core.py", (future, future))
+    facts, problems = check.shipped_source_drift(record, binary, tmp_path)
+    assert facts["changed"] == ["core.py"] and problems
 
 
 def test_ax_probe_does_not_mistake_a_zombie_for_a_live_process():

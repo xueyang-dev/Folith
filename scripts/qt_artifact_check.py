@@ -11,7 +11,9 @@
 
 * 路径必须存在（缺失 = 失败，不是空输出）；
 * `Info.plist`、DMG 校验和、build record、release manifest 必须互相一致；
-* 随包源码不得比可执行文件更新（dirty checkout 的构建顺序证据）。
+* 随包源码必须与构建时一致：构建记录有 commit 且工作区干净时，按**内容**与该
+  commit 比较（`git diff` + 未跟踪的 `.py`）；切分支、重新 clone 只改文件修改时间，
+  不会误报。dirty 构建或没有 git 时退回比较修改时间，并在报告里写明用的是哪种方法。
 
 Usage:
     venv/bin/python scripts/qt_artifact_check.py --out build/qt-desktop/artifact-check.json
@@ -22,6 +24,8 @@ import argparse
 import hashlib
 import json
 import plistlib
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +46,68 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(root), *args],
+                          capture_output=True, text=True, check=False)
+
+
+def _sources_newer_than(binary: Path, root: Path) -> list[str]:
+    built_at = binary.stat().st_mtime
+    newer: list[str] = []
+    for entry in SHIPPED_SOURCES:
+        target = root / entry
+        paths = [target] if target.is_file() else sorted(
+            path for path in target.rglob("*.py") if path.is_file())
+        for path in paths:
+            try:
+                if path.stat().st_mtime > built_at:
+                    newer.append(str(path.relative_to(root)))
+            except OSError:
+                continue
+    return newer
+
+
+def shipped_source_drift(record: dict, binary: Path, root: Path = ROOT) -> tuple[dict, list[str]]:
+    """随包源码与构建时是否一致。返回 (facts, problems)。
+
+    构建记录有 commit 且 ``worktree_dirty`` 为 false 时，那个 commit 就是包里的源码，
+    所以按内容比较；修改时间只在没有更好证据时使用（dirty 构建的内容不等于任何 commit）。
+    commit 在本仓库里找不到时**失败**而不是回退：查不到来源的候选不能算一致。
+    """
+    commit = str(record.get("commit") or "")
+    clean_build = record.get("worktree_dirty") is False
+    has_git = shutil.which("git") is not None and \
+        _git(root, "rev-parse", "--is-inside-work-tree").returncode == 0
+    if commit and clean_build and has_git:
+        if _git(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+            return ({"method": "git-content", "commit": commit, "changed": []},
+                    [f"build commit {commit[:12]} is not in this repository; "
+                     "cannot prove the shipped sources match the candidate "
+                     "(fetch or push that commit)"])
+        diff = _git(root, "diff", "--name-only", "-z", commit, "--", *SHIPPED_SOURCES)
+        untracked = _git(root, "ls-files", "-z", "--others", "--exclude-standard",
+                         "--", *SHIPPED_SOURCES)
+        if diff.returncode != 0 or untracked.returncode != 0:
+            return ({"method": "git-content", "commit": commit, "changed": []},
+                    [f"git could not compare shipped sources with {commit[:12]}: "
+                     f"{(diff.stderr or untracked.stderr).strip()}"])
+        changed = sorted({name for name in diff.stdout.split("\0") if name} | {
+            name for name in untracked.stdout.split("\0") if name.endswith(".py")})
+        facts = {"method": "git-content", "commit": commit, "changed": changed[:20]}
+        problems = [] if not changed else [
+            f"{len(changed)} shipped source file(s) differ from build commit "
+            f"{commit[:12]} (rebuild required): {', '.join(changed[:5])}"]
+        return facts, problems
+    reason = ("dirty build" if commit and not clean_build else
+              "no git" if not has_git else "no commit in build record")
+    newer = _sources_newer_than(binary, root)
+    facts = {"method": "mtime", "reason": reason, "changed": newer[:20]}
+    problems = [] if not newer else [
+        f"{len(newer)} shipped source file(s) are newer than the built "
+        f"binary (rebuild required): {', '.join(newer[:5])}"]
+    return facts, problems
 
 
 def check(app: Path, dmg: Path | None, build_dir: Path) -> dict:
@@ -152,25 +218,11 @@ def check(app: Path, dmg: Path | None, build_dir: Path) -> dict:
     elif not manifest_path.is_file():
         problems.append(f"missing release manifest: {manifest_path}")
 
-    # --- 5. 随包源码不得比可执行文件更新 ----------------------------------
+    # --- 5. 随包源码与构建时一致 -----------------------------------------
     if binary.is_file():
-        built_at = binary.stat().st_mtime
-        newer: list[str] = []
-        for entry in SHIPPED_SOURCES:
-            target = ROOT / entry
-            paths = [target] if target.is_file() else sorted(
-                path for path in target.rglob("*.py") if path.is_file())
-            for path in paths:
-                try:
-                    if path.stat().st_mtime > built_at:
-                        newer.append(str(path.relative_to(ROOT)))
-                except OSError:
-                    continue
-        facts["shipped_sources_newer_than_binary"] = newer[:20]
-        if newer:
-            problems.append(
-                f"{len(newer)} shipped source file(s) are newer than the built "
-                f"binary (rebuild required): {', '.join(newer[:5])}")
+        source_facts, source_problems = shipped_source_drift(record, binary)
+        facts["shipped_sources"] = source_facts
+        problems.extend(source_problems)
     facts["app"] = {"path": str(app), "exists": app.is_dir(),
                     "executable_exists": binary.is_file()}
 
