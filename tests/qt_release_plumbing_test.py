@@ -164,7 +164,8 @@ def _git_repo_with_a_build(tmp_path):
     git("commit", "-q", "-m", "build")
     commit = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
                             check=True, capture_output=True, text=True).stdout.strip()
-    binary = tmp_path / "Folith"
+    # Not "Folith": on case-insensitive APFS it collides with the folith/ package dir.
+    binary = tmp_path / "Folith.bin"
     binary.write_bytes(b"binary")
     return commit, binary
 

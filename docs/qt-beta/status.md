@@ -17,7 +17,7 @@
 
 ### 2026-10-11 当前范围与核验
 
-本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准。应用源码候选为 `9518629`，新增 EPUB / TXT / Markdown；工程门禁和同一候选的机器探针通过。全量遍历与修复重跑合并为 212 文件、2,983 pytest 用例通过；指定 Qt 门禁 **173 项用例**。构建、归档比对、语言目录、产物身份和文档审计通过；三种新格式在最终冻结应用上通过完整流程。
+本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准。应用源码候选为 `9518629`，新增 EPUB / TXT / Markdown；工程门禁和同一候选的机器探针通过。全量遍历与修复重跑合并为 212 文件、2,983 pytest 用例通过；指定 Qt 门禁 **176 项用例**。构建、归档比对、语言目录、产物身份和文档审计通过；三种新格式在最终冻结应用上通过完整流程。
 
 20 步链的构建 / 门禁 / 测试 / 9 项探针分别执行并留证，未在修复后重复整条构建链；完整原始记录见范围冻结记录。7 条强制人工项仍未完成，尚不能声明 `PRIVATE_BETA_READY`。远端 CI 未触发。下列历史数字及旧候选状态只说明当时快照，不代表本轮验证结论。
 
@@ -62,7 +62,7 @@ venv/bin/python scripts/qt_artifact_check.py --out build/qt-desktop/artifact-che
 venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py \
     tests/qt_extraction_error_test.py tests/qt_client_style_test.py \
     tests/qt_client_adapter_test.py tests/qt_client_window_test.py \
-    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 173 项
+    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 176 项
 
 # 完整验证链（20 步：构建 → 门禁 → 文档一致性 → 用例 → 端到端探针）
 bash scripts/qt_beta_chain.sh tmp/qt-beta/chain
