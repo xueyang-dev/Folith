@@ -34,6 +34,7 @@ class ReportPanel(QWidget):
     rebuildRequested = Signal()
     templateAddRequested = Signal()
     templateRemoveRequested = Signal()
+    exportRequested = Signal(str)                  # "docx" | "md"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -112,6 +113,16 @@ class ReportPanel(QWidget):
         for widget in (self.draft_hint, self.heading_box):
             draft_layout.addWidget(widget)
         draft_layout.addWidget(self.draft, 1)
+        # 导出当前稿件：DOCX 按报告模板排版，Markdown 是原始稿件。
+        self.export_docx_button = QPushButton(i18n.tr('导出 DOCX…'))
+        self.export_docx_button.clicked.connect(lambda: self.exportRequested.emit("docx"))
+        self.export_md_button = QPushButton(i18n.tr('导出 Markdown…'))
+        self.export_md_button.clicked.connect(lambda: self.exportRequested.emit("md"))
+        export_row = QHBoxLayout()
+        export_row.addWidget(self.export_docx_button)
+        export_row.addWidget(self.export_md_button)
+        export_row.addStretch(1)
+        draft_layout.addLayout(export_row)
 
         # ---- 运行详情 + 模板 ----------------------------------------------------
         self.runtime = QTextBrowser()
@@ -182,6 +193,9 @@ class ReportPanel(QWidget):
             i18n.tr('报告需要更新：{v0}', v0=impact.get("reason") or "") if impact.get("stale") else "")
         self.rebuild_button.setVisible(bool(impact.get("stale")))
         self.rebuild_button.setEnabled(connection_ok and not busy)
+        has_report = bool(self._view.get("has_report"))
+        self.export_docx_button.setEnabled(has_report and not busy)
+        self.export_md_button.setEnabled(has_report and not busy)
 
         keep = self._selected_category()
         self._groups = list(self._view.get("groups") or [])

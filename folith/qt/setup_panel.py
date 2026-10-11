@@ -620,6 +620,7 @@ class TaskSetupPanel(QWidget):
     termbaseAddRequested = Signal()
     styleProfileRequested = Signal()
     profileEditRequested = Signal()
+    connectionSettingsRequested = Signal()
     termbaseRemoveRequested = Signal()
     literatureAddRequested = Signal()
     literatureRemoveRequested = Signal()
@@ -1258,6 +1259,13 @@ class TaskSetupPanel(QWidget):
         # 失败降级的"通用风格"不是推荐，不给「接受」
         self.style_accept_button.setVisible(not failed)
 
+    def set_connection_problem(self, problem: str) -> None:
+        """模型连接的问题（空 = 可用）：开始翻译需要它。"""
+        self.connection_note.setText(i18n.tr('还不能翻译：{v0}', v0=i18n.tr_dynamic(problem))
+                                     if problem else "")
+        self.connection_note.setVisible(bool(problem))
+        self.connection_button.setVisible(bool(problem))
+
     def document_profile(self) -> dict:
         """当前该显示/编辑的画像：用户保存过的优先，否则是智能画像的建议。"""
         saved = dict((self._view or {}).get("document_profile") or {})
@@ -1401,11 +1409,22 @@ class TaskSetupPanel(QWidget):
         self.footer_note.setWordWrap(True)
         # 底栏只留主行动：这句说明不影响"现在要不要开始"。
         self.footer_note.setVisible(False)
+        # 模型连接还没配好时就在开始按钮旁边说清楚，而不是点了才报错。
+        self.connection_note = QLabel("")
+        self.connection_note.setObjectName("warningText")
+        self.connection_note.setWordWrap(True)
+        self.connection_note.setVisible(False)
+        self.connection_button = QPushButton(i18n.tr('设置连接…'))
+        self.connection_button.setObjectName("linkAction")
+        self.connection_button.clicked.connect(self.connectionSettingsRequested.emit)
+        self.connection_button.setVisible(False)
         self.footer_bar = QWidget()
         row = QHBoxLayout(self.footer_bar)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(theme_module.SPACE["md"])
         row.addWidget(self.footer_note, 1)
+        row.addWidget(self.connection_note, 1)
+        row.addWidget(self.connection_button)
         row.addStretch(1)
         row.addWidget(self.start_button)
         return self.footer_bar

@@ -19,6 +19,7 @@ from .style import Card
 
 class TaskDetailsPanel(QWidget):
     profileEditRequested = Signal()
+    promoteRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -53,6 +54,20 @@ class TaskDetailsPanel(QWidget):
         column_layout.setSpacing(theme_module.SPACE["md"])
         column_layout.addWidget(profile_card)
         column_layout.addWidget(self.groups_card)
+        # 项目记忆：把这个任务里**人确认过**的术语、风格规则与决定带给同项目的后续任务。
+        memory_card = Card()
+        memory_layout = QHBoxLayout(memory_card)
+        memory_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                         theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        memory_text = QLabel(i18n.tr('把本任务锁定的术语、确认的风格规则与人工决定提升到项目记忆，'
+                                     '同项目的后续任务会用上它们。候选和未审校的内容不会被提升。'))
+        memory_text.setObjectName("hint")
+        memory_text.setWordWrap(True)
+        self.promote_button = QPushButton(i18n.tr('提升到项目记忆'))
+        self.promote_button.clicked.connect(self.promoteRequested.emit)
+        memory_layout.addWidget(memory_text, 1)
+        memory_layout.addWidget(self.promote_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        column_layout.addWidget(memory_card)
         column_layout.addStretch(1)
         content = QWidget()
         centre = QHBoxLayout(content)

@@ -46,6 +46,7 @@ class ReviewPanel(QWidget):
     retranslateRequested = Signal(int)
     confirmSourceRequested = Signal(int, str)       # segment index, note
     reviewAllRequested = Signal()
+    styleRuleRequested = Signal(dict, str)          # item, note（保存为项目风格规则）
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -141,6 +142,11 @@ class ReviewPanel(QWidget):
         self.review_button.clicked.connect(self._emit_review)
         self.retranslate_button = button(i18n.tr('重译本段'), "refresh")
         self.retranslate_button.clicked.connect(self._emit_retranslate)
+        # 风格类问题：把这条建议确认成项目风格规则，以后的任务也按它译。
+        self.style_rule_button = button(i18n.tr('保存为项目风格规则…'), "sparkles")
+        self.style_rule_button.clicked.connect(
+            lambda: self.styleRuleRequested.emit(self.selected_item() or {},
+                                                 self.note_edit.text().strip()))
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
         self.hint.setProperty("role", "muted")
@@ -149,7 +155,7 @@ class ReviewPanel(QWidget):
         for widget in (self.apply_button, self.confirm_button,
                        self.confirm_source_button, self.preserve_button,
                        self.review_button, self.edit_button,
-                       self.retranslate_button):
+                       self.retranslate_button, self.style_rule_button):
             action_row.addWidget(widget)
         action_row.addStretch(1)
 
@@ -292,6 +298,8 @@ class ReviewPanel(QWidget):
         self.edit_button.setVisible(edit)
         self.retranslate_button.setVisible(edit)
         self.note_edit.setVisible(decision or suggestion)
+        item = self.selected_item() or {}
+        self.style_rule_button.setVisible(str(item.get("category") or "") == "style")
 
     def _sync_buttons(self, *_args) -> None:
         item = self.selected_item()

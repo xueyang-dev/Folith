@@ -211,3 +211,67 @@ def test_deep_analysis_is_cached_and_verbatim_only(monkeypatch, bench):  # noqa:
     assert view.inline_editor.source_view.extraSelections()
     assert view.target_edit.extraSelections()
     assert view.target_edit.toPlainText() == target      # 只高亮，不改文字
+
+
+def test_notes_live_outside_the_task_state(bench):  # noqa: F811
+    view, app = bench
+    from folith.qt import adapter
+
+    state_before = adapter.load_state(view.job_id)
+    uid = view._all_rows[1].segment_uid
+    adapter.save_segment_note(view.job_id, uid, "客户要求保留英文书名")
+    assert adapter.segment_notes(view.job_id)[uid]["text"] == "客户要求保留英文书名"
+    assert adapter.load_state(view.job_id) == state_before     # 批注不进任务状态
+    view.apply(view.job_id, state_before, adapter.segment_rows(view.job_id), {}, [])
+    view.select_segment(1)
+    _pump(app)
+    assert view.note_box.edit.toPlainText() == "客户要求保留英文书名"
+    assert view.segment_list.item(view._rows.index(view._all_rows[1]), 0).text().endswith("✎")
+    view.filter_actions["notes"].setChecked(True)
+    assert view.filtered_indexes() == [1]
+    view.filter_actions["notes"].setChecked(False)
+    view.note_box.edit.setPlainText("")
+    view.note_box.save_button.click()
+    assert uid not in adapter.segment_notes(view.job_id)
+
+
+def test_repetitions_and_find_replace(env_job):
+    from folith.qt import adapter
+
+    job_id = env_job
+    assert adapter.repetitions(job_id, 0) == [2]
+    assert adapter.propagate_translation(job_id, 0, [2]) == 1
+    pairs = adapter.load_state(job_id)["pairs"]
+    assert pairs[2]["target"] == pairs[0]["target"] and pairs[2]["human_edited"]
+    assert adapter.repetitions(job_id, 0) == []
+
+    matches = adapter.find_in_targets(adapter.load_state(job_id), "图书馆", "藏书楼")
+    assert [item["index"] for item in matches] == [0, 1, 2]
+    assert matches[1]["after"] == "藏书楼关门了。"
+    assert adapter.replace_in_targets(job_id, "图书馆", "藏书楼", indexes=[1]) == 1
+    assert adapter.load_state(job_id)["pairs"][1]["target"] == "藏书楼关门了。"
+    assert adapter.find_in_targets(adapter.load_state(job_id), "") == []
+
+
+@pytest.fixture()
+def env_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("FOLITH_DESKTOP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FOLITH_OUTPUT_DIR", str(tmp_path))
+    import core
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path, raising=False)
+    from folith.qt import adapter
+    from tests.qt_inline_editor_test import _docx
+
+    sources = ["The library opens.", "The library closes.", "The  library opens."]
+    path = tmp_path / "rep.docx"
+    path.write_bytes(_docx(sources))
+    job_id = adapter.import_documents([path], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    state = core.load_job_state(job_id)
+    state["paras"] = sources
+    state["pairs"] = [{"source": sources[0], "target": "图书馆开门了。", "segment_uid": "s0"},
+                      {"source": sources[1], "target": "图书馆关门了。", "segment_uid": "s1"},
+                      {"source": sources[2], "target": "图书馆开放了。", "segment_uid": "s2"}]
+    state["p1_done"] = state["p2_done"] = True
+    core.save_job_state(job_id, state)
+    return job_id

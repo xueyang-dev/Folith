@@ -267,6 +267,7 @@ def test_reasoning_effort_is_offered_only_for_reasoning_models(qapp):
     assert not dialog.reasoning_row.isHidden()
     dialog.reasoning_box.setCurrentIndex(dialog.reasoning_box.findData("high"))
     assert dialog._collect().reasoning_effort == "high"
-    dialog.model_box.setCurrentText("gpt-4o")        # 换成不支持的模型就回到自动
-    assert dialog._collect().reasoning_effort == ""
+    dialog.model_box.setCurrentText("gpt-4o")        # 不支持的模型：这一项收起，保留原值
+    assert dialog.reasoning_row.isHidden()
+    assert dialog._collect().reasoning_effort == ""   # 原配置就是自动
     assert dialog.reviewer_fetch_button.text() == "获取模型"

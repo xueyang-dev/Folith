@@ -787,9 +787,10 @@ class EngineDialog(QDialog):
             reviewer_model=self.reviewer_model_edit.text().strip(),
             reviewer_api_key=self.reviewer_key_edit.text().strip(),
             reviewer_base_url=self.reviewer_base_edit.text().strip(),
-            # 只有当前模型提供推理强度选项时才保存选择；换成不支持的模型就回到自动。
+            # 当前模型提供推理强度选项时才取对话框里的选择；不提供时这一项没有显示，
+            # 保留原值（核心对不支持的模型会忽略它），不能被一次"保存"悄悄清掉。
             reasoning_effort=str(self.reasoning_box.currentData() or "")
-            if self.reasoning_box.count() > 1 else "",
+            if self.reasoning_box.count() > 1 else self.config.reasoning_effort,
         )
         # 优先取条目 data（核心取值）；没有选中条目时用输入文本（用户手填的代码）。
         index = self.ocr_language_box.currentIndex()
@@ -1154,6 +1155,12 @@ class ProjectPickerDialog(QDialog):
             hint=i18n.tr('先在「项目…」里新建一个项目，再回来移动任务。'))
         self.empty_state.setVisible(not projects)
 
+        # 在这里就能新建项目并直接选中（不必先去「项目」页建好再回来）。
+        self.new_project_button = QPushButton(i18n.tr('新建项目…'))
+        self.new_project_button.clicked.connect(self._new_project)
+        self.new_project_note = QLabel("")
+        self.new_project_note.setObjectName("hint")
+
         self.move_tm_box = style_module.CheckBox(i18n.tr('同时把已审校译文并入目标项目的翻译记忆'))
         self.move_tm_box.setToolTip(i18n.tr('只增不改：目标项目已有的译法不会被覆盖'))
 
@@ -1177,8 +1184,36 @@ class ProjectPickerDialog(QDialog):
         layout.addWidget(notice)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.empty_state)
+        new_row = QHBoxLayout()
+        new_row.addWidget(self.new_project_button)
+        new_row.addWidget(self.new_project_note, 1)
+        layout.addLayout(new_row)
         layout.addWidget(self.move_tm_box)
         layout.addWidget(buttons)
+
+    def _new_project(self, name: str = "") -> None:
+        from . import adapter
+
+        if not name:
+            if bootstrap.automation():
+                return
+            name, ok = prompts.TextInputDialog.get_text(
+                self, i18n.tr('新建项目'), i18n.tr('项目名称：'))
+            if not ok:
+                return
+        try:
+            project = adapter.create_project(name)
+        except adapter.AdapterError as exc:
+            self.new_project_note.setText(str(exc))
+            return
+        item = QListWidgetItem(icons.icon("folder", 16, "text-secondary"),
+                               f"{project['name']}（0 个任务）")
+        item.setData(Qt.ItemDataRole.UserRole, project.get("project_id"))
+        item.setSizeHint(QSize(0, theme_module.CONTROL["md"] + 6))
+        self.list.addItem(item)
+        self.list.setCurrentItem(item)
+        self.empty_state.setVisible(False)
+        self.new_project_note.setText(i18n.tr('已新建「{v0}」并选中。', v0=project["name"]))
 
     def selected_project(self) -> str:
         item = self.list.currentItem()
@@ -1256,6 +1291,75 @@ class SegmentSplitDialog(QDialog):
                 "source_b": self.source_b.toPlainText(),
                 "target_a": self.target_a.toPlainText(),
                 "target_b": self.target_b.toPlainText()}
+
+
+class FindReplaceDialog(QDialog):
+    """查找替换（只改译文）：先看命中了哪些段、改成什么样，再全部替换。
+
+    每段替换都走人工提交：记为人工修改，需要重新审校；原文不动。
+    """
+
+    def __init__(self, state: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from . import adapter
+
+        self._adapter = adapter
+        self._state = state
+        self.setWindowTitle(i18n.tr('查找替换译文'))
+        self.resize(680, 480)
+        self.find_edit = QLineEdit()
+        self.find_edit.setPlaceholderText(i18n.tr('查找'))
+        self.replace_edit = QLineEdit()
+        self.replace_edit.setPlaceholderText(i18n.tr('替换为'))
+        self.case_box = QCheckBox(i18n.tr('区分大小写'))
+        self.summary = QLabel("")
+        self.summary.setObjectName("hint")
+        self.preview = QListWidget()
+        for widget in (self.find_edit, self.replace_edit):
+            widget.textChanged.connect(self._refresh)
+        self.case_box.toggled.connect(self._refresh)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok_button.setText(i18n.tr('全部替换'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('关闭'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form = QFormLayout()
+        form.addRow(i18n.tr('查找'), self.find_edit)
+        form.addRow(i18n.tr('替换为'), self.replace_edit)
+        hint = QLabel(i18n.tr('只查找和替换译文。替换的段落记为人工修改，需要重新审校。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(form)
+        layout.addWidget(self.case_box)
+        layout.addWidget(self.summary)
+        layout.addWidget(self.preview, 1)
+        layout.addWidget(buttons)
+        self._refresh()
+
+    def matches(self) -> list[dict]:
+        return self._adapter.find_in_targets(
+            self._state, self.find_edit.text(), self.replace_edit.text(),
+            case_sensitive=self.case_box.isChecked())
+
+    def _refresh(self, *_args) -> None:
+        matches = self.matches()
+        self.preview.clear()
+        for item in matches[:200]:
+            self.preview.addItem(QListWidgetItem(
+                f"#{item['index'] + 1}  {item['before']}\n   → {item['after']}"))
+        total = sum(item["count"] for item in matches)
+        self.summary.setText(
+            i18n.tr('{v0} 段、{v1} 处命中', v0=len(matches), v1=total) if matches
+            else (i18n.tr('没有命中') if self.find_edit.text() else ""))
+        self.ok_button.setEnabled(bool(matches))
+
+    def values(self) -> dict:
+        return {"query": self.find_edit.text(), "replacement": self.replace_edit.text(),
+                "case_sensitive": self.case_box.isChecked()}
 
 
 class LibraryTermDialog(QDialog):
@@ -1617,6 +1721,11 @@ class ProjectsPanel(QWidget):
         self.knowledge_button = QPushButton(i18n.tr('项目知识…'))
         self.export_button = QPushButton(i18n.tr('导出记忆…'))
         self.import_button = QPushButton(i18n.tr('导入记忆…'))
+        self.describe_button = QPushButton(i18n.tr('编辑说明…'))
+        self.describe_button.clicked.connect(self._describe)
+        self.merge_button = QPushButton(i18n.tr('并入「未分类」记忆…'))
+        self.merge_button.setToolTip(i18n.tr('把「未分类」里已审校的翻译记忆复制进这个项目'))
+        self.merge_button.clicked.connect(self._merge_uncategorized)
         for button in (self.knowledge_button, self.export_button, self.import_button):
             button.setIconSize(QSize(16, 16))
         self.knowledge_button.clicked.connect(self._open_knowledge)
@@ -1634,11 +1743,13 @@ class ProjectsPanel(QWidget):
         actions = QHBoxLayout()
         actions.addWidget(self.new_button)
         actions.addWidget(self.rename_button)
+        actions.addWidget(self.describe_button)
         actions.addWidget(self.archive_button)
         actions.addWidget(self.delete_button)
         actions.addStretch(1)
         memory_actions = QHBoxLayout()
-        for button in (self.knowledge_button, self.export_button, self.import_button):
+        for button in (self.knowledge_button, self.export_button, self.import_button,
+                       self.merge_button):
             memory_actions.addWidget(button)
         memory_actions.addStretch(1)
 
@@ -1707,6 +1818,8 @@ class ProjectsPanel(QWidget):
         self.knowledge_button.setEnabled(bool(project))
         self.export_button.setEnabled(bool(project))
         self.rename_button.setEnabled(bool(project) and not system)
+        self.describe_button.setEnabled(bool(project) and not system)
+        self.merge_button.setEnabled(bool(project) and not system)
         self.archive_button.setEnabled(bool(project) and not system)
         self.delete_button.setEnabled(bool(project) and not system)
         if project:
@@ -1797,6 +1910,42 @@ class ProjectsPanel(QWidget):
         self._mark_changed()
         self.reload()
         self._note(f"已重命名为「{name.strip()}」")
+
+    def _describe(self) -> None:
+        project = self.selected_project()
+        if project is None:
+            return
+        text, ok = self._ask_name(i18n.tr('项目说明'), i18n.tr('说明（客户、领域、要求……）：'),
+                                  str(project.get("description") or ""))
+        if not ok:
+            return
+        try:
+            adapter.update_project_description(project["project_id"], text)
+        except adapter.AdapterError as exc:
+            self._note(i18n.tr('无法保存说明：{v0}', v0=exc))
+            return
+        self._mark_changed()
+        self.reload()
+        self._note(i18n.tr('已更新「{v0}」的说明。', v0=project["name"]))
+
+    def _merge_uncategorized(self) -> None:
+        project = self.selected_project()
+        if project is None:
+            return
+        if not bootstrap.automation() and not prompts.ConfirmDialog.ask(
+                self, i18n.tr('并入「未分类」记忆'),
+                i18n.tr('把「未分类」里已审校的翻译记忆复制进「{v0}」。已有的条目不会被覆盖。确定吗？',
+                        v0=project["name"]),
+                yes=i18n.tr('并入'), no=i18n.tr('取消')):
+            return
+        try:
+            count = adapter.merge_uncategorized_memory(project["project_id"])
+        except adapter.AdapterError as exc:
+            self._note(str(exc))
+            return
+        self.reload()
+        self._note(i18n.tr('已并入 {v0} 条翻译记忆。', v0=count) if count
+                   else i18n.tr('「未分类」里没有可并入的已审校记忆。'))
 
     def _toggle_archive(self) -> None:
         project = self.selected_project()

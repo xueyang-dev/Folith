@@ -34,6 +34,7 @@ class FollowupPanel(QWidget):
     repairRequested = Signal(str, str, list)        # source, target, preview
     acceptRequested = Signal(str)                   # source
     rescanRequested = Signal(dict)                  # backend / mode / language / quality
+    excludeFragmentsRequested = Signal(list)        # 疑似碎片段的索引
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -180,6 +181,23 @@ class FollowupPanel(QWidget):
         self.empty.setText(i18n.tr('没有待处理的事项。'))
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        # ---- 疑似原文碎片 ----------------------------------------------------
+        self.fragments_title = QLabel(i18n.tr('疑似原文碎片'))
+        self.fragments_title.setObjectName("sectionTitle")
+        self.fragments_text = label(muted=True)
+        self.fragments_button = QPushButton(i18n.tr('全部排除…'))
+        self.fragments_button.clicked.connect(
+            lambda: self.excludeFragmentsRequested.emit(list(self._fragments)))
+        fragments_card = Card()
+        fragments = QVBoxLayout(fragments_card)
+        fragments.setContentsMargins(16, 14, 16, 14)
+        fragments.setSpacing(8)
+        fragments.addWidget(self.fragments_title)
+        fragments.addWidget(self.fragments_text)
+        fragments.addWidget(self.fragments_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.fragments_card = fragments_card
+        self._fragments: list[int] = []
+
         content = QWidget()
         content.setObjectName("pageCanvas")
         column = QVBoxLayout(content)
@@ -188,6 +206,7 @@ class FollowupPanel(QWidget):
         column.addWidget(recovery_card)
         column.addWidget(retry_card)
         column.addWidget(entity_card)
+        column.addWidget(fragments_card)
         column.addWidget(rescan_card)
         column.addWidget(extraction_card)
         column.addWidget(self.empty)
@@ -227,6 +246,15 @@ class FollowupPanel(QWidget):
             self.recovery_warning.set_text("")
         self.resume_button.setVisible(bool(recovery.get("can_resume")))
         self.resume_button.setEnabled(not self._busy)
+
+        self._fragments = [int(item) for item in self._view.get("fragments") or []]
+        self.fragments_card.setVisible(bool(self._fragments))
+        numbers = "、".join(str(index + 1) for index in self._fragments[:20])
+        self.fragments_text.setText(i18n.tr(
+            '第 {v0}{v1} 段在原文整理前后都像残片（页眉、页码、断句碎片……）。可以逐段在审校页核对，'
+            '也可以一次排除；排除的段保留原文与译文，可在「交付」页恢复。',
+            v0=numbers, v1=i18n.tr(' 等') if len(self._fragments) > 20 else ""))
+        self.fragments_button.setEnabled(not self._busy)
 
         understanding = self._view.get("understanding") or {}
         degraded = understanding.get("status") == "degraded"

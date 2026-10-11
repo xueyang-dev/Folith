@@ -789,6 +789,121 @@ def submit_edit(job_id: str, index: int, text: str, *, actor: str = "user") -> d
     return new_state
 
 
+# ================= 段落批注、重复段、查找替换 =================
+
+#: 批注单独存一个文件：它是译者 / 审校之间的留言，不是文档内容，写进任务状态会让
+#: 已冻结的交付"偏离"（快照按状态内容判断），也会让审校回执失效。
+SEGMENT_NOTES_FILE = "segment_notes.json"
+
+
+def _notes_path(job_id: str) -> Path:
+    return core.job_dir(job_id) / SEGMENT_NOTES_FILE
+
+
+def segment_notes(job_id: str) -> dict[str, dict]:
+    """``{segment_uid: {"text", "updated_at"}}``；读不到就是没有批注。"""
+    try:
+        data = json.loads(_notes_path(job_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(key): dict(value) for key, value in (data or {}).items()
+            if isinstance(value, dict) and str(value.get("text") or "").strip()}
+
+
+def save_segment_note(job_id: str, segment_uid: str, text: str) -> None:
+    """保存（或清空）一段的批注。原子写入，空批注即删除。"""
+    notes = segment_notes(job_id)
+    text = str(text or "").strip()
+    if text:
+        notes[str(segment_uid)] = {
+            "text": text,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    else:
+        notes.pop(str(segment_uid), None)
+    path = _notes_path(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _repetition_key(text: str) -> str:
+    return " ".join(str(text or "").split()).casefold()
+
+
+def repetitions(job_id: str, index: int, state: dict | None = None) -> list[int]:
+    """与第 ``index`` 段原文相同、但译文不同的其他段（没被排除的）。"""
+    state = state if state is not None else load_state(job_id)
+    pairs = state.get("pairs") or []
+    if not 0 <= index < len(pairs):
+        return []
+    key = _repetition_key(pairs[index].get("source"))
+    target = str(pairs[index].get("target") or "")
+    if not key:
+        return []
+    return [position for position, pair in enumerate(pairs)
+            if position != index and not pair.get("excluded")
+            and _repetition_key(pair.get("source")) == key
+            and str(pair.get("target") or "") != target]
+
+
+def propagate_translation(job_id: str, index: int, indexes: Sequence[int]) -> int:
+    """把第 ``index`` 段的译文用到原文相同的这些段上（逐段人工提交）。"""
+    target = str((load_state(job_id).get("pairs") or [])[index].get("target") or "")
+    if not target.strip():
+        raise AdapterError("这一段没有译文可以沿用。")
+    for position in indexes:
+        submit_edit(job_id, int(position), target)
+    return len(list(indexes))
+
+
+def find_in_targets(state: dict, query: str, replacement: str = "", *,
+                    case_sensitive: bool = False) -> list[dict]:
+    """在译文里查找（只查译文，不改原文）：每处命中给出替换前后的整段。"""
+    import re
+
+    query = str(query or "")
+    if not query:
+        return []
+    pattern = re.compile(re.escape(query), 0 if case_sensitive else re.IGNORECASE)
+    results = []
+    for index, pair in enumerate(state.get("pairs") or []):
+        if pair.get("excluded"):
+            continue
+        target = str(pair.get("target") or "")
+        count = len(pattern.findall(target))
+        if count:
+            results.append({"index": index, "count": count, "before": target,
+                            "after": pattern.sub(lambda _m: replacement, target)})
+    return results
+
+
+def replace_in_targets(job_id: str, query: str, replacement: str, *,
+                       case_sensitive: bool = False,
+                       indexes: Sequence[int] | None = None) -> int:
+    """批量替换译文：每段都走人工提交（记为人工修改、需要重新审校）。返回改了几段。"""
+    matches = find_in_targets(load_state(job_id), query, replacement,
+                              case_sensitive=case_sensitive)
+    wanted = set(indexes) if indexes is not None else None
+    changed = 0
+    for item in matches:
+        if wanted is not None and item["index"] not in wanted:
+            continue
+        if item["after"] != item["before"]:
+            submit_edit(job_id, item["index"], item["after"])
+            changed += 1
+    return changed
+
+
+def exclude_fragments(job_id: str, indexes: Sequence[int]) -> int:
+    """一次排除多个疑似原文碎片（原文与译文都保留，可在交付页恢复）。"""
+    done = 0
+    for index in sorted({int(item) for item in indexes}, reverse=True):
+        exclude_segment(job_id, index, reason="疑似原文碎片（批量排除）")
+        done += 1
+    return done
+
+
 def exclude_segment(job_id: str, index: int, *, reason: str = "人工排除") -> dict:
     """把一段排除在翻译与交付之外（原文与当时的译文都完整保留，可恢复）。"""
     try:
@@ -1397,6 +1512,10 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         "rescan": rescan_view(state),
         "extraction": extraction_report_view(state),
         "recovery": recovery,
+        # 原文质量门禁标出、还没确认的疑似碎片（可以一次排除）。
+        "fragments": sorted(index for index in source_quality_indexes(state)
+                            if 0 <= index < len(state.get("pairs") or [])
+                            and not (state.get("pairs") or [])[index].get("excluded")),
         "understanding": understanding,
         "annotation": annotation,
         "entities": entities,
@@ -1881,6 +2000,28 @@ REPORT_REPAIR_LABELS = {
     "文献证据缺失": "重建文献证据并继续生成", "引用需要确认": "重新验证引用并继续生成",
     "统计验证失败": "重新验证统计并继续生成", "章节需要重新生成": "重新生成问题章节",
     "需要人工补充": "用已提交回答继续生成"}
+
+
+def export_report(job_id: str, kind: str, path: str) -> str:
+    """把当前报告稿件写到用户选的位置：DOCX（按报告模板排版）或 Markdown。"""
+    state = load_state(job_id)
+    if kind == "md":
+        text = str(state.get("p3_md") or "")
+        if not text.strip():
+            raise AdapterError("还没有报告稿件可以导出。")
+        data = text.encode("utf-8")
+    elif kind == "docx":
+        data = core.report_docx_bytes(job_id, state)
+        if not data:
+            raise AdapterError("还没有报告稿件可以导出。")
+    else:
+        raise AdapterError(f"不支持的导出格式：{kind}")
+    target = Path(path)
+    try:
+        target.write_bytes(data)
+    except OSError as exc:
+        raise AdapterError(f"无法写入 {target}：{exc}") from exc
+    return str(target)
 
 
 def report_view(job_id: str, state: dict | None = None) -> dict:
@@ -3347,6 +3488,52 @@ def project_options() -> list[dict]:
             "is_system": bool(project.get("is_system")),
         })
     return options
+
+
+def update_project_description(project_id: str, description: str) -> dict:
+    """编辑项目说明（项目列表的「说明」列）。"""
+    try:
+        return core.update_project(project_id, description=str(description or "").strip())
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def merge_uncategorized_memory(project_id: str) -> int:
+    """把「未分类」里已审校的翻译记忆并入这个项目（显式动作，返回并入条数）。
+
+    新项目从空白记忆开始；想把以前的积累带过来，就在这里明确做一次，而不是静默共享。
+    """
+    try:
+        return int(core.copy_system_tm_to_project(project_id) or 0)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def promote_task_memory(job_id: str) -> str:
+    """把任务里**已人工确认**的知识（锁定术语、确认的风格规则、人工决定）提升进项目记忆。"""
+    owner = core.project_for_job(job_id)
+    if owner is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    if core.is_system_project(owner):
+        raise AdapterError("这个任务在「未分类」里；请先把它归入一个项目，再提升到项目记忆。")
+    try:
+        project = core.promote_job_to_project(job_id, actor="用户")
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+    if project is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    return f"已提升到项目「{project.get('name') or '未命名项目'}」"
+
+
+def save_style_rule(job_id: str, rule: str, *, note: str = "",
+                    finding_id: str = "") -> None:
+    """审校中确认一条风格规则，保存到项目记忆（由人明确确认）。"""
+    try:
+        core.confirm_translation_style_rule(
+            job_id, str(rule or ""), "user", actor_type="human", note=note,
+            source_finding_id=finding_id)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
 
 
 def create_project(name: str) -> dict:

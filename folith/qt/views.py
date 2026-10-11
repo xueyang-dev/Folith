@@ -1513,6 +1513,12 @@ class WorkbenchView(QWidget):
     saveAllDraftsRequested = Signal()
     discardAllDraftsRequested = Signal()
     profileEditRequested = Signal()         # 修改文档画像
+    promoteMemoryRequested = Signal()       # 把本任务确认过的知识提升到项目记忆
+    styleRuleRequested = Signal(dict, str)  # 审校：保存为项目风格规则
+    reportExportRequested = Signal(str)     # 报告导出："docx" | "md"
+    findReplaceRequested = Signal()
+    excludeFragmentsRequested = Signal(list)
+    connectionSettingsRequested = Signal()
     draftSaved = Signal(str, str, str)      # job_id, segment_uid, text
     editSubmitted = Signal(int)
     revealRequested = Signal(str)
@@ -1731,7 +1737,8 @@ class WorkbenchView(QWidget):
         self.filter_actions: dict[str, QAction] = {}
         for key, label in (("edited", '只看人工修改'), ("issues", '只看必须处理'),
                            ("terms", '含项目术语'), ("tm", '使用了翻译记忆'),
-                           ("source_quality", '原文质量问题'), ("term_issues", '术语问题')):
+                           ("source_quality", '原文质量问题'), ("term_issues", '术语问题'),
+                           ("notes", '有批注')):
             action = self.filter_menu.addAction(i18n.tr(label))
             action.setCheckable(True)
             action.toggled.connect(self._filters_changed)
@@ -1757,6 +1764,12 @@ class WorkbenchView(QWidget):
         # 组内仍是 8px —— 三种控件挤在一起时，组边界是唯一的分组线索。
         toolbar.addSpacing(theme_module.SPACE["xs"])
         toolbar.addWidget(self.filter_button)
+        self.find_replace_button = QToolButton()
+        self.find_replace_button.setText(i18n.tr('查找替换…'))
+        self.find_replace_button.setIcon(icons.icon("search", 16, "text-secondary"))
+        self.find_replace_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.find_replace_button.clicked.connect(self._request_find_replace)
+        toolbar.addWidget(self.find_replace_button)
         toolbar.addStretch(1)
         # ⚠️ Qt 布局坑（macOS + QSS 主题实测）：QHBoxLayout 给 QLabel / QCheckBox
         # 分配的槽位比控件自身的 sizeHint **窄**（复选框 110→99、"筛选"标签 24→22），
@@ -1948,6 +1961,9 @@ class WorkbenchView(QWidget):
         self.term_add_button.clicked.connect(self._request_term_add)
         self.context_view = segment_assist.ContextView()
         self.context_view.jumpRequested.connect(self.select_segment)
+        self.note_box = segment_assist.NoteBox()
+        self.note_box.saveRequested.connect(self._save_note)
+        self._notes: dict[str, dict] = {}
         self.suggest_box = segment_assist.SuggestBox()
         self.suggest_box.suggestRequested.connect(
             lambda instruction: self.suggestRequested.emit(self._current_index, instruction))
@@ -2000,6 +2016,8 @@ class WorkbenchView(QWidget):
         for button in (self.copy_source_button, self.restore_button, self.exclude_button,
                        self.structure_button, self.view_source_button):
             ops.addWidget(button)
+        ops.addWidget(style_module.SectionLabel(i18n.tr('批注')))
+        ops.addWidget(self.note_box)
         ops.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
         ops.addLayout(facts)
         inspector_layout.addWidget(self.segment_ops_section)
@@ -2065,6 +2083,7 @@ class WorkbenchView(QWidget):
         self.setup_panel.termbaseAddRequested.connect(self.setupTermbaseAddRequested.emit)
         self.setup_panel.styleProfileRequested.connect(self.setupStyleProfileRequested.emit)
         self.setup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
+        self.setup_panel.connectionSettingsRequested.connect(self.connectionSettingsRequested.emit)
         self.setup_panel.termbaseRemoveRequested.connect(self.setupTermbaseRemoveRequested.emit)
         self.setup_panel.literatureAddRequested.connect(self.setupLiteratureAddRequested.emit)
         self.setup_panel.literatureRemoveRequested.connect(
@@ -2285,6 +2304,7 @@ class WorkbenchView(QWidget):
                          icons.icon("file-sheet", 16, "text-secondary"),
                          i18n.tr('术语'))
         self.review_panel = ReviewPanel()
+        self.review_panel.styleRuleRequested.connect(self.styleRuleRequested.emit)
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
         self.review_panel.applySuggestionRequested.connect(self.suggestionApplyRequested.emit)
         self.review_panel.confirmSourceRequested.connect(self.sourceConfirmRequested.emit)
@@ -2296,6 +2316,7 @@ class WorkbenchView(QWidget):
                          icons.icon("shield-check", 16, "text-secondary"),
                          i18n.tr('审校'))
         self.followup_panel = FollowupPanel()
+        self.followup_panel.excludeFragmentsRequested.connect(self.excludeFragmentsRequested.emit)
         self.followup_panel.retryRequested.connect(self.followupRetryRequested.emit)
         self.followup_panel.resumeRequested.connect(self.followupResumeRequested.emit)
         self.followup_panel.previewRequested.connect(self.entityPreviewRequested.emit)
@@ -2310,6 +2331,7 @@ class WorkbenchView(QWidget):
                          i18n.tr('交付'))
         # 学术专业模式的页：默认隐藏，设置里主动打开（或任务本身已带着学术产物）才出现。
         self.report_panel = ReportPanel()
+        self.report_panel.exportRequested.connect(self.reportExportRequested.emit)
         self.report_panel.repairRequested.connect(self.reportRepairRequested.emit)
         self.report_panel.answerSubmitted.connect(self.reportAnswerRequested.emit)
         self.report_panel.rebuildRequested.connect(self.reportRebuildRequested.emit)
@@ -2355,6 +2377,7 @@ class WorkbenchView(QWidget):
                          i18n.tr('运行记录'))
         self.details_panel = TaskDetailsPanel()
         self.details_panel.profileEditRequested.connect(self.profileEditRequested.emit)
+        self.details_panel.promoteRequested.connect(self.promoteMemoryRequested.emit)
         self.tabs.addTab(self.details_panel,
                          icons.icon("info", 16, "text-secondary"),
                          i18n.tr('任务详情'))
@@ -2439,6 +2462,10 @@ class WorkbenchView(QWidget):
         self._last_runtime = runtime or {}
         self._snapshots = snapshots or []
         self._all_rows = list(rows)
+        if job_id != getattr(self, "_notes_job", None) or not self._notes_loaded_at_state(state):
+            self._notes = adapter.segment_notes(job_id) if job_id else {}
+            self._notes_job = job_id
+            self._notes_state = id(state)
         self._render_segments()
         self._render_excluded()
         # 交付预检先于运行区：头部状态芯片要用它给出的任务状态标签。
@@ -2761,6 +2788,9 @@ class WorkbenchView(QWidget):
         if self.filter_actions["term_issues"].isChecked():
             flagged = adapter.term_issue_indexes(self._state)
             visible = [index for index in visible if index in flagged]
+        if self.filter_actions["notes"].isChecked():
+            noted = {row.index for row in self._all_rows if row.segment_uid in self._notes}
+            visible = [index for index in visible if index in noted]
         return visible
 
     def _visible_rows(self) -> list[adapter.SegmentRow]:
@@ -2896,8 +2926,12 @@ class WorkbenchView(QWidget):
         if number is None or source is None or target is None:
             return
         self._painted[position] = dataclasses.replace(row)
+        if row.segment_uid in self._notes:
+            # 批注变了也要重画：缓存按行数据比较，批注不在行数据里。
+            self._painted.pop(position, None)
         marker = ("⚠" if row.stale_draft else "●") if row.has_draft else ""
-        number_text = f"{marker}{row.index + 1}"
+        noted = "✎" if row.segment_uid in self._notes else ""
+        number_text = f"{marker}{row.index + 1}{noted}"
         if number.text() != number_text:
             number.setText(number_text)
         number.setForeground(style_module.qcolor(_tone_color(tokens, tone)))
@@ -3038,6 +3072,12 @@ class WorkbenchView(QWidget):
                           v0=_elide("；".join(i18n.tr_dynamic(str(i)) for i in issues), 200))
                   if issues
                   else i18n.tr("；交付文件按任务声明生成，冻结后不可修改。"))
+        missing = [index for index, pair in enumerate(self._state.get("pairs") or [])
+                   if not pair.get("excluded") and not str(pair.get("target") or "").strip()]
+        if missing:
+            numbers = "、".join(str(index + 1) for index in missing[:20])
+            detail += i18n.tr("\n有 {v0} 段尚无译文：第 {v1}{v2} 段。", v0=len(missing), v1=numbers,
+                              v2=i18n.tr(' 等') if len(missing) > 20 else "")
         self.delivery_label.setText(i18n.tr("交付状态：{v0}", v0=status) + detail)
         self.deliver_button.setEnabled(bool(preview.get("can_deliver")))
         self.risk_button.setVisible(bool(preview.get("can_accept_risk")))
@@ -3307,7 +3347,10 @@ class WorkbenchView(QWidget):
         self.segment_status.setText(" · ".join(parts))
         self.fact_state.setText(row.status)
         self.fact_review.setText("已审校" if row.reviewed else "未审校")
-        self.fact_source.setText("人工修改" if row.human_edited else "机器翻译")
+        pairs_now = self._state.get("pairs") or []
+        from_tm = 0 <= row.index < len(pairs_now) and bool(pairs_now[row.index].get("from_tm"))
+        self.fact_source.setText("人工修改" if row.human_edited
+                                 else ("翻译记忆（已匹配并复用）" if from_tm else "机器翻译"))
         reason = ""
         for record in adapter.excluded_segments(self.job_id, self._state):
             if record.get("segment_index") == row.index:
@@ -3350,6 +3393,7 @@ class WorkbenchView(QWidget):
         self.context_view.set_context(adapter.segment_context(self._state, row.index))
         if self._assist_index != row.index:
             self._assist_index = row.index
+            self.note_box.set_note(self._notes.get(row.segment_uid))
             self._clear_highlights()
             self.ask_box.reset()
             self.suggest_box.reset()
@@ -3684,6 +3728,26 @@ class WorkbenchView(QWidget):
     def _clear_highlights(self) -> None:
         self.inline_editor.source_view.setExtraSelections([])
         self.target_edit.setExtraSelections([])
+
+    def _request_find_replace(self) -> None:
+        self.flush_draft()
+        self.findReplaceRequested.emit()
+
+    def _notes_loaded_at_state(self, state: dict) -> bool:
+        return getattr(self, "_notes_state", None) == id(state)
+
+    def _save_note(self, text: str) -> None:
+        if not self.job_id or not self._loaded_uid:
+            return
+        try:
+            adapter.save_segment_note(self.job_id, self._loaded_uid, text)
+        except OSError as exc:
+            self.segment_status.setText(i18n.tr('批注保存失败：{v0}', v0=exc))
+            return
+        self._notes = adapter.segment_notes(self.job_id)
+        self.note_box.set_note(self._notes.get(self._loaded_uid))
+        self._painted.clear()
+        self._render_segments()
 
     def set_suggestion(self, index: int, text: str, error: str = "") -> None:
         """窗口把「按要求重译」的候选交回来；用户已经换段时丢掉。"""

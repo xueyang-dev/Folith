@@ -293,6 +293,12 @@ class MainWindow(QMainWindow):
         self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.termAddRequested.connect(self.add_term_from_selection)
         self.workbench.profileEditRequested.connect(self.edit_document_profile)
+        self.workbench.promoteMemoryRequested.connect(self.promote_task_memory)
+        self.workbench.styleRuleRequested.connect(self.save_style_rule)
+        self.workbench.reportExportRequested.connect(self.export_report)
+        self.workbench.findReplaceRequested.connect(self.find_replace)
+        self.workbench.excludeFragmentsRequested.connect(self.exclude_fragments)
+        self.workbench.connectionSettingsRequested.connect(self.open_settings)
         self.workbench.saveAllDraftsRequested.connect(self.save_all_drafts)
         self.workbench.discardAllDraftsRequested.connect(self.discard_all_drafts)
         self.workbench.askAgentRequested.connect(self.ask_agent)
@@ -1281,6 +1287,7 @@ class MainWindow(QMainWindow):
             self.workbench.set_setup_choices(adapter.setup_choices())
             self._setup_choices_loaded = True
         self.workbench.set_setup(adapter.task_setup_view(self.config, job_id))
+        self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
         self._auto_style_profile(job_id)
 
     def _auto_style_profile(self, job_id: str) -> None:
@@ -1501,6 +1508,69 @@ class MainWindow(QMainWindow):
             return
         self._notice(i18n.tr('已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。'))
         self.refresh_workbench(force=True)
+        self._offer_repetitions(job_id, index)
+
+    def _offer_repetitions(self, job_id: str, index: int) -> None:
+        """重复段：原文相同、译文不同的段，问一次要不要一起用这段译文（不自动替换）。"""
+        if _automation():
+            return
+        others = adapter.repetitions(job_id, index)
+        if not others:
+            return
+        numbers = "、".join(str(position + 1) for position in others[:8])
+        more = i18n.tr(' 等') if len(others) > 8 else ""
+        if not self._confirm(
+                i18n.tr('重复段'),
+                i18n.tr('原文相同的还有 {v0} 段（第 {v1}{v2} 段），译文和这段不一样。也用这段译文吗？',
+                        v0=len(others), v1=numbers, v2=more),
+                yes=i18n.tr('一起更新'), no=i18n.tr('不用')):
+            return
+        try:
+            count = adapter.propagate_translation(job_id, index, others)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法更新重复段'), str(exc))
+            return
+        self._notice(i18n.tr('已把这段译文用到另外 {v0} 段。', v0=count))
+        self.refresh_workbench(force=True)
+
+    def exclude_fragments(self, indexes: list) -> None:
+        job_id = self._current_job_id
+        if not job_id or not indexes:
+            return
+        if not self._confirm(i18n.tr('排除疑似碎片'),
+                             i18n.tr('将排除 {v0} 段疑似原文碎片；原文与译文都保留，可在「交付」页恢复。确定吗？',
+                                     v0=len(indexes)),
+                             yes=i18n.tr('全部排除'), no=i18n.tr('取消')):
+            return
+        try:
+            count = adapter.exclude_fragments(job_id, indexes)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法排除'), str(exc))
+            return
+        self._notice(i18n.tr('已排除 {v0} 段疑似碎片。', v0=count))
+        self.refresh_workbench(force=True)
+
+    def find_replace(self) -> None:
+        """查找替换译文：先预览，再全部替换（逐段人工提交）。"""
+        job_id = self._current_job_id
+        if not job_id or _automation():
+            return
+        from .dialogs import FindReplaceDialog
+
+        dialog = FindReplaceDialog(adapter.load_state(job_id), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+
+        def done(count: int) -> None:
+            self._notice(i18n.tr('已替换 {v0} 段译文；这些段需要重新审校。', v0=count))
+            self.refresh_workbench(force=True)
+            self.workbench.reload_current_segment()
+
+        self._run_with_busy(i18n.tr('查找替换'), i18n.tr('正在替换译文…'),
+                            adapter.replace_in_targets, job_id, values["query"],
+                            values["replacement"], on_done=done,
+                            case_sensitive=values["case_sensitive"])
 
     def review_current(self, index: int) -> None:
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校当前段落…'),
@@ -2125,6 +2195,55 @@ class MainWindow(QMainWindow):
         if not started:
             self._load_setup(job_id, adapter.load_state(job_id))
 
+    def export_report(self, kind: str) -> None:
+        """导出实践报告的当前稿件（DOCX 或 Markdown）。"""
+        job_id = self._current_job_id
+        if not job_id or _automation():
+            return
+        stem = Path(str((self._cached_state or {}).get("filename") or "report")).stem
+        suffix, label = (".docx", "Word (*.docx)") if kind == "docx" else (".md", "Markdown (*.md)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, i18n.tr('导出报告'), str(Path.home() / f"{stem}-report{suffix}"), label)
+        if not path:
+            return
+        try:
+            written = adapter.export_report(job_id, kind, path)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法导出报告'), str(exc))
+            return
+        self._notice(i18n.tr('报告已导出到 {v0}', v0=written))
+
+    def promote_task_memory(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            message = adapter.promote_task_memory(job_id)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法提升到项目记忆'), str(exc))
+            return
+        self._notice(i18n.tr_dynamic(message))
+
+    def save_style_rule(self, item: dict, note: str) -> None:
+        """审校：把风格建议确认成项目风格规则（可先改写措辞）。"""
+        job_id = self._current_job_id
+        if not job_id or not item or _automation():
+            return
+        from . import prompts
+
+        rule, ok = prompts.TextInputDialog.get_text(
+            self, i18n.tr('保存为项目风格规则'), i18n.tr('规则（会用于同项目的后续翻译）：'),
+            text=str(item.get("recommendation") or item.get("summary") or ""))
+        if not ok or not str(rule).strip():
+            return
+        try:
+            adapter.save_style_rule(job_id, str(rule), note=note,
+                                    finding_id=str(item.get("core_finding_id") or ""))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法保存风格规则'), str(exc))
+            return
+        self._notice(i18n.tr('项目风格规则已由你确认保存。'))
+
     def save_all_drafts(self) -> None:
         """提交所有未保存的修改（基于旧译文的草稿跳过，留给用户逐段决定）。"""
         job_id = self._current_job_id
@@ -2374,6 +2493,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('设置已保存。'))
             if self.stack.currentWidget() is self.workbench:
                 self.workbench.config = self.config
+                self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
                 self.refresh_workbench(force=True)
 
     def show_about(self) -> None:

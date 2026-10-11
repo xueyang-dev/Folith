@@ -394,4 +394,45 @@ class SuggestBox(QWidget):
         self.input.clear()
 
 
-__all__ = ["AskAgentBox", "AttentionList", "ContextView", "SuggestBox", "TermList"]
+class NoteBox(QWidget):
+    """段落批注：留给自己或审校的一句话。不是译文，不进交付，不影响审校。"""
+
+    saveRequested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from PySide6.QtWidgets import QPlainTextEdit
+
+        self.edit = QPlainTextEdit()
+        self.edit.setPlaceholderText(i18n.tr('给这一段留个批注（只自己和审校看得到）'))
+        self.edit.setFixedHeight(64)
+        self.edit.textChanged.connect(self._changed)
+        self.meta = _wrapped("", "hint")
+        self.save_button = QPushButton(i18n.tr('保存批注'))
+        self.save_button.clicked.connect(lambda: self.saveRequested.emit(self.edit.toPlainText()))
+        self.save_button.setEnabled(False)
+        row = QHBoxLayout()
+        row.addWidget(self.meta, 1)
+        row.addWidget(self.save_button)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(theme_module.SPACE["xs"])
+        layout.addWidget(self.edit)
+        layout.addLayout(row)
+        self._saved = ""
+
+    def set_note(self, note: dict | None) -> None:
+        note = note or {}
+        self._saved = str(note.get("text") or "")
+        self.edit.blockSignals(True)
+        self.edit.setPlainText(self._saved)
+        self.edit.blockSignals(False)
+        stamp = str(note.get("updated_at") or "")[:16].replace("T", " ")
+        self.meta.setText(i18n.tr('更新于 {v0}', v0=stamp) if stamp else "")
+        self.save_button.setEnabled(False)
+
+    def _changed(self) -> None:
+        self.save_button.setEnabled(self.edit.toPlainText().strip() != self._saved.strip())
+
+
+__all__ = ["AskAgentBox", "AttentionList", "ContextView", "NoteBox", "SuggestBox", "TermList"]
