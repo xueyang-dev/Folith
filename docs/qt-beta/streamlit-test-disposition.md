@@ -78,7 +78,7 @@
 | sidebar_ai_engine_footer_test / sidebar_project_switcher_test | Streamlit 侧栏信息架构；Qt 侧栏/阶段栏另有设计 |
 | project_task_navigation_test / project_context_hierarchy_test / project_overview_structure_test / project_detail_visual_system_test / inbox_project_density_test | Streamlit 项目中心的页面结构与视觉规范；Qt 的项目功能由 qt_home_cards、qt_project_knowledge 覆盖 |
 | task_overview_ui_test / workbench_stage3_stage4_test | Streamlit 任务横幅与五列网格布局；Qt 用阶段栏（qt_stage） |
-| agent_inspector_ui_test | Agent 检查器，有意不迁移 |
+| agent_inspector_ui_test | Agent 检查器：2026-10-11 并入工作台右侧操作栏，Qt 侧由 `qt_inline_editor_test` / `qt_segment_assist_test` 覆盖 |
 
 另：`desktop_release_notes_test` 是误命中（0 个 Streamlit 用例，只在文字里提到），不受影响；`provider_models_ui_test` 见 §4，已补 Qt 测试并归入 §1。
 

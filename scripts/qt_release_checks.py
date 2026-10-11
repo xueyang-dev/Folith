@@ -317,8 +317,8 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "",
         "- 真实中文输入法、系统文件面板、睡眠/唤醒、真实模型服务与干净机器验收为**人工项**，"
         "尚未闭环；自动化与冻结产物证据不能替代。",
-        "- 有意不迁移到本客户端：性能面板、Agent 检查器、Paddle 任务级模型选择、线上 OCR "
-        "独立来源；需要时只能用旧 Streamlit 启动器（保留一个版本）。",
+        "- 有意不迁移到本客户端：性能面板、Paddle 任务级模型选择、线上 OCR 独立来源、"
+        "风格微调滑杆（风格由智能画像与风格卡片决定）；Agent 检查器已并入工作台右侧操作栏。",
         "- 数据目录 `~/Library/Application Support/Folith/data` 与旧壳共用；替换或删除应用"
         "不会删除用户数据。",
         "- **macOS 26/27 上的外部辅助功能扫描（AI \"Computer Use\" / VoiceOver / 窗口管理器的"

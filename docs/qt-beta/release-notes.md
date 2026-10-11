@@ -54,6 +54,6 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 ## 已知限制
 
 - 真实中文输入法、系统文件面板、睡眠/唤醒、真实模型服务与干净机器验收为**人工项**，尚未闭环；自动化与冻结产物证据不能替代。
-- 有意不迁移到本客户端：性能面板、Agent 检查器、Paddle 任务级模型选择、线上 OCR 独立来源；需要时只能用旧 Streamlit 启动器（保留一个版本）。
+- 有意不迁移到本客户端：性能面板、Paddle 任务级模型选择、线上 OCR 独立来源、风格微调滑杆（风格由智能画像与风格卡片决定）；Agent 检查器已并入工作台右侧操作栏。
 - 数据目录 `~/Library/Application Support/Folith/data` 与旧壳共用；替换或删除应用不会删除用户数据。
 - **macOS 26/27 上的外部辅助功能扫描（AI "Computer Use" / VoiceOver / 窗口管理器的AX 客户端）会触发 Qt 平台插件崩溃**（SIGSEGV/SIGBUS，栈顶 `libqcocoa` + `NSAccessibilityAttributeAccessorInfo getAttributeValue:forObject:`）：上游根因是 **QTBUG-149612**（macOS: synthesized table elements can delete their parent accessibility interface；影响 Qt 6.11.0–6.11.2，截至 2026-10-05 无修复版本），同样见于 calibre（PyQt6）、Qt Creator、Anki、FreeCAD。R62 已在本机复现 3/3 并逐帧核对，且实测**没有可用的应用侧开关**：`QT_ACCESSIBILITY=0` 在 Qt 6.11 上完全无效，`QAccessible.setActive(False)` 会被系统在 AX 客户端接入时重新激活。**请用人工键鼠完成验收，不要挂载 AX 代理**——人工键鼠操作不受此缺陷影响。

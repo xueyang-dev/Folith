@@ -7,9 +7,55 @@
 2. 核心接口差集：Streamlit 一侧调用了 172 个 `core.*`（含 `_core().*`），Qt 一侧 79 个；**99 个可调用接口只被 Streamlit 调用**（清单见 §5）；
 3. 与 [s8-decision.md §5](s8-decision.md) 里"已知未迁移"清单对照，区分"已登记的有意延后"和"清单里没有的遗漏"。
 
-结论先行（2026-10-10 终稿）：批次 A–D 已完成，§2 的 4 个卡死点和 §3 的 10 项遗漏都已在 Qt 里有入口和测试。
-**已达到删除 Streamlit 的标准（READY）**，见 §6.2 与 [streamlit-test-disposition.md](streamlit-test-disposition.md)。
-下面 §1–§3 保留初稿时的状态作为记录，最新状态以 §6.1 为准。
+**现状以 §0（2026-10-11 复核）为准。** §1–§6 是 2026-10-10 初稿与收尾记录，保留作历史：
+其中 §1 总表里有十几项 ❌ 当时就已补上，另有两项 ✅ 当时并不成立（"接受剩余风险后交付"、
+"搜索筛选"），§0 已逐项按当前代码改正。
+
+---
+
+## 0. 2026-10-11 复核：按当前 Qt 代码逐项核对
+
+方法：逐项走 `app.py` 与 `folith/ui/**` 里**实际被调用**的功能（`_render_recovery_panel`、
+`_render_context_surface`、`_render_delivery_review_queue`、`_render_workspace_document_nav`、
+`_render_document_agent_panel` 等是没有调用方的死代码，不算功能），再到 `folith/qt/**` 找入口。
+状态：✅ 已有 ｜ 🟡 部分 ｜ ⛔ 有意不迁移（写明原因）。
+
+### 0.1 本轮补上的（2026-10-11）
+
+| 领域 | 功能 | Qt 位置 |
+| --- | --- | --- |
+| 工作台 | 中央网格**就地编辑**（唯一编辑区），改过才出现保存条；⌘S 保存、⌘↩ 保存并进入下一个未确认段 | `segment_editor.py`、`views.py` |
+| 工作台 | 右侧操作栏（原 Agent 检查器）：需要注意（检查项可直接保留译文 / 采用建议）、翻译决策痕迹（证据片段可标出；「进一步审视本段」按需分析并缓存）、术语（点击插入、禁用译名标红、从选中文字加入术语库）、前后文、按要求重译（候选，采用才写入编辑框）、询问 Agent（只回答不改写）、批注 | `segment_assist.py`、`views.py`、`adapter.segment_*` |
+| 工作台 | 筛选菜单：人工修改、必须处理、含项目术语、使用了翻译记忆、原文质量问题、术语问题、有批注 | `views.py` `filter_actions` |
+| 工作台 | 未保存修改横幅：全部保存（基于旧译文的草稿跳过）/ 全部丢弃 | `views.py` `drafts_banner` |
+| 工作台 | 重复段提示（原文相同、译文不同时询问是否一起更新）；查找替换译文（先预览） | `window.py`、`dialogs.FindReplaceDialog` |
+| 工作台 | 段落事实显示"翻译记忆（已匹配并复用）" | `views.py` |
+| 任务 | 「更多 › 任务详情」：开始后仍能看到当时的设置、项目记忆、模型、原文整理统计、交付文件；提升到项目记忆 | `task_details_panel.py` |
+| 任务 | 文档画像查看与修改（准备页显示智能画像建议；任务详情页可改） | `dialogs.DocumentProfileDialog` |
+| 准备 | 开始按钮旁的模型连接提示与「设置连接…」 | `setup_panel.py` |
+| 术语 | 禁用译名字段；搜索 / 状态筛选 / 只看冲突项；多选锁定 / 拒绝（开始后只生成一个新版本） | `terms_panel.py` |
+| 审校 | 风格类问题「保存为项目风格规则…」 | `review_panel.py` |
+| 语言资产 | 在所在任务里编辑 / 删除术语；改译名后接受候选 | `library_view.py`、`dialogs.LibraryTermDialog` |
+| 设置 | 推理强度（只对识别得出的推理模型显示）；审校模型「获取模型」 | `dialogs.EngineDialog` |
+| 项目 | 编辑项目说明；并入「未分类」已审校记忆；移动任务时可直接新建项目 | `dialogs.ProjectsPanel`、`ProjectPickerDialog` |
+| 交付 | 交付说明写进快照；仍有必须处理项时「接受风险并交付…」（说明 + 明确确认，核心记为已接受风险）；列出尚无译文的段 | `views.py`、`dialogs.RiskAcceptanceDialog` |
+| 交付 | 补生成当初没选的文件（例如电子书），冻结新版本 | `views.py` 补生成卡片 |
+| 检查与修复 | 疑似原文碎片一次排除 | `followup_panel.py` |
+| 报告（学术模式） | 当前稿件导出 DOCX / Markdown | `report_panel.py` |
+
+### 0.2 仍为部分或有意不迁移
+
+| 功能 | 状态 | 说明 |
+| --- | --- | --- |
+| 性能面板 | ⛔ | Qt 有诊断信息与运行记录 |
+| Paddle 任务级模型、线上 OCR 独立来源 | ⛔ | 默认路径是视觉模型理解；见发行说明 |
+| 风格微调滑杆 | ⛔ | 风格由智能画像推荐 + 风格卡片 + 补充约束决定 |
+| URL 路由、Streamlit 侧栏结构、首次引导标记 | ⛔ | 桌面端不适用 |
+| 交付快照 zip 下载 | ⚪ | 改为「保存到文件夹」 |
+| 交付清单（manifest）查看、导出检查明细 | 🟡 | 只显示完整性提示；清单随交付文件一起保存 |
+| 项目知识的具体条目（风格规则、人工决定、提升记录） | 🟡 | 项目页只显示计数；术语与翻译记忆可在语言资产里逐条看 |
+| 原页 PDF 与网格并排 | 🟡 | 「原页」是单独一页，「查看原位置」会切过去并高亮 |
+| 翻译记忆模糊匹配、语料检索、字数统计 | — | 两边都没有；属于 TM Engine V2 / 项目分析（蓝图 §7.4–7.5） |
 
 ---
 
@@ -55,7 +101,7 @@
 | 项目：新建/重命名/归档/删除 | ✅ | `ProjectDialog` | ✅ |
 | 项目：**概览 / 项目知识 / 设置 tab、项目记忆导入导出、冲突解决、从任务提升** | `project_*`、`export_project_memory`、`resolve_project_conflict`、`promote_job_to_project` | 无 | ❌ |
 | 外观（日/夜/纸面）、界面语言 | ✅ | ✅（`style.apply_theme`、i18n） | ✅ |
-| 性能面板 / Agent 检查器 | `performance_view`、`agent_inspector` | 无（Qt 有诊断页） | ⚪ |
+| 性能面板 / Agent 检查器 | `performance_view`、`agent_inspector` | 性能面板无（Qt 有诊断页）；Agent 检查器 2026-10-11 并入右侧操作栏（§0） | ⚪ / ✅ |
 | 退出/崩溃恢复/单实例/旧数据接入/诊断 | `folith/desktop` | Qt 版更完整 | ✅ |
 
 ---
@@ -159,7 +205,7 @@ Qt 比 Streamlit **多**的：退出/恢复语义、最小窗口适配、键盘�
 
 初稿后剩下的四项已补齐：模型发现的 Qt 测试、学术模式的参考资料添加、提取报告（「检查与修复」→「导入范围」）、首页排序。
 
-有意不迁移：性能面板、Agent 检查器、Paddle 模型选择、线上 OCR 独立来源、URL 路由、Streamlit 侧栏结构。
+有意不迁移：性能面板、Paddle 模型选择、线上 OCR 独立来源、URL 路由、Streamlit 侧栏结构（Agent 检查器已在 2026-10-11 并入工作台右侧操作栏，见 §0）。
 
 旧测试归类见 [streamlit-test-disposition.md](streamlit-test-disposition.md)：59 个文件中 25 已迁移、17 只删其中的 Streamlit 用例、16 随 Streamlit 下线、1 误命中，待迁移 0。
 

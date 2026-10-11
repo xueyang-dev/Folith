@@ -87,8 +87,9 @@ def test_the_only_editor_sits_in_the_selected_row_of_the_grid(bench):
     # 展开行显示整段原文（不省略）并加高；其他行保持一行。
     assert view.segment_list.item(1, 1).text().endswith("middle of the grid.")
     assert view.segment_list.rowHeight(1) > view.segment_list.rowHeight(0)
-    # 右侧不再有任何文字编辑框：一个内容只能有一个可写位置。
-    panel_editors = [widget for widget in view.inspector_scroll.findChildren(QPlainTextEdit)]
+    # 右侧没有原文 / 译文编辑框：一个内容只能有一个可写位置（批注框写的是批注，不是译文）。
+    panel_editors = [widget for widget in view.inspector_scroll.findChildren(QPlainTextEdit)
+                     if widget is not view.note_box.edit]
     assert panel_editors == []
 
 
