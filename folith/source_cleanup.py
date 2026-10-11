@@ -17,7 +17,7 @@ import time
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 
 from .textual import has_textual_content
 from .workflow_errors import raise_if_fatal
@@ -382,7 +382,9 @@ def _load_cleanup_checkpoint(path: Path | None, fingerprint: str) -> Dict[str, A
     return value
 
 
-def _deterministic_prepare(items: Sequence[str]) -> Tuple[List[str], List[bool], List[Dict[str, Any]], List[str]]:
+def _deterministic_prepare(items: Sequence[str], *, frozen: Iterable[int] = (),
+                           hard_breaks: Iterable[int] = (),
+                           ) -> Tuple[List[str], List[bool], List[Dict[str, Any]], List[str]]:
     """Normalize text, drop stray symbol lines and mark obvious joins as safe work.
 
     The third stream of work here is the text-layer corruption that produces a
@@ -393,11 +395,14 @@ def _deterministic_prepare(items: Sequence[str]) -> Tuple[List[str], List[bool],
     pinned into the same paragraph, and the deletion is recorded as
     :data:`REASON_STRAY_PUNCTUATION`.
     """
+    frozen = {int(index) for index in frozen}
+    # 冻结项前后、以及显式的硬断点之后，一律断段：不与任何东西拼接。
+    locked = set(hard_breaks) | frozen | {index - 1 for index in frozen}
     cleaned = []
     changed = []
     for index, raw in enumerate(items):
         before = str(raw or "")
-        after = _normalise_text(before)
+        after = before if index in frozen else _normalise_text(before)
         cleaned.append(after)
         if after != before:
             changed.append({"index": index, "before": before, "after": after,
@@ -418,7 +423,7 @@ def _deterministic_prepare(items: Sequence[str]) -> Tuple[List[str], List[bool],
 
     for index in range(max(0, len(cleaned) - 1)):
         left, right = cleaned[index], cleaned[index + 1]
-        if not left or not right:
+        if not left or not right or index in locked:
             continue
         obvious_hyphen = left.endswith(("-", "‐", "‑")) and right[:1].islower()
         obvious_line_join = (
@@ -433,6 +438,8 @@ def _deterministic_prepare(items: Sequence[str]) -> Tuple[List[str], List[bool],
     # 纯符号行必须**删除**而不能仅仅"不换段"：只要它还留在流里，`_join` 就会把
     # 句点贴到前一行末尾，等于把假句末交给后面的分句器。
     for index in _stray_fragment_indices(cleaned):
+        if {index - 1, index} & locked or index in frozen or index + 1 in frozen:
+            continue
         fragment = cleaned[index]
         cleaned[index] = ""
         changed.append({"index": index, "before": str(items[index] or ""),
@@ -647,8 +654,16 @@ def cleanup_source_paragraphs(
     text_direction: str = "",
     ocr_engine_code: str = "",
     ocr_backend: str = "tesseract",
+    frozen_indices: Iterable[int] = (),
+    hard_breaks_after: Iterable[int] = (),
 ) -> Tuple[List[str], Dict[str, Any], List[str]]:
     """Repair OCR paragraphs and return ``(paragraphs, metadata, warnings)``.
+
+    ``frozen_indices``: items that are already trusted semantic text (blocks a
+    vision model read from a scanned page inside an otherwise native PDF).
+    They pass through unchanged, are never sent to the model and never merged
+    with a neighbour.  ``hard_breaks_after``: items after which a paragraph
+    must end (e.g. the last native line before a skipped page).
 
     The input boundaries are preserved as indexed items in each request; the
     model may only change their text and mark joins.  A failed batch falls back
@@ -674,9 +689,15 @@ def cleanup_source_paragraphs(
             metadata={"operations": [REASON_WHITESPACE, REASON_OBVIOUS_LINE_JOIN,
                                      REASON_STRAY_PUNCTUATION]},
         )
+    frozen = {int(index) for index in frozen_indices or ()
+              if 0 <= int(index) < len(original)}
+    hard_breaks = {int(index) for index in hard_breaks_after or ()}
     deterministic_items, break_after, deterministic_merges, changed = _deterministic_prepare(
-        original
-    )
+        original, frozen=frozen, hard_breaks=hard_breaks)
+    boundary_locks = hard_breaks | frozen | {index - 1 for index in frozen}
+    for index in boundary_locks:
+        if 0 <= index < len(break_after):
+            break_after[index] = True
     if deterministic_stage is not None:
         for index, before in enumerate(original):
             deterministic_stage.item(
@@ -695,14 +716,15 @@ def cleanup_source_paragraphs(
             uncertainty[index] = reasons
     # 被确定性层判为噪声并清空的行没有可修复的正文：不送模型，模型也无权把它填回来
     # （否则"猜正文"就会以"修一个孤立的句点"的名义重新发生）。
-    llm_indices = [index for index in uncertainty if deterministic_items[index]]
+    llm_indices = [index for index in uncertainty
+                   if deterministic_items[index] and index not in frozen]
     # 碎片两侧的断段决定由确定性层拍板，模型只能改文字、不能把这一句重新截断。
     stray_spans = [
         list(merge.get("input_indices") or [])
         for merge in deterministic_merges
         if merge.get("reason") == REASON_STRAY_PUNCTUATION
     ]
-    locked_breaks = {int(index) for span in stray_spans for index in span[:2]}
+    locked_breaks = {int(index) for span in stray_spans for index in span[:2]} | boundary_locks
     locked_tails = {int(span[0]) for span in stray_spans if span}
     batches: List[List[Tuple[int, str]]] = []
     current: List[Tuple[int, str]] = []

@@ -672,6 +672,7 @@ from folith.engine.source_quality import (  # noqa: F401  (re-export: core keeps
     _text_layer_decision,
     audit_source_quality,
     cleanup_source_paragraphs,
+    cleanup_constraints as _cleanup_constraints,
     confirm_source_quality_segment,
     extract_document_paragraphs,
     extraction_failure_detail,
@@ -1830,8 +1831,9 @@ def _apply_source_segmentation(state, cleaned_paragraphs, *, mode=None):
 
 
 # Extraction provenances that produce trusted semantic blocks rather than rough
-# OCR.  `mixed` means every page was read by the VLM (native PDF pages keep their
-# text layer); neither carries OCR-fragment risk.
+# OCR.  Note that in `mixed` only the scanned pages were read by the VLM: the
+# native pages keep their text layer, whose line breaks are repaired by source
+# cleanup (see ``cleanup_constraints``).
 _VLM_SEMANTIC_SOURCES = frozenset({"vlm", "mixed"})
 
 
@@ -9362,12 +9364,13 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             return call_llm(
                 provider_name, api_key_value, model_name, system_prompt,
                 user_prompt, **inherited_kwargs, **kwargs)
-        if extraction_report.get("semantic_source") in {"vlm", "mixed"}:
+        if extraction_report.get("semantic_source") == "vlm":
             cleaned, cleanup_meta, cleanup_warnings = raw_paragraphs, {
                 "status":"skipped", "reason":"vlm_semantics_no_ocr_repair"}, []
         else:
             cleaned, cleanup_meta, cleanup_warnings = cleanup_source_paragraphs(
                 raw_paragraphs, provider, api_key, model, call_llm_fn=cleanup_call,
+                **_cleanup_constraints(extraction_report, len(raw_paragraphs)),
                 on_progress=report, max_batch_chars=max_batch_chars,
                 max_batch_items=max_batch_items, parallelism=effective_parallelism,
                 confidence_by_index=((extraction_report.get("ocr") or {}).get(
@@ -10668,14 +10671,18 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
             "output_count": len(raw_paragraphs),
         }
         cleanup_warnings = []
-        if extraction_report.get("semantic_source") in {"vlm", "mixed"}:
+        # 只有整份由视觉模型读出（vlm）才跳过整理。混合 PDF 的文字层页面同样有断行
+        # 和残片，必须整理；视觉模型读出的段由约束冻结（见 cleanup_constraints）。
+        # 以前 mixed 也整体跳过，于是一本只有几页扫描页的书，正文每一行都成了一段。
+        if extraction_report.get("semantic_source") == "vlm":
             cleanup_meta["reason"] = "vlm_semantics_no_ocr_repair"
         if (filename.lower().endswith(".pdf") and enable_source_cleanup and paragraphs
-                and extraction_report.get("semantic_source") not in {"vlm", "mixed"}):
+                and extraction_report.get("semantic_source") != "vlm"):
             if on_status:
                 on_status("【阶段一】LLM 原文纠错与断行整理…")
             paragraphs, cleanup_meta, cleanup_warnings = cleanup_source_paragraphs(
                 raw_paragraphs, provider, api_key, model,
+                **_cleanup_constraints(extraction_report, len(raw_paragraphs)),
                 on_progress=on_status,
                 parallelism=effective_cleanup_concurrency,
                 confidence_by_index=((extraction_report.get("ocr") or {}).get(
@@ -10693,7 +10700,7 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
                 ocr_backend=((extraction_report.get("ocr") or {}).get("actual_engine") or effective_ocr_backend))
         elif profiler is not None:
             reason = ("vlm_semantics_no_ocr_repair" if extraction_report.get("semantic_source")
-                      in {"vlm", "mixed"} else "source_cleanup_disabled")
+                      == "vlm" else "source_cleanup_disabled")
             profiler.skipped("deterministic_cleanup", metadata={"reason": reason})
             profiler.skipped("llm_cleanup", metadata={"reason": reason})
 

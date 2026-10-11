@@ -402,3 +402,62 @@ def test_resume_stage1_with_existing_source_paras_without_file_bytes(tmp_path: P
         assert result["paras"][0] == "Cleaned paragraph 1."
     finally:
         core.OUTPUT_DIR, core.call_llm = old_output, old_call
+
+
+def _echo_joining_llm(provider, api_key, model, system, user, **kwargs):
+    """敌对的模型：原样返回每一项，但声称所有项都与下一项同段。"""
+    payload = json.loads(user[user.index("{"):]) if "{" in user else {}
+    items = payload.get("segments") or payload.get("items") or []
+    return json.dumps({"segments": [
+        {"index": item.get("index"), "text": item.get("text"), "break_after": False}
+        for item in items]})
+
+
+def test_mixed_pdf_repairs_text_layer_lines_but_never_touches_vlm_paragraphs():
+    """混合 PDF：文字层页面的断行照常整理，视觉模型读出的段原样保留、不与邻段拼接。
+
+    真实场景：一本 308 页的书只有几页是扫描页，于是整份被标成 ``mixed``，原文整理被
+    整体跳过，封底简介的每一行都成了一段。
+    """
+    items = [
+        "ca When Nora Seed finds herself in the", ".",
+        "_ Midnight Library, she has a chance to make things right.",
+        "A scanned page the vision model read as one paragraph.",
+        "Up until now, her", "life has been full of misery and regret.",
+    ]
+    cleaned, metadata, warnings = core.cleanup_source_paragraphs(
+        items, "DeepSeek", "key", "model", call_llm_fn=_echo_joining_llm,
+        parallelism=1, frozen_indices=[3], hard_breaks_after=[])
+
+    assert "A scanned page the vision model read as one paragraph." in cleaned
+    # 这个模型只回显文字，所以 "ca"、"_" 这类残片留着（真实模型会修掉）；这里只看断行。
+    assert cleaned[0] == ("ca When Nora Seed finds herself in the "
+                          "_ Midnight Library, she has a chance to make things right.")
+    assert "the." not in cleaned[0]
+    assert cleaned[-1] == "Up until now, her life has been full of misery and regret."
+    assert len(cleaned) == 3
+
+
+def test_hard_break_keeps_lines_apart_across_a_skipped_page():
+    cleaned, _metadata, _warnings = core.cleanup_source_paragraphs(
+        ["the last line before a scanned page and", "a line after it"],
+        "DeepSeek", "key", "model", call_llm_fn=_echo_joining_llm,
+        parallelism=1, hard_breaks_after=[0])
+    assert cleaned == ["the last line before a scanned page and", "a line after it"]
+
+
+def test_cleanup_constraints_freeze_vlm_blocks_and_break_across_skipped_pages():
+    def block(block_id, provider, page):
+        return {"block_id": block_id, "text": block_id, "provenance": {"provider": provider},
+                "source_anchor": {"source_spans": [{"page_id": f"p{page}"}]}}
+
+    report = {"semantic_source": "mixed", "document_ir": {
+        "pages": [{"page_id": f"p{i}", "page_index": i} for i in range(6)],
+        "blocks": [block("a", "native_pdf", 0), block("b", "native_pdf", 1),
+                   block("c", "openai", 2), block("d", "native_pdf", 3),
+                   block("e", "native_pdf", 5)],
+        "translation_block_ids": ["a", "b", "c", "d", "e"]}}
+    assert core._cleanup_constraints(report, 5) == {
+        "frozen_indices": [2], "hard_breaks_after": [3]}
+    assert core._cleanup_constraints({"semantic_source": "native_pdf"}, 5) == {}
+    assert core._cleanup_constraints({"semantic_source": "vlm"}, 5) == {}

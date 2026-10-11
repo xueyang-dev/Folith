@@ -140,7 +140,8 @@ def cleanup_source_paragraphs(paragraphs, provider, api_key, model, *,
                               retry_backoff_seconds=None,
                               request_interval_seconds=None, profiler=None,
                               ocr_language="", source_language="",
-                              text_direction="", ocr_engine_code="", ocr_backend="tesseract"):
+                              text_direction="", ocr_engine_code="", ocr_backend="tesseract",
+                              frozen_indices=(), hard_breaks_after=()):
     """Repair OCR characters/line breaks while preserving indexed source items.
 
     This compatibility wrapper keeps the cleanup contract in the core API so
@@ -194,7 +195,42 @@ def cleanup_source_paragraphs(paragraphs, provider, api_key, model, *,
         text_direction=text_direction or "",
         ocr_engine_code=ocr_engine_code or "",
         ocr_backend=ocr_backend,
+        frozen_indices=frozen_indices,
+        hard_breaks_after=hard_breaks_after,
     )
+
+
+def cleanup_constraints(extraction_report, count):
+    """原文整理在"混合 PDF"上的约束：哪些段不能动、哪些段之后必须断开。
+
+    混合 PDF = 有文字层的页 + 少量扫描页（扫描页由视觉模型读出）。文字层页面的
+    断行、页眉残片、孤立符号行和普通原生 PDF 一样需要整理；视觉模型读出的段已经
+    是成段的语义文本，原样保留、不与邻段拼接。两段原生文字之间隔着一页（扫描页
+    或空页）时也必须断开：句子不会跨过中间那一页接上。
+
+    返回 ``cleanup_source_paragraphs`` 的关键字参数；不是混合来源时为空。
+    """
+    report = extraction_report if isinstance(extraction_report, dict) else {}
+    if report.get("semantic_source") != "mixed":
+        return {}
+    document = report.get("document_ir") or {}
+    blocks = {b.get("block_id"): b for b in document.get("blocks") or []}
+    pages = {p.get("page_id"): p.get("page_index") for p in document.get("pages") or []}
+    ids = list(document.get("translation_block_ids") or [])[:count]
+    frozen, page_of = [], {}
+    for index, block_id in enumerate(ids):
+        block = blocks.get(block_id) or {}
+        if (block.get("provenance") or {}).get("provider") != "native_pdf":
+            frozen.append(index)
+        spans = (block.get("source_anchor") or {}).get("source_spans") or []
+        found = [pages.get(span.get("page_id")) for span in spans]
+        found = [value for value in found if value is not None]
+        if found:
+            page_of[index] = (min(found), max(found))
+    hard_breaks = [index for index in range(len(ids) - 1)
+                   if index in page_of and index + 1 in page_of
+                   and page_of[index + 1][0] - page_of[index][1] > 1]
+    return {"frozen_indices": frozen, "hard_breaks_after": hard_breaks}
 
 
 def _source_segmentation_mode(state=None, explicit=None):
