@@ -39,6 +39,7 @@ from .report_panel import ReportPanel
 from .review_panel import ReviewPanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
+from .task_details_panel import TaskDetailsPanel
 from .stagebar import StageBar
 from . import stage as stage_model
 from . import style as style_module
@@ -1509,6 +1510,7 @@ class WorkbenchView(QWidget):
     askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
     saveAllDraftsRequested = Signal()
     discardAllDraftsRequested = Signal()
+    profileEditRequested = Signal()         # 修改文档画像
     draftSaved = Signal(str, str, str)      # job_id, segment_uid, text
     editSubmitted = Signal(int)
     revealRequested = Signal(str)
@@ -2051,6 +2053,7 @@ class WorkbenchView(QWidget):
         # 建项目要弹输入框、写盘、刷新首页列表 —— 那些是 window 的职责，这里只转发。
         self.setup_panel.termbaseAddRequested.connect(self.setupTermbaseAddRequested.emit)
         self.setup_panel.styleProfileRequested.connect(self.setupStyleProfileRequested.emit)
+        self.setup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         self.setup_panel.termbaseRemoveRequested.connect(self.setupTermbaseRemoveRequested.emit)
         self.setup_panel.literatureAddRequested.connect(self.setupLiteratureAddRequested.emit)
         self.setup_panel.literatureRemoveRequested.connect(
@@ -2338,6 +2341,12 @@ class WorkbenchView(QWidget):
         self.tabs.addTab(self.activity_panel,
                          icons.icon("clock", 16, "text-secondary"),
                          i18n.tr('运行记录'))
+        self.details_panel = TaskDetailsPanel()
+        self.details_panel.profileEditRequested.connect(self.profileEditRequested.emit)
+        self.tabs.addTab(self.details_panel,
+                         icons.icon("info", 16, "text-secondary"),
+                         i18n.tr('任务详情'))
+        self._details_key: tuple = ()
         #: 页面 id → 页面。步骤条与代码里的跳转都用页面 id，不再依赖页签序号。
         self._pages: dict[str, QWidget] = {
             "translate": translation_page, "terms": self.terms_panel,
@@ -2345,6 +2354,7 @@ class WorkbenchView(QWidget):
             "report": self.report_panel, "cases": self.cases_panel,
             "qa": self.qa_panel, "source": self.pdf_panel,
             "followup": self.followup_panel, "activity": self.activity_panel,
+            "details": self.details_panel,
         }
         self.tabs.currentChanged.connect(lambda _index: self._sync_stage_page())
         self._followup_count = 0
@@ -2431,6 +2441,7 @@ class WorkbenchView(QWidget):
         self._render_cases()
         self._render_qa()
         self._render_activity()
+        self._render_details()
         self._render_stage()
 
     # ================= 阶段与页面导航 =================
@@ -2454,6 +2465,7 @@ class WorkbenchView(QWidget):
             pages.append(("source", i18n.tr('原页')))
         pages.append(("followup", i18n.tr('检查与修复')))
         pages.append(("activity", i18n.tr('运行记录')))
+        pages.append(("details", i18n.tr('任务详情')))
         if self.academic_visible():
             pages.extend((("report", i18n.tr('报告')), ("cases", i18n.tr('案例')),
                           ("qa", i18n.tr('合规与 QA'))))
@@ -2584,6 +2596,21 @@ class WorkbenchView(QWidget):
             + len(view.get("entities") or [])
         self._followup_count = count
         self._sync_more_pages()
+
+    def _render_details(self) -> None:
+        """任务详情只在状态对象换了时重算（轮询每秒一次）。"""
+        if not self.job_id or self.config is None:
+            return
+        key = (self.job_id, id(self._state))
+        if key == self._details_key:
+            return
+        self._details_key = key
+        try:
+            groups = adapter.task_details(self.config, self.job_id)
+        except Exception:  # noqa: BLE001 - 详情页坏了不能拖垮翻译页
+            groups = []
+        profile = dict(self._state.get("document_profile") or {})
+        self.details_panel.apply(groups, profile, adapter.profile_summary(profile))
 
     def _render_activity(self) -> None:
         """活动记录按事件日志的签名重读：日志没变就不碰（轮询每秒一次）。"""

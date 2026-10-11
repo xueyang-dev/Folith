@@ -619,6 +619,7 @@ class TaskSetupPanel(QWidget):
     createProjectRequested = Signal()
     termbaseAddRequested = Signal()
     styleProfileRequested = Signal()
+    profileEditRequested = Signal()
     termbaseRemoveRequested = Signal()
     literatureAddRequested = Signal()
     literatureRemoveRequested = Signal()
@@ -1076,6 +1077,24 @@ class TaskSetupPanel(QWidget):
         reco_row.addWidget(self.style_accept_button, 0, Qt.AlignmentFlag.AlignVCenter)
         inner.addLayout(reco_row)
 
+        # 文档画像：模型把这份文档当成什么来译（领域 · 文本类型 · 读者 · 语域）。
+        # 判断错了可以改；保存后翻译直接用它。
+        self.profile_label = QLabel("")
+        self.profile_label.setObjectName("hint")
+        self.profile_label.setWordWrap(True)
+        self.profile_edit_button = QPushButton(i18n.tr('修改画像…'))
+        self.profile_edit_button.setObjectName("linkAction")
+        self.profile_edit_button.clicked.connect(self.profileEditRequested.emit)
+        self.profile_row = QWidget()
+        profile_row = QHBoxLayout(self.profile_row)
+        profile_row.setContentsMargins(0, 0, 0, 0)
+        profile_row.setSpacing(theme_module.SPACE["md"])
+        profile_row.addWidget(self.profile_label, 1)
+        profile_row.addWidget(self.profile_edit_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        inner.addWidget(self.profile_row)
+        self._suggested_profile: dict = {}
+        self._sync_profile_row()
+
         # ---- 风格卡片 ----------------------------------------------------------
         self.style_box = style_module.ComboBox()
         self.style_box.addItem(i18n.tr('沿用设置里的风格规则'), "")
@@ -1234,12 +1253,32 @@ class TaskSetupPanel(QWidget):
                        v1=f"{float(recommendation.get('confidence') or 0):.2f}")
         self.style_status.setText(" · ".join([head] + reasons))
         self.style_status.setVisible(True)
+        self._suggested_profile = dict((result or {}).get("document_profile") or {})
+        self._sync_profile_row()
         # 失败降级的"通用风格"不是推荐，不给「接受」
         self.style_accept_button.setVisible(not failed)
+
+    def document_profile(self) -> dict:
+        """当前该显示/编辑的画像：用户保存过的优先，否则是智能画像的建议。"""
+        saved = dict((self._view or {}).get("document_profile") or {})
+        return saved if adapter.profile_summary(saved) else dict(self._suggested_profile)
+
+    def _sync_profile_row(self) -> None:
+        saved = adapter.profile_summary((self._view or {}).get("document_profile"))
+        suggested = adapter.profile_summary(self._suggested_profile)
+        if saved:
+            text = i18n.tr('文档画像（已保存）：{v0}', v0=saved)
+        elif suggested:
+            text = i18n.tr('文档画像（智能画像建议）：{v0}', v0=suggested)
+        else:
+            text = i18n.tr('文档画像：还没有。开始翻译时会自动分析，也可以先自己填写。')
+        self.profile_label.setText(text)
 
     def reset_style_profile(self) -> None:
         """切换任务时清掉上一个任务的智能画像状态（面板是各任务共用的）。"""
         self._style_recommendation = {}
+        self._suggested_profile = {}
+        self._sync_profile_row()
         self.style_profile_button.setEnabled(True)
         self.style_accept_button.setVisible(False)
         self.style_status.setText("")
@@ -1501,6 +1540,7 @@ class TaskSetupPanel(QWidget):
     def load(self, view: dict) -> None:
         """按视图回填控件（adapter.task_setup_view()）。"""
         self._view = dict(view or {})
+        self._sync_profile_row()
         self._loading = True
         try:
             # 左栏：这份文档本身（预览、页数、需要注意的地方）。

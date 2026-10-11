@@ -3219,6 +3219,128 @@ def task_started(job_id: str) -> bool:
                 or state.get("pipeline_config") or state.get("source_paras"))
 
 
+# ================= 文档画像与任务详情 =================
+
+#: 文档画像里用户能看懂、能改的字段（顺序即显示顺序）。
+PROFILE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("domain", "领域"), ("subdomain", "细分领域"), ("genre", "文本类型"),
+    ("audience", "读者"), ("register", "语域"), ("style_constraints", "风格约束"),
+)
+
+
+def profile_summary(profile: dict | None) -> str:
+    """一行文档画像：领域 · 细分领域 · 文本类型 · 读者 · 语域（空的不写）。"""
+    profile = profile or {}
+    return " · ".join(str(profile.get(key) or "").strip()
+                      for key, _label in PROFILE_FIELDS[:5]
+                      if str(profile.get(key) or "").strip())
+
+
+def save_document_profile(job_id: str, profile: dict) -> dict:
+    """保存用户改过的文档画像（领域、文本类型、读者、语域、风格约束）。
+
+    开始翻译前保存：翻译直接用它，不再自动生成画像。翻译完成后修改：核心会让
+    审校回执失效（审校的上下文变了），交付需要重新确认。
+    """
+    current = dict(load_state(job_id).get("document_profile") or {})
+    merged = {**current, **{key: str(profile.get(key) or "").strip()
+                            for key, _label in PROFILE_FIELDS}}
+    merged.setdefault("sections", current.get("sections") or [])
+    state = core.save_document_profile(job_id, merged)
+    if state is None:
+        raise AdapterError(f"找不到任务 {job_id}")
+    return dict(state.get("document_profile") or {})
+
+
+def _yes(value) -> str:
+    return "开启" if value else "关闭"
+
+
+def task_details(config: EngineConfig, job_id: str) -> list[dict]:
+    """任务开始以后，"这个任务用的是什么设置"：分组的（标签, 值）。
+
+    开始翻译后准备页就收起了；这里把当时的选择、识别出的画像、项目记忆、
+    原文整理的结果如实列出来。没有值的行不写（不编造）。
+    """
+    state = load_state(job_id)
+    setup = task_setup_view(config, job_id)
+    strategy = setup.get("strategy") or {}
+
+    def group(title: str, rows: list[tuple[str, object]]) -> dict:
+        return {"title": title,
+                "rows": [(label, str(value)) for label, value in rows
+                         if value not in (None, "", [])]}
+
+    project = None
+    try:
+        project = core.project_for_job(job_id, state)
+    except Exception:  # noqa: BLE001 - 项目读不出只是少一行
+        project = None
+    project_row = "未分类（不注入项目记忆）"
+    if project is not None and not core.is_system_project(project):
+        try:
+            view = core.project_memory_view(project)
+            project_row = (f"{project.get('name')} · 锁定术语 {view.get('glossary_count', 0)} 条"
+                           f" · 风格 {view.get('style_rule_count', 0)} 条")
+        except Exception:  # noqa: BLE001
+            project_row = str(project.get("name") or "")
+    from folith import source_languages as _languages
+
+    segmentation = state.get("segmentation") or {}
+    document = group("文档", [
+        ("文件", state.get("filename")),
+        ("原文语言", _languages.display_name(state.get("source_lang") or "") or "自动识别"),
+        ("目标语言", setup.get("target_lang")),
+        ("翻译单元", f"{len(state.get('paras') or [])} 段 · "
+                    + ("按自然句" if segmentation.get("mode", "sentence") == "sentence"
+                       else "按自然段")),
+        ("所属项目", project_row),
+    ])
+    preset = str(setup.get("strategy_preset") or "")
+    strategy_group = group("翻译设置", [
+        ("翻译模式", _task_setup.STRATEGY_PRESET_LABELS.get(preset, preset)),
+        ("文档画像", _yes(strategy.get("enable_understanding"))),
+        ("自动识别术语", _yes(strategy.get("auto_term"))),
+        ("翻译记忆", _yes(strategy.get("use_tm"))),
+        ("译后自动审校", _yes(strategy.get("enable_review"))),
+        ("严格术语治理", _yes(strategy.get("strict_terminology_governance"))),
+        ("并发", strategy.get("translation_concurrency")),
+        ("批次", strategy.get("batch_profile")),
+        ("翻译理论", setup.get("translation_theory")),
+        ("补充风格约束", setup.get("style_rules")),
+    ])
+    reviewer = state.get("reviewer_config") or {}
+    translator = state.get("translator_config") or {}
+    engine = group("模型", [
+        ("翻译", " · ".join(str(item) for item in (
+            translator.get("provider") or state.get("provider"),
+            translator.get("model") or state.get("model")) if item)),
+        ("审校", " · ".join(str(item) for item in (
+            reviewer.get("provider"), reviewer.get("model")) if item) or "与翻译相同"),
+    ])
+    ocr = setup.get("ocr") or {}
+    cleanup = state.get("source_cleanup") or {}
+    gate = state.get("source_quality_gate") or {}
+    source = group("原文读取与整理", [
+        ("识别方式", {"online": "按版面理解（视觉模型）"}.get(str(ocr.get("backend")),
+                                                         str(ocr.get("backend") or ""))),
+        ("识别语言", ocr.get("language")),
+        ("原文整理", (f"{'已完成' if cleanup.get('status') == 'completed' else '部分完成'}"
+                     f" · 修复 {len(cleanup.get('changed_segments') or [])} 项"
+                     f" · 整理 {len(cleanup.get('paragraph_merges') or [])} 处断行")
+         if cleanup.get("status") in ("completed", "partial") else ""),
+        ("疑似碎片", f"{int(gate.get('flagged_count') or 0)} 段"
+         if gate.get("flagged_count") else ""),
+    ])
+    names = [str(item.get("title") or "") + (f"（{item.get('format')}）" if item.get("format") else "")
+             for item in (*_task_setup.DELIVERY_TRANSLATION_ITEMS, *_task_setup.DELIVERY_ASSET_ITEMS,
+                          *_task_setup.DELIVERY_RESEARCH_ITEMS)
+             if (setup.get("delivery") or {}).get(item["key"])]
+    delivery = group("交付内容", [("文件", "、".join(names))])
+    return [item for item in (document, strategy_group, engine, source, delivery)
+            if item["rows"]]
+
+
 def task_setup_view(config: EngineConfig, job_id: str) -> dict:
     """「译前准备」面板的当前值（用于回填）。纯值，无 Qt 对象。"""
     state = load_state(job_id)
@@ -3282,6 +3404,8 @@ def task_setup_view(config: EngineConfig, job_id: str) -> dict:
         "glossary_name": str(state.get("glossary_name") or ""),
         "literature_count": len(state.get("literature_sources") or []),
         "literature_names": [str(n) for n in state.get("literature_names") or []],
+        # 已保存的文档画像（用户改过 / 运行中生成过）；智能画像的建议不在这里。
+        "document_profile": dict(state.get("document_profile") or {}),
     }
 
 

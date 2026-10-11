@@ -212,3 +212,15 @@ def test_style_is_a_collapsed_row_without_manual_sliders(qapp):
         assert len(samples) == 1, "页面上同一时刻只有一句示例"
     finally:
         panel.close()
+
+
+def test_profile_row_shows_the_suggestion_until_a_profile_is_saved(panel):
+    assert "还没有" in panel.profile_label.text()
+    panel.set_style_recommendation({
+        "recommendation": {"recommended_style": "literary", "confidence": 0.8},
+        "document_profile": {"domain": "文学", "genre": "小说", "audience": "大众"}})
+    assert panel.profile_label.text() == "文档画像（智能画像建议）：文学 · 小说 · 大众"
+    assert panel.document_profile()["genre"] == "小说"
+    panel.load({**panel._view, "document_profile": {"domain": "历史", "genre": "传记"}})
+    assert panel.profile_label.text() == "文档画像（已保存）：历史 · 传记"
+    assert panel.document_profile()["domain"] == "历史"

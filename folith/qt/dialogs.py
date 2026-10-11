@@ -1191,6 +1191,51 @@ class SegmentSplitDialog(QDialog):
                 "target_b": self.target_b.toPlainText()}
 
 
+class DocumentProfileDialog(QDialog):
+    """修改文档画像：领域、细分领域、文本类型、读者、语域、风格约束。
+
+    画像决定模型"把这份文档当成什么来译"。AI 判断错了（比如把小说当成学术
+    文章），在这里改正；开始翻译前改，翻译就直接用它。
+    """
+
+    def __init__(self, profile: dict, *, started: bool = False,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from . import adapter
+
+        self.setWindowTitle(i18n.tr('文档画像'))
+        self.setMinimumWidth(480)
+        hint = QLabel(i18n.tr('翻译完成后修改画像，审校需要重新进行。') if started
+                      else i18n.tr('开始翻译前保存，翻译会直接使用这里的画像。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        form = QFormLayout()
+        self.fields: dict[str, QWidget] = {}
+        for key, label in adapter.PROFILE_FIELDS:
+            if key == "style_constraints":
+                widget = QPlainTextEdit(str(profile.get(key) or ""))
+                widget.setMinimumHeight(70)
+            else:
+                widget = QLineEdit(str(profile.get(key) or ""))
+            self.fields[key] = widget
+            form.addRow(i18n.tr(label), widget)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(i18n.tr('保存画像'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def values(self) -> dict:
+        return {key: (widget.toPlainText() if isinstance(widget, QPlainTextEdit)
+                      else widget.text()).strip()
+                for key, widget in self.fields.items()}
+
+
 class RiskAcceptanceDialog(QDialog):
     """接受剩余风险后交付：写下处理说明，并明确勾选确认。
 

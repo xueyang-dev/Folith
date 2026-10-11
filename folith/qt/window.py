@@ -288,6 +288,7 @@ class MainWindow(QMainWindow):
         self.workbench.deliverWithRiskRequested.connect(self.deliver_with_risk)
         self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.termAddRequested.connect(self.add_term_from_selection)
+        self.workbench.profileEditRequested.connect(self.edit_document_profile)
         self.workbench.saveAllDraftsRequested.connect(self.save_all_drafts)
         self.workbench.discardAllDraftsRequested.connect(self.discard_all_drafts)
         self.workbench.askAgentRequested.connect(self.ask_agent)
@@ -2028,6 +2029,30 @@ class MainWindow(QMainWindow):
         self._run_with_busy(i18n.tr('接受风险并交付'), i18n.tr('正在通过交付门禁并生成快照…'),
                             adapter.deliver, job_id, self.config, on_done=done,
                             note=dialog.note(), accept_risk=True)
+
+    def edit_document_profile(self) -> None:
+        """修改文档画像（准备页或任务详情页）：保存后翻译 / 审校按它理解这份文档。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        from .dialogs import DocumentProfileDialog
+
+        started = self.workbench.task_started()
+        profile = (dict((self._cached_state or {}).get("document_profile") or {})
+                   if started else self.workbench.setup_panel.document_profile())
+        dialog = DocumentProfileDialog(profile, started=started, parent=self)
+        if _automation() or dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            adapter.save_document_profile(job_id, dialog.values())
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法保存文档画像'), str(exc))
+            return
+        self._notice(i18n.tr('文档画像已保存。') if not started
+                     else i18n.tr('文档画像已保存；审校需要重新进行。'))
+        self.refresh_workbench(force=True)
+        if not started:
+            self._load_setup(job_id, adapter.load_state(job_id))
 
     def save_all_drafts(self) -> None:
         """提交所有未保存的修改（基于旧译文的草稿跳过，留给用户逐段决定）。"""
