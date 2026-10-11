@@ -284,4 +284,83 @@ class AskAgentBox(QWidget):
         self.answer.setVisible(False)
 
 
-__all__ = ["AskAgentBox", "AttentionList", "ContextView", "TermList"]
+class SuggestBox(QWidget):
+    """按要求重译：写一句要求，生成一个候选译文；「采用」才放进编辑框。"""
+
+    suggestRequested = Signal(str)
+    adoptRequested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.input = QLineEdit()
+        self.input.setPlaceholderText(i18n.tr('按要求重译，比如：更口语一点'))
+        self.input.returnPressed.connect(self._suggest)
+        self.button = QPushButton(i18n.tr('生成'))
+        self.button.clicked.connect(self._suggest)
+        self.candidate = _wrapped("", "suggestionText")
+        self.status = _wrapped("", "hint")
+        self.adopt_button = QPushButton(i18n.tr('采用'))
+        self.adopt_button.setToolTip(i18n.tr('把候选译文放进编辑框；保存仍由你决定'))
+        self.adopt_button.clicked.connect(
+            lambda: self.adoptRequested.emit(self.candidate.text()))
+        self.discard_button = QPushButton(i18n.tr('丢弃'))
+        self.discard_button.setObjectName("ghostAction")
+        self.discard_button.clicked.connect(self.reset_candidate)
+        row = QHBoxLayout()
+        row.setSpacing(theme_module.SPACE["xs"])
+        row.addWidget(self.input, 1)
+        row.addWidget(self.button)
+        actions = QHBoxLayout()
+        actions.setSpacing(theme_module.SPACE["xs"])
+        actions.addStretch(1)
+        actions.addWidget(self.discard_button)
+        actions.addWidget(self.adopt_button)
+        self.result = QWidget()
+        self.result.setObjectName("attentionItem")
+        self.result.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        result_layout = QVBoxLayout(self.result)
+        result_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["xs"],
+                                         theme_module.SPACE["sm"], theme_module.SPACE["xs"])
+        result_layout.addWidget(self.candidate)
+        result_layout.addLayout(actions)
+        self.result.setVisible(False)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(theme_module.SPACE["xs"])
+        layout.addLayout(row)
+        layout.addWidget(self.status)
+        layout.addWidget(self.result)
+        self.status.setVisible(False)
+
+    def _suggest(self) -> None:
+        instruction = self.input.text().strip()
+        if instruction:
+            self.button.setEnabled(False)
+            self.result.setVisible(False)
+            self.status.setText(i18n.tr('正在生成候选译文…'))
+            self.status.setVisible(True)
+            self.suggestRequested.emit(instruction)
+
+    def set_candidate(self, text: str, *, error: str = "") -> None:
+        self.button.setEnabled(True)
+        if error:
+            self.status.setText(error)
+            self.status.setVisible(True)
+            self.result.setVisible(False)
+            return
+        self.status.setVisible(False)
+        self.candidate.setText(text)
+        self.result.setVisible(bool(text))
+
+    def reset_candidate(self) -> None:
+        self.candidate.clear()
+        self.result.setVisible(False)
+        self.status.setVisible(False)
+        self.button.setEnabled(True)
+
+    def reset(self) -> None:
+        self.reset_candidate()
+        self.input.clear()
+
+
+__all__ = ["AskAgentBox", "AttentionList", "ContextView", "SuggestBox", "TermList"]

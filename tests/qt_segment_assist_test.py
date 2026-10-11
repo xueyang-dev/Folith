@@ -139,3 +139,38 @@ def test_context_row_jumps_and_ask_box_resets_per_segment(bench):  # noqa: F811
     assert view.current_index() == 2
     assert view.ask_box.answer.text() == ""
     QApplication.processEvents()
+
+
+def test_suggestion_is_generated_but_not_written(monkeypatch, bench):  # noqa: F811
+    view, app = bench
+    from folith.qt import adapter
+
+    seen = {}
+
+    def fake_batch(segments, prev, nxt, glossary_text, rules, target_lang, *args, **kwargs):
+        seen["rules"] = rules
+        return ["更口语的译文"]
+
+    monkeypatch.setattr(adapter.core, "translate_batch", fake_batch)
+    config = adapter.EngineConfig(provider="DeepSeek", model="m", api_key="k",
+                                  target_lang="简体中文")
+    before = adapter.load_state(view.job_id)["pairs"][1]["target"]
+    candidate = adapter.suggest_translation(view.job_id, 1, "更口语一点", config)
+    assert candidate == "更口语的译文"
+    assert "更口语一点" in seen["rules"]
+    assert adapter.load_state(view.job_id)["pairs"][1]["target"] == before
+    with pytest.raises(adapter.AdapterError):
+        adapter.suggest_translation(view.job_id, 1, " ", config)
+
+    view.select_segment(1)
+    _pump(app)
+    requested = []
+    view.suggestRequested.connect(lambda index, text: requested.append((index, text)))
+    view.suggest_box.input.setText("更口语一点")
+    view.suggest_box.button.click()
+    assert requested == [(1, "更口语一点")]
+    view.set_suggestion(1, candidate)
+    assert view.suggest_box.result.isVisibleTo(view.suggest_box)
+    view.suggest_box.adopt_button.click()
+    assert view.target_edit.toPlainText() == "更口语的译文"
+    assert view.has_unsaved_editor_text()

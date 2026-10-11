@@ -1214,5 +1214,11 @@
   "识别方式": "Reconocimiento",
   "疑似碎片": "Fragmentos sospechosos",
   "开启": "Activado",
-  "与翻译相同": "Igual que la traducción"
+  "与翻译相同": "Igual que la traducción",
+  "丢弃": "Descartar",
+  "把候选译文放进编辑框；保存仍由你决定": "Poner la propuesta en el editor; guardarla sigue siendo decisión tuya",
+  "按要求重译，比如：更口语一点": "Retraducir con una indicación, p. ej.: más coloquial",
+  "正在生成候选译文…": "Generando una propuesta…",
+  "生成": "Generar",
+  "采用": "Usar"
 }

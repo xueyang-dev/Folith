@@ -1214,5 +1214,11 @@
   "识别方式": "Recognition",
   "疑似碎片": "Suspected fragments",
   "开启": "On",
-  "与翻译相同": "Same as translation"
+  "与翻译相同": "Same as translation",
+  "丢弃": "Discard",
+  "把候选译文放进编辑框；保存仍由你决定": "Put the candidate into the editor; saving is still your call",
+  "按要求重译，比如：更口语一点": "Retranslate with an instruction, e.g. more conversational",
+  "正在生成候选译文…": "Generating a candidate…",
+  "生成": "Generate",
+  "采用": "Use"
 }

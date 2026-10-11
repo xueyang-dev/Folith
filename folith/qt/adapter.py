@@ -1032,6 +1032,55 @@ def segment_decisions(state: dict, index: int) -> list[dict]:
     return [dict(item) for item in merged[:3]]
 
 
+def suggest_translation(job_id: str, index: int, instruction: str,
+                        config: EngineConfig) -> str:
+    """按要求重译：按这一次的要求（"更口语一点""保留原文语序"……）生成一个候选译文。
+
+    只生成，不写入：候选交给工作台显示，用户点「采用」才放进编辑框，仍由用户保存
+    （docs/agent-inspector-workspace.md：AI 不自动改写译文）。上下文、术语与任务的
+    风格规则和正式翻译同一套。
+    """
+    instruction = str(instruction or "").strip()
+    if not instruction:
+        raise AdapterError("请先写下这次重译的要求。")
+    problem = config.connection_problem()
+    if problem:
+        raise AdapterError(problem)
+    state = load_state(job_id)
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    if not 0 <= index < len(pairs):
+        raise AdapterError("这一段已不存在，请重新选择段落。")
+    source = str(pairs[index].get("source") or "")
+    glossary = core.normalize_glossary(state.get("glossary") or [])
+    base_rules = str(state.get("style_rules") or config.style_rules or DEFAULT_STYLE_RULES)
+    rules = (f"{base_rules}\n\n本次重译的额外要求（优先于上面的一般风格，但不得违反术语表）："
+             f"{instruction}\n当前译文供参考：{pairs[index].get('target') or ''}")
+    target_lang = str(state.get("target_lang") or config.target_lang)
+    # 后台线程里调用：自定义中转站地址按线程设置，用完还原（与定点重译同一做法）。
+    previous_url = getattr(core._LLM_CTX, "base_url", None)
+    try:
+        core.set_llm_base_url(config.translator_base_url() or None)
+    except Exception:  # noqa: BLE001 - 没有自定义地址时按提供商默认
+        pass
+    try:
+        result = core.translate_batch(
+            [source], paras[max(0, index - 2):index], paras[index + 1:index + 3],
+            core.glossary_block(glossary), rules, target_lang,
+            config.provider, config.api_key, config.model)
+    except Exception as exc:  # noqa: BLE001 - 把模型错误原样告诉用户
+        raise AdapterError(f"没有生成候选译文：{exc}") from exc
+    finally:
+        try:
+            core.set_llm_base_url(previous_url)
+        except Exception:  # noqa: BLE001
+            pass
+    candidate = core.clean_xml_chars(str((result or [""])[0] or "")).strip()
+    if not candidate:
+        raise AdapterError("模型没有返回译文，请换个说法再试。")
+    return candidate
+
+
 def ask_about_segment(job_id: str, index: int, question: str,
                       config: EngineConfig) -> str:
     """询问 Agent：就这一段的原文与当前译文回答译者的问题（只回答，不改写）。"""

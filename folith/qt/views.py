@@ -1508,6 +1508,7 @@ class WorkbenchView(QWidget):
     refreshRequested = Signal()
     termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
     askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
+    suggestRequested = Signal(int, str)     # 按要求重译：段索引, 要求
     saveAllDraftsRequested = Signal()
     discardAllDraftsRequested = Signal()
     profileEditRequested = Signal()         # 修改文档画像
@@ -1942,6 +1943,10 @@ class WorkbenchView(QWidget):
         self.term_add_button.clicked.connect(self._request_term_add)
         self.context_view = segment_assist.ContextView()
         self.context_view.jumpRequested.connect(self.select_segment)
+        self.suggest_box = segment_assist.SuggestBox()
+        self.suggest_box.suggestRequested.connect(
+            lambda instruction: self.suggestRequested.emit(self._current_index, instruction))
+        self.suggest_box.adoptRequested.connect(self._adopt_suggestion)
         self.ask_box = segment_assist.AskAgentBox()
         self.ask_box.askRequested.connect(
             lambda question: self.askAgentRequested.emit(self._current_index, question))
@@ -1979,6 +1984,7 @@ class WorkbenchView(QWidget):
         for button in (self.review_button, self.review_selected_button,
                        self.retranslate_button):
             inspector_layout.addWidget(button)
+        inspector_layout.addWidget(self.suggest_box)
         inspector_layout.addWidget(self.ask_box)
 
         self.segment_ops_section = QWidget()
@@ -3337,6 +3343,7 @@ class WorkbenchView(QWidget):
         if self._assist_index != row.index:
             self._assist_index = row.index
             self.ask_box.reset()
+            self.suggest_box.reset()
 
     # ================= 选择 / 编辑器 =================
     def _position_of_loaded_segment(self) -> int | None:
@@ -3550,6 +3557,7 @@ class WorkbenchView(QWidget):
         self.single_segment_section.setVisible(not multiple)
         self.segment_ops_section.setVisible(not multiple)
         self.ask_box.setVisible(not multiple)
+        self.suggest_box.setVisible(not multiple)
         self.segment_status.setVisible(not multiple)
         self.multi_hint.setVisible(multiple)
         for button in (self.retranslate_button, self.copy_source_button,
@@ -3624,6 +3632,19 @@ class WorkbenchView(QWidget):
         source = self.inline_editor.source_view.textCursor().selectedText().strip()
         target = self.target_edit.textCursor().selectedText().strip()
         self.termAddRequested.emit(source, target)
+
+    def set_suggestion(self, index: int, text: str, error: str = "") -> None:
+        """窗口把「按要求重译」的候选交回来；用户已经换段时丢掉。"""
+        if index == self._current_index:
+            self.suggest_box.set_candidate(text, error=error)
+
+    def _adopt_suggestion(self, text: str) -> None:
+        """采用候选：放进编辑框（成为未保存的修改），保存仍由用户决定。"""
+        if not text or self._active_position < 0:
+            return
+        self.target_edit.setPlainText(text)
+        self.target_edit.setFocus()
+        self.suggest_box.reset_candidate()
 
     def set_agent_answer(self, index: int, text: str) -> None:
         """窗口把「询问 Agent」的回答交回来；用户已经换段时丢掉。"""

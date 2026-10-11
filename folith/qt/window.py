@@ -292,6 +292,7 @@ class MainWindow(QMainWindow):
         self.workbench.saveAllDraftsRequested.connect(self.save_all_drafts)
         self.workbench.discardAllDraftsRequested.connect(self.discard_all_drafts)
         self.workbench.askAgentRequested.connect(self.ask_agent)
+        self.workbench.suggestRequested.connect(self.suggest_translation)
         self.workbench.exportRequested.connect(self.export_copy)
         self.workbench.saveSnapshotRequested.connect(self.save_snapshot)
         self.workbench.editSubmitted.connect(self.submit_edit)
@@ -2104,6 +2105,23 @@ class MainWindow(QMainWindow):
         values = dialog.values()
         self.add_glossary_entry({"source": values["source"], "preferred": values["target"],
                                  "domain": values["domain"], "status": "locked"})
+
+    def suggest_translation(self, index: int, instruction: str) -> None:
+        """按要求重译：后台生成一个候选译文（不写入），交回工作台让用户决定。"""
+        job_id = self._current_job_id
+        if not job_id or index < 0:
+            return
+
+        def done(candidate: str) -> None:
+            if self._current_job_id == job_id:
+                self.workbench.set_suggestion(index, candidate)
+
+        def failed(message: str, _detail: str) -> None:
+            if self._current_job_id == job_id:
+                self.workbench.set_suggestion(index, "", i18n.tr_dynamic(message))
+
+        self.runner.submit(adapter.suggest_translation, job_id, index, instruction,
+                           self.config, on_done=done, on_error=failed, label="suggest")
 
     def ask_agent(self, index: int, question: str) -> None:
         """询问 Agent：后台问一次模型，回答交回工作台（只回答，不改写译文）。"""
