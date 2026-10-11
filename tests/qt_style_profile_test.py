@@ -195,6 +195,8 @@ def test_style_is_a_collapsed_row_without_manual_sliders(qapp):
         assert section.parent() is panel.doc_section.parent()
         assert all(slider.isHidden() for slider in panel.style_sliders.values())
         section.button.setChecked(True)
+        # 示例跟着目标语言走（简体中文有示例）。
+        panel.target_box.setEditText("简体中文")
         panel._pick_style_card("literary")
         qapp.processEvents()
         assert section.summary_label.text() == panel.style_box.currentText()

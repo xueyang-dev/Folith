@@ -67,6 +67,15 @@ _MODE_ICONS: dict[str, str] = {
     "学术增强": "shield-check",
 }
 
+#: 模式卡片上的"倾向"：这个模式的工作流包含哪几步（亮 = 包含，暗 = 不包含）。
+#: 直接读预设里的真实开关，所以图标说的就是这个模式实际会做的事。
+_MODE_STEPS: tuple[tuple[str, str, str], ...] = (
+    ("book-open", "建立文档画像", "enable_understanding"),
+    ("termbase", "自动识别术语", "auto_term"),
+    ("memory", "使用翻译记忆", "use_tm"),
+    ("review", "译后自动审校", "enable_review"),
+)
+
 #: 面板能改的策略字段。预设之间的差异**只在这些字段上比较** —— 预设里若有这个
 #: 面板没暴露的键（未来的新开关），把它算成"用户改过"会让"已自定义"常年亮着。
 _MANAGED_STRATEGY_KEYS: tuple[str, ...] = (
@@ -338,7 +347,10 @@ class DisclosureSection(QWidget):
 
 
 class PresetOption(QPushButton):
-    """一个翻译模式选项：图标 + 标题 + 一行摘要。
+    """一个翻译模式选项：图标 + 标题 + 一排工作流步骤小图标。
+
+    一行摘要不再显示（仍保存在 ``_description`` 与悬停提示里）：模式之间的差别
+    就是工作流的差别，用"包含哪几步"的小图标表达，比一句形容词更准确。
 
     ⚠️ ``QPushButton`` 的 ``sizeHint`` 是按**文字/图标**算的，看不见里面的布局 ——
     所以必须自己覆盖 ``sizeHint``/``minimumSizeHint``，否则三个选项会被压到
@@ -348,7 +360,8 @@ class PresetOption(QPushButton):
     """
 
     def __init__(self, key: str, title: str, description: str, icon_name: str,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, *,
+                 steps: tuple[tuple[str, str, bool], ...] = ()) -> None:
         super().__init__(parent)
         self.setObjectName("presetOption")
         self.setCheckable(True)
@@ -375,11 +388,32 @@ class PresetOption(QPushButton):
         head.addWidget(self._title, 1)
         self._description = ElidedLabel(description, self)
         self._description.setObjectName("presetDesc")
+        self._description.setVisible(False)
         column.addLayout(head)
-        column.addWidget(self._description)
+        # 工作流步骤：包含的步骤用强调色，不包含的用淡色；名称在悬停提示里。
+        self.steps: dict[str, bool] = {}
+        step_row = QHBoxLayout()
+        step_row.setContentsMargins(0, 0, 0, 0)
+        step_row.setSpacing(theme_module.SPACE["xs"])
+        included: list[str] = []
+        for icon_name_, label, on in steps:
+            mark = icons.IconLabel(icon_name_, 14, "accent" if on else "border-strong", parent=self)
+            mark.setToolTip(label)
+            mark.setAccessibleName(label)
+            step_row.addWidget(mark)
+            self.steps[label] = bool(on)
+            if on:
+                included.append(label)
+        step_row.addStretch(1)
+        column.addLayout(step_row)
         self.toggled.connect(self._sync_icon)
         self._sync_icon(False)
-        self.setToolTip(f"{title} · {description}" if description else title)
+        tip = [title]
+        if description:
+            tip.append(description)
+        if included:
+            tip.append(" · ".join(included))
+        self.setToolTip("\n".join(tip))
 
     def setText(self, value: str) -> None:  # noqa: N802 - Qt 命名
         """按钮自己的文字永远是空的：文案由内部的两个标签承担。
@@ -439,10 +473,13 @@ class ModeSelector(QWidget):
                 continue
             # 标签与摘要都在这里过 i18n（本组件是面板的显示层）；模式的**键**仍是
             # 内部取值（快速/标准/学术增强），不受翻译影响。
+            config = dict(item.get("config") or {})
+            steps = tuple((icon_name, i18n.tr(label), bool(config.get(flag)))
+                          for icon_name, label, flag in _MODE_STEPS) if config else ()
             button = PresetOption(
                 key, i18n.tr(str(item.get("label") or key)),
                 i18n.tr(str(item.get("description") or "")),
-                _MODE_ICONS.get(key, "check"))
+                _MODE_ICONS.get(key, "check"), steps=steps)
             button.clicked.connect(lambda _checked=False, k=key: self._pick(k))
             self._group.addButton(button)
             self._row.addWidget(button, 1)
@@ -732,17 +769,19 @@ class TaskSetupPanel(QWidget):
         return row
 
     def _build_strategy_card(self) -> Card:
-        """翻译设置：翻译模式（主决定）→ 内容处理 → 高级设置（默认收起）。
+        """翻译模式：快速 / 标准 / 精细（只决定工作流）→ 高级设置（默认收起）。
+
+        内容处理（切分、术语识别、翻译记忆）与审校、执行参数都在高级设置里：
+        模式已经是它们的模板，大多数人不需要逐项改。下面是旧版三层分工的说明：
 
         三层的分工是这一版的重点：**模式**决定用哪套模板，**内容处理**是每次翻译
         都要面对的两三个选择，**高级设置**是执行参数（审校、术语锁定、并发、调度），
         它们影响的是任务怎么跑、API 怎么用，而不是译文是否更准 —— 所以退到折叠区里，
         并且不复述"更快/更好"这种预设里并不成立的暗示。
         """
-        card, body = _panel(i18n.tr('翻译设置'))
+        card, body = _panel(i18n.tr('翻译模式'))
 
-        # ---- Level 1：翻译模式 -------------------------------------------------
-        body.addWidget(style_module.SectionLabel(i18n.tr('翻译模式')))
+        # ---- Level 1：翻译模式（只决定工作流；交付什么由「交付内容」单独决定） -----
         self.mode_selector = ModeSelector()
         self.mode_selector.changed.connect(self._on_strategy_preset)
         body.addWidget(self.mode_selector)
@@ -763,45 +802,40 @@ class TaskSetupPanel(QWidget):
         status_layout.addWidget(self.strategy_note, 1)
         status_layout.addWidget(self.restore_button, 0, Qt.AlignmentFlag.AlignVCenter)
         body.addWidget(status_row)
+        # 默认配置时这一行不出现；只在"已自定义 / 对应不上预设"时出现（见 _sync_strategy_note）。
+        self.strategy_status_row = status_row
 
-        body.addWidget(_hairline())
-
-        # ---- Level 2：内容处理 -------------------------------------------------
-        body.addWidget(style_module.SectionLabel(i18n.tr('内容处理')))
-        self.seg_mode_seg = style_module.SegmentedControl([
-            ("sentence", i18n.tr('按句')),
-            ("paragraph", i18n.tr('按段'))])
-        self.seg_mode_seg.setToolTip(i18n.tr('按句提供主流 CAT 工具的逐句对照；'
-                                            '按段保留清洗后的整段。'))
-        body.addWidget(_setting_row(
-            i18n.tr('文本切分方式'), self.seg_mode_seg,
-            i18n.tr('决定翻译单元的大小')))
-
-        self.auto_term_box = style_module.CheckBox("")
-        self.tm_box = style_module.CheckBox("")
-        body.addWidget(ToggleRow(
-            i18n.tr('自动识别术语'), i18n.tr('提取关键术语，保持译名一致'),
-            self.auto_term_box))
-        body.addWidget(ToggleRow(
-            i18n.tr('使用翻译记忆'), i18n.tr('参考已保存的历史译文'),
-            self.tm_box))
-
-        body.addWidget(_hairline())
-        body.addWidget(_hairline())
-
-        # ---- Level 3：高级设置（默认收起） --------------------------------------
+        # ---- 高级设置（默认收起）：内容处理 + 审校与执行参数 ------------------------
         # 与「文档识别」同一个组件：折叠头、摘要位、警示位、展开体都由它提供，
         # 面板只挂自己的属性名（测试与 window 都按这些名字访问）。
-        self.advanced_section = DisclosureSection(
-            i18n.tr('高级设置 · 审校与执行参数'))
+        self.advanced_section = DisclosureSection(i18n.tr('高级设置'))
         self.advanced_toggle = self.advanced_section.button
         self.advanced_label = self.advanced_section.title_label
         self.advanced_chevron = self.advanced_section.chevron
         self.advanced_body = self.advanced_section.body
         self.advanced_toggle.setAccessibleName(i18n.tr('高级设置'))
         self.advanced_toggle.setToolTip(i18n.tr('展开或收起审校与执行参数'))
+        body.addWidget(_hairline())
         body.addWidget(self.advanced_section)
         advanced = self.advanced_body.layout()
+
+        self.seg_mode_seg = style_module.SegmentedControl([
+            ("sentence", i18n.tr('按句')),
+            ("paragraph", i18n.tr('按段'))])
+        self.seg_mode_seg.setToolTip(i18n.tr('按句提供主流 CAT 工具的逐句对照；'
+                                            '按段保留清洗后的整段。'))
+        advanced.addWidget(_setting_row(
+            i18n.tr('文本切分方式'), self.seg_mode_seg,
+            i18n.tr('决定翻译单元的大小')))
+
+        self.auto_term_box = style_module.CheckBox("")
+        self.tm_box = style_module.CheckBox("")
+        advanced.addWidget(ToggleRow(
+            i18n.tr('自动识别术语'), i18n.tr('提取关键术语，保持译名一致'),
+            self.auto_term_box))
+        advanced.addWidget(ToggleRow(
+            i18n.tr('使用翻译记忆'), i18n.tr('参考已保存的历史译文'),
+            self.tm_box))
 
         self.review_box = style_module.CheckBox("")
         self.strict_terms_box = style_module.CheckBox("")
@@ -1502,6 +1536,7 @@ class TaskSetupPanel(QWidget):
             self.strategy_note.setText(
                 i18n.tr('当前配置不对应任何预设；可直接调整下面的选项。'))
             self.restore_button.setVisible(False)
+            self.strategy_status_row.setVisible(True)
             return
         label = self._preset_label(key)
         changed = sum(1 for name in _MANAGED_STRATEGY_KEYS
@@ -1511,10 +1546,13 @@ class TaskSetupPanel(QWidget):
                 i18n.tr('{label}模式 · 已自定义', label=label))
             self.restore_button.setText(i18n.tr('恢复「{label}」默认', label=label))
             self.restore_button.setVisible(True)
+            self.strategy_status_row.setVisible(True)
         else:
             self.strategy_note.setText(
                 i18n.tr('当前使用「{label}」默认配置', label=label))
             self.restore_button.setVisible(False)
+            # 默认配置不需要再说一遍：选中的模式本身已经说明了。
+            self.strategy_status_row.setVisible(False)
 
     def _on_advanced_changed(self, *_args) -> None:
         if self._loading:

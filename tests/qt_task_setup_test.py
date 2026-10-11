@@ -444,30 +444,42 @@ def _panel(data_env, qt_app, *, show: bool = True):
     return panel
 
 
-def test_the_translation_settings_panel_has_three_levels(data_env, qt_app):
-    """一层主决定 + 一层内容处理 + 一层**默认收起**的高级设置。"""
+def test_the_translation_mode_panel_is_modes_plus_a_collapsed_advanced_section(
+        data_env, qt_app):
+    """翻译模式（快速 / 标准 / 精细）+ **默认收起**的高级设置，没有第三层。
+
+    模式之间的差别是工作流：每个选项用一排步骤小图标表达它包含哪几步，
+    图标读的是预设里的真实开关（快速不建画像、不审校；精细审校）。
+    """
     from folith.qt.setup_panel import ToggleRow
 
     panel = _panel(data_env, qt_app)
     try:
         assert panel.mode_selector.options() == ("快速", "标准", "学术增强")
-        # 三个模式各自有标题与一行摘要（只有名字等于没解释）。
         for key in panel.mode_selector.options():
             button = panel.mode_selector.button(key)
             assert button._title.text()
-            assert button._description.text()
+            # 一行摘要不再占位，但仍在悬停提示里。
+            assert button._description.isHidden()
+            assert button._description.text() in button.toolTip()
+        fast = panel.mode_selector.button("快速").steps
+        standard = panel.mode_selector.button("标准").steps
+        fine = panel.mode_selector.button("学术增强").steps
+        assert fast["建立文档画像"] is False and fast["译后自动审校"] is False
+        assert standard["建立文档画像"] is True and standard["译后自动审校"] is False
+        assert fine["译后自动审校"] is True
+        assert sum(fast.values()) < sum(standard.values()) < sum(fine.values())
+        # 默认配置时不重复说"当前使用「标准」默认配置"。
+        assert panel.strategy_status_row.isHidden()
 
-        # 内容处理：切分方式 + 术语 + 记忆（三项都在高级区**外面**）。
-        for widget in (panel.seg_mode_seg, panel.auto_term_box, panel.tm_box):
-            assert not panel.advanced_body.isAncestorOf(widget)
-        assert isinstance(panel.tm_box.parent(), ToggleRow)
-
-        # 高级设置：默认收起，展开后才有审校 / 术语锁定 / 并发 / 调度。
-        assert panel.advanced_toggle.isChecked() is False
-        assert panel.advanced_body.isVisible() is False
-        for widget in (panel.review_box, panel.strict_terms_box,
+        # 内容处理（切分 / 术语 / 记忆）与审校、执行参数都在高级设置里。
+        for widget in (panel.seg_mode_seg, panel.auto_term_box, panel.tm_box,
+                       panel.review_box, panel.strict_terms_box,
                        panel.concurrency_box, panel.batch_seg):
             assert panel.advanced_body.isAncestorOf(widget)
+        assert isinstance(panel.tm_box.parent(), ToggleRow)
+        assert panel.advanced_toggle.isChecked() is False
+        assert panel.advanced_body.isVisible() is False
         panel.advanced_toggle.setChecked(True)
         qt_app.processEvents()
         assert panel.advanced_body.isVisible() is True
@@ -786,12 +798,9 @@ def test_every_section_expanded_still_fits_the_narrowest_window(data_env, qt_app
         scroll.close()
 
 
-def test_a_long_translated_description_is_elided_not_cut(data_env, qt_app):
-    """长文案（德语/俄语那种长度）只能省略，不能把字切在半途。
-
-    真语言下三行说明都放得下；这条守的是"放不下的时候"——``QLabel`` 默认会**硬裁**，
-    看起来像排版坏了。省略号 + tooltip 才是"装不下"的正确表现。
-    """
+def test_a_long_translated_description_lives_in_the_tooltip(data_env, qt_app):
+    """长文案（德语/俄语那种长度）不在模式卡上截断：卡上只有名字与步骤图标，
+    完整说明在悬停提示里；窄窗也不出现横向滚动。"""
     from PySide6.QtWidgets import QScrollArea
 
     long_description = "Umfassendere Qualitätsprüfungen für Übersetzungen"
@@ -811,14 +820,8 @@ def test_a_long_translated_description_is_elided_not_cut(data_env, qt_app):
     try:
         assert scroll.horizontalScrollBar().maximum() == 0
         option = panel.mode_selector.button("快速")
-        label = option._description
-        # 原文还在（tooltip 与断言读它），显示的那行才是省略过的。
-        assert label.fullText() == long_description
-        assert label.text() != long_description
-        assert label.text().endswith("\u2026"), "长说明被硬裁了，没有省略号"
-        # 放得下的行必须原样显示，不能被顺手省略。
-        assert panel.mode_selector.button("标准")._description.text() == "Kurz"
-        # 完整文案永远能从按钮的 tooltip 读到。
+        assert option._description.isHidden(), "说明不再占卡片的一行"
+        assert option._description.fullText() == long_description
         assert long_description in option.toolTip()
     finally:
         scroll.close()
@@ -838,7 +841,9 @@ def test_the_card_keeps_one_left_baseline(data_env, qt_app):
     panel.show()
     qt_app.processEvents()
     try:
-        widgets = [panel.strategy_note, panel.advanced_toggle, panel.advanced_label,
+        # 默认配置时状态行是隐藏的；只比较屏幕上真的有的行。
+        widgets = [panel.strategy_note] if panel.strategy_note.isVisibleTo(panel) else []
+        widgets += [panel.advanced_toggle, panel.advanced_label,
                    panel.seg_mode_seg.parent(), panel.auto_term_box.parent(),
                    panel.tm_box.parent(), panel.review_box.parent(),
                    panel.strict_terms_box.parent(), panel.concurrency_box.parent(),
