@@ -155,3 +155,26 @@ def test_delivery_page_shows_a_button_per_missing_file():
     assert bench.supplement_buttons == {}
     bench.deleteLater()
     app.processEvents()
+
+
+def test_pause_button_stays_while_the_task_waits_on_the_model():
+    """暂停按钮不能随着 running ⇄ waiting_external 来回切换而一闪一闪。"""
+    app = QApplication.instance() or QApplication([])
+    from folith.qt import views
+
+    bench = views.WorkbenchView()
+    for status in ("running", "waiting_external", "running"):
+        bench._last_runtime = {"status": status, "available_actions": ["cancel"]}
+        bench._render_runtime()
+        assert not bench.pause_button.isHidden(), status
+        assert bench.pause_button.isEnabled()
+    bench._last_runtime = {"status": "pausing", "available_actions": ["cancel"]}
+    bench._render_runtime()
+    assert not bench.pause_button.isHidden()
+    assert not bench.pause_button.isEnabled()
+    assert bench.pause_button.text() == "正在暂停…"
+    bench._last_runtime = {"status": "paused", "available_actions": ["resume", "cancel"]}
+    bench._render_runtime()
+    assert bench.pause_button.isHidden()
+    bench.deleteLater()
+    app.processEvents()

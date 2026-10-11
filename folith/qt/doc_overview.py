@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from . import adapter
 from . import components
@@ -83,6 +83,21 @@ class DocumentOverview(QWidget):
         self.meta_label = QLabel("")
         self.meta_label.setObjectName("hint")
         self.meta_label.setWordWrap(True)
+        # 读取中：文件名下面一条细的不确定进度条和一句话，读完就收起。没有它，
+        # 大文件在这里会空白好几秒，看起来像卡住了。
+        self.loading = QWidget()
+        loading_layout = QVBoxLayout(self.loading)
+        loading_layout.setContentsMargins(0, 0, 0, 0)
+        loading_layout.setSpacing(theme_module.SPACE["xs"])
+        self.loading_bar = QProgressBar()
+        self.loading_bar.setRange(0, 0)
+        self.loading_bar.setTextVisible(False)
+        self.loading_bar.setFixedHeight(4)
+        self.loading_label = QLabel(i18n.tr('正在读取文档…'))
+        self.loading_label.setObjectName("hint")
+        loading_layout.addWidget(self.loading_bar)
+        loading_layout.addWidget(self.loading_label)
+        self.loading.setVisible(False)
         self.notes = QVBoxLayout()
         self.notes.setContentsMargins(0, 0, 0, 0)
         self.notes.setSpacing(theme_module.SPACE["xs"])
@@ -94,6 +109,7 @@ class DocumentOverview(QWidget):
         column.addSpacing(theme_module.SPACE["xs"])
         column.addWidget(self.name_label)
         column.addWidget(self.meta_label)
+        column.addWidget(self.loading)
         column.addSpacing(theme_module.SPACE["xs"])
         column.addLayout(self.notes)
         column.addStretch(1)
@@ -124,11 +140,12 @@ class DocumentOverview(QWidget):
         if not self._job_id:
             return
         source = adapter.source_path(self._job_id)
-        image = self._previews.request(self._job_id, source, self._filename)
+        image = self._previews.request(self._job_id, source, self._filename, priority=10)
         if image is not None:
             self.paper.set_image(image)
-        facts = self._facts.request(self._job_id, source, self._filename) or {}
-        meta, notes = describe(facts, source_lang=self._source_lang)
+        facts = self._facts.request(self._job_id, source, self._filename, priority=10)
+        self.loading.setVisible(facts is None and self._facts.pending(self._job_id))
+        meta, notes = describe(facts or {}, source_lang=self._source_lang)
         self.meta_label.setText(meta)
         self.meta_label.setVisible(bool(meta))
         self._set_notes(notes)

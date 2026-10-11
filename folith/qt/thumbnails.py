@@ -211,8 +211,12 @@ class PreviewLoader(QObject):
             return None
         return (job_id, stat.st_mtime_ns, stat.st_size)
 
-    def request(self, job_id: str, source: Path | None, filename: str) -> QImage | None:
-        """有缓存就直接返回；否则排队生成，好了以后发 ``ready(job_id)``。"""
+    def request(self, job_id: str, source: Path | None, filename: str, *,
+                priority: int = 0) -> QImage | None:
+        """有缓存就直接返回；否则排队生成，好了以后发 ``ready(job_id)``。
+
+        ``priority``：用户正在看的那一份（「准备」页）排在首页卡片缩略图前面。
+        """
         if source is None:
             return None
         key = self._key(job_id, source)
@@ -222,7 +226,7 @@ class PreviewLoader(QObject):
             return self._cache[key]
         if key not in self._pending:
             self._pending.add(key)
-            self._pool.start(_Job(self, key, Path(source), filename))
+            self._pool.start(_Job(self, key, Path(source), filename), priority)
         return None
 
     def _store(self, key: tuple, image) -> None:
@@ -235,8 +239,12 @@ class PreviewLoader(QObject):
         self._cache[key] = image
         while len(self._cache) > self.LIMIT:
             self._cache.pop(next(iter(self._cache)))
-        if self._cache[key] is not None:
-            self.ready.emit(key[0])
+        # 失败也通知：在等结果的界面（「准备」页的"正在读取"）要能收起等待状态。
+        self.ready.emit(key[0])
+
+    def pending(self, job_id: str) -> bool:
+        """这个任务还有没算完的请求吗（界面据此显示"正在读取"）。"""
+        return any(key[0] == job_id for key in self._pending)
 
     def wait(self, msecs: int = 5000) -> bool:
         """测试与自检用：等后台队列清空。"""

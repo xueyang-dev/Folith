@@ -1761,6 +1761,35 @@ def style_rules_from_selection(selection: dict) -> str:
     return rules
 
 
+#: 智能画像抽样的页数上限（长 PDF）。
+PROFILE_SAMPLE_PAGES = 12
+
+
+def profile_sample_bytes(filename: str, data: bytes,
+                         pages: int = PROFILE_SAMPLE_PAGES) -> bytes:
+    """长 PDF → 只含代表页的小 PDF（其余格式原样返回）。
+
+    代表页均匀分布在全书的 10%–90% 之间：封面、版权页、目录和书后附录不能代表
+    正文的语言与风格。页数不多的文件、读不出来的文件都原样返回。
+    """
+    if not str(filename or "").lower().endswith(".pdf") or not data:
+        return data
+    try:
+        import fitz
+
+        with fitz.open(stream=data, filetype="pdf") as document:
+            total = document.page_count
+            if document.needs_pass or total <= pages:
+                return data
+            start, end = int(total * 0.1), max(int(total * 0.9), int(total * 0.1) + 1)
+            step = (end - start) / pages
+            chosen = sorted({min(total - 1, start + int(step * i)) for i in range(pages)})
+            document.select(chosen)
+            return document.tobytes(garbage=1)
+    except Exception:  # noqa: BLE001 - 抽样失败就按原文件画像，只是慢一些
+        return data
+
+
 def quick_style_profile(job_id: str, config: EngineConfig) -> dict:
     """抽样读原文并给出风格推荐（一次模型调用；失败降级为通用风格，不伪造成功）。"""
     from folith import style_profile as _style_profile
@@ -1773,6 +1802,10 @@ def quick_style_profile(job_id: str, config: EngineConfig) -> dict:
     data = core.load_source(job_id)
     if not data:
         raise AdapterError("找不到这个任务的原文文件，无法做智能画像。")
+    # 画像只看样本：长 PDF 先抽出分布在全书的代表页，再走完整的读取流程。
+    # 以前整本书（300 多页）都要先读一遍才开始抽样，进入「准备」页后后台要算几十秒，
+    # 还占着解释器，界面因此发卡。
+    data = profile_sample_bytes(filename, data)
     try:
         paragraphs, warnings, _report = core.extract_document_paragraphs_with_report(
             filename, data,

@@ -1127,5 +1127,7 @@
   "不用重新翻译：从已完成的译文生成，交付会更新为新版本，原有文件保持不变。": "No hace falta volver a traducir: los archivos se generan a partir de la traducción terminada y la entrega pasa a una nueva versión sin cambiar los archivos existentes.",
   "生成{v0}": "Generar {v0}",
   "已生成{v0}，交付更新为 v{v1}。": "{v0} generado; la entrega es ahora la v{v1}.",
-  "正在从已完成的译文生成，并冻结新的交付版本…": "Generando a partir de la traducción terminada y congelando una nueva versión de entrega…"
+  "正在从已完成的译文生成，并冻结新的交付版本…": "Generando a partir de la traducción terminada y congelando una nueva versión de entrega…",
+  "正在读取文档…": "Leyendo el documento…",
+  "正在暂停…": "Pausando…"
 }

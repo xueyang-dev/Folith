@@ -48,6 +48,8 @@ from .style import Card, Chip
 DRAFT_AUTOSAVE_MS = 1500
 
 #: 核心运行视图里"正在占用管线"的状态（头部进度条与暂停/取消按钮只在这些状态出现）。
+#: 可以请求暂停的运行状态（核心在当前操作结束后暂停）。
+PAUSABLE_STATUSES = frozenset({"running", "waiting_external", "starting", "resume_requested"})
 RUNNING_STATUSES = frozenset({"running", "pausing", "cancelling", "resume_requested",
                               "starting", "queued", "waiting_external", "waiting_manual"})
 # Re-validating the whole delivery (every segment, every finding) costs ~240 ms
@@ -2805,7 +2807,14 @@ class WorkbenchView(QWidget):
         self.start_button.setVisible("resume" in actions)
         self.start_button.setText(
             "继续翻译" if self._state.get("p1_done") else "开始翻译")
-        self.pause_button.setVisible(running and raw_status == "running")
+        # 暂停只在"管线确实在跑"时出现，但不能只认 `running`：每次请求模型时状态会
+        # 在 running ⇄ waiting_external 之间来回切换，按钮于是一闪一闪、时有时无。
+        # 等待模型响应时请求暂停同样有效（当前请求结束后暂停）。已请求暂停时按钮
+        # 留在原位、变成不可点的"正在暂停…"，而不是突然消失。
+        pausing = raw_status == "pausing"
+        self.pause_button.setVisible(raw_status in PAUSABLE_STATUSES or pausing)
+        self.pause_button.setEnabled(not pausing)
+        self.pause_button.setText(i18n.tr('正在暂停…') if pausing else i18n.tr('暂停'))
         self.cancel_button.setVisible(running or "cancel" in actions)
         self.retry_button.setVisible("retry" in actions)
         self._sync_header_actions()

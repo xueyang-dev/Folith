@@ -97,6 +97,8 @@ def test_overview_widget_fills_in_from_the_background(app, tmp_path, monkeypatch
     monkeypatch.setattr(adapter, "source_path", lambda _job: source)
     view = doc_overview.DocumentOverview()
     view.set_document("job-overview", "book.pdf")
+    # 结果出来之前有"正在读取"，不是一块空白。
+    assert not view.loading.isHidden()
     deadline = time.time() + 10
     while time.time() < deadline and not view.note_texts():
         doc_facts.loader().wait(200)
@@ -105,3 +107,28 @@ def test_overview_widget_fills_in_from_the_background(app, tmp_path, monkeypatch
     assert "第 5 页没有文字层，需要识别" in view.note_texts()
     assert view.meta_label.text().startswith("PDF · 6 页")
     assert view.name_label.text() == "book.pdf"
+    assert view.loading.isHidden()
+
+
+def test_profile_reads_a_page_sample_of_a_long_pdf(tmp_path):
+    import fitz
+
+    from folith.qt import adapter
+
+    document = fitz.open()
+    for index in range(100):
+        document.new_page().insert_text((72, 72), f"Page {index + 1}", fontsize=11)
+    data = document.tobytes()
+    sample = adapter.profile_sample_bytes("book.pdf", data)
+    with fitz.open(stream=sample, filetype="pdf") as sampled:
+        texts = [page.get_text().strip() for page in sampled]
+    assert len(texts) == adapter.PROFILE_SAMPLE_PAGES
+    # 代表页分布在正文里：不含封面所在的前 10% 和书后的最后 10%。
+    numbers = [int(text.split()[-1]) for text in texts]
+    assert min(numbers) > 10 and max(numbers) <= 90
+    # 短文件和其他格式原样返回。
+    short = fitz.open()
+    short.new_page()
+    short_data = short.tobytes()
+    assert adapter.profile_sample_bytes("short.pdf", short_data) == short_data
+    assert adapter.profile_sample_bytes("book.docx", b"abc") == b"abc"

@@ -1127,5 +1127,7 @@
   "不用重新翻译：从已完成的译文生成，交付会更新为新版本，原有文件保持不变。": "No retranslation needed: files are built from the finished translation, and the delivery moves to a new version with the existing files unchanged.",
   "生成{v0}": "Generate {v0}",
   "已生成{v0}，交付更新为 v{v1}。": "{v0} generated; the delivery is now v{v1}.",
-  "正在从已完成的译文生成，并冻结新的交付版本…": "Generating from the finished translation and freezing a new delivery version…"
+  "正在从已完成的译文生成，并冻结新的交付版本…": "Generating from the finished translation and freezing a new delivery version…",
+  "正在读取文档…": "Reading the document…",
+  "正在暂停…": "Pausing…"
 }
