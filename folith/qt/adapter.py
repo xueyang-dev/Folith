@@ -2946,6 +2946,8 @@ def task_setup_view(config: EngineConfig, job_id: str) -> dict:
         "started": started,
         "is_pdf": filename.lower().endswith(".pdf"),
         "target_lang": str(_pick(state, "target_lang", config.target_lang)),
+        # 原文语言在导入时确定（它是任务身份的一部分）；准备页只显示，不改。
+        "source_lang": str(state.get("source_lang") or ""),
         "project_id": state.get("project_id"),
         "strategy": strategy,
         "strategy_preset": preset,

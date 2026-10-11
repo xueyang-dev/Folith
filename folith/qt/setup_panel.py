@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 
 from . import adapter
 from . import components
+from .doc_overview import DocumentOverview
 from . import i18n
 from . import icons
 from . import style as style_module
@@ -70,22 +71,10 @@ _MODE_ICONS: dict[str, str] = {
 
 #: 模式卡片上的"倾向"：这个模式的工作流包含哪几步（亮 = 包含，暗 = 不包含）。
 #: 直接读预设里的真实开关，所以图标说的就是这个模式实际会做的事。
-#: 交付文件格式 → 行图标块（图标, 颜色）。研究产物统一用学位帽。
-_FORMAT_TILES: dict[str, tuple[str, str]] = {
-    "DOCX": ("file-text", "tile-blue"),
-    "PDF": ("file", "tile-red"),
-    "EPUB": ("book", "tile-orange"),
-    "XLSX": ("file-sheet", "tile-green"),
-    "TMX": ("memory", "tile-purple"),
-    "TBX": ("termbase", "tile-indigo"),
-    "JSONL": ("file-code", "tile-gray"),
-}
-
-#: 模式卡片上的大图标块（图标, 颜色）。
-_MODE_TILES: dict[str, tuple[str, str]] = {
-    "快速": ("play", "tile-orange"),
-    "标准": ("check", "tile-blue"),
-    "学术增强": ("shield-check", "tile-purple"),
+#: 交付文件格式 → 行图标（中性色）。研究产物统一用学位帽。
+_FORMAT_ICONS: dict[str, str] = {
+    "DOCX": "file-text", "PDF": "file", "EPUB": "book", "XLSX": "file-sheet",
+    "TMX": "memory", "TBX": "termbase", "JSONL": "file-code",
 }
 
 _MODE_STEPS: tuple[tuple[str, str, str], ...] = (
@@ -197,8 +186,8 @@ def _copy_column(title: str, hint="") -> QVBoxLayout:
     return column
 
 
-#: 分组行的左缩进：12 内边距 + 28 图标块 + 12 间距。发丝线与折叠体都从这里开始。
-_ROW_INSET = 52
+#: 分组行的左缩进：12 内边距 + 16 图标 + 12 间距。发丝线与折叠体都从这里开始。
+_ROW_INSET = 40
 
 
 def _group_header(text: str) -> QLabel:
@@ -208,16 +197,21 @@ def _group_header(text: str) -> QLabel:
     return label
 
 
-def _icon_row(icon_name: str, color: str, title: str, *controls: QWidget,
+def _icon_row(icon_name: str, title: str, *controls: QWidget,
               value: QWidget | None = None, tooltip: str = "") -> QWidget:
-    """一行设置：彩色图标块 + 标题 +（取值）+ 右侧控件，最小高 44。"""
+    """一行次要设置：中性色图标 + 标题 +（取值）+ 右侧控件，最小高 40。
+
+    图标统一用 ``text-muted``：它只帮眼睛定位，不表达状态。颜色留给当前选择、
+    需要注意的提示和主行动。
+    """
     row = QWidget()
     row.setObjectName("groupRow")
-    row.setMinimumHeight(44)
+    row.setMinimumHeight(40)
     layout = QHBoxLayout(row)
-    layout.setContentsMargins(12, 8, 12, 8)
+    layout.setContentsMargins(12, 6, 12, 6)
     layout.setSpacing(12)
-    layout.addWidget(components.IconTile(icon_name, color), 0, Qt.AlignmentFlag.AlignVCenter)
+    layout.addWidget(icons.IconLabel(icon_name, 16, "text-muted"), 0,
+                     Qt.AlignmentFlag.AlignVCenter)
     label = QLabel(title)
     label.setObjectName("rowTitle")
     layout.addWidget(label, 0 if value is not None else 1, Qt.AlignmentFlag.AlignVCenter)
@@ -373,13 +367,13 @@ class DisclosureSection(QWidget):
     toggled = Signal(bool)
 
     def __init__(self, title: str, parent: QWidget | None = None, *,
-                 icon: tuple[str, str] | None = None) -> None:
+                 icon: str | None = None) -> None:
         super().__init__(parent)
         self.button = QPushButton()
         self.button.setObjectName("disclosureHeader")
-        #: 放在 :class:`SettingsGroup` 里的折叠行：左侧彩色图标块，标题用行标题字号，
+        #: 放在 :class:`SettingsGroup` 里的折叠行：左侧中性色图标，标题用行标题字号，
         #: 摘要靠右（像「系统设置」的取值），展开体与发丝线同一条缩进。
-        self.icon_tile = components.IconTile(*icon) if icon else None
+        self.icon_tile = icons.IconLabel(icon, 16, "text-muted") if icon else None
         self.button.setCheckable(True)
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.button.setAccessibleName(title)
@@ -401,8 +395,8 @@ class DisclosureSection(QWidget):
         row.setSpacing(theme_module.SPACE["sm"])
         if self.icon_tile is not None:
             self.button.setObjectName("settingsGroupHeader")
-            self.button.setMinimumHeight(44)
-            row.setContentsMargins(12, 8, 12, 8)
+            self.button.setMinimumHeight(40)
+            row.setContentsMargins(12, 6, 12, 6)
             row.setSpacing(12)
             row.addWidget(self.icon_tile, 0, Qt.AlignmentFlag.AlignVCenter)
             self.title_label.setObjectName("rowTitle")
@@ -473,49 +467,32 @@ class PresetOption(QPushButton):
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(132)
+        self.setMinimumWidth(72)
         # 无障碍名走 accessibleName：按钮自己的文字永远是空的（文案由内部的两个
         # 标签承担），读屏与自动化却仍能读到这个选项叫什么。
         self.setAccessibleName(title)
         self.key = str(key)
         self._icon_name = icon_name
 
-        # 竖排居中：大图标块 → 名称 → 工作流步骤（macOS 外观选择那种可选卡片）。
+        # 分段控件里的一段：只有名称。模式之间的差别由面板在下方用一句话说明
+        # （:meth:`TaskSetupPanel._sync_mode_summary`），不靠小图标解释。
         column = QVBoxLayout(self)
-        column.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
-                                  theme_module.SPACE["md"], theme_module.SPACE["md"])
-        column.setSpacing(theme_module.SPACE["sm"])
-        tile_icon, tile_color = _MODE_TILES.get(key, (icon_name, "tile-blue"))
-        self._icon = components.IconTile(tile_icon, tile_color, size=40, parent=self)
+        column.setContentsMargins(theme_module.SPACE["md"], 5, theme_module.SPACE["md"], 5)
+        column.setSpacing(0)
+        self._icon = None
         self._title = ElidedLabel(title, self)
         self._title.setObjectName("presetTitle")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         head = QVBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(theme_module.SPACE["xs"])
-        head.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignHCenter)
         head.addWidget(self._title)
         self._description = ElidedLabel(description, self)
         self._description.setObjectName("presetDesc")
         self._description.setVisible(False)
         column.addLayout(head)
-        # 工作流步骤：包含的步骤用强调色，不包含的用淡色；名称在悬停提示里。
-        self.steps: dict[str, bool] = {}
-        step_row = QHBoxLayout()
-        step_row.setContentsMargins(0, 0, 0, 0)
-        step_row.setSpacing(theme_module.SPACE["xs"] + 2)
-        step_row.addStretch(1)
-        included: list[str] = []
-        for icon_name_, label, on in steps:
-            mark = icons.IconLabel(icon_name_, 14, "accent" if on else "border-strong", parent=self)
-            mark.setToolTip(label)
-            mark.setAccessibleName(label)
-            step_row.addWidget(mark)
-            self.steps[label] = bool(on)
-            if on:
-                included.append(label)
-        step_row.addStretch(1)
-        column.addLayout(step_row)
+        # 工作流步骤只作为数据保存（悬停提示与面板的一句话说明都读它），不画图标。
+        self.steps: dict[str, bool] = {label: bool(on) for _icon_name, label, on in steps}
+        included = [label for label, on in self.steps.items() if on]
         self.toggled.connect(self._sync_icon)
         self._sync_icon(False)
         tip = [title]
@@ -561,9 +538,12 @@ class ModeSelector(QWidget):
         self._group.setExclusive(True)
         self._options: dict[str, PresetOption] = {}
         self._value = ""
+        # 一条分段轨道（与页面上其它分段控件同一种语法）。
+        self.setObjectName("modeTrack")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._row = QHBoxLayout(self)
-        self._row.setContentsMargins(0, 0, 0, 0)
-        self._row.setSpacing(theme_module.SPACE["sm"])
+        self._row.setContentsMargins(2, 2, 2, 2)
+        self._row.setSpacing(2)
 
     def set_options(self, options: list[dict]) -> None:
         """按目录重建选项（``set_choices`` 时调一次）。
@@ -676,25 +656,47 @@ class TaskSetupPanel(QWidget):
         head.addWidget(self.title_label)
         head.addWidget(self.subtitle_label)
 
-        # 内容收在一列居中的版心里（「系统设置」式）：宽屏上不把一行拉到两头。
+        # 两栏：左边是这份文档（agent 读到了什么），右边是要做的决定。
+        # 右栏自上而下按"必须 → 常用 → 可以不管"排列，「开始翻译」紧跟在决定之后。
         page = QHBoxLayout(self)
-        page.setContentsMargins(0, 0, 0, 0)
-        content = QWidget()
-        content.setMaximumWidth(860)
+        page.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"],
+                                theme_module.SPACE["lg"], theme_module.SPACE["lg"])
+        page.setSpacing(theme_module.SPACE["xl"] + 8)
+        # 两栏作为一个整体居中：宽屏上左右留白对称，内容不贴在一边。
         page.addStretch(1)
-        page.addWidget(content, 100)
+        self.overview = DocumentOverview()
+        page.addWidget(self.overview, 0, Qt.AlignmentFlag.AlignTop)
+        content = QWidget()
+        content.setMinimumWidth(420)
+        content.setMaximumWidth(640)
+        page.addWidget(content, 4, Qt.AlignmentFlag.AlignTop)
         page.addStretch(1)
         column = QVBoxLayout(content)
-        column.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
-        column.setSpacing(theme_module.SPACE["xl"])
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(theme_module.SPACE["lg"])
         # 页头（「译前准备」+ 说明）不再显示：工作台顶部的阶段条已经标出「准备」。
         self.title_label.setVisible(False)
         self.subtitle_label.setVisible(False)
         column.addLayout(head)
-        # 核心设置在前：目标语言 / 项目 / 术语库，风格是其中一行收起的折叠项。
-        column.addWidget(self._build_context_card())
+
+        options = self._build_context_card()
+        # ① 必须：目标语言（全页唯一的大号控件）
+        target = QVBoxLayout()
+        target.setSpacing(theme_module.SPACE["xs"])
+        target.addWidget(_group_header(i18n.tr('目标语言')))
+        target.addWidget(self.target_box)
+        column.addLayout(target)
+        # ② 常用：翻译模式（一条分段轨道 + 一句话说明）
         column.addWidget(self._build_strategy_card())
-        column.addWidget(self._build_delivery_card())
+        # ③ 可以不管：项目 / 术语库 / 风格 / 文档读取 / 高级设置
+        options.add_row(self.advanced_section)
+        column.addWidget(options)
+        # ④ 交付文件：一行摘要，点开才是文件清单（翻译完成后也能在「交付」补生成）
+        self.delivery_section = DisclosureSection(i18n.tr('交付内容'), icon="package")
+        self.delivery_section.body_layout.addWidget(self._build_delivery_card())
+        delivery_group = SettingsGroup()
+        delivery_group.add_row(self.delivery_section)
+        column.addWidget(delivery_group)
         column.addWidget(self._build_footer())
         column.addStretch(1)
 
@@ -738,19 +740,19 @@ class TaskSetupPanel(QWidget):
         self.project_box.setSizePolicy(QSizePolicy.Policy.Expanding,
                                        QSizePolicy.Policy.Fixed)
 
-        # 控件按内容宽度摆在行的右侧（像「系统设置」的弹出菜单），不再拉满整行。
-        self.target_box.setFixedWidth(240)
-        self.project_box.setFixedWidth(240)
+        # 目标语言是这一页唯一必须做的决定：放在右栏最上方、用大号控件
+        # （见 ``__init__``）。其余是可以不管的选项，进同一个分组，存在感一致地低。
+        self.target_box.setObjectName("primaryCombo")
+        self.target_box.setMinimumHeight(40)
+        self.project_box.setFixedWidth(200)
 
         group = SettingsGroup()
-        group.add_row(_icon_row("translate", "tile-blue", i18n.tr('目标语言'),
-                                self.target_box))
-        group.add_row(_icon_row("folder", "tile-orange", i18n.tr('归入项目'),
-                                self._build_project_row()))
+        group.add_row(_icon_row("folder", i18n.tr('归入项目'), self._build_project_row()))
         group.add_row(self._build_glossary_row())
+        group.add_row(self._build_style_card())
         self.doc_section = self._build_document_section()
         group.add_row(self.doc_section)
-        group.add_row(self._build_style_card())
+        self.options_group = group
         return group
 
     def _build_glossary_row(self) -> QWidget:
@@ -774,7 +776,7 @@ class TaskSetupPanel(QWidget):
         self.glossary_remove_button.setObjectName("rowAction")
         self.glossary_remove_button.clicked.connect(self.termbaseRemoveRequested.emit)
         self.glossary_remove_button.setVisible(False)
-        return _icon_row("termbase", "tile-green", i18n.tr('术语库'),
+        return _icon_row("termbase", i18n.tr('术语库'),
                          self.glossary_add_button, self.glossary_remove_button,
                          value=self.glossary_value, tooltip=hint)
 
@@ -791,7 +793,7 @@ class TaskSetupPanel(QWidget):
         # 恰恰是通过 `ocr_backend == "online"` 触发的（`core.py:2304`），旧标签
         # 「联网识别（默认）」是迁移前一天的词汇。用 OCR 当区块名会让用户以为自己的
         # 转向没生效（实测就是这一条被提出来了）。
-        section = DisclosureSection(i18n.tr('文档识别'), icon=("image", "tile-teal"))
+        section = DisclosureSection(i18n.tr('文档识别'), icon="image")
 
         self.understanding_box = style_module.CheckBox("")
         section.body_layout.addWidget(ToggleRow(
@@ -895,13 +897,18 @@ class TaskSetupPanel(QWidget):
         card = QWidget()
         body = QVBoxLayout(card)
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(theme_module.SPACE["sm"])
+        body.setSpacing(theme_module.SPACE["xs"])
         body.addWidget(_group_header(i18n.tr('翻译模式')))
 
-        # ---- Level 1：翻译模式（只决定工作流；交付什么由「交付内容」单独决定） -----
+        # ---- 翻译模式：一条分段轨道 + 一句话说明（只决定工作流；交付另算） -----------
         self.mode_selector = ModeSelector()
         self.mode_selector.changed.connect(self._on_strategy_preset)
         body.addWidget(self.mode_selector)
+        self.mode_summary = QLabel("")
+        self.mode_summary.setObjectName("hint")
+        self.mode_summary.setWordWrap(True)
+        self.mode_summary.setContentsMargins(4, 2, 0, 0)
+        body.addWidget(self.mode_summary)
 
         # 自定义状态：只在**实际生效的配置**与所选预设不同时亮出来，
         # 并且同时给出"退回该预设默认值"的出口（否则用户只能靠记忆手动改回去）。
@@ -925,17 +932,14 @@ class TaskSetupPanel(QWidget):
         # ---- 高级设置（默认收起）：内容处理 + 审校与执行参数 ------------------------
         # 与「文档识别」同一个组件：折叠头、摘要位、警示位、展开体都由它提供，
         # 面板只挂自己的属性名（测试与 window 都按这些名字访问）。
-        self.advanced_section = DisclosureSection(i18n.tr('高级设置'),
-                                                  icon=("settings", "tile-gray"))
+        self.advanced_section = DisclosureSection(i18n.tr('高级设置'), icon="settings")
         self.advanced_toggle = self.advanced_section.button
         self.advanced_label = self.advanced_section.title_label
         self.advanced_chevron = self.advanced_section.chevron
         self.advanced_body = self.advanced_section.body
         self.advanced_toggle.setAccessibleName(i18n.tr('高级设置'))
         self.advanced_toggle.setToolTip(i18n.tr('展开或收起审校与执行参数'))
-        advanced_group = SettingsGroup()
-        advanced_group.add_row(self.advanced_section)
-        body.addWidget(advanced_group)
+        # 高级设置是次要选项：由 ``__init__`` 放进「选项」分组的最后一行。
         advanced = self.advanced_body.layout()
 
         self.seg_mode_seg = style_module.SegmentedControl([
@@ -992,8 +996,7 @@ class TaskSetupPanel(QWidget):
 
         内容由 :meth:`_build_style_card` 填进来，放在「输入与上下文」的最后一行。
         """
-        self.style_section = DisclosureSection(i18n.tr('翻译风格'),
-                                               icon=("sparkles", "tile-pink"))
+        self.style_section = DisclosureSection(i18n.tr('翻译风格'), icon="sparkles")
         return self.style_section
 
     def _build_style_card(self) -> QWidget:
@@ -1145,8 +1148,9 @@ class TaskSetupPanel(QWidget):
             self.style_cards.set_selected(str(self.style_box.currentData() or ""))
             self.style_inherit_button.setChecked(not chosen)
             self._sync_style_sample()
+        # 没有手动选风格时，风格来自智能画像的分析建议（摘要说出这一点，而不是"沿用设置"）。
         self.style_section.set_summary(
-            self.style_box.currentText() if chosen else i18n.tr('沿用设置'))
+            self.style_box.currentText() if chosen else i18n.tr('智能画像分析建议'))
 
     def style_selection(self) -> dict | None:
         """用户选定的风格（没选返回 ``None``，沿用设置里的规则）。"""
@@ -1207,7 +1211,6 @@ class TaskSetupPanel(QWidget):
         self.delivery_seg.changed.connect(self._on_delivery_preset)
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
-        head.addWidget(_group_header(i18n.tr('交付内容')), 0, Qt.AlignmentFlag.AlignBottom)
         head.addStretch(1)
         head.addWidget(self.delivery_seg)
         body.addLayout(head)
@@ -1423,19 +1426,22 @@ class TaskSetupPanel(QWidget):
                 box.stateChanged.connect(
                     lambda _state, k=key_name: self._on_delivery_item_changed(k))
                 self._delivery_boxes[key_name] = box
-                tile = (("graduation", "tile-pink") if key == "research_items"
-                        else _FORMAT_TILES.get(fmt.upper(), ("file-text", "tile-gray")))
+                icon_name = ("graduation" if key == "research_items"
+                             else _FORMAT_ICONS.get(fmt.upper(), "file-text"))
                 value = QLabel(fmt)
                 value.setObjectName("rowValue")
                 value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                group.add_row(_icon_row(tile[0], tile[1], label, box,
-                                        value=value, tooltip=detail))
+                group.add_row(_icon_row(icon_name, label, box, value=value, tooltip=detail))
 
     def load(self, view: dict) -> None:
         """按视图回填控件（adapter.task_setup_view()）。"""
         self._view = dict(view or {})
         self._loading = True
         try:
+            # 左栏：这份文档本身（预览、页数、需要注意的地方）。
+            self.overview.set_document(
+                str(self._view.get("job_id") or ""), str(self._view.get("filename") or ""),
+                source_lang=str(self._view.get("source_lang") or ""))
             # 文件名已经在工作台头部，这里只说"这一步要做什么"。
             self.title_label.setText(i18n.tr('译前准备'))
             self.subtitle_label.setText(i18n.tr('确认设置和要生成的文件，选择会保存到本任务。'))
@@ -1449,7 +1455,8 @@ class TaskSetupPanel(QWidget):
             elif count:
                 glossary_text = i18n.tr('已添加 · {count} 条术语', count=count)
             else:
-                glossary_text = i18n.tr('未使用（可选，用于保持术语一致）')
+                # 取值只说状态；"可选、用于保持术语一致"在这一行的悬停提示里。
+                glossary_text = i18n.tr('未使用')
             self.glossary_value.setText(glossary_text)
             self.glossary_value.setToolTip(glossary_text)
             self.glossary_add_button.setText(i18n.tr('更换…') if count else i18n.tr('添加…'))
@@ -1658,12 +1665,25 @@ class TaskSetupPanel(QWidget):
         return all(bool(self._delivery.get(name)) == bool(value)
                    for name, value in config.items())
 
+    def _sync_mode_summary(self) -> None:
+        """翻译模式下方的一句话：当前配置实际会做哪几步（读真实开关，不读模式名）。"""
+        if not hasattr(self, "mode_summary"):
+            return
+        included, excluded = [], []
+        for _icon_name, label, flag in _MODE_STEPS:
+            (included if self._strategy_value(flag) else excluded).append(i18n.tr(label))
+        text = "、".join(included)
+        if excluded:
+            text = (text + " · " if text else "") + i18n.tr('不含{v0}', v0="、".join(excluded))
+        self.mode_summary.setText(text)
+
     def _sync_strategy_note(self) -> None:
         """自定义状态：由**实际生效的配置**推出来，不是"某个控件响过信号"。
 
         差异只在 :data:`_MANAGED_STRATEGY_KEYS`（这个面板真的暴露的字段）上比较：
         预设里若多出一个面板没有的开关，把它算进来会让状态常年显示"已自定义"。
         """
+        self._sync_mode_summary()
         key = self.mode_selector.value()
         preset = self._preset_config(key)
         if not preset:
@@ -1757,15 +1777,20 @@ class TaskSetupPanel(QWidget):
         核心会静默退回英语（`core.py:1344` / `core.py:1370` 的 `ocr_language or "eng"`），
         不提醒的话用户要到译文出来才发现。这种"可执行的错误"不能关在折叠体里。
         """
-        parts: list[str] = []
-        if self._is_pdf:
-            parts.append(_short_label(self.ocr_backend_box.currentText()))
-            parts.append(_short_label(self.ocr_mode_box.currentText()))
+        # 说效果，不说实现：用户关心的是"扫描页能不能读、版面会不会被理解"，
+        # 不是"视觉理解 · 自动判断"这种技术选项名（技术名在展开后的控件里）。
+        mode = str(self.ocr_mode_box.currentData() or "auto")
+        if not self._is_pdf:
+            text = i18n.tr('直接读取正文结构')
+        elif mode == "off":
+            text = i18n.tr('只读取文字层')
+        elif self._is_local_ocr():
+            text = (i18n.tr('每页都用本机 OCR 识别') if mode == "force"
+                    else i18n.tr('扫描页用本机 OCR 识别'))
         else:
-            parts.append(i18n.tr('文本层解析'))
-        if self.understanding_box.isChecked():
-            parts.append(i18n.tr('含文档画像'))
-        self.doc_section.set_summary(" · ".join(p for p in parts if p))
+            text = (i18n.tr('每页都按版面理解') if mode == "force"
+                    else i18n.tr('按版面理解页面，扫描页也能读取'))
+        self.doc_section.set_summary(text)
 
         warning = ""
         if self._is_pdf and self._is_local_ocr() and not str(
@@ -1821,6 +1846,22 @@ class TaskSetupPanel(QWidget):
         else:
             text = i18n.tr('尚未选择交付文件')
         self.delivery_summary.setText(text)
+        # 交付行收起时也说清楚会得到哪些文件（用文件名，不用方案名）。
+        names = []
+        for items_key in ("translation_items", "asset_items", "research_items"):
+            if items_key == "research_items" and not self._research_visible:
+                continue
+            for item in self._choices.get(items_key) or []:
+                box = self._delivery_boxes.get(str(item.get("key") or ""))
+                if box is not None and box.isChecked():
+                    if item.get("key") == "enable_annotate" and not (
+                            self._delivery_boxes.get("deliver_bilingual_docx")
+                            and self._delivery_boxes["deliver_bilingual_docx"].isChecked()):
+                        continue
+                    names.append(i18n.tr(str(item.get("title") or item.get("key"))))
+        if hasattr(self, "delivery_section"):
+            self.delivery_section.set_summary(
+                " · ".join(names) if names else i18n.tr('尚未选择交付文件'))
 
     def _report_box_checked(self) -> bool:
         box = self._delivery_boxes.get("enable_report")
@@ -1890,22 +1931,6 @@ class TaskSetupPanel(QWidget):
 def _normalize_ocr_mode(value) -> str:
     text = str(value or "").strip()
     return text or "auto"
-
-
-def _short_label(label: str) -> str:
-    """把下拉框标签压成摘要里放得下的短名（取括号之前的部分）。
-
-    目录里的标签带着补充说明，那是**选项列表**里需要的完整表述；折叠摘要只有一行。
-    空标签原样返回，交给调用方过滤。
-    """
-    # 例：视觉理解标签 → 去掉括号里的补注；「总是识别（强制 OCR）」同理。
-    # （写成注释而不是文档字符串：`test_the_stale_ocr_wording_is_gone_and_has_one_source`
-    # 扫的是源码里的**用户可见字面量**，注释里引用旧文案是故意的、不算回归。）
-    text = str(label or "").strip()
-    for opener in ("（", " ("):
-        if opener in text:
-            text = text.split(opener, 1)[0].strip()
-    return text or str(label or "").strip()
 
 
 def _fallback_ocr_languages() -> tuple[tuple[str, str], ...]:

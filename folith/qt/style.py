@@ -589,14 +589,17 @@ QPushButton#segment:checked {{
    "id 数 > 伪类数"排优先级 —— 它压不过 #presetOption（同 #themeCard 的坑）。
    ⚠️ `:checked` 必须写在 `:hover` **之后**：两者 id 数与伪类数相同，平手时 Qt 取
    后出现的那条；`:checked:hover` 再显式写一条，避免悬停把选中态洗回静止色。 */
+QWidget#modeTrack {{
+    background: {t['bg-surface-sunken']}; border-radius: {r['sm'] + 2}px;
+}}
 QPushButton#presetOption {{
-    background: {t['bg-surface']};
-    border: 1px solid {t['border-hairline']};
-    border-radius: {r['lg']}px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: {r['sm']}px;
     padding: 0;
 }}
 QPushButton#presetOption:hover {{
-    background: {t['bg-surface']}; border-color: {t['border-strong']};
+    background: {t['bg-hover']}; border-color: transparent;
 }}
 QPushButton#presetOption:checked {{
     background: {t['bg-surface-raised']}; border-color: {t['accent']};
@@ -618,6 +621,9 @@ QFrame#settingsGroup QWidget#groupRow, QFrame#settingsGroup QLabel {{ background
 QFrame#rowRule {{ background: {t['border-divider']}; border: none; }}
 QLabel#rowTitle {{ font-size: {f['body']}px; color: {t['text-primary']}; }}
 QLabel#rowValue {{ font-size: {f['body'] - 1}px; color: {t['text-secondary']}; }}
+QComboBox#primaryCombo {{ font-size: {f['body'] + 3}px; padding-left: 12px; }}
+QLabel#overviewTitle {{ font-size: {f['body'] + 1}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#overviewNote {{ font-size: {f['caption'] + 1}px; color: {t['text-secondary']}; }}
 QLabel#groupHeader {{
     font-size: {f['caption']}px; font-weight: 600; color: {t['text-secondary']};
     padding-left: 4px;

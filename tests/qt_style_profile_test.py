@@ -190,7 +190,8 @@ def test_style_is_a_collapsed_row_without_manual_sliders(qapp):
     try:
         section = panel.style_section
         assert section.isVisible() and not section.is_expanded()
-        assert section.summary_label.text() == "沿用设置"
+        # 没手动选风格时，风格来自智能画像的分析建议。
+        assert section.summary_label.text() == "智能画像分析建议"
         # 它和「文档识别」同在「输入与上下文」卡片里，排在核心设置之后。
         assert section.parent() is panel.doc_section.parent()
         assert all(slider.isHidden() for slider in panel.style_sliders.values())

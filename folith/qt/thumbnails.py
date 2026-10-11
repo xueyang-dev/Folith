@@ -174,14 +174,18 @@ class _Job(QRunnable):
 
     def run(self) -> None:
         try:
-            image = render_preview(self._source, self._filename)
+            image = self._loader._render(self._source, self._filename)
         except Exception:  # noqa: BLE001 - 坏文件只是没有预览，不能影响首页
             image = None
         self._loader._finished.emit(self._key, image)
 
 
 class PreviewLoader(QObject):
-    """后台生成预览、按源文件身份缓存。``ready(job_id)`` 在主线程发出。"""
+    """后台读源文件、按源文件身份缓存结果。``ready(job_id)`` 在主线程发出。
+
+    默认产出预览图（:func:`render_preview`）；传入别的 ``render`` 就是同一套后台
+    与缓存机制算别的东西（例如 :mod:`folith.qt.doc_facts` 的文档概览事实）。
+    """
 
     ready = Signal(str)
     _finished = Signal(object, object)
@@ -189,9 +193,10 @@ class PreviewLoader(QObject):
     #: 缓存上限（张）。每张约 240×340 RGB32 ≈ 0.3 MB。
     LIMIT = 160
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(self, parent: QObject | None = None, *, render=None) -> None:
         super().__init__(parent)
-        self._cache: dict[tuple, QImage | None] = {}
+        self._render = render or render_preview
+        self._cache: dict[tuple, object] = {}
         self._pending: set[tuple] = set()
         self._pool = QThreadPool(self)
         # 一个线程就够：预览只在首页卡片出现，不值得与翻译 worker 抢 CPU。
@@ -225,7 +230,9 @@ class PreviewLoader(QObject):
         # 同一任务的旧版本预览（源文件被替换过）直接丢掉。
         for stale in [item for item in self._cache if item[0] == key[0] and item != key]:
             self._cache.pop(stale, None)
-        self._cache[key] = image if isinstance(image, QImage) and not image.isNull() else None
+        if isinstance(image, QImage) and image.isNull():
+            image = None
+        self._cache[key] = image
         while len(self._cache) > self.LIMIT:
             self._cache.pop(next(iter(self._cache)))
         if self._cache[key] is not None:

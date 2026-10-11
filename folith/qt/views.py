@@ -1975,18 +1975,13 @@ class WorkbenchView(QWidget):
         setup_scroll.viewport().setAutoFillBackground(False)
         setup_scroll.setWidget(self.setup_panel)
         self.setup_scroll = setup_scroll
-        # 「开始翻译」钉在滚动区下方：它是这一步唯一的主行动，不能跟着内容滚出首屏。
-        footer_bar = self.setup_panel.detach_footer()
-        footer_rule = QFrame()
-        footer_rule.setObjectName("hairline")
-        footer_rule.setFixedHeight(1)
+        # 「开始翻译」留在面板右栏、紧跟设置之后（交互路径最短）；两栏布局在常见窗口
+        # 高度里一屏放得下，展开次要设置时它随内容一起滚动。
         self.setup_page = QWidget()
         setup_layout = QVBoxLayout(self.setup_page)
         setup_layout.setContentsMargins(0, 0, 0, 0)
-        setup_layout.setSpacing(theme_module.SPACE["sm"])
+        setup_layout.setSpacing(0)
         setup_layout.addWidget(self.setup_scroll, 1)
-        setup_layout.addWidget(footer_rule)
-        setup_layout.addWidget(footer_bar)
         self.setup_page.setVisible(False)
         translation_layout.addWidget(self.setup_page, 1)
 

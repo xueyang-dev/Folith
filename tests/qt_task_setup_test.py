@@ -344,7 +344,7 @@ def test_opening_another_task_rebuilds_every_control(data_env, qt_app):
         # A 开了双语对照，所以子项「标记术语」也是亮的。
         assert panel._delivery_boxes["enable_annotate"].isChecked() is True
         assert panel.doc_section.summary_label.fullText() == \
-            "视觉理解 · 自动判断 · 含文档画像"
+            "按版面理解页面，扫描页也能读取"
 
         panel.load(adapter.task_setup_view(config, job_b))
 
@@ -360,7 +360,7 @@ def test_opening_another_task_rebuilds_every_control(data_env, qt_app):
         assert panel.theory_field.isHidden() is True, "B 没开报告，理论框架不该留着"
         # DOCX 没有扫描路径：整个扫描件区块与摘要都要跟着换过来。
         assert panel.ocr_box.isHidden() is True
-        assert panel.doc_section.summary_label.fullText() == "文本层解析"
+        assert panel.doc_section.summary_label.fullText() == "直接读取正文结构"
 
         # 显示必须等于会被提交的事实：勾着的框不能有一个是"提交时被丢掉"的。
         payload = panel.payload()
@@ -394,6 +394,9 @@ def test_research_products_only_appear_for_a_research_strategy(data_env, qt_app)
     panel.show()
     qt_app.processEvents()
 
+    # 研究产物在「交付内容」里（默认收起），展开后再看它出不出现。
+    panel.delivery_section.button.setChecked(True)
+    qt_app.processEvents()
     assert panel.research_group.isVisible() is False
     panel.mode_selector.set_value("学术增强")
     panel._on_strategy_preset("学术增强")
@@ -756,7 +759,7 @@ def test_the_panel_never_scrolls_sideways_at_the_narrowest_window(data_env, qt_a
         buttons = [panel.mode_selector.button(key)
                    for key in panel.mode_selector.options()]
         assert all(button.width() >= button.minimumWidth() for button in buttons)
-        assert all(button.height() >= 40 for button in buttons), \
+        assert all(button.height() >= button.sizeHint().height() for button in buttons), \
             "模式选项被压扁了（说明 sizeHint 没跟上内部布局）"
     finally:
         scroll.close()
@@ -1235,7 +1238,8 @@ def test_a_non_pdf_task_does_not_show_scan_settings(data_env, qt_app):
 
 def test_the_collapsed_document_summary_says_how_the_document_is_read(
         data_env, qt_app):
-    """收起时也要读得懂：「文档识别」的摘要就是"现在按什么方式读"的答案。"""
+    """收起时也要读得懂：「文档识别」的摘要说**效果**（扫描页能不能读、版面会不会被
+    理解），不说实现（"视觉理解 · 自动判断"）。是否预读全文由翻译模式下方的说明负责。"""
     from folith.qt.setup_panel import TaskSetupPanel
 
     panel = TaskSetupPanel()
@@ -1247,16 +1251,21 @@ def test_the_collapsed_document_summary_says_how_the_document_is_read(
     try:
         assert panel.doc_section.is_expanded() is False, "文档识别默认应当收起"
         summary = panel.doc_section.summary_label.fullText()
-        assert summary == "视觉理解 · 自动判断", summary
-        # 打开文档画像：摘要要跟着说，而不是要用户展开才知道。
+        assert summary == "按版面理解页面，扫描页也能读取", summary
+        assert "视觉理解" not in summary and "自动判断" not in summary
+        # 只用文本层：摘要直说"只读取文字层"。
+        panel.ocr_mode_box.setCurrentIndex(panel.ocr_mode_box.findData("off"))
+        qt_app.processEvents()
+        assert panel.doc_section.summary_label.fullText() == "只读取文字层"
+        # 打开文档画像：模式下方的一句话要跟着说，而不是要用户展开才知道。
         panel.understanding_box.setChecked(True)
         qt_app.processEvents()
-        assert panel.doc_section.summary_label.fullText().endswith("含文档画像")
+        assert "建立文档画像" in panel.mode_summary.text()
 
         # 非 PDF 没有扫描路径：不要拿一个不生效的来源去糊摘要。
         panel.load({"filename": "notes.docx", "is_pdf": False, "started": False})
         qt_app.processEvents()
-        assert panel.doc_section.summary_label.fullText() == "文本层解析"
+        assert panel.doc_section.summary_label.fullText() == "直接读取正文结构"
     finally:
         panel.close()
 

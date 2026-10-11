@@ -1102,5 +1102,21 @@
   "高级设置": "Advanced settings",
   "高级设置 · 审校与执行参数": "Advanced settings · Review and execution",
   "导入 PDF、DOCX、EPUB、TXT 或 Markdown，翻译、审校，然后交付。": "Import PDF, DOCX, EPUB, TXT or Markdown, translate, review, then deliver.",
-  "示例": "Example"
+  "示例": "Example",
+  "{count} 章": "{count} chapters",
+  "{count} 页": "{count} pages",
+  "不含{v0}": "Skips {v0}",
+  "只读取文字层": "Reads the text layer only",
+  "含 {count} 张图片": "Contains {count} images",
+  "文件已加密，无法读取内容": "The file is encrypted and cannot be read",
+  "每页都有文字层，可直接读取正文": "Every page has a text layer; the text can be read directly",
+  "整份文档没有文字层，正文需要识别": "The document has no text layer; the text needs recognition",
+  "第 {pages} 页没有文字层，需要识别": "Pages {pages} have no text layer and need recognition",
+  "智能画像分析建议": "Smart profile suggestion",
+  "直接读取正文结构": "Reads the document structure directly",
+  "每页都用本机 OCR 识别": "Every page is recognized with local OCR",
+  "扫描页用本机 OCR 识别": "Scanned pages are recognized with local OCR",
+  "每页都按版面理解": "Every page is read by its layout",
+  "按版面理解页面，扫描页也能读取": "Pages are read by their layout; scanned pages too",
+  "未使用": "Not used"
 }

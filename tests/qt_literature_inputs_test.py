@@ -107,6 +107,9 @@ def test_panel_row_follows_the_report_box_and_state(qapp, job, tmp_path):
     report = panel._delivery_boxes.get("enable_report")
     if report is None:
         pytest.skip("该面板构建未提供报告勾选")
+    # 参考资料在「交付内容」里（默认收起）：展开后再看它跟不跟报告开关。
+    if hasattr(panel, "delivery_section"):
+        panel.delivery_section.button.setChecked(True)
     report.setChecked(False)
     assert not panel.literature_field.isVisibleTo(panel)
     report.setChecked(True)
