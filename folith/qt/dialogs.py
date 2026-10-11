@@ -141,13 +141,13 @@ class EngineDialog(QDialog):
 
         tabs = QTabWidget(self)
         tabs.addTab(_scroll_page(self._build_connection_tab()),
-                    icons.icon("sparkles", 16, style_module.text_color("text-secondary")),
+                    icons.icon("sparkles", 16, "text-secondary"),
                     i18n.tr('模型连接'))
         tabs.addTab(_scroll_page(self._build_task_tab()),
-                    icons.icon("package", 16, style_module.text_color("text-secondary")),
+                    icons.icon("package", 16, "text-secondary"),
                     i18n.tr('任务默认值'))
         tabs.addTab(_scroll_page(self._build_appearance_tab()),
-                    icons.icon("image", 16, style_module.text_color("text-secondary")),
+                    icons.icon("image", 16, "text-secondary"),
                     i18n.tr('通用'))
         tabs.setIconSize(QSize(16, 16))
 
@@ -157,7 +157,7 @@ class EngineDialog(QDialog):
         save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         save_button.setText(i18n.tr('保存'))
         save_button.setIcon(icons.icon(
-            "save", 16, style_module.text_color("text-on-accent")))
+            "save", 16, "text-on-accent"))
         save_button.setIconSize(QSize(16, 16))
         style_module.mark_primary(save_button)
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
@@ -580,7 +580,7 @@ class EngineDialog(QDialog):
         page_layout.setSpacing(theme_module.SPACE["sm"])
         card, body = _panel(
             i18n.tr('界面主题'),
-            i18n.tr('「跟随系统」随 macOS 浅色/深色外观自动切换。三套主题共用同一份品牌配色，切换不会影响已导入的任务与译文。'))
+            i18n.tr('「跟随系统」随 macOS 浅色/深色外观自动切换。所有主题共用同一份品牌配色，切换不会影响已导入的任务与译文。'))
         self.theme_box = style_module.ComboBox()
         for name in (theme_module.FOLLOW_SYSTEM, *theme_module.theme_names()):
             self.theme_box.addItem(theme_module.label(name), name)
@@ -1075,7 +1075,7 @@ class ProjectPickerDialog(QDialog):
                 label = f"{project['name']}（未分类）"
             item = QListWidgetItem(
                 icons.icon("folder", 16,
-                           style_module.text_color("text-secondary")), label)
+                           "text-secondary"), label)
             item.setData(Qt.ItemDataRole.UserRole, project.get("project_id"))
             item.setSizeHint(QSize(0, theme_module.CONTROL["md"] + 6))
             self.list.addItem(item)
@@ -1096,7 +1096,7 @@ class ProjectPickerDialog(QDialog):
         ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         ok_button.setText(i18n.tr('移动'))
         ok_button.setIcon(icons.icon(
-            "arrow-right", 16, style_module.text_color("text-on-accent")))
+            "arrow-right", 16, "text-on-accent"))
         ok_button.setIconSize(QSize(16, 16))
         style_module.mark_primary(ok_button)
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
@@ -1380,18 +1380,18 @@ class ProjectDialog(QDialog):
 
         self.new_button = QPushButton(i18n.tr('新建项目…'))
         self.new_button.setIcon(icons.icon(
-            "plus", 16, style_module.text_color("text-on-accent")))
+            "plus", 16, "text-on-accent"))
         style_module.mark_primary(self.new_button)
         self.rename_button = QPushButton(i18n.tr('重命名…'))
         self.rename_button.setIcon(icons.icon(
-            "file-text", 16, style_module.text_color("text-secondary")))
+            "file-text", 16, "text-secondary"))
         self.archive_button = QPushButton(i18n.tr('归档'))
         self.archive_button.setIcon(icons.icon(
-            "folder", 16, style_module.text_color("text-secondary")))
+            "folder", 16, "text-secondary"))
         self.delete_button = QPushButton(i18n.tr('删除项目…'))
         self.delete_button.setObjectName("dangerAction")
         self.delete_button.setIcon(icons.icon(
-            "trash", 16, style_module.text_color("danger")))
+            "trash", 16, "danger"))
         for button in (self.new_button, self.rename_button,
                        self.archive_button, self.delete_button):
             button.setIconSize(QSize(16, 16))

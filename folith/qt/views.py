@@ -13,6 +13,7 @@ Design rules that come from the Beta acceptance list:
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 
 from PySide6.QtCore import QEvent, QSize, QTimer, Qt, Signal
@@ -21,12 +22,13 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QFormLayout, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QPlainTextEdit, QProgressBar,
-    QPushButton, QScrollArea, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
 
 from . import i18n
 from . import adapter
+from . import components
 from . import icons
 from .activity_panel import ActivityPanel
 from .cases_panel import CasesPanel
@@ -287,8 +289,28 @@ def _asset_rows(latest: dict | None, *, resolve=None) -> list[dict]:
     return rows
 
 
+def _row_percent(row) -> int | None:
+    """从进度/状态文案里取出百分比（"正在翻译 · 63%"），没有就返回 None。"""
+    import re
+
+    for text in (getattr(row, "progress_label", ""), getattr(row, "status_label", "")):
+        match = re.search(r"(\d{1,3})\s*%", str(text or ""))
+        if match:
+            return max(0, min(100, int(match.group(1))))
+    return None
+
+
+def _row_format(row) -> str:
+    name = str(getattr(row, "filename", "") or "")
+    suffix = name.rsplit(".", 1)[-1] if "." in name else ""
+    return suffix.upper()[:4] if suffix else ""
+
+
 class _TaskCard(Card):
-    """首页卡片视图里的一张任务卡：单击选中、双击打开。
+    """首页卡片视图里的一张任务卡（Golden Gate 版式）：单击选中、双击打开。
+
+    上半是"文档"——一张纸的示意 + 左上格式角标 + 右上"多久前更新"；下半是文件名、
+    段数与目标语言、状态点 + 状态文案，运行中/有百分比时再给一条细进度条。
 
     与表格共用同一份选中状态（卡片只是把表格行"画"成卡片），因此底部动作
     （打开/移动/删除）在两种视图下语义一致，不需要第二套选择逻辑。
@@ -296,6 +318,8 @@ class _TaskCard(Card):
 
     clicked = Signal(str)
     activated = Signal(str)
+    #: 卡片的最小宽度（px）：列数 = 可用宽度能放下几张这么宽的卡。
+    MIN_WIDTH = 200
 
     def __init__(self, row: adapter.JobRow, *, tone: str,
                  parent: QWidget | None = None) -> None:
@@ -304,62 +328,88 @@ class _TaskCard(Card):
         self.job_id = row.job_id
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(i18n.tr('单击选中；双击打开任务'))
+        self.setMinimumWidth(self.MIN_WIDTH)
+        # 卡片视图是默认视图：纯键盘用户必须能用 Tab 进到卡片、方向键换卡、回车打开。
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(row.title or "")
         self._selected = False
         # 属性一开始就要有值：QSS 的 [selected="true"] 与外部探测都读它，
         # 只在状态变化时设置会留下"未定义"的中间态。
         self.setProperty("selected", "false")
 
         column = QVBoxLayout(self)
-        column.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
-                                  theme_module.SPACE["md"], theme_module.SPACE["sm"])
-        column.setSpacing(theme_module.SPACE["xs"])
+        column.setContentsMargins(0, 0, 0, theme_module.SPACE["md"])
+        column.setSpacing(theme_module.SPACE["sm"])
 
-        title = style_module.ElideLabel(row.title or "未命名任务",
-                                        mode=Qt.TextElideMode.ElideRight)
+        # ---- 上半：文档示意 ----------------------------------------------
+        thumb = QFrame()
+        thumb.setObjectName("tileThumb")
+        thumb.setFixedHeight(124)
+        thumb_layout = QGridLayout(thumb)
+        thumb_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["sm"],
+                                        theme_module.SPACE["sm"], 0)
+        badge_text = _row_format(row)
+        # ⚠️ 子控件一律先给父对象再改可见性：对无父控件 setVisible(True) 会把它
+        # 当成顶层窗口弹出来，抢走主窗口的激活与键盘焦点（实测）。
+        self.badge = QLabel(badge_text, thumb)
+        self.badge.setObjectName("tileBadge")
+        self.badge.setVisible(bool(badge_text))
+        self.time_label = QLabel(components.relative_time(row.updated_at))
+        self.time_label.setObjectName("tileTime")
+        self.time_label.setToolTip((row.updated_at or "").replace("T", " ")[:16])
+        unreadable = bool(str(getattr(row, "error", "") or "").strip())
+        paper = components.DocThumb(66, 86, faded=unreadable)
+        thumb_layout.addWidget(self.badge, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        thumb_layout.addWidget(self.time_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        thumb_layout.addWidget(paper, 0, 0, 2, 3, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+        thumb_layout.setColumnStretch(1, 1)
+        column.addWidget(thumb)
+
+        # ---- 下半：文字 ----------------------------------------------------
+        text = QVBoxLayout()
+        text.setContentsMargins(theme_module.SPACE["md"], 0, theme_module.SPACE["md"], 0)
+        text.setSpacing(theme_module.SPACE["xxs"] + 1)
+        title = style_module.ElideLabel(row.title or i18n.tr("未命名任务"),
+                                        mode=Qt.TextElideMode.ElideMiddle)
         title.setObjectName("taskCardTitle")
         title.setToolTip(row.title or "")
-        self.chip = Chip(_elide(i18n.tr_dynamic(row.status_label) or "—", 12), tone)
-
-        file_icon = QLabel()
-        file_icon.setPixmap(icons.pixmap("file-text", 16,
-                                         style_module.text_color("text-secondary")))
-        file_icon.setFixedSize(16, 16)
-
-        top = QHBoxLayout()
-        top.setSpacing(theme_module.SPACE["sm"])
-        top.addWidget(file_icon, 0, Qt.AlignmentFlag.AlignVCenter)
-        top.addWidget(title, 1)
-        top.addWidget(self.chip, 0, Qt.AlignmentFlag.AlignTop)
-
         meta_parts = [part for part in (
-            row.target_lang or "",
-            f"{row.segment_count} 段" if row.segment_count else "",
-            (row.updated_at or "").replace("T", " ")[:16] or "",
+            i18n.tr("{v0} 段", v0=row.segment_count) if row.segment_count else "",
+            i18n.tr_dynamic(row.target_lang) if row.target_lang else "",
         ) if part]
-        meta = QLabel(" · ".join(meta_parts))
+        meta = QLabel(" · ".join(meta_parts) or "—")
         meta.setObjectName("taskCardMeta")
-        meta.setToolTip(row.title or "")
 
-        # 旧界面首页卡片右下角有"查看项目 →"：这里给一个可见的打开入口，
-        # 而不是只靠"双击"这种没有提示的隐藏操作。点击仍然由卡片本身接收。
-        # 它和 meta **同一行**右对齐：各占一行会让每张卡高 ≈99px（实测），107 个任务
-        # 时首屏只放得下 5 张；并成一行后 ≈63px —— 同样的信息量，多出约 1/3 的可视条目。
-        # ⚠️ 这里刻意不复用 objectName "link"：全局有一条 `QLabel#link`（accent 蓝，
-        # 用于正文里的可点链接），而 Qt 在「短选择器 vs 后代选择器」的比拼里会把
-        # 短的排在前 —— 于是 `QFrame#taskCard QLabel#link { color: muted }` 永远
-        # 压不过它（实测：卡内 14 张卡的同一句"打开任务 →"全是 accent 蓝，正是本轮
-        # 要消掉的重复视觉噪音）。给它一个独占的名字，用**单条 #id 规则**才生效。
-        open_hint = QLabel(i18n.tr('打开任务 →'))
-        open_hint.setObjectName("taskCardLink")
+        hollow = tone == "muted" and not row.active
+        dot = components.StatusDot({"ok": "success", "warn": "warning", "danger": "danger",
+                                    "info": "accent", "brand": "brand-ink"}.get(tone, "text-muted"),
+                                   hollow=hollow)
+        status_text = i18n.tr_dynamic(row.status_label) or "—"
+        percent = _row_percent(row)
+        if row.active and percent is not None and f"{percent}%" not in status_text:
+            status_text = f"{status_text} · {percent}%"
+        self.status_label = style_module.ElideLabel(status_text, mode=Qt.TextElideMode.ElideRight)
+        self.status_label.setObjectName("taskCardStatus")
+        self.status_label.setProperty("state", tone)
+        status_row = QHBoxLayout()
+        status_row.setSpacing(theme_module.SPACE["xs"] + 2)
+        status_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status_label, 1)
+        # 兼容旧接口：状态芯片仍然存在（外部/测试会读它的文案），但不再显示。
+        self.chip = Chip(_elide(i18n.tr_dynamic(row.status_label) or "—", 12), tone)
+        self.chip.setParent(self)
+        self.chip.setVisible(False)
 
-        bottom = QHBoxLayout()
-        bottom.setSpacing(theme_module.SPACE["sm"])
-        bottom.addWidget(meta, 0)
-        bottom.addStretch(1)
-        bottom.addWidget(open_hint, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        column.addLayout(top)
-        column.addLayout(bottom)
+        text.addWidget(title)
+        text.addWidget(meta)
+        text.addSpacing(theme_module.SPACE["xxs"])
+        text.addLayout(status_row)
+        self.progress = None
+        if row.active and percent is not None:
+            self.progress = components.ProgressLine(percent)
+            text.addSpacing(theme_module.SPACE["xxs"])
+            text.addWidget(self.progress)
+        column.addLayout(text)
 
     def set_selected(self, selected: bool) -> None:
         if selected == self._selected:
@@ -377,6 +427,32 @@ class _TaskCard(Card):
         if event.button() == Qt.MouseButton.LeftButton:
             self.activated.emit(self.job_id)
         super().mouseDoubleClickEvent(event)
+
+    #: 方向键换卡：由 HomeView 接上（它知道卡片的顺序与列数）。
+    navigate = Signal(str, int)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        # 键盘焦点到了哪张卡，哪张卡就是选中项（与表格"当前行即选中行"同一条规则）。
+        self.clicked.emit(self.job_id)
+        super().focusInEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.activated.emit(self.job_id)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Space:
+            self.clicked.emit(self.job_id)
+            event.accept()
+            return
+        steps = {Qt.Key.Key_Left: -1, Qt.Key.Key_Right: 1, Qt.Key.Key_Up: -100,
+                 Qt.Key.Key_Down: 100}
+        if key in steps:
+            self.navigate.emit(self.job_id, steps[key])
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 HOME_SORTS = (("最近更新", "updated"), ("最早更新", "oldest"),
@@ -411,6 +487,10 @@ class HomeView(QWidget):
     settingsRequested = Signal()
 
     COLUMNS = ("文档", "状态", "目标语言", "段落", "更新时间")
+    #: 侧栏品牌字标的逻辑高度（px）。Golden Gate 版式里它在侧栏左下角、设置按钮左侧。
+    LOGO_HEIGHT = 48
+    #: 侧栏宽度（px）。
+    SIDEBAR_WIDTH = 240
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -419,52 +499,64 @@ class HomeView(QWidget):
         #: 脚注上的"覆盖消息"（读列表失败之类）。为空时脚注显示选中摘要。
         self._status_override = ""
 
-        # ---- 品牌栏（侧栏顶部） --------------------------------------------
-        from . import branding
+        # ---- 品牌（Golden Gate：移到侧栏左下角，与设置按钮同一行） ---------------
+        from . import branding  # noqa: F401 - _refresh_logo 用
 
         self._logo_label = QLabel()
         self._logo_theme = ""
         self._refresh_logo()
-        # 侧栏品牌块用**字标**（自带品牌名与标语），和旧 Web 界面一致：
-        # 图形标记（app icon）在 30px 下只是一团深色，读不出品牌。
-        brand_row = QHBoxLayout()
-        brand_row.setSpacing(theme_module.SPACE["sm"])
-        brand_row.addWidget(self._logo_label)
-        brand_row.addStretch(1)
 
         # ---- 侧栏动作（全部是真实入口，不放没实现的导航） -------------------
+        # 「导入文档…」是侧栏顶部唯一的实心按钮：任务库的第一动作。
         self.import_button = QPushButton(i18n.tr('导入文档…'))
         self.import_button.setObjectName("primaryAction")
-        self.import_button.setIcon(icons.icon("upload", 16, style_module.text_color("text-on-accent")))
+        self.import_button.setIcon(icons.icon("upload", 16, "text-on-accent"))
         self.import_button.setIconSize(QSize(16, 16))
         self.import_button.setMinimumHeight(theme_module.CONTROL["lg"])
         self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.import_button.clicked.connect(self.importRequested.emit)
-        style_module.fit_button(self.import_button, max_width=168)
+        style_module.fit_button(self.import_button, max_width=self.SIDEBAR_WIDTH - 24)
 
-        def nav_button(label: str, icon_name: str) -> QPushButton:
-            button = QPushButton(label)
-            button.setObjectName("navItem")
-            button.setIcon(icons.icon(icon_name, 16, style_module.text_color("text-secondary")))
-            button.setIconSize(QSize(16, 16))
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
+        def nav_button(label: str, icon_name: str, *, checkable: bool = False) -> QPushButton:
+            button = components.nav_item(label, icon_name, checkable=checkable)
             # 侧栏是固定宽度：长语言（英/俄/阿）必须省略显示，否则按钮被截断
-            style_module.fit_button(button, max_width=168)
+            style_module.fit_button(button, max_width=self.SIDEBAR_WIDTH - 24)
             return button
 
+        # 「任务库」就是当前这一页：常亮的导航项（不是按钮），让侧栏有"你在这里"的锚点。
+        self.tasks_button = nav_button(i18n.tr('任务库'), "projects", checkable=True)
+        self.tasks_button.setChecked(True)
+        self.tasks_button.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.tasks_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.manage_projects_button = nav_button(i18n.tr('项目…'), "folder")
         self.manage_projects_button.setToolTip(i18n.tr('新建、重命名、归档项目，管理项目知识'))
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
-        self.library_button = nav_button(i18n.tr('术语与记忆…'), "file-sheet")
+        self.library_button = nav_button(i18n.tr('术语与记忆…'), "termbase")
         self.library_button.setToolTip(i18n.tr('跨任务浏览术语与翻译记忆，并审核 Agent 发现的候选词条'))
         self.library_button.clicked.connect(self.libraryRequested.emit)
-        self.settings_button = nav_button(i18n.tr('设置…'), "settings")
+
+        # 设置：侧栏左下角的圆形按钮（文案仍然是「设置…」，作为无障碍名称与提示）。
+        self.settings_button = QToolButton()
+        self.settings_button.setObjectName("roundButton")
+        self.settings_button.setText(i18n.tr('设置…'))
+        self.settings_button.setToolTip(i18n.tr('设置…'))
+        self.settings_button.setAccessibleName(i18n.tr('设置…'))
+        self.settings_button.setIcon(icons.icon("settings", 16, "text-secondary"))
+        self.settings_button.setIconSize(QSize(16, 16))
+        self.settings_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.clicked.connect(self.settingsRequested.emit)
 
-        # ---- 侧栏底部：引擎状态（常驻属性 + 配置入口） -----------------------
-        # 旧版是一张 100px 高的 Card：小标题 + 两行文字 + 芯片 + 按钮。它把"模型没配好"
-        # 这件事说得比导航还响。这里换成"状态点 + 一行状态 + 一行模型 + 一个入口"，
-        # 信息一个不少，视觉重量降到与侧栏其它行同级；贴底、用一条分隔线与导航分开。
+        # 「最近项目」：真实的项目分组，点一下 = 只看这个项目的任务（与页头的项目筛选同源）。
+        self.project_nav_label = QLabel(i18n.tr('最近项目'))
+        self.project_nav_label.setObjectName("navSection")
+        self.project_nav_label.setVisible(False)
+        self.project_nav_box = QVBoxLayout()
+        self.project_nav_box.setContentsMargins(0, 0, 0, 0)
+        self.project_nav_box.setSpacing(theme_module.SPACE["xxs"])
+        self._project_nav_buttons: dict[str, QPushButton] = {}
+
+        # ---- 侧栏底部：引擎状态条 + 品牌行（字标 + 设置） ---------------------
         self.engine_dot = QLabel()
         self.engine_dot.setObjectName("engineDot")
         self.engine_dot.setFixedSize(8, 8)
@@ -475,54 +567,69 @@ class HomeView(QWidget):
         self.engine_label.setObjectName("engineState")
         self.engine_model = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
         self.engine_model.setObjectName("engineModel")
+        self.engine_model.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.engine_model.setVisible(False)
-        engine_row = QHBoxLayout()
+        engine_card = QFrame()
+        engine_card.setObjectName("engineCard")
+        engine_row = QHBoxLayout(engine_card)
+        engine_row.setContentsMargins(theme_module.SPACE["sm"] + 2, theme_module.SPACE["sm"],
+                                      theme_module.SPACE["sm"] + 2, theme_module.SPACE["sm"])
         engine_row.setSpacing(theme_module.SPACE["sm"])
         engine_row.addWidget(self.engine_dot, 0, Qt.AlignmentFlag.AlignVCenter)
         engine_row.addWidget(self.engine_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        engine_row.addStretch(1)
+        engine_row.addWidget(self.engine_model, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(theme_module.SPACE["xxs"], 0, 0, 0)
+        brand_row.setSpacing(theme_module.SPACE["sm"])
+        brand_row.addWidget(self._logo_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        brand_row.addStretch(1)
+        brand_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         sidebar_footer = QFrame()
-        sidebar_footer.setObjectName("sidebarFooter")
+        sidebar_footer.setObjectName("sidebarFooterGG")
         footer_layout = QVBoxLayout(sidebar_footer)
-        footer_layout.setContentsMargins(0, theme_module.SPACE["md"], 0, 0)
-        footer_layout.setSpacing(theme_module.SPACE["xs"])
-        footer_layout.addLayout(engine_row)
-        footer_layout.addWidget(self.engine_model)
-        footer_layout.addSpacing(theme_module.SPACE["xxs"])
-        footer_layout.addWidget(self.settings_button)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(theme_module.SPACE["md"])
+        footer_layout.addWidget(engine_card)
+        footer_rule = QFrame()
+        footer_rule.setObjectName("hairline")
+        footer_rule.setFixedHeight(1)
+        footer_layout.addWidget(footer_rule)
+        footer_layout.addLayout(brand_row)
 
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
-        # 248 → 232：图标 16 + 文字 + 14px 行内留白在同一行里都放得下，而主工作区
-        # 多拿到 16px。更窄会先牺牲导航文案（英/俄/阿），更宽就只是留白。
-        sidebar.setFixedWidth(232)
+        # Golden Gate：侧栏贴满窗口左侧（边到边），右侧一条发丝线。宽 240：底部的品牌行
+        # 要放下 48px 高的字标（≈174px）和 30px 的圆形设置按钮。
+        sidebar.setFixedWidth(self.SIDEBAR_WIDTH)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
+        side.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["lg"],
                                 theme_module.SPACE["md"], theme_module.SPACE["md"])
-        side.setSpacing(theme_module.SPACE["xs"])
-        side.addLayout(brand_row)
-        side.addSpacing(theme_module.SPACE["lg"])
+        side.setSpacing(theme_module.SPACE["xxs"])
         side.addWidget(self.import_button)
-        # 分组之间 12px、组内 4px：只在"组"上写间距，行与行之间保持同一条节奏。
-        side.addSpacing(theme_module.SPACE["md"])
+        # 分组之间 16px、组内 2px：只在"组"上写间距，行与行之间保持同一条节奏。
+        side.addSpacing(theme_module.SPACE["lg"])
+        side.addWidget(self.tasks_button)
         side.addWidget(self.manage_projects_button)
         side.addWidget(self.library_button)
+        side.addSpacing(theme_module.SPACE["lg"])
+        side.addWidget(self.project_nav_label)
+        side.addSpacing(theme_module.SPACE["xxs"])
+        side.addLayout(self.project_nav_box)
         side.addStretch(1)
         side.addWidget(sidebar_footer)
 
-        # ---- 页头 = 这一页的工具条 ------------------------------------------
-        # 标题从 display(28) 收到 title(22) 并与副标题**同一行**：桌面窗口的标题栏已经
-        # 说过"这是哪个应用"，内容区不必再喊一次。省下的纵向全部还给任务列表。
+        # ---- 页头：大标题 + 一句说明，右侧是搜索 ------------------------------------
         title = QLabel(i18n.tr('任务库'))
-        title.setObjectName("pageTitle")
+        title.setObjectName("displayTitle")
         self.subtitle = style_module.ElideLabel(
-            i18n.tr('导入 PDF / DOCX，翻译、审校，然后交付。'))
-        self.subtitle.setObjectName("pageSubtitle")
-        title_box = QHBoxLayout()
-        title_box.setSpacing(theme_module.SPACE["md"])
-        title_box.addWidget(title, 0, Qt.AlignmentFlag.AlignVCenter)
-        title_box.addWidget(self.subtitle, 1, Qt.AlignmentFlag.AlignVCenter)
+            i18n.tr('导入 PDF、DOCX、EPUB、TXT 或 Markdown，翻译、审校，然后交付。'))
+        self.subtitle.setObjectName("subtitle")
+        title_box = QVBoxLayout()
+        title_box.setSpacing(theme_module.SPACE["xxs"])
+        title_box.addWidget(title)
+        title_box.addWidget(self.subtitle)
 
         self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
         self.refresh_icon_button.clicked.connect(self.refreshRequested.emit)
@@ -531,23 +638,30 @@ class HomeView(QWidget):
         # 两种视图共用同一份选中状态，切换不丢选择。
         self.view_switch = style_module.SegmentedControl(
             [("table", i18n.tr("表格")), ("cards", i18n.tr("卡片"))])
-        self._view_mode = "table"
+        # Golden Gate：默认是卡片（文档缩略图 + 状态），表格留给"几十个任务横着扫"。
+        self.view_switch.set_value("cards")
+        self._view_mode = "cards"
         self.view_switch.changed.connect(self._set_view_mode)
 
-        # 项目筛选：原来它是"任务列表"标题行上的第三个元素，与旁边的分段控件连在一起
-        # 读成"一个四段控件"。现在它回到工具条右侧，与视图切换同属"看什么"这一类。
+        # 状态筛选：与下方指标卡同一组词（运行中 / 已交付 / 有错误）。
+        self._status_key = "all"
+        self.status_filter = components.FilterChips([
+            ("all", i18n.tr('全部')), ("active", i18n.tr('运行中')),
+            ("delivered", i18n.tr('已交付')), ("errored", i18n.tr('有错误'))])
+        self.status_filter.changed.connect(self._status_filter_changed)
+
         self.project_filter = style_module.ComboBox()
         self.project_filter.addItem(i18n.tr('全部项目'), "")
         self.project_filter.setMinimumWidth(150)
         self.project_filter.setMaximumWidth(220)
         self.project_filter.setToolTip(i18n.tr('按项目筛选任务'))
         self.project_filter.currentIndexChanged.connect(self._apply_filter)
+        self.project_filter.currentIndexChanged.connect(self._sync_project_nav)
 
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText(i18n.tr('搜索任务：文档名、状态、语言…'))
-        self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.setMinimumWidth(180)
-        self.search_edit.setMaximumWidth(260)
+        self.search_edit = components.SearchBar(
+            i18n.tr('搜索任务：文档名、状态、语言…'), shortcut_scope=self)
+        self.search_edit.setMinimumWidth(300)
+        self.search_edit.setMaximumWidth(340)
         self.search_edit.textChanged.connect(self._apply_filter)
 
         self.sort_box = style_module.ComboBox()
@@ -559,10 +673,6 @@ class HomeView(QWidget):
         header_actions = QHBoxLayout()
         header_actions.setSpacing(theme_module.SPACE["sm"])
         header_actions.addWidget(self.search_edit)
-        header_actions.addWidget(self.view_switch)
-        header_actions.addWidget(self.project_filter)
-        header_actions.addWidget(self.sort_box)
-        header_actions.addSpacing(theme_module.SPACE["xxs"])
         header_actions.addWidget(self.refresh_icon_button)
 
         page_header = QHBoxLayout()
@@ -575,14 +685,23 @@ class HomeView(QWidget):
         self.setup_banner.set_action(i18n.tr('配置模型连接…'), self.settingsRequested.emit)
         self.setup_banner.setVisible(False)
 
-        # ---- 内联指标条（取代四张 69px 高的指标卡） -------------------------
-        self.stats = style_module.StatStrip([
-            ("total", i18n.tr('任务总数')),
-            ("active", i18n.tr('运行中')),
-            ("delivered", i18n.tr('已交付')),
-            ("errored", i18n.tr('有错误')),
+        # ---- 指标卡（接口与旧的内联指标条相同：set_value / value / cell） ---------
+        # Golden Gate：四张指标卡并进了筛选芯片（"运行中 1"），不再单独占一行。
+        # 对象保留（计数仍在这里维护，窗口/测试读它），但不显示。
+        self.stats = components.MetricCards([
+            ("total", i18n.tr('任务总数'), "projects", "accent"),
+            ("active", i18n.tr('运行中'), "pulse", "info"),
+            ("delivered", i18n.tr('已交付'), "check-circle", "ok"),
+            ("errored", i18n.tr('有错误'), "alert", "danger"),
         ])
+        self.stats.setParent(self)
+        self.stats.setVisible(False)
+        self._status_labels = {"all": i18n.tr('全部'), "active": i18n.tr('运行中'),
+                               "delivered": i18n.tr('已交付'), "errored": i18n.tr('有错误')}
 
+        # ---- 继续上次的工作（最近一个还没交付、也没出错的任务） -----------------
+        self.continue_card = self._build_continue_card()
+        self._continue_job_id = ""
 
         # ---- 任务表 --------------------------------------------------------
         self.table = QTableWidget(0, len(self.COLUMNS), self)
@@ -625,7 +744,8 @@ class HomeView(QWidget):
         self.card_page = QWidget()
         self.card_page.setObjectName("pageCanvas")
         self.card_layout = QVBoxLayout(self.card_page)
-        self.card_layout.setContentsMargins(0, 0, theme_module.SPACE["sm"], 0)
+        self.card_layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
+                                            theme_module.SPACE["md"], theme_module.SPACE["md"])
         self.card_layout.setSpacing(theme_module.SPACE["lg"])
         self.card_scroll = QScrollArea()
         self.card_scroll.setWidgetResizable(True)
@@ -644,9 +764,7 @@ class HomeView(QWidget):
         empty_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["xxl"],
                                         theme_module.SPACE["xl"], theme_module.SPACE["xxl"])
         empty_layout.setSpacing(theme_module.SPACE["sm"])
-        empty_icon = QLabel()
-        empty_icon.setPixmap(icons.pixmap("file-text", 40, style_module.text_color("text-muted")))
-        empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_icon = icons.IconLabel("file-text", 40, "text-muted")
         empty_title = QLabel(i18n.tr('还没有任务'))
         empty_title.setObjectName("sectionTitle")
         empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -655,14 +773,14 @@ class HomeView(QWidget):
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_button = QPushButton(i18n.tr('导入文档…'))
         self.empty_button.setObjectName("primaryAction")
-        self.empty_button.setIcon(icons.icon("upload", 16, style_module.text_color("text-on-accent")))
+        self.empty_button.setIcon(icons.icon("upload", 16, "text-on-accent"))
         self.empty_button.setIconSize(QSize(16, 16))
         self.empty_button.clicked.connect(self.importRequested.emit)
         empty_buttons = QHBoxLayout()
         empty_buttons.addStretch(1)
         empty_buttons.addWidget(self.empty_button)
         empty_buttons.addStretch(1)
-        empty_layout.addWidget(empty_icon)
+        empty_layout.addWidget(empty_icon, 0, Qt.AlignmentFlag.AlignHCenter)
         empty_layout.addWidget(empty_title)
         empty_layout.addWidget(self.empty_label)
         empty_layout.addSpacing(theme_module.SPACE["sm"])
@@ -682,14 +800,14 @@ class HomeView(QWidget):
         # ---- 底部动作 + 状态 ------------------------------------------------
         self.open_button = QPushButton(i18n.tr('打开任务'))
         self.open_button.setObjectName("primaryAction")
-        self.open_button.setIcon(icons.icon("arrow-right", 16, style_module.text_color("text-on-accent")))
+        self.open_button.setIcon(icons.icon("arrow-right", 16, "text-on-accent"))
         self.open_button.setIconSize(QSize(16, 16))
         self.move_button = QPushButton(i18n.tr('移动到项目…'))
-        self.move_button.setIcon(icons.icon("folder", 16, style_module.text_color("text-secondary")))
+        self.move_button.setIcon(icons.icon("folder", 16, "text-secondary"))
         self.move_button.setIconSize(QSize(16, 16))
         self.delete_button = QPushButton(i18n.tr('删除任务'))
         self.delete_button.setObjectName("dangerAction")
-        self.delete_button.setIcon(icons.icon("trash", 16, style_module.text_color("danger")))
+        self.delete_button.setIcon(icons.icon("trash", 16, "danger"))
         self.delete_button.setIconSize(QSize(16, 16))
         self.open_button.clicked.connect(self._open_selected)
         self.move_button.clicked.connect(self._move_selected)
@@ -712,31 +830,114 @@ class HomeView(QWidget):
         actions.addStretch(1)
         actions.addWidget(self.status_label)
 
-        # 列表块 = 表格 + 脚注（间距 0）。脚注自带一条 1px 顶线，若还留着主布局的
-        # 12px 行距，它就会"浮"在表格下面，看起来仍是一个独立容器。
-        list_block = QWidget()
-        list_layout = QVBoxLayout(list_block)
-        list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(0)
-        list_layout.addWidget(self.stack, 1)
-        list_layout.addWidget(self.actions_frame)
+        # 任务区块 = 一张容器卡：头部条（标题 + 状态筛选 + 视图/项目/排序） + 列表 + 脚注。
+        self.list_card = components.SectionCard(i18n.tr('任务列表'))
+        self.list_card.add_header_widget(self.status_filter)
+        self.list_card.header_layout.addStretch(1)
+        for control in (self.view_switch, self.project_filter, self.sort_box):
+            self.list_card.add_header_widget(control)
+        actions.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
+                                   theme_module.SPACE["md"], theme_module.SPACE["sm"])
+        self.list_card.body_layout.addWidget(self.stack, 1)
+        self.list_card.body_layout.addWidget(self.actions_frame)
 
         # ---- 主区组装 ------------------------------------------------------
-        main = QWidget()
+        main = components.GradientCanvas()
         layout = QVBoxLayout(main)
-        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["md"],
-                                  theme_module.SPACE["xl"], theme_module.SPACE["md"])
-        layout.setSpacing(theme_module.SPACE["md"])
+        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        layout.setSpacing(theme_module.SPACE["lg"])
         layout.addLayout(page_header)
         layout.addWidget(self.setup_banner)
-        layout.addWidget(self.stats)
-        layout.addWidget(list_block, 1)
+        layout.addWidget(self.continue_card)
+        layout.addWidget(self.list_card, 1)
 
         shell = QHBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
         shell.addWidget(sidebar)
         shell.addWidget(main, 1)
+
+    # -- 继续上次的工作 ----------------------------------------------------
+    def _build_continue_card(self) -> Card:
+        card = Card()
+        card.setObjectName("continueCard")
+        row = QHBoxLayout(card)
+        row.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                               theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        row.setSpacing(theme_module.SPACE["xl"])
+        row.addWidget(components.DocThumb(80, 104), 0, Qt.AlignmentFlag.AlignVCenter)
+        text = QVBoxLayout()
+        text.setSpacing(theme_module.SPACE["xs"])
+        eyebrow = QLabel(i18n.tr('继续上次的工作'))
+        eyebrow.setObjectName("eyebrow")
+        self.continue_title = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideMiddle)
+        self.continue_title.setObjectName("continueTitle")
+        self.continue_meta = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
+        self.continue_meta.setObjectName("subtitle")
+        self.continue_status = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
+        self.continue_status.setObjectName("continueStatus")
+        self.continue_progress = components.ProgressLine(0)
+        self.continue_progress.setMaximumWidth(320)
+        self.continue_button = QPushButton(i18n.tr('继续'))
+        self.continue_button.setObjectName("primaryAction")
+        self.continue_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.continue_button.clicked.connect(
+            lambda: self._continue_job_id and self.openRequested.emit(self._continue_job_id))
+        style_module.fit_button(self.continue_button, max_width=200)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(theme_module.SPACE["sm"])
+        buttons.addWidget(self.continue_button)
+        buttons.addStretch(1)
+        text.addWidget(eyebrow)
+        text.addWidget(self.continue_title)
+        text.addWidget(self.continue_meta)
+        text.addSpacing(theme_module.SPACE["xxs"])
+        text.addWidget(self.continue_status)
+        text.addWidget(self.continue_progress)
+        text.addSpacing(theme_module.SPACE["sm"])
+        text.addLayout(buttons)
+        row.addLayout(text, 1)
+        card.setVisible(False)
+        return card
+
+    def _continue_candidate(self) -> adapter.JobRow | None:
+        """最近更新的、还没交付也没出错的任务（运行中的优先）。"""
+        candidates = [row for row in self._rows
+                      if not getattr(row, "snapshot_version", None)
+                      and not str(getattr(row, "error", "") or "").strip()]
+        if not candidates:
+            return None
+        return sort_job_rows(candidates, "updated")[0]
+
+    def _refresh_continue(self) -> None:
+        row = self._continue_candidate()
+        # 搜索/筛选时它会和结果打架：只在"看全部"时出现。
+        show = (row is not None and not self.search_edit.text().strip()
+                and self._status_key == "all")
+        self.continue_card.setVisible(show)
+        if not show:
+            self._continue_job_id = ""
+            return
+        self._continue_job_id = row.job_id
+        self.continue_title.setText(row.title)
+        self.continue_title.setToolTip(row.title)
+        meta = [part for part in (
+            _row_format(row),
+            i18n.tr("{v0} 段", v0=row.segment_count) if row.segment_count else "",
+            i18n.tr_dynamic(row.target_lang) if row.target_lang else "",
+            components.relative_time(row.updated_at),
+        ) if part]
+        self.continue_meta.setText(" · ".join(meta))
+        status = i18n.tr_dynamic(row.status_label) or ""
+        progress = i18n.tr_dynamic(row.progress_label) if row.progress_label else ""
+        parts = [part for part in (status, progress if progress != status else "") if part]
+        self.continue_status.setText(" · ".join(parts))
+        percent = _row_percent(row)
+        self.continue_progress.setVisible(percent is not None)
+        if percent is not None:
+            self.continue_progress.set_value(percent)
+        self.continue_button.setText(i18n.tr('继续'))
 
     # -- data --------------------------------------------------------------
     def set_rows(self, rows: list[adapter.JobRow]) -> None:
@@ -760,6 +961,62 @@ class HomeView(QWidget):
         index = self.project_filter.findData(current)
         self.project_filter.setCurrentIndex(index if index >= 0 else 0)
         self.project_filter.blockSignals(False)
+        self._rebuild_project_nav(projects)
+
+    #: 侧栏「最近项目」最多列几个：它是快捷入口，不是项目管理（那是「项目…」）。
+    PROJECT_NAV_LIMIT = 6
+
+    def _rebuild_project_nav(self, projects: list[dict]) -> None:
+        for button in self._project_nav_buttons.values():
+            self.project_nav_box.removeWidget(button)
+            button.setParent(None)
+            button.deleteLater()
+        self._project_nav_buttons = {}
+        shown = [project for project in projects
+                 if project.get("project_id") and not project.get("is_system")]
+        for project in shown[:self.PROJECT_NAV_LIMIT]:
+            project_id = str(project.get("project_id"))
+            name = str(project.get("name") or i18n.tr("未命名项目"))
+            button = QPushButton(name)
+            button.setObjectName("navProject")
+            button.setCheckable(True)
+            button.setIcon(icons.icon("dot", 14, "text-muted", color_on="accent"))
+            button.setIconSize(QSize(14, 14))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip(name)
+            style_module.fit_button(button, max_width=168)
+            button.clicked.connect(
+                lambda _checked=False, pid=project_id: self._pick_project_from_nav(pid))
+            self.project_nav_box.addWidget(button)
+            self._project_nav_buttons[project_id] = button
+        self.project_nav_label.setVisible(bool(self._project_nav_buttons))
+        self._sync_project_nav()
+
+    def _pick_project_from_nav(self, project_id: str) -> None:
+        # 再点一次已选中的项目 = 取消筛选，回到"全部项目"。
+        current = self.project_filter.currentData() or ""
+        target = "" if current == project_id else project_id
+        index = self.project_filter.findData(target)
+        self.project_filter.setCurrentIndex(max(index, 0))
+
+    def _sync_project_nav(self, *_args) -> None:
+        current = self.project_filter.currentData() or ""
+        for project_id, button in self._project_nav_buttons.items():
+            button.setChecked(project_id == current)
+
+    def _status_filter_changed(self, key: str) -> None:
+        self._status_key = key or "all"
+        self._apply_filter()
+
+    def _matches_status(self, row: adapter.JobRow) -> bool:
+        key = self._status_key
+        if key == "active":
+            return bool(row.active)
+        if key == "delivered":
+            return bool(getattr(row, "snapshot_version", None))
+        if key == "errored":
+            return bool(str(getattr(row, "error", "") or "").strip())
+        return True
 
     def set_status(self, text: str) -> None:
         """列表脚注：有消息时显示消息，否则显示选中摘要（"已选择 2 个任务"）。
@@ -806,7 +1063,8 @@ class HomeView(QWidget):
         self.engine_model.setVisible(bool(model_label))
 
     def _visible_rows(self) -> list[adapter.JobRow]:
-        return sort_job_rows(self._filtered_rows(), self.sort_box.currentData() or "updated")
+        rows = [row for row in self._filtered_rows() if self._matches_status(row)]
+        return sort_job_rows(rows, self.sort_box.currentData() or "updated")
 
     def _filtered_rows(self) -> list[adapter.JobRow]:
         project = self.project_filter.currentData() or ""
@@ -835,9 +1093,14 @@ class HomeView(QWidget):
         theme = current_theme()
         if theme == self._logo_theme:
             return
-        # 字标自带品牌名与标语，所以侧栏不再重复写文字
-        logo = branding.logo_pixmap(32, theme)
+        # 字标自带品牌名与标语，所以侧栏不再重复写文字。
+        # 高度 LOGO_HEIGHT（逻辑像素）：字标宽高比 3.62，52px 高 ≈ 188px 宽，正好铺满
+        # 232px 侧栏的内容区（208px）；按设备像素比出图，Retina 屏上不发糊。
+        ratio = max(1.0, float(self.devicePixelRatioF()))
+        logo = branding.logo_pixmap(round(self.LOGO_HEIGHT * ratio), theme,
+                                    tint=theme_module.tokens(theme)["accent"])
         if not logo.isNull():
+            logo.setDevicePixelRatio(ratio)
             self._logo_label.setPixmap(logo)
         self._logo_theme = theme
 
@@ -845,13 +1108,16 @@ class HomeView(QWidget):
         rows = self._visible_rows()
         self._refresh_logo()
         tokens = theme_module.tokens(current_theme())
-        active = [row for row in rows if row.active]
-        # 指标条的值只用行里**确实存在**的字段（不猜状态字符串）
-        delivered = [row for row in rows if getattr(row, "snapshot_version", None)]
-        errored = [row for row in rows if str(getattr(row, "error", "") or "").strip()]
-        # ---- 指标条 --------------------------------------------------------
+        # 指标按"项目 + 搜索"的范围统计，**不受状态筛选影响**：点「有错误」芯片时，
+        # 「任务总数」还应该是这个范围里的总数，而不是被筛成 3。
+        scope = self._filtered_rows()
+        active = [row for row in scope if row.active]
+        # 指标的值只用行里**确实存在**的字段（不猜状态字符串）
+        delivered = [row for row in scope if getattr(row, "snapshot_version", None)]
+        errored = [row for row in scope if str(getattr(row, "error", "") or "").strip()]
+        # ---- 指标卡 --------------------------------------------------------
         rows_count = len(rows)
-        self.stats.set_value("total", rows_count)
+        self.stats.set_value("total", len(scope))
         self.stats.set_value("active", len(active),
                              emphasis="accent" if active else "muted")
         self.stats.set_value("delivered", len(delivered),
@@ -859,6 +1125,13 @@ class HomeView(QWidget):
         # "有错误"是这四个数字里唯一需要被看见的那个：0 的时候退成灰，非 0 变红。
         self.stats.set_value("errored", len(errored),
                              emphasis="danger" if errored else "muted")
+        for key, count in (("all", len(scope)), ("active", len(active)),
+                           ("delivered", len(delivered)), ("errored", len(errored))):
+            button = self.status_filter.button(key)
+            if button is not None:
+                label = self._status_labels[key]
+                button.setText(f"{label}  {count}" if count else label)
+        self._refresh_continue()
         self.table.setRowCount(rows_count)
         for row_index, row in enumerate(rows):
             tone = _status_tone(row)
@@ -925,13 +1198,16 @@ class HomeView(QWidget):
         self.view_switch.set_value(self._view_mode)
 
     def _card_columns(self) -> int:
-        # 先看视图自己的宽度（滚动区在首次填充时往往还没被布局到最终尺寸）。
+        """能并排放下几张 ≥ ``_TaskCard.MIN_WIDTH`` 的卡（Golden Gate 的缩略图网格）。
+
+        先看视图自己的宽度（滚动区在首次填充时往往还没被布局到最终尺寸），再减去侧栏、
+        主区左右留白与容器卡的内边距。
+        """
         width = self.width() or self.card_scroll.viewport().width()
-        if width >= 1240:
-            return 3
-        if width >= 880:
-            return 2
-        return 1
+        available = width - self.SIDEBAR_WIDTH - 2 * theme_module.SPACE["xl"] \
+            - 2 * theme_module.SPACE["md"]
+        gap = theme_module.SPACE["lg"]
+        return max(1, min(6, (available + gap) // (_TaskCard.MIN_WIDTH + gap)))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         """窗口宽度跨过断点时重排卡片：否则列数会和可用宽度脱节。"""
@@ -950,6 +1226,14 @@ class HomeView(QWidget):
 
     def _fill_cards(self, rows: list[adapter.JobRow]) -> None:
         """按项目分组重建卡片页：分组标题 + 网格任务卡（选中态与表格同步）。"""
+        # 卡片可以拿键盘焦点：重建前先记住焦点在哪张卡上，并把焦点移出卡片页。
+        # 否则下面 setParent(None) 会把"持有焦点的控件"整个摘出窗口，整个窗口随之失焦
+        # （键盘用户的焦点凭空消失，Tab 也没有起点）。
+        focused_job = next((job_id for job_id, card in self._cards.items()
+                            if card.hasFocus()), "")
+        if focused_job or (self.focusWidget() is not None
+                           and self.card_page.isAncestorOf(self.focusWidget())):
+            self.card_scroll.setFocus(Qt.FocusReason.OtherFocusReason)
         while self.card_layout.count():
             item = self.card_layout.takeAt(0)
             widget = item.widget()
@@ -982,12 +1266,13 @@ class HomeView(QWidget):
 
             grid = QGridLayout()
             grid.setContentsMargins(0, 0, 0, 0)
-            grid.setHorizontalSpacing(theme_module.SPACE["md"])
-            grid.setVerticalSpacing(theme_module.SPACE["md"])
+            grid.setHorizontalSpacing(theme_module.SPACE["lg"])
+            grid.setVerticalSpacing(theme_module.SPACE["lg"])
             for position, row in enumerate(items):
                 card = _TaskCard(row, tone=_status_tone(row), parent=section)
                 card.clicked.connect(self._select_job_from_card)
                 card.activated.connect(self._open_job_from_card)
+                card.navigate.connect(self._navigate_cards)
                 grid.addWidget(card, position // columns, position % columns)
                 self._cards[row.job_id] = card
             for column in range(columns):
@@ -995,6 +1280,8 @@ class HomeView(QWidget):
             section_layout.addLayout(grid)
             self.card_layout.addWidget(section)
         self.card_layout.addStretch(1)
+        if focused_job in self._cards:
+            self._cards[focused_job].setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _select_job_from_card(self, job_id: str) -> None:
         for row_index in range(self.table.rowCount()):
@@ -1004,6 +1291,19 @@ class HomeView(QWidget):
                 self.table.clearSelection()
                 self.table.selectRow(row_index)
                 return
+
+    def _navigate_cards(self, job_id: str, step: int) -> None:
+        """方向键：左右 = 前/后一张，上下 = 上/下一行（±100 表示"一行"）。"""
+        order = list(self._cards)
+        if job_id not in order:
+            return
+        columns = max(1, self._card_columns_applied or 1)
+        delta = step if abs(step) < 100 else (columns if step > 0 else -columns)
+        target = order.index(job_id) + delta
+        if 0 <= target < len(order):
+            card = self._cards[order[target]]
+            card.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.card_scroll.ensureWidgetVisible(card)
 
     def _open_job_from_card(self, job_id: str) -> None:
         self._select_job_from_card(job_id)
@@ -1179,6 +1479,10 @@ class WorkbenchView(QWidget):
         self.config: adapter.EngineConfig | None = None
         self._all_rows: list[adapter.SegmentRow] = []
         self._rows: list[adapter.SegmentRow] = []
+        # 每个网格位置上一次画出去的行数据 + 画它时的（主题, 语言）。后台每秒刷新时
+        # 绝大多数行没有变化：只重画变了的行，否则 4800 段的任务每秒要白画 5 万次。
+        self._painted: dict[int, adapter.SegmentRow] = {}
+        self._painted_look: tuple = ()
         self._state: dict = {}
         # 译前准备视图（adapter.task_setup_view）。``None`` 表示"没有准备面"，
         # 此时一律按"已开始"处理，旧的调用路径（测试、恢复）不受影响。
@@ -1216,11 +1520,16 @@ class WorkbenchView(QWidget):
         # 原来第二行是三个事实芯片（进度 / 审校 / 必须处理），它们各自用不同口径回答
         # "现在怎么样"，互相对不上；这些事实现在是步骤条上每一步的一句状态，
         # 全部来自 `stage.stage_view` 这一个出处。
-        self.back_button = QPushButton(i18n.tr('任务列表'))
-        self.back_button.setObjectName("ghostAction")
-        self.back_button.setIcon(icons.icon("arrow-left", 16,
-                                            style_module.text_color("text-secondary")))
+        # Golden Gate 统一工具栏：返回是一枚圆形按钮（文案作为提示与无障碍名称）。
+        self.back_button = QToolButton()
+        self.back_button.setObjectName("roundButton")
+        self.back_button.setText(i18n.tr('任务列表'))
+        self.back_button.setToolTip(i18n.tr('任务列表'))
+        self.back_button.setAccessibleName(i18n.tr('任务列表'))
+        self.back_button.setIcon(icons.icon("chevron-left", 16, "text-primary"))
         self.back_button.setIconSize(QSize(16, 16))
+        self.back_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.clicked.connect(self.backRequested.emit)
         # 文件名与运行时说明都用**可省略**标签：长文件名不能再把进度条和运行控制
         # 挤出可视区（旧版是普通 QLabel，sizeHint 就是整串文字的宽度）。
@@ -1236,7 +1545,7 @@ class WorkbenchView(QWidget):
         self.chip_state = Chip("—", "muted")
 
         def _icon_button(button: QPushButton, name: str, token: str = "text-secondary"):
-            button.setIcon(icons.icon(name, 16, style_module.text_color(token)))
+            button.setIcon(icons.icon(name, 16, token))
             button.setIconSize(QSize(16, 16))
             return button
 
@@ -1284,28 +1593,42 @@ class WorkbenchView(QWidget):
         self.header_actions_bar.setContentsMargins(0, 0, 0, 0)
         self.header_actions_bar.setLayout(run_controls)
 
-        identity = QHBoxLayout()
+        # ---- Golden Gate 统一工具栏（一行，贴住窗口顶边，底部一条发丝线） ----------
+        #   返回 · 文件名（下面一行是状态芯片 + 运行说明） · 阶段胶囊（居中）
+        #   · 术语/更多 · 进度 · 运行动作
+        self.progress.setFixedWidth(120)
+        subtitle = QHBoxLayout()
+        subtitle.setContentsMargins(0, 0, 0, 0)
+        subtitle.setSpacing(theme_module.SPACE["xs"] + 2)
+        # 芯片按内容高居中：QLabel 的垂直策略允许被拉伸，不给对齐就会被撑到与按钮同高。
+        self.chip_state.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        subtitle.addWidget(self.chip_state, 0, Qt.AlignmentFlag.AlignVCenter)
+        subtitle.addWidget(self.status_label, 1)
+        subtitle.addStretch(0)
+        identity = QVBoxLayout()
         identity.setContentsMargins(0, 0, 0, 0)
-        identity.setSpacing(theme_module.SPACE["sm"])
-        identity.addWidget(self.back_button)
-        identity.addWidget(self.title_label, 2)
-        # 芯片按内容高居中：QLabel 的垂直策略允许被拉伸，不给对齐就会被撑到
-        # 与按钮同高，药丸从 21px 变成 30px。
-        identity.addWidget(self.chip_state, 0, Qt.AlignmentFlag.AlignVCenter)
-        identity.addWidget(self.status_label, 1)
-        identity.addWidget(self.progress)
-        identity.addWidget(self.header_actions_bar)
+        identity.setSpacing(1)
+        identity.addWidget(self.title_label)
+        identity.addLayout(subtitle)
+        identity_box = QWidget()
+        identity_box.setLayout(identity)
+        identity_box.setMinimumWidth(180)
+        identity_box.setMaximumWidth(360)
 
         self.stage_bar = StageBar()
         self.stage_bar.pageRequested.connect(self.show_page)
 
-        header_card = Card()
-        header_layout = QVBoxLayout(header_card)
+        header_card = QFrame()
+        header_card.setObjectName("unifiedToolbar")
+        header_layout = QHBoxLayout(header_card)
         header_layout.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["sm"],
                                          theme_module.SPACE["lg"], theme_module.SPACE["sm"])
-        header_layout.setSpacing(theme_module.SPACE["xs"])
-        header_layout.addLayout(identity)
-        header_layout.addWidget(self.stage_bar)
+        header_layout.setSpacing(theme_module.SPACE["md"])
+        header_layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(identity_box, 1)
+        header_layout.addWidget(self.stage_bar, 2)
+        header_layout.addWidget(self.progress, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.header_actions_bar, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ---- 翻译标签页 ----------------------------------------------------
         self.search_edit = QLineEdit()
@@ -1314,7 +1637,7 @@ class WorkbenchView(QWidget):
         self.search_edit.textChanged.connect(self._filters_changed)
 
         self.search_edit.addAction(
-            icons.icon("search", 16, style_module.text_color("text-muted")),
+            icons.icon("search", 16, "text-muted"),
             QLineEdit.ActionPosition.LeadingPosition)
         self.search_edit.setObjectName("searchField")
 
@@ -1687,8 +2010,9 @@ class WorkbenchView(QWidget):
 
         delivery_card = Card()
         delivery_layout = QVBoxLayout(delivery_card)
-        delivery_layout.setContentsMargins(16, 14, 16, 14)
-        delivery_layout.setSpacing(10)
+        delivery_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                           theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        delivery_layout.setSpacing(theme_module.SPACE["md"])
         delivery_layout.addWidget(self.delivery_label)
         delivery_layout.addLayout(delivery_actions)
         delivery_layout.addLayout(asset_header)
@@ -1727,12 +2051,20 @@ class WorkbenchView(QWidget):
         # 而不是把最后一组文件挤成半行。
         delivery_content = QWidget()
         delivery_content.setObjectName("pageCanvas")
-        delivery_content_layout = QVBoxLayout(delivery_content)
-        delivery_content_layout.setContentsMargins(0, 8, 0, 0)
+        # Golden Gate：交付是一张居中的"检查单"，内容列最宽 820px，两侧留白。
+        delivery_column = QWidget()
+        delivery_column.setMaximumWidth(820)
+        delivery_content_layout = QVBoxLayout(delivery_column)
+        delivery_content_layout.setContentsMargins(0, theme_module.SPACE["lg"], 0, 0)
         delivery_content_layout.setSpacing(theme_module.SPACE["md"])
         delivery_content_layout.addWidget(delivery_card)
         delivery_content_layout.addWidget(excluded_card)
         delivery_content_layout.addStretch(1)
+        delivery_centre = QHBoxLayout(delivery_content)
+        delivery_centre.setContentsMargins(0, 0, 0, 0)
+        delivery_centre.addStretch(1)
+        delivery_centre.addWidget(delivery_column, 100)
+        delivery_centre.addStretch(1)
         delivery_scroll = QScrollArea()
         delivery_scroll.setWidgetResizable(True)
         delivery_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -1753,7 +2085,7 @@ class WorkbenchView(QWidget):
         self.tabs.tabBar().setVisible(False)
         self.tabs.setIconSize(QSize(16, 16))
         self.tabs.addTab(translation_page,
-                         icons.icon("translate", 16, style_module.text_color("text-secondary")),
+                         icons.icon("translate", 16, "text-secondary"),
                          i18n.tr('翻译'))
         # 严格术语治理：核心在候选术语未冻结时拒绝开始翻译。没有这条提示，任务只会
         # 停在"待术语确认"，用户不知道该去哪里。
@@ -1768,7 +2100,7 @@ class WorkbenchView(QWidget):
         self.terms_panel.entryAddRequested.connect(self.glossaryEntryAddRequested.emit)
         self.terms_panel.entryDeleteRequested.connect(self.glossaryEntryDeleteRequested.emit)
         self.tabs.addTab(self.terms_panel,
-                         icons.icon("file-sheet", 16, style_module.text_color("text-secondary")),
+                         icons.icon("file-sheet", 16, "text-secondary"),
                          i18n.tr('术语'))
         self.review_panel = ReviewPanel()
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
@@ -1779,7 +2111,7 @@ class WorkbenchView(QWidget):
         self.review_panel.retranslateRequested.connect(self.retranslateRequested.emit)
         self.review_panel.editRequested.connect(self.show_segment_for_edit)
         self.tabs.addTab(self.review_panel,
-                         icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
+                         icons.icon("shield-check", 16, "text-secondary"),
                          i18n.tr('审校'))
         self.followup_panel = FollowupPanel()
         self.followup_panel.retryRequested.connect(self.followupRetryRequested.emit)
@@ -1792,7 +2124,7 @@ class WorkbenchView(QWidget):
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))
         self.tabs.addTab(delivery_page,
-                         icons.icon("package", 16, style_module.text_color("text-secondary")),
+                         icons.icon("package", 16, "text-secondary"),
                          i18n.tr('交付'))
         # 学术专业模式的页：默认隐藏，设置里主动打开（或任务本身已带着学术产物）才出现。
         self.report_panel = ReportPanel()
@@ -1806,7 +2138,7 @@ class WorkbenchView(QWidget):
         self.report_panel.openCasesRequested.connect(
             lambda: self.tabs.setCurrentWidget(self.cases_panel))
         self.tabs.addTab(self.report_panel,
-                         icons.icon("file-text", 16, style_module.text_color("text-secondary")),
+                         icons.icon("file-text", 16, "text-secondary"),
                          i18n.tr('报告'))
         self.cases_panel = CasesPanel()
         self.cases_panel.approveRequested.connect(self.caseApproveRequested.emit)
@@ -1816,28 +2148,28 @@ class WorkbenchView(QWidget):
         self.cases_panel.baselineRejectRequested.connect(self.caseBaselineRejectRequested.emit)
         self.cases_panel.editRequested.connect(self.show_segment_for_edit)
         self.tabs.addTab(self.cases_panel,
-                         icons.icon("file-text", 16, style_module.text_color("text-secondary")),
+                         icons.icon("file-text", 16, "text-secondary"),
                          i18n.tr('案例'))
         self.qa_panel = QAPanel()
         self.qa_panel.renderRequested.connect(self.qaRenderRequested.emit)
         self.qa_panel.factToggled.connect(self.qaFactToggled.emit)
         self.tabs.addTab(self.qa_panel,
-                         icons.icon("shield-check", 16, style_module.text_color("text-secondary")),
+                         icons.icon("shield-check", 16, "text-secondary"),
                          i18n.tr('合规与 QA'))
         self._academic_widgets = [self.report_panel, self.cases_panel, self.qa_panel]
         self._academic_mode = False
         self.tabs.currentChanged.connect(self._tab_changed)
         self.pdf_panel = PdfPanel()
         self.tabs.addTab(self.pdf_panel,
-                         icons.icon("file", 16, style_module.text_color("text-secondary")),
+                         icons.icon("file", 16, "text-secondary"),
                          i18n.tr('原页'))
         self.tabs.setTabVisible(self.tabs.indexOf(self.pdf_panel), False)
         self._pdf_ok = False
         self.tabs.addTab(self.followup_panel,
-                         icons.icon("check-circle", 16, style_module.text_color("text-secondary")),
+                         icons.icon("check-circle", 16, "text-secondary"),
                          i18n.tr('检查与修复'))
         self.tabs.addTab(self.activity_panel,
-                         icons.icon("clock", 16, style_module.text_color("text-secondary")),
+                         icons.icon("clock", 16, "text-secondary"),
                          i18n.tr('运行记录'))
         #: 页面 id → 页面。步骤条与代码里的跳转都用页面 id，不再依赖页签序号。
         self._pages: dict[str, QWidget] = {
@@ -1852,12 +2184,16 @@ class WorkbenchView(QWidget):
         self._terms_blocked = False
         self._sync_academic_tabs()
 
+        body = QVBoxLayout()
+        body.setContentsMargins(20, 12, 20, 12)
+        body.setSpacing(10)
+        body.addWidget(self.terms_gate)
+        body.addWidget(self.tabs, 1)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 12, 20, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(header_card)
-        layout.addWidget(self.terms_gate)
-        layout.addWidget(self.tabs, 1)
+        layout.addLayout(body, 1)
 
         next_shortcut = QAction(i18n.tr('下一段'), self)
         next_shortcut.setShortcut(QKeySequence("Ctrl+Return"))
@@ -2271,6 +2607,7 @@ class WorkbenchView(QWidget):
         self._rows = self._visible_rows()
         if self.segment_list.rowCount() != len(self._rows):
             self.segment_list.blockSignals(True)
+            self._painted.clear()  # 下面会换成全新的空单元格，旧缓存不再对应屏幕内容
             self.segment_list.setRowCount(len(self._rows))
             for position, row in enumerate(self._rows):
                 self.segment_list.setItem(position, 0, QTableWidgetItem(""))
@@ -2291,6 +2628,13 @@ class WorkbenchView(QWidget):
             self._paint_row(position, row)
 
     def _paint_row(self, position: int, row: adapter.SegmentRow) -> None:
+        look = (current_theme(), i18n.language())
+        if look != self._painted_look:
+            # 主题或语言变了：颜色与提示都要重画，缓存整体作废。
+            self._painted.clear()
+            self._painted_look = look
+        if self._painted.get(position) == row:
+            return
         tokens = theme_module.tokens(current_theme())
         tone = _segment_tone(row)
         number = self.segment_list.item(position, 0)
@@ -2298,6 +2642,7 @@ class WorkbenchView(QWidget):
         target = self.segment_list.item(position, 2)
         if number is None or source is None or target is None:
             return
+        self._painted[position] = dataclasses.replace(row)
         marker = ("⚠" if row.stale_draft else "●") if row.has_draft else ""
         number_text = f"{marker}{row.index + 1}"
         if number.text() != number_text:

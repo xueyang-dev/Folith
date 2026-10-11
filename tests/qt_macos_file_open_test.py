@@ -38,29 +38,50 @@ def qt_app():
     yield instance
 
 
+def _run_in_fresh_process(code: str) -> None:
+    """在**全新的进程**里跑一段 Qt 代码。
+
+    "进程里的第一个 QApplication 是不是 FolithApplication"只能在没有别的应用对象
+    的进程里判定：同一次 pytest 里只要有别的测试文件先建了普通 `QApplication`，
+    `build_application` 就（正确地）直接复用它，这两条断言便与文件的执行顺序有关。
+    """
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONPATH": str(ROOT)}
+    result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_build_application_installs_the_file_open_aware_application():
     """入口建的应用必须能收到 `QFileOpenEvent`，否则 macOS 的"打开方式"永远没反应。"""
-    from PySide6.QtWidgets import QApplication
+    _run_in_fresh_process("""
+from PySide6.QtWidgets import QApplication
+from folith.qt import window as window_module
 
-    app = window_module.build_application([])
-    assert isinstance(app, window_module.FolithApplication)
-    assert isinstance(QApplication.instance(), window_module.FolithApplication)
-    assert hasattr(app, "file_opened")
+app = window_module.build_application([])
+assert isinstance(app, window_module.FolithApplication), type(app)
+assert isinstance(QApplication.instance(), window_module.FolithApplication)
+assert hasattr(app, "file_opened")
+""")
 
 
-def test_file_open_event_is_consumed_and_emits_the_local_path(qt_app):
+def test_file_open_event_is_consumed_and_emits_the_local_path():
     """真事件走一遍：路径要取对，而且必须返回 True（否则 Qt 会忽略它）。"""
-    from PySide6.QtCore import QEvent, QUrl
-    from PySide6.QtGui import QFileOpenEvent
+    _run_in_fresh_process("""
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QFileOpenEvent
+from folith.qt import window as window_module
 
-    received: list[str] = []
-    qt_app.file_opened.connect(received.append)
-    try:
-        event = QFileOpenEvent(QUrl.fromLocalFile("/tmp/中文 路径/论文.pdf"))
-        assert window_module.FolithApplication.event(qt_app, event) is True
-        assert received == ["/tmp/中文 路径/论文.pdf"], received
-    finally:
-        qt_app.file_opened.disconnect(received.append)
+app = window_module.build_application([])
+received = []
+app.file_opened.connect(received.append)
+event = QFileOpenEvent(QUrl.fromLocalFile("/tmp/中文 路径/论文.pdf"))
+assert window_module.FolithApplication.event(app, event) is True
+assert received == ["/tmp/中文 路径/论文.pdf"], received
+""")
 
 
 def test_file_open_path_falls_back_to_the_url_form():
@@ -289,9 +310,12 @@ def test_bundle_declares_every_supported_document_type():
     ingestible = {
         ".pdf": "com.adobe.pdf",
         ".docx": "org.openxmlformats.wordprocessingml.document",
+        ".epub": "org.idpf.epub-container",
+        ".txt": "public.plain-text",
+        ".md": "net.daringfireball.markdown",
+        ".markdown": "net.daringfireball.markdown",
     }
     assert set(adapter.SUPPORTED_SUFFIXES) == set(ingestible), adapter.SUPPORTED_SUFFIXES
     assert utis == set(ingestible.values()), utis
-    for unsupported in ("public.plain-text", "net.daringfireball.markdown",
-                        "com.microsoft.word.doc"):
+    for unsupported in ("com.microsoft.word.doc",):
         assert unsupported not in utis, f"{unsupported} 会被声明成可打开，但导入层拒绝它"

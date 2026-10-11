@@ -1,21 +1,27 @@
-"""线性图标：用 QPainter 画，不引入字体/SVG 依赖，颜色跟随调用方给的 token。
+"""线性图标：用 QPainter 画，不引入字体/SVG 依赖，**颜色在绘制时才解析**。
 
-为什么自己画：Web 界面里图标是"看起来像软件"的主要来源之一（文件夹、时钟、加号、
-刷新、盾牌…），而 Qt 的 `QStyle.StandardPixmap` 是各平台混搭的原生图标，风格不统一，
-跟品牌对不上。这里用同一套 24×24 网格、同一线宽、圆头圆角的描边图标，
-颜色由调用方从主题 token 里取，因此三套主题天然一致。
+为什么自己画：Qt 的 `QStyle.StandardPixmap` 是各平台混搭的原生图标，风格不统一，
+跟品牌对不上。这里用同一套 24×24 网格、同一线宽、圆头圆角的描边图标。
 
-用法：
+**图标不携带颜色，只携带"用哪个语义 token"**：
 
-    from . import icons
-    button.setIcon(icons.icon("plus", 16, tokens["text-on-accent"]))
-    label.setPixmap(icons.pixmap("folder", 18, tokens["text-secondary"]))
+    button.setIcon(icons.icon("plus", 16, "text-on-accent"))
+    nav.setIcon(icons.icon("projects", 18, "accent", duotone=True))
+
+返回的 ``QIcon`` 背后是 :class:`ThemedIconEngine`，每次绘制都向当前主题要这个 token 的
+值，所以日间 / 夜间 / 纸面切换、以后的"自定义主题色"都不需要重建任何图标；
+禁用态自动换成 ``disabled-ink``。想要固定颜色（极少数场景）传 ``QColor`` 或 ``#hex``。
+
+``duotone=True`` 给闭合形状加一层 16% 透明度的同色底（参考设计稿里"描边 + 浅色填充"
+的双色图标）；填充色由描边色派生，因此不需要为每套主题单独配一个"浅色"。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import (QColor, QIcon, QIconEngine, QImage, QPainter,
+                           QPainterPath, QPen, QPixmap)
+from PySide6.QtWidgets import QSizePolicy, QWidget
 
 
 def _as_color(value) -> QColor:
@@ -34,6 +40,8 @@ def _as_color(value) -> QColor:
 #:   ("circle", cx, cy, r)                    圆
 #:   ("rect", x, y, w, h, r)                  圆角矩形
 #:   ("arc", cx, cy, r, start_deg, span_deg)  圆弧（Qt 角度：0=3 点方向，逆时针为正）
+#:   ("disc", cx, cy, r)                      实心圆（用主色填充）
+#:   ("cut", <以上任一种描边指令>)               在实心形状上"镂空"（用于实心图标里的对勾/三角）
 ICONS: dict[str, list[tuple]] = {
     "plus": [("line", 12, 5, 12, 19), ("line", 5, 12, 19, 12)],
     "search": [("circle", 11, 11, 6.5), ("line", 15.6, 15.6, 20, 20)],
@@ -114,33 +122,114 @@ ICONS: dict[str, list[tuple]] = {
                   ("poly", [(4.5, 10), (10.5, 10), (7.5, 6)], False),
                   ("poly", [(12, 20), (17, 9), (22, 20)], False),
                   ("line", 14, 17, 20, 17)],
+    # ---- 导航 / 工作流（设计稿图标表）-------------------------------------------
+    "projects": [("rect", 3.5, 5, 11, 15, 2.5), ("rect", 11.5, 9.5, 9, 10.5, 2.5)],
+    "workbench": [("rect", 3.5, 4.5, 15, 15, 3.5),
+                  ("poly", [(9, 15.2), (9.5, 12), (18, 3.6), (20.4, 6), (12, 14.5)], True)],
+    "segments": [("rect", 4, 4, 6.5, 6.5, 2), ("rect", 13.5, 4, 6.5, 6.5, 2),
+                 ("rect", 4, 13.5, 6.5, 6.5, 2), ("rect", 13.5, 13.5, 6.5, 6.5, 2)],
+    "termbase": [("rect", 5, 3.5, 14, 17, 3.2), ("line", 9, 9, 15, 9),
+                 ("line", 9, 13, 15, 13), ("line", 9, 17, 12.5, 17)],
+    "memory": [("poly", [(9.5, 16), (6.5, 16), (4, 13.5), (4, 6.5), (6.5, 4),
+                         (13.5, 4), (16, 6.5), (16, 9.5)], False),
+               ("rect", 9.5, 9.5, 11, 11, 2.5),
+               ("line", 12.5, 14, 17.5, 14), ("line", 12.5, 17, 16, 17)],
+    "review": [("arc", 12, 12, 8.5, 75, 315), ("poly", [(8, 12.4), (11, 15.4), (16.2, 9)], False),
+               ("disc", 18.2, 5.4, 1.1), ("disc", 20.2, 8.2, 0.8)],
+    "export": [("line", 12, 15, 12, 4), ("poly", [(7.5, 8.5), (12, 4), (16.5, 8.5)], False),
+               ("poly", [(4, 14), (4, 18), (6, 20), (18, 20), (20, 18), (20, 14)], False)],
+    "grid": [("rect", 4, 4, 6.5, 6.5, 3.25), ("rect", 13.5, 4, 6.5, 6.5, 3.25),
+             ("rect", 4, 13.5, 6.5, 6.5, 3.25), ("rect", 13.5, 13.5, 6.5, 6.5, 3.25)],
+    "book": [("poly", [(12, 7), (12, 20)], False),
+             ("poly", [(12, 7), (9, 5), (3.5, 5), (3.5, 18), (9, 18), (12, 20)], True),
+             ("poly", [(12, 7), (15, 5), (20.5, 5), (20.5, 18), (15, 18), (12, 20)], True)],
+    # 译前准备「基础风格」卡片的风格图标（与语言无关的图形，不用汉字块）。
+    "graduation": [("poly", [(2, 9.5), (12, 4.5), (22, 9.5), (12, 14.5)], True),
+                   ("poly", [(6.5, 12), (6.5, 16.2), (12, 19), (17.5, 16.2), (17.5, 12)], False),
+                   ("line", 22, 9.5, 22, 15)],
+    "code": [("poly", [(8, 7), (3, 12), (8, 17)], False),
+             ("poly", [(16, 7), (21, 12), (16, 17)], False),
+             ("line", 13.5, 5, 10.5, 19)],
+    "briefcase": [("rect", 3, 7.5, 18, 12.5, 2.5),
+                  ("poly", [(9, 7.5), (9, 5), (15, 5), (15, 7.5)], False),
+                  ("line", 3, 12.5, 21, 12.5)],
+    "feather": [("poly", [(20.5, 3.5), (13, 5), (8, 10), (6.5, 17.5), (14, 16), (19, 11)], True),
+                ("line", 6.5, 17.5, 3.5, 20.5), ("line", 9.5, 14.5, 16, 8)],
+    "scale": [("line", 12, 4, 12, 20), ("line", 7, 20, 17, 20), ("line", 5, 7, 19, 7),
+              ("poly", [(5, 7), (2.5, 13), (7.5, 13)], True),
+              ("poly", [(19, 7), (16.5, 13), (21.5, 13)], True)],
+    "megaphone": [("poly", [(4, 10), (4, 14), (8, 14), (16, 18.5), (16, 5.5), (8, 10)], True),
+                  ("line", 8, 14, 9.5, 19.5), ("arc", 16, 12, 4, -45, 90)],
+    "book-open": [("rect", 3.5, 4.5, 17, 15, 2.5), ("line", 12, 4.5, 12, 19.5),
+                  ("line", 6.2, 9, 9.4, 9), ("line", 6.2, 12.5, 9.4, 12.5),
+                  ("line", 14.6, 9, 17.8, 9), ("line", 14.6, 12.5, 17.8, 12.5)],
+    "help": [("circle", 12, 12, 8.5),
+             ("poly", [(9.6, 9.6), (10.2, 8.1), (12, 7.6), (13.8, 8.1), (14.4, 9.6),
+                       (13.8, 11), (12, 12), (12, 13.3)], False),
+             ("disc", 12, 16.4, 0.95)],
+    "shield": [("poly", [(12, 3), (20, 6), (20, 12), (12, 21), (4, 12), (4, 6)], True)],
+    "pulse": [("line", 4, 11, 4, 13), ("line", 8, 7.5, 8, 16.5), ("line", 12, 4, 12, 20),
+              ("line", 16, 8, 16, 16), ("line", 20, 10.5, 20, 13.5)],
+    "more": [("disc", 5.5, 12, 1.4), ("disc", 12, 12, 1.4), ("disc", 18.5, 12, 1.4)],
+    "dot": [("disc", 12, 12, 5)],
+    "plus-circle": [("disc", 12, 12, 9.5), ("cut", "line", 12, 7.5, 12, 16.5),
+                    ("cut", "line", 7.5, 12, 16.5, 12)],
+    "check-filled": [("disc", 12, 12, 9.5),
+                     ("cut", "poly", [(8, 12.4), (11, 15.4), (16.2, 9)], False)],
+    "play-filled": [("disc", 12, 12, 9.5), ("cut", "poly", [(10, 8), (16, 12), (10, 16)], True)],
+    "arrow-up": [("line", 12, 19, 12, 5), ("poly", [(6.5, 10.5), (12, 5), (17.5, 10.5)], False)],
+    "arrow-down": [("line", 12, 5, 12, 19), ("poly", [(6.5, 13.5), (12, 19), (17.5, 13.5)], False)],
+    "bell": [("poly", [(6, 16.5), (6, 10.5), (8, 6.5), (12, 5), (16, 6.5), (18, 10.5),
+                       (18, 16.5), (19.5, 18), (4.5, 18)], True),
+             ("poly", [(10, 20.5), (14, 20.5)], False)],
+    "sun": [("circle", 12, 12, 4), ("line", 12, 2.8, 12, 4.8), ("line", 12, 19.2, 12, 21.2),
+            ("line", 2.8, 12, 4.8, 12), ("line", 19.2, 12, 21.2, 12),
+            ("line", 5.5, 5.5, 6.9, 6.9), ("line", 17.1, 17.1, 18.5, 18.5),
+            ("line", 5.5, 18.5, 6.9, 17.1), ("line", 17.1, 6.9, 18.5, 5.5)],
+    "moon": [("poly", [(20, 14.5), (18, 15.2), (15.5, 15), (12.8, 13), (11.5, 10), (11.7, 7),
+                       (13, 4.2), (10.5, 4.8), (7, 7.5), (5.2, 11.5), (5.8, 15.5),
+                       (8.5, 19), (12.5, 20.5), (16.5, 19.7), (19.2, 17.2)], True)],
     "eye": [("poly", [(2.5, 12), (6, 7.5), (12, 5.5), (18, 7.5), (21.5, 12)], False),
             ("poly", [(21.5, 12), (18, 16.5), (12, 18.5), (6, 16.5), (2.5, 12)], False),
             ("circle", 12, 12, 3)],
 }
 
 #: 线宽按目标尺寸等比缩放（24 网格 → size 像素）
-_STROKE = 1.75
+_STROKE = 1.9
 _GRID = 24.0
+#: 双色图标的底色透明度（描边色的 alpha）。
+DUOTONE_ALPHA = 0.16
 
 
-def _painter_path(ops: list[tuple]) -> tuple[QPainterPath, list[QPainterPath]]:
-    """把指令拆成"描边路径"与"需要单独填充的圆点"。"""
-    path = QPainterPath()
+def _painter_path(ops: list[tuple]) -> tuple[QPainterPath, QPainterPath, QPainterPath,
+                                             QPainterPath, list[QPainterPath]]:
+    """把指令拆成：描边路径 / 闭合形状（双色底）/ 实心形状 / 镂空路径。
+
+    返回 ``(stroke, closed, solid, cut, dots)``。
+    """
+    stroke = QPainterPath()
+    closed = QPainterPath()
+    solid = QPainterPath()
+    cut = QPainterPath()
     dots: list[QPainterPath] = []
-    for op in ops:
+
+    def add(op: tuple, target: QPainterPath, *, fillable: QPainterPath | None) -> None:
         kind = op[0]
         if kind == "line":
             _, x1, y1, x2, y2 = op
-            path.moveTo(x1, y1)
-            path.lineTo(x2, y2)
+            target.moveTo(x1, y1)
+            target.lineTo(x2, y2)
         elif kind == "poly":
-            _, points, closed = op
-            path.moveTo(*points[0])
+            _, points, is_closed = op
+            shape = QPainterPath()
+            shape.moveTo(*points[0])
             for point in points[1:]:
-                path.lineTo(*point)
-            if closed:
-                path.closeSubpath()
+                shape.lineTo(*point)
+            if is_closed:
+                shape.closeSubpath()
+                if fillable is not None:
+                    fillable.addPath(shape)
+            target.addPath(shape)
         elif kind == "circle":
             _, cx, cy, radius = op
             if radius <= 1.2:                      # 小圆点：填充更像"实心点"
@@ -148,51 +237,228 @@ def _painter_path(ops: list[tuple]) -> tuple[QPainterPath, list[QPainterPath]]:
                 dot.addEllipse(QPointF(cx, cy), radius, radius)
                 dots.append(dot)
             else:
-                path.addEllipse(QPointF(cx, cy), radius, radius)
+                shape = QPainterPath()
+                shape.addEllipse(QPointF(cx, cy), radius, radius)
+                target.addPath(shape)
+                if fillable is not None:
+                    fillable.addPath(shape)
         elif kind == "rect":
             _, x, y, width, height, radius = op
-            path.addRoundedRect(QRectF(x, y, width, height), radius, radius)
+            shape = QPainterPath()
+            shape.addRoundedRect(QRectF(x, y, width, height), radius, radius)
+            target.addPath(shape)
+            if fillable is not None:
+                fillable.addPath(shape)
         elif kind == "arc":
             _, cx, cy, radius, start, span = op
             box = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
-            path.arcMoveTo(box, start)
-            path.arcTo(box, start, span)
-    return path, dots
+            target.arcMoveTo(box, start)
+            target.arcTo(box, start, span)
+
+    for op in ops:
+        kind = op[0]
+        if kind == "disc":
+            _, cx, cy, radius = op
+            solid.addEllipse(QPointF(cx, cy), radius, radius)
+        elif kind == "cut":
+            add(op[1:], cut, fillable=None)
+        else:
+            add(op, stroke, fillable=closed)
+    return stroke, closed, solid, cut, dots
 
 
-def pixmap(name: str, size: int = 16, color: str | QColor = "#000000",
-           *, stroke: float | None = None) -> QPixmap:
-    """画出一个图标。未知名字返回空 pixmap（调用方 `isNull()` 可判断）。"""
-    ops = ICONS.get(name)
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    if not ops:
-        return pixmap
-    path, dots = _painter_path(ops)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    scale = size / _GRID
-    painter.scale(scale, scale)
-    pen = QPen(_as_color(color))
-    width = (stroke if stroke is not None else _STROKE)
-    pen.setWidthF(width)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawPath(path)
-    brush = _as_color(color)
-    painter.setBrush(brush)
-    painter.setPen(Qt.PenStyle.NoPen)
-    for dot in dots:
-        painter.drawPath(dot)
-    painter.end()
-    return pixmap
+_PATH_CACHE: dict[str, tuple] = {}
+_PIXMAP_CACHE: dict[tuple, QPixmap] = {}
 
 
-def icon(name: str, size: int = 16, color: str | QColor = "#000000") -> QIcon:
-    """QIcon 版本（按钮/菜单用）。"""
-    return QIcon(pixmap(name, size, color))
+def _paths_for(name: str):
+    cached = _PATH_CACHE.get(name)
+    if cached is None:
+        ops = ICONS.get(name)
+        cached = _painter_path(ops) if ops else ()
+        _PATH_CACHE[name] = cached
+    return cached
+
+
+def render(name: str, width: int, height: int, color: str | QColor, *,
+           duotone: bool = False, stroke: float | None = None,
+           dpr: float = 1.0) -> QPixmap:
+    """把图标画成 ``width×height`` 设备像素的 pixmap（带缓存）。未知名字返回空 pixmap。"""
+    qcolor = _as_color(color)
+    key = (name, width, height, qcolor.rgba(), duotone, stroke, round(dpr, 2))
+    cached = _PIXMAP_CACHE.get(key)
+    if cached is not None:
+        return cached
+    result = QPixmap(max(1, width), max(1, height))
+    result.fill(Qt.GlobalColor.transparent)
+    paths = _paths_for(name)
+    if paths:
+        stroke_path, closed, solid, cut, dots = paths
+        image = QImage(result.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.scale(width / _GRID, height / _GRID)
+        if duotone and not closed.isEmpty():
+            wash = QColor(qcolor)
+            wash.setAlphaF(min(1.0, wash.alphaF() * DUOTONE_ALPHA))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(wash)
+            painter.drawPath(closed)
+        pen = QPen(qcolor)
+        pen.setWidthF(stroke if stroke is not None else _STROKE)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(stroke_path)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(qcolor)
+        for dot in dots:
+            painter.drawPath(dot)
+        painter.drawPath(solid)
+        if not cut.isEmpty():
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+            clear = QPen(Qt.GlobalColor.black)
+            clear.setWidthF(stroke if stroke is not None else _STROKE)
+            clear.setCapStyle(Qt.PenCapStyle.RoundCap)
+            clear.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(clear)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(cut)
+        painter.end()
+        result = QPixmap.fromImage(image)
+    result.setDevicePixelRatio(dpr)
+    if len(_PIXMAP_CACHE) > 600:
+        _PIXMAP_CACHE.clear()
+    _PIXMAP_CACHE[key] = result
+    return result
+
+
+def _token_value(token: str) -> str | None:
+    """``token`` 是语义 token 名时，返回它在**当前主题**里的值；否则返回 None。"""
+    from . import theme as theme_module
+    from .style import current_theme
+
+    return theme_module.tokens(current_theme()).get(token)
+
+
+def is_token(value) -> bool:
+    return isinstance(value, str) and _token_value(value) is not None
+
+
+def resolve_color(color: str | QColor) -> QColor:
+    """token 名 → 当前主题的颜色；``#hex`` / ``QColor`` 原样。"""
+    if isinstance(color, str):
+        value = _token_value(color)
+        if value is not None:
+            return _as_color(value)
+    return _as_color(color)
+
+
+class ThemedIconEngine(QIconEngine):
+    """每次绘制才解析颜色的图标引擎：主题切换后不需要重建 QIcon。
+
+    ``color_on`` / ``duotone_on`` 对应 ``QIcon.State.On``（可勾选按钮被选中时），
+    侧栏导航项因此"选中 = 图标变强调色 + 浅色底"，不需要自己监听 toggled。
+    """
+
+    def __init__(self, name: str, color: str | QColor = "text-secondary", *,
+                 duotone: bool = False, stroke: float | None = None,
+                 color_on: str | QColor | None = None,
+                 duotone_on: bool | None = None) -> None:
+        super().__init__()
+        self._name = name
+        self._color = color
+        self._duotone = duotone
+        self._stroke = stroke
+        self._color_on = color_on
+        self._duotone_on = duotone_on
+
+    def _look(self, mode: QIcon.Mode, state: QIcon.State) -> tuple[QColor, bool]:
+        on = state == QIcon.State.On and self._color_on is not None
+        base = self._color_on if on else self._color
+        duotone = (self._duotone_on if on and self._duotone_on is not None
+                   else self._duotone)
+        if mode == QIcon.Mode.Disabled and isinstance(base, str) and is_token(base):
+            return resolve_color("disabled-ink"), duotone
+        return resolve_color(base), duotone
+
+    def pixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QPixmap:
+        color, duotone = self._look(mode, state)
+        return render(self._name, size.width(), size.height(), color,
+                      duotone=duotone, stroke=self._stroke)
+
+    def paint(self, painter: QPainter, rect, mode: QIcon.Mode, state: QIcon.State) -> None:
+        dpr = 1.0
+        device = painter.device()
+        if device is not None:
+            try:
+                dpr = float(device.devicePixelRatio()) or 1.0
+            except (AttributeError, TypeError):
+                dpr = 1.0
+        width = max(1, round(rect.width() * dpr))
+        height = max(1, round(rect.height() * dpr))
+        color, duotone = self._look(mode, state)
+        pm = render(self._name, width, height, color, duotone=duotone,
+                    stroke=self._stroke, dpr=dpr)
+        painter.drawPixmap(rect, pm)
+
+    def clone(self) -> "ThemedIconEngine":
+        return ThemedIconEngine(self._name, self._color, duotone=self._duotone,
+                                stroke=self._stroke, color_on=self._color_on,
+                                duotone_on=self._duotone_on)
+
+    def key(self) -> str:
+        return "folith-themed"
+
+
+def icon(name: str, size: int = 16, color: str | QColor = "text-secondary", *,
+         duotone: bool = False, stroke: float | None = None,
+         color_on: str | QColor | None = None,
+         duotone_on: bool | None = None) -> QIcon:
+    """QIcon（按钮 / 菜单 / 标签页用）。``color`` 优先传 **token 名**，见模块说明。
+
+    ``size`` 只是兼容旧调用；引擎按实际绘制尺寸出图，不受它限制。
+    """
+    return QIcon(ThemedIconEngine(name, color, duotone=duotone, stroke=stroke,
+                                  color_on=color_on, duotone_on=duotone_on))
+
+
+def pixmap(name: str, size: int = 16, color: str | QColor = "text-secondary",
+           *, stroke: float | None = None, duotone: bool = False) -> QPixmap:
+    """画出一个**当下**颜色的图标（静态，不随主题更新）。
+
+    只用于"当场就画进别的东西里"的场合（委托 ``paint``、自绘控件的 ``paintEvent``）。
+    要放在界面上长期显示的图标，用 :func:`icon` 或 :class:`IconLabel`。
+    """
+    return render(name, size, size, resolve_color(color), duotone=duotone, stroke=stroke)
+
+
+class IconLabel(QWidget):
+    """显示一个主题图标的小控件（代替 ``QLabel.setPixmap``，随主题自动换色）。"""
+
+    def __init__(self, name: str = "", size: int = 16,
+                 color: str | QColor = "text-secondary", *, duotone: bool = False,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._size = size
+        self._icon = QIcon()
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if name:
+            self.set_icon(name, color, duotone=duotone)
+
+    def set_icon(self, name: str, color: str | QColor = "text-secondary", *,
+                 duotone: bool = False) -> None:
+        self._icon = icon(name, self._size, color, duotone=duotone)
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        painter = QPainter(self)
+        self._icon.paint(painter, self.rect(), Qt.AlignmentFlag.AlignCenter)
+        painter.end()
 
 
 def names() -> list[str]:

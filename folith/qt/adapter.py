@@ -574,6 +574,15 @@ def state_signature(job_id: str) -> str:
     return f"{stat.st_mtime_ns}:{stat.st_size}"
 
 
+def drafts_signature(job_id: str) -> str:
+    """Cheap revision marker for the uncommitted-draft file (same idea as ``state_signature``)."""
+    try:
+        stat = core.translation_drafts_path(job_id).stat()
+    except OSError:
+        return "missing"
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
 # ================= the editing workbench =================
 
 

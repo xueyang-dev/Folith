@@ -1,7 +1,7 @@
 {
  "schema": "dynamic-context-ab/compare/1",
  "generated_at": "2026-10-06T11:48:25",
- "fixture": "/Users/xueyang/Dev/FolioThread/benchmark/translation-efficiency/workload.json",
+ "fixture": "<workspace>/benchmark/translation-efficiency/workload.json",
  "arms": [
   "A_nocontext",
   "B_fixed",

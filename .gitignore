@@ -66,6 +66,7 @@ tmp/
 # 本地 Agent 状态（WorkBuddy 会话记忆 / 技能等）：机器本地，不属于 repo
 .workbuddy/
 .workbuddy-ai/
+.serena/
 
 # 系统与编辑器
 .DS_Store

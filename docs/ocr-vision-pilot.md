@@ -17,7 +17,7 @@
 
 ## 数据与公平性
 
-- 原书：`/Users/xueyang/Downloads/Alam_al-din_(IA_alamaldin00alimuoft).pdf`。
+- 原书：`/Users/<user>/Downloads/Alam_al-din_(IA_alamaldin00alimuoft).pdf`。
 - 新增 PDF 第 **121、301** 页，各取 6 个印刷行，共 **669** 个归一化参考字符、126 个词。两个页面均未出现在此前十页测试、训练或 checkpoint 选择中。
 - 补充使用此前留出的第 **6、221** 页，分别 11、9 行，共 1263 个参考字符。这两个页面也没有参与微调训练或 checkpoint 选择，但已经在此前分析中查看过，因此单独列出。
 - 总计 **4 个页面片段、32 行、1932 个参考字符**。这不是四个完整页面，也不是全书评测。

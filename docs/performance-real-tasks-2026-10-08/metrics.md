@@ -19,12 +19,12 @@
 
 业务文档完整名称及数据路径：
 
-- Eco：An+Eco-Translatology+Approach.pdf；`/Users/xueyang/Library/Application Support/Folith/data/6819bee1568187b0`。
-- Attention-2p：arxiv-attention-2p.pdf；`/Users/xueyang/Library/Application Support/Folith/data/cf557598f6fef4ff`。
-- Attention-8p：arxiv-attention.pdf；`/Users/xueyang/Library/Application Support/Folith/data/cdf03b39a96cbd6a`。
-- Sensorium-53p：2 Part3提取自The Sensorium Of The Drone And Communities (Kathrin Maurer).pdf；`/Users/xueyang/Library/Application Support/Folith/data/2bad0add0b59e364`。
-- Sky-224p：When the Sky Was Ours A Fighter Pilot’s Odyssey (Raz, Ze’ev).pdf；`/Users/xueyang/Dev/FolioThread/outputs/51e711938cd70f2c`。
-- 样本：folith-marker-sample-b.pdf；`/Users/xueyang/Library/Application Support/Folith/data/6c055bcf5572697f`。
+- Eco：An+Eco-Translatology+Approach.pdf；`/Users/<user>/Library/Application Support/Folith/data/6819bee1568187b0`。
+- Attention-2p：arxiv-attention-2p.pdf；`/Users/<user>/Library/Application Support/Folith/data/cf557598f6fef4ff`。
+- Attention-8p：arxiv-attention.pdf；`/Users/<user>/Library/Application Support/Folith/data/cdf03b39a96cbd6a`。
+- Sensorium-53p：2 Part3提取自The Sensorium Of The Drone And Communities (Kathrin Maurer).pdf；`/Users/<user>/Library/Application Support/Folith/data/2bad0add0b59e364`。
+- Sky-224p：When the Sky Was Ours A Fighter Pilot’s Odyssey (Raz, Ze’ev).pdf；`<workspace>/outputs/51e711938cd70f2c`。
+- 样本：folith-marker-sample-b.pdf；`/Users/<user>/Library/Application Support/Folith/data/6c055bcf5572697f`。
 
 ## 各次运行、请求分布与 usage
 

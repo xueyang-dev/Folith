@@ -115,3 +115,40 @@ def test_every_locale_translates_all_strings():
                         if value == key and key not in ENDONYMS]
         assert not untranslated, \
             f"{code} 有 {len(untranslated)} 条未翻译：{untranslated[:3]}"
+
+
+def test_window_has_no_untranslated_chinese_literals():
+    """FND-5：``window.py`` 里用户可见的中文必须经过 ``i18n.tr`` / ``tr_dynamic``。
+
+    允许清单里是有意保留中文的位置（写进本机日志的文本、自动化运行的排除原因、
+    作为数据传给适配层的任务名兜底），不是界面文案。
+    """
+    import ast
+    import re
+
+    path = Path(__file__).resolve().parents[1] / "folith" / "qt" / "window.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    cjk = re.compile(r"[一-鿿]")
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    allowed = {"（内容含可能的凭据，已隐去；完整原因见界面提示）", "自动化运行排除", "当前任务"}
+
+    def translated(node) -> bool:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, ast.Call):
+                func = node.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if name in ("tr", "tr_dynamic"):
+                    return True
+            if isinstance(node, ast.FunctionDef):
+                return False
+        return False
+
+    offenders = [
+        f"{node.lineno}: {node.value[:40]!r}" for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and cjk.search(node.value) and node.value not in allowed
+        and not isinstance(parents.get(node), ast.Expr)  # docstrings
+        and not translated(node)
+    ]
+    assert not offenders, "window.py 里有未走 i18n.tr 的中文文案：\n" + "\n".join(offenders)

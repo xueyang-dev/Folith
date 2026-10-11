@@ -15,18 +15,21 @@ from functools import lru_cache
 
 from folith.ui import theme_tokens
 
-THEME_ORDER = theme_tokens.THEME_ORDER          # ('light', 'dark', 'paper')
+THEME_ORDER = theme_tokens.THEME_ORDER          # ('light', 'dark', 'paper', 'green')
 FOLLOW_SYSTEM = "system"
 THEME_LABELS = {
     FOLLOW_SYSTEM: "跟随系统",
     "light": "日间",
     "dark": "夜间",
     "paper": "纸面",
+    "green": "翠绿",
 }
 
 # Qt 需要、而语义 token 不表达的量。圆角沿用旧界面的 --tp-radius-* 取值。
 #: 圆角阶梯（px）：控件用 sm、卡片用 md、页头/大面板用 lg，pill 用于芯片与药丸按钮。
-RADIUS = {"xs": 4, "sm": 6, "md": 10, "lg": 14, "pill": 999}
+#: Golden Gate（macOS 27）：圆角随嵌套层级递减——卡片 12、分组/面板 14、输入与行 8；
+#: 按钮是胶囊（``control`` = 26px 最矮控件高度的一半，QSS 圆角超过半高会退化成直角）。
+RADIUS = {"xs": 4, "sm": 8, "md": 12, "lg": 14, "control": 13, "pill": 999}
 #: 间距阶梯（px）：4 的倍数，界面里所有 padding/margin 都从这取，避免"每处随手写一个数"。
 SPACE = {"xxs": 2, "xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "xxl": 32}
 #: 控件高度（px）：Web 界面里按钮/输入框都在 30–34，Qt 默认 22 显得"很挤"。

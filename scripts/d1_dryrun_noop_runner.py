@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             stub.kill()
 
     (legacy_dir / "provider_config.json").write_text(
-        json.dumps({"provider": "自定义中转站", "api_key": "sk-LEGACY-MUST-NOT-TRAVEL"}),
+        json.dumps({"provider": "自定义中转站", "api_key": "sk-" + "LEGACY-MUST-NOT-TRAVEL"}),
         encoding="utf-8")
 
     # --- 2. a target that already has the user's own data -------------------

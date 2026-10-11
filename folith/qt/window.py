@@ -166,6 +166,7 @@ class MainWindow(QMainWindow):
         self.status.set_permanent_widget(self.data_label)
 
         self._current_job_id = ""
+        self._rows_cache: tuple | None = None  # (job_id+drafts 签名, state 对象, rows)
         self._cached_state: dict = {}
         self._cached_signature = ""
         #: 「译前准备」的目录（`adapter.setup_choices`）在一个进程里只需读一次。
@@ -343,10 +344,10 @@ class MainWindow(QMainWindow):
         task_menu = self.menuBar().addMenu(i18n.tr('任务'))
         named: dict = {}
         for key, label, slot, shortcut in (
-            ("start", "开始 / 继续翻译", self.start_or_resume, "Ctrl+R"),
-            ("pause", "暂停", self.pause_job, ""),
-            ("cancel", "取消任务", self.cancel_job, ""),
-            ("reload", "重新载入",
+            ("start", i18n.tr('开始 / 继续翻译'), self.start_or_resume, "Ctrl+R"),
+            ("pause", i18n.tr('暂停'), self.pause_job, ""),
+            ("cancel", i18n.tr('取消任务'), self.cancel_job, ""),
+            ("reload", i18n.tr('重新载入'),
              lambda: self.refresh_workbench(force=True), "Ctrl+Shift+R"),
         ):
             action = QAction(label, self)
@@ -588,10 +589,12 @@ class MainWindow(QMainWindow):
         prompts.NoticeDialog.notify(self, title, message, tone="danger")
 
     def _confirm(self, title: str, message: str,
-                 yes: str = "确定", no: str = "取消") -> bool:
+                 yes: str | None = None, no: str | None = None) -> bool:
         if _automation():
             return True
-        return prompts.ConfirmDialog.ask(self, title, message, yes=yes, no=no)
+        return prompts.ConfirmDialog.ask(
+            self, title, message,
+            yes=yes or i18n.tr('确定'), no=no or i18n.tr('取消'))
 
     def _busy(self, message: str):
         """等待指示器（见 `prompts.BusyDialog`：真实运行里必须留一条出路）。"""
@@ -735,10 +738,10 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('导入文档：自动化运行不打开系统面板，请用 import_paths 直接提供路径。'))
             return
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "导入文档", str(Path.home()),
+            self, i18n.tr('导入文档'), str(Path.home()),
             # The picker advertises exactly the formats the shared application
             # contract (and therefore the core ingestion path) accepts.
-            "文档 (" + " ".join(f"*{item}" for item in adapter.SOURCE_SUFFIXES) + ")")
+            i18n.tr('文档 ({v0})', v0=" ".join(f"*{item}" for item in adapter.SOURCE_SUFFIXES)))
         if not paths:
             # Cancelling must not leave a half-created task behind.
             self._notice(i18n.tr('已取消导入，没有创建任何任务。'))
@@ -802,6 +805,8 @@ class MainWindow(QMainWindow):
             self._failure(i18n.tr('无法打开任务'), i18n.tr('任务 {v0} 的状态文件不可读。', v0=job_id))
             self.refresh_home()
             return
+        if job_id != self._current_job_id:
+            self.workbench.setup_panel.reset_style_profile()
         self._current_job_id = job_id
         self._cached_state = state
         self._cached_signature = adapter.state_signature(job_id)
@@ -810,15 +815,27 @@ class MainWindow(QMainWindow):
         self._last_runtime_status = ""
         rows = adapter.segment_rows(job_id, state)
         snapshots = adapter.delivery_snapshots(job_id)
-        # 「译前准备」的数据必须先于 load 填进去：load 内部会立刻决定正文区放
-        # 准备面板还是段落网格，晚一步就会先闪一下上一个任务的面。
-        self._load_setup(job_id, state)
-        self.workbench.load(job_id, self.config, state, rows, snapshots)
-        self.stack.setCurrentWidget(self.workbench)
-        self._log(f"open job {job_id}")
-        self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
-        self._sync_menu_state()
-        self.refresh_workbench(force=True)
+        # 大任务（几千段）在这里要在 GUI 线程算交付预检、术语与原页，可达 1–2 秒。
+        # 没法在不改核心的前提下挪到后台，至少让用户看到"正在打开"而不是窗口冻结。
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        opening = i18n.tr('正在打开任务…')
+        self.status.showMessage(opening)
+        self.status.repaint()
+        try:
+            # 「译前准备」的数据必须先于 load 填进去：load 内部会立刻决定正文区放
+            # 准备面板还是段落网格，晚一步就会先闪一下上一个任务的面。
+            self._load_setup(job_id, state)
+            self.workbench.load(job_id, self.config, state, rows, snapshots)
+            self.stack.setCurrentWidget(self.workbench)
+            self._log(f"open job {job_id}")
+            self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
+            self._sync_menu_state()
+            self.refresh_workbench(force=True)
+        finally:
+            QApplication.restoreOverrideCursor()
+            # 只清自己的提示：打开过程中运行状态行可能已经写了新消息。
+            if self.status.currentMessage() == opening:
+                self.status.clearMessage()
         self.workbench.focus_editor()
 
     def delete_jobs_requested(self, job_id: str) -> None:
@@ -847,12 +864,14 @@ class MainWindow(QMainWindow):
             state = adapter.load_state(item)
             names.append(state.get("filename") or item)
         if len(ids) == 1:
-            question = (f"将永久删除任务「{names[0]}」及其输出目录，包括交付快照。\n\n"
-                        "这个操作不可撤销。确定删除吗？")
+            question = i18n.tr(
+                '将永久删除任务「{v0}」及其输出目录，包括交付快照。\n\n这个操作不可撤销。确定删除吗？',
+                v0=names[0])
         else:
             preview = "、".join(names[:5]) + ("…" if len(names) > 5 else "")
-            question = (f"将永久删除选中的 {len(ids)} 个任务及其输出目录（含交付快照）："
-                        f"\n\n{preview}\n\n这个操作不可撤销。确定删除吗？")
+            question = i18n.tr(
+                '将永久删除选中的 {v0} 个任务及其输出目录（含交付快照）：\n\n{v1}\n\n这个操作不可撤销。确定删除吗？',
+                v0=len(ids), v1=preview)
         if not self._confirm(i18n.tr('删除任务'), question, yes=i18n.tr('永久删除'), no=i18n.tr('取消')):
             return
         deleted: list[str] = []
@@ -994,21 +1013,22 @@ class MainWindow(QMainWindow):
             return
         moved = len(result.get("moved") or [])
         skipped = result.get("skipped") or []
-        name = (result.get("project") or {}).get("name") or "项目"
-        message = f"已把 {moved} 个任务移动到「{name}」"
+        name = (result.get("project") or {}).get("name") or i18n.tr('项目')
+        message = i18n.tr('已把 {v0} 个任务移动到「{v1}」', v0=moved, v1=name)
         if result.get("tm_added"):
-            message += f"；并入 {result['tm_added']} 条已审校译文"
+            message += i18n.tr('；并入 {v0} 条已审校译文', v0=result['tm_added'])
         if skipped:
             reasons = "；".join(
-                f"{item.get('job_id')}：{item.get('reason')}" for item in skipped)
-            message += f"。跳过 {len(skipped)} 个：{reasons}"
+                f"{item.get('job_id')}：{i18n.tr_dynamic(str(item.get('reason') or ''))}"
+                for item in skipped)
+            message += i18n.tr('。跳过 {v0} 个：{v1}', v0=len(skipped), v1=reasons)
         self.refresh_home()
         self._notice(message, error=bool(skipped))
 
     def import_legacy(self) -> None:
         # 与导入/保存一致：走受自动化守卫的目录选择器——直接调
         # `QFileDialog.getExistingDirectory` 会让脚本化运行卡在没人点的面板上。
-        source = self._choose_directory("选择旧数据目录")
+        source = self._choose_directory(i18n.tr('选择旧数据目录'))
         if not source:
             return
         busy = self._busy(i18n.tr('正在接入旧数据目录…'))
@@ -1058,13 +1078,18 @@ class MainWindow(QMainWindow):
         panel.set_style_busy(True)
 
         def done(result) -> None:
+            if self._current_job_id != job_id:
+                # 准备面板是各任务共用的：结果属于提交时的任务，切走后不能写进
+                # 另一个任务的面板（否则「接受推荐」会把 A 的风格设给 B）。
+                return
             panel.set_style_recommendation(result)
             for warning in (result or {}).get("warnings") or []:
                 self._notice(i18n.tr_dynamic(str(warning)), error=True)
 
         def failed(message: str, detail: str) -> None:
-            panel.set_style_busy(False)
-            panel.style_status.setText(i18n.tr_dynamic(message))
+            if self._current_job_id == job_id:
+                panel.set_style_busy(False)
+                panel.style_status.setText(i18n.tr_dynamic(message))
             self._failure(i18n.tr('智能画像未完成'), message, detail)
 
         self.runner.submit(adapter.quick_style_profile, job_id, self.config,
@@ -1180,7 +1205,7 @@ class MainWindow(QMainWindow):
         # 在 apply 之前——apply 会立刻决定正文区放哪一面。
         if changed or force:
             self._load_setup(job_id, state)
-        rows = adapter.segment_rows(job_id, state)
+        rows = self._segment_rows(job_id, state)
         runtime = adapter.runtime_view(job_id, state)
         snapshots = adapter.delivery_snapshots(job_id) if (changed or force) \
             else self.workbench._snapshots
@@ -1195,6 +1220,20 @@ class MainWindow(QMainWindow):
                              refresh_delivery=force or terminal_change)
         self._sync_running_state(runtime)
         self._sync_menu_state()
+
+    def _segment_rows(self, job_id: str, state: dict) -> list:
+        """段落行：任务状态与草稿文件都没变时复用上一次的结果。
+
+        每秒轮询都重建几千个 ``SegmentRow`` 是纯浪费；两个输入（状态对象、草稿文件）
+        任何一个变了都会重算，所以草稿保存、重译、审校之后行数据仍是最新的。
+        """
+        key = (job_id, adapter.drafts_signature(job_id))
+        cached = self._rows_cache
+        if cached is not None and cached[0] == key and cached[1] is state:
+            return cached[2]
+        rows = adapter.segment_rows(job_id, state)
+        self._rows_cache = (key, state, rows)
+        return rows
 
     def _sync_running_state(self, runtime: dict) -> None:
         # 任务还没开始时没有"运行状态"可报：核心给的"未完成 · 当前进度已保存"
@@ -1376,10 +1415,14 @@ class MainWindow(QMainWindow):
         self._run_with_busy(
             i18n.tr('重译'), i18n.tr('正在重译第 {v0} 段…', v0=index + 1),
             adapter.retranslate_segment, job_id, index, self.config,
-            on_done=self._retranslate_done)
+            on_done=lambda result: self._retranslate_done(result, index, job_id))
 
-    def _retranslate_done(self, result) -> None:
-        index = self.workbench.current_index()
+    def _retranslate_done(self, result, index: int | None = None,
+                          job_id: str | None = None) -> None:
+        # 序号取"发起重译的那一段"，而不是完成时的选中段：等待框可以隐藏，
+        # 用户可能已经切了段甚至切了任务。
+        if index is None:
+            index = self.workbench.current_index()
         self._notice(
             i18n.tr("已重译第 {v0} 段", v0=index + 1)
             + (i18n.tr("；该段审校状态已刷新")
@@ -1388,7 +1431,8 @@ class MainWindow(QMainWindow):
         # 新译文必须立刻出现在编辑器里：否则用户按"保存并提交"会把刚重译出来的
         # 文本又覆盖成旧的。编辑器里有未提交内容时该方法会自行跳过（保留用户输入，
         # 并以"草稿基于旧译文"的警示呈现）。
-        self.workbench.reload_current_segment()
+        if job_id is None or job_id == self._current_job_id:
+            self.workbench.reload_current_segment()
 
     def discard_draft(self, index: int) -> None:
         """放弃某段的未提交草稿（编辑器回到当前已提交的译文）。"""
@@ -1856,7 +1900,7 @@ class MainWindow(QMainWindow):
         job_id = self._current_job_id
         valid = [int(index) for index in indexes or [] if str(index).isdigit()]
         if not job_id or not valid:
-            self._notice(i18n.tr('请先在段落列表中选择至少两个段落。'), error=True)
+            self._notice(i18n.tr('请先在段落列表中选择至少一个段落。'), error=True)
             return
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校所选 {v0} 段…', v0=len(valid)),
                             adapter.review_segments, job_id, valid, self.config,
@@ -1883,7 +1927,7 @@ class MainWindow(QMainWindow):
                 i18n.tr('暂不能冻结交付'),
                 i18n.tr("当前状态：{v0}。",
                         v0=i18n.tr_dynamic(preview.get("status_label")))
-                + ("；".join(str(item) for item in preview.get("issues") or [])
+                + ("；".join(i18n.tr_dynamic(str(item)) for item in preview.get("issues") or [])
                    or i18n.tr("请先完成翻译与审校。")))
             return
         if not self._confirm(
@@ -1897,11 +1941,18 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('已冻结交付 v{v0}，共 {v1} 个文件。', v0=version, v1=len(result.get('assets') or [])))
             # 冻结后立刻刷新：资产清单必须马上出现在「交付」页，而不是等下一次轮询。
             self.refresh_workbench(force=True)
+            if self._current_job_id != job_id:
+                # 用户在等待框里点了「在后台运行」并已切到别的任务：不要弹模态框，
+                # 更不能把"当前任务"当成刚冻结的那个。提示里指明去哪里保存。
+                self._notice(i18n.tr(
+                    '另一个任务的交付快照 v{v0} 已生成；回到该任务的「交付」页即可保存交付文件。',
+                    v0=version))
+                return
             if self._confirm(
                     i18n.tr('保存交付文件'),
                     i18n.tr('交付快照 v{v0} 已生成。\n\n现在选择保存位置并写出文件吗？', v0=version),
                     yes=i18n.tr('选择保存位置'), no=i18n.tr('稍后')):
-                self.save_snapshot(int(version or 1))
+                self.save_snapshot(int(version or 1), job_id)
 
         self._run_with_busy(i18n.tr('冻结交付'), i18n.tr('正在通过交付门禁并生成快照…'),
                             adapter.deliver, job_id, self.config, on_done=done)
@@ -1910,7 +1961,7 @@ class MainWindow(QMainWindow):
         job_id = self._current_job_id
         if not job_id:
             return
-        target = self._choose_directory("选择导出目录")
+        target = self._choose_directory(i18n.tr('选择导出目录'))
         if not target:
             self._notice(i18n.tr('已取消导出。'))
             return
@@ -1965,11 +2016,17 @@ class MainWindow(QMainWindow):
             return None
         return True
 
-    def save_snapshot(self, version: int) -> None:
-        job_id = self._current_job_id
+    def save_snapshot(self, version: int, job_id: str | None = None) -> None:
+        """保存某任务的冻结交付文件。
+
+        ``job_id`` 缺省为当前任务；异步完成的回调必须显式传入提交时的任务，
+        否则用户切换任务后会写出另一个任务的交付内容。
+        """
+        job_id = job_id or self._current_job_id
         if not job_id:
             return
-        target = self._choose_directory(f"选择交付文件保存位置（v{version}）")
+        target = self._choose_directory(
+            i18n.tr('选择交付文件保存位置（v{v0}）', v0=version))
         if not target:
             self._notice(i18n.tr('已取消保存。'))
             return
@@ -1987,14 +2044,14 @@ class MainWindow(QMainWindow):
 
     def reveal_path(self, path: str) -> None:
         result = adapter.reveal_in_finder(path)
-        self._notice(result.get("detail") or "已在 Finder 中显示。")
+        self._notice(result.get("detail") or i18n.tr('已在 Finder 中显示。'))
 
     def open_path(self, path: str) -> None:
         result = adapter.open_with_default_app(path)
         if not result.get("ok"):
-            self._failure(i18n.tr('无法打开文件'), result.get("detail") or "系统未返回原因。")
+            self._failure(i18n.tr('无法打开文件'), result.get("detail") or i18n.tr('系统未返回原因。'))
             return
-        self._notice(result.get("detail") or "已用默认应用打开。")
+        self._notice(result.get("detail") or i18n.tr('已用默认应用打开。'))
 
     # ================= settings / diagnostics =================
     def open_settings(self) -> None:
@@ -2156,12 +2213,13 @@ class MainWindow(QMainWindow):
         if not non_interactive:
             lines = []
             if active:
-                lines.append(f"{len(active)} 个任务仍在运行，退出前会按产品语义取消它们，"
-                             "并等待 worker 释放写入锁。")
+                lines.append(i18n.tr(
+                    '{v0} 个任务仍在运行，退出前会按产品语义取消它们，并等待 worker 释放写入锁。',
+                    v0=len(active)))
             if drafts:
-                lines.append(f"{drafts} 处未提交的编辑会保留为草稿，"
-                             "重新打开任务即可继续。")
-            lines.append("确定退出吗？")
+                lines.append(i18n.tr(
+                    '{v0} 处未提交的编辑会保留为草稿，重新打开任务即可继续。', v0=drafts))
+            lines.append(i18n.tr('确定退出吗？'))
             if not self._confirm(i18n.tr('退出 Folith'), "\n\n".join(lines),
                                  yes=i18n.tr('退出'), no=i18n.tr('返回应用')):
                 self._exit_in_progress = False
@@ -2195,9 +2253,9 @@ class MainWindow(QMainWindow):
             if pending:
                 detail.append(i18n.tr("仍在停止中：{v0}", v0="、".join(pending)))
             if report.get("draft_count"):
-                detail.append(f"仍有 {report['draft_count']} 处草稿未落盘")
+                detail.append(i18n.tr('仍有 {v0} 处草稿未落盘', v0=report['draft_count']))
             if report.get("worker_lock_held"):
-                detail.append("worker 仍持有写入锁")
+                detail.append(i18n.tr('worker 仍持有写入锁'))
             message = ("；".join(detail) or i18n.tr("退出前检查未完成")) + \
                 i18n.tr("。\n\n选择「强制退出」只保证已落盘的结果可恢复；"
                         "选择「继续等待」将返回应用。")

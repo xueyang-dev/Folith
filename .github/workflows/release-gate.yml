@@ -29,7 +29,7 @@ jobs:
       - name: Install test tools
         run: sudo apt-get update && sudo apt-get install --yes ripgrep
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip && python -m pip install ".[test]"
+        run: python -m pip install --upgrade pip && python -m pip install ".[test]" PySide6
       - name: Compile and import critical modules
         run: |
           python -m py_compile app.py core.py folith/academic_writer.py \
@@ -44,6 +44,8 @@ jobs:
       - name: Check complete UI catalogs
         run: python scripts/check_ui_locales.py
       - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: python scripts/run_regression.py --tsv release-regression.tsv
 
   package:
@@ -141,7 +143,7 @@ jobs:
     # called a script expecting $ROOT/venv (MAC-03), so this job creates the venv
     # it uses and installs the real desktop dependency set.
     name: macOS Qt candidate (build, frozen flow, DMG, release checks)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -154,11 +156,7 @@ jobs:
           python -m venv venv
           venv/bin/python -m pip install --upgrade pip
           venv/bin/python -m pip install -r requirements.txt
-          venv/bin/python -m pip install PySide6 pytest
-      - name: Qt client tests (adapter, window, release plumbing)
-        run: |
-          venv/bin/python -m pytest tests/qt_client_adapter_test.py \
-            tests/qt_client_window_test.py tests/qt_release_plumbing_test.py -q
+          venv/bin/python -m pip install -r requirements-desktop-build.txt PySide6 "pytest>=8,<9"
       - name: Install the OCR engine used to stage the bundled payload
         run: brew install tesseract
       - name: Build the Qt bundle
@@ -167,7 +165,8 @@ jobs:
         run: |
           venv/bin/python scripts/qt_desktop_probe.py \
             --data-dir "$RUNNER_TEMP/qt-probe/data" \
-            --out "$RUNNER_TEMP/qt-probe/report.json" --fixture both
+            --out "$RUNNER_TEMP/qt-probe/report.json" --fixture both \
+            --frozen-app "$GITHUB_WORKSPACE/dist/qt-desktop/Folith.app/Contents/MacOS/Folith"
       - name: Frozen bundled OCR baseline (eng/chi_sim/ara, no Homebrew on PATH)
         run: |
           venv/bin/python scripts/qt_ocr_baseline_runner.py \
@@ -180,6 +179,20 @@ jobs:
           venv/bin/python scripts/qt_release_checks.py --write
           venv/bin/python scripts/qt_release_checks.py --write-notes
           venv/bin/python scripts/qt_release_checks.py --check-notes
+      - name: Candidate documents and isolated Qt regression
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          venv/bin/python scripts/qt_acceptance_kit.py --write
+          venv/bin/python scripts/qt_acceptance_kit.py --check
+          venv/bin/python scripts/run_regression.py -k qt_,text_import --tsv qt-regression.tsv
+      - name: New source formats in the frozen main flow
+        run: |
+          for format in epub txt md; do
+            venv/bin/python scripts/qt_desktop_probe.py --fixture "$format" \
+              --frozen-app "$GITHUB_WORKSPACE/dist/qt-desktop/Folith.app/Contents/MacOS/Folith" \
+              --data-dir "$RUNNER_TEMP/qt-$format/data" --out "$RUNNER_TEMP/qt-$format/report.json"
+          done
       - name: DMG acceptance probe (mount, install a copy, run)
         run: |
           venv/bin/python scripts/qt_dmg_probe.py \

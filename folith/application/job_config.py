@@ -85,12 +85,10 @@ DEFAULT_TRANSLATION_CONCURRENCY = 4
 #: Default segmentation mode (``core`` default is ``sentence``).
 DEFAULT_SEGMENTATION_MODE = "sentence"
 
-#: The only source formats the core can actually turn into paragraphs today:
-#: ``core.extract_document_paragraphs_with_report`` dispatches on ``.pdf`` and
-#: ``.docx`` and answers every other suffix with "不支持的文档格式".  File
+#: Source formats the core can turn into paragraphs. File
 #: admission has exactly one authority — this tuple — so no surface can advertise
 #: a format the engine cannot ingest.
-SOURCE_SUFFIXES: Tuple[str, ...] = (".pdf", ".docx")
+SOURCE_SUFFIXES: Tuple[str, ...] = (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown")
 
 #: A single document larger than this is refused up front instead of being read
 #: into memory and failing deep inside the pipeline.

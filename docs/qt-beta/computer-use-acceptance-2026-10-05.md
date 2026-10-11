@@ -42,8 +42,8 @@
 
    ```sh
    dist/qt-desktop/Folith.app/Contents/MacOS/Folith \
-     --data-dir /Users/xueyang/Dev/FolioThread/tmp/qt-beta/computer-use-2026-10-05/data \
-     --log-dir /Users/xueyang/Dev/FolioThread/tmp/qt-beta/computer-use-2026-10-05/logs
+     --data-dir <workspace>/tmp/qt-beta/computer-use-2026-10-05/data \
+     --log-dir <workspace>/tmp/qt-beta/computer-use-2026-10-05/logs
    ```
 
 2. 用 computer use 绑定该候选应用。首页可读取，可看到 `selftest.docx` 为“已冻结交付 v1”、3 段。

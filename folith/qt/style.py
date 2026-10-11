@@ -27,6 +27,9 @@ CHIP_TONES = {
     "info": ("accent-soft", "accent"),
     "muted": ("bg-surface-sunken", "text-secondary"),
     "brand": ("accent-soft", "brand-ink"),
+    # 设计稿的"已暂停"紫色 / PDF 红色文档标签。
+    "violet": ("info-soft", "info"),
+    "pdf": ("danger-soft", "danger"),
 }
 
 #: 外观页主题预览色卡的几何（px）。QSS 与 ``EngineDialog._build_theme_previews``
@@ -325,8 +328,86 @@ QFrame#taskCard:hover {{ border-color: {t['border-strong']}; background: {t['bg-
 QFrame#taskCard[selected="true"] {{
     border: 2px solid {t['accent']}; background: {t['accent-soft']};
 }}
-QLabel#taskCardTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#taskCardTitle {{ font-size: {f['body'] - 1}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#taskCardMeta {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+/* Golden Gate 任务卡：上半是沉底的"文档区"（左上格式角标、右上更新时间），
+   下半是文字。卡片自身的圆角 12，文档区只圆上两角，和卡片外轮廓同心。 */
+QFrame#tileThumb {{
+    background: {t['bg-surface-sunken']}; border: none;
+    border-bottom: 1px solid {t['border-hairline']};
+    border-top-left-radius: {r['md'] - 1}px; border-top-right-radius: {r['md'] - 1}px;
+}}
+QFrame#taskCard[selected="true"] QFrame#tileThumb {{ background: {t['accent-soft']}; }}
+QFrame#taskCard:focus {{ border: 2px solid {t['accent']}; }}
+QLabel#tileBadge {{
+    background: {t['bg-surface']}; color: {t['text-secondary']};
+    border: 1px solid {t['border-hairline']}; border-radius: {r['xs'] + 2}px;
+    padding: 1px 6px; font-size: 10px; font-weight: 700;
+}}
+QLabel#tileTime {{ font-size: {f['micro'] - 1}px; color: {t['text-muted']}; background: transparent; }}
+QLabel#taskCardStatus {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+QLabel#taskCardStatus[state="danger"] {{ color: {t['danger']}; }}
+QLabel#taskCardStatus[state="ok"] {{ color: {t['success']}; }}
+/* 继续上次的工作：页面里唯一一张"抬起"的卡 */
+QFrame#continueCard {{
+    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['lg']}px;
+}}
+QLabel#eyebrow {{ font-size: {f['caption']}px; font-weight: 600; color: {t['accent']}; }}
+QLabel#continueTitle {{ font-size: {f['title']}px; font-weight: 700; color: {t['text-primary']}; }}
+QLabel#continueStatus {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+/* ================= 译前准备：翻译风格（Golden Gate） ================= */
+QFrame#styleHeroCard {{
+    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['lg']}px;
+}}
+QLabel#heroTitle {{ font-size: {f['title'] + 4}px; font-weight: 700; color: {t['text-primary']}; }}
+QFrame#recoStrip {{
+    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['md']}px;
+}}
+QFrame#recoStrip QLabel {{ background: transparent; }}
+QFrame#styleCard {{
+    background: {t['bg-surface']}; border: 1px solid {t['border-subtle']};
+    border-radius: {r['lg']}px;
+}}
+QFrame#styleCard:hover {{ border-color: {t['border-strong']}; }}
+QFrame#styleCard:focus {{ border-color: {t['accent']}; }}
+QFrame#styleCard[selected="true"] {{ border: 2px solid {t['accent']}; background: {t['bg-surface']}; }}
+QFrame#styleCard QLabel {{ background: transparent; }}
+QLabel#styleCardTitle {{ font-size: {f['body']}px; font-weight: 700; color: {t['text-primary']}; }}
+QLabel#styleCardSummary {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+QLabel#radioRing {{ border: 1.5px solid {t['border-strong']}; border-radius: 9px; background: transparent; }}
+QFrame#styleCard QLabel#styleSample {{
+    background: {t['bg-surface-sunken']}; border-radius: {r['sm'] + 2}px;
+    padding: {sp['sm']}px {sp['md']}px; font-size: {f['caption'] + 1}px; color: {t['text-primary']};
+}}
+QLabel#traitLabel {{ font-size: {f['micro']}px; color: {t['text-secondary']}; }}
+QFrame#styleCard QLabel#fitChip {{
+    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
+    border-radius: 9px; padding: 1px 8px; font-size: {f['micro']}px; color: {t['text-secondary']};
+}}
+QFrame#tunePanel {{
+    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['lg']}px;
+}}
+QFrame#tunePanel QLabel {{ background: transparent; }}
+QLabel#tuneName {{ font-size: {f['body'] - 1}px; font-weight: 500; color: {t['text-primary']}; }}
+QLabel#tuneValue {{ font-size: {f['caption']}px; font-weight: 600; color: {t['accent']}; }}
+QPushButton#chipButton {{
+    background: {t['control-bg']}; border: 1px solid {t['control-border']};
+    border-radius: 13px; padding: 2px 10px; min-height: 20px; font-size: {f['caption']}px;
+    color: {t['text-primary']}; font-weight: 500;
+}}
+QPushButton#chipButton:hover {{ background: {t['bg-hover']}; }}
+QPushButton#linkAction:checked {{ color: {t['text-muted']}; }}
+QSlider::groove:horizontal {{ height: 4px; background: {t['bg-surface-sunken']}; border-radius: 2px; }}
+QSlider::sub-page:horizontal {{ background: {t['accent']}; border-radius: 2px; }}
+QSlider::sub-page:horizontal:disabled {{ background: {t['border-strong']}; }}
+QSlider::handle:horizontal {{
+    background: {t['bg-surface-raised']}; border: 1px solid {t['control-border']};
+    width: 16px; height: 16px; margin: -7px 0; border-radius: 8px;
+}}
 /* 卡片右下角的"打开任务 →"：**静止态不用强调色**。
    一屏 14 张卡片时，14 条 accent 蓝链接比卡片标题还抢眼，整屏都是"蓝色小尾巴"；
    它是"这张卡可点开"的提示，所以静止态退成 muted，悬停 / 选中才升为 accent。
@@ -361,20 +442,33 @@ QFrame#statSeparator {{ background: {t['border-hairline']}; border: none; max-wi
 
 /* ================= 侧栏 ================= */
 QWidget#sidebar {{
-    background: {t['bg-sidebar']};
+    background: {t['bg-glass']};
     border-right: 1px solid {t['border-sidebar']};
 }}
 QWidget#sidebar QLabel {{ background: transparent; }}
 QPushButton#navItem {{
-    background: transparent; border: 1px solid transparent;
+    background: transparent; border: none;
     border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['sm']}px;
-    min-height: {box('md', pad_y=sp['xs'])}px; text-align: left; color: {t['text-secondary']};
+    min-height: {box('lg', pad_y=sp['xs'], border=0)}px; text-align: left; color: {t['text-secondary']};
     font-weight: 500;
 }}
 QPushButton#navItem:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+/* 选中 = 浅色底 + **左侧强调条** + 强调色双色图标（图标颜色由图标引擎按 QIcon.State.On
+   给出，这里只管底与条）。 */
 QPushButton#navItem:checked {{
-    background: {t['accent-soft']}; color: {t['brand-ink']};
-    border-color: {t['accent-border']}; font-weight: 600;
+    background: {t['accent-soft']}; color: {t['brand-ink']}; font-weight: 600;
+}}
+/* 侧栏小节标题（"最近项目"）与项目条目 */
+QLabel#navSection {{ font-size: {f['caption']}px; font-weight: 500; color: {t['text-muted']}; }}
+QPushButton#navProject {{
+    background: transparent; border: none;
+    border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['sm']}px;
+    min-height: {box('md', pad_y=sp['xs'], border=0)}px; text-align: left; color: {t['text-secondary']};
+    font-weight: 500;
+}}
+QPushButton#navProject:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+QPushButton#navProject:checked {{
+    background: {t['accent-soft']}; color: {t['brand-ink']}; font-weight: 600;
 }}
 /* 侧栏底部（引擎状态 + 配置入口）：一条 1px 分隔 + 透明底，不再是一张浮起的小卡。
    它贴着侧栏底边，是"常驻的属性区"，不是内容卡片。 */
@@ -390,14 +484,31 @@ QLabel#engineDot[state="warn"] {{ background: {t['warning']}; }}
 QLabel#engineDot[state="muted"] {{ background: {t['text-muted']}; }}
 QLabel#engineState {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#engineModel {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
+/* 引擎状态：侧栏底部一枚浅色圆角条（状态点 + 已配置 + 模型名），与品牌行之间一条发丝线 */
+QFrame#engineCard {{
+    background: {t['bg-surface-sunken']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['sm'] + 2}px;
+}}
+QFrame#engineCard QLabel {{ background: transparent; }}
+/* 圆形工具按钮（侧栏底部的设置、工具栏的返回/检查器）：QToolButton 自己的圆角必须
+   等于半高（32px → 16），否则 Qt 画成直角。 */
+QToolButton#roundButton {{
+    background: {t['control-bg']}; border: 1px solid {t['control-border']};
+    border-radius: 16px; min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px;
+    padding: 0; color: {t['text-secondary']};
+}}
+QToolButton#roundButton:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+QToolButton#roundButton:pressed {{ background: {t['bg-selected']}; }}
+QToolButton#roundButton:focus {{ border-color: {t['accent']}; }}
+QToolButton#roundButton:checked {{ background: {t['accent-soft']}; border-color: {t['accent-border']}; }}
 
 /* ================= 按钮 ================= */
 QPushButton {{
-    background: {t['bg-surface']};
+    background: {t['control-bg']};
     color: {t['text-primary']};
-    border: 1px solid {t['border-subtle']};
-    border-radius: {r['sm']}px;
-    padding: {sp['xs']}px {sp['md']}px;
+    border: 1px solid {t['control-border']};
+    border-radius: {r['control']}px;
+    padding: {sp['xs']}px {sp['md'] + 2}px;
     min-height: {box('md', pad_y=sp['xs'])}px;
     font-weight: 500;
 }}
@@ -436,6 +547,16 @@ QPushButton#stageUtility:checked {{
     background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['brand-ink']};
 }}
 QPushButton#stageUtility::menu-indicator {{ image: none; width: 0px; }}
+/* 统一工具栏：贴住窗口顶边的一行，底部一条发丝线（Golden Gate） */
+QFrame#unifiedToolbar {{
+    background: {t['bg-surface']}; border: none;
+    border-bottom: 1px solid {t['border-hairline']};
+}}
+/* 阶段胶囊：工具栏中间的主控件（半高圆角 = 胶囊；步骤自绘） */
+QFrame#stageTrack {{
+    background: {t['control-bg']}; border: 1px solid {t['control-border']};
+    border-radius: 16px;
+}}
 QPushButton#dangerAction {{ color: {t['danger']}; border-color: {t['border-subtle']}; background: {t['bg-surface']}; }}
 QPushButton#dangerAction:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
 /* 破坏性动作的**主按钮**：确认删除/强制退出这种"按下就回不去"的一条，
@@ -463,7 +584,7 @@ QPushButton#linkAction:hover {{ color: {t['accent-hover']}; text-decoration: und
 /* 工具栏方形图标按钮 */
 QPushButton#iconButton {{
     min-width: {box('md', pad_y=0)}px; max-width: {box('md', pad_y=0)}px;
-    min-height: {box('md', pad_y=0)}px; padding: 0; border-radius: {r['sm']}px;
+    min-height: {box('md', pad_y=0)}px; padding: 0; border-radius: {c['md'] // 2 - 1}px;
     background: transparent; border-color: transparent; color: {t['text-secondary']};
 }}
 QPushButton#iconButton:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
@@ -473,16 +594,16 @@ QPushButton#iconButton:checked {{ background: {t['accent-soft']}; color: {t['bra
 QFrame#segmentTrack {{
     background: {t['bg-surface-sunken']};
     border: 1px solid {t['border-hairline']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['sm'] + 1}px;
 }}
 QPushButton#segment {{
     background: transparent; border: 1px solid transparent;
-    border-radius: {r['xs']}px; padding: {sp['xxs']}px {sp['md']}px;
+    border-radius: {r['sm'] - 1}px; padding: {sp['xxs']}px {sp['md']}px;
     min-height: {box('sm', pad_y=sp['xxs'])}px; color: {t['text-secondary']}; font-weight: 500;
 }}
 QPushButton#segment:hover {{ color: {t['text-primary']}; }}
 QPushButton#segment:checked {{
-    background: {t['bg-surface']}; border-color: {t['border-subtle']};
+    background: {t['bg-surface-raised']}; border-color: {t['control-border']};
     color: {t['text-primary']}; font-weight: 600;
 }}
 
@@ -716,6 +837,60 @@ QTabBar::tab:hover {{ color: {t['text-primary']}; }}
 QTabBar::tab:selected {{
     background: transparent; color: {t['brand-ink']};
     border-bottom: 2px solid {t['accent']}; font-weight: 600;
+}}
+
+/* ================= 组件库（folith/qt/components.py） ================= */
+/* 图标徽标：圆底 + 双色图标；底色按语义色调（与芯片同一批 token） */
+/* （图标徽标 IconBadge 是自绘的圆：QSS 的 border-radius 超过半高会退化成直角。） */
+/* 指标卡：图标徽标 + 标签 / 大号数字。数字只在"需要被看见"时上色。 */
+QFrame#metricCard {{
+    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['lg']}px;
+}}
+QLabel#metricLabel {{ font-size: {f['caption']}px; font-weight: 500; color: {t['text-secondary']}; }}
+QLabel#metricValue {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
+QLabel#metricValue[emphasis="accent"] {{ color: {t['accent']}; }}
+QLabel#metricValue[emphasis="danger"] {{ color: {t['danger']}; }}
+QLabel#metricValue[emphasis="ok"] {{ color: {t['success']}; }}
+QLabel#metricValue[emphasis="muted"] {{ color: {t['text-muted']}; }}
+/* 搜索框：药丸形，聚焦时描边转强调色；右侧 ⌘K 提示是一枚小键帽 */
+QLineEdit#searchBar {{
+    background: {t['control-bg']}; border: 1px solid {t['control-border']};
+    border-radius: {c['lg'] // 2}px; padding: 0 {sp['md']}px;
+    min-height: {box('lg', pad_y=0)}px; color: {t['text-primary']};
+}}
+QLineEdit#searchBar:focus {{ border: 1px solid {t['accent']}; }}
+QLabel#keyHint {{
+    background: {t['bg-surface-sunken']}; color: {t['text-muted']};
+    border: 1px solid {t['border-hairline']}; border-radius: {r['xs']}px;
+    padding: 1px {sp['sm']}px; font-size: {f['micro']}px; font-weight: 600;
+}}
+/* 药丸分段 / 筛选芯片：选中 = 浅色底 + 强调色字 */
+QFrame#pillTrack {{
+    background: {t['bg-surface-sunken']}; border: 1px solid {t['border-hairline']};
+    border-radius: {(c['sm'] + 6) // 2}px;
+}}
+QPushButton#pill {{
+    background: transparent; border: 1px solid transparent; border-radius: {c['sm'] // 2}px;
+    padding: {sp['xxs']}px {sp['md']}px; min-height: {box('sm', pad_y=sp['xxs'])}px;
+    color: {t['text-secondary']}; font-weight: 500;
+}}
+QPushButton#pill:hover {{ background: transparent; border-color: transparent; color: {t['text-primary']}; }}
+QPushButton#pill:checked {{
+    background: {t['accent-soft']}; border-color: transparent;
+    color: {t['accent']}; font-weight: 600;
+}}
+/* 容器卡 + 头部条；卡内的表格不再自带描边（外框由卡片给） */
+QFrame#sectionCard {{
+    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['lg']}px;
+}}
+QFrame#sectionHeader {{
+    background: transparent; border: none; border-bottom: 1px solid {t['border-hairline']};
+}}
+QFrame#sectionCard QWidget#pageCanvas {{ background: transparent; }}
+QFrame#sectionCard QTableWidget {{
+    border: none; border-radius: 0; background: transparent;
 }}
 
 /* ================= 对话框 ================= */
@@ -960,8 +1135,9 @@ class NoticeStrip(QFrame):
         row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                theme_module.SPACE["md"], theme_module.SPACE["sm"])
         row.setSpacing(theme_module.SPACE["sm"])
-        self._icon = QLabel()
-        self._icon.setFixedSize(16, 16)
+        from . import icons
+
+        self._icon = icons.IconLabel(size=16)
         self._label = QLabel(text)
         self._label.setWordWrap(True)
         self._action = QPushButton("")
@@ -976,7 +1152,7 @@ class NoticeStrip(QFrame):
     def set_tone(self, tone: str) -> None:
         self._tone = tone if tone in self.TONES else "info"
         self.setObjectName(self.TONES[self._tone])
-        self._icon.setPixmap(icons_pixmap(self.ICONS[self._tone], 16, "text-secondary"))
+        self._icon.set_icon(self.ICONS[self._tone], "text-secondary")
         repolish(self)
 
     def set_text(self, text: str) -> None:
@@ -1004,10 +1180,13 @@ class SegmentedControl(QFrame):
     """分段控件：一条浅色轨道 + 若干可选中段（Web 界面的"全部/待审校/已审校"）。"""
 
     changed = Signal(str)
+    #: QSS 的 objectName：轨道与分段。子类（``components.FilterChips``）换一套皮肤。
+    TRACK = "segmentTrack"
+    BUTTON = "segment"
 
     def __init__(self, options: list[tuple[str, str]], *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("segmentTrack")
+        self.setObjectName(self.TRACK)
         from PySide6.QtWidgets import QButtonGroup, QHBoxLayout
 
         row = QHBoxLayout(self)
@@ -1024,7 +1203,7 @@ class SegmentedControl(QFrame):
 
     def _add_button(self, value: str, label: str, row) -> None:
         button = QPushButton(label)
-        button.setObjectName("segment")
+        button.setObjectName(self.BUTTON)
         button.setCheckable(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(lambda _checked=False, v=value: self._pick(v))
@@ -1268,11 +1447,9 @@ class EmptyState(QFrame):
         column.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
                                   theme_module.SPACE["xl"], theme_module.SPACE["lg"])
         column.setSpacing(theme_module.SPACE["xs"])
-        self.icon_label = QLabel()
-        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         from . import icons
 
-        self._icons = icons
+        self.icon_label = icons.IconLabel(size=30)
         self.set_icon(icon)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("emptyTitle")
@@ -1282,15 +1459,14 @@ class EmptyState(QFrame):
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint_label.setWordWrap(True)
         column.addStretch(1)
-        column.addWidget(self.icon_label)
+        column.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self.title_label)
         column.addWidget(self.hint_label)
         column.addStretch(1)
         self.setVisible(bool(title))
 
     def set_icon(self, name: str) -> None:
-        self.icon_label.setPixmap(
-            self._icons.pixmap(name, 30, text_color("text-muted")))
+        self.icon_label.set_icon(name, "text-muted")
 
     def set_text(self, title: str, hint: str = "") -> None:
         self.title_label.setText(title)
@@ -1481,7 +1657,7 @@ class ComboBox(QComboBox):
             # 少数平台样式在可编辑态下返回空矩形：退回 QSS 预留的右侧 22px 带。
             rect = QRect(self.width() - 22, 0, 22, self.height())
         token = "text-secondary" if self.isEnabled() else "text-muted"
-        arrow = icons.pixmap("chevron-down", self.ARROW, text_color(token))
+        arrow = icons.pixmap("chevron-down", self.ARROW, token)
         painter = QPainter(self)
         painter.drawPixmap(
             int(rect.center().x() - arrow.width() / 2),
@@ -1538,7 +1714,7 @@ class SecretField(QWidget):
                                    else QLineEdit.EchoMode.Password)
         self.reveal_button.setToolTip("隐藏密钥" if revealed else "显示密钥")
         self.reveal_button.setIcon(icons.icon(
-            "eye-off" if revealed else "eye", 16, text_color("text-secondary")))
+            "eye-off" if revealed else "eye", 16, "text-secondary"))
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt 命名
         if watched is self.line_edit and event.type() in (
@@ -1569,7 +1745,7 @@ def icons_pixmap(name: str, size: int = 16, token: str = "text-secondary"):
     """按当前主题的 token 颜色取一个图标 pixmap。"""
     from . import icons
 
-    return icons.pixmap(name, size, text_color(token))
+    return icons.pixmap(name, size, token)
 
 
 def fit_button(button, *, max_width: int = 200) -> None:
@@ -1600,7 +1776,7 @@ def icon_button(name: str, tooltip: str = "", *, size: int = 16,
 
     button = QPushButton(parent)
     button.setObjectName("iconButton")
-    button.setIcon(icons.icon(name, size, text_color("text-secondary")))
+    button.setIcon(icons.icon(name, size, "text-secondary"))
     button.setIconSize(QSize(size, size))
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     if tooltip:

@@ -96,6 +96,23 @@ def build_fixtures(out_dir: Path, kind: str) -> list[Path]:
         make_scanned_pdf(path, ["Scanned page one for OCR baseline.",
                                "Second scanned line in English."])
         fixtures.append(path)
+    if kind in ("txt", "md"):
+        path = target_dir / f"selftest.{kind}"
+        text = "\n\n".join(LONG_PARAGRAPHS)
+        if kind == "md":
+            text = "# Markdown intake\n\n" + text
+        path.write_text(text, encoding="utf-8")
+        fixtures.append(path)
+    if kind == "epub":
+        import zipfile
+        from html import escape
+        path = target_dir / "selftest.epub"
+        with zipfile.ZipFile(path, "w") as book:
+            book.writestr("mimetype", "application/epub+zip")
+            book.writestr("META-INF/container.xml", '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>')
+            book.writestr("book.opf", '<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>')
+            book.writestr("chapter.xhtml", '<html xmlns="http://www.w3.org/1999/xhtml"><body>' + ''.join(f'<p>{escape(text)}</p>' for text in LONG_PARAGRAPHS) + '</body></html>')
+        fixtures.append(path)
     return fixtures
 
 

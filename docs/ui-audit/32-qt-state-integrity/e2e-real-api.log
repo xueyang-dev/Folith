@@ -30,7 +30,7 @@ warning: The `fitz` API is deprecated and will be removed in future. Use `import
   翻译: pairs=0 有译文=0 p1=True p2=False
 == UI 一致性终检 ==
 qt.qpa.fonts: Populating font family aliases took 77 ms. Replace uses of missing font family "SF Pro Text" with one that exists to avoid this cost. 
-/Users/xueyang/Dev/FolioThread/folith/qt/style.py:944: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+<workspace>/folith/qt/style.py:944: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
   self._action.clicked.disconnect()
 This plugin does not support propagateSizeHints()
 This plugin does not support propagateSizeHints()

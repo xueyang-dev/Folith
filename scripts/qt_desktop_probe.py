@@ -81,16 +81,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Qt desktop Beta flow probe")
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--out", default=None, help="write the JSON report here")
-    parser.add_argument("--fixture", default="docx", choices=("docx", "pdf", "both"))
+    parser.add_argument("--fixture", default="docx", choices=("docx", "pdf", "both", "epub", "txt", "md"))
     parser.add_argument("--window", action="store_true",
                         help="use the real platform plugin (cocoa) instead of offscreen")
     parser.add_argument("--screenshot", default=None)
     parser.add_argument("--stub-delay", type=float, default=0.0)
     parser.add_argument("--keep-data", action="store_true")
     parser.add_argument("--timeout", type=float, default=900.0)
+    parser.add_argument("--frozen-app", help="run the packaged executable with the local controlled endpoint")
     args = parser.parse_args(argv)
 
-    out_dir = Path(args.out).parent if args.out else Path(args.data_dir).parent
+    out_dir = (Path(args.out).parent if args.out else Path(args.data_dir).parent).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     data_dir = Path(args.data_dir).expanduser().resolve()
     if not args.keep_data and data_dir.exists():
@@ -106,6 +107,29 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["FOLITH_DESKTOP_DATA_DIR"] = str(data_dir)
     os.environ["FOLITH_DESKTOP_LOG_DIR"] = str(out_dir / "logs")
     os.environ["FOLITH_OUTPUT_DIR"] = str(data_dir)
+
+    if args.frozen_app:
+        if not args.out:
+            parser.error("--frozen-app requires --out")
+        stub = StubEndpoint(out_dir, delay=args.stub_delay)
+        try:
+            env = dict(os.environ, FOLITH_QT_SELFTEST_BASE_URL=stub.start(),
+                       FOLITH_QT_SELFTEST_PROVIDER="自定义中转站",
+                       FOLITH_QT_SELFTEST_MODEL="stub-model",
+                       FOLITH_QT_SELFTEST_API_KEY="stub-key")
+            command = [str(Path(args.frozen_app).resolve()), "--selftest",
+                       "--selftest-fixture", args.fixture, "--data-dir", str(data_dir),
+                       "--log-dir", str(out_dir / "logs"), "--result", str(Path(args.out).resolve())]
+            if args.screenshot:
+                command += ["--selftest-screenshot", str(Path(args.screenshot).resolve())]
+            result = subprocess.run(command, env=env, cwd=out_dir,
+                                    timeout=args.timeout, capture_output=True, text=True)
+            report = json.loads(Path(args.out).read_text()) if Path(args.out).is_file() else {}
+            print(json.dumps({"ok": report.get("ok"), "exit_code": result.returncode,
+                              "stderr_tail": result.stderr[-1000:]}, ensure_ascii=False))
+            return 0 if result.returncode == 0 and report.get("ok") else 1
+        finally:
+            stub.stop()
 
     from folith.qt import adapter
     from folith.qt import selftest

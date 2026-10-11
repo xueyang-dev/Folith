@@ -327,8 +327,17 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
             paragraphs, nodes, media, warnings, cover = _docx_source(source)
         elif filename.lower().endswith(".pdf"):
             paragraphs, nodes, media, warnings, cover = _pdf_source(source)
+        elif filename.lower().endswith((".epub", ".txt", ".md", ".markdown")):
+            from .text_import import extract_text_source
+            paragraphs, omitted, _facts = extract_text_source(filename, source)
+            paragraphs = [_text(text) for text in paragraphs]
+            nodes = [{"kind": "text", "ref": index, "role": "body"}
+                     for index in range(len(paragraphs))]
+            media, cover = {}, None
+            warnings = ["此来源导出为重建的纯文字 EPUB；不保留源书排版、图片或音视频。"]
+            warnings.extend(f'{item["label"]}（{item["count"]}）未纳入译文。' for item in omitted)
         else:
-            raise EpubExportError("EPUB 图文导出支持普通 PDF 和 DOCX。")
+            raise EpubExportError("EPUB 导出不支持此来源格式。")
     except EpubExportError:
         raise
     except Exception as exc:

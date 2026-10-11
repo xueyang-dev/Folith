@@ -1,5 +1,5 @@
 {
-  "app": "/Users/xueyang/Dev/FolioThread/dist/desktop/Folith.app/Contents/MacOS/Folith",
+  "app": "<workspace>/dist/desktop/Folith.app/Contents/MacOS/Folith",
   "data_dir": "/private/tmp/d1-unsafe/desktop-data",
   "cases": [
     {

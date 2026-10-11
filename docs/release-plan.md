@@ -1,26 +1,35 @@
-# 0.5.0 候选版本发布计划
+# 0.5.0 Qt Beta 发布计划
 
-更新：2026-10-01。v0.4.0 已于 2026-09-22 公开发布。当前候选版本为 0.5.0，正式发布日期待定；不得移动或覆盖 v0.4.0 的 tag 与资产。
+更新：2026-10-11。v0.4.0 保持原 tag 与资产。本轮冻结 0.5.0 受邀 Beta 候选，不创建公开 Release。
 
-## 候选版本范围
+## 冻结范围
 
-- 内部代码包迁移到 `folith`；主命令 `folith`，保留 `foliothread` 发行名和兼容命令。0.5.0 移除 `transpraxis` 命令，需在正式 release notes 告知升级用户。
-- 本轮已经实现的性能、任务恢复、审校与 EPUB 交付改进，详见 CHANGELOG 的 Unreleased 区块。
-- 日间、夜间、纸面模式；四种非中文界面为实验功能，四语各 1668 条界面文案已补齐。未完成独立语言审阅与全页面 RTL 验收，不宣称完整本地化。
-- DOCX 原格式保真及 Translation Quality Pipeline 是后续工作，不作为本次 0.5.0 的完成承诺。
+- 分发主产物：Qt Widgets 原生客户端的 macOS arm64 DMG，最低 macOS 15.0；每次构建复核原生闭包。Windows、Linux、Intel Mac 不在本轮桌面支持声明内。
+- 中文主界面；English、Español、Русский、العربية 为实验功能。目录完整性必须通过，但不代表语言语义、字体及 RTL 真机验收通过。
+- PDF / DOCX / EPUB / TXT / Markdown 导入；文本层解析、扫描页视觉理解、显式本机 OCR；扫描件视觉连接在实际需要时校验。随包 Tesseract 基线 eng / chi_sim / ara，缺语言包明确失败。
+- 准备 → 翻译 → 人工审校 → 交付；包括术语治理、项目隔离的 TM、段落编辑及结构修复、失败恢复、原页对照、交付门禁与不可变快照。
+- 保留语言资产与项目记忆；学术模式默认关闭，显式开启或读取既有学术任务时可用。已有任务恢复使用其已保存策略。
+- 保留现有原版式 PDF、DOCX、EPUB 和语言资产导出；原版式 PDF 仅适用于 PDF 来源，不宣称 DOCX 原格式写回。
+- 日间、夜间、纸面与翠绿主题；冻结现有设计，不再扩展本轮 UI 范围。
+- 旧 Streamlit / pywebview 路径保留一个版本。源码与 Pip 的 `folith` / `foliothread` 命令仍为旧启动器；Qt 源码入口为 `python -m folith.qt`，需另装 PySide6。DMG 是本轮 Qt Beta 入口，不能把 Pip 安装说明写成 Qt 安装说明。
 
-## 发布顺序
+EPUB 按主阅读顺序提取无 DRM 正文；TXT 支持 UTF-8、带 BOM 的 UTF-16 与 GB18030；Markdown 提取可读正文、列表及表格文字，代码块、图片与音视频明确列为未翻译。新格式使用现有翻译与重建导出流程，不提供原文件格式写回。
 
-1. 明确选取源码、测试、文档、品牌图和五种语言目录作为本地提交；运行数据、导出源文档及本地过程稿不进入发布单元。
-2. 在冻结提交上运行 `python scripts/check_ui_locales.py` 与 `python scripts/run_regression.py --tsv <evidence-dir>/regression.tsv`。前者严格阻断缺译、资源缺失、额外键、非法占位符和拼接片段空格变化。
-3. 从同一提交构建 wheel/sdist，运行 `python scripts/check_release_archives.py <dist-dir>` 及 `python scripts/release_preflight.py --dist <dist-dir>`；干净环境安装后从仓库外运行 `scripts/release_smoke.py`。
-4. 核对验证记录及未验证范围。正式发布时将 Unreleased 内容移入 `[0.5.0] - <实际发布日期>`，更新发布徽章并重新验证与该提交对应的构建。
-5. 经公开发布授权后 push，查看真实 GitHub Actions，创建新 v0.5.0 tag 和 Release；公开 v0.4.0 保持原样。
+## 本轮不增加
 
-界面目录严格检查使用 `python scripts/check_ui_locales.py`。键集完整不代表全部动态展示、语言语义审阅或页面 RTL 视觉已验收。
+DOCX 原格式写回、TM 模糊匹配、文档跨版本增量同步、新的知识反馈并发或性能策略。VLM 不宣称普遍更准、更快或更便宜；并发标注不宣称已取得真实 API 的端到端收益。
 
-## 历史证据边界
+## 发布工程顺序
 
-此前的 1031、1509、1526 passed 均属于各自源码快照，不能证明本次候选提交。当前验证以本轮生成的独立记录为准。
+1. 保留当前已完成的 Qt 设计和修复；只提交源码、测试、文档与品牌资源。开发工具状态、用户任务、源文档、凭据及构建产物不入库。
+2. 修复回归红项；用项目声明的 pytest 8 环境逐文件跑测试，避免多文件 Qt / Streamlit 对象污染。检查两套 UI 目录、重复定义与发布卫生。
+3. 冻结本地源码提交。从该提交构建 wheel / sdist 与 Qt `.app` / DMG；核对归档内容和源码、产物身份、原生架构及最低系统版本。
+4. 由构建记录生成 manifest、发行说明和人工验收文档；执行冻结应用的受控 HTTP 主流程、OCR、恢复、退出、干净 HOME 与 DMG 安装探针；生成同一候选的验收包。
+5. 在最终 DMG 上收齐 7 条强制人工项后，才可声明 `PRIVATE_BETA_READY`。本轮不代替真实模型、中文输入法、系统面板、运行中睡眠恢复、quarantine 首启及干净 Mac 验收。
+6. 公开分发另需 Developer ID、硬化运行时、签名、公证、staple 与真实下载验证；公开 push / tag / Release 留待后续授权。
 
-真实收费模型、Windows/Linux 实机、原生 pywebview 窗口、全部语言语义与 RTL 页面视觉仍须分别验收。旧 git 历史中的本机路径未清除；历史重写需要单独授权。
+## 候选身份与证据
+
+冻结源码提交是候选身份的起点。构建后生成的验收文档引用该提交；其刷新不会改变应用源码，也不因此重造第二个候选。实际身份以 `build/qt-desktop/desktop_build_info.json`、`release-manifest.json` 和 `dmg_record.json` 为准。
+
+历史测试数字只证明各自快照。新记录见 [Beta 收口记录](qt-beta/freeze-0.5.0.md)，现有人工项见 [验收矩阵](qt-beta/acceptance-matrix.md)。历史仓库路径清理只涉及本轮树，不重写 git 历史。

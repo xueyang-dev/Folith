@@ -16,7 +16,7 @@ Status: **Phase 0 PASS · Phase 1 PASS · Phase 2 PASS**
 | item | value |
 | --- | --- |
 | branch | `main` |
-| worktree | `/Users/xueyang/Dev/FolioThread` (primary checkout — the session did **not** start in an isolated worktree) |
+| worktree | `<workspace>` (primary checkout — the session did **not** start in an isolated worktree) |
 | HEAD | `1260a82 Fix provider model discovery and preserve connection selections` |
 | other worktrees | `/private/tmp/folith-baseline` (detached at `1260a82`), `~/.dsh/clutch-dsh-worktree/worktree/wt_3c92d568ba33` (branch `dsh/UIDev`) |
 | dirty entries | 272 modified/untracked paths (`git status --porcelain`), 1 566 untracked files |

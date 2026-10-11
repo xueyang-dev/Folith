@@ -32,6 +32,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 NUMBERED = re.compile(r"^\s*(\d+)[.)、]\s*(.*)$")
 NUMBERED_PAIR = re.compile(r"^\s*(\d+)[.)、]\s*原文[:：]\s*(.*)$")
 CURRENT_BATCH_MARKER = "【待翻译段落"

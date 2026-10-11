@@ -13447,14 +13447,14 @@ with setup_placeholder.container():
                     st.markdown(_h('<div class="tp-upload-copy">'
                                 '<span class="material-symbols-rounded" aria-hidden="true">upload_file</span>'
                                 '<span>拖入文件或点击选择</span>'
-                                '<small>支持 PDF、DOCX · 单文件最大 200 MB</small></div>'),
+                                '<small>支持 PDF、DOCX、EPUB、TXT、Markdown · 单文件最大 200 MB</small></div>'),
                                 unsafe_allow_html=True)
-                    uploaded_files = st.file_uploader(_t("原文"), type=["pdf", "docx"],
+                    uploaded_files = st.file_uploader(_t("原文"), type=["pdf", "docx", "epub", "txt", "md", "markdown"],
                                                       accept_multiple_files=True,
                                                       key=f"source_documents_"
                                                           f"{st.session_state.get('source_uploader_generation', 0)}",
                                                       label_visibility="collapsed",
-                                                      help=_t("支持 PDF 和 DOCX，可一次添加多个文件"))
+                                                      help=_t("支持 PDF、DOCX、EPUB、TXT 和 Markdown，可一次添加多个文件"))
                 if uploaded_files:
                     st.session_state.task_files = [
                         {"name": f.name, "bytes": f.getvalue()} for f in uploaded_files

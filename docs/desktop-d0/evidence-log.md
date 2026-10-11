@@ -15,7 +15,7 @@
 - 测试：静态采集（`venv/bin/python -V`、`pip list`、`uname`、`sw_vers`、`tesseract --version`）
 - 结果：PASS（记录见 `environment.md`）
 - 证据：
-  - Python 3.11.3（venv `/Users/xueyang/Dev/FolioThread/venv`）
+  - Python 3.11.3（venv `<workspace>/venv`）
   - Streamlit 1.64.0 / Starlette 1.6.0 / uvicorn 0.53.0 / pytest 8.4.2
   - macOS 27.0.1（build 26A434），arm64（Apple Silicon）
   - Tesseract 5.5.0（`/opt/homebrew/bin/tesseract`），已装语言 `chi_sim`、`eng`、`osd`、`snum`
@@ -264,7 +264,7 @@
 - 任务：用与 Finder 双击等价的方式启动 `.app`，核验身份握手、数据目录、工具发现、退出回收
 - 命令与结果：
   - `open dist/desktop/Folith.app` → launcher pid 49792 / service pid 49794；launcher 日志记录 `pipe_identity_verified=true`、`port_ownership_verified=true`（端口 54000）、`process_tree_verified=true`
-  - 数据目录解析为 macOS 默认位置：`/Users/xueyang/Library/Application Support/Folith/data`（roadmap §3.2 目标位置）
+  - 数据目录解析为 macOS 默认位置：`/Users/<user>/Library/Application Support/Folith/data`（roadmap §3.2 目标位置）
   - 退出：`osascript -e 'quit app "Folith"'` → 无残留进程、端口释放
 - **桌面环境 PATH 实测**：干净环境启动（`env -i HOME=$HOME open …`）时服务进程 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`（launchd 最小 PATH）。在完全相同的 PATH 下：
   - `core._find_tesseract()` → `/opt/homebrew/bin/tesseract`（应用已有绝对 GUI 路径探测，**不依赖 PATH**）→ OCR 发现 PASS

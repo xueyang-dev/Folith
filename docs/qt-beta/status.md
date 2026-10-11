@@ -3,9 +3,9 @@
 单一进度清单（复用 `docs/qt-spike/evidence-log.md` 作为证据日志，不重复造第二份证据表）。
 每轮只改本文件的"当前阶段 / 状态 / 证据 / 阻断 / 下一单元"。
 
-- 更新日期：2026-10-05（Beta 收口 R62：AX 崩溃已复现 + 定性上游缺陷 + 删除无效开关）
-- 阶段：**S1–S8 完成；进入 Beta 收口（等待人工验收）**
-- **当前结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
+- 更新日期：2026-10-11（0.5.0 Beta 范围调整与同一候选重建）
+- 阶段：**S1–S8 完成；新增 EPUB / TXT / Markdown，正在重跑工程门禁**
+- **上一轮结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
 
 - 路线：Python + PySide6（Qt Widgets）；Windows 保留适配与实机验收要求，本轮不宣称支持
 - 架构决策：**GO — Qt Widgets / macOS arm64**（见 [s8-decision.md](s8-decision.md)）
@@ -15,12 +15,18 @@
 <!-- status-identity:end -->
 - **声明最低系统：macOS 15.0**（实测原生闭包上限；**不支持** 13/14，不声称支持）
 
+### 2026-10-11 当前范围与核验
+
+本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准：加入 EPUB / TXT / Markdown 导入，保留现有 Qt 设计，修复发布卫生与回归红项，再由同一个源码提交重建应用、DMG 和验收包。新增格式完整链路及冻结产物验证完成前，不沿用历史 PASS。7 条强制人工项仍未完成，尚不能声明 `PRIVATE_BETA_READY`。
+
+本轮门禁收集 **173 项用例**；20 步链另加三个新格式的冻结应用完整流程。下列历史数字及旧候选状态只说明当时快照，不代表本轮验证结论。
+
 ### 最终报告摘要（截至 R57）
 
 | 维度 | 结果 |
 | --- | --- |
 | 工程实现 | §6 要求的 A/B/C/D 主流程全部实现；本轮循环内修复 **40+ 处真实缺陷**（含数据损坏级：交付预览承诺门禁会拒绝的事、批次错位防护、列表可能指向错任务） |
-| 机器可验证验收 | **PASS**：166 项用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件全量回归（154 通过；唯一失败为既有 brand 用例：命中他人未跟踪文件 + 本仓 Qt 客户端 `dialogs.py` 一处注释，见 E180）、文档一致性审计（用例数/候选身份/最低系统/结论字符串/**相对链接是否断**自动核对）、重复定义静态检查（全部模块） |
+| 机器可验证验收 | **PASS**：173 项用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件全量回归（154 通过；唯一失败为既有 brand 用例：命中他人未跟踪文件 + 本仓 Qt 客户端 `dialogs.py` 一处注释，见 E180）、文档一致性审计（用例数/候选身份/最低系统/结论字符串/**相对链接是否断**自动核对）、重复定义静态检查（全部模块） |
 | 人工强制项 | **0/7 完成**（本轮 computer use 回传：C.2′ → **抓到真缺陷并已修复**；A.8′ 连接 PASS / 任务链被 AX 崩溃阻断；C.12 空闲 PASS / 运行中未验证；A.1′、A.7″、B.1、D.9 见下方明细）。详见 [computer-use-acceptance-2b74924a-2026-10-05.md](computer-use-acceptance-2b74924a-2026-10-05.md) |
 | 公开分发 | **DEFERRED**：Developer ID / 硬化运行时 / 签名 / 公证 / staple / 真实下载——属另行授权范围，不阻塞受邀 Beta |
 | 技术阻断 | **无**（不依赖人工项的部分已全部收口；剩余项均为"只有人能判定"） |
@@ -217,13 +223,13 @@ venv/bin/python scripts/qt_release_checks.py --check-notes
 - Windows / Intel Mac / Windows ARM：未验收，不宣称支持。
 - LibreOffice 未随包：渲染 QA 保持 `NOT_RUN`，不以缺少它阻塞可用 DOCX 的 Beta。
 
-## 5. 下一单元（本循环已收口，等待人工验收）
+## 5. 历史交接记录（本轮按上方 2026-10-11 范围重新验证）
 
 0. **先决条件（重要）**：本轮构建（16:33）之后，**另一个 session 仍在改** `core.py` / `folith/document_understanding.py` / `folith/ui/pdf_view.py`，所以产物身份检查会报"需要重建"，且 `test_real_scan_with_missing_pack_reports_the_pack` 当前是红的（报错就在他人刚改的文件里）。**等共享工作区稳定后**：重建候选 → 重跑完整 20 步链 → 重跑 `scripts/qt_exit_paths_probe.py` → 重生成验收包（`scripts/qt_acceptance_bundle.py --write`）。
 1. **候选已就绪**：`dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（身份见 §1；未签名未公证）。
    发给测试者的最小集合：[acceptance-quickstart.md](acceptance-quickstart.md)（一页速览 + 回传模板）
    ＋ [manual-acceptance.md](manual-acceptance.md)（详细步骤）＋ 本文件（状态与证据入口）。
-2. **机器侧已无剩余工作**：166 用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件回归、
+2. **机器侧已无剩余工作**：173 用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件回归、
    文档一致性审计、重复定义检查——全部通过；终局核对见证据日志 R60。
 3. **唯一剩余路径 = 7 条强制人工项**（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9）。
    请用**人工键鼠**完成——不要挂 AX 代理/Computer Use：那是上游 QTBUG-149612 的触发条件，

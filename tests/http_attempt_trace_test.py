@@ -1,8 +1,9 @@
-"""Use the real SDK with an offline HTTP transport to test hidden retries."""
+"""Use the real SDK against a local HTTP endpoint to test hidden retries."""
 import json
-import httpx
+import socket
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
-from openai import DefaultHttpxClient
 
 import core
 from folith import llm_transport, usage
@@ -20,25 +21,48 @@ def test_sdk_attempts_join_one_logical_call(tmp_path, monkeypatch, failure):
         monkeypatch.setattr(core, name, lambda *_: None)
     attempts = []
 
-    def handler(request):
-        attempts.append(request)
-        if len(attempts) == 1:
-            if failure == "connection":
-                raise httpx.ConnectError("controlled connection failure", request=request)
-            return httpx.Response(429, headers={"retry-after-ms": "1"}, json={"error": {"message": "rate limited"}})
-        return httpx.Response(200, json={"id": "test", "object": "chat.completion", "created": 0,
-            "model": "test-model", "choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 12, "completion_tokens": 2, "total_tokens": 14}})
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
 
-    monkeypatch.setattr(core, "DefaultHttpxClient",
-        lambda **kwargs: DefaultHttpxClient(transport=httpx.MockTransport(handler), **kwargs))
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            attempts.append(self.path)
+            if len(attempts) == 1 and failure == "connection":
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.connection.close()
+                return
+            status = 429 if len(attempts) == 1 else 200
+            body = ({"error": {"message": "rate limited"}} if status == 429 else {
+                "id": "test", "object": "chat.completion", "created": 0,
+                "model": "test-model", "choices": [{"index": 0,
+                "message": {"role": "assistant", "content": "OK"},
+                "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 2, "total_tokens": 14}})
+            payload = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            if status == 429:
+                self.send_header("retry-after-ms", "1")
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    base_url = f"http://127.0.0.1:{server.server_port}/v1"
     run = trace.start_run("sdk-attempts", output_dir=tmp_path / "trace", level=TraceLevel.STANDARD)
     try:
         invoke = usage.tracked_call(core.call_llm, usage.empty_usage(), role="translation")
-        assert invoke("DeepSeek", "mock-secret", "test-model", "private system", "private source") == "OK"
+        assert invoke("DeepSeek", "mock-secret", "test-model", "private system", "private source",
+                      base_url=base_url) == "OK"
     finally:
         trace.finish_run("sdk-attempts")
         llm_transport.close_all_clients()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
     events = [json.loads(line) for line in run.requests_path.read_text().splitlines()]
     starts = [e for e in events if e["event"] == "http_attempt_started"]
     responses = [e for e in events if e["event"] == "http_response_headers"]

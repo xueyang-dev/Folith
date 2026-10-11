@@ -1248,7 +1248,9 @@ class RunContext:
                         existing_stages = existing_data.get("stages") or {}
                 except Exception:
                     pass
-            legacy_stages = {}
+            # A standalone delivery run must not erase the ingestion and
+            # translation timings already stored for this task.
+            legacy_stages = dict(existing_stages)
             for s_name, s_info in self.stages.items():
                 old_stage = existing_stages.get(s_name) or {}
                 b_count = len([b for b in self.batch_records if b.get("stage") == s_name])

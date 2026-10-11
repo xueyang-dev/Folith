@@ -1,6 +1,6 @@
 # Original-layout PDF Renderer v1 — progress
 
-Updated: 2026-10-07 (Asia/Riyadh). Owner: single-agent loop. Repo: FolioThread.
+Updated: 2026-10-07 (Asia/Riyadh). Owner: single-agent loop. Repo: Folith.
 Read this file first after a context restore; it records what is already proven so
 the audit is not repeated.
 
@@ -190,7 +190,7 @@ only the affected page changed.
 ## Reproduction commands
 
 ```bash
-cd /Users/xueyang/Dev/FolioThread
+cd <workspace>
 ./venv/bin/python benchmark/opdf/prepare_corpus.py
 ./venv/bin/python benchmark/opdf/build_jobs.py --mode offline
 ./venv/bin/python benchmark/opdf/build_jobs.py --mode live

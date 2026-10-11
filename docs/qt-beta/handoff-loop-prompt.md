@@ -125,7 +125,7 @@ macOS 27.0.1 / Apple M4 上，用 AI "Computer Use"（辅助功能/AX 扫描）�
 ## 4. 循环工程提示词（把这一节整体作为新 session 的指令）
 
 ```text
-你在 /Users/xueyang/Dev/FolioThread 继续推进 Folith Qt 桌面端（Python + PySide6 / Qt Widgets，
+你在 <workspace> 继续推进 Folith Qt 桌面端（Python + PySide6 / Qt Widgets，
 macOS arm64）的 Private Beta 收口。先读这三份，再动手：
 
 1. docs/qt-beta-loop-engineering-prompt.md   —— 总提示词（§6 验收标准、§7 结论口径、每轮循环规则）

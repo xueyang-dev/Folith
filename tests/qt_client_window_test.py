@@ -176,6 +176,12 @@ def client(tmp_path, monkeypatch, qt_app):
         settings.setValue("appearance/language", saved_language)
     settings.sync()
     i18n_module.set_language("zh-CN")
+    # QTest 的组合键（⌘⇧H 之类）会把修饰键状态留在**应用级**：不释放的话，后面任何
+    # 测试文件里的 selectRow / 点击都像是按着 Shift 在选，表现为"别的文件的用例莫名失败"。
+    from PySide6.QtTest import QTest
+
+    for key in (Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta):
+        QTest.keyRelease(main, key)
     main.timer.stop()
     main._closing_accepted = True
     main.close()
@@ -3339,6 +3345,8 @@ def test_keyboard_only_can_select_and_open_a_task(client):
 
     table = window.home.table
     assert table.rowCount() == 1, f"首页应只有 1 个任务：{table.rowCount()}"
+    # 默认是卡片视图（卡片的键盘路径见 qt_home_cards_test）；这条用例走表格视图。
+    window.home.set_view_mode("table")
 
     # 表格必须能被键盘聚焦，方向键必须能选中行（而不是只能鼠标点）
     table.setFocus()
@@ -3617,3 +3625,208 @@ def test_exit_closes_an_open_modal_settings_dialog(client):
     leftovers = [widget for widget in app.topLevelWidgets()
                  if widget.isWindow() and widget.isVisible() and widget is not window]
     assert leftovers == [], f"退出后还有窗口开着：{leftovers}"
+
+
+# ---- 异步回调必须使用"提交时"的上下文（任务 / 段落），而不是完成时的当前上下文 ----
+# 等待框的「在后台运行」只是把它藏起来，用户可以继续操作；回调回来时当前任务/选中段
+# 可能已经变了。下面几条用例把后台动作"卡住"，切换上下文后再放行回调。
+
+
+class _HeldRunner:
+    """替换 ``window.runner.submit``：只记下回调，不执行，由用例决定何时放行。"""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def submit(self, fn, *args, on_done=None, on_error=None, label="", **kwargs):
+        self.calls.append({"fn": fn, "args": args, "kwargs": kwargs,
+                           "on_done": on_done, "on_error": on_error, "label": label})
+
+
+def _two_jobs(client):
+    adapter, core, tmp = client["adapter"], client["core"], client["tmp"]
+    job_a = _seed_job_for_keyboard(adapter, core, tmp, "ctx-a.docx", ["甲一。", "甲二。", "甲三。"])
+    job_b = _seed_job_for_keyboard(adapter, core, tmp, "ctx-b.docx", ["乙一。", "乙二。", "乙三。"])
+    return job_a, job_b
+
+
+def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(client, monkeypatch):
+    """FND-1：任务 A 冻结交付时切到 B；完成回调不得对 B 弹"保存"，也不得写出 B 的文件。"""
+    window, adapter, app = client["window"], client["adapter"], client["app"]
+    job_a, job_b = _two_jobs(client)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(adapter, "delivery_preview",
+                        lambda *_a, **_k: {"can_deliver": True, "status_label": "可交付"})
+    saved: list[tuple] = []
+    prompts: list[str] = []
+    notices: list[str] = []
+    monkeypatch.setattr(window, "save_snapshot",
+                        lambda version, job_id=None: saved.append((version, job_id)))
+    monkeypatch.setattr(window, "_confirm",
+                        lambda title, message, yes=None, no=None: prompts.append(title) or True)
+    monkeypatch.setattr(window, "_notice",
+                        lambda message, **_k: notices.append(str(message)))
+
+    window.open_job(job_a)
+    app.processEvents()
+    window.deliver()
+    assert [call["label"] for call in held.calls] == ["冻结交付"], held.calls
+    prompts.clear()
+
+    window.open_job(job_b)  # 用户点了「在后台运行」并打开了另一个任务
+    app.processEvents()
+    held.calls[0]["on_done"]({"version": 3, "assets": []})
+
+    assert saved == [], f"不应为当前任务 B 保存：{saved}"
+    assert "保存交付文件" not in prompts, prompts
+    assert any("另一个任务" in text for text in notices), notices
+
+    # 仍停留在 A：照旧询问，并且把 A 的任务号明确传下去。
+    window.open_job(job_a)
+    app.processEvents()
+    window.deliver()
+    prompts.clear()
+    held.calls[-1]["on_done"]({"version": 4, "assets": []})
+    assert saved == [(4, job_a)], saved
+
+
+def test_save_snapshot_writes_the_requested_task_not_the_current_one(client, monkeypatch):
+    window, adapter, app = client["window"], client["adapter"], client["app"]
+    job_a, job_b = _two_jobs(client)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(window, "_choose_directory", lambda _title: str(client["tmp"]))
+    monkeypatch.setattr(window, "_confirm_overwrite", lambda *_a, **_k: False)
+
+    window.open_job(job_b)
+    app.processEvents()
+    window.save_snapshot(2, job_a)
+
+    copy_calls = [call for call in held.calls if call["fn"] is adapter.copy_delivery_assets]
+    assert len(copy_calls) == 1 and copy_calls[0]["args"][0] == job_a, held.calls
+
+    held.calls.clear()
+    window.save_snapshot(2)  # 缺省仍是当前任务（交付页按钮的路径）
+    copy_calls = [call for call in held.calls if call["fn"] is adapter.copy_delivery_assets]
+    assert len(copy_calls) == 1 and copy_calls[0]["args"][0] == job_b, held.calls
+
+
+def test_style_profile_result_is_dropped_after_switching_task(client, monkeypatch):
+    """FND-2：A 的智能画像结果不得显示在 B 的（共用）准备面板上。"""
+    window, app = client["window"], client["app"]
+    job_a, job_b = _two_jobs(client)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(window, "_notice", lambda *_a, **_k: None)
+    panel = window.workbench.setup_panel
+
+    window.open_job(job_a)
+    app.processEvents()
+    window.run_style_profile()
+    assert not panel.style_profile_button.isEnabled()
+
+    window.open_job(job_b)
+    app.processEvents()
+    assert panel.style_profile_button.isEnabled(), "切换任务应清掉上一任务的忙碌状态"
+    assert not panel.style_status.isVisible() and not panel.style_status.text()
+
+    held.calls[0]["on_done"]({"recommendation": {"recommended_style": "academic",
+                                                 "confidence": 0.9, "reasons": ["A 的理由"]}})
+    assert panel._style_recommendation == {}
+    assert "A 的理由" not in panel.style_status.text()
+    assert not panel.style_accept_button.isVisible()
+
+    # 仍在 A 时结果照常展示。
+    window.open_job(job_a)
+    app.processEvents()
+    window.run_style_profile()
+    held.calls[-1]["on_done"]({"recommendation": {"recommended_style": "academic",
+                                                  "confidence": 0.9, "reasons": ["A 的理由"]}})
+    assert panel._style_recommendation.get("recommended_style") == "academic"
+
+
+def test_retranslate_notice_names_the_segment_that_was_retranslated(client, monkeypatch):
+    """FND-4：等待框隐藏后切到别的段，提示仍应说"发起重译的那一段"。"""
+    window, app = client["window"], client["app"]
+    job_a, _job_b = _two_jobs(client)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    notices: list[str] = []
+    monkeypatch.setattr(window, "_notice", lambda message, **_k: notices.append(str(message)))
+
+    window.open_job(job_a)
+    app.processEvents()
+    window.retranslate_segment(2)  # 第 3 段
+    assert held.calls, "重译应已提交到后台"
+
+    monkeypatch.setattr(window.workbench, "current_index", lambda: 0)  # 用户已切到第 1 段
+    held.calls[0]["on_done"]({})
+    assert any("第 3 段" in text for text in notices), notices
+    assert not any("第 1 段" in text for text in notices), notices
+
+
+def test_review_selected_hint_asks_for_one_segment_not_two(client):
+    """FND-6：单段也能审校，提示不能再要求"至少两个"。"""
+    window = client["window"]
+    notices: list[str] = []
+    window._notice = lambda message, **_k: notices.append(str(message))
+    window.review_selected([])
+    assert notices and "至少一个段落" in notices[-1] and "两个" not in notices[-1], notices
+
+
+def test_opening_a_task_computes_the_delivery_preview_once(client, monkeypatch):
+    """FND-3：打开任务时交付预检（最贵的一步）只算一次，而不是 load 一次、强刷再一次。"""
+    window, adapter, app = client["window"], client["adapter"], client["app"]
+    job_a, _job_b = _two_jobs(client)
+    calls: list[str] = []
+    real = adapter.delivery_preview
+
+    def counting(job_id, *args, **kwargs):
+        calls.append(job_id)
+        return real(job_id, *args, **kwargs)
+
+    monkeypatch.setattr(adapter, "delivery_preview", counting)
+    window.open_job(job_a)
+    app.processEvents()
+    assert calls.count(job_a) == 1, calls
+
+
+def test_idle_poll_repaints_nothing_but_real_changes_still_show(client, monkeypatch):
+    """FND-3：状态没变的每秒轮询不重建行数据、不重画网格；真有变化（草稿）仍立刻体现。"""
+    window, adapter, app = client["window"], client["adapter"], client["app"]
+    from folith.qt import views as views_module
+
+    job_a, _job_b = _two_jobs(client)
+    window.open_job(job_a)
+    app.processEvents()
+    bench = window.workbench
+
+    row_builds: list[str] = []
+    real_rows = adapter.segment_rows
+    monkeypatch.setattr(adapter, "segment_rows",
+                        lambda *a, **k: row_builds.append("rows") or real_rows(*a, **k))
+    paints: list[int] = []
+    real_paint = views_module.style_module.qcolor
+    monkeypatch.setattr(views_module.style_module, "qcolor",
+                        lambda *a, **k: paints.append(1) or real_paint(*a, **k))
+
+    for _ in range(3):
+        window.refresh_workbench()  # 与 1 秒轮询同一条路径（非强制）
+    assert row_builds == [], "状态与草稿都没变时不应重建段落行"
+    assert paints == [], f"没有变化的行不应重画：{len(paints)} 次"
+
+    # 草稿文件变了 → 行数据重算，只有那一行重画，且角标立刻出现。
+    uid = bench._rows[1].segment_uid
+    adapter.save_draft(job_a, uid, "未提交的修改", baseline="T1")
+    window.refresh_workbench()
+    assert row_builds == ["rows"], row_builds
+    assert bench.segment_row_text(1, 2) == "未提交的修改"
+    assert bench.segment_list.item(1, 0).text().startswith(("●", "⚠"))
+    assert 0 < len(paints) <= 4, len(paints)  # 一行 = 数字列 + 译文列两次取色
+
+    # 主题变了 → 整张网格按新主题重画。
+    paints.clear()
+    monkeypatch.setattr(views_module, "current_theme", lambda: "dark-probe")
+    window.refresh_workbench()
+    assert len(paints) >= len(bench._rows), len(paints)

@@ -59,7 +59,7 @@ class MemorySample:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pdf", default=os.environ.get("FOLITH_BENCHMARK_PDF", "/Users/xueyang/Downloads/Alam_al-din_(IA_alamaldin00alimuoft).pdf"))
+    parser.add_argument("--pdf", default=os.environ.get("FOLITH_BENCHMARK_PDF", str(Path.home() / "Downloads" / "Alam_al-din_(IA_alamaldin00alimuoft).pdf")))
     parser.add_argument("--count", type=int, default=20)
     args = parser.parse_args()
     selected = json.loads((ROOT / "select_pages.json").read_text())["pages"]

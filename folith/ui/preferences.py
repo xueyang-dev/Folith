@@ -20,7 +20,7 @@ from .i18n import LANGUAGES, tr, localized_formatter, current_locale
 
 _PERSIST_STATE = {'persist_state': 'session'} if 'persist_state' in inspect.signature(st.radio).parameters else {}
 
-THEMES = {'light': '日间模式', 'dark': '夜间模式', 'paper': '纸面模式'}
+THEMES = {'light': '日间模式', 'dark': '夜间模式', 'paper': '纸面模式', 'green': '翠绿模式'}
 
 # Mock document used by the live preview. This is *document* text, not UI copy:
 # it must never be routed through the catalog, exactly like real user content.

@@ -16,7 +16,7 @@
 
 | 项 | 实测值 |
 | --- | --- |
-| 解释器 | `/Users/xueyang/Dev/FolioThread/venv/bin/python` |
+| 解释器 | `<workspace>/venv/bin/python` |
 | Python | 3.11.3 |
 | Streamlit | 1.64.0 |
 | Starlette | 1.6.0 |

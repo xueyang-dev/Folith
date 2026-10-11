@@ -199,7 +199,7 @@
     `version 0.5.0`、`build_id git:1260a82`、`commit 1260a826…`、`packaging_backend pyinstaller`、`frozen true`、`target macos/arm64`、
     `python 3.11.3`、`streamlit 1.64.0`、`pywebview 6.2.1`、`pyinstaller 6.22.3`、`Darwin / macOS-27.0.1-arm64-arm-64bit / arm64`、
     `job_state unversioned`、`runtime.observed "2"`、`journal declared 1 / observed 1`、`translation_drafts.observed 1`
-  - **泄漏检查**：在数据目录预埋 `provider_config.json`（`api_key: sk-SHOULD-NOT-LEAK-999`）与文档内容 → 导出包中 **0 次**出现该凭据、`provider_config`、文档文本；`Path.home()` 与用户名均不出现。
+  - **泄漏检查**：在数据目录预埋 `provider_config.json`（`api_key: <test-key>`）与文档内容 → 导出包中 **0 次**出现该凭据、`provider_config`、文档文本；`Path.home()` 与用户名均不出现。
   - 日志错误摘要：预埋 `ERROR … api_key=sk-LOGLEAK-777` → 导出为 `ERROR boom at ~/Dev/… api_key=<redacted>`（家目录折叠、凭据脱敏、普通日志行被过滤）。
   - 启动写入：`--no-browser` 启动后 `<log_dir>/diagnostics.json` 存在，横幅打印 `诊断：<path>`。
 - 测试与结果：
@@ -232,7 +232,7 @@
 | 正式接入 | 退出码 0，输出 `已接入 1 个任务…未复制凭据 1 项` |
 | **原目录未改动** | 接入前后各 25 个文件，**逐文件 sha256 完全一致**（`legacy_tree_unchanged: true`） |
 | **资产完整** | 来源任务 23 个文件 vs 接入后 23 个文件，**文件集合完全一致**（`asset_set_identical: true`）；含 `state.json`、`source.bin`、`runtime_events.jsonl`、`.performance/**` 等任务资产 |
-| **凭据未随迁** | 预埋 `provider_config.json`（`api_key: sk-LEGACY-MUST-NOT-TRAVEL`）→ `credential_copied: false` |
+| **凭据未随迁** | 预埋 `provider_config.json`（`api_key: <test-key>`）→ `credential_copied: false` |
 | **接入后可读** | `adopted_job_readable: true` |
 | **真实 UI 重开** | 在接入后的数据目录启动冻结应用 → 浏览器重开校验：编辑器显示 `导入校验编辑 IMPORT-CHECK`（`editor_contains_edit: true`） |
 - 测试与结果：
@@ -455,7 +455,7 @@
 - **发现真实缺陷**：`folith/desktop/diagnostics.py` 的脱敏只处理 `api_key/token/... : value` 这类**带键名**的写法；日志里**不带前缀**的凭据（上游错误回显、SDK 报错）会**原样进入诊断包**。实测首轮：
 
 ```
-launcher.log: ERROR upstream returned 401 for key sk-BARE-BBB2222222222   ← 泄漏
+launcher.log: ERROR upstream returned 401 for key <test-key>   ← 泄漏
 ```
 
 - 修复：新增 `_SECRET_PATTERNS` 高置信度凭据形态（`sk-…`、`AIza…`、`ghp_…`、`xox?-…`、`Bearer …`），并**先应用具体形态、再应用通用 `键名: 值` 规则**（否则通用规则只吃掉 "Bearer" 一词而把 token 留下）。刻意**不**匹配普通哈希，避免诊断失去可读性。
@@ -464,7 +464,7 @@ launcher.log: ERROR upstream returned 401 for key sk-BARE-BBB2222222222   ← �
 | 检查 | 修复前 | 修复后 |
 | --- | --- | --- |
 | 带前缀 key `api_key=sk-PREFIXED-AAA111` | 已脱敏 | 已脱敏 |
-| **裸 key** `key sk-BARE-BBB2222222222` | **泄漏** | **`<redacted>`** |
+| **裸 key** `key <test-key>` | **泄漏** | **`<redacted>`** |
 | `startup_token=abc123def456` | 已脱敏 | 已脱敏 |
 | `Authorization: Bearer eyJ…` | 部分泄漏（只吃掉 Bearer） | `<redacted>` |
 | 家目录 / `/opt/homebrew` | 已隐去 | 已隐去 |

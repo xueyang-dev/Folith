@@ -1,5 +1,5 @@
 {
- "fixture": "/Users/xueyang/Dev/FolioThread/benchmark/translation-efficiency/workload.json",
+ "fixture": "<workspace>/benchmark/translation-efficiency/workload.json",
  "arms": {
   "A_nocontext": {
    "context_mode": "dynamic_v2",

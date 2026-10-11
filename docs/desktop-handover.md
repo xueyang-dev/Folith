@@ -1,6 +1,6 @@
 # Folith 桌面客户端：成果交接（Streamlit + pywebview → PySide6 / Qt Widgets）
 
-日期：2026-10-03 · 仓库：`/Users/xueyang/Dev/FolioThread`
+日期：2026-10-03 · 仓库：`<workspace>`
 背景：产品方向调整为 **Python + PySide6（Qt Widgets）**，Windows / macOS 共用界面与业务核心、分别打包。
 本文件收尾既有 Streamlit + pywebview 桌面工程（D0–D3），保存成果、证据、已知问题与未验证范围，
 并给出 Qt Spike 的复用范围与计划。**旧界面保留为对照**（`python gui.py --legacy`）。

@@ -49,9 +49,9 @@ run venv/bin/python scripts/qt_acceptance_kit.py --write
 run venv/bin/python scripts/qt_acceptance_kit.py --check
 run venv/bin/python scripts/qt_docs_audit.py --json build/qt-desktop/docs-audit.json
 run venv/bin/python scripts/qt_duplicate_defs.py
-run venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py tests/qt_client_style_test.py tests/red_team_acceptance_test.py \
-  tests/qt_extraction_error_test.py tests/qt_client_adapter_test.py tests/qt_client_window_test.py \
-  tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q -rf
+run venv/bin/python scripts/run_regression.py \
+  -k qt_acceptance_kit,qt_delivery_content,qt_client_style,red_team_acceptance,qt_extraction_error,qt_client_adapter,qt_client_window,qt_release_plumbing,qt_spike \
+  --tsv "$OUT/regression.tsv"
 fi
 DMG=$(ls dist/qt-desktop/*.dmg | head -1)
 run venv/bin/python scripts/qt_dmg_probe.py --dmg "$DMG" --out $OUT/dmg
@@ -63,8 +63,9 @@ run venv/bin/python scripts/qt_lifecycle_probe.py --scenario two-tasks-cancel \
   --stub-delay 0.6 --timeout 420
 run venv/bin/python scripts/qt_crash_recovery_probe.py \
   --data-dir $OUT/crash/data --out $OUT/crash/report.json --paragraphs 150
-run env SCREENSHOT=/Users/xueyang/Dev/FolioThread/tmp/qt-beta/visual/frozen-workbench.png \
-  tmp/qt-beta/run_frozen_probe.sh $OUT/real real
+run venv/bin/python scripts/qt_desktop_probe.py --frozen-app "$PWD/dist/qt-desktop/Folith.app/Contents/MacOS/Folith" \
+  --data-dir "$OUT/real/data" --out "$OUT/real/report.json" --fixture both \
+  --screenshot "$OUT/real/frozen-workbench.png"
 # 模型请求挂住时（睡眠/唤醒、网络黑洞）：界面可用、可取消、退出有上界且走显式强制路径。
 run venv/bin/python scripts/qt_hung_provider_probe.py --out $OUT/hung
 # 干净用户首跑：在全新的 HOME 下跑完整流程（验收清单 A 步可机器验证的部分）。
@@ -72,7 +73,7 @@ run venv/bin/python scripts/qt_clean_home_probe.py \
   --app "$PWD/dist/qt-desktop/Folith.app/Contents/MacOS/Folith" \
   --out $OUT/cleanhome
 # 交付文件内容校验：把随包产物写出的交付文件读回来，与任务状态交叉核对。
-JOB=$(ls $OUT/real/data 2>/dev/null | grep -v json | grep -v lock | head -1)
+JOB=$(venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["job_ids"][0])' "$OUT/real/report.json")
 run venv/bin/python scripts/qt_delivery_content_probe.py \
   --delivery-dir "$OUT/real/交付 结果 中文" \
   --state "$OUT/real/data/$JOB/state.json" \

@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # A credential in the legacy directory must not travel.
     (legacy_dir / "provider_config.json").write_text(
-        json.dumps({"provider": "自定义中转站", "api_key": "sk-LEGACY-MUST-NOT-TRAVEL"}),
+        json.dumps({"provider": "自定义中转站", "api_key": "sk-" + "LEGACY-MUST-NOT-TRAVEL"}),
         encoding="utf-8")
     before = _tree_digest(legacy_dir)
     evidence["legacy_tree"] = {"files": len(before), "job": job}

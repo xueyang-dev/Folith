@@ -78,12 +78,13 @@ def _headings(home) -> list[str]:
             if label.objectName() == "groupHeading"]
 
 
-def test_card_view_exists_and_starts_on_the_table(home):
-    assert home.view_switch.value() == "table"
-    assert home.stack.currentWidget() is home.table
-    home.set_view_mode("cards")
+def test_card_view_is_the_default_and_the_table_is_one_click_away(home):
+    # Golden Gate 版式：任务库默认是缩略图卡片，表格留给"几十个任务横着扫"。
     assert home.view_switch.value() == "cards"
     assert home.stack.currentWidget() is home.card_scroll
+    home.set_view_mode("table")
+    assert home.view_switch.value() == "table"
+    assert home.stack.currentWidget() is home.table
 
 
 def test_cards_are_grouped_by_project(home):
@@ -134,10 +135,11 @@ def test_empty_list_shows_the_empty_state_in_both_views(home):
 
 
 def test_column_count_follows_the_window_width(home):
+    # 卡片至少 200px 宽（文档缩略图 + 两行文字放得下），列数 = 主区能放下几张。
     home.resize(1400, 900)
-    assert home._card_columns() == 3
+    assert home._card_columns() == 5
     home.resize(1000, 900)
-    assert home._card_columns() == 2
+    assert home._card_columns() == 3
     home.resize(700, 900)
     assert home._card_columns() == 1
 
@@ -246,3 +248,29 @@ def test_home_sort_orders_rows_and_keeps_running_tasks_first(app):
         assert order() == ["c", "b", "a"], "排序与搜索可以叠加"
     finally:
         home.deleteLater()
+
+
+def test_cards_are_keyboard_operable(app, home):
+    """默认视图是卡片：Tab 聚焦即选中，方向键换卡，回车打开。"""
+    from PySide6.QtTest import QTest
+
+    home.show()
+    home.set_view_mode("cards")
+    app.processEvents()
+    opened: list[str] = []
+    home.openRequested.connect(opened.append)
+    order = list(home._cards)
+    first = home._cards[order[0]]
+    assert first.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    first.setFocus()
+    app.processEvents()
+    assert home.selected_job_id() == order[0]
+    assert home.open_button.isEnabled()
+    QTest.keyClick(first, Qt.Key.Key_Right)
+    app.processEvents()
+    second = home._cards[order[1]]
+    if second.hasFocus():       # 离屏平台上焦点可能不落到窗口里：只在落到时校验选中
+        assert home.selected_job_id() == order[1]
+    QTest.keyClick(home._cards[order[0]], Qt.Key.Key_Return)
+    assert opened and opened[-1] == order[0]
+    home.hide()

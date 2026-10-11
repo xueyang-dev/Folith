@@ -28,9 +28,9 @@ status colours) that every component inherits for free.
 from __future__ import annotations
 
 # Presentation order used by the appearance settings page and by generated CSS.
-THEME_ORDER = ('light', 'dark', 'paper')
+THEME_ORDER = ('light', 'dark', 'paper', 'green')
 
-SCHEMES = {'light': 'light', 'dark': 'dark', 'paper': 'light'}
+SCHEMES = {'light': 'light', 'dark': 'dark', 'paper': 'light', 'green': 'light'}
 
 # --------------------------------------------------------------------------
 # Semantic tokens
@@ -50,6 +50,10 @@ TOKENS: dict[str, dict[str, str]] = {
     'light': {
         'bg-page': '#f4f7fc',
         'bg-sidebar': '#f9fafb',
+        # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
+        'bg-glass': '#eef2f8',
+        'control-bg': '#ffffff',
+        'control-border': 'rgba(19,28,46,.16)',
         'bg-surface': '#ffffff',
         'bg-surface-subtle': '#f9fafb',
         'bg-surface-sunken': '#f2f4f7',
@@ -80,6 +84,14 @@ TOKENS: dict[str, dict[str, str]] = {
         'warning-soft': '#fffaeb',
         'danger': '#dc2626',
         'danger-soft': '#fef3f2',
+        # Info = the "paused / noted" violet (design sheet: Info #8B5CF6).  Not an
+        # action colour: only status pills and a few icon tints use it.
+        'info': '#6f4bdc',
+        'info-soft': '#f1ecff',
+        # Page wash: the home canvas fades from the page colour into a faint
+        # brand-blue tint (135deg).  Dark stays flat on purpose (graphite).
+        'bg-gradient-start': '#f8fbff',
+        'bg-gradient-end': '#e9f1ff',
         'brand-navy': '#000d2d',
         'brand-ink': '#0b1f3b',
         'brand-logo-blue': '#004cfd',
@@ -114,6 +126,10 @@ TOKENS: dict[str, dict[str, str]] = {
         # --- surfaces (window → sidebar → card → raised control/popover) ---
         'bg-page': '#1C1C1E',
         'bg-sidebar': '#202022',
+        # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
+        'bg-glass': '#232326',
+        'control-bg': 'rgba(255,255,255,.08)',
+        'control-border': 'rgba(255,255,255,.14)',
         'bg-surface': '#242426',
         'bg-surface-subtle': '#212123',
         'bg-surface-sunken': '#1A1A1C',
@@ -149,6 +165,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'warning-soft': 'rgba(242,201,124,.14)',
         'danger': '#ffaaa4',
         'danger-soft': 'rgba(255,170,164,.14)',
+        'info': '#c0a8ff',
+        'info-soft': 'rgba(192,168,255,.16)',
+        'bg-gradient-start': '#1C1C1E',
+        'bg-gradient-end': '#1C1C1E',
         'brand-navy': '#f2f2f7',
         'brand-ink': '#f2f2f7',
         'brand-logo-blue': '#82acff',
@@ -167,6 +187,10 @@ TOKENS: dict[str, dict[str, str]] = {
     'paper': {
         'bg-page': '#f2eadb',
         'bg-sidebar': '#ece3d2',
+        # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
+        'bg-glass': '#e9dfcc',
+        'control-bg': '#fbf7ee',
+        'control-border': 'rgba(70,60,45,.22)',
         'bg-surface': '#fbf7ee',
         'bg-surface-subtle': '#f6f0e2',
         'bg-surface-sunken': '#e9dfcb',
@@ -197,6 +221,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'warning-soft': '#f1e4c4',
         'danger': '#a63a31',
         'danger-soft': '#f2ded6',
+        'info': '#6a5a86',
+        'info-soft': '#e6dfef',
+        'bg-gradient-start': '#f4ecdd',
+        'bg-gradient-end': '#ece2cf',
         'brand-navy': '#2a251e',
         'brand-ink': '#2a251e',
         # The logo keeps the brand colours in every theme: it is the anchor that
@@ -213,6 +241,68 @@ TOKENS: dict[str, dict[str, str]] = {
         'shadow-sm': '0 1px 2px rgba(72,58,38,.05)',
         'shadow-md': '0 2px 8px rgba(72,58,38,.07), 0 1px 2px rgba(72,58,38,.05)',
         'shadow-lg': '0 8px 24px rgba(72,58,38,.10), 0 2px 6px rgba(72,58,38,.05)',
+    },
+    # Green is the fourth theme: a light, fresh palette whose accent is the
+    # design sheet's "Primary Green" (#0F6B4F).  Like Paper it is a complete
+    # palette, not a re-tint of Day: the accent, selection washes, focus rings and
+    # page wash are all green, while text / border neutrals stay the cool slate
+    # of the sheet (#0F172A / #64748B / #E5E7EB).  The logo keeps its brand
+    # colours (see ``brand-logo-blue``), so the product stays recognisable.
+    'green': {
+        'bg-page': '#f4f8f6',
+        'bg-sidebar': '#f8faf9',
+        # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
+        'bg-glass': '#ebf3ef',
+        'control-bg': '#ffffff',
+        'control-border': 'rgba(15,40,30,.18)',
+        'bg-surface': '#ffffff',
+        'bg-surface-subtle': '#f8faf9',
+        'bg-surface-sunken': '#eef3f0',
+        'bg-surface-raised': '#ffffff',
+        'bg-hover': '#f0f6f3',
+        'bg-selected': '#e6f4ee',
+        'text-primary': '#0f172a',
+        'text-secondary': '#64748b',
+        'text-muted': '#7a8699',
+        'text-on-accent': '#ffffff',
+        'border-faint': '#edf1ef',
+        'border-hairline': '#e8edeb',
+        'border-divider': '#e5e7eb',
+        'border-subtle': '#dde3e0',
+        'border-strong': '#c6d0cb',
+        'border-sidebar': '#e2e8e5',
+        'accent': '#0f6b4f',
+        'accent-hover': '#0b5a42',
+        'accent-active': '#084833',
+        'accent-soft': '#e6f4ee',
+        'accent-soft-hover': '#d5ece2',
+        'accent-border': '#a8d8c4',
+        'focus-ring': 'rgba(15,107,79,.26)',
+        'focus-halo': 'rgba(46,204,138,.18)',
+        'success': '#13955f',
+        'success-soft': '#e4f6ee',
+        'warning': '#b54708',
+        'warning-soft': '#fffaeb',
+        'danger': '#dc2626',
+        'danger-soft': '#fef3f2',
+        'info': '#6f4bdc',
+        'info-soft': '#f1ecff',
+        'bg-gradient-start': '#f7fbf9',
+        'bg-gradient-end': '#e2f3ea',
+        'brand-navy': '#0d2b21',
+        'brand-ink': '#0d2b21',
+        'brand-logo-blue': '#004cfd',
+        'brand-cyan': '#00e8fe',
+        'brand-azure': '#0088fd',
+        'disabled-bg': '#e1eae6',
+        'disabled-ink': '#93a39b',
+        'overlay-veil': 'rgba(244,248,246,.96)',
+        'surface-glass': 'rgba(248,250,249,.96)',
+        'glass-border': '#cfe3d9',
+        'glass-shadow': 'rgba(15,60,45,.08)',
+        'shadow-sm': '0 1px 2px rgba(16,40,30,.05)',
+        'shadow-md': '0 2px 8px rgba(16,40,30,.07), 0 1px 2px rgba(16,40,30,.05)',
+        'shadow-lg': '0 8px 24px rgba(16,40,30,.09), 0 2px 6px rgba(16,40,30,.05)',
     },
 }
 
@@ -311,7 +401,7 @@ def _theme_swatch_rules(container: str) -> str:
 
 
 def theme_selector_css() -> str:
-    """Compact three-option theme cards with a per-theme colour preview.
+    """Compact theme cards with a per-theme colour preview.
 
     A radio is kept as the control (keyboard + aria semantics come for free);
     only its presentation changes.  Each option shows what that theme's paper and
@@ -320,7 +410,7 @@ def theme_selector_css() -> str:
     return _theme_swatch_rules('.st-key-appearance_theme_control') + """
 .st-key-appearance_theme_control [data-testid="stRadio"] { margin:0; }
 .st-key-appearance_theme_control [data-testid="stRadioGroup"] {
- display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; align-items:stretch;
+ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; align-items:stretch;
 }
 .st-key-appearance_theme_control [data-testid="stRadioOption"] {
  display:flex; align-items:center; gap:9px; margin:0;

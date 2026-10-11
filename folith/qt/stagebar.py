@@ -11,7 +11,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractButton, QHBoxLayout, QMenu, QPushButton, QSizePolicy, QWidget,
+    QAbstractButton, QFrame, QHBoxLayout, QMenu, QPushButton, QSizePolicy, QWidget,
 )
 
 from . import i18n
@@ -26,10 +26,15 @@ STEP_PAGES = {stage_model.PREPARE: "translate", stage_model.TRANSLATE: "translat
 
 
 class StepButton(QAbstractButton):
-    """一个步骤：圆形标记（序号 / ✓ / !） + 标签 + 弱化的状态提示。"""
+    """一个步骤（Golden Gate 胶囊分段里的一段）：✓ / ! + 标签 + 弱化的状态提示。
 
-    HEIGHT = 40
-    MARKER = 20
+    整条步骤条是工具栏中间的一枚胶囊（见 :class:`StageBar` 的 ``stageTrack``）；
+    当前所在的一步是胶囊里浅色强调底的那一段，已完成的步骤前面一个成功色对勾，
+    卡住的步骤前面一个警示色叹号，还没轮到的只有文字。
+    """
+
+    HEIGHT = 28
+    MARKER = 12
 
     def __init__(self, step_id: str, number: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,6 +70,7 @@ class StepButton(QAbstractButton):
     def set_active(self, active: bool) -> None:
         if active != self._active:
             self._active = active
+            self.updateGeometry()
             self.update()
 
     def state(self) -> str:
@@ -80,17 +86,26 @@ class StepButton(QAbstractButton):
     def _fonts(self) -> tuple[QFont, QFont]:
         label = QFont(self.font())
         label.setPixelSize(theme_module.FONT_SIZES["body"] - 1)
-        label.setWeight(QFont.Weight.DemiBold)
+        label.setWeight(QFont.Weight.DemiBold if self._active else QFont.Weight.Medium)
         hint = QFont(self.font())
         hint.setPixelSize(theme_module.FONT_SIZES["caption"])
         return label, hint
 
+    def _shows_hint(self) -> bool:
+        """提示只在当前一步、或这一步卡住时出现（胶囊里放不下四句状态）。"""
+        return bool(self._hint) and (self._active or self._state == stage_model.ATTENTION)
+
+    def _has_marker(self) -> bool:
+        return self._state in (stage_model.DONE, stage_model.ATTENTION)
+
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
         label_font, hint_font = self._fonts()
-        width = 10 + self.MARKER + 8 + QFontMetrics(label_font).horizontalAdvance(self._label)
-        if self._hint:
-            width += 8 + QFontMetrics(hint_font).horizontalAdvance(self._hint)
-        return QSize(width + 12, self.HEIGHT)
+        width = 13 + QFontMetrics(label_font).horizontalAdvance(self._label) + 13
+        if self._has_marker():
+            width += self.MARKER + 5
+        if self._shows_hint():
+            width += 6 + QFontMetrics(hint_font).horizontalAdvance(self._hint)
+        return QSize(width, self.HEIGHT)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802
         return self.sizeHint()
@@ -101,10 +116,10 @@ class StepButton(QAbstractButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = theme_module.RADIUS["sm"]
+        radius = rect.height() / 2
         hovered = self.underMouse() and self.isEnabled()
         if self._active:
-            painter.setPen(QPen(theme_module.qcolor(tokens["accent-border"]), 1))
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(theme_module.qcolor(tokens["accent-soft"]))
             painter.drawRoundedRect(rect, radius, radius)
         elif hovered:
@@ -113,64 +128,59 @@ class StepButton(QAbstractButton):
             painter.drawRoundedRect(rect, radius, radius)
 
         state = self._state
-        marker_color = {
-            stage_model.DONE: tokens["success"], stage_model.CURRENT: tokens["accent"],
-            stage_model.ATTENTION: tokens["warning"],
-        }.get(state, tokens["text-muted"])
-        # 从右到左的语言（阿拉伯语）里整条步骤条是镜像的：自绘内容也要跟着镜像，
-        # 否则圆形标记还在左边、文字却被布局挪到了右边。
+        # 从右到左的语言（阿拉伯语）里整条步骤条是镜像的：自绘内容也要跟着镜像。
         rtl = self.isRightToLeft()
-        marker_x = (self.width() - 10 - self.MARKER) if rtl else 10
-        marker = QRectF(marker_x, (self.height() - self.MARKER) / 2, self.MARKER, self.MARKER)
-        filled = state in (stage_model.DONE, stage_model.CURRENT, stage_model.ATTENTION)
-        if filled:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(theme_module.qcolor(marker_color))
-        else:
-            painter.setPen(QPen(theme_module.qcolor(marker_color), 1.2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(marker)
-        glyph_color = theme_module.qcolor(tokens["text-on-accent"] if filled else marker_color)
-        if state == stage_model.DONE:
-            pixmap = icons.pixmap("check", self.MARKER - 8, glyph_color)
-            painter.drawPixmap(int(marker.x() + 4), int(marker.y() + 4), pixmap)
-        else:
-            glyph = "!" if state == stage_model.ATTENTION else str(self.number)
-            painter.setPen(glyph_color)
-            number_font = QFont(self.font())
-            number_font.setPixelSize(theme_module.FONT_SIZES["caption"])
-            number_font.setWeight(QFont.Weight.DemiBold)
-            painter.setFont(number_font)
-            painter.drawText(marker, int(Qt.AlignmentFlag.AlignCenter), glyph)
-
         label_font, hint_font = self._fonts()
-        muted = state in (stage_model.TODO, stage_model.LOCKED)
-        label_color = tokens["text-muted"] if state == stage_model.LOCKED else (
-            tokens["text-secondary"] if muted and not self._active else tokens["text-primary"])
-        if self._active:
-            label_color = tokens["brand-ink"]
         label_width = QFontMetrics(label_font).horizontalAdvance(self._label) + 2
-        hint_width = QFontMetrics(hint_font).horizontalAdvance(self._hint) + 2 if self._hint else 0
+        show_hint = self._shows_hint()
+        hint_width = (QFontMetrics(hint_font).horizontalAdvance(self._hint) + 2) if show_hint else 0
         height = self.height()
-        if rtl:
-            label_x = marker.left() - 8 - label_width
-            hint_x = label_x - 8 - hint_width
+        cursor = 13.0
+        if self._has_marker():
+            marker_x = (self.width() - cursor - self.MARKER) if rtl else cursor
+            marker = QRectF(marker_x, (height - self.MARKER) / 2, self.MARKER, self.MARKER)
+            if state == stage_model.DONE:
+                pixmap = icons.pixmap("check", self.MARKER,
+                                      theme_module.qcolor(tokens["success"]))
+                painter.drawPixmap(int(marker.x()), int(marker.y()), pixmap)
+            else:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(theme_module.qcolor(tokens["warning"]))
+                painter.drawEllipse(marker)
+                painter.setPen(theme_module.qcolor(tokens["text-on-accent"]))
+                bang = QFont(self.font())
+                bang.setPixelSize(10)
+                bang.setWeight(QFont.Weight.Bold)
+                painter.setFont(bang)
+                painter.drawText(marker, int(Qt.AlignmentFlag.AlignCenter), "!")
+            cursor += self.MARKER + 5
+        if state == stage_model.LOCKED:
+            label_color = tokens["text-muted"]
+        elif self._active:
+            label_color = tokens["accent"]
+        elif state == stage_model.TODO:
+            label_color = tokens["text-secondary"]
         else:
-            label_x = marker.right() + 8
-            hint_x = label_x + label_width + 8
+            label_color = tokens["text-primary"]
+        if rtl:
+            label_x = self.width() - cursor - label_width
+            hint_x = label_x - 6 - hint_width
+        else:
+            label_x = cursor
+            hint_x = label_x + label_width + 6
         align = int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         painter.setFont(label_font)
         painter.setPen(theme_module.qcolor(label_color))
         painter.drawText(QRectF(label_x, 0, label_width, height), align, self._label)
-        if self._hint:
+        if show_hint:
             painter.setFont(hint_font)
-            hint_color = tokens["warning"] if state == stage_model.ATTENTION else tokens["text-muted"]
+            hint_color = tokens["warning"] if state == stage_model.ATTENTION else tokens["text-secondary"]
             painter.setPen(theme_module.qcolor(hint_color))
             painter.drawText(QRectF(hint_x, 0, hint_width, height), align, self._hint)
         if self.hasFocus():
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(theme_module.qcolor(tokens["focus-ring"]), 2))
-            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius, radius)
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius - 1, radius - 1)
 
     def enterEvent(self, event) -> None:  # noqa: N802
         self.update()
@@ -220,18 +230,29 @@ class StageBar(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
+        # Golden Gate：四步装在工具栏中间的一枚胶囊里（统一工具栏的主控件）。
+        self.track = QFrame()
+        self.track.setObjectName("stageTrack")
+        track_row = QHBoxLayout(self.track)
+        track_row.setContentsMargins(2, 2, 2, 2)
+        track_row.setSpacing(0)
         self.steps: dict[str, StepButton] = {}
         self._connectors: list[_Connector] = []
         for number, step_id in enumerate(stage_model.STEP_IDS, start=1):
             if number > 1:
+                # 连接线保留为状态对象（"上一步是否完成"），胶囊版式里不再画出来。
                 connector = _Connector()
+                connector.setVisible(False)
                 self._connectors.append(connector)
-                row.addWidget(connector)
+                track_row.addWidget(connector)
             button = StepButton(step_id, number)
             button.clicked.connect(
                 lambda _checked=False, s=step_id: self.pageRequested.emit(STEP_PAGES[s]))
             self.steps[step_id] = button
-            row.addWidget(button)
+            track_row.addWidget(button)
+        # 胶囊居中：左右各一段弹性空间，旁路入口（术语 / 更多）贴右。
+        row.addStretch(1)
+        row.addWidget(self.track)
         row.addStretch(1)
 
         def utility(text: str) -> QPushButton:
@@ -239,17 +260,17 @@ class StageBar(QWidget):
             button.setObjectName("stageUtility")
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setFixedHeight(StepButton.HEIGHT - 8)
+            button.setFixedHeight(StepButton.HEIGHT + 4)
             return button
 
         self.terms_button = utility(i18n.tr('术语'))
         self.terms_button.setIcon(icons.icon("file-sheet", 16,
-                                             style_module.text_color("text-secondary")))
+                                             "text-secondary"))
         self.terms_button.setIconSize(QSize(16, 16))
         self.terms_button.clicked.connect(lambda: self.pageRequested.emit("terms"))
         self.more_button = utility(i18n.tr('更多'))
         self.more_button.setIcon(icons.icon("chevron-down", 16,
-                                            style_module.text_color("text-secondary")))
+                                            "text-secondary"))
         self.more_button.setIconSize(QSize(16, 16))
         self.more_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.more_menu = QMenu(self.more_button)

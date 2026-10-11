@@ -32,7 +32,7 @@
 </p>
 
 ### 2. 新建任务向导与上下文配置 (New Task Wizard)
-结构化四步创建向导（文档与画像 → 翻译策略 → 交付内容 → 确认运行），支持 PDF / DOCX 拖拽上传、目标语言选择、项目上下文关联与智能画像识别。
+结构化四步创建向导（文档与画像 → 翻译策略 → 交付内容 → 确认运行），支持 PDF / DOCX / EPUB / TXT / Markdown 拖拽上传、目标语言选择、项目上下文关联与智能画像识别。
 
 <p align="center">
   <img src="docs/assets/02-new-task-preview.png" alt="Folith 新建任务向导" width="1000">
@@ -114,6 +114,20 @@
 - （可选）[Tesseract OCR](https://github.com/tesseract-ocr/tesseract)（如需离线识别扫描件 PDF）
 - （可选）本地 PaddleOCR / PP-OCRv5：Python 3.10–3.13，macOS Apple Silicon、Windows/Linux x86_64。安装当前源码包时使用 `python -m pip install '.[paddle]'`；默认仍使用 Tesseract。模型仅在实际 OCR 时下载，安装后可离线使用。古书实测中原版 Paddle 并未整体优于 Tesseract，详见 [OCR 安装、模型与实测限制](docs/ocr-subsystem.md)；另有 [《علم الدين》书内微调实验与独立模型](docs/paddle-arabic-finetuning.md)。
 - （可选）线上 OCR API：任务里可显式选择 OpenAI 兼容的图像转写接口（独立于翻译模型配置，可引用已有凭据）。默认关闭，只在明确选择时使用；配置与边界见[三路 OCR 来源](docs/ocr-sources.md)，实测与请求消耗见[实测记录](docs/ocr-sources-verification.md)。
+
+### 0.5.0 Qt 受邀 Beta
+
+本轮桌面候选为 **macOS Apple Silicon / macOS 15.0+** 的 Qt DMG；尚未正式发布。
+中文为主界面，其他语言为实验功能。源码开发入口：
+
+```bash
+python -m pip install -e .
+python -m pip install PySide6
+python -m folith.qt
+```
+
+Pip 的 `folith` 命令仍启动保留一个版本的旧界面。Qt Beta 范围、验收条件与已知限制见
+[发布计划](docs/release-plan.md)和[人工验收清单](docs/qt-beta/manual-acceptance.md)。
 
 ### 方式 1：通过 Pip 安装发布包（推荐）
 

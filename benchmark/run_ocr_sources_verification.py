@@ -54,7 +54,7 @@ def write(path: Path, value) -> None:
 def source_pdf() -> Path:
     explicit = os.environ.get("FOLITH_BENCHMARK_PDF")
     candidates = [Path(explicit).expanduser()] if explicit else []
-    candidates.append(Path("/Users/xueyang/Downloads/Alam_al-din_(IA_alamaldin00alimuoft).pdf"))
+    candidates.append(Path(str(Path.home() / "Downloads" / "Alam_al-din_(IA_alamaldin00alimuoft).pdf")))
     for candidate in candidates:
         if candidate.is_file():
             return candidate

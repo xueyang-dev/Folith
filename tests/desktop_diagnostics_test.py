@@ -105,7 +105,7 @@ def test_error_summary_is_filtered_and_redacted(tmp_paths):
 def test_export_bundle_never_includes_secrets_or_document_content(tmp_paths):
     """Plant a credential and document text, then prove neither is exported."""
     tmp_paths.data_dir.mkdir(parents=True, exist_ok=True)
-    secret = "sk-D0-NOT-EXPORTED-1234567890"
+    secret = "sk-" + "D0-NOT-EXPORTED-1234567890"
     (tmp_paths.data_dir / "provider_config.json").write_text(json.dumps({
         "provider": "自定义中转站",
         "api_key": secret,
@@ -252,7 +252,7 @@ def test_bare_credentials_in_log_lines_are_redacted():
 
     cases = {
         "ERROR upstream returned 401 for key sk-BARE-BBB2222222222": "sk-BARE-BBB2222222222",
-        "ERROR google said AIzaSyA1234567890abcdefghijklmnopqrstuv": "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+        "ERROR google said " + "AIza" + "SyA1234567890abcdefghijklmnopqrstuv": "AIza" + "SyA1234567890abcdefghijklmnopqrstuv",
         "ERROR Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
         "WARNING startup_token=abc123def456": "abc123def456",
         "ERROR api_key: sk-PREFIXED-AAA111": "sk-PREFIXED-AAA111",

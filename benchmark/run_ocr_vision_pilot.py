@@ -98,7 +98,7 @@ def prepare():
     OUT.mkdir(parents=True, exist_ok=True)
     SCRATCH.mkdir(parents=True, exist_ok=True)
     source = os.environ.get("FOLITH_BENCHMARK_PDF",
-        "/Users/xueyang/Downloads/Alam_al-din_(IA_alamaldin00alimuoft).pdf")
+        str(Path.home() / "Downloads" / "Alam_al-din_(IA_alamaldin00alimuoft).pdf"))
     manifest = json.loads((ROOT / "benchmark/paddle-finetune/dataset-manifest.json").read_text())
     training = {int(p) for p, group in manifest["page_splits"].items() if group == "train"}
     pages = []

@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--page-index", type=int, default=20)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "benchmark")
     args = parser.parse_args()
-    source = os.environ.get("FOLITH_BENCHMARK_PDF", "/Users/xueyang/Downloads/Alam_al-din_(IA_alamaldin00alimuoft).pdf")
+    source = os.environ.get("FOLITH_BENCHMARK_PDF", str(Path.home() / "Downloads" / "Alam_al-din_(IA_alamaldin00alimuoft).pdf"))
     with pymupdf.open(source) as document, pymupdf.open() as excerpt:
         excerpt.insert_pdf(document, from_page=args.page_index, to_page=args.page_index)
         payload = excerpt.tobytes()

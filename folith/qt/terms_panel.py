@@ -50,7 +50,7 @@ class TermsPanel(QWidget):
         def button(text: str, icon_name: str, token: str = "text-secondary",
                    name: str = "") -> QPushButton:
             widget = QPushButton(text)
-            widget.setIcon(icons.icon(icon_name, 16, style_module.text_color(token)))
+            widget.setIcon(icons.icon(icon_name, 16, token))
             widget.setIconSize(QSize(16, 16))
             if name:
                 widget.setObjectName(name)

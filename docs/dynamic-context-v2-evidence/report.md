@@ -1,6 +1,6 @@
 # Dynamic-context v2 A/B/C/D benchmark
 
-- fixture: `/Users/xueyang/Dev/FolioThread/benchmark/translation-efficiency/workload.json`
+- fixture: `<workspace>/benchmark/translation-efficiency/workload.json`
 - arms: `A_nocontext`, `B_fixed`, `C_dynamic`, `D_dynamic_distant`, `D_term_only`, `D_entity_only`, `D_budget_small`, `D_budget_large`, `D_no_summary`, `D_no_local`, `D_budget_tiny_600`
 - generated: 2026-10-06T11:48:25
 

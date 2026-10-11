@@ -387,14 +387,14 @@ def test_source_cleanup_tristate_on_resume():
 
 def test_only_ingestible_suffixes_are_advertised():
     from folith.qt import adapter
-    assert SOURCE_SUFFIXES == (".pdf", ".docx")
+    assert SOURCE_SUFFIXES == (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown")
     assert adapter.SUPPORTED_SUFFIXES == SOURCE_SUFFIXES
     assert adapter.MAX_SOURCE_BYTES > 0
 
 
 def test_qt_import_rejects_formats_the_core_cannot_ingest(tmp_path):
     from folith.qt import adapter
-    for suffix in (".doc", ".txt", ".md", ".markdown", ".bib", ".ris"):
+    for suffix in (".doc", ".bib", ".ris"):
         target = tmp_path / f"source{suffix}"
         target.write_bytes(b"content")
         with pytest.raises(adapter.AdapterError) as excinfo:
@@ -424,13 +424,13 @@ def test_core_ingests_exactly_the_advertised_formats():
 
     paragraphs, warnings = core.extract_document_paragraphs(
         "sample.txt", b"hello world\n\nsecond paragraph\n")
-    assert not paragraphs
-    assert any("不支持" in item for item in warnings)
+    assert paragraphs == ["hello world", "second paragraph"]
+    assert not warnings
 
 
 def test_unsupported_suffix_is_refused_by_the_contract():
     with pytest.raises(JobConfigError):
-        JobConfig.from_frontend({**_minimal_values(), "source_suffix": ".txt"})
+        JobConfig.from_frontend({**_minimal_values(), "source_suffix": ".doc"})
 
 
 def _minimal_docx() -> bytes:

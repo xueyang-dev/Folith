@@ -36,11 +36,6 @@ TONES: dict[str, tuple[str, str]] = {
 }
 
 
-def _tone_pixmap(tone: str, size: int = 20):
-    name, token = TONES.get(tone, TONES["info"])
-    return icons.pixmap(name, size, style_module.text_color(token))
-
-
 class _BaseDialog(QDialog):
     """所有应用内对话框的骨架：标题行（图标 + 标题）、正文、详情区、按钮行。"""
 
@@ -59,9 +54,7 @@ class _BaseDialog(QDialog):
                                        theme_module.SPACE["md"])
         card_layout.setSpacing(theme_module.SPACE["sm"])
 
-        self._icon = QLabel()
-        self._icon.setFixedSize(20, 20)
-        self._icon.setPixmap(_tone_pixmap(tone))
+        self._icon = icons.IconLabel(TONES.get(tone, TONES["info"])[0], 20, TONES.get(tone, TONES["info"])[1])
         self._title = QLabel(title)
         self._title.setObjectName("sectionTitle")
         head = QHBoxLayout()
@@ -239,9 +232,7 @@ class BusyDialog(QDialog):
         column.setSpacing(theme_module.SPACE["sm"])
         row = QHBoxLayout()
         row.setSpacing(theme_module.SPACE["sm"])
-        icon = QLabel()
-        icon.setFixedSize(18, 18)
-        icon.setPixmap(icons.pixmap("clock", 18, style_module.text_color("accent")))
+        icon = icons.IconLabel("clock", 18, "accent")
         label = QLabel(message)
         label.setWordWrap(True)
         row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)

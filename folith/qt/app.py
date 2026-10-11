@@ -66,7 +66,7 @@ def _parser() -> argparse.ArgumentParser:
                         help="在真实窗口上跑一遍 Beta 主流程并输出 JSON 报告（需要 "
                              "FOLITH_QT_SELFTEST_BASE_URL 指向受控模型端点）")
     parser.add_argument("--selftest-fixture", default="docx",
-                        choices=("docx", "pdf", "scan", "both"))
+                        choices=("docx", "pdf", "scan", "both", "epub", "txt", "md"))
     parser.add_argument("--selftest-source", action="append", default=[],
                         help="用指定的真实文件跑自检（可重复；用于扫描件 OCR 验收）")
     parser.add_argument("--selftest-screenshot", default=None)

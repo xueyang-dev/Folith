@@ -37,7 +37,7 @@ class ActivityPanel(QWidget):
         self.empty.setProperty("role", "muted")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.log_button = QPushButton(i18n.tr('在 Finder 中显示完整日志'))
-        self.log_button.setIcon(icons.icon("folder", 16, style_module.text_color("text-secondary")))
+        self.log_button.setIcon(icons.icon("folder", 16, "text-secondary"))
         self.log_button.setIconSize(QSize(16, 16))
         self.log_button.clicked.connect(self.revealLogRequested.emit)
 

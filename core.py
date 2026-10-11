@@ -1748,18 +1748,28 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                     if len(t) > 1 and not _ORNAMENT_RE.match(t):
                         paragraphs.append(t)
             unsupported = _docx_unsupported_parts(doc_word)
+        elif name.endswith((".epub", ".txt", ".md", ".markdown")):
+            from folith.text_import import extract_text_source
+            paragraphs, unsupported, facts = extract_text_source(filename, file_bytes)
+            paragraphs = [clean_xml_chars(item) for item in paragraphs]
         else:
             warnings.append("不支持的文档格式，无法自动画像")
     except Exception as exc:  # noqa: BLE001
         if "任务已请求取消" in str(exc):
             raise
-        warnings.append(f"预提取失败：{friendly_extraction_reason(exc)}")
-        facts["extraction_error"] = friendly_extraction_reason(exc)
+        reason = (f"无法读取 {Path(name).suffix.lstrip('.').upper()}：{exc}"
+                  if name.endswith((".epub", ".txt", ".md", ".markdown"))
+                  else friendly_extraction_reason(exc))
+        warnings.append(f"预提取失败：{reason}")
+        facts["extraction_error"] = reason
         if hasattr(exc, "diagnostics"):
             facts["understanding_failure"] = exc.diagnostics
     report = _build_extraction_report(
         filename, paragraphs, ocr_used=ocr_used, unsupported=unsupported,
         facts=facts, warnings=warnings)
+    if name.endswith(".epub"):
+        report["extracted"]["chapters"] = facts.get("chapters", 0)
+        report["notes"].append("按 EPUB 主阅读顺序提取正文；目录及未列入主阅读顺序的资源不纳入翻译。")
     if facts.get("extraction_error"):
         report["status"] = "failed"
         report["error"] = facts["extraction_error"]

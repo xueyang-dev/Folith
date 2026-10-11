@@ -411,11 +411,19 @@ def test_online_credentials_stay_out_of_task_configuration(monkeypatch, tmp_path
     assert backend == "online"
     assert config.api_key == "top-secret"
     assert "top-secret" not in json.dumps(descriptor, ensure_ascii=False)
-    # A task cannot start on the online source without a usable connection.
+    # Native documents need no vision connection. Scanned pages validate it
+    # when constructing their visual provider, not at task configuration time.
     core.save_ocr_online_config(provider="OpenCode Go", model="", api_key="",
                                 base_url="")
-    with pytest.raises(ValueError, match="模型"):
-        core._effective_ocr_source("online", {})
+    backend, _, descriptor, config = core._effective_ocr_source("online", {})
+    assert backend == "online"
+    assert descriptor == {} and config == {}
+    paragraphs, warnings, report = core.extract_document_paragraphs_with_report(
+        "scan.pdf", pdf_bytes(1), ocr_backend=backend, ocr_online_config=config,
+        ocr_mode="force")
+    assert not paragraphs
+    assert report["status"] == "failed"
+    assert any("模型" in warning for warning in warnings)
 
 
 def test_effective_source_prefers_saved_values_on_resume():
