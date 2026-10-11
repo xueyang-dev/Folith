@@ -1500,6 +1500,7 @@ class WorkbenchView(QWidget):
     restoreRequested = Signal(int)             # 恢复人工修改之前的译文
     structureRequested = Signal(str, int)     # 操作名（见 adapter.STRUCTURE_OPERATIONS / "undo"）, 段索引
     deliverRequested = Signal()
+    deliverWithRiskRequested = Signal()        # 接受剩余风险后交付
     supplementRequested = Signal(str)          # 补生成：交付开关键（如 deliver_epub）
     exportRequested = Signal()
     saveSnapshotRequested = Signal(int)
@@ -2047,6 +2048,15 @@ class WorkbenchView(QWidget):
         self.deliver_button = QPushButton(i18n.tr('审校完成后冻结交付'))
         self.deliver_button.setObjectName("primaryAction")
         self.deliver_button.clicked.connect(self.deliverRequested.emit)
+        # 交付说明：写进交付快照的批准记录（以前固定写"桌面端人工确认"）。
+        self.delivery_note = QLineEdit()
+        self.delivery_note.setPlaceholderText(i18n.tr('交付说明（可选，例如：已完成人工审校）'))
+        self.risk_button = QPushButton(i18n.tr('接受风险并交付…'))
+        self.risk_button.setObjectName("dangerAction")
+        self.risk_button.setToolTip(
+            i18n.tr('仍有必须处理的问题时，写下说明并确认后继续交付；问题不会被删除'))
+        self.risk_button.clicked.connect(self.deliverWithRiskRequested.emit)
+        self.risk_button.setVisible(False)
         self.export_button = QPushButton(i18n.tr('导出当前译文副本…'))
         self.export_button.setIcon(icons.icon("download", 16))
         self.export_button.setIconSize(QSize(16, 16))
@@ -2101,6 +2111,7 @@ class WorkbenchView(QWidget):
         delivery_actions = QHBoxLayout()
         delivery_actions.setSpacing(8)
         delivery_actions.addWidget(self.deliver_button)
+        delivery_actions.addWidget(self.risk_button)
         delivery_actions.addWidget(self.export_button)
         delivery_actions.addWidget(self.save_snapshot_button)
         delivery_actions.addStretch(1)
@@ -2111,6 +2122,7 @@ class WorkbenchView(QWidget):
                                            theme_module.SPACE["xl"], theme_module.SPACE["lg"])
         delivery_layout.setSpacing(theme_module.SPACE["md"])
         delivery_layout.addWidget(self.delivery_label)
+        delivery_layout.addWidget(self.delivery_note)
         delivery_layout.addLayout(delivery_actions)
         delivery_layout.addLayout(asset_header)
         delivery_layout.addWidget(self.asset_notice)
@@ -2918,6 +2930,9 @@ class WorkbenchView(QWidget):
                   else i18n.tr("；交付文件按任务声明生成，冻结后不可修改。"))
         self.delivery_label.setText(i18n.tr("交付状态：{v0}", v0=status) + detail)
         self.deliver_button.setEnabled(bool(preview.get("can_deliver")))
+        self.risk_button.setVisible(bool(preview.get("can_accept_risk")))
+        self.delivery_note.setEnabled(bool(preview.get("can_deliver")
+                                           or preview.get("can_accept_risk")))
         snapshot = preview.get("snapshot") or {}
         if snapshot.get("current"):
             self.deliver_button.setText(

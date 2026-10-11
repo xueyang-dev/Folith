@@ -285,6 +285,7 @@ class MainWindow(QMainWindow):
         self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
+        self.workbench.deliverWithRiskRequested.connect(self.deliver_with_risk)
         self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.termAddRequested.connect(self.add_term_from_selection)
         self.workbench.askAgentRequested.connect(self.ask_agent)
@@ -1978,6 +1979,7 @@ class MainWindow(QMainWindow):
 
         def done(result) -> None:
             version = result.get("version")
+            self.workbench.delivery_note.clear()
             self._notice(i18n.tr('已冻结交付 v{v0}，共 {v1} 个文件。', v0=version, v1=len(result.get('assets') or [])))
             # 冻结后立刻刷新：资产清单必须马上出现在「交付」页，而不是等下一次轮询。
             self.refresh_workbench(force=True)
@@ -1995,7 +1997,35 @@ class MainWindow(QMainWindow):
                 self.save_snapshot(int(version or 1), job_id)
 
         self._run_with_busy(i18n.tr('冻结交付'), i18n.tr('正在通过交付门禁并生成快照…'),
-                            adapter.deliver, job_id, self.config, on_done=done)
+                            adapter.deliver, job_id, self.config, on_done=done,
+                            note=self.workbench.delivery_note.text().strip())
+
+    def deliver_with_risk(self) -> None:
+        """仍有必须处理的问题时，写下说明并确认后继续交付（问题不会被删除）。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        preview = adapter.delivery_preview(job_id, self.config)
+        if not preview.get("can_accept_risk"):
+            self._failure(i18n.tr('暂不能接受风险交付'),
+                          i18n.tr('当前的阻断项不能通过"接受风险"跳过，请先处理。'))
+            return
+        from .dialogs import RiskAcceptanceDialog
+
+        dialog = RiskAcceptanceDialog(int(preview.get("blocking_count") or 0), self)
+        dialog.note_edit.setPlainText(self.workbench.delivery_note.text().strip())
+        if _automation() or dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        def done(result) -> None:
+            self.workbench.delivery_note.clear()
+            self._notice(i18n.tr('风险接受记录已保存，交付版本 v{v0} 已创建。',
+                                 v0=result.get("version")))
+            self.refresh_workbench(force=True)
+
+        self._run_with_busy(i18n.tr('接受风险并交付'), i18n.tr('正在通过交付门禁并生成快照…'),
+                            adapter.deliver, job_id, self.config, on_done=done,
+                            note=dialog.note(), accept_risk=True)
 
     def add_term_from_selection(self, source: str, target: str) -> None:
         """工作台「加入术语库」：原文/译文里选中的词预先填好，确认后写进本任务术语表。"""

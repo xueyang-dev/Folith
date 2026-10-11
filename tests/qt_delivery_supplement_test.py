@@ -178,3 +178,34 @@ def test_pause_button_stays_while_the_task_waits_on_the_model():
     assert bench.pause_button.isHidden()
     bench.deleteLater()
     app.processEvents()
+
+
+def test_accepting_remaining_risk_delivers_and_records_the_note(env):
+    """仍有必须处理的问题：普通交付被拒，写下说明并接受风险后才能交付。"""
+    adapter, core = env["adapter"], env["core"]
+    job_id, config = _finished(env)
+    state = core.load_job_state(job_id)
+    state["findings"] = [{"segment_index": 0, "severity": "blocking", "type": "check",
+                          "reason": "需要人工确认"}]
+    core.save_job_state(job_id, state)
+
+    preview = adapter.delivery_preview(job_id, config)
+    assert preview["can_deliver"] is False
+    assert preview["can_accept_risk"] is True
+    assert preview["blocking_count"] == 1
+    with pytest.raises(adapter.AdapterError):
+        adapter.deliver(job_id, config)
+    with pytest.raises(adapter.AdapterError):
+        adapter.deliver(job_id, config, accept_risk=True)   # 没写说明
+
+    result = adapter.deliver(job_id, config, note="客户确认可以交付", accept_risk=True)
+    approval = result["manifest"].get("approval") or {}
+    assert approval.get("note") == "客户确认可以交付"
+    assert adapter.delivery_preview(job_id, config)["snapshot"]["current"]
+
+
+def test_delivery_note_is_recorded_on_a_normal_delivery(env):
+    adapter = env["adapter"]
+    job_id, config = _finished(env)
+    result = adapter.deliver(job_id, config, note="已完成人工审校")
+    assert (result["manifest"].get("approval") or {}).get("note") == "已完成人工审校"

@@ -1191,6 +1191,51 @@ class SegmentSplitDialog(QDialog):
                 "target_b": self.target_b.toPlainText()}
 
 
+class RiskAcceptanceDialog(QDialog):
+    """接受剩余风险后交付：写下处理说明，并明确勾选确认。
+
+    继续交付不会删除这些问题：核心把它们记为"已接受风险"的人工决定，处理说明
+    写进交付快照的批准记录（与 Streamlit 交付页同一契约）。
+    """
+
+    def __init__(self, blocking_count: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('接受风险并交付'))
+        self.setMinimumWidth(480)
+        intro = QLabel(i18n.tr(
+            '当前仍有 {v0} 个必须处理的问题。继续交付不会删除这些问题；系统会保存本次风险接受记录，'
+            '并写进交付版本。', v0=blocking_count))
+        intro.setWordWrap(True)
+        self.note_edit = QPlainTextEdit()
+        self.note_edit.setPlaceholderText(i18n.tr('说明为什么在这些问题仍然存在时决定继续交付…'))
+        self.note_edit.setMinimumHeight(90)
+        self.confirm_box = QCheckBox(i18n.tr('我确认理解这些问题仍然存在，并决定继续交付'))
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok_button.setText(i18n.tr('确认风险并创建交付版本'))
+        self.ok_button.setObjectName("dangerPrimary")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.note_edit.textChanged.connect(self._sync)
+        self.confirm_box.toggled.connect(self._sync)
+        layout = QVBoxLayout(self)
+        layout.addWidget(intro)
+        layout.addWidget(QLabel(i18n.tr('处理说明')))
+        layout.addWidget(self.note_edit)
+        layout.addWidget(self.confirm_box)
+        layout.addWidget(buttons)
+        self._sync()
+
+    def _sync(self) -> None:
+        self.ok_button.setEnabled(self.confirm_box.isChecked()
+                                  and bool(self.note_edit.toPlainText().strip()))
+
+    def note(self) -> str:
+        return self.note_edit.toPlainText().strip()
+
+
 class NewTermDialog(QDialog):
     """新建术语：术语保存在所选任务的术语表里，并生成新的术语版本。"""
 

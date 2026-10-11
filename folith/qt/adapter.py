@@ -2399,7 +2399,28 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None) -> dict:
         # `detail` 里（审校失败 N 段 / 需重新审校 N 段 …）。
         review_issues.append(
             "审校未完成" + (f"（{'、'.join(detail)}）" if detail else ""))
+    # 接受剩余风险后交付：只剩"必须处理的发现项还没有人工决定"这一种阻断时才可用
+    # （与 Streamlit 交付页、核心 approve_delivery(accept_blocking=True) 同一判据）。
+    # 译文完整性、报告这类硬门禁不能用"接受风险"跳过。
+    from folith import workbench_view as _workbench_view
+
+    from folith import delivery as _delivery
+
+    risk = _workbench_view._risk_acceptance(state, review)
+    # 两种阻断都算：审校收据里的必须处理项，以及旧式（无收据）的 blocking 发现项。
+    legacy_blocking = _delivery.unresolved_blocking(state)
+    blocking_count = max(len(review.get("blocking_finding_ids") or []),
+                         len(legacy_blocking))
+    review_ok = (not review.get("required") or bool(review.get("ready"))
+                 or bool(risk.get("available")))
+    can_accept_risk = (bool(state.get("p2_done")) and not validation.get("blocking")
+                       and not snapshot.get("current") and blocking_count > 0
+                       and review_ok)
+    if legacy_blocking:
+        review_issues.append(f"必须处理的问题 {len(legacy_blocking)} 个")
     return {
+        "can_accept_risk": can_accept_risk,
+        "blocking_count": blocking_count,
         "status_label": core.task_status_label(state, job_id),
         "delivery_status": state.get("delivery_status") or "draft",
         "validation": validation,
@@ -2417,6 +2438,7 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None) -> dict:
         "can_deliver": bool(state.get("p2_done"))
         and not validation.get("blocking")
         and not snapshot.get("current")
+        and not legacy_blocking
         and (not review.get("required") or bool(review.get("ready"))),
     }
 
@@ -2427,9 +2449,8 @@ GATE_HINTS: tuple[tuple[str, str], ...] = (
     ("review gate=missing", "尚未完成审校，需要先审校当前译文"),
     ("review gate=failed", "有段落审校失败，请重试后再交付"),
     ("review gate=", "译文审校未就绪，不能冻结交付"),
-    ("未解决", "仍有未解决的阻断问题，需要先处理或明确接受风险"),
-    ("report", "实践报告尚未完成，不能冻结交付。报告的案例复核与终稿 QA 暂时只能在旧界面完成"
-               "（命令行运行 python gui.py --legacy）"),
+    ("未解决", "仍有未解决的阻断问题，需要先处理，或在「交付」页选择「接受风险并交付」"),
+    ("report", "实践报告尚未完成，不能冻结交付。请在「报告」「案例」「QA」页完成报告、案例复核与终稿检查"),
     ("Translation Target Invariant", "译文未通过交付完整性检查"),
     ("尚未完成", "翻译尚未完成，不能冻结交付"),
 )
@@ -2448,18 +2469,26 @@ def friendly_gate_message(raw: str) -> str:
     return text or "交付门禁未通过"
 
 
-def deliver(job_id: str, config: EngineConfig) -> dict:
+def deliver(job_id: str, config: EngineConfig, *, note: str = "",
+            accept_risk: bool = False) -> dict:
     """Run the real delivery gate, which freezes the immutable snapshot.
 
     ``core.approve_delivery`` already writes the snapshot; the client must not
     call ``create_delivery_snapshot`` again or every delivery would produce a
     duplicate version and make the "current vs diverged" check meaningless.
+
+    ``note`` 是用户写的交付说明（记进快照的批准记录）；``accept_risk`` 表示用户
+    明确接受剩余的必须处理项后继续交付，核心会把它们记成"已接受风险"的人工决定。
     """
     state = load_state(job_id)
     if not state:
         raise AdapterError(f"找不到任务 {job_id}")
+    note = str(note or "").strip()
+    if accept_risk and not note:
+        raise AdapterError("接受风险后交付需要写下处理说明。")
     state, ok, messages = core.approve_delivery(
-        job_id, note="桌面端人工确认", actor="user",
+        job_id, note=note or ("人工确认并接受剩余风险" if accept_risk else "桌面端人工确认"),
+        accept_blocking=bool(accept_risk), actor="user",
         target_lang=str(state.get("target_lang") or config.target_lang),
         provider=config.provider, model=config.model)
     if not ok:

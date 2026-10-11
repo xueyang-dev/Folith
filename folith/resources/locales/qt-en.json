@@ -1161,5 +1161,17 @@
   "跳到第 {v0} 段": "Go to segment {v0}",
   "采用建议": "Use suggestion",
   "问问这一段，比如：这里为什么这样译？": "Ask about this segment, e.g. why is it translated this way?",
-  "需要注意": "Needs attention"
+  "需要注意": "Needs attention",
+  "交付说明（可选，例如：已完成人工审校）": "Delivery note (optional, e.g. human review completed)",
+  "仍有必须处理的问题时，写下说明并确认后继续交付；问题不会被删除": "When must-fix issues remain, write a note and confirm to deliver anyway; the issues are not deleted",
+  "处理说明": "Note",
+  "当前仍有 {v0} 个必须处理的问题。继续交付不会删除这些问题；系统会保存本次风险接受记录，并写进交付版本。": "{v0} must-fix issue(s) remain. Delivering anyway does not delete them; the risk acceptance is recorded and written into the delivery version.",
+  "当前的阻断项不能通过\"接受风险\"跳过，请先处理。": "The current blockers cannot be skipped by accepting risk; resolve them first.",
+  "我确认理解这些问题仍然存在，并决定继续交付": "I understand these issues remain and decide to deliver anyway",
+  "接受风险并交付": "Accept risk and deliver",
+  "接受风险并交付…": "Accept risk and deliver…",
+  "暂不能接受风险交付": "Cannot deliver with accepted risk yet",
+  "确认风险并创建交付版本": "Accept risk and create delivery version",
+  "说明为什么在这些问题仍然存在时决定继续交付…": "Explain why you are delivering while these issues remain…",
+  "风险接受记录已保存，交付版本 v{v0} 已创建。": "Risk acceptance recorded; delivery version v{v0} created."
 }
