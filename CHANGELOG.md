@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 0.5.0 Beta：EPUB / TXT / Markdown 导入（2026-10-11）
+
+- 新增无 DRM EPUB、TXT、Markdown（`.md` / `.markdown`）来源，共用任务、翻译、审校、恢复与交付流程。EPUB 按主阅读顺序提取；TXT 支持 UTF-8、带 BOM 的 UTF-16 与 GB18030。
+- Markdown 提取正文、标题、列表、链接文字与表格文字；图片、代码块及媒体明确列为未翻译。损坏或加密 EPUB 整体报错，避免只翻译部分章节。
+- 新来源可导出重建的纯文字 EPUB；不承诺保留源书排版和图片。既有 PDF / DOCX 图文 EPUB 导出继续保留。
+- 范围冻结与候选工程记录见 [Beta 收口记录](docs/qt-beta/freeze-0.5.0.md)。强制人工项完成前不声明受邀 Beta 就绪。
+
+
 ### 新增：三路可选 OCR 来源（Tesseract / PaddleOCR 任务级模型 / 线上 OCR API）（2026-10-03）
 
 - **OCR 来源成为任务级选择**：Tesseract（默认）、PaddleOCR、线上 OCR API；`auto` 保持

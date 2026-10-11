@@ -29,6 +29,8 @@ def decode_text(data: bytes) -> str:
 
 
 def _html_paragraphs(markup: str | bytes):
+    if isinstance(markup, bytes):
+        markup = decode_text(markup)
     root = html.fromstring(markup)
     def tag_name(element):
         return str(element.tag).split("}")[-1].split(":")[-1].lower()

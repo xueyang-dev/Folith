@@ -9,9 +9,9 @@
 | 项 | 值 |
 | --- | --- |
 | 安装包 | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg` |
-| sha256 | `ce8bc23e120ac50123e2f590379fa78dd9fb96acb0fd906aa6c097afd137c0d4` |
-| 大小 | 166,611,300 字节（159 MiB） |
-| 构建时间 | `2026-10-07T06:18:12+00:00`（build id `git:5ad40a0`） |
+| sha256 | `dafdb9737b15c09042018689b12625ad7b4d9dff6a3b87801a5eff09560701fd` |
+| 大小 | 199,483,810 字节（190 MiB） |
+| 构建时间 | `2026-10-11T05:22:41+00:00`（build id `git:0de4b68`） |
 | 声明最低系统 | **macOS 15.0**（实测；未在更低版本验收，不声称支持） |
 | 架构 | arm64（Apple Silicon） |
 | 签名 | **未签名、未公证**（受邀 Private Beta） |
@@ -82,7 +82,7 @@
 
 ## D. 系统文件面板与交付保存（约 5 分钟）
 
-1. 「导入文档…」：用系统面板选择真实 PDF 与 DOCX → 确认建任务；
+1. 「导入文档…」：用系统面板选择真实 PDF、DOCX、EPUB、TXT 与 Markdown → 确认建任务；
    **再点一次取消** → 确认没有产生半成品任务。
 2. 在工作台点「冻结交付」（需先审校通过）→ 交付页出现资产清单（`translation.docx`、
    `bilingual.docx`、`terms.xlsx`…），双击资产可在 Finder 中显示。

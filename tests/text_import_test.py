@@ -69,6 +69,13 @@ def test_prefixed_xhtml_excludes_metadata_and_preserves_body():
     assert not omitted
 
 
+def test_utf8_html_without_charset_preserves_multilingual_text():
+    from folith.text_import import _html_paragraphs
+    paragraphs, omitted = _html_paragraphs('<html><body><p>中文 العربية</p></body></html>'.encode())
+    assert paragraphs == ["中文 العربية"]
+    assert not omitted
+
+
 @pytest.mark.parametrize("suffix,data", [(".txt", b"Text paragraph."), (".md", b"# Heading"), (".markdown", b"Body text."), (".epub", epub_bytes())])
 def test_actual_file_admission_reaches_shared_extraction(tmp_path, suffix, data):
     path = tmp_path / ("source" + suffix)

@@ -5,19 +5,19 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 
 ## 产物
 
-- 应用版本 / build id：`0.5.0` / `git:1260a82`
-- 构建时间（UTC）：`2026-10-05T13:33:10+00:00`
-- 打包后端：`pyinstaller`；worktree dirty：`True`
+- 应用版本 / build id：`0.5.0` / `git:0de4b68`
+- 构建时间（UTC）：`2026-10-11T05:22:41+00:00`
+- 打包后端：`pyinstaller`；worktree dirty：`False`
 - 目标平台 / 架构：`macos` / `arm64`
 - 随包运行时：Python `3.11.3` / PySide6 `6.11.2` / Qt `6.11.2`
 - DMG：`Folith-Qt-0.5.0-macos-arm64.dmg`
-- DMG sha256：`47b37ac3afab9dcfe3c867042266524de09bdadc69d0b7c1877b0262fc8f5e8e`（166.3 MB）
+- DMG sha256：`dafdb9737b15c09042018689b12625ad7b4d9dff6a3b87801a5eff09560701fd`（199.5 MB）
 
 ## 支持的系统
 
 - 最低 macOS：**15.0**（依据：measured: scripts/qt_native_min_os.py (Mach-O LC_BUILD_VERSION minos)）
-- 包内原生组件实测上限：`15.0.0`（449 个原生文件）
-- 架构：arm64×449；arm64 完整：True；通用（universal）二进制文件数：0（本候选为 **arm64-only**，不含 Intel 切片）
+- 包内原生组件实测上限：`15.0.0`（445 个原生文件）
+- 架构：arm64×445；arm64 完整：True；通用（universal）二进制文件数：0（本候选为 **arm64-only**，不含 Intel 切片）
 - 本轮实际验收系统：`macOS-27.0.1-arm64-arm-64bit`
 - 未在 macOS 13 / 14 上验收：随包 Qt 6.11 与 Tesseract 均为 `minos 15.0`，因此本候选**不支持** macOS 13 / 14，也不声称支持。
 - Intel Mac / Windows：本轮不在范围，未验收即不宣称支持。

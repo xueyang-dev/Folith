@@ -37,3 +37,7 @@ PDF 的首张无文本图片页整页保留为原书封面；DOCX 的首个正�
 EPUB 由 Python 标准库打包，复用已有 PyMuPDF 和 python-docx，不增加运行时依赖。包含 EPUB 3 导航和 NCX 目录、书名、目标语言元数据、章节 XHTML、简单流式 CSS 及本地图片资源。
 
 本次验证：EPUB、交付界面、交付快照和分句四组测试共 45 项通过；段落生命周期及缺译交付扩展测试共 28 项通过、2 项失败。失败项为 `test_exclude_rejects_empty_and_unknown_segments` 和 `test_segment_identity_is_stable_across_structural_edits`；将新增 `bind_source_references` 禁用后仍逐项复现，不属于这次 EPUB 来源关联引入的失败。没有为通过测试而修改原有段落编辑逻辑。
+
+## 0.5.0 Beta 新来源
+
+EPUB、TXT、Markdown 来源也可选择 EPUB 交付。它们生成重建的纯文字 EPUB，不保留源文件图片、音视频或书籍排版；导出范围报告明确记录此边界。EPUB 导入按主阅读顺序读取无 DRM 的正文，Markdown 的代码块和图片不纳入翻译。
