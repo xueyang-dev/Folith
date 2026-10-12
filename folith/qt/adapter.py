@@ -3558,9 +3558,14 @@ def _pick(state: dict, key: str, fallback):
     return fallback if value is None else value
 
 
-def task_started(job_id: str) -> bool:
-    """任务是否已经跑过（有段落 / p1 / p2 / pipeline_config）。"""
-    state = load_state(job_id)
+def task_started(job_id: str, state: dict | None = None) -> bool:
+    """任务是否已经跑过（有段落 / p1 / p2 / pipeline_config）。
+
+    已经读好的 ``state`` 直接传进来：大文档的状态读一次要零点几秒，界面刷新时不能
+    为同一份状态反复读盘。
+    """
+    if state is None:
+        state = load_state(job_id)
     return bool(state.get("p1_done") or state.get("p2_done")
                 or state.get("pipeline_config") or state.get("source_paras"))
 
@@ -3607,14 +3612,16 @@ def reasoning_effort_options(provider: str, model: str) -> tuple[str, ...]:
     return tuple(core.reasoning_effort_options(provider, model) or ())
 
 
-def task_details(config: EngineConfig, job_id: str) -> list[dict]:
+def task_details(config: EngineConfig, job_id: str,
+                 state: dict | None = None) -> list[dict]:
     """任务开始以后，"这个任务用的是什么设置"：分组的（标签, 值）。
 
     开始翻译后准备页就收起了；这里把当时的选择、识别出的画像、项目记忆、
     原文整理的结果如实列出来。没有值的行不写（不编造）。
     """
-    state = load_state(job_id)
-    setup = task_setup_view(config, job_id)
+    if state is None:
+        state = load_state(job_id)
+    setup = task_setup_view(config, job_id, state)
     strategy = setup.get("strategy") or {}
 
     def group(title: str, rows: list[tuple[str, object]]) -> dict:
@@ -3692,11 +3699,13 @@ def task_details(config: EngineConfig, job_id: str) -> list[dict]:
             if item["rows"]]
 
 
-def task_setup_view(config: EngineConfig, job_id: str) -> dict:
+def task_setup_view(config: EngineConfig, job_id: str,
+                    state: dict | None = None) -> dict:
     """「译前准备」面板的当前值（用于回填）。纯值，无 Qt 对象。"""
-    state = load_state(job_id)
+    if state is None:
+        state = load_state(job_id)
     filename = str(state.get("filename") or "")
-    started = task_started(job_id)
+    started = task_started(job_id, state)
     # A not-yet-started task that never recorded a choice is a *decision not yet
     # made*, not "the import's accidental defaults": the import path freezes the
     # EngineConfig values (``enable_review`` on, ``enable_understanding`` off,

@@ -2629,6 +2629,8 @@ class WorkbenchView(QWidget):
 
     def _tab_changed(self, index: int) -> None:
         """打开"合规与 QA"页时，把 DOCX 结构检查的最新结论记下（和旧界面一样，写入只发生在这里）。"""
+        if self.tabs.widget(index) is self.details_panel:
+            self._render_details()
         if self.tabs.widget(index) is not self.qa_panel or not self.job_id:
             return
         try:
@@ -2656,15 +2658,21 @@ class WorkbenchView(QWidget):
         self._sync_more_pages()
 
     def _render_details(self) -> None:
-        """任务详情只在状态对象换了时重算（轮询每秒一次）。"""
+        """任务详情只在打开这一页、且状态对象换了时重算。
+
+        翻译运行时状态每批都会换；这一页不在眼前就不算——它要读项目记忆、原文整理
+        等好几样东西，放在每次刷新里会让整本书的工作台一卡一卡。
+        """
         if not self.job_id or self.config is None:
+            return
+        if self.tabs.currentWidget() is not self.details_panel:
             return
         key = (self.job_id, id(self._state))
         if key == self._details_key:
             return
         self._details_key = key
         try:
-            groups = adapter.task_details(self.config, self.job_id)
+            groups = adapter.task_details(self.config, self.job_id, self._state)
         except Exception:  # noqa: BLE001 - 详情页坏了不能拖垮翻译页
             groups = []
         profile = dict(self._state.get("document_profile") or {})
@@ -3085,8 +3093,16 @@ class WorkbenchView(QWidget):
         if not total:
             total = int(stage_progress.get("total") or 0)
             completed = int(stage_progress.get("completed") or 0)
-        self.progress.setRange(0, max(total, 1))
-        self.progress.setValue(min(completed, total) if total else 0)
+        if total:
+            self.progress.setRange(0, total)
+            self.progress.setValue(min(completed, total))
+        elif running:
+            # 这一步没有可数的进度（读取原文、识别画像、抽取术语、等模型回应）：
+            # 用来回走动的忙碌条，而不是一根停在 0 的空条——后者看起来像卡死了。
+            self.progress.setRange(0, 0)
+        else:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(0)
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
         # * `available_actions` 是核心给出的可执行动作（resume/retry/cancel/…）；

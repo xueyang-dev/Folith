@@ -180,6 +180,25 @@ def test_pause_button_stays_while_the_task_waits_on_the_model():
     app.processEvents()
 
 
+def test_progress_bar_is_busy_when_the_step_has_no_count():
+    """读取原文、识别画像、等模型回应这些步骤没有可数的进度：显示忙碌条，不显示停在 0 的空条。"""
+    app = QApplication.instance() or QApplication([])
+    from folith.qt import views
+
+    bench = views.WorkbenchView()
+    bench._task_started = lambda: True
+    bench._last_runtime = {"status": "running", "available_actions": ["cancel"]}
+    bench._render_runtime()
+    assert not bench.progress.isHidden()
+    assert (bench.progress.minimum(), bench.progress.maximum()) == (0, 0)
+    bench._last_runtime = {"status": "running", "available_actions": ["cancel"],
+                           "stage_progress": {"completed": 3, "total": 10}}
+    bench._render_runtime()
+    assert (bench.progress.maximum(), bench.progress.value()) == (10, 3)
+    bench.deleteLater()
+    app.processEvents()
+
+
 def test_accepting_remaining_risk_delivers_and_records_the_note(env):
     """仍有必须处理的问题：普通交付被拒，写下说明并接受风险后才能交付。"""
     adapter, core = env["adapter"], env["core"]

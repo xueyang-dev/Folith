@@ -3079,11 +3079,12 @@ def test_progress_follows_the_core_stage_progress(client):
     assert translate.hint() == "3/10 段"
     assert (workbench.progress.value(), workbench.progress.maximum()) == (3, 10)
 
-    # 3) 都没有时退回真实段落数（不假装有进度）
+    # 3) 都没有时退回真实段落数（不假装有进度）；进度条是忙碌条（来回走动），
+    #    不是一根停在 0 的空条——后者看起来像卡死了。
     render({"status": "running", "headline_status": "正在运行"},
            pairs=[{"target": "T0"}, {"target": "T1"}])
     assert translate.hint() == "2 段"
-    assert (workbench.progress.value(), workbench.progress.maximum()) == (0, 1)
+    assert (workbench.progress.minimum(), workbench.progress.maximum()) == (0, 0)
 
     # 4) 什么都没有：显示占位，不显示假的 0/0
     render({"status": "idle", "headline_status": "空闲"})

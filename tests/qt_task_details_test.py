@@ -55,3 +55,29 @@ def test_details_page_is_reachable_and_edits_the_profile(bench):  # noqa: F811
     view.profileEditRequested.connect(lambda: asked.append(True))
     view.details_panel.profile_button.click()
     assert asked == [True]
+
+
+def test_details_are_not_rebuilt_while_the_page_is_closed(bench, monkeypatch):  # noqa: F811
+    """翻译运行时状态每批都会换：任务详情不在眼前就不重算，也不为同一份状态重新读盘。"""
+    view, app = bench
+    from folith.qt import adapter
+
+    calls: list[int] = []
+    real = adapter.task_details
+    monkeypatch.setattr(adapter, "task_details",
+                        lambda *args, **kwargs: calls.append(1) or real(*args, **kwargs))
+    view.show_page("segments")
+    for _ in range(3):
+        state = dict(adapter.load_state(view.job_id))
+        view.apply(view.job_id, state, adapter.segment_rows(view.job_id, state), {}, [])
+    assert calls == []
+
+    reads: list[str] = []
+    real_load = adapter.load_state
+    monkeypatch.setattr(adapter, "load_state",
+                        lambda job_id: reads.append(job_id) or real_load(job_id))
+    view.show_page("details")
+    _pump(app)
+    assert calls == [1]
+    assert reads == []          # 用的是工作台手里那份状态
+    assert any(text.startswith("文件：") for text in view.details_panel.texts())

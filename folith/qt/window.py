@@ -1286,7 +1286,7 @@ class MainWindow(QMainWindow):
         if not self._setup_choices_loaded:
             self.workbench.set_setup_choices(adapter.setup_choices())
             self._setup_choices_loaded = True
-        self.workbench.set_setup(adapter.task_setup_view(self.config, job_id))
+        self.workbench.set_setup(adapter.task_setup_view(self.config, job_id, state))
         self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
         self._auto_style_profile(job_id)
 
