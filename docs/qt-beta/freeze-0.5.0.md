@@ -47,4 +47,6 @@
 
 随后 `f53aaef → 3ad4247` 的 15 个提交修改了随包的工作台代码：译文就地编辑；右侧操作栏及看 / 查 / 改 / 记各项功能；带要求的重译、批注、重复段复用、查找替换；字数统计；混合 PDF 断行拼接、暂停按钮、准备页加载提示三项修复；补齐 Streamlit 时期遗漏的功能。候选据此重建为 `git:3ad4247`（`worktree_dirty=false`，built_at `2026-10-12T04:31:28+00:00`，DMG sha256 `d290c8986dac2c4a4fa5b28d040b18ab8d264772bc053846c75a63089a962dcc`），`scripts/qt_beta_chain.sh` 20 / 20 步通过。这些新功能尚未做人工验收（新工作台功能的人工检查项见 [manual-acceptance.md](manual-acceptance.md) 的 H 节）；本轮新增的测试暂未纳入指定 Qt 门禁清单，门禁数仍为 176。上文记在 `9518629` 上的全量遍历、归档比对与三种新格式完整流程同样尚未在 `3ad4247` 上重跑。
 
+随后 `3ad4247 → 45f8ca7` 的 2 个提交再次修改了随包代码：扫描页带隐形 OCR 文字层时按行拼接成段（`folith/pdf_ingestion.py`）；运行中每次状态更新不再让工作台卡顿（`folith/qt/`、`folith/storage/job_repository.py`）。候选据此重建为 `git:45f8ca7`（`worktree_dirty=false`，built_at `2026-10-12T06:15:50+00:00`，DMG sha256 `e7b285b9bf9347b465ff8acca5270758977dbb5092f9ca879d950683a8a2f9b3`），`scripts/qt_beta_chain.sh` 20 / 20 步通过。`3ad4247` 上的人工检查结论不沿用到新候选；新工作台功能与这两项修复的人工验收仍待在 `45f8ca7` 上完成（新工作台功能的人工检查项见 [manual-acceptance.md](manual-acceptance.md) 的 H 节）。门禁数仍为 176；`9518629` 上的全量遍历、归档比对与三种新格式完整流程同样尚未在 `45f8ca7` 上重跑。
+
 **结论：ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING。7 条强制人工项尚未完成，不声明 PRIVATE_BETA_READY，也未创建公开 Release。** 本轮候选与验收包可交给人工验收；公开分发所需签名 / 公证仍属后续范围。

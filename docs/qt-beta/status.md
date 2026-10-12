@@ -11,15 +11,15 @@
 - 架构决策：**GO — Qt Widgets / macOS arm64**（见 [s8-decision.md](s8-decision.md)）
 - 本机验收环境：Apple Silicon（arm64）/ macOS 27.0.1 / Python 3.11.3 / PySide6 6.11.2 / Qt 6.11.2
 <!-- status-identity:begin -->
-- 候选身份：`app_version=0.5.0`、`build_id=git:3ad4247`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-12T04:31:28+00:00`
+- 候选身份：`app_version=0.5.0`、`build_id=git:45f8ca7`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-12T06:15:50+00:00`
 <!-- status-identity:end -->
 - **声明最低系统：macOS 15.0**（实测原生闭包上限；**不支持** 13/14，不声称支持）
 
 ### 2026-10-11 当前范围与核验
 
-本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准。当前候选为 `git:3ad4247`，新增 EPUB / TXT / Markdown 及工作台就地编辑与译者辅助；在 `3ad4247` 上，构建、指定 Qt 门禁 **176 项用例**、产物身份核对、`qt_docs_audit` 和 9 项端到端机器探针通过（20 步验证链全部 rc=0，工作区干净）。以下结果来自旧候选 `9518629`，新候选尚待重跑：全量遍历与修复重跑合并为 212 文件、2,983 pytest 用例通过；归档比对与语言目录检查通过；三种新格式在冻结应用上通过完整流程。`f53aaef` 之后 15 个提交新增的工作台功能目前只有自动化测试覆盖，还没有在 `3ad4247` 上做人工验收；新工作台功能的人工检查项见 [manual-acceptance.md](manual-acceptance.md) 的 H 节。
+本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准。当前候选为 `git:45f8ca7`，新增 EPUB / TXT / Markdown 及工作台就地编辑与译者辅助（`3ad4247` 之后另含扫描页隐形 OCR 文字层的断行拼接修复、运行中工作台卡顿修复）；在 `45f8ca7` 上，构建、指定 Qt 门禁 **176 项用例**、产物身份核对、`qt_docs_audit` 和 9 项端到端机器探针通过（20 步验证链全部 rc=0，工作区干净）。以下结果来自旧候选 `9518629`，新候选尚待重跑：全量遍历与修复重跑合并为 212 文件、2,983 pytest 用例通过；归档比对与语言目录检查通过；三种新格式在冻结应用上通过完整流程。`f53aaef` 之后新增的工作台功能目前只有自动化测试覆盖，还没有在 `45f8ca7` 上做人工验收；`3ad4247` 上的人工检查结论不沿用到新候选；新工作台功能的人工检查项见 [manual-acceptance.md](manual-acceptance.md) 的 H 节。
 
-本轮在 3ad4247 上一次跑完了 20 步验证链；9518629 一轮的完整原始记录见范围冻结记录。7 条强制人工项仍未完成，尚不能声明 `PRIVATE_BETA_READY`。远端 CI 未触发。下列历史数字及旧候选状态只说明当时快照，不代表本轮验证结论。
+本轮在 45f8ca7 上一次跑完了 20 步验证链；9518629 一轮的完整原始记录见范围冻结记录。7 条强制人工项仍未完成，尚不能声明 `PRIVATE_BETA_READY`。远端 CI 未触发。下列历史数字及旧候选状态只说明当时快照，不代表本轮验证结论。
 
 ### 最终报告摘要（截至 R57）
 
@@ -39,7 +39,7 @@
 | 源码入口 | `venv/bin/python qt_client.py`（或 `python -m folith.qt`） |
 | 冻结应用 | `dist/qt-desktop/Folith.app`（375 MiB / 393 MB，bundle id `dev.folith.qt`） |
 <!-- status-dmg:begin -->
-| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（190 MiB / 199 MB，sha256 `d290c898…2dcc`） |
+| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（190 MiB / 199 MB，sha256 `e7b285b9…f9b3`） |
 <!-- status-dmg:end -->
 | 构建中间物 | `build/qt-desktop/`（build record、`native_min_os_*.json`、`release-manifest.json`、`dmg_record.json`） |
 | 发行说明 | [release-notes.md](release-notes.md)（生成式，`--check-notes` 可检测过期） |
