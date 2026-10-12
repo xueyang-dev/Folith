@@ -129,3 +129,28 @@ def test_typeset_pages_are_not_treated_as_ocr_overlays():
     page.insert_text((40, 60), "A typeset line of visible text.", fontsize=11)
     blocks = pdf_ingestion.extract_layout_blocks(doc.tobytes())
     assert blocks and not any(block.get("ocr_overlay") for block in blocks)
+
+
+def _overlay_block(text, size, y0):
+    return {
+        "block_type": "text", "text": text, "font_size": size, "font_flags": 0,
+        "page_number": 1, "page_height": HEIGHT, "page_width": WIDTH,
+        "x0": 60.0, "y0": y0, "x1": 300.0, "y1": y0 + 14, "ocr_overlay": True,
+        "lines": [{"text": text, "x0": 60.0, "y0": y0, "x1": 300.0, "y1": y0 + 14}],
+    }
+
+
+def test_oversized_ocr_prose_is_not_a_heading_but_title_case_still_is():
+    # 实测封底：OCR 把一个居中正文块的字号估成正文的 1.3 倍，整块被判成标题，
+    # 于是 ``She feels … let everyone down,`` 再也接不上下一行。
+    body = [_overlay_block("Body text line that sets the body size", 10.0, 200 + i * 16)
+            for i in range(6)]
+    prose = _overlay_block("‘She feels she has let everyone down, a including herself. "
+                           "But things are", 13.0, 100)
+    title = _overlay_block("The Moving Shelves", 13.0, 80)
+    clock = _overlay_block("00:00:00", 13.0, 60)
+    roles = {block["text"]: block["role"]
+             for block in pdf_ingestion.classify_blocks([clock, title, prose, *body])}
+    assert roles[prose["text"]] in pdf_ingestion.JOINABLE_ROLES
+    assert roles["The Moving Shelves"] == "heading"
+    assert roles["00:00:00"] == "heading"

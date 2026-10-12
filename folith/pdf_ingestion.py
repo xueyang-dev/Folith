@@ -86,6 +86,33 @@ _ALNUM_RE = re.compile(r"[^\W_]")
 _OVERLAY_NOISE_TOKEN_RE = re.compile(r"(?<!\S)[_|¦~=]+(?!\S)")
 
 
+#: 标题里可以小写的虚词（Title Case 惯例）。
+_TITLE_MINOR_WORDS = {
+    "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into",
+    "nor", "of", "on", "or", "the", "to", "with",
+}
+#: OCR 层上，按字号判成标题的块至少要有这么多实词首字母大写。
+OVERLAY_HEADING_CAPITALISED_SHARE = 0.6
+
+
+def _looks_like_title(text: str) -> bool:
+    """文字本身像不像标题：全大写，或实词大多首字母大写（Title Case）。
+
+    OCR 层的字号逐词抖动，封底一类居中的正文块常被估得比正文大一截，单凭字号
+    会被判成标题、从而不再和上下文拼接。真标题（``The Moving Shelves``
+    ``in the Middle of Nowhere``）的写法本身就是证据，正文句子不是。
+    """
+    words = re.findall(r"[^\W\d_][\w’'-]*", text)
+    content = [word for word in words if word.casefold() not in _TITLE_MINOR_WORDS]
+    if not words:
+        # 纯数字的章题（``00:00:00``）没有大小写可看。
+        return any(char.isdigit() for char in text)
+    if not content:
+        return False
+    capitalised = sum(1 for word in content if word[:1].isupper())
+    return capitalised / len(content) >= OVERLAY_HEADING_CAPITALISED_SHARE
+
+
 def _is_full_page_image(block: Dict[str, Any]) -> bool:
     width = float(block.get("page_width") or 0)
     height = float(block.get("page_height") or 0)
@@ -905,6 +932,7 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             and len(text) <= 220
             and len(block.get("lines") or []) <= 4
             and not _is_sentence_terminal(text)
+            and (not block.get("ocr_overlay") or _looks_like_title(text))
         ):
             role = "heading"
         elif block["x0"] > body_x0 + body_size * 2.2 and len(text) <= 700:
