@@ -54,6 +54,62 @@ BOLD_DOMINANCE_MIN = 0.5
 #: 所以它落进 ``quote`` 是唯一正确的归宿。
 HEADING_BOLD_MIN_SIZE_RATIO = 0.98
 
+# --- 扫描件上的 OCR 文本层（「图片 + 隐形文字」页）-------------------------------
+# 扫描书（Internet Archive、OCRmyPDF、扫描仪自带 OCR）每页是一张整页图片，上面盖
+# 一层**隐形**文字（render mode 3，PyMuPDF 里 span 的 ``alpha == 0``）。这层文字的
+# 几何是 OCR 估出来的，不是排版：
+#
+# * 字号逐词抖动（为了让隐形字宽对上图里的词宽），所以"排版一致"的字号判据失效；
+# * 行起点逐行抖动，居中排版（封底、扉页）每行起点都不同，"缩进 = 新段"失效；
+# * 图里的纹理、装饰会被识别成 ``©`` ``.`` ``—`` 这类孤立符号行，夹在正文行之间，
+#   把本该相连的两行隔开；
+# * 整页图片让每一行都"挨着图片"，图注判据会把正文行当成图注静默丢掉。
+#
+# 这类页面改用只依赖**行距**的判据（见 :func:`_overlay_continues`）。
+#: 一页的字符里隐形文字占到这个比例，就按 OCR 文本层处理。
+OCR_OVERLAY_INVISIBLE_SHARE = 0.6
+#: 图片面积占页面这个比例以上算"整页背景图"：它不是图注能依附的插图。
+FULL_PAGE_IMAGE_AREA = 0.85
+#: 两行之间的空白超过这么多个行高，就是段间空行。
+OVERLAY_PARAGRAPH_GAP = 0.9
+#: 上一行没结句时允许的行距上限（行高倍数）。
+OVERLAY_OPEN_GAP = 2.2
+#: 左对齐时，起点右移超过这么多个行高算首行缩进。
+OVERLAY_INDENT = 0.8
+#: 两行的水平中点相差在这么多个行高以内、起点却不对齐，算居中排版。
+OVERLAY_CENTRE_TOLERANCE = 1.5
+#: 结句的上一行如果右端离文本右边界还差这么多个行高，就是段末短行。
+OVERLAY_SHORT_LINE = 3.0
+_ALNUM_RE = re.compile(r"[^\W_]")
+#: OCR 层行内的孤立噪声记号（图里的竖线、下划线、波纹）：整词只由这些字符组成时删掉。
+#: 破折号、引号等真标点不在其列。
+_OVERLAY_NOISE_TOKEN_RE = re.compile(r"(?<!\S)[_|¦~=]+(?!\S)")
+
+
+def _is_full_page_image(block: Dict[str, Any]) -> bool:
+    width = float(block.get("page_width") or 0)
+    height = float(block.get("page_height") or 0)
+    if width <= 0 or height <= 0:
+        return False
+    area = float(block.get("x1", 0) - block.get("x0", 0)) * float(
+        block.get("y1", 0) - block.get("y0", 0))
+    return area >= width * height * FULL_PAGE_IMAGE_AREA
+
+
+def _page_is_ocr_overlay(page_dict: Dict[str, Any]) -> bool:
+    """这一页的文字是不是盖在扫描图上的隐形 OCR 层。"""
+    total = invisible = 0
+    for raw in page_dict.get("blocks") or []:
+        if int(raw.get("type") or 0) != 0:
+            continue
+        for line in raw.get("lines") or []:
+            for span in line.get("spans") or []:
+                size = len(str(span.get("text") or "").strip())
+                total += size
+                if span.get("alpha") == 0:
+                    invisible += size
+    return bool(total) and invisible / total >= OCR_OVERLAY_INVISIBLE_SHARE
+
 
 def _bbox(value: Sequence[Any]) -> Dict[str, float]:
     values = list(value or [])[:4]
@@ -327,6 +383,35 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
             width, height = float(page.rect.width), float(page.rect.height)
             page_dict = page.get_text("dict")
             page_body_size, baselines = _page_body_metrics(page_dict)
+            ocr_overlay = _page_is_ocr_overlay(page_dict)
+            line_heights = [
+                float(line["bbox"][3]) - float(line["bbox"][1])
+                for raw in page_dict.get("blocks") or [] if int(raw.get("type") or 0) == 0
+                for line in raw.get("lines") or []
+                if len(line.get("bbox") or ()) == 4
+                and float(line["bbox"][3]) > float(line["bbox"][1])
+            ]
+            page_line_height = (
+                statistics.median(line_heights) if line_heights else 0.0
+            )
+            line_right_edges = sorted(
+                float(line["bbox"][2])
+                for raw in page_dict.get("blocks") or [] if int(raw.get("type") or 0) == 0
+                for line in raw.get("lines") or [] if len(line.get("bbox") or ()) == 4
+            )
+            page_text_x1 = (
+                line_right_edges[int(len(line_right_edges) * 0.9)]
+                if line_right_edges else 0.0
+            )
+            line_left_edges = sorted(
+                float(line["bbox"][0])
+                for raw in page_dict.get("blocks") or [] if int(raw.get("type") or 0) == 0
+                for line in raw.get("lines") or [] if len(line.get("bbox") or ()) == 4
+            )
+            page_text_x0 = (
+                line_left_edges[int(len(line_left_edges) * 0.1)]
+                if line_left_edges else 0.0
+            )
             for raw_number, raw in enumerate(page_dict.get("blocks") or []):
                 block_box = _bbox(raw.get("bbox"))
                 block_id = f"p{page_number + 1}-b{raw_number}"
@@ -440,6 +525,10 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
                         "text": text,
                         "lines": line_records,
                         "marks": [],
+                        "ocr_overlay": ocr_overlay,
+                        "page_line_height": page_line_height,
+                        "page_text_x1": page_text_x1,
+                        "page_text_x0": page_text_x0,
                     }
                 )
                 order += 1
@@ -500,7 +589,7 @@ def _is_sentence_terminal(text: str) -> bool:
     value = _normalise_line(text)
     if not value:
         return False
-    value = re.sub(r"[\]\)}」』”’]+$", "", value).rstrip()
+    value = re.sub(r"[\]\)}」』”’']+$", "", value).rstrip()
     if ABBREV_RE.search(value[-12:]):
         return False
     return value[-1] in SENTENCE_TERMINAL
@@ -755,7 +844,7 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     repeated = Counter(_normalise_repeat(block.get("text")) for block in text_blocks)
     image_by_page = defaultdict(list)
     for block in out:
-        if block.get("block_type") == "image":
+        if block.get("block_type") == "image" and not _is_full_page_image(block):
             image_by_page[int(block.get("page_number") or 0)].append(block)
     page_number = len(page_counts)
     repeat_threshold = max(2, math.ceil(page_number * 0.2)) if page_number > 1 else 99
@@ -797,7 +886,9 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         elif (
             len(text) < 100
             and (repeated[_normalise_repeat(text)] >= repeat_threshold
-                 or font_size <= body_size * 0.9)
+                 # OCR 层的字号是估出来的、逐行抖动，不能当页眉页脚的证据。
+                 or (font_size <= body_size * 0.9
+                     and not block.get("ocr_overlay")))
             and (block["y0"] < page_height * 0.12
                  or block["y1"] > page_height * 0.88)
         ):
@@ -860,6 +951,8 @@ def _line_groups(block: Dict[str, Any]) -> List[Dict[str, Any]]:
         lines[-1] = last
     if not lines:
         return []
+    if block.get("ocr_overlay"):
+        return _overlay_rows(block, lines)
     body_x0 = float(block.get("body_x0") or block.get("x0") or 0)
     body_size = float(
         block.get("body_font_size") or block.get("font_size") or 10
@@ -889,6 +982,89 @@ def _line_groups(block: Dict[str, Any]) -> List[Dict[str, Any]]:
             }
         )
     return result
+
+
+def _overlay_rows(
+    block: Dict[str, Any], lines: Sequence[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """OCR 层的块：每个视觉行一组，跨行合并交给 :func:`_overlay_continues`。
+
+    OCR 层常把同一视觉行拆成几个"行"对象（逐词定位）；纵向重叠的相邻行先并回
+    一行。没有任何字母或数字的行（``©`` ``.`` ``— ]``）是图里纹理的误识别，直接
+    丢掉——留着它会把前后本该相连的两行隔开。
+    """
+    rows: List[Dict[str, Any]] = []
+    for line in lines:
+        text = _normalise_line(
+            _OVERLAY_NOISE_TOKEN_RE.sub(" ", str(line.get("text") or "")))
+        if not _ALNUM_RE.search(text):
+            continue
+        y0, y1 = float(line.get("y0") or 0), float(line.get("y1") or 0)
+        if rows:
+            last = rows[-1]
+            overlap = _overlap(last["y0"], last["y1"], y0, y1)
+            if overlap >= 0.5 * min(last["y1"] - last["y0"], y1 - y0) and (
+                float(line.get("x0") or 0) >= last["last_x1"] - 1.0
+            ):
+                last["text"] = _join_text(last["text"], text)
+                last["last_x1"] = float(line.get("x1") or 0)
+                last["marks"].extend(dict(item) for item in (line.get("marks") or []))
+                continue
+        rows.append({
+            "text": text,
+            "role": block.get("role") or "body",
+            "page_number": block.get("page_number"),
+            "block_id": block.get("block_id"),
+            "first_line_x0": float(line.get("x0") or 0),
+            "last_x0": float(line.get("x0") or 0),
+            "last_x1": float(line.get("x1") or 0),
+            "y0": y0,
+            "y1": y1,
+            "last_y1": y1,
+            "page_height": block.get("page_height", 0),
+            "marks": [dict(item) for item in (line.get("marks") or [])],
+            "ocr_overlay": True,
+        })
+    return rows
+
+
+def _overlay_continues(previous: Dict[str, Any], current: Dict[str, Any]) -> bool:
+    """OCR 层上，``current`` 这一行是否接着 ``previous`` 那一段。
+
+    只用行距、对齐和句末这几样 OCR 估得准的东西：
+
+    * 段间有空行（行距超过 :data:`OVERLAY_PARAGRAPH_GAP` 个行高）→ 新段；
+    * 上一行没结句 → 续行（不看下一行首字母大小写：OCR 常在行首带进噪声字符）；
+    * 上一行结句时，居中排版看行距（上面已判）；左对齐看首行缩进和段末短行。
+    """
+    line_height = float(current.get("line_height") or 0) or 12.0
+    if current["page_numbers"][0] != previous["page_numbers"][-1]:
+        if current["page_numbers"][0] != previous["page_numbers"][-1] + 1:
+            return False
+        return not _is_sentence_terminal(previous["text"])
+    gap = float(current.get("y0") or 0) - float(previous.get("last_y1") or 0)
+    if gap < -line_height:
+        return False
+    if not _is_sentence_terminal(previous["text"]):
+        # 没结句的行后面可以多容一行空白：被丢掉的噪声行（``©`` ``.``）常常
+        # 占着一个行位。
+        return gap <= line_height * OVERLAY_OPEN_GAP
+    if gap > line_height * OVERLAY_PARAGRAPH_GAP:
+        return False
+    prev_x0, prev_x1 = float(previous["last_x0"]), float(previous["last_x1"])
+    cur_x0, cur_x1 = float(current["first_line_x0"]), float(current["last_x1"])
+    tolerance = line_height * OVERLAY_CENTRE_TOLERANCE
+    # 居中：中点对齐、起点不对齐（起点也对齐的两行只是等宽，按左对齐判即可）。
+    centred = (
+        abs((prev_x0 + prev_x1) / 2 - (cur_x0 + cur_x1) / 2) <= tolerance
+        and abs(prev_x0 - cur_x0) > tolerance
+    )
+    if centred:
+        return True
+    if cur_x0 > prev_x0 + line_height * OVERLAY_INDENT:
+        return False
+    right = float(current.get("page_text_x1") or 0)
+    return not (right and prev_x1 < right - line_height * OVERLAY_SHORT_LINE)
 
 
 def reconstruct_paragraph_records(
@@ -931,6 +1107,37 @@ def reconstruct_paragraph_records(
                 "font_size": float(block.get("font_size") or 0),
                 "marks": [dict(item) for item in (group.get("marks") or [])],
             }
+            overlay = bool(group.get("ocr_overlay"))
+            if overlay:
+                current.update({
+                    "ocr_overlay": True,
+                    "y0": group["y0"],
+                    "last_x0": group["last_x0"],
+                    "last_x1": group["last_x1"],
+                    "line_height": float(block.get("page_line_height") or 0),
+                    "page_text_x1": float(block.get("page_text_x1") or 0),
+                    "page_text_x0": float(block.get("page_text_x0") or 0),
+                })
+            if records and overlay and records[-1].get("ocr_overlay"):
+                previous = records[-1]
+                if (
+                    previous["role"] in JOINABLE_ROLES
+                    and group["role"] in JOINABLE_ROLES
+                    and _overlay_continues(previous, current)
+                ):
+                    previous["text"] = _join_text(previous["text"], current["text"])
+                    previous["page_numbers"].extend(current["page_numbers"])
+                    previous["block_ids"].extend(current["block_ids"])
+                    previous["marks"].extend(current["marks"])
+                    previous["last_y1"] = current["last_y1"]
+                    previous["last_x0"] = current["last_x0"]
+                    previous["last_x1"] = current["last_x1"]
+                    previous["reading_order"] = current_order
+                    last_kept_order = current_order
+                    continue
+                records.append(current)
+                last_kept_order = current_order
+                continue
             if records:
                 previous = records[-1]
                 same_role = (
