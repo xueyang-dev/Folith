@@ -1521,7 +1521,7 @@ class MainWindow(QMainWindow):
         more = i18n.tr(' 等') if len(others) > 8 else ""
         if not self._confirm(
                 i18n.tr('重复段'),
-                i18n.tr('原文相同的还有 {v0} 段（第 {v1}{v2} 段），译文和这段不一样。也用这段译文吗？',
+                i18n.tr('原文相同的还有 {v0} 段（第 {v1}{v2} 段），译文和这段不一样。是否复用译文？',
                         v0=len(others), v1=numbers, v2=more),
                 yes=i18n.tr('一起更新'), no=i18n.tr('不用')):
             return

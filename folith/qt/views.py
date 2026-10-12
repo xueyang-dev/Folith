@@ -2059,6 +2059,25 @@ class WorkbenchView(QWidget):
         translation_layout.addWidget(self.toolbar_bar)
         translation_layout.addWidget(self.drafts_banner)
         translation_layout.addWidget(self.translation_split, 1)
+        # 字数统计：底栏一行（整份进度 + 当前段 / 所选段），点「详情」看分项。
+        self.word_bar = QWidget()
+        word_layout = QHBoxLayout(self.word_bar)
+        word_layout.setContentsMargins(theme_module.SPACE["xs"], 0, 0, 0)
+        word_layout.setSpacing(theme_module.SPACE["md"])
+        self.word_total_label = QLabel("")
+        self.word_total_label.setObjectName("hint")
+        self.word_selection_label = QLabel("")
+        self.word_selection_label.setObjectName("hint")
+        self.word_detail_button = QToolButton()
+        self.word_detail_button.setText(i18n.tr('字数统计…'))
+        self.word_detail_button.clicked.connect(self._show_word_count)
+        word_layout.addWidget(self.word_total_label)
+        word_layout.addStretch(1)
+        word_layout.addWidget(self.word_selection_label)
+        word_layout.addWidget(self.word_detail_button)
+        translation_layout.addWidget(self.word_bar)
+        self._word_count_key: tuple = ()
+        self._word_count = None
         # 没有段落时正文只放一段说明：空表格 + 空检查器看起来像加载失败，
         # 而这个状态下用户真正要做的事只有 Header 上那一个动作。
         self.no_segments_card = Card()
@@ -2888,11 +2907,64 @@ class WorkbenchView(QWidget):
                 self._row_selected(target)
             else:
                 self._activate_position(-1)
+            self._sync_drafts_banner()
+            self._sync_word_count()
             return
         for position, row in enumerate(self._rows):
             self._paint_row(position, row)
         self._place_inline_editor()
         self._sync_drafts_banner()
+        self._sync_word_count()
+
+    def _sync_word_count(self) -> None:
+        """整份文档的字数与进度（按原文计）。状态没换就不重算。"""
+        from folith import word_count
+
+        key = (self.job_id, id(self._state), len(self._all_rows))
+        if key != self._word_count_key:
+            self._word_count_key = key
+            self._word_count = word_count.document_count(self._all_rows)
+        count = self._word_count
+        if count is None or not count.total.segments:
+            self.word_total_label.setText("")
+            self.word_bar.setVisible(False)
+            return
+        self.word_bar.setVisible(True)
+        self.word_total_label.setText(i18n.tr(
+            '原文 {v0} 词 · 已译 {v1}% · 已审校 {v2}%',
+            v0=f"{count.total.words:,}", v1=count.percent(count.translated),
+            v2=count.percent(count.reviewed)))
+        self._sync_selection_count()
+
+    def _sync_selection_count(self) -> None:
+        """当前段（或所选多段）的词数：原文 → 译文。"""
+        from folith import word_count
+
+        if not hasattr(self, "word_selection_label"):
+            return
+        indexes = set(self.selected_indexes())
+        if len(indexes) <= 1 and self._current_index >= 0:
+            indexes = {self._current_index}
+        rows = [row for row in self._all_rows if row.index in indexes]
+        if not rows:
+            self.word_selection_label.setText("")
+            return
+        data = word_count.selection_count(rows)
+        head = (i18n.tr('所选 {v0} 段', v0=data["segments"]) if data["segments"] > 1
+                else i18n.tr('第 {v0} 段', v0=rows[0].index + 1))
+        self.word_selection_label.setText(i18n.tr(
+            '{v0}：原文 {v1} 词 / {v2} 字符 → 译文 {v3} 词 / {v4} 字符',
+            v0=head, v1=data["source_words"], v2=data["source_chars"],
+            v3=data["target_words"], v4=data["target_chars"]))
+
+    def _show_word_count(self) -> None:
+        from .dialogs import WordCountDialog
+
+        self._sync_word_count()
+        if self._word_count is None:
+            return
+        rows = [row for row in self._all_rows if row.index in set(self.selected_indexes())]
+        WordCountDialog(self._word_count, rows, self).exec()
 
     def _sync_drafts_banner(self) -> None:
         count = sum(1 for row in self._all_rows if row.has_draft)
@@ -3595,6 +3667,7 @@ class WorkbenchView(QWidget):
     def _selection_changed(self) -> None:
         indexes = self.selected_indexes()
         multiple = len(indexes) > 1
+        self._sync_selection_count()
         self.review_selected_button.setEnabled(multiple)
         self.review_selected_button.setText(
             i18n.tr('审校所选 {v0} 段', v0=len(indexes)) if multiple

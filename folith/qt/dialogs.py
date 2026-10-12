@@ -1293,6 +1293,63 @@ class SegmentSplitDialog(QDialog):
                 "target_b": self.target_b.toPlainText()}
 
 
+class WordCountDialog(QDialog):
+    """字数统计：整份文档按状态分项（以原文计），以及所选段落。"""
+
+    def __init__(self, count, selected_rows: list, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from folith import word_count
+
+        self.setWindowTitle(i18n.tr('字数统计'))
+        self.setMinimumWidth(520)
+        rows = [
+            (i18n.tr('全部（不含已排除）'), count.total),
+            (i18n.tr('已翻译'), count.translated),
+            (i18n.tr('尚未翻译'), count.untranslated),
+            (i18n.tr('已审校'), count.reviewed),
+            (i18n.tr('人工修改'), count.human_edited),
+            (i18n.tr('重复（原文与前文相同）'), count.repetitions),
+            (i18n.tr('已排除'), count.excluded),
+        ]
+        self.table = QTableWidget(len(rows), 5, self)
+        self.table.setHorizontalHeaderLabels(
+            [i18n.tr('分类'), i18n.tr('段数'), i18n.tr('原文词数'), i18n.tr('原文字符'),
+             i18n.tr('占比')])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for position, (label, bucket) in enumerate(rows):
+            share = "" if bucket is count.excluded else f"{count.percent(bucket)}%"
+            for column, value in enumerate((label, f"{bucket.segments:,}", f"{bucket.words:,}",
+                                            f"{bucket.chars:,}", share)):
+                item = QTableWidgetItem(value)
+                if column:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(position, column, item)
+        self.table.setMinimumHeight(min(320, 32 + 30 * len(rows)))
+        target = QLabel(i18n.tr('译文：{v0} 词 / {v1} 字符', v0=f"{count.target_words:,}",
+                                v1=f"{count.target_chars:,}"))
+        rules = QLabel(i18n.tr('计数规则：中文、日文每个字算一个词；其他文字按空格分词。字符数不含空白。'))
+        rules.setObjectName("hint")
+        rules.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.table)
+        layout.addWidget(target)
+        self.selection_label = None
+        if len(selected_rows) > 1:
+            data = word_count.selection_count(selected_rows)
+            self.selection_label = QLabel(i18n.tr(
+                '所选 {v0} 段：原文 {v1} 词 / {v2} 字符 → 译文 {v3} 词 / {v4} 字符',
+                v0=data["segments"], v1=data["source_words"], v2=data["source_chars"],
+                v3=data["target_words"], v4=data["target_chars"]))
+            layout.addWidget(self.selection_label)
+        layout.addWidget(rules)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).setText(i18n.tr('关闭'))
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+
 class FindReplaceDialog(QDialog):
     """查找替换（只改译文）：先看命中了哪些段、改成什么样，再全部替换。
 

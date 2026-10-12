@@ -219,3 +219,21 @@ def test_bulk_draft_helpers(bench):
     assert adapter.load_state(job)["pairs"][0]["target"] == "新译文0"
     assert adapter.discard_all_drafts(job) == 1
     assert adapter.pending_draft_count(job) == 0
+
+
+def test_word_count_bar_and_dialog(bench):
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    assert not view.word_bar.isHidden()
+    total = view.word_total_label.text()
+    assert total.startswith("原文 ") and "已译 100%" in total
+    assert view.word_selection_label.text().startswith("第 1 段：原文 5 词")
+    view.select_segments([0, 1])
+    _pump(app)
+    assert view.word_selection_label.text().startswith("所选 2 段")
+    from folith.qt.dialogs import WordCountDialog
+
+    dialog = WordCountDialog(view._word_count, view._all_rows[:2], view)
+    assert dialog.table.item(0, 0).text().startswith("全部")
+    assert dialog.selection_label is not None
