@@ -271,6 +271,40 @@ def test_mixed_pdf_keeps_native_and_scanned_pages_in_order():
             for bid in document['translation_block_ids']]==['p1','p2','p3']
 
 
+def _with_invisible_ocr_layer(data, text):
+    """Stamp the hidden text layer a scanner / Internet Archive puts on each page."""
+    doc=fitz.open(stream=data,filetype='pdf')
+    for page in doc:
+        for row in range(6):
+            page.insert_text((40,80+row*16),text,fontsize=11,render_mode=3)
+    out=doc.tobytes();doc.close()
+    return out
+
+
+def test_scan_with_invisible_ocr_layer_goes_to_vlm_not_the_text_layer():
+    # 实测：扫描小说自带的隐形 OCR 层通过了文本层质量检测，303/308 页按原生文本
+    # 走了老的拼行规则，VLM 只接手了 5 张空白图片页。
+    data=_with_invisible_ocr_layer(scanned_pdf(2),'Tbe sensorlum of tbe drone, garbled by someone else OCR.')
+    paras,warnings,report=core.extract_document_paragraphs_with_report('scan.pdf',data,
+        ocr_max_pages=None,understanding_provider=Provider(),spatial_engine=lambda p:SpatialTextIndex(p.page_id))
+    assert report['semantic_source']=='vlm' and report['ocr_trigger']=='scanned_ocr_overlay'
+    assert paras and all(p.startswith('The sensorium') for p in paras)
+    assert any('隐形 OCR 层' in w for w in warnings)
+
+
+def test_ocr_overlay_page_inside_a_native_pdf_is_routed_as_a_scanned_page():
+    native=fitz.open()
+    p=native.new_page(width=400,height=600)
+    p.insert_text((40,80),'First native paragraph has ordinary text for extraction.')
+    with fitz.open(stream=_with_invisible_ocr_layer(scanned_pdf(1),'Tbe sensorlum.'),filetype='pdf') as scan:
+        native.insert_pdf(scan)
+    data=native.tobytes();native.close()
+    paras,_,report=core.extract_document_paragraphs_with_report('mixed.pdf',data,
+        ocr_max_pages=None,understanding_provider=Provider(),spatial_engine=lambda p:SpatialTextIndex(p.page_id))
+    assert report['semantic_source']=='mixed'
+    assert paras[0].startswith('First native paragraph') and paras[1].startswith('The sensorium')
+
+
 def test_page_only_never_claims_a_rectangle():
     with pytest.raises(ValueError):
         SourceSpan('p1',bbox=[.1,.1,.9,.2],grounding_quality='page_only')

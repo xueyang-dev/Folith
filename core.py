@@ -1611,13 +1611,28 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 layout_stage.finish(status="completed")
             ocr_details = {}
             visual_indices = []
+            vlm_available = (understanding_provider is not None
+                             or ocr_backend is None
+                             or _ocr_backends.normalize_backend(ocr_backend) == "online")
             if use_text_layer and resolved_ocr_mode != "off":
                 with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
+                    page_count = len(pdf)
+                    # 扫描页：没有文字的图片页，或者整页图片上盖着一层隐形 OCR 文字
+                    # 的页（扫描仪 / Internet Archive / OCRmyPDF 自带的识别结果）。
+                    # 后者的文字是别人的 OCR，不是原生文本：同样交给视觉理解。
                     visual_indices = [i for i,p in enumerate(pdf)
-                                      if not p.get_text().strip() and p.get_images()]
-            if (not use_text_layer or visual_indices) and (understanding_provider is not None
-                                      or ocr_backend is None
-                                      or _ocr_backends.normalize_backend(ocr_backend) == "online"):
+                                      if p.get_images() and (
+                                          not p.get_text().strip()
+                                          or (vlm_available
+                                              and _pdf_ingestion._page_is_ocr_overlay(
+                                                  p.get_text("dict"))))]
+                if visual_indices and len(visual_indices) == page_count:
+                    # 整本都是扫描件：走纯视觉路径，不再保留第三方 OCR 文本。
+                    visual_indices = []
+                    use_text_layer = False
+                    ocr_trigger = "scanned_ocr_overlay"
+                    warnings.append("PDF 的文字是扫描图上的隐形 OCR 层，已改用视觉理解识别全文。")
+            if (not use_text_layer or visual_indices) and vlm_available:
                 from folith.document_understanding import VLMDocumentProvider, understand_visual_pdf, understand_mixed_pdf
                 from folith.spatial_index import SpatialTextIndex
                 if understanding_provider is None:
