@@ -45,6 +45,6 @@
 
 候选已按 `9aded0c` 的随包源码（含 `9518629` 之后的界面调整、准备页重做、原文语言、交付页补生成）重建为 `git:f53aaef`（`worktree_dirty=false`，built_at `2026-10-11T15:06:58+00:00`，DMG sha256 `cda31ff9…03e9`）。本轮 `scripts/qt_beta_chain.sh` 20 步全部通过：构建与 DMG、清单与发行说明（含 `--check-notes`）、artifact check、验收包生成与检查、docs audit、重复定义检查、176 项指定 Qt 门禁，以及上文同一组 9 项端到端探针。上文的全量遍历（212 文件 / 2,983 用例）、wheel / sdist 归档比对和三种新格式的完整流程仍是 `9518629` 的结果，尚未在 `f53aaef` 上重跑；人工验收也须在新候选上完成。
 
-随后 `f53aaef → 3ad4247` 的 15 个提交修改了随包的工作台代码：译文就地编辑；右侧操作栏及看 / 查 / 改 / 记各项功能；带要求的重译、批注、重复段复用、查找替换；字数统计；混合 PDF 断行拼接、暂停按钮、准备页加载提示三项修复；补齐 Streamlit 时期遗漏的功能。候选据此重建为 `git:3ad4247`（`worktree_dirty=false`，built_at `2026-10-12T04:31:28+00:00`，DMG sha256 `d290c8986dac2c4a4fa5b28d040b18ab8d264772bc053846c75a63089a962dcc`），`scripts/qt_beta_chain.sh` 20 / 20 步通过。这些新功能尚未做人工验收；本轮新增的测试暂未纳入指定 Qt 门禁清单，门禁数仍为 176。上文记在 `9518629` 上的全量遍历、归档比对与三种新格式完整流程同样尚未在 `3ad4247` 上重跑。
+随后 `f53aaef → 3ad4247` 的 15 个提交修改了随包的工作台代码：译文就地编辑；右侧操作栏及看 / 查 / 改 / 记各项功能；带要求的重译、批注、重复段复用、查找替换；字数统计；混合 PDF 断行拼接、暂停按钮、准备页加载提示三项修复；补齐 Streamlit 时期遗漏的功能。候选据此重建为 `git:3ad4247`（`worktree_dirty=false`，built_at `2026-10-12T04:31:28+00:00`，DMG sha256 `d290c8986dac2c4a4fa5b28d040b18ab8d264772bc053846c75a63089a962dcc`），`scripts/qt_beta_chain.sh` 20 / 20 步通过。这些新功能尚未做人工验收（新工作台功能的人工检查项见 [manual-acceptance.md](manual-acceptance.md) 的 H 节）；本轮新增的测试暂未纳入指定 Qt 门禁清单，门禁数仍为 176。上文记在 `9518629` 上的全量遍历、归档比对与三种新格式完整流程同样尚未在 `3ad4247` 上重跑。
 
 **结论：ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING。7 条强制人工项尚未完成，不声明 PRIVATE_BETA_READY，也未创建公开 Release。** 本轮候选与验收包可交给人工验收；公开分发所需签名 / 公证仍属后续范围。
