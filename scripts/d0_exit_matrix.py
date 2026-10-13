@@ -86,6 +86,20 @@ def _journal_summary(data_dir: Path, job_id: str) -> dict:
     return {"exists": True, "entries": len(entries), "translated_pairs": translated}
 
 
+def _is_mid_translation(state: dict | None) -> bool:
+    journal = (state or {}).get("journal") or {}
+    runtime = (state or {}).get("runtime_state") or {}
+    return bool(
+        (journal.get("translated_pairs") or 0) > 0
+        and str(runtime.get("stage") or "") == "translation"
+        and str(runtime.get("status") or "") in {"running", "waiting_external"}
+        and str(runtime.get("operation") or "") in {
+            "translation", "translation_generation", "context_build",
+            "state_commit_done", "state_commit", "translation_qa",
+        }
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="D0 running-task exit check")
     parser.add_argument("--out", required=True)
@@ -155,23 +169,11 @@ def main(argv: list[str] | None = None) -> int:
         running_state = None
         while time.monotonic() < deadline:
             running_state = _job_state(data_dir, job_id)
-            journal = running_state.get("journal") or {}
-            runtime = running_state.get("runtime_state") or {}
-            if (journal.get("translated_pairs") or 0) > 0 \
-                    and str(runtime.get("stage") or "") == "translation":
+            if _is_mid_translation(running_state):
                 break
             time.sleep(1.0)
         evidence["state_while_running"] = running_state
-        journal = (running_state or {}).get("journal") or {}
-        runtime = (running_state or {}).get("runtime_state") or {}
-        evidence["stopped_mid_task"] = bool(
-            (journal.get("translated_pairs") or 0) > 0
-            and str(runtime.get("stage") or "") == "translation"
-            and str(runtime.get("operation") or "") in {
-                "translation", "translation_generation", "context_build",
-                "state_commit_done", "state_commit",
-            }
-        )
+        evidence["stopped_mid_task"] = _is_mid_translation(running_state)
 
         stop = service.stop()
         evidence["shutdown_mid_task"] = {

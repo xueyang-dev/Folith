@@ -119,6 +119,20 @@ def test_paused_probe_waits_for_initial_load_before_routing(monkeypatch, tmp_pat
 SWEEP = ROOT / "scripts" / "desktop_e2e_sweep.py"
 
 
+def test_exit_matrix_recognizes_in_flight_translation_qa():
+    from d0_exit_matrix import _is_mid_translation
+
+    state = {"journal": {"translated_pairs": 4}, "runtime_state": {
+        "stage": "translation", "status": "waiting_external",
+        "operation": "translation_qa"}}
+    assert _is_mid_translation(state)
+    state["runtime_state"]["status"] = "completed"
+    assert not _is_mid_translation(state)
+    state["runtime_state"]["status"] = "waiting_external"
+    state["journal"]["translated_pairs"] = 0
+    assert not _is_mid_translation(state)
+
+
 def test_multi_segment_editing_verification_is_wired():
     """Roadmap §6.1: multi-sentence switching/commit must stay verified."""
     runner = ROOT / "scripts" / "d0_multiseg_runner.py"
