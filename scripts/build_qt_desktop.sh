@@ -65,8 +65,7 @@ fi
 MIN_OS="$("$PYTHON" -c "
 import json,sys
 data=json.load(open('$OUT_DIR/native_min_os_inputs.json'))
-value=(data.get('max_minos') or '0.0').split('.')
-print('.'.join(value[:2]))")"
+print(data.get('max_minos') or '0.0')")"
 echo "declared LSMinimumSystemVersion=$MIN_OS"
 
 # Record the measured support boundary in the build record, so diagnostics, the

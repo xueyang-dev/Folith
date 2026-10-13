@@ -7,14 +7,33 @@ comparing a fresh manifest against old text.  These tests pin the corrections.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import qt_release_checks as release  # noqa: E402
+
+
+@pytest.mark.parametrize("minos", ["15.7.5", "15.0.0", "26.0.0"])
+def test_build_declares_the_complete_measured_minimum(tmp_path, minos):
+    (tmp_path / "native_min_os_inputs.json").write_text(
+        json.dumps({"max_minos": minos}), encoding="utf-8")
+    script = (ROOT / "scripts" / "build_qt_desktop.sh").read_text(encoding="utf-8")
+    start = script.index('MIN_OS="$(')
+    end = script.index('\necho "declared LSMinimumSystemVersion=', start)
+    # Execute the build's actual declaration command, without rebuilding an app.
+    command = script[start:end] + '\nprintf "%s" "$MIN_OS"'
+    result = subprocess.run(
+        ["bash", "-c", command], check=True, capture_output=True, text=True,
+        env=dict(os.environ, PYTHON=sys.executable, OUT_DIR=str(tmp_path)))
+    assert result.stdout == minos
 
 
 def test_metadata_version_is_read_with_the_exact_prefix(tmp_path):
