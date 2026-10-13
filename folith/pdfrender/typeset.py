@@ -45,7 +45,7 @@ FAMILIES: dict[str, tuple[str, ...]] = {
 SCRIPT_FAMILIES: dict[str, tuple[str, ...]] = {
     "cjk": ("Songti SC", "STSong", "PingFang SC", "Hiragino Sans GB", "Heiti SC",
             "Noto Sans CJK SC", "Noto Serif CJK SC", "Source Han Sans SC",
-            "Microsoft YaHei", "SimSun"),
+            "Microsoft YaHei", "SimSun", "Droid Sans Fallback"),
     "arabic": ("Geeza Pro", "Al Nile", "Noto Naskh Arabic", "Noto Sans Arabic",
                "Amiri", "Times New Roman"),
     "hebrew": ("Arial Hebrew", "Noto Sans Hebrew", "Times New Roman"),
@@ -160,10 +160,34 @@ def _font_faces(path_str: str) -> tuple[tuple[str, tuple[int, ...]], ...]:
 
 
 @functools.lru_cache(maxsize=1)
+def _bundled_cjk_font():
+    """Make MuPDF's existing CJK font available to Typst for this process.
+
+    Keep the temporary directory alive with the cached result. Typst needs a
+    font file for both measurement and PDF compilation, not just a family name.
+    """
+    import tempfile
+    import io
+    import pymupdf
+    from fontTools.ttLib import TTFont
+
+    directory = tempfile.TemporaryDirectory(prefix="folith-pdf-fonts-")
+    path = pathlib.Path(directory.name) / "DroidSansFallback.ttf"
+    # MuPDF's copy omits the full/PostScript names. Typst ignores that stripped
+    # font until these naming records are restored; the glyph data is unchanged.
+    font = TTFont(io.BytesIO(pymupdf.Font("cjk").buffer))
+    font["name"].setName("Droid Sans Fallback Regular", 4, 3, 1, 0x409)
+    font["name"].setName("DroidSansFallback", 6, 3, 1, 0x409)
+    font.save(path)
+    font.close()
+    return directory, path
+
+
+@functools.lru_cache(maxsize=1)
 def font_index() -> tuple[dict[str, tuple[tuple[int, frozenset], ...]], ...]:
     """family -> faces; and codepoint -> families that cover it."""
     by_family: dict[str, list[tuple[int, frozenset]]] = {}
-    for path in available_font_files():
+    for path in available_font_files() + (_bundled_cjk_font()[1],):
         for family, (weight, italic), codes in _font_faces(str(path)):
             by_family.setdefault(family, []).append(
                 (weight, frozenset(codes)))
@@ -417,7 +441,8 @@ def _measure_cached(text: str, width: float, size: float,
     source = _MEASURE_TEMPLATE.format(width=block.width, tall=100000.0,
                                       body=_styled_body(block))
     import json as _json
-    raw_result = typst.query(source.encode("utf-8"), "<opdf>")
+    raw_result = typst.query(source.encode("utf-8"), "<opdf>",
+                             font_paths=[_bundled_cjk_font()[0].name])
     found = _json.loads(raw_result) if isinstance(raw_result, str) else raw_result
     if not found:
         return float("inf")
@@ -513,7 +538,8 @@ def _lang_for(block: Block) -> str:
 
 @functools.lru_cache(maxsize=4096)
 def _compile_cached(source: str) -> bytes:
-    return typst.compile(source.encode("utf-8"))
+    return typst.compile(source.encode("utf-8"),
+                         font_paths=[_bundled_cjk_font()[0].name])
 
 
 def fits(block: Block) -> bool:
