@@ -243,6 +243,7 @@ def test_import_then_editor_keeps_text_across_background_refresh(client, monkeyp
     assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1), \
         f"import did not create exactly one task: {adapter.list_jobs()!r} " \
         f"data_dir={core.OUTPUT_DIR}"
+    assert _pump(app, 120, lambda: not window.runner.busy)
     job_id = adapter.list_jobs()[0].job_id
     window.open_job(job_id)
 
@@ -346,6 +347,7 @@ def test_full_translation_run_through_the_window(client):
             f"jobs={[(r.job_id, r.filename) for r in adapter.list_jobs()]!r} "
             f"core_output_dir={core.OUTPUT_DIR!r} "
             f"data_dir={client['data_dir']!r} failures={window.failures!r}")
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         window.open_job(job_id)
         window.start_or_resume()
@@ -421,6 +423,7 @@ def test_running_task_blocks_exit_until_stopped(client):
         source.write_bytes(_make_docx([f"第 {index} 段。" for index in range(40)]))
         window.import_paths([str(source)], autostart=False)
         assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1)
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         window.open_job(job_id)
         window.start_or_resume()
@@ -488,6 +491,7 @@ def test_pause_and_continue_through_the_window(client):
             f"import did not create exactly one task: "
             f"jobs={[(r.job_id, r.filename) for r in adapter.list_jobs()]!r} "
             f"core_output_dir={core.OUTPUT_DIR!r} failures={window.failures!r}")
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         window.open_job(job_id)
         window.start_or_resume()
@@ -893,6 +897,7 @@ def test_typing_while_a_real_task_runs_is_kept_and_persisted(client):
             f"import did not create exactly one task: "
             f"jobs={[(r.job_id, r.filename) for r in adapter.list_jobs()]!r} "
             f"core_output_dir={core.OUTPUT_DIR!r} failures={window.failures!r}")
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         window.open_job(job_id)
         window.start_or_resume()
@@ -960,6 +965,7 @@ def test_declared_delivery_formats_are_the_ones_produced(client):
         source.write_bytes(_make_docx(["第一段。", "第二段。"]))
         window.import_paths([str(source)], autostart=False)
         assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1)
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
 
         # The choice is recorded on the task itself, before anything runs.
@@ -1517,6 +1523,7 @@ def test_retranslate_one_segment_from_the_workbench(client):
         source.write_bytes(_make_docx(["第一段。", "第二段。"]))
         window.import_paths([str(source)], autostart=False)
         assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1)
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         state = core.load_job_state(job_id) or {}
         state["paras"] = ["第一段。", "第二段。"]
@@ -1964,6 +1971,7 @@ def test_retranslate_refreshes_the_editor_with_the_new_text(client):
         source.write_bytes(_make_docx(["一段。"]))
         window.import_paths([str(source)], autostart=False)
         assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1)
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         state = core.load_job_state(job_id) or {}
         state["paras"] = ["一段。"]
@@ -2009,6 +2017,7 @@ def test_retranslate_keeps_uncommitted_editor_text(client):
         source.write_bytes(_make_docx(["一段。"]))
         window.import_paths([str(source)], autostart=False)
         assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1)
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         state = core.load_job_state(job_id) or {}
         state["paras"] = ["一段。"]
