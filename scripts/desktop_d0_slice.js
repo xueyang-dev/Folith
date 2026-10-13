@@ -416,11 +416,16 @@ async function main() {
           }
           if (!clicked) break;
           await settle(3500);
+          let reviewFinished = false;
           for (let i = 0; i < 90; i += 1) {
             const body = await page.locator('body').innerText();
-            if (!/正在审校|审校中/.test(body)) break;
+            if (!/正在审校|审校中|任务正在后台处理/.test(body)) {
+              reviewFinished = true;
+              break;
+            }
             await page.waitForTimeout(2000);
           }
+          if (!reviewFinished) throw new Error('review task did not finish before delivery');
           await settle(1500);
         }
         // Decide any findings that are still open.
