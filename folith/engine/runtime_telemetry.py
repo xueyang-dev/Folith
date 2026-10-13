@@ -112,7 +112,9 @@ class _RuntimeTelemetryCoalescer:
     def _flush_from_timer(self):
         with self._lock:
             self._timer = None
-            if self._closed:
+            # The last response may already have flushed this window.  An
+            # empty timer must not write "running" over the worker's completion.
+            if self._closed or not (self._pending or self._active):
                 return
             self._flush_locked(time.monotonic())
 
