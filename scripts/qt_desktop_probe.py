@@ -64,7 +64,8 @@ class StubEndpoint:
                 raise RuntimeError("stub server exited: "
                                    + self.server_log.read_text(errors="replace")[-500:])
             time.sleep(0.1)
-        raise RuntimeError("stub server did not become ready")
+        raise RuntimeError("stub server did not become ready: "
+                           + self.server_log.read_text(errors="replace")[-1500:])
 
     def stop(self) -> None:
         if self.proc is not None and self.proc.poll() is None:

@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import re
 import sys
@@ -265,7 +266,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="write {\"port\": N, \"url\": ...} here once listening")
     args = parser.parse_args(argv)
 
-    server = serve(args.port, args.log, args.delay)
+    # The probe waits 30 seconds for readiness. Preserve a startup stack in its
+    # server log if binding stalls, before the probe terminates this process.
+    faulthandler.dump_traceback_later(20)
+    try:
+        server = serve(args.port, args.log, args.delay)
+    finally:
+        faulthandler.cancel_dump_traceback_later()
     port = server.server_address[1]
     info = {"port": port, "url": f"http://127.0.0.1:{port}/v1"}
     if args.ready_file:

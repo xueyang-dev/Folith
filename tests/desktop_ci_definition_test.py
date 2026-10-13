@@ -20,7 +20,7 @@ def _workflow_text() -> str:
 def test_desktop_job_exists_on_a_macos_runner():
     text = _workflow_text()
     assert "desktop-macos:" in text
-    assert "runs-on: macos-14" in text, "the first release targets Apple Silicon"
+    assert "runs-on: macos-15" in text, "the dependency wheels require macOS 15"
 
 
 def test_desktop_job_runs_the_verified_pipeline():

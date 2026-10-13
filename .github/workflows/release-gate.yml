@@ -47,6 +47,16 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python scripts/run_regression.py --tsv release-regression.tsv
+      - name: Upload regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-python-${{ matrix.python-version }}
+          path: |
+            .regression-logs/
+            release-regression.tsv
+          include-hidden-files: true
+          if-no-files-found: ignore
 
   package:
     name: build and wheel smoke
@@ -212,3 +222,15 @@ jobs:
             build/qt-desktop/native_min_os_bundle.json
             docs/qt-beta/release-notes.md
           if-no-files-found: error
+      - name: Upload failed Qt probe diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: folith-qt-failure-diagnostics
+          path: |
+            ${{ runner.temp }}/qt-*/
+            build/qt-desktop/*.json
+            .regression-logs/
+            qt-regression.tsv
+          include-hidden-files: true
+          if-no-files-found: ignore
