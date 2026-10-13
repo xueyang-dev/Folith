@@ -5172,7 +5172,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _term_t0 = time.perf_counter()
             selected, injected_ids = _select_glossary(
                 texts, glossary + provisional_hints,
-                document_profile, section_profile)
+                document_profile, section_profile,
+                segment_ids=[offset + i for i, _ in to_translate])
             _term_dur_ms = (time.perf_counter() - _term_t0) * 1000.0
             trace.record_terminology_lookup(matches=len(selected), duration_ms=_term_dur_ms, job_id=job_id)
             glossary_text = _glossary_block(selected)
@@ -9799,7 +9800,8 @@ def review_translation_segments(
             [source], glossary + _knowledge.provisional_hints(
                 state.get("knowledge_candidates") or [],
                 authoritative_entries=glossary),
-            state.get("document_profile"), section_profile)
+            state.get("document_profile"), section_profile,
+            segment_ids=[segment_id])
         glossary_text = _glossary_block(selected)
         deterministic = _globalize_batch_findings(check_translation_batch(
             [source], [target], glossary, target_lang,

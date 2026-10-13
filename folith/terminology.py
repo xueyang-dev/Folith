@@ -18,7 +18,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 
 from . import models
 from .document_profile import distributed_sample
@@ -555,6 +555,7 @@ def select_glossary_for_segments(
     document_profile: Optional[models.DocumentProfile] = None,
     section_profile: Optional[Dict[str, Any]] = None,
     max_provisional: int = 5,
+    segment_ids: Optional[Sequence[int]] = None,
 ) -> Tuple[List[models.GlossaryEntry], List[str]]:
     """为当前批次筛选相关术语。返回 (selected_entries, injected_entry_ids)。
 
@@ -565,6 +566,8 @@ def select_glossary_for_segments(
     4. 支持 scope：global / document / section:<id> / segment:<id>；
     5. 大小写差异与词边界匹配（term_matches），避免短词 substring 误命中；
     6. rejected 条目永不注入。
+
+    segment_ids 与 segments 逐段对齐，使用文档全局段号；省略时沿用批内下标。
     """
     if not segments or not glossary:
         return [], []
@@ -592,7 +595,8 @@ def select_glossary_for_segments(
                     continue
             elif scope.startswith("segment:"):
                 seg_id = scope[8:]
-                if not any(str(i) == seg_id for i in range(len(segments))):
+                ids = segment_ids if segment_ids is not None else range(len(segments))
+                if not any(str(i) == seg_id for i in ids):
                     continue
             else:
                 continue  # 未知 scope 不注入
