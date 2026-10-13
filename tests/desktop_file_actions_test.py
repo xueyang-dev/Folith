@@ -57,7 +57,12 @@ def test_successful_action_records_the_command(delivered, monkeypatch):
     monkeypatch.setattr(file_actions.subprocess, "run", fake_run)
     result = file_actions.reveal_in_file_manager(delivered)
     assert result.ok is True
-    assert calls and calls[0][-1] == str(delivered)
+    if sys.platform == "darwin":
+        assert calls == [["open", "-R", str(delivered)]]
+    elif sys.platform.startswith("linux"):
+        assert calls == [["xdg-open", str(delivered.parent)]]
+    else:
+        pytest.skip("native reveal command is only implemented for macOS and Linux")
     assert result.describe() == "已在文件管理器中显示：translation.docx"
     assert result.as_dict()["action"] == file_actions.REVEAL
 

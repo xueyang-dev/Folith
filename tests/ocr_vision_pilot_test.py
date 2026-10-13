@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("ocr_vision_pilot", ROOT / "benchmark/run_ocr_vision_pilot.py")
@@ -43,6 +44,11 @@ def test_image_payload_contains_only_given_prompt_and_image(tmp_path):
 
 
 def test_fresh_reference_pages_were_not_used_for_training_or_selection():
+    required = [ROOT / "benchmark/ocr-vision-pilot/fresh-references.json",
+                ROOT / "benchmark/paddle-finetune/dataset-manifest.json"]
+    missing = [str(path.relative_to(ROOT)) for path in required if not path.is_file()]
+    if missing:
+        pytest.skip("optional local OCR benchmark data is missing: " + ", ".join(missing))
     fresh = json.loads((ROOT / "benchmark/ocr-vision-pilot/fresh-references.json").read_text())
     training = json.loads((ROOT / "benchmark/paddle-finetune/dataset-manifest.json").read_text())
     old_pages = {int(page) for page in training["page_splits"]}

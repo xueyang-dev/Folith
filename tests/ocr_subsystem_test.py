@@ -203,7 +203,13 @@ def test_real_tesseract_goldens_preserve_text_boundaries_and_confidence():
     for index, records in expected.items():
         payload = (root / f"tests/fixtures/ocr_tesseract_page_{int(index):04d}.tsv").read_text()
         blocks = core._parse_tesseract_tsv(payload, direction="rtl")
-        assert [{k: x.get(k) for k in ["text", "confidence", "top", "bottom"]} for x in blocks] == records
+        assert [{k: x.get(k) for k in ["text", "top", "bottom"]} for x in blocks] == [
+            {k: x.get(k) for k in ["text", "top", "bottom"]} for x in records]
+        # Python 3.12's compensated float sum differs by a few ULPs from the
+        # 3.11 golden. Text and geometry remain exact; confidence stays precise.
+        for block, record in zip(blocks, records):
+            assert block["confidence"] == pytest.approx(
+                record["confidence"], rel=0, abs=1e-12)
         assert all(x["left"] < x["right"] and x["lines"][0]["words"] for x in blocks)
 
 

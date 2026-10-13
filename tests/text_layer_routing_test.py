@@ -149,6 +149,8 @@ def test_the_new_rule_is_what_rejects_a_strongly_mirrored_layer(monkeypatch):
 # Section 7 Test 6 — the frozen challenge page, not a synthetic count
 # ---------------------------------------------------------------------------
 def _benchmark_entry(sample_id: str) -> dict:
+    if not BENCHMARK.is_file():
+        pytest.skip("optional routing benchmark manifest is not present in this checkout")
     manifest = json.loads(BENCHMARK.read_text(encoding="utf-8"))
     for entries in manifest["groups"].values():
         for entry in entries:
@@ -203,6 +205,11 @@ def test_the_challenge_page_was_accepted_under_the_old_rule(monkeypatch):
 def test_benchmark_has_no_false_accept_or_false_reject():
     if not BENCHMARK.is_file():
         pytest.skip("run benchmark/routing/prepare_samples.py first")
+    manifest = json.loads(BENCHMARK.read_text(encoding="utf-8"))
+    missing = [entry["file"] for entries in manifest["groups"].values()
+               for entry in entries if not (ROUTING / entry["file"]).is_file()]
+    if missing:
+        pytest.skip("optional git-ignored routing samples are missing: " + ", ".join(missing))
     sys.path.insert(0, str(ROUTING))
     import measure
 

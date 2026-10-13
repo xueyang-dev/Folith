@@ -613,7 +613,8 @@ def test_split_then_undo_restores_the_original_row(tmp_path, monkeypatch):
          if item.key == f"{base}_source_a").set_value("Beta source · first")
     next(item for item in at.text_area
          if item.key == f"{base}_source_b").set_value("Beta source · second")
-    at.run()
+    # Form inputs reach the backend together with submit. An intermediate
+    # rerun discards unsubmitted form edits in Streamlit 1.65's AppTest.
     next(button for button in at.button if button.label == "拆分并保存").click()
     at.run()
     assert not at.exception, at.exception

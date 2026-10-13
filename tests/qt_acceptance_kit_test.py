@@ -126,6 +126,9 @@ def test_docs_match_the_artifacts_and_the_suite():
     """
     import qt_docs_audit as docs_audit
 
+    if not (ROOT / "build" / "qt-desktop" / "dmg_record.json").is_file():
+        pytest.skip("Qt document/artifact audit requires a locally built DMG record")
+
     report = docs_audit.audit(check_tests=False)
     assert report["ok"] is True, report["problems"]
     assert report["has_verdict"] is True
@@ -136,6 +139,9 @@ def test_docs_match_the_artifacts_and_the_suite():
 def test_docs_audit_catches_a_stale_claim(tmp_path, monkeypatch):
     """审计本身也要能被证伪：把状态清单改坏必须报出来。"""
     import qt_docs_audit as docs_audit
+
+    if not (ROOT / "build" / "qt-desktop" / "dmg_record.json").is_file():
+        pytest.skip("Qt document/artifact audit requires a locally built DMG record")
 
     original = docs_audit.STATUS.read_text(encoding="utf-8")
     broken = original.replace("ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING",

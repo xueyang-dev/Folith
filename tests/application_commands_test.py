@@ -107,7 +107,7 @@ def test_import_document_creates_then_reopens_the_same_task():
 def test_import_document_refuses_unsupported_and_empty_sources():
     with app_env():
         with pytest.raises(CommandRejected):
-            import_document("notes.txt", b"hello", _values())
+            import_document("notes.rtf", b"hello", _values())
         with pytest.raises(CommandRejected):
             import_document("book.docx", b"", _values())
         assert list_jobs() == []
