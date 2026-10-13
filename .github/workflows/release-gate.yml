@@ -154,7 +154,9 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
       - name: Release checks and manifest
-        run: python scripts/release_checks.py --mount --out build/desktop/release-manifest.json
+        run: |
+          python scripts/release_checks.py --mount --out build/desktop/release-manifest.json
+          python scripts/release_notes.py
       - name: Verify the release notes match the manifest
         run: python scripts/release_notes.py --check
       - name: Upload desktop artifacts
