@@ -277,8 +277,10 @@ def choose_fonts(text: str, *, font_style: str = "", bold: bool = False,
                 covered |= script_codes
                 break
 
-    # Second pass: any remaining family that closes a gap.
-    for family in wanted:
+    # Prefer the named families, then use any installed face that closes a gap.
+    # For example, Linux's DejaVu Sans covers Arabic but is not a serif role or
+    # one of the preferred Arabic families above.
+    for family in dict.fromkeys(wanted + list(index)):
         if codepoints <= covered:
             break
         if family in families:

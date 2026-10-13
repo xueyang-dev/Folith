@@ -46,3 +46,13 @@ def test_cjk_delivery_has_real_glyphs_and_a_complete_text_layer(no_system_fonts)
         glyphs = [char for span in doc[0].get_texttrace() for char in span["chars"]]
         assert glyphs and all(char[1] != 0 for char in glyphs)
     assert result.report["totals"]["missing_glyph_slots"] == 0
+
+
+def test_installed_arabic_font_is_used_even_without_a_preferred_family(monkeypatch):
+    target = "مرحبا بالعالم"
+    monkeypatch.setattr(typeset, "font_index", lambda: ({
+        "DejaVu Sans": ((400, frozenset(map(ord, target))),),
+    },))
+    choice = typeset.choose_fonts(target)
+    assert not choice.missing
+    assert choice.families == ["DejaVu Sans"]
