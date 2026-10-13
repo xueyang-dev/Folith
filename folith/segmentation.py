@@ -18,7 +18,7 @@ import re
 from typing import Any, Dict, List, Sequence, Tuple
 
 
-RULES_VERSION = 5
+RULES_VERSION = 6
 MIGRATION_VERSION = 1
 DEFAULT_MODE = "sentence"
 SUPPORTED_MODES = ("sentence", "paragraph")
@@ -38,12 +38,15 @@ _ABBREVIATIONS = {
     "asap", "approx", "dept", "dr", "e.g", "etc", "fig", "i.e", "inc", "jan",
     "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct",
     "nov", "dec", "jr", "misc", "mr", "mrs", "ms", "prof", "sr", "st",
-    "vs", "no",
+    "vs", "no", "pvt", "co", "corp", "bros",
 }
 _NON_TERMINAL_ABBREVIATIONS = {
     "approx", "dept", "dr", "e.g", "fig", "i.e", "inc", "jan", "feb", "mar",
     "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec", "jr",
     "misc", "mr", "mrs", "ms", "prof", "sr", "st", "vs", "no",
+    # 公司名中段：``Replika Press Pvt. Ltd.`` / ``Smith & Co. Ltd.`` 后面跟的大写
+    # 是公司名的下半截，不是新句子。
+    "pvt", "co", "corp", "bros",
 }
 _CLOSING_CHARS = set('"\'”’»)]}】》」』〉〕）］〗〙〛')
 # Arabic ``؟`` and Urdu ``۔`` are sentence terminals; the Arabic comma ``،``

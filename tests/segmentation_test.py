@@ -199,7 +199,7 @@ def test_article_guard_keeps_existing_sentence_protections_intact():
         "Next sentence.",
         "A Short Heading",
     ]
-    assert metadata["rules_version"] == segmentation.RULES_VERSION == 5
+    assert metadata["rules_version"] == segmentation.RULES_VERSION == 6
 
 
 def test_quote_aware_segmentation_preserves_dialogue_sentences():
@@ -226,4 +226,18 @@ def test_quote_aware_segmentation_distinguishes_apostrophes():
     assert segments == [
         "“It's not that she’s unhappy. She's just tired,” said John.",
         "“We'll see.”",
+    ]
+
+
+def test_company_name_abbreviations_do_not_end_a_sentence():
+    # 实测版权页：``Replika Press Pvt. Ltd.`` 被切成 ``…Pvt.`` 与 ``Ltd.`` 两句。
+    segments, _ = segmentation.segment_paragraphs(
+        ["Printed and bound in India by Replika Press Pvt. Ltd.",
+         "Smith & Co. Ltd. is here. Next one.",
+         "He went to Canongate Books Ltd. Then he left."],
+        mode="sentence", source_lang="English")
+    assert segments == [
+        "Printed and bound in India by Replika Press Pvt. Ltd.",
+        "Smith & Co. Ltd. is here.", "Next one.",
+        "He went to Canongate Books Ltd.", "Then he left.",
     ]
