@@ -339,9 +339,9 @@ def commit_pending_drafts(window, data_dir: Path, job_id: str, *,
             while True:
                 outcome = evaluate(window, _COMMIT_ONE_JS % json.dumps(texts, ensure_ascii=False))
                 # The draft is written during the Streamlit rerun, before the
-                # frontend enables Save.  That interval is not a failed save.
+                # frontend replaces the editor row and enables Save.
                 if (not isinstance(outcome, dict)
-                        or outcome.get("reason") != "save-button-disabled"
+                        or outcome.get("reason") not in {"save-button-disabled", "no-matching-row"}
                         or time.monotonic() >= deadline):
                     break
                 time.sleep(min(0.4, max(0.0, deadline - time.monotonic())))

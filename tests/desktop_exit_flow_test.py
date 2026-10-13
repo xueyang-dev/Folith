@@ -154,7 +154,8 @@ def test_commit_pending_drafts_refuses_to_claim_success(tmp_path):
     assert "save-button-disabled" in result["failures"]
 
 
-def test_commit_waits_for_the_save_button_after_the_draft_is_recorded(tmp_path):
+@pytest.mark.parametrize("pending_reason", ["save-button-disabled", "no-matching-row"])
+def test_commit_waits_for_the_editor_after_the_draft_is_recorded(tmp_path, pending_reason):
     job = "draft-before-rerender"
     path = _write_drafts(tmp_path, job, [{"segment_id": "1", "text": "尚未提交的编辑"}])
 
@@ -164,7 +165,7 @@ def test_commit_waits_for_the_save_button_after_the_draft_is_recorded(tmp_path):
         def evaluate_js(self, script):
             self.attempts += 1
             if self.attempts == 1:
-                return {"clicked": False, "reason": "save-button-disabled"}
+                return {"clicked": False, "reason": pending_reason}
             path.write_text(json.dumps({"drafts": []}), encoding="utf-8")
             return {"clicked": True}
 
@@ -172,6 +173,18 @@ def test_commit_waits_for_the_save_button_after_the_draft_is_recorded(tmp_path):
     assert result["confirmed"] is True
     assert result["committed_segments"] == ["1"]
     assert result["failures"] == []
+
+
+def test_commit_does_not_accept_a_persistently_missing_editor_row(tmp_path):
+    job = "missing-editor"
+    _write_drafts(tmp_path, job, [{"segment_id": "1", "text": "未提交的编辑"}])
+    window = _FakeWindow([])
+    window.evaluate_js = lambda script: {"clicked": False, "reason": "no-matching-row"}
+    result = exit_flow.commit_pending_drafts(window, tmp_path, job, timeout=0.02)
+    assert result["confirmed"] is False
+    assert result["remaining"] == 1
+    assert result["committed_segments"] == []
+    assert result["failures"] == ["no-matching-row"]
 
 
 def test_run_exit_flow_without_a_job_is_a_no_op():
