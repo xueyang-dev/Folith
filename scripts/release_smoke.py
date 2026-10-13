@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import importlib
 import importlib.metadata
 import importlib.util
@@ -188,7 +189,8 @@ def _socket_probe() -> str:
 
     assert probe(gui.bind_address(False), "127.0.0.1") == 0, "默认下回环应可连"
     refused = probe(gui.bind_address(False), lan)
-    assert refused in (61, 65), f"默认下局域网应被拒绝，实际 errno={refused}"
+    assert refused in (errno.ECONNREFUSED, errno.EHOSTUNREACH), \
+        f"默认下局域网应被拒绝，实际 errno={refused}"
     assert probe(gui.bind_address(True), lan) == 0, "--lan 下局域网应可连"
     return f"默认回环可连 / 局域网 errno={refused}；--lan 局域网可连"
 

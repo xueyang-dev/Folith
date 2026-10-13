@@ -110,7 +110,7 @@ jobs:
       - name: Install the OCR engine used to stage the bundled payload
         run: brew install tesseract
       - name: Build the desktop bundle
-        run: bash scripts/build_desktop.sh
+        run: FOLITH_BUILD_PYTHON="$(command -v python)" bash scripts/build_desktop.sh
       - name: Desktop gate (frozen app, handshake, lifecycle, diagnostics)
         env:
           FOLITH_D0_FROZEN_GUI: "1"
