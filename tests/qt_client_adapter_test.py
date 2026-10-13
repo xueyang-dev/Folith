@@ -1862,6 +1862,11 @@ def test_ocr_mode_actually_controls_extraction(adapter_env, tmp_path):
     """
     from folith.qt import adapter, selftest
 
+    import shutil
+
+    if shutil.which("tesseract") is None:
+        pytest.skip("OCR force extraction requires the Tesseract executable")
+
     config_base = dict(provider="自定义中转站", model="stub-model",
                        api_key="stub-key", target_lang="简体中文",
                        enable_review=False, enable_report=False,
