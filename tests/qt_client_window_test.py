@@ -1034,6 +1034,9 @@ def test_selected_segments_can_be_reviewed(client):
         source.write_bytes(_make_docx(["第一段。", "第二段。", "第三段。"]))
         window.import_paths([str(source)], autostart=False)
         assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1)
+        # The task appears while import still owns its state transaction lock.
+        # Wait for the import result before replacing state with review fixtures.
+        assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
         state = adapter.load_state(job_id)
         state["paras"] = ["第一段。", "第二段。", "第三段。"]
