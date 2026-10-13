@@ -278,8 +278,8 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         + f"；通用（universal）二进制文件数：{support.get('universal_files')}"
         + "（本候选为 **arm64-only**，不含 Intel 切片）",
         f"- 本轮实际验收系统：`{support.get('verified_on', '')}`",
-        "- 未在 macOS 13 / 14 上验收：随包 Qt 6.11 与 Tesseract 均为 `minos 15.0`，"
-        "因此本候选**不支持** macOS 13 / 14，也不声称支持。",
+        f"- 本候选原生依赖闭包要求 macOS {support.get('minimum_system_version', '')}；"
+        "未在更低版本上验收，不声称支持更低版本。",
         "- Intel Mac / Windows：本轮不在范围，未验收即不宣称支持。",
         "",
         "## 随包能力与外部依赖",

@@ -87,7 +87,7 @@ def _declared_min_os(status: str) -> str:
     for line in status.splitlines():
         if "声明最低系统" not in line:
             continue
-        match = re.search(r"macOS\s*([0-9]+\.[0-9]+)", line)
+        match = re.search(r"macOS\s*([0-9]+(?:\.[0-9]+){1,2})", line)
         if match:
             return match.group(1)
     return ""

@@ -3,8 +3,8 @@
 单一进度清单（复用 `docs/qt-spike/evidence-log.md` 作为证据日志，不重复造第二份证据表）。
 每轮只改本文件的"当前阶段 / 状态 / 证据 / 阻断 / 下一单元"。
 
-- 更新日期：2026-10-11（0.5.0 Beta 范围调整与同一候选重建）
-- 阶段：**S1–S8 完成；新增 EPUB / TXT / Markdown 已收口，工程门禁通过；等待人工验收**
+- 更新日期：2026-10-13（Release gate 修复与最低系统范围确认）
+- 阶段：**S1–S8 历史验收保留；当前 CI 候选验证中；等待人工验收**
 - **当前结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
 
 - 路线：Python + PySide6（Qt Widgets）；Windows 保留适配与实机验收要求，本轮不宣称支持
@@ -13,7 +13,11 @@
 <!-- status-identity:begin -->
 - 候选身份：`app_version=0.5.0`、`build_id=git:45f8ca7`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-12T06:15:50+00:00`
 <!-- status-identity:end -->
-- **声明最低系统：macOS 15.0**（实测原生闭包上限；**不支持** 13/14，不声称支持）
+- **声明最低系统：macOS 15.7.5**（当前 CI 原生闭包上限由随包 Tesseract 决定；不声称支持更低版本）
+
+### 2026-10-13 CI 候选范围
+
+当前 freeze 候选最低系统为 **macOS 15.7.5**，已由发布负责人确认。PySide6 固定为已验证的 6.11.2，其绑定库最低版本为 15.0；CI 的 Tesseract 可执行文件和库最低版本为 15.7.5，构建声明保留完整 patch 版本。Release gate 尚未全部通过，不能沿用下文历史候选的工程门禁结论。候选身份块由当前构建刷新；下文 2026-10-11 及更早的记录、S8 的 15.0 实测值保留为历史事实。
 
 ### 2026-10-11 当前范围与核验
 

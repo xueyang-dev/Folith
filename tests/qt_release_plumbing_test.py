@@ -22,6 +22,15 @@ import qt_release_checks as release  # noqa: E402
 import qt_native_min_os as native  # noqa: E402
 
 
+@pytest.mark.parametrize("minimum", ["15.7.5", "15.0", "15.0.0"])
+def test_docs_audit_reads_the_complete_declared_minimum(minimum):
+    import qt_docs_audit as audit
+
+    status = ("- 本机验收环境：macOS 27.0.1\n"
+              f"- **声明最低系统：macOS {minimum}**（实测）\n")
+    assert audit._declared_min_os(status) == minimum
+
+
 @pytest.mark.parametrize("minos", ["15.7.5", "15.0.0", "26.0.0"])
 def test_build_declares_the_complete_measured_minimum(tmp_path, minos):
     (tmp_path / "native_min_os_inputs.json").write_text(
@@ -76,9 +85,9 @@ def test_notes_are_stale_checked_against_the_current_artifact(tmp_path, monkeypa
                 "target_platform": "macos", "target_arch": "arm64"},
         "runtime": {"python_version": "3.11.3", "pyside6_version": "6.11.2",
                     "qt_version": "6.11.2"},
-        "support": {"minimum_system_version": "15.0",
+        "support": {"minimum_system_version": "15.7.5",
                     "minimum_system_version_source": "measured",
-                    "measured_bundle_max_minos": "15.0.0",
+                    "measured_bundle_max_minos": "15.7.5",
                     "measured_native_files": 449,
                     "verified_on": "macOS-27.0.1-arm64"},
         "ocr": {"engine": "tesseract", "bundled_languages": ["ara", "chi_sim", "eng"],
@@ -94,7 +103,8 @@ def test_notes_are_stale_checked_against_the_current_artifact(tmp_path, monkeypa
            "sha256": "deadbeef", "bytes": 166223431}
     notes = release.render_notes(manifest, dmg)
     assert "9.9.9" in notes and "deadbeef" in notes
-    assert "15.0" in notes and "不声称支持" in notes
+    assert "15.7.5" in notes and "不声称支持" in notes
+    assert "均为 `minos 15.0`" not in notes
     assert "streamlit" in notes
     # The notes name the entry they describe, and that `folith` is not it.
     assert "## 入口" in notes and "qt_client.py" in notes

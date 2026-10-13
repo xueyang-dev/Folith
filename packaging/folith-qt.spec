@@ -36,7 +36,7 @@ if BUILD_INFO.exists():
     BUILD_ID = _record.get("build_id", BUILD_ID)
 
 # The declared support boundary, measured before bundling (never guessed).
-MIN_OS = os.environ.get("FOLITH_QT_MIN_OS", "15.0")
+MIN_OS = os.environ.get("FOLITH_QT_MIN_OS", "15.7.5")
 
 # ---------------------------------------------------------------- data files
 datas = []

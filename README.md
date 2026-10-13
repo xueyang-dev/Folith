@@ -117,7 +117,7 @@
 
 ### 0.5.0 Qt 受邀 Beta
 
-本轮桌面候选为 **macOS Apple Silicon / macOS 15.0+** 的 Qt DMG；尚未正式发布。
+本轮桌面候选为 **macOS Apple Silicon / macOS 15.7.5+** 的 Qt DMG；尚未正式发布。
 中文为主界面，其他语言为实验功能。源码开发入口：
 
 ```bash
@@ -171,7 +171,7 @@ folith
 
 ### 方式 3：macOS 桌面客户端（Qt，0.5.0 受邀 Beta）
 
-0.5.0 Beta 的桌面入口是 Qt Widgets 原生客户端，以 `Folith-Qt-0.5.0-macos-arm64.dmg` 分发：未签名、未公证，仅限受邀测试；最低 macOS 15，仅 Apple Silicon。支持 PDF / DOCX / EPUB / TXT / Markdown 导入，覆盖准备 → 翻译 → 审校 → 交付，语言资产与学术专业模式也已提供。支持范围与已知限制以 [Qt 桌面端发布说明](docs/qt-beta/release-notes.md) 为准。
+0.5.0 Beta 的桌面入口是 Qt Widgets 原生客户端，以 `Folith-Qt-0.5.0-macos-arm64.dmg` 分发：未签名、未公证，仅限受邀测试；最低 macOS 15.7.5，仅 Apple Silicon。支持 PDF / DOCX / EPUB / TXT / Markdown 导入，覆盖准备 → 翻译 → 审校 → 交付，语言资产与学术专业模式也已提供。支持范围与已知限制以 [Qt 桌面端发布说明](docs/qt-beta/release-notes.md) 为准。
 
 ```bash
 # 从源码运行同一客户端（需另装 PySide6）
