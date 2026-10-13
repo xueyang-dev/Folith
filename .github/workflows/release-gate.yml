@@ -135,10 +135,24 @@ jobs:
           python -m pytest tests/desktop_handshake_test.py tests/desktop_frozen_test.py             tests/desktop_single_instance_test.py tests/desktop_exit_flow_test.py             tests/desktop_diagnostics_test.py tests/desktop_legacy_import_test.py             tests/desktop_tool_discovery_test.py tests/desktop_app_identity_test.py             tests/desktop_file_actions_test.py tests/desktop_dmg_test.py             tests/desktop_release_plumbing_test.py tests/desktop_release_checks_test.py             tests/desktop_release_notes_test.py tests/gui_launcher_test.py -q
       - name: Build the DMG
         run: bash scripts/build_dmg.sh
+      - name: Install browser automation for the desktop sweep
+        run: |
+          npm install --prefix "$RUNNER_TEMP/folith-browser" --no-audit --no-fund playwright-core@1.64.0
+          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          echo "FOLIO_PLAYWRIGHT_CORE=$RUNNER_TEMP/folith-browser/node_modules/playwright-core" >> "$GITHUB_ENV"
+          echo "FOLIO_CHROME=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" >> "$GITHUB_ENV"
       - name: End-to-end reproducibility sweep
         env:
           FOLITH_DESKTOP_FROZEN_APP: ${{ github.workspace }}/dist/desktop/Folith.app/Contents/MacOS/Folith
         run: python scripts/desktop_e2e_sweep.py --skip-slow
+      - name: Upload failed desktop sweep diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: folith-desktop-sweep-diagnostics
+          path: build/desktop/e2e-sweep/
+          include-hidden-files: true
+          if-no-files-found: ignore
       - name: Release checks and manifest
         run: python scripts/release_checks.py --mount --out build/desktop/release-manifest.json
       - name: Verify the release notes match the manifest
