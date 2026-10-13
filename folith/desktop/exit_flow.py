@@ -334,8 +334,17 @@ def commit_pending_drafts(window, data_dir: Path, job_id: str, *,
         if not texts:
             failures.append("draft-without-text")
             break
+        deadline = time.monotonic() + max(0.0, timeout)
         try:
-            outcome = evaluate(window, _COMMIT_ONE_JS % json.dumps(texts, ensure_ascii=False))
+            while True:
+                outcome = evaluate(window, _COMMIT_ONE_JS % json.dumps(texts, ensure_ascii=False))
+                # The draft is written during the Streamlit rerun, before the
+                # frontend enables Save.  That interval is not a failed save.
+                if (not isinstance(outcome, dict)
+                        or outcome.get("reason") != "save-button-disabled"
+                        or time.monotonic() >= deadline):
+                    break
+                time.sleep(min(0.4, max(0.0, deadline - time.monotonic())))
         except Exception as exc:
             failures.append(f"commit-error: {type(exc).__name__}: {exc}")
             break
@@ -345,7 +354,7 @@ def commit_pending_drafts(window, data_dir: Path, job_id: str, *,
         before = {item.segment_id for item in drafts}
         settled = _wait(
             lambda: {item.segment_id for item in read_pending_drafts(data_dir, job_id)} != before,
-            timeout,
+            max(0.0, deadline - time.monotonic()),
         )
         if not settled:
             failures.append("draft-file-did-not-change")
