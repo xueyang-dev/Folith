@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import qt_release_checks as release  # noqa: E402
+import qt_native_min_os as native  # noqa: E402
 
 
 @pytest.mark.parametrize("minos", ["15.7.5", "15.0.0", "26.0.0"])
@@ -118,8 +119,8 @@ def test_live_manifest_matches_the_built_bundle_when_present():
     assert manifest["app"]["bundle_identifier"] == "dev.folith.qt"
     assert manifest["must_not_contain"]["found"] == []
     assert manifest["support"]["minimum_system_version"]
-    assert manifest["support"]["minimum_system_version"] == \
-        manifest["support"]["measured_bundle_max_minos"].rsplit(".", 1)[0]
+    assert native._parse_version_key(manifest["support"]["minimum_system_version"]) == \
+        native._parse_version_key(manifest["support"]["measured_bundle_max_minos"])
     assert set(manifest["ocr"]["baseline"]) <= set(
         manifest["ocr"]["bundled_languages"])
     assert manifest["external_library_references"] == []
@@ -127,6 +128,33 @@ def test_live_manifest_matches_the_built_bundle_when_present():
     # No truncated versions: a version that lost its major part looks like this.
     for item in manifest["distributions"]:
         assert item["version"] != "unknown" or item["name"]
+
+
+@pytest.mark.parametrize("declared,measured,valid", [
+    ("15.7.5", "15.7.5", True),
+    ("15.0", "15.0.0", True),
+    ("15.7", "15.7.5", False),
+])
+def test_live_manifest_keeps_the_measured_patch_boundary(
+        tmp_path, monkeypatch, declared, measured, valid):
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+    (tmp_path / "dist/qt-desktop/Folith.app").mkdir(parents=True)
+    manifest_path = tmp_path / "build/qt-desktop/release-manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(json.dumps({
+        "app": {"bundle_identifier": "dev.folith.qt"},
+        "must_not_contain": {"found": []},
+        "support": {"minimum_system_version": declared,
+                    "measured_bundle_max_minos": measured},
+        "ocr": {"baseline": ["eng"], "bundled_languages": ["eng"]},
+        "external_library_references": [],
+        "distributions": [{"name": "PySide6", "version": "6.11.2"}],
+    }), encoding="utf-8")
+    if valid:
+        test_live_manifest_matches_the_built_bundle_when_present()
+    else:
+        with pytest.raises(AssertionError):
+            test_live_manifest_matches_the_built_bundle_when_present()
 
 
 def test_artifact_check_fails_when_the_artifact_is_missing(tmp_path):
