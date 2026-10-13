@@ -93,6 +93,29 @@ def test_exit_probe_waits_for_the_initial_page_before_routing(monkeypatch, tmp_p
     assert result["closing"] is True
 
 
+def test_paused_probe_waits_for_initial_load_before_routing(monkeypatch, tmp_path):
+    import desktop_d1_paused_probe as probe
+
+    monkeypatch.setattr(probe, "_jobs_with_runtime", lambda _: ["paused-load-job"])
+    monkeypatch.setattr(probe.time, "sleep", lambda _: None)
+
+    class LoadingWindow:
+        loaded = False
+
+        def evaluate_js(self, script):
+            assert "document.body.innerText" in script
+            self.loaded = True
+            return True
+
+    def navigate(window, job):
+        assert window.loaded, "the pending initial load would overwrite navigation"
+        return False
+
+    monkeypatch.setattr(probe, "_navigate", navigate)
+    result = probe.run(LoadingWindow(), {"data_dir": str(tmp_path)})
+    assert result["error"] == "job-page-not-rendered"
+
+
 SWEEP = ROOT / "scripts" / "desktop_e2e_sweep.py"
 
 

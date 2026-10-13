@@ -119,7 +119,23 @@ def run(window, context):  # noqa: D103
     # The service was stopped mid-flight, so the job may be reported as
     # interrupted: the window must first be routed to it, then resumed, before a
     # pause is meaningful.
+    # The automation callback precedes the initial WebView load; routing now
+    # would be overwritten by that load, leaving runtime controls off-screen.
+    render_deadline = time.monotonic() + 150
+    while time.monotonic() < render_deadline:
+        try:
+            if window.evaluate_js("document.body.innerText.trim().length > 200"):
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    else:
+        evidence["error"] = "initial-page-not-rendered"
+        return evidence
     evidence["navigated"] = _navigate(window, job)
+    if not evidence["navigated"]:
+        evidence["error"] = "job-page-not-rendered"
+        return evidence
     evidence["state_on_arrival"] = _job_state(data_dir, job)
     resume_deadline = time.monotonic() + float(os.environ.get("FOLITH_D1_RESUME_WAIT", "180"))
     while time.monotonic() < resume_deadline:
