@@ -85,6 +85,9 @@ class SemanticBlock:
     parent_id: str | None = None
     relations: list[dict] = field(default_factory=list)
     cells: list[dict] = field(default_factory=list)
+    # 翻页续段（视觉模型看缩进与满行给出；None = 没给，交给文字规则判断）。
+    continues_previous: bool | None = None
+    continues_next: bool | None = None
 
 
 @dataclass
