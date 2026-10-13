@@ -63,6 +63,36 @@ def test_stub_ready_file_can_be_namespaced():
     assert '{name}-ready.json' in source
 
 
+def test_exit_probe_waits_for_the_initial_page_before_routing(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    import desktop_d1_exit_probe as probe
+
+    monkeypatch.setenv("FOLITH_D1_JOB", "initial-load-job")
+    monkeypatch.setattr(probe.time, "sleep", lambda _: None)
+
+    class LoadingWindow:
+        loaded = False
+        events = SimpleNamespace(closing=SimpleNamespace(set=lambda: False))
+
+        def evaluate_js(self, script):
+            if "document.body.innerText" in script:
+                self.loaded = True
+                return True
+            if "window.location.href" in script:
+                assert self.loaded, "the initial page would overwrite this navigation"
+                return None
+            if "const setter" in script:
+                return {"ok": True, "focused": True}
+            return True
+
+        def destroy(self):
+            pass
+
+    result = probe.run(LoadingWindow(), {"data_dir": str(tmp_path), "url": "http://localhost"})
+    assert result["steps"]["typed_without_blur"]["ok"] is True
+    assert result["closing"] is True
+
+
 SWEEP = ROOT / "scripts" / "desktop_e2e_sweep.py"
 
 

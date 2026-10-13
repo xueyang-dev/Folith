@@ -88,6 +88,11 @@ def run(window, context):  # noqa: D103
     step("target_before", _segment_target(data_dir, job, 0))
     step("drafts_before", len(_drafts(data_dir, job)))
 
+    # The start callback can run before the first page has loaded.  Navigating
+    # then can be overwritten by that initial load (the quit probe waits too).
+    if not _wait_for(window, "document.body.innerText.trim().length > 200", timeout=150):
+        evidence["error"] = "initial-page-not-rendered"
+        return evidence
     # Open the job's translation workspace inside the real window.
     url = f"{context['url']}/?task={job}&section=translation"
     _js(window, f"window.location.href = {json.dumps(url)}")
