@@ -31,10 +31,12 @@ import sys
 from pathlib import Path
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+from scripts.local_http_server import LocalThreadingHTTPServer as ThreadingHTTPServer
 
 NUMBERED = re.compile(r"^\s*(\d+)[.)、]\s*(.*)$")
 NUMBERED_PAIR = re.compile(r"^\s*(\d+)[.)、]\s*原文[:：]\s*(.*)$")

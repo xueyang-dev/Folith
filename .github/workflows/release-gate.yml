@@ -116,6 +116,7 @@ jobs:
           # pikepdf source builds need external qpdf headers. Prefer a published
           # wheel (including an older compatible release) for this test extra.
           python -m pip install --only-binary=pikepdf ".[test]"
+          python -m pip install -r requirements-desktop.txt
           python -m pip install -r requirements-desktop-build.txt
       - name: Install the OCR engine used to stage the bundled payload
         run: brew install tesseract

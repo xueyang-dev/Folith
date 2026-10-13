@@ -2,10 +2,11 @@
 import json
 import socket
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import pytest
 
 import core
+from scripts.local_http_server import LocalThreadingHTTPServer as ThreadingHTTPServer
 from folith import llm_transport, usage
 from folith.trace import trace, TraceLevel
 

@@ -14,13 +14,15 @@ import subprocess
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+from scripts.local_http_server import LocalHTTPServer as HTTPServer
 
 from folith.desktop import launcher as desktop_launcher  # noqa: E402
 from folith.desktop import paths as desktop_paths  # noqa: E402

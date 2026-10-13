@@ -28,11 +28,13 @@ import statistics
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+from scripts.local_http_server import LocalThreadingHTTPServer as ThreadingHTTPServer
 
 import core  # noqa: E402
 

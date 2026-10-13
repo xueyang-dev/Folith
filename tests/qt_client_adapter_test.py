@@ -1657,7 +1657,8 @@ def test_delivery_preview_never_promises_what_the_gate_refuses(adapter_env):
 def _fault_server(status: int, payload: dict):
     """一个总是返回指定 HTTP 状态与 JSON 体的本地端点（用于错误映射验证）。"""
     import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
+    from scripts.local_http_server import LocalThreadingHTTPServer as ThreadingHTTPServer
 
     raw = json.dumps(payload).encode()
 
@@ -1748,7 +1749,8 @@ def _canned_server(content: str, seen: list):
     这样，把"每个任务用自己的端点"误报成了"跨任务串数据"。
     """
     import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
+    from scripts.local_http_server import LocalThreadingHTTPServer as ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
