@@ -101,7 +101,7 @@ async function main() {
     try { await page.screenshot({ path: path.join(SHOTS, `${name}.png`) }); } catch (_) {}
   };
   const alerts = async () => {
-    const texts = await page.locator('[data-testid="stAlert"]').allInnerTexts().catch(() => []);
+    const texts = await page.locator('[data-testid="stAlert"], .tp-utility-feedback[role="status"]').allInnerTexts().catch(() => []);
     texts.forEach((text) => { if (text && !result.alerts.includes(text.trim())) result.alerts.push(text.trim()); });
     return texts;
   };
@@ -182,7 +182,7 @@ async function main() {
         await page.getByRole('button', { name: '测试连接' }).first().click();
         await page.waitForTimeout(1500);
         for (let i = 0; i < 60; i += 1) {
-          const texts = await page.locator('[data-testid="stAlert"]').allInnerTexts();
+          const texts = await page.locator('[data-testid="stAlert"], .tp-utility-feedback[role="status"]').allInnerTexts();
           const hit = texts.find((t) => /响应「|连接成功|连接正常/.test(t));
           if (hit) { await alerts(); return { alert: hit.trim() }; }
           const bad = texts.find((t) => /失败|错误|无法/.test(t));
