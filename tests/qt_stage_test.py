@@ -66,6 +66,24 @@ def test_running_translation_shows_the_cores_own_progress_and_unit():
     assert view["action"] is None, "运行中的控制在头部的运行按钮上，不重复推荐动作"
 
 
+def test_streaming_translation_says_how_much_of_the_scan_is_recognised():
+    state = {"pairs": [], "streaming_ingest": {"status": "running", "pages_done": 40,
+                                               "pages_total": 308}}
+    view = stage.stage_view(
+        started=True,
+        runtime={"status": "running",
+                 "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}},
+        state=state, review={}, delivery={})
+    assert _steps(view)["translate"]["hint"] == "2/8 批次 · 已识别 40/308 页"
+    state["streaming_ingest"]["status"] = "complete"
+    view = stage.stage_view(
+        started=True,
+        runtime={"status": "running",
+                 "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}},
+        state=state, review={}, delivery={})
+    assert _steps(view)["translate"]["hint"] == "2/8 批次"
+
+
 def test_unit_progress_beats_batch_progress_and_falls_back_to_the_segment_count():
     both = stage.stage_view(
         started=True,

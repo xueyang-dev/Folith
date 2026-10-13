@@ -605,7 +605,9 @@ def test_crash_recovery_no_duplicate_tm():
         core.call_llm = flaky
         kwargs = dict(provider="DeepSeek", api_key="k", model="deepseek-chat",
                       target_lang="简体中文", auto_term=False, enable_report=False,
-                      translation_theory="目的论 (Skopos Theory)", user_glossary=[])
+                      translation_theory="目的论 (Skopos Theory)", user_glossary=[],
+                      # 测的是"每批 4 句"的崩溃边界：显式按句数组批。
+                      batch_size=core.BATCH_SIZE)
         try:
             core.run_job_pipeline(jid, "c.docx", docx_bytes, **kwargs)
         except RuntimeError:
@@ -913,8 +915,9 @@ def test_long_document_simulation_and_performance():
                 st0["document_profile"] = doc_profile
                 st0["profile_done"] = True
                 core.save_job_state(jid, st0)
+            # 批次数断言按每批 4 句计：显式按句数组批。
             state = core.run_job_pipeline(jid, "long.docx", docx_bytes, mode=mode,
-                                          **kwargs)
+                                          batch_size=core.BATCH_SIZE, **kwargs)
             elapsed = time.perf_counter() - t0
             log = state.get("glossary_injection_log") or []
             sizes = [len(x["entry_ids"]) for x in log]

@@ -1332,5 +1332,6 @@
   "段数": "Segments",
   "计数规则：中文、日文每个字算一个词；其他文字按空格分词。字符数不含空白。": "Counting rules: each Chinese or Japanese character counts as one word; other scripts are split by spaces. Character counts exclude whitespace.",
   "译文：{v0} 词 / {v1} 字符": "Target: {v0} words / {v1} chars",
-  "重复（原文与前文相同）": "Repetitions (same source as an earlier segment)"
+  "重复（原文与前文相同）": "Repetitions (same source as an earlier segment)",
+  "已识别 {v0}/{v1} 页": "{v0}/{v1} pages recognised"
 }

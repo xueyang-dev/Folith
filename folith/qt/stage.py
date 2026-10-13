@@ -59,6 +59,12 @@ def _translate_step(translated: bool, runtime: Mapping, state: Mapping) -> dict:
     else:
         count = pairs or len(state.get("paras") or [])
         hint = i18n.tr("{v0} 段", v0=count) if count else ""
+    # 边识别边翻译：识别还在后台推进，批次总数会随之增长，如实说明还没识别完。
+    streaming = state.get("streaming_ingest") or {}
+    if streaming.get("status") == "running" and streaming.get("pages_total"):
+        recognised = i18n.tr("已识别 {v0}/{v1} 页", v0=_count(streaming.get("pages_done")),
+                             v1=_count(streaming.get("pages_total")))
+        hint = f"{hint} · {recognised}" if hint else recognised
     return _step(TRANSLATE, ATTENTION if status in _TROUBLED else CURRENT, hint)
 
 

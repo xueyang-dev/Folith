@@ -1332,5 +1332,6 @@
   "段数": "Segmentos",
   "计数规则：中文、日文每个字算一个词；其他文字按空格分词。字符数不含空白。": "Reglas: cada carácter chino o japonés cuenta como una palabra; el resto se separa por espacios. Los caracteres no incluyen espacios.",
   "译文：{v0} 词 / {v1} 字符": "Traducción: {v0} palabras / {v1} caracteres",
-  "重复（原文与前文相同）": "Repeticiones (mismo original que un segmento anterior)"
+  "重复（原文与前文相同）": "Repeticiones (mismo original que un segmento anterior)",
+  "已识别 {v0}/{v1} 页": "{v0}/{v1} páginas reconocidas"
 }

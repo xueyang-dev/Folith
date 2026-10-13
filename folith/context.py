@@ -830,6 +830,22 @@ PROMPT_COST_CATEGORIES = {
     "【项目知识反馈（人工确认优先）】": "project_knowledge",
 }
 CURRENT_BATCH_TITLE = "【待翻译段落（按序号返回等长数组）】"
+GROUPED_BATCH_NOTE = ("同一【第 N 段】内的句子属于原文同一个自然段：请通读整段、按段连贯地翻译，"
+                      "但仍按序号逐句返回等长数组，每个序号只放该句的译文。")
+
+
+def _render_grouped_batch(current: Sequence[str], paragraphs: Sequence[Any]) -> str:
+    """按自然段分组显示待译句子；序号连续，返回格式不变。"""
+    lines = [CURRENT_BATCH_TITLE, GROUPED_BATCH_NOTE]
+    previous = object()
+    group = 0
+    for index, (source, paragraph) in enumerate(zip(current, paragraphs)):
+        if paragraph != previous:
+            group += 1
+            lines.append(f"【第 {group} 段】")
+            previous = paragraph
+        lines.append(f"{index + 1}. {source}")
+    return "\n".join(lines)
 
 
 def _render_entity_hints(hints: Sequence[Dict[str, Any]]) -> str:
@@ -964,8 +980,12 @@ def _render_context_packet(packet: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]
         prefix_text = prefix_text[:budget]
         truncated = True
     current = packet.get("current_batch") or []
-    current_section = CURRENT_BATCH_TITLE + "\n" + "\n".join(
-        f"{index + 1}. {source}" for index, source in enumerate(current))
+    paragraphs = packet.get("current_paragraphs")
+    if paragraphs and len(paragraphs) == len(current) and len(current) > 1:
+        current_section = _render_grouped_batch(current, paragraphs)
+    else:
+        current_section = CURRENT_BATCH_TITLE + "\n" + "\n".join(
+            f"{index + 1}. {source}" for index, source in enumerate(current))
     rendered = "\n\n".join([prefix_text, current_section]) if prefix_text \
         else current_section
     # Coarse prompt-cost buckets.  Character counts, not tokens: the caller

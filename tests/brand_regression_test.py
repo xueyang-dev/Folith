@@ -56,6 +56,7 @@ LEGACY_LINE_ALLOWLIST = {
     "folith/application/settings.py": ("FOLIOTHREAD_",),
     "folith/engine/ocr_config.py": ("FOLIOTHREAD_",),
     "folith/engine/source_quality.py": ("FOLIOTHREAD_",),
+    "folith/document_understanding.py": ("FOLIOTHREAD_",),
     "folith/store_lock.py": ("FOLIOTHREAD_STATE_LOCK_TIMEOUT",),
     "folith/qt/branding.py": ("foliothread-favicon.png", "foliothread-logo.png"),
     "folith/qt/dialogs.py": ("~/Dev/FolioThread/",),

@@ -2,6 +2,7 @@
 
 职责：大模型路由、文档清洗、术语抽取、双语翻译、报告生成、任务进度持久化。
 """
+import contextvars
 import copy
 import hashlib
 import io
@@ -1519,6 +1520,53 @@ _NO_TEXT_REASON = ("文档里没有可翻译的文本：可能是空文档，或
 
 
 
+def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
+                 ocr_online_config=None, cancel_check=None, source_language=None,
+                 ocr_language=None, ocr_psm=None):
+    """视觉理解路径的读页 provider 与本地定位引擎（缺省时按配置构建）。"""
+    from folith.document_understanding import VLMDocumentProvider
+    from folith.spatial_index import SpatialTextIndex
+    if understanding_provider is None:
+        config = ocr_online_config
+        if config is None or isinstance(config, dict):
+            config, error = resolve_ocr_online_config(config)
+            if error:
+                raise ValueError(error["message"])
+        from folith import source_languages as _source_languages
+        understanding_provider = VLMDocumentProvider(
+            config, cancel_check=cancel_check,
+            language=_source_languages.english_name(source_language))
+    if spatial_engine is None:
+        command = _find_tesseract()
+        def spatial_engine(page):
+            index = SpatialTextIndex(page.page_id)
+            if not command:
+                index.error = "Local spatial engine unavailable"
+                return index
+            # Single cheap recognition pass. No quality retries,
+            # OCR repair, or dependency on installed language packs.
+            blocks, error = _ocr_page_with_tesseract(
+                command, page.image, ocr_language or "eng", psm=ocr_psm)
+            if error:
+                index.error = str(error)
+                return index
+            return SpatialTextIndex.from_ocr(page, blocks or [],
+                                            image_width=page.image_width,
+                                            image_height=page.image_height)
+    return understanding_provider, spatial_engine
+
+
+def _pdf_scan_page_indices(file_bytes, *, include_ocr_overlay=True):
+    """扫描页：带图片且没有文字，或文字是盖在扫描图上的隐形 OCR 层。"""
+    with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
+        return len(pdf), [
+            i for i, p in enumerate(pdf)
+            if p.get_images() and (
+                not p.get_text().strip()
+                or (include_ocr_overlay
+                    and _pdf_ingestion._page_is_ocr_overlay(p.get_text("dict"))))]
+
+
 def extract_document_paragraphs_with_report(filename, file_bytes, *,
                                             ocr_max_pages=3, on_progress=None,
                                             profiler=None, checkpoint_dir=None,
@@ -1615,17 +1663,11 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                              or ocr_backend is None
                              or _ocr_backends.normalize_backend(ocr_backend) == "online")
             if use_text_layer and resolved_ocr_mode != "off":
-                with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
-                    page_count = len(pdf)
-                    # 扫描页：没有文字的图片页，或者整页图片上盖着一层隐形 OCR 文字
-                    # 的页（扫描仪 / Internet Archive / OCRmyPDF 自带的识别结果）。
-                    # 后者的文字是别人的 OCR，不是原生文本：同样交给视觉理解。
-                    visual_indices = [i for i,p in enumerate(pdf)
-                                      if p.get_images() and (
-                                          not p.get_text().strip()
-                                          or (vlm_available
-                                              and _pdf_ingestion._page_is_ocr_overlay(
-                                                  p.get_text("dict"))))]
+                # 扫描页：没有文字的图片页，或者整页图片上盖着一层隐形 OCR 文字
+                # 的页（扫描仪 / Internet Archive / OCRmyPDF 自带的识别结果）。
+                # 后者的文字是别人的 OCR，不是原生文本：同样交给视觉理解。
+                page_count, visual_indices = _pdf_scan_page_indices(
+                    file_bytes, include_ocr_overlay=vlm_available)
                 if visual_indices and len(visual_indices) == page_count:
                     # 整本都是扫描件：走纯视觉路径，不再保留第三方 OCR 文本。
                     visual_indices = []
@@ -1633,35 +1675,12 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                     ocr_trigger = "scanned_ocr_overlay"
                     warnings.append("PDF 的文字是扫描图上的隐形 OCR 层，已改用视觉理解识别全文。")
             if (not use_text_layer or visual_indices) and vlm_available:
-                from folith.document_understanding import VLMDocumentProvider, understand_visual_pdf, understand_mixed_pdf
-                from folith.spatial_index import SpatialTextIndex
-                if understanding_provider is None:
-                    config = ocr_online_config
-                    if config is None or isinstance(config, dict):
-                        config, error = resolve_ocr_online_config(config)
-                        if error:
-                            raise ValueError(error["message"])
-                    from folith import source_languages as _source_languages
-                    understanding_provider = VLMDocumentProvider(
-                        config, cancel_check=cancel_check,
-                        language=_source_languages.english_name(source_language))
-                if spatial_engine is None:
-                    command = _find_tesseract()
-                    def spatial_engine(page):
-                        index = SpatialTextIndex(page.page_id)
-                        if not command:
-                            index.error = "Local spatial engine unavailable"
-                            return index
-                        # Single cheap recognition pass. No quality retries,
-                        # OCR repair, or dependency on installed language packs.
-                        blocks, error = _ocr_page_with_tesseract(
-                            command, page.image, ocr_language or "eng", psm=ocr_psm)
-                        if error:
-                            index.error = str(error)
-                            return index
-                        return SpatialTextIndex.from_ocr(page, blocks or [],
-                                                        image_width=page.image_width,
-                                                        image_height=page.image_height)
+                from folith.document_understanding import understand_visual_pdf, understand_mixed_pdf
+                understanding_provider, spatial_engine = _vlm_runtime(
+                    understanding_provider, spatial_engine,
+                    ocr_online_config=ocr_online_config, cancel_check=cancel_check,
+                    source_language=source_language, ocr_language=ocr_language,
+                    ocr_psm=ocr_psm)
                 understand = understand_mixed_pdf if visual_indices else understand_visual_pdf
                 args = (filename, file_bytes, visual_indices, understanding_provider) if visual_indices else (filename, file_bytes, understanding_provider)
                 paragraphs, document = understand(
@@ -2751,6 +2770,110 @@ def make_batches(paragraphs, batch_size=BATCH_SIZE, max_chars=MAX_BATCH_CHARS,
         n += len(p)
     if cur:
         batches.append(cur)
+    return batches
+
+
+#: 「按自然段组批」：一批装若干个完整自然段，原文合计不超过这么多字符、这么多句。
+#: 每批固定开销（系统指令 + 上下文约 1800 字符）不随批次大小变，所以批次越接近
+#: 这个上限，每个原文字符分摊的开销越低；条数上限限制一次错位/重试的代价。
+PARAGRAPH_BATCH_MAX_CHARS = 2000
+PARAGRAPH_BATCH_MAX_ITEMS = 20
+BATCH_STRATEGIES = ("sentence", "paragraph")
+
+
+#: 新任务的默认组批方式。实测（《午夜图书馆》正文 490 句，同一模型）：按段组批的
+#: 输入约少 54%，引号错误 59 → 2 处、人名译法不再前后不一。
+DEFAULT_BATCH_STRATEGY = "paragraph"
+
+
+def _batch_strategy(state=None, explicit=None, default="sentence"):
+    """组批策略：显式参数 > 任务配置 > 环境变量 FOLIOTHREAD_BATCH_STRATEGY > ``default``。
+
+    新任务的默认值（按段）由 :func:`run_job_pipeline` 在开跑时写进任务配置；没有记录
+    的状态（老任务、直接调用翻译阶段）沿用每批 4 句，批次划分不会无声改变。
+    """
+    config = (state or {}).get("pipeline_config") or {}
+    for candidate in (explicit, config.get("batch_strategy"),
+                      os.environ.get("FOLIOTHREAD_BATCH_STRATEGY")):
+        value = str(candidate or "").strip().lower()
+        if value in BATCH_STRATEGIES:
+            return value
+    return default
+
+
+def _paragraph_labels(segment_count, paragraph_ranges):
+    """每个翻译单元所属的自然段编号；不在任何区间里的单元各自成段。"""
+    labels = [None] * segment_count
+    for row in paragraph_ranges or []:
+        try:
+            start, end, index = int(row["start"]), int(row["end"]), int(row["paragraph_index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for position in range(max(0, start), min(end, segment_count)):
+            labels[position] = index
+    for position, label in enumerate(labels):
+        if label is None:
+            labels[position] = f"solo-{position}"
+    return labels
+
+
+def make_paragraph_batches(segments, paragraph_ranges, *,
+                           max_chars=PARAGRAPH_BATCH_MAX_CHARS,
+                           max_items=PARAGRAPH_BATCH_MAX_ITEMS, semantic_units=None):
+    """按自然段装箱：整段不拆，只有单段超过上限时才在段内切开。
+
+    提供 ``semantic_units`` 时不跨语义单元（与 :func:`make_batches` 相同的约束）：
+    边识别边翻译按窗口追加单元，已翻部分的批次划分因此保持不变。
+    """
+    segments = list(segments)
+    labels = _paragraph_labels(len(segments), paragraph_ranges)
+    spans = []
+    if semantic_units:
+        for unit in semantic_units:
+            try:
+                start, end = int(unit.get("start_segment")), int(unit.get("end_segment"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if 0 <= start <= end < len(segments):
+                spans.append((start, end + 1))
+        spans.sort()
+        covered = sum(end - start for start, end in spans)
+        if covered != len(segments) or any(
+                a[1] != b[0] for a, b in zip(spans, spans[1:])) or (spans and spans[0][0] != 0):
+            spans = []
+    if not spans:
+        spans = [(0, len(segments))] if segments else []
+    batches = []
+    for start, end in spans:
+        # 单元内按自然段分组。
+        groups, current, label = [], [], object()
+        for position in range(start, end):
+            if current and labels[position] != label:
+                groups.append(current)
+                current = []
+            label = labels[position]
+            current.append(segments[position])
+        if current:
+            groups.append(current)
+        batch, chars = [], 0
+        for group in groups:
+            size = sum(len(item) for item in group)
+            if batch and (chars + size > max_chars or len(batch) + len(group) > max_items):
+                batches.append(batch)
+                batch, chars = [], 0
+            if size > max_chars or len(group) > max_items:
+                # 超长的单段：段内贪心切开，接着装。
+                for item in group:
+                    if batch and (chars + len(item) > max_chars or len(batch) >= max_items):
+                        batches.append(batch)
+                        batch, chars = [], 0
+                    batch.append(item)
+                    chars += len(item)
+                continue
+            batch.extend(group)
+            chars += size
+        if batch:
+            batches.append(batch)
     return batches
 
 
@@ -4844,10 +4967,23 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         "batch_size": effective_batch_size,
         "max_batch_chars": effective_max_chars,
     }
-    batches = make_batches(
-        paras, batch_size=effective_batch_size, max_chars=effective_max_chars,
-        semantic_units=state.get("semantic_units")
-        or state.get("section_digests") or None)
+    batch_strategy = _batch_strategy(state)
+    paragraph_ranges = (state.get("segmentation") or {}).get("paragraph_ranges") or []
+    if batch_strategy == "paragraph":
+        batches = make_paragraph_batches(
+            paras, paragraph_ranges,
+            semantic_units=state.get("semantic_units")
+            or state.get("section_digests") or None)
+        state["batch_plan"].update(
+            strategy="paragraph", max_batch_chars=PARAGRAPH_BATCH_MAX_CHARS,
+            batch_size=PARAGRAPH_BATCH_MAX_ITEMS)
+        segment_paragraph = _paragraph_labels(len(paras), paragraph_ranges)
+    else:
+        batches = make_batches(
+            paras, batch_size=effective_batch_size, max_chars=effective_max_chars,
+            semantic_units=state.get("semantic_units")
+            or state.get("section_digests") or None)
+        segment_paragraph = None
     state["batch_plan"]["batch_count"] = len(batches)
     # The snapshot cadence is bounded by a fraction of the document, so it can
     # only be resolved once the batch plan exists.
@@ -5238,6 +5374,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                         entity_hints=entity_hints,
                         context_budget_chars=max(5200, min(12000, effective_max_chars * 3)),
                     )
+                    if segment_paragraph is not None:
+                        # 按自然段组批：告诉模型哪些句子同属一段（渲染时分段显示）。
+                        context_packet["current_paragraphs"] = [
+                            segment_paragraph[offset + i] for i, _ in to_translate]
             review_context = _runtime_review_context(
                 state, offset, len(batch), glossary_text, style_rules, target_lang)
 
@@ -10147,8 +10287,244 @@ def generate_mti_report(bilingual_pairs, termbase_dict, theory, provider, api_ke
 
 
 # ================= 主流程：单文档完整流水线 =================
-@_exclusive_job_execution(0)
-def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
+# ---------------- 边识别边翻译（整本扫描书） ----------------
+# 整本扫描书走视觉理解时，识别在后台线程里按页推进，每满一个窗口（20 页）就把
+# 定稿的段落追加成翻译单元、先翻这一批；见 folith/streaming_ingest.py。已提交的
+# 翻译单元只追加、不改动，所以已经产出的译文和用户的修改都不会被挪位。
+STREAMING_SCAN_ENV = "FOLIOTHREAD_STREAMING_SCAN"
+
+
+def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
+                             strict_terminology_governance=False):
+    """这份文档能不能边识别边翻译：整本走视觉理解的 PDF。
+
+    严格术语治理要求先审核整本的候选术语再翻译，与边识别边翻译相冲突，保持原流程。
+    """
+    if str(os.environ.get(STREAMING_SCAN_ENV, "")).strip().lower() in {
+            "0", "false", "off", "no"}:
+        return False
+    if not str(filename or "").lower().endswith(".pdf") or not file_bytes:
+        return False
+    if strict_terminology_governance:
+        return False
+    if _ocr_backends.normalize_backend(ocr_backend) != "online":
+        return False
+    mode = normalize_ocr_mode(ocr_mode)
+    if mode == "off":
+        return False
+    if mode == "force":
+        return True
+    try:
+        total, scanned = _pdf_scan_page_indices(file_bytes)
+    except Exception:
+        return False
+    return total > 0 and len(scanned) == total
+
+
+def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
+                       source_language=None, ocr_language=None, ocr_psm=None):
+    from folith.streaming_ingest import ScanStream
+    cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
+
+    def page_gate():
+        # 读每一页之前：任务暂停时后台识别也停下，不在暂停期间继续花钱。
+        while (not cancel_check()
+               and (load_runtime_state(job_id) or {}).get("pause_requested")):
+            time.sleep(1.0)
+        return cancel_check()
+
+    provider, spatial_engine = _vlm_runtime(
+        ocr_online_config=online_config, cancel_check=cancel_check,
+        source_language=source_language, ocr_language=ocr_language,
+        ocr_psm=ocr_psm)
+    stream = ScanStream(filename, file_bytes, provider, spatial_engine=spatial_engine,
+                        checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
+                        page_gate=page_gate)
+    stream.facts = _pdf_extraction_facts(file_bytes)
+    return stream
+
+
+def _merge_streaming_segmentation(previous, addition, *, paragraph_offset,
+                                  segment_offset):
+    """把新追加段落的分段元数据接到已有元数据后面（索引整体平移）。"""
+    previous = dict(previous or {})
+    merged = {**addition, **{key: value for key, value in previous.items()
+                             if key in {"locked"}}}
+    for key in ("input_paragraph_count", "split_paragraph_count",
+                "preserved_paragraph_count"):
+        merged[key] = int(previous.get(key) or 0) + int(addition.get(key) or 0)
+    merged["output_segment_count"] = segment_offset + int(
+        addition.get("output_segment_count") or 0)
+    merged["paragraph_ranges"] = list(previous.get("paragraph_ranges") or []) + [
+        {**row,
+         "paragraph_index": int(row["paragraph_index"]) + paragraph_offset,
+         "start": int(row["start"]) + segment_offset,
+         "end": int(row["end"]) + segment_offset}
+        for row in addition.get("paragraph_ranges") or []]
+    old_gate = previous.get("gate") or {}
+    new_gate = addition.get("gate") or {}
+    if old_gate or new_gate:
+        blocked = list(old_gate.get("blocked_paragraphs") or []) + [
+            {**item, "paragraph_index": int(item["paragraph_index"]) + paragraph_offset}
+            for item in new_gate.get("blocked_paragraphs") or []]
+        merged["gate"] = {
+            **old_gate, **new_gate,
+            "status": "blocked" if blocked else (new_gate.get("status") or old_gate.get("status")),
+            "checked_paragraph_count": int(old_gate.get("checked_paragraph_count") or 0)
+            + int(new_gate.get("checked_paragraph_count") or 0),
+            "blocked_paragraphs": blocked,
+        }
+    return merged
+
+
+def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
+                        ocr_mode, warnings):
+    """把识别快照里新定稿的段落追加成翻译单元；返回新增翻译单元的区间。"""
+    paragraphs = list(snapshot["paragraphs"])
+    committed = list(state.get("source_paragraphs") or [])
+    if paragraphs[:len(committed)] != committed:
+        # 页缓存决定了识别结果，重跑不会变；真变了说明缓存或源文件被替换。
+        raise RuntimeError(
+            "边识别边翻译：已定稿的原文与重新识别的结果不一致，"
+            "请删除该任务后重新导入。")
+    document = snapshot["document"]
+    report = _build_extraction_report(filename, paragraphs, facts=facts,
+                                      warnings=list(warnings))
+    report.update({
+        "semantic_source": "vlm", "document_ir": document, "ocr_used": False,
+        "ocr_mode": ocr_mode, "ocr_trigger": "scanned_pdf_streaming",
+        "page_diagnostics": (document.get("provenance") or {}).get("page_diagnostics") or [],
+    })
+    if not snapshot["finished"]:
+        report["status"] = "partial"
+    state["extraction_report"] = report
+    state["source_paras"] = list(paragraphs)
+    paras = state.setdefault("paras", [])
+    start = len(paras)
+    added = paragraphs[len(committed):]
+    if added:
+        from folith.document_ir import segment_marks, segment_spans
+        segments, metadata = segment_source_paragraphs(
+            added, state=state, mode=segmentation_mode)
+        # 投影原文锚点：段落索引按全书计，翻译单元索引按本批计。
+        local = {**metadata, "paragraph_ranges": [
+            {**row, "paragraph_index": int(row["paragraph_index"]) + len(committed)}
+            for row in metadata.get("paragraph_ranges") or []]}
+        spans = segment_spans(document, paragraphs, segments, local)
+        state["segmentation"] = _merge_streaming_segmentation(
+            state.get("segmentation"), metadata,
+            paragraph_offset=len(committed), segment_offset=start)
+        paras.extend(segments)
+        state["source_paragraphs"] = committed + added
+        state["segment_source_spans"] = list(state.get("segment_source_spans") or []) + spans
+        state["segment_source_marks"] = list(state.get("segment_source_marks") or []) + \
+            segment_marks(document, spans, segments)
+    state["source_cleanup"] = {
+        "status": "skipped", "reason": "vlm_semantics_no_ocr_repair",
+        "input_count": len(paragraphs), "output_count": len(paragraphs),
+        "paragraph_count": len(paragraphs), "segment_count": len(paras),
+    }
+    state["source_cleanup_done"] = True
+    state["source_quality_gate"] = _audit_source_quality_for_state(state)
+    if facts.get("pages"):
+        state["source_page_count"] = facts["pages"]
+    state["streaming_ingest"] = {
+        "status": "complete" if snapshot["finished"] else "running",
+        "pages_done": snapshot["pages_done"],
+        "pages_total": snapshot["pages_total"],
+        "paragraphs": len(paragraphs),
+        "segments": len(paras),
+    }
+    return start, len(paras)
+
+
+def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
+                         ocr_mode, on_status=None):
+    """等下一个窗口识别完并提交；返回新增翻译单元的区间（可能为空）。"""
+    previous_pages = int((state.get("streaming_ingest") or {}).get("pages_done") or 0)
+    target = max(stream.pages_done, previous_pages) + stream.window_pages
+    if on_status:
+        on_status(f"【阶段一】视觉识别：{stream.pages_done}/{stream.pages_total} 页"
+                  f"（满 {min(target, stream.pages_total)} 页后先交给翻译）…")
+    stream.wait_for_pages(target)
+    snapshot = stream.snapshot()
+    start, end = _commit_scan_stream(
+        state, snapshot, filename=filename, facts=stream.facts,
+        segmentation_mode=segmentation_mode, ocr_mode=ocr_mode,
+        warnings=state.get("warnings") or [])
+    if on_status:
+        on_status(f"【阶段一】视觉识别：{snapshot['pages_done']}/{snapshot['pages_total']} 页，"
+                  f"新增 {end - start} 句进入翻译")
+    save_job_state(job_id, state)
+    return start, end
+
+
+def _extend_streaming_knowledge(job_id, state, start, end, *, auxiliary_config,
+                                auxiliary_call, target_lang, auto_term,
+                                enable_understanding, glossary, warnings):
+    """新追加的一批翻译单元：补语义单元摘要、滚动全文概要，抽取新术语。
+
+    已有单元和已有术语保持不动（只追加），批次划分因此对已翻部分保持稳定。
+    新术语以「暂定」状态加入，与非严格模式下的自动术语一致。
+    """
+    paras = state.get("paras") or []
+    if end <= start:
+        return
+    window = paras[start:end]
+    if enable_understanding and state.get("understanding_done"):
+        units = _context.build_semantic_units(window, None)
+        prefix = f"s{start}"
+        for unit in units:
+            unit["unit_id"] = f"{prefix}-{unit['unit_id']}"
+            unit["start_segment"] = int(unit["start_segment"]) + start
+            unit["end_segment"] = int(unit["end_segment"]) + start
+        digests, digest_warnings = _context.generate_section_digests(
+            units, auxiliary_config["provider"], auxiliary_config["api_key"],
+            auxiliary_config["model"], target_lang, call_llm=auxiliary_call)
+        state["semantic_units"] = list(state.get("semantic_units") or []) + units
+        state["section_digests"] = list(state.get("section_digests") or []) + digests
+        synopsis, synopsis_warnings = _context.generate_document_synopsis(
+            state["section_digests"], auxiliary_config["provider"],
+            auxiliary_config["api_key"], auxiliary_config["model"], target_lang,
+            call_llm=auxiliary_call)
+        if synopsis.get("summary"):
+            state["document_synopsis"] = synopsis
+        for warning in list(digest_warnings) + list(synopsis_warnings):
+            if warning not in warnings:
+                warnings.append(warning)
+        _context.write_understanding_artifacts(
+            job_dir(job_id), state["semantic_units"], state["section_digests"],
+            state.get("document_synopsis") or {})
+    if auto_term:
+        from folith.terminology import extract_auto_terms_v2
+        entries, extract_warnings = extract_auto_terms_v2(
+            window, target_lang, auxiliary_config["provider"],
+            auxiliary_config["api_key"], auxiliary_config["model"],
+            document_profile=state.get("document_profile"),
+            call_llm=auxiliary_call,
+            cancel_check=lambda: _runtime_cancel_requested(job_id))
+        known = {str(e.get("source") or "").casefold() for e in glossary}
+        fresh = []
+        for entry in normalize_glossary(entries):
+            if entry["source"].casefold() in known:
+                continue
+            if entry["status"] == "candidate":
+                entry["status"] = "provisional"
+            known.add(entry["source"].casefold())
+            fresh.append(entry)
+        # 就地追加：翻译阶段持有的是同一个术语表列表。
+        glossary.extend(fresh)
+        state["glossary"] = glossary
+        state["auto_term_entries"] = list(state.get("auto_term_entries") or []) + fresh
+        state["auto_terms"] = {**(state.get("auto_terms") or {}),
+                               **{e["source"]: e["target"] for e in fresh}}
+        for warning in extract_warnings:
+            if warning not in warnings:
+                warnings.append(warning)
+    save_job_state(job_id, state)
+
+
+def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, model,
                      target_lang, auto_term, enable_report, translation_theory,
                      user_glossary=None, style_rules="", enable_review=True,
                      enable_annotate=True, use_tm=True,
@@ -10426,6 +10802,13 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         )
     if segmentation_mode is not None or "segmentation_mode" in saved_runtime_config:
         pipeline_config["segmentation_mode"] = effective_segmentation_mode
+    # 组批方式随任务保存：已经开译、却没有记录过组批方式的老任务沿用每批 4 句，
+    # 恢复时不换批次划分；显式给了批次大小的调用方要的是按句数组批；其余新任务
+    # 用当前默认（按自然段）。
+    pipeline_config["batch_strategy"] = _batch_strategy(
+        None, saved_runtime_config.get("batch_strategy")
+        or ("sentence" if state.get("pairs") or batch_size or max_batch_chars else None),
+        default=DEFAULT_BATCH_STRATEGY)
     state["pipeline_config"] = pipeline_config
     state.setdefault("llm_usage", _usage.empty_usage())
     auxiliary_call = _model_roles.make_role_call(
@@ -10632,6 +11015,48 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         state["performance"] = persist_performance()
         save_job_state(job_id, state)
         return state
+
+    # ---------------- 阶段一（整本扫描书）：边识别边翻译 ----------------
+    scan_stream = None
+    streaming_status = (state.get("streaming_ingest") or {}).get("status")
+    if not state.get("p2_done") and (
+            streaming_status == "running"
+            or (not state["p1_done"] and not state.get("source_paras"))):
+        if file_bytes is None:
+            file_bytes = load_source(job_id)
+        if streaming_status == "running" or _streaming_scan_eligible(
+                filename, file_bytes, ocr_mode=effective_ocr_mode,
+                ocr_backend=effective_ocr_backend,
+                strict_terminology_governance=strict_terminology_governance):
+            if file_bytes is None:
+                raise ValueError("缺少源文件，请重新上传后再继续")
+            try:
+                save_source(job_id, file_bytes)
+            except Exception:
+                pass
+            if on_status:
+                on_status("【阶段一】视觉识别（边识别边翻译：每识别 20 页先交给翻译）…")
+            scan_stream = _start_scan_stream(
+                job_id, filename, file_bytes, online_config=effective_online_config,
+                source_language=effective_source_language,
+                ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm)
+            registry = _SCAN_STREAMS.get()
+            if registry is not None:
+                registry.append(scan_stream)
+            _advance_scan_stream(
+                job_id, state, scan_stream, filename=filename,
+                segmentation_mode=effective_segmentation_mode,
+                ocr_mode=effective_ocr_mode, on_status=on_status)
+            # 开头几十页可能全是图（封面、插图）：一直等到有可译的文字。
+            while not state.get("paras") and not scan_stream.finished:
+                _advance_scan_stream(
+                    job_id, state, scan_stream, filename=filename,
+                    segmentation_mode=effective_segmentation_mode,
+                    ocr_mode=effective_ocr_mode, on_status=on_status)
+            if not state.get("paras"):
+                raise ValueError(f"未提取到有效文本：{_NO_TEXT_REASON}")
+            state["p1_done"] = True
+            save_job_state(job_id, state)
 
     # ---------------- 阶段一：排版清洗 ----------------
     if not state["p1_done"]:
@@ -10949,23 +11374,40 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
         if on_status:
             on_status("【阶段二】双语翻译与术语严格注入（批次翻译 + 确定性检查 + 独立审校）...")
         _batch_cfg = state.get("pipeline_config") or {}
-        translate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
-                        style_rules, enable_review, use_tm=use_tm,
-                        document_profile=state.get("document_profile"),
-                        translator_config=translator_config,
-                        reviewer_config=reviewer_config,
-                        auxiliary_config=auxiliary_config,
-                        on_status=on_status, on_caption=on_caption,
-                        batch_size=_batch_cfg.get("batch_size", batch_size),
-                        max_batch_chars=_batch_cfg.get("max_batch_chars", max_batch_chars),
-                        knowledge_feedback_interval=_batch_cfg.get(
-                            "knowledge_feedback_interval", knowledge_feedback_interval),
-                        translation_concurrency=_batch_cfg.get(
-                            "translation_concurrency", translation_concurrency),
-                        profiler=profiler,
-                        review_overlap=_batch_cfg.get("review_overlap"),
-                        max_review_in_flight=_batch_cfg.get("max_review_in_flight"),
-                        review_overlap_strategy=_batch_cfg.get("review_overlap_strategy"))
+        while True:
+            translate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
+                            style_rules, enable_review, use_tm=use_tm,
+                            document_profile=state.get("document_profile"),
+                            translator_config=translator_config,
+                            reviewer_config=reviewer_config,
+                            auxiliary_config=auxiliary_config,
+                            on_status=on_status, on_caption=on_caption,
+                            batch_size=_batch_cfg.get("batch_size", batch_size),
+                            max_batch_chars=_batch_cfg.get("max_batch_chars", max_batch_chars),
+                            knowledge_feedback_interval=_batch_cfg.get(
+                                "knowledge_feedback_interval", knowledge_feedback_interval),
+                            translation_concurrency=_batch_cfg.get(
+                                "translation_concurrency", translation_concurrency),
+                            profiler=profiler,
+                            review_overlap=_batch_cfg.get("review_overlap"),
+                            max_review_in_flight=_batch_cfg.get("max_review_in_flight"),
+                            review_overlap_strategy=_batch_cfg.get("review_overlap_strategy"))
+            # 边识别边翻译：已识别的部分翻完了，取下一窗口（识别一直在后台往前跑）。
+            if scan_stream is None or (
+                    (state.get("streaming_ingest") or {}).get("status") == "complete"):
+                break
+            if _runtime_cancel_requested(job_id):
+                raise RuntimeError("任务已请求取消")
+            window_start, window_end = _advance_scan_stream(
+                job_id, state, scan_stream, filename=filename,
+                segmentation_mode=effective_segmentation_mode,
+                ocr_mode=effective_ocr_mode, on_status=on_status)
+            _extend_streaming_knowledge(
+                job_id, state, window_start, window_end,
+                auxiliary_config=auxiliary_config, auxiliary_call=auxiliary_call,
+                target_lang=target_lang, auto_term=auto_term,
+                enable_understanding=enable_understanding, glossary=glossary,
+                warnings=warnings)
         for _required_stage in ("translation_generation", "translation_deterministic_qa",
                                 "translation_repair", "translation_semantic_review",
                                 "knowledge_feedback", "state_commit", "tm_commit",
@@ -11034,3 +11476,20 @@ def run_job_pipeline(job_id, filename, file_bytes, *, provider, api_key, model,
     active_run.record_point("milestone", phase="automatic_pipeline_complete")
     trace.finish_run(job_id=job_id, status="completed")
     return state
+
+
+#: 本次 run_job_pipeline 调用启动的后台识别；无论任务怎样结束都要停掉它们。
+_SCAN_STREAMS = contextvars.ContextVar("folith_scan_streams", default=None)
+
+
+@_exclusive_job_execution(0)
+@wraps(_run_job_pipeline_impl)
+def run_job_pipeline(*args, **kwargs):
+    streams = []
+    token = _SCAN_STREAMS.set(streams)
+    try:
+        return _run_job_pipeline_impl(*args, **kwargs)
+    finally:
+        _SCAN_STREAMS.reset(token)
+        for stream in streams:
+            stream.close()

@@ -870,7 +870,7 @@ def test_batch_plan_is_configurable_and_recorded(tmp_path):
                       "p2_done": False, "target_lang": "简体中文"})
         core.save_job_state("plan", state)
 
-        # 默认（不传参）→ 沿用模块常量，行为不变
+        # 默认（不传参）→ 新任务按自然段组批，批次上限取按段组批的常量
         core.call_llm = offline.OfflineProvider()
         core.run_job_pipeline(
             "plan", "plan.docx", None, provider="DeepSeek", api_key="k", model="m",
@@ -879,8 +879,9 @@ def test_batch_plan_is_configurable_and_recorded(tmp_path):
             enable_review=False, enable_annotate=False, use_tm=False,
             enable_understanding=False, delivery_config={"deliver_report": False})
         default_plan = core.load_job_state("plan")["batch_plan"]
-        assert default_plan["batch_size"] == core.BATCH_SIZE
-        assert default_plan["max_batch_chars"] == core.TRANSLATION_MAX_BATCH_CHARS
+        assert default_plan["strategy"] == "paragraph"
+        assert default_plan["batch_size"] == core.PARAGRAPH_BATCH_MAX_ITEMS
+        assert default_plan["max_batch_chars"] == core.PARAGRAPH_BATCH_MAX_CHARS
         assert default_plan["batch_count"] > 0
 
         # 显式配置 → 生效并记录
@@ -898,7 +899,12 @@ def test_batch_plan_is_configurable_and_recorded(tmp_path):
             batch_size=6, max_batch_chars=4800)
         plan = core.load_job_state("plan2")["batch_plan"]
         assert plan["batch_size"] == 6 and plan["max_batch_chars"] == 4800
-        assert plan["batch_count"] < default_plan["batch_count"], \
+        # 显式给批次大小 = 按句数组批；与默认句数（每批 4 句）的划分比较。
+        assert "strategy" not in plan
+        sentence_baseline = core.make_batches(
+            paragraphs, batch_size=core.BATCH_SIZE,
+            max_chars=core.TRANSLATION_MAX_BATCH_CHARS)
+        assert plan["batch_count"] < len(sentence_baseline), \
             "更大的批次必须产生更少的批次"
         # 批次参数随任务保存，恢复时沿用同一配置
         assert core.load_job_state("plan2")["pipeline_config"]["batch_size"] == 6

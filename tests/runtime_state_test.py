@@ -355,6 +355,8 @@ def test_pipeline_persists_resume_and_delivery_configuration(tmp_path):
                             "base_url": "", "configured": True},
             "reviewer": {"provider": "DeepSeek", "model": "deepseek-chat",
                           "base_url": "", "configured": True},
+            # 组批方式同样随任务保存（新任务默认按自然段）。
+            "batch_strategy": "paragraph",
         }
         assert saved["target_lang"] == "العربية"
         assert saved["auto_term_enabled"] is True
