@@ -228,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--edit-text", default=None,
                         help="override the committed edit text (e.g. Arabic for RTL)")
     parser.add_argument("--ocr-language", default=None)
+    parser.add_argument("--ocr-source", default=None,
+                        help="visible OCR source label, e.g. Tesseract")
     parser.add_argument("--ready-timeout", type=float, default=240.0)
     parser.add_argument("--stub-delay", type=float, default=0.0,
                         help="seconds per controlled model response (keeps a job running)")
@@ -345,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
             command.extend(["--edit-text", args.edit_text])
         if args.ocr_language:
             command.extend(["--ocr-language", args.ocr_language])
+        if args.ocr_source:
+            command.extend(["--ocr-source", args.ocr_source])
         env = os.environ.copy()
         env["FOLIO_PLAYWRIGHT_CORE"] = playwright
         env["FOLIO_CHROME"] = chrome

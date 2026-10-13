@@ -52,6 +52,7 @@ const RESULT = args.result || path.join(OUT_DIR, 'slice.json');
 const WANT_REVIEW = Boolean(args.review);
 const TARGET_LANG = args['target-lang'] || '简体中文';
 const OCR_LANGUAGE = args['ocr-language'] || null;
+const OCR_SOURCE = args['ocr-source'] || null;
 const SHOTS = path.join(OUT_DIR, 'screenshots');
 
 fs.mkdirSync(SHOTS, { recursive: true });
@@ -222,6 +223,13 @@ async function main() {
           await settle(1500);
         }
       }
+      if (OCR_SOURCE) {
+        const source = page.locator('[class*="st-key-ocr_backend"] [role="combobox"]').first();
+        await source.waitFor({ state: 'visible', timeout: 60000 });
+        await source.click();
+        await page.getByRole('option', { name: OCR_SOURCE, exact: true }).click();
+        await settle(1500);
+      }
       if (OCR_LANGUAGE && await keyVisible('ocr_language')) {
         const ocr = page.locator('[class*="st-key-ocr_language"] [role="combobox"], [class*="st-key-ocr_language"] input').first();
         await ocr.click();
@@ -236,7 +244,7 @@ async function main() {
       if (await next.isDisabled()) { throw new Error('下一步 disabled after upload'); }
       await next.click();
       await settle(3000);
-      return { target_lang: TARGET_LANG, ocr_language: OCR_LANGUAGE };
+      return { target_lang: TARGET_LANG, ocr_language: OCR_LANGUAGE, ocr_source: OCR_SOURCE };
     });
 
     await step('strategy', async () => {

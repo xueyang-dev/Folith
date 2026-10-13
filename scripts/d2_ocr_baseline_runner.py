@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             "--source-kind", case["kind"], "--out", str(case_dir),
             "--frozen-app", str(Path(args.frozen_app).expanduser()),
             "--target-lang", "简体中文",
+            "--ocr-source", "Tesseract",
         ]
         if case["label"]:
             command.extend(["--ocr-language", case["label"]])
