@@ -1306,6 +1306,55 @@ def _apply_document_context_budget(context: Dict[str, Any]) -> Dict[str, Any]:
     return context
 
 
+#: Reviewer-view context fields that are identical for every batch of a
+#: document (or of a section), in the order they are rendered.  Everything not
+#: listed here varies per batch and is rendered after them, so consecutive
+#: review requests share one long prefix the provider can serve from its
+#: prompt cache.  ``sort_keys=True`` used to interleave the two groups
+#: (``context_dedupe_removed_count`` sorted before ``document_synopsis``).
+REVIEW_VIEW_STABLE_CONTEXT_ORDER = (
+    "target_language", "style_rules", "style_constraints",
+    "context_budget_chars", "document_profile", "document_synopsis",
+    "section_profile", "section_digest",
+)
+
+#: Top-level reviewer-view order: context first (stable fields lead it), then
+#: the batch-specific parts.
+REVIEW_VIEW_TOP_LEVEL_ORDER = (
+    "context", "glossary", "confirmed_knowledge", "deterministic_checks",
+    "translation_truth",
+)
+
+
+def _sorted_json_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _sorted_json_value(value[key]) for key in sorted(value)}
+    if isinstance(value, (list, tuple)):
+        return [_sorted_json_value(item) for item in value]
+    return value
+
+
+def _ordered_by(mapping: Mapping[str, Any], leading: Sequence[str]) -> Dict[str, Any]:
+    ordered = {key: _sorted_json_value(mapping[key]) for key in leading if key in mapping}
+    for key in sorted(mapping):
+        if key not in ordered:
+            ordered[key] = _sorted_json_value(mapping[key])
+    return ordered
+
+
+def _render_reviewer_view(view: Mapping[str, Any]) -> str:
+    """Deterministic JSON of the reviewer view, stable content first.
+
+    Only the rendering order changes; the packet, the view and every
+    fingerprint are untouched.
+    """
+    ordered = _ordered_by(view, REVIEW_VIEW_TOP_LEVEL_ORDER)
+    context = view.get("context")
+    if isinstance(context, Mapping):
+        ordered["context"] = _ordered_by(context, REVIEW_VIEW_STABLE_CONTEXT_ORDER)
+    return json.dumps(ordered, ensure_ascii=False)
+
+
 def _reviewer_packet_view(
     packet: Dict[str, Any], *,
     reductions: Optional[frozenset] = None,
@@ -1511,11 +1560,9 @@ def review_translation_batch_with_evidence(
                 "若有稳定规则编号、术语或逻辑位置，可带 code、entry_id、"
                 "location_key 或 occurrence_key。"
             )
-            packet_prompt = "\n【Translation Core 独立审校包】\n" + json.dumps(
+            packet_prompt = "\n【Translation Core 独立审校包】\n" + _render_reviewer_view(
                 _reviewer_packet_view(
-                    translation_core_packet, reductions=review_view_reductions),
-                ensure_ascii=False, sort_keys=True,
-            )
+                    translation_core_packet, reductions=review_view_reductions))
         legacy_prompt_context = "" if translation_core_packet is not None else \
             glossary_text + "\n" + style_rules
         # One statement of each rule.  The previous wording described the
