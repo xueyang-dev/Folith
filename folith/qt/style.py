@@ -1268,6 +1268,7 @@ class SegmentedControl(QFrame):
         """
         for button in self._buttons.values():
             self._group.removeButton(button)
+            button.hide()  # before detaching (see segment_assist._clear)
             button.setParent(None)
             button.deleteLater()
         self._buttons = {}

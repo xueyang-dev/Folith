@@ -236,11 +236,13 @@ class ReportPanel(QWidget):
     def _issue_selected(self, row: int) -> None:
         group = self.current_group()
         for box in list(self._answer_boxes.values()):
+            box.hide()  # before detaching (see segment_assist._clear)
             box.setParent(None)
         self._answer_boxes.clear()
         while self.questions_layout.count():
             item = self.questions_layout.takeAt(0)
             if item.widget() is not None:
+                item.widget().hide()  # before detaching (see segment_assist._clear)
                 item.widget().setParent(None)
         if not group:
             self.issue_detail.setHtml("")

@@ -1019,6 +1019,7 @@ class HomeView(QWidget):
     def _rebuild_project_nav(self, projects: list[dict]) -> None:
         for button in self._project_nav_buttons.values():
             self.project_nav_box.removeWidget(button)
+            button.hide()  # before detaching (see segment_assist._clear)
             button.setParent(None)
             button.deleteLater()
         self._project_nav_buttons = {}
@@ -1292,6 +1293,7 @@ class HomeView(QWidget):
             if widget is not None:
                 # 先摘出布局树再排队销毁：只 deleteLater() 的话旧卡片会一直挂到
                 # 事件循环回收那一刻，期间和新卡片叠在一起（看起来像重影）。
+                widget.hide()  # before detaching (see segment_assist._clear)
                 widget.setParent(None)
                 widget.deleteLater()
         self._cards = {}
@@ -3217,6 +3219,7 @@ class WorkbenchView(QWidget):
         while self.supplement_grid.count():
             widget = self.supplement_grid.takeAt(0).widget()
             if widget is not None:
+                widget.hide()  # before detaching (see segment_assist._clear)
                 widget.setParent(None)
                 widget.deleteLater()
         self.supplement_buttons = {}

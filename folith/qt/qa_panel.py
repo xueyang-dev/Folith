@@ -185,6 +185,7 @@ class QAPanel(QWidget):
     def _fill_facts(self) -> None:
         for field in list(self._fact_rows):
             row = self._fact_rows.pop(field)
+            row["widget"].hide()  # before detaching (see segment_assist._clear)
             row["widget"].setParent(None)
             row["widget"].deleteLater()
         for fact in self._view.get("facts") or []:

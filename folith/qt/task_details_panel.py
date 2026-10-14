@@ -197,6 +197,7 @@ class TaskDetailsPanel(QWidget):
         while self.usage_grid.count():
             widget = self.usage_grid.takeAt(0).widget()
             if widget is not None:
+                widget.hide()  # before detaching (see segment_assist._clear)
                 widget.setParent(None)
                 widget.deleteLater()
         if has_usage:
@@ -247,6 +248,7 @@ class TaskDetailsPanel(QWidget):
             item = self._groups_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()  # before detaching (see segment_assist._clear)
                 widget.setParent(None)
                 widget.deleteLater()
         for group in groups:

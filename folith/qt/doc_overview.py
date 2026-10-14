@@ -164,6 +164,7 @@ class DocumentOverview(QWidget):
             item = self.notes.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()  # before detaching (see segment_assist._clear)
                 widget.setParent(None)
                 widget.deleteLater()
         for tone, text in notes:

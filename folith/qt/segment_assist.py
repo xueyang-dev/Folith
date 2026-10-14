@@ -27,10 +27,19 @@ _SEVERITY_LABELS = {"blocking": "必须处理", "actionable": "建议处理",
 
 
 def _clear(layout) -> None:
+    """Remove and discard every widget in ``layout``.
+
+    Hide before detaching.  A widget added to a visible layout is shown by a
+    *queued* call; if it is detached in the same turn (the inspector is rebuilt
+    twice by "save and next"), that queued show then runs on a parentless widget
+    and it pops up as a stray top-level window that steals focus.  An explicit
+    ``hide()`` makes the queued show a no-op.
+    """
     while layout.count():
         item = layout.takeAt(0)
         widget = item.widget()
         if widget is not None:
+            widget.hide()  # before detaching (see segment_assist._clear)
             widget.setParent(None)
             widget.deleteLater()
 

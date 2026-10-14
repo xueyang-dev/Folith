@@ -255,6 +255,7 @@ class SettingsGroup(QFrame):
             item = self._layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()  # before detaching (see segment_assist._clear)
                 widget.setParent(None)
                 widget.deleteLater()
         self._count = 0
@@ -553,6 +554,7 @@ class ModeSelector(QWidget):
         """
         for button in self._options.values():
             self._group.removeButton(button)
+            button.hide()  # before detaching (see segment_assist._clear)
             button.setParent(None)
             button.deleteLater()
         self._options = {}
