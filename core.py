@@ -2181,7 +2181,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         resolved_reasoning = None
     if resolved_base:
         kwargs["base_url"] = resolved_base
-    proxy_bypass = bool(cfg.get("proxy_bypass"))
+    proxy_bypass = _llm_transport.proxy_bypass_for(cfg.get("proxy_bypass"), resolved_base)
 
     def _build_openai_client():
         build_kwargs = dict(kwargs)
@@ -2269,6 +2269,22 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
 
 
 
+def _proxy_hint(provider, base_url, exc):
+    """连不上且系统开着代理时，点明代理可能是原因（502 / 407 / 代理错误）。"""
+    proxy = _llm_transport.system_proxy()
+    text = f"{type(exc).__name__} {exc}"
+    if not proxy or not any(mark in text for mark in ("502", "407", "Proxy", "proxy")):
+        return ""
+    try:
+        resolved = resolve_openai_base_url(provider, base_url)
+    except ValueError:
+        resolved = base_url
+    if _llm_transport.is_local_endpoint(resolved):
+        return ""
+    return (f"（检测到系统代理 {proxy}：如果模型服务可以直连，"
+            "请把它的地址加入代理的例外列表，或者暂时关闭代理再试。）")
+
+
 def test_provider(provider, api_key, model, base_url=None):
     """连通性测试：发送一个最小请求，返回 (ok, message)。"""
     t0 = time.time()
@@ -2277,7 +2293,7 @@ def test_provider(provider, api_key, model, base_url=None):
                        "你是连接测试助手。", "请只回复两个字：OK",
                        temperature=0.0, base_url=base_url)
     except Exception as exc:
-        return False, provider_error_message(exc)
+        return False, provider_error_message(exc) + _proxy_hint(provider, base_url, exc)
     elapsed = time.time() - t0
     if not (out or "").strip():
         return False, "返回内容为空（请检查 API Key / 模型名 / 余额）"
@@ -2306,7 +2322,9 @@ def fetch_provider_models(provider, api_key, base_url=None):
         headers = {"Accept": "application/json"}
         if (api_key or "").strip():
             headers["Authorization"] = f"Bearer {api_key.strip()}"
-        transport = {"trust_env": False} if cfg.get("proxy_bypass") else {}
+        transport = ({"trust_env": False}
+                     if _llm_transport.proxy_bypass_for(cfg.get("proxy_bypass"), resolved_base)
+                     else {})
         directory_url = f"{resolved_base}/models"
         if provider == "SiliconFlow":
             directory_url += "?sub_type=chat"

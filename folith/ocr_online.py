@@ -775,11 +775,13 @@ def _default_client_factory(config: OnlineOCRConfig):
         raise OnlineOCRUnavailable("unconfigured", "线上 OCR 缺少服务地址。")
     timeout = (15.0, float(config.timeout_s))
 
+    bypass_proxy = llm_transport.proxy_bypass_for(config.proxy_bypass, config.base_url)
+
     def build():
         kwargs: Dict[str, Any] = {"api_key": config.api_key, "base_url": config.base_url,
                                   "timeout": timeout, "max_retries": 0}
         bypass = None
-        if config.proxy_bypass:
+        if bypass_proxy:
             bypass = httpx.Client(trust_env=False, timeout=timeout)
             kwargs["http_client"] = bypass
         try:
@@ -792,6 +794,6 @@ def _default_client_factory(config: OnlineOCRConfig):
     return llm_transport.get_registry().acquire(
         llm_transport.build_openai_identity(
             provider=f"ocr-online:{config.provider or 'custom'}",
-            base_url=config.base_url, proxy_bypass=config.proxy_bypass,
+            base_url=config.base_url, proxy_bypass=bypass_proxy,
             api_key=config.api_key, timeout=timeout, max_retries=0),
         build)

@@ -292,6 +292,51 @@ def reset_client_registry_stats() -> None:
     _REGISTRY.reset_stats()
 
 
+def is_local_endpoint(url: Any) -> bool:
+    """Whether ``url`` points at this machine or the local network.
+
+    A macOS system proxy (Clash and similar) answers 502 for requests to a model
+    served locally (Ollama, LM Studio, a relay on 127.0.0.1) even when its own
+    exception list covers them, because the SDK's HTTP client still routes them
+    through the proxy.  Such endpoints never need a proxy, so they bypass it.
+    """
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    text = str(url or "").strip()
+    if not text:
+        return False
+    try:
+        host = (urlsplit(text if "://" in text else f"http://{text}").hostname or "").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host == "localhost" or host.endswith((".localhost", ".local")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
+def proxy_bypass_for(provider_flag: Any, base_url: Any) -> bool:
+    """Bypass the system proxy for providers that need it and for local endpoints."""
+    return bool(provider_flag) or is_local_endpoint(base_url)
+
+
+def system_proxy() -> str:
+    """The HTTP(S) proxy the OS / environment would apply, or ``""``."""
+    try:
+        import urllib.request
+
+        proxies = urllib.request.getproxies()
+    except Exception:  # noqa: BLE001 - only used to explain an error
+        return ""
+    return str(proxies.get("https") or proxies.get("http") or "")
+
+
 def build_openai_identity(
     *,
     provider: str,
