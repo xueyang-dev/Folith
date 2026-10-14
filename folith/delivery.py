@@ -264,11 +264,15 @@ def finding_context(state: Dict[str, Any], finding: Dict[str, Any]) -> Dict[str,
     pair = pairs[index] if index is not None and 0 <= index < len(pairs) else {}
     review_evidence = []
     for entry in state.get("review_evidence") or []:
+        # The event test is cheap and selective, so it goes first; the segment
+        # test (which stringifies every id) then runs for one entry instead of
+        # every review event of the task, for every finding on the review page.
+        if not ((event_id and entry.get("review_event_id") == event_id)
+                or (not event_id and finding.get("type") == "review"
+                    and not entry.get("review_event_id"))):
+            continue
         segment_ids = entry.get("segment_ids") or []
-        if (index in segment_ids or str(index) in {str(x) for x in segment_ids}) \
-                and ((event_id and entry.get("review_event_id") == event_id)
-                     or (not event_id and finding.get("type") == "review"
-                         and not entry.get("review_event_id"))):
+        if index in segment_ids or str(index) in {str(x) for x in segment_ids}:
             trace_evidence_ids = [str(item) for item in entry.get("evidence_ids") or []
                                   if str(item) in finding_evidence_refs]
             trace_requests = [dict(request) for request in entry.get("requests") or []

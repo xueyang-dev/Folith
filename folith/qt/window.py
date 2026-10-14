@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
         #: in submission order: (job_id, index, text).
         self._edit_queue: list[tuple[str, int, str]] = []
         self._edit_in_flight = False
+        self._state_load_in_flight = False
         # 与启动器同一个日志文件：测试者遇到问题时可以直接把这份日志发出来，
         # 不必依赖"记得把对话框内容抄下来"。（模块顶部已导入 bootstrap；
         # 这里若再写一次 `from . import bootstrap`，整个 __init__ 里的
@@ -906,7 +907,11 @@ class MainWindow(QMainWindow):
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
             self._sync_menu_state()
-            self.refresh_workbench(force=True)
+            # `load` has just rendered everything from this state (delivery
+            # included); a forced refresh here re-read and re-rendered it all a
+            # second time (~1.5 s on a book-length task).  An ordinary refresh
+            # only syncs the run state and menus while the signature is unchanged.
+            self.refresh_workbench()
         finally:
             QApplication.restoreOverrideCursor()
             # 只清自己的提示：打开过程中运行状态行可能已经写了新消息。
@@ -1151,7 +1156,7 @@ class MainWindow(QMainWindow):
     # ================= workbench =================
     def _poll(self) -> None:
         if self.stack.currentWidget() is self.workbench:
-            self.refresh_workbench()
+            self._poll_workbench()
         else:
             self._home_counter += 1
             if self._home_counter >= HOME_REFRESH_SECONDS:
@@ -1307,13 +1312,48 @@ class MainWindow(QMainWindow):
         self._auto_profiled.add(job_id)
         self.run_style_profile(automatic=True)
 
-    def refresh_workbench(self, *, force: bool = False) -> None:
+    def _poll_workbench(self) -> None:
+        """Timer path: read a changed state off the GUI thread, then refresh.
+
+        Every batch the pipeline writes changes the state; parsing and copying it
+        on the GUI thread froze the workbench for ~0.35 s per batch on a book.
+        Explicit ``refresh_workbench()`` calls stay synchronous (callers expect
+        the fresh state at once).
+        """
+        job_id = self._current_job_id
+        if not job_id or self._state_load_in_flight:
+            return
+        signature = adapter.state_signature(job_id)
+        if signature == self._cached_signature:
+            self.refresh_workbench()
+            return
+        self._state_load_in_flight = True
+
+        def done(state) -> None:
+            self._state_load_in_flight = False
+            if job_id != self._current_job_id:
+                return
+            if not state or self._cached_signature == signature:
+                # Unreadable (refresh reports it) or already refreshed meanwhile.
+                self.refresh_workbench()
+                return
+            self._cached_state = state
+            self._cached_signature = signature
+            self.refresh_workbench(preloaded=True)
+
+        def failed(_message: str, _detail: str) -> None:
+            self._state_load_in_flight = False
+
+        self.runner.submit(adapter.load_state, job_id, on_done=done, on_error=failed,
+                           label="poll-state")
+
+    def refresh_workbench(self, *, force: bool = False, preloaded: bool = False) -> None:
         job_id = self._current_job_id
         if not job_id:
             return
         signature = adapter.state_signature(job_id)
-        changed = signature != self._cached_signature
-        if changed or force:
+        changed = preloaded or signature != self._cached_signature
+        if (changed or force) and not preloaded:
             state = adapter.load_state(job_id)
             if not state:
                 self._notice(i18n.tr('任务状态不可读，已返回任务列表。'), error=True)
@@ -1541,7 +1581,10 @@ class MainWindow(QMainWindow):
                 self.refresh_workbench(force=True)  # show what is really on disk
             self._save_next_edit()
 
-        self.runner.submit(adapter.submit_edit, job_id, index, text,
+        # The window's cached state is enough for the adapter's pre-checks; the
+        # core re-reads the authoritative state itself when it saves.
+        hint = self._cached_state if job_id == self._current_job_id else None
+        self.runner.submit(adapter.submit_edit, job_id, index, text, state=hint,
                            on_done=done, on_error=failed, label="submit-edit")
 
     def _offer_repetitions(self, job_id: str, index: int, *,

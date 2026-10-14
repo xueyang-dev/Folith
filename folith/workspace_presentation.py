@@ -2,7 +2,9 @@
 from folith.terminology import find_occurrences, term_matches
 
 
-def term_rows(state):
+def term_rows(state, *, count_occurrences=True):
+    """Rows for the term list.  ``count_occurrences=False`` skips the full-text
+    scan (every term × every paragraph); occurrences are then left empty."""
     entries = state.get("glossary") or []
     if not isinstance(entries, list):
         entries = []
@@ -17,7 +19,8 @@ def term_rows(state):
     for entry in entries:
         source = str(entry.get("source") or "")
         target = str(entry.get("preferred") or entry.get("target") or "")
-        occurrences = find_occurrences(source, paragraphs) if source else []
+        occurrences = find_occurrences(source, paragraphs) \
+            if source and count_occurrences else []
         matched = sum(term_matches(target, str(pairs[i].get("target") or ""))
                       for i in occurrences if i < len(pairs)) if target else 0
         status = entry.get("status") or "provisional"

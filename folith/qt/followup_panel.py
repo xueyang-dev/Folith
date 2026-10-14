@@ -441,9 +441,21 @@ class FollowupPanel(QWidget):
 
     def _target_changed(self, *_args) -> None:
         self.set_preview([])
+        if self.window().isVisible() and not self.isVisible():
+            # (only when shown in a window but on a hidden page)
+            # The preview scans the whole document (~0.2 s on a book); the panel
+            # is rebuilt on every state change, mostly while nobody looks at it.
+            self._preview_pending = True
+            return
+        self._preview_pending = False
         target = self.target_edit.text().strip()
         if target and self._current_source():
             self.previewRequested.emit(self._current_source(), target)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        if getattr(self, "_preview_pending", False):
+            self._target_changed()
 
     def set_preview(self, preview: list[dict]) -> None:
         self._preview = list(preview or [])

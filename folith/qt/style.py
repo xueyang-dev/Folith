@@ -1265,7 +1265,23 @@ class SegmentedControl(QFrame):
         """替换分段（译前准备面板要先拿到目录再填选项）。
 
         新增按钮沿用同一 objectName("segment")，所以不引入任何新的 QSS 规则。
+
+        选项的 key 和顺序都没变（例如审校筛选每次只是计数变了）时只改文字：
+        每次都销毁重建按钮，新按钮要重新套用整份全局 QSS，刷新一次就是几百毫秒。
+        选中状态的处理与重建时完全一样（先清空，由调用方 set_value 回填）。
         """
+        keys = [str(value) for value, _label in options]
+        if keys and keys == list(self._buttons):
+            for value, label in options:
+                self._buttons[str(value)].setText(str(label))
+            self._group.setExclusive(False)
+            for button in self._buttons.values():
+                button.setChecked(False)
+            self._group.setExclusive(True)
+            self._value = ""
+            if len(self._buttons) == 1:
+                self.set_value(next(iter(self._buttons)))
+            return
         for button in self._buttons.values():
             self._group.removeButton(button)
             button.hide()  # before detaching (see segment_assist._clear)

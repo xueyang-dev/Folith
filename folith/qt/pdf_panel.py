@@ -21,6 +21,7 @@ ZOOMS = ((100, "100%"), (150, "150%"), (200, "200%"))
 class PdfPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._render_pending = False
         self.job_id = ""
         self._page = 0
         self._pages = 0
@@ -115,6 +116,13 @@ class PdfPanel(QWidget):
         if not self.job_id or not self._pages:
             self.image.clear()
             return
+        if self.window().isVisible() and not self.isVisible():
+            # (only when shown in a window but on a hidden page)
+            # Rendering a page costs ~0.6 s; opening a task used to pay it even
+            # when the original page was never looked at.  Render on show.
+            self._render_pending = True
+            return
+        self._render_pending = False
         png = adapter.pdf_page_png(self.job_id, self._page, self._rects,
                                    dpi=int(self.zoom_box.currentData() or 150))
         if not png:
@@ -123,6 +131,11 @@ class PdfPanel(QWidget):
         pixmap = QPixmap()
         pixmap.loadFromData(png)
         self.image.setPixmap(pixmap)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        if self._render_pending:
+            self._render()
 
     def _sync(self) -> None:
         self.prev_button.setEnabled(self._page > 0)

@@ -2637,6 +2637,8 @@ class WorkbenchView(QWidget):
         """打开"合规与 QA"页时，把 DOCX 结构检查的最新结论记下（和旧界面一样，写入只发生在这里）。"""
         if self.tabs.widget(index) is self.details_panel:
             self._render_details()
+        if self.tabs.widget(index) is self.terms_panel and self.job_id:
+            self._render_terms()
         if self.tabs.widget(index) is not self.qa_panel or not self.job_id:
             return
         try:
@@ -2714,9 +2716,16 @@ class WorkbenchView(QWidget):
         key = (self.job_id, id(self._state))
         if key == self._terms_key and not force:
             return
-        self._terms_key = key
+        # The full table counts every term's occurrences across the document
+        # (~0.35 s on a book).  Off-page the panel gets the same view without
+        # those counts (the start gate and layout stay current); the counts are
+        # filled in when the page is shown (see _tab_changed).
+        on_page = force or self.tabs.currentWidget() is self.terms_panel
+        if on_page:
+            self._terms_key = key
         try:
-            view = adapter.glossary_view(self.job_id, self._state)
+            view = adapter.glossary_view(self.job_id, self._state,
+                                         count_occurrences=on_page)
         except Exception:  # noqa: BLE001 - 术语页坏了不能拖垮翻译页
             view = {}
         self.terms_panel.apply(self.job_id, view, force=force)
@@ -3167,7 +3176,7 @@ class WorkbenchView(QWidget):
             return
         if unchanged and (now - self._delivery_preview_at) < DELIVERY_FORCE_FLOOR_SECONDS:
             return
-        preview = adapter.delivery_preview(self.job_id, self.config) \
+        preview = adapter.delivery_preview(self.job_id, self.config, state=self._state) \
             if self.job_id else {}
         self._delivery_preview = preview
         self._delivery_rendered = True

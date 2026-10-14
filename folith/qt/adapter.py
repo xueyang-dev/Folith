@@ -759,7 +759,8 @@ def pending_draft_count(job_id: str) -> int:
     return len(core.load_translation_drafts(job_id))
 
 
-def submit_edit(job_id: str, index: int, text: str, *, actor: str = "user") -> dict:
+def submit_edit(job_id: str, index: int, text: str, *, actor: str = "user",
+                state: dict | None = None) -> dict:
     """提交一段人工修改（走核心，标记 ``human_edited`` 并触发下游失效）。
 
     三种拒绝都要说清楚**为什么**：
@@ -768,8 +769,12 @@ def submit_edit(job_id: str, index: int, text: str, *, actor: str = "user") -> d
     * 任务正在后台处理——核心会拒绝（避免 worker 与人工同时改同一段），
       这里把它的原因原样传给界面，不再暴露异常类型名；
     * 索引确实越界——保留原来的提示。
+
+    ``state``：调用方手里已有的状态，只用于上面这些前置检查（只读）。核心保存时会
+    自己重新读取；这里再读一遍意味着在后台线程里多解析、多深拷贝一次整份状态
+    （一本书几十 MB），期间界面线程拿不到 GIL。
     """
-    state = core.load_job_state(job_id)
+    state = state if state is not None else core.load_job_state(job_id)
     if state is None:
         raise AdapterError(f"找不到任务 {job_id}")
     pairs = state.get("pairs") or []
@@ -786,6 +791,13 @@ def submit_edit(job_id: str, index: int, text: str, *, actor: str = "user") -> d
     except (RuntimeError, ValueError, IndexError) as exc:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
     clear_draft(job_id, uid)
+    # The core may assign the segment its uid while saving; a draft can be
+    # filed under either, so clear both.
+    saved_pairs = new_state.get("pairs") or []
+    if 0 <= index < len(saved_pairs):
+        saved_uid = core.segment_uid(saved_pairs[index])
+        if saved_uid and saved_uid != uid:
+            clear_draft(job_id, saved_uid)
     return new_state
 
 
@@ -2656,13 +2668,18 @@ GLOSSARY_STATUS_LABELS = {"candidate": "候选", "provisional": "暂定",
 _GLOSSARY_FIELDS = ("source", "preferred", "status", "domain", "note")
 
 
-def glossary_view(job_id: str, state: dict | None = None) -> dict:
-    """术语页的视图模型（命中次数、状态、冻结情况）。"""
+def glossary_view(job_id: str, state: dict | None = None, *,
+                  count_occurrences: bool = True) -> dict:
+    """术语页的视图模型（命中次数、状态、冻结情况）。
+
+    ``count_occurrences=False``：不统计每条术语在全文的出现次数（一本书上几百毫秒），
+    其余字段（门禁、待确认数、状态）不变；术语页不在眼前时用它。
+    """
     from folith import workspace_presentation as _presentation
 
     state = state if state is not None else load_state(job_id)
     rows = []
-    for row in _presentation.term_rows(state):
+    for row in _presentation.term_rows(state, count_occurrences=count_occurrences):
         entry = row.get("entry") or {}
         rows.append({
             "id": row["id"],
@@ -2825,9 +2842,14 @@ def delete_glossary_entry(job_id: str, entry_id: str) -> str:
 # ================= delivery =================
 
 
-def delivery_preview(job_id: str, config: EngineConfig | None = None) -> dict:
-    """What the delivery gate currently says, without changing anything."""
-    state = load_state(job_id)
+def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
+                     state: dict | None = None) -> dict:
+    """What the delivery gate currently says, without changing anything.
+
+    ``state``: the caller's already-loaded state.  Reloading means parsing and
+    deep-copying the whole task state again (tens of MB for a book).
+    """
+    state = state if state is not None else load_state(job_id)
     validation = core.validate_delivery_translation_state(state)
     snapshot = core.delivery_snapshot_status(job_id, state)
     configured = core.normalize_delivery_config(
