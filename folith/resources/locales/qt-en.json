@@ -1367,5 +1367,6 @@
   "读取原文": "Reading source",
   "切分段落": "Segmenting",
   "全文理解": "Document understanding",
-  "标注": "Annotation"
+  "标注": "Annotation",
+  "筛选 · {v0}": "Filter · {v0}"
 }

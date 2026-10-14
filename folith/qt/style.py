@@ -479,6 +479,10 @@ QFrame#popover {{
     border-radius: {r['md']}px;
 }}
 QFrame#popover QListWidget {{ background: transparent; border: none; }}
+/* 底栏字数：本身可点（打开字数浮窗）。 */
+QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}
+QLabel#wordTotal:hover {{ color: {t['accent']}; text-decoration: underline; }}
+QLabel#wordTotal:focus {{ color: {t['accent']}; }}
 /* 运行状态组：进度条 + 百分比 + 状态说明，整组可点（打开运行记录）。 */
 QFrame#runStatus {{ background: transparent; border: 1px solid transparent; border-radius: {r['sm']}px; }}
 QFrame#runStatus:hover {{ background: {t['bg-hover']}; }}
@@ -649,6 +653,22 @@ QPushButton#segment:checked {{
     background: {t['bg-surface-raised']}; border-color: {t['control-border']};
     color: {t['text-primary']}; font-weight: 600;
 }}
+
+/* 工具条按钮（筛选、查找替换）：与旁边的分段控件同一套外观——沉底、发丝线、
+   同样的圆角与高度；不画系统的下拉小箭头。有筛选生效时整颗按钮高亮。 */
+QToolButton#toolbarButton {{
+    background: {t['bg-surface-sunken']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['sm'] + 1}px; padding: {sp['xxs'] + 2}px {sp['md']}px;
+    min-height: {box('sm', pad_y=sp['xxs']) + 2}px;
+    color: {t['text-secondary']}; font-weight: 500;
+}}
+QToolButton#toolbarButton:hover {{ color: {t['text-primary']}; background: {t['bg-hover']}; }}
+QToolButton#toolbarButton:pressed, QToolButton#toolbarButton:open {{ background: {t['bg-selected']}; }}
+QToolButton#toolbarButton:focus {{ border-color: {t['focus-ring']}; }}
+QToolButton#toolbarButton[active="true"] {{
+    background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['accent']}; font-weight: 600;
+}}
+QToolButton#toolbarButton::menu-indicator {{ image: none; width: 0px; }}
 
 /* ================= 翻译模式选项（译前准备 Level 1） =================
    三个紧凑的"图标 + 标题 + 一行摘要"，横排。静止 = **沉底**（比卡片低一档），

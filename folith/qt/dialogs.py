@@ -1293,15 +1293,16 @@ class SegmentSplitDialog(QDialog):
                 "target_b": self.target_b.toPlainText()}
 
 
-class WordCountDialog(QDialog):
-    """字数统计：整份文档按状态分项（以原文计），以及所选段落。"""
+class WordCountView(QWidget):
+    """字数统计的内容：按状态分项（以原文计）、译文总数、所选段落与计数规则。
+
+    工作台底栏的字数浮窗与 :class:`WordCountDialog` 共用它。
+    """
 
     def __init__(self, count, selected_rows: list, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         from folith import word_count
 
-        self.setWindowTitle(i18n.tr('字数统计'))
-        self.setMinimumWidth(520)
         rows = [
             (i18n.tr('全部（不含已排除）'), count.total),
             (i18n.tr('已翻译'), count.translated),
@@ -1317,7 +1318,10 @@ class WordCountDialog(QDialog):
              i18n.tr('占比')])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in range(1, 5):  # numbers take what they need; the label gets the rest
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         for position, (label, bucket) in enumerate(rows):
             share = "" if bucket is count.excluded else f"{count.percent(bucket)}%"
             for column, value in enumerate((label, f"{bucket.segments:,}", f"{bucket.words:,}",
@@ -1333,6 +1337,7 @@ class WordCountDialog(QDialog):
         rules.setObjectName("hint")
         rules.setWordWrap(True)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.table)
         layout.addWidget(target)
         self.selection_label = None
@@ -1344,6 +1349,20 @@ class WordCountDialog(QDialog):
                 v3=data["target_words"], v4=data["target_chars"]))
             layout.addWidget(self.selection_label)
         layout.addWidget(rules)
+
+
+class WordCountDialog(QDialog):
+    """字数统计：整份文档按状态分项（以原文计），以及所选段落。"""
+
+    def __init__(self, count, selected_rows: list, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('字数统计'))
+        self.setMinimumWidth(520)
+        self.view = WordCountView(count, selected_rows, self)
+        self.table = self.view.table
+        self.selection_label = self.view.selection_label
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.view)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.button(QDialogButtonBox.StandardButton.Close).setText(i18n.tr('关闭'))
         buttons.rejected.connect(self.reject)

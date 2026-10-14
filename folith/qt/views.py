@@ -1514,6 +1514,29 @@ def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
     return "running", " · ".join(p for p in (head, note) if p)
 
 
+class ClickableLabel(QLabel):
+    """一行可点的文字（悬停有下划线与手型光标；回车 / 空格也能触发）。"""
+
+    clicked = Signal()
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit()
+            return
+        super().keyPressEvent(event)
+
+
 class RunStatusGroup(QFrame):
     """顶栏的运行状态组：进度条 + 百分比，下面一行写「阶段 · 进度 · 正在做什么」。
 
@@ -1894,7 +1917,7 @@ class WorkbenchView(QWidget):
         # 筛选收进一个菜单：六个条件同时放在工具条上放不下，也读不过来。
         # 勾选多个时取交集（"含项目术语"且"原文质量问题"……）。
         self.filter_button = QToolButton()
-        self.filter_button.setObjectName("filterButton")
+        self.filter_button.setObjectName("toolbarButton")
         self.filter_button.setText(i18n.tr('筛选'))
         self.filter_button.setIcon(icons.icon("filter", 16, "text-secondary"))
         self.filter_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -1931,6 +1954,7 @@ class WorkbenchView(QWidget):
         toolbar.addSpacing(theme_module.SPACE["xs"])
         toolbar.addWidget(self.filter_button)
         self.find_replace_button = QToolButton()
+        self.find_replace_button.setObjectName("toolbarButton")
         self.find_replace_button.setText(i18n.tr('查找替换…'))
         self.find_replace_button.setIcon(icons.icon("search", 16, "text-secondary"))
         self.find_replace_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -2230,17 +2254,17 @@ class WorkbenchView(QWidget):
         word_layout = QHBoxLayout(self.word_bar)
         word_layout.setContentsMargins(theme_module.SPACE["xs"], 0, 0, 0)
         word_layout.setSpacing(theme_module.SPACE["md"])
-        self.word_total_label = QLabel("")
-        self.word_total_label.setObjectName("hint")
+        # 字数只有一处：底栏左边这一行本身可点，点开浮窗看分项与当前段 / 所选段
+        # （acceptance-feedback 第 4 条：去掉右下角的「字数统计…」与右侧那行）。
+        self.word_total_label = ClickableLabel("")
+        self.word_total_label.setObjectName("wordTotal")
+        self.word_total_label.setToolTip(i18n.tr('字数统计'))
+        self.word_total_label.clicked.connect(self._show_word_count)
         self.word_selection_label = QLabel("")
         self.word_selection_label.setObjectName("hint")
-        self.word_detail_button = QToolButton()
-        self.word_detail_button.setText(i18n.tr('字数统计…'))
-        self.word_detail_button.clicked.connect(self._show_word_count)
+        self.word_selection_label.setWordWrap(True)
         word_layout.addWidget(self.word_total_label)
         word_layout.addStretch(1)
-        word_layout.addWidget(self.word_selection_label)
-        word_layout.addWidget(self.word_detail_button)
         translation_layout.addWidget(self.word_bar)
         self._word_count_key: tuple = ()
         self._word_count = None
@@ -3052,8 +3076,11 @@ class WorkbenchView(QWidget):
         self._only_edited = self.only_edited_box.isChecked()
         self._only_issues = self.only_issues_box.isChecked()
         active = sum(action.isChecked() for action in self.filter_actions.values())
-        self.filter_button.setText(i18n.tr('筛选（{v0}）', v0=active) if active
+        self.filter_button.setText(i18n.tr('筛选 · {v0}', v0=active) if active
                                    else i18n.tr('筛选'))
+        # 筛过的列表一眼就能认出来：按钮整颗高亮，不只是菜单里打勾。
+        self.filter_button.setProperty("active", "true" if active else "false")
+        style_module.repolish(self.filter_button)
         self._render_segments()
 
     def clear_filters(self) -> None:
@@ -3241,13 +3268,25 @@ class WorkbenchView(QWidget):
             v3=data["target_words"], v4=data["target_chars"]))
 
     def _show_word_count(self) -> None:
-        from .dialogs import WordCountDialog
+        """字数浮窗：当前段 / 所选段在最上面，下面是整份文档的分项。"""
+        from .dialogs import WordCountView
 
         self._sync_word_count()
         if self._word_count is None:
             return
         rows = [row for row in self._all_rows if row.index in set(self.selected_indexes())]
-        WordCountDialog(self._word_count, rows, self).exec()
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(theme_module.SPACE["sm"])
+        current = QLabel(self.word_selection_label.text())
+        current.setWordWrap(True)
+        layout.addWidget(current)
+        layout.addWidget(WordCountView(self._word_count, rows), 1)
+        popover = components.Popover(i18n.tr('字数统计'), content, self, size=QSize(560, 400))
+        popover.closed.connect(popover.deleteLater)
+        self._word_popover = popover
+        popover.open_at(self.word_total_label)
 
     def _sync_drafts_banner(self) -> None:
         count = sum(1 for row in self._all_rows if row.has_draft)

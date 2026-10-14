@@ -143,3 +143,28 @@ def test_check_icon_tones(app):
     assert button.tone() == "warning" and button.badge.text() == "2"
     button.set_count(1, "danger")
     assert button.tone() == "danger" and "1 项待处理" in button.toolTip()
+
+
+def test_every_workbench_tool_button_has_a_designed_style(app):
+    """未指定样式的 QToolButton 会退回 macOS 原生的灰色斜面按钮（「筛选」「查找替换…」
+    「字数统计…」就是这样）。Qt 自己的内部按钮（输入框清除、页签滚动）除外。"""
+    from PySide6.QtWidgets import QLineEdit, QTabBar, QToolButton
+
+    styled = {"roundButton", "toolbarButton"}
+    bench = views.WorkbenchView()
+    bench.resize(1400, 900)
+    bench.show()
+    app.processEvents()
+    plain = [button.text() or button.toolTip() or repr(button)
+             for button in bench.findChildren(QToolButton)
+             if not isinstance(button.parent(), (QLineEdit, QTabBar))
+             and button.objectName() not in styled]
+    bench.close()
+    assert plain == []
+
+
+def test_word_count_lives_in_the_bottom_left_line(app):
+    bench = views.WorkbenchView()
+    assert not hasattr(bench, "word_detail_button")
+    assert isinstance(bench.word_total_label, views.ClickableLabel)
+    assert bench.word_selection_label.parent() is not bench.word_bar

@@ -177,12 +177,14 @@ def test_filter_menu_combines_conditions(bench):
 
     view.filter_actions["tm"].setChecked(True)
     assert view.filtered_indexes() == [0, 2]
-    assert view.filter_button.text() == "筛选（1）"
+    assert view.filter_button.text() == "筛选 · 1"
+    assert view.filter_button.property("active") == "true"  # highlighted while filtered
     view.filter_actions["term_issues"].setChecked(True)
     assert view.filtered_indexes() == [2]
     view.clear_filters()
     assert view.filtered_indexes() == [0, 1, 2]
     assert view.filter_button.text() == "筛选"
+    assert view.filter_button.property("active") == "false"
 
 
 def test_save_and_next_skips_confirmed_segments(bench):
