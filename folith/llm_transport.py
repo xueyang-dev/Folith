@@ -307,7 +307,8 @@ def is_local_endpoint(url: Any) -> bool:
     if not text:
         return False
     try:
-        host = (urlsplit(text if "://" in text else f"http://{text}").hostname or "").lower()
+        # No scheme ("127.0.0.1:9000/v1"): a leading "//" makes it parse as a netloc.
+        host = (urlsplit(text if "://" in text else "//" + text).hostname or "").lower()
     except ValueError:
         return False
     if not host:
