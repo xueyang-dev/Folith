@@ -313,6 +313,15 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "- 公开分发（Developer ID / hardened runtime / 签名 / 公证 / staple / 真实下载验收）"
         "尚未完成，本候选不得当作公开版本发布。",
         "",
+        "## 卸载",
+        "",
+        "- 把 `Folith.app` 拖到废纸篓只移除应用本身；任务、术语、翻译记忆和设置都会保留，"
+        "重新安装后原样可见。",
+        "- 如需完全清除，先退出应用，再删除：`~/Library/Application Support/Folith`"
+        "（任务与语言资产，与旧壳共用）、`~/Library/Logs/Folith`（日志）、"
+        "`~/Library/Preferences/com.folith.QtDesktop.plist`（界面设置）。"
+        "删除前请先导出需要保留的译文与 TMX/TBX。",
+        "",
         "## 已知限制",
         "",
         "- 真实中文输入法、系统文件面板、睡眠/唤醒、真实模型服务与干净机器验收为**人工项**，"
