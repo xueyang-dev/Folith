@@ -3149,11 +3149,13 @@ def test_progress_follows_the_core_stage_progress(client):
         workbench.apply("job", {"pairs": pairs or []}, [], runtime, [])
         app.processEvents()
 
-    # 1) 批次进度（翻译阶段）：芯片与进度条都用核心的单位
+    # 1) 批次进度（翻译阶段）：进度条用核心的批次；步骤条只说已译 / 总段数
+    #    （批次是内部概念，acceptance-feedback 第 5 条第 5 点）。
+    eight = [{"target": "T0"}, {"target": "T1"}] + [{"target": ""}] * 6
     render({"status": "running", "headline_status": "正在运行",
-            "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}})
+            "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}}, pairs=eight)
     translate = workbench.stage_bar.steps["translate"]
-    assert translate.hint() == "2/8 批次", translate.hint()
+    assert translate.hint() == "2/8 段", translate.hint()
     assert (workbench.progress.value(), workbench.progress.maximum()) == (2, 8)
     assert translate.state() == "current"
 
@@ -3168,7 +3170,7 @@ def test_progress_follows_the_core_stage_progress(client):
     #    不是一根停在 0 的空条——后者看起来像卡死了。
     render({"status": "running", "headline_status": "正在运行"},
            pairs=[{"target": "T0"}, {"target": "T1"}])
-    assert translate.hint() == "2 段"
+    assert translate.hint() == "2/2 段"
     assert (workbench.progress.minimum(), workbench.progress.maximum()) == (0, 0)
 
     # 4) 什么都没有：显示占位，不显示假的 0/0
@@ -3176,8 +3178,9 @@ def test_progress_follows_the_core_stage_progress(client):
     assert translate.hint() == ""
     # 5) 完成时批次进度到满、色调转 ok
     render({"status": "completed", "headline_status": "已完成",
-            "stage_progress": {"completed": 8, "total": 8, "unit": "批次"}})
-    assert translate.hint() == "8/8 批次"
+            "stage_progress": {"completed": 8, "total": 8, "unit": "批次"}},
+           pairs=[{"target": "T"}] * 8)
+    assert translate.hint() == "8/8 段"
     assert (workbench.progress.value(), workbench.progress.maximum()) == (8, 8)
 
 

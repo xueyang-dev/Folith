@@ -168,3 +168,13 @@ def test_word_count_lives_in_the_bottom_left_line(app):
     assert not hasattr(bench, "word_detail_button")
     assert isinstance(bench.word_total_label, views.ClickableLabel)
     assert bench.word_selection_label.parent() is not bench.word_bar
+
+
+def test_shared_colours_cannot_be_dimmed_by_one_caller():
+    """回归：缩略图阴影对 qcolor() 的返回值 setAlpha(26)，因为它是缓存里的同一个
+    对象，工作台里所有用 text-primary 的译文都变成了 10% 不透明。"""
+    from folith.qt import theme
+
+    first = theme.qcolor("#131c2e")
+    first.setAlpha(26)
+    assert theme.qcolor("#131c2e").alpha() == 255

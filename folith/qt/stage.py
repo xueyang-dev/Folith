@@ -46,25 +46,19 @@ def _translate_step(translated: bool, runtime: Mapping, state: Mapping) -> dict:
     pairs = len(state.get("pairs") or [])
     if translated:
         return _step(TRANSLATE, DONE, i18n.tr("{v0} 段", v0=pairs) if pairs else "")
-    # 进度的出处与顺序和头部进度条一致：学术写作阶段的单位进度优先，其次是翻译阶段
-    # 的批次进度（单位由核心给出，不是"段"），都没有时退回真实的段落数。
-    stage = runtime.get("stage_progress") or {}
+    # 步骤条只说「已译 / 总」段数：批次是内部概念，识别页数等细节在运行状态那一行
+    # 与运行记录里（acceptance-feedback 第 5 条第 5 点）。学术写作阶段由核心给出
+    # 自己的单位进度，照用。
     total, done = _count(runtime.get("progress_total")), _count(runtime.get("progress_completed"))
-    unit = i18n.tr("段")
-    if not total:
-        total, done = _count(stage.get("total")), _count(stage.get("completed"))
-        unit = i18n.tr_dynamic(str(stage.get("unit") or "段"))
     if total:
-        hint = i18n.tr("{v0}/{v1} {v2}", v0=done, v1=total, v2=unit)
+        hint = i18n.tr("{v0}/{v1} {v2}", v0=done, v1=total, v2=i18n.tr("段"))
     else:
-        count = pairs or len(state.get("paras") or [])
-        hint = i18n.tr("{v0} 段", v0=count) if count else ""
-    # 边识别边翻译：识别还在后台推进，批次总数会随之增长，如实说明还没识别完。
-    streaming = state.get("streaming_ingest") or {}
-    if streaming.get("status") == "running" and streaming.get("pages_total"):
-        recognised = i18n.tr("已识别 {v0}/{v1} 页", v0=_count(streaming.get("pages_done")),
-                             v1=_count(streaming.get("pages_total")))
-        hint = f"{hint} · {recognised}" if hint else recognised
+        pair_list = state.get("pairs") or []
+        total = max(len(state.get("paras") or []), len(pair_list))
+        done = sum(1 for pair in pair_list
+                   if isinstance(pair, Mapping) and str(pair.get("target") or "").strip())
+        hint = i18n.tr("{v0}/{v1} {v2}", v0=f"{done:,}", v1=f"{total:,}",
+                       v2=i18n.tr("段")) if total else ""
     return _step(TRANSLATE, ATTENTION if status in _TROUBLED else CURRENT, hint)
 
 

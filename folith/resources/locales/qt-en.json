@@ -1368,5 +1368,13 @@
   "切分段落": "Segmenting",
   "全文理解": "Document understanding",
   "标注": "Annotation",
-  "筛选 · {v0}": "Filter · {v0}"
+  "筛选 · {v0}": "Filter · {v0}",
+  "（未翻译）": "(not translated)",
+  "AI 点评本段": "AI comment on this segment",
+  "让模型指出这一段值得注意的翻译取舍（最多 3 条，一次模型调用）；只给建议，不改变审校状态": "Ask the model for up to 3 translation trade-offs worth noting (one model call); suggestions only, the review status does not change",
+  "审校会更新这一段的审校状态；点评只给建议。": "Review updates this segment's review status; a comment only gives suggestions.",
+  "正在点评…": "Commenting…",
+  "问这一段，如：为什么这样译": "Ask about this segment, e.g. why this wording",
+  "提问": "Ask",
+  "重译要求，如：更口语": "Retranslate instruction, e.g. more casual"
 }

@@ -75,8 +75,20 @@ def label(theme: str) -> str:
     return THEME_LABELS.get(theme, theme)
 
 
-@lru_cache(maxsize=64)
 def qcolor(value: str):
+    """token 值 → ``QColor``（每次返回**新副本**）。
+
+    解析结果有缓存，但调用方常常就地改它（``setAlpha`` 画阴影、描边）；若直接
+    返回缓存里的那个对象，一处 ``setAlpha(26)`` 就把所有用同一 token 的地方都改成
+    10% 不透明——任务卡缩略图的阴影就这样把工作台的译文染成了浅灰。
+    """
+    from PySide6.QtGui import QColor
+
+    return QColor(_qcolor_cached(value))
+
+
+@lru_cache(maxsize=64)
+def _qcolor_cached(value: str):
     """token 值 → ``QColor``。
 
     语义 token 里有一半是带 alpha 的 ``rgba(...)``（夜间主题的分隔线、悬停底色、

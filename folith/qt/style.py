@@ -547,11 +547,25 @@ QPushButton#subtleAction:hover {{ background: {t['bg-hover']}; color: {t['text-p
 QPushButton#ghostAction {{ background: transparent; border-color: transparent; color: {t['text-secondary']}; }}
 QPushButton#ghostAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 /* 工作台右侧操作栏：一行一个动作，左对齐、无边框，悬停才浮出底色 */
-QPushButton#panelAction {{
-    background: transparent; border-color: transparent; color: {t['text-primary']};
-    text-align: left; padding-left: {sp['sm']}px;
+/* 检查器操作分三档（acceptance-feedback 第 5 条）：
+   panelPrimary = 主操作（审校本段）；panelAction = 次要操作（描边）；
+   panelDanger  = 会改变交付内容的操作（排除本段，红字描边）。
+   此前 panelAction 是透明无边框，按钮看起来像一行普通文字。 */
+QPushButton#panelAction, QPushButton#panelPrimary, QPushButton#panelDanger {{
+    background: {t['control-bg']}; border: 1px solid {t['control-border']};
+    color: {t['text-primary']}; text-align: left; padding-left: {sp['sm'] + 2}px;
 }}
 QPushButton#panelAction:hover {{ background: {t['bg-hover']}; }}
+QPushButton#panelPrimary {{
+    background: {t['accent-soft']}; border-color: {t['accent-border']};
+    color: {t['accent']}; font-weight: 600;
+}}
+QPushButton#panelPrimary:hover {{ background: {t['accent-soft-hover']}; }}
+QPushButton#panelPrimary:disabled, QPushButton#panelDanger:disabled {{
+    background: {t['control-bg']}; border-color: {t['control-border']}; color: {t['text-muted']};
+}}
+QPushButton#panelDanger {{ color: {t['danger']}; border-color: {t['border-subtle']}; }}
+QPushButton#panelDanger:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
 QPushButton#panelAction:disabled {{ color: {t['text-muted']}; }}
 QPushButton#panelAction::menu-indicator {{ subcontrol-position: right center; right: {sp['sm']}px; }}
 /* 展开行的原文浮层：看起来就是表格里的字，只是可以选中 */

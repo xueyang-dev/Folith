@@ -2127,6 +2127,21 @@ class WorkbenchView(QWidget):
                        self.structure_button, self.view_source_button):
             button.setObjectName("panelAction")
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.review_button.setObjectName("panelPrimary")
+        self.review_button.setIcon(icons.icon("shield-check", 16, "accent"))
+        self.exclude_button.setObjectName("panelDanger")
+        self.exclude_button.setIcon(icons.icon("eye-off", 16, "danger"))
+        # 「AI 点评」挨着「审校本段」，并用一句话说清两者的区别：审校会改变审校
+        # 状态，点评只给建议（此前它是"需要注意"里一个蓝色链接，名字和审校分不清）。
+        self.analyze_button = _icon_button(QPushButton(i18n.tr('AI 点评本段')), "sparkles", "text-secondary")
+        self.analyze_button.setObjectName("panelAction")
+        self.analyze_button.setToolTip(
+            i18n.tr('让模型指出这一段值得注意的翻译取舍（最多 3 条，一次模型调用）；只给建议，不改变审校状态'))
+        self.analyze_button.clicked.connect(self._request_analysis)
+        self.review_hint = QLabel(i18n.tr('审校会更新这一段的审校状态；点评只给建议。'))
+        self.review_hint.setObjectName("hint")
+        self.review_hint.setWordWrap(True)
+        self.analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.selection_title = QLabel(i18n.tr('尚未选择段落'))
         self.selection_title.setObjectName("cardTitle")
@@ -2192,9 +2207,11 @@ class WorkbenchView(QWidget):
         inspector_layout.addWidget(self.single_segment_section)
 
         inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
-        for button in (self.review_button, self.review_selected_button,
+        for button in (self.review_button, self.analyze_button, self.review_selected_button,
                        self.retranslate_button):
             inspector_layout.addWidget(button)
+        inspector_layout.insertWidget(inspector_layout.indexOf(self.analyze_button) + 1,
+                                      self.review_hint)
         inspector_layout.addWidget(self.suggest_box)
         inspector_layout.addWidget(self.ask_box)
 
@@ -3335,10 +3352,15 @@ class WorkbenchView(QWidget):
         if source.text() != source_text:
             source.setText(source_text)
         target_text = _elide(row.draft_text if row.has_draft else row.target, 160)
+        untranslated = not target_text.strip()
+        if untranslated:
+            # 真正没有译文的段用占位说明，和已译文字一眼区分（第 5 条第 7 点）。
+            target_text = i18n.tr('（未翻译）')
         if target.text() != target_text:
             target.setText(target_text)
-        target.setForeground(style_module.qcolor(tokens["text-secondary"] if row.has_draft
-                                    else tokens["text-primary"]))
+        target.setForeground(style_module.qcolor(
+            tokens["text-muted"] if untranslated
+            else tokens["text-secondary"] if row.has_draft else tokens["text-primary"]))
         for column in range(3):
             item = self.segment_list.item(position, column)
             if item is not None:
@@ -3418,6 +3440,12 @@ class WorkbenchView(QWidget):
         tone, line = run_status_view(runtime, note=note, running=running,
                                      completed=completed, total=total,
                                      unit=str(stage_progress.get("unit") or ""))
+        # 边识别边翻译：识别还在后台推进时如实说明（原先挤在步骤条里）。
+        streaming = (self._state or {}).get("streaming_ingest") or {}
+        if streaming.get("status") == "running" and streaming.get("pages_total"):
+            recognised = i18n.tr("已识别 {v0}/{v1} 页", v0=int(streaming.get("pages_done") or 0),
+                                 v1=int(streaming.get("pages_total") or 0))
+            line = f"{line} · {recognised}" if line else recognised
         self.run_status.set_state(tone=tone, line=line)
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
@@ -3710,6 +3738,7 @@ class WorkbenchView(QWidget):
             self.context_view.set_context({})
             self.submit_button.setEnabled(False)
             self.review_button.setEnabled(False)
+            self.analyze_button.setEnabled(False)
             for label in (self.fact_state, self.fact_review, self.fact_source,
                           self.fact_terms, self.fact_excluded):
                 label.setText("—")
@@ -3791,9 +3820,11 @@ class WorkbenchView(QWidget):
         queue = [item for item in self._review_items
                  if item.get("kind") == "finding" and item.get("segment_index") == row.index]
         self.attention_list.set_items(
-            queue, adapter.segment_decisions(self._state, row.index), resolved_count,
-            can_analyze=bool(str(row.target or "").strip()) and not row.excluded,
-            analyzing=self._analyzing_index == row.index)
+            queue, adapter.segment_decisions(self._state, row.index), resolved_count)
+        can_analyze = bool(str(row.target or "").strip()) and not row.excluded
+        analyzing = self._analyzing_index == row.index
+        self.analyze_button.setEnabled(can_analyze and not analyzing)
+        self.analyze_button.setText(i18n.tr('正在点评…') if analyzing else i18n.tr('AI 点评本段'))
         self.term_list.set_terms(adapter.segment_terms(self._state, row.index))
         self.context_view.set_context(adapter.segment_context(self._state, row.index))
         if self._assist_index != row.index:
@@ -4042,6 +4073,8 @@ class WorkbenchView(QWidget):
         multiple = len(indexes) > 1
         self.review_selected_button.setVisible(multiple)
         self.review_button.setVisible(not multiple)
+        self.analyze_button.setVisible(not multiple)
+        self.review_hint.setVisible(not multiple)
         self.single_segment_section.setVisible(not multiple)
         self.segment_ops_section.setVisible(not multiple)
         self.ask_box.setVisible(not multiple)

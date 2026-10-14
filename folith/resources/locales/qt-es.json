@@ -1368,5 +1368,13 @@
   "切分段落": "Segmentando",
   "全文理解": "Comprensión del documento",
   "标注": "Anotación",
-  "筛选 · {v0}": "Filtro · {v0}"
+  "筛选 · {v0}": "Filtro · {v0}",
+  "（未翻译）": "(sin traducir)",
+  "AI 点评本段": "Comentario de IA sobre este segmento",
+  "让模型指出这一段值得注意的翻译取舍（最多 3 条，一次模型调用）；只给建议，不改变审校状态": "Pide al modelo hasta 3 decisiones de traducción destacables (una llamada); solo sugerencias, no cambia el estado de revisión",
+  "审校会更新这一段的审校状态；点评只给建议。": "La revisión actualiza el estado de este segmento; el comentario solo sugiere.",
+  "正在点评…": "Comentando…",
+  "问这一段，如：为什么这样译": "Pregunta sobre el segmento, p. ej. por qué así",
+  "提问": "Preguntar",
+  "重译要求，如：更口语": "Indicación, p. ej. más coloquial"
 }

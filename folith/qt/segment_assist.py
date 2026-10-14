@@ -282,9 +282,9 @@ class AskAgentBox(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.input = QLineEdit()
-        self.input.setPlaceholderText(i18n.tr('问问这一段，比如：这里为什么这样译？'))
+        self.input.setPlaceholderText(i18n.tr('问这一段，如：为什么这样译'))
         self.input.returnPressed.connect(self._ask)
-        self.button = QPushButton(i18n.tr('询问'))
+        self.button = QPushButton(i18n.tr('提问'))
         self.button.clicked.connect(self._ask)
         self.answer = _wrapped("", "agentAnswer")
         self.answer.setVisible(False)
@@ -333,9 +333,9 @@ class SuggestBox(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.input = QLineEdit()
-        self.input.setPlaceholderText(i18n.tr('按要求重译，比如：更口语一点'))
+        self.input.setPlaceholderText(i18n.tr('重译要求，如：更口语'))
         self.input.returnPressed.connect(self._suggest)
-        self.button = QPushButton(i18n.tr('生成'))
+        self.button = QPushButton(i18n.tr('重译'))
         self.button.clicked.connect(self._suggest)
         self.candidate = _wrapped("", "suggestionText")
         self.status = _wrapped("", "hint")

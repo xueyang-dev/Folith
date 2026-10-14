@@ -58,30 +58,25 @@ def test_running_translation_shows_the_cores_own_progress_and_unit():
         started=True,
         runtime={"status": "running",
                  "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}},
-        state={"pairs": []}, review={}, delivery={})
+        state={"paras": ["p"] * 8, "pairs": [{"target": "a"}, {"target": "b"}, {"target": ""}]},
+        review={}, delivery={})
     translate = _steps(view)["translate"]
     assert translate["state"] == stage.CURRENT
-    assert translate["hint"] == "2/8 批次"
+    # 已译 / 总段数，不是内部的「批次」（acceptance-feedback 第 5 条第 5 点）。
+    assert translate["hint"] == "2/8 段"
     assert view["current"] == stage.TRANSLATE
     assert view["action"] is None, "运行中的控制在头部的运行按钮上，不重复推荐动作"
 
 
-def test_streaming_translation_says_how_much_of_the_scan_is_recognised():
-    state = {"pairs": [], "streaming_ingest": {"status": "running", "pages_done": 40,
-                                               "pages_total": 308}}
+def test_streaming_recognition_is_not_crammed_into_the_step():
+    state = {"paras": ["p"] * 8, "pairs": [{"target": "a"}, {"target": "b"}],
+             "streaming_ingest": {"status": "running", "pages_done": 40, "pages_total": 308}}
     view = stage.stage_view(
         started=True,
         runtime={"status": "running",
                  "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}},
         state=state, review={}, delivery={})
-    assert _steps(view)["translate"]["hint"] == "2/8 批次 · 已识别 40/308 页"
-    state["streaming_ingest"]["status"] = "complete"
-    view = stage.stage_view(
-        started=True,
-        runtime={"status": "running",
-                 "stage_progress": {"completed": 2, "total": 8, "unit": "批次"}},
-        state=state, review={}, delivery={})
-    assert _steps(view)["translate"]["hint"] == "2/8 批次"
+    assert _steps(view)["translate"]["hint"] == "2/8 段"
 
 
 def test_unit_progress_beats_batch_progress_and_falls_back_to_the_segment_count():
@@ -93,7 +88,7 @@ def test_unit_progress_beats_batch_progress_and_falls_back_to_the_segment_count(
     assert _steps(both)["translate"]["hint"] == "3/10 段"
     bare = stage.stage_view(started=True, runtime={"status": "running"},
                             state={"pairs": [{}, {}]}, review={}, delivery={})
-    assert _steps(bare)["translate"]["hint"] == "2 段"
+    assert _steps(bare)["translate"]["hint"] == "0/2 段"
     nothing = stage.stage_view(started=True, runtime={"status": "idle"},
                                state={}, review={}, delivery={})
     assert _steps(nothing)["translate"]["hint"] == ""
