@@ -212,19 +212,24 @@ _TASK_FIELDS: Tuple[_Field, ...] = (
     _Field("reviewer_base_url"),
     _Field("reasoning_effort", truthy=True),
     _Field("target_lang", truthy=True, state_keys=("target_lang",)),
-    _Field("auto_term"),
+    # The task-setup panel saves the strategy preset into the job state; without
+    # these state keys the live EngineConfig (the global task defaults) won and a
+    # 快速 task still ran term extraction and the independent review.
+    _Field("auto_term", state_keys=("auto_term",)),
     _Field("translation_theory", truthy=True, state_keys=("theory",)),
     _Field("user_glossary", truthy=True, state_keys=("glossary",)),
     _Field("style_rules"),
-    _Field("enable_review"),
+    _Field("enable_review", state_keys=("enable_review",)),
     _Field("enable_annotate", state_keys=("enable_annotate",)),
     _Field("enable_report", state_keys=("report_enabled",)),
-    _Field("use_tm"),
+    _Field("use_tm", state_keys=("use_tm",)),
     _Field("enable_understanding", state_keys=("enable_understanding",),
            persisted_default="understanding"),
     _Field("enable_source_cleanup", state_keys=("enable_source_cleanup",),
            persisted_default="pdf_cleanup"),
-    _Field("strict_terminology_governance", state_keys=("quality_mode",)),
+    # The panel writes the field name; the pipeline persists it as `quality_mode`.
+    _Field("strict_terminology_governance",
+           state_keys=("strict_terminology_governance", "quality_mode")),
     _Field("segmentation_mode", truthy=True, state_derived="locked_segmentation"),
     _Field("translation_concurrency", truthy=True),
     _Field("batch_size", truthy=True),

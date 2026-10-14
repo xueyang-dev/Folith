@@ -1457,3 +1457,57 @@ def test_a_translated_display_name_is_never_used_as_a_value(
             panel.close()
     finally:
         i18n.set_language("zh-CN")
+
+
+# ---------------------------------------------------------------------------
+# 模式开关必须真的生效：任务保存的预设优先于全局「任务默认值」
+# ---------------------------------------------------------------------------
+
+_PRESET_FIELDS = ("auto_term", "use_tm", "enable_understanding", "enable_review",
+                  "strict_terminology_governance")
+
+
+@pytest.mark.parametrize("preset_key", task_setup.STRATEGY_PRESET_KEYS)
+@pytest.mark.parametrize("global_default", [True, False])
+def test_saved_strategy_preset_wins_over_the_global_task_defaults(
+        data_env, preset_key, global_default):
+    """快速 / 标准 / 精细 保存之后，流水线拿到的就是这个模式的开关。
+
+    回归：`auto_term` / `enable_review` / `use_tm` 原先没有 state_keys，全局设置里的
+    勾选总是赢，选「快速」照样跑审校；严格术语治理写成 `strict_terminology_governance`
+    却只读 `quality_mode`，「精细」从来没有锁定术语。
+    """
+    job_id = _new_task(data_env)
+    preset = task_setup.STRATEGY_PRESETS[preset_key]
+    config = adapter.EngineConfig(
+        provider="自定义中转站", model="m", api_key="k", base_url="http://127.0.0.1:9/v1",
+        target_lang="简体中文", enable_review=global_default, auto_term=global_default,
+        use_tm=global_default, enable_understanding=global_default,
+        enable_report=False, enable_source_cleanup=False)
+    setup = dict(adapter.task_setup_view(config, job_id))
+    setup["strategy"] = dict(preset)
+    setup["strategy_preset"] = preset_key
+    setup["delivery"] = dict(task_setup.DELIVERY_PRESET_CONFIGS["standard"])
+    adapter.apply_task_setup(config, job_id, setup)
+
+    effective = adapter.pipeline_kwargs(config, core.load_job_state(job_id))
+    assert {name: bool(effective.get(name)) for name in _PRESET_FIELDS} == \
+        {name: bool(preset[name]) for name in _PRESET_FIELDS}
+
+
+def test_a_started_task_keeps_the_switches_it_actually_ran_with(data_env):
+    """已经开始的任务按 `pipeline_config` 里实际生效过的值继续，不被新规则改写。"""
+    job_id = _new_task(data_env)
+    state = core.load_job_state(job_id)
+    state.update({"p1_done": True, "strategy_preset": "标准",
+                  "enable_review": False, "auto_term": True, "use_tm": True,
+                  "pipeline_config": {"enable_review": True, "auto_term": True,
+                                      "use_tm": True,
+                                      "strict_terminology_governance": False}})
+    core.save_job_state(job_id, state)
+    config = adapter.EngineConfig(
+        provider="自定义中转站", model="m", api_key="k", base_url="http://127.0.0.1:9/v1",
+        target_lang="简体中文", enable_review=False, enable_report=False,
+        enable_source_cleanup=False)
+    effective = adapter.pipeline_kwargs(config, core.load_job_state(job_id))
+    assert effective["enable_review"] is True
