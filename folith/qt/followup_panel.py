@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextBrowser,
-    QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QScrollArea,
+    QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from . import adapter
@@ -35,6 +35,7 @@ class FollowupPanel(QWidget):
     acceptRequested = Signal(str)                   # source
     rescanRequested = Signal(dict)                  # backend / mode / language / quality
     excludeFragmentsRequested = Signal(list)        # 疑似碎片段的索引
+    locateRequested = Signal(int)                   # 定位到某一段（段索引）
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -198,12 +199,35 @@ class FollowupPanel(QWidget):
         self.fragments_card = fragments_card
         self._fragments: list[int] = []
 
+        # ---- 翻译失败的批次 ---------------------------------------------------
+        self.failures_title = QLabel(i18n.tr('翻译失败的批次'))
+        self.failures_title.setObjectName("sectionTitle")
+        self.failures_text = label(muted=True)
+        self.failures_list = QListWidget()
+        self.failures_list.itemDoubleClicked.connect(self._locate_failure)
+        self.failures_list.currentRowChanged.connect(
+            lambda row: self.failures_locate.setEnabled(row >= 0))
+        self.failures_locate = QPushButton(i18n.tr('定位到这一段'))
+        self.failures_locate.setEnabled(False)
+        self.failures_locate.clicked.connect(lambda: self._locate_failure())
+        failures_card = Card()
+        failures = QVBoxLayout(failures_card)
+        failures.setContentsMargins(16, 14, 16, 14)
+        failures.setSpacing(8)
+        failures.addWidget(self.failures_title)
+        failures.addWidget(self.failures_text)
+        failures.addWidget(self.failures_list)
+        failures.addWidget(self.failures_locate, 0, Qt.AlignmentFlag.AlignLeft)
+        self.failures_card = failures_card
+        self._failures: list[dict] = []
+
         content = QWidget()
         content.setObjectName("pageCanvas")
         column = QVBoxLayout(content)
         column.setContentsMargins(0, 8, 0, 0)
         column.setSpacing(12)
         column.addWidget(recovery_card)
+        column.addWidget(failures_card)
         column.addWidget(retry_card)
         column.addWidget(entity_card)
         column.addWidget(fragments_card)
@@ -285,6 +309,7 @@ class FollowupPanel(QWidget):
         self.annotation_button.setEnabled(not self._busy)
         self.retry_card.setVisible(degraded or partial)
 
+        self._apply_failures(self._view.get("failures") or [])
         self._apply_rescan(self._view.get("rescan") or {})
         self._apply_extraction(self._view.get("extraction") or {})
         entities = list(self._view.get("entities") or [])
@@ -300,8 +325,37 @@ class FollowupPanel(QWidget):
             self.entity_hint.setText(i18n.tr('{v0} 个实体的当前译名需要确认；书名号和引号差异已合并。',
                                              v0=len(entities)))
             self._entity_changed()
-        has_work = bool(self._view.get("has_work")) or bool(current) or degraded or partial or bool(entities)
+        has_work = (bool(self._view.get("has_work")) or bool(current) or degraded or partial
+                    or bool(entities) or bool(self._failures))
         self.empty.setVisible(not has_work)
+
+    def _apply_failures(self, failures: list[dict]) -> None:
+        """翻译协议失败、当前译文还没补上的批次：列出段范围与原因，可定位过去。"""
+        self._failures = [dict(item) for item in failures]
+        self.failures_card.setVisible(bool(self._failures))
+        self.failures_list.clear()
+        if not self._failures:
+            return
+        segments = sum(int(item.get("count") or 0) for item in self._failures)
+        self.failures_text.setText(i18n.tr(
+            '{v0} 个批次（共 {v1} 段）的模型回复无法使用，这些段还没有可用译文。'
+            '「重试当前步骤」会只补译这些段；也可以定位过去逐段处理。',
+            v0=len(self._failures), v1=segments))
+        for item in self._failures:
+            reason = " ".join(str(item.get("reason") or "").split())
+            text = i18n.tr('第 {v0} 批 · 第 {v1}–{v2} 段', v0=item.get("batch"),
+                           v1=int(item.get("start") or 0) + 1, v2=int(item.get("end") or 0) + 1)
+            entry = QListWidgetItem(text + (f" · {reason[:80]}" if reason else ""))
+            entry.setToolTip(reason)
+            entry.setData(Qt.ItemDataRole.UserRole, int(item.get("start") or 0))
+            self.failures_list.addItem(entry)
+        rows = min(self.failures_list.count(), 5)
+        self.failures_list.setFixedHeight(rows * self.failures_list.sizeHintForRow(0) + 12)
+
+    def _locate_failure(self, item=None) -> None:
+        item = item or self.failures_list.currentItem()
+        if item is not None:
+            self.locateRequested.emit(int(item.data(Qt.ItemDataRole.UserRole) or 0))
 
     def _apply_extraction(self, report: dict) -> None:
         available = bool(report.get("available"))

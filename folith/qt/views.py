@@ -2342,6 +2342,7 @@ class WorkbenchView(QWidget):
         self.followup_panel.repairRequested.connect(self.entityRepairRequested.emit)
         self.followup_panel.acceptRequested.connect(self.entityAcceptRequested.emit)
         self.followup_panel.rescanRequested.connect(self.rescanRequested.emit)
+        self.followup_panel.locateRequested.connect(self._locate_segment_from_followup)
         self.activity_panel = ActivityPanel()
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))
@@ -2653,9 +2654,17 @@ class WorkbenchView(QWidget):
         self.followup_panel.apply(view)
         count = int(bool((view.get("understanding") or {}).get("status") == "degraded")) \
             + int(bool((view.get("annotation") or {}).get("status") == "partial")) \
-            + len(view.get("entities") or [])
+            + len(view.get("entities") or []) + len(view.get("failures") or [])
         self._followup_count = count
         self._sync_more_pages()
+
+    def _locate_segment_from_followup(self, index: int) -> None:
+        """「检查与修复」里点一个失败批次：回到翻译页并选中那一段（清掉会挡住它的筛选）。"""
+        self.show_page("translate")
+        if not self.select_segment(index):
+            self.search_edit.clear()
+            self.set_status_filter("全部")
+            self.select_segment(index)
 
     def _render_details(self) -> None:
         """任务详情只在打开这一页、且状态对象换了时重算。
@@ -2677,6 +2686,11 @@ class WorkbenchView(QWidget):
             groups = []
         profile = dict(self._state.get("document_profile") or {})
         self.details_panel.apply(groups, profile, adapter.profile_summary(profile))
+        try:
+            facts = adapter.run_facts(self._state)
+        except Exception:  # noqa: BLE001 - 用量/理解读不出只是少两张卡
+            facts = {}
+        self.details_panel.apply_run_facts(facts)
 
     def _render_activity(self) -> None:
         """活动记录按事件日志的签名重读：日志没变就不碰（轮询每秒一次）。"""

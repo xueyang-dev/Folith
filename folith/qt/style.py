@@ -719,6 +719,13 @@ QPlainTextEdit#targetEdit {{
 QPlainTextEdit#targetEdit:focus {{ border-color: {t['accent']}; }}
 QLineEdit#pathValue {{ background: transparent; border: none; padding: 0; color: {t['text-primary']}; }}
 QTextBrowser#diagnosticsView {{ font-family: {", ".join(repr(name) for name in theme_module.MONO_STACK)}; }}
+/* 任务详情「全文理解」：只读沉底面板。min-height 必须写在 QSS 里——上面那条
+   `QTextBrowser {{ min-height: 0 }}` 会覆盖代码里的 setMinimumHeight。 */
+QTextBrowser#understandingView {{
+    background: {t['bg-surface-sunken']}; border: 1px solid {t['border-faint']};
+    border-radius: {r['sm']}px; padding: {sp['sm']}px; color: {t['text-primary']};
+    min-height: 300px;
+}}
 /* 工作台"检查项"：只读报告面（沉底面板），不要输入框那种聚焦边框 */
 QTextBrowser#qaView {{
     background: {t['bg-surface-sunken']};

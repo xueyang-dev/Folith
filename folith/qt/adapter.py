@@ -1508,7 +1508,10 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
     except Exception:  # noqa: BLE001
         recovery = {}
     busy = bool(core._job_execution_alive(job_id))
+    failures = run_facts(state)["failures"]
     return {
+        # 翻译协议失败、还没被当前译文补上的批次（"重试当前步骤"会补译它们）。
+        "failures": failures,
         "rescan": rescan_view(state),
         "extraction": extraction_report_view(state),
         "recovery": recovery,
@@ -1522,9 +1525,123 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         "busy": busy,
         "has_work": bool(
             understanding.get("status") == "degraded"
-            or annotation.get("status") == "partial" or entities
+            or annotation.get("status") == "partial" or entities or failures
             or recovery.get("current_batch")),
     }
+
+
+#: 用量账本里的角色 → 界面标签（目录键）。
+USAGE_ROLE_LABELS = {"translation": "翻译", "review": "审校", "auxiliary": "辅助（画像、理解、标注）"}
+
+
+def run_facts(state: dict) -> dict:
+    """运行透明度：用量、复用、全文理解结果、失败批次（纯函数，只读任务状态）。
+
+    这些都是核心在运行中**已经记下**、但界面此前从不显示的事实：
+
+    * ``llm_usage``（`folith.usage`）：调用次数 / 失败 / 耗时 / token。提供方没回报
+      token 时按字符估算——界面必须说清"估算，不是账单"；
+    * ``tm_used_count`` / ``tm_recovered_count`` / ``translation_cache``：翻译记忆与
+      "完全相同原文"缓存各省下了多少次翻译；
+    * ``document_synopsis`` / ``section_digests`` / ``understanding_*``：全文理解产出的
+      概要与各单元摘要（模型没给结构化结果时是"首句备用"，要如实标出）；
+    * ``translation_failures``：翻译协议失败的批次（已被当前译文补上的标为已恢复）。
+    没有数据的部分 ``available`` 为 False，界面不显示，不编造零值。
+    """
+    state = state or {}
+
+    def as_int(value) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    ledger = state.get("llm_usage") if isinstance(state.get("llm_usage"), dict) else {}
+    calls = as_int(ledger.get("calls"))
+    exact_calls = as_int(ledger.get("exact_token_calls"))
+    roles = []
+    for key, slot in (ledger.get("by_role") or {}).items():
+        if isinstance(slot, dict) and as_int(slot.get("calls")):
+            roles.append({"role": str(key), "label": USAGE_ROLE_LABELS.get(str(key), str(key)),
+                          "calls": as_int(slot.get("calls")),
+                          "failures": as_int(slot.get("failures")),
+                          "tokens": as_int(slot.get("total_tokens"))})
+    roles.sort(key=lambda item: list(USAGE_ROLE_LABELS).index(item["role"])
+               if item["role"] in USAGE_ROLE_LABELS else 99)
+    models = []
+    for key, slot in (ledger.get("by_provider_model") or {}).items():
+        if isinstance(slot, dict) and as_int(slot.get("calls")):
+            provider, _, model = str(key).partition("::")
+            models.append({"label": " · ".join(part for part in (provider, model)
+                                                if part and part != "unknown") or str(key),
+                           "calls": as_int(slot.get("calls")),
+                           "tokens": as_int(slot.get("total_tokens"))})
+    models.sort(key=lambda item: -item["tokens"])
+    usage = {
+        "available": calls > 0,
+        "calls": calls,
+        "failures": as_int(ledger.get("failures")),
+        "seconds": round(float(ledger.get("latency_seconds") or 0.0), 1),
+        "total_tokens": as_int(ledger.get("total_tokens")),
+        "prompt_tokens": as_int(ledger.get("prompt_tokens")),
+        "completion_tokens": as_int(ledger.get("completion_tokens")),
+        # 全部调用都有提供方回报的 token 才算"精确"；只要有一次是估算就整体标为估算。
+        "estimated": calls > 0 and exact_calls < calls,
+        "roles": roles,
+        "models": models,
+    }
+
+    cache = state.get("translation_cache") if isinstance(state.get("translation_cache"), dict) else {}
+    reuse = {
+        "tm_used": as_int(state.get("tm_used_count")),
+        "tm_recovered": as_int(state.get("tm_recovered_count")),
+        "cache_hits": as_int(cache.get("hits")),
+        "cache_misses": as_int(cache.get("misses")),
+    }
+    reuse["available"] = bool(reuse["tm_used"] or reuse["tm_recovered"] or reuse["cache_hits"])
+
+    synopsis = state.get("document_synopsis") if isinstance(state.get("document_synopsis"), dict) else {}
+    digests = [item for item in state.get("section_digests") or [] if isinstance(item, dict)]
+    sections = []
+    for item in digests:
+        start, end = item.get("start_segment"), item.get("end_segment")
+        sections.append({
+            "label": str(item.get("label") or ""),
+            "start": start if isinstance(start, int) else None,
+            "end": end if isinstance(end, int) else None,
+            "summary": str(item.get("summary") or ""),
+            "terms": [str(term) for term in item.get("key_terms") or []][:8],
+            "fallback": item.get("status") == "deterministic_fallback",
+        })
+    understanding = {
+        "available": bool(str(synopsis.get("summary") or "").strip() or sections),
+        "status": str(state.get("understanding_status") or ""),
+        "summary": str(synopsis.get("summary") or ""),
+        "arc": str(synopsis.get("document_arc") or ""),
+        "themes": [str(item) for item in synopsis.get("themes") or []][:10],
+        "terms": [str(item) for item in synopsis.get("terms") or []][:16],
+        "notes": [str(item) for item in synopsis.get("translation_notes") or []][:10],
+        "synopsis_fallback": synopsis.get("status") == "deterministic_fallback",
+        "sections": sections,
+        "warnings": [str(item) for item in state.get("understanding_warnings") or []
+                     if str(item).strip()],
+    }
+
+    failures, recovered = [], 0
+    for item in state.get("translation_failures") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("recovered"):
+            recovered += 1
+            continue
+        offset, count = item.get("offset"), item.get("segment_count")
+        if not isinstance(offset, int) or not isinstance(count, int) or count <= 0:
+            continue
+        failures.append({"batch": as_int(item.get("batch")) + 1, "start": offset,
+                         "end": offset + count - 1, "count": count,
+                         "reason": str(item.get("reason") or "")[:300]})
+    return {"usage": usage, "reuse": reuse, "understanding": understanding,
+            "failures": failures, "failures_recovered": recovered}
 
 
 def extraction_report_view(state: dict) -> dict:
