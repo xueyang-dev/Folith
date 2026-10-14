@@ -1355,5 +1355,17 @@
   "论证 / 叙事主线": "Argument / narrative arc",
   "辅助（画像、理解、标注）": "Auxiliary (profile, understanding, annotation)",
   "还没有模型调用记录。": "No model calls recorded yet.",
-  "首句备用": "first-sentence stand-in"
+  "首句备用": "first-sentence stand-in",
+  "查看运行记录": "View run log",
+  "运行状态": "Run status",
+  "检查与修复 · {v0} 项待处理": "Checks & fixes · {v0} open",
+  "关闭检查与修复": "Close checks & fixes",
+  "已完成 · {v0} 分钟": "Done · {v0} min",
+  "已有 {v0} 分钟没有进展，可以暂停后重试": "No progress for {v0} min — you can pause and retry",
+  "正在等待模型响应 · {v0} 秒": "Waiting for the model · {v0} s",
+  "步骤失败": "Step failed",
+  "读取原文": "Reading source",
+  "切分段落": "Segmenting",
+  "全文理解": "Document understanding",
+  "标注": "Annotation"
 }

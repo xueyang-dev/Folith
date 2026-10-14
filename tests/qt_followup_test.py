@@ -184,16 +184,28 @@ def test_panel_offers_the_right_annotation_retry_label(qapp):
     assert seen == ["annotation"]
 
 
-def test_workbench_more_menu_counts_the_open_items(qapp, job):
+def test_check_icon_counts_the_open_items_and_opens_the_drawer(qapp, job):
     from folith.qt import views
 
     bench = views.WorkbenchView()
     state = adapter.load_state(job)
     bench.load(job, adapter.EngineConfig(target_lang="简体中文"), state,
                adapter.segment_rows(job, state), [])
-    # 待办数挂在步骤条的"更多"上；"检查与修复"页本身在它的菜单里。
-    assert "(1)" in bench.stage_bar.more_button.text()
-    assert "followup" in bench.stage_bar.more_page_ids()
+    # 待办数只挂在进度条旁的「检查与修复」图标上（有项变黄）；「更多」不再带数字，
+    # 菜单里也不再有这一页（acceptance-feedback D3 / 1a）。
+    assert bench.check_button.badge.text() == "1"
+    assert bench.check_button.tone() == "warning"
+    assert "(" not in bench.stage_bar.more_button.text()
+    assert "followup" not in bench.stage_bar.more_page_ids()
+    # 点图标：右侧面板打开、段落检查器让位；再点一次收起。
+    bench.check_button.click()
+    assert bench.followup_drawer_open()
+    assert not bench.inspector_scroll.isVisibleTo(bench)
+    bench.show_page("followup")  # old jump target still lands on the drawer
+    assert bench.followup_drawer_open()
+    bench.check_button.click()
+    assert not bench.followup_drawer_open()
+    assert bench.inspector_scroll.isVisibleTo(bench)
 
 
 # --------------------------------------------------------- 重新扫描 PDF -------

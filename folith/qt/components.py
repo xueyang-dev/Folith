@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import (QImage, QKeySequence, QLinearGradient, QPainter, QPainterPath,
-                           QShortcut)
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QLinearGradient,
+                           QPainter, QPainterPath, QShortcut)
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QSizePolicy, QVBoxLayout, QWidget)
+                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from . import icons
+from . import motion
 from . import style as style_module
 from . import theme as theme_module
 from .style import Card, SegmentedControl, repolish
@@ -538,3 +539,228 @@ class Switch(style_module.CheckBox):
             painter.drawRoundedRect(track, track.height() / 2, track.height() / 2)
             painter.setPen(pen)
         painter.end()
+
+
+# --------------------------------------------------------------------------
+# Run progress (docs/qt-beta/acceptance-feedback-2026-10-14.md §6, §11)
+# --------------------------------------------------------------------------
+
+#: Run tone → fill token.  Colour is never the only signal: the run status line
+#: beside the track always says the same thing in words.
+PROGRESS_TONES = {
+    "running": "accent", "waiting": "accent", "retrying": "warning",
+    "stalled": "warning", "failed": "danger", "paused": "text-muted",
+    "done": "success", "idle": "text-muted",
+}
+
+
+class ProgressTrack(QWidget):
+    """A native-looking progress bar (macOS NSProgressIndicator, bar style).
+
+    Rounded, slightly sunken track; fill in the run's tone colour with a soft top
+    highlight.  ``waiting`` / ``retrying`` / an indeterminate range show a slow
+    moving sheen so a long model call never looks frozen; with reduced motion
+    the sheen is not drawn.  The value API mirrors ``QProgressBar``
+    (``setRange`` / ``setValue`` / ``minimum`` / ``maximum`` / ``value``;
+    ``setRange(0, 0)`` means indeterminate).
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(6)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._minimum, self._maximum, self._value = 0, 100, 0
+        self._tone = "running"
+        self._phase = 0.0
+        self._sheen = QTimer(self)
+        self._sheen.setInterval(33)
+        self._sheen.timeout.connect(self._advance)
+
+    # QProgressBar-compatible value API --------------------------------
+    def setRange(self, minimum: int, maximum: int) -> None:  # noqa: N802 - Qt naming
+        self._minimum, self._maximum = int(minimum), max(int(minimum), int(maximum))
+        self._value = max(self._minimum, min(self._value, self._maximum))
+        self._sync_sheen()
+        self.update()
+
+    def setValue(self, value: int) -> None:  # noqa: N802 - Qt naming
+        self._value = max(self._minimum, min(int(value), self._maximum))
+        self.update()
+
+    def minimum(self) -> int:
+        return self._minimum
+
+    def maximum(self) -> int:
+        return self._maximum
+
+    def value(self) -> int:
+        return self._value
+
+    def indeterminate(self) -> bool:
+        return self._maximum == self._minimum == 0
+
+    def fraction(self) -> float | None:
+        span = self._maximum - self._minimum
+        return None if span <= 0 else (self._value - self._minimum) / span
+
+    def set_tone(self, tone: str) -> None:
+        tone = tone if tone in PROGRESS_TONES else "running"
+        if tone != self._tone:
+            self._tone = tone
+            self._sync_sheen()
+            self.update()
+
+    def tone(self) -> str:
+        return self._tone
+
+    # -------------------------------------------------------------------
+    def _wants_sheen(self) -> bool:
+        return (self.indeterminate() or self._tone in ("waiting", "retrying")) \
+            and not motion.reduced()
+
+    def _sync_sheen(self) -> None:
+        if self._wants_sheen() and self.isVisible():
+            if not self._sheen.isActive():
+                self._sheen.start()
+        else:
+            self._sheen.stop()
+
+    def _advance(self) -> None:
+        speed = 0.008 if self._tone == "retrying" else 0.016
+        self._phase = (self._phase + speed) % 1.0
+        self.update()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        self._sync_sheen()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().hideEvent(event)
+        self._sheen.stop()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt naming
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = rect.height() / 2
+        rtl = self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+        # Track: sunken surface, a hairline darker at the top (the groove).
+        painter.setBrush(theme_module.qcolor(tokens["bg-surface-sunken"]))
+        painter.drawRoundedRect(rect, radius, radius)
+        groove = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        shade = QColor(0, 0, 0, 28)
+        groove.setColorAt(0.0, shade)
+        groove.setColorAt(0.5, QColor(0, 0, 0, 0))
+        painter.setBrush(groove)
+        painter.drawRoundedRect(rect, radius, radius)
+        # Fill.
+        colour = theme_module.qcolor(tokens[PROGRESS_TONES.get(self._tone, "accent")])
+        share = self.fraction()
+        if share is None:
+            share = 1.0 if self._tone in ("failed", "done", "stalled") else 0.0
+        width = rect.width() * max(0.0, min(1.0, share))
+        if width > 0:
+            if width < rect.height():
+                width = rect.height()  # keep the rounded cap visible
+            fill = QRectF(rect.right() - width if rtl else rect.left(), rect.top(),
+                          width, rect.height())
+            body = QLinearGradient(fill.topLeft(), fill.bottomLeft())
+            body.setColorAt(0.0, colour.lighter(118))
+            body.setColorAt(1.0, colour)
+            painter.setBrush(body)
+            painter.drawRoundedRect(fill, radius, radius)
+        # Sheen: a soft band sweeping across (indeterminate or waiting).
+        if self._wants_sheen():
+            band = rect.width() * 0.35
+            start = -band + (rect.width() + band) * self._phase
+            x = rect.right() - start - band if rtl else rect.left() + start
+            sheen = QLinearGradient(QPointF(x, 0), QPointF(x + band, 0))
+            glow = QColor(colour if width <= 0 else QColor(255, 255, 255))
+            glow.setAlpha(0)
+            peak = QColor(glow)
+            peak.setAlpha(90 if width > 0 else 120)
+            sheen.setColorAt(0.0, glow)
+            sheen.setColorAt(0.5, peak)
+            sheen.setColorAt(1.0, glow)
+            painter.setBrush(sheen)
+            clip = QPainterPath()
+            clip.addRoundedRect(rect, radius, radius)
+            painter.setClipPath(clip)
+            painter.drawRect(QRectF(x, rect.top(), band, rect.height()))
+        painter.end()
+
+
+# --------------------------------------------------------------------------
+# Popover
+# --------------------------------------------------------------------------
+
+class Popover(QFrame):
+    """A light popover anchored under a control (run log, task details, …).
+
+    ``Qt.Popup``: a click outside or Esc closes it — the system behaviour, no
+    global click filter.  ✕ closes it too.  It is placed below the anchor,
+    right-aligned with it, and kept inside the anchor's screen.
+    """
+
+    closed = Signal()
+
+    def __init__(self, title: str, content: QWidget, parent: QWidget | None = None, *,
+                 size: QSize = QSize(440, 380)) -> None:
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("popover")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.resize(size)
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("sectionTitle")
+        self.subtitle_label = QLabel("")
+        self.subtitle_label.setObjectName("hint")
+        self.subtitle_label.setVisible(False)
+        self.close_button = QToolButton()
+        self.close_button.setObjectName("roundButton")
+        self.close_button.setIcon(icons.icon("x", 14, "text-secondary"))
+        self.close_button.setIconSize(QSize(14, 14))
+        self.close_button.setAccessibleName(title)
+        self.close_button.setToolTip(QKeySequence("Esc").toString())
+        self.close_button.clicked.connect(self.close)
+        head_text = QVBoxLayout()
+        head_text.setContentsMargins(0, 0, 0, 0)
+        head_text.setSpacing(0)
+        head_text.addWidget(self.title_label)
+        head_text.addWidget(self.subtitle_label)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.addLayout(head_text, 1)
+        head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
+                                  theme_module.SPACE["md"], theme_module.SPACE["md"])
+        layout.setSpacing(theme_module.SPACE["sm"])
+        layout.addLayout(head)
+        self.content = content
+        layout.addWidget(content, 1)
+
+    def set_subtitle(self, text: str) -> None:
+        self.subtitle_label.setText(text)
+        self.subtitle_label.setVisible(bool(text))
+
+    def open_at(self, anchor: QWidget) -> None:
+        """Show below ``anchor``, right edges aligned, clamped to its screen."""
+        below = anchor.mapToGlobal(QPoint(anchor.width(), anchor.height() + 6))
+        x, y = below.x() - self.width(), below.y()
+        screen = anchor.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            x = max(area.left() + 8, min(x, area.right() - self.width() - 8))
+            if y + self.height() > area.bottom() - 8:
+                y = max(area.top() + 8,
+                        anchor.mapToGlobal(QPoint(0, 0)).y() - self.height() - 6)
+        self.move(x, y)
+        self.show()
+        self.raise_()
+        self.close_button.setFocus(Qt.FocusReason.PopupFocusReason)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().closeEvent(event)
+        self.closed.emit()

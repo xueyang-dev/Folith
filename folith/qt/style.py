@@ -473,6 +473,28 @@ QToolButton#roundButton:hover {{ background: {t['bg-hover']}; color: {t['text-pr
 QToolButton#roundButton:pressed {{ background: {t['bg-selected']}; }}
 QToolButton#roundButton:focus {{ border-color: {t['accent']}; }}
 QToolButton#roundButton:checked {{ background: {t['accent-soft']}; border-color: {t['accent-border']}; }}
+/* 轻浮窗（运行记录、任务详情）：Qt.Popup，点外面 / Esc 关闭。 */
+QFrame#popover {{
+    background: {t['bg-surface-raised']}; border: 1px solid {t['border-subtle']};
+    border-radius: {r['md']}px;
+}}
+QFrame#popover QListWidget {{ background: transparent; border: none; }}
+/* 运行状态组：进度条 + 百分比 + 状态说明，整组可点（打开运行记录）。 */
+QFrame#runStatus {{ background: transparent; border: 1px solid transparent; border-radius: {r['sm']}px; }}
+QFrame#runStatus:hover {{ background: {t['bg-hover']}; }}
+QFrame#runStatus:focus {{ border-color: {t['focus-ring']}; }}
+QLabel#runStatusLine {{ color: {t['text-secondary']}; font-size: {f['micro']}px; background: transparent; }}
+QLabel#runStatusLine[tone="retrying"], QLabel#runStatusLine[tone="stalled"] {{ color: {t['warning']}; }}
+QLabel#runStatusLine[tone="failed"] {{ color: {t['danger']}; }}
+QLabel#runStatusPercent {{ color: {t['text-secondary']}; font-size: {f['micro']}px; background: transparent; }}
+/* 检查与修复：进度条旁的状态图标；有问题时变黄 / 变红。 */
+QToolButton#roundButton[check="warning"] {{ border-color: {t['warning']}; background: {t['warning-soft']}; }}
+QToolButton#roundButton[check="danger"] {{ border-color: {t['danger']}; background: {t['danger-soft']}; }}
+QLabel#countBadge {{
+    background: {t['danger']}; color: {t['text-on-accent']}; border-radius: 7px;
+    min-width: 14px; max-height: 14px; padding: 0 3px; font-size: {f['micro']}px; font-weight: 600;
+}}
+QToolButton#roundButton[check="warning"] QLabel#countBadge {{ background: {t['warning']}; }}
 
 /* ================= 按钮 ================= */
 QPushButton {{

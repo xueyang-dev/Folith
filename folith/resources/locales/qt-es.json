@@ -1355,5 +1355,17 @@
   "论证 / 叙事主线": "Hilo argumental / narrativo",
   "辅助（画像、理解、标注）": "Auxiliar (perfil, comprensión, anotación)",
   "还没有模型调用记录。": "Aún no hay llamadas al modelo.",
-  "首句备用": "primera frase provisional"
+  "首句备用": "primera frase provisional",
+  "查看运行记录": "Ver registro de ejecución",
+  "运行状态": "Estado de la ejecución",
+  "检查与修复 · {v0} 项待处理": "Revisión y correcciones · {v0} pendientes",
+  "关闭检查与修复": "Cerrar revisión y correcciones",
+  "已完成 · {v0} 分钟": "Completado · {v0} min",
+  "已有 {v0} 分钟没有进展，可以暂停后重试": "Sin avances desde hace {v0} min: puedes pausar y reintentar",
+  "正在等待模型响应 · {v0} 秒": "Esperando al modelo · {v0} s",
+  "步骤失败": "El paso falló",
+  "读取原文": "Leyendo el original",
+  "切分段落": "Segmentando",
+  "全文理解": "Comprensión del documento",
+  "标注": "Anotación"
 }

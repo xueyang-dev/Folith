@@ -1449,6 +1449,169 @@ class HomeView(QWidget):
                 return
 
 
+#: Core stage id → short label for the run status line.
+_RUN_STAGE_LABELS = {
+    "document_processing": "读取原文", "segment_build": "切分段落",
+    "terminology": "术语", "understanding": "全文理解", "translation": "翻译",
+    "review": "审校", "annotation": "标注", "delivery": "交付", "report": "报告",
+}
+_STALL_AFTER_S = 120
+
+
+def _parse_iso(value) -> float | None:
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
+                    total: int, unit: str, now: float | None = None) -> tuple[str, str]:
+    """(tone, line) for the run status group: colour and the words that say the same.
+
+    Tones: running / waiting (model call in flight) / retrying / stalled / failed /
+    paused / done / idle.  "Stalled" uses the core's own ``stalled`` status, or no
+    progress for ``_STALL_AFTER_S`` seconds while running.
+    """
+    now = time.time() if now is None else now
+    status = str(runtime.get("status") or "")
+    # The view's ``runtime`` is the raw runtime record (timestamps, stage, operation).
+    raw = runtime.get("runtime") if isinstance(runtime.get("runtime"), dict) else runtime
+    operation = str(raw.get("operation_id") or raw.get("operation")
+                    or runtime.get("operation_id") or "")
+    stage_id = str(raw.get("stage") or "")
+    stage = i18n.tr(_RUN_STAGE_LABELS[stage_id]) if stage_id in _RUN_STAGE_LABELS else ""
+    count = f"{completed:,} / {total:,} {i18n.tr_dynamic(unit)}".strip() if total else ""
+    head = " · ".join(part for part in (stage, count) if part)
+    last_progress = _parse_iso(raw.get("last_progress_at"))
+    waiting_since = _parse_iso(raw.get("model_wait_started_at"))
+    if status == "completed":
+        started = _parse_iso(raw.get("started_at"))
+        finished = _parse_iso(raw.get("finished_at")) or now
+        minutes = int(round((finished - started) / 60)) if started else 0
+        return "done", (i18n.tr('已完成 · {v0} 分钟', v0=max(1, minutes)) if started
+                        else i18n.tr('已完成'))
+    if status == "failed":
+        return "failed", " · ".join(p for p in (head, note or i18n.tr('步骤失败')) if p)
+    if status == "stalled":
+        return "stalled", " · ".join(p for p in (head, note or i18n.tr('暂无运行信号')) if p)
+    if status in ("paused", "interrupted", "cancelled", "idle_incomplete"):
+        return "paused", " · ".join(p for p in (head, note) if p) or i18n.tr('已暂停')
+    if not running:
+        return "idle", " · ".join(p for p in (head, note) if p)
+    if "retry" in operation:
+        return "retrying", " · ".join(p for p in (head, note) if p)
+    if last_progress and now - last_progress > _STALL_AFTER_S:
+        minutes = int((now - last_progress) // 60)
+        return "stalled", " · ".join(p for p in (head, i18n.tr(
+            '已有 {v0} 分钟没有进展，可以暂停后重试', v0=max(2, minutes))) if p)
+    if waiting_since and (not last_progress or waiting_since >= last_progress):
+        seconds = int(max(0, now - waiting_since))
+        wait = i18n.tr('正在等待模型响应 · {v0} 秒', v0=seconds)
+        return "waiting", " · ".join(p for p in (head, wait) if p)
+    return "running", " · ".join(p for p in (head, note) if p)
+
+
+class RunStatusGroup(QFrame):
+    """顶栏的运行状态组：进度条 + 百分比，下面一行写「阶段 · 进度 · 正在做什么」。
+
+    整组是一个可点区域（鼠标、回车 / 空格），点开运行记录浮窗。颜色只是辅助：
+    同一个状态在下面那行文字里总会写出来（见 acceptance-feedback 第 11 条）。
+    """
+
+    clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("runStatus")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setToolTip(i18n.tr('查看运行记录'))
+        self.setAccessibleName(i18n.tr('运行状态'))
+        self.track = components.ProgressTrack()
+        self.percent = QLabel("")
+        self.percent.setObjectName("runStatusPercent")
+        self.line = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
+        self.line.setObjectName("runStatusLine")
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(theme_module.SPACE["xs"] + 2)
+        top.addWidget(self.track, 1, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self.percent, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(theme_module.SPACE["xs"] + 2, 4, theme_module.SPACE["xs"] + 2, 4)
+        layout.setSpacing(3)
+        layout.addLayout(top)
+        layout.addWidget(self.line)
+        self.setFixedWidth(232)
+
+    def set_state(self, *, tone: str, line: str) -> None:
+        self.track.set_tone(tone)
+        share = self.track.fraction()
+        self.percent.setText("" if share is None or tone == "done"
+                             else f"{int(round(share * 100))}%")
+        self.line.setText(line)
+        self.line.setProperty("tone", tone)
+        style_module.repolish(self.line)
+        self.setAccessibleDescription(line)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+                event.position().toPoint()):
+            self.clicked.emit()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit()
+            return
+        super().keyPressEvent(event)
+
+
+class CheckStatusButton(QToolButton):
+    """「检查与修复」：进度条旁的圆形图标。平时灰；有待处理项变黄，有失败批次变红。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("roundButton")
+        self.setCheckable(True)
+        self.setIcon(icons.icon("shield-check", 16, "text-secondary"))
+        self.setIconSize(QSize(16, 16))
+        self.badge = QLabel("", self)
+        self.badge.setObjectName("countBadge")
+        self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.badge.setVisible(False)
+        self._tone = ""
+        self.set_count(0, "")
+
+    def set_count(self, count: int, tone: str) -> None:
+        tone = tone if count else ""
+        if tone != self._tone:
+            self._tone = tone
+            self.setProperty("check", tone)
+            token = {"warning": "warning", "danger": "danger"}.get(tone, "text-secondary")
+            self.setIcon(icons.icon("shield-check", 16, token))
+            style_module.repolish(self)
+        self.badge.setText(str(count) if count else "")
+        self.badge.setVisible(bool(count))
+        self.badge.adjustSize()
+        self.badge.move(self.width() - self.badge.width() + 2, -2)
+        label = i18n.tr('检查与修复')
+        self.setToolTip(i18n.tr('检查与修复 · {v0} 项待处理', v0=count) if count else label)
+        self.setAccessibleName(label)
+        self.setAccessibleDescription(self.toolTip())
+
+    def tone(self) -> str:
+        return self._tone
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        self.badge.move(self.width() - self.badge.width() + 2, -2)
+
+
 class WorkbenchView(QWidget):
     """多段工作台：就地编辑的双语网格 + 右侧操作栏 + 交付标签页。
 
@@ -1618,9 +1781,6 @@ class WorkbenchView(QWidget):
         # 布局把剩下的余量分不到它头上，就会回流给返回按钮和状态芯片（实测两者
         # 被撑到 281px，像两个巨大的空按钮）。
         self.title_label.setMinimumWidth(120)
-        self.status_label = style_module.ElideLabel("")
-        self.status_label.setObjectName("workbenchNote")
-
         self.chip_state = Chip("—", "muted")
 
         def _icon_button(button: QPushButton, name: str, token: str = "text-secondary"):
@@ -1654,12 +1814,15 @@ class WorkbenchView(QWidget):
         self.stage_action_button.setVisible(False)
         self._stage_action: dict | None = None
 
-        self.progress = QProgressBar()
-        self.progress.setTextVisible(False)
-        self.progress.setFixedHeight(6)
-        # 160 而不是 220：它只是"精简进度指示"，省下的宽度归文件名
-        # （长标题此前会被挤到只剩几十像素）。只在运行时显示。
-        self.progress.setFixedWidth(160)
+        # 运行状态组（进度 + 百分比 + 状态说明，点开运行记录）与「检查与修复」图标。
+        # `progress` 仍指向那根进度条（QProgressBar 同名接口），`status_label`
+        # 是状态组里那行说明：原先在左上角文件名下面，与进度隔着整个顶栏。
+        self.run_status = RunStatusGroup()
+        self.run_status.clicked.connect(self.open_activity)
+        self.progress = self.run_status.track
+        self.status_label = self.run_status.line
+        self.check_button = CheckStatusButton()
+        self.check_button.clicked.connect(self._toggle_followup_drawer)
 
         # 运行控制单独放进一个零边距容器：全部隐藏时整组收掉，不留空槽位。
         run_controls = QHBoxLayout()
@@ -1675,15 +1838,13 @@ class WorkbenchView(QWidget):
         # ---- Golden Gate 统一工具栏（一行，贴住窗口顶边，底部一条发丝线） ----------
         #   返回 · 文件名（下面一行是状态芯片 + 运行说明） · 阶段胶囊（居中）
         #   · 术语/更多 · 进度 · 运行动作
-        self.progress.setFixedWidth(120)
         subtitle = QHBoxLayout()
         subtitle.setContentsMargins(0, 0, 0, 0)
         subtitle.setSpacing(theme_module.SPACE["xs"] + 2)
         # 芯片按内容高居中：QLabel 的垂直策略允许被拉伸，不给对齐就会被撑到与按钮同高。
         self.chip_state.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         subtitle.addWidget(self.chip_state, 0, Qt.AlignmentFlag.AlignVCenter)
-        subtitle.addWidget(self.status_label, 1)
-        subtitle.addStretch(0)
+        subtitle.addStretch(1)
         identity = QVBoxLayout()
         identity.setContentsMargins(0, 0, 0, 0)
         identity.setSpacing(1)
@@ -1706,7 +1867,8 @@ class WorkbenchView(QWidget):
         header_layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(identity_box, 1)
         header_layout.addWidget(self.stage_bar, 2)
-        header_layout.addWidget(self.progress, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.run_status, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.check_button, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.header_actions_bar, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ---- 翻译标签页 ----------------------------------------------------
@@ -2393,12 +2555,43 @@ class WorkbenchView(QWidget):
                          i18n.tr('原页'))
         self.tabs.setTabVisible(self.tabs.indexOf(self.pdf_panel), False)
         self._pdf_ok = False
-        self.tabs.addTab(self.followup_panel,
-                         icons.icon("check-circle", 16, "text-secondary"),
-                         i18n.tr('检查与修复'))
-        self.tabs.addTab(self.activity_panel,
-                         icons.icon("clock", 16, "text-secondary"),
-                         i18n.tr('运行记录'))
+        # 检查与修复：从右侧滑出的面板，暂时替换段落检查器（点网格里的段落不会
+        # 关掉它，可以逐条处理）；运行记录：从运行状态组弹出的浮窗。两者都不再
+        # 占满主屏（acceptance-feedback D3 / Q1 / Q2）。
+        self.followup_drawer = QFrame()
+        self.followup_drawer.setObjectName("followupDrawer")
+        drawer_title = QLabel(i18n.tr('检查与修复'))
+        drawer_title.setObjectName("sectionTitle")
+        drawer_close = QToolButton()
+        drawer_close.setObjectName("roundButton")
+        drawer_close.setIcon(icons.icon("x", 14, "text-secondary"))
+        drawer_close.setIconSize(QSize(14, 14))
+        drawer_close.setAccessibleName(i18n.tr('关闭检查与修复'))
+        drawer_close.clicked.connect(lambda: self.set_followup_drawer_open(False))
+        drawer_head = QHBoxLayout()
+        drawer_head.setContentsMargins(0, 0, 0, 0)
+        drawer_head.addWidget(drawer_title, 1)
+        drawer_head.addWidget(drawer_close)
+        drawer_layout = QVBoxLayout(self.followup_drawer)
+        drawer_layout.setContentsMargins(theme_module.SPACE["sm"], 0, 0, 0)
+        drawer_layout.setSpacing(theme_module.SPACE["sm"])
+        drawer_layout.addLayout(drawer_head)
+        drawer_scroll = QScrollArea()
+        drawer_scroll.setWidgetResizable(True)
+        drawer_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        drawer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        drawer_scroll.viewport().setAutoFillBackground(False)
+        drawer_scroll.setWidget(self.followup_panel)
+        drawer_layout.addWidget(drawer_scroll, 1)
+        self.followup_drawer.setVisible(False)
+        self.translation_split.addWidget(self.followup_drawer)
+        self.translation_split.setStretchFactor(2, 0)
+        self.activity_panel.heading.setVisible(False)  # the popover has the title
+        self.activity_panel.hint.setVisible(False)     # repeats the Finder button
+        # In a 440 px popover long steps wrap instead of scrolling sideways.
+        self.activity_panel.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.activity_panel.list.setWordWrap(True)
+        self.activity_popover = components.Popover(i18n.tr('运行记录'), self.activity_panel, self)
         self.details_panel = TaskDetailsPanel()
         self.details_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         self.details_panel.promoteRequested.connect(self.promoteMemoryRequested.emit)
@@ -2412,7 +2605,6 @@ class WorkbenchView(QWidget):
             "review": self.review_panel, "deliver": delivery_page,
             "report": self.report_panel, "cases": self.cases_panel,
             "qa": self.qa_panel, "source": self.pdf_panel,
-            "followup": self.followup_panel, "activity": self.activity_panel,
             "details": self.details_panel,
         }
         self.tabs.currentChanged.connect(lambda _index: self._sync_stage_page())
@@ -2510,10 +2702,64 @@ class WorkbenchView(QWidget):
 
     # ================= 阶段与页面导航 =================
     def show_page(self, page_id: str) -> None:
-        """切到某一页（页面 id 见 `_pages`）。步骤条、跳转链接与测试都走这一个入口。"""
+        """切到某一页（页面 id 见 `_pages`）。步骤条、跳转链接与测试都走这一个入口。
+
+        ``followup`` 打开右侧的检查与修复面板，``activity`` 打开运行记录浮窗：
+        它们不再是整页，但旧的跳转与菜单仍然用这两个 id。
+        """
+        if page_id == "followup":
+            self.set_followup_drawer_open(True)
+            return
+        if page_id == "activity":
+            self.open_activity()
+            return
         page = self._pages.get(page_id)
         if page is not None:
             self.tabs.setCurrentWidget(page)
+
+    def open_activity(self) -> None:
+        """运行记录浮窗：锚定在运行状态组下面；运行状态组不可见时锚定在顶栏右端。"""
+        anchor = self.run_status if self.run_status.isVisible() else self.check_button
+        if not anchor.isVisible():
+            anchor = self
+        self._render_activity()
+        self.activity_popover.set_subtitle(self.run_status.line.text())
+        self.activity_popover.open_at(anchor)
+
+    def followup_drawer_open(self) -> bool:
+        return self.followup_drawer.isVisibleTo(self)
+
+    def set_followup_drawer_open(self, open_: bool) -> None:
+        """打开时切回翻译页，面板暂时替换右侧的段落检查器；关闭时检查器回来。"""
+        open_ = bool(open_)
+        if open_ == self.followup_drawer_open():
+            self.check_button.setChecked(open_)
+            if open_:
+                self.tabs.setCurrentWidget(self._pages["translate"])
+            return
+        if open_:
+            self.tabs.setCurrentWidget(self._pages["translate"])
+            # The follow-up panel needs ~440 px; the inspector's ~300 px column
+            # clipped its text.  The grid gives up the difference while it is open.
+            self._sizes_before_drawer = self.translation_split.sizes()
+            total = sum(self._sizes_before_drawer) or self.translation_split.width()
+            drawer = min(440, max(360, total // 3))
+        self.followup_drawer.setVisible(open_)
+        self.inspector_scroll.setVisible(not open_)
+        if open_:
+            self.translation_split.setSizes([max(360, total - drawer), 0, drawer])
+        elif getattr(self, "_sizes_before_drawer", None):
+            self.translation_split.setSizes(self._sizes_before_drawer)
+        # The grid's columns are re-laid out after this returns; the inline
+        # editor must follow them, or it hangs past the grid's new right edge.
+        QTimer.singleShot(0, self._place_inline_editor)
+        self.check_button.setChecked(open_)
+        if open_:
+            self._followup_key = ()
+            self._render_followup()
+
+    def _toggle_followup_drawer(self) -> None:
+        self.set_followup_drawer_open(not self.followup_drawer_open())
 
     def current_page_id(self) -> str:
         widget = self.tabs.currentWidget()
@@ -2527,13 +2773,12 @@ class WorkbenchView(QWidget):
         pages: list[tuple[str, str]] = []
         if self._pdf_ok:
             pages.append(("source", i18n.tr('原页')))
-        pages.append(("followup", i18n.tr('检查与修复')))
-        pages.append(("activity", i18n.tr('运行记录')))
         pages.append(("details", i18n.tr('任务详情')))
         if self.academic_visible():
             pages.extend((("report", i18n.tr('报告')), ("cases", i18n.tr('案例')),
                           ("qa", i18n.tr('合规与 QA'))))
-        self.stage_bar.set_more_pages(pages, badge=self._followup_count)
+        # 待处理数只挂在「检查与修复」图标上：挂在「更多」上会读成"运行记录 (2)"。
+        self.stage_bar.set_more_pages(pages)
 
     def _render_stage(self) -> None:
         """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
@@ -2663,6 +2908,8 @@ class WorkbenchView(QWidget):
             + int(bool((view.get("annotation") or {}).get("status") == "partial")) \
             + len(view.get("entities") or []) + len(view.get("failures") or [])
         self._followup_count = count
+        failures = len(view.get("failures") or [])
+        self.check_button.set_count(count, "danger" if failures else "warning")
         self._sync_more_pages()
 
     def _locate_segment_from_followup(self, index: int) -> None:
@@ -3102,9 +3349,7 @@ class WorkbenchView(QWidget):
         self.chip_state.setVisible(header_visible)
         self.chip_state.setText(chip_text)
         self.chip_state.set_tone(chip_tone)
-        self.status_label.setText(note if header_visible else "")
-        self.status_label.setVisible(header_visible and bool(note))
-        self.progress.setVisible(header_visible and running)
+        self.run_status.setVisible(header_visible)
         if not started:
             for button in (self.start_button, self.pause_button, self.cancel_button,
                            self.retry_button):
@@ -3131,6 +3376,10 @@ class WorkbenchView(QWidget):
         else:
             self.progress.setRange(0, 1)
             self.progress.setValue(0)
+        tone, line = run_status_view(runtime, note=note, running=running,
+                                     completed=completed, total=total,
+                                     unit=str(stage_progress.get("unit") or ""))
+        self.run_status.set_state(tone=tone, line=line)
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
         # * `available_actions` 是核心给出的可执行动作（resume/retry/cancel/…）；
