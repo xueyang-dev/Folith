@@ -47,6 +47,16 @@ def _is_real(value: str | None) -> bool:
     return _resolved(path) in _REAL_DIRS
 
 
+# Tests talk to local stub servers on 127.0.0.1.  A macOS system proxy (Clash and
+# similar, common on developer machines) would otherwise intercept those requests
+# and answer 502, so test results would depend on whether the proxy is on.
+for _name in ("NO_PROXY", "no_proxy"):
+    _hosts = [h for h in os.environ.get(_name, "").split(",") if h]
+    for _host in ("127.0.0.1", "localhost", "::1"):
+        if _host not in _hosts:
+            _hosts.append(_host)
+    os.environ[_name] = ",".join(_hosts)
+
 _SESSION_DIR = Path(tempfile.mkdtemp(prefix="folith-test-data-"))
 if any(_is_real(os.environ.get(name)) for name in _DATA_ENVS):
     for name in _DATA_ENVS:

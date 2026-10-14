@@ -158,6 +158,8 @@ def _iter_text_files():
         rel = _relative(path)
         if rel.startswith((".git/", "venv/", ".venv/", "outputs/", "dist/",
                            "build/", ".pytest_cache/", ".audit/", ".workbuddy/",
+                           # Local agent worktrees: full checkouts of other branches, not this tree.
+                           ".claude/",
                            ".workbuddy-ai/", ".serena/", ".localize-anything/", "exports/", "tmp/", "skills/", "tests/",
                            # Generated working areas (see .gitignore): benchmark output
                            # and the local video scaffold are not shipped source.

@@ -194,6 +194,11 @@ def test_artifact_check_accepts_the_real_candidate_when_present():
         import pytest
 
         pytest.skip("no Qt candidate on disk")
+    import pytest
+
+    import local_build
+
+    local_build.skip_unless_fresh(pytest)
     report = check.check(app, candidates[0], ROOT / "build" / "qt-desktop")
     assert report["ok"] is True, report["problems"]
     assert report["bundle"]["CFBundleIdentifier"] == "dev.folith.qt"

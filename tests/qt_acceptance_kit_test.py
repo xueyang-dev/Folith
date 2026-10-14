@@ -16,6 +16,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
+
+import local_build  # noqa: E402
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
@@ -90,6 +93,7 @@ def test_kit_candidate_identity_is_not_stale():
     record = ROOT / "build" / "qt-desktop" / "dmg_record.json"
     if not record.is_file():
         pytest.skip("no build record on disk")
+    local_build.skip_unless_fresh(pytest)
     text = KIT.read_text(encoding="utf-8")
     head, current, tail = kit_script._split(text)
     expected = kit_script.render(kit_script._facts())
@@ -128,6 +132,7 @@ def test_docs_match_the_artifacts_and_the_suite():
 
     if not (ROOT / "build" / "qt-desktop" / "dmg_record.json").is_file():
         pytest.skip("Qt document/artifact audit requires a locally built DMG record")
+    local_build.skip_unless_fresh(pytest)
 
     report = docs_audit.audit(check_tests=False)
     assert report["ok"] is True, report["problems"]
