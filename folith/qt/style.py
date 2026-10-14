@@ -520,6 +520,17 @@ QPushButton#primaryAction {{
 }}
 QPushButton#primaryAction:hover {{ background: {t['accent-hover']}; border-color: {t['accent-hover']}; }}
 QPushButton#primaryAction:pressed {{ background: {t['accent-active']}; }}
+/* 页面唯一的主行动（侧栏「导入文档…」）：比普通主按钮更高、更大、更粗；
+   暗色主题用更深更饱和的蓝底配白字（浅蓝底上的白字对比度只有 2.3:1）。 */
+QPushButton#heroAction {{
+    background: {t['hero']}; color: {t['text-on-hero']};
+    border: 1px solid {t['hero']}; border-radius: {r['md']}px;
+    font-size: {f['section'] - 1}px; font-weight: 700; padding: 0 16px;
+    min-height: 38px; max-height: 38px;  /* 40px tall: QSS heights exclude the 1px border */
+}}
+QPushButton#heroAction:hover {{ background: {t['hero-hover']}; border-color: {t['hero-hover']}; }}
+QPushButton#heroAction:pressed {{ background: {t['hero-active']}; }}
+QPushButton#heroAction:focus {{ border-color: {t['focus-ring']}; }}
 QPushButton#primaryAction:disabled {{
     background: {t['bg-surface-sunken']}; color: {t['disabled-ink']};
     border-color: {t['border-faint']};

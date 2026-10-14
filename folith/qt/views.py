@@ -517,10 +517,10 @@ class HomeView(QWidget):
         # ---- 侧栏动作（全部是真实入口，不放没实现的导航） -------------------
         # 「导入文档…」是侧栏顶部唯一的实心按钮：任务库的第一动作。
         self.import_button = QPushButton(i18n.tr('导入文档…'))
-        self.import_button.setObjectName("primaryAction")
-        self.import_button.setIcon(icons.icon("upload", 16, "text-on-accent"))
-        self.import_button.setIconSize(QSize(16, 16))
-        self.import_button.setMinimumHeight(theme_module.CONTROL["lg"])
+        self.import_button.setObjectName("heroAction")
+        self.import_button.setIcon(icons.icon("upload", 18, "text-on-hero"))
+        self.import_button.setIconSize(QSize(18, 18))
+        self.import_button.setMinimumHeight(40)
         self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.import_button.clicked.connect(self.importRequested.emit)
         style_module.fit_button(self.import_button, max_width=self.SIDEBAR_WIDTH - 24)

@@ -64,6 +64,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-secondary': '#667085',
         'text-muted': '#8a94a6',
         'text-on-accent': '#ffffff',
+        # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
+        # as a button in every theme; white on it is >= 4.5:1.
+        'hero': '#004cfd', 'hero-hover': '#003fd6', 'hero-active': '#0034b0',
+        'text-on-hero': '#ffffff',
         'border-faint': '#ebeef3',
         'border-hairline': '#eef0f4',
         'border-divider': '#e4e7ec',
@@ -144,6 +148,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-secondary': 'rgba(235,235,245,.62)',
         'text-muted': 'rgba(235,235,245,.38)',
         'text-on-accent': '#131316',
+        # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
+        # as a button in every theme; white on it is >= 4.5:1.
+        'hero': '#2a62e8', 'hero-hover': '#3470f5', 'hero-active': '#2257d0',
+        'text-on-hero': '#ffffff',
         # --- separators / borders (weak reflections, never blue-gray lines) ---
         'border-faint': 'rgba(255,255,255,.040)',
         'border-hairline': 'rgba(255,255,255,.055)',
@@ -204,6 +212,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-secondary': '#5f594e',
         'text-muted': '#6f6858',
         'text-on-accent': '#faf7ef',
+        # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
+        # as a button in every theme; white on it is >= 4.5:1.
+        'hero': '#4c5a66', 'hero-hover': '#3e4b56', 'hero-active': '#333e48',
+        'text-on-hero': '#faf7ef',
         'border-faint': 'rgba(70,60,45,.07)',
         'border-hairline': 'rgba(70,60,45,.09)',
         'border-divider': 'rgba(70,60,45,.11)',
@@ -269,6 +281,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-secondary': '#64748b',
         'text-muted': '#7a8699',
         'text-on-accent': '#ffffff',
+        # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
+        # as a button in every theme; white on it is >= 4.5:1.
+        'hero': '#0f6b4f', 'hero-hover': '#0b5a42', 'hero-active': '#084833',
+        'text-on-hero': '#ffffff',
         'border-faint': '#edf1ef',
         'border-hairline': '#e8edeb',
         'border-divider': '#e5e7eb',
