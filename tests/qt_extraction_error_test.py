@@ -109,6 +109,9 @@ def test_broken_docx_reports_a_readable_reason_end_to_end(tmp_path, monkeypatch)
     monkeypatch.setenv("FOLITH_OUTPUT_DIR", str(data_dir))
     monkeypatch.setenv("FOLITH_DESKTOP_DATA_DIR", str(data_dir))
     monkeypatch.setenv("FOLITH_DESKTOP_LOG_DIR", str(tmp_path / "logs"))
+    # core is imported at module top, so OUTPUT_DIR was pinned before the env
+    # above existed; without this the job lands in the developer's real data.
+    monkeypatch.setattr(core, "OUTPUT_DIR", data_dir, raising=False)
 
     from folith.qt import adapter
 
@@ -147,3 +150,6 @@ def test_broken_docx_reports_a_readable_reason_end_to_end(tmp_path, monkeypatch)
     finally:
         stub.terminate()
         stub.wait(timeout=30)
+        from qt_workers import drain_job_workers
+
+        drain_job_workers(core)
