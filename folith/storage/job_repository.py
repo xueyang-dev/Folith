@@ -17,6 +17,7 @@ import json
 import os
 import pickle
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -125,6 +126,52 @@ def get_job_state_path(job_id: str, output_dir: Optional[Path] = None) -> Path:
 
 def get_job_summary_path(job_id: str, output_dir: Optional[Path] = None) -> Path:
     return _get_output_dir(output_dir) / str(job_id) / "summary.json"
+
+
+#: Lists longer than this are encoded in slices of this many items.
+_COOPERATIVE_CHUNK = 256
+
+
+def _encode_part(value: Any, depth: int) -> List[str]:
+    """JSON text of ``value`` as pieces, yielding the GIL between large pieces."""
+    if depth > 0 and isinstance(value, dict) and len(value) > 1:
+        pieces = ["{"]
+        for position, (key, item) in enumerate(value.items()):
+            if position:
+                pieces.append(",")
+            # The stdlib encodes the key (including non-str keys) and separator.
+            head = json.dumps({key: None}, **_COMPACT_JSON)
+            pieces.append(head[1:-5])  # '"key":'  (strip "{" and "null}")
+            pieces.extend(_encode_part(item, depth - 1))
+        pieces.append("}")
+        return pieces
+    if depth > 0 and isinstance(value, list) and len(value) > _COOPERATIVE_CHUNK:
+        pieces = ["["]
+        for start in range(0, len(value), _COOPERATIVE_CHUNK):
+            if start:
+                pieces.append(",")
+            pieces.append(json.dumps(value[start:start + _COOPERATIVE_CHUNK],
+                                     **_COMPACT_JSON)[1:-1])
+            time.sleep(0)  # let the GUI thread run between slices
+        pieces.append("]")
+        return pieces
+    text = json.dumps(value, **_COMPACT_JSON)
+    time.sleep(0)
+    return [text]
+
+
+def encode_state(state: Dict[str, Any]) -> str:
+    """``json.dumps(state, **COMPACT_JSON)``, byte for byte.
+
+    The C encoder never releases the GIL, so dumping a book-length state (tens of
+    MB) on a worker thread froze the GUI thread for the whole encode, during
+    every pipeline snapshot and every saved edit.  Off the main thread the state
+    is encoded in pieces (top-level and second-level keys, long lists in slices)
+    with a GIL release between them; the output is identical.
+    """
+    if threading.current_thread() is threading.main_thread() or not isinstance(state, dict):
+        return json.dumps(state, **_COMPACT_JSON)
+    return "".join(_encode_part(state, depth=2))
 
 
 def _isolated_copy(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -249,7 +296,7 @@ def save_job_state_atomic(
         # Encode once here and hand the bytes to the writer: the UTF-8 pass is
         # part of serialization, and doing it twice would be pure waste on a
         # multi-megabyte payload.
-        encoded = json.dumps(state, **_COMPACT_JSON).encode("utf-8")
+        encoded = encode_state(state).encode("utf-8")
         sink.serialized(len(encoded))
     try:
         with _pprof.phase("state_file_write") as sink:

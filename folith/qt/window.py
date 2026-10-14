@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import sys
+import weakref
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
@@ -47,6 +48,7 @@ SUSPICIOUS_QUIT_ENV = "FOLITH_EXIT_FORCE_PROMPT"
 
 HOME_REFRESH_SECONDS = 5
 POLL_MS = 1000
+EDIT_SAVE_IDLE_MS = 400
 
 
 class _NullProgress:
@@ -108,6 +110,14 @@ class MainWindow(QMainWindow):
         self._edit_queue: list[tuple[str, int, str]] = []
         self._edit_in_flight = False
         self._state_load_in_flight = False
+        #: Start writing queued edits once the GUI has been idle this long.  The
+        #: writer competes with the GUI thread for the GIL; starting it while the
+        #: workbench repaints after ⌘↩ made the move to the next segment take
+        #: ~0.7 s on a book instead of a frame.
+        self._edit_idle = QTimer(self)
+        self._edit_idle.setSingleShot(True)
+        self._edit_idle.setInterval(EDIT_SAVE_IDLE_MS)
+        self._edit_idle.timeout.connect(self._start_queued_edits)
         # 与启动器同一个日志文件：测试者遇到问题时可以直接把这份日志发出来，
         # 不必依赖"记得把对话框内容抄下来"。（模块顶部已导入 bootstrap；
         # 这里若再写一次 `from . import bootstrap`，整个 __init__ 里的
@@ -1551,11 +1561,20 @@ class MainWindow(QMainWindow):
         self.workbench.show_saved_locally(index, text)
         self._edit_queue.append((job_id, index, text))
         if not self._edit_in_flight:
+            self._edit_idle.start()  # (re)start: a burst of saves writes after the last
+
+    def _start_queued_edits(self) -> None:
+        if not self._edit_in_flight:
             self._save_next_edit()
 
     def edits_pending(self) -> bool:
         """还有提交了但还没落盘的修改（测试与退出流程用）。"""
         return self._edit_in_flight or bool(self._edit_queue)
+
+    def flush_edits_now(self) -> None:
+        """Start writing queued edits without waiting for the GUI to be idle."""
+        self._edit_idle.stop()
+        self._start_queued_edits()
 
     def _save_next_edit(self) -> None:
         if not self._edit_queue:
@@ -1568,9 +1587,16 @@ class MainWindow(QMainWindow):
             if job_id == self._current_job_id:
                 self.workbench.settle_saved(index)
                 self._notice(i18n.tr('已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。'))
-                # Not forced: the signature changed, so this reloads once; the
-                # delivery panel is re-validated when it is shown or the run ends.
-                self.refresh_workbench()
+                if isinstance(new_state, dict) and not self._edit_queue:
+                    # The writer hands back the state it just saved (its own
+                    # copy, not shared with the cache): adopt it instead of
+                    # re-reading tens of MB on the GUI thread.  With more edits
+                    # queued, their writes follow and the poll catches up.
+                    self._cached_state = new_state
+                    self._cached_signature = adapter.state_signature(job_id)
+                    self.refresh_workbench(preloaded=True)
+                else:
+                    self.refresh_workbench()
                 self._offer_repetitions(job_id, index, state=new_state)
             self._save_next_edit()
 
@@ -2618,6 +2644,10 @@ class MainWindow(QMainWindow):
     # ================= lifecycle =================
     def _install_quit_filter(self) -> None:
         app = QApplication.instance()
+        if isinstance(app, FolithApplication):
+            app.add_quit_handler(self._intercept_quit)
+            self._quit_filter_installed = True
+            return
         if app is not None and self not in app.findChildren(QApplication):
             try:
                 app.installEventFilter(self)
@@ -2636,11 +2666,16 @@ class MainWindow(QMainWindow):
         closed must not swallow the event that belongs to the one still on
         screen.
         """
+        if self._intercept_quit(event):
+            return True
+        return super().eventFilter(obj, event)
+
+    def _intercept_quit(self, event) -> bool:
         if event.type() == QEvent.Type.Quit and not self._closing_accepted \
                 and self.isVisible():
             self.close()
             return True
-        return super().eventFilter(obj, event)
+        return False
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         if self._closing_accepted:
@@ -2835,7 +2870,28 @@ class FolithApplication(QApplication):
 
     file_opened = Signal(str)
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._quit_handlers: list = []
+
+    def add_quit_handler(self, handler) -> None:
+        """Ask ``handler(event) -> bool`` first when the app is told to quit.
+
+        Replaces an application-wide event filter: such a filter runs Python for
+        every event of every widget, and each call has to re-take the GIL — while
+        a worker thread saves a large task, that turned ~20 ms of GUI work into a
+        ~0.8 s freeze.  Quit is delivered to the application object only.
+        """
+        self._quit_handlers.append(weakref.WeakMethod(handler))
+
     def event(self, event):  # noqa: N802 - Qt 命名
+        if event.type() == QEvent.Type.Quit:
+            for ref in list(reversed(self._quit_handlers)):
+                handler = ref()
+                if handler is None:
+                    self._quit_handlers.remove(ref)
+                elif handler(event):
+                    return True
         if event.type() == QEvent.Type.FileOpen:
             path = file_open_path(event)
             if path:

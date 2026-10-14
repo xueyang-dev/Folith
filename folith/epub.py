@@ -5,6 +5,7 @@ structure edits; image positions are paragraph boundaries, not target offsets.
 """
 from __future__ import annotations
 
+import collections
 import io
 import re
 import zipfile
@@ -87,6 +88,11 @@ def _bind_from_paragraph_ranges(pairs, origins, paragraph_ranges, cleaned) -> bo
     return changed
 
 
+#: Inputs for which :func:`bind_source_references` already found that the pairs
+#: cannot be bound (exact keys, most recent last).
+_UNBINDABLE: "collections.OrderedDict[tuple, None]" = collections.OrderedDict()
+
+
 def bind_source_references(state: dict) -> bool:
     """Attach raw paragraph ordinals before an edit changes CAT ordinals.
 
@@ -131,6 +137,15 @@ def bind_source_references(state: dict) -> bool:
     if state.get("excluded_segments"):
         return _bind_from_paragraph_ranges(
             pairs, origins, meta.get("paragraph_ranges") or [], cleaned)
+    # Re-segmenting the whole document costs ~0.3 s on a book and runs before
+    # every saved edit; when the pairs cannot be bound (they do not match the
+    # initial segmentation) the answer is the same until one of the inputs
+    # changes, so a refusal is remembered for exactly these inputs.
+    key = (tuple(cleaned), tuple(tuple(refs) for refs in origins),
+           meta.get("mode") or "paragraph", state.get("source_lang"),
+           tuple(pair.get("source") for pair in pairs))
+    if key in _UNBINDABLE:
+        return False
     units, rebuilt = segmentation.segment_paragraphs(
         cleaned, mode=meta.get("mode") or "paragraph",
         source_lang=state.get("source_lang"))
@@ -140,6 +155,9 @@ def bind_source_references(state: dict) -> bool:
         _normal(pair.get("source")) != _normal(units[i])
         for i, pair in enumerate(pairs)
     ):
+        _UNBINDABLE[key] = None
+        while len(_UNBINDABLE) > 8:
+            _UNBINDABLE.popitem(last=False)
         return False
     changed = False
     for item in rebuilt["paragraph_ranges"]:
