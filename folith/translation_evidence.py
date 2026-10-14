@@ -54,10 +54,68 @@ def _current_translation_review(event: Mapping[str, Any]) -> bool:
         event.get("phase") == "formal_review"
 
 
+class ReviewIndex(NamedTuple):
+    """One pass over ``review_evidence``, answering per-segment questions in O(1).
+
+    ``current``    segment → latest non-stale current-translation review (what
+                   :func:`current_review_event` returns);
+    ``reviewed``   segments that any current-translation review ever covered
+                   (stale or not) — "stale" versus "missing" in the readiness;
+    ``latest_any`` raw segment id → latest event of any kind listing it (the
+                   workbench's historical lookup; keys keep ``in``-list equality).
+    """
+
+    current: Dict[Any, Dict[str, Any]]
+    reviewed: frozenset
+    latest_any: Dict[Any, Mapping[str, Any]]
+
+
+def review_index(state: Mapping[str, Any]) -> ReviewIndex:
+    """Build the per-segment review lookups with one reverse pass.
+
+    Scanning every event for every segment made opening a 3 700-segment task with
+    ~1 000 review events take 36 million calls (about 10 s on the GUI thread).
+    The conditions are exactly those of the per-segment scans they replace.
+    """
+    current: Dict[Any, Dict[str, Any]] = {}
+    reviewed = set()
+    latest_any: Dict[Any, Mapping[str, Any]] = {}
+    for event in reversed(state.get("review_evidence") or []):
+        if not isinstance(event, Mapping):
+            continue
+        raw = event.get("segment_ids") or (event.get("completion_receipt") or {}).get(
+            "reviewed_segment_ids") or []
+        for value in raw:
+            try:
+                latest_any.setdefault(value, event)
+            except TypeError:  # unhashable ids can never equal an int segment id
+                continue
+        if not _current_translation_review(event):
+            continue
+        ids = _review_segment_ids(event)
+        reviewed.update(ids)
+        if not isinstance(event, dict) or event.get("freshness_status") == "stale":
+            continue
+        stale = set(event.get("stale_segment_ids") or [])
+        for segment_id in ids:
+            if segment_id not in stale:
+                current.setdefault(segment_id, event)
+    return ReviewIndex(current, frozenset(reviewed), latest_any)
+
+
 def current_review_event(
-    state: Mapping[str, Any], segment_id: int,
+    state: Mapping[str, Any], segment_id: int, *, index: Optional[ReviewIndex] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return the latest non-stale current-translation review for one segment."""
+    """Return the latest non-stale current-translation review for one segment.
+
+    Callers that ask about many segments should build :func:`review_index` once
+    and pass it; a single lookup keeps the early-exit scan.
+    """
+    if index is not None:
+        try:
+            return index.current.get(segment_id)
+        except TypeError:
+            return None
     for event in reversed(state.get("review_evidence") or []):
         if not isinstance(event, dict) or not _current_translation_review(event):
             continue
@@ -327,15 +385,14 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
 
     events = [event for event in state.get("review_evidence") or []
               if isinstance(event, Mapping) and _current_translation_review(event)]
+    index = review_index(state)
     stale_ids, missing_ids, failed_ids, current_ids = [], [], [], []
     skipped_ids: List[int] = []
     current_events: Dict[int, Dict[str, Any]] = {}
     for segment_id in expected:
-        event = current_review_event(state, segment_id)
+        event = index.current.get(segment_id)
         if event is None:
-            historical = [item for item in events
-                          if segment_id in _review_segment_ids(item)]
-            (stale_ids if historical else missing_ids).append(segment_id)
+            (stale_ids if segment_id in index.reviewed else missing_ids).append(segment_id)
             continue
         current_events[segment_id] = event
         receipt = event.get("completion_receipt") or {}

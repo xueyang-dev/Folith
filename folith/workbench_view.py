@@ -59,7 +59,8 @@ def _pair(state: Mapping[str, Any], segment_id: Optional[int]) -> Mapping[str, A
     return pair if isinstance(pair, Mapping) else {}
 
 
-def _current_finding(state: Mapping[str, Any], finding: Mapping[str, Any]) -> bool:
+def _current_finding(state: Mapping[str, Any], finding: Mapping[str, Any], *,
+                     index: "translation_evidence.ReviewIndex | None" = None) -> bool:
     if finding.get("status") == "stale" or finding.get(
             "superseded_by_review_event_id"):
         return False
@@ -68,7 +69,7 @@ def _current_finding(state: Mapping[str, Any], finding: Mapping[str, Any]) -> bo
     segment_id = _segment_id(finding)
     if segment_id is None:
         return False
-    event = translation_evidence.current_review_event(state, segment_id)
+    event = translation_evidence.current_review_event(state, segment_id, index=index)
     return bool(event and event.get("review_event_id") == finding.get(
         "review_event_id"))
 
@@ -146,7 +147,11 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[
     }
 
 
-def _historical_event(state: Mapping[str, Any], segment_id: int) -> Mapping[str, Any]:
+def _historical_event(state: Mapping[str, Any], segment_id: int, *,
+                      index: "translation_evidence.ReviewIndex | None" = None,
+                      ) -> Mapping[str, Any]:
+    if index is not None:
+        return index.latest_any.get(segment_id) or {}
     for event in reversed(state.get("review_evidence") or []):
         if not isinstance(event, Mapping):
             continue
@@ -158,10 +163,11 @@ def _historical_event(state: Mapping[str, Any], segment_id: int) -> Mapping[str,
 
 
 def _review_task_item(
-    state: Mapping[str, Any], kind: str, segment_id: int,
+    state: Mapping[str, Any], kind: str, segment_id: int, *,
+    index: "translation_evidence.ReviewIndex | None" = None,
 ) -> Dict[str, Any]:
     pair = _pair(state, segment_id)
-    event = _historical_event(state, segment_id)
+    event = _historical_event(state, segment_id, index=index)
     copy = {
         "failed": ("审校未完成", "上次独立审校调用失败", "retry", 0),
         "stale": ("需要重新审校", stale_reason_label(event.get("stale_reason")),
@@ -215,8 +221,11 @@ def _review_task_item(
 
 
 def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    # One index for the whole queue: per-item reverse scans of every review event
+    # were O(items × events) (thousands × ~1 000 on a book-length task).
+    index = translation_evidence.review_index(state)
     items = [
-        _review_task_item(state, kind, segment_id)
+        _review_task_item(state, kind, segment_id, index=index)
         for kind, key in (
             ("failed", "failed_segment_ids"),
             ("stale", "stale_segment_ids"),
@@ -226,7 +235,7 @@ def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List
     ]
     current_findings = [
         finding for finding in delivery.review_queue_findings(dict(state))
-        if _current_finding(state, finding)
+        if _current_finding(state, finding, index=index)
     ]
     items.extend(_finding_item(state, finding) for finding in current_findings)
     return sorted(items, key=lambda item: (
