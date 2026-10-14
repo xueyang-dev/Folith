@@ -146,9 +146,10 @@ def test_workbench_shows_the_original_page_only_for_pdf_tasks(qapp, pdf_job, doc
         state = adapter.load_state(job_id)
         bench.load(job_id, adapter.EngineConfig(target_lang="简体中文"), state,
                    adapter.segment_rows(job_id, state), [])
-        index = bench.tabs.indexOf(bench.pdf_panel)
-        assert bench.tabs.isTabVisible(index) is expected
+        # 原页是工具条上的「原页」按钮（左侧展开面板），只有 PDF 任务才有。
+        assert (not bench.source_button.isHidden()) is expected
         assert (not bench.view_source_button.isHidden()) is expected
+        assert bench.tabs.indexOf(bench.pdf_panel) == -1, "原页不再是整页"
 
 
 def test_view_source_button_jumps_to_the_segment(qapp, pdf_job):
@@ -160,5 +161,9 @@ def test_view_source_button_jumps_to_the_segment(qapp, pdf_job):
                adapter.segment_rows(pdf_job, state), [])
     bench.select_segment(1)
     bench.view_source_button.click()
-    assert bench.tabs.currentWidget() is bench.pdf_panel
+    # 在工作台左侧展开，网格仍在旁边（acceptance-feedback D2）。
+    assert bench.source_open() and bench.source_button.isChecked()
+    assert bench.tabs.currentWidget() is bench._pages["translate"]
     assert bench.pdf_panel.current_page() == 1
+    bench.pdf_panel.close_button.click()
+    assert not bench.source_open() and not bench.source_button.isChecked()

@@ -683,6 +683,7 @@ QToolButton#toolbarButton[active="true"] {{
     background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['accent']}; font-weight: 600;
 }}
 QToolButton#toolbarButton::menu-indicator {{ image: none; width: 0px; }}
+QToolButton#toolbarButton:checked {{ background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['accent']}; font-weight: 600; }}
 
 /* ================= 翻译模式选项（译前准备 Level 1） =================
    三个紧凑的"图标 + 标题 + 一行摘要"，横排。静止 = **沉底**（比卡片低一档），

@@ -1376,5 +1376,10 @@
   "正在点评…": "Comentando…",
   "问这一段，如：为什么这样译": "Pregunta sobre el segmento, p. ej. por qué así",
   "提问": "Preguntar",
-  "重译要求，如：更口语": "Indicación, p. ej. más coloquial"
+  "重译要求，如：更口语": "Indicación, p. ej. más coloquial",
+  "适合宽度": "Ajustar al ancho",
+  "收起原页": "Cerrar página original",
+  "在左侧展开 PDF 原页，跟随选中的段落（⌘⌥P）": "Muestra la página PDF original a la izquierda; sigue al segmento seleccionado (⌘⌥P)",
+  "上一页": "Página anterior",
+  "下一页": "Página siguiente"
 }

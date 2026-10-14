@@ -203,14 +203,16 @@ def _find_ocr_location(job_id, queries, page_order):
     return None, []
 
 
-def get_segment_source_locations(job_id, segment_index):
+def get_segment_source_locations(job_id, segment_index, state=None):
     """Resolve all persisted spans, including cross-page segments.
 
     An empty rectangle list is a usable page anchor, never a search failure.
     Existing legacy jobs without anchors continue through text search.
+    ``state``: the caller's loaded state (read only); reloading copies the whole
+    task state, which made following the selection in the original page stall.
     """
     from folith.document_ir import normalized_bbox
-    state = core.load_job_state(job_id) or {}
+    state = state if state is not None else (core.load_job_state(job_id) or {})
     pairs = state.get("pairs") or []
     if segment_index < 0:
         return []

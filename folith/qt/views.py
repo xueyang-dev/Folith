@@ -1960,6 +1960,17 @@ class WorkbenchView(QWidget):
         self.find_replace_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.find_replace_button.clicked.connect(self._request_find_replace)
         toolbar.addWidget(self.find_replace_button)
+        # 原页：只有 PDF 来源的任务才显示；点一下在左侧展开（⌘⌥P）。
+        self.source_button = QToolButton()
+        self.source_button.setObjectName("toolbarButton")
+        self.source_button.setCheckable(True)
+        self.source_button.setText(i18n.tr('原页'))
+        self.source_button.setIcon(icons.icon("file", 16, "text-secondary"))
+        self.source_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.source_button.setToolTip(i18n.tr('在左侧展开 PDF 原页，跟随选中的段落（⌘⌥P）'))
+        self.source_button.clicked.connect(lambda checked: self.set_source_open(checked))
+        self.source_button.setVisible(False)
+        toolbar.addWidget(self.source_button)
         toolbar.addStretch(1)
         # ⚠️ Qt 布局坑（macOS + QSS 主题实测）：QHBoxLayout 给 QLabel / QCheckBox
         # 分配的槽位比控件自身的 sizeHint **窄**（复选框 110→99、"筛选"标签 24→22），
@@ -2590,12 +2601,23 @@ class WorkbenchView(QWidget):
         self._academic_widgets = [self.report_panel, self.cases_panel, self.qa_panel]
         self._academic_mode = False
         self.tabs.currentChanged.connect(self._tab_changed)
+        # 原页：工作台左侧可展开的面板（acceptance-feedback D2），不再是一整页。
         self.pdf_panel = PdfPanel()
-        self.tabs.addTab(self.pdf_panel,
-                         icons.icon("file", 16, "text-secondary"),
-                         i18n.tr('原页'))
-        self.tabs.setTabVisible(self.tabs.indexOf(self.pdf_panel), False)
+        self.pdf_panel.closeRequested.connect(lambda: self.set_source_open(False))
+        self.pdf_panel.setVisible(False)
+        self.translation_split.insertWidget(0, self.pdf_panel)
+        self.translation_split.setStretchFactor(0, 0)
         self._pdf_ok = False
+        self._pdf_width = 0
+        self._pdf_follow = QTimer(self)
+        self._pdf_follow.setSingleShot(True)
+        self._pdf_follow.setInterval(150)
+        self._pdf_follow.timeout.connect(self._follow_source)
+        self.translation_split.splitterMoved.connect(self._remember_source_width)
+        source_shortcut = QAction(i18n.tr('原页'), self)
+        source_shortcut.setShortcut(QKeySequence("Ctrl+Alt+P"))
+        source_shortcut.triggered.connect(lambda: self.set_source_open(not self.source_open()))
+        self.addAction(source_shortcut)
         # 检查与修复：从右侧滑出的面板，暂时替换段落检查器（点网格里的段落不会
         # 关掉它，可以逐条处理）；运行记录：从运行状态组弹出的浮窗。两者都不再
         # 占满主屏（acceptance-feedback D3 / Q1 / Q2）。
@@ -2645,7 +2667,7 @@ class WorkbenchView(QWidget):
             "translate": translation_page, "terms": self.terms_panel,
             "review": self.review_panel, "deliver": delivery_page,
             "report": self.report_panel, "cases": self.cases_panel,
-            "qa": self.qa_panel, "source": self.pdf_panel,
+            "qa": self.qa_panel,
             "details": self.details_panel,
         }
         self.tabs.currentChanged.connect(lambda _index: self._sync_stage_page())
@@ -2754,6 +2776,9 @@ class WorkbenchView(QWidget):
         if page_id == "activity":
             self.open_activity()
             return
+        if page_id == "source":
+            self.set_source_open(True)
+            return
         page = self._pages.get(page_id)
         if page is not None:
             self.tabs.setCurrentWidget(page)
@@ -2780,20 +2805,8 @@ class WorkbenchView(QWidget):
             return
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
-            # The follow-up panel needs ~440 px; the inspector's ~300 px column
-            # clipped its text.  The grid gives up the difference while it is open.
-            self._sizes_before_drawer = self.translation_split.sizes()
-            total = sum(self._sizes_before_drawer) or self.translation_split.width()
-            drawer = min(440, max(360, total // 3))
         self.followup_drawer.setVisible(open_)
-        self.inspector_scroll.setVisible(not open_)
-        if open_:
-            self.translation_split.setSizes([max(360, total - drawer), 0, drawer])
-        elif getattr(self, "_sizes_before_drawer", None):
-            self.translation_split.setSizes(self._sizes_before_drawer)
-        # The grid's columns are re-laid out after this returns; the inline
-        # editor must follow them, or it hangs past the grid's new right edge.
-        QTimer.singleShot(0, self._place_inline_editor)
+        self._layout_translation_columns()
         self.check_button.setChecked(open_)
         if open_:
             self._followup_key = ()
@@ -2801,6 +2814,71 @@ class WorkbenchView(QWidget):
 
     def _toggle_followup_drawer(self) -> None:
         self.set_followup_drawer_open(not self.followup_drawer_open())
+
+    # ---- 翻译页的列：原页 | 段落网格 | 检查器 / 检查与修复 ---------------------
+    def source_open(self) -> bool:
+        return self.pdf_panel.isVisibleTo(self)
+
+    def set_source_open(self, open_: bool) -> None:
+        """原页在工作台左侧展开 / 收起；中间的网格随之收缩（acceptance-feedback D2）。"""
+        open_ = bool(open_) and self._pdf_ok
+        self.source_button.setChecked(open_)
+        if open_ == self.source_open():
+            return
+        if open_:
+            self.tabs.setCurrentWidget(self._pages["translate"])
+        self.pdf_panel.setVisible(open_)
+        self._layout_translation_columns()
+        if open_ and self._current_index >= 0:
+            self._follow_source()
+
+    def _follow_source(self) -> None:
+        if self.source_open() and self._current_index >= 0:
+            self.pdf_panel.locate(self._current_index, state=self._state or None)
+
+    def _remember_source_width(self, *_args) -> None:
+        if self.source_open():
+            self._pdf_width = self.translation_split.sizes()[
+                self.translation_split.indexOf(self.pdf_panel)]
+
+    def _layout_translation_columns(self) -> None:
+        """按当前打开的面板分配宽度：原页约 40%（或用户拖过的宽度）、检查与修复
+        约 440px、检查器保持原宽；窗口太窄时，原页打开会让检查器让位。"""
+        split = self.translation_split
+        drawer_open = self.followup_drawer_open()
+        source = self.source_open()
+        narrow = self.width() and self.width() < 1200
+        self.inspector_scroll.setVisible(not drawer_open and not (source and narrow))
+        sizes = split.sizes()
+        total = sum(sizes) or split.width() or max(self.width() - 40, 800)
+        index = {widget: split.indexOf(widget) for widget in (
+            self.pdf_panel, self.segment_list, self.inspector_scroll, self.followup_drawer)}
+        side = 0
+        if drawer_open:
+            side = min(440, max(360, total // 3))
+        elif self.inspector_scroll.isVisibleTo(self):
+            side = sizes[index[self.inspector_scroll]] or 300
+        pdf = 0
+        if source:
+            pdf = self._pdf_width or int(total * 0.4)
+            pdf = max(320, min(pdf, total - side - 360))
+        new = [0] * split.count()
+        new[index[self.pdf_panel]] = pdf
+        new[index[self.followup_drawer]] = side if drawer_open else 0
+        new[index[self.inspector_scroll]] = side if not drawer_open else 0
+        new[index[self.segment_list]] = max(360, total - pdf - side)
+        split.setSizes(new)
+        # The grid's columns are re-laid out after this returns; the inline
+        # editor must follow them, or it hangs past the grid's new right edge.
+        QTimer.singleShot(0, self._place_inline_editor)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        if self.source_open():
+            narrow = self.width() < 1200
+            if self.inspector_scroll.isVisibleTo(self) == narrow and not self.followup_drawer_open():
+                self._layout_translation_columns()
+
 
     def current_page_id(self) -> str:
         widget = self.tabs.currentWidget()
@@ -2812,8 +2890,6 @@ class WorkbenchView(QWidget):
     def _sync_more_pages(self) -> None:
         """"更多"菜单里的页面：随 PDF 来源与学术模式变化。收不收起由内容决定。"""
         pages: list[tuple[str, str]] = []
-        if self._pdf_ok:
-            pages.append(("source", i18n.tr('原页')))
         pages.append(("details", i18n.tr('任务详情')))
         if self.academic_visible():
             pages.extend((("report", i18n.tr('报告')), ("cases", i18n.tr('案例')),
@@ -3061,7 +3137,9 @@ class WorkbenchView(QWidget):
         except Exception:  # noqa: BLE001 - 读不出原文时当作没有原页
             self._pdf_ok = False
         self.pdf_panel.load(job_id if self._pdf_ok else "")
-        self.tabs.setTabVisible(self.tabs.indexOf(self.pdf_panel), self._pdf_ok)
+        self.source_button.setVisible(self._pdf_ok)
+        if not self._pdf_ok:
+            self.set_source_open(False)
         self.view_source_button.setVisible(self._pdf_ok)
         self._sync_more_pages()
 
@@ -3069,8 +3147,8 @@ class WorkbenchView(QWidget):
         """切到原页并高亮第 ``index`` 段。"""
         if not self._pdf_ok or index < 0:
             return
-        self.tabs.setCurrentWidget(self.pdf_panel)
-        self.pdf_panel.locate(int(index))
+        self.set_source_open(True)
+        self.pdf_panel.locate(int(index), state=self._state or None)
 
     def show_segment_for_edit(self, index: int) -> None:
         """从审校页跳到翻译页的某一段（用户要自己改译文）。"""
@@ -3767,6 +3845,8 @@ class WorkbenchView(QWidget):
         self.exclude_button.setVisible(not row.excluded)
         self._sync_structure_menu(row)
         self.pdf_panel.set_segment(row.index)
+        if self.source_open():
+            self._pdf_follow.start()  # follow the selection (debounced for key repeat)
         self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
         self._sync_inline_footer()
         self._sync_operation_panel()

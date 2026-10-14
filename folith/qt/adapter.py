@@ -1489,7 +1489,7 @@ def segment_pdf_location(job_id: str, index: int, state: dict | None = None,
         text = str(paras[index] or "")
     if not text:
         return {"page": None, "rects": [], "hint": "这一段没有原文，无法定位。"}
-    locations = pdf_preview.get_segment_source_locations(job_id, index)
+    locations = pdf_preview.get_segment_source_locations(job_id, index, state=state)
     current = next((loc for loc in locations if loc[0] == current_page), None)
     page, rects = current or pdf_preview.get_cached_segment_location(
         job_id, index, text, start_page_hint=current_page)
