@@ -48,7 +48,8 @@ def test_details_page_is_reachable_and_edits_the_profile(bench):  # noqa: F811
     view.apply(view.job_id, state, adapter.segment_rows(view.job_id, state), {}, [])
     view.show_page("details")
     _pump(app)
-    assert view.current_page_id() == "details"
+    # 任务详情是顶栏 ⓘ 打开的浮窗，不再是整页（acceptance-feedback 第 12 条 E）。
+    assert view.details_popover.isVisible()
     assert "文学 · 小说" in view.details_panel.profile_label.text()
     assert any(text.startswith("文件：") for text in view.details_panel.texts())
     asked = []

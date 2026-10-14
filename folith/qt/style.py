@@ -479,6 +479,7 @@ QFrame#popover {{
     border-radius: {r['md']}px;
 }}
 QFrame#popover QListWidget {{ background: transparent; border: none; }}
+QFrame#popover QScrollArea, QFrame#popover QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 /* 底栏字数：本身可点（打开字数浮窗）。 */
 QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}
 QLabel#wordTotal:hover {{ color: {t['accent']}; text-decoration: underline; }}

@@ -1846,6 +1846,13 @@ class WorkbenchView(QWidget):
         self.status_label = self.run_status.line
         self.check_button = CheckStatusButton()
         self.check_button.clicked.connect(self._toggle_followup_drawer)
+        self.details_button = QToolButton()
+        self.details_button.setObjectName("roundButton")
+        self.details_button.setIcon(icons.icon("info", 16, "text-secondary"))
+        self.details_button.setIconSize(QSize(16, 16))
+        self.details_button.setToolTip(i18n.tr('任务详情'))
+        self.details_button.setAccessibleName(i18n.tr('任务详情'))
+        self.details_button.clicked.connect(self.open_details)
 
         # 运行控制单独放进一个零边距容器：全部隐藏时整组收掉，不留空槽位。
         run_controls = QHBoxLayout()
@@ -1892,6 +1899,7 @@ class WorkbenchView(QWidget):
         header_layout.addWidget(self.stage_bar, 2)
         header_layout.addWidget(self.run_status, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.check_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.details_button, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.header_actions_bar, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ---- 翻译标签页 ----------------------------------------------------
@@ -2658,9 +2666,16 @@ class WorkbenchView(QWidget):
         self.details_panel = TaskDetailsPanel()
         self.details_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         self.details_panel.promoteRequested.connect(self.promoteMemoryRequested.emit)
-        self.tabs.addTab(self.details_panel,
-                         icons.icon("info", 16, "text-secondary"),
-                         i18n.tr('任务详情'))
+        # 任务详情：顶栏 ⓘ 打开的浮窗（任务开始后，准备阶段的选择、文档画像与用量都在
+        # 这里；acceptance-feedback 第 12 条 E / D3）。
+        details_scroll = QScrollArea()
+        details_scroll.setWidgetResizable(True)
+        details_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        details_scroll.viewport().setAutoFillBackground(False)
+        details_scroll.setWidget(self.details_panel)
+        self.details_popover = components.Popover(i18n.tr('任务详情'), details_scroll, self,
+                                                  size=QSize(560, 620))
         self._details_key: tuple = ()
         #: 页面 id → 页面。步骤条与代码里的跳转都用页面 id，不再依赖页签序号。
         self._pages: dict[str, QWidget] = {
@@ -2668,7 +2683,7 @@ class WorkbenchView(QWidget):
             "review": self.review_panel, "deliver": delivery_page,
             "report": self.report_panel, "cases": self.cases_panel,
             "qa": self.qa_panel,
-            "details": self.details_panel,
+
         }
         self.tabs.currentChanged.connect(lambda _index: self._sync_stage_page())
         self._followup_count = 0
@@ -2779,6 +2794,9 @@ class WorkbenchView(QWidget):
         if page_id == "source":
             self.set_source_open(True)
             return
+        if page_id == "details":
+            self.open_details()
+            return
         page = self._pages.get(page_id)
         if page is not None:
             self.tabs.setCurrentWidget(page)
@@ -2791,6 +2809,13 @@ class WorkbenchView(QWidget):
         self._render_activity()
         self.activity_popover.set_subtitle(self.run_status.line.text())
         self.activity_popover.open_at(anchor)
+
+    def open_details(self) -> None:
+        """任务详情浮窗：锚定在顶栏的 ⓘ 上。"""
+        anchor = self.details_button if self.details_button.isVisible() else self.check_button
+        self.details_popover.open_at(anchor if anchor.isVisible() else self)
+        self._details_key = ()
+        self._render_details()
 
     def followup_drawer_open(self) -> bool:
         return self.followup_drawer.isVisibleTo(self)
@@ -2890,7 +2915,6 @@ class WorkbenchView(QWidget):
     def _sync_more_pages(self) -> None:
         """"更多"菜单里的页面：随 PDF 来源与学术模式变化。收不收起由内容决定。"""
         pages: list[tuple[str, str]] = []
-        pages.append(("details", i18n.tr('任务详情')))
         if self.academic_visible():
             pages.extend((("report", i18n.tr('报告')), ("cases", i18n.tr('案例')),
                           ("qa", i18n.tr('合规与 QA'))))
@@ -3045,7 +3069,7 @@ class WorkbenchView(QWidget):
         """
         if not self.job_id or self.config is None:
             return
-        if self.tabs.currentWidget() is not self.details_panel:
+        if not self.details_popover.isVisible():
             return
         key = (self.job_id, id(self._state))
         if key == self._details_key:
