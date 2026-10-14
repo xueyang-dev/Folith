@@ -2486,6 +2486,79 @@ def test_save_and_next_commits_this_segment_and_moves_on(client):
     assert "s1" not in drafts, drafts
 
 
+def test_save_and_next_does_not_wait_for_the_disk_write(client, monkeypatch):
+    """保存在后台写盘：按钮立即返回、行内先显示新译文，连续两次按提交顺序落盘。
+
+    回归：大任务上每次「保存并下一段」都要在主线程写几十 MB 的状态（实测 6.9 秒）。
+    """
+    import threading
+
+    adapter = client["adapter"]
+    core = client["core"]
+    window = client["window"]
+    app = client["app"]
+    tmp = client["tmp"]
+
+    source = tmp / "async-save.docx"
+    source.write_bytes(_make_docx(["甲段。", "乙段。", "丙段。"]))
+    job_id = adapter.import_documents(
+        [source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    state = core.load_job_state(job_id) or {}
+    state["paras"] = ["甲段。", "乙段。", "丙段。"]
+    state["pairs"] = [
+        {"source": "甲段。", "target": "A.", "reviewed": True, "segment_uid": "s0"},
+        {"source": "乙段。", "target": "B.", "reviewed": True, "segment_uid": "s1"},
+        {"source": "丙段。", "target": "C.", "reviewed": True, "segment_uid": "s2"},
+    ]
+    state["p1_done"] = True
+    state["p2_done"] = True
+    core.save_job_state(job_id, state)
+    window.open_job(job_id)
+    workbench = window.workbench
+
+    # Hold the background writer until the test lets it go.
+    release = threading.Event()
+    order: list[int] = []
+    real_submit = adapter.submit_edit
+
+    def slow_submit(job, index, text, **kwargs):
+        release.wait(10)
+        order.append(index)
+        return real_submit(job, index, text, **kwargs)
+
+    monkeypatch.setattr(adapter, "submit_edit", slow_submit)
+
+    assert workbench.select_segment(0) is True
+    app.processEvents()
+    workbench.set_editor_text_for_test("A 改。")
+    started = time.perf_counter()
+    workbench.save_next_button.click()
+    assert time.perf_counter() - started < 1.0  # did not wait for the write
+    assert _pump(app, 30, lambda: workbench.current_uid() == "s1")
+    workbench.set_editor_text_for_test("B 改。")
+    workbench.save_next_button.click()
+    app.processEvents()
+    # Both rows already show the committed text, although nothing is on disk yet.
+    shown = {row.segment_uid: row.target for row in workbench._all_rows}
+    assert shown["s0"] == "A 改。" and shown["s1"] == "B 改。", shown
+    assert window.edits_pending()
+    assert [pair["target"] for pair in core.load_job_state(job_id)["pairs"]] == \
+        ["A.", "B.", "C."]
+    # A background refresh in between must not flash the old text back.
+    window.refresh_workbench()
+    shown = {row.segment_uid: row.target for row in workbench._all_rows}
+    assert shown["s0"] == "A 改。", shown
+
+    release.set()
+    assert _pump(app, 60, lambda: not window.edits_pending())
+    assert order == [0, 1]
+    pairs = core.load_job_state(job_id)["pairs"]
+    assert [pair["target"] for pair in pairs] == ["A 改。", "B 改。", "C."]
+    assert all(pair.get("human_edited") for pair in pairs[:2])
+    assert app.focusWidget() is None or app.focusWidget() is workbench.target_edit \
+        or not window.isActiveWindow()
+
+
 def test_copy_source_to_target_fills_the_editor_as_an_uncommitted_draft(client):
     """「复制原文到译文」只填编辑器（未提交草稿），不写业务真值。"""
     adapter = client["adapter"]

@@ -1553,6 +1553,8 @@ class WorkbenchView(QWidget):
         self.job_id = ""
         self.config: adapter.EngineConfig | None = None
         self._all_rows: list[adapter.SegmentRow] = []
+        #: Submitted edits whose background save has not landed yet (index → text).
+        self._pending_saved: dict[int, str] = {}
         self._rows: list[adapter.SegmentRow] = []
         # 每个网格位置上一次画出去的行数据 + 画它时的（主题, 语言）。后台每秒刷新时
         # 绝大多数行没有变化：只重画变了的行，否则 4800 段的任务每秒要白画 5 万次。
@@ -2449,6 +2451,7 @@ class WorkbenchView(QWidget):
         self.config = config
         self._state = state
         self._snapshots = snapshots
+        self._pending_saved = {}
         self._all_rows = list(rows)
         self.title_label.setText(str(state.get("filename") or job_id))
         # 注意：这里**不**先 setRowCount(0)。清空再重建会让可访问性树经历
@@ -2483,7 +2486,7 @@ class WorkbenchView(QWidget):
         self._state = state
         self._last_runtime = runtime or {}
         self._snapshots = snapshots or []
-        self._all_rows = list(rows)
+        self._all_rows = [self._with_pending_save(row) for row in rows]
         if job_id != getattr(self, "_notes_job", None) or not self._notes_loaded_at_state(state):
             self._notes = adapter.segment_notes(job_id) if job_id else {}
             self._notes_job = job_id
@@ -3680,6 +3683,35 @@ class WorkbenchView(QWidget):
 
     def draft_text(self) -> str:
         return self.target_edit.toPlainText()
+
+    def show_saved_locally(self, index: int, text: str) -> None:
+        """Show a submitted edit in the grid before the background save lands.
+
+        The window writes the edit off the GUI thread and refreshes from disk
+        when it is done; until then the row shows what the user committed, so
+        "save and next" moves on immediately instead of freezing on the write.
+        The overlay survives the 1 s background refresh (which still reads the
+        pre-save state) until :meth:`settle_saved` drops it.
+        """
+        self._pending_saved[index] = text
+        self._all_rows = [self._with_pending_save(row) for row in self._all_rows]
+        for position, row in enumerate(self._rows):
+            if row.index == index:
+                self._rows[position] = self._with_pending_save(row)
+                self._painted.pop(position, None)
+                self._paint_row(position, self._rows[position])
+
+    def settle_saved(self, index: int) -> None:
+        """The background save for ``index`` finished or failed: disk is the truth again."""
+        self._pending_saved.pop(index, None)
+
+    def _with_pending_save(self, row: adapter.SegmentRow) -> adapter.SegmentRow:
+        text = self._pending_saved.get(row.index)
+        if text is None:
+            return row
+        return dataclasses.replace(
+            row, target=text, human_edited=True, has_draft=False, draft_text="",
+            stale_draft=False, status=row.status if row.excluded else "人工修改")
 
     def current_uid(self) -> str:
         return self._loaded_uid

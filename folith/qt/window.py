@@ -103,6 +103,10 @@ class MainWindow(QMainWindow):
         self._exit_forced = False
         self._quit_filter_installed = False
         self._deleting_batch = False
+        #: Submitted edits waiting for the background writer, saved one at a time
+        #: in submission order: (job_id, index, text).
+        self._edit_queue: list[tuple[str, int, str]] = []
+        self._edit_in_flight = False
         # 与启动器同一个日志文件：测试者遇到问题时可以直接把这份日志发出来，
         # 不必依赖"记得把对话框内容抄下来"。（模块顶部已导入 bootstrap；
         # 这里若再写一次 `from . import bootstrap`，整个 __init__ 里的
@@ -1494,27 +1498,58 @@ class MainWindow(QMainWindow):
                            label=label, **kwargs)
 
     def submit_edit(self, index: int) -> None:
+        """提交一段人工修改：写盘在后台进行，界面立即继续。
+
+        写入大任务的状态（几十 MB）在主线程上要好几秒，「保存并下一段」每一段都会
+        卡住。现在按提交顺序逐个在后台保存；落盘之前，这一行先显示刚提交的译文。
+        编辑框里的文字在提交前已经由 ``flush_draft`` 写进草稿，后台保存中途退出也不丢。
+        """
         job_id = self._current_job_id
         if not job_id or index < 0:
             return
         text = self.workbench.draft_text()
-        try:
-            adapter.submit_edit(job_id, index, text)
-        except adapter.AdapterError as exc:
-            self._failure(i18n.tr('无法提交'), str(exc))
-            return
-        except Exception as exc:  # noqa: BLE001
-            self._failure(i18n.tr('提交失败'), f"{type(exc).__name__}: {exc}")
-            return
-        self._notice(i18n.tr('已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。'))
-        self.refresh_workbench(force=True)
-        self._offer_repetitions(job_id, index)
+        self.workbench.show_saved_locally(index, text)
+        self._edit_queue.append((job_id, index, text))
+        if not self._edit_in_flight:
+            self._save_next_edit()
 
-    def _offer_repetitions(self, job_id: str, index: int) -> None:
+    def edits_pending(self) -> bool:
+        """还有提交了但还没落盘的修改（测试与退出流程用）。"""
+        return self._edit_in_flight or bool(self._edit_queue)
+
+    def _save_next_edit(self) -> None:
+        if not self._edit_queue:
+            self._edit_in_flight = False
+            return
+        self._edit_in_flight = True
+        job_id, index, text = self._edit_queue.pop(0)
+
+        def done(new_state) -> None:
+            if job_id == self._current_job_id:
+                self.workbench.settle_saved(index)
+                self._notice(i18n.tr('已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。'))
+                # Not forced: the signature changed, so this reloads once; the
+                # delivery panel is re-validated when it is shown or the run ends.
+                self.refresh_workbench()
+                self._offer_repetitions(job_id, index, state=new_state)
+            self._save_next_edit()
+
+        def failed(message: str, detail: str) -> None:
+            if job_id == self._current_job_id:
+                self.workbench.settle_saved(index)
+                self._failure(i18n.tr('无法提交'), message, detail)
+                self.refresh_workbench(force=True)  # show what is really on disk
+            self._save_next_edit()
+
+        self.runner.submit(adapter.submit_edit, job_id, index, text,
+                           on_done=done, on_error=failed, label="submit-edit")
+
+    def _offer_repetitions(self, job_id: str, index: int, *,
+                           state: dict | None = None) -> None:
         """重复段：原文相同、译文不同的段，问一次要不要一起用这段译文（不自动替换）。"""
         if _automation():
             return
-        others = adapter.repetitions(job_id, index)
+        others = adapter.repetitions(job_id, index, state=state)
         if not others:
             return
         numbers = "、".join(str(position + 1) for position in others[:8])
@@ -2693,6 +2728,14 @@ class MainWindow(QMainWindow):
         self._closing_accepted = True
         self._exit_in_progress = False
         self.runner.wait_for_done(3000)
+        # Edits still queued behind the background writer: save them now, in
+        # order, so a submitted edit is never left behind as a mere draft.
+        while self._edit_queue:
+            job_id, index, text = self._edit_queue.pop(0)
+            try:
+                adapter.submit_edit(job_id, index, text)
+            except Exception as exc:  # noqa: BLE001 - the draft file still holds the text
+                self._log(f"exit: queued edit {job_id}#{index} not saved: {exc}")
         if forced:
             self._notice(i18n.tr('已强制退出；只保证已经落盘的结果可以恢复。'))
         if self._in_close_event:
