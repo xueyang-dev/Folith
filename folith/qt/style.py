@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette, QPen
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFrame,
                                QLabel, QPushButton, QRadioButton, QSizePolicy,
                                QStatusBar, QStyledItemDelegate, QWidget)
@@ -199,10 +199,10 @@ QLabel#pageTitle {{ font-size: {f['title']}px; font-weight: 700; color: {t['bran
 QLabel#brandName {{ font-size: {f['section']}px; font-weight: 700; color: {t['brand-ink']}; }}
 QLabel#brandSub {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
 QLabel#sectionTitle {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
-QLabel#cardTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
-/* 小节标题：小字号 + 加粗 + 次要色（配合 setLetterSpacing 才有 Web 界面的"分组感"） */
+QLabel#cardTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
+/* 分组标题：与说明拉开字号/字重；保留正常字距，适用于阿拉伯语连写。 */
 QLabel#sectionLabel {{
-    font-size: {f['label']}px; font-weight: 700; color: {t['text-muted']};
+    font-size: {f['label']}px; font-weight: 600; color: {t['text-secondary']};
 }}
 QLabel#subtitle {{ font-size: {f['body']}px; color: {t['text-secondary']}; }}
 /* 页头副标题：与页面标题**同一行**（标题右侧），所以是 caption 档 + muted。
@@ -220,6 +220,10 @@ QLabel#workbenchNote[error="true"] {{ color: {t['danger']}; }}
 QLabel#caption, QLabel#hint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#faint {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 QLabel#metric {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
+/* These existing semantic names previously fell through to the body style. */
+QLabel#termsHeading, QLabel#reviewHeadline {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#reviewItemTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel[role="muted"] {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#statusError {{ color: {t['danger']}; font-weight: 600; }}
 QLabel#statusOk {{ color: {t['success']}; font-weight: 600; }}
 QLabel#statusWarn {{ color: {t['warning']}; font-weight: 600; }}
@@ -237,7 +241,7 @@ QFrame#onboardingChoice QLabel {{ background: transparent; }}
 QLabel#link {{ color: {t['accent']}; font-weight: 600; }}
 /* 交付清单：小节标题 + 右侧汇总（"6 个文件 · 85.5 KB"），行内布局由委托自绘 */
 QLabel#assetMeta {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
-QLabel#assetGroupTitle {{ font-size: {f['label']}px; font-weight: 700; color: {t['text-muted']}; }}
+QLabel#assetGroupTitle {{ font-size: {f['label']}px; font-weight: 600; color: {t['text-secondary']}; }}
 QLabel#assetMissing {{ font-size: {f['micro']}px; font-weight: 600; color: {t['danger']}; }}
 {chip_rules()}
 
@@ -279,8 +283,8 @@ QFrame#emptyState, QWidget#emptyState {{
 QLabel#emptyTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#emptyHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* 表单：标签在输入框**上方**（旧界面如此），而不是右对齐挤在左侧窄列里 */
-QLabel#fieldLabel {{ font-size: {f['caption']}px; color: {t['text-secondary']}; font-weight: 500; }}
-QLabel#fieldHint {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
+QLabel#fieldLabel {{ font-size: {f['body']}px; color: {t['text-secondary']}; font-weight: 500; }}
+QLabel#fieldHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* 密钥输入：一个"输入框外壳"，右侧放显示/隐藏按钮（QSS 没有 :focus-within） */
 QFrame#inputGroup {{
     background: {t['bg-surface']};
@@ -340,7 +344,7 @@ QFrame#taskCard:hover {{ border-color: {t['border-strong']}; background: {t['bg-
 QFrame#taskCard[selected="true"] {{
     border: 2px solid {t['accent']}; background: {t['accent-soft']};
 }}
-QLabel#taskCardTitle {{ font-size: {f['body'] - 1}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#taskCardTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#taskCardMeta {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* Golden Gate 任务卡：上半是沉底的"文档区"（左上格式角标、右上更新时间），
    下半是文字。卡片自身的圆角 12，文档区只圆上两角，和卡片外轮廓同心。 */
@@ -377,7 +381,7 @@ QFrame#styleCard:hover {{ border-color: {t['border-strong']}; }}
 QFrame#styleCard:focus {{ border-color: {t['accent']}; }}
 QFrame#styleCard[selected="true"] {{ border: 2px solid {t['accent']}; background: {t['bg-surface']}; }}
 QFrame#styleCard QLabel {{ background: transparent; }}
-QLabel#styleCardTitle {{ font-size: {f['body']}px; font-weight: 700; color: {t['text-primary']}; }}
+QLabel#styleCardTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#styleCardSummary {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#radioRing {{ border: 1.5px solid {t['border-strong']}; border-radius: 9px; background: transparent; }}
 QLabel#styleSample {{
@@ -539,7 +543,7 @@ QLabel#issueTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text
 QLabel#issueSummary {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#issueEvidence {{ font-size: {f['caption']}px; color: {t['text-primary']}; }}
 QLabel#issueWarning {{ font-size: {f['caption']}px; color: {t['warning']}; }}
-QLabel#groupCaption {{ font-size: {f['label']}px; font-weight: 700; color: {t['text-muted']};
+QLabel#groupCaption {{ font-size: {f['label']}px; font-weight: 600; color: {t['text-secondary']};
     padding: 2px 2px 0 2px; }}
 QListWidget#issueList {{ background: {t['bg-surface-sunken']}; border: none;
     border-radius: {r['sm']}px; font-size: {f['caption']}px; }}
@@ -779,7 +783,7 @@ QPushButton#presetOption:checked:hover {{
     background: {t['bg-surface-raised']}; border-color: {t['accent']};
 }}
 QPushButton#presetOption:focus {{ border-color: {t['accent']}; }}
-QLabel#presetTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#presetTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#presetDesc {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 
 /* 译前准备：macOS「系统设置」式的分组列表。分组是一块圆角面，行之间是从标题起的
@@ -793,10 +797,10 @@ QFrame#rowRule {{ background: {t['border-divider']}; border: none; }}
 QLabel#rowTitle {{ font-size: {f['body']}px; color: {t['text-primary']}; }}
 QLabel#rowValue {{ font-size: {f['body'] - 1}px; color: {t['text-secondary']}; }}
 QComboBox#primaryCombo {{ font-size: {f['body'] + 3}px; padding-left: 12px; }}
-QLabel#overviewTitle {{ font-size: {f['body'] + 1}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#overviewTitle {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#overviewNote {{ font-size: {f['caption'] + 1}px; color: {t['text-secondary']}; }}
 QLabel#groupHeader {{
-    font-size: {f['caption']}px; font-weight: 600; color: {t['text-secondary']};
+    font-size: {f['label']}px; font-weight: 600; color: {t['text-secondary']};
     padding-left: 4px;
 }}
 QPushButton#settingsGroupHeader {{
@@ -1083,8 +1087,11 @@ QDialogButtonBox QPushButton {{ min-width: 84px; }}
 
 def font_for(theme: str, *, mono: bool = False) -> QFont:
     stack = theme_module.MONO_STACK if mono else theme_module.FONT_STACK
-    font = QFont()
-    font.setFamilies(list(stack))
+    # Ask Qt for the platform UI face (macOS uses a private system family),
+    # then keep the project's CJK fallback faces. No downloaded font required.
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont if mono
+                                   else QFontDatabase.SystemFont.GeneralFont)
+    font.setFamilies(list(dict.fromkeys([font.family(), *stack])))
     font.setPixelSize(theme_module.FONT_SIZES["body"])
     return font
 
@@ -1288,15 +1295,14 @@ class ElideLabel(QLabel):
 
 
 class SectionLabel(QLabel):
-    """小节标题：小字号 + 加粗 + 字距（Web 界面里的"编辑动作 / 段落事实"）。"""
+    """分组标题：中粗体与次要色，正常字距保留各语言的自然字形。"""
 
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
         super().__init__(text, parent)
         self.setObjectName("sectionLabel")
         font = self.font()
         font.setPixelSize(theme_module.FONT_SIZES["label"])
-        font.setWeight(QFont.Weight.Bold)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
+        font.setWeight(QFont.Weight.DemiBold)
         self.setFont(font)
 
 
@@ -1721,10 +1727,9 @@ class AssetRowDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         if data.get("kind") == "header":
-            font = QFont(theme_module.FONT_STACK[0])
+            font = font_for(current_theme())
             font.setPixelSize(theme_module.FONT_SIZES["label"])
-            font.setWeight(QFont.Weight.Bold)
-            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
+            font.setWeight(QFont.Weight.DemiBold)
             painter.setFont(font)
             metrics = painter.fontMetrics()
             meta = str(data.get("meta") or "")
@@ -1775,11 +1780,11 @@ class AssetRowDelegate(QStyledItemDelegate):
         if not pixmap.isNull():
             painter.drawPixmap(icon_rect.topLeft(), pixmap)
 
-        font = QFont(theme_module.FONT_STACK[0])
+        font = font_for(current_theme())
         font.setPixelSize(theme_module.FONT_SIZES["body"])
         painter.setFont(font)
         metrics = painter.fontMetrics()
-        meta_font = QFont(theme_module.FONT_STACK[0])
+        meta_font = font_for(current_theme())
         meta_font.setPixelSize(theme_module.FONT_SIZES["caption"])
         meta_metrics = QFontMetrics(meta_font)
         meta = str(data.get("meta") or "")
@@ -1972,7 +1977,7 @@ def fit_button(button, *, max_width: int = 200) -> None:
         return
     # 用**主题正文字号**量宽度：控件此刻还没被 polish，`button.fontMetrics()`
     # 拿到的是默认小字号，量出来偏窄，于是"该省略的没省略"，按钮里被裁成半句。
-    font = QFont(theme_module.FONT_STACK[0])
+    font = font_for(current_theme())
     font.setPixelSize(theme_module.FONT_SIZES["body"])
     metrics = QFontMetrics(font)
     available = max(60, max_width)

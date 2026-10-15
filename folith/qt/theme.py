@@ -43,9 +43,10 @@ MONO_STACK = ("SF Mono", "Menlo", "Monaco", "Courier New")
 FONT_SIZES = {
     "micro": 11,      # 角标 / 极小说明
     "caption": 12,    # 次要说明、卡片脚注
-    "label": 11,      # 全大写/小字号小节标题（配合字距）
+    "label": 13,      # 分组标题；不用额外字距，保留阿拉伯语连写
     "body": 14,       # 正文、输入框
-    "section": 16,    # 区块标题
+    "card": 15,       # 卡片/条目标题，比正文高一档
+    "section": 17,    # 区块标题（macOS Title 2）
     "title": 22,      # 卡片/对话框标题
     "display": 28,    # 页面主标题
     "metric": 30,     # 指标数字
