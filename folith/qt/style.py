@@ -449,9 +449,9 @@ QWidget#sidebar {{
 QWidget#sidebar QLabel {{ background: transparent; }}
 QPushButton#navItem {{
     background: transparent; border: 1px solid transparent;
-    border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['sm']}px;
-    min-height: {box('lg', pad_y=sp['xs'], border=1)}px; text-align: left; color: {t['text-secondary']};
-    font-size: {f['reading']}px; font-weight: 500;
+    border-radius: {r['md']}px; padding: {sp['xs'] + 2}px {sp['md']}px;
+    min-height: {44 - 2 * (sp['xs'] + 2) - 2}px; text-align: left; color: {t['text-secondary']};
+    font-size: {f['nav']}px; font-weight: 500;
 }}
 QPushButton#navItem:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 /* 选中 = 一片浅色玻璃（2026-10-16 验收：浅蓝底不醒目，强调色描边又太硬）：半透明亮面、
@@ -462,12 +462,12 @@ QPushButton#navItem:checked {{
     color: {t['text-primary']}; font-weight: 600;
 }}
 /* 侧栏小节标题（"最近项目"）与项目条目 */
-QLabel#navSection {{ font-size: {f['footnote']}px; font-weight: 500; color: {t['text-muted']}; }}
+QLabel#navSection {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-muted']}; }}
 QPushButton#navProject {{
     background: transparent; border: 1px solid transparent;
-    border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['sm']}px;
-    min-height: {box('md', pad_y=sp['xs'], border=1)}px; text-align: left; color: {t['text-secondary']};
-    font-size: {f['body']}px; font-weight: 500;
+    border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['md']}px;
+    min-height: {36 - 2 * sp['xs'] - 2}px; text-align: left; color: {t['text-secondary']};
+    font-size: {f['card']}px; font-weight: 500;
 }}
 QPushButton#navProject:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#navProject:checked {{

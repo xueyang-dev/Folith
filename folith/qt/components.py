@@ -626,7 +626,7 @@ class ProjectTabs(QWidget):
 # Navigation
 # --------------------------------------------------------------------------
 def nav_item(label: str, icon_name: str, *, checkable: bool = False,
-             icon_size: int = 18) -> QPushButton:
+             icon_size: int = 22) -> QPushButton:
     """侧栏导航项：静止 = 次要色线性图标；选中 = 强调色双色图标 + 左侧强调条（QSS）。"""
     button = QPushButton(label)
     button.setObjectName("navItem")

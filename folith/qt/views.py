@@ -670,6 +670,8 @@ class HomeView(QWidget):
         # 「最近项目」：真实的项目分组，点一下 = 只看这个项目的任务（与页头的项目筛选同源）。
         self.project_nav_label = QLabel(i18n.tr('最近项目'))
         self.project_nav_label.setObjectName("navSection")
+        # 与导航文字左缘对齐（按钮左内边距 12 + 1px 透明边）。
+        self.project_nav_label.setContentsMargins(theme_module.SPACE["md"] + 1, 0, 0, 0)
         self.project_nav_label.setVisible(False)
         self.project_nav_box = QVBoxLayout()
         self.project_nav_box.setContentsMargins(0, 0, 0, 0)
@@ -733,16 +735,16 @@ class HomeView(QWidget):
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["lg"],
                                 theme_module.SPACE["md"], theme_module.SPACE["md"])
-        side.setSpacing(theme_module.SPACE["xxs"])
+        side.setSpacing(theme_module.SPACE["xs"])
         side.addWidget(self.import_button)
-        # 分组之间 16px、组内 2px：只在"组"上写间距，行与行之间保持同一条节奏。
-        side.addSpacing(theme_module.SPACE["lg"])
+        # 分组之间 24px、组内 4px：只在"组"上写间距，行与行之间保持同一条节奏。
+        side.addSpacing(theme_module.SPACE["xl"])
         side.addWidget(self.tasks_button)
         side.addWidget(self.manage_projects_button)
         side.addWidget(self.library_button)
-        side.addSpacing(theme_module.SPACE["lg"])
+        side.addSpacing(theme_module.SPACE["xl"])
         side.addWidget(self.project_nav_label)
-        side.addSpacing(theme_module.SPACE["xxs"])
+        side.addSpacing(theme_module.SPACE["xs"])
         side.addLayout(self.project_nav_box)
         side.addStretch(1)
         side.addWidget(sidebar_footer)
@@ -797,7 +799,6 @@ class HomeView(QWidget):
         self.project_tabs = components.ProjectTabs(i18n.tr('全部项目'))
         self.project_tabs.setToolTip(i18n.tr('按项目筛选任务'))
         self.project_tabs.changed.connect(self._pick_project_tab)
-        self.project_tabs.setVisible(False)
         self._projects: list[dict] = []
 
         self.search_edit = components.SearchBar(
@@ -981,6 +982,15 @@ class HomeView(QWidget):
             self.list_card.add_header_widget(control)
         actions.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                    theme_module.SPACE["md"], theme_module.SPACE["sm"])
+        # 项目标签：紧贴在「任务列表」头部条下面，是列表自己的一层筛选。
+        self.project_tabs_row = QFrame()
+        self.project_tabs_row.setObjectName("projectTabsRow")
+        tabs_row = QHBoxLayout(self.project_tabs_row)
+        tabs_row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["md"],
+                                    theme_module.SPACE["md"], theme_module.SPACE["xxs"])
+        tabs_row.addWidget(self.project_tabs)
+        self.project_tabs_row.setVisible(False)
+        self.list_card.body_layout.addWidget(self.project_tabs_row)
         self.list_card.body_layout.addWidget(self.stack, 1)
         self.list_card.body_layout.addWidget(self.actions_frame)
 
@@ -993,11 +1003,7 @@ class HomeView(QWidget):
         layout.addLayout(page_header)
         layout.addWidget(self.setup_banner)
         layout.addWidget(self.continue_card)
-        list_column = QVBoxLayout()
-        list_column.setSpacing(theme_module.SPACE["sm"])
-        list_column.addWidget(self.project_tabs)
-        list_column.addWidget(self.list_card, 1)
-        layout.addLayout(list_column, 1)
+        layout.addWidget(self.list_card, 1)
 
         shell = QHBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
@@ -1172,9 +1178,10 @@ class HomeView(QWidget):
         self.project_tabs.tabs[components.ALL_PROJECTS].set_data(
             i18n.tr('全部项目'), len(getattr(self, "_rows", [])))
         self.project_tabs.set_value(self.project_filter.currentData() or "")
-        self.project_tabs.setVisible(any(not project.get("is_system")
-                                         for project in self._projects
-                                         if project.get("project_id")))
+        self.project_tabs.setVisible(True)
+        self.project_tabs_row.setVisible(any(not project.get("is_system")
+                                             for project in self._projects
+                                             if project.get("project_id")))
 
     def _pick_project_tab(self, project_id: str) -> None:
         index = self.project_filter.findData(project_id or "")
@@ -1198,8 +1205,8 @@ class HomeView(QWidget):
             button = QPushButton(name)
             button.setObjectName("navProject")
             button.setCheckable(True)
-            button.setIcon(icons.icon("dot", 14, "text-muted", color_on="accent"))
-            button.setIconSize(QSize(14, 14))
+            button.setIcon(icons.icon("dot", 16, "text-muted", color_on="accent"))
+            button.setIconSize(QSize(16, 16))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setToolTip(name)
             style_module.fit_button(button, max_width=168)
