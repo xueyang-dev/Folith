@@ -1,0 +1,80 @@
+[
+  {
+    "preset": "快速",
+    "status": "completed",
+    "effective": {
+      "enable_review": false,
+      "auto_term": false,
+      "use_tm": true,
+      "enable_understanding": false,
+      "strict_terminology_governance": false
+    },
+    "roles": {
+      "translation": {
+        "calls": 67,
+        "in": 34103,
+        "out": 15533
+      }
+    },
+    "profile": false,
+    "glossary": 0,
+    "review_events": 0
+  },
+  {
+    "preset": "标准",
+    "status": "completed",
+    "effective": {
+      "enable_review": false,
+      "auto_term": true,
+      "use_tm": true,
+      "enable_understanding": true,
+      "strict_terminology_governance": false
+    },
+    "roles": {
+      "auxiliary": {
+        "calls": 54,
+        "in": 21901,
+        "out": 183
+      },
+      "translation": {
+        "calls": 95,
+        "in": 43656,
+        "out": 14339
+      }
+    },
+    "profile": true,
+    "glossary": 0,
+    "review_events": 0
+  },
+  {
+    "preset": "学术增强",
+    "status": "completed",
+    "effective": {
+      "enable_review": true,
+      "auto_term": true,
+      "use_tm": true,
+      "enable_understanding": true,
+      "strict_terminology_governance": true
+    },
+    "roles": {
+      "auxiliary": {
+        "calls": 66,
+        "in": 24714,
+        "out": 195
+      },
+      "translation": {
+        "calls": 95,
+        "in": 43928,
+        "out": 14339
+      },
+      "review": {
+        "calls": 61,
+        "in": 69231,
+        "out": 671
+      }
+    },
+    "profile": true,
+    "glossary": 0,
+    "review_events": 61
+  }
+]

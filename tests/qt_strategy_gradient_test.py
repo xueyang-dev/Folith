@@ -257,7 +257,9 @@ def test_the_mode_cards_show_each_modes_cost(tmp_path, data_dir):
         QTest.qWait(20)
     assert panel.source_size()["segments"] == 60
     cards = {key: panel.mode_selector.button(key).estimate() for key in PRESETS}
-    assert all("token" in text and "分钟" in text for text in cards.values()), cards
+    assert all("token" in text and "分钟" in text and "次调用" in text for text in cards.values()), cards
+    assert all(text in panel.mode_selector.button(key).accessibleDescription()
+               for key, text in cards.items())
     assert "预估" in panel.mode_summary.text()
     assert "倍" not in panel.mode_summary.text(), "标准 is the reference itself"
     panel.mode_selector.button("学术增强").click()

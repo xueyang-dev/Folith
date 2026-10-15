@@ -1601,5 +1601,6 @@
   "关闭通知": "Dismiss notification",
   "关闭当前通知，继续工作。": "Dismiss this notification and continue working.",
   "通知详情": "Notification details",
-  "重试当前任务失败的步骤。": "Retry the failed step of this task."
+  "重试当前任务失败的步骤。": "Retry the failed step of this task.",
+  "约 {v0} 次调用": "About {v0} calls"
 }

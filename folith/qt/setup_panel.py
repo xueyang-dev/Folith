@@ -517,11 +517,12 @@ class PresetOption(QPushButton):
         self._description.setObjectName("presetDesc")
         self._description.setVisible(False)
         column.addLayout(head)
-        # 名称下两行短字：这份文档上的大约 token 与耗时（没有原文大小时隐藏）。
+        # 名称下三行预估：调用、输入 token 与耗时；窄窗口也能逐项比较。
         # 分两行是因为三段并排时每段只有一百多像素宽，放一行会被省略。
+        self._estimate_calls = ElidedLabel("", self)
         self._estimate = ElidedLabel("", self)
         self._estimate_time = ElidedLabel("", self)
-        for label in (self._estimate, self._estimate_time):
+        for label in (self._estimate_calls, self._estimate, self._estimate_time):
             label.setObjectName("presetDesc")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setVisible(False)
@@ -538,16 +539,20 @@ class PresetOption(QPushButton):
             tip.append(" · ".join(included))
         self._base_tooltip = "\n".join(tip)
         self.setToolTip(self._base_tooltip)
+        self.setAccessibleDescription(self._base_tooltip)
 
-    def set_estimate(self, tokens: str, duration: str = "") -> None:
+    def set_estimate(self, tokens: str, duration: str = "", calls: str = "") -> None:
         """这个模式在这份文档上的大约成本（acceptance-feedback 13.6-3）。"""
-        self._estimate_text = " · ".join(part for part in (tokens, duration) if part)
+        self._estimate_text = " · ".join(part for part in (calls, tokens, duration) if part)
+        self._estimate_calls.setText(calls)
+        self._estimate_calls.setVisible(bool(calls))
         self._estimate.setText(tokens)
         self._estimate.setVisible(bool(tokens))
         self._estimate_time.setText(duration)
         self._estimate_time.setVisible(bool(duration))
         self.setToolTip("\n".join(part for part in (
             self._base_tooltip, self._estimate_text) if part))
+        self.setAccessibleDescription(self.toolTip())
         self.updateGeometry()
 
     def estimate(self) -> str:
@@ -658,10 +663,10 @@ class ModeSelector(QWidget):
     def button(self, key: str) -> PresetOption | None:
         return self._options.get(key)
 
-    def set_estimates(self, texts: dict[str, tuple[str, str]]) -> None:
+    def set_estimates(self, texts: dict[str, tuple[str, str, str]]) -> None:
         for key, button in self._options.items():
-            tokens, duration = texts.get(key) or ("", "")
-            button.set_estimate(tokens, duration)
+            tokens, duration, calls = texts.get(key) or ("", "", "")
+            button.set_estimate(tokens, duration, calls)
 
     def options(self) -> tuple[str, ...]:
         return tuple(self._options)
@@ -1925,7 +1930,8 @@ class TaskSetupPanel(QWidget):
         self._size = dict(size or {})
         self.mode_selector.set_estimates({
             key: (i18n.tr('{v0} token', v0=_compact_count(value["input_tokens"])),
-                  _duration(value["minutes"]))
+                  _duration(value["minutes"]),
+                  i18n.tr('约 {v0} 次调用', v0=format(value["calls"], ",")))
             for key, value in adapter.strategy_estimates(self._size).items()
             if value.get("calls")})
         self._sync_mode_summary()
