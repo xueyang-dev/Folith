@@ -49,6 +49,15 @@ LEGACY_ALLOWLIST_FILES = {
 # Current docs and source files may mention a legacy token only when the whole line is
 # an explicit package, path, environment variable, schema, or published-repo reference.
 LEGACY_LINE_ALLOWLIST = {
+    # Native probe and profiler evidence records this checkout directory.
+    # Permit only those literal local paths; product prose remains scanned.
+    "docs/ui-audit/45-p4-motion-slice/artifact-check.json": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/ui-audit/45-p4-motion-slice/dmg-probe.json": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/ui-audit/46-p4-motion/artifact-check.json": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/ui-audit/46-p4-motion/dmg-probe.json": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/ui-audit/46-p4-motion/navigation-home-profile.txt": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/ui-audit/46-p4-motion/navigation-open-profile.txt": ("/Users/xueyang/Dev/FolioThread/",),
+    "docs/ui-audit/46-p4-motion/source-flow.json": ("/Users/xueyang/Dev/FolioThread/",),
     "docs/performance-real-tasks-2026-10-08/evidence.json": ('"technical_log":',),
     # Technical identifiers and evidence paths, not brand prose: environment
     # variable names, the legacy asset fallbacks, the project schema id and the

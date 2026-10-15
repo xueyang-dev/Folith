@@ -365,3 +365,17 @@ def test_reopening_same_sized_grid_restores_editor_and_inspector(bench):
     assert bench._loaded_uid == bench._rows[5].segment_uid
     assert bench.target_edit.toPlainText() == bench._rows[5].target
     assert bench.inline_editor.isVisibleTo(bench)
+
+
+def test_source_location_waits_for_transition_and_follows_latest_selection(bench, monkeypatch):
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    bench._pdf_ok = True
+    located = []
+    monkeypatch.setattr(bench.pdf_panel, "locate", lambda index, **kw: located.append(index))
+    bench.set_source_open(True)
+    assert bench.pdf_panel._render_deferred and not located
+    bench.select_segment(4)
+    assert not located
+    QTest.qWait(350)
+    assert located == [4] and not bench.pdf_panel._render_deferred
+    assert not bench._motion.running("translation-columns")

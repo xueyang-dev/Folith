@@ -167,3 +167,36 @@ def test_view_source_button_jumps_to_the_segment(qapp, pdf_job):
     assert bench.pdf_panel.current_page() == 1
     bench.pdf_panel.close_button.click()
     assert not bench.source_open() and not bench.source_button.isChecked()
+
+
+def test_show_defers_render_until_column_transition_settles(qapp, pdf_job, monkeypatch):
+    from folith.qt.pdf_panel import PdfPanel
+
+    panel = PdfPanel()
+    started = []
+    monkeypatch.setattr(panel._pool, "start", lambda task: started.append(task))
+    panel.set_render_deferred(True)
+    panel.load(pdf_job)
+    panel.show()
+    qapp.processEvents()
+    panel.locate(1, state=adapter.load_state(pdf_job))
+    assert not started and panel._render_pending
+    panel.set_render_deferred(False)
+    assert len(started) == 1 and started[0].args[2] == 1
+    panel.close()
+    panel.deleteLater()
+
+
+def test_changing_job_invalidates_old_render_even_while_deferred(qapp, pdf_job, monkeypatch):
+    from folith.qt.pdf_panel import PdfPanel
+
+    panel = PdfPanel()
+    panel.load(pdf_job)
+    generation = panel._generation
+    shown = []
+    monkeypatch.setattr(panel, "_show_png", lambda png: shown.append(png))
+    panel.set_render_deferred(True)
+    panel.load("")
+    panel._rendered(generation, b"old job image")
+    assert not shown and panel._source.isNull()
+    panel.deleteLater()

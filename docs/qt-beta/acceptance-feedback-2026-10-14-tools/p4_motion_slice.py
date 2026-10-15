@@ -155,7 +155,11 @@ settings.remove("appearance/reduce_motion")
 if bench._pdf_ok:
     bench.set_source_open(True)
     pump(.35)
-    source_open_settled = bench.source_open() and bench.source_clip.isVisible()
+    deadline = time.monotonic() + 10
+    while (bench.pdf_panel._tasks or bench.pdf_panel._source.isNull()) and time.monotonic() < deadline:
+        pump(.05)
+    source_open_settled = (bench.source_open() and bench.source_clip.isVisible()
+                           and not bench.pdf_panel._source.isNull())
     w.grab().save(str(out / "source-open.png"))
     bench.set_followup_drawer_open(True)
     bench.set_source_open(False)
@@ -189,6 +193,9 @@ nav_last[0] = time.perf_counter()
 pump(.5)
 nav_workbench_settled = w.sidebar_clip.width() == 0 and not w.sidebar_clip.isVisible()
 nav_heartbeat.stop()
+w.raise_()
+w.activateWindow()
+pump(.1)
 w.workbench.show_page("activity")
 pump(.3)
 popup = w.workbench.activity_popover

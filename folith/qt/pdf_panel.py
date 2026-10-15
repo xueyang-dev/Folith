@@ -51,6 +51,7 @@ class PdfPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._render_pending = False
+        self._render_deferred = False
         self.job_id = ""
         self._page = 0
         self._pages = 0
@@ -125,6 +126,7 @@ class PdfPanel(QWidget):
         if job_id == self.job_id:
             return
         self.job_id = job_id
+        self._generation += 1  # invalidate a render from the previously attached task
         self._rects = []
         self._page = 0
         self._segment = -1
@@ -183,6 +185,9 @@ class PdfPanel(QWidget):
         if not self.job_id or not self._pages:
             self.image.clear()
             return
+        if self._render_deferred:
+            self._render_pending = True
+            return
         in_window = self.window().isVisible()
         if in_window and not self.isVisible():
             # Rendering a page costs ~0.6 s; opening a task used to pay it even
@@ -202,6 +207,12 @@ class PdfPanel(QWidget):
         task.signals.done.connect(self._rendered)
         self._tasks.append(task)
         self._pool.start(task)
+
+    def set_render_deferred(self, deferred: bool) -> None:
+        """Keep CPU-heavy PDF rendering out of panel transition frames."""
+        self._render_deferred = deferred
+        if not deferred and self._render_pending and self.isVisible():
+            self._render()
 
     def _rendered(self, generation: int, png: bytes) -> None:
         self._tasks = [task for task in self._tasks if task.args[0] > generation]

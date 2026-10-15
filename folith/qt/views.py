@@ -2740,6 +2740,7 @@ class WorkbenchView(QWidget):
         self.pdf_panel.closeRequested.connect(lambda: self.set_source_open(False))
         self.source_clip = components.ClippedWidget(self.pdf_panel, 400)
         self._source_open = False
+        self._source_locate_pending = False
         self.source_clip.hide()
         self.translation_split.insertWidget(0, self.source_clip)
         self.translation_split.setStretchFactor(0, 0)
@@ -3000,6 +3001,7 @@ class WorkbenchView(QWidget):
         side = split.indexOf(self.right_panel)
         source = split.indexOf(self.source_clip)
         self.followup_panel.set_preview_deferred(True)
+        self.pdf_panel.set_render_deferred(True)
         self.source_clip.setVisible(bool(start_sizes[source] or end_sizes[source]))
         self.source_clip.freeze(max(1, end_sizes[source] or start_sizes[source]))
         self.right_panel.setVisible(bool(start_sizes[side] or end_sizes[side]))
@@ -3020,6 +3022,7 @@ class WorkbenchView(QWidget):
             self.right_panel.settle(self._drawer_open)
             self.right_panel.setVisible(bool(end_sizes[side]))
             self.followup_panel.set_preview_deferred(False)
+            self._resume_source_render()
 
         self._motion.animate("translation-columns", 0.0, 1.0, frame,
                              kind="source" if start_sizes[source] != end_sizes[source] else "panel",
@@ -3041,13 +3044,21 @@ class WorkbenchView(QWidget):
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
         self._source_open = open_
+        self._source_locate_pending = open_ and self._current_index >= 0
         self._transition_columns()
-        if open_ and self._current_index >= 0:
-            self._follow_source()
 
     def _follow_source(self) -> None:
         if self.source_open() and self._current_index >= 0:
+            if self._motion.running("translation-columns"):
+                self._source_locate_pending = True
+                return
+            self._source_locate_pending = False
             self.pdf_panel.locate(self._current_index, state=self._state or None)
+
+    def _resume_source_render(self) -> None:
+        if getattr(self, "_source_locate_pending", False):
+            self._follow_source()
+        self.pdf_panel.set_render_deferred(False)
 
     def _remember_source_width(self, *_args) -> None:
         self._motion.stop("translation-columns")
@@ -3055,6 +3066,7 @@ class WorkbenchView(QWidget):
         self.source_clip.setVisible(self._source_open)
         self.right_panel.settle(self._drawer_open)
         self.followup_panel.set_preview_deferred(False)
+        self._resume_source_render()
         if not self._drawer_open and self.right_panel.isVisibleTo(self):
             self._inspector_width = self.translation_split.sizes()[
                 self.translation_split.indexOf(self.right_panel)]
@@ -3074,6 +3086,7 @@ class WorkbenchView(QWidget):
         self.source_clip.freeze(None)
         self.right_panel.settle(drawer_open)
         self.followup_panel.set_preview_deferred(False)
+        self._resume_source_render()
         self.right_panel.setVisible(drawer_open or not (source and narrow))
         split.setSizes(self._translation_column_sizes())
         # The grid's columns are re-laid out after this returns; the inline
