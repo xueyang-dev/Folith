@@ -299,11 +299,36 @@ def _row_percent(row) -> int | None:
     """从进度/状态文案里取出百分比（"正在翻译 · 63%"），没有就返回 None。"""
     import re
 
+    runtime = getattr(row, "runtime", {}) or {}
+    total = int(runtime.get("total_units") or 0)
+    if total > 0:
+        return max(0, min(100, round(100 * int(runtime.get("completed_units") or 0) / total)))
+    saved = getattr(row, "progress_percent", None)
+    if saved is not None:
+        return max(0, min(100, int(saved)))
     for text in (getattr(row, "progress_label", ""), getattr(row, "status_label", "")):
         match = re.search(r"(\d{1,3})\s*%", str(text or ""))
         if match:
             return max(0, min(100, int(match.group(1))))
     return None
+
+
+def library_run_view(row) -> tuple[str, str]:
+    """Same runtime colour semantics as the workbench, from lightweight reads."""
+    status = getattr(row, "runtime_status", "")
+    note = i18n.tr_dynamic(row.status_label)
+    if status == "stalled":
+        note = i18n.tr('暂无运行信号')
+    elif status == "failed":
+        note = i18n.tr('步骤失败') + (" · " + row.error if row.error else "")
+    elif status in ("paused", "interrupted", "cancelled", "idle_incomplete"):
+        note = i18n.tr_dynamic({"paused": "已暂停", "interrupted": "上次运行已中断",
+                                "cancelled": "任务已取消", "idle_incomplete": "未完成"}[status])
+    tone, line = run_status_view(
+        {"status": status, "runtime": getattr(row, "runtime", {})},
+        note=note, running=row.active,
+        completed=0, total=0, unit="")
+    return tone, line or i18n.tr_dynamic(row.status_label)
 
 
 def _row_format(row) -> str:
@@ -324,6 +349,7 @@ class _TaskCard(Card):
 
     clicked = Signal(str)
     activated = Signal(str)
+    attentionRequested = Signal(str)
     #: 卡片的最小宽度（px）：列数 = 可用宽度能放下几张这么宽的卡。
     MIN_WIDTH = 200
 
@@ -387,11 +413,18 @@ class _TaskCard(Card):
         meta = QLabel(" · ".join(meta_parts) or "—")
         meta.setObjectName("taskCardMeta")
 
+        run_tone, run_line = library_run_view(row)
+        tone = {"running": "info", "waiting": "info", "retrying": "warn",
+                "stalled": "warn", "failed": "danger", "done": "ok",
+                "paused": "muted", "idle": "muted"}.get(run_tone, tone)
+        if row.runtime_status == "unreadable":
+            tone = "danger"
         hollow = tone == "muted" and not row.active
         dot = components.StatusDot({"ok": "success", "warn": "warning", "danger": "danger",
                                     "info": "accent", "brand": "brand-ink"}.get(tone, "text-muted"),
                                    hollow=hollow)
-        status_text = i18n.tr_dynamic(row.status_label) or "—"
+        status_text = (run_line if run_tone in ("running", "waiting", "retrying", "stalled", "failed", "paused")
+                       else i18n.tr_dynamic(row.status_label)) or "—"
         percent = _row_percent(row)
         if row.active and percent is not None and f"{percent}%" not in status_text:
             status_text = f"{status_text} · {percent}%"
@@ -402,6 +435,13 @@ class _TaskCard(Card):
         status_row.setSpacing(theme_module.SPACE["xs"] + 2)
         status_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
         status_row.addWidget(self.status_label, 1)
+        self.attention = CheckStatusButton(self)
+        self.attention.set_count(row.attention_count, row.attention_tone or "warning")
+        self.attention.setVisible(bool(row.attention_count))
+        self.attention.clicked.connect(lambda: self.attentionRequested.emit(self.job_id))
+        status_row.addWidget(self.attention)
+        self.setAccessibleDescription(status_text + (" · " + i18n.tr('需要处理 · {v0}',
+                                      v0=row.attention_count) if row.attention_count else ""))
         # 兼容旧接口：状态芯片仍然存在（外部/测试会读它的文案），但不再显示。
         self.chip = Chip(_elide(i18n.tr_dynamic(row.status_label) or "—", 12), tone)
         self.chip.setParent(self)
@@ -412,8 +452,8 @@ class _TaskCard(Card):
         text.addSpacing(theme_module.SPACE["xxs"])
         text.addLayout(status_row)
         self.progress = None
-        if row.active and percent is not None:
-            self.progress = components.ProgressLine(percent)
+        if percent is not None:
+            self.progress = components.ProgressLine(percent, token=components.PROGRESS_TONES[run_tone])
             text.addSpacing(theme_module.SPACE["xxs"])
             text.addWidget(self.progress)
         column.addLayout(text)
@@ -486,6 +526,7 @@ class HomeView(QWidget):
 
     importRequested = Signal()
     openRequested = Signal(str)
+    checkRequested = Signal(str)
     deleteRequested = Signal(str)
     refreshRequested = Signal()
     #: 侧栏「任务库」：从项目页 / 术语页回到任务库。
@@ -995,6 +1036,7 @@ class HomeView(QWidget):
         self.continue_progress.setVisible(percent is not None)
         if percent is not None:
             self.continue_progress.set_value(percent)
+            self.continue_progress.set_token(components.PROGRESS_TONES[library_run_view(row)[0]])
         self.continue_button.setText(i18n.tr('继续'))
 
     # -- data --------------------------------------------------------------
@@ -1334,6 +1376,7 @@ class HomeView(QWidget):
                 card = _TaskCard(row, tone=_status_tone(row), parent=section)
                 card.clicked.connect(self._select_job_from_card)
                 card.activated.connect(self._open_job_from_card)
+                card.attentionRequested.connect(self.checkRequested.emit)
                 card.navigate.connect(self._navigate_cards)
                 grid.addWidget(card, position // columns, position % columns)
                 self._cards[row.job_id] = card
@@ -1653,7 +1696,8 @@ class CheckStatusButton(QToolButton):
         self.badge.setText(str(count) if count else "")
         self.badge.setVisible(bool(count))
         self.badge.adjustSize()
-        self.badge.move(self.width() - self.badge.width() + 2, -2)
+        self.badge.move(0 if self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+                        else self.width() - self.badge.width(), 0)
         label = i18n.tr('检查与修复')
         self.setToolTip(i18n.tr('检查与修复 · {v0} 项待处理', v0=count) if count else label)
         self.setAccessibleName(label)
@@ -1664,7 +1708,8 @@ class CheckStatusButton(QToolButton):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
-        self.badge.move(self.width() - self.badge.width() + 2, -2)
+        self.badge.move(0 if self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+                        else self.width() - self.badge.width(), 0)
 
 
 class WorkbenchView(QWidget):
@@ -2729,6 +2774,7 @@ class WorkbenchView(QWidget):
         self.followup_panel.locateRequested.connect(self._locate_segment_from_followup)
         self.followup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         self.activity_panel = ActivityPanel()
+        self.activity_panel.retry_button.clicked.connect(self.retryRequested.emit)
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))
         self.tabs.addTab(delivery_page,
@@ -2976,6 +3022,16 @@ class WorkbenchView(QWidget):
         page = self._pages.get(page_id)
         if page is not None:
             self.tabs.setCurrentWidget(page)
+
+    def set_task_notice(self, message: str, *, error=False):
+        runtime = self._last_runtime
+        self._task_notice = (self.job_id, message, error, (runtime.get("status"), runtime.get("detail"), runtime.get("current_operation")))
+        self.run_status.setVisible(True)
+        self.run_status.set_state(tone="failed" if error else self.run_status.track.tone(),
+                                  line=message)
+        self.run_status.track.setVisible(self.task_started())
+        self.run_status.percent.setVisible(self.task_started())
+        self._render_activity()
 
     def open_activity(self) -> None:
         """运行记录浮窗：锚定在运行状态组下面；运行状态组不可见时锚定在顶栏右端。"""
@@ -3378,7 +3434,7 @@ class WorkbenchView(QWidget):
             rows = adapter.activity_events(self.job_id)
         except Exception:  # noqa: BLE001 - 活动页坏了不能拖垮翻译页
             rows = []
-        self.activity_panel.set_rows(rows, signature=signature)
+        self.activity_panel.set_rows(rows[-50:], signature=signature)
 
     def _render_terms(self, *, force: bool = False) -> None:
         key = (self.job_id, id(self._state))
@@ -3801,12 +3857,18 @@ class WorkbenchView(QWidget):
         # 进度已保存"对一个还没开始的任务是错的；「开始翻译」由准备面板承担，
         # 两个"开始翻译"并存会让用户不确定哪个才带上刚选的策略（面板里那个会
         # 先把选择写回任务再启动）。
+        self.run_status.track.setVisible(started)
+        self.run_status.percent.setVisible(started)
         header_visible = started
         self.chip_state.setVisible(header_visible)
         self.chip_state.setText(chip_text)
         self.chip_state.set_tone(chip_tone)
         self.run_status.setVisible(header_visible)
         if not started:
+            notice = getattr(self, "_task_notice", None)
+            if notice and notice[0] == self.job_id:
+                self.run_status.setVisible(True)
+                self.run_status.set_state(tone="failed" if notice[2] else "idle", line=notice[1])
             for button in (self.start_button, self.pause_button, self.cancel_button,
                            self.retry_button):
                 button.setVisible(False)
@@ -3863,6 +3925,11 @@ class WorkbenchView(QWidget):
         self.pause_button.setText(i18n.tr('正在暂停…') if pausing else i18n.tr('暂停'))
         self.cancel_button.setVisible(running or "cancel" in actions)
         self.retry_button.setVisible("retry" in actions)
+        self.activity_panel.retry_button.setVisible("retry" in actions)
+        notice = getattr(self, "_task_notice", None)
+        if notice and notice[0] == self.job_id and notice[3] == (runtime.get("status"), runtime.get("detail"), runtime.get("current_operation")):
+            self.run_status.setVisible(True)
+            self.run_status.set_state(tone="failed" if notice[2] else tone, line=notice[1])
         self._sync_header_actions()
 
     def _sync_header_actions(self) -> None:

@@ -580,6 +580,10 @@ class ProgressLine(QWidget):
         self._value = max(0, min(100, int(value)))
         self.update()
 
+    def set_token(self, token: str) -> None:
+        self._token = token
+        self.update()
+
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
         tokens = _tokens()
         painter = QPainter(self)
@@ -590,7 +594,9 @@ class ProgressLine(QWidget):
         painter.drawRoundedRect(rect, 2, 2)
         if self._value:
             painter.setBrush(theme_module.qcolor(tokens[self._token]))
-            painter.drawRoundedRect(QRectF(0, 0, rect.width() * self._value / 100, rect.height()), 2, 2)
+            width = rect.width() * self._value / 100
+            x = rect.width() - width if self.layoutDirection() == Qt.LayoutDirection.RightToLeft else 0
+            painter.drawRoundedRect(QRectF(x, 0, width, rect.height()), 2, 2)
         painter.end()
 
 

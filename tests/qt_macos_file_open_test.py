@@ -231,7 +231,7 @@ def test_unsupported_document_says_so_instead_of_doing_nothing(client, tmp_path,
     client.open_external_files([str(other)])
 
     assert imported == [], imported
-    message = client.status.currentMessage()
+    message = client.last_notice()
     assert "xlsx" in message and "不支持" in message, message
 
 
@@ -246,7 +246,7 @@ def test_mixed_batch_imports_the_supported_ones_only(client, tmp_path, monkeypat
     client.open_external_files([str(good), str(bad)])
 
     assert imported == [[str(good)]], imported
-    assert "zip" in client.status.currentMessage()
+    assert "zip" in client.last_notice()
 
 
 def test_empty_input_is_a_no_op(client, monkeypatch):

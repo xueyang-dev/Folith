@@ -36,7 +36,7 @@ _SYSTEM_TTL_S = 5.0
 _cache: dict = {"at": 0.0, "value": False}
 
 
-def _macos_reduce_motion() -> bool:
+def _macos_reduce_motion(selector: bytes = b"accessibilityDisplayShouldReduceMotion") -> bool:
     try:
         objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
         ctypes.cdll.LoadLibrary(
@@ -55,8 +55,7 @@ def _macos_reduce_motion() -> bool:
         send_bool = ctypes.cast(objc.objc_msgSend,
                                 ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
                                                  ctypes.c_void_p))
-        return bool(send_bool(workspace, objc.sel_registerName(
-            b"accessibilityDisplayShouldReduceMotion")))
+        return bool(send_bool(workspace, objc.sel_registerName(selector)))
     except Exception:  # noqa: BLE001 - an unreadable preference means "not reduced"
         return False
 
@@ -87,6 +86,22 @@ def reduced() -> bool:
             or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
         return True
     return _system_reduce_motion()
+
+
+_transparency_cache = {"at": 0.0, "value": False}
+
+
+def reduced_transparency() -> bool:
+    forced = os.environ.get("FOLITH_REDUCE_TRANSPARENCY")
+    if forced is not None:
+        return forced.strip() not in ("0", "false", "no")
+    if sys.platform != "darwin":
+        return False
+    now = time.monotonic()
+    if now - _transparency_cache["at"] > _SYSTEM_TTL_S:
+        _transparency_cache.update(at=now, value=_macos_reduce_motion(
+            b"accessibilityDisplayShouldReduceTransparency"))
+    return bool(_transparency_cache["value"])
 
 
 class Motion(QObject):

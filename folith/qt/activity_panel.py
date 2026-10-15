@@ -8,7 +8,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
-    QWidget,
+    QWidget, QPlainTextEdit,
 )
 
 from . import i18n
@@ -51,11 +51,28 @@ class ActivityPanel(QWidget):
         layout.addLayout(bar)
         layout.addWidget(self.hint)
         layout.addWidget(self.list, 1)
+        self.detail = QPlainTextEdit(self)
+        self.detail.setReadOnly(True)
+        self.detail.setAccessibleName(i18n.tr('通知详情'))
+        self.detail.setVisible(False)
+        self.list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.list.currentItemChanged.connect(self._selection_changed)
+        layout.addWidget(self.detail, 1)
+        self.retry_button = QPushButton(i18n.tr('重试当前步骤'), self)
+        self.retry_button.setAccessibleDescription(i18n.tr('重试当前任务失败的步骤。'))
+        self.retry_button.setVisible(False)
+        layout.addWidget(self.retry_button)
         layout.addWidget(self.empty)
         self.set_rows([])
 
     def set_rows(self, rows: list[dict], *, signature: str = "") -> None:
         self._signature = signature
+        scrollbar = self.list.verticalScrollBar()
+        at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        position = scrollbar.value()
+        selected_item = self.list.currentItem()
+        selected = selected_item.data(Qt.ItemDataRole.UserRole) if selected_item else None
+        self.list.blockSignals(True)
         self.list.clear()
         for row in rows:
             status = str(row.get("status") or "completed")
@@ -64,11 +81,27 @@ class ActivityPanel(QWidget):
                 f"{i18n.tr_dynamic(str(row.get('label') or ''))}")
             item.setForeground(style_module.qcolor(
                 style_module.text_color(_TONE.get(status, "text-secondary"))))
+            item.setData(Qt.ItemDataRole.UserRole, str(row.get("label") or "") +
+                         ("\n\n" + str(row["detail"]) if row.get("detail") else ""))
+            item.setToolTip(str(row.get("label") or ""))
             self.list.addItem(item)
-        if rows:
+        if selected is not None:
+            for index in range(self.list.count()):
+                if self.list.item(index).data(Qt.ItemDataRole.UserRole) == selected:
+                    self.list.setCurrentRow(index)
+                    break
+        self.list.blockSignals(False)
+        self._selection_changed(self.list.currentItem())
+        if rows and at_bottom:
             self.list.scrollToBottom()
+        else:
+            scrollbar.setValue(position)
         self.empty.setVisible(not rows)
         self.list.setVisible(bool(rows))
+
+    def _selection_changed(self, item, _previous=None):
+        self.detail.setPlainText(item.data(Qt.ItemDataRole.UserRole) if item else "")
+        self.detail.setVisible(item is not None)
 
     def signature(self) -> str:
         return self._signature

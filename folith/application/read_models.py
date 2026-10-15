@@ -58,6 +58,10 @@ class JobSummary:
     diverged: bool = False
     unreadable: bool = False
     error: str = ""
+    progress_percent: int | None = None
+    attention_count: int = 0
+    attention_tone: str = ""
+    runtime: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def completed(self) -> bool:
@@ -130,6 +134,8 @@ def _status_label(job_id: str, summary: Mapping[str, Any], signature: str) -> st
     snapshot) behind a small bounded memo, because the label is recomputed for
     every row on every list refresh and the snapshot check touches disk.
     """
+    if "status_label" in summary:
+        return str(summary["status_label"])
     core = _core()
     key = _label_cache_key(job_id, summary, signature)
     cached = _LABEL_CACHE.get(key)
@@ -172,6 +178,10 @@ def _cached_summary(job_id: str, entry: Path) -> Optional[Dict[str, Any]]:
         return None
     if str(data.get("job_id") or "") != job_id:
         return None
+    # Pre-P6 summaries lack these facts. Use the existing read-only state
+    # fallback until the next normal save writes the current summary shape.
+    if "attention_count" not in data:
+        return _rebuilt_summary(job_id) or data
     return data
 
 
@@ -261,7 +271,13 @@ def _last_saved_at(job_id: str) -> str:
 def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
     core = _core()
     updated = str(summary.get("updated_at") or "")
-    if not updated:
+    if not updated and "attention_count" in summary:
+        try:
+            updated = datetime.fromtimestamp(
+                (core.job_dir(job_id) / "state.json").stat().st_mtime).astimezone().isoformat()
+        except OSError:
+            pass
+    if not updated and "attention_count" not in summary:
         # A persisted state does not carry its own timestamp; the core's
         # authoritative "last saved" value comes from the durable artifacts.
         updated = _last_saved_at(job_id)
@@ -284,13 +300,22 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
     error = runtime.get("error")
     if isinstance(error, Mapping):
         error = error.get("message") or ""
+    label = _status_label(job_id, summary, signature)
+    if snapshot_version is not None:
+        label = (f"工作版本已偏离冻结交付 v{snapshot_version}" if diverged else
+                 f"已冻结交付 v{snapshot_version}") if snapshot.get("current") or diverged else label
+    count = int(summary.get("attention_count") or 0)
+    tone = str(summary.get("attention_tone") or "")
+    if summary.get("recovery_attention") and status not in _active_statuses():
+        count += 1
+        tone = tone or "warning"
     return JobSummary(
         job_id=job_id,
         filename=str(summary.get("filename") or ""),
         project_id=summary.get("project_id"),
         target_lang=str(summary.get("target_lang") or ""),
         status=status,
-        status_label=_status_label(job_id, summary, signature),
+        status_label=label,
         progress_label=str(summary.get("progress_label") or ""),
         stage=str(summary.get("stage") or ""),
         segment_count=int(summary.get("segment_count") or 0),
@@ -301,6 +326,10 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
         snapshot_version=snapshot_version,
         diverged=diverged,
         error=str(error or ""),
+        progress_percent=summary.get("progress_percent"),
+        attention_count=count,
+        attention_tone=tone,
+        runtime=runtime.get("runtime") or {},
     )
 
 

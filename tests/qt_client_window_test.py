@@ -1192,7 +1192,7 @@ def test_unsafe_exit_offers_force_quit_and_says_what_it_guarantees(client, monke
     # Second run: force quit closes, and the notice states the guarantee.
     notices: list[str] = []
     monkeypatch.setattr(window, "_notice",
-                        lambda text, error=False: notices.append(text))
+                        lambda text, error=False, **kwargs: notices.append(text))
     decisions["无法安全退出"] = True
     prompts.clear()
     window.close()
@@ -1372,7 +1372,7 @@ def test_home_can_move_a_task_to_another_project(client, monkeypatch):
     monkeypatch.setattr(window_module, "ProjectPickerDialog", _Chooser)
     notices: list[str] = []
     monkeypatch.setattr(window, "_notice",
-                        lambda text, error=False: notices.append(text))
+                        lambda text, error=False, **kwargs: notices.append(text))
     window.move_to_project([job_id])
     app.processEvents()
 
@@ -2109,7 +2109,7 @@ def test_macos_menu_roles_and_standard_shortcuts(client):
 
     # 关于：自动化运行下不弹模态，把事实写进状态栏提示。
     notices: list[str] = []
-    window._notice = lambda text, error=False: notices.append(text)
+    window._notice = lambda text, error=False, **kwargs: notices.append(text)
     window.show_about()
     assert notices and "Folith" in notices[0], notices
 
@@ -2154,8 +2154,8 @@ def test_dialogs_never_block_a_scripted_run(client, monkeypatch):
     #    前者在上面第 2 步已覆盖。）
     window = client["window"]
     window.show_tools()
-    assert "工具状态" in window.status.currentMessage(), \
-        window.status.currentMessage()
+    assert "工具状态" in window.last_notice(), \
+        window.last_notice()
 
 
 def test_main_window_confirm_uses_the_apps_own_dialog(client, monkeypatch):
@@ -2595,7 +2595,7 @@ def test_legacy_import_never_opens_a_native_panel_in_a_scripted_run(client, monk
     window = client["window"]
     notices: list[str] = []
     monkeypatch.setattr(window, "_notice",
-                        lambda text, error=False: notices.append(text))
+                        lambda text, error=False, **kwargs: notices.append(text))
     # 不替换任何对话框：若实现仍走原生面板，这里会挂起（用例超时即失败）。
     window.import_legacy()
     client["app"].processEvents()
@@ -2616,7 +2616,7 @@ def test_import_entry_point_never_opens_a_native_panel_in_a_scripted_run(client)
     assert bootstrap.automation() is True
     window = client["window"]
     notices: list[str] = []
-    window._notice = lambda text, error=False: notices.append(text)
+    window._notice = lambda text, error=False, **kwargs: notices.append(text)
     before = len(adapter_jobs(client))
     window.choose_import()            # 若仍走原生面板，这里会挂起
     client["app"].processEvents()
@@ -3945,7 +3945,7 @@ def test_start_is_inline_defers_io_and_restores_buttons_on_failure(client, monke
     assert notices[-1] == "另一个任务正在启动，请等它启动后再开始这个任务。"
     monkeypatch.setattr(window, "_notice", real_notice)
     failures = []
-    monkeypatch.setattr(window, "_failure", lambda *args: failures.append(args))
+    monkeypatch.setattr(window, "_failure", lambda *args, **kwargs: failures.append(args))
     held.calls[0]["on_error"]("Failed", "detail")
     assert failures and not window._starting_jobs
     assert all(b.isEnabled() for b in buttons)
@@ -3957,7 +3957,7 @@ def test_import_is_inline_and_failure_restores_entry_point(client, monkeypatch):
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window, "_busy", lambda *_: pytest.fail("import must stay inline"))
     failures = []
-    monkeypatch.setattr(window, "_failure", lambda *args: failures.append(args))
+    monkeypatch.setattr(window, "_failure", lambda *args, **kwargs: failures.append(args))
     window.import_paths(["missing.docx"], autostart=False)
     assert not window.home.import_button.isEnabled()
     assert window._import_activity is not None and not window._busy_dialogs
@@ -3975,7 +3975,7 @@ def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, mo
     held = _HeldRunner()
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window_module, "_automation", lambda: False)
-    monkeypatch.setattr(window, "_failure", lambda *args: None)
+    monkeypatch.setattr(window, "_failure", lambda *args, **kwargs: None)
     window.import_paths(["held.docx"], autostart=False)
     QTest.qWait(3200)
     dialog = window._import_activity._dialog

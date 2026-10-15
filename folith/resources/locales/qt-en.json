@@ -1597,5 +1597,9 @@
   "新的设置窗口": "A new Settings window",
   "改了立即生效；模型连接先测试再保存；新增「存储」与「关于」两页。": "Changes apply at once; model connections are tested before saving; new Storage and About pages.",
   "更流畅": "Smoother",
-  "大文档打开、保存、切换段落都不再卡住；动画尊重「减少动态效果」。": "Large documents open, save and switch segments without freezing; animations respect Reduce Motion."
+  "大文档打开、保存、切换段落都不再卡住；动画尊重「减少动态效果」。": "Large documents open, save and switch segments without freezing; animations respect Reduce Motion.",
+  "关闭通知": "Dismiss notification",
+  "关闭当前通知，继续工作。": "Dismiss this notification and continue working.",
+  "通知详情": "Notification details",
+  "重试当前任务失败的步骤。": "Retry the failed step of this task."
 }

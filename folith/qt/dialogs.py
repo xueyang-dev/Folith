@@ -1136,8 +1136,7 @@ class EngineDialog(QDialog):
             if bootstrap.automation():
                 self._status.setText(i18n.tr('无法保存设置：{v0}', v0=exc))
             else:
-                prompts.NoticeDialog.notify(self, i18n.tr('保存失败'),
-                                          i18n.tr('无法保存设置：{v0}', v0=exc), tone="danger")
+                _set_status(self._status, i18n.tr('无法保存设置：{v0}', v0=exc), "danger")
             return
         self.config = config
         self.academic_preference = self.academic_box.isChecked()
@@ -1409,14 +1408,12 @@ class DiagnosticsDialog(QDialog):
             if bootstrap.automation():
                 self._status.setText(i18n.tr('无法写出诊断包：{v0}', v0=exc))
             else:
-                prompts.NoticeDialog.notify(self, i18n.tr('保存失败'),
-                                          i18n.tr('无法写出诊断包：{v0}', v0=exc), tone="danger")
+                _set_status(self._status, i18n.tr('无法写出诊断包：{v0}', v0=exc), "danger")
             return
         if bootstrap.automation():
             self._status.setText(i18n.tr('诊断包已写入：{v0}', v0=written))
         else:
-            prompts.NoticeDialog.notify(self, i18n.tr('已保存'),
-                                      i18n.tr('诊断包已写入：\n{v0}', v0=written), tone="ok")
+            _set_status(self._status, i18n.tr('诊断包已写入：{v0}', v0=written), "ok")
 
 
 class ProjectPickerDialog(QDialog):

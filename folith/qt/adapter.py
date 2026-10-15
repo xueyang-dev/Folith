@@ -19,7 +19,7 @@ import os
 import re
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -228,6 +228,10 @@ class JobRow:
     snapshot_version: int | None = None
     diverged: bool = False
     error: str = ""
+    progress_percent: int | None = None
+    attention_count: int = 0
+    attention_tone: str = ""
+    runtime: dict = field(default_factory=dict)
 
     @property
     def title(self) -> str:
@@ -256,6 +260,10 @@ def _row_from_summary(summary) -> JobRow:
         snapshot_version=summary.snapshot_version,
         diverged=summary.diverged,
         error=summary.error,
+        progress_percent=summary.progress_percent,
+        attention_count=summary.attention_count,
+        attention_tone=summary.attention_tone,
+        runtime=dict(summary.runtime),
     )
 
 
@@ -1547,26 +1555,23 @@ def _warning_reason(warnings: list[str]) -> str:
 
 def followup_view(job_id: str, state: dict | None = None) -> dict:
     state = state if state is not None else load_state(job_id)
-    outcomes = core.workflow_outcomes(state)
-    understanding, annotation = outcomes["understanding"], outcomes["annotation"]
+    from folith.application.task_attention import state_facts
+    facts = state_facts(state)
+    understanding, annotation = facts["understanding"], facts["annotation"]
     report_warnings = [str(item) for item in
                        ((state.get("extraction_report") or {}).get("warnings") or [])]
     understanding = dict(understanding, reason=_warning_reason(
         [item for item in report_warnings if _UNDERSTANDING_WARNING.search(item)]))
     profile_warnings = [item for item in report_warnings if _PROFILE_WARNING.search(item)
                         and "失败" in item]
-    profile = state.get("document_profile") or {}
     profile_view = {
         # 画像生成失败、用户也还没补上领域：翻译与审校少了"这是一份什么文档"的依据。
-        "missing": bool(profile_warnings) and not str(profile.get("domain") or "").strip(),
+        "missing": facts["profile_missing"],
         "reason": "模型给出的画像缺少领域等关键字段。"
         if any("缺少关键字段" in item for item in profile_warnings)
         else _warning_reason(profile_warnings),
     }
-    try:
-        entities = [dict(item) for item in core.entity_consistency_queue(state)]
-    except Exception:  # noqa: BLE001 - 实体登记缺失/损坏时不应拖垮整个页面
-        entities = []
+    entities = facts["entities"]
     try:
         recovery = dict(core.recovery_summary(job_id, state))
     except Exception:  # noqa: BLE001
@@ -1580,9 +1585,7 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         "extraction": extraction_report_view(state),
         "recovery": recovery,
         # 原文质量门禁标出、还没确认的疑似碎片（可以一次排除）。
-        "fragments": sorted(index for index in source_quality_indexes(state)
-                            if 0 <= index < len(state.get("pairs") or [])
-                            and not (state.get("pairs") or [])[index].get("excluded")),
+        "fragments": facts["fragments"],
         "understanding": understanding,
         "annotation": annotation,
         "profile": profile_view,
@@ -1857,6 +1860,14 @@ def activity_signature(job_id: str) -> str:
     except OSError:
         return "missing"
     return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def record_notice(job_id: str, message: str, *, error: bool = False, detail: str = "") -> None:
+    """Append an action result without changing the pipeline's runtime state."""
+    core._append_runtime_event(
+        job_id, {"event": "client_error" if error else "client_notice", "message": message},
+        visibility="user", category="client",
+        metadata={"detail": detail})
 
 
 def activity_events(job_id: str, limit: int = 200) -> list[dict]:

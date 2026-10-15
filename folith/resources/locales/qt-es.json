@@ -1597,5 +1597,9 @@
   "新的设置窗口": "Nueva ventana de ajustes",
   "改了立即生效；模型连接先测试再保存；新增「存储」与「关于」两页。": "Los cambios se aplican al momento; las conexiones se prueban antes de guardar; nuevas páginas Almacenamiento y Acerca de.",
   "更流畅": "Más fluido",
-  "大文档打开、保存、切换段落都不再卡住；动画尊重「减少动态效果」。": "Los documentos grandes se abren, guardan y cambian de segmento sin bloqueos; las animaciones respetan «Reducir movimiento»."
+  "大文档打开、保存、切换段落都不再卡住；动画尊重「减少动态效果」。": "Los documentos grandes se abren, guardan y cambian de segmento sin bloqueos; las animaciones respetan «Reducir movimiento».",
+  "关闭通知": "Cerrar notificación",
+  "关闭当前通知，继续工作。": "Cierra esta notificación y continúa trabajando.",
+  "通知详情": "Detalles de la notificación",
+  "重试当前任务失败的步骤。": "Reintenta el paso fallido de esta tarea."
 }

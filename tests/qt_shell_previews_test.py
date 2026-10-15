@@ -305,22 +305,17 @@ def test_projects_page_changes_refresh_the_task_library(window, app, monkeypatch
     assert main.projects.changed
 
 
-def test_bottom_bar_shows_only_while_there_is_a_message(window, app):
+def test_notifications_use_top_toast_without_bottom_bar(window, app):
     main = window["window"]
-    data_dir = str(main.paths.data_dir)
-    main.status.clearMessage()
-    app.processEvents()
-    assert not main.status.isVisible(), "没有消息时窗口最下端不留状态栏"
-    main.status.showMessage("已保存")
-    app.processEvents()
-    assert main.status.isVisible() and main.status.currentMessage() == "已保存"
-    main.status.clearMessage()
-    app.processEvents()
-    assert not main.status.isVisible()
-    from PySide6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QStatusBar
 
-    texts = [label.text() for label in main.status.findChildren(QLabel)]
-    assert data_dir not in texts, "数据目录不再常驻在底栏"
+    assert not main.findChildren(QStatusBar)
+    main._notice("已保存", task=False)
+    app.processEvents()
+    assert main.toast.isVisible() and main.last_notice() == "已保存"
+    assert main.toast.y() < 80
+    main.toast.close_button.click()
+    assert not main.toast.isVisible()
 
 
 def test_cards_show_the_real_first_page(window, app):

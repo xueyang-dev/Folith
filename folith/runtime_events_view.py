@@ -80,13 +80,15 @@ def activity_rows(events: Iterable[Mapping[str, Any]]) -> List[Dict[str, str]]:
     """Oldest-first rows ``{status, label, timestamp}``; repeats collapse to the latest."""
     rows: List[Dict[str, str]] = []
     for event in events:
-        label = event_label(event)
+        client = event.get("event") in ("client_notice", "client_error")
+        label = str(event.get("message") or "") if client else event_label(event)
         if not label or label == "—":
             continue
         name = str(event.get("event") or "")
-        status = ("failed" if name in _FAILURE_EVENTS or "失败" in str(event.get("message") or "")
+        status = ("failed" if name in _FAILURE_EVENTS or name == "client_error" or "失败" in str(event.get("message") or "")
                   else "running" if name in _RUNNING_EVENTS else "completed")
         row = {"status": status, "label": label,
+               "detail": str((event.get("metadata") or {}).get("detail") or ""),
                "timestamp": clock(event.get("timestamp") or event.get("at"))}
         if rows and rows[-1]["label"] == label and rows[-1]["status"] == status:
             rows[-1] = row

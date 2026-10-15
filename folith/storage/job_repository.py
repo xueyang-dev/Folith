@@ -334,7 +334,11 @@ def build_job_summary(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
     if not runtime_status or runtime_status == "idle":
         runtime_status = "idle" if core._runtime_business_complete(state) else "idle_incomplete"
 
+    from folith.application.task_attention import summary as attention_summary
+
     return {
+        **attention_summary(job_id, state),
+        "status_label": core.task_status_label(state),
         "job_id": str(job_id),
         "filename": str(state.get("filename") or ""),
         "project_id": state.get("project_id"),
@@ -346,6 +350,9 @@ def build_job_summary(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
         "progress": progress_info,
         "progress_label": core.progress_label(state),
         "segment_count": seg_count,
+        "progress_percent": (min(100, round(100 * sum(bool(str(pair.get("target") or "").strip())
+                                                     for pair in pairs) / max(len(paras), len(pairs))))
+                             if pairs else None),
         "review_count": len(findings),
     }
 
