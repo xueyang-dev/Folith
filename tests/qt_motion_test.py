@@ -1,8 +1,13 @@
 """P4 validation slice: interrupted drawers, stable rows and preferences."""
 from __future__ import annotations
 
+import os
+
 import pytest
 
+# Animations and Qt.Popup activation are timing-sensitive on the real
+# Cocoa platform; like the other Qt test files, run deterministically.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest

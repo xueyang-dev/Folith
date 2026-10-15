@@ -4,6 +4,8 @@ docs/qt-beta/acceptance-feedback-2026-10-14.md §1, §6, §11, D3.
 """
 from __future__ import annotations
 
+import os
+
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,6 +15,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# Animations and Qt.Popup activation are timing-sensitive on the real
+# Cocoa platform; like the other Qt test files, run deterministically.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
