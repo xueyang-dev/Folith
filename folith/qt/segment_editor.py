@@ -146,11 +146,11 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
         if index.row() == self.active_row and index.column() == 1:
             # 原文由可选中的浮层显示（见 InlineSegmentEditor.source_view），这里不画字。
             option.text = ""
-        elif index.row() == self.active_row:
-            option.features |= QStyleOptionViewItem.ViewItemFeature.WrapText
-            option.displayAlignment = (Qt.AlignmentFlag.AlignTop
-                                       | Qt.AlignmentFlag.AlignLeft)
-            option.textElideMode = Qt.TextElideMode.ElideNone
+            return
+        # 每一行都整段换行、顶部对齐（行高按较长的一方自适应，见 WorkbenchView）。
+        option.features |= QStyleOptionViewItem.ViewItemFeature.WrapText
+        option.displayAlignment = (Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        option.textElideMode = Qt.TextElideMode.ElideNone
 
 
 def source_height(table: QAbstractItemView, text: str, width: int) -> int:

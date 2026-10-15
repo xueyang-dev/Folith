@@ -107,6 +107,24 @@ def test_editor_follows_the_selection_and_collapses_the_previous_row(bench):
     assert view.target_edit.toPlainText() == "译文2"
 
 
+def test_rows_are_as_tall_as_their_longer_side_and_never_truncated(bench):
+    """acceptance-feedback #20：每行整段显示，行高按原文 / 译文中较长的一方。"""
+    from folith.qt import segment_editor
+
+    view, app = bench
+    view.select_segment(2)
+    table = view.segment_list
+    view.resize(700, 800)  # 两列随窗口伸缩：窗口变窄 → 列宽变化 → 去抖 → 分批重算
+    _pump(app, 0.4)
+    short, long_ = table.rowHeight(0), table.rowHeight(1)
+    assert short >= segment_editor.ROW_HEIGHT
+    assert long_ > short, "the wrapped source must make its row taller"
+    assert table.item(1, 1).text() == view._rows[1].source  # full text, no preview
+    view.resize(2400, 800)
+    _pump(app, 0.4)
+    assert table.rowHeight(1) < long_, "a wider column needs fewer lines"
+
+
 def test_save_bar_appears_only_after_a_change(bench):
     view, app = bench
     view.select_segment(0)

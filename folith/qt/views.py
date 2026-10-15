@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 import time
 
-from PySide6.QtCore import QEvent, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QRect, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QFormLayout, QFrame, QGridLayout,
@@ -2016,7 +2016,8 @@ class WorkbenchView(QWidget):
         self.segment_list.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers)
         self.segment_list.setShowGrid(False)
-        self.segment_list.setWordWrap(False)
+        # 全部展开、按原文 / 译文中较长的一方自适应行高（acceptance-feedback 第 20 条）。
+        self.segment_list.setWordWrap(True)
         self.row_delegate = segment_editor.WorkbenchRowDelegate(self.segment_list)
         self.segment_list.setItemDelegate(self.row_delegate)
         self.segment_list.verticalHeader().setVisible(False)
@@ -2036,6 +2037,16 @@ class WorkbenchView(QWidget):
         self.segment_list.itemSelectionChanged.connect(self._selection_changed)
         self.segment_list.currentCellChanged.connect(
             lambda row, *_rest: self._row_selected(row))
+        self._height_cache: dict = {}
+        self._heights_pending: list[int] = []
+        self._height_timer = QTimer(self)
+        self._height_timer.setInterval(0)
+        self._height_timer.timeout.connect(self._apply_row_height_chunk)
+        self._height_resize = QTimer(self)
+        self._height_resize.setSingleShot(True)
+        self._height_resize.setInterval(120)
+        self._height_resize.timeout.connect(lambda: self._schedule_row_heights(reset=True))
+        self.segment_list.horizontalHeader().sectionResized.connect(self._columns_resized)
 
         # ---- 右侧检查器 ----------------------------------------------------
         self.segment_status = QLabel(i18n.tr('尚未选择段落'))
@@ -3422,12 +3433,14 @@ class WorkbenchView(QWidget):
                 self._activate_position(-1)
             self._sync_drafts_banner()
             self._sync_word_count()
+            self._schedule_row_heights()
             return
         for position, row in enumerate(self._rows):
             self._paint_row(position, row)
         self._place_inline_editor()
         self._sync_drafts_banner()
         self._sync_word_count()
+        self._schedule_row_heights()
 
     def _sync_word_count(self) -> None:
         """整份文档的字数与进度（按原文计）。状态没换就不重算。"""
@@ -3534,10 +3547,10 @@ class WorkbenchView(QWidget):
         number.setForeground(style_module.qcolor(_tone_color(tokens, tone)))
         number.setToolTip(i18n.tr_dynamic(row.status))
         # 展开行显示整段原文（委托负责换行）；其余行一行一段。
-        source_text = row.source if position == self._active_position else _elide(row.source, 160)
+        source_text = str(row.source or "")
         if source.text() != source_text:
             source.setText(source_text)
-        target_text = _elide(row.draft_text if row.has_draft else row.target, 160)
+        target_text = str((row.draft_text if row.has_draft else row.target) or "")
         untranslated = not target_text.strip()
         if untranslated:
             # 真正没有译文的段用占位说明，和已译文字一眼区分（第 5 条第 7 点）。
@@ -4103,7 +4116,7 @@ class WorkbenchView(QWidget):
         self._active_position = position
         self.row_delegate.active_row = position
         if 0 <= previous < self.segment_list.rowCount():
-            self.segment_list.setRowHeight(previous, segment_editor.ROW_HEIGHT)
+            self.segment_list.setRowHeight(previous, self._natural_height(previous))
             self._painted.pop(previous, None)
             if previous < len(self._rows):
                 self._paint_row(previous, self._rows[previous])
@@ -4111,6 +4124,65 @@ class WorkbenchView(QWidget):
             self._painted.pop(position, None)
             self._paint_row(position, self._rows[position])
         self._place_inline_editor()
+
+    # ---- 自适应行高：每行按原文 / 译文中较长的一方换行后的高度 ------------------
+    def _natural_height(self, position: int) -> int:
+        """第 ``position`` 行全部展开时需要的高度（按当前列宽，结果有缓存）。"""
+        if not (0 <= position < len(self._rows)):
+            return segment_editor.ROW_HEIGHT
+        row = self._rows[position]
+        table = self.segment_list
+        source = str(row.source or "")
+        target = str((row.draft_text if row.has_draft else row.target) or "") or i18n.tr('（未翻译）')
+        widths = (table.columnWidth(1), table.columnWidth(2))
+        key = (source, target, widths)
+        cached = self._height_cache.get(key)
+        if cached is None:
+            metrics = table.fontMetrics()
+            tallest = 0
+            for text, width in ((source, widths[0]), (target, widths[1])):
+                rect = metrics.boundingRect(
+                    QRect(0, 0, max(40, width - 2 * segment_editor.CELL_PAD - 10), 100000),
+                    int(Qt.TextFlag.TextWordWrap), text or " ")
+                tallest = max(tallest, rect.height())
+            cached = max(segment_editor.ROW_HEIGHT, tallest + 2 * segment_editor.CELL_PAD + 4)
+            self._height_cache[key] = cached
+        return cached
+
+    def _schedule_row_heights(self, *, reset: bool = False) -> None:
+        """排队重算行高：先算眼前这一屏，再分批（每批 200 行）算其余的。
+
+        一次算完 3 856 行要约 0.3 s，放在主线程一口气做会卡；分批做，每批几毫秒。
+        """
+        if reset:
+            self._height_cache.clear()
+        table = self.segment_list
+        count = table.rowCount()
+        first = max(0, table.rowAt(0))
+        last = table.rowAt(table.viewport().height() - 1)
+        last = count - 1 if last < 0 else last
+        visible = list(range(first, min(count, last + 40)))
+        rest = [p for p in range(count) if p < first or p >= last + 40]
+        self._heights_pending = visible + rest
+        if not self._height_timer.isActive():
+            self._height_timer.start()
+
+    def _apply_row_height_chunk(self) -> None:
+        table = self.segment_list
+        batch, self._heights_pending = self._heights_pending[:200], self._heights_pending[200:]
+        for position in batch:
+            if position == self._active_position or position >= table.rowCount():
+                continue
+            height = self._natural_height(position)
+            if table.rowHeight(position) != height:
+                table.setRowHeight(position, height)
+        if not self._heights_pending:
+            self._height_timer.stop()
+        self._place_inline_editor()
+
+    def _columns_resized(self, index: int, _old: int, _new: int) -> None:
+        if index in (1, 2):
+            self._height_resize.start()
 
     def _place_inline_editor(self) -> None:
         """按当前行的单元格位置摆放编辑框，并让这一行刚好容下原文与译文。"""
