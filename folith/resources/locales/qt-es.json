@@ -1441,5 +1441,7 @@
   "模型没有按要求的格式回复。": "El modelo no respondió con el formato requerido.",
   "模型给出的画像缺少领域等关键字段。": "El perfil del modelo carecía de campos clave como el ámbito.",
   "滚动查看本段的注意事项、术语、前后文和批注。": "Desplázate para ver las observaciones, los términos, el contexto y las notas de este segmento.",
-  "处理任务中需要注意的问题；按 Esc 收起并返回编辑框。": "Resuelve los problemas de esta tarea; pulsa Esc para cerrar y volver al editor."
+  "处理任务中需要注意的问题；按 Esc 收起并返回编辑框。": "Resuelve los problemas de esta tarea; pulsa Esc para cerrar y volver al editor.",
+  "正在导入…": "Importando…",
+  "正在启动…": "Iniciando…"
 }

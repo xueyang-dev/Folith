@@ -124,7 +124,7 @@ def test_drawer_clips_at_final_width_and_rapid_toggles_settle(bench, app, monkey
     for i in range(20):
         bench.set_followup_drawer_open(bool(i % 2))
     assert bench.followup_drawer_open()
-    assert panel.fraction == 1 and not bench._motion.running("review-drawer")
+    assert panel.fraction == 1 and not bench._motion.running("translation-columns")
     assert bench.followup_drawer.isVisible() and not bench.inspector_scroll.isVisible()
     QTest.keyClick(bench.drawer_close, Qt.Key.Key_Escape)
     app.processEvents()
@@ -140,12 +140,12 @@ def test_resizing_and_hiding_during_transition_leave_no_animation(bench, monkeyp
     bench.set_followup_drawer_open(True)
     QTest.qWait(50)
     bench.resize(1300, 800)
-    assert not bench._motion.running("review-drawer")
+    assert not bench._motion.running("translation-columns")
     assert bench.right_panel.fraction == 1
     QTest.qWait(250)
     bench.set_followup_drawer_open(False)
     bench.hide()
-    assert not bench._motion.running("review-drawer")
+    assert not bench._motion.running("translation-columns")
     assert bench.right_panel.fraction == 0
 
 
@@ -228,3 +228,140 @@ def test_reference_scroll_area_is_readable_in_dark_theme(bench, app):
 def test_drawer_styles_use_valid_tokens_in_every_theme():
     for name in ("light", "dark", "paper", "green"):
         assert "QFrame#followupDrawer" in style.build_qss(name)
+
+
+def test_probe_poll_interval_does_not_block_gui_heartbeat(app, tmp_path):
+    from PySide6.QtCore import QTimer
+    from folith.qt.selftest import Flow
+
+    ticks = []
+    timer = QTimer()
+    timer.setInterval(10)
+    timer.timeout.connect(lambda: ticks.append(1))
+    timer.start()
+    try:
+        flow = Flow(None, app, out_dir=tmp_path)
+        assert not flow.pump(.12, lambda: False, interval=.5)
+        assert len(ticks) >= 4
+    finally:
+        timer.stop()
+
+
+def test_progress_never_runs_ahead_and_stage_reset_is_immediate(app, monkeypatch):
+    from folith.qt.components import ProgressTrack
+
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    track = ProgressTrack()
+    track.set_stage("translation")
+    track.setValue(20)
+    track.setValue(70)
+    QTest.qWait(80)
+    assert 20 < track._display_value < track.value() == 70
+    track.setValue(75)  # rapid updates settle rather than queue
+    assert track._display_value == 75
+    track.set_stage("review")
+    track.setValue(5)
+    assert track._display_value == track.value() == 5
+    assert not track._motion.running("value")
+    track.deleteLater()
+
+
+def test_view_effect_renders_and_releases_without_moving_input_geometry(app, monkeypatch):
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    widget = QWidget()
+    widget.resize(240, 100)
+    widget.show()
+    geometry = widget.geometry()
+    controller = motion.Motion(widget)
+    controller.reveal("view", widget)
+    QTest.qWait(80)
+    assert not widget.grab().isNull()
+    assert widget.geometry() == geometry
+    QTest.qWait(250)
+    assert not widget.graphicsEffect().isEnabled()
+    controller.nod("tone", widget)
+    QTest.qWait(70)
+    assert not widget.grab().isNull()
+    QTest.qWait(170)
+    assert not widget.graphicsEffect().isEnabled()
+    widget.close()
+    widget.deleteLater()
+
+
+def test_popover_interruptions_and_native_escape(app, monkeypatch):
+    from PySide6.QtWidgets import QLabel, QPushButton
+    from folith.qt.components import Popover
+
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    anchor = QPushButton("anchor")
+    anchor.show()
+    popup = Popover("Details", QLabel("content"), anchor)
+    closed = []
+    popup.closed.connect(lambda: closed.append(True))
+    popup.open_at(anchor)
+    assert popup._motion.running("popup")
+    assert popup.body.isHidden()
+    QTest.qWait(240)
+    assert popup.isVisible() and popup.body.isVisible()
+    assert popup.size() == popup._popup_size
+    popup.close()
+    QTest.qWait(30)
+    popup.open_at(anchor)  # cancellation cannot run the old close completion
+    QTest.qWait(220)
+    assert popup.isVisible() and popup.body.isVisible() and not closed
+    QTest.keyClick(popup, Qt.Key.Key_Escape)
+    QTest.qWait(190)
+    assert not popup.isVisible() and len(closed) == 1
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
+    popup.open_at(anchor)
+    assert popup.body.isVisible() and not popup._motion.running("popup")
+    popup.close()
+    assert not popup.isVisible()
+    anchor.close()
+    anchor.deleteLater()
+
+
+def test_save_acknowledgement_waits_for_persistence(bench, monkeypatch):
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    index = bench._rows[0].index
+    bench.show_saved_locally(index, "saved text")
+    assert "✓" not in bench.segment_list.item(0, 0).text()
+    bench.settle_saved(index)
+    bench.confirm_saved(index)
+    assert "✓" in bench.segment_list.item(0, 0).text()
+    assert index in bench.row_delegate.saved
+    QTest.qWait(450)
+    assert index not in bench.row_delegate.saved
+
+
+def test_inline_activity_restores_buttons_and_cancels_delayed_progress(app, monkeypatch):
+    from PySide6.QtWidgets import QPushButton
+    from folith.qt.components import ButtonActivity
+
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
+    owner = QWidget()
+    button = QPushButton("Import", owner)
+    button.setAccessibleDescription("Choose a file")
+    activity = ButtonActivity([button], "Importing…", owner)
+    dialogs = []
+    activity.show_progress_after(50, lambda: dialogs.append(True))
+    assert not button.isEnabled() and button.text() == "Importing…"
+    angle = activity._angle
+    QTest.qWait(40)
+    assert activity._angle == angle
+    activity.close()
+    QTest.qWait(60)
+    assert not dialogs and button.isEnabled() and button.text() == "Import"
+    assert button.accessibleDescription() == "Choose a file"
+    owner.deleteLater()
+
+
+def test_reopening_same_sized_grid_restores_editor_and_inspector(bench):
+    bench.select_segment(5)
+    job_id = bench.job_id
+    bench.load(job_id, adapter.EngineConfig(), adapter.load_state(job_id),
+               adapter.segment_rows(job_id), [])
+    assert bench.current_index() == 5
+    assert bench._loaded_uid == bench._rows[5].segment_uid
+    assert bench.target_edit.toPlainText() == bench._rows[5].target
+    assert bench.inline_editor.isVisibleTo(bench)

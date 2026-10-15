@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QLinearGradient,
-                           QPainter, QPainterPath, QShortcut)
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                           QIcon, QPainter, QPainterPath, QPen, QPixmap, QShortcut)
+from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from . import icons
@@ -98,6 +98,88 @@ class SlidingPanel(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._place()
+
+
+class ClippedWidget(QWidget):
+    """Reveal a fixed-width panel without rewrapping its contents each frame."""
+
+    def __init__(self, content: QWidget, width: int, parent=None) -> None:
+        super().__init__(parent)
+        self.content, self.content_width = content, width
+        content.setParent(self)
+        content.show()
+        self.resize(width, self.height())
+
+    def freeze(self, width: int | None) -> None:
+        self.content_width = width
+        self._place()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._place()
+
+    def _place(self) -> None:
+        rtl = self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+        width = self.content_width if self.content_width is not None else self.width()
+        self.content.setGeometry(self.width() - width if rtl else 0, 0, width, self.height())
+
+
+class ButtonActivity(QObject):
+    """Inline activity with an optional delayed, non-modal progress window."""
+
+    def __init__(self, buttons: list, text: str, parent) -> None:
+        super().__init__(parent)
+        self.active = True
+        self.text = text
+        self._original = [(b, b.text(), b.icon(), b.iconSize(), b.isEnabled(),
+                           b.accessibleDescription()) for b in buttons]
+        self._angle = 0
+        self._dialog = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self._tick)
+        self._tick()
+        self._timer.start()
+
+    def _tick(self) -> None:
+        if not motion.reduced():
+            self._angle = (self._angle + 18) % 360
+        pixmap = QPixmap(36, 36)
+        pixmap.setDevicePixelRatio(2)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(theme_module.qcolor(_tokens()["accent"]), 2,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawArc(QRectF(3, 3, 12, 12), -self._angle * 16, 270 * 16)
+        painter.end()
+        for button, *_ in self._original:
+            button.setText(self.text)
+            button.setIcon(QIcon(pixmap))
+            button.setIconSize(QSize(18, 18))
+            button.setEnabled(False)
+            button.setAccessibleDescription(self.text)
+
+    def show_progress_after(self, milliseconds: int, factory) -> None:
+        def show() -> None:
+            if self.active:
+                self._dialog = factory()
+        QTimer.singleShot(milliseconds, self, show)
+
+    def close(self) -> None:
+        if not self.active:
+            return
+        self.active = False
+        self._timer.stop()
+        if self._dialog is not None:
+            self._dialog.close()
+        for button, text, icon, size, enabled, description in self._original:
+            button.setText(text)
+            button.setIcon(icon)
+            button.setIconSize(size)
+            button.setEnabled(enabled)
+            button.setAccessibleDescription(description)
+        self.deleteLater()
 
 
 class IconBadge(QWidget):
@@ -625,6 +707,12 @@ class ProgressTrack(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._minimum, self._maximum, self._value = 0, 100, 0
         self._tone = "running"
+        self._previous_tone = "running"
+        self._tone_mix = 1.0
+        self._display_value = 0.0
+        self._stage = None
+        self._snap_next = True
+        self._motion = motion.Motion(self)
         self._phase = 0.0
         self._sheen = QTimer(self)
         self._sheen.setInterval(33)
@@ -632,13 +720,37 @@ class ProgressTrack(QWidget):
 
     # QProgressBar-compatible value API --------------------------------
     def setRange(self, minimum: int, maximum: int) -> None:  # noqa: N802 - Qt naming
+        changed = (self._minimum, self._maximum) != (int(minimum), max(int(minimum), int(maximum)))
         self._minimum, self._maximum = int(minimum), max(int(minimum), int(maximum))
         self._value = max(self._minimum, min(self._value, self._maximum))
+        if changed:
+            self._motion.stop("value")
+            self._display_value = float(self._value)
+            self._snap_next = True
         self._sync_sheen()
         self.update()
 
     def setValue(self, value: int) -> None:  # noqa: N802 - Qt naming
+        previous = self._value
         self._value = max(self._minimum, min(int(value), self._maximum))
+        if self._value == previous and not self._snap_next:
+            return
+        if self._snap_next or self._value < previous:
+            self._motion.stop("value")
+            self._set_display(float(self._value))
+        else:
+            self._motion.animate("value", self._display_value, float(self._value),
+                                 self._set_display, kind="progress")
+        self._snap_next = False
+
+    def set_stage(self, stage) -> None:
+        if stage != self._stage:
+            self._stage = stage
+            self._motion.stop("value")
+            self._snap_next = True
+
+    def _set_display(self, value: float) -> None:
+        self._display_value = min(float(self._value), value)
         self.update()
 
     def minimum(self) -> int:
@@ -660,9 +772,13 @@ class ProgressTrack(QWidget):
     def set_tone(self, tone: str) -> None:
         tone = tone if tone in PROGRESS_TONES else "running"
         if tone != self._tone:
-            self._tone = tone
+            self._previous_tone, self._tone = self._tone, tone
             self._sync_sheen()
-            self.update()
+            self._motion.animate("tone", 0, 1, self._set_tone_mix, kind="progress")
+
+    def _set_tone_mix(self, value: float) -> None:
+        self._tone_mix = value
+        self.update()
 
     def tone(self) -> str:
         return self._tone
@@ -711,7 +827,11 @@ class ProgressTrack(QWidget):
         painter.drawRoundedRect(rect, radius, radius)
         # Fill.
         colour = theme_module.qcolor(tokens[PROGRESS_TONES.get(self._tone, "accent")])
-        share = self.fraction()
+        previous = theme_module.qcolor(tokens[PROGRESS_TONES[self._previous_tone]])
+        colour = QColor.fromRgbF(*[a + (b - a) * self._tone_mix for a, b in zip(
+            previous.getRgbF(), colour.getRgbF())])
+        span = self._maximum - self._minimum
+        share = None if span <= 0 else (self._display_value - self._minimum) / span
         if share is None:
             share = 1.0 if self._tone in ("failed", "done", "stalled") else 0.0
         width = rect.width() * max(0.0, min(1.0, share))
@@ -766,6 +886,13 @@ class Popover(QFrame):
         self.setObjectName("popover")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.resize(size)
+        self._popup_size = QSize(size)
+        self._motion = motion.Motion(self)
+        self._closing = False
+        self._accept_close = False
+        self._anchor_rect = QRect()
+        self.body = QWidget(self)
+        self.body.resize(size)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("sectionTitle")
         self.subtitle_label = QLabel("")
@@ -787,7 +914,7 @@ class Popover(QFrame):
         head.setContentsMargins(0, 0, 0, 0)
         head.addLayout(head_text, 1)
         head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self.body)
         layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                   theme_module.SPACE["md"], theme_module.SPACE["md"])
         layout.setSpacing(theme_module.SPACE["sm"])
@@ -801,8 +928,11 @@ class Popover(QFrame):
 
     def open_at(self, anchor: QWidget) -> None:
         """Show below ``anchor``, right edges aligned, clamped to its screen."""
+        self.resize(self._popup_size)
         below = anchor.mapToGlobal(QPoint(anchor.width(), anchor.height() + 6))
         x, y = below.x() - self.width(), below.y()
+        if self.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+            x = anchor.mapToGlobal(QPoint(0, 0)).x()
         screen = anchor.screen() or QGuiApplication.primaryScreen()
         if screen is not None:
             area = screen.availableGeometry()
@@ -810,11 +940,47 @@ class Popover(QFrame):
             if y + self.height() > area.bottom() - 8:
                 y = max(area.top() + 8,
                         anchor.mapToGlobal(QPoint(0, 0)).y() - self.height() - 6)
-        self.move(x, y)
+        target = QRect(x, y, self._popup_size.width(), self._popup_size.height())
+        self._anchor_rect = QRect(anchor.mapToGlobal(QPoint(0, 0)), anchor.size())
+        self._closing = False
+        self._accept_close = False
+        self._motion.stop("popup")
+        self.body.setGeometry(QRect(QPoint(0, 0), target.size()))
+        self.body.hide()
         self.show()
         self.raise_()
-        self.close_button.setFocus(Qt.FocusReason.PopupFocusReason)
+
+        def ready():
+            self.body.show()
+            if self.isVisible() and QApplication.activePopupWidget() is self:
+                self.close_button.setFocus(Qt.FocusReason.PopupFocusReason)
+
+        self._animate_geometry(self._anchor_rect, target, "popover", ready)
+
+    def _animate_geometry(self, start, end, kind, finished):
+        def frame(value):
+            self.setGeometry(QRect(*[round(a + (b - a) * value) for a, b in zip(
+                (start.x(), start.y(), start.width(), start.height()),
+                (end.x(), end.y(), end.width(), end.height()))]))
+        self._motion.animate("popup", 0, 1, frame, kind=kind, finished=finished)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().closeEvent(event)
+        if self._accept_close or motion.reduced() or not self.isVisible():
+            super().closeEvent(event)
+            return
+        event.ignore()
+        if self._closing:
+            return
+        self._closing = True
+        self.body.hide()
+
+        def finish():
+            self._accept_close = True
+            self.close()
+
+        self._animate_geometry(self.geometry(), self._anchor_rect, "popover-close", finish)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._motion.stop("popup")
+        super().hideEvent(event)
         self.closed.emit()

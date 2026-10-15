@@ -1441,5 +1441,7 @@
   "模型没有按要求的格式回复。": "The model didn't reply in the required format.",
   "模型给出的画像缺少领域等关键字段。": "The model's profile lacked key fields such as the field/domain.",
   "滚动查看本段的注意事项、术语、前后文和批注。": "Scroll to read this segment’s findings, terms, context and notes.",
-  "处理任务中需要注意的问题；按 Esc 收起并返回编辑框。": "Address issues in this task; press Esc to close and return to the editor."
+  "处理任务中需要注意的问题；按 Esc 收起并返回编辑框。": "Address issues in this task; press Esc to close and return to the editor.",
+  "正在导入…": "Importing…",
+  "正在启动…": "Starting…"
 }

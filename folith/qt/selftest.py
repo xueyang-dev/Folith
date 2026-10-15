@@ -191,11 +191,16 @@ class Flow:
         keep the default; state-based ones pass a coarser interval.
         """
         deadline = time.monotonic() + seconds
+        next_check = 0.0
         while time.monotonic() < deadline:
             self.app.processEvents()
-            if predicate is not None and predicate():
-                return True
-            time.sleep(interval)
+            now = time.monotonic()
+            if predicate is not None and now >= next_check:
+                if predicate():
+                    return True
+                next_check = now + interval
+            # Polling slowly must not suspend the GUI timer we are measuring.
+            time.sleep(min(interval, 0.01))
         self.app.processEvents()
         return bool(predicate()) if predicate is not None else True
 
@@ -215,13 +220,8 @@ class Flow:
                          interval=0.5):
             return False
         # The gate decides whether every expected segment has a receipt.
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
-            self.app.processEvents()
-            if not self._missing_review_indexes(core, job_id):
-                return True
-            time.sleep(0.5)
-        return False
+        return self.pump(60.0, lambda: not self._missing_review_indexes(core, job_id),
+                         interval=0.5)
 
     @staticmethod
     def _review_readiness(core, job_id: str) -> dict:

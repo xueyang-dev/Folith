@@ -638,7 +638,7 @@ class FollowupPanel(QWidget):
 
     def _target_changed(self, *_args) -> None:
         self.set_preview([])
-        if self.window().isVisible() and not self.isVisible():
+        if getattr(self, "_defer_preview", False) or (self.window().isVisible() and not self.isVisible()):
             # (only when shown in a window but on a hidden page)
             # The preview scans the whole document (~0.2 s on a book); the panel
             # is rebuilt on every state change, mostly while nobody looks at it.
@@ -648,6 +648,12 @@ class FollowupPanel(QWidget):
         target = self.target_edit.text().strip()
         if target and self._current_source():
             self.previewRequested.emit(self._current_source(), target)
+
+    def set_preview_deferred(self, deferred: bool) -> None:
+        """Keep the first-show entity scan out of the drawer's opening frames."""
+        self._defer_preview = deferred
+        if not deferred and getattr(self, "_preview_pending", False) and self.isVisible():
+            self._target_changed()
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().showEvent(event)

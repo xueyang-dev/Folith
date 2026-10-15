@@ -116,7 +116,7 @@ def test_status_group_opens_the_run_log_by_click_and_keyboard(app):
     QTest.mouseClick(bench.run_status, Qt.MouseButton.LeftButton)
     app.processEvents()
     assert bench.activity_popover.isVisible()
-    assert bench.activity_panel.parent() is bench.activity_popover
+    assert bench.activity_popover.isAncestorOf(bench.activity_panel)
     bench.activity_popover.close_button.click()
     app.processEvents()
     assert not bench.activity_popover.isVisible()

@@ -35,6 +35,7 @@ from . import adapter
 from . import bootstrap
 from . import dialogs
 from . import prompts
+from . import components, motion
 from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
@@ -101,6 +102,11 @@ class MainWindow(QMainWindow):
         self.paths = paths
         self.instance_lock = instance_lock
         self.runner = TaskRunner(self)
+        self._motion = motion.Motion(self)
+        self._sidebar_page = None
+        self._starting_jobs: set[str] = set()
+        self._imports_active = 0
+        self._import_activity = None
         self._busy_dialogs: list = []
         self._exit_forced = False
         self._quit_filter_installed = False
@@ -157,11 +163,13 @@ class MainWindow(QMainWindow):
         # 侧栏属于窗口而不是任务库：任务库 / 项目 / 术语页切换时它一直在左侧，
         # 「任务库」导航项就是返回入口。进入工作台时收起，把宽度留给段落网格。
         self.sidebar = self.home.take_sidebar()
+        self.sidebar_clip = components.ClippedWidget(self.sidebar, HomeView.SIDEBAR_WIDTH)
+        self.sidebar_clip.setFixedWidth(HomeView.SIDEBAR_WIDTH)
         shell = QWidget(self)
         shell_layout = QHBoxLayout(shell)
         shell_layout.setContentsMargins(0, 0, 0, 0)
         shell_layout.setSpacing(0)
-        shell_layout.addWidget(self.sidebar)
+        shell_layout.addWidget(self.sidebar_clip)
         shell_layout.addWidget(self.stack, 1)
         self.setCentralWidget(shell)
         self.stack.currentChanged.connect(self._sync_sidebar)
@@ -808,9 +816,11 @@ class MainWindow(QMainWindow):
     def show_home(self) -> None:
         self.workbench.flush_draft()
         self._current_job_id = ""
+        # Finish the existing synchronous list read before starting a 300 ms
+        # entrance; otherwise the read consumes the animation's whole duration.
+        self.refresh_home()
         self.stack.setCurrentWidget(self.home)
         self._sync_sidebar()
-        self.refresh_home()
         self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
         self._sync_menu_state()
 
@@ -840,12 +850,33 @@ class MainWindow(QMainWindow):
 
     def import_paths(self, paths: list[str], *,
                      autostart: bool | None = None) -> None:
-        busy = self._busy(i18n.tr('正在导入 {v0} 个文档…', v0=len(paths)))
+        self._imports_active += 1
+        if self._import_activity is None:
+            self._import_activity = components.ButtonActivity(
+                [self.home.import_button], i18n.tr('正在导入…'), self)
+
+            def long_import():
+                if _automation():
+                    return _NullProgress()
+                dialog = prompts.BusyDialog(self, i18n.tr('正在导入…'))
+                dialog.setWindowModality(Qt.WindowModality.NonModal)
+                self._busy_dialogs.append(dialog)
+                dialog.show()
+                return dialog
+
+            self._import_activity.show_progress_after(3000, long_import)
+
+        def finished() -> None:
+            self._imports_active -= 1
+            if self._imports_active == 0:
+                self._import_activity.close()
+                self._import_activity = None
+
         project = self.home.project_filter.currentData() or None
         start_now = autostart
 
         def done(results) -> None:
-            busy.close()
+            finished()
             created = [item for item in results if item.created]
             failed = [item for item in results if not item.ok]
             self.refresh_home()
@@ -874,7 +905,7 @@ class MainWindow(QMainWindow):
                     self.start_or_resume()
 
         def failed(message: str, detail: str) -> None:
-            busy.close()
+            finished()
             self._failure(i18n.tr('导入失败'), message, detail)
 
         self.runner.submit(adapter.import_documents, paths, self.config,
@@ -1097,7 +1128,18 @@ class MainWindow(QMainWindow):
 
     def _sync_sidebar(self, *_args) -> None:
         current = self.stack.currentWidget()
-        self.sidebar.setVisible(current is not self.workbench)
+        if self._sidebar_page is not current:
+            initial = self._sidebar_page is None
+            self._sidebar_page = current
+            visible = current is not self.workbench
+            self.sidebar_clip.show()
+            target = HomeView.SIDEBAR_WIDTH if visible else 0
+            self._motion.animate("sidebar", self.sidebar_clip.width(), target,
+                                 lambda value: self.sidebar_clip.setFixedWidth(round(value)),
+                                 kind="view",
+                                 finished=lambda: self.sidebar_clip.setVisible(visible))
+            if not initial:
+                self._motion.reveal("navigation", self.stack)
         self.home.set_current_nav(
             "projects" if current is self.projects else
             "library" if current is self.library else "tasks")
@@ -1446,47 +1488,45 @@ class MainWindow(QMainWindow):
 
     def start_or_resume(self) -> None:
         job_id = self._current_job_id
-        if not job_id:
+        if not job_id or self._starting_jobs:
             return
-        try:
-            source = adapter.core.load_source(job_id)
-        except Exception:  # noqa: BLE001
-            source = None
-        state = adapter.load_state(job_id)
+        config, defaults = self.config, dict(self.stored_task_defaults)
+        self._starting_jobs.add(job_id)
+        busy = components.ButtonActivity(
+            [self.workbench.start_button, self.workbench.setup_panel.start_button],
+            i18n.tr('正在启动…'), self)
 
-        # Re-read and re-apply under the task's state transaction lock: the copy
-        # this window rendered may be older than disk (another surface may have
-        # edited the same task in between).
-        def _apply_delivery(latest: dict) -> None:
-            latest["delivery_config"] = adapter.core.normalize_delivery_config(
-                latest.get("delivery_config"),
-                enable_report=self.config.enable_report,
-                enable_annotate=self.config.enable_annotate)
+        def start():
+            # File reads, state isolation and persistence belong off the GUI
+            # thread too, not just the final call that launches the pipeline.
+            try:
+                source = adapter.core.load_source(job_id)
+            except Exception:  # noqa: BLE001 - core reports a missing source
+                source = None
 
-        try:
-            adapter.core.mutate_job_state(job_id, _apply_delivery)
-        except Exception as exc:  # noqa: BLE001
-            self._failure(i18n.tr('无法保存任务配置'), f"{type(exc).__name__}: {exc}")
-            return
-        state = adapter.load_state(job_id)
-        file_bytes = source if not state.get("p1_done") else None
+            def apply_delivery(latest):
+                latest["delivery_config"] = adapter.core.normalize_delivery_config(
+                    latest.get("delivery_config"), enable_report=config.enable_report,
+                    enable_annotate=config.enable_annotate)
 
-        busy = self._busy(i18n.tr('正在启动翻译任务…'))
+            adapter.core.mutate_job_state(job_id, apply_delivery)
+            state = adapter.load_state(job_id)
+            return adapter.start_job(job_id, str(state.get("filename") or "当前任务"),
+                                     source if not state.get("p1_done") else None,
+                                     config, user_defaults=defaults)
 
         def done(_result) -> None:
+            self._starting_jobs.discard(job_id)
             busy.close()
             self._notice(i18n.tr('任务已启动'))
             self.refresh_workbench(force=True)
 
         def failed(message: str, detail: str) -> None:
+            self._starting_jobs.discard(job_id)
             busy.close()
             self._failure(i18n.tr('无法启动任务'), message, detail)
 
-        self.runner.submit(
-            adapter.start_job, job_id,
-            str(state.get("filename") or "当前任务"), file_bytes, self.config,
-            user_defaults=self.stored_task_defaults,
-            on_done=done, on_error=failed, label="start-job")
+        self.runner.submit(start, on_done=done, on_error=failed, label="start-job")
 
     def pause_job(self) -> None:
         if self._current_job_id and adapter.pause_job(self._current_job_id):
@@ -1586,6 +1626,7 @@ class MainWindow(QMainWindow):
         def done(new_state) -> None:
             if job_id == self._current_job_id:
                 self.workbench.settle_saved(index)
+                self.workbench.confirm_saved(index)
                 self._notice(i18n.tr('已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。'))
                 if isinstance(new_state, dict) and not self._edit_queue:
                     # The writer hands back the state it just saved (its own

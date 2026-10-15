@@ -453,3 +453,21 @@ def test_entity_evidence_links_locate_the_segment(qapp, job):
     panel.locateRequested.connect(located.append)
     panel.entity_variants.linkActivated.emit("seg:1")
     assert located == [1]
+
+
+def test_first_show_entity_preview_waits_until_drawer_settles(qapp, job):
+    from folith.qt.followup_panel import FollowupPanel
+
+    panel = FollowupPanel()
+    panel.set_preview_deferred(True)
+    previews = []
+    panel.previewRequested.connect(lambda s, t: previews.append((s, t)))
+    panel.apply(adapter.followup_view(job))
+    panel.target_edit.setText("莉迪亚")
+    panel.show()
+    qapp.processEvents()
+    assert not previews and panel._preview_pending
+    panel.set_preview_deferred(False)
+    assert previews == [("Lydia", "莉迪亚")]
+    panel.close()
+    panel.deleteLater()

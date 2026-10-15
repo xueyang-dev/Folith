@@ -15,13 +15,21 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QObject, QEasingCurve, QSettings, QVariantAnimation
+from PySide6.QtCore import QObject, QEasingCurve, QSettings, QVariantAnimation, Qt
+from PySide6.QtWidgets import QGraphicsEffect
 
-DURATION = {"select": 140, "local": 180, "panel": 240, "view": 300}
+DURATION = {"select": 140, "local": 180, "panel": 240, "view": 300,
+            "body": 250, "source": 280, "progress": 250, "popover": 200, "popover-close": 150, "save": 400}
 EASING = {"select": QEasingCurve.Type.OutCubic,
           "local": QEasingCurve.Type.OutCubic,
           "panel": QEasingCurve.Type.InOutCubic,
-          "view": QEasingCurve.Type.OutCubic}
+          "view": QEasingCurve.Type.OutCubic,
+          "body": QEasingCurve.Type.OutCubic,
+          "source": QEasingCurve.Type.InOutCubic,
+          "progress": QEasingCurve.Type.OutCubic,
+          "popover": QEasingCurve.Type.OutCubic,
+          "popover-close": QEasingCurve.Type.OutCubic,
+          "save": QEasingCurve.Type.OutCubic}
 
 #: Re-read the system setting at most this often (it can change while running).
 _SYSTEM_TTL_S = 5.0
@@ -132,3 +140,54 @@ class Motion(QObject):
         self._active[key] = animation
         setter(start)
         animation.start()
+
+    def reveal(self, key: str, widget, *, kind: str = "view") -> None:
+        """Reveal a view at its final layout; do not move its input geometry."""
+        effect = widget.graphicsEffect()
+        if not isinstance(effect, RevealEffect):
+            effect = RevealEffect(widget)
+            widget.setGraphicsEffect(effect)
+        effect.setEnabled(True)
+        self.animate(key, 0.0, 1.0, effect.set_fraction, kind=kind,
+                     finished=lambda: effect.setEnabled(False))
+
+    def nod(self, key: str, widget) -> None:
+        effect = widget.graphicsEffect()
+        if not isinstance(effect, NodEffect):
+            effect = NodEffect(widget)
+            widget.setGraphicsEffect(effect)
+        effect.setEnabled(True)
+        self.animate(key, 0.0, 1.0, effect.set_fraction, kind="popover",
+                     finished=lambda: effect.setEnabled(False))
+
+
+class RevealEffect(QGraphicsEffect):
+    """One clipped 8 px entrance, with no per-frame text re-layout."""
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.fraction = 1.0
+
+    def set_fraction(self, value: float) -> None:
+        self.fraction = value
+        self.update()
+
+    def draw(self, painter) -> None:
+        painter.save()
+        painter.setOpacity(self.fraction)
+        rtl = self.parent().layoutDirection() == Qt.LayoutDirection.RightToLeft
+        painter.translate((-1 if rtl else 1) * 8 * (1 - self.fraction), 0)
+        self.drawSource(painter)
+        painter.restore()
+
+
+class NodEffect(RevealEffect):
+    def draw(self, painter) -> None:
+        painter.save()
+        center = self.parent().rect().center()
+        scale = 1 - .06 * (1 - (2 * self.fraction - 1) ** 2)
+        painter.translate(center)
+        painter.scale(scale, scale)
+        painter.translate(-center)
+        self.drawSource(painter)
+        painter.restore()

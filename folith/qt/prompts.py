@@ -17,10 +17,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton,
+    QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextBrowser, QVBoxLayout, QWidget,
 )
 
+from .components import ProgressTrack
 from . import i18n
 from . import icons
 from . import style as style_module
@@ -237,9 +238,9 @@ class BusyDialog(QDialog):
         label.setWordWrap(True)
         row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
         row.addWidget(label, 1)
-        self.progress = QProgressBar()
+        self.progress = ProgressTrack()
+        self.progress.setAccessibleName(message)
         self.progress.setRange(0, 0)          # 不确定进度
-        self.progress.setTextVisible(False)
         self.run_button = QPushButton(i18n.tr('在后台运行'))
         run_button_row = QHBoxLayout()
         run_button_row.addStretch(1)

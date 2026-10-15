@@ -1609,6 +1609,7 @@ class CheckStatusButton(QToolButton):
         self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.badge.setVisible(False)
         self._tone = ""
+        self._motion = motion.Motion(self)
         self.set_count(0, "")
 
     def set_count(self, count: int, tone: str) -> None:
@@ -1619,6 +1620,8 @@ class CheckStatusButton(QToolButton):
             token = {"warning": "warning", "danger": "danger"}.get(tone, "text-secondary")
             self.setIcon(icons.icon("shield-check", 16, token))
             style_module.repolish(self)
+            if tone:
+                self._motion.nod("check-tone", self)
         self.badge.setText(str(count) if count else "")
         self.badge.setVisible(bool(count))
         self.badge.adjustSize()
@@ -2735,8 +2738,10 @@ class WorkbenchView(QWidget):
         # 原页：工作台左侧可展开的面板（acceptance-feedback D2），不再是一整页。
         self.pdf_panel = PdfPanel()
         self.pdf_panel.closeRequested.connect(lambda: self.set_source_open(False))
-        self.pdf_panel.setVisible(False)
-        self.translation_split.insertWidget(0, self.pdf_panel)
+        self.source_clip = components.ClippedWidget(self.pdf_panel, 400)
+        self._source_open = False
+        self.source_clip.hide()
+        self.translation_split.insertWidget(0, self.source_clip)
         self.translation_split.setStretchFactor(0, 0)
         self._pdf_ok = False
         self._pdf_width = 0
@@ -2846,6 +2851,9 @@ class WorkbenchView(QWidget):
              state: dict, rows: list[adapter.SegmentRow],
              snapshots: list[dict]) -> None:
         """Attach a job.  Only call this when switching jobs."""
+        for saved_index in self.row_delegate.saved:
+            self._motion.stop(f"saved:{saved_index}")
+        self.row_delegate.saved.clear()
         if self.job_id and self.job_id != job_id:
             self.flush_draft()
         # 换任务总是从翻译页开始：上一个任务停在哪一页（交付、术语……）与这个任务
@@ -2964,16 +2972,11 @@ class WorkbenchView(QWidget):
             return
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
-        split = self.translation_split
-        start_sizes = split.sizes()
-        start_fraction = self.right_panel.fraction
-        side = split.indexOf(self.right_panel)
-        if open_ and start_fraction == 0 and start_sizes[side]:
-            self._inspector_width = start_sizes[side]
-        self._motion.stop("review-drawer")
+        if open_ and self.right_panel.fraction == 0:
+            width = self.translation_split.sizes()[self.translation_split.indexOf(self.right_panel)]
+            if width:
+                self._inspector_width = width
         self._drawer_open = open_
-        self.right_panel.setVisible(open_ or not (self.source_open() and self.width() < 1200))
-        end_sizes = self._translation_column_sizes()
         self.check_button.setChecked(open_)
         self.drawer_escape.setEnabled(open_)
         if open_:
@@ -2981,28 +2984,45 @@ class WorkbenchView(QWidget):
             # Clearing its signature here re-scans a whole book on every click
             # (~450 ms), freezing the transition before its first frame.
             self._render_followup()
-        iw = end_sizes[side] if not open_ else start_sizes[side]
-        dw = end_sizes[side] if open_ else start_sizes[side]
-        self.right_panel.begin(max(1, iw), max(1, dw))
+        self._transition_columns()
         if open_:
             self.drawer_close.setFocus()
         else:
             self.focus_editor()
 
+    def _transition_columns(self) -> None:
+        """A single interruptible transition coordinates both side panels."""
+        split = self.translation_split
+        start_sizes = split.sizes()
+        end_sizes = self._translation_column_sizes()
+        start_fraction = self.right_panel.fraction
+        self._motion.stop("translation-columns")
+        side = split.indexOf(self.right_panel)
+        source = split.indexOf(self.source_clip)
+        self.followup_panel.set_preview_deferred(True)
+        self.source_clip.setVisible(bool(start_sizes[source] or end_sizes[source]))
+        self.source_clip.freeze(max(1, end_sizes[source] or start_sizes[source]))
+        self.right_panel.setVisible(bool(start_sizes[side] or end_sizes[side]))
+        self.right_panel.begin(max(1, self._inspector_width),
+                               max(1, end_sizes[side] if self._drawer_open else start_sizes[side]))
+
         def frame(value: float) -> None:
             # Sizes share a curve. Text inside the clipped panel is laid out
             # once at its destination width, never at each intermediate width.
-            fraction = ((value - start_fraction) / (float(open_) - start_fraction)
-                        if float(open_) != start_fraction else 1.0)
-            split.setSizes([round(a + (b - a) * fraction)
+            split.setSizes([round(a + (b - a) * value)
                             for a, b in zip(start_sizes, end_sizes)])
-            self.right_panel.set_fraction(value)
+            self.right_panel.set_fraction(start_fraction + (float(self._drawer_open) - start_fraction) * value)
             self._place_inline_editor()
 
         def settled() -> None:
-            self.right_panel.settle(open_)
+            self.source_clip.setVisible(self._source_open)
+            self.source_clip.freeze(None)
+            self.right_panel.settle(self._drawer_open)
+            self.right_panel.setVisible(bool(end_sizes[side]))
+            self.followup_panel.set_preview_deferred(False)
 
-        self._motion.animate("review-drawer", start_fraction, float(open_), frame,
+        self._motion.animate("translation-columns", 0.0, 1.0, frame,
+                             kind="source" if start_sizes[source] != end_sizes[source] else "panel",
                              finished=settled)
 
     def _toggle_followup_drawer(self) -> None:
@@ -3010,7 +3030,7 @@ class WorkbenchView(QWidget):
 
     # ---- 翻译页的列：原页 | 段落网格 | 检查器 / 检查与修复 ---------------------
     def source_open(self) -> bool:
-        return self.pdf_panel.isVisibleTo(self)
+        return self._source_open
 
     def set_source_open(self, open_: bool) -> None:
         """原页在工作台左侧展开 / 收起；中间的网格随之收缩（acceptance-feedback D2）。"""
@@ -3020,8 +3040,8 @@ class WorkbenchView(QWidget):
             return
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
-        self.pdf_panel.setVisible(open_)
-        self._layout_translation_columns()
+        self._source_open = open_
+        self._transition_columns()
         if open_ and self._current_index >= 0:
             self._follow_source()
 
@@ -3030,24 +3050,30 @@ class WorkbenchView(QWidget):
             self.pdf_panel.locate(self._current_index, state=self._state or None)
 
     def _remember_source_width(self, *_args) -> None:
-        self._motion.stop("review-drawer")
+        self._motion.stop("translation-columns")
+        self.source_clip.freeze(None)
+        self.source_clip.setVisible(self._source_open)
         self.right_panel.settle(self._drawer_open)
+        self.followup_panel.set_preview_deferred(False)
         if not self._drawer_open and self.right_panel.isVisibleTo(self):
             self._inspector_width = self.translation_split.sizes()[
                 self.translation_split.indexOf(self.right_panel)]
         if self.source_open():
             self._pdf_width = self.translation_split.sizes()[
-                self.translation_split.indexOf(self.pdf_panel)]
+                self.translation_split.indexOf(self.source_clip)]
 
     def _layout_translation_columns(self) -> None:
         """按当前打开的面板分配宽度：原页约 40%（或用户拖过的宽度）、检查与修复
         约 440px、检查器保持原宽；窗口太窄时，原页打开会让检查器让位。"""
         split = self.translation_split
-        self._motion.stop("review-drawer")
+        self._motion.stop("translation-columns")
         drawer_open = self.followup_drawer_open()
         source = self.source_open()
         narrow = self.width() and self.width() < 1200
+        self.source_clip.setVisible(source)
+        self.source_clip.freeze(None)
         self.right_panel.settle(drawer_open)
+        self.followup_panel.set_preview_deferred(False)
         self.right_panel.setVisible(drawer_open or not (source and narrow))
         split.setSizes(self._translation_column_sizes())
         # The grid's columns are re-laid out after this returns; the inline
@@ -3062,11 +3088,12 @@ class WorkbenchView(QWidget):
         sizes = split.sizes()
         total = sum(sizes) or split.width() or max(self.width() - 40, 800)
         index = {widget: split.indexOf(widget) for widget in (
-            self.pdf_panel, self.segment_list, self.right_panel)}
+            self.segment_list, self.right_panel)}
+        index[self.pdf_panel] = split.indexOf(self.source_clip)
         side = 0
         if drawer_open:
             side = min(440, max(360, total // 3))
-        elif self.right_panel.isVisibleTo(self):
+        elif not (source and self.width() < 1200):
             side = self._inspector_width
         pdf = 0
         if source:
@@ -3081,7 +3108,7 @@ class WorkbenchView(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
-        if self._motion.running("review-drawer"):
+        if self._motion.running("translation-columns"):
             self._layout_translation_columns()
         if self.source_open():
             narrow = self.width() < 1200
@@ -3089,7 +3116,7 @@ class WorkbenchView(QWidget):
                 self._layout_translation_columns()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        if self._motion.running("review-drawer"):
+        if self._motion.running("translation-columns"):
             self._layout_translation_columns()
         super().hideEvent(event)
 
@@ -3474,10 +3501,14 @@ class WorkbenchView(QWidget):
         started = self._task_started()
         has_rows = bool(self._all_rows)
         show_setup = not started
+        was_setup = getattr(self, "_showing_setup", show_setup)
+        self._showing_setup = show_setup
         self.setup_page.setVisible(show_setup)
         self.toolbar_bar.setVisible(started and has_rows)
         self.translation_split.setVisible(started and has_rows)
         self.no_segments_card.setVisible(started and not has_rows)
+        if was_setup and started and has_rows:
+            self._motion.reveal("translation-body", self.translation_split, kind="body")
         if show_setup or has_rows:
             return
         state = self._state or {}
@@ -3529,6 +3560,12 @@ class WorkbenchView(QWidget):
             return
         for position, row in enumerate(self._rows):
             self._paint_row(position, row)
+        if self._rows and self._current_index < 0:
+            # Returning from the library can reuse exactly the same row count
+            # and selection. Qt then emits no selection signal after load().
+            target = max(0, min(self.segment_list.currentRow(), len(self._rows) - 1))
+            self.segment_list.selectRow(target)
+            self._row_selected(target)
         self._place_inline_editor()
         self._sync_drafts_banner()
         self._sync_word_count()
@@ -3631,7 +3668,8 @@ class WorkbenchView(QWidget):
         if row.segment_uid in self._notes:
             # 批注变了也要重画：缓存按行数据比较，批注不在行数据里。
             self._painted.pop(position, None)
-        marker = ("⚠" if row.stale_draft else "●") if row.has_draft else ""
+        marker = ("⚠" if row.stale_draft else "●") if row.has_draft else (
+            "✓ " if row.human_edited and row.index not in self._pending_saved else "")
         noted = "✎" if row.segment_uid in self._notes else ""
         number_text = f"{marker}{row.index + 1}{noted}"
         if number.text() != number_text:
@@ -3713,6 +3751,7 @@ class WorkbenchView(QWidget):
         # `progress_completed/total` 只在学术写作阶段才有值；此前只读它，于是普通
         # 翻译运行期间进度条整段是空的、最后一下跳到满——不可信。
         stage_progress = runtime.get("stage_progress") or {}
+        self.progress.set_stage((self.job_id, (runtime.get("runtime") or {}).get("stage")))
         completed = int(runtime.get("progress_completed") or 0)
         total = int(runtime.get("progress_total") or 0)
         if not total:
@@ -4418,6 +4457,23 @@ class WorkbenchView(QWidget):
     def settle_saved(self, index: int) -> None:
         """The background save for ``index`` finished or failed: disk is the truth again."""
         self._pending_saved.pop(index, None)
+
+    def confirm_saved(self, index: int) -> None:
+        """Acknowledge persistence in the row, without changing editor text."""
+        for position, row in enumerate(self._rows):
+            if row.index == index:
+                self._painted.pop(position, None)
+                self._paint_row(position, row)
+                break
+        def tint(value):
+            self.row_delegate.saved[index] = value
+            self.segment_list.viewport().update()
+
+        def finished():
+            self.row_delegate.saved.pop(index, None)
+            self.segment_list.viewport().update()
+
+        self._motion.animate(f"saved:{index}", 1.0, 0.0, tint, kind="save", finished=finished)
 
     def _with_pending_save(self, row: adapter.SegmentRow) -> adapter.SegmentRow:
         text = self._pending_saved.get(row.index)

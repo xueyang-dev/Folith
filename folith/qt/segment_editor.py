@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QRect, Qt, Signal
-from PySide6.QtGui import QFontMetrics, QTextDocument, QTextOption
+from PySide6.QtGui import QBrush, QFontMetrics, QTextDocument, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QLabel, QPlainTextEdit, QStyleOptionViewItem,
     QTableWidget, QVBoxLayout, QWidget,
@@ -140,6 +140,7 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.active_row = -1
+        self.saved: dict[int, float] = {}
 
     def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt 命名
         super().initStyleOption(option, index)
@@ -151,6 +152,11 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
         option.features |= QStyleOptionViewItem.ViewItemFeature.WrapText
         option.displayAlignment = (Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         option.textElideMode = Qt.TextElideMode.ElideNone
+        share = self.saved.get(index.data(Qt.ItemDataRole.UserRole), 0.0)
+        if share:
+            colour = theme_module.qcolor(theme_module.tokens(style_module.current_theme())["success-soft"])
+            colour.setAlphaF(share)
+            option.backgroundBrush = QBrush(colour)
 
 
 def source_height(table: QAbstractItemView, text: str, width: int) -> int:

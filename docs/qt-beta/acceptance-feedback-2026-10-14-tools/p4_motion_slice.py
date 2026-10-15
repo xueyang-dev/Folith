@@ -106,7 +106,7 @@ heartbeat.setInterval(8)
 def beat():
     now = time.perf_counter()
     gaps.append((now - last[0]) * 1000)
-    active = bench._motion.running("review-drawer")
+    active = bench._motion.running("translation-columns")
     if active or was_animating[0]:
         animation_gaps.append(gaps[-1])
     was_animating[0] = active
@@ -145,11 +145,58 @@ for name in ("light", "dark", "paper", "green"):
 # Fast toggles cannot leave queued animations or intermediate geometry.
 for i in range(20):
     bench.set_followup_drawer_open(bool(i % 2))
-rapid_settled = bench.right_panel.fraction == 1 and not bench._motion.running("review-drawer")
+rapid_settled = bench.right_panel.fraction == 1 and not bench._motion.running("translation-columns")
 settings.setValue("appearance/reduce_motion", True)
 bench.set_followup_drawer_open(False)
-reduced_settled = bench.right_panel.fraction == 0 and not bench._motion.running("review-drawer")
+reduced_settled = bench.right_panel.fraction == 0 and not bench._motion.running("translation-columns")
 settings.remove("appearance/reduce_motion")
+
+# Full P4: final geometry and interruption across shared column transitions.
+if bench._pdf_ok:
+    bench.set_source_open(True)
+    pump(.35)
+    source_open_settled = bench.source_open() and bench.source_clip.isVisible()
+    w.grab().save(str(out / "source-open.png"))
+    bench.set_followup_drawer_open(True)
+    bench.set_source_open(False)
+    bench.set_followup_drawer_open(False)
+    pump(.35)
+    source_closed_settled = not bench.source_clip.isVisible() and not bench._motion.running("translation-columns")
+else:
+    source_open_settled = source_closed_settled = None
+
+nav_gaps = []
+nav_last = [time.perf_counter()]
+nav_heartbeat = QTimer()
+nav_heartbeat.setInterval(8)
+def nav_beat():
+    now = time.perf_counter()
+    nav_gaps.append((now - nav_last[0]) * 1000)
+    nav_last[0] = now
+nav_heartbeat.timeout.connect(nav_beat)
+nav_heartbeat.start()
+at = time.perf_counter()
+w.show_home()
+nav_home_call_ms = (time.perf_counter() - at) * 1000
+nav_last[0] = time.perf_counter()
+pump(.4)
+nav_home_settled = w.sidebar_clip.width() == 240 and w.sidebar_clip.isVisible()
+w.grab().save(str(out / "navigation-home.png"))
+at = time.perf_counter()
+w.open_job(source.name)
+nav_open_call_ms = (time.perf_counter() - at) * 1000
+nav_last[0] = time.perf_counter()
+pump(.5)
+nav_workbench_settled = w.sidebar_clip.width() == 0 and not w.sidebar_clip.isVisible()
+nav_heartbeat.stop()
+w.workbench.show_page("activity")
+pump(.3)
+popup = w.workbench.activity_popover
+popover_settled = popup.isVisible() and popup.body.isVisible()
+popup.grab().save(str(out / "activity-open.png"))
+popup.close()
+pump(.2)
+popover_closed = not popup.isVisible()
 w.hide()
 w.deleteLater()
 pump(.1)
@@ -179,7 +226,15 @@ result = {"segments": segment_count,
           "open_call_ms": round(open_call_ms, 2), "close_call_ms": round(close_call_ms, 2),
           "rapid_20_toggles_settled": rapid_settled,
           "reduced_settled": reduced_settled,
-          "focus_restored": focus_restored, "arabic_rtl": rtl}
+          "focus_restored": focus_restored, "arabic_rtl": rtl,
+          "source_open_settled": source_open_settled,
+          "source_closed_settled": source_closed_settled,
+          "navigation_home_settled": nav_home_settled,
+          "navigation_workbench_settled": nav_workbench_settled,
+          "navigation_home_call_ms": round(nav_home_call_ms, 2),
+          "navigation_open_call_ms": round(nav_open_call_ms, 2),
+          "navigation_animation_8ms_heartbeat_max_gap_ms": round(max(nav_gaps), 2),
+          "popover_settled": popover_settled, "popover_closed": popover_closed}
 (out / "metrics.json").write_text(json.dumps(result, indent=2) + "\n")
 print(json.dumps(result))
 shutil.rmtree(scratch)

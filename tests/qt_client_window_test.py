@@ -3927,3 +3927,65 @@ def test_idle_poll_repaints_nothing_but_real_changes_still_show(client, monkeypa
     monkeypatch.setattr(views_module, "current_theme", lambda: "dark-probe")
     window.refresh_workbench()
     assert len(paints) >= len(bench._rows), len(paints)
+
+
+def test_start_is_inline_defers_io_and_restores_buttons_on_failure(client, monkeypatch):
+    window, adapter = client["window"], client["adapter"]
+    job_a, job_b = _two_jobs(client)
+    window.open_job(job_a)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(window, "_busy", lambda *_: pytest.fail("start must stay inline"))
+    load_source = adapter.core.load_source
+    monkeypatch.setattr(adapter.core, "load_source",
+                        lambda *_: pytest.fail("source I/O must run in the worker"))
+    window.start_or_resume()
+    window.start_or_resume()
+    assert len(held.calls) == 1 and held.calls[0]["label"] == "start-job"
+    buttons = (window.workbench.start_button, window.workbench.setup_panel.start_button)
+    assert all(not b.isEnabled() for b in buttons)
+    monkeypatch.setattr(adapter.core, "load_source", load_source)
+    window.open_job(job_b)
+    window.start_or_resume()  # shared buttons cannot have overlapping restorations
+    assert len(held.calls) == 1
+    failures = []
+    monkeypatch.setattr(window, "_failure", lambda *args: failures.append(args))
+    held.calls[0]["on_error"]("Failed", "detail")
+    assert failures and not window._starting_jobs
+    assert all(b.isEnabled() for b in buttons)
+
+
+def test_import_is_inline_and_failure_restores_entry_point(client, monkeypatch):
+    window = client["window"]
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(window, "_busy", lambda *_: pytest.fail("import must stay inline"))
+    failures = []
+    monkeypatch.setattr(window, "_failure", lambda *args: failures.append(args))
+    window.import_paths(["missing.docx"], autostart=False)
+    assert not window.home.import_button.isEnabled()
+    assert window._import_activity is not None and not window._busy_dialogs
+    held.calls[0]["on_error"]("Failed", "detail")
+    assert failures and window.home.import_button.isEnabled()
+    assert window._import_activity is None and window._imports_active == 0
+
+
+def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, monkeypatch):
+    from PySide6.QtTest import QTest
+    from folith.qt import window as window_module
+    from PySide6.QtCore import Qt
+
+    window = client["window"]
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    monkeypatch.setattr(window, "_failure", lambda *args: None)
+    window.import_paths(["held.docx"], autostart=False)
+    QTest.qWait(3200)
+    dialog = window._import_activity._dialog
+    assert dialog is not None and dialog.isVisible()
+    assert dialog.windowModality() == Qt.WindowModality.NonModal
+    assert QApplication.activeModalWidget() is None
+    assert not dialog.progress._wants_sheen()
+    held.calls[0]["on_error"]("Failed", "detail")
+    assert not dialog.isVisible() and window.home.import_button.isEnabled()
