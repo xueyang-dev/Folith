@@ -10,7 +10,7 @@ from pathlib import Path
 
 from folith.desktop import paths as desktop_paths
 
-APP_ICON = "folith/resources/brand/folith-app-icon.png"
+APP_ICON = "folith/resources/brand/folith-app-icon-white.png"
 # `docs/brand.md` §1 asset matrix: the horizontal lockup has a night variant that
 # differs only in the wordmark colour, and it is the one meant for a dark
 # surface.  Using the day lockup on a dark background makes the wordmark vanish.

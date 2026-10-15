@@ -20,8 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 BUNDLE = ROOT / "dist" / "desktop" / "Folith.app"
 ICNS = ROOT / "build" / "desktop" / "Folith.icns"
-# `docs/brand.md`: the official, user-provided App icon is the brand asset the
-# bundle must use.  The legacy `foliothread-app-icon.png` (old set) must not be.
+# P9: the provided high-resolution mark remains the unmodified brand source.
 BRAND_ICON = ROOT / "folith" / "resources" / "brand" / "folith-mark-hires.png"
 TILE_ICON = ROOT / "folith" / "resources" / "brand" / "folith-app-icon.png"
 LEGACY_ICON = ROOT / "folith" / "resources" / "brand" / "foliothread-app-icon.png"
@@ -53,22 +52,26 @@ def test_brand_artwork_is_tracked_and_usable():
 
 
 def test_icon_source_is_normalised_to_a_square_canvas(tmp_path):
-    """The brand file is a tight non-square mark; .icns frames are square."""
+    """P9: white squircle, transparent outer corners, undistorted brand mark."""
     from build_app_icon import square_master
+    from PIL import Image, ImageChops
 
     target = tmp_path / "master.png"
-    record = square_master(BRAND_ICON, target, margin=0.10)
-    width, height = record["square_canvas"]
-    assert width == height and width > max(record["artwork"])
-    assert target.is_file()
-    # No stretching: the artwork keeps its own aspect ratio inside the canvas.
-    from PIL import Image
-
+    record = square_master(BRAND_ICON, target)
+    assert record["square_canvas"] == (1024, 1024)
+    assert record["tile_bounds"] == [100, 100, 924, 924]
+    left, top, right, bottom = record["mark_bounds"]
+    assert abs((right-left) / (bottom-top) - record["artwork"][0] / record["artwork"][1]) < 0.01
     master = Image.open(target).convert("RGBA")
-    bbox = master.getchannel("A").getbbox()
-    art_w, art_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    source_ratio = record["artwork"][0] / record["artwork"][1]
-    assert abs((art_w / art_h) - source_ratio) < 0.02
+    assert all(master.getpixel(point)[3] == 0 for point in
+               [(0,0), (1023,0), (0,1023), (1023,1023)])
+    assert master.getpixel((512,140)) == (255,255,255,255)
+    assert master.getpixel((140,512)) == (255,255,255,255)
+    # Qt and the bundle must use the same composition; compare decoded pixels
+    # rather than PNG encoder metadata or timestamps.
+    tracked = Image.open(BRAND_ICON.with_name("folith-app-icon-white.png")).convert("RGBA")
+    assert tracked.size == master.size
+    assert all(maximum == 0 for minimum, maximum in ImageChops.difference(master, tracked).getextrema())
 
 
 def test_icon_builder_produces_a_valid_icns(tmp_path):
@@ -86,7 +89,12 @@ def test_icon_builder_produces_a_valid_icns(tmp_path):
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     names = {path.name for path in extracted.iterdir()}
-    assert {"icon_16x16.png", "icon_128x128.png", "icon_512x512.png"} <= names
+    assert {"icon_16x16.png", "icon_128x128.png", "icon_512x512.png", "icon_512x512@2x.png"} <= names
+    from PIL import Image
+    retina = Image.open(extracted / "icon_512x512@2x.png").convert("RGBA")
+    assert retina.size == (1024,1024)
+    assert retina.getpixel((0,0))[3] == 0 and retina.getpixel((1023,1023))[3] == 0
+    assert retina.getpixel((512,140)) == (255,255,255,255)
 
 
 def test_built_bundle_carries_its_own_identity():

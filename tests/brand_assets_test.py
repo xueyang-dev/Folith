@@ -63,6 +63,7 @@ BRAND_PNG_SIZE = {
     "folith-mark.png": (278, 248),
     "folith-app-icon.png": (273, 257),
     "folith-mark-hires.png": (1254, 1254),
+    "folith-app-icon-white.png": (1024, 1024),
     "folith-logo-dark.png": (1498, 268),
     "folith-logo-stacked.png": (560, 372),
 }

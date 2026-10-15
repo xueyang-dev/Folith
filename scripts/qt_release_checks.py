@@ -263,6 +263,8 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "",
         "- 字体层级：页面 / 区块 / 卡片标题与正文、说明、分组标签统一字号和字重；设置字段更清楚，阿拉伯语标题使用自然字距，译文阅读字号保持不变。",
         "",
+        "- 应用图标：纯白圆角底板，保留原有品牌标；`.icns` 补齐 1024px Retina 帧，关于与欢迎页使用同一白底资产。",
+        "",
         "## 产物",
         "",
         f"- 应用版本 / build id：`{app.get('app_version', '')}` / `{app.get('build_id', '')}`",

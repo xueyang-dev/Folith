@@ -43,8 +43,9 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 | 透明横向组合 | `folith-lockup-transparent.png` | 原图逐像素去白底 | 日间与纸面主题侧栏 |
 | 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 同一原图，仅调整文字颜色 | 夜间主题侧栏 |
 | 图标（透明底） | `folith-mark.png` | 用户提供 | 页面图标（浏览器标签页、安装入口） |
-| 图标（透明底，高清母版） | `folith-mark-hires.png` | 用户提供（1254×1254） | **桌面 / Dock 应用图标**（`scripts/build_app_icon.py` 的唯一来源） |
-| App 图标 | `folith-app-icon.png` | 用户提供 | 桌面与应用入口 |
+| 图标（透明底，高清母版） | `folith-mark-hires.png` | 用户提供（1254×1254） | 白底应用图标的原始母版（`scripts/build_app_icon.py` 保留原色，仅缩放居中） |
+| App 图标（原始深底版） | `folith-app-icon.png` | 用户提供 | 保留的原始素材；Qt 当前应用入口改用下行白底版 |
+| App 图标（P9 白底版） | `folith-app-icon-white.png` | 由高清母版合成 | Qt 应用 / 关于 / 欢迎与桌面 `.icns`；1024px 透明画布、824px 纯白连续曲线底板、品牌标宽约 70% |
 | 深色底横向组合 | `folith-logo-dark.png` | SVG 派生 | 旧补充素材，侧栏不再使用 |
 | 竖向组合 | `folith-logo-stacked.png` | SVG 派生 | 窄栏或正方形版位 |
 | 彩色图标（向量） | `folith-mark.svg` | 向量源 | 派生渲染与单色底稿 |
@@ -176,7 +177,7 @@ python -m pytest tests/brand_assets_test.py -q
 ## 5. 工作台应用
 
 侧栏、页面图标、启动器和导出署名使用正式品牌素材：侧栏品牌位使用 `folith-lockup.png` 的透明 PNG 派生版，
-页面图标 = `folith-mark.png`，App 图标 = `folith-app-icon.png`；组合字标统一为
+页面图标 = `folith-mark.png`；Qt App 图标 = `folith-app-icon-white.png`，由 `scripts/build_app_icon.py` 从高清标记合成；原始深底 App 素材仍保留。组合字标统一为
 `Folith·译页`。README 首屏展示同一份主 lockup。页面仍保持既有侧栏、任务步骤、
 内容面、圆角、间距和颜色，不借 rebrand 之机改动导航或交互流程。
 
@@ -200,3 +201,10 @@ python -m pytest tests/brand_assets_test.py -q
 日间与纸面使用 `folith-lockup-transparent.png`，夜间使用 `folith-lockup-transparent-dark.png`。两者从正式原图逐像素去白底，保留图标内白色文字与箭头；夜间版只调整文字颜色，尺寸与 alpha 轮廓相同。不再使用 SVG 派生图或主题放大。
 
 重建命令：`python3 scripts/extract_brand_png.py`（维护环境需 Pillow、NumPy、SciPy）。原图保留，不覆盖。
+
+
+## P9 白底应用图标（2026-10-15）
+
+重生成：`venv/bin/python scripts/build_app_icon.py --out build/qt-desktop/Folith.icns --png-out folith/resources/brand/folith-app-icon-white.png`。
+
+外形为指数 4 的超椭圆，是连续曲率底板的近似，不声称是 Apple 系统掩膜的精确复制。纯白底板下有轻微投影；只对轮廓超采样，品牌标按原比例缩小一次，不改色。传统 `.icns` 含 16–1024px 的完整帧，外角透明。浅色 / 深色均使用白底版；独立深色 / 着色资产仍留到有完整 Xcode / Icon Composer 后另做。系统是否额外套底座须在实际安装后人工确认，不能从资产图推断。
