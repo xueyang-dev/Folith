@@ -1220,34 +1220,17 @@ def test_settings_dialog_keeps_untouched_preferences(client, monkeypatch):
     window.apply_theme_preference()
     window.settings.setValue(window.LANGUAGE_KEY, "en")
 
-    captured: dict = {}
-
-    class _FakeDialog:
-        def __init__(self, config, runner, parent=None):
-            self.config = config
-            self.theme_preference = ""
-            self.language_preference = ""
-            self.academic_preference = False
-
-        def set_language_preference(self, code):
-            self.language_preference = i18n.normalize(code)
-
-        def set_academic_preference(self, value):
-            self.academic_preference = bool(value)
-
-        def exec(self):
-            captured["theme"] = self.theme_preference
-            captured["language"] = self.language_preference
-            return True
-
-    monkeypatch.setattr(window_module, "EngineDialog", _FakeDialog)
-
     try:
         # 调用也要在 try 里：它一旦抛错，真实 QSettings 里的 dark/en 就没人还原，
         # 会污染同进程后续用例（以及本机上真实应用的偏好）。
         window.open_settings()
-        assert captured["theme"] == "dark", captured
-        assert captured["language"] == "en", captured
+        dialog = window._settings_window
+        assert dialog.theme_preference == "dark"
+        assert dialog.theme_box.currentData() == "dark"
+        assert dialog.language_preference == "en"
+        # 设置改成立即生效：改一个无关选项，主题与语言偏好原样保留。
+        dialog.tm_box.setChecked(not dialog.tm_box.isChecked())
+        dialog.flush_preferences()
         assert str(window.settings.value(window.THEME_KEY)) == "dark"
         assert str(window.settings.value(window.LANGUAGE_KEY)) == "en"
     finally:
@@ -3706,24 +3689,25 @@ def test_double_clicking_a_task_row_opens_that_task(client):
         f"双击第 {target_row} 行应打开 {second}，实际打开 {window.workbench.job_id}"
 
 
-def test_exit_closes_an_open_modal_settings_dialog(client):
-    """设置对话框开着时退出：模态对话框不能把退出流程拖住。
+def test_exit_closes_an_open_settings_window(client, monkeypatch):
+    """设置窗口开着时退出：非模态的设置窗口不能把进程留在后台（R70 的同类问题）。
 
-    用户在「设置对话框打开时点 Dock 退出」遇到的就是这个场景（R70）：只关主窗口的话，
-    模态对话框自己的嵌套事件循环会继续跑、窗口也还在 → `quitOnLastWindowClosed` 不触发，
-    进程永远不退。这里要求在退出被接受后，除主窗口外不再有可见的顶层窗口。
+    设置改成 macOS 式的非模态窗口之后，只关主窗口的话设置窗口还在，
+    `quitOnLastWindowClosed` 就不会触发。退出被接受后，除主窗口外不能再有可见的顶层窗口。
     """
-    from PySide6.QtCore import QTimer
+    from folith.qt import window as window_module
 
     window = client["window"]
     app = client["app"]
-
-    QTimer.singleShot(200, window.close)          # 模态循环里请求退出
-    QTimer.singleShot(6000, app.quit)             # 兜底，避免测试挂死
-    window.open_settings()                        # 阻塞在 dialog.exec() 直到对话框关闭
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    window.open_settings()
+    app.processEvents()
+    assert window._settings_window is not None and window._settings_window.isVisible()
+    assert window.isEnabled(), "设置开着时主窗口仍然可以操作（非模态）"
+    window.close()
     app.processEvents()
 
-    assert window._closing_accepted is True, "设置对话框开着时退出也必须被接受"
+    assert window._closing_accepted is True, "设置窗口开着时退出也必须被接受"
     assert window.isVisible() is False, "退出后主窗口必须关闭"
     leftovers = [widget for widget in app.topLevelWidgets()
                  if widget.isWindow() and widget.isVisible() and widget is not window]

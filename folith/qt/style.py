@@ -222,6 +222,7 @@ QLabel#faint {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 QLabel#metric {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
 QLabel#statusError {{ color: {t['danger']}; font-weight: 600; }}
 QLabel#statusOk {{ color: {t['success']}; font-weight: 600; }}
+QLabel#statusWarn {{ color: {t['warning']}; font-weight: 600; }}
 QLabel#link {{ color: {t['accent']}; font-weight: 600; }}
 /* 交付清单：小节标题 + 右侧汇总（"6 个文件 · 85.5 KB"），行内布局由委托自绘 */
 QLabel#assetMeta {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
@@ -454,6 +455,23 @@ QLabel#engineDot {{ border-radius: 4px; }}
 QLabel#engineDot[state="ok"] {{ background: {t['success']}; }}
 QLabel#engineDot[state="warn"] {{ background: {t['warning']}; }}
 QLabel#engineDot[state="muted"] {{ background: {t['text-muted']}; }}
+QLabel#engineDot[state="error"] {{ background: {t['danger']}; }}
+/* 设置窗口顶部的页签（macOS 设置窗口的工具栏样式：图标在上、文字在下）。 */
+QToolButton#settingsTab {{
+    background: transparent; border: none; border-radius: {r['sm']}px;
+    padding: {sp['xs']}px {sp['sm']}px; color: {t['text-secondary']};
+    font-size: {f['caption']}px; min-width: 64px;
+}}
+QToolButton#settingsTab:hover {{ background: {t['bg-hover']}; }}
+QToolButton#settingsTab:checked {{ background: {t['bg-selected']}; color: {t['text-primary']}; }}
+QFrame#settingsToolbar {{ background: {t['bg-surface']}; border: none;
+    border-bottom: 1px solid {t['border-hairline']}; }}
+QLabel#monoValue {{ font-family: "SF Mono", Menlo, monospace; font-size: {f['caption']}px;
+    color: {t['text-secondary']}; }}
+QLabel#metricInline {{ font-weight: 600; color: {t['text-primary']}; }}
+QLabel#formatFile {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
+QLabel#betaBadge {{ font-size: {f['micro']}px; font-weight: 700; color: {t['warning']};
+    border: 1px solid {t['warning']}; border-radius: {r['xs']}px; padding: 0 4px; }}
 QLabel#engineState {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#engineModel {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 /* 引擎状态：侧栏底部一枚浅色圆角条（状态点 + 已配置 + 模型名），与品牌行之间一条发丝线 */

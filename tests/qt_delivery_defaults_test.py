@@ -141,7 +141,12 @@ def test_settings_dialog_offers_the_epub_option():
     dialog = dialogs.EngineDialog(adapter.EngineConfig(deliver_epub=True), None, None)
     try:
         assert dialog.deliver_epub_box.isChecked() is True
-        assert "translation.epub" in dialog.deliver_epub_box.text()
+        # 格式名是复选框，文件名是同一行后面的灰色小字（8.3-6）。
+        assert dialog.deliver_epub_box.text() == "EPUB 电子书"
+        from PySide6.QtWidgets import QLabel
+
+        names = [label.text() for label in dialog._deliver_epub_holder.findChildren(QLabel)]
+        assert "translation.epub" in names
     finally:
         dialog.deleteLater()
 

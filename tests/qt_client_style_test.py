@@ -141,8 +141,8 @@ def test_mark_primary_applies_the_theme_accent(app):
     box.close()
 
 
-def test_settings_save_button_renders_as_the_primary_action(app):
-    """设置对话框的"保存"必须是主行动按钮（不是默认按钮外观）。"""
+def test_settings_apply_button_renders_as_the_primary_action(app):
+    """设置窗口只有连接两页有「应用」，它必须是主行动按钮；其余选项改了立即生效，没有保存按钮。"""
     from PySide6.QtWidgets import QDialogButtonBox
 
     from folith.qt import adapter, style, theme
@@ -153,11 +153,12 @@ def test_settings_save_button_renders_as_the_primary_action(app):
         style.apply_theme(app, name)
         dialog = EngineDialog(adapter.EngineConfig(), TaskRunner())
         dialog.show()
+        dialog.show_page("models")
         app.processEvents()
-        box = dialog.findChild(QDialogButtonBox)
-        save = box.button(QDialogButtonBox.StandardButton.Save)
-        assert save.objectName() == "primaryAction"
-        assert _button_background(save).lower() == \
+        assert dialog.findChild(QDialogButtonBox) is None, "设置窗口不该再有保存 / 取消"
+        apply = dialog.models_apply_button
+        assert apply.objectName() == "primaryAction"
+        assert _button_background(apply).lower() == \
             theme.tokens(name)["accent"].lower(), name
         dialog.close()
 

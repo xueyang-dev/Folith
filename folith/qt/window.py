@@ -16,6 +16,7 @@ Exit rules (roadmap §3.3, MAC-01 class of defect):
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import weakref
@@ -256,6 +257,7 @@ class MainWindow(QMainWindow):
         self.library.termDeleteRequested.connect(self.delete_library_term)
         self.home.moveToProjectRequested.connect(self.move_to_project)
         self.home.settingsRequested.connect(self.open_settings)
+        self.home.connectionRequested.connect(self.show_connections)
 
         self.workbench.backRequested.connect(self.show_home)
         self.workbench.startRequested.connect(self.start_or_resume)
@@ -417,6 +419,17 @@ class MainWindow(QMainWindow):
         diagnostics_action.triggered.connect(self.show_diagnostics)
         tools_action = QAction(i18n.tr('OCR 与外部工具状态…'), self)
         tools_action.triggered.connect(self.show_tools)
+        github_action = QAction(i18n.tr('在 GitHub 上查看 Folith'), self)
+        github_action.triggered.connect(self.open_project_page)
+        issue_action = QAction(i18n.tr('报告问题…'), self)
+        issue_action.triggered.connect(self.report_issue)
+        shortcuts_action = QAction(i18n.tr('键盘快捷键…'), self)
+        shortcuts_action.triggered.connect(self.show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+        help_menu.addSeparator()
+        help_menu.addAction(github_action)
+        help_menu.addAction(issue_action)
+        help_menu.addSeparator()
         help_menu.addAction(diagnostics_action)
         help_menu.addAction(tools_action)
         self.menu_actions.update({
@@ -424,6 +437,7 @@ class MainWindow(QMainWindow):
             "cancel": cancel_action, "reload": reload_action,
             "submit": edit_action, "deliver": deliver_action,
             "diagnostics": diagnostics_action, "tools": tools_action,
+            "github": github_action, "issue": issue_action, "shortcuts": shortcuts_action,
         })
 
     # Delivery defaults are a *client* preference (they are copied into each new
@@ -548,6 +562,39 @@ class MainWindow(QMainWindow):
             (f"{self.config.provider} / {self.config.model}"
              + (f" → {self.config.target_lang}" if self.config.target_lang else ""))
             if self.config.provider else "")
+        from . import connection_status
+
+        try:
+            self.home.set_connection_overview(connection_status.overview(self.config))
+        except Exception:  # noqa: BLE001 - the chip must never break the home page
+            pass
+        panel = getattr(self, "_connection_panel", None)
+        if panel is not None:
+            panel.refresh()
+        dialog = getattr(self, "_settings_window", None)
+        if dialog is not None:
+            try:
+                dialog.refresh_connection_states()
+            except RuntimeError:
+                pass
+
+    def show_connections(self) -> None:
+        """侧栏芯片 → 浮窗：三条连接逐项的状态、上次测试时间、「测试」与「设置…」。"""
+        from .settings_pages import ConnectionPanel
+
+        if getattr(self, "_connection_popover", None) is None:
+            self._connection_panel = ConnectionPanel(self.runner, lambda: self.config)
+            self._connection_panel.settingsRequested.connect(self._connection_settings)
+            self._connection_panel.changed.connect(self.refresh_engine_label)
+            self._connection_popover = components.Popover(
+                i18n.tr('模型连接'), self._connection_panel, self)
+        self._connection_panel.refresh()
+        self._connection_popover.open_at(self.home.engine_card)
+
+    def _connection_settings(self, page: str) -> None:
+        if getattr(self, "_connection_popover", None) is not None:
+            self._connection_popover.close()
+        self.open_settings(page)
 
     def _sync_menu_state(self) -> None:
         """菜单动作跟随"当前在哪一页 + 任务能不能做这件事"。
@@ -2669,55 +2716,106 @@ class MainWindow(QMainWindow):
         self._notice(result.get("detail") or i18n.tr('已用默认应用打开。'))
 
     # ================= settings / diagnostics =================
-    def open_settings(self) -> None:
-        dialog = EngineDialog(self.config, self.runner, self)
-        # 把**当前**偏好带进对话框：否则"打开设置 → 保存"会把用户没动过的偏好
-        # 重置成默认值（主题此前就是这样被静默重置成「跟随系统」的）。
-        dialog.theme_preference = self.theme_preference
-        # 语言偏好以**设置里保存的值**为准：运行中的模块状态可能被
-        # `FOLITH_UI_LANGUAGE` 覆盖（脚本化验收要用），但那不是用户的选择。
-        dialog.set_language_preference(str(self.settings.value(
-            self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE)))
-        dialog.set_academic_preference(self.academic_mode())
-        if dialog.exec():
-            self.settings.setValue(self.ACADEMIC_KEY, "true" if dialog.academic_preference else "false")
-            self.workbench.set_academic_mode(dialog.academic_preference)
-            self.config = dialog.config
-            self._save_client_defaults()
+    def open_settings(self, page: str = "") -> None:
+        """设置是非模态窗口（macOS 设置的形态）：已经开着就带到前面并切到 ``page``。"""
+        page = page if isinstance(page, str) else ""   # menu actions pass `checked`
+        dialog = getattr(self, "_settings_window", None)
+        if dialog is not None:
+            try:
+                dialog.isVisible()
+            except RuntimeError:  # deleted with its parent or closed for good
+                dialog = None
+        if dialog is None:
+            dialog = EngineDialog(self.config, self.runner, self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            # 把**当前**偏好带进窗口：否则打开设置会把用户没动过的偏好重置成默认值
+            # （主题此前就是这样被静默重置成「跟随系统」的）。
+            dialog.theme_preference = self.theme_preference
+            index = dialog.theme_box.findData(self.theme_preference)
+            dialog._loading = True
+            if index >= 0:
+                dialog.theme_box.setCurrentIndex(index)
+            # 语言偏好以**设置里保存的值**为准：运行中的模块状态可能被
+            # `FOLITH_UI_LANGUAGE` 覆盖（脚本化验收要用），但那不是用户的选择。
+            dialog.set_language_preference(str(self.settings.value(
+                self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE)))
+            dialog.set_academic_preference(self.academic_mode())
+            dialog._loading = False
+            dialog.preferencesChanged.connect(lambda: self._settings_preferences(dialog))
+            dialog.connectionApplied.connect(lambda: self._settings_connection(dialog))
+            dialog.revealRequested.connect(self.reveal_path)
+            dialog.diagnosticsRequested.connect(self.show_diagnostics)
+            dialog.shortcutsRequested.connect(self.show_shortcuts)
+            dialog.destroyed.connect(lambda *_: setattr(self, "_settings_window", None))
+            self._settings_window = dialog
+        if page:
+            dialog.show_page(page)
+        if _automation():
+            return
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _settings_preferences(self, dialog) -> None:
+        """立即生效的选项：工作模式、任务默认值、主题、语言。"""
+        self.settings.setValue(self.ACADEMIC_KEY, "true" if dialog.academic_preference else "false")
+        self.workbench.set_academic_mode(dialog.academic_preference)
+        self.config = dataclasses.replace(dialog.config, **{
+            name: getattr(self.config, name) for name in dialog.CONNECTION_FIELDS})
+        self._save_client_defaults()
+        if str(self.settings.value(self.THEME_KEY, "")) != dialog.theme_preference:
             self.settings.setValue(self.THEME_KEY, dialog.theme_preference)
             self.apply_theme_preference()
-            previous_language = i18n.language()
-            self.settings.setValue(self.LANGUAGE_KEY, dialog.language_preference)
-            i18n.set_language(dialog.language_preference)
-            self._apply_layout_direction()
-            if i18n.language() != previous_language:
-                self._notice(i18n.tr('界面语言已切换为「{v0}」；重启应用后整个窗口生效。',
-                                     v0=i18n.language_label(i18n.language())))
-            self.refresh_home()
-            self.refresh_engine_label()
-            self._notice(i18n.tr('设置已保存。'))
-            if self.stack.currentWidget() is self.workbench:
-                self.workbench.config = self.config
-                self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
-                self.refresh_workbench(force=True)
+        previous_language = i18n.language()
+        self.settings.setValue(self.LANGUAGE_KEY, dialog.language_preference)
+        i18n.set_language(dialog.language_preference)
+        self._apply_layout_direction()
+        if i18n.language() != previous_language:
+            self._notice(i18n.tr('界面语言已切换为「{v0}」；重启应用后整个窗口生效。',
+                                 v0=i18n.language_label(i18n.language())))
+        self.refresh_engine_label()
+        if self.stack.currentWidget() is self.workbench:
+            self.workbench.config = self.config
+
+    def _settings_connection(self, dialog) -> None:
+        """模型 / 视觉连接已应用：整份配置以窗口里的为准（含刚生效的选项）。"""
+        self.config = dialog.config
+        self._save_client_defaults()
+        self.refresh_engine_label()
+        self._refresh_home_async()
+        self._notice(i18n.tr('模型连接已应用。'))
+        if self.stack.currentWidget() is self.workbench:
+            self.workbench.config = self.config
+            self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
+            self.refresh_workbench(force=True)
 
     def show_about(self) -> None:
-        """关于：版本与构建。位置/日志/运行事实属于支持信息，由「诊断信息」承载
-        （那里有可复制、可在 Finder 里显示的完整呈现），不在关于里再印一遍路径。"""
-        identity = adapter.app_identity()
-        text = "\n".join((
-            i18n.tr("Folith 学术翻译工作台 {v0}",
-                    v0=identity.get("app_version") or ""),
-            i18n.tr("构建：{v0}", v0=identity.get("build_id") or i18n.tr("未知"))
-            + (i18n.tr("（随包）") if identity.get("frozen") else i18n.tr("（源码运行）")),
-            "",
-            i18n.tr("数据与日志位置、版本与运行事实见「帮助 → 诊断信息…」；"
-                    "其中不包含 API Key 与文档正文。"),
-        ))
+        """「关于 Folith」直接打开设置的「关于」页（12-H：支持信息只有一个家）。"""
         if _automation():
-            self._notice(" · ".join(text.splitlines()[:2]))
+            identity = adapter.app_identity()
+            self._notice(i18n.tr("Folith 学术翻译工作台 {v0}", v0=identity.get("app_version") or "")
+                         + " · " + i18n.tr("构建：{v0}", v0=identity.get("build_id")
+                                           or i18n.tr("未知")))
             return
-        prompts.NoticeDialog.notify(self, i18n.tr('关于 Folith'), text, tone="info")
+        self.open_settings("about")
+
+    def show_shortcuts(self) -> None:
+        from .settings_pages import ShortcutsDialog
+
+        dialog = ShortcutsDialog(self.menuBar(), getattr(self, "_settings_window", None) or self)
+        if _automation():
+            return
+        dialog.exec()
+
+    def open_project_page(self) -> None:
+        from . import settings_pages, support
+
+        settings_pages._open_url(support.PROJECT_URL)
+
+    def report_issue(self) -> None:
+        from . import settings_pages, support
+
+        settings_pages._open_url(support.issue_url())
 
     def show_diagnostics(self) -> None:
         from PySide6.QtCore import qVersion

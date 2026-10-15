@@ -494,6 +494,7 @@ class HomeView(QWidget):
     libraryRequested = Signal()
     moveToProjectRequested = Signal(list)
     settingsRequested = Signal()
+    connectionRequested = Signal()          # 侧栏连接状态芯片：打开逐项状态的浮窗
 
     COLUMNS = ("文档", "状态", "目标语言", "段落", "更新时间")
     #: 侧栏品牌字标的逻辑高度（px）。Golden Gate 版式里它在侧栏左下角、设置按钮左侧。
@@ -583,6 +584,12 @@ class HomeView(QWidget):
         self.engine_model.setVisible(False)
         engine_card = QFrame()
         engine_card.setObjectName("engineCard")
+        # 连接状态芯片（12-B）：「已配置」不等于「能用」，点开逐项看翻译 / 审校 / 视觉。
+        engine_card.setCursor(Qt.CursorShape.PointingHandCursor)
+        engine_card.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        engine_card.setAccessibleName(i18n.tr('模型连接状态'))
+        engine_card.installEventFilter(self)
+        self.engine_card = engine_card
         engine_row = QHBoxLayout(engine_card)
         engine_row.setContentsMargins(theme_module.SPACE["sm"] + 2, theme_module.SPACE["sm"],
                                       theme_module.SPACE["sm"] + 2, theme_module.SPACE["sm"])
@@ -1410,9 +1417,30 @@ class HomeView(QWidget):
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt 命名
         """表格拿到键盘焦点时给它一个"当前行即选中行"的起点（键盘可达性的前提）。"""
-        if watched is self.table and event.type() == QEvent.Type.FocusIn:
+        if watched is getattr(self, "table", None) and event.type() == QEvent.Type.FocusIn:
             self._select_current_row_for_keyboard()
+        if watched is getattr(self, "engine_card", None) and (
+                event.type() == QEvent.Type.MouseButtonRelease
+                or (event.type() == QEvent.Type.KeyPress
+                    and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space))):
+            self.connectionRequested.emit()
+            return True
         return super().eventFilter(watched, event)
+
+    def set_connection_overview(self, overview: dict) -> None:
+        """芯片显示最严重的那一条（● 连接正常 / ● 视觉模型未测试 / ● 翻译模型连接失败）。
+
+        配置本身不完整时由 :meth:`set_engine_problem` 说「未配置」，这里不覆盖。
+        """
+        if self.setup_banner.isVisible():
+            return
+        from . import connection_status
+
+        self.engine_label.setText(connection_status.describe(overview))
+        self.engine_dot.setProperty("state", {"ok": "ok", "danger": "error",
+                                              "warning": "warn"}.get(overview.get("tone"), "muted"))
+        style_module.repolish(self.engine_dot)
+        self.engine_card.setToolTip(i18n.tr('点击查看各模型连接的状态并测试'))
 
     def _selection_changed(self) -> None:
         ids = self.selected_job_ids()

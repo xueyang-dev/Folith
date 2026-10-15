@@ -11,14 +11,14 @@ import dataclasses
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
     QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
-    QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
-    QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
+    QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QStackedWidget,
+    QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
 
 from . import i18n
@@ -105,16 +105,36 @@ def _set_status(label: QLabel, text: str, tone: str = "muted") -> None:
 
 
 class EngineDialog(QDialog):
-    """Model connection + the task defaults a new job will use."""
+    """设置窗口：macOS 原生设置的形态（acceptance-feedback 8.3-1、D6、12-H）。
+
+    * **非模态**：打开设置时仍可操作主窗口；⌘, 再按一次只是把它带到前面。
+    * 顶部是带图标的页签（通用 / 模型 / 视觉与识别 / 任务默认值 / 存储 / 关于），
+      窗口标题跟着当前页走，窗口高度随页内容伸缩。
+    * **普通选项改了立即生效**（主题、语言、工作模式、任务默认值）——没有「保存 / 取消」。
+      只有改错会让任务失败的「模型」「视觉与识别」两页保留「应用」，应用前先自动测试连接。
+
+    控件与取值逻辑（``_collect`` / ``OWNED_FIELDS`` / ``_save``）沿用原来的对话框；
+    ``_save`` 仍然是"把整页一次性落盘"，供脚本化运行与测试使用。
+    """
+
+    preferencesChanged = Signal()       # 立即生效的选项变了（窗口据此持久化并套用）
+    connectionApplied = Signal()        # 模型 / 视觉连接已测试并保存
+    revealRequested = Signal(str)
+    diagnosticsRequested = Signal()
+    shortcutsRequested = Signal()
+
+    PAGES = (("general", "settings", "通用"), ("models", "sparkles", "模型"),
+             ("vision", "image", "视觉与识别"), ("defaults", "package", "任务默认值"),
+             ("storage", "folder", "存储"), ("about", "info", "关于"))
 
     def __init__(self, config: adapter.EngineConfig, runner: TaskRunner,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.setModal(False)
         self.setWindowTitle(i18n.tr('设置'))
-        # 820×720 → 780×640：常规 Mac 窗口里能放下，且不必靠"更大的窗口"来掩盖
-        # 控件过高的问题（真正的修法是缩控件，见 style.box）。
-        self.setMinimumWidth(680)
-        self.resize(780, 640)
+        self.setMinimumWidth(640)
+        self.resize(720, 600)
         self.config = config
         self.runner = runner
         self._status = QLabel("")
@@ -126,51 +146,244 @@ class EngineDialog(QDialog):
         self.theme_preference = theme_module.FOLLOW_SYSTEM
         self.language_preference = i18n.language()
         self.academic_preference = False
+        self._loading = True
 
-        # 对话框自己的标题栏已经写着「设置」；内容区里再放一个 22px 的 pageTitle
-        # 是同一句话说两遍，还白占一行高度。改用 section(16px)。
-        title = QLabel(i18n.tr('设置'))
-        title.setObjectName("sectionTitle")
-        subtitle = QLabel(i18n.tr('模型连接、任务默认值与通用选项。配置保存在本机，仅当前用户可读。'))
-        subtitle.setObjectName("hint")
+        from .settings_pages import AboutPage, StoragePage
 
-        header = QVBoxLayout()
-        header.setSpacing(2)
-        header.addWidget(title)
-        header.addWidget(subtitle)
+        self.storage_page = StoragePage(runner)
+        self.storage_page.revealRequested.connect(self.revealRequested.emit)
+        self.about_page = AboutPage(runner)
+        self.about_page.diagnosticsRequested.connect(self.diagnosticsRequested.emit)
+        builders = {"general": self._build_appearance_tab,
+                    "models": self._build_connection_tab,
+                    "vision": self._build_vision_tab,
+                    "defaults": self._build_task_tab,
+                    "storage": lambda: self.storage_page,
+                    "about": lambda: self.about_page}
+        # 工作模式的复选框在「任务默认值」里，但「通用」页先建：先把它造出来。
+        self._make_academic_box()
 
-        tabs = QTabWidget(self)
-        tabs.addTab(_scroll_page(self._build_connection_tab()),
-                    icons.icon("sparkles", 16, "text-secondary"),
-                    i18n.tr('模型连接'))
-        tabs.addTab(_scroll_page(self._build_task_tab()),
-                    icons.icon("package", 16, "text-secondary"),
-                    i18n.tr('任务默认值'))
-        tabs.addTab(_scroll_page(self._build_appearance_tab()),
-                    icons.icon("image", 16, "text-secondary"),
-                    i18n.tr('通用'))
-        tabs.setIconSize(QSize(16, 16))
+        toolbar = QFrame()
+        toolbar.setObjectName("settingsToolbar")
+        bar = QHBoxLayout(toolbar)
+        bar.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["xs"],
+                               theme_module.SPACE["md"], theme_module.SPACE["xs"])
+        bar.setSpacing(theme_module.SPACE["xxs"])
+        bar.addStretch(1)
+        self.stack = QStackedWidget()
+        self.tab_buttons: dict[str, QToolButton] = {}
+        self.pages: dict[str, QWidget] = {}
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for key, icon, label in self.PAGES:
+            button = QToolButton()
+            button.setObjectName("settingsTab")
+            button.setText(i18n.tr(label))
+            button.setIcon(icons.icon(icon, 20, "text-secondary", color_on="accent"))
+            button.setIconSize(QSize(20, 20))
+            button.setCheckable(True)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setAccessibleName(i18n.tr(label))
+            button.clicked.connect(lambda _checked=False, value=key: self.show_page(value))
+            group.addButton(button)
+            bar.addWidget(button)
+            self.tab_buttons[key] = button
+            page = _scroll_page(builders[key]())
+            self.pages[key] = page
+            self.stack.addWidget(page)
+        bar.addStretch(1)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel, self)
-        save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
-        save_button.setText(i18n.tr('保存'))
-        save_button.setIcon(icons.icon(
-            "save", 16, "text-on-accent"))
-        save_button.setIconSize(QSize(16, 16))
-        style_module.mark_primary(save_button)
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
-        buttons.accepted.connect(self._save)
-        buttons.rejected.connect(self.reject)
-
+        body = QVBoxLayout()
+        body.setContentsMargins(20, theme_module.SPACE["sm"], 20, theme_module.SPACE["md"])
+        body.setSpacing(theme_module.SPACE["sm"])
+        body.addWidget(self.stack, 1)
+        body.addWidget(self._status)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, theme_module.SPACE["md"], 20, theme_module.SPACE["md"])
-        layout.setSpacing(theme_module.SPACE["sm"])
-        layout.addLayout(header)
-        layout.addWidget(tabs, 1)
-        layout.addWidget(self._status)
-        layout.addWidget(buttons)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(toolbar)
+        layout.addLayout(body, 1)
+
+        # 立即生效：改动合并 250 ms 再落盘（拖动、连续输入不会每一下都写一次）。
+        self._defaults_timer = QTimer(self)
+        self._defaults_timer.setSingleShot(True)
+        self._defaults_timer.setInterval(250)
+        self._defaults_timer.timeout.connect(self._apply_preferences)
+        self._watch_immediate_fields()
+        self._loading = False
+        self.show_page("general")
+
+    # -- 页签 ---------------------------------------------------------------
+    def show_page(self, key: str) -> None:
+        if key not in self.pages:
+            key = "general"
+        self.tab_buttons[key].setChecked(True)
+        self.stack.setCurrentWidget(self.pages[key])
+        label = next(text for value, _icon, text in self.PAGES if value == key)
+        self.setWindowTitle(i18n.tr(label))
+        if key == "storage":
+            self.storage_page.refresh()
+        _set_status(self._status, "")
+        self._fit_height()
+
+    def current_page(self) -> str:
+        widget = self.stack.currentWidget()
+        return next((key for key, page in self.pages.items() if page is widget), "general")
+
+    def _fit_height(self) -> None:
+        """窗口高度随当前页的内容伸缩（macOS 设置窗口的行为），不超出屏幕。"""
+        page = self.stack.currentWidget()
+        inner = page.widget() if isinstance(page, QScrollArea) else page
+        wanted = inner.sizeHint().height() + 120
+        screen = (self.screen() or QGuiApplication.primaryScreen())
+        cap = int(screen.availableGeometry().height() * 0.85) if screen else 820
+        target = max(360, min(wanted, cap, 820))
+        from . import motion
+
+        start = self.height()
+        if not self.isVisible():
+            self.resize(self.width(), target)
+            return
+        if not hasattr(self, "_motion"):
+            self._motion = motion.Motion(self)
+        self._motion.animate("settings-height", start, target,
+                             lambda value: self.resize(self.width(), round(value)),
+                             kind="panel")
+
+    # -- 立即生效的选项 -------------------------------------------------------
+    #: 改错会让任务失败、因而要「应用」并先测试的字段；其余展示的字段改了立即生效。
+    CONNECTION_FIELDS = frozenset({
+        "provider", "model", "api_key", "base_url", "reasoning_effort",
+        "reviewer_mode", "reviewer_provider", "reviewer_model", "reviewer_api_key",
+        "reviewer_base_url"})
+
+    def _watch_immediate_fields(self) -> None:
+        for box in (self.auto_term_box, self.review_box, self.tm_box, self.understanding_box,
+                    self.cleanup_box, self.report_box, self.academic_box,
+                    self.deliver_plain_box, self.deliver_bilingual_box, self.deliver_terms_box,
+                    self.deliver_evidence_box, self.deliver_pdf_box,
+                    self.deliver_original_pdf_box, self.deliver_epub_box):
+            box.toggled.connect(self._immediate_changed)
+        for combo in (self.theme_box, self.language_box, self.ocr_backend_box,
+                      self.ocr_mode_box, self.ocr_language_box):
+            combo.currentIndexChanged.connect(self._immediate_changed)
+        self.target_box.currentTextChanged.connect(self._immediate_changed)
+        self.ocr_language_box.editTextChanged.connect(self._immediate_changed)
+
+    def _immediate_changed(self, *_args) -> None:
+        if not self._loading:
+            self._defaults_timer.start()
+
+    def _defaults_config(self) -> adapter.EngineConfig:
+        """当前**已保存**的连接 + 界面上的其余选项（正在改、还没应用的连接不混进来）。"""
+        collected = self._collect()
+        return dataclasses.replace(collected, **{
+            name: getattr(self.config, name) for name in self.CONNECTION_FIELDS})
+
+    def _apply_preferences(self) -> None:
+        self._defaults_timer.stop()
+        self.config = self._defaults_config()
+        self.academic_preference = self.academic_box.isChecked()
+        self.theme_preference = str(self.theme_box.currentData() or theme_module.FOLLOW_SYSTEM)
+        self.language_preference = str(self.language_box.currentData() or i18n.DEFAULT_LANGUAGE)
+        self.preferencesChanged.emit()
+
+    def flush_preferences(self) -> None:
+        """关闭窗口时把还在合并等待中的改动落盘。"""
+        if self._defaults_timer.isActive():
+            self._apply_preferences()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.flush_preferences()
+        super().closeEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.flush_preferences()
+        super().hideEvent(event)
+
+    # -- 「应用」：模型与视觉连接 -------------------------------------------------
+    def _apply_row(self, page: str) -> QWidget:
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, theme_module.SPACE["xs"], 0, 0)
+        row.setSpacing(theme_module.SPACE["sm"])
+        hint = QLabel(i18n.tr('应用前会先测试连接；测试通过才保存。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        apply_button = QPushButton(i18n.tr('应用'))
+        style_module.mark_primary(apply_button)
+        apply_button.clicked.connect(self.apply_connection)
+        force = QPushButton(i18n.tr('仍然应用'))
+        force.setToolTip(i18n.tr('不等测试通过就保存这份连接（未配置好之前无法启动翻译）。'))
+        force.setVisible(False)
+        force.clicked.connect(lambda: self._commit_connection(self._collect(), tested=False))
+        row.addWidget(hint, 1)
+        row.addWidget(force)
+        row.addWidget(apply_button)
+        setattr(self, f"{page}_apply_button", apply_button)
+        setattr(self, f"{page}_force_button", force)
+        return holder
+
+    def apply_connection(self) -> None:
+        """测试连接 → 通过才保存；失败时说明原因，并给出「仍然应用」。"""
+        vision_problem = self._vision_problem()
+        if vision_problem:
+            _set_status(self._status, i18n.tr_dynamic(vision_problem), "danger")
+            return
+        config = self._collect()
+        problem = i18n.tr_dynamic(config.connection_problem())
+        if problem:
+            _set_status(self._status, i18n.tr('无法应用：{v0}', v0=problem), "danger")
+            self._show_force(True)
+            return
+        for button in (self.models_apply_button, self.vision_apply_button):
+            button.setEnabled(False)
+        _set_status(self._status, i18n.tr('正在测试连接…'))
+
+        def done(result) -> None:
+            ok, message = result
+            for button in (self.models_apply_button, self.vision_apply_button):
+                button.setEnabled(True)
+            from . import connection_status
+
+            connection_status.record("translation", config, ok, message)
+            if ok:
+                self._commit_connection(config, tested=True, message=message)
+            else:
+                _set_status(self._status, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+                self._show_force(True)
+
+        def failed(message: str, _detail: str) -> None:
+            for button in (self.models_apply_button, self.vision_apply_button):
+                button.setEnabled(True)
+            _set_status(self._status, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+            self._show_force(True)
+
+        self.runner.submit(adapter.test_connection, config, on_done=done, on_error=failed,
+                           label="apply-connection")
+
+    def _show_force(self, visible: bool) -> None:
+        for button in (self.models_force_button, self.vision_force_button):
+            button.setVisible(visible)
+
+    def _commit_connection(self, collected: adapter.EngineConfig, *, tested: bool,
+                           message: str = "") -> bool:
+        """把连接字段（以及视觉连接）落盘；其余选项保持已生效的值。"""
+        merged = dataclasses.replace(self.config, **{
+            name: getattr(collected, name) for name in self.CONNECTION_FIELDS})
+        try:
+            self._apply_vision()
+            merged.save()
+        except Exception as exc:  # noqa: BLE001 - the user must see the reason
+            _set_status(self._status, i18n.tr('无法保存设置：{v0}', v0=i18n.tr_dynamic(str(exc))),
+                        "danger")
+            return False
+        self.config = merged
+        self._show_force(False)
+        _set_status(self._status, i18n.tr('连接正常，已应用：{v0}', v0=message) if tested
+                    else i18n.tr('已应用（未通过测试）。'), "ok" if tested else "muted")
+        self.connectionApplied.emit()
+        return True
 
     # -- connection --------------------------------------------------------
     def _build_connection_tab(self) -> QWidget:
@@ -224,7 +437,8 @@ class EngineDialog(QDialog):
         self.test_button.setIcon(icons.icon("check-circle", 16))
         self.test_button.setIconSize(QSize(16, 16))
         self.test_button.clicked.connect(self._test_connection)
-        self.test_label = QLabel(i18n.tr('尚未测试'))
+        # 测试状态写在卡片标题下（translation_state）；这里只放这一次测试的结果。
+        self.test_label = QLabel("")
         self.test_label.setObjectName("hint")
         self.test_label.setWordWrap(True)
         test_row = QWidget()
@@ -301,16 +515,57 @@ class EngineDialog(QDialog):
         reviewer_body.addWidget(mode_row)
         reviewer_body.addWidget(self.reviewer_fields)
 
+        # 标题下一行写这条连接上次测试的结果（「已配置」不等于「能用」，12-B）。
+        self.translation_state = QLabel("")
+        self.reviewer_state = QLabel("")
+        body.insertWidget(1, self.translation_state)
+        reviewer_body.insertWidget(1, self.reviewer_state)
         page_layout.addWidget(connection_card)
         page_layout.addWidget(reviewer_card)
-        # 视觉模型也是"模型连接"：扫描件由它读成正文。放在这里，所有连接一处配完。
-        page_layout.addWidget(self._build_vision_card())
+        page_layout.addWidget(self._apply_row("models"))
         page_layout.addStretch(1)
 
         self._provider_changed(self.provider_box.currentText())
         self._reviewer_changed()
         self._sync_reasoning()
         return page
+
+    def _build_vision_tab(self) -> QWidget:
+        """视觉理解连接（扫描件由它读成正文）+ 扫描件识别的默认值。"""
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        page_layout.setSpacing(theme_module.SPACE["sm"])
+        card = self._build_vision_card()
+        self.vision_state = QLabel("")
+        card.layout().insertWidget(1, self.vision_state)
+        page_layout.addWidget(card)
+        page_layout.addWidget(self._apply_row("vision"))
+        page_layout.addWidget(self._build_scan_group())
+        page_layout.addStretch(1)
+        self.refresh_connection_states()
+        return page
+
+    def refresh_connection_states(self) -> None:
+        """各连接标题下的状态行：✓ 已连接 / ⚠ 未测试 / ✕ 失败 / 沿用翻译模型。"""
+        from . import connection_status
+
+        marks = {"ok": "✓", "failed": "✕", "missing": "✕", "untested": "⚠", "inherited": "↳"}
+        for role, label in (("translation", getattr(self, "translation_state", None)),
+                            ("reviewer", getattr(self, "reviewer_state", None)),
+                            ("vision", getattr(self, "vision_state", None))):
+            if label is None:
+                continue
+            row = connection_status.status(role, self.config)
+            text = {"ok": i18n.tr('已连接'), "failed": i18n.tr('上次测试失败'),
+                    "untested": i18n.tr('未测试'), "missing": i18n.tr('未配置完整'),
+                    "inherited": i18n.tr('沿用翻译模型')}[row["state"]]
+            if row["at"]:
+                text += " · " + i18n.tr('上次测试 {v0}', v0=row["at"].replace("T", " ")[:16])
+            label.setText(f"{marks[row['state']]} {text}")
+            label.setObjectName({"ok": "statusOk", "danger": "statusError",
+                                 "warning": "statusWarn"}.get(row["tone"], "hint"))
+            style_module.repolish(label)
 
     def _build_task_tab(self) -> QWidget:
         page = QWidget()
@@ -336,12 +591,15 @@ class EngineDialog(QDialog):
         self.cleanup_box.setChecked(self.config.enable_source_cleanup)
         self.report_box = style_module.CheckBox(i18n.tr('生成实践报告（需要更长的运行时间）'))
         self.report_box.setChecked(self.config.enable_report)
-        # 实践报告 / 案例 / 终稿 QA 是专用能力：默认不出现，用户主动打开"学术专业模式"才显示。
-        self.academic_box = style_module.CheckBox(
-            i18n.tr('学术专业模式：显示实践报告、案例与终稿 QA'))
-        self.academic_box.setChecked(bool(self.academic_preference or self.config.enable_report))
         self.academic_box.toggled.connect(self._academic_toggled)
         self.report_box.setVisible(self.academic_box.isChecked())
+        # 工作模式决定工作台出现哪些页，属于工作流（8.3-4）：放在这一页最上面。
+        mode_card, mode_body = _panel(
+            i18n.tr('工作模式'),
+            i18n.tr('默认关闭。打开后，工作台会多出实践报告、案例与合规 QA 三页，'
+                    '下面也可以勾选「生成实践报告」。'))
+        mode_body.addWidget(self.academic_box)
+        outer.addWidget(mode_card)
         # 两列网格：六项都是单行短句，一列排下来会白占半屏。
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -364,39 +622,71 @@ class EngineDialog(QDialog):
 
         delivery, delivery_body = _panel(
             i18n.tr('交付文件'), i18n.tr('只生成勾选的格式；冻结交付后快照不可修改。'))
-        self.deliver_plain_box = style_module.CheckBox(i18n.tr('纯译文 DOCX（translation.docx）'))
-        self.deliver_plain_box.setChecked(bool(getattr(self.config, "deliver_plain_docx", True)))
-        self.deliver_bilingual_box = style_module.CheckBox(i18n.tr('双语对照 DOCX（bilingual.docx）'))
-        self.deliver_bilingual_box.setChecked(bool(getattr(self.config, "deliver_bilingual_docx", True)))
-        self.deliver_terms_box = style_module.CheckBox(i18n.tr('术语表 XLSX（terms.xlsx）'))
-        self.deliver_terms_box.setChecked(bool(getattr(self.config, "deliver_terms_xlsx", True)))
-        self.deliver_evidence_box = style_module.CheckBox(i18n.tr('段落证据 JSONL（segment_evidence.jsonl）'))
-        self.deliver_evidence_box.setChecked(bool(getattr(self.config, "deliver_evidence", True)))
-        self.deliver_original_pdf_box = style_module.CheckBox(
-            i18n.tr('原排版译文 PDF（Beta，original_layout.pdf）'))
-        self.deliver_original_pdf_box.setChecked(
-            bool(getattr(self.config, "deliver_original_pdf", False)))
+
+        def fmt(attr: str, label: str, filename: str, default: bool) -> tuple:
+            """格式名是复选框，文件名是后面一行灰色小字（8.3-6）。"""
+            box = style_module.CheckBox(i18n.tr(label))
+            box.setChecked(bool(getattr(self.config, attr, default)))
+            holder = QWidget()
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(theme_module.SPACE["sm"])
+            row.addWidget(box)
+            name = QLabel(filename)
+            name.setObjectName("formatFile")
+            row.addWidget(name)
+            row.addStretch(1)
+            setattr(self, f"_{attr}_holder", holder)
+            return box, holder
+
+        self.deliver_plain_box, plain = fmt("deliver_plain_docx", '纯译文 DOCX',
+                                            "translation.docx", True)
+        self.deliver_bilingual_box, bilingual = fmt("deliver_bilingual_docx", '双语对照 DOCX',
+                                                    "bilingual.docx", True)
+        self.deliver_pdf_box, pdf = fmt("deliver_pdf", '译文 PDF', "translation.pdf", False)
+        self.deliver_epub_box, epub = fmt("deliver_epub", 'EPUB 电子书',
+                                          "translation.epub", False)
+        self.deliver_terms_box, terms = fmt("deliver_terms_xlsx", '术语表 XLSX',
+                                            "terms.xlsx", True)
+        self.deliver_evidence_box, evidence = fmt("deliver_evidence", '段落证据 JSONL',
+                                                  "segment_evidence.jsonl", True)
+        self.deliver_original_pdf_box, original = fmt(
+            "deliver_original_pdf", '原排版译文 PDF', "original_layout.pdf", False)
         # This dialog edits client defaults before a file is chosen, so it
         # cannot know the source type; the hint states the constraint and the
         # import mapping drops the option for a non-PDF source.
         self.deliver_original_pdf_box.setToolTip(
             i18n.tr('仅 PDF 任务可用：按原文件的版式重建译文页面。'))
-        self.deliver_pdf_box = style_module.CheckBox(i18n.tr('译文 PDF（translation.pdf）'))
-        self.deliver_pdf_box.setChecked(
-            bool(getattr(self.config, "deliver_pdf", False)))
-        self.deliver_epub_box = style_module.CheckBox(
-            i18n.tr('EPUB 电子书（translation.epub）'))
-        self.deliver_epub_box.setChecked(
-            bool(getattr(self.config, "deliver_epub", False)))
-        for box in (self.deliver_plain_box, self.deliver_bilingual_box,
-                    self.deliver_terms_box, self.deliver_evidence_box,
-                    self.deliver_pdf_box, self.deliver_original_pdf_box,
-                    self.deliver_epub_box):
-            delivery_body.addWidget(box)
+        beta = QLabel("Beta")
+        beta.setObjectName("betaBadge")
+        original.layout().insertWidget(1, beta)
+        groups = QGridLayout()
+        groups.setContentsMargins(0, 0, 0, 0)
+        groups.setHorizontalSpacing(theme_module.SPACE["lg"])
+        groups.setVerticalSpacing(theme_module.SPACE["xs"])
+        for column, (caption, rows) in enumerate(((i18n.tr('文档'), (plain, bilingual, pdf)),
+                                                  (i18n.tr('电子书与数据'),
+                                                   (epub, terms, evidence)))):
+            groups.addWidget(style_module.field_label(caption), 0, column)
+            for index, widget in enumerate(rows, start=1):
+                groups.addWidget(widget, index, column)
+        groups.setColumnStretch(0, 1)
+        groups.setColumnStretch(1, 1)
+        delivery_body.addLayout(groups)
+        delivery_body.addSpacing(theme_module.SPACE["xs"])
+        delivery_body.addWidget(original)
+        only_pdf = QLabel(i18n.tr('仅对 PDF 任务生效：按原文件的版式重建译文页面。'))
+        only_pdf.setObjectName("fieldHint")
+        delivery_body.addWidget(only_pdf)
         outer.addWidget(delivery)
-        outer.addWidget(self._build_scan_group())
         outer.addStretch(1)
         return page
+
+    def _make_academic_box(self) -> None:
+        # 实践报告 / 案例 / 终稿 QA 是专用能力：默认不出现，用户主动打开"学术专业模式"才显示。
+        self.academic_box = style_module.CheckBox(
+            i18n.tr('学术专业模式：显示实践报告、案例与终稿 QA'))
+        self.academic_box.setChecked(bool(self.academic_preference or self.config.enable_report))
 
     def _select_ocr_language(self, value: str) -> None:
         """按**配置值**选中对应条目。
@@ -617,15 +907,18 @@ class EngineDialog(QDialog):
         self._select_language(self.language_preference)
         body.addWidget(_field(
             i18n.tr('界面语言'), self.language_box,
-            i18n.tr('非中文界面为实验功能（尚未完成独立的语言审阅）。语言在应用启动时生效，保存后请重启；阿拉伯语会整体从右到左排版。')))
+            i18n.tr('非中文界面为实验功能（尚未完成独立的语言审阅）。切换后重启应用，整个窗口才会换成新语言；阿拉伯语会整体从右到左排版。')))
         page_layout.addWidget(card)
 
-        # 学术专业模式是整个应用的工作方式，不是"新任务的默认值"，所以不放在任务默认值里。
-        mode_card, mode_body = _panel(
-            i18n.tr('工作模式'),
-            i18n.tr('默认关闭。打开后，「更多」菜单里会出现报告、案例与合规 QA，任务默认值里也可勾选「生成实践报告」。'))
-        mode_body.addWidget(self.academic_box)
-        page_layout.addWidget(mode_card)
+        keys, keys_body = _panel(i18n.tr('键盘'),
+                                 i18n.tr('常用操作都有快捷键；这里列出当前版本的全部快捷键。'))
+        self.shortcuts_button = QPushButton(i18n.tr('键盘快捷键…'))
+        self.shortcuts_button.clicked.connect(self.shortcutsRequested.emit)
+        row = QHBoxLayout()
+        row.addWidget(self.shortcuts_button)
+        row.addStretch(1)
+        keys_body.addLayout(row)
+        page_layout.addWidget(keys)
         page_layout.addStretch(1)
         return page
 
@@ -852,6 +1145,9 @@ class EngineDialog(QDialog):
             self.theme_box.currentData() or theme_module.FOLLOW_SYSTEM)
         self.language_preference = str(
             self.language_box.currentData() or i18n.DEFAULT_LANGUAGE)
+        self._defaults_timer.stop()
+        self.preferencesChanged.emit()
+        self.connectionApplied.emit()
         self.accept()
 
     def _test_connection(self) -> None:
@@ -866,6 +1162,11 @@ class EngineDialog(QDialog):
                         i18n.tr("连接正常：{v0}", v0=message) if ok
                         else i18n.tr("连接失败：{v0}", v0=message),
                         "ok" if ok else "danger")
+            from . import connection_status
+
+            connection_status.record("translation", config, ok, message)
+            # 标题下的状态行按**已保存**的配置显示；测的是界面上的值，一致时才会变成「已连接」。
+            self.refresh_connection_states()
 
         def failed(message: str, _detail: str) -> None:
             self.test_button.setEnabled(True)
