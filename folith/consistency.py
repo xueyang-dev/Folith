@@ -8,6 +8,41 @@ def spelling(value):
     return str(value or '').strip().strip('《》“”"「」『』').strip()
 
 
+#: 只差一个指示词 / 量词的两种写法是同一个译名（「熊」与「那头熊」、"Bear" 与 "the Bear"）。
+_DETERMINERS = tuple(sorted(
+    {'这', '那', '该', '此'} | {d + m for d in ('这', '那', '一') for m in
+                              ('个', '位', '名', '头', '只', '条', '匹', '本', '座', '家', '种')},
+    key=len, reverse=True))
+_ENGLISH_ARTICLES = ('the ', 'a ', 'an ')
+
+
+def _distinct_variants(variants):
+    """去掉"另一个写法加了指示词"的写法：它们不是两种译名，只是语境里多了一个限定词。"""
+    kept = set(variants)
+    for value in variants:
+        for other in variants:
+            if other == value or not other:
+                continue
+            if (any(value == prefix + other for prefix in _DETERMINERS)
+                    or any(value == prefix + other for prefix in _ENGLISH_ARTICLES)):
+                kept.discard(value)
+                break
+    return kept
+
+
+def is_common_noun(source):
+    """拉丁字母写成、又没有一个大写字母的"实体"是普通名词（"the bear"），不是专名。
+
+    模型偶尔把故事里反复出现的普通名词标成 ``named_object``；专名在英文、法文、
+    西文等语言里总有大写（"the Shire"、"Ella"），所以只按这一条判断，不猜词表。
+    中日韩等不分大小写的原文不受影响。
+    """
+    text = str(source or '')
+    letters = [char for char in text if char.isalpha() and char.isascii()]
+    return bool(letters) and len(letters) == sum(char.isalpha() for char in text) \
+        and not any(char.isupper() for char in letters)
+
+
 def _pattern(variants):
     alternatives = []
     for value in sorted(set(variants), key=len, reverse=True):
@@ -49,8 +84,11 @@ def findings(records, pairs):
     for record in records:
         if record.get('status') == 'rejected':
             continue
+        if record.get('status') != 'locked' and is_common_noun(record.get('source_form')):
+            continue
         rows = current_occurrences(record, pairs)
-        variants = {spelling(value).casefold() for row in rows for value in row['variants']}
+        variants = _distinct_variants(
+            {spelling(value).casefold() for row in rows for value in row['variants']})
         preferred = spelling(record.get('preferred_target')).casefold()
         accepted = {spelling(value).casefold() for value in record.get('accepted_variants') or []}
         locked_mismatch = record.get('status') == 'locked' and variants - {preferred}
