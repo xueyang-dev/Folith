@@ -674,6 +674,13 @@ QFrame#termFocusBar {{
     border-radius: {r['sm']}px;
 }}
 QFrame#termFocusBar QLabel {{ background: transparent; }}
+/* 任务库的书面卡片：文字浮在底部磨砂玻璃上，一律白色系（玻璃之下的暗层保证对比度）。 */
+QWidget#coverOverlay, QWidget#coverOverlay QLabel {{ background: transparent; }}
+QLabel#coverTitle {{ font-size: {f['card']}px; font-weight: 600; color: #ffffff; }}
+QLabel#coverMeta {{ font-size: {f['caption']}px; color: rgba(255,255,255,0.78); }}
+QLabel#coverStatus {{ font-size: {f['caption']}px; color: rgba(255,255,255,0.92); }}
+QLabel#coverStatus[state="danger"] {{ color: #ff9f9a; }}
+QLabel#coverStatus[state="ok"] {{ color: #8fe6ad; }}
 QWidget#contextRow {{
     background: transparent; border: 1px solid {t['border-hairline']};
     border-radius: {r['sm']}px;

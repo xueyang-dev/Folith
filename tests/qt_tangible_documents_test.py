@@ -74,3 +74,29 @@ def test_flight_only_runs_with_motion_and_cleans_up(app, monkeypatch):
     assert not [child for child in host.findChildren(components.DocumentFlight)
                 if child.isVisible()]
     host.close()
+
+
+def test_cover_glass_darkens_more_on_light_covers(app):
+    light = components._bottom_scrim(_image("#fdfcf8"))
+    dark = components._bottom_scrim(_image("#1d2a40"))
+    assert 0.45 <= dark < light <= 0.72, "white pages need a stronger scrim than dark covers"
+
+
+def test_task_tile_is_the_cover_itself(app):
+    from folith.qt import adapter, views
+
+    row = adapter.JobRow(job_id="j", filename="Survey.pdf", project_id=None, target_lang="简体中文",
+                         status_label="待审校", progress_label="", runtime_status="idle",
+                         segment_count=700, updated_at="", active=False, attention_count=2,
+                         attention_tone="warning")
+    card = views._TaskCard(row, tone="muted")
+    card.set_tile_width(220)
+    cover = card.paper.geometry()
+    assert abs(cover.height() / cover.width() - views._TaskCard.ASPECT) < 0.02
+    assert card.overlay.geometry() == cover, "the text floats on the cover"
+    assert card.title.text() == "Survey.pdf" and "700 段" in card.meta.text()
+    assert cover.contains(card.attention.geometry().center()), "problems badge sits on the glass"
+    resting = card.paper.y()
+    card._set_lift(1.0)
+    assert card.paper.y() < resting
+    assert not card.grab().isNull()

@@ -16,8 +16,8 @@ from __future__ import annotations
 import dataclasses
 import time
 
-from PySide6.QtCore import QEvent, QRect, QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QEvent, QMargins, QRect, QRectF, QSize, QTimer, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QFormLayout, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -337,11 +337,12 @@ def _row_format(row) -> str:
     return suffix.upper()[:4] if suffix else ""
 
 
-class _TaskCard(Card):
-    """首页卡片视图里的一张任务卡（Golden Gate 版式）：单击选中、双击打开。
+class _TaskCard(QFrame):
+    """任务库里的一张任务：没有卡片外框，文档本身就是卡片（2026-10-15 效果图定稿）。
 
-    上半是"文档"——一张纸的示意 + 左上格式角标 + 右上"多久前更新"；下半是文件名、
-    段数与目标语言、状态点 + 状态文案，运行中/有百分比时再给一条细进度条。
+    书面（:class:`components.CoverArt`）铺满整张卡；底部一层从下往上渐隐的磨砂玻璃，
+    文件名、格式与段数、更新时间、状态与进度浮在玻璃上。层次只靠文档自己的投影；
+    悬停时书面抬起、投影变大变柔，按下时略微下沉。单击选中（强调色描边）、双击打开。
 
     与表格共用同一份选中状态（卡片只是把表格行"画"成卡片），因此底部动作
     （打开/移动/删除）在两种视图下语义一致，不需要第二套选择逻辑。
@@ -350,73 +351,54 @@ class _TaskCard(Card):
     clicked = Signal(str)
     activated = Signal(str)
     attentionRequested = Signal(str)
-    #: 卡片的最小宽度（px）：列数 = 可用宽度能放下几张这么宽的卡。
+    #: 卡片宽度范围（px）：列数 = 可用宽度能放下几张；再宽只会让书面变成海报。
     MIN_WIDTH = 180
     MAX_WIDTH = 236
+    #: 书面四周给投影与抬起留的空间。
+    PAD = QMargins(8, 10, 8, 18)
+    ASPECT = 1.34          # 书面的高 / 宽（接近一本书或一页纸）
+    LIFT = 6
 
     def __init__(self, row: adapter.JobRow, *, tone: str,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("taskCard")
+        self.setObjectName("coverTile")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         self.job_id = row.job_id
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(i18n.tr('单击选中；双击打开任务'))
-        self.setMinimumWidth(self.MIN_WIDTH)
-        # 卡片不随窗口无限变宽：宽了只会在文档两侧留出大片空白（看起来像外框太大）。
-        self.setMaximumWidth(self.MAX_WIDTH)
+        self.setToolTip(row.title or "")
         # 卡片视图是默认视图：纯键盘用户必须能用 Tab 进到卡片、方向键换卡、回车打开。
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(row.title or "")
         self._selected = False
-        # 属性一开始就要有值：QSS 的 [selected="true"] 与外部探测都读它，
-        # 只在状态变化时设置会留下"未定义"的中间态。
+        self._lift = 0.0
         self.setProperty("selected", "false")
-
-        column = QVBoxLayout(self)
-        column.setContentsMargins(0, 0, 0, theme_module.SPACE["sm"] + 2)
-        column.setSpacing(theme_module.SPACE["sm"])
-
-        # ---- 上半：文档示意 ----------------------------------------------
-        thumb = QFrame()
-        thumb.setObjectName("tileThumb")
-        thumb.setFixedHeight(118)
-        thumb_layout = QGridLayout(thumb)
-        thumb_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["xs"] + 2,
-                                        theme_module.SPACE["sm"], 0)
-        badge_text = _row_format(row)
-        # ⚠️ 子控件一律先给父对象再改可见性：对无父控件 setVisible(True) 会把它
-        # 当成顶层窗口弹出来，抢走主窗口的激活与键盘焦点（实测）。
-        self.badge = QLabel(badge_text, thumb)
-        self.badge.setObjectName("tileBadge")
-        self.badge.setVisible(bool(badge_text))
-        self.time_label = QLabel(components.relative_time(row.updated_at))
-        self.time_label.setObjectName("tileTime")
-        self.time_label.setToolTip((row.updated_at or "").replace("T", " ")[:16])
-        unreadable = bool(str(getattr(row, "error", "") or "").strip())
-        paper = components.DocThumb(68, 88, faded=unreadable)
-        paper.set_document(row.filename, row.segment_count)
-        self.paper = paper
         self._motion = motion.Motion(self)
-        thumb_layout.addWidget(self.badge, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        thumb_layout.addWidget(self.time_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-        thumb_layout.addWidget(paper, 0, 0, 2, 3, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
-        thumb_layout.setColumnStretch(1, 1)
-        column.addWidget(thumb)
 
-        # ---- 下半：文字 ----------------------------------------------------
-        text = QVBoxLayout()
-        text.setContentsMargins(theme_module.SPACE["sm"] + 4, 0, theme_module.SPACE["sm"] + 4, 0)
-        text.setSpacing(theme_module.SPACE["xxs"])
-        title = style_module.ElideLabel(row.title or i18n.tr("未命名任务"),
-                                        mode=Qt.TextElideMode.ElideMiddle)
-        title.setObjectName("taskCardTitle")
-        title.setToolTip(row.title or "")
+        unreadable = bool(str(getattr(row, "error", "") or "").strip())
+        self.paper = components.CoverArt(self, faded=unreadable)
+        self.paper.set_document(row.filename, row.segment_count)
+        self.paper.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        # ---- 浮在玻璃上的文字 ------------------------------------------------
+        self.overlay = QWidget(self)
+        self.overlay.setObjectName("coverOverlay")
+        self.overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        text = QVBoxLayout(self.overlay)
+        text.setContentsMargins(14, 0, 14, 12)
+        text.setSpacing(2)
+        text.addStretch(1)
+        self.title = style_module.ElideLabel(row.title or i18n.tr("未命名任务"),
+                                             mode=Qt.TextElideMode.ElideMiddle)
+        self.title.setObjectName("coverTitle")
         meta_parts = [part for part in (
-            i18n.tr("{v0} 段", v0=row.segment_count) if row.segment_count else "",
-            i18n.tr_dynamic(row.target_lang) if row.target_lang else "",
+            _row_format(row),
+            i18n.tr("{v0} 段", v0=f"{row.segment_count:,}") if row.segment_count else "",
+            components.relative_time(row.updated_at),
         ) if part]
-        meta = QLabel(" · ".join(meta_parts) or "—")
-        meta.setObjectName("taskCardMeta")
+        self.meta = style_module.ElideLabel(" · ".join(meta_parts) or "—",
+                                            mode=Qt.TextElideMode.ElideRight)
+        self.meta.setObjectName("coverMeta")
 
         run_tone, run_line = library_run_view(row)
         tone = {"running": "info", "waiting": "info", "retrying": "warn",
@@ -424,55 +406,115 @@ class _TaskCard(Card):
                 "paused": "muted", "idle": "muted"}.get(run_tone, tone)
         if row.runtime_status == "unreadable":
             tone = "danger"
-        hollow = tone == "muted" and not row.active
         dot = components.StatusDot({"ok": "success", "warn": "warning", "danger": "danger",
                                     "info": "accent", "brand": "brand-ink"}.get(tone, "text-muted"),
-                                   hollow=hollow)
+                                   hollow=False)
         status_text = (run_line if run_tone in ("running", "waiting", "retrying", "stalled", "failed", "paused")
                        else i18n.tr_dynamic(row.status_label)) or "—"
         percent = _row_percent(row)
         if row.active and percent is not None and f"{percent}%" not in status_text:
             status_text = f"{status_text} · {percent}%"
         self.status_label = style_module.ElideLabel(status_text, mode=Qt.TextElideMode.ElideRight)
-        self.status_label.setObjectName("taskCardStatus")
+        self.status_label.setObjectName("coverStatus")
         self.status_label.setProperty("state", tone)
         status_row = QHBoxLayout()
-        status_row.setSpacing(theme_module.SPACE["xs"] + 2)
+        status_row.setSpacing(6)
         status_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
         status_row.addWidget(self.status_label, 1)
-        self.attention = CheckStatusButton(self)
-        self.attention.set_count(row.attention_count, row.attention_tone or "warning")
-        self.attention.setVisible(bool(row.attention_count))
-        self.attention.clicked.connect(lambda: self.attentionRequested.emit(self.job_id))
-        status_row.addWidget(self.attention)
-        self.setAccessibleDescription(status_text + (" · " + i18n.tr('需要处理 · {v0}',
-                                      v0=row.attention_count) if row.attention_count else ""))
-        # 兼容旧接口：状态芯片仍然存在（外部/测试会读它的文案），但不再显示。
-        self.chip = Chip(_elide(i18n.tr_dynamic(row.status_label) or "—", 12), tone)
-        self.chip.setParent(self)
-        self.chip.setVisible(False)
-
-        text.addWidget(title)
-        text.addWidget(meta)
-        text.addSpacing(theme_module.SPACE["xxs"])
+        text.addWidget(self.title)
+        text.addWidget(self.meta)
+        text.addSpacing(3)
         text.addLayout(status_row)
         self.progress = None
         if percent is not None:
             self.progress = components.ProgressLine(percent, token=components.PROGRESS_TONES[run_tone])
-            text.addSpacing(theme_module.SPACE["xxs"])
+            self.progress.on_glass = True
+            text.addSpacing(5)
             text.addWidget(self.progress)
-        column.addLayout(text)
+
+        # 问题数：浮在玻璃右下角，单独可点（不随文字层透明）。
+        self.attention = CheckStatusButton(self)
+        self.attention.set_count(row.attention_count, row.attention_tone or "warning")
+        self.attention.setVisible(bool(row.attention_count))
+        self.attention.clicked.connect(lambda: self.attentionRequested.emit(self.job_id))
+        self.setAccessibleDescription(" · ".join(meta_parts + [status_text]) + (
+            " · " + i18n.tr('需要处理 · {v0}', v0=row.attention_count) if row.attention_count else ""))
+        # 兼容旧接口：状态芯片仍然存在（外部/测试会读它的文案），但不再显示。
+        self.chip = Chip(_elide(i18n.tr_dynamic(row.status_label) or "—", 12), tone)
+        self.chip.setParent(self)
+        self.chip.setVisible(False)
+        self.set_tile_width(self.MIN_WIDTH + 20)
+
+    # ---- 尺寸与摆放 -------------------------------------------------------
+    def set_tile_width(self, width: int) -> None:
+        inner = width - self.PAD.left() - self.PAD.right()
+        self.setFixedSize(width, round(inner * self.ASPECT) + self.PAD.top() + self.PAD.bottom())
+        self._place()
+
+    def setFixedWidth(self, width: int) -> None:  # noqa: N802 - keeps HomeView's call sites
+        self.set_tile_width(width)
+
+    def _cover_rect(self) -> QRect:
+        rise = round(self.LIFT * self._lift)
+        return QRect(self.PAD.left(), self.PAD.top() - rise,
+                     self.width() - self.PAD.left() - self.PAD.right(),
+                     self.height() - self.PAD.top() - self.PAD.bottom())
+
+    def _place(self) -> None:
+        rect = self._cover_rect()
+        self.paper.setGeometry(rect)
+        self.overlay.setGeometry(rect)
+        if self.attention.isVisibleTo(self):
+            hint = self.attention.sizeHint()
+            self.attention.move(rect.right() - hint.width() - 10, rect.bottom() - hint.height() - 26)
+            self.attention.raise_()
+        self.update()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().resizeEvent(event)
+        self._place()
+
+    def _set_lift(self, value: float) -> None:
+        self._lift = float(value)
+        self.paper.set_lift(self._lift)
+        self._place()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        """投影（没有卡片外框，层次只靠文档自己的影子）与选中 / 焦点描边。"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(self._cover_rect())
+        lift = max(0.0, self._lift)
+        dark = style_module.night_mode()
+        radius = self.paper.radius()
+        painter.setPen(Qt.PenStyle.NoPen)
+        for spread, alpha in ((16, 5), (10, 8), (5, 12), (1.5, 20)):
+            grow = spread * (1 + 0.5 * lift)
+            offset = 1.5 + 3.5 * lift
+            painter.setBrush(QColor(10, 15, 25, int(alpha * (1.6 if dark else 1.0))))
+            painter.drawRoundedRect(rect.adjusted(-grow / 3, grow / 4 + offset, grow / 3,
+                                                  grow / 3 + offset), radius + grow / 4, radius + grow / 4)
+        if self._selected or self.hasFocus():
+            tokens = theme_module.tokens(current_theme())
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(style_module.qcolor(tokens["accent"]), 2.5))
+            painter.drawRoundedRect(rect.adjusted(-3, -3, 3, 3), radius + 3, radius + 3)
+        painter.end()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().focusOutEvent(event)
+        self.update()
 
     def set_selected(self, selected: bool) -> None:
         if selected == self._selected:
             return
         self._selected = selected
         self.setProperty("selected", "true" if selected else "false")
-        style_module.repolish(self)
+        self.update()
 
-    # ---- 文档的手感：悬停抬起、按下略沉、松开回到悬停 -------------------------
+    # ---- 书面的手感：悬停抬起、按下略沉、松开回到悬停 -------------------------
     def _lift_to(self, value: float, kind: str = "select") -> None:
-        self._motion.animate("paper-lift", self.paper.lift(), value, self.paper.set_lift, kind=kind)
+        self._motion.animate("paper-lift", self._lift, value, self._set_lift, kind=kind)
 
     def enterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         self._lift_to(1.0, "local")
@@ -505,6 +547,7 @@ class _TaskCard(Card):
         # 键盘焦点到了哪张卡，哪张卡就是选中项（与表格"当前行即选中行"同一条规则）。
         self.clicked.emit(self.job_id)
         super().focusInEvent(event)
+        self.update()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         key = event.key()
@@ -1406,7 +1449,7 @@ class HomeView(QWidget):
         width = self._card_width(columns)
         for card in self._cards.values():
             if card.width() != width:
-                card.setFixedWidth(width)
+                card.set_tile_width(width)
 
     def _project_label(self, project_id: str) -> str:
         if not project_id:
@@ -1461,7 +1504,7 @@ class HomeView(QWidget):
             grid.setVerticalSpacing(theme_module.SPACE["lg"])
             for position, row in enumerate(items):
                 card = _TaskCard(row, tone=_status_tone(row), parent=section)
-                card.setFixedWidth(card_width)
+                card.set_tile_width(card_width)
                 card.clicked.connect(self._select_job_from_card)
                 card.activated.connect(self._open_job_from_card)
                 card.attentionRequested.connect(self.checkRequested.emit)

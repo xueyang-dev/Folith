@@ -718,6 +718,178 @@ class DocThumb(QWidget):
         painter.drawImage(target, image)
 
 
+class CoverArt(QWidget):
+    """任务库里的一本「书面」：文档本身就是卡片（2026-10-15 效果图定稿）。
+
+    * 书（EPUB、第一页是封面的 PDF）画封面，左缘一点书脊压痕；纸质文档画第一页的暖白纸面；
+    * 底部一层**磨砂玻璃**：同一张图模糊后，从最底下（不透明）渐隐到封面中线（全透明）；
+    * 玻璃上再压一层暗色，最底部最重、到中线全透明——文字浮在上面读得清。暗层的浓淡
+      按封面底部的亮度自适应：浅色封面压得重一点，深色封面轻一点，避免一条死黑的带子；
+    * 外缘一道极细的亮边，像玻璃的边。
+
+    文字（文件名、信息、状态、进度）是放在它上面的真实控件（可省略、可翻译、读屏器能读），
+    由 :class:`folith.qt.views._TaskCard` 摆放。接口与 :class:`DocThumb` 兼容：
+    ``set_document`` / ``set_image`` / ``has_image`` / ``is_book`` / ``page_rect`` /
+    ``set_ghost`` / ``lift``（抬起由卡片移动整个控件实现）。
+    """
+
+    RADIUS_BOOK = 7.0
+    RADIUS_PAPER = 5.0
+
+    def __init__(self, parent: QWidget | None = None, *, faded: bool = False) -> None:
+        super().__init__(parent)
+        self._faded = faded
+        self._image: QImage | None = None
+        self._glass: QImage | None = None
+        self._ext = ""
+        self._cover = False
+        self._ghost = False
+        self._lift = 0.0
+        self._scrim = 0.7
+
+    # ---- 数据（与 DocThumb 同名） ----
+    def set_document(self, filename: str, segments: int = 0) -> None:
+        name = str(filename or "")
+        self._ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        self.update()
+
+    def set_image(self, image: QImage | None) -> None:
+        self._image = image if image is not None and not image.isNull() else None
+        self._cover = self._image is not None and _looks_like_cover(self._image)
+        self._glass = None
+        self._scrim = _bottom_scrim(self._image)
+        self.update()
+
+    def has_image(self) -> bool:
+        return self._image is not None
+
+    def is_book(self) -> bool:
+        return self._ext == "epub" or (self._cover and self._ext not in ("txt", "md", "markdown", "docx"))
+
+    def page_rect(self) -> QRectF:
+        return QRectF(self.rect())
+
+    def set_ghost(self, ghost: bool) -> None:
+        self._ghost = bool(ghost)
+        self.update()
+
+    def set_lift(self, value: float) -> None:
+        self._lift = float(value)
+
+    def lift(self) -> float:
+        return self._lift
+
+    def radius(self) -> float:
+        return self.RADIUS_BOOK if self.is_book() else self.RADIUS_PAPER
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().resizeEvent(event)
+        self._glass = None
+
+    # ---- 绘制 ----
+    def _source(self) -> QImage:
+        """铺满书面的源图（真实封面 / 第一页；还没有时画一张示意纸或纯色封面）。"""
+        ratio = self.devicePixelRatioF() or 1.0
+        size = QSize(max(1, int(self.width() * ratio)), max(1, int(self.height() * ratio)))
+        canvas = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(QColor("#fdfcf8"))
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        target = QRectF(0, 0, size.width(), size.height())
+        if self._image is not None:
+            image = self._image
+            scale = max(target.width() / image.width(), target.height() / image.height())
+            w, h = image.width() * scale, image.height() * scale
+            top = (target.height() - h) / 2 if self.is_book() else 0.0
+            painter.drawImage(QRectF((target.width() - w) / 2, top, w, h), image)
+        elif self._ext == "epub":
+            painter.fillRect(target, theme_module.qcolor(_tokens()["accent"]).darker(140))
+        else:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(40, 40, 46, 170))
+            pad = target.width() * 0.11
+            painter.drawRect(QRectF(pad, pad, target.width() * 0.56, target.height() * 0.028))
+            painter.setBrush(QColor(60, 60, 70, 80))
+            y = pad + target.height() * 0.08
+            while y < target.height() * 0.92:
+                painter.drawRect(QRectF(pad, y, target.width() - 2 * pad, max(1.0, ratio)))
+                y += target.height() * 0.028
+        painter.end()
+        return canvas
+
+    def _glass_image(self, source: QImage) -> QImage:
+        """磨砂玻璃：模糊后的同一张图，用一条从底部（不透明）到中线（透明）的遮罩裁出来。"""
+        if self._glass is not None and self._glass.size() == source.size():
+            return self._glass
+        factor = 14
+        small = source.scaled(max(1, source.width() // factor), max(1, source.height() // factor),
+                              Qt.AspectRatioMode.IgnoreAspectRatio,
+                              Qt.TransformationMode.SmoothTransformation)
+        glass = small.scaled(source.size(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation).convertToFormat(
+            QImage.Format.Format_ARGB32_Premultiplied)
+        mask = QImage(glass.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        mask.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(mask)
+        fade = QLinearGradient(0, mask.height(), 0, mask.height() * 0.5)
+        fade.setColorAt(0.0, QColor(0, 0, 0, 255))
+        fade.setColorAt(0.55, QColor(0, 0, 0, 200))
+        fade.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.fillRect(mask.rect(), fade)
+        painter.end()
+        painter = QPainter(glass)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        painter.drawImage(0, 0, mask)
+        painter.end()
+        self._glass = glass
+        return glass
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        if self._ghost:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        if self._faded:
+            painter.setOpacity(0.55)
+        rect = QRectF(self.rect())
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, self.radius(), self.radius())
+        painter.setClipPath(clip)
+        source = self._source()
+        painter.drawImage(rect, source)
+        if self.is_book():
+            spine = QLinearGradient(rect.topLeft(), QPointF(rect.left() + rect.width() * 0.12, rect.top()))
+            spine.setColorAt(0.0, QColor(0, 0, 0, 80))
+            spine.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.fillRect(rect, spine)
+            painter.fillRect(QRectF(rect.left() + rect.width() * 0.07, rect.top(), 0.8, rect.height()),
+                             QColor(255, 255, 255, 55))
+        painter.drawImage(rect, self._glass_image(source))
+        scrim = QLinearGradient(rect.bottomLeft(), QPointF(rect.left(), rect.top() + rect.height() * 0.5))
+        scrim.setColorAt(0.0, QColor(0, 0, 8, int(255 * self._scrim)))
+        scrim.setColorAt(0.45, QColor(0, 0, 8, int(255 * self._scrim * 0.54)))
+        scrim.setColorAt(1.0, QColor(0, 0, 8, 0))
+        painter.fillRect(rect, scrim)
+        painter.setClipping(False)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(255, 255, 255, 60 if _night() else 80), 1))
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), self.radius(), self.radius())
+        painter.end()
+
+
+def _bottom_scrim(image: QImage | None) -> float:
+    """封面底部越亮，暗层越重（0.45–0.72）：白纸和浅色封面也读得清，深色封面不压成死黑。"""
+    if image is None:
+        return 0.68
+    small = image.scaled(12, 16, Qt.AspectRatioMode.IgnoreAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+    values = [QColor(small.pixel(x, y)).lightnessF()
+              for y in range(small.height() // 2, small.height()) for x in range(small.width())]
+    light = sum(values) / max(1, len(values))
+    return 0.45 + 0.27 * max(0.0, min(1.0, (light - 0.2) / 0.7))
+
+
 class DocumentFlight(QWidget):
     """打开 / 关闭任务时，文档从卡片「飞」到工作台（或飞回卡片）的那一下。
 
@@ -824,7 +996,8 @@ class ProgressLine(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
         rect = QRectF(self.rect())
-        painter.setBrush(theme_module.qcolor(tokens["bg-surface-sunken"]))
+        painter.setBrush(QColor(255, 255, 255, 60) if getattr(self, "on_glass", False)
+                         else theme_module.qcolor(tokens["bg-surface-sunken"]))
         painter.drawRoundedRect(rect, 2, 2)
         if self._value:
             painter.setBrush(theme_module.qcolor(tokens[self._token]))
