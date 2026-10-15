@@ -484,10 +484,13 @@ def list_delivery_snapshots(job_id):
 
 
 def delivery_snapshot_status(job_id, state=None):
-    state = state if state is not None else _c.load_job_state(job_id)
+    # Look for a snapshot first: most tasks have none, and loading the state
+    # (an isolated copy of up to tens of MB) only to answer "no snapshot" made
+    # every task-list refresh pay ~0.2 s per large task.
     latest = _snapshots.latest_snapshot(_c.job_dir(job_id))
     if latest is None:
         return {"latest": None, "current": False, "diverged": False, "integrity": False}
+    state = state if state is not None else _c.load_job_state(job_id)
     current_identity = _snapshots.state_identity(state or {})
     matches = current_identity == latest.get("translation_state_identity")
     assets = delivery_snapshot_assets(job_id, latest["snapshot_version"])

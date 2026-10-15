@@ -22,6 +22,7 @@ Design notes
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -217,17 +218,53 @@ def _unreadable_summary(job_id: str, entry: Path) -> JobSummary:
     )
 
 
+#: job_id -> (signature of the task directory's files, last_saved_at).
+_LAST_SAVED: Dict[str, Tuple[Any, str]] = {}
+
+
+def _job_files_signature(job_id: str) -> Any:
+    """Names, sizes and mtimes of the files directly in the task directory.
+
+    ``last_saved_at`` is derived from the state and the durable checkpoint
+    artifacts, all of which live there; a write to any of them changes this.
+    """
+    try:
+        folder = _core().job_dir(job_id)
+        return tuple(sorted(
+            (entry.name, entry.stat().st_mtime_ns, entry.stat().st_size)
+            for entry in os.scandir(folder) if entry.is_file()))
+    except OSError:
+        return None
+
+
+def _last_saved_at(job_id: str) -> str:
+    """The core's "last saved" value, recomputed only when the task's files change.
+
+    Computing it loads the whole state (≈0.2 s for a large book); the task list
+    is refreshed on every return to it, mostly with nothing changed.
+    """
+    signature = _job_files_signature(job_id)
+    cached = _LAST_SAVED.get(job_id)
+    if signature is not None and cached is not None and cached[0] == signature:
+        return cached[1]
+    core = _core()
+    try:
+        state = core.load_job_state(job_id) or {}
+        updated = str(core.recovery_summary(job_id, state).get("last_saved_at") or "")
+    except Exception:  # noqa: BLE001 - the list must still render
+        return ""
+    if signature is not None:
+        _LAST_SAVED[job_id] = (signature, updated)
+    return updated
+
+
 def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
     core = _core()
     updated = str(summary.get("updated_at") or "")
     if not updated:
         # A persisted state does not carry its own timestamp; the core's
         # authoritative "last saved" value comes from the durable artifacts.
-        try:
-            state = core.load_job_state(job_id) or {}
-            updated = str(core.recovery_summary(job_id, state).get("last_saved_at") or "")
-        except Exception:  # noqa: BLE001 - the list must still render
-            updated = ""
+        updated = _last_saved_at(job_id)
     try:
         runtime = core.read_runtime_view(job_id)
     except Exception:  # noqa: BLE001
