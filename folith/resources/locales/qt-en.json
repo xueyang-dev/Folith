@@ -1443,5 +1443,7 @@
   "滚动查看本段的注意事项、术语、前后文和批注。": "Scroll to read this segment’s findings, terms, context and notes.",
   "处理任务中需要注意的问题；按 Esc 收起并返回编辑框。": "Address issues in this task; press Esc to close and return to the editor.",
   "正在导入…": "Importing…",
-  "正在启动…": "Starting…"
+  "正在启动…": "Starting…",
+  "任务正在启动，请稍候。": "The task is starting — one moment.",
+  "另一个任务正在启动，请等它启动后再开始这个任务。": "Another task is starting; start this one once it has started."
 }

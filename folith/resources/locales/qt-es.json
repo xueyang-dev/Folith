@@ -1443,5 +1443,7 @@
   "滚动查看本段的注意事项、术语、前后文和批注。": "Desplázate para ver las observaciones, los términos, el contexto y las notas de este segmento.",
   "处理任务中需要注意的问题；按 Esc 收起并返回编辑框。": "Resuelve los problemas de esta tarea; pulsa Esc para cerrar y volver al editor.",
   "正在导入…": "Importando…",
-  "正在启动…": "Iniciando…"
+  "正在启动…": "Iniciando…",
+  "任务正在启动，请稍候。": "La tarea se está iniciando; espera un momento.",
+  "另一个任务正在启动，请等它启动后再开始这个任务。": "Otra tarea se está iniciando; inicia esta cuando haya arrancado."
 }

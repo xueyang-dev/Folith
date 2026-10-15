@@ -170,7 +170,8 @@ class MainWindow(QMainWindow):
         shell_layout.setContentsMargins(0, 0, 0, 0)
         shell_layout.setSpacing(0)
         shell_layout.addWidget(self.sidebar_clip)
-        shell_layout.addWidget(self.stack, 1)
+        self.stack_clip = components.TrailingClip(self.stack)
+        shell_layout.addWidget(self.stack_clip, 1)
         self.setCentralWidget(shell)
         self.stack.currentChanged.connect(self._sync_sidebar)
 
@@ -669,6 +670,7 @@ class MainWindow(QMainWindow):
 
     # ================= home =================
     def refresh_home(self) -> None:
+        self._home_generation = getattr(self, "_home_generation", 0) + 1
         try:
             rows = adapter.list_jobs()
             projects = adapter.project_options()
@@ -816,13 +818,36 @@ class MainWindow(QMainWindow):
     def show_home(self) -> None:
         self.workbench.flush_draft()
         self._current_job_id = ""
-        # Finish the existing synchronous list read before starting a 300 ms
-        # entrance; otherwise the read consumes the animation's whole duration.
-        self.refresh_home()
+        # Switch at once and let the entrance run; the list (≈0.5 s on a large
+        # book: two isolated state copies per summary) is read off the GUI
+        # thread and applied in place.  Reading it first left the window frozen
+        # for half a second after 「返回」 before anything moved.
         self.stack.setCurrentWidget(self.home)
         self._sync_sidebar()
         self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
         self._sync_menu_state()
+        self._refresh_home_async()
+
+    def _refresh_home_async(self) -> None:
+        self._home_generation = getattr(self, "_home_generation", 0) + 1
+        generation = self._home_generation
+
+        def read():
+            return adapter.list_jobs(), adapter.project_options()
+
+        def done(result) -> None:
+            if generation != self._home_generation:
+                return  # a newer read was asked for meanwhile
+            rows, projects = result
+            self.home.set_projects(projects)
+            self.home.set_rows(rows)
+            self.home.set_status("")
+
+        def failed(message: str, _detail: str) -> None:
+            if generation == self._home_generation:
+                self.home.set_status(i18n.tr('读取任务列表失败：{v0}', v0=message))
+
+        self.runner.submit(read, on_done=done, on_error=failed, label="home-list")
 
     def choose_import(self) -> None:
         """「导入文档…」：系统面板 → 建任务。
@@ -1126,6 +1151,15 @@ class MainWindow(QMainWindow):
             return
         self.show_home()
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        # A frozen page width belongs to the window size the transition began
+        # with; a resize mid-transition jumps straight to the final layout.
+        settle = getattr(self, "_sidebar_settle", None)
+        if settle is not None and self._motion.running("sidebar"):
+            self._motion.stop("sidebar")
+            settle()
+
     def _sync_sidebar(self, *_args) -> None:
         current = self.stack.currentWidget()
         if self._sidebar_page is not current:
@@ -1134,12 +1168,23 @@ class MainWindow(QMainWindow):
             visible = current is not self.workbench
             self.sidebar_clip.show()
             target = HomeView.SIDEBAR_WIDTH if visible else 0
-            self._motion.animate("sidebar", self.sidebar_clip.width(), target,
+            start = self.sidebar_clip.width() if self.sidebar_clip.isVisibleTo(self) else 0
+            # The page is laid out once, at its final width, and slides out from
+            # under the sidebar; only the sidebar's clip width changes per frame.
+            shell = self.stack_clip.width() + start
+            if not initial and self.isVisible() and shell > 0:
+                self.stack_clip.freeze(max(1, shell - target))
+
+            def settled() -> None:
+                self._sidebar_settle = None
+                self.sidebar_clip.setFixedWidth(target)
+                self.sidebar_clip.setVisible(visible)
+                self.stack_clip.freeze(None)
+
+            self._sidebar_settle = settled
+            self._motion.animate("sidebar", start, target,
                                  lambda value: self.sidebar_clip.setFixedWidth(round(value)),
-                                 kind="view",
-                                 finished=lambda: self.sidebar_clip.setVisible(visible))
-            if not initial:
-                self._motion.reveal("navigation", self.stack)
+                                 kind="view", finished=settled)
         self.home.set_current_nav(
             "projects" if current is self.projects else
             "library" if current is self.library else "tasks")
@@ -1488,7 +1533,14 @@ class MainWindow(QMainWindow):
 
     def start_or_resume(self) -> None:
         job_id = self._current_job_id
-        if not job_id or self._starting_jobs:
+        if not job_id:
+            return
+        if self._starting_jobs:
+            # One start at a time: the start buttons are shared between tasks,
+            # so overlapping inline activities could not restore them correctly.
+            # The click is still answered instead of silently ignored.
+            self._notice(i18n.tr('任务正在启动，请稍候。') if job_id in self._starting_jobs
+                         else i18n.tr('另一个任务正在启动，请等它启动后再开始这个任务。'))
             return
         config, defaults = self.config, dict(self.stored_task_defaults)
         self._starting_jobs.add(job_id)

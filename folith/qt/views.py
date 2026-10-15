@@ -19,7 +19,7 @@ import time
 from PySide6.QtCore import QEvent, QRect, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QFormLayout, QFrame, QGridLayout,
+    QAbstractItemView, QApplication, QCheckBox, QFormLayout, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QPlainTextEdit, QProgressBar,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
@@ -2337,7 +2337,11 @@ class WorkbenchView(QWidget):
         self.segment_extra_section.setFrameShape(QScrollArea.Shape.NoFrame)
         self.segment_extra_section.viewport().setAutoFillBackground(False)
         self.segment_extra_section.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.segment_extra_section.setFixedHeight(360)
+        # 填满操作按钮下方的剩余高度（随窗口伸缩），不再固定 360 px：大屏不浪费，
+        # 外层滚动只在窗口矮到装不下最小高度时才出现，平时只有这一层滚动。
+        self.segment_extra_section.setMinimumHeight(180)
+        self.segment_extra_section.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                                 QSizePolicy.Policy.Expanding)
         self.segment_extra_section.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.segment_extra_section.setAccessibleName(" / ".join(
             i18n.tr(label) for label in ('需要注意', '术语', '前后文', '批注')))
@@ -2368,14 +2372,15 @@ class WorkbenchView(QWidget):
         # stays light on macOS even in our dark theme, obscuring pale text.
         references.setAutoFillBackground(False)
         # 「段落事实」只是把顶上那行状态再说一遍：来源并进状态行，这一节不再单独占位。
-        inspector_layout.addWidget(self.segment_extra_section)
+        inspector_layout.addWidget(self.segment_extra_section, 1)
         self.review_hint.setVisible(False)
         self.multi_hint = QLabel(i18n.tr('按住 ⇧ 或 ⌘ 点选可以多选；批量操作会作用于所有选中的段落。'))
         self.multi_hint.setObjectName("hint")
         self.multi_hint.setWordWrap(True)
         self.multi_hint.setVisible(False)
         inspector_layout.addWidget(self.multi_hint)
-        inspector_layout.addStretch(1)
+        # 多选时参考区隐藏，由这段弹性空白把内容顶到上方；单选时剩余高度都给参考区。
+        inspector_layout.addStretch(0)
 
         # 检查器的内容比小屏更高（实测 minimumSizeHint ≈609pt）：直接塞进 splitter 会把主窗口的
         # 最小高度顶到 902pt——在 1440×900 的 Mac 上（可用高度约 875pt）窗口装不下，窗口底部的
@@ -2793,7 +2798,7 @@ class WorkbenchView(QWidget):
         drawer_escape = QAction(self)
         drawer_escape.setShortcut(QKeySequence("Esc"))
         drawer_escape.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        drawer_escape.triggered.connect(lambda: self.set_followup_drawer_open(False))
+        drawer_escape.triggered.connect(self._escape_pressed)
         drawer_escape.setEnabled(False)
         self.addAction(drawer_escape)
         self.drawer_escape = drawer_escape
@@ -3005,8 +3010,13 @@ class WorkbenchView(QWidget):
         self.source_clip.setVisible(bool(start_sizes[source] or end_sizes[source]))
         self.source_clip.freeze(max(1, end_sizes[source] or start_sizes[source]))
         self.right_panel.setVisible(bool(start_sizes[side] or end_sizes[side]))
-        self.right_panel.begin(max(1, self._inspector_width),
-                               max(1, end_sizes[side] if self._drawer_open else start_sizes[side]))
+        # Both sides are laid out at their own *final* widths even when this
+        # transition interrupts another one halfway (P4 review item 7): the
+        # current, intermediate split width would re-wrap the panel once.
+        self.right_panel.begin(
+            max(1, self._translation_column_sizes(drawer_open=False)[side]
+                or self._inspector_width),
+            max(1, self._translation_column_sizes(drawer_open=True)[side]))
 
         def frame(value: float) -> None:
             # Sizes share a curve. Text inside the clipped panel is laid out
@@ -3027,6 +3037,16 @@ class WorkbenchView(QWidget):
         self._motion.animate("translation-columns", 0.0, 1.0, frame,
                              kind="source" if start_sizes[source] != end_sizes[source] else "panel",
                              finished=settled)
+
+    def _escape_pressed(self) -> None:
+        """侧栏打开时的 Esc：焦点在译文编辑框里，Esc 仍按编辑框的约定把焦点还给表格
+        （一个键只做一件事，按最近的上下文）；其余位置的 Esc 收起检查与修复。"""
+        focus = QApplication.focusWidget()
+        if focus is not None and (focus is self.target_edit
+                                  or self.inline_editor.isAncestorOf(focus)):
+            self.target_edit.escaped.emit()
+            return
+        self.set_followup_drawer_open(False)
 
     def _toggle_followup_drawer(self) -> None:
         self.set_followup_drawer_open(not self.followup_drawer_open())
@@ -3093,10 +3113,15 @@ class WorkbenchView(QWidget):
         # editor must follow them, or it hangs past the grid's new right edge.
         QTimer.singleShot(0, self._place_inline_editor)
 
-    def _translation_column_sizes(self) -> list[int]:
-        """Compute the destination without laying out and then undoing a frame."""
+    def _translation_column_sizes(self, *, drawer_open: bool | None = None) -> list[int]:
+        """Compute the destination without laying out and then undoing a frame.
+
+        ``drawer_open`` asks for the layout with the drawer open / closed
+        regardless of its current state (the widths each side is laid out at).
+        """
         split = self.translation_split
-        drawer_open = self.followup_drawer_open()
+        if drawer_open is None:
+            drawer_open = self.followup_drawer_open()
         source = self.source_open()
         sizes = split.sizes()
         total = sum(sizes) or split.width() or max(self.width() - 40, 800)

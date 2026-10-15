@@ -124,6 +124,43 @@ class ClippedWidget(QWidget):
         self.content.setGeometry(self.width() - width if rtl else 0, 0, width, self.height())
 
 
+class TrailingClip(QWidget):
+    """Hold a page at a fixed width while its container resizes, anchored to
+    the trailing edge -- the way a macOS sidebar collapses: the page slides out
+    from under the sidebar instead of being re-laid out on every frame.
+
+    ``freeze(None)`` lets the page follow the container again.  Size hints come
+    from the page, so the window's minimum size is unchanged.
+    """
+
+    def __init__(self, content: QWidget, parent=None) -> None:
+        super().__init__(parent)
+        self.content = content
+        self.content_width: int | None = None
+        content.setParent(self)
+        content.show()
+
+    def freeze(self, width: int | None) -> None:
+        self.content_width = width
+        self._place()
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return self.content.sizeHint()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return self.content.minimumSizeHint()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._place()
+
+    def _place(self) -> None:
+        width = self.content_width if self.content_width is not None else self.width()
+        rtl = self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+        # LTR: the sidebar is on the left, so the page keeps its right edge.
+        self.content.setGeometry(0 if rtl else self.width() - width, 0, width, self.height())
+
+
 class ButtonActivity(QObject):
     """Inline activity with an optional delayed, non-modal progress window."""
 

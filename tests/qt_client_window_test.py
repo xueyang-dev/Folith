@@ -3562,7 +3562,13 @@ def test_resize_and_fullscreen_round_trip_keep_the_workbench_usable(client):
     window.resize(minimum.width(), minimum.height())
     _pump(app, 0.5)
     scroll = workbench.inspector_scroll
-    assert scroll.verticalScrollBar().maximum() > 0, "最小窗口下检查器必须可滚动（否则底部控件不可达）"
+    # 控件必须可达：要么检查器整体装得下（参考区自己滚动），要么外层可以滚动。
+    # P4 之后参考区随剩余高度伸缩，最小窗口下通常整体装得下，只剩参考区这一层滚动。
+    fits = scroll.widget().minimumSizeHint().height() <= scroll.viewport().height()
+    assert fits or scroll.verticalScrollBar().maximum() > 0, \
+        "最小窗口下检查器既装不下又不能滚动（底部控件不可达）"
+    references = workbench.segment_extra_section
+    assert references.isVisible() and references.height() >= references.minimumHeight()
     assert scroll.widget() is not None and scroll.widget().isVisible()
 
     window.showFullScreen()
@@ -3939,15 +3945,21 @@ def test_start_is_inline_defers_io_and_restores_buttons_on_failure(client, monke
     load_source = adapter.core.load_source
     monkeypatch.setattr(adapter.core, "load_source",
                         lambda *_: pytest.fail("source I/O must run in the worker"))
+    notices = []
+    real_notice = window._notice
+    monkeypatch.setattr(window, "_notice", lambda text, **kw: notices.append(text))
     window.start_or_resume()
     window.start_or_resume()
     assert len(held.calls) == 1 and held.calls[0]["label"] == "start-job"
+    assert notices == ["任务正在启动，请稍候。"], "a repeated click is answered, not ignored"
     buttons = (window.workbench.start_button, window.workbench.setup_panel.start_button)
     assert all(not b.isEnabled() for b in buttons)
     monkeypatch.setattr(adapter.core, "load_source", load_source)
     window.open_job(job_b)
     window.start_or_resume()  # shared buttons cannot have overlapping restorations
     assert len(held.calls) == 1
+    assert notices[-1] == "另一个任务正在启动，请等它启动后再开始这个任务。"
+    monkeypatch.setattr(window, "_notice", real_notice)
     failures = []
     monkeypatch.setattr(window, "_failure", lambda *args: failures.append(args))
     held.calls[0]["on_error"]("Failed", "detail")
@@ -4011,3 +4023,27 @@ def test_save_acknowledges_latest_queued_text_only(client, monkeypatch):
     assert not confirmed and window.workbench._pending_saved[index] == "latest"
     held.calls[1]["on_done"]({})
     assert confirmed == [index] and index not in window.workbench._pending_saved
+
+
+def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
+    """P4 审校第 5 条：侧栏开合时页面按终态宽度排一次版、从侧栏下滑出，
+    不在每一帧改变页面宽度（那会让任务库卡片与段落网格逐帧重排）。"""
+    adapter, core, window, app, tmp = (client[key] for key in
+                                       ("adapter", "core", "window", "app", "tmp"))
+    job_id = _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
+    window.show_home()
+    _pump(app, 0.5)
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    window._motion._last.clear()  # not a "rapid repeat" of the first navigation
+    widths = []
+    window.open_job(job_id)
+    while window._motion.running("sidebar"):
+        widths.append(window.stack.width())
+        app.processEvents()
+        time.sleep(0.01)
+    _pump(app, 0.2)
+    assert len(widths) > 2, "the transition should have run for a few frames"
+    assert len(set(widths)) == 1, f"page width changed during the transition: {sorted(set(widths))}"
+    assert not window.sidebar_clip.isVisible()
+    assert window.stack.width() == window.stack_clip.width(), "the page follows the window again"
+    assert window.stack.graphicsEffect() is None, "no effect is left installed on the page"

@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -16,14 +16,7 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture(autouse=True)
-def preferences(tmp_path, monkeypatch):
-    settings = QSettings(str(tmp_path / "motion.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr(motion, "QSettings", lambda *args: settings)
-    return settings
-
-
-def test_preference_priority_and_system_fallback(preferences, monkeypatch):
+def test_reduce_motion_priority_and_system_fallback(monkeypatch):
     monkeypatch.setattr(motion, "_system_reduce_motion", lambda: True)
     monkeypatch.delenv("FOLITH_REDUCE_MOTION", raising=False)
     monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
@@ -31,15 +24,16 @@ def test_preference_priority_and_system_fallback(preferences, monkeypatch):
     assert motion.reduced()
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
     assert not motion.reduced()
-    preferences.setValue("appearance/reduce_motion", True)
-    assert motion.reduced()
-    preferences.setValue("appearance/reduce_motion", "false")
-    assert not motion.reduced()
-    preferences.remove("appearance/reduce_motion")
     monkeypatch.delenv("FOLITH_REDUCE_MOTION")
     monkeypatch.setattr(motion, "_system_reduce_motion", lambda: False)
+    assert not motion.reduced()
     monkeypatch.setenv("FOLITH_QT_NONINTERACTIVE", "1")
     assert motion.reduced()
+
+
+def test_reduce_motion_never_reads_stored_settings(monkeypatch):
+    """没有界面能写的偏好不能参与判断：测试和脚本不能依赖开发者本机的 QSettings。"""
+    assert not hasattr(motion, "QSettings")
 
 
 def test_animation_is_interruptible_and_latest_completion_wins(app, monkeypatch):
@@ -182,11 +176,23 @@ def test_changing_reference_content_does_not_move_the_actions(bench, app):
     app.processEvents()
     assert [button.mapTo(bench, button.rect().topLeft()).y() for button in buttons] == before
     assert bench.inspector_scroll.widget().sizeHint().height() == hint
+    QTest.qWait(50)  # nested scroll-area geometry settles through queued layout requests
     assert bench.segment_extra_section.verticalScrollBar().maximum() > 0
     bench.segment_extra_section.setFocus()
     bench.segment_extra_section.verticalScrollBar().setValue(0)
     QTest.keyClick(bench.segment_extra_section, Qt.Key.Key_PageDown)
     assert bench.segment_extra_section.verticalScrollBar().value() > 0
+
+
+def test_reference_area_fills_the_inspector_height(bench, app):
+    """参考区随窗口高度伸缩（不是固定 360 px）：窗口变高，它跟着变高。"""
+    bench.select_segment(10)
+    bench.resize(1400, 760)
+    QTest.qWait(50)
+    short = bench.segment_extra_section.height()
+    bench.resize(1400, 1100)
+    QTest.qWait(50)
+    assert bench.segment_extra_section.height() > short + 200
 
 
 def test_reference_overflow_scrolls_without_compressing_term_rows(bench, app):
@@ -278,12 +284,12 @@ def test_view_effect_renders_and_releases_without_moving_input_geometry(app, mon
     assert not widget.grab().isNull()
     assert widget.geometry() == geometry
     QTest.qWait(250)
-    assert not widget.graphicsEffect().isEnabled()
+    assert widget.graphicsEffect() is None, "a finished reveal leaves no effect installed"
     controller.nod("tone", widget)
     QTest.qWait(70)
     assert not widget.grab().isNull()
     QTest.qWait(170)
-    assert not widget.graphicsEffect().isEnabled()
+    assert widget.graphicsEffect() is None
     widget.close()
     widget.deleteLater()
 
@@ -392,3 +398,63 @@ def test_column_rewrap_keeps_visible_editor_anchored(bench):
     QTest.qWait(350)
     assert abs(table.rowViewportPosition(40) - before) <= 1
     assert bench.inline_editor.isVisibleTo(bench)
+
+
+def test_reveal_removes_its_effect_when_finished(app, monkeypatch):
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    owner = QWidget()
+    owner.resize(200, 100)
+    controller = motion.Motion(owner)
+    controller.reveal("page", owner, kind="body")
+    assert owner.graphicsEffect() is not None
+    QTest.qWait(motion.DURATION["body"] + 150)
+    assert owner.graphicsEffect() is None
+
+
+def test_trailing_clip_keeps_the_page_width_and_its_minimum(app):
+    from folith.qt import components
+
+    page = QWidget()
+    page.setMinimumSize(300, 200)
+    clip = components.TrailingClip(page)
+    assert clip.minimumSizeHint() == page.minimumSizeHint()
+    clip.resize(800, 400)
+    clip.freeze(600)
+    assert page.geometry().width() == 600 and page.geometry().right() == 799
+    clip.freeze(None)
+    assert page.geometry().width() == 800
+
+
+def test_an_interrupted_drawer_keeps_both_sides_at_their_final_widths(bench, app, monkeypatch):
+    """P4 审校第 7 条：展开途中立即收起，两侧都按各自终态宽度排版，不按半路宽度。"""
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    open_width = bench._translation_column_sizes(drawer_open=True)[
+        bench.translation_split.indexOf(bench.right_panel)]
+    bench._motion._last.clear()
+    bench.set_followup_drawer_open(True)
+    QTest.qWait(motion.DURATION["panel"] // 3)
+    assert bench._motion.running("translation-columns")
+    bench._motion._last.clear()  # an interruption, not a rapid repeat that snaps
+    bench.set_followup_drawer_open(False)
+    assert bench.right_panel._widths is not None
+    inspector_width, drawer_width = bench.right_panel._widths
+    assert drawer_width == open_width
+    assert inspector_width == bench._inspector_width
+    QTest.qWait(motion.DURATION["panel"] + 150)
+    assert not bench.followup_drawer_open() and bench.right_panel.fraction == 0
+
+
+def test_escape_in_the_editor_keeps_the_drawer_open(bench, app, monkeypatch):
+    """P4 审校第 8 条：侧栏打开时在译文框里按 Esc，仍是「焦点还给表格」，不收起侧栏。"""
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
+    bench.select_segment(1)
+    bench.set_followup_drawer_open(True)
+    bench.target_edit.setFocus()
+    app.processEvents()
+    QTest.keyClick(bench.target_edit, Qt.Key.Key_Escape)
+    app.processEvents()
+    assert bench.followup_drawer_open()
+    assert app.focusWidget() is bench.segment_list
+    QTest.keyClick(bench.segment_list, Qt.Key.Key_Escape)
+    app.processEvents()
+    assert not bench.followup_drawer_open()

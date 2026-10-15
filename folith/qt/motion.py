@@ -15,7 +15,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QObject, QEasingCurve, QSettings, QVariantAnimation, Qt
+from PySide6.QtCore import QObject, QEasingCurve, QVariantAnimation, Qt
 from PySide6.QtWidgets import QGraphicsEffect
 
 DURATION = {"select": 140, "local": 180, "panel": 240, "view": 300,
@@ -74,13 +74,12 @@ def _system_reduce_motion() -> bool:
 def reduced() -> bool:
     """Whether animations should jump straight to their end state.
 
-    An explicit application preference wins over the environment override,
-    scripted/offscreen runs, then the system setting. An absent preference
-    follows the system. The environment override also lets probes run animations.
+    In order: ``FOLITH_REDUCE_MOTION`` (1/0; also lets probes run animations),
+    scripted and offscreen runs (deterministic: always reduced), then the macOS
+    setting.  An in-app switch is added with the settings window (P5); until a
+    screen can write it, no stored preference is consulted -- otherwise tests
+    and scripts would silently depend on the developer's real QSettings.
     """
-    preference = QSettings("Folith", "QtDesktop").value("appearance/reduce_motion")
-    if preference is not None:
-        return str(preference).strip().lower() in ("1", "true", "yes")
     forced = os.environ.get("FOLITH_REDUCE_MOTION")
     if forced is not None and forced.strip() != "":
         return forced.strip() not in ("0", "false", "no")
@@ -149,7 +148,7 @@ class Motion(QObject):
             widget.setGraphicsEffect(effect)
         effect.setEnabled(True)
         self.animate(key, 0.0, 1.0, effect.set_fraction, kind=kind,
-                     finished=lambda: effect.setEnabled(False))
+                     finished=lambda: _remove_effect(widget, effect))
 
     def nod(self, key: str, widget) -> None:
         effect = widget.graphicsEffect()
@@ -158,7 +157,15 @@ class Motion(QObject):
             widget.setGraphicsEffect(effect)
         effect.setEnabled(True)
         self.animate(key, 0.0, 1.0, effect.set_fraction, kind="popover",
-                     finished=lambda: effect.setEnabled(False))
+                     finished=lambda: _remove_effect(widget, effect))
+
+
+def _remove_effect(widget, effect) -> None:
+    """A finished transition leaves nothing behind: a disabled effect that stays
+    installed still routes the widget's painting through the effect machinery,
+    and nests with the cards' own drop shadows."""
+    if widget.graphicsEffect() is effect:
+        widget.setGraphicsEffect(None)  # Qt deletes the effect
 
 
 class RevealEffect(QGraphicsEffect):
