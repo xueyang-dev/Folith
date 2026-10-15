@@ -1,0 +1,75 @@
+{
+  "model": "deepseek-v4.1-flash",
+  "request_limit": 6,
+  "requests": 6,
+  "synthetic_only": true,
+  "sdk_retries": 0,
+  "records": [
+    {
+      "mode": "标准",
+      "sample": 1,
+      "segments": 4,
+      "source_chars": 508,
+      "requests": 1,
+      "outcome": "ok",
+      "returned_items": 4,
+      "seconds": 6.36,
+      "within_profile": true
+    },
+    {
+      "mode": "快速",
+      "sample": 1,
+      "segments": 6,
+      "source_chars": 762,
+      "requests": 1,
+      "outcome": "ok",
+      "returned_items": 6,
+      "seconds": 3.47,
+      "within_profile": true
+    },
+    {
+      "mode": "标准",
+      "sample": 2,
+      "segments": 4,
+      "source_chars": 1532,
+      "requests": 1,
+      "outcome": "ok",
+      "returned_items": 4,
+      "seconds": 3.34,
+      "within_profile": true
+    },
+    {
+      "mode": "快速",
+      "sample": 2,
+      "segments": 6,
+      "source_chars": 2298,
+      "requests": 1,
+      "outcome": "ok",
+      "returned_items": 6,
+      "seconds": 5.24,
+      "within_profile": true
+    },
+    {
+      "mode": "标准",
+      "sample": 3,
+      "segments": 4,
+      "source_chars": 3068,
+      "requests": 1,
+      "outcome": "ok",
+      "returned_items": 4,
+      "seconds": 4.72,
+      "within_profile": false
+    },
+    {
+      "mode": "快速",
+      "sample": 3,
+      "segments": 6,
+      "source_chars": 4602,
+      "requests": 1,
+      "outcome": "ok",
+      "returned_items": 6,
+      "seconds": 6.05,
+      "within_profile": true
+    }
+  ]
+}
