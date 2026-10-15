@@ -1,0 +1,43 @@
+         2825343 function calls (2729757 primitive calls) in 0.789 seconds
+
+   Ordered by: cumulative time
+   List reduced from 867 to 35 due to restriction <35>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.791    0.791 <stdin>:7(<lambda>)
+        1    0.000    0.000    0.790    0.790 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:915(open_job)
+        2    0.000    0.000    0.668    0.334 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:2893(apply)
+        1    0.000    0.000    0.641    0.641 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:2850(load)
+        2    0.002    0.001    0.352    0.176 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3528(_render_segments)
+        3    0.000    0.000    0.287    0.096 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:4063(_render_segment_detail)
+        1    0.000    0.000    0.280    0.280 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:4189(_row_selected)
+        1    0.000    0.000    0.280    0.280 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:4206(_load_selected_row)
+        5    0.000    0.000    0.276    0.055 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3358(_render_review)
+        2    0.000    0.000    0.256    0.128 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3809(_render_delivery)
+        1    0.000    0.000    0.254    0.254 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:2903(delivery_preview)
+        1    0.000    0.000    0.227    0.227 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:269(validate_delivery_translation_state)
+        1    0.000    0.000    0.218    0.218 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:243(validate_translation_pairs)
+        1    0.021    0.021    0.206    0.206 /Users/xueyang/Dev/FolioThread/core.py:2398(check_translation_batch)
+        1    0.000    0.000    0.190    0.190 /Users/xueyang/Dev/FolioThread/folith/qt/review_panel.py:196(apply)
+        1    0.006    0.006    0.190    0.190 /Users/xueyang/Dev/FolioThread/folith/qt/review_panel.py:215(_rebuild_list)
+        6    0.000    0.000    0.174    0.029 {method 'sort' of 'list' objects}
+     3393    0.174    0.000    0.174    0.000 /Users/xueyang/Dev/FolioThread/folith/qt/review_panel.py:220(<lambda>)
+        1    0.000    0.000    0.085    0.085 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:1381(review_queue)
+        1    0.000    0.000    0.085    0.085 /Users/xueyang/Dev/FolioThread/folith/workbench_view.py:342(review_workbench_view)
+        1    0.000    0.000    0.080    0.080 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:564(load_state)
+        1    0.000    0.000    0.080    0.080 /Users/xueyang/Dev/FolioThread/core.py:8654(load_job_state)
+        1    0.000    0.000    0.080    0.080 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:190(load_job_state_cached)
+        1    0.001    0.001    0.080    0.080 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:177(_isolated_copy)
+    27291    0.014    0.000    0.068    0.000 {built-in method builtins.any}
+        1    0.000    0.000    0.059    0.059 /Users/xueyang/Dev/FolioThread/folith/workbench_view.py:223(_queue_items)
+        1    0.007    0.007    0.050    0.050 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:1400(refresh_workbench)
+   258352    0.038    0.000    0.047    0.000 /Users/xueyang/Dev/FolioThread/core.py:2442(<genexpr>)
+        2    0.000    0.000    0.045    0.023 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3574(_sync_word_count)
+        1    0.006    0.006    0.045    0.045 /Users/xueyang/Dev/FolioThread/folith/word_count.py:83(document_count)
+316813/221355    0.014    0.000    0.044    0.000 {built-in method builtins.isinstance}
+        2    0.002    0.001    0.043    0.021 /Users/xueyang/Dev/FolioThread/folith/translation_evidence.py:354(translation_review_readiness)
+        1    0.041    0.041    0.041    0.041 {built-in method _pickle.dumps}
+        1    0.038    0.038    0.038    0.038 {built-in method _pickle.loads}
+    36144    0.037    0.000    0.037    0.000 {method 'sub' of 're.Pattern' objects}
+
+

@@ -36,7 +36,7 @@ from folith.qt import adapter, i18n, motion, window
 app = QApplication([])
 core.OUTPUT_DIR = data
 settings = QSettings(str(scratch / "settings.ini"), QSettings.Format.IniFormat)
-window.QSettings = motion.QSettings = lambda *args: settings
+window.QSettings = lambda *args: settings
 config = adapter.EngineConfig(provider="自定义中转站", model="probe", api_key="probe",
     base_url="http://127.0.0.1:9/v1", enable_understanding=False, enable_review=False)
 
@@ -146,10 +146,11 @@ for name in ("light", "dark", "paper", "green"):
 for i in range(20):
     bench.set_followup_drawer_open(bool(i % 2))
 rapid_settled = bench.right_panel.fraction == 1 and not bench._motion.running("translation-columns")
-settings.setValue("appearance/reduce_motion", True)
+_motion_env = os.environ.get("FOLITH_REDUCE_MOTION")
+os.environ["FOLITH_REDUCE_MOTION"] = "1"
 bench.set_followup_drawer_open(False)
 reduced_settled = bench.right_panel.fraction == 0 and not bench._motion.running("translation-columns")
-settings.remove("appearance/reduce_motion")
+os.environ["FOLITH_REDUCE_MOTION"] = _motion_env or "0"
 
 # Full P4: final geometry and interruption across shared column transitions.
 if bench._pdf_ok:
@@ -160,6 +161,7 @@ if bench._pdf_ok:
         pump(.05)
     source_open_settled = (bench.source_open() and bench.source_clip.isVisible()
                            and not bench.pdf_panel._source.isNull())
+    source_editor_visible = bench.inline_editor.isVisibleTo(bench)
     w.grab().save(str(out / "source-open.png"))
     bench.set_followup_drawer_open(True)
     bench.set_source_open(False)
@@ -167,7 +169,7 @@ if bench._pdf_ok:
     pump(.35)
     source_closed_settled = not bench.source_clip.isVisible() and not bench._motion.running("translation-columns")
 else:
-    source_open_settled = source_closed_settled = None
+    source_open_settled = source_closed_settled = source_editor_visible = None
 
 nav_gaps = []
 nav_last = [time.perf_counter()]
@@ -236,6 +238,7 @@ result = {"segments": segment_count,
           "focus_restored": focus_restored, "arabic_rtl": rtl,
           "source_open_settled": source_open_settled,
           "source_closed_settled": source_closed_settled,
+          "source_editor_visible": source_editor_visible,
           "navigation_home_settled": nav_home_settled,
           "navigation_workbench_settled": nav_workbench_settled,
           "navigation_home_call_ms": round(nav_home_call_ms, 2),

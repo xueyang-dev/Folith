@@ -1,0 +1,30 @@
+{
+  "segments": 3856,
+  "visible_target_shift_px": {
+    "median": 0,
+    "max_abs": 0
+  },
+  "switch_ms_excluding_30ms_pump": {
+    "median": 3.16,
+    "max": 3.93
+  },
+  "drawer_frame_setter_ms": {
+    "median": 0.41,
+    "max": 0.56
+  },
+  "drawer_8ms_heartbeat_max_gap_ms": 18.58,
+  "during_animation_8ms_heartbeat_max_gap_ms": 18.58,
+  "open_call_ms": 8.63,
+  "close_call_ms": 0.78,
+  "rapid_20_toggles_settled": true,
+  "reduced_settled": true,
+  "focus_restored": true,
+  "arabic_rtl": true,
+  "source_open_settled": true,
+  "source_closed_settled": true,
+  "navigation_home_settled": true,
+  "navigation_workbench_settled": true,
+  "navigation_8ms_heartbeat_max_gap_ms": 585.49,
+  "popover_settled": true,
+  "popover_closed": true
+}

@@ -1,0 +1,14 @@
+{"ok": true, "manifest": "/Users/xueyang/Dev/FolioThread/build/qt-desktop/release-manifest.json", "distributions": 9, "forbidden_found": []}
+{"ok": true, "notes": "/Users/xueyang/Dev/FolioThread/docs/qt-beta/release-notes.md"}
+<!-- candidate-identity:begin -->
+| 项 | 值 |
+| --- | --- |
+| 安装包 | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg` |
+| sha256 | `f480a1f88c895a53276364f52868b16bd88615ef66cc078a926808930f4bd8e6` |
+| 大小 | 199,823,906 字节（191 MiB） |
+| 构建时间 | `2026-10-15T05:16:07+00:00`（build id `git:7b70ad5`） |
+| 声明最低系统 | **macOS 15.0.0**（实测；未在更低版本验收，不声称支持） |
+| 架构 | arm64（Apple Silicon） |
+| 签名 | **未签名、未公证**（受邀 Private Beta） |
+<!-- candidate-identity:end -->
+状态清单与验收速览身份已刷新

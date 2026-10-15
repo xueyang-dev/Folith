@@ -1,0 +1,21 @@
+..............................                                           [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+tests/qt_motion_test.py: 11 warnings
+tests/qt_inline_editor_test.py: 10 warnings
+  /Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+    self._action.clicked.disconnect()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+30 passed, 26 warnings in 12.23s
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

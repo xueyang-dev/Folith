@@ -1,0 +1,77 @@
+.F.                                                                      [100%]
+=================================== FAILURES ===================================
+____________________ test_legacy_brand_hits_are_allowlisted ____________________
+
+    def test_legacy_brand_hits_are_allowlisted():
+        hits = _legacy_hits()
+>       assert not hits, "发现未归类的旧品牌命中：\n" + "\n".join(hits)
+E       AssertionError: 发现未归类的旧品牌命中：
+E         docs/ui-audit/46-p4-motion/source-flow.json:122: "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-complete-source/data",
+E         docs/ui-audit/46-p4-motion/source-flow.json:124: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/fixtures/selftest.docx",
+E         docs/ui-audit/46-p4-motion/source-flow.json:125: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/fixtures/selftest.pdf"
+E         docs/ui-audit/46-p4-motion/source-flow.json:213: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/bilingual.docx",
+E         docs/ui-audit/46-p4-motion/source-flow.json:214: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/delivery_manifest.json",
+E         docs/ui-audit/46-p4-motion/source-flow.json:215: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/segment_evidence.jsonl",
+E         docs/ui-audit/46-p4-motion/source-flow.json:216: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/source_cleanup.json",
+E         docs/ui-audit/46-p4-motion/source-flow.json:217: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/terms.xlsx",
+E         docs/ui-audit/46-p4-motion/source-flow.json:218: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/translation.docx"
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:7: 1    0.000    0.000    0.505    0.505 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:816(show_home)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:8: 1    0.000    0.000    0.499    0.499 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:671(refresh_home)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:9: 1    0.000    0.000    0.497    0.497 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:262(list_jobs)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:10: 1    0.006    0.006    0.497    0.497 /Users/xueyang/Dev/FolioThread/folith/application/read_models.py:278(list_jobs)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:11: 1    0.006    0.006    0.490    0.490 /Users/xueyang/Dev/FolioThread/folith/application/read_models.py:220(_summary_row)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:12: 2    0.000    0.000    0.465    0.233 /Users/xueyang/Dev/FolioThread/core.py:8654(load_job_state)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:13: 2    0.000    0.000    0.465    0.233 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:190(load_job_state_cached)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:14: 2    0.001    0.000    0.465    0.233 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:177(_isolated_copy)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:16: 1    0.000    0.000    0.255    0.255 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:486(delivery_snapshot_status)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:18: 1    0.000    0.000    0.019    0.019 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:539(recovery_summary)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:19: 1    0.003    0.003    0.019    0.019 /Users/xueyang/Dev/FolioThread/folith/checkpoint.py:110(recovery_summary)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:20: 1    0.002    0.002    0.014    0.014 /Users/xueyang/Dev/FolioThread/folith/checkpoint.py:92(read_events)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:24: 2    0.000    0.000    0.004    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:1281(_fill_cards)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:26: 1    0.000    0.000    0.002    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:994(set_rows)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:27: 1    0.000    0.000    0.002    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:1161(_apply_filter)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:28: 1    0.000    0.000    0.002    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:1266(resizeEvent)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:30: 2    0.000    0.000    0.001    0.001 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:330(__init__)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:32: 769    0.000    0.000    0.001    0.000 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:2705(eventFilter)
+E         docs/ui-audit/46-p4-motion/navigation-home-profile.txt:36: 769    0.000    0.000    0.001    0.000 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:2716(_intercept_quit)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:8: 1    0.000    0.000    0.790    0.790 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:915(open_job)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:9: 2    0.000    0.000    0.668    0.334 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:2893(apply)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:10: 1    0.000    0.000    0.641    0.641 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:2850(load)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:11: 2    0.002    0.001    0.352    0.176 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3528(_render_segments)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:12: 3    0.000    0.000    0.287    0.096 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:4063(_render_segment_detail)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:13: 1    0.000    0.000    0.280    0.280 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:4189(_row_selected)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:14: 1    0.000    0.000    0.280    0.280 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:4206(_load_selected_row)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:15: 5    0.000    0.000    0.276    0.055 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3358(_render_review)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:16: 2    0.000    0.000    0.256    0.128 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3809(_render_delivery)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:17: 1    0.000    0.000    0.254    0.254 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:2903(delivery_preview)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:18: 1    0.000    0.000    0.227    0.227 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:269(validate_delivery_translation_state)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:19: 1    0.000    0.000    0.218    0.218 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:243(validate_translation_pairs)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:20: 1    0.021    0.021    0.206    0.206 /Users/xueyang/Dev/FolioThread/core.py:2398(check_translation_batch)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:21: 1    0.000    0.000    0.190    0.190 /Users/xueyang/Dev/FolioThread/folith/qt/review_panel.py:196(apply)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:22: 1    0.006    0.006    0.190    0.190 /Users/xueyang/Dev/FolioThread/folith/qt/review_panel.py:215(_rebuild_list)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:24: 3393    0.174    0.000    0.174    0.000 /Users/xueyang/Dev/FolioThread/folith/qt/review_panel.py:220(<lambda>)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:25: 1    0.000    0.000    0.085    0.085 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:1381(review_queue)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:26: 1    0.000    0.000    0.085    0.085 /Users/xueyang/Dev/FolioThread/folith/workbench_view.py:342(review_workbench_view)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:27: 1    0.000    0.000    0.080    0.080 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:564(load_state)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:28: 1    0.000    0.000    0.080    0.080 /Users/xueyang/Dev/FolioThread/core.py:8654(load_job_state)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:29: 1    0.000    0.000    0.080    0.080 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:190(load_job_state_cached)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:30: 1    0.001    0.001    0.080    0.080 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:177(_isolated_copy)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:32: 1    0.000    0.000    0.059    0.059 /Users/xueyang/Dev/FolioThread/folith/workbench_view.py:223(_queue_items)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:33: 1    0.007    0.007    0.050    0.050 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:1400(refresh_workbench)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:34: 258352    0.038    0.000    0.047    0.000 /Users/xueyang/Dev/FolioThread/core.py:2442(<genexpr>)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:35: 2    0.000    0.000    0.045    0.023 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:3574(_sync_word_count)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:36: 1    0.006    0.006    0.045    0.045 /Users/xueyang/Dev/FolioThread/folith/word_count.py:83(document_count)
+E         docs/ui-audit/46-p4-motion/navigation-open-profile.txt:38: 2    0.002    0.001    0.043    0.021 /Users/xueyang/Dev/FolioThread/folith/translation_evidence.py:354(translation_review_readiness)
+E         docs/ui-audit/46-p4-motion/artifact-check.json:18: "path": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg",
+E         docs/ui-audit/46-p4-motion/artifact-check.json:35: "path": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith.app",
+E         docs/ui-audit/45-p4-motion-slice/dmg-probe.json:2: "dmg": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg",
+E         docs/ui-audit/45-p4-motion-slice/dmg-probe.json:98: "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-5725c3f/dmg/data",
+E         docs/ui-audit/45-p4-motion-slice/dmg-probe.json:99: "log_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-5725c3f/dmg/logs",
+E         docs/ui-audit/45-p4-motion-slice/dmg-probe.json:103: "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-5725c3f/dmg/data",
+E         docs/ui-audit/45-p4-motion-slice/artifact-check.json:35: "path": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith.app",
+E       assert not ['docs/ui-audit/46-p4-motion/source-flow.json:122: "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-complete...urce-flow.json:215: "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/segment_evidence.jsonl",', ...]
+
+tests/brand_regression_test.py:215: AssertionError
+=========================== short test summary info ============================
+FAILED tests/brand_regression_test.py::test_legacy_brand_hits_are_allowlisted
+1 failed, 2 passed in 2.46s

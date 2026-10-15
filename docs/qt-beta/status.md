@@ -3,21 +3,21 @@
 单一进度清单（复用 `docs/qt-spike/evidence-log.md` 作为证据日志，不重复造第二份证据表）。
 每轮只改本文件的"当前阶段 / 状态 / 证据 / 阻断 / 下一单元"。
 
-- 更新日期：2026-10-15（P4 验证切片本地候选；历史验收保留）
-- 阶段：**0.6 工作台开发预览，P4 切片仍有性能与人工验收待完成**
+- 更新日期：2026-10-15（P4 动效扩展本地候选；历史验收保留）
+- 阶段：**0.6 工作台开发预览，P4 扩展已实现，性能与人工验收待完成**
 - **0.5 Beta 基线结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——不代表 0.6 开发已完成；人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
 
 - 路线：Python + PySide6（Qt Widgets）；Windows 保留适配与实机验收要求，本轮不宣称支持
 - 架构决策：**GO — Qt Widgets / macOS arm64**（见 [s8-decision.md](s8-decision.md)）
 - 本机验收环境：Apple Silicon（arm64）/ macOS 27.0.1 / Python 3.11.3 / PySide6 6.11.2 / Qt 6.11.2
 <!-- status-identity:begin -->
-- 候选身份：`app_version=0.5.0`、`build_id=git:5725c3f`、`worktree_dirty=true`、PyInstaller 6.22.3、built_at `2026-10-15T04:28:25+00:00`
+- 候选身份：`app_version=0.5.0`、`build_id=git:7b70ad5`、`worktree_dirty=true`、PyInstaller 6.22.3、built_at `2026-10-15T05:16:07+00:00`
 <!-- status-identity:end -->
-- **声明最低系统：macOS 15.0.0**（本地 `git:5725c3f` 原生闭包实测；CI 的支持边界须按各自构建重新测量，不沿用旧候选数字）
+- **声明最低系统：macOS 15.7.5**（发布负责人 2026-10-13 确认；CI 产物的原生闭包上限由随包 Tesseract 决定；不声称支持更低版本）。本地开发候选 `git:7b70ad5` 的原生闭包实测为 15.0.0，只是该本地包的观测值，不改变发布声明
 
 ### 2026-10-15 P4 本地候选
 
-本地候选为 `git:5725c3f`（仍沿用开发期应用版本 0.5.0），包括 P0–P3b 和 P4 验证切片及参考区显示修正；详见 [本批验收记录](../ui-audit/45-p4-motion-slice/verification.md)。全量遍历 236 文件中有 3 项报告页超时，独立复跑该文件 12 项通过；最后相关 40 项全部通过。当前指定门禁可收集 186 项用例，本批没有重跑整条 20 步验证链，也没有沿用旧候选的人工结果。P4 的 16 ms 心跳目标尚未完全达到；动效推广及 P5–P10 未完成。仅本地构建，无 push。
+本地候选为 `git:7b70ad5`（开发期应用版本 0.5.0），包括 P0–P3b 与 P4 约定动效扩展、按钮内等待及导航选择恢复；详见 [本批验收记录](../ui-audit/46-p4-motion/verification.md)。已完成源码 / DMG 完整流程、原生产物身份核对和定向回归；全量回归收尾中。P4 的 16 ms 严格心跳与既有大任务同步导航停顿尚未解决，人工验收没有代签；P5–P10 尚未实施。未重跑整条 20 步发布链，没有沿用旧候选的人工结果。仅本地构建，无 push。
 
 ### 2026-10-13 CI 历史候选范围
 
@@ -47,7 +47,7 @@
 | 源码入口 | `venv/bin/python qt_client.py`（或 `python -m folith.qt`） |
 | 冻结应用 | `dist/qt-desktop/Folith.app`（437 MiB / 458 MB，bundle id `dev.folith.qt`） |
 <!-- status-dmg:begin -->
-| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（191 MiB / 199 MB，sha256 `c7411c1f…389c`） |
+| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（191 MiB / 199 MB，sha256 `f480a1f8…d8e6`） |
 <!-- status-dmg:end -->
 | 构建中间物 | `build/qt-desktop/`（build record、`native_min_os_*.json`、`release-manifest.json`、`dmg_record.json`） |
 | 发行说明 | [release-notes.md](release-notes.md)（生成式，`--check-notes` 可检测过期） |
@@ -70,7 +70,7 @@ venv/bin/python scripts/qt_artifact_check.py --out build/qt-desktop/artifact-che
 venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py \
     tests/qt_extraction_error_test.py tests/qt_client_style_test.py \
     tests/qt_client_adapter_test.py tests/qt_client_window_test.py \
-    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 186 项
+    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 190 项
 
 # 完整验证链（20 步：构建 → 门禁 → 文档一致性 → 用例 → 端到端探针）
 bash scripts/qt_beta_chain.sh tmp/qt-beta/chain

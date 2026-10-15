@@ -1,0 +1,276 @@
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+qt.qpa.fonts: Populating font family aliases took 77 ms. Replace uses of missing font family "SF Pro Text" with one that exists to avoid this cost. 
+/Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+{
+  "started_at": 1792040430.9243279,
+  "steps": [
+    {
+      "at": 0.08,
+      "step": "imported",
+      "jobs": 2,
+      "ok": true
+    },
+    {
+      "at": 0.09,
+      "step": "opened",
+      "job_id": "1f71e513846310b2"
+    },
+    {
+      "at": 3.09,
+      "step": "translated",
+      "settled": true,
+      "runtime_status": "completed",
+      "error": null,
+      "p1_done": true,
+      "p2_done": true,
+      "segments": 3,
+      "reviewed": 3,
+      "source_lang": null,
+      "ocr_language": "",
+      "ocr_config": {
+        "ocr_language": "",
+        "ocr_language_engine_code": "",
+        "ocr_language_label": "",
+        "ocr_text_direction": "",
+        "ocr_dpi": 220,
+        "ocr_psm": 3,
+        "ocr_quality": "standard",
+        "ocr_backend": "online",
+        "ocr_mode": "auto",
+        "ocr_paddle_model": "official",
+        "ocr_online": {
+          "source": "online",
+          "provider": "自定义中转站",
+          "base_url": "http://127.0.0.1:59664/v1",
+          "target_fingerprint": "edc2e1aa7180",
+          "model": "stub-model",
+          "prompt_version": "v1",
+          "max_tokens": 8192,
+          "temperature": 0.0,
+          "reasoning_mode": "provider_default",
+          "timeout_s": 180.0,
+          "max_retries": 2,
+          "credential_source": "translation_profile",
+          "api_key_configured": true,
+          "cache_options": "online|provider=自定义中转站|target=edc2e1aa7180|model=stub-model|prompt=v1|max_tokens=8192|temperature=0|reasoning=provider_default"
+        }
+      },
+      "paras": [
+        "这是第一段，涉及术语 MT 与机器翻译流程。",
+        "这是第二段，涉及术语 CAT 与计算机辅助翻译。",
+        "这是第三段，用于验证交付与重开恢复。"
+      ]
+    },
+    {
+      "at": 3.1,
+      "step": "draft-saved",
+      "segment": "1",
+      "drafts": 1,
+      "text_matches": true
+    },
+    {
+      "at": 18.11,
+      "step": "edit-submitted",
+      "index": 1,
+      "target": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "human_edited": true,
+      "provenance": "human_edit",
+      "drafts_left": 0
+    },
+    {
+      "at": 18.61,
+      "step": "reviewed",
+      "reviewed": 3,
+      "total": 3,
+      "settled": true,
+      "pending_after_retries": [],
+      "open_blocking": []
+    },
+    {
+      "at": 18.78,
+      "step": "delivered",
+      "snapshots": [
+        1
+      ],
+      "assets": [
+        "bilingual.docx",
+        "delivery_manifest.json",
+        "segment_evidence.jsonl",
+        "source_cleanup.json",
+        "terms.xlsx",
+        "translation.docx"
+      ],
+      "delivery_status": "final",
+      "current": true
+    },
+    {
+      "at": 18.78,
+      "step": "saved",
+      "count": 6
+    },
+    {
+      "at": 18.78,
+      "step": "exit",
+      "closing_accepted": true,
+      "failures": []
+    },
+    {
+      "at": 18.78,
+      "step": "reopened",
+      "target": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "human_edited": true,
+      "snapshots": 1
+    }
+  ],
+  "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-complete-source/data",
+  "fixtures": [
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/fixtures/selftest.docx",
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/fixtures/selftest.pdf"
+  ],
+  "job_ids": [
+    "1f71e513846310b2",
+    "ea2c2b5ef0c7a269"
+  ],
+  "heartbeat_quiet_window": {
+    "seconds": 3.0,
+    "ticks": 236,
+    "max_gap_ms": 24.0,
+    "note": "driver only pumps the event loop; measures the window's own work"
+  },
+  "run": {
+    "settled": true,
+    "runtime_status": "completed",
+    "error": null,
+    "p1_done": true,
+    "p2_done": true,
+    "segments": 3,
+    "reviewed": 3,
+    "source_lang": null,
+    "ocr_language": "",
+    "ocr_config": {
+      "ocr_language": "",
+      "ocr_language_engine_code": "",
+      "ocr_language_label": "",
+      "ocr_text_direction": "",
+      "ocr_dpi": 220,
+      "ocr_psm": 3,
+      "ocr_quality": "standard",
+      "ocr_backend": "online",
+      "ocr_mode": "auto",
+      "ocr_paddle_model": "official",
+      "ocr_online": {
+        "source": "online",
+        "provider": "自定义中转站",
+        "base_url": "http://127.0.0.1:59664/v1",
+        "target_fingerprint": "edc2e1aa7180",
+        "model": "stub-model",
+        "prompt_version": "v1",
+        "max_tokens": 8192,
+        "temperature": 0.0,
+        "reasoning_mode": "provider_default",
+        "timeout_s": 180.0,
+        "max_retries": 2,
+        "credential_source": "translation_profile",
+        "api_key_configured": true,
+        "cache_options": "online|provider=自定义中转站|target=edc2e1aa7180|model=stub-model|prompt=v1|max_tokens=8192|temperature=0|reasoning=provider_default"
+      }
+    },
+    "paras": [
+      "这是第一段，涉及术语 MT 与机器翻译流程。",
+      "这是第二段，涉及术语 CAT 与计算机辅助翻译。",
+      "这是第三段，用于验证交付与重开恢复。"
+    ]
+  },
+  "edit": {
+    "index": 1,
+    "target": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+    "human_edited": true,
+    "provenance": "human_edit",
+    "drafts_left": 0
+  },
+  "review_retries": [],
+  "resolved_findings": [],
+  "review": {
+    "reviewed": 3,
+    "total": 3,
+    "settled": true,
+    "pending_after_retries": [],
+    "open_blocking": []
+  },
+  "delivery": {
+    "snapshots": [
+      1
+    ],
+    "assets": [
+      "bilingual.docx",
+      "delivery_manifest.json",
+      "segment_evidence.jsonl",
+      "source_cleanup.json",
+      "terms.xlsx",
+      "translation.docx"
+    ],
+    "delivery_status": "final",
+    "current": true
+  },
+  "saved_files": [
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/bilingual.docx",
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/delivery_manifest.json",
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/segment_evidence.jsonl",
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/source_cleanup.json",
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/terms.xlsx",
+    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/translation.docx"
+  ],
+  "exit_before": {
+    "safe_to_exit": true,
+    "draft_count": 0,
+    "worker_lock_held": false,
+    "active_jobs": []
+  },
+  "exit": {
+    "closing_accepted": true,
+    "failures": []
+  },
+  "reopen": {
+    "target": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+    "human_edited": true,
+    "snapshots": 1
+  },
+  "ok": true,
+  "heartbeat": {
+    "ticks": 375,
+    "max_gap_ms": 77.0,
+    "interval_ms": 50,
+    "worst_gaps": []
+  },
+  "failures": [],
+  "finished_at": 1792040449.704036,
+  "duration_s": 18.8,
+  "stub_url": "http://127.0.0.1:59664/v1",
+  "platform": "offscreen",
+  "app_version": "0.5.0",
+  "build_id": "git:a7b00c5",
+  "frozen": false
+}

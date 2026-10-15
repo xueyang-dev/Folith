@@ -1,0 +1,203 @@
+{
+  "dmg": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg",
+  "started_at": 1792041520.925424,
+  "steps": [
+    {
+      "at": 2.08,
+      "step": "verified",
+      "ok": true
+    },
+    {
+      "at": 2.22,
+      "step": "inspected",
+      "identity": {
+        "CFBundleIdentifier": "dev.folith.qt",
+        "CFBundleShortVersionString": "0.5.0",
+        "CFBundleVersion": "git:7b70ad5",
+        "LSMinimumSystemVersion": "15.0.0"
+      },
+      "ocr_ok": true
+    },
+    {
+      "at": 3.97,
+      "step": "installed",
+      "app": "/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folith-qt-install-falpfnwi/Folith.app"
+    },
+    {
+      "at": 6.6,
+      "step": "smoke",
+      "ok": true
+    },
+    {
+      "at": 8.49,
+      "step": "launchservices",
+      "ok": true
+    },
+    {
+      "at": 29.2,
+      "step": "selftest",
+      "ok": true
+    },
+    {
+      "at": 31.22,
+      "step": "leftover-check",
+      "remaining": 0
+    },
+    {
+      "at": 37.22,
+      "step": "upgrade",
+      "exit_code": 0,
+      "jobs_before": 3,
+      "jobs_after": 3,
+      "reported_jobs": 2
+    },
+    {
+      "at": 37.33,
+      "step": "uninstall-check",
+      "jobs": 3,
+      "data_survives": true
+    }
+  ],
+  "sha256": "f480a1f88c895a53276364f52868b16bd88615ef66cc078a926808930f4bd8e6",
+  "path_without_homebrew": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/xueyang/.opencode/bin:/Users/xueyang/.local/bin:/Users/xueyang/anaconda3/bin:/Users/xueyang/.local/bin:/Library/Frameworks/Python.framework/Versions/3.11/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/xueyang/.codex/tmp/arg0/codex-arg0YlmuFu:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/xueyang/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/xueyang/.opencode/bin:/Users/xueyang/.local/bin:/Users/xueyang/anaconda3/bin:/Library/Frameworks/Python.framework/Versions/3.11/bin:/Users/xueyang/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+  "homebrew_on_path": false,
+  "free_bytes": 12268208128,
+  "needed_bytes": 629145600,
+  "verify_ok": true,
+  "image_contents": [
+    "Applications",
+    "Folith.app",
+    "请先阅读.txt"
+  ],
+  "identity": {
+    "CFBundleIdentifier": "dev.folith.qt",
+    "CFBundleShortVersionString": "0.5.0",
+    "CFBundleVersion": "git:7b70ad5",
+    "LSMinimumSystemVersion": "15.0.0"
+  },
+  "identity_ok": true,
+  "ocr_payload": [
+    "ara.traineddata",
+    "chi_sim.traineddata",
+    "configs",
+    "eng.traineddata",
+    "pdf.ttf",
+    "tessconfigs"
+  ],
+  "ocr_payload_ok": true,
+  "installed_app": "/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folith-qt-install-falpfnwi/Folith.app",
+  "smoke": {
+    "exit_code": 0,
+    "stderr_tail": "h/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal \"clicked()\".\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\n",
+    "ok": true,
+    "mode": "smoke",
+    "identity": {
+      "app_version": "0.5.0",
+      "build_id": "git:7b70ad5",
+      "frozen": true,
+      "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-7b70ad5/dmg/data",
+      "log_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-7b70ad5/dmg/logs",
+      "python": "3.11.3",
+      "platform": "darwin"
+    },
+    "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-7b70ad5/dmg/data",
+    "jobs": 0,
+    "engine_configured": false,
+    "qt_version": "6.11.2",
+    "pyside_version": "6.11.2",
+    "platform": "offscreen"
+  },
+  "smoke_ok": true,
+  "launchservices": {
+    "open_exit_code": 0,
+    "open_stderr": "",
+    "reported": true,
+    "ok": true,
+    "frozen": true,
+    "platform": "cocoa"
+  },
+  "launchservices_ok": true,
+  "selftest": {
+    "exit_code": 0,
+    "ok": true,
+    "error": null,
+    "run": {
+      "settled": true,
+      "runtime_status": "completed",
+      "error": null,
+      "p1_done": true,
+      "p2_done": true,
+      "segments": 3,
+      "reviewed": 3,
+      "source_lang": null,
+      "ocr_language": "",
+      "ocr_config": {
+        "ocr_language": "",
+        "ocr_language_engine_code": "",
+        "ocr_language_label": "",
+        "ocr_text_direction": "",
+        "ocr_dpi": 220,
+        "ocr_psm": 3,
+        "ocr_quality": "standard",
+        "ocr_backend": "tesseract",
+        "ocr_mode": "auto",
+        "ocr_paddle_model": "official",
+        "ocr_online": {}
+      },
+      "paras": [
+        "这是第一段，涉及术语 MT 与机器翻译流程。",
+        "这是第二段，涉及术语 CAT 与计算机辅助翻译。",
+        "这是第三段，用于验证交付与重开恢复。"
+      ]
+    },
+    "delivery": {
+      "snapshots": [
+        1
+      ],
+      "assets": [
+        "bilingual.docx",
+        "delivery_manifest.json",
+        "segment_evidence.jsonl",
+        "source_cleanup.json",
+        "terms.xlsx",
+        "translation.docx"
+      ],
+      "delivery_status": "final",
+      "current": true
+    },
+    "reopen": {
+      "target": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "human_edited": true,
+      "snapshots": 1
+    },
+    "exit": {
+      "closing_accepted": true,
+      "failures": []
+    },
+    "heartbeat": {
+      "ticks": 375,
+      "max_gap_ms": 100.8,
+      "interval_ms": 50,
+      "worst_gaps": []
+    },
+    "stderr_tail": "This plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\n"
+  },
+  "selftest_ok": true,
+  "leftover_processes": [],
+  "no_leftover_processes": true,
+  "state_files_inside_bundle": [],
+  "jobs_after_run": 3,
+  "data_outside_bundle": true,
+  "upgrade": {
+    "exit_code": 0,
+    "jobs_before": 3,
+    "jobs_after": 3,
+    "reported_jobs": 2
+  },
+  "upgrade_keeps_data": true,
+  "data_survives_app_removal": true,
+  "reinstalled_app_absent": true,
+  "ok": true,
+  "finished_at": 1792041558.355765,
+  "duration_s": 37.4
+}

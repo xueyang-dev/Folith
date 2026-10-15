@@ -1,0 +1,20 @@
+.                                                                        [100%]
+=============================== warnings summary ===============================
+tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
+tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
+tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
+  /Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+    self._action.clicked.disconnect()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 6 warnings in 4.77s
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

@@ -1,0 +1,32 @@
+{
+  "segments": 3856,
+  "visible_target_shift_px": {
+    "median": 0,
+    "max_abs": 0
+  },
+  "switch_ms_excluding_30ms_pump": {
+    "median": 3.54,
+    "max": 4.5
+  },
+  "drawer_frame_setter_ms": {
+    "median": 0.43,
+    "max": 0.81
+  },
+  "drawer_8ms_heartbeat_max_gap_ms": 26.34,
+  "during_animation_8ms_heartbeat_max_gap_ms": 26.34,
+  "open_call_ms": 9.0,
+  "close_call_ms": 0.89,
+  "rapid_20_toggles_settled": true,
+  "reduced_settled": true,
+  "focus_restored": true,
+  "arabic_rtl": true,
+  "source_open_settled": true,
+  "source_closed_settled": true,
+  "navigation_home_settled": true,
+  "navigation_workbench_settled": true,
+  "navigation_home_call_ms": 522.25,
+  "navigation_open_call_ms": 454.22,
+  "navigation_animation_8ms_heartbeat_max_gap_ms": 21.22,
+  "popover_settled": false,
+  "popover_closed": true
+}

@@ -1,0 +1,7 @@
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+qt.qpa.fonts: Populating font family aliases took 80 ms. Replace uses of missing font family "SF Pro Text" with one that exists to avoid this cost. 
+/Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+/Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+{"segments": 3856, "visible_target_shift_px": {"median": 0, "max_abs": 0}, "switch_ms_excluding_30ms_pump": {"median": 3.36, "max": 4.53}, "drawer_frame_setter_ms": {"median": 0.43, "max": 0.64}, "drawer_8ms_heartbeat_max_gap_ms": 24.88, "during_animation_8ms_heartbeat_max_gap_ms": 24.88, "open_call_ms": 8.28, "close_call_ms": 0.81, "rapid_20_toggles_settled": true, "reduced_settled": true, "focus_restored": true, "arabic_rtl": true, "source_open_settled": true, "source_closed_settled": true, "source_editor_visible": true, "navigation_home_settled": true, "navigation_workbench_settled": true, "navigation_home_call_ms": 559.14, "navigation_open_call_ms": 504.72, "navigation_animation_8ms_heartbeat_max_gap_ms": 22.92, "popover_settled": true, "popover_closed": true}

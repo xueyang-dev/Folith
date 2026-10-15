@@ -1,0 +1,33 @@
+........................................................................ [ 65%]
+......................................                                   [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+tests/qt_motion_test.py: 10 warnings
+tests/qt_task_details_test.py: 4 warnings
+tests/qt_client_window_test.py: 85 warnings
+  /Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+    self._action.clicked.disconnect()
+
+tests/qt_client_window_test.py::test_double_clicking_a_task_row_opens_that_task
+tests/qt_client_window_test.py::test_double_clicking_a_task_row_opens_that_task
+  /Users/xueyang/Dev/FolioThread/tests/qt_client_window_test.py:3690: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    app.sendEvent(viewport, QMouseEvent(kind, QPointF(position), Qt.MouseButton.LeftButton,
+
+tests/qt_client_window_test.py::test_double_clicking_a_task_row_opens_that_task
+tests/qt_client_window_test.py::test_double_clicking_a_task_row_opens_that_task
+  /Users/xueyang/Dev/FolioThread/tests/qt_client_window_test.py:3694: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    app.sendEvent(viewport, QMouseEvent(kind, QPointF(position), Qt.MouseButton.LeftButton,
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+110 passed, 108 warnings in 181.03s (0:03:01)
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
