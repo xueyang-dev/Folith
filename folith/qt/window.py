@@ -235,6 +235,10 @@ class MainWindow(QMainWindow):
         self.timer.setInterval(POLL_MS)
         self.timer.timeout.connect(self._poll)
         self.timer.start()
+        self.workbench.tabs.currentChanged.connect(
+            lambda _index: QTimer.singleShot(400, self._offer_tips))
+        # 窗口出现之后再判断是否首次使用（欢迎窗口要以主窗口为父、居中在它上面）。
+        QTimer.singleShot(500, self.maybe_start_onboarding)
 
     # ================= wiring =================
     def _wire(self) -> None:
@@ -425,6 +429,12 @@ class MainWindow(QMainWindow):
         issue_action.triggered.connect(self.report_issue)
         shortcuts_action = QAction(i18n.tr('键盘快捷键…'), self)
         shortcuts_action.triggered.connect(self.show_shortcuts)
+        guide_action = QAction(i18n.tr('新手指南…'), self)
+        guide_action.triggered.connect(self.show_onboarding)
+        tips_action = QAction(i18n.tr('重新显示提示'), self)
+        tips_action.triggered.connect(lambda: self.coach_marks().reset())
+        help_menu.addAction(guide_action)
+        help_menu.addAction(tips_action)
         help_menu.addAction(shortcuts_action)
         help_menu.addSeparator()
         help_menu.addAction(github_action)
@@ -438,6 +448,7 @@ class MainWindow(QMainWindow):
             "submit": edit_action, "deliver": deliver_action,
             "diagnostics": diagnostics_action, "tools": tools_action,
             "github": github_action, "issue": issue_action, "shortcuts": shortcuts_action,
+            "guide": guide_action, "tips": tips_action,
         })
 
     # Delivery defaults are a *client* preference (they are copied into each new
@@ -1525,6 +1536,8 @@ class MainWindow(QMainWindow):
                              refresh_delivery=force or terminal_change)
         self._sync_running_state(runtime)
         self._sync_menu_state()
+        # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
+        QTimer.singleShot(600, lambda: self._offer_tips(runtime))
 
     def _segment_rows(self, job_id: str, state: dict) -> list:
         """段落行：任务状态与草稿文件都没变时复用上一次的结果。
@@ -2726,23 +2739,8 @@ class MainWindow(QMainWindow):
             except RuntimeError:  # deleted with its parent or closed for good
                 dialog = None
         if dialog is None:
-            dialog = EngineDialog(self.config, self.runner, self)
+            dialog = self._settings_form()
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-            # 把**当前**偏好带进窗口：否则打开设置会把用户没动过的偏好重置成默认值
-            # （主题此前就是这样被静默重置成「跟随系统」的）。
-            dialog.theme_preference = self.theme_preference
-            index = dialog.theme_box.findData(self.theme_preference)
-            dialog._loading = True
-            if index >= 0:
-                dialog.theme_box.setCurrentIndex(index)
-            # 语言偏好以**设置里保存的值**为准：运行中的模块状态可能被
-            # `FOLITH_UI_LANGUAGE` 覆盖（脚本化验收要用），但那不是用户的选择。
-            dialog.set_language_preference(str(self.settings.value(
-                self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE)))
-            dialog.set_academic_preference(self.academic_mode())
-            dialog._loading = False
-            dialog.preferencesChanged.connect(lambda: self._settings_preferences(dialog))
-            dialog.connectionApplied.connect(lambda: self._settings_connection(dialog))
             dialog.revealRequested.connect(self.reveal_path)
             dialog.diagnosticsRequested.connect(self.show_diagnostics)
             dialog.shortcutsRequested.connect(self.show_shortcuts)
@@ -2755,6 +2753,107 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def _settings_form(self) -> "EngineDialog":
+        """一个已经带上当前偏好、连好「立即生效 / 应用」的设置窗口实例。
+
+        设置窗口与新手指南共用它（指南的「连接模型」「偏好」两步就是这些控件）。
+        """
+        dialog = EngineDialog(self.config, self.runner, self)
+        # 把**当前**偏好带进窗口：否则打开设置会把用户没动过的偏好重置成默认值
+        # （主题此前就是这样被静默重置成「跟随系统」的）。
+        dialog.theme_preference = self.theme_preference
+        index = dialog.theme_box.findData(self.theme_preference)
+        dialog._loading = True
+        if index >= 0:
+            dialog.theme_box.setCurrentIndex(index)
+        # 语言偏好以**设置里保存的值**为准：运行中的模块状态可能被
+        # `FOLITH_UI_LANGUAGE` 覆盖（脚本化验收要用），但那不是用户的选择。
+        dialog.set_language_preference(str(self.settings.value(
+            self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE)))
+        dialog.set_academic_preference(self.academic_mode())
+        dialog._loading = False
+        dialog.preferencesChanged.connect(lambda: self._settings_preferences(dialog))
+        dialog.connectionApplied.connect(lambda: self._settings_connection(dialog))
+        return dialog
+
+    # ================= 新手指南（第 9 条） =================
+    def maybe_start_onboarding(self) -> str:
+        """首次启动：全新用户看欢迎窗口，老用户只看一页「新变化」。返回显示了哪一种。"""
+        from . import onboarding
+
+        if onboarding._automatic():
+            return ""
+        try:
+            has_jobs = bool(adapter.list_jobs())
+        except Exception:  # noqa: BLE001 - an unreadable list is not a first run
+            has_jobs = True
+        version = adapter.app_identity().get("app_version") or ""
+        kind = onboarding.first_run_kind(
+            self.settings, has_jobs=has_jobs,
+            configured=not self.config.connection_problem(), version=version)
+        if kind == "welcome":
+            self.show_onboarding()
+        elif kind == "whatsnew":
+            onboarding.WhatsNewDialog(version, self).exec()
+            onboarding.mark_completed(self.settings, version)
+        return kind
+
+    def show_onboarding(self) -> None:
+        """「帮助 › 新手指南…」也走这里：可以随时重新打开。"""
+        from . import onboarding
+
+        form = self._settings_form()
+        wizard = onboarding.WelcomeDialog(form, self)
+        wizard.importRequested.connect(self.choose_import)
+        wizard.sampleRequested.connect(self.import_sample)
+        self._welcome = wizard
+        if not _automation():
+            wizard.exec()
+        onboarding.mark_completed(self.settings,
+                                  adapter.app_identity().get("app_version") or "")
+        form.deleteLater()
+
+    def import_sample(self) -> None:
+        """「用示例文档试一下」：随包的《傲慢与偏见》第一章，走和普通导入完全一样的路。"""
+        from . import onboarding
+
+        if not onboarding.SAMPLE_PATH.is_file():
+            self._failure(i18n.tr('找不到示例文档'), str(onboarding.SAMPLE_PATH))
+            return
+        self.import_paths([str(onboarding.SAMPLE_PATH)])
+
+    def coach_marks(self):
+        from . import onboarding
+
+        if getattr(self, "_coach", None) is None:
+            self._coach = onboarding.CoachMarks(self.settings, self)
+        return self._coach
+
+    def _offer_tips(self, runtime: dict | None = None) -> str:
+        """情境提示：按眼前的情况挑**一个**（同一时刻最多一个），返回显示的那个。"""
+        if self.stack.currentWidget() is not self.workbench or not self.isVisible():
+            return ""
+        bench, marks = self.workbench, self.coach_marks()
+        if marks.showing():
+            return ""
+        candidates = []
+        if getattr(bench, "_showing_setup", False):
+            candidates.append(("prepare", bench.setup_panel.start_button))
+        elif bench.current_page_id() == "deliver":
+            candidates.append(("deliver", bench.deliver_button))
+        else:
+            if bench.check_button.tone() in ("warning", "danger"):
+                candidates.append(("check", bench.check_button))
+            status = str((runtime or {}).get("status") or "")
+            if status in views_module.RUNNING_STATUSES:
+                candidates.append(("translate", bench.run_status))
+            if getattr(bench, "_pdf_ok", False):
+                candidates.append(("pdf", bench.source_button))
+        for tip, anchor in candidates:
+            if marks.offer(tip, anchor):
+                return tip
+        return ""
 
     def _settings_preferences(self, dialog) -> None:
         """立即生效的选项：工作模式、任务默认值、主题、语言。"""

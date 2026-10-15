@@ -223,6 +223,17 @@ QLabel#metric {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-p
 QLabel#statusError {{ color: {t['danger']}; font-weight: 600; }}
 QLabel#statusOk {{ color: {t['success']}; font-weight: 600; }}
 QLabel#statusWarn {{ color: {t['warning']}; font-weight: 600; }}
+/* 新手指南：左侧步骤栏（当前步骤强调色、已完成淡化），第 4 步的两张大按钮。 */
+QFrame#onboardingSide {{ background: {t['bg-surface-sunken']}; border: none;
+    border-right: 1px solid {t['border-hairline']}; }}
+QLabel#onboardingStep {{ font-size: {f['body']}px; color: {t['text-muted']}; padding: 4px 0; }}
+QLabel#onboardingStep[state="current"] {{ color: {t['accent']}; font-weight: 700; }}
+QLabel#onboardingStep[state="done"] {{ color: {t['text-secondary']}; }}
+QFrame#onboardingChoice {{ background: {t['bg-surface']}; border: 1px solid {t['border-subtle']};
+    border-radius: {r['md']}px; }}
+QFrame#onboardingChoice:hover, QFrame#onboardingChoice:focus {{ border-color: {t['accent']}; }}
+QFrame#onboardingChoice:disabled {{ background: {t['disabled-bg']}; }}
+QFrame#onboardingChoice QLabel {{ background: transparent; }}
 QLabel#link {{ color: {t['accent']}; font-weight: 600; }}
 /* 交付清单：小节标题 + 右侧汇总（"6 个文件 · 85.5 KB"），行内布局由委托自绘 */
 QLabel#assetMeta {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
