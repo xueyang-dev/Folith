@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "duration_s": 40.9,
+  "verify_ok": true,
+  "identity": {
+    "CFBundleIdentifier": "dev.folith.qt",
+    "CFBundleShortVersionString": "0.5.0",
+    "CFBundleVersion": "git:28a6ba5",
+    "LSMinimumSystemVersion": "15.0.0"
+  },
+  "identity_ok": true,
+  "ocr_payload_ok": true,
+  "smoke_ok": true,
+  "launchservices_ok": true,
+  "selftest_ok": true,
+  "no_leftover_processes": true,
+  "data_outside_bundle": true,
+  "upgrade_keeps_data": true,
+  "data_survives_app_removal": true,
+  "reinstalled_app_absent": true,
+  "launchservices": {
+    "open_exit_code": 0,
+    "open_stderr": "",
+    "reported": true,
+    "ok": true,
+    "frozen": true,
+    "platform": "cocoa"
+  },
+  "selftest": {
+    "ok": true,
+    "heartbeat": {
+      "ticks": 375,
+      "max_gap_ms": 108.1,
+      "interval_ms": 50,
+      "worst_gaps": []
+    }
+  },
+  "dmg_bytes": 199993051
+}

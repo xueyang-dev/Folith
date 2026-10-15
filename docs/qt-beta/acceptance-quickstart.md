@@ -34,9 +34,9 @@
 | 项 | 值 |
 | --- | --- |
 | 安装包 | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg` |
-| sha256 | `425858a8734ac01da1cff0567852eae89e8ae48405e3cdfd13a9889190af3c95` |
-| 大小 | 200,005,446 字节（191 MiB） |
-| 构建时间 | `2026-10-15T09:58:20+00:00`（build id `git:1ed7f2d`） |
+| sha256 | `0fa8d3bfd5d51d393e3fbce5da117df52163e1fc2e62831e08002dbf05a20bb2` |
+| 大小 | 199,993,051 字节（191 MiB） |
+| 构建时间 | `2026-10-15T10:31:52+00:00`（build id `git:28a6ba5`） |
 | 声明最低系统 | **macOS 15.0.0**（实测；未在更低版本验收，不声称支持） |
 | 架构 | arm64（Apple Silicon） |
 | 签名 | **未签名、未公证**（受邀 Private Beta） |

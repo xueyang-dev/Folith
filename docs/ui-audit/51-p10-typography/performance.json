@@ -1,0 +1,36 @@
+{
+  "baseline": {
+    "open_ms": 614,
+    "idle_refresh_ms": [
+      14,
+      13,
+      13,
+      13,
+      14,
+      32
+    ]
+  },
+  "after": {
+    "open_ms": 770,
+    "idle_refresh_ms": [
+      16,
+      16,
+      16,
+      15,
+      15,
+      37
+    ]
+  },
+  "during_parallel_capture": {
+    "open_ms": 1230,
+    "idle_refresh_ms": [
+      27,
+      28,
+      31,
+      29,
+      27,
+      69
+    ]
+  },
+  "method": "p1_idle_refresh.py, isolated copy of the same 3856-segment / 23.6 MB task, offscreen; baseline replays f8593f0 typography"
+}
