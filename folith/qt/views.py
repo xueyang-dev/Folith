@@ -1642,13 +1642,14 @@ class RunStatusGroup(QFrame):
         layout.addWidget(self.line)
         self.setFixedWidth(232)
 
-    def set_state(self, *, tone: str, line: str) -> None:
+    def set_state(self, *, tone: str, line: str, line_tone: str | None = None) -> None:
+        """``line_tone``：只给文字着色（例如一次操作失败），进度条仍表示任务本身的状态。"""
         self.track.set_tone(tone)
         share = self.track.fraction()
         self.percent.setText("" if share is None or tone == "done"
                              else f"{int(round(share * 100))}%")
         self.line.setText(line)
-        self.line.setProperty("tone", tone)
+        self.line.setProperty("tone", line_tone or tone)
         style_module.repolish(self.line)
         self.setAccessibleDescription(line)
 
@@ -3023,12 +3024,26 @@ class WorkbenchView(QWidget):
         if page is not None:
             self.tabs.setCurrentWidget(page)
 
+    #: 运行状态行里一条操作结果停留多久（秒）：普通告知很快让位给运行状态，
+    #: 错误多留一会儿；完整内容一直在运行记录里。
+    TASK_NOTICE_SECONDS = {False: 8, True: 60}
+
     def set_task_notice(self, message: str, *, error=False):
+        """一次操作的结果借用运行状态行显示一会儿，然后让位给任务本身的状态。
+
+        P6 曾让它一直留到「运行状态变化」为止——已完成或暂停的任务永远不变，于是
+        「已提交人工修改…」或一次小操作的失败会一直占着这一行，进度条也一直是红的。
+        现在按时长过期；操作失败只把文字标红，不把进度条染成「任务失败」。
+        """
         runtime = self._last_runtime
-        self._task_notice = (self.job_id, message, error, (runtime.get("status"), runtime.get("detail"), runtime.get("current_operation")))
+        self._task_notice = (self.job_id, message, error,
+                             (runtime.get("status"), runtime.get("detail"),
+                              runtime.get("current_operation")), time.monotonic())
+        seconds = self.TASK_NOTICE_SECONDS[bool(error)]
+        QTimer.singleShot(int(seconds * 1000) + 50, self._render_runtime)
         self.run_status.setVisible(True)
-        self.run_status.set_state(tone="failed" if error else self.run_status.track.tone(),
-                                  line=message)
+        self.run_status.set_state(tone=self.run_status.track.tone(), line=message,
+                                  line_tone="failed" if error else None)
         self.run_status.track.setVisible(self.task_started())
         self.run_status.percent.setVisible(self.task_started())
         self._render_activity()
@@ -3865,10 +3880,11 @@ class WorkbenchView(QWidget):
         self.chip_state.set_tone(chip_tone)
         self.run_status.setVisible(header_visible)
         if not started:
-            notice = getattr(self, "_task_notice", None)
-            if notice and notice[0] == self.job_id:
+            notice = self._live_task_notice()
+            if notice:
                 self.run_status.setVisible(True)
-                self.run_status.set_state(tone="failed" if notice[2] else "idle", line=notice[1])
+                self.run_status.set_state(tone="idle", line=notice[1],
+                                          line_tone="failed" if notice[2] else None)
             for button in (self.start_button, self.pause_button, self.cancel_button,
                            self.retry_button):
                 button.setVisible(False)
@@ -3926,11 +3942,26 @@ class WorkbenchView(QWidget):
         self.cancel_button.setVisible(running or "cancel" in actions)
         self.retry_button.setVisible("retry" in actions)
         self.activity_panel.retry_button.setVisible("retry" in actions)
-        notice = getattr(self, "_task_notice", None)
-        if notice and notice[0] == self.job_id and notice[3] == (runtime.get("status"), runtime.get("detail"), runtime.get("current_operation")):
+        notice = self._live_task_notice(runtime)
+        if notice:
             self.run_status.setVisible(True)
-            self.run_status.set_state(tone="failed" if notice[2] else tone, line=notice[1])
+            self.run_status.set_state(tone=tone, line=notice[1],
+                                      line_tone="failed" if notice[2] else None)
         self._sync_header_actions()
+
+    def _live_task_notice(self, runtime: dict | None = None):
+        """还在有效期内、属于当前任务、且运行状态没变过的那条操作结果；否则清掉。"""
+        notice = getattr(self, "_task_notice", None)
+        if not notice:
+            return None
+        job_id, _message, error, fingerprint, at = notice
+        expired = time.monotonic() - at > self.TASK_NOTICE_SECONDS[bool(error)]
+        moved = runtime is not None and fingerprint != (
+            runtime.get("status"), runtime.get("detail"), runtime.get("current_operation"))
+        if job_id != self.job_id or expired or moved:
+            self._task_notice = None
+            return None
+        return notice
 
     def _sync_header_actions(self) -> None:
         """运行控制整组收掉：没有可执行动作时不留一条空槽位。"""

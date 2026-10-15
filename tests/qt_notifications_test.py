@@ -40,7 +40,9 @@ def test_task_error_is_nonmodal_persistent_and_readable(window, app, monkeypatch
     main._failure('保存失败', message, 'Full traceback')
     app.processEvents()
     assert app.focusWidget() is focus
-    assert main.workbench.run_status.track.tone() == 'failed'
+    # 一次操作失败只把文字标红；进度条仍表示任务本身（这个任务已经完成）。
+    assert main.workbench.run_status.line.property('tone') == 'failed'
+    assert main.workbench.run_status.track.tone() != 'failed'
     assert message in main.workbench.status_label.fullText()
     main.refresh_workbench()
     assert message in main.workbench.status_label.fullText()
@@ -159,3 +161,31 @@ def test_library_saved_time_includes_newer_checkpoint_without_reading_state(wind
     expected = core.recovery_summary('one', adapter.load_state('one'))['last_saved_at']
     monkeypatch.setattr(core, 'load_job_state', lambda *_a, **_k: pytest.fail('full state read'))
     assert adapter.list_jobs()[0].updated_at == expected
+
+
+def test_task_notices_expire_back_to_the_run_status(window, app, monkeypatch):
+    """回归：P6 的操作结果一直留到「运行状态变化」为止——已完成的任务永远不变，
+    于是「已提交人工修改…」或一次小失败会永久占住运行状态行（并把进度条染红）。"""
+    main, core = window['window'], window['core']
+    _job(core, 'done-task')
+    main.open_job('done-task')
+    bench = main.workbench
+    before = bench.run_status.line.text()
+    clock = [1000.0]
+    monkeypatch.setattr(views.time, 'monotonic', lambda: clock[0])
+    main._notice('已提交人工修改。')
+    main.refresh_workbench(force=True)
+    assert bench.run_status.line.text().startswith('已提交人工修改')
+    clock[0] += bench.TASK_NOTICE_SECONDS[False] + 1
+    main.refresh_workbench(force=True)
+    assert bench.run_status.line.text() == before
+    main._failure('无法记录', '磁盘只读')
+    clock[0] += 5
+    main.refresh_workbench(force=True)
+    assert '磁盘只读' in bench.run_status.line.text(), 'errors stay a while'
+    assert bench.run_status.track.tone() != 'failed'
+    clock[0] += bench.TASK_NOTICE_SECONDS[True]
+    main.refresh_workbench(force=True)
+    assert bench.run_status.line.text() == before
+    assert any('磁盘只读' in row['label'] for row in adapter.activity_events('done-task')), \
+        'the full text stays in the run log'

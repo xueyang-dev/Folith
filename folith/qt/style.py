@@ -283,7 +283,8 @@ QFrame#emptyState, QWidget#emptyState {{
 QLabel#emptyTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#emptyHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* 表单：标签在输入框**上方**（旧界面如此），而不是右对齐挤在左侧窄列里 */
-QLabel#fieldLabel {{ font-size: {f['body']}px; color: {t['text-secondary']}; font-weight: 500; }}
+/* 字段标签比输入框里的正文小一档（macOS 设置窗口的做法），层级才分得开。 */
+QLabel#fieldLabel {{ font-size: {f['label']}px; color: {t['text-secondary']}; font-weight: 500; }}
 QLabel#fieldHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* 密钥输入：一个"输入框外壳"，右侧放显示/隐藏按钮（QSS 没有 :focus-within） */
 QFrame#inputGroup {{
