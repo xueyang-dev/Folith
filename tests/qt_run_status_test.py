@@ -150,7 +150,7 @@ def test_every_workbench_tool_button_has_a_designed_style(app):
     「字数统计…」就是这样）。Qt 自己的内部按钮（输入框清除、页签滚动）除外。"""
     from PySide6.QtWidgets import QLineEdit, QTabBar, QToolButton
 
-    styled = {"roundButton", "toolbarButton"}
+    styled = {"roundButton", "toolbarButton", "issueToggle"}
     bench = views.WorkbenchView()
     bench.resize(1400, 900)
     bench.show()

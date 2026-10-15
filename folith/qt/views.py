@@ -2664,6 +2664,7 @@ class WorkbenchView(QWidget):
         self.followup_panel.acceptRequested.connect(self.entityAcceptRequested.emit)
         self.followup_panel.rescanRequested.connect(self.rescanRequested.emit)
         self.followup_panel.locateRequested.connect(self._locate_segment_from_followup)
+        self.followup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         self.activity_panel = ActivityPanel()
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))
@@ -3140,12 +3141,10 @@ class WorkbenchView(QWidget):
         except Exception:  # noqa: BLE001 - 收尾页坏了不能拖垮翻译页
             view = {}
         self.followup_panel.apply(view)
-        count = int(bool((view.get("understanding") or {}).get("status") == "degraded")) \
-            + int(bool((view.get("annotation") or {}).get("status") == "partial")) \
-            + len(view.get("entities") or []) + len(view.get("failures") or [])
+        # 顶栏图标与抽屉说同一件事：抽屉里有几张 ✕ / ⚠ 卡，角标就是几。
+        count = self.followup_panel.issue_count()
         self._followup_count = count
-        failures = len(view.get("failures") or [])
-        self.check_button.set_count(count, "danger" if failures else "warning")
+        self.check_button.set_count(count, self.followup_panel.worst_tone() or "warning")
         self._sync_more_pages()
 
     def _locate_segment_from_followup(self, index: int) -> None:

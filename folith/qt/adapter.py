@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -1507,10 +1508,61 @@ def segment_pdf_location(job_id: str, index: int, state: dict | None = None,
 FOLLOWUP_PARTS = ("understanding", "annotation")
 
 
+#: 导入报告里混进来的两类警告：全文理解（单元摘要 / 全文概要）与文档画像。它们在
+#: 「检查与修复」里各有一项（带补跑 / 填写的动作），不再在「导入范围」里原样堆着。
+_UNDERSTANDING_WARNING = re.compile(r"语义摘要失败|全文概要失败")
+_PROFILE_WARNING = re.compile(r"^文档画像")
+_WARNING_DETAIL = re.compile(r"失败[（(](.+)[)）]")
+
+
+def explain_failure(detail: str) -> str:
+    """模型调用失败的原话（"Connection error."、"HTTP 429 …"）→ 一句用户看得懂的原因。"""
+    text = " ".join(str(detail or "").split())
+    if not text:
+        return ""
+    try:
+        status = core.provider_error_status(RuntimeError(text))
+    except Exception:  # noqa: BLE001 - 解释不了就用原话
+        status = {"status": "unknown"}
+    if status.get("status") not in (None, "", "unknown"):
+        return str(status.get("message") or text)
+    lowered = text.lower()
+    if "connection" in lowered or "connect" in lowered or "network" in lowered:
+        return "连不上模型服务，请检查网络、代理和 API 地址。"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "模型服务响应超时。"
+    if "json" in lowered or "结构化" in text:
+        return "模型没有按要求的格式回复。"
+    return text
+
+
+def _warning_reason(warnings: list[str]) -> str:
+    """一组同类警告里最常见的失败原因（已解释成人话）。"""
+    details = [match.group(1) for match in map(_WARNING_DETAIL.search, warnings) if match]
+    if not details:
+        return ""
+    common = max(set(details), key=details.count)
+    return explain_failure(common)
+
+
 def followup_view(job_id: str, state: dict | None = None) -> dict:
     state = state if state is not None else load_state(job_id)
     outcomes = core.workflow_outcomes(state)
     understanding, annotation = outcomes["understanding"], outcomes["annotation"]
+    report_warnings = [str(item) for item in
+                       ((state.get("extraction_report") or {}).get("warnings") or [])]
+    understanding = dict(understanding, reason=_warning_reason(
+        [item for item in report_warnings if _UNDERSTANDING_WARNING.search(item)]))
+    profile_warnings = [item for item in report_warnings if _PROFILE_WARNING.search(item)
+                        and "失败" in item]
+    profile = state.get("document_profile") or {}
+    profile_view = {
+        # 画像生成失败、用户也还没补上领域：翻译与审校少了"这是一份什么文档"的依据。
+        "missing": bool(profile_warnings) and not str(profile.get("domain") or "").strip(),
+        "reason": "模型给出的画像缺少领域等关键字段。"
+        if any("缺少关键字段" in item for item in profile_warnings)
+        else _warning_reason(profile_warnings),
+    }
     try:
         entities = [dict(item) for item in core.entity_consistency_queue(state)]
     except Exception:  # noqa: BLE001 - 实体登记缺失/损坏时不应拖垮整个页面
@@ -1533,12 +1585,13 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
                             and not (state.get("pairs") or [])[index].get("excluded")),
         "understanding": understanding,
         "annotation": annotation,
+        "profile": profile_view,
         "entities": entities,
         "busy": busy,
         "has_work": bool(
             understanding.get("status") == "degraded"
             or annotation.get("status") == "partial" or entities or failures
-            or recovery.get("current_batch")),
+            or recovery.get("current_batch") or profile_view["missing"]),
     }
 
 
@@ -1680,7 +1733,10 @@ def extraction_report_view(state: dict) -> dict:
             {"label": str(item.get("label") or ""), "detail": str(item.get("detail") or ""),
              "sample": str(item.get("sample") or "")}
             for item in report.get("unsupported") or [] if isinstance(item, dict)],
-        "warnings": [str(item) for item in report.get("warnings") or [] if str(item).strip()],
+        # 理解与画像的失败在「检查与修复」里各有一项，这里只留导入本身的警告。
+        "warnings": [str(item) for item in report.get("warnings") or [] if str(item).strip()
+                     and not _UNDERSTANDING_WARNING.search(str(item))
+                     and not _PROFILE_WARNING.search(str(item))],
     }
 
 

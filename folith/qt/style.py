@@ -495,6 +495,23 @@ QPushButton#inspectorTool:disabled, QPushButton#inspectorPrimary:disabled, QPush
     background: {t['control-bg']}; border-color: {t['control-border']}; color: {t['text-muted']};
 }}
 QPushButton#inspectorTool::menu-indicator {{ image: none; width: 0px; }}
+/* 检查与修复：每一项一张卡，同一个结构（图标 / 标题 / 一句说明 / 动作）。
+   严重程度只靠图标颜色区分（✕ 红 / ⚠ 黄 / ✓ 绿），不铺整块彩色底。 */
+QFrame#issueCard {{
+    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
+    border-radius: {r['md']}px;
+}}
+QToolButton#issueToggle {{ background: transparent; border: none; border-radius: {r['sm']}px;
+    padding: 0; min-width: 20px; min-height: 20px; }}
+QToolButton#issueToggle:hover {{ background: {t['bg-hover']}; }}
+QLabel#issueTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#issueSummary {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+QLabel#issueEvidence {{ font-size: {f['caption']}px; color: {t['text-primary']}; }}
+QLabel#issueWarning {{ font-size: {f['caption']}px; color: {t['warning']}; }}
+QLabel#groupCaption {{ font-size: {f['label']}px; font-weight: 700; color: {t['text-muted']};
+    padding: 2px 2px 0 2px; }}
+QListWidget#issueList {{ background: {t['bg-surface-sunken']}; border: none;
+    border-radius: {r['sm']}px; font-size: {f['caption']}px; }}
 QLabel#attentionHeading {{ font-size: {f['label']}px; font-weight: 700; color: {t['warning']}; }}
 /* 底栏字数：本身可点（打开字数浮窗）。 */
 QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}

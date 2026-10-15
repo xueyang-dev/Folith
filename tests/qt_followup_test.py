@@ -330,3 +330,111 @@ def test_panel_shows_the_extraction_card(qapp):
     assert "文字层损坏" in panel.extraction_warning.text()
     panel.apply({"extraction": {"available": False}})
     assert panel.extraction_card.isHidden()
+
+
+# ------------------------------------------ acceptance-feedback #21–23 --------
+
+def _noisy_import_state():
+    state = _entity_state()
+    state["extraction_report"] = {
+        "extracted": {"paragraphs": 3, "pages": 1},
+        "warnings": [
+            "文档画像失败（画像缺少关键字段：文档画像缺少 domain（领域）），已跳过；可在 UI 中人工填写。",
+            "s1-unit-0001：语义摘要失败（Connection error.）",
+            "s1-unit-0002：语义摘要失败（Connection error.）",
+            "全文概要失败（Connection error.）",
+            "第 3 页文字层损坏，已改用识别",
+        ]}
+    state["section_digests"] = [{"unit_id": "s1-unit-0001", "status": "deterministic_fallback"},
+                                {"unit_id": "s1-unit-0002", "status": "deterministic_fallback"}]
+    return state
+
+
+def test_understanding_and_profile_failures_leave_the_import_report(tmp_path, monkeypatch):
+    """导入范围只留导入本身的警告；理解与画像的失败各成一项，原因说人话、带动作。"""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    core.save_job_state("noisyimport00001", _noisy_import_state())
+    view = adapter.followup_view("noisyimport00001")
+    assert view["extraction"]["warnings"] == ["第 3 页文字层损坏，已改用识别"]
+    assert view["understanding"]["status"] == "degraded"
+    assert "连不上模型服务" in view["understanding"]["reason"]
+    assert view["profile"]["missing"] is True and "领域" in view["profile"]["reason"]
+
+    state = _noisy_import_state()
+    state["document_profile"] = {"domain": "文学"}  # 用户已经补填
+    core.save_job_state("noisyimport00002", state)
+    assert adapter.followup_view("noisyimport00002")["profile"]["missing"] is False
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Connection error.", "连不上模型服务"),
+    ("Request timed out", "超时"),
+    ("Error code: 401 - invalid_api_key", "API Key"),
+    ("", ""),
+])
+def test_failures_are_explained_in_plain_words(raw, expected):
+    assert expected in adapter.explain_failure(raw)
+
+
+def test_common_nouns_and_determiner_variants_are_not_name_conflicts():
+    """「the bear」：模型把普通名词标成了专名，「熊 / 那头熊」只差一个指示词——都不该提示。
+    「Ella」：埃拉 / 艾拉 是真的两种译名，必须提示。"""
+    from folith import consistency
+
+    registry = core._entity_registry.EntityRegistry()
+    for source, target, index in (("the bear", "熊", 0), ("the bear", "那头熊", 1),
+                                  ("Ella", "埃拉", 2), ("Ella", "艾拉", 3),
+                                  ("Bear", "熊", 4), ("Bear", "那头熊", 5)):
+        registry.observe(source, target, segment_id=index, entity_type="named_object")
+    pairs = [{"source": "The bear slept.", "target": "熊睡着了。"},
+             {"source": "Then the bear woke.", "target": "然后那头熊醒了。"},
+             {"source": "Ella sang.", "target": "埃拉唱歌。"},
+             {"source": "Ella left.", "target": "艾拉走了。"},
+             {"source": "Bear came.", "target": "熊来了。"},
+             {"source": "Bear went.", "target": "那头熊走了。"}]
+    sources = [item["source"] for item in consistency.findings(registry.records, pairs)]
+    assert sources == ["Ella"]
+    assert consistency.is_common_noun("the bear") and not consistency.is_common_noun("the Shire")
+    assert not consistency.is_common_noun("莉迪亚") and not consistency.is_common_noun("Café")
+
+
+def test_every_item_has_one_shape_and_the_badge_counts_items(qapp):
+    from folith.qt.followup_panel import FollowupPanel, IssueCard
+
+    panel = FollowupPanel()
+    panel.apply({
+        "failures": [{"batch": 3, "start": 20, "end": 24, "count": 5,
+                      "reason": "批次翻译失败（5 段）：Connection error."}],
+        "understanding": {"status": "degraded", "degraded_units": ["u1"], "total_units": 4,
+                          "reason": "连不上模型服务，请检查网络、代理和 API 地址。"},
+        "profile": {"missing": True, "reason": ""},
+        "recovery": {"current_batch": {"number": 3, "regenerate_segments": 2},
+                     "can_resume": True, "total_batches": 9, "completed_batch_count": 2},
+        "busy": False})
+    assert panel.issue_count() == 4 and panel.worst_tone() == "danger"
+    assert panel.empty.isHidden() and "4" in panel.overview.text()
+    assert "连不上模型服务" in panel.failures_card.summary.text()
+    for card in panel.issue_cards():
+        assert isinstance(card, IssueCard) and card.title.text()
+    # 失败批次的证据收在详情里；没选中也能定位到第一批。
+    assert not panel.failures_card.expanded()
+    located = []
+    panel.locateRequested.connect(located.append)
+    panel.failures_locate.click()
+    assert located == [20]
+    panel.apply({"busy": True, "recovery": {"current_batch": {"number": 3}, "can_resume": True}})
+    assert panel.recovery_card.isHidden(), "运行中不提示「翻译中断」"
+    assert panel.issue_count() == 0 and not panel.empty.isHidden()
+
+
+def test_entity_evidence_links_locate_the_segment(qapp, job):
+    from folith.qt.followup_panel import FollowupPanel
+
+    panel = FollowupPanel()
+    panel.apply(adapter.followup_view(job))
+    text = panel.entity_variants.text()
+    assert "seg:0" in text and "seg:1" in text
+    located = []
+    panel.locateRequested.connect(located.append)
+    panel.entity_variants.linkActivated.emit("seg:1")
+    assert located == [1]
