@@ -56,26 +56,29 @@ __all__ = [
 #: Workflow presets.  A preset is a *template*: the effective configuration is
 #: the preset's values, optionally adjusted in the advanced section.
 STRATEGY_PRESETS: Dict[str, Dict[str, Any]] = {
+    # 快速 is genuinely faster (acceptance feedback 13.5 B): bigger batches,
+    # higher concurrency and no per-batch knowledge feedback.  Before this it
+    # differed from 标准 by +6 % calls only, which no user could feel.
     "快速": {
         "auto_term": False, "use_tm": True,
         "enable_understanding": False,
         "enable_review": False, "strict_terminology_governance": False,
-        "segmentation_mode": "sentence", "translation_concurrency": 4,
-        "batch_profile": "保守",
+        "segmentation_mode": "sentence", "translation_concurrency": 6,
+        "batch_profile": "均衡", "knowledge_feedback": False,
     },
     "标准": {
         "auto_term": True, "use_tm": True,
         "enable_understanding": True,
         "enable_review": False, "strict_terminology_governance": False,
         "segmentation_mode": "sentence", "translation_concurrency": 4,
-        "batch_profile": "保守",
+        "batch_profile": "保守", "knowledge_feedback": True,
     },
     "学术增强": {
         "auto_term": True, "use_tm": True,
         "enable_understanding": True,
         "enable_review": True, "strict_terminology_governance": True,
         "segmentation_mode": "sentence", "translation_concurrency": 4,
-        "batch_profile": "保守",
+        "batch_profile": "保守", "knowledge_feedback": True,
     },
 }
 STRATEGY_PRESET_KEYS: Tuple[str, ...] = tuple(STRATEGY_PRESETS)
@@ -101,9 +104,9 @@ STRATEGY_PRESET_LABELS: Dict[str, str] = {
 #: (``app.py:_preset_card_html``, with expectation / workflow / trade-off
 #: metrics); this table is the short form for surfaces with one line of room.
 STRATEGY_PRESET_SUMMARIES: Dict[str, str] = {
-    "快速": "优先处理效率",
-    "标准": "质量与效率兼顾",
-    "学术增强": "更充分的质量检查",
+    "快速": "只翻译，适合先看个大概或内部阅读",
+    "标准": "加文档画像与术语识别，适合正式翻译",
+    "学术增强": "每一段再由模型独立审校，并锁定已确认术语",
 }
 
 #: Batch strategy: a bigger batch means fewer calls (faster) but a higher risk
@@ -342,6 +345,7 @@ def delivery_items_for_source(items: Iterable[Mapping[str, Any]],
 #: ignored by the core, so this stays additive.
 PANEL_STATE_KEYS: Tuple[str, ...] = (
     "strategy_preset", "batch_profile", "translation_concurrency",
+    "knowledge_feedback",
     "enable_review", "strict_terminology_governance", "translation_theory",
     "ocr_language", "ocr_mode", "ocr_backend", "ocr_quality",
     # 原文语言（「准备」页选择或由智能画像识别）：读扫描页时交给视觉模型。

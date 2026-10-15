@@ -3930,6 +3930,7 @@ def task_setup_view(config: EngineConfig, job_id: str,
             "translation_concurrency": int(_pick(
                 state, "translation_concurrency", config.translation_concurrency) or 4),
             "batch_profile": str(_pick(state, "batch_profile", "保守") or "保守"),
+            "knowledge_feedback": bool(_pick(state, "knowledge_feedback", True)),
         }
         preset = saved_preset or _task_setup.strategy_preset_for(strategy)
         delivery = dict(state.get("delivery_config") or {})
@@ -3988,6 +3989,7 @@ def apply_task_setup(config: EngineConfig, job_id: str, setup: dict) -> None:
         "segmentation_mode": str(strategy.get("segmentation_mode") or "sentence"),
         "translation_concurrency": int(strategy.get("translation_concurrency") or 4),
         "batch_profile": str(strategy.get("batch_profile") or "保守"),
+        "knowledge_feedback": bool(strategy.get("knowledge_feedback", True)),
         "strategy_preset": str(setup.get("strategy_preset") or ""),
         "translation_theory": str(
             setup.get("translation_theory") or config.translation_theory),
@@ -4013,6 +4015,118 @@ def apply_task_setup(config: EngineConfig, job_id: str, setup: dict) -> None:
             project_id=setup.get("project_id"))
     except _commands.ApplicationError as exc:
         raise AdapterError(str(exc)) from exc
+
+
+# ---- 翻译模式的成本预估（acceptance-feedback 13.5 B / 13.6-3） -------------------
+#
+# 系数来自同一份 239 段 / 31,775 字符的基准文档（benchmark/translation-efficiency），
+# 真实流水线与提示词、本地 stub 代替模型，三种模式各跑一次（P7 复测，2026-10-15）：
+#
+#   快速   翻译 67 次 / 3.4 万输入 token；无辅助
+#   标准   翻译 95 次 / 4.4 万；辅助（画像、摘要、知识反馈）54 次 / 2.2 万
+#   精细   翻译 95 次 / 4.4 万；辅助 66 次 / 2.5 万；独立审校 61 次 / 6.9 万
+#
+# 单次耗时取真实大任务（The Midnight Library）的平均延迟：翻译 8.2 s、审校 7.7 s、
+# 辅助 8.4 s。只估输入 token（stub 的输出不可信）；术语注入、长上下文会让真实值偏高。
+_EST_CALLS_PER_BATCH = 1.6        # 按句切分后的翻译调用 / 段落批次
+_EST_TOKENS_PER_CALL = 346        # 每次翻译调用的固定开销（指令、上下文）
+_EST_TOKENS_PER_CHAR = 0.348      # 原文每字符折合的输入 token（翻译）
+_EST_UNDERSTANDING_PER_CHAR = 0.346
+_EST_UNDERSTANDING_CHARS_PER_CALL = 4500
+_EST_FEEDBACK_SHARE = 0.78        # 普通模式下做知识反馈的批次比例（严格模式每批都做）
+_EST_FEEDBACK_TOKENS_PER_CALL = 232
+_EST_REVIEW_CALLS_PER_TRANSLATION = 0.64
+_EST_REVIEW_PER_CHAR = 2.18
+_EST_SECONDS = {"translation": 8.2, "review": 7.7, "auxiliary": 8.4}
+
+
+def strategy_estimate(strategy: dict, segments: int, chars: int) -> dict:
+    """一种模式配置在这份文档上的大约调用次数、输入 token 与耗时（分钟）。
+
+    纯函数：读模式开关、批次与并发，不读任务、不调模型。数值是**估算**，界面必须
+    这样标注。
+    """
+    segments, chars = max(0, int(segments or 0)), max(0, int(chars or 0))
+    if not segments or not chars:
+        return {"calls": 0, "input_tokens": 0, "minutes": 0.0}
+    batch_size, max_chars = _task_setup.batch_params(strategy)
+    batches = max(segments / batch_size, chars / max_chars)
+    translation = _EST_CALLS_PER_BATCH * batches
+    tokens = translation * _EST_TOKENS_PER_CALL + chars * _EST_TOKENS_PER_CHAR
+    auxiliary = 0.0
+    strict = bool(strategy.get("strict_terminology_governance"))
+    if strategy.get("enable_understanding"):
+        auxiliary += max(2.0, chars / _EST_UNDERSTANDING_CHARS_PER_CALL)
+        tokens += chars * _EST_UNDERSTANDING_PER_CHAR
+    if strategy.get("knowledge_feedback", True) or strict:
+        feedback = batches * (1.0 if strict else _EST_FEEDBACK_SHARE)
+        auxiliary += feedback
+        tokens += feedback * _EST_FEEDBACK_TOKENS_PER_CALL
+    review = 0.0
+    if strategy.get("enable_review"):
+        review = translation * _EST_REVIEW_CALLS_PER_TRANSLATION
+        tokens += chars * _EST_REVIEW_PER_CHAR
+    concurrency = max(1, int(strategy.get("translation_concurrency") or 4))
+    seconds = (translation * _EST_SECONDS["translation"] + review * _EST_SECONDS["review"]
+               + auxiliary * _EST_SECONDS["auxiliary"]) / concurrency
+    return {"calls": int(round(translation + auxiliary + review)),
+            "input_tokens": int(round(tokens)),
+            "minutes": round(seconds / 60.0, 1)}
+
+
+#: 没有文字层的扫描页按每页这么多字符估（视觉理解要到开始翻译时才读）。
+_EST_CHARS_PER_SCANNED_PAGE = 1800
+_source_size_cache: dict[tuple[str, int], dict] = {}
+
+
+def source_size(job_id: str) -> dict:
+    """原文的段落数与字符数，给模式预估用（只读文字层，不 OCR、不调模型）。
+
+    任务开始前状态里还没有段落，所以从原文件读；结果按文件大小缓存。PDF 的扫描页
+    没有文字层时按页数估，``approximate`` 为 True。读不出来时返回空，界面不显示预估。
+    """
+    try:
+        data = core.load_source(job_id)
+    except Exception:  # noqa: BLE001 - 没有原文件就不预估
+        data = None
+    if not data:
+        return {}
+    key = (job_id, len(data))
+    if key in _source_size_cache:
+        return dict(_source_size_cache[key])
+    state = load_state(job_id)
+    filename = str(state.get("filename") or "")
+    try:
+        paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+            filename, data, ocr_mode="off", ocr_max_pages=0)
+    except Exception:  # noqa: BLE001 - 读不出就不预估，不阻塞准备页
+        paragraphs = []
+    paragraphs = [str(item) for item in paragraphs if str(item).strip()]
+    chars = sum(len(item) for item in paragraphs)
+    approximate = False
+    if filename.lower().endswith(".pdf"):
+        try:
+            from folith import pdf_preview
+
+            pages = int(pdf_preview.get_pdf_page_count(job_id))
+        except Exception:  # noqa: BLE001
+            pages = 0
+        if pages and chars < pages * 200:  # 大部分是扫描页
+            chars = pages * _EST_CHARS_PER_SCANNED_PAGE
+            paragraphs = paragraphs or [""] * (pages * 8)
+            approximate = True
+    result = {"segments": len(paragraphs), "chars": chars, "approximate": approximate} \
+        if chars else {}
+    _source_size_cache[key] = dict(result)
+    return result
+
+
+def strategy_estimates(size: dict) -> dict:
+    """三种预设在这份原文上的预估（键为预设的内部键）。"""
+    if not size:
+        return {}
+    return {key: strategy_estimate(config, size.get("segments", 0), size.get("chars", 0))
+            for key, config in _task_setup.STRATEGY_PRESETS.items()}
 
 
 def setup_choices() -> dict:

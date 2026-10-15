@@ -46,6 +46,7 @@ from . import icons
 from . import style as style_module
 from .style import Card
 from . import theme as theme_module
+from .workers import TaskRunner
 
 #: 理论框架下拉框的取值。显示"自动推荐（建议）"，落库的是核心认识的那句话
 #: （与 app.py 的 `_render_delivery_research_details` 同一套映射）。
@@ -89,7 +90,7 @@ _MODE_STEPS: tuple[tuple[str, str, str], ...] = (
 _MANAGED_STRATEGY_KEYS: tuple[str, ...] = (
     "auto_term", "use_tm", "enable_understanding", "enable_review",
     "strict_terminology_governance", "segmentation_mode",
-    "translation_concurrency", "batch_profile",
+    "translation_concurrency", "batch_profile", "knowledge_feedback",
 )
 
 #: 「识别语言」在两条提取路径上含义不同，提示语跟着换（键 = 是否本机 OCR）。
@@ -447,6 +448,31 @@ class DisclosureSection(QWidget):
         return self.button.isChecked()
 
 
+def _compact_count(value: int) -> str:
+    """3.4 万 / 34k：中文界面按万，其余按 k / M。"""
+    value = max(0, int(value or 0))
+    if i18n.language().startswith("zh"):
+        if value < 10000:
+            return format(value, ",")
+        return f"{value / 10000:.1f}".rstrip("0").rstrip(".") + " 万"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    return f"{round(value / 1000)}k" if value >= 1000 else str(value)
+
+
+def _duration(minutes: float) -> str:
+    minutes = float(minutes or 0)
+    if minutes < 1:
+        return i18n.tr('不到 1 分钟')
+    if minutes < 90:
+        return i18n.tr('约 {v0} 分钟', v0=int(round(minutes)))
+    return i18n.tr('约 {v0} 小时', v0=f"{minutes / 60:.1f}".rstrip("0").rstrip("."))
+
+
+def _ratio(value: float) -> str:
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
 class PresetOption(QPushButton):
     """一个翻译模式选项：图标 + 标题 + 一排工作流步骤小图标。
 
@@ -491,6 +517,15 @@ class PresetOption(QPushButton):
         self._description.setObjectName("presetDesc")
         self._description.setVisible(False)
         column.addLayout(head)
+        # 名称下两行短字：这份文档上的大约 token 与耗时（没有原文大小时隐藏）。
+        # 分两行是因为三段并排时每段只有一百多像素宽，放一行会被省略。
+        self._estimate = ElidedLabel("", self)
+        self._estimate_time = ElidedLabel("", self)
+        for label in (self._estimate, self._estimate_time):
+            label.setObjectName("presetDesc")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setVisible(False)
+            column.addWidget(label)
         # 工作流步骤只作为数据保存（悬停提示与面板的一句话说明都读它），不画图标。
         self.steps: dict[str, bool] = {label: bool(on) for _icon_name, label, on in steps}
         included = [label for label, on in self.steps.items() if on]
@@ -501,7 +536,23 @@ class PresetOption(QPushButton):
             tip.append(description)
         if included:
             tip.append(" · ".join(included))
-        self.setToolTip("\n".join(tip))
+        self._base_tooltip = "\n".join(tip)
+        self.setToolTip(self._base_tooltip)
+
+    def set_estimate(self, tokens: str, duration: str = "") -> None:
+        """这个模式在这份文档上的大约成本（acceptance-feedback 13.6-3）。"""
+        self._estimate_text = " · ".join(part for part in (tokens, duration) if part)
+        self._estimate.setText(tokens)
+        self._estimate.setVisible(bool(tokens))
+        self._estimate_time.setText(duration)
+        self._estimate_time.setVisible(bool(duration))
+        self.setToolTip("\n".join(part for part in (
+            self._base_tooltip, self._estimate_text) if part))
+        self.updateGeometry()
+
+    def estimate(self) -> str:
+        """完整的预估文字（标签在窄处会省略显示）。"""
+        return getattr(self, "_estimate_text", "")
 
     def setText(self, value: str) -> None:  # noqa: N802 - Qt 命名
         """按钮自己的文字永远是空的：文案由内部的两个标签承担。
@@ -607,6 +658,11 @@ class ModeSelector(QWidget):
     def button(self, key: str) -> PresetOption | None:
         return self._options.get(key)
 
+    def set_estimates(self, texts: dict[str, tuple[str, str]]) -> None:
+        for key, button in self._options.items():
+            tokens, duration = texts.get(key) or ("", "")
+            button.set_estimate(tokens, duration)
+
     def options(self) -> tuple[str, ...]:
         return tuple(self._options)
 
@@ -641,6 +697,10 @@ class TaskSetupPanel(QWidget):
         self._group_widgets: dict[str, QWidget] = {}
         self._delivery_groups: dict[str, "SettingsGroup"] = {}
         self._loading = False
+        # 模式成本预估：原文的段数与字符数在后台读一次（每个任务一次）。
+        self._size: dict = {}
+        self._size_job = ""
+        self._size_runner = TaskRunner(self, max_threads=1)
         #: 当前任务是不是 PDF。扫描件识别整块只对 PDF 出现（见 `_sync_ocr_visibility`）。
         self._is_pdf = False
         #: 研究产物那一组是否适用（由翻译策略决定）。汇总行不能用 ``isVisible()`` 判断：
@@ -736,6 +796,7 @@ class TaskSetupPanel(QWidget):
         self.tm_box.stateChanged.connect(self._on_advanced_changed)
         self.review_box.stateChanged.connect(self._on_advanced_changed)
         self.strict_terms_box.stateChanged.connect(self._on_advanced_changed)
+        self.knowledge_box.stateChanged.connect(self._on_advanced_changed)
         # 「建立文档画像」既是策略模板的一份子（要更新"已自定义"），也决定折叠摘要
         # 里的那段话，所以走一个同时管两件事的槽。
         self.understanding_box.stateChanged.connect(self._on_understanding_changed)
@@ -995,6 +1056,11 @@ class TaskSetupPanel(QWidget):
         advanced.addWidget(ToggleRow(
             i18n.tr('审定并锁定术语'), i18n.tr('审查候选术语，锁定已确认的译名'),
             self.strict_terms_box))
+        self.knowledge_box = style_module.CheckBox("")
+        advanced.addWidget(ToggleRow(
+            i18n.tr('每批知识反馈'),
+            i18n.tr('每批译完后记下专名与候选术语，保持前后译名一致；关闭可省约 15% token'),
+            self.knowledge_box))
 
         self.concurrency_box = style_module.ComboBox()
         for value in CONCURRENCY_OPTIONS:
@@ -1562,6 +1628,7 @@ class TaskSetupPanel(QWidget):
         """按视图回填控件（adapter.task_setup_view()）。"""
         self._view = dict(view or {})
         self._sync_profile_row()
+        self._request_source_size(str(self._view.get("job_id") or ""))
         self._loading = True
         try:
             # 左栏：这份文档本身（预览、页数、需要注意的地方）。
@@ -1614,6 +1681,7 @@ class TaskSetupPanel(QWidget):
             self.review_box.setChecked(bool(strategy.get("enable_review")))
             self.strict_terms_box.setChecked(
                 bool(strategy.get("strict_terminology_governance")))
+            self.knowledge_box.setChecked(bool(strategy.get("knowledge_feedback", True)))
             self._set_combo_data(self.concurrency_box,
                                  int(strategy.get("translation_concurrency") or 4))
             self.seg_mode_seg.set_value(
@@ -1697,6 +1765,7 @@ class TaskSetupPanel(QWidget):
         self.understanding_box.setChecked(bool(preset.get("enable_understanding")))
         self.strict_terms_box.setChecked(
             bool(preset.get("strict_terminology_governance")))
+        self.knowledge_box.setChecked(bool(preset.get("knowledge_feedback", True)))
         self.seg_mode_seg.set_value(str(preset.get("segmentation_mode") or "sentence"))
         self._set_combo_data(self.concurrency_box,
                              int(preset.get("translation_concurrency") or 4))
@@ -1809,7 +1878,67 @@ class TaskSetupPanel(QWidget):
         text = "、".join(included)
         if excluded:
             text = (text + " · " if text else "") + i18n.tr('不含{v0}', v0="、".join(excluded))
+        # 按**当前配置**（含自定义）估这份文档的成本（acceptance-feedback 13.6-3）。
+        estimate = self._current_estimate()
+        if estimate.get("calls"):
+            line = i18n.tr('预估：约 {v0} 次模型调用 · 输入约 {v1} token · {v2}',
+                           v0=format(estimate["calls"], ","),
+                           v1=_compact_count(estimate["input_tokens"]),
+                           v2=_duration(estimate["minutes"]))
+            base = adapter.strategy_estimates(self._size).get("标准") or {}
+            standard = self._preset_config("标准")
+            if base.get("input_tokens") and any(
+                    self._strategy_value(key) != value for key, value in standard.items()
+                    if key in _MANAGED_STRATEGY_KEYS):
+                line += i18n.tr('（约为「标准」的 {v0} 倍）', v0=_ratio(
+                    estimate["input_tokens"] / base["input_tokens"]))
+            text += "\n" + line
         self.mode_summary.setText(text)
+        if self._size:
+            tip = i18n.tr('按本文约 {v0} 段、{v1} 字符和基准实测比例估算，只计输入 token；'
+                          '术语多、上下文长时实际会更高。',
+                          v0=format(self._size.get("segments", 0), ","),
+                          v1=format(self._size.get("chars", 0), ","))
+            if self._size.get("approximate"):
+                tip += i18n.tr('扫描页按每页约 1,800 字估算。')
+            self.mode_summary.setToolTip(tip)
+        else:
+            self.mode_summary.setToolTip("")
+
+    # ---- 模式成本预估 ----------------------------------------------------------
+    def _request_source_size(self, job_id: str) -> None:
+        if job_id == self._size_job:
+            return
+        self._size_job = job_id
+        self._size = {}
+        self.mode_selector.set_estimates({})
+        if not job_id or self._view.get("started"):
+            return
+        self._size_runner.submit(
+            adapter.source_size, job_id, label="source-size",
+            on_done=lambda size, job=job_id: self._source_size_ready(job, size),
+            on_error=lambda *_args: None)
+
+    def _source_size_ready(self, job_id: str, size) -> None:
+        if job_id != self._size_job:
+            return  # the panel moved on to another task meanwhile
+        self._size = dict(size or {})
+        self.mode_selector.set_estimates({
+            key: (i18n.tr('{v0} token', v0=_compact_count(value["input_tokens"])),
+                  _duration(value["minutes"]))
+            for key, value in adapter.strategy_estimates(self._size).items()
+            if value.get("calls")})
+        self._sync_mode_summary()
+
+    def _current_estimate(self) -> dict:
+        if not self._size:
+            return {}
+        strategy = {key: self._strategy_value(key) for key in _MANAGED_STRATEGY_KEYS}
+        return adapter.strategy_estimate(strategy, self._size.get("segments", 0),
+                                         self._size.get("chars", 0))
+
+    def source_size(self) -> dict:
+        return dict(self._size)
 
     def _sync_strategy_note(self) -> None:
         """自定义状态：由**实际生效的配置**推出来，不是"某个控件响过信号"。
@@ -1864,6 +1993,7 @@ class TaskSetupPanel(QWidget):
             "segmentation_mode": self.seg_mode_seg.value(),
             "translation_concurrency": int(self.concurrency_box.currentData() or 4),
             "batch_profile": self.batch_seg.value(),
+            "knowledge_feedback": self.knowledge_box.isChecked(),
         }.get(key)
 
     def _sync_batch_hint(self) -> None:
@@ -2029,6 +2159,7 @@ class TaskSetupPanel(QWidget):
                 "segmentation_mode": str(self.seg_mode_seg.value() or "sentence"),
                 "translation_concurrency": int(self.concurrency_box.currentData() or 4),
                 "batch_profile": str(self.batch_seg.value() or "保守"),
+                "knowledge_feedback": self.knowledge_box.isChecked(),
             },
             "delivery": delivery,
             "translation_theory": str(theory),

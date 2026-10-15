@@ -1445,5 +1445,19 @@
   "正在导入…": "Importando…",
   "正在启动…": "Iniciando…",
   "任务正在启动，请稍候。": "La tarea se está iniciando; espera un momento.",
-  "另一个任务正在启动，请等它启动后再开始这个任务。": "Otra tarea se está iniciando; inicia esta cuando haya arrancado."
+  "另一个任务正在启动，请等它启动后再开始这个任务。": "Otra tarea se está iniciando; inicia esta cuando haya arrancado.",
+  "精细": "Exhaustivo",
+  "只翻译，适合先看个大概或内部阅读": "Solo traducción: para una primera lectura o uso interno",
+  "加文档画像与术语识别，适合正式翻译": "Añade perfil del documento y detección de términos: para traducción formal",
+  "每一段再由模型独立审校，并锁定已确认术语": "Cada segmento se revisa de forma independiente y se bloquean los términos confirmados",
+  "每批知识反馈": "Retroalimentación de conocimiento por lote",
+  "每批译完后记下专名与候选术语，保持前后译名一致；关闭可省约 15% token": "Tras cada lote registra nombres y términos candidatos para mantener la coherencia; desactivarlo ahorra un 15 % de tokens",
+  "不到 1 分钟": "menos de 1 min",
+  "约 {v0} 分钟": "~{v0} min",
+  "约 {v0} 小时": "~{v0} h",
+  "{v0} token": "{v0} tokens",
+  "预估：约 {v0} 次模型调用 · 输入约 {v1} token · {v2}": "Estimación: ~{v0} llamadas al modelo · ~{v1} tokens de entrada · {v2}",
+  "（约为「标准」的 {v0} 倍）": " (aprox. {v0}× Estándar)",
+  "按本文约 {v0} 段、{v1} 字符和基准实测比例估算，只计输入 token；术语多、上下文长时实际会更高。": "Estimado a partir de ~{v0} segmentos y {v1} caracteres de este documento con proporciones medidas; solo tokens de entrada. Muchos términos o un contexto largo costarán más.",
+  "扫描页按每页约 1,800 字估算。": " Las páginas escaneadas se cuentan como unos 1.800 caracteres."
 }

@@ -34,6 +34,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
+        "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "high",
         "ocr_dpi": 300,
@@ -79,6 +80,7 @@
         "enable_review",
         "enable_source_cleanup",
         "enable_understanding",
+        "knowledge_feedback",
         "literature_sources",
         "max_batch_chars",
         "model",
@@ -107,7 +109,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "3ece74a5cc5717c979a7909939b4613398c30fb5c71870cb82a5e4c397e0b1eb"
+      "fingerprint": "95a7c79d3802745b1447347a06671a0feff45353f3ef7652e07c37d3fc3f4a59"
     },
     "qt_new_pdf_job": {
       "config": {
@@ -137,6 +139,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
+        "knowledge_feedback": true,
         "ocr_language": "",
         "ocr_quality": "standard",
         "ocr_dpi": null,
@@ -176,6 +179,7 @@
         "enable_review",
         "enable_source_cleanup",
         "enable_understanding",
+        "knowledge_feedback",
         "literature_sources",
         "max_batch_chars",
         "model",
@@ -204,7 +208,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "14a53035c1bf0f2771dfcf81638f6b63a575fef8709e044ed2ce1779c12360ec"
+      "fingerprint": "57b72d80f0138c628a784441630361cec2a02b17fa26c3a3c135ba06be7fe6ef"
     },
     "resumed_pdf_job": {
       "config": {
@@ -240,6 +244,7 @@
         "translation_concurrency": 4,
         "batch_size": 8,
         "max_batch_chars": 6400,
+        "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "historical",
         "ocr_dpi": 350,
@@ -284,6 +289,7 @@
         "enable_review",
         "enable_source_cleanup",
         "enable_understanding",
+        "knowledge_feedback",
         "literature_sources",
         "max_batch_chars",
         "model",
@@ -308,7 +314,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "cad7453006236d13c07e78924c038b5640beb2905239d83d2ce59cdfb1653ac4"
+      "fingerprint": "4d1737fd05bc57d624605508752088a94196bc23c4c7b15877b9751c67f94629"
     }
   }
 }

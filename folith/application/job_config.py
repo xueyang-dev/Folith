@@ -115,6 +115,7 @@ JOB_CONFIG_KWARG_KEYS = frozenset({
     "use_tm", "enable_understanding", "enable_source_cleanup",
     "strict_terminology_governance", "segmentation_mode",
     "translation_concurrency", "batch_size", "max_batch_chars",
+    "knowledge_feedback",
     "ocr_language", "ocr_quality", "ocr_dpi", "ocr_psm", "ocr_mode",
     "ocr_backend", "ocr_paddle_model", "ocr_online",
     "research_settings", "literature_sources", "delivery_config",
@@ -280,6 +281,8 @@ class JobConfig:
     translation_concurrency: int = DEFAULT_TRANSLATION_CONCURRENCY
     batch_size: int = DEFAULT_BATCH_SIZE
     max_batch_chars: int = DEFAULT_MAX_BATCH_CHARS
+    #: per-batch knowledge feedback (name continuity, term candidates); 快速 is off
+    knowledge_feedback: bool = True
 
     # -- OCR / visual source ---------------------------------------------
     ocr_language: str = ""
@@ -419,6 +422,7 @@ class JobConfig:
             values.get("batch_size"), DEFAULT_BATCH_SIZE, "batch_size")
         max_batch_chars = _normalize_positive_int(
             values.get("max_batch_chars"), DEFAULT_MAX_BATCH_CHARS, "max_batch_chars")
+        knowledge_feedback = _as_bool(values.get("knowledge_feedback"), default=True)
 
         # -- OCR / visual source -------------------------------------------------
         ocr_language = _as_text(values.get("ocr_language")).strip()
@@ -468,6 +472,7 @@ class JobConfig:
             translation_concurrency=translation_concurrency,
             batch_size=batch_size,
             max_batch_chars=max_batch_chars,
+            knowledge_feedback=knowledge_feedback,
             ocr_language=ocr_language,
             ocr_quality=ocr_quality,
             ocr_dpi=ocr_dpi,
@@ -554,6 +559,7 @@ class JobConfig:
             "translation_concurrency": int(self.translation_concurrency),
             "batch_size": int(self.batch_size),
             "max_batch_chars": int(self.max_batch_chars),
+            "knowledge_feedback": bool(self.knowledge_feedback),
             "ocr_language": self.ocr_language,
             "ocr_quality": self.ocr_quality,
             "ocr_dpi": self.ocr_dpi,

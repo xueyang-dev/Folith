@@ -231,9 +231,15 @@ _TASK_FIELDS: Tuple[_Field, ...] = (
     _Field("strict_terminology_governance",
            state_keys=("strict_terminology_governance", "quality_mode")),
     _Field("segmentation_mode", truthy=True, state_derived="locked_segmentation"),
-    _Field("translation_concurrency", truthy=True),
-    _Field("batch_size", truthy=True),
-    _Field("max_batch_chars", truthy=True),
+    # Like auto_term / enable_review above: the preparation panel saves the
+    # preset's concurrency and batch profile into the job state; without these
+    # the global EngineConfig won and a 快速 task ran with 标准's batches.
+    _Field("translation_concurrency", truthy=True, state_keys=("translation_concurrency",)),
+    _Field("batch_size", truthy=True, state_derived="batch_profile_size"),
+    _Field("max_batch_chars", truthy=True, state_derived="batch_profile_chars"),
+    # Per-batch knowledge feedback (name continuity, term candidates).  快速
+    # switches it off; absent means on.
+    _Field("knowledge_feedback", state_keys=("knowledge_feedback",)),
     _Field("ocr_language"),
     _Field("ocr_quality", truthy=True),
     _Field("ocr_dpi"),
@@ -291,6 +297,19 @@ def _locked_segmentation(state: Mapping[str, Any]) -> Any:
     return _MISSING
 
 
+def _batch_profile_value(state: Mapping[str, Any], kind: str) -> Any:
+    """``batch_size`` / ``max_batch_chars`` of the batch profile the task saved."""
+    profile = _text(state.get("batch_profile")).strip()
+    if not profile:
+        return _MISSING
+    from folith.application.task_setup import BATCH_PROFILES  # noqa: PLC0415
+
+    values = BATCH_PROFILES.get(profile)
+    if not values:
+        return _MISSING
+    return values["batch_size" if kind == "batch_profile_size" else "max_batch_chars"]
+
+
 def _persisted_default(kind: str, state: Mapping[str, Any]) -> Any:
     if kind == "understanding":
         # A legacy in-progress job had no understanding pass outside strict
@@ -345,8 +364,12 @@ def _resolve_task_field(spec: _Field, sources: SettingsSources,
         if key in state and (not spec.truthy or state[key]):
             return state[key], "job_state"
     if spec.state_derived:
-        derived = (_locked_segmentation(state) if spec.state_derived == "locked_segmentation"
-                   else _MISSING)
+        if spec.state_derived == "locked_segmentation":
+            derived = _locked_segmentation(state)
+        elif spec.state_derived in ("batch_profile_size", "batch_profile_chars"):
+            derived = _batch_profile_value(state, spec.state_derived)
+        else:
+            derived = _MISSING
         if derived is not _MISSING:
             return derived, "job_state_derived"
     if spec.persisted_default and persisted:

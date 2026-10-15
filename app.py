@@ -13032,6 +13032,7 @@ def _settings_sources(state=None):
         "translation_concurrency": strategy_config.get("translation_concurrency", 4),
         "batch_size": batch_size,
         "max_batch_chars": max_batch_chars,
+        "knowledge_feedback": strategy_config.get("knowledge_feedback", True),
         "delivery_config": output_config,
     }
     profile = core.load_provider_config() or {}

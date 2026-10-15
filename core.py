@@ -4585,6 +4585,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                     on_status=None, on_caption=None, translator_config=None,
                     reviewer_config=None, batch_size=None, max_batch_chars=None,
                     auxiliary_config=None, knowledge_feedback_interval=None,
+                    knowledge_feedback=True,
                     translation_concurrency=None, profiler=None,
                     review_overlap=None, max_review_in_flight=None,
                     review_overlap_strategy=None, use_translation_cache=True,
@@ -5035,9 +5036,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             feedback_interval = 1
     force_knowledge_feedback = bool(
         state.get("quality_mode") or feedback_interval <= 1)
+    # 快速 switches per-batch feedback off (``knowledge_feedback=False``).  Strict
+    # terminology governance still requires it, so it wins over the switch.
+    knowledge_feedback_off = not knowledge_feedback and not force_knowledge_feedback
     state["knowledge_feedback_policy"] = {
         "interval": feedback_interval,
         "force_every_batch": force_knowledge_feedback,
+        "disabled": knowledge_feedback_off,
         "batch_count": len(batches),
         "observed_batches": [],
         "skipped_batches": [],
@@ -6096,14 +6101,17 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 str(alias or "").casefold()
                 for alias in _record.get("aliases") or [])
         _knowledge_known_forms.discard("")
-        knowledge_due, knowledge_reason = _knowledge.should_run_knowledge_feedback(
-            batch_index=bi, batch_count=len(batches),
-            interval=feedback_interval,
-            sources=[batch_sources[j] for j in accepted_for_knowledge],
-            known_forms=_knowledge_known_forms,
-            accepted_count=len(accepted_for_knowledge),
-            force_every_batch=force_knowledge_feedback,
-        )
+        if knowledge_feedback_off:
+            knowledge_due, knowledge_reason = False, "disabled_by_strategy"
+        else:
+            knowledge_due, knowledge_reason = _knowledge.should_run_knowledge_feedback(
+                batch_index=bi, batch_count=len(batches),
+                interval=feedback_interval,
+                sources=[batch_sources[j] for j in accepted_for_knowledge],
+                known_forms=_knowledge_known_forms,
+                accepted_count=len(accepted_for_knowledge),
+                force_every_batch=force_knowledge_feedback,
+            )
         knowledge_cache_hit = False
         if knowledge_due:
             _policy = state["knowledge_feedback_policy"]
@@ -10555,6 +10563,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                      auxiliary_provider=None, auxiliary_api_key=None,
                      auxiliary_model=None, auxiliary_base_url=None,
                      knowledge_feedback_interval=None,
+                     knowledge_feedback=True,
                      enable_source_cleanup=None,
                      reasoning_effort=None, source_cleanup_concurrency=None,
                      ocr_workers=None, ocr_queue_size=None,
@@ -10782,6 +10791,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         "enable_annotate": bool(enable_annotate),
         "use_tm": bool(use_tm),
         "strict_terminology_governance": bool(strict_terminology_governance),
+        # 每批知识反馈开关随任务保存：快速档关闭，恢复时沿用。
+        "knowledge_feedback": bool(knowledge_feedback),
         # 批次参数随任务保存：恢复任务必须沿用原配置，否则同一任务的批次划分
         # 会在中途变化。
         "batch_size": int(batch_size or BATCH_SIZE),
@@ -11404,6 +11415,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                             max_batch_chars=_batch_cfg.get("max_batch_chars", max_batch_chars),
                             knowledge_feedback_interval=_batch_cfg.get(
                                 "knowledge_feedback_interval", knowledge_feedback_interval),
+                            knowledge_feedback=_batch_cfg.get(
+                                "knowledge_feedback", knowledge_feedback),
                             translation_concurrency=_batch_cfg.get(
                                 "translation_concurrency", translation_concurrency),
                             profiler=profiler,
