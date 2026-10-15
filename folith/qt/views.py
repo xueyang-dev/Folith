@@ -351,7 +351,8 @@ class _TaskCard(Card):
     activated = Signal(str)
     attentionRequested = Signal(str)
     #: 卡片的最小宽度（px）：列数 = 可用宽度能放下几张这么宽的卡。
-    MIN_WIDTH = 200
+    MIN_WIDTH = 180
+    MAX_WIDTH = 236
 
     def __init__(self, row: adapter.JobRow, *, tone: str,
                  parent: QWidget | None = None) -> None:
@@ -361,6 +362,8 @@ class _TaskCard(Card):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(i18n.tr('单击选中；双击打开任务'))
         self.setMinimumWidth(self.MIN_WIDTH)
+        # 卡片不随窗口无限变宽：宽了只会在文档两侧留出大片空白（看起来像外框太大）。
+        self.setMaximumWidth(self.MAX_WIDTH)
         # 卡片视图是默认视图：纯键盘用户必须能用 Tab 进到卡片、方向键换卡、回车打开。
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(row.title or "")
@@ -370,15 +373,15 @@ class _TaskCard(Card):
         self.setProperty("selected", "false")
 
         column = QVBoxLayout(self)
-        column.setContentsMargins(0, 0, 0, theme_module.SPACE["md"])
+        column.setContentsMargins(0, 0, 0, theme_module.SPACE["sm"] + 2)
         column.setSpacing(theme_module.SPACE["sm"])
 
         # ---- 上半：文档示意 ----------------------------------------------
         thumb = QFrame()
         thumb.setObjectName("tileThumb")
-        thumb.setFixedHeight(136)
+        thumb.setFixedHeight(118)
         thumb_layout = QGridLayout(thumb)
-        thumb_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["sm"],
+        thumb_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["xs"] + 2,
                                         theme_module.SPACE["sm"], 0)
         badge_text = _row_format(row)
         # ⚠️ 子控件一律先给父对象再改可见性：对无父控件 setVisible(True) 会把它
@@ -390,7 +393,7 @@ class _TaskCard(Card):
         self.time_label.setObjectName("tileTime")
         self.time_label.setToolTip((row.updated_at or "").replace("T", " ")[:16])
         unreadable = bool(str(getattr(row, "error", "") or "").strip())
-        paper = components.DocThumb(72, 94, faded=unreadable)
+        paper = components.DocThumb(68, 88, faded=unreadable)
         paper.set_document(row.filename, row.segment_count)
         self.paper = paper
         self._motion = motion.Motion(self)
@@ -402,8 +405,8 @@ class _TaskCard(Card):
 
         # ---- 下半：文字 ----------------------------------------------------
         text = QVBoxLayout()
-        text.setContentsMargins(theme_module.SPACE["md"], 0, theme_module.SPACE["md"], 0)
-        text.setSpacing(theme_module.SPACE["xxs"] + 1)
+        text.setContentsMargins(theme_module.SPACE["sm"] + 4, 0, theme_module.SPACE["sm"] + 4, 0)
+        text.setSpacing(theme_module.SPACE["xxs"])
         title = style_module.ElideLabel(row.title or i18n.tr("未命名任务"),
                                         mode=Qt.TextElideMode.ElideMiddle)
         title.setObjectName("taskCardTitle")
@@ -841,6 +844,7 @@ class HomeView(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.card_scroll.viewport().setAutoFillBackground(False)
         self.card_scroll.setWidget(self.card_page)
+        self.card_scroll.viewport().installEventFilter(self)
         self._cards: dict[str, _TaskCard] = {}
         self._project_names: dict[str, str] = {}
         self._card_columns_applied = 0
@@ -1351,27 +1355,58 @@ class HomeView(QWidget):
         self._set_view_mode(value)
         self.view_switch.set_value(self._view_mode)
 
+    def _cards_available(self) -> int:
+        """卡片区可用的宽度。
+
+        卡片区已经显示并布局好时，量它的视口（出现滚动条、首次布局落定都会改变它）；
+        否则按整页宽度估算——侧栏还在这一页里（独立使用、没交给窗口）时要扣掉它。
+        """
+        viewport = self.card_scroll.viewport()
+        if self.card_scroll.isVisible() and viewport.width() > 200:
+            return viewport.width() - 2 * theme_module.SPACE["md"]
+        sidebar = self.SIDEBAR_WIDTH if self.isAncestorOf(self.sidebar) else 0
+        return self.width() - sidebar - 2 * theme_module.SPACE["xl"] - 2 * theme_module.SPACE["md"]
+
+    def _card_width(self, columns: int) -> int:
+        """一行里的卡片等宽铺开，但不超过 MAX_WIDTH（再宽就只是文档两侧的空白）。"""
+        available = self._cards_available()
+        gap = theme_module.SPACE["lg"]
+        share = (available - gap * (columns - 1)) // max(1, columns)
+        return int(max(_TaskCard.MIN_WIDTH, min(_TaskCard.MAX_WIDTH, share)))
+
     def _card_columns(self) -> int:
         """能并排放下几张 ≥ ``_TaskCard.MIN_WIDTH`` 的卡（Golden Gate 的缩略图网格）。
 
         先看视图自己的宽度（滚动区在首次填充时往往还没被布局到最终尺寸），再减去侧栏、
         主区左右留白与容器卡的内边距。
         """
-        width = self.width() or self.card_scroll.viewport().width()
-        available = width - self.SIDEBAR_WIDTH - 2 * theme_module.SPACE["xl"] \
-            - 2 * theme_module.SPACE["md"]
+        available = self._cards_available()
         gap = theme_module.SPACE["lg"]
-        return max(1, min(6, (available + gap) // (_TaskCard.MIN_WIDTH + gap)))
+        # 按卡片的最大宽度排：窗口越宽列越多，而不是每张卡越宽。
+        return max(1, min(8, (available + gap) // (_TaskCard.MIN_WIDTH + gap + 20)))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         """窗口宽度跨过断点时重排卡片：否则列数会和可用宽度脱节。"""
         super().resizeEvent(event)
+        self._relayout_cards()
+
+    def _relayout_cards(self) -> None:
+        """卡片区宽度变了：列数变了就重排，没变就只把现有卡片调到新的等宽。
+
+        要看的是卡片滚动区视口的宽度（出现滚动条、首次布局落定都会改变它），
+        不只是整页的宽度——否则卡片停在填充那一刻算出的宽度上，右侧留出一条空白。
+        """
         if self._view_mode != "cards" or not self._cards:
             return
         columns = self._card_columns()
         if columns != self._card_columns_applied:
             self._fill_cards(self._visible_rows())
             self._sync_card_selection()
+            return
+        width = self._card_width(columns)
+        for card in self._cards.values():
+            if card.width() != width:
+                card.setFixedWidth(width)
 
     def _project_label(self, project_id: str) -> str:
         if not project_id:
@@ -1405,6 +1440,7 @@ class HomeView(QWidget):
 
         columns = self._card_columns()
         self._card_columns_applied = columns
+        card_width = self._card_width(columns)
         for project_id, items in groups.items():
             section = QWidget()
             section_layout = QVBoxLayout(section)
@@ -1425,6 +1461,7 @@ class HomeView(QWidget):
             grid.setVerticalSpacing(theme_module.SPACE["lg"])
             for position, row in enumerate(items):
                 card = _TaskCard(row, tone=_status_tone(row), parent=section)
+                card.setFixedWidth(card_width)
                 card.clicked.connect(self._select_job_from_card)
                 card.activated.connect(self._open_job_from_card)
                 card.attentionRequested.connect(self.checkRequested.emit)
@@ -1433,7 +1470,8 @@ class HomeView(QWidget):
                 self._cards[row.job_id] = card
                 self._request_preview(row.job_id, row.filename, card.paper)
             for column in range(columns):
-                grid.setColumnStretch(column, 1)
+                grid.setColumnStretch(column, 0)
+            grid.setColumnStretch(columns, 1)     # 多出来的宽度留在右侧，卡片保持紧凑
             section_layout.addLayout(grid)
             self.card_layout.addWidget(section)
         self.card_layout.addStretch(1)
@@ -1513,6 +1551,9 @@ class HomeView(QWidget):
         """表格拿到键盘焦点时给它一个"当前行即选中行"的起点（键盘可达性的前提）。"""
         if watched is getattr(self, "table", None) and event.type() == QEvent.Type.FocusIn:
             self._select_current_row_for_keyboard()
+        if (event.type() == QEvent.Type.Resize and hasattr(self, "card_scroll")
+                and watched is self.card_scroll.viewport()):
+            QTimer.singleShot(0, self._relayout_cards)
         if watched is getattr(self, "engine_card", None) and (
                 event.type() == QEvent.Type.MouseButtonRelease
                 or (event.type() == QEvent.Type.KeyPress

@@ -495,7 +495,7 @@ class DocThumb(QWidget):
     def __init__(self, width: int = 74, height: int = 96, *, faded: bool = False,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(width + 22, height + 24)
+        self.setFixedSize(width + 16, height + 18)
         self._page = QSize(width, height)
         self._faded = faded
         self._image: QImage | None = None
@@ -542,7 +542,7 @@ class DocThumb(QWidget):
         """页面在本控件里的位置（含抬起位移）：打开任务的过渡从这里出发。"""
         w, h = self._page.width(), self._page.height()
         rise = 4.0 * self._lift
-        return QRectF((self.width() - w) / 2 - 3, self.height() - h - 12 - rise, w, h)
+        return QRectF((self.width() - w) / 2 - 2, self.height() - h - 9 - rise, w, h)
 
     # ---- 绘制 ----
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名

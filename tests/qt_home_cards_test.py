@@ -135,7 +135,7 @@ def test_empty_list_shows_the_empty_state_in_both_views(home):
 
 
 def test_column_count_follows_the_window_width(home):
-    # 卡片至少 200px 宽（文档缩略图 + 两行文字放得下），列数 = 主区能放下几张。
+    # 卡片 180–236px 宽（更紧凑的外框，见 _TaskCard.MAX_WIDTH），列数 = 主区能放下几张。
     home.resize(1400, 900)
     assert home._card_columns() == 5
     home.resize(1000, 900)
