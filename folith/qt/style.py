@@ -439,28 +439,30 @@ QWidget#sidebar {{
 }}
 QWidget#sidebar QLabel {{ background: transparent; }}
 QPushButton#navItem {{
-    background: transparent; border: none;
+    background: transparent; border: 1px solid transparent;
     border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['sm']}px;
-    min-height: {box('lg', pad_y=sp['xs'], border=0)}px; text-align: left; color: {t['text-secondary']};
-    font-weight: 500;
+    min-height: {box('lg', pad_y=sp['xs'], border=1)}px; text-align: left; color: {t['text-secondary']};
+    font-size: {f['reading']}px; font-weight: 500;
 }}
 QPushButton#navItem:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
-/* 选中 = 浅色底 + **左侧强调条** + 强调色双色图标（图标颜色由图标引擎按 QIcon.State.On
-   给出，这里只管底与条）。 */
+/* 选中 = 浅色底 + **一圈强调色描边**（2026-10-16 验收：只有浅底时太不醒目）+ 强调色
+   双色图标（图标颜色由图标引擎按 QIcon.State.On 给出，这里只管底与框）。 */
 QPushButton#navItem:checked {{
-    background: {t['accent-soft']}; color: {t['brand-ink']}; font-weight: 600;
+    background: {t['accent-soft']}; border-color: {t['accent']};
+    color: {t['brand-ink']}; font-weight: 600;
 }}
 /* 侧栏小节标题（"最近项目"）与项目条目 */
-QLabel#navSection {{ font-size: {f['caption']}px; font-weight: 500; color: {t['text-muted']}; }}
+QLabel#navSection {{ font-size: {f['footnote']}px; font-weight: 500; color: {t['text-muted']}; }}
 QPushButton#navProject {{
-    background: transparent; border: none;
+    background: transparent; border: 1px solid transparent;
     border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['sm']}px;
-    min-height: {box('md', pad_y=sp['xs'], border=0)}px; text-align: left; color: {t['text-secondary']};
-    font-weight: 500;
+    min-height: {box('md', pad_y=sp['xs'], border=1)}px; text-align: left; color: {t['text-secondary']};
+    font-size: {f['body']}px; font-weight: 500;
 }}
 QPushButton#navProject:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#navProject:checked {{
-    background: {t['accent-soft']}; color: {t['brand-ink']}; font-weight: 600;
+    background: {t['accent-soft']}; border-color: {t['accent']};
+    color: {t['brand-ink']}; font-weight: 600;
 }}
 /* 侧栏底部（引擎状态 + 配置入口）：一条 1px 分隔 + 透明底，不再是一张浮起的小卡。
    它贴着侧栏底边，是"常驻的属性区"，不是内容卡片。 */
