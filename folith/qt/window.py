@@ -1625,8 +1625,10 @@ class MainWindow(QMainWindow):
 
         def done(new_state) -> None:
             if job_id == self._current_job_id:
-                self.workbench.settle_saved(index)
-                self.workbench.confirm_saved(index)
+                if not any(queued_job == job_id and queued_index == index
+                           for queued_job, queued_index, _ in self._edit_queue):
+                    self.workbench.settle_saved(index)
+                    self.workbench.confirm_saved(index)
                 self._notice(i18n.tr('已提交人工修改。修改会进入交付内容，需要重新审校后才能冻结交付。'))
                 if isinstance(new_state, dict) and not self._edit_queue:
                     # The writer hands back the state it just saved (its own
@@ -1643,7 +1645,9 @@ class MainWindow(QMainWindow):
 
         def failed(message: str, detail: str) -> None:
             if job_id == self._current_job_id:
-                self.workbench.settle_saved(index)
+                if not any(queued_job == job_id and queued_index == index
+                           for queued_job, queued_index, _ in self._edit_queue):
+                    self.workbench.settle_saved(index)
                 self._failure(i18n.tr('无法提交'), message, detail)
                 self.refresh_workbench(force=True)  # show what is really on disk
             self._save_next_edit()

@@ -3989,3 +3989,25 @@ def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, mo
     assert not dialog.progress._wants_sheen()
     held.calls[0]["on_error"]("Failed", "detail")
     assert not dialog.isVisible() and window.home.import_button.isEnabled()
+
+
+def test_save_acknowledges_latest_queued_text_only(client, monkeypatch):
+    window = client["window"]
+    job_a, _ = _two_jobs(client)
+    window.open_job(job_a)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(window, "refresh_workbench", lambda **kw: None)
+    monkeypatch.setattr(window, "_offer_repetitions", lambda *a, **kw: None)
+    confirmed = []
+    monkeypatch.setattr(window.workbench, "confirm_saved", confirmed.append)
+    index = window.workbench.current_index()
+    window.workbench.target_edit.setPlainText("first")
+    window.submit_edit(index)
+    window.flush_edits_now()
+    window.workbench.target_edit.setPlainText("latest")
+    window.submit_edit(index)
+    held.calls[0]["on_done"]({})
+    assert not confirmed and window.workbench._pending_saved[index] == "latest"
+    held.calls[1]["on_done"]({})
+    assert confirmed == [index] and index not in window.workbench._pending_saved
