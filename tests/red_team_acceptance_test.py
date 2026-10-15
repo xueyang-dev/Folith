@@ -807,6 +807,19 @@ def test_external_evidence_attack_and_prompt_scan():
             if isinstance(node, ast.Constant) and isinstance(node.value, str) \
                     and node.value.startswith(("http://", "https://")):
                 transport_url_lines.add((function_path, first_line + node.lineno - 1))
+    # P5 support navigation and the manually requested release check are UI /
+    # transport configuration, not model-authored citation evidence. Allow only
+    # these four assignments; prompts elsewhere in the file remain scanned.
+    support_path = "folith/qt/support.py"
+    with open(os.path.join(repo_root, support_path), encoding="utf-8") as stream:
+        support_tree = ast.parse(stream.read())
+    for node in support_tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in {
+                    "PROJECT_URL", "AUTHOR_URL", "ISSUES_URL", "RELEASES_API"}
+                for target in node.targets):
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                transport_url_lines.add((support_path, node.value.lineno))
     hits = subprocess.run(
         ["rg", "-n", "https?://", "core.py", "folith/", "scripts/"],
         capture_output=True, text=True).stdout

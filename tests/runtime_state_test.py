@@ -345,6 +345,7 @@ def test_pipeline_persists_resume_and_delivery_configuration(tmp_path):
             "enable_report": False, "translation_theory": "功能对等理论",
             "style_rules": "保留正式语域", "enable_review": True,
             "enable_annotate": True, "use_tm": False,
+            "knowledge_feedback": True,
             "strict_terminology_governance": False,
             # 批次参数必须随任务保存：恢复任务要沿用同一套批次划分
             "batch_size": core.BATCH_SIZE,

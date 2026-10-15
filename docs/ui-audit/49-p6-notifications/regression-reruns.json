@@ -1,0 +1,44 @@
+{
+  "method": "Full sequential per-file run, then reruns of corrected or unblocked files",
+  "files": 240,
+  "initial_passed_files": 234,
+  "initial_failed_or_blocked_files": 6,
+  "initial_pytest_cases_passed": 3701,
+  "initial_duration": "26m2s",
+  "reruns": {
+    "app_boot_test.py": {
+      "status": "passed",
+      "kind": "script",
+      "log": "build/p6-validation/app-boot-final.log"
+    },
+    "desktop_data_safety_test.py": {
+      "status": "passed",
+      "cases": 3,
+      "log": "build/p6-validation/data-safety.log"
+    },
+    "qt_client_adapter_test.py": {
+      "status": "passed",
+      "cases": 57,
+      "group_cases": 99,
+      "log": "build/p6-validation/timestamp.log"
+    },
+    "qt_macos_file_open_test.py": {
+      "status": "passed",
+      "cases": 14,
+      "log": "build/p6-validation/file-open-isolated.log"
+    },
+    "red_team_acceptance_test.py": {
+      "status": "passed",
+      "cases": 18,
+      "group_cases": 34,
+      "log": "build/p6-validation/baseline-final.log"
+    },
+    "runtime_state_test.py": {
+      "status": "passed",
+      "cases": 16,
+      "group_cases": 34,
+      "log": "build/p6-validation/baseline-final.log"
+    }
+  },
+  "unresolved_files": []
+}

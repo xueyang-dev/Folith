@@ -13,9 +13,16 @@
 from __future__ import annotations
 
 import ast
+import os
 import pathlib
 
 import pytest
+
+# Each regression file runs in its own process. Do not inherit automation
+# switches accidentally from another Qt test module.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
+os.environ["FOLITH_EXIT_FORCE_PROMPT"] = "0"
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -161,10 +168,8 @@ def client(tmp_path, monkeypatch, qt_app):
     from folith.desktop import paths as desktop_paths
     from folith.qt import adapter, i18n as i18n_module
 
-    settings = QSettings("Folith", "QtDesktop")
-    saved_language = settings.value("appearance/language")
-    settings.remove("appearance/language")
-    settings.sync()
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    monkeypatch.setattr(window_module, "QSettings", lambda *_args: settings)
     i18n_module.set_language("zh-CN")
 
     paths = desktop_paths.resolve_paths()
@@ -181,11 +186,6 @@ def client(tmp_path, monkeypatch, qt_app):
     finally:
         window.close()
         qt_app.processEvents()
-        if saved_language is None:
-            settings.remove("appearance/language")
-        else:
-            settings.setValue("appearance/language", saved_language)
-        settings.sync()
         i18n_module.set_language("zh-CN")
 
 

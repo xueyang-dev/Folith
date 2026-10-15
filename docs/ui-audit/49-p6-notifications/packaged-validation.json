@@ -1,0 +1,41 @@
+{
+  "raw_probe": "build/p6-validation/dmg-final/dmg-probe.json",
+  "raw_flow": "build/p6-validation/dmg-final/selftest.json",
+  "artifact": "dist/qt-desktop/local-1ed7f2d/Folith-Qt-0.5.0-macos-arm64.dmg",
+  "identity": {
+    "CFBundleIdentifier": "dev.folith.qt",
+    "CFBundleShortVersionString": "0.5.0",
+    "CFBundleVersion": "git:1ed7f2d",
+    "LSMinimumSystemVersion": "15.0.0"
+  },
+  "bytes": 200005446,
+  "sha256": "425858a8734ac01da1cff0567852eae89e8ae48405e3cdfd13a9889190af3c95",
+  "signed": false,
+  "notarized": false,
+  "checks": {
+    "verify_ok": true,
+    "identity_ok": true,
+    "ocr_payload_ok": true,
+    "smoke_ok": true,
+    "launchservices_ok": true,
+    "selftest_ok": true,
+    "no_leftover_processes": true,
+    "data_outside_bundle": true,
+    "upgrade_keeps_data": true,
+    "data_survives_app_removal": true,
+    "reinstalled_app_absent": true,
+    "ok": true
+  },
+  "probe_duration_s": 39.9,
+  "flow": {
+    "ok": true,
+    "heartbeat": {
+      "ticks": 373,
+      "max_gap_ms": 131.6,
+      "interval_ms": 50,
+      "worst_gaps": []
+    },
+    "failures": [],
+    "duration_s": 18.8
+  }
+}
