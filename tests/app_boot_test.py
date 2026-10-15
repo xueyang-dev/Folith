@@ -16,6 +16,10 @@ def main():
 
     tmp = Path(tempfile.mkdtemp(prefix="app-boot-"))
     old_dir = core.OUTPUT_DIR
+    saved_fetch_models = core.fetch_provider_models
+    # This UI smoke uses placeholder credentials. Automatic catalogue refresh
+    # must stay offline; the explicit catalogue action is stubbed below.
+    core.fetch_provider_models = lambda *args, **kwargs: (False, [], "offline fixture")
     core.OUTPUT_DIR = tmp
     try:
         app_source = (root / "app.py").read_text(encoding="utf-8")
@@ -332,6 +336,7 @@ def main():
 
         print("AppTest 启动测试通过 ✅")
     finally:
+        core.fetch_provider_models = saved_fetch_models
         core.OUTPUT_DIR = old_dir
         shutil.rmtree(tmp, ignore_errors=True)
 

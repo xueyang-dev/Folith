@@ -2,10 +2,8 @@
 
 Roadmap §3.2: "临时文件 / 可删缓存与任务资产分开，清缓存不能删除源文件、检查点或交付快照"。
 
-The product currently has **no** cache-clearing action, so the requirement is
-`NOT APPLICABLE` today — but the *separation* it depends on is real and must not
-regress: a future clear-cache feature may only touch the dedicated cache subtree,
-never a job's assets.  These tests pin that down.
+P5 added a cache-clearing action. It may only touch the dedicated derived
+cache entries, never a job's source, state, checkpoints or delivery snapshots.
 """
 from __future__ import annotations
 
@@ -57,13 +55,27 @@ def test_no_destructive_call_targets_task_assets():
     assert not offenders, "destructive call sites touching task assets: " + "; ".join(offenders)
 
 
-def test_cache_clearing_still_does_not_exist():
-    """If a clear-cache surface is added, this test must be updated with its safety case."""
-    pattern = re.compile(r"清理缓存|清除缓存|清空缓存|删除缓存|clear_cache")
-    hits = []
-    for path in _product_sources():
-        text = path.read_text(encoding="utf-8")
-        if pattern.search(text):
-            hits.append(str(path.relative_to(ROOT)))
-    assert not hits, ("a cache-clearing surface appeared; verify it cannot delete source "
-                      f"files, checkpoints or delivery snapshots, then update this test: {hits}")
+def test_cache_clearing_preserves_all_task_assets(tmp_path, monkeypatch):
+    from folith.qt import support
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = tmp_path / "0123456789abcdef"
+    retained = {}
+    for name in TASK_ASSETS:
+        path = job / name
+        if name.endswith(".json") or name.endswith(".bin"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            path = path / "evidence.dat"
+        payload = ("preserve " + name).encode()
+        path.write_bytes(payload)
+        retained[path] = payload
+    (tmp_path / "ocr_profile_cache").mkdir()
+    (tmp_path / "ocr_profile_cache" / "page.json").write_bytes(b"cache")
+    (tmp_path / "translation_cache.json").write_bytes(b"cache")
+    (tmp_path / "knowledge_cache.json").write_bytes(b"cache")
+    monkeypatch.setattr(support, "running_jobs", lambda: [])
+    assert support.clear_caches() == 15
+    assert all(path.read_bytes() == payload for path, payload in retained.items())
+    assert all(not (tmp_path / name).exists() for name in support.CACHE_ENTRIES)

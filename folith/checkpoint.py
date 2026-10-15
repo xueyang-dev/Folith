@@ -107,6 +107,23 @@ def read_events(job_root: Path) -> List[Dict[str, Any]]:
     return events
 
 
+def durable_saved_at(job_root: Path) -> str | None:
+    """Canonical saved time from state and checkpoint mtimes; no state read."""
+    root = Path(job_root)
+    durable_times = []
+    for name in ("state.json", EVENTS_FILE):
+        try:
+            durable_times.append((root / name).stat().st_mtime)
+        except OSError:
+            pass
+    last_saved_at = None
+    if durable_times:
+        last_saved_at = datetime.fromtimestamp(max(durable_times)).astimezone().isoformat(
+            timespec="seconds")
+
+    return last_saved_at
+
+
 def recovery_summary(job_root: Path, state: Dict[str, Any]) -> Dict[str, Any]:
     """Summarize durable progress for the UI without changing resume semantics."""
     root = Path(job_root)
@@ -162,16 +179,7 @@ def recovery_summary(job_root: Path, state: Dict[str, Any]) -> Dict[str, Any]:
             }
             break
 
-    durable_times = []
-    for name in ("state.json", EVENTS_FILE):
-        try:
-            durable_times.append((root / name).stat().st_mtime)
-        except OSError:
-            pass
-    last_saved_at = None
-    if durable_times:
-        last_saved_at = datetime.fromtimestamp(max(durable_times)).astimezone().isoformat(
-            timespec="seconds")
+    last_saved_at = durable_saved_at(root)
 
     stage = str(state.get("stage") or "")
     if last_completed_stage == "尚未开始":

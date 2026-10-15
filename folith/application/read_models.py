@@ -272,11 +272,8 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
     core = _core()
     updated = str(summary.get("updated_at") or "")
     if not updated and "attention_count" in summary:
-        try:
-            updated = datetime.fromtimestamp(
-                (core.job_dir(job_id) / "state.json").stat().st_mtime).astimezone().isoformat()
-        except OSError:
-            pass
+        from folith.checkpoint import durable_saved_at
+        updated = durable_saved_at(core.job_dir(job_id)) or ""
     if not updated and "attention_count" not in summary:
         # A persisted state does not carry its own timestamp; the core's
         # authoritative "last saved" value comes from the durable artifacts.

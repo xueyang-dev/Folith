@@ -146,3 +146,16 @@ def test_log_write_failure_keeps_the_error_available(window, monkeypatch):
     assert main.toast.isVisible()
     assert main.toast._detail == 'Complete cause'
     assert 'disk full' in main.workbench.status_label.fullText()
+
+
+def test_library_saved_time_includes_newer_checkpoint_without_reading_state(window, monkeypatch):
+    main, core = window['window'], window['core']
+    _job(core, 'one')
+    from folith import checkpoint
+    root = core.job_dir('one')
+    checkpoint.append_event(root, {'phase': 'state_commit_done', 'batch': 0})
+    newer = (root / 'state.json').stat().st_mtime + 5
+    os.utime(root / checkpoint.EVENTS_FILE, (newer, newer))
+    expected = core.recovery_summary('one', adapter.load_state('one'))['last_saved_at']
+    monkeypatch.setattr(core, 'load_job_state', lambda *_a, **_k: pytest.fail('full state read'))
+    assert adapter.list_jobs()[0].updated_at == expected
