@@ -15,24 +15,25 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 - 导入：PDF / DOCX / EPUB（无 DRM）/ TXT / Markdown；新格式共用任务、翻译、审校、恢复与交付流程，不提供原文件格式写回。
 - 流程：准备 → 翻译 → 人工审校 → 交付，含术语治理、项目隔离的翻译记忆、段落编辑与结构修复、失败恢复、原页对照、交付门禁与不可变快照。
 - 语言资产、项目记忆，以及学术专业模式（QA、案例、实践报告）已在本客户端提供；学术模式默认关闭，显式开启或打开既有学术任务时可用。
+- 工作台动效验证切片：可见目标段落保持滚动位置；检查与修复侧栏可中断开合，支持减少动态效果与 RTL，Esc 收起回到编辑框。段落和 AI 操作保持固定，参考内容在下方滚动。动效尚未推广到导航、原页、浮窗及进度条。
 
 ## 产物
 
-- 应用版本 / build id：`0.5.0` / `git:45f8ca7`
-- 构建时间（UTC）：`2026-10-12T06:15:50+00:00`
-- 打包后端：`pyinstaller`；worktree dirty：`False`
+- 应用版本 / build id：`0.5.0` / `git:5725c3f`
+- 构建时间（UTC）：`2026-10-15T04:28:25+00:00`
+- 打包后端：`pyinstaller`；worktree dirty：`True`
 - 目标平台 / 架构：`macos` / `arm64`
 - 随包运行时：Python `3.11.3` / PySide6 `6.11.2` / Qt `6.11.2`
 - DMG：`Folith-Qt-0.5.0-macos-arm64.dmg`
-- DMG sha256：`e7b285b9bf9347b465ff8acca5270758977dbb5092f9ca879d950683a8a2f9b3`（199.6 MB）
+- DMG sha256：`c7411c1fe4fddc675a789a5a1ef624c194fcb5b056f83b0464e395f95550389c`（199.8 MB）
 
 ## 支持的系统
 
-- 最低 macOS：**15.0**（依据：measured: scripts/qt_native_min_os.py (Mach-O LC_BUILD_VERSION minos)）
+- 最低 macOS：**15.0.0**（依据：measured: scripts/qt_native_min_os.py (Mach-O LC_BUILD_VERSION minos)）
 - 包内原生组件实测上限：`15.0.0`（445 个原生文件）
 - 架构：arm64×445；arm64 完整：True；通用（universal）二进制文件数：0（本候选为 **arm64-only**，不含 Intel 切片）
 - 本轮实际验收系统：`macOS-27.0.1-arm64-arm-64bit`
-- 未在 macOS 13 / 14 上验收：随包 Qt 6.11 与 Tesseract 均为 `minos 15.0`，因此本候选**不支持** macOS 13 / 14，也不声称支持。
+- 本候选原生依赖闭包要求 macOS 15.0.0；未在更低版本上验收，不声称支持更低版本。
 - Intel Mac / Windows：本轮不在范围，未验收即不宣称支持。
 
 ## 随包能力与外部依赖

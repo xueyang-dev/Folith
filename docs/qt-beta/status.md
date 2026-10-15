@@ -3,23 +3,27 @@
 单一进度清单（复用 `docs/qt-spike/evidence-log.md` 作为证据日志，不重复造第二份证据表）。
 每轮只改本文件的"当前阶段 / 状态 / 证据 / 阻断 / 下一单元"。
 
-- 更新日期：2026-10-13（Release gate 修复与最低系统范围确认）
-- 阶段：**S1–S8 历史验收保留；当前 CI 候选验证中；等待人工验收**
-- **当前结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
+- 更新日期：2026-10-15（P4 验证切片本地候选；历史验收保留）
+- 阶段：**0.6 工作台开发预览，P4 切片仍有性能与人工验收待完成**
+- **0.5 Beta 基线结论（§7）：`ENGINEERING_COMPLETE — REQUIRED_ACCEPTANCE_PENDING`**——不代表 0.6 开发已完成；人工强制项通过前**不得**声明 `PRIVATE_BETA_READY`
 
 - 路线：Python + PySide6（Qt Widgets）；Windows 保留适配与实机验收要求，本轮不宣称支持
 - 架构决策：**GO — Qt Widgets / macOS arm64**（见 [s8-decision.md](s8-decision.md)）
 - 本机验收环境：Apple Silicon（arm64）/ macOS 27.0.1 / Python 3.11.3 / PySide6 6.11.2 / Qt 6.11.2
 <!-- status-identity:begin -->
-- 候选身份：`app_version=0.5.0`、`build_id=git:45f8ca7`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-12T06:15:50+00:00`
+- 候选身份：`app_version=0.5.0`、`build_id=git:5725c3f`、`worktree_dirty=true`、PyInstaller 6.22.3、built_at `2026-10-15T04:28:25+00:00`
 <!-- status-identity:end -->
-- **声明最低系统：macOS 15.7.5**（当前 CI 原生闭包上限由随包 Tesseract 决定；不声称支持更低版本）
+- **声明最低系统：macOS 15.0.0**（本地 `git:5725c3f` 原生闭包实测；CI 的支持边界须按各自构建重新测量，不沿用旧候选数字）
 
-### 2026-10-13 CI 候选范围
+### 2026-10-15 P4 本地候选
+
+本地候选为 `git:5725c3f`（仍沿用开发期应用版本 0.5.0），包括 P0–P3b 和 P4 验证切片及参考区显示修正；详见 [本批验收记录](../ui-audit/45-p4-motion-slice/verification.md)。全量遍历 236 文件中有 3 项报告页超时，独立复跑该文件 12 项通过；最后相关 40 项全部通过。当前指定门禁可收集 186 项用例，本批没有重跑整条 20 步验证链，也没有沿用旧候选的人工结果。P4 的 16 ms 心跳目标尚未完全达到；动效推广及 P5–P10 未完成。仅本地构建，无 push。
+
+### 2026-10-13 CI 历史候选范围
 
 当前 freeze 候选最低系统为 **macOS 15.7.5**，已由发布负责人确认。PySide6 固定为已验证的 6.11.2，其绑定库最低版本为 15.0；CI 的 Tesseract 可执行文件和库最低版本为 15.7.5，构建声明保留完整 patch 版本。Release gate 尚未全部通过，不能沿用下文历史候选的工程门禁结论。候选身份块由当前构建刷新；下文 2026-10-11 及更早的记录、S8 的 15.0 实测值保留为历史事实。
 
-### 2026-10-11 当前范围与核验
+### 2026-10-11 历史范围与核验
 
 本轮以 [发布计划](../release-plan.md) 与 [范围冻结记录](freeze-0.5.0.md) 为准。当前候选为 `git:45f8ca7`，新增 EPUB / TXT / Markdown 及工作台就地编辑与译者辅助（`3ad4247` 之后另含扫描页隐形 OCR 文字层的断行拼接修复、运行中工作台卡顿修复）；在 `45f8ca7` 上，构建、指定 Qt 门禁 **176 项用例**、产物身份核对、`qt_docs_audit` 和 9 项端到端机器探针通过（20 步验证链全部 rc=0，工作区干净）。以下结果来自旧候选 `9518629`，新候选尚待重跑：全量遍历与修复重跑合并为 212 文件、2,983 pytest 用例通过；归档比对与语言目录检查通过；三种新格式在冻结应用上通过完整流程。`f53aaef` 之后新增的工作台功能目前只有自动化测试覆盖，还没有在 `45f8ca7` 上做人工验收；`3ad4247` 上的人工检查结论不沿用到新候选；新工作台功能的人工检查项见 [manual-acceptance.md](manual-acceptance.md) 的 H 节。
 
@@ -41,9 +45,9 @@
 | 项 | 值 |
 | --- | --- |
 | 源码入口 | `venv/bin/python qt_client.py`（或 `python -m folith.qt`） |
-| 冻结应用 | `dist/qt-desktop/Folith.app`（375 MiB / 393 MB，bundle id `dev.folith.qt`） |
+| 冻结应用 | `dist/qt-desktop/Folith.app`（437 MiB / 458 MB，bundle id `dev.folith.qt`） |
 <!-- status-dmg:begin -->
-| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（190 MiB / 199 MB，sha256 `e7b285b9…f9b3`） |
+| DMG | `dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg`（191 MiB / 199 MB，sha256 `c7411c1f…389c`） |
 <!-- status-dmg:end -->
 | 构建中间物 | `build/qt-desktop/`（build record、`native_min_os_*.json`、`release-manifest.json`、`dmg_record.json`） |
 | 发行说明 | [release-notes.md](release-notes.md)（生成式，`--check-notes` 可检测过期） |
@@ -66,7 +70,7 @@ venv/bin/python scripts/qt_artifact_check.py --out build/qt-desktop/artifact-che
 venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py \
     tests/qt_extraction_error_test.py tests/qt_client_style_test.py \
     tests/qt_client_adapter_test.py tests/qt_client_window_test.py \
-    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 176 项
+    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 186 项
 
 # 完整验证链（20 步：构建 → 门禁 → 文档一致性 → 用例 → 端到端探针）
 bash scripts/qt_beta_chain.sh tmp/qt-beta/chain

@@ -1,0 +1,42 @@
+{
+  "bundle": {
+    "CFBundleIdentifier": "dev.folith.qt",
+    "CFBundleShortVersionString": "0.5.0",
+    "CFBundleVersion": "git:5725c3f",
+    "LSMinimumSystemVersion": "15.0.0"
+  },
+  "build_record": {
+    "app_version": "0.5.0",
+    "build_id": "git:5725c3f",
+    "built_at": "2026-10-15T04:28:25+00:00",
+    "minimum_system_version": "15.0.0",
+    "target_arch": "arm64",
+    "packaging_backend": "pyinstaller",
+    "worktree_dirty": true
+  },
+  "dmg": {
+    "path": "dist/qt-desktop/local-5725c3f/Folith-Qt-0.5.0-macos-arm64.dmg",
+    "bytes": 199795632,
+    "sha256": "c7411c1fe4fddc675a789a5a1ef624c194fcb5b056f83b0464e395f95550389c"
+  },
+  "manifest": {
+    "build_id": "git:5725c3f",
+    "bundle_identifier": "dev.folith.qt",
+    "minimum_system_version": "15.0.0",
+    "arm64_complete": true,
+    "forbidden_found": []
+  },
+  "shipped_sources": {
+    "method": "mtime",
+    "reason": "dirty build",
+    "changed": []
+  },
+  "app": {
+    "path": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith.app",
+    "exists": true,
+    "executable_exists": true
+  },
+  "problems": [],
+  "ok": true,
+  "checked_at": "2026-10-15T04:32:20+00:00"
+}
