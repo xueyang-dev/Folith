@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from . import i18n
 from . import adapter
 from . import components
+from . import motion
 from . import icons
 from .activity_panel import ActivityPanel
 from .cases_panel import CasesPanel
@@ -2013,6 +2014,7 @@ class WorkbenchView(QWidget):
             QAbstractItemView.SelectionBehavior.SelectRows)
         self.segment_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.segment_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.segment_list.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers)
         self.segment_list.setShowGrid(False)
@@ -2221,10 +2223,10 @@ class WorkbenchView(QWidget):
         inspector_layout.addLayout(title_row)
         inspector_layout.addWidget(self.segment_status)
         self.segment_status.setWordWrap(True)
+        self.segment_status.setMinimumHeight(self.segment_status.fontMetrics().lineSpacing() * 2)
 
-        # 检查器尽量一屏放下（acceptance-feedback 第 19 条）：
-        #   ⚠ 需要注意（只有真的有项时才出现）→ 段落操作（一行图标）→ 术语
-        #   → AI 操作（审校 / 点评 / 重译一行，下面一个共用输入框）→ 前后文 → 批注 → 段落事实。
+        # 操作固定在上方；数量会变的注意事项、术语与前后文在下方有界滚动，
+        # 切换段落不再把操作按钮推走（P4 验证切片；无问题时仍隐藏注意标题）。
         def tool(button: QPushButton, label: str, tip: str, name: str = "inspectorTool") -> QPushButton:
             button.setText(label)
             button.setObjectName(name)
@@ -2295,8 +2297,6 @@ class WorkbenchView(QWidget):
         single.setSpacing(theme_module.SPACE["sm"])
         self.attention_label = style_module.SectionLabel(i18n.tr('需要注意'))
         self.attention_label.setObjectName("attentionHeading")
-        single.addWidget(self.attention_label)
-        single.addWidget(self.attention_list)
         self.segment_ops_section = QWidget()
         ops = QVBoxLayout(self.segment_ops_section)
         ops.setContentsMargins(0, 0, 0, 0)
@@ -2306,9 +2306,6 @@ class WorkbenchView(QWidget):
                              self.structure_button, self.view_source_button,
                              self.exclude_button))
         single.addWidget(self.segment_ops_section)
-        single.addWidget(style_module.SectionLabel(i18n.tr('术语')))
-        single.addWidget(self.term_list)
-        single.addWidget(self.term_add_button)
         inspector_layout.addWidget(self.single_segment_section)
 
         inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
@@ -2331,14 +2328,31 @@ class WorkbenchView(QWidget):
         results_layout.addWidget(self.ask_box)
         inspector_layout.addWidget(results)
 
-        self.segment_extra_section = QWidget()
-        extra = QVBoxLayout(self.segment_extra_section)
+        self.segment_extra_section = QScrollArea()
+        self.segment_extra_section.setWidgetResizable(True)
+        self.segment_extra_section.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.segment_extra_section.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.segment_extra_section.setFixedHeight(360)
+        self.segment_extra_section.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.segment_extra_section.setAccessibleName(" / ".join(
+            i18n.tr(label) for label in ('需要注意', '术语', '前后文', '批注')))
+        self.segment_extra_section.setAccessibleDescription(
+            i18n.tr('滚动查看本段的注意事项、术语、前后文和批注。'))
+        references = QWidget()
+        extra = QVBoxLayout(references)
         extra.setContentsMargins(0, 0, 0, 0)
         extra.setSpacing(theme_module.SPACE["sm"])
+        extra.addWidget(self.attention_label)
+        extra.addWidget(self.attention_list)
+        extra.addWidget(style_module.SectionLabel(i18n.tr('术语')))
+        extra.addWidget(self.term_list)
+        extra.addWidget(self.term_add_button)
         extra.addWidget(style_module.SectionLabel(i18n.tr('前后文')))
         extra.addWidget(self.context_view)
         extra.addWidget(style_module.SectionLabel(i18n.tr('批注')))
         extra.addWidget(self.note_box)
+        extra.addStretch(1)
+        self.segment_extra_section.setWidget(references)
         # 「段落事实」只是把顶上那行状态再说一遍：来源并进状态行，这一节不再单独占位。
         inspector_layout.addWidget(self.segment_extra_section)
         self.review_hint.setVisible(False)
@@ -2361,8 +2375,10 @@ class WorkbenchView(QWidget):
         inspector_scroll.setWidget(inspector)
 
         translation_split = QSplitter(Qt.Orientation.Horizontal, self)
+        self.right_panel = components.SlidingPanel(inspector_scroll)
+        self._inspector_width = 300
         translation_split.addWidget(self.segment_list)
-        translation_split.addWidget(inspector_scroll)
+        translation_split.addWidget(self.right_panel)
         translation_split.setStretchFactor(0, 1)
         translation_split.setStretchFactor(1, 0)
         # 检查器 400（原 460）：它是**编辑当前一段**的面板，不该比段落列表还宽。
@@ -2727,6 +2743,11 @@ class WorkbenchView(QWidget):
         # 占满主屏（acceptance-feedback D3 / Q1 / Q2）。
         self.followup_drawer = QFrame()
         self.followup_drawer.setObjectName("followupDrawer")
+        self.followup_drawer.setAccessibleName(i18n.tr('检查与修复'))
+        self.followup_drawer.setAccessibleDescription(
+            i18n.tr('处理任务中需要注意的问题；按 Esc 收起并返回编辑框。'))
+        self._drawer_open = False
+        self._motion = motion.Motion(self)
         drawer_title = QLabel(i18n.tr('检查与修复'))
         drawer_title.setObjectName("sectionTitle")
         drawer_close = QToolButton()
@@ -2734,6 +2755,7 @@ class WorkbenchView(QWidget):
         drawer_close.setIcon(icons.icon("x", 14, "text-secondary"))
         drawer_close.setIconSize(QSize(14, 14))
         drawer_close.setAccessibleName(i18n.tr('关闭检查与修复'))
+        self.drawer_close = drawer_close
         drawer_close.clicked.connect(lambda: self.set_followup_drawer_open(False))
         drawer_head = QHBoxLayout()
         drawer_head.setContentsMargins(0, 0, 0, 0)
@@ -2750,9 +2772,14 @@ class WorkbenchView(QWidget):
         drawer_scroll.viewport().setAutoFillBackground(False)
         drawer_scroll.setWidget(self.followup_panel)
         drawer_layout.addWidget(drawer_scroll, 1)
-        self.followup_drawer.setVisible(False)
-        self.translation_split.addWidget(self.followup_drawer)
-        self.translation_split.setStretchFactor(2, 0)
+        self.right_panel.set_drawer(self.followup_drawer)
+        drawer_escape = QAction(self)
+        drawer_escape.setShortcut(QKeySequence("Esc"))
+        drawer_escape.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        drawer_escape.triggered.connect(lambda: self.set_followup_drawer_open(False))
+        drawer_escape.setEnabled(False)
+        self.addAction(drawer_escape)
+        self.drawer_escape = drawer_escape
         self.activity_panel.heading.setVisible(False)  # the popover has the title
         self.activity_panel.hint.setVisible(False)     # repeats the Finder button
         # In a 440 px popover long steps wrap instead of scrolling sideways.
@@ -2914,7 +2941,7 @@ class WorkbenchView(QWidget):
         self._render_details()
 
     def followup_drawer_open(self) -> bool:
-        return self.followup_drawer.isVisibleTo(self)
+        return self._drawer_open
 
     def set_followup_drawer_open(self, open_: bool) -> None:
         """打开时切回翻译页，面板暂时替换右侧的段落检查器；关闭时检查器回来。"""
@@ -2926,12 +2953,46 @@ class WorkbenchView(QWidget):
             return
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
-        self.followup_drawer.setVisible(open_)
-        self._layout_translation_columns()
+        split = self.translation_split
+        start_sizes = split.sizes()
+        start_fraction = self.right_panel.fraction
+        side = split.indexOf(self.right_panel)
+        if open_ and start_fraction == 0 and start_sizes[side]:
+            self._inspector_width = start_sizes[side]
+        self._motion.stop("review-drawer")
+        self._drawer_open = open_
+        self.right_panel.setVisible(open_ or not (self.source_open() and self.width() < 1200))
+        end_sizes = self._translation_column_sizes()
         self.check_button.setChecked(open_)
+        self.drawer_escape.setEnabled(open_)
         if open_:
-            self._followup_key = ()
+            # apply() already refreshes this data when the task state changes.
+            # Clearing its signature here re-scans a whole book on every click
+            # (~450 ms), freezing the transition before its first frame.
             self._render_followup()
+        iw = end_sizes[side] if not open_ else start_sizes[side]
+        dw = end_sizes[side] if open_ else start_sizes[side]
+        self.right_panel.begin(max(1, iw), max(1, dw))
+        if open_:
+            self.drawer_close.setFocus()
+        else:
+            self.focus_editor()
+
+        def frame(value: float) -> None:
+            # Sizes share a curve. Text inside the clipped panel is laid out
+            # once at its destination width, never at each intermediate width.
+            fraction = ((value - start_fraction) / (float(open_) - start_fraction)
+                        if float(open_) != start_fraction else 1.0)
+            split.setSizes([round(a + (b - a) * fraction)
+                            for a, b in zip(start_sizes, end_sizes)])
+            self.right_panel.set_fraction(value)
+            self._place_inline_editor()
+
+        def settled() -> None:
+            self.right_panel.settle(open_)
+
+        self._motion.animate("review-drawer", start_fraction, float(open_), frame,
+                             finished=settled)
 
     def _toggle_followup_drawer(self) -> None:
         self.set_followup_drawer_open(not self.followup_drawer_open())
@@ -2958,6 +3019,11 @@ class WorkbenchView(QWidget):
             self.pdf_panel.locate(self._current_index, state=self._state or None)
 
     def _remember_source_width(self, *_args) -> None:
+        self._motion.stop("review-drawer")
+        self.right_panel.settle(self._drawer_open)
+        if not self._drawer_open and self.right_panel.isVisibleTo(self):
+            self._inspector_width = self.translation_split.sizes()[
+                self.translation_split.indexOf(self.right_panel)]
         if self.source_open():
             self._pdf_width = self.translation_split.sizes()[
                 self.translation_split.indexOf(self.pdf_panel)]
@@ -2966,39 +3032,55 @@ class WorkbenchView(QWidget):
         """按当前打开的面板分配宽度：原页约 40%（或用户拖过的宽度）、检查与修复
         约 440px、检查器保持原宽；窗口太窄时，原页打开会让检查器让位。"""
         split = self.translation_split
+        self._motion.stop("review-drawer")
         drawer_open = self.followup_drawer_open()
         source = self.source_open()
         narrow = self.width() and self.width() < 1200
-        self.inspector_scroll.setVisible(not drawer_open and not (source and narrow))
-        sizes = split.sizes()
-        total = sum(sizes) or split.width() or max(self.width() - 40, 800)
-        index = {widget: split.indexOf(widget) for widget in (
-            self.pdf_panel, self.segment_list, self.inspector_scroll, self.followup_drawer)}
-        side = 0
-        if drawer_open:
-            side = min(440, max(360, total // 3))
-        elif self.inspector_scroll.isVisibleTo(self):
-            side = sizes[index[self.inspector_scroll]] or 300
-        pdf = 0
-        if source:
-            pdf = self._pdf_width or int(total * 0.4)
-            pdf = max(320, min(pdf, total - side - 360))
-        new = [0] * split.count()
-        new[index[self.pdf_panel]] = pdf
-        new[index[self.followup_drawer]] = side if drawer_open else 0
-        new[index[self.inspector_scroll]] = side if not drawer_open else 0
-        new[index[self.segment_list]] = max(360, total - pdf - side)
-        split.setSizes(new)
+        self.right_panel.settle(drawer_open)
+        self.right_panel.setVisible(drawer_open or not (source and narrow))
+        split.setSizes(self._translation_column_sizes())
         # The grid's columns are re-laid out after this returns; the inline
         # editor must follow them, or it hangs past the grid's new right edge.
         QTimer.singleShot(0, self._place_inline_editor)
 
+    def _translation_column_sizes(self) -> list[int]:
+        """Compute the destination without laying out and then undoing a frame."""
+        split = self.translation_split
+        drawer_open = self.followup_drawer_open()
+        source = self.source_open()
+        sizes = split.sizes()
+        total = sum(sizes) or split.width() or max(self.width() - 40, 800)
+        index = {widget: split.indexOf(widget) for widget in (
+            self.pdf_panel, self.segment_list, self.right_panel)}
+        side = 0
+        if drawer_open:
+            side = min(440, max(360, total // 3))
+        elif self.right_panel.isVisibleTo(self):
+            side = self._inspector_width
+        pdf = 0
+        if source:
+            pdf = self._pdf_width or int(total * 0.4)
+            pdf = max(320, min(pdf, total - side - 360))
+        side = min(side, max(0, total - pdf - 360))
+        new = [0] * split.count()
+        new[index[self.pdf_panel]] = pdf
+        new[index[self.right_panel]] = side
+        new[index[self.segment_list]] = max(360, total - pdf - side)
+        return new
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
+        if self._motion.running("review-drawer"):
+            self._layout_translation_columns()
         if self.source_open():
             narrow = self.width() < 1200
             if self.inspector_scroll.isVisibleTo(self) == narrow and not self.followup_drawer_open():
                 self._layout_translation_columns()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self._motion.running("review-drawer"):
+            self._layout_translation_columns()
+        super().hideEvent(event)
 
 
     def current_page_id(self) -> str:
@@ -4055,6 +4137,23 @@ class WorkbenchView(QWidget):
         return None
 
     def _row_selected(self, position: int) -> None:
+        # Restore the target's visible position after the previous editor row
+        # regains its natural height AND the new editor loads its actual text.
+        # Natural rows already show all text (P3b); animating their text layout
+        # would add motion without helping the user locate the selection.
+        table = self.segment_list
+        anchor = table.visualRect(table.model().index(position, 1)).top() \
+            if 0 <= position < table.rowCount() else -1
+        try:
+            self._load_selected_row(position)
+        finally:
+            if 0 <= anchor < table.viewport().height():
+                after = table.visualRect(table.model().index(position, 1)).top()
+                bar = table.verticalScrollBar()
+                bar.setValue(bar.value() + after - anchor)
+                self._place_inline_editor()
+
+    def _load_selected_row(self, position: int) -> None:
         if position < 0 or position >= len(self._rows):
             self._activate_position(-1)
             return
@@ -4169,7 +4268,13 @@ class WorkbenchView(QWidget):
     def _apply_row_height_chunk(self) -> None:
         table = self.segment_list
         batch, self._heights_pending = self._heights_pending[:200], self._heights_pending[200:]
-        for position in batch:
+        started = time.perf_counter()
+        for offset, position in enumerate(batch):
+            # Wrapping a book after a column transition must leave time for
+            # input and paint events; 200 long paragraphs can take 10–30 ms.
+            if offset and time.perf_counter() - started >= 0.004:
+                self._heights_pending = batch[offset:] + self._heights_pending
+                break
             if position == self._active_position or position >= table.rowCount():
                 continue
             height = self._natural_height(position)

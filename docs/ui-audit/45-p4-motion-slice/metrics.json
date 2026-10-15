@@ -1,0 +1,23 @@
+{
+  "segments": 3856,
+  "visible_target_shift_px": {
+    "median": 0,
+    "max_abs": 0
+  },
+  "switch_ms_excluding_30ms_pump": {
+    "median": 3.65,
+    "max": 5.11
+  },
+  "drawer_frame_setter_ms": {
+    "median": 0.42,
+    "max": 0.71
+  },
+  "drawer_8ms_heartbeat_max_gap_ms": 21.42,
+  "during_animation_8ms_heartbeat_max_gap_ms": 21.42,
+  "open_call_ms": 13.3,
+  "close_call_ms": 0.87,
+  "rapid_20_toggles_settled": true,
+  "reduced_settled": true,
+  "focus_restored": true,
+  "arabic_rtl": true
+}

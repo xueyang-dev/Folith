@@ -61,6 +61,21 @@ def test_preview_changes_only_the_confirmed_occurrences(job):
     assert adapter.entity_repair_preview(job, "Lydia", "  ") == []
 
 
+def test_preview_can_read_the_displayed_state_without_reloading_it(job, monkeypatch):
+    import copy
+
+    state = adapter.load_state(job)
+    before = copy.deepcopy(state)
+
+    def unexpected_reload(*args):
+        raise AssertionError("opening the drawer must reuse the displayed state")
+
+    monkeypatch.setattr(adapter, "load_state", unexpected_reload)
+    preview = adapter.entity_repair_preview(job, "Lydia", "莉迪亚", state=state)
+    assert [row["index"] for row in preview] == [1]
+    assert state == before
+
+
 def test_unknown_entity_is_a_readable_error(job):
     with pytest.raises(adapter.AdapterError):
         adapter.entity_repair_preview(job, "Nobody", "x")

@@ -1815,11 +1815,13 @@ def prepare_followup_retry(job_id: str, part: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
-def entity_repair_preview(job_id: str, source: str, target: str) -> list[dict]:
+def entity_repair_preview(job_id: str, source: str, target: str,
+                          *, state: dict | None = None) -> list[dict]:
     if not str(target or "").strip():
         return []
     try:
-        return list(core.preview_entity_repair(load_state(job_id), source, target))
+        return list(core.preview_entity_repair(
+            state if state is not None else load_state(job_id), source, target))
     except (RuntimeError, ValueError) as exc:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 

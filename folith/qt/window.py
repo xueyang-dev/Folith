@@ -1922,7 +1922,11 @@ class MainWindow(QMainWindow):
         if not job_id:
             return
         try:
-            preview = adapter.entity_repair_preview(job_id, source, target)
+            # The preview is read-only. Use the state already displayed rather
+            # than copying a 23 MB book again on the drawer's first show. The
+            # actual repair still revalidates before/after against current data.
+            preview = adapter.entity_repair_preview(
+                job_id, source, target, state=self.workbench._state)
         except adapter.AdapterError as exc:
             self.workbench.followup_panel.set_preview([])
             self._notice(str(exc), error=True)

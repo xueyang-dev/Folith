@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QLinearGradient,
                            QPainter, QPainterPath, QShortcut)
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -46,6 +46,60 @@ def _tokens() -> dict[str, str]:
 # --------------------------------------------------------------------------
 # Icon badge
 # --------------------------------------------------------------------------
+class SlidingPanel(QWidget):
+    """Inspector and replacement drawer, clipped at their final text widths.
+
+    The splitter resizes this container; its children keep their final widths
+    during a transition, so their paragraphs do not wrap on every frame.
+    """
+
+    def __init__(self, inspector: QWidget, parent=None) -> None:
+        super().__init__(parent)
+        self.inspector = inspector
+        inspector.setParent(self)
+        self.drawer: QWidget | None = None
+        self.fraction = 0.0
+        self._widths: tuple[int, int] | None = None
+
+    def set_drawer(self, drawer: QWidget) -> None:
+        self.drawer = drawer
+        drawer.setParent(self)
+        drawer.hide()
+
+    def begin(self, inspector_width: int, drawer_width: int) -> None:
+        self._widths = (inspector_width, drawer_width)
+        self._place()
+        self.inspector.show()
+        self.drawer.show()
+        self.drawer.raise_()
+
+    def set_fraction(self, fraction: float) -> None:
+        self.fraction = fraction
+        self._place()
+
+    def settle(self, open_: bool) -> None:
+        self._widths = None
+        self.fraction = float(open_)
+        self.inspector.setVisible(not open_)
+        self.drawer.setVisible(open_)
+        self._place()
+
+    def _place(self) -> None:
+        if self.drawer is None:
+            self.inspector.setGeometry(self.rect())
+            return
+        iw, dw = self._widths or (self.width(), self.width())
+        rtl = self.layoutDirection() == Qt.LayoutDirection.RightToLeft
+        self.inspector.setGeometry(QRect(0 if rtl else self.width() - iw, 0, iw, self.height()))
+        offset = round((1.0 - self.fraction) * dw)
+        self.drawer.setGeometry(QRect(-offset if rtl else self.width() - dw + offset,
+                                      0, dw, self.height()))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._place()
+
+
 class IconBadge(QWidget):
     """圆形底 + 双色图标（设计稿 Metric Card 左上角那一枚）。
 
