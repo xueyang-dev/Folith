@@ -704,10 +704,11 @@ class HomeView(QWidget):
         # 表格 / 卡片：旧界面首页是"按项目分组的卡片"，表格适合几十个任务横着扫。
         # 两种视图共用同一份选中状态，切换不丢选择。
         self.view_switch = style_module.SegmentedControl(
-            [("table", i18n.tr("表格")), ("cards", i18n.tr("卡片"))])
-        # Golden Gate：默认是卡片（文档缩略图 + 状态），表格留给"几十个任务横着扫"。
-        self.view_switch.set_value("cards")
-        self._view_mode = "cards"
+            [("shelf", i18n.tr("书架")), ("cards", i18n.tr("卡片")), ("table", i18n.tr("表格"))])
+        # 默认是书架（每个项目一层、每个任务一本书脊，见 shelf_view）；卡片看缩略图，
+        # 表格留给"几十个任务横着扫"。三种视图共用同一份选中状态。
+        self.view_switch.set_value("shelf")
+        self._view_mode = "shelf"
         self.view_switch.changed.connect(self._set_view_mode)
 
         # 状态筛选：与下方指标卡同一组词（运行中 / 已交付 / 有错误）。
@@ -863,6 +864,19 @@ class HomeView(QWidget):
         self.stack.addWidget(self.empty_page)
         self.stack.addWidget(self.table)
         self.stack.addWidget(self.card_scroll)
+        from .shelf_view import ShelfView
+
+        self.shelf = ShelfView()
+        self.shelf.clicked.connect(self._select_job_from_card)
+        self.shelf.activated.connect(self._open_job_from_card)
+        self.shelf_scroll = QScrollArea()
+        self.shelf_scroll.setObjectName("shelfScroll")
+        self.shelf_scroll.setWidgetResizable(True)
+        self.shelf_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.shelf_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.shelf_scroll.viewport().setAutoFillBackground(False)
+        self.shelf_scroll.setWidget(self.shelf)
+        self.stack.addWidget(self.shelf_scroll)
 
         # ---- 底部动作 + 状态 ------------------------------------------------
         self.open_button = QPushButton(i18n.tr('打开任务'))
@@ -956,6 +970,7 @@ class HomeView(QWidget):
         card = self._cards.get(job_id)
         if card is not None:
             self._request_preview(job_id, row.filename, card.paper)
+        self._shelf_colour(row)
         if getattr(self, "_continue_job_id", "") == job_id:
             self._request_preview(job_id, row.filename, self.continue_paper)
 
@@ -1295,6 +1310,7 @@ class HomeView(QWidget):
                     item.setForeground(style_module.qcolor(_tone_color(tokens, tone)))
                 self.table.setItem(row_index, column, item)
         self._fill_cards(rows)
+        self._fill_shelf(rows)
         self._reflow_stack(rows)
         row_count_changed = len(rows) != self._last_row_count
         self._last_row_count = len(rows)
@@ -1309,13 +1325,15 @@ class HomeView(QWidget):
         rows = self._visible_rows() if rows is None else rows
         if not rows:
             self.stack.setCurrentWidget(self.empty_page)
+        elif self._view_mode == "shelf":
+            self.stack.setCurrentWidget(self.shelf_scroll)
         elif self._view_mode == "cards":
             self.stack.setCurrentWidget(self.card_scroll)
         else:
             self.stack.setCurrentWidget(self.table)
 
     def _set_view_mode(self, value: str) -> None:
-        self._view_mode = value if value in ("table", "cards") else "table"
+        self._view_mode = value if value in ("table", "cards", "shelf") else "table"
         self._reflow_stack()
         # 切到卡片视图时按**当前**宽度重算列数。首次填充（set_rows）时窗口往往还没
         # 被布局到最终尺寸，`_card_columns()` 会算出 1 列；此后没人再问一次，于是
@@ -1449,6 +1467,28 @@ class HomeView(QWidget):
         selected = set(self.selected_job_ids())
         for job_id, card in self._cards.items():
             card.set_selected(job_id in selected)
+        if hasattr(self, "shelf"):
+            self.shelf.set_selected(selected)
+
+    def _fill_shelf(self, rows: list[adapter.JobRow]) -> None:
+        """书架：按项目分组，每组一层；书脊颜色取自缩略图（已经生成的先用上）。"""
+        groups: dict[str, list[adapter.JobRow]] = {}
+        for row in rows:
+            groups.setdefault(row.project_id or "", []).append(row)
+        self.shelf.fill([(self._project_label(project_id), items)
+                         for project_id, items in groups.items()])
+        for row in rows:
+            self._shelf_colour(row)
+        self.shelf.set_selected(set(self.selected_job_ids()))
+
+    def _shelf_colour(self, row) -> None:
+        from . import shelf_view
+
+        image = self._previews.request(row.job_id, adapter.source_path(row.job_id), row.filename)
+        colour = shelf_view.cover_colour(image, style_module.night_mode()) if image is not None \
+            else None
+        if colour is not None:
+            self.shelf.set_colour(row.job_id, colour)
 
     def selected_job_ids(self) -> list[str]:
         """当前选中的任务（按列表顺序，去重）。"""

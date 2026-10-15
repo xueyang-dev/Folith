@@ -1621,5 +1621,9 @@
   "选中一句，直接输入问题或重译要求…": "Selecciona una frase y escribe tu pregunta o petición de retraducción…",
   "{v0} 个进行中": "{v0} en curso",
   "{v0} 个已交付": "{v0} entregadas",
-  "{v0} 个需要处理": "{v0} requieren atención"
+  "{v0} 个需要处理": "{v0} requieren atención",
+  "{v0} 项待处理": "{v0} pendientes",
+  "书架": "Estantería",
+  "已译 {v0}%": "{v0}% traducido",
+  "藏书票": "Ex libris"
 }
