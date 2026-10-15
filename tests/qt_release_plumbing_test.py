@@ -408,3 +408,14 @@ def test_docs_audit_link_check_catches_broken_links_but_spares_tmp(tmp_path, mon
     result = audit_module.doc_links()
     assert result["broken_doc_links"] == [], "tmp 下的断链不该判失败"
     assert result["advisory_doc_links"] == ["good.md → ../../tmp/gone.md"], result
+
+
+@pytest.mark.parametrize("declared,measured,problem", [
+    ("15.7.5", "15.0.0", False),   # deliberate conservative boundary (release owner, CI Tesseract)
+    ("15.0", "15.0.0", False),
+    ("15.0.0", "15.7.5", True),    # an overclaim: machines that cannot run it would think they can
+])
+def test_docs_audit_rejects_only_a_minimum_below_the_artifact(declared, measured, problem):
+    import qt_docs_audit as audit
+
+    assert (audit._version_key(declared) < audit._version_key(measured)) is problem

@@ -101,6 +101,11 @@ def _normalize_version(value: str) -> str:
     return ".".join(parts)
 
 
+def _version_key(value: str) -> tuple[int, ...]:
+    parts = [int(item) for item in re.findall(r"\d+", _normalize_version(value))]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
 def _sha_matches(doc_text: str, sha: str) -> bool:
     """文档里可以写完整 sha，也可以写 `头8…尾4` 的缩写形式。"""
     if sha in doc_text:
@@ -199,10 +204,14 @@ def audit(*, check_tests: bool = True) -> dict:
     facts["measured_min_os"] = measured
     declared = _declared_min_os(status)
     facts["declared_min_os"] = declared or None
-    if measured and declared and _normalize_version(declared) != \
-            _normalize_version(measured):
+    # 声明值**低于**产物实际需要的系统才是错的（会让装不上的机器以为支持）。
+    # 声明值高于本地实测是有意的保守边界：发布负责人按 CI 产物（随包 Tesseract 要求
+    # 15.7.5）确认了声明，而本地开发包的闭包可能更低——这记为事实，不算问题。
+    if measured and declared and _version_key(declared) < _version_key(measured):
         problems.append(
-            f"状态清单声明最低 macOS {declared}，实测闭包是 {measured}")
+            f"状态清单声明最低 macOS {declared}，低于实测闭包要求的 {measured}")
+    facts["declared_above_measured"] = bool(
+        measured and declared and _version_key(declared) > _version_key(measured))
     if not declared:
         problems.append("状态清单没有可识别的『声明最低系统』行")
     if measured and _normalize_version(measured) not in \

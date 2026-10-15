@@ -23,15 +23,17 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 
 - 字体层级：页面 / 区块 / 卡片标题与正文、说明、分组标签统一字号和字重；设置字段更清楚，阿拉伯语标题使用自然字距，译文阅读字号保持不变。
 
+- 应用图标：纯白圆角底板，保留原有品牌标；`.icns` 补齐 1024px Retina 帧，关于与欢迎页使用同一白底资产。
+
 ## 产物
 
-- 应用版本 / build id：`0.5.0` / `git:28a6ba5`
-- 构建时间（UTC）：`2026-10-15T10:31:52+00:00`
-- 打包后端：`pyinstaller`；worktree dirty：`True`
+- 应用版本 / build id：`0.5.0` / `git:28f708b`
+- 构建时间（UTC）：`2026-10-15T12:11:08+00:00`
+- 打包后端：`pyinstaller`；worktree dirty：`False`
 - 目标平台 / 架构：`macos` / `arm64`
 - 随包运行时：Python `3.11.3` / PySide6 `6.11.2` / Qt `6.11.2`
 - DMG：`Folith-Qt-0.5.0-macos-arm64.dmg`
-- DMG sha256：`0fa8d3bfd5d51d393e3fbce5da117df52163e1fc2e62831e08002dbf05a20bb2`（200.0 MB）
+- DMG sha256：`f346ef1912abe2acc64085c1f67cd3cfdcb49dbf140d3b404dd291a75587ad9d`（200.5 MB）
 
 ## 支持的系统
 
@@ -49,7 +51,7 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 - PaddleOCR / LibreOffice：**不随包**；缺失时如实记录 `NOT_RUN`，不宣称渲染通过。
 - 已确认**不包含**旧壳运行时：streamlit、webview、pywebview（实际命中：无）
 - 包外绝对路径动态库引用：无
-- 随包发行版共 9 项，版本取自包内 `METADATA`（完整字符串，不截断）；逐项见 `release-manifest.json` 的 `distributions`。
+- 随包发行版共 10 项，版本取自包内 `METADATA`（完整字符串，不截断）；逐项见 `release-manifest.json` 的 `distributions`。
 - 依赖表述：`requirements*.txt` 记录的是**版本范围**；本文件与清单记录的是本次构建**实际解析并随包**的版本（`distributions` 与 `runtime`）。未完成依赖锁定时不宣称完整环境可复现。
 
 ## 分发状态（如实披露）
