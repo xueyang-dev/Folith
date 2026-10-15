@@ -133,6 +133,15 @@ def build_qss(theme: str) -> str:
     """
     t = theme_module.tokens(theme)
     r = theme_module.RADIUS
+    # 侧栏选中项的「玻璃片」：浅色半透明面 + 同色系的亮边，投影由 components.glass_selection 加。
+    if theme_module.resolve(theme) == "dark":
+        glass_fill = ("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,0.14), "
+                      "stop:1 rgba(255,255,255,0.07))")
+        glass_rim = "rgba(255,255,255,0.12)"
+    else:
+        glass_fill = ("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,0.96), "
+                      "stop:1 rgba(255,255,255,0.74))")
+        glass_rim = "rgba(255,255,255,0.9)"
     f = theme_module.FONT_SIZES
     c = theme_module.CONTROL
     sp = theme_module.SPACE
@@ -445,11 +454,12 @@ QPushButton#navItem {{
     font-size: {f['reading']}px; font-weight: 500;
 }}
 QPushButton#navItem:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
-/* 选中 = 浅色底 + **一圈强调色描边**（2026-10-16 验收：只有浅底时太不醒目）+ 强调色
-   双色图标（图标颜色由图标引擎按 QIcon.State.On 给出，这里只管底与框）。 */
+/* 选中 = 一片浅色玻璃（2026-10-16 验收：浅蓝底不醒目，强调色描边又太硬）：半透明亮面、
+   同色亮边、柔和投影（components.glass_selection），加强调色双色图标（图标引擎按
+   QIcon.State.On 给出）。 */
 QPushButton#navItem:checked {{
-    background: {t['accent-soft']}; border-color: {t['accent']};
-    color: {t['brand-ink']}; font-weight: 600;
+    background: {glass_fill}; border-color: {glass_rim};
+    color: {t['text-primary']}; font-weight: 600;
 }}
 /* 侧栏小节标题（"最近项目"）与项目条目 */
 QLabel#navSection {{ font-size: {f['footnote']}px; font-weight: 500; color: {t['text-muted']}; }}
@@ -461,8 +471,8 @@ QPushButton#navProject {{
 }}
 QPushButton#navProject:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#navProject:checked {{
-    background: {t['accent-soft']}; border-color: {t['accent']};
-    color: {t['brand-ink']}; font-weight: 600;
+    background: {glass_fill}; border-color: {glass_rim};
+    color: {t['text-primary']}; font-weight: 600;
 }}
 /* 侧栏底部（引擎状态 + 配置入口）：一条 1px 分隔 + 透明底，不再是一张浮起的小卡。
    它贴着侧栏底边，是"常驻的属性区"，不是内容卡片。 */

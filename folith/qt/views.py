@@ -790,6 +790,15 @@ class HomeView(QWidget):
         self.project_filter.setToolTip(i18n.tr('按项目筛选任务'))
         self.project_filter.currentIndexChanged.connect(self._apply_filter)
         self.project_filter.currentIndexChanged.connect(self._sync_project_nav)
+        # 下拉框只做数据模型（窗口、脚本、测试都读 currentData）；用户看到的是
+        # 列表上方那一排项目标签（2026-10-16：下拉筛选「藏着」，看不出有哪些项目）。
+        self.project_filter.setParent(self)
+        self.project_filter.hide()
+        self.project_tabs = components.ProjectTabs(i18n.tr('全部项目'))
+        self.project_tabs.setToolTip(i18n.tr('按项目筛选任务'))
+        self.project_tabs.changed.connect(self._pick_project_tab)
+        self.project_tabs.setVisible(False)
+        self._projects: list[dict] = []
 
         self.search_edit = components.SearchBar(
             i18n.tr('搜索任务：文档名、状态、语言…'), shortcut_scope=self)
@@ -968,7 +977,7 @@ class HomeView(QWidget):
         self.list_card = components.SectionCard(i18n.tr('任务列表'))
         self.list_card.add_header_widget(self.status_filter)
         self.list_card.header_layout.addStretch(1)
-        for control in (self.view_switch, self.project_filter, self.sort_box):
+        for control in (self.view_switch, self.sort_box):
             self.list_card.add_header_widget(control)
         actions.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                    theme_module.SPACE["md"], theme_module.SPACE["sm"])
@@ -984,7 +993,11 @@ class HomeView(QWidget):
         layout.addLayout(page_header)
         layout.addWidget(self.setup_banner)
         layout.addWidget(self.continue_card)
-        layout.addWidget(self.list_card, 1)
+        list_column = QVBoxLayout()
+        list_column.setSpacing(theme_module.SPACE["sm"])
+        list_column.addWidget(self.project_tabs)
+        list_column.addWidget(self.list_card, 1)
+        layout.addLayout(list_column, 1)
 
         shell = QHBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
@@ -1116,6 +1129,7 @@ class HomeView(QWidget):
     # -- data --------------------------------------------------------------
     def set_rows(self, rows: list[adapter.JobRow]) -> None:
         self._rows = list(rows)
+        self._sync_project_tabs()
         self._apply_filter()
 
     def set_projects(self, projects: list[dict]) -> None:
@@ -1135,7 +1149,36 @@ class HomeView(QWidget):
         index = self.project_filter.findData(current)
         self.project_filter.setCurrentIndex(index if index >= 0 else 0)
         self.project_filter.blockSignals(False)
+        self._projects = list(projects)
+        self._sync_project_tabs()
         self._rebuild_project_nav(projects)
+
+    def _sync_project_tabs(self) -> None:
+        """项目标签：每个项目一枚（带任务数）；还没有自建项目时整排不显示。"""
+        counts: dict[str, int] = {}
+        for row in getattr(self, "_rows", []):
+            counts[row.project_id or ""] = counts.get(row.project_id or "", 0) + 1
+        tabs = []
+        for project in self._projects:
+            project_id = str(project.get("project_id") or "")
+            if not project_id:
+                continue
+            count = counts.get(project_id, 0)
+            if project.get("is_system") and not count:
+                continue               # 空着的「未分类」不占位置
+            tabs.append((project_id, str(project.get("name") or i18n.tr("未命名项目")), count))
+        self.project_tabs.set_projects(tabs)
+        # 「全部」数的是所有任务（含未归属），不只是各项目之和。
+        self.project_tabs.tabs[components.ALL_PROJECTS].set_data(
+            i18n.tr('全部项目'), len(getattr(self, "_rows", [])))
+        self.project_tabs.set_value(self.project_filter.currentData() or "")
+        self.project_tabs.setVisible(any(not project.get("is_system")
+                                         for project in self._projects
+                                         if project.get("project_id")))
+
+    def _pick_project_tab(self, project_id: str) -> None:
+        index = self.project_filter.findData(project_id or "")
+        self.project_filter.setCurrentIndex(max(index, 0))
 
     #: 侧栏「最近项目」最多列几个：它是快捷入口，不是项目管理（那是「项目…」）。
     PROJECT_NAV_LIMIT = 6
@@ -1160,6 +1203,7 @@ class HomeView(QWidget):
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setToolTip(name)
             style_module.fit_button(button, max_width=168)
+            components.glass_selection(button)
             button.clicked.connect(
                 lambda _checked=False, pid=project_id: self._pick_project_from_nav(pid))
             self.project_nav_box.addWidget(button)
@@ -1178,6 +1222,8 @@ class HomeView(QWidget):
 
     def _sync_project_nav(self, *_args) -> None:
         current = self.project_filter.currentData() or ""
+        if self.project_tabs.value() != current:
+            self.project_tabs.set_value(current)
         for project_id, button in self._project_nav_buttons.items():
             button.setChecked(project_id == current)
 
@@ -1489,14 +1535,16 @@ class HomeView(QWidget):
             section_layout = QVBoxLayout(section)
             section_layout.setContentsMargins(0, 0, 0, 0)
             section_layout.setSpacing(theme_module.SPACE["sm"])
-            heading_row = QHBoxLayout()
-            heading_row.setSpacing(theme_module.SPACE["sm"])
-            heading = QLabel(self._project_label(project_id))
-            heading.setObjectName("groupHeading")
-            heading_row.addWidget(heading)
-            heading_row.addWidget(Chip(i18n.tr('{v0} 个任务', v0=len(items)), "muted"))
-            heading_row.addStretch(1)
-            section_layout.addLayout(heading_row)
+            # 已经选中了一个项目：上面的标签就是标题，分组标题不再重复一遍。
+            if not (self.project_filter.currentData() or ""):
+                heading_row = QHBoxLayout()
+                heading_row.setSpacing(theme_module.SPACE["sm"])
+                heading = QLabel(self._project_label(project_id))
+                heading.setObjectName("groupHeading")
+                heading_row.addWidget(heading)
+                heading_row.addWidget(Chip(i18n.tr('{v0} 个任务', v0=len(items)), "muted"))
+                heading_row.addStretch(1)
+                section_layout.addLayout(heading_row)
 
             grid = QGridLayout()
             grid.setContentsMargins(0, 0, 0, 0)

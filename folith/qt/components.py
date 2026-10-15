@@ -400,6 +400,229 @@ class FilterChips(SegmentedControl):
 
 
 # --------------------------------------------------------------------------
+# Project tabs
+# --------------------------------------------------------------------------
+#: 项目色点轮换用的 token（按项目 id 稳定取色：同一个项目在哪里都是同一种颜色）。
+#: 不用 danger（像报错）、brand-navy（日间近黑、夜间近白）、brand-cyan（白底上太刺眼）。
+PROJECT_DOT_TOKENS = ("accent", "success", "warning", "info", "brand-azure")
+
+
+def project_dot_token(project_id: str) -> str:
+    """项目 → 色点 token。未归属（空 id）是次要灰。"""
+    if not project_id:
+        return "text-muted"
+    total = sum((index + 1) * ord(char) for index, char in enumerate(project_id))
+    return PROJECT_DOT_TOKENS[total % len(PROJECT_DOT_TOKENS)]
+
+
+class _ProjectTab(QPushButton):
+    """一枚项目标签：色点 + 名称 + 任务数（数字是次要色，所以自己画）。"""
+
+    MAX_WIDTH = 220
+    HEIGHT = 30
+
+    def __init__(self, project_id: str, name: str, count: int, parent=None) -> None:
+        super().__init__(parent)
+        self.project_id = project_id
+        self.name = name
+        self.count = count
+        self.setObjectName("projectTab")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setFixedHeight(self.HEIGHT)
+        self._hover = False
+        self.set_data(name, count)
+
+    def set_data(self, name: str, count: int) -> None:
+        self.name, self.count = name, int(count)
+        self.setToolTip(name)
+        self.setAccessibleName(f"{name} {count}")
+        self.setText(name)                     # 测试与无障碍读到的文字
+        self.updateGeometry()
+        self.update()
+
+    def _bold_font(self):
+        font = self.font()
+        font.setWeight(font.Weight.DemiBold)
+        return font
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        from PySide6.QtGui import QFontMetrics
+
+        name_w = QFontMetrics(self._bold_font()).horizontalAdvance(self.name)
+        count_w = QFontMetrics(self.font()).horizontalAdvance(str(self.count))
+        width = 12 + 8 + 8 + name_w + 8 + count_w + 12
+        return QSize(min(self.MAX_WIDTH, width), self.HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        return self.sizeHint()
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt naming
+        from PySide6.QtGui import QFontMetrics
+
+        tokens = _tokens()
+        checked = self.isChecked()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = 9.0
+        if checked:
+            fill, border = tokens["accent-soft"], tokens["accent-border"]
+        elif self._hover:
+            fill, border = tokens["bg-hover"], tokens["border-subtle"]
+        else:
+            fill, border = tokens["bg-surface"], tokens["border-hairline"]
+        painter.setPen(QPen(theme_module.qcolor(border), 1))
+        painter.setBrush(theme_module.qcolor(fill))
+        painter.drawRoundedRect(rect, radius, radius)
+        if self.hasFocus():
+            painter.setPen(QPen(theme_module.qcolor(tokens["focus-ring"]), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius - 1, radius - 1)
+
+        x = 12.0
+        mid = rect.center().y()
+        dot = theme_module.qcolor(tokens[project_dot_token(self.project_id)]
+                                  if self.project_id != ALL_PROJECTS else tokens["accent"])
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(dot)
+        painter.drawEllipse(QPointF(x + 4, mid), 4, 4)
+        x += 16
+
+        count_text = str(self.count)
+        count_w = QFontMetrics(self.font()).horizontalAdvance(count_text)
+        name_font = self._bold_font() if checked else self.font()
+        available = max(0, int(self.width() - x - 8 - count_w - 12))
+        name = QFontMetrics(name_font).elidedText(self.name, Qt.TextElideMode.ElideMiddle,
+                                                  available)
+        painter.setFont(name_font)
+        painter.setPen(theme_module.qcolor(tokens["accent" if checked else "text-primary"]))
+        name_rect = QRectF(x, rect.top(), available, rect.height())
+        painter.drawText(name_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         name)
+        painter.setFont(self.font())
+        painter.setPen(theme_module.qcolor(tokens["accent" if checked else "text-muted"]))
+        painter.drawText(QRectF(rect.right() - 12 - count_w, rect.top(), count_w, rect.height()),
+                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, count_text)
+        painter.end()
+
+
+#: :class:`ProjectTabs` 里「全部」那一枚的值。
+ALL_PROJECTS = ""
+
+
+class ProjectTabs(QWidget):
+    """任务库顶部的一排项目标签（像浏览器标签页）：全部 / 项目 A / 项目 B / 未归属。
+
+    放不下时横向滚动（滚轮 / 触控板都行，不显示滚动条），选中的那枚始终滚进视野。
+    ``changed(project_id)``：``""`` = 全部，``"__none__"`` 由调用方自定义也可以。
+    """
+
+    changed = Signal(str)
+
+    def __init__(self, all_label: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from PySide6.QtWidgets import QButtonGroup, QScrollArea
+
+        self.setObjectName("projectTabs")
+        self._all_label = all_label
+        self._value = ALL_PROJECTS
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self.tabs: dict[str, _ProjectTab] = {}
+
+        self.strip = QWidget()
+        self.strip.setObjectName("transparent")
+        self._row = QHBoxLayout(self.strip)
+        self._row.setContentsMargins(2, 2, 2, 2)
+        self._row.setSpacing(theme_module.SPACE["sm"])
+        self._row.addStretch(1)
+
+        self.scroll = QScrollArea(self)
+        self.scroll.setObjectName("transparent")
+        self.scroll.setWidget(self.strip)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.viewport().setAutoFillBackground(False)
+        self.scroll.viewport().installEventFilter(self)
+        self.scroll.setFixedHeight(_ProjectTab.HEIGHT + 4)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.scroll)
+        self.set_projects([])
+
+    def set_projects(self, projects: list[tuple[str, str, int]]) -> None:
+        """``projects``：``[(project_id, 名称, 任务数)]``，「全部」由这里补在最前面。"""
+        total = sum(count for _pid, _name, count in projects)
+        wanted = [(ALL_PROJECTS, self._all_label, total)] + [
+            (str(pid), str(name), int(count)) for pid, name, count in projects]
+        if [pid for pid, _n, _c in wanted] == list(self.tabs):
+            for pid, name, count in wanted:
+                self.tabs[pid].set_data(name, count)
+        else:
+            for tab in self.tabs.values():
+                self._group.removeButton(tab)
+                self._row.removeWidget(tab)
+                tab.hide()  # before detaching (see segment_assist._clear)
+                tab.setParent(None)
+                tab.deleteLater()
+            self.tabs = {}
+            for position, (pid, name, count) in enumerate(wanted):
+                tab = _ProjectTab(pid, name, count, self.strip)
+                tab.clicked.connect(lambda _checked=False, v=pid: self._pick(v))
+                self._group.addButton(tab)
+                self._row.insertWidget(position, tab)
+                self.tabs[pid] = tab
+        if self._value not in self.tabs:
+            self._value = ALL_PROJECTS
+        self.tabs[self._value].setChecked(True)
+
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, project_id: str) -> None:
+        project_id = project_id if project_id in self.tabs else ALL_PROJECTS
+        self._value = project_id
+        self.tabs[project_id].setChecked(True)
+        self._reveal(self.tabs[project_id])
+
+    def _pick(self, project_id: str) -> None:
+        self._reveal(self.tabs.get(project_id))
+        if project_id == self._value:
+            return
+        self._value = project_id
+        self.changed.emit(project_id)
+
+    def _reveal(self, tab) -> None:
+        if tab is not None and self.isVisible():
+            QTimer.singleShot(0, lambda: self.scroll.ensureWidgetVisible(tab, 24, 0))
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        # 竖向滚轮 → 横向滚动（鼠标用户没有横向滚轮）。
+        if watched is self.scroll.viewport() and event.type() == QEvent.Type.Wheel:
+            delta = event.angleDelta()
+            step = delta.x() or delta.y()
+            bar = self.scroll.horizontalScrollBar()
+            if bar.maximum() > 0 and step:
+                bar.setValue(bar.value() - step)
+                return True
+        return super().eventFilter(watched, event)
+
+
+# --------------------------------------------------------------------------
 # Navigation
 # --------------------------------------------------------------------------
 def nav_item(label: str, icon_name: str, *, checkable: bool = False,
@@ -412,6 +635,45 @@ def nav_item(label: str, icon_name: str, *, checkable: bool = False,
                               color_on="accent", duotone_on=True))
     button.setIconSize(QSize(icon_size, icon_size))
     button.setCursor(Qt.CursorShape.PointingHandCursor)
+    glass_selection(button)
+    return button
+
+
+class _GlassShadow(QObject):
+    """选中时给按钮一层柔和投影；主题切换（StyleChange）时按新主题换颜色。"""
+
+    def __init__(self, button: QPushButton) -> None:
+        super().__init__(button)
+        self.button = button
+        button.toggled.connect(self.sync)
+        button.installEventFilter(self)
+        self.sync()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        if event.type() == QEvent.Type.StyleChange:
+            self.sync()
+        return False
+
+    def sync(self, *_args) -> None:
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+        if not self.button.isChecked():
+            if self.button.graphicsEffect() is not None:
+                self.button.setGraphicsEffect(None)
+            return
+        effect = self.button.graphicsEffect()
+        if not isinstance(effect, QGraphicsDropShadowEffect):
+            effect = QGraphicsDropShadowEffect(self.button)
+            self.button.setGraphicsEffect(effect)
+        night = theme_module.resolve(style_module.current_theme()) == "dark"
+        effect.setOffset(0, 2)
+        effect.setBlurRadius(16 if night else 14)
+        effect.setColor(QColor(0, 0, 0, 110) if night else QColor(30, 41, 70, 34))
+
+
+def glass_selection(button: QPushButton) -> QPushButton:
+    """侧栏导航 / 项目条目：选中时是一片带投影的浅色玻璃（底与亮边在 QSS 里）。"""
+    _GlassShadow(button)
     return button
 
 
