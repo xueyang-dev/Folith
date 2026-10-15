@@ -379,3 +379,16 @@ def test_source_location_waits_for_transition_and_follows_latest_selection(bench
     QTest.qWait(350)
     assert located == [4] and not bench.pdf_panel._render_deferred
     assert not bench._motion.running("translation-columns")
+
+
+def test_column_rewrap_keeps_visible_editor_anchored(bench):
+    table = bench.segment_list
+    bench.select_segment(40)
+    bar = table.verticalScrollBar()
+    bar.setValue(bar.value() + table.rowViewportPosition(40) - 180)
+    before = table.rowViewportPosition(40)
+    table.setColumnWidth(1, max(120, table.columnWidth(1) - 170))
+    bench._schedule_row_heights(reset=True)
+    QTest.qWait(350)
+    assert abs(table.rowViewportPosition(40) - before) <= 1
+    assert bench.inline_editor.isVisibleTo(bench)

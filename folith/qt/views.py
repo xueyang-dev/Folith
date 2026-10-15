@@ -4330,6 +4330,9 @@ class WorkbenchView(QWidget):
 
     def _apply_row_height_chunk(self) -> None:
         table = self.segment_list
+        position = self._active_position
+        anchor = table.visualRect(table.model().index(position, 1))
+        keep_anchor = anchor.intersects(table.viewport().rect())
         batch, self._heights_pending = self._heights_pending[:200], self._heights_pending[200:]
         started = time.perf_counter()
         for offset, position in enumerate(batch):
@@ -4346,6 +4349,11 @@ class WorkbenchView(QWidget):
         if not self._heights_pending:
             self._height_timer.stop()
         self._place_inline_editor()
+        if keep_anchor:
+            after = table.visualRect(table.model().index(self._active_position, 1)).top()
+            bar = table.verticalScrollBar()
+            bar.setValue(bar.value() + after - anchor.top())
+            self._place_inline_editor()
 
     def _columns_resized(self, index: int, _old: int, _new: int) -> None:
         if index in (1, 2):
