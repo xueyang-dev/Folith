@@ -22,7 +22,7 @@ import sys
 import weakref
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
@@ -872,6 +872,9 @@ class MainWindow(QMainWindow):
 
     def show_home(self) -> None:
         self.workbench.flush_draft()
+        returning = self._current_job_id if self.stack.currentWidget() is self.workbench else ""
+        overview = self._overview_document() if returning else None
+        origin = overview[1] if overview is not None else None
         self._current_job_id = ""
         # Switch at once and let the entrance run; the list (≈0.5 s on a large
         # book: two isolated state copies per summary) is read off the GUI
@@ -882,6 +885,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
         self._sync_menu_state()
         self._refresh_home_async()
+        if returning:
+            # 卡片要等任务库排好版才有位置：下一轮事件循环再飞回去。
+            QTimer.singleShot(0, lambda: self._fly_back(returning, origin))
 
     def _refresh_home_async(self) -> None:
         self._home_generation = getattr(self, "_home_generation", 0) + 1
@@ -999,9 +1005,72 @@ class MainWindow(QMainWindow):
         if self._current_job_id == job_id:
             self.workbench.set_followup_drawer_open(True)
 
+    # ---- 文档飞入 / 飞回（任务库卡片 ↔ 工作台） -------------------------------
+    def _card_document(self, job_id: str):
+        """任务库里这张卡上的文档（可见时）：``(截图, 在窗口里的矩形)``。"""
+        card = getattr(self.home, "_cards", {}).get(job_id)
+        if card is None or not card.isVisible() or self.stack.currentWidget() is not self.home:
+            return None
+        paper = card.paper
+        page = paper.page_rect().toRect()
+        if page.isEmpty() or not paper.visibleRegion().contains(page.center()):
+            return None
+        top_left = paper.mapTo(self, page.topLeft())
+        return paper.grab(page), QRectF(top_left.x(), top_left.y(), page.width(), page.height())
+
+    def _content_rect(self, aspect: float) -> QRectF:
+        """飞行的另一端：内容区中央、按文档比例的一块（大约占内容区高度的六成）。"""
+        area = QRectF(self.stack.mapTo(self, self.stack.rect().topLeft()), QSizeF(self.stack.size()))
+        height = area.height() * 0.62
+        width = height * aspect
+        return QRectF(area.center().x() - width / 2, area.center().y() - height / 2, width, height)
+
+    def _overview_document(self):
+        """译前准备页上的那份文档（可见时）：飞行的落点就是它，而不是内容区中央。"""
+        try:
+            paper = self.workbench.setup_panel.overview.paper
+        except AttributeError:
+            return None
+        if self.stack.currentWidget() is not self.workbench or not paper.isVisible():
+            return None
+        page = paper.page_rect()
+        top_left = paper.mapTo(self, page.topLeft().toPoint())
+        return paper, QRectF(top_left.x(), top_left.y(), page.width(), page.height())
+
+    def _fly(self, document, *, opening: bool, overview=None) -> None:
+        if document is None or motion.reduced() or not self.isVisible():
+            return
+        pixmap, card_rect = document
+        aspect = card_rect.width() / max(1.0, card_rect.height())
+        target = overview[1] if overview is not None else self._content_rect(aspect)
+        start, end = (card_rect, target) if opening else (target, card_rect)
+        if overview is not None and opening:
+            # 同一份文档从卡片落到准备页：落地前真实的那份先不画，落地时交接。
+            paper = overview[0]
+            paper.set_ghost(True)
+            components.DocumentFlight(self, pixmap, start, end, opening=True, land=True,
+                                      on_done=lambda: paper.set_ghost(False))
+            return
+        components.DocumentFlight(self, pixmap, start, end, opening=opening)
+
+    def _fly_back(self, job_id: str, origin) -> None:
+        document = self._card_document(job_id)
+        if document is None or motion.reduced():
+            return
+        pixmap, card_rect = document
+        start = origin if origin is not None else self._content_rect(
+            card_rect.width() / max(1.0, card_rect.height()))
+        card = self.home._cards.get(job_id)
+        if card is not None:
+            card.paper.set_ghost(True)
+        components.DocumentFlight(
+            self, pixmap, start, card_rect, opening=False, land=origin is not None,
+            on_done=lambda: card.paper.set_ghost(False) if card is not None else None)
+
     def open_job(self, job_id: str) -> None:
         if not job_id:
             return
+        flight = self._card_document(job_id)
         self.workbench.flush_draft()
         state = adapter.load_state(job_id)
         if not state:
@@ -1037,6 +1106,7 @@ class MainWindow(QMainWindow):
             # second time (~1.5 s on a book-length task).  An ordinary refresh
             # only syncs the run state and menus while the signature is unchanged.
             self.refresh_workbench()
+            self._fly(flight, opening=True, overview=self._overview_document())
         finally:
             QApplication.restoreOverrideCursor()
             # 只清打开任务的临时查询值。

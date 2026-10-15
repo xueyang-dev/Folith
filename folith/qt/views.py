@@ -376,7 +376,7 @@ class _TaskCard(Card):
         # ---- 上半：文档示意 ----------------------------------------------
         thumb = QFrame()
         thumb.setObjectName("tileThumb")
-        thumb.setFixedHeight(124)
+        thumb.setFixedHeight(136)
         thumb_layout = QGridLayout(thumb)
         thumb_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["sm"],
                                         theme_module.SPACE["sm"], 0)
@@ -390,8 +390,10 @@ class _TaskCard(Card):
         self.time_label.setObjectName("tileTime")
         self.time_label.setToolTip((row.updated_at or "").replace("T", " ")[:16])
         unreadable = bool(str(getattr(row, "error", "") or "").strip())
-        paper = components.DocThumb(66, 86, faded=unreadable)
+        paper = components.DocThumb(72, 94, faded=unreadable)
+        paper.set_document(row.filename, row.segment_count)
         self.paper = paper
+        self._motion = motion.Motion(self)
         thumb_layout.addWidget(self.badge, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         thumb_layout.addWidget(self.time_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         thumb_layout.addWidget(paper, 0, 0, 2, 3, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
@@ -465,10 +467,28 @@ class _TaskCard(Card):
         self.setProperty("selected", "true" if selected else "false")
         style_module.repolish(self)
 
+    # ---- 文档的手感：悬停抬起、按下略沉、松开回到悬停 -------------------------
+    def _lift_to(self, value: float, kind: str = "select") -> None:
+        self._motion.animate("paper-lift", self.paper.lift(), value, self.paper.set_lift, kind=kind)
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        self._lift_to(1.0, "local")
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        self._lift_to(0.0, "local")
+        super().leaveEvent(event)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         if event.button() == Qt.MouseButton.LeftButton:
+            self._lift_to(-0.3)
             self.clicked.emit(self.job_id)
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._lift_to(1.0 if self.underMouse() else 0.0)
+        super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1023,6 +1043,7 @@ class HomeView(QWidget):
             return
         if self._continue_job_id != row.job_id:
             self.continue_paper.set_image(None)
+            self.continue_paper.set_document(row.filename, row.segment_count)
         self._continue_job_id = row.job_id
         self._request_preview(row.job_id, row.filename, self.continue_paper)
         self.continue_title.setText(row.title)

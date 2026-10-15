@@ -14,6 +14,7 @@ Section Card + Card Header Strip、Icon Badge。
 """
 from __future__ import annotations
 
+import math
 import sys
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
@@ -475,56 +476,223 @@ class GradientCanvas(QWidget):
 # Golden Gate：任务库的小积木（文档缩略图、细进度条、状态点、相对时间）
 # --------------------------------------------------------------------------
 class DocThumb(QWidget):
-    """一张"纸"：白色页面 + 投影 + 标题线 + 正文行。
+    """文档本身：一张纸、一叠纸，或一本书——画得像实物，而不是一个色块。
 
-    任务卡与"继续上次的工作"用它表示文档本身。真实页面（PDF 第一页 / 书封面 /
-    正文第一页）由 :mod:`folith.qt.thumbnails` 在后台生成，好了以后经
-    :meth:`set_image` 换上；在那之前、或文件读不出来时，画一张主题内的示意纸。
-    `faded` 用于读不出的任务。
+    * **纸**（PDF 正文页、DOCX、TXT、Markdown）：页面下面垫着几张错开一点的纸，文档越长
+      垫得越厚；TXT / Markdown 右上角折一个角。页面上是真实的第一页预览（后台生成，见
+      :mod:`folith.qt.thumbnails`），之前先画一张主题内的示意纸。
+    * **书**（EPUB，或第一页看起来就是封面的 PDF）：左侧有书脊的压痕与暗部，右侧露出书页的
+      切口，封面右侧圆角、左侧几乎是直角。
+    * **抬起**（``set_lift``，0–1）：悬停时整份文档上移一点、投影变大变柔，接触阴影变淡；
+      按下时略微下沉。动画由卡片驱动（尊重「减少动态效果」）。
+
+    ``faded`` 用于读不出的任务。接口与旧版相同：``set_image`` / ``has_image``。
     """
+
+    PAPER_EXTS = ("pdf", "docx", "doc", "txt", "md", "markdown")
+    FOLD_EXTS = ("txt", "md", "markdown")
 
     def __init__(self, width: int = 74, height: int = 96, *, faded: bool = False,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(width + 12, height + 14)
+        self.setFixedSize(width + 22, height + 24)
         self._page = QSize(width, height)
         self._faded = faded
         self._image: QImage | None = None
+        self._ext = ""
+        self._sheets = 1
+        self._lift = 0.0
+        self._cover = False
+        self._ghost = False
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    # ---- 数据 ----
+    def set_document(self, filename: str, segments: int = 0) -> None:
+        """格式决定画成纸还是书；长度决定纸垫几层。"""
+        self._ext = str(filename or "").rsplit(".", 1)[-1].lower() if "." in str(filename or "") else ""
+        count = int(segments or 0)
+        self._sheets = 0 if count < 40 else 1 if count < 400 else 2 if count < 2000 else 3
+        self.update()
 
     def set_image(self, image: QImage | None) -> None:
         """换上真实页面预览（``None`` = 回到示意纸）。"""
         self._image = image if image is not None and not image.isNull() else None
+        self._cover = self._image is not None and _looks_like_cover(self._image)
         self.update()
 
     def has_image(self) -> bool:
         return self._image is not None
 
+    def is_book(self) -> bool:
+        return self._ext == "epub" or (self._cover and self._ext not in ("txt", "md", "markdown", "docx"))
+
+    def set_lift(self, value: float) -> None:
+        self._lift = max(-0.4, min(1.0, float(value)))
+        self.update()
+
+    def lift(self) -> float:
+        return self._lift
+
+    def set_ghost(self, ghost: bool) -> None:
+        """飞行中的文档正落向这里：先不画，落地那一刻再出现（同一份文档不出现两份）。"""
+        self._ghost = bool(ghost)
+        self.update()
+
+    def page_rect(self) -> QRectF:
+        """页面在本控件里的位置（含抬起位移）：打开任务的过渡从这里出发。"""
+        w, h = self._page.width(), self._page.height()
+        rise = 4.0 * self._lift
+        return QRectF((self.width() - w) / 2 - 3, self.height() - h - 12 - rise, w, h)
+
+    # ---- 绘制 ----
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        if self._ghost:
+            return
         tokens = _tokens()
+        dark = _night()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         if self._faded:
             painter.setOpacity(0.55)
-        w, h = self._page.width(), self._page.height()
-        page = QRectF((self.width() - w) / 2, 4, w, h)
-        shadow = theme_module.qcolor(tokens["text-primary"])
-        for spread, alpha in ((5, 10), (3, 16), (1, 26)):
-            shadow.setAlpha(alpha)
+        page = self.page_rect()
+        self._paint_shadow(painter, page, dark)
+        if self.is_book():
+            self._paint_book(painter, page, tokens, dark)
+        else:
+            self._paint_paper(painter, page, tokens, dark)
+        painter.end()
+
+    def _paint_shadow(self, painter: QPainter, page: QRectF, dark: bool) -> None:
+        lift = max(0.0, self._lift)
+        strength = 1.6 if dark else 1.0
+        # 环境投影：抬得越高，离得越远、越大、越淡。
+        for i, (spread, alpha) in enumerate(((12, 8), (8, 12), (5, 18), (2, 26))):
+            grow = spread * (1 + 0.8 * lift)
+            offset = 2 + 6 * lift + i * 0.4
+            colour = QColor(15, 20, 30, int(alpha * strength * (1 - 0.25 * lift)))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(shadow)
-            painter.drawRoundedRect(page.adjusted(-spread / 2, spread / 2, spread / 2, spread), 4, 4)
-        painter.setBrush(theme_module.qcolor(tokens["bg-surface-raised"]))
-        border = theme_module.qcolor(tokens["border-subtle"])
-        painter.setPen(border)
-        painter.drawRoundedRect(page, 3, 3)
+            painter.setBrush(colour)
+            painter.drawRoundedRect(page.adjusted(-grow / 2, offset, grow / 2, offset + grow / 3),
+                                    4 + grow / 3, 4 + grow / 3)
+        # 接触阴影：贴着纸底的一道深色，抬起时变淡变宽。
+        contact = QRectF(page.left() + 4, page.bottom() + 2 + 4 * lift, page.width() - 8, 3)
+        painter.setBrush(QColor(10, 12, 18, int((70 if dark else 45) * (1 - 0.6 * lift))))
+        painter.drawEllipse(contact.adjusted(-6 * lift, 0, 6 * lift, 1 + 2 * lift))
+
+    def _paper_colour(self, tokens: dict, dark: bool) -> QColor:
+        return QColor("#dcd8cf") if dark else QColor("#fdfcf8")
+
+    def _paint_paper(self, painter: QPainter, page: QRectF, tokens: dict, dark: bool) -> None:
+        paper = self._paper_colour(tokens, dark)
+        edge = QColor(0, 0, 0, 38 if not dark else 70)
+        # 垫在下面的纸：每层错开一点、略微转一点角度、颜色略深。
+        for layer in range(self._sheets, 0, -1):
+            painter.save()
+            sheet = QRectF(page).translated(2.2 * layer, 1.6 * layer)
+            painter.translate(sheet.center())
+            painter.rotate((0.9 if layer % 2 else -0.6) * layer)
+            painter.translate(-sheet.center())
+            painter.setBrush(paper.darker(100 + 4 * layer))
+            painter.setPen(QPen(edge, 0.8))
+            painter.drawRoundedRect(sheet, 2, 2)
+            painter.restore()
+        fold = 11.0 if self._ext in self.FOLD_EXTS else 0.0
+        path = QPainterPath()
+        if fold:
+            path.moveTo(page.topLeft())
+            path.lineTo(page.right() - fold, page.top())
+            path.lineTo(page.right(), page.top() + fold)
+            path.lineTo(page.bottomRight())
+            path.lineTo(page.bottomLeft())
+            path.closeSubpath()
+        else:
+            path.addRoundedRect(page, 2, 2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(paper)
+        painter.drawPath(path)
+        painter.save()
+        painter.setClipPath(path)
         if self._image is not None:
-            self._paint_image(painter, page, border)
-            return
-        ink = theme_module.qcolor(tokens["text-primary"])
-        ink.setAlpha(170)
-        muted = theme_module.qcolor(tokens["text-muted"])
-        muted.setAlpha(110)
+            self._paint_image(painter, page)
+        else:
+            self._paint_placeholder(painter, page, tokens)
+        # 纸面的光：上方极淡的一层亮、下方极淡的一层暗——像一张有厚度的纸。
+        sheen = QLinearGradient(page.topLeft(), page.bottomLeft())
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 34))
+        sheen.setColorAt(0.5, QColor(255, 255, 255, 0))
+        sheen.setColorAt(1.0, QColor(0, 0, 0, 14))
+        painter.fillRect(page, sheen)
+        painter.restore()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(edge, 0.8))
+        painter.drawPath(path)
+        if fold:
+            # 折角：一块折过来的三角，背面颜色略深，带一点阴影。
+            corner = QPainterPath()
+            corner.moveTo(page.right() - fold, page.top())
+            corner.lineTo(page.right() - fold, page.top() + fold)
+            corner.lineTo(page.right(), page.top() + fold)
+            corner.closeSubpath()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 30))
+            painter.drawPath(corner.translated(-1, 1))
+            back = QLinearGradient(QPointF(page.right() - fold, page.top()),
+                                   QPointF(page.right(), page.top() + fold))
+            back.setColorAt(0.0, paper.darker(112))
+            back.setColorAt(1.0, paper.darker(102))
+            painter.setBrush(back)
+            painter.drawPath(corner)
+
+    def _paint_book(self, painter: QPainter, page: QRectF, tokens: dict, dark: bool) -> None:
+        # 书页切口：封面右侧与底部露出一点米色的书页（几条细线就是一叠纸）。
+        block = QRectF(page.left() + 3, page.top() + 2, page.width(), page.height() - 2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#efe8d8") if not dark else QColor("#cfc7b6"))
+        painter.drawRoundedRect(block, 2, 2)
+        lines = QColor(120, 100, 70, 60)
+        for i in range(1, 4):
+            x = block.right() - i * 1.1
+            painter.fillRect(QRectF(x, block.top() + 2, 0.6, block.height() - 4), lines)
+        # 封面：左侧近乎直角（装订处），右侧圆角。
+        cover = QPainterPath()
+        r = 3.0
+        cover.moveTo(page.left(), page.top())
+        cover.lineTo(page.right() - r, page.top())
+        cover.quadTo(page.right(), page.top(), page.right(), page.top() + r)
+        cover.lineTo(page.right(), page.bottom() - r)
+        cover.quadTo(page.right(), page.bottom(), page.right() - r, page.bottom())
+        cover.lineTo(page.left(), page.bottom())
+        cover.closeSubpath()
+        painter.save()
+        painter.setClipPath(cover)
+        if self._image is not None:
+            self._paint_image(painter, page, centred=True)
+        else:
+            painter.fillRect(page, theme_module.qcolor(tokens["accent"]).darker(130))
+        # 书脊：左缘暗部 + 一道压痕高光 + 压痕暗线。
+        spine = QLinearGradient(page.topLeft(), QPointF(page.left() + page.width() * 0.14, page.top()))
+        spine.setColorAt(0.0, QColor(0, 0, 0, 90))
+        spine.setColorAt(0.35, QColor(0, 0, 0, 25))
+        spine.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.fillRect(page, spine)
+        hinge = page.left() + page.width() * 0.075
+        painter.fillRect(QRectF(hinge, page.top(), 0.8, page.height()), QColor(255, 255, 255, 70))
+        painter.fillRect(QRectF(hinge + 1.2, page.top(), 0.8, page.height()), QColor(0, 0, 0, 55))
+        # 封面的光泽：左上一层斜向的淡光。
+        gloss = QLinearGradient(page.topLeft(), page.bottomRight())
+        gloss.setColorAt(0.0, QColor(255, 255, 255, 40))
+        gloss.setColorAt(0.45, QColor(255, 255, 255, 0))
+        painter.fillRect(page, gloss)
+        painter.restore()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(0, 0, 0, 50), 0.8))
+        painter.drawPath(cover)
+
+    def _paint_placeholder(self, painter: QPainter, page: QRectF, tokens: dict) -> None:
+        w, h = page.width(), page.height()
+        ink = QColor(40, 40, 45, 150)
+        muted = QColor(60, 60, 70, 70)
         pad = max(8.0, w * 0.12)
         x, y, inner = page.left() + pad, page.top() + pad, w - 2 * pad
         painter.setPen(Qt.PenStyle.NoPen)
@@ -536,31 +704,97 @@ class DocThumb(QWidget):
         y += h * 0.1
         step = max(4.5, h * 0.06)
         while y < page.bottom() - pad:
-            painter.drawRect(QRectF(x, y, inner, 2))
+            painter.drawRect(QRectF(x, y, inner, 1.6))
             y += step
-        painter.end()
 
-
-
-    def _paint_image(self, painter: QPainter, page: QRectF, border) -> None:
+    def _paint_image(self, painter: QPainter, page: QRectF, *, centred: bool = False) -> None:
         """按"铺满纸面"缩放：页面预览靠上对齐（标题在上方），封面居中裁切。"""
         image = self._image
         scale = max(page.width() / image.width(), page.height() / image.height())
         width, height = image.width() * scale, image.height() * scale
         target = QRectF(page.left() + (page.width() - width) / 2, page.top(), width, height)
-        if height > page.height() and image.width() / image.height() < 0.7:
-            # 竖长的封面：上下居中裁切，不只露出书名区域。
+        if centred or (height > page.height() and image.width() / image.height() < 0.7):
             target.moveTop(page.top() - (height - page.height()) / 2)
-        path = QPainterPath()
-        path.addRoundedRect(page, 3, 3)
-        painter.save()
-        painter.setClipPath(path)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.drawImage(target, image)
-        painter.restore()
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(border)
-        painter.drawRoundedRect(page, 3, 3)
+
+
+class DocumentFlight(QWidget):
+    """打开 / 关闭任务时，文档从卡片「飞」到工作台（或飞回卡片）的那一下。
+
+    只是一张截图在窗口最上层移动、缩放、淡出：不挡鼠标、不改任何布局，结束就删掉。
+    打开：从卡片上的位置放大到内容区，后 40% 淡出——像拿起一份文件、凑近、翻开。
+    关闭：反过来，从内容区缩回卡片，最后 30% 淡入到卡片上。减少动态效果时不出现。
+    """
+
+    def __init__(self, window: QWidget, pixmap: QPixmap, start: QRectF, end: QRectF, *,
+                 opening: bool, on_done=None, land: bool = False) -> None:
+        super().__init__(window)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setGeometry(window.rect())
+        self._pixmap = pixmap
+        self._start, self._end = QRectF(start), QRectF(end)
+        self._opening = opening
+        self._land = land          # 终点是同一份文档的真实位置：全程不透明，落地交接
+        self._t = 0.0
+        self._motion = motion.Motion(self)
+        self.show()
+        self.raise_()
+
+        def finished() -> None:
+            self.hide()
+            self.deleteLater()
+            if on_done is not None:
+                on_done()
+
+        self._motion.animate("flight", 0.0, 1.0, self._step, kind="view", finished=finished)
+
+    def _step(self, value: float) -> None:
+        self._t = float(value)
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        t = self._t
+        rect = QRectF(self._start.x() + (self._end.x() - self._start.x()) * t,
+                      self._start.y() + (self._end.y() - self._start.y()) * t,
+                      self._start.width() + (self._end.width() - self._start.width()) * t,
+                      self._start.height() + (self._end.height() - self._start.height()) * t)
+        if self._land:
+            opacity = 1.0
+        elif self._opening:
+            opacity = 1.0 if t < 0.6 else max(0.0, 1.0 - (t - 0.6) / 0.4)
+        else:
+            opacity = min(1.0, 0.35 + t)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.setOpacity(opacity)
+        # 投影随飞行高度变化：中段最高。
+        height = math.sin(math.pi * t)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(10, 15, 25, int(40 * height * opacity)))
+        painter.drawRoundedRect(rect.adjusted(-6 * height, 8 * height, 6 * height, 14 * height), 8, 8)
+        painter.drawPixmap(rect, self._pixmap, QRectF(self._pixmap.rect()))
+        painter.end()
+
+
+def _looks_like_cover(image: QImage) -> bool:
+    """第一页像封面（大面积颜色或深色），而不是白底黑字的正文页。"""
+    small = image.scaled(16, 20, Qt.AspectRatioMode.IgnoreAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
+    total = sat = dark = 0
+    for y in range(small.height()):
+        for x in range(small.width()):
+            colour = QColor(small.pixel(x, y))
+            total += 1
+            sat += colour.hsvSaturationF()
+            dark += colour.valueF() < 0.45
+    return total > 0 and (sat / total > 0.2 or dark / total > 0.35)
+
+
+def _night() -> bool:
+    from . import style
+
+    return style.night_mode()
+
 
 class ProgressLine(QWidget):
     """4px 圆头细进度条（QSS 的 QProgressBar 画不出圆头 + 0 高度的轨道）。"""

@@ -130,6 +130,7 @@ class DocumentOverview(QWidget):
         self.name_label.setToolTip(self._filename)
         if changed:
             self.paper.set_image(None)
+            self.paper.set_document(self._filename)
         self._refresh()
 
     def _ready(self, job_id: str) -> None:
