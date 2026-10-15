@@ -78,11 +78,9 @@ def _headings(home) -> list[str]:
             if label.objectName() == "groupHeading"]
 
 
-def test_shelf_is_the_default_and_cards_and_table_are_one_click_away(home):
-    # 任务库默认是书架（每个项目一层、每个任务一本书脊）；卡片看缩略图，表格横着扫。
-    assert home.view_switch.value() == "shelf"
-    assert home.stack.currentWidget() is home.shelf_scroll
-    home.set_view_mode("cards")
+def test_card_view_is_the_default_and_the_table_is_one_click_away(home):
+    # Golden Gate 版式：任务库默认是缩略图卡片，表格留给"几十个任务横着扫"。
+    assert home.view_switch.value() == "cards"
     assert home.stack.currentWidget() is home.card_scroll
     home.set_view_mode("table")
     assert home.view_switch.value() == "table"

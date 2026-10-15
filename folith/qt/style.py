@@ -674,18 +674,6 @@ QFrame#termFocusBar {{
     border-radius: {r['sm']}px;
 }}
 QFrame#termFocusBar QLabel {{ background: transparent; }}
-/* 书架视图的「藏书票」：纸色底、细边框、衬线书名。 */
-QFrame#bookplate {{
-    background: {t['bg-surface-raised']}; border: 1px solid {t['border-subtle']};
-    border-radius: {r['md']}px;
-}}
-QFrame#bookplate QLabel {{ background: transparent; }}
-QLabel#bookplateKicker {{ font-size: {f['micro']}px; font-weight: 700; color: {t['accent']};
-    letter-spacing: 1px; }}
-QLabel#bookplateTitle {{ font-family: ".New York", "New York", "Songti SC", Georgia, serif;
-    font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
-QLabel#bookplateMeta {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
-QLabel#bookplateStatus {{ font-size: {f['caption']}px; color: {t['text-primary']}; }}
 QWidget#contextRow {{
     background: transparent; border: 1px solid {t['border-hairline']};
     border-radius: {r['sm']}px;

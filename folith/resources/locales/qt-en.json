@@ -1621,9 +1621,5 @@
   "选中一句，直接输入问题或重译要求…": "Select a sentence, then just type a question or a retranslation request…",
   "{v0} 个进行中": "{v0} in progress",
   "{v0} 个已交付": "{v0} delivered",
-  "{v0} 个需要处理": "{v0} need attention",
-  "{v0} 项待处理": "{v0} to handle",
-  "书架": "Shelf",
-  "已译 {v0}%": "{v0}% translated",
-  "藏书票": "Ex libris"
+  "{v0} 个需要处理": "{v0} need attention"
 }
