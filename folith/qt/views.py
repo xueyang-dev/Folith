@@ -2211,42 +2211,126 @@ class WorkbenchView(QWidget):
         inspector_layout.addWidget(self.segment_status)
         self.segment_status.setWordWrap(True)
 
+        # 检查器尽量一屏放下（acceptance-feedback 第 19 条）：
+        #   ⚠ 需要注意（只有真的有项时才出现）→ 段落操作（一行图标）→ 术语
+        #   → AI 操作（审校 / 点评 / 重译一行，下面一个共用输入框）→ 前后文 → 批注 → 段落事实。
+        def tool(button: QPushButton, label: str, tip: str, name: str = "inspectorTool") -> QPushButton:
+            button.setText(label)
+            button.setObjectName(name)
+            button.setToolTip(tip)
+            button.setAccessibleName(tip.split("：")[0].split("（")[0])
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            return button
+
+        for button, tip in ((self.copy_source_button, i18n.tr('复制原文到译文')),
+                            (self.restore_button, self.restore_button.toolTip()),
+                            (self.structure_button, self.structure_button.toolTip()),
+                            (self.view_source_button, self.view_source_button.toolTip()),
+                            (self.exclude_button, self.exclude_button.toolTip())):
+            label = {self.copy_source_button: i18n.tr('复制原文'),
+                     self.restore_button: i18n.tr('恢复原译'),
+                     self.structure_button: i18n.tr('结构'),
+                     self.view_source_button: i18n.tr('原位置'),
+                     self.exclude_button: i18n.tr('排除')}[button]
+            full = {self.copy_source_button: i18n.tr('复制原文到译文'),
+                    self.restore_button: i18n.tr('恢复原译'),
+                    self.structure_button: i18n.tr('段落结构…'),
+                    self.view_source_button: i18n.tr('查看原位置'),
+                    self.exclude_button: i18n.tr('排除本段')}[button]
+            tool(button, label, f"{full}：{tip}" if tip and tip != full else full,
+                 "inspectorDanger" if button is self.exclude_button else "inspectorTool")
+        tool(self.review_button, i18n.tr('审校'),
+             i18n.tr('审校本段：正式审校这一段，会更新它的审校状态'), "inspectorPrimary")
+        tool(self.review_selected_button, i18n.tr('审校所选'),
+             i18n.tr('审校所选段落'), "inspectorPrimary")
+        tool(self.analyze_button, i18n.tr('点评'), self.analyze_button.toolTip())
+        tool(self.retranslate_button, i18n.tr('重译'),
+             i18n.tr('重译本段：只重译这一段，并刷新它的审校状态'))
+
+        # 一个共用输入框：写一句要求点「重译」，或者问一个问题点「提问」。
+        self.assist_input = QLineEdit()
+        self.assist_input.setPlaceholderText(i18n.tr('写重译要求或问一个问题…'))
+        self.assist_retranslate = QPushButton(i18n.tr('按要求重译'))
+        self.assist_ask = QPushButton(i18n.tr('提问'))
+        for button in (self.assist_retranslate, self.assist_ask):
+            button.setObjectName("inspectorTool")
+
+        def send(box) -> None:
+            text = self.assist_input.text().strip()
+            if not text:
+                return
+            box.input.setText(text)
+            (box._suggest if box is self.suggest_box else box._ask)()
+
+        self.assist_retranslate.clicked.connect(lambda: send(self.suggest_box))
+        self.assist_ask.clicked.connect(lambda: send(self.ask_box))
+        self.assist_input.returnPressed.connect(lambda: send(self.suggest_box))
+        for box in (self.suggest_box, self.ask_box):
+            box.input.setVisible(False)
+            box.button.setVisible(False)
+
+        def row_of(*widgets) -> QHBoxLayout:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(theme_module.SPACE["xs"])
+            for widget in widgets:
+                row.addWidget(widget, 1)
+            return row
+
         # 只对单独一段有意义的部分：选多段时整组收起。
         self.single_segment_section = QWidget()
         single = QVBoxLayout(self.single_segment_section)
         single.setContentsMargins(0, 0, 0, 0)
         single.setSpacing(theme_module.SPACE["sm"])
-        single.addWidget(style_module.SectionLabel(i18n.tr('需要注意')))
+        self.attention_label = style_module.SectionLabel(i18n.tr('需要注意'))
+        self.attention_label.setObjectName("attentionHeading")
+        single.addWidget(self.attention_label)
         single.addWidget(self.attention_list)
-        single.addWidget(style_module.SectionLabel(i18n.tr('术语')))
-        single.addWidget(self.term_list)
-        single.addWidget(self.term_add_button)
-        single.addWidget(style_module.SectionLabel(i18n.tr('前后文')))
-        single.addWidget(self.context_view)
-        inspector_layout.addWidget(self.single_segment_section)
-
-        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
-        for button in (self.review_button, self.analyze_button, self.review_selected_button,
-                       self.retranslate_button):
-            inspector_layout.addWidget(button)
-        inspector_layout.insertWidget(inspector_layout.indexOf(self.analyze_button) + 1,
-                                      self.review_hint)
-        inspector_layout.addWidget(self.suggest_box)
-        inspector_layout.addWidget(self.ask_box)
-
         self.segment_ops_section = QWidget()
         ops = QVBoxLayout(self.segment_ops_section)
         ops.setContentsMargins(0, 0, 0, 0)
-        ops.setSpacing(theme_module.SPACE["sm"])
+        ops.setSpacing(theme_module.SPACE["xs"])
         ops.addWidget(style_module.SectionLabel(i18n.tr('段落操作')))
-        for button in (self.copy_source_button, self.restore_button, self.exclude_button,
-                       self.structure_button, self.view_source_button):
-            ops.addWidget(button)
-        ops.addWidget(style_module.SectionLabel(i18n.tr('批注')))
-        ops.addWidget(self.note_box)
-        ops.addWidget(style_module.SectionLabel(i18n.tr('段落事实')))
-        ops.addLayout(facts)
-        inspector_layout.addWidget(self.segment_ops_section)
+        ops.addLayout(row_of(self.copy_source_button, self.restore_button,
+                             self.structure_button, self.view_source_button,
+                             self.exclude_button))
+        single.addWidget(self.segment_ops_section)
+        single.addWidget(style_module.SectionLabel(i18n.tr('术语')))
+        single.addWidget(self.term_list)
+        single.addWidget(self.term_add_button)
+        inspector_layout.addWidget(self.single_segment_section)
+
+        inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
+        inspector_layout.addLayout(row_of(self.review_button, self.review_selected_button,
+                                          self.analyze_button, self.retranslate_button))
+        self.assist_row = QWidget()
+        assist = QHBoxLayout(self.assist_row)
+        assist.setContentsMargins(0, 0, 0, 0)
+        assist.setSpacing(theme_module.SPACE["xs"])
+        assist.addWidget(self.assist_input, 1)
+        assist.addWidget(self.assist_retranslate)
+        assist.addWidget(self.assist_ask)
+        inspector_layout.addWidget(self.assist_row)
+        # The two result boxes share one zero-spacing holder: empty, they take no room.
+        results = QWidget()
+        results_layout = QVBoxLayout(results)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(0)
+        results_layout.addWidget(self.suggest_box)
+        results_layout.addWidget(self.ask_box)
+        inspector_layout.addWidget(results)
+
+        self.segment_extra_section = QWidget()
+        extra = QVBoxLayout(self.segment_extra_section)
+        extra.setContentsMargins(0, 0, 0, 0)
+        extra.setSpacing(theme_module.SPACE["sm"])
+        extra.addWidget(style_module.SectionLabel(i18n.tr('前后文')))
+        extra.addWidget(self.context_view)
+        extra.addWidget(style_module.SectionLabel(i18n.tr('批注')))
+        extra.addWidget(self.note_box)
+        # 「段落事实」只是把顶上那行状态再说一遍：来源并进状态行，这一节不再单独占位。
+        inspector_layout.addWidget(self.segment_extra_section)
+        self.review_hint.setVisible(False)
         self.multi_hint = QLabel(i18n.tr('按住 ⇧ 或 ⌘ 点选可以多选；批量操作会作用于所有选中的段落。'))
         self.multi_hint.setObjectName("hint")
         self.multi_hint.setWordWrap(True)
@@ -3836,6 +3920,8 @@ class WorkbenchView(QWidget):
         if not (0 <= self._current_index < len(self._all_rows)) or not self._rows:
             self.segment_status.setText(i18n.tr('尚未选择段落'))
             self.attention_list.set_items([], [])
+            self.attention_label.setVisible(False)
+            self.attention_list.setVisible(False)
             self.term_list.set_terms([])
             self.context_view.set_context({})
             self.submit_button.setEnabled(False)
@@ -3889,6 +3975,9 @@ class WorkbenchView(QWidget):
         from_tm = 0 <= row.index < len(pairs_now) and bool(pairs_now[row.index].get("from_tm"))
         self.fact_source.setText("人工修改" if row.human_edited
                                  else ("翻译记忆（已匹配并复用）" if from_tm else "机器翻译"))
+        if from_tm and not row.human_edited:
+            self.segment_status.setText(self.segment_status.text() + " · "
+                                        + i18n.tr('来自翻译记忆'))
         reason = ""
         for record in adapter.excluded_segments(self.job_id, self._state):
             if record.get("segment_index") == row.index:
@@ -3923,12 +4012,18 @@ class WorkbenchView(QWidget):
         self._render_review()
         queue = [item for item in self._review_items
                  if item.get("kind") == "finding" and item.get("segment_index") == row.index]
-        self.attention_list.set_items(
-            queue, adapter.segment_decisions(self._state, row.index), resolved_count)
+        decisions = adapter.segment_decisions(self._state, row.index)
+        self.attention_list.set_items(queue, decisions, resolved_count)
+        # 「需要注意」只在真的有项时出现：标题下写"没有需要注意的地方"是自相矛盾。
+        attention = len(queue) + len(decisions)
+        self.attention_label.setText(i18n.tr('需要注意 · {v0}', v0=attention) if attention
+                                     else i18n.tr('需要注意'))
+        self.attention_label.setVisible(bool(attention))
+        self.attention_list.setVisible(bool(attention))
         can_analyze = bool(str(row.target or "").strip()) and not row.excluded
         analyzing = self._analyzing_index == row.index
         self.analyze_button.setEnabled(can_analyze and not analyzing)
-        self.analyze_button.setText(i18n.tr('正在点评…') if analyzing else i18n.tr('AI 点评本段'))
+        self.analyze_button.setText(i18n.tr('点评中…') if analyzing else i18n.tr('点评'))
         self.term_list.set_terms(adapter.segment_terms(self._state, row.index))
         self.context_view.set_context(adapter.segment_context(self._state, row.index))
         if self._assist_index != row.index:
@@ -4178,9 +4273,10 @@ class WorkbenchView(QWidget):
         self.review_selected_button.setVisible(multiple)
         self.review_button.setVisible(not multiple)
         self.analyze_button.setVisible(not multiple)
-        self.review_hint.setVisible(not multiple)
         self.single_segment_section.setVisible(not multiple)
         self.segment_ops_section.setVisible(not multiple)
+        self.segment_extra_section.setVisible(not multiple)
+        self.assist_row.setVisible(not multiple)
         self.ask_box.setVisible(not multiple)
         self.suggest_box.setVisible(not multiple)
         self.segment_status.setVisible(not multiple)

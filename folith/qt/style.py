@@ -480,6 +480,22 @@ QFrame#popover {{
 }}
 QFrame#popover QListWidget {{ background: transparent; border: none; }}
 QFrame#popover QScrollArea, QFrame#popover QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
+/* 检查器的紧凑操作（一行几个）：图标 + 短标签，居中；主操作浅强调色，排除为红。 */
+QPushButton#inspectorTool, QPushButton#inspectorPrimary, QPushButton#inspectorDanger {{
+    background: {t['control-bg']}; border: 1px solid {t['control-border']};
+    color: {t['text-primary']}; border-radius: {r['sm']}px;
+    padding: {sp['xs']}px {sp['xs']}px; font-size: {f['caption']}px; font-weight: 500;
+}}
+QPushButton#inspectorTool:hover {{ background: {t['bg-hover']}; }}
+QPushButton#inspectorPrimary {{ background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['accent']}; font-weight: 600; }}
+QPushButton#inspectorPrimary:hover {{ background: {t['accent-soft-hover']}; }}
+QPushButton#inspectorDanger {{ color: {t['danger']}; }}
+QPushButton#inspectorDanger:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
+QPushButton#inspectorTool:disabled, QPushButton#inspectorPrimary:disabled, QPushButton#inspectorDanger:disabled {{
+    background: {t['control-bg']}; border-color: {t['control-border']}; color: {t['text-muted']};
+}}
+QPushButton#inspectorTool::menu-indicator {{ image: none; width: 0px; }}
+QLabel#attentionHeading {{ font-size: {f['label']}px; font-weight: 700; color: {t['warning']}; }}
 /* 底栏字数：本身可点（打开字数浮窗）。 */
 QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}
 QLabel#wordTotal:hover {{ color: {t['accent']}; text-decoration: underline; }}

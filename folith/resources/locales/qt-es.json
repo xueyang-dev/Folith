@@ -1381,5 +1381,17 @@
   "收起原页": "Cerrar página original",
   "在左侧展开 PDF 原页，跟随选中的段落（⌘⌥P）": "Muestra la página PDF original a la izquierda; sigue al segmento seleccionado (⌘⌥P)",
   "上一页": "Página anterior",
-  "下一页": "Página siguiente"
+  "下一页": "Página siguiente",
+  "复制原文": "Copiar original",
+  "结构": "Estructura",
+  "原位置": "En el original",
+  "审校所选": "Revisar selección",
+  "点评": "Comentar",
+  "点评中…": "Comentando…",
+  "按要求重译": "Retraducir así",
+  "写重译要求或问一个问题…": "Escribe una indicación o una pregunta…",
+  "审校本段：正式审校这一段，会更新它的审校状态": "Revisar este segmento: revisión formal que actualiza su estado",
+  "重译本段：只重译这一段，并刷新它的审校状态": "Retraducir solo este segmento y actualizar su estado",
+  "需要注意 · {v0}": "Requiere atención · {v0}",
+  "来自翻译记忆": "de la memoria de traducción"
 }

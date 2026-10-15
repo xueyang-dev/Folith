@@ -339,6 +339,7 @@ class SuggestBox(QWidget):
         self.button.clicked.connect(self._suggest)
         self.candidate = _wrapped("", "suggestionText")
         self.status = _wrapped("", "hint")
+        self.status.setVisible(False)  # only while generating or on an error
         self.adopt_button = QPushButton(i18n.tr('采用'))
         self.adopt_button.setToolTip(i18n.tr('把候选译文放进编辑框；保存仍由你决定'))
         self.adopt_button.clicked.connect(
