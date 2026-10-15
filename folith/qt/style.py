@@ -194,8 +194,11 @@ QWidget#transparent, QFrame#transparent {{ background: transparent; }}
 
 /* ================= 文本层级 ================= */
 QLabel {{ background: transparent; }}
-QLabel#displayTitle {{ font-size: {f['display']}px; font-weight: 700; color: {t['brand-ink']}; }}
-QLabel#pageTitle {{ font-size: {f['title']}px; font-weight: 700; color: {t['brand-ink']}; }}
+/* 页面标题用衬线展示字（macOS 的 New York，中文回退宋体）：和正文的无衬线拉开，
+   层级不只靠字号。字体在 apply_theme 里从系统字体文件注册，没有就退回无衬线。 */
+QLabel#displayTitle {{ font-family: ".New York", "New York", "Songti SC", Georgia, serif; font-size: {f['display']}px; font-weight: 600; color: {t['brand-ink']}; }}
+QLabel#pageTitle {{ font-family: ".New York", "New York", "Songti SC", Georgia, serif; font-size: {f['title']}px; font-weight: 600; color: {t['brand-ink']}; }}
+QLabel#statsLine {{ font-size: {f['footnote']}px; color: {t['text-secondary']}; }}
 QLabel#brandName {{ font-size: {f['section']}px; font-weight: 700; color: {t['brand-ink']}; }}
 QLabel#brandSub {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
 QLabel#sectionTitle {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
@@ -284,8 +287,8 @@ QLabel#emptyTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text
 QLabel#emptyHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* 表单：标签在输入框**上方**（旧界面如此），而不是右对齐挤在左侧窄列里 */
 /* 字段标签比输入框里的正文小一档（macOS 设置窗口的做法），层级才分得开。 */
-QLabel#fieldLabel {{ font-size: {f['label']}px; color: {t['text-secondary']}; font-weight: 500; }}
-QLabel#fieldHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+QLabel#fieldLabel {{ font-size: {f['footnote']}px; color: {t['text-secondary']}; font-weight: 500; }}
+QLabel#fieldHint {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 /* 密钥输入：一个"输入框外壳"，右侧放显示/隐藏按钮（QSS 没有 :focus-within） */
 QFrame#inputGroup {{
     background: {t['bg-surface']};
@@ -642,13 +645,35 @@ QPushButton#panelAction::menu-indicator {{ subcontrol-position: right center; ri
 QPlainTextEdit#inlineSource {{
     background: transparent; border: none; padding: 0; color: {t['text-primary']};
 }}
+/* 阅读区比界面正文大一档：段落网格、原文浮层、译文编辑框是用户真正在读的文字。 */
+QTableWidget#segmentGrid, QPlainTextEdit#inlineSource, QPlainTextEdit#targetEdit {{ font-size: {f['reading']}px; }}
 QPlainTextEdit#inlineSource:focus {{ border: none; }}
 /* 右栏：术语、前后文、需要注意 */
-QPushButton#termChip {{
-    background: {t['bg-surface-subtle']}; border: 1px solid {t['border-hairline']};
-    color: {t['text-primary']}; text-align: left; padding: 2px {sp['sm']}px; min-height: 0;
+/* 术语：浅强调色底的条目，首选译名加粗；被点开（全文定位）时描边强调色。 */
+QFrame#termChip {{
+    background: {t['accent-soft']}; border: 1px solid transparent;
+    border-radius: {r['sm']}px;
 }}
-QPushButton#termChip:hover {{ border-color: {t['accent']}; }}
+QFrame#termChip:hover, QFrame#termChip:focus {{ border-color: {t['accent-border']}; }}
+QFrame#termChip[active="true"] {{ border-color: {t['accent']}; background: {t['accent-soft-hover']}; }}
+QFrame#termChip QLabel {{ background: transparent; }}
+QLabel#termSource {{ color: {t['text-primary']}; }}
+QLabel#termArrow {{ color: {t['text-muted']}; }}
+QLabel#termTarget {{ color: {t['text-primary']}; font-weight: 600; }}
+QLabel#termCount {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
+QToolButton#termInsert {{
+    background: transparent; border: none; border-radius: {r['xs']}px;
+    color: {t['accent']}; font-weight: 700; min-width: 22px; min-height: 20px; padding: 0;
+}}
+QToolButton#termInsert:hover {{ background: {t['bg-hover']}; }}
+QToolButton#termInsert:disabled {{ color: {t['text-muted']}; }}
+QLabel#termMissing {{ color: {t['warning']}; font-size: {f['caption']}px; }}
+/* 全文定位条：「Pixie · 第 3 / 12 处 ↑ ↓ ✕」 */
+QFrame#termFocusBar {{
+    background: {t['accent-soft']}; border: 1px solid {t['accent-border']};
+    border-radius: {r['sm']}px;
+}}
+QFrame#termFocusBar QLabel {{ background: transparent; }}
 QWidget#contextRow {{
     background: transparent; border: 1px solid {t['border-hairline']};
     border-radius: {r['sm']}px;
@@ -1128,8 +1153,25 @@ def _sync_native_appearance(preference: str, resolved: str) -> None:
         pass
 
 
+_DISPLAY_FONT_LOADED = False
+
+
+def _register_display_font() -> None:
+    """macOS 自带的 New York 衬线字体不在 Qt 的字体列表里（系统私有名），从字体文件注册一次。"""
+    global _DISPLAY_FONT_LOADED
+    if _DISPLAY_FONT_LOADED:
+        return
+    _DISPLAY_FONT_LOADED = True
+    import os
+
+    for path in ("/System/Library/Fonts/NewYork.ttf",):
+        if os.path.exists(path):
+            QFontDatabase.addApplicationFont(path)
+
+
 def apply_theme(app, theme: str, *, system_dark: bool = False) -> str:
     """把主题应用到 QApplication；返回实际生效的主题名。"""
+    _register_display_font()
     preference = str(theme or "").strip().lower()
     resolved = theme_module.resolve(theme, system_dark=system_dark)
     t = theme_module.tokens(resolved)

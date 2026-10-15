@@ -1099,7 +1099,12 @@ def segment_terms(state: dict, index: int) -> list[dict]:
         rows.append((0 if hit else 1, position if position >= 0 else len(source), {
             "id": str(entry.get("id") or ""), "source": term, "target": preferred,
             "status": str(entry.get("status") or ""),
+            "forbidden": forbidden,
             "forbidden_hits": [item for item in forbidden if item in target],
+            # 原文出现了术语、译文已经有了，却没有用首选译名（可能是同义写法，也可能是漏改）。
+            "missing_preferred": bool(target.strip() and preferred and preferred != "—"
+                                      and _term_in(term, source)
+                                      and not _term_in(preferred, target)),
         }))
     rows.sort(key=lambda item: (item[0], item[1]))
     return [row for _rank, _position, row in rows[:SEGMENT_TERM_LIMIT]]

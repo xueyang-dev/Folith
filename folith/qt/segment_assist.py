@@ -4,8 +4,9 @@
 
 * **需要注意**：本段未解决的检查项（可以直接「保留译文」或「采用建议」，不用跳去
   审校页）和翻译决策痕迹（中性观察，不是错误）；
-* **术语**：本段命中的术语，点一下插入到译文光标处；译文里出现禁用译名时标红；
-* **前后文**：上一段、下一段；
+* **术语**：本段命中的术语；悬停在本段里标出，点击在全文中定位，↵ 插入首选译名；
+  译文出现禁用译名、或没用首选译名时提示；
+* **前后文**：上一段、下一段（只在筛选或搜索时显示——平时网格里相邻的行就是前后文）；
 * **询问 Agent**：就这一段自由提问，只回答、不改写译文。
 
 这里只放控件与信号；数据来自 :mod:`folith.qt.adapter`，动作由工作台转给窗口。
@@ -14,7 +15,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 from . import i18n
@@ -178,40 +180,128 @@ class AttentionList(QWidget):
         self._texts.append(text)
 
 
+class TermChip(QFrame):
+    """一条术语：原文 → **首选译名** · 本文 N 处，右边一个「插入」。
+
+    悬停 = 当前行里这一对亮起来；点击 = 全文定位（网格高亮 + 滚动条标记 + 逐处跳转）；
+    右侧 ↵ 或 ⌥点击 = 把首选译名插入到译文光标处（原先点击的行为）。
+    """
+
+    hovered = Signal(object)       # 进入时是术语 dict，离开时是 None
+    activated = Signal(object)     # 点击：全文定位
+    insertRequested = Signal(str)
+
+    def __init__(self, term: dict, count: int | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.term = dict(term)
+        self.setObjectName("termChip")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(1)
+        self.setProperty("active", "false")
+        target = str(term.get("target") or "")
+        source = QLabel(str(term.get("source") or ""))
+        source.setObjectName("termSource")
+        arrow = QLabel("→")
+        arrow.setObjectName("termArrow")
+        preferred = QLabel(target or "—")
+        preferred.setObjectName("termTarget")
+        self.count_label = QLabel(i18n.tr('本文 {v0} 处', v0=count) if count else "")
+        self.count_label.setObjectName("termCount")
+        self.count_label.setVisible(bool(count))
+        self.insert_button = QToolButton()
+        self.insert_button.setObjectName("termInsert")
+        self.insert_button.setText("↵")
+        self.insert_button.setToolTip(i18n.tr('插入「{v0}」到译文光标处（⌥点击术语也可以）', v0=target))
+        self.insert_button.setAccessibleName(i18n.tr('插入译名'))
+        self.insert_button.setEnabled(bool(target) and target != "—")
+        self.insert_button.clicked.connect(lambda: self.insertRequested.emit(target))
+        for label in (source, arrow, preferred, self.count_label):
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(theme_module.SPACE["sm"], 3, 3, 3)
+        row.setSpacing(theme_module.SPACE["xs"])
+        row.addWidget(source)
+        row.addWidget(arrow)
+        row.addWidget(preferred)
+        row.addStretch(1)
+        row.addWidget(self.count_label)
+        row.addWidget(self.insert_button)
+        self.setToolTip(i18n.tr('点击：在全文中定位这个术语；悬停：在本段里标出它'))
+        self.setAccessibleName(f"{term.get('source')} → {target}")
+
+    def set_active(self, active: bool) -> None:
+        self.setProperty("active", "true" if active else "false")
+        style_module.repolish(self)
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.hovered.emit(self.term)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.hovered.emit(None)
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
+                event.position().toPoint()):
+            if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+                self.insert_button.click()
+            else:
+                self.activated.emit(self.term)
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.activated.emit(self.term)
+            return
+        super().keyPressEvent(event)
+
+
 class TermList(QWidget):
-    """本段命中的术语：点一下把首选译名插入到译文光标处。"""
+    """本段命中的术语（见 :class:`TermChip`）。"""
 
     insertRequested = Signal(str)
+    hovered = Signal(object)        # 术语 dict 或 None
+    activated = Signal(object)      # 术语 dict：全文定位
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(2)
-        self.buttons: list[QPushButton] = []
+        self._layout.setSpacing(3)
+        self.buttons: list[TermChip] = []
+        self.terms: list[dict] = []
 
-    def set_terms(self, terms: list[dict]) -> None:
+    def set_terms(self, terms: list[dict], counts: dict | None = None) -> None:
         _clear(self._layout)
         self.buttons = []
-        if not terms:
+        self.terms = [dict(term) for term in terms or []]
+        counts = counts or {}
+        if not self.terms:
             self._layout.addWidget(_wrapped(i18n.tr('本段没有命中术语。'), "hint"))
             return
-        for term in terms:
-            target = str(term.get("target") or "")
-            button = QPushButton(f"{term.get('source')}  →  {target}")
-            button.setObjectName("termChip")
-            # 宽度由面板决定，不由术语长短决定（长术语不能把右栏撑宽）。
-            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            button.setMinimumWidth(1)
-            button.setToolTip(i18n.tr('插入「{v0}」到译文光标处', v0=target))
-            button.setEnabled(bool(target) and target != "—")
-            button.clicked.connect(lambda _checked=False, text=target:
-                                   self.insertRequested.emit(text))
-            self._layout.addWidget(button)
-            self.buttons.append(button)
+        for term in self.terms:
+            chip = TermChip(term, counts.get(str(term.get("source") or "")))
+            chip.insertRequested.connect(self.insertRequested.emit)
+            chip.hovered.connect(self.hovered.emit)
+            chip.activated.connect(self.activated.emit)
+            self._layout.addWidget(chip)
+            self.buttons.append(chip)
             for hit in term.get("forbidden_hits") or []:
-                warning = _wrapped(i18n.tr('译文用了禁用译名「{v0}」', v0=hit), "forbiddenTerm")
-                self._layout.addWidget(warning)
+                self._layout.addWidget(
+                    _wrapped(i18n.tr('译文用了禁用译名「{v0}」', v0=hit), "forbiddenTerm"))
+            if term.get("missing_preferred"):
+                self._layout.addWidget(
+                    _wrapped(i18n.tr('译文里没有用首选译名「{v0}」', v0=term.get("target")),
+                             "termMissing"))
+
+    def set_active(self, source: str) -> None:
+        for chip in self.buttons:
+            chip.set_active(bool(source) and chip.term.get("source") == source)
 
 
 class _ContextRow(QWidget):

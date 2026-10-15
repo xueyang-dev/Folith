@@ -141,6 +141,29 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
         super().__init__(parent)
         self.active_row = -1
         self.saved: dict[int, float] = {}
+        #: 全文定位中的术语（term_highlight.Occurrences）；None 表示没有。
+        self.focus = None
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802 - Qt 命名
+        super().paint(painter, option, index)
+        found = self.focus
+        if found is None or index.column() not in (1, 2) or index.row() not in found.positions:
+            return
+        if index.row() == self.active_row and index.column() == 1:
+            return  # 原文由浮层显示，浮层自己标注（见 WorkbenchView._decorate_current_row）
+        from . import term_highlight
+
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        needle = found.focus.source if index.column() == 1 else found.focus.target
+        ranges = term_highlight.spans(needle, text)
+        if not ranges:
+            return
+        styled = QStyleOptionViewItem(option)
+        self.initStyleOption(styled, index)
+        widget = option.widget if option.widget is not None else self.parent()
+        rects = term_highlight.text_rects(styled, text, ranges, widget)
+        tone = "warning" if index.row() in found.inconsistent else "accent"
+        term_highlight.paint_marks(painter, rects, tone)
 
     def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt 命名
         super().initStyleOption(option, index)

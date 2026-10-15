@@ -691,6 +691,12 @@ class HomeView(QWidget):
         title_box.setSpacing(theme_module.SPACE["xxs"])
         title_box.addWidget(title)
         title_box.addWidget(self.subtitle)
+        # 一行统计（数字加粗、其余是次要色）：有任务时替代上面那句导入说明。
+        self.stats_line = QLabel("")
+        self.stats_line.setObjectName("statsLine")
+        self.stats_line.setTextFormat(Qt.TextFormat.RichText)
+        self.stats_line.setVisible(False)
+        title_box.addWidget(self.stats_line)
 
         self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
         self.refresh_icon_button.clicked.connect(self.refreshRequested.emit)
@@ -1207,6 +1213,29 @@ class HomeView(QWidget):
             self._logo_label.setPixmap(logo)
         self._logo_theme = theme
 
+    def _sync_stats_line(self, scope, active, delivered) -> None:
+        """「12 个任务 · 3 个进行中 · 5 个已交付 · 2 个需要处理」：数字加粗，一眼读完。"""
+        if not scope:
+            self.stats_line.setVisible(False)
+            self.subtitle.setVisible(True)
+            return
+        attention = [row for row in scope if int(getattr(row, "attention_count", 0) or 0)]
+
+        def part(template: str, value: int) -> str:
+            number = f"<b style='color:{style_module.text_color('text-primary')}'>{value:,}</b>"
+            return i18n.tr(template, v0="\x00").replace("\x00", number)
+
+        parts = [part('{v0} 个任务', len(scope))]
+        if active:
+            parts.append(part('{v0} 个进行中', len(active)))
+        if delivered:
+            parts.append(part('{v0} 个已交付', len(delivered)))
+        if attention:
+            parts.append(part('{v0} 个需要处理', len(attention)))
+        self.stats_line.setText(" · ".join(parts))
+        self.stats_line.setVisible(True)
+        self.subtitle.setVisible(False)
+
     def _apply_filter(self) -> None:
         rows = self._visible_rows()
         self._refresh_logo()
@@ -1218,6 +1247,7 @@ class HomeView(QWidget):
         # 指标的值只用行里**确实存在**的字段（不猜状态字符串）
         delivered = [row for row in scope if getattr(row, "snapshot_version", None)]
         errored = [row for row in scope if str(getattr(row, "error", "") or "").strip()]
+        self._sync_stats_line(scope, active, delivered)
         # ---- 指标卡 --------------------------------------------------------
         rows_count = len(rows)
         self.stats.set_value("total", len(scope))
@@ -2085,6 +2115,7 @@ class WorkbenchView(QWidget):
         self.toolbar_bar.setLayout(toolbar)
 
         self.segment_list = QTableWidget(0, len(self.COLUMNS), self)
+        self.segment_list.setObjectName("segmentGrid")
         self.segment_list.setHorizontalHeaderLabels(
             [i18n.tr(column) for column in self.COLUMNS])
         self.segment_list.setSelectionBehavior(
@@ -2268,6 +2299,12 @@ class WorkbenchView(QWidget):
         self._analyzing_index = -1
         self.term_list = segment_assist.TermList()
         self.term_list.insertRequested.connect(self._insert_into_target)
+        self.term_list.hovered.connect(self._hover_term)
+        self.term_list.activated.connect(self.focus_term)
+        self._hover = None
+        self._decision_marks: dict = {}    # 决策痕迹的高亮（叠在术语标注之上）
+        self._term_focus = None            # term_highlight.Occurrences
+        self._term_counts: dict = {}
         self.term_add_button = _icon_button(QPushButton(i18n.tr('加入术语库…')), "plus",
                                             "text-secondary")
         self.term_add_button.setToolTip(
@@ -2339,7 +2376,8 @@ class WorkbenchView(QWidget):
 
         # 一个共用输入框：写一句要求点「重译」，或者问一个问题点「提问」。
         self.assist_input = QLineEdit()
-        self.assist_input.setPlaceholderText(i18n.tr('写重译要求或问一个问题…'))
+        # 空状态就是说明书：告诉用户可以先选中一句再直接打字（见 eventFilter）。
+        self.assist_input.setPlaceholderText(i18n.tr('选中一句，直接输入问题或重译要求…'))
         self.assist_retranslate = QPushButton(i18n.tr('按要求重译'))
         self.assist_ask = QPushButton(i18n.tr('提问'))
         for button in (self.assist_retranslate, self.assist_ask):
@@ -2433,10 +2471,14 @@ class WorkbenchView(QWidget):
         extra.setSpacing(theme_module.SPACE["sm"])
         extra.addWidget(self.attention_label)
         extra.addWidget(self.attention_list)
-        extra.addWidget(style_module.SectionLabel(i18n.tr('术语')))
+        self.term_heading = style_module.SectionLabel(i18n.tr('术语'))
+        extra.addWidget(self.term_heading)
         extra.addWidget(self.term_list)
         extra.addWidget(self.term_add_button)
-        extra.addWidget(style_module.SectionLabel(i18n.tr('前后文')))
+        # 前后文：平时网格里相邻的行就是前后文（整段显示之后这一节是重复的）；
+        # 只有筛选 / 搜索让相邻行不再相邻时才出现。
+        self.context_heading = style_module.SectionLabel(i18n.tr('原文中的前后文'))
+        extra.addWidget(self.context_heading)
         extra.addWidget(self.context_view)
         extra.addWidget(style_module.SectionLabel(i18n.tr('批注')))
         extra.addWidget(self.note_box)
@@ -2487,6 +2529,7 @@ class WorkbenchView(QWidget):
         translation_layout.setContentsMargins(0, 8, 0, 0)
         translation_layout.setSpacing(8)
         translation_layout.addWidget(self.toolbar_bar)
+        translation_layout.addWidget(self._build_term_focus_bar())
         translation_layout.addWidget(self.drafts_banner)
         translation_layout.addWidget(self.translation_split, 1)
         # 字数统计：底栏一行（整份进度 + 当前段 / 所选段），点「详情」看分项。
@@ -3083,7 +3126,8 @@ class WorkbenchView(QWidget):
                 self._inspector_width = width
         self._drawer_open = open_
         self.check_button.setChecked(open_)
-        self.drawer_escape.setEnabled(open_)
+        self._drawer_open_for_escape = open_
+        self.drawer_escape.setEnabled(open_ or self._term_focus is not None)
         if open_:
             # apply() already refreshes this data when the task state changes.
             # Clearing its signature here re-scans a whole book on every click
@@ -3145,7 +3189,281 @@ class WorkbenchView(QWidget):
                                   or self.inline_editor.isAncestorOf(focus)):
             self.target_edit.escaped.emit()
             return
+        if self._term_focus is not None:
+            self.clear_term_focus()
+            return
         self.set_followup_drawer_open(False)
+
+    def _sync_escape(self) -> None:
+        self.drawer_escape.setEnabled(self.followup_drawer_open()
+                                      or self._term_focus is not None)
+
+    # ================= 术语：本段标注、悬停高亮、全文定位 =================
+    def _filters_active(self) -> bool:
+        return bool(self.search_edit.text().strip()) or self._status_filter != "全部" or any(
+            action.isChecked() for action in self.filter_actions.values())
+
+    def _sync_context_visibility(self) -> None:
+        shown = self._filters_active() and bool(self._rows)
+        self.context_heading.setVisible(shown)
+        self.context_view.setVisible(shown)
+
+    def _document_term_counts(self, terms: list[dict]) -> dict:
+        """每条术语在全文原文里出现在几段（按任务状态缓存）。"""
+        from . import term_highlight
+
+        key = id(self._state)
+        if self._term_counts.get("__state__") != key:
+            self._term_counts = {"__state__": key}
+        counts = {}
+        for term in terms:
+            source = str(term.get("source") or "")
+            if source not in self._term_counts:
+                self._term_counts[source] = sum(
+                    1 for row in self._all_rows if term_highlight.spans(source, row.source))
+            counts[source] = self._term_counts[source]
+        return counts
+
+    def _hover_term(self, term) -> None:
+        self._hover = dict(term) if term else None
+        self._decorate_current_row()
+
+    def _decorate_current_row(self) -> None:
+        """当前行：原文里的术语、译文里的首选译名加虚线；悬停的那一对铺底色；
+        禁用译名是红色波浪线。用 ExtraSelections，不改动文字本身。"""
+        from PySide6.QtGui import QTextCharFormat, QTextCursor
+        from PySide6.QtWidgets import QTextEdit
+
+        from . import term_highlight
+
+        tokens = theme_module.tokens(style_module.current_theme())
+        accent = theme_module.qcolor(tokens["accent"])
+        soft = theme_module.qcolor(tokens["accent"])
+        soft.setAlphaF(0.22)
+        danger = theme_module.qcolor(tokens["danger"])
+        hover = self._hover or {}
+
+        def selections(edit, pairs) -> list:
+            result = []
+            document_text = edit.toPlainText()
+            for needle, kind in pairs:
+                for start, end in term_highlight.spans(needle, document_text):
+                    selection = QTextEdit.ExtraSelection()
+                    cursor = QTextCursor(edit.document())
+                    cursor.setPosition(start)
+                    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                    fmt = QTextCharFormat()
+                    if kind == "forbidden":
+                        fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+                        fmt.setUnderlineColor(danger)
+                    else:
+                        fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.DotLine)
+                        fmt.setUnderlineColor(accent)
+                        if kind == "hover":
+                            fmt.setBackground(soft)
+                    selection.cursor = cursor
+                    selection.format = fmt
+                    result.append(selection)
+            return result
+
+        terms = self.term_list.terms
+        source_pairs, target_pairs = [], []
+        for term in terms:
+            hovered = hover.get("source") == term.get("source")
+            source_pairs.append((term.get("source"), "hover" if hovered else "term"))
+            target_pairs.append((term.get("target"), "hover" if hovered else "term"))
+            target_pairs.extend((word, "forbidden") for word in term.get("forbidden") or [])
+        decisions = getattr(self, "_decision_marks", {})
+        source_view = self.inline_editor.source_view
+        source_view.setExtraSelections(selections(source_view, source_pairs)
+                                       + decisions.get(id(source_view), []))
+        self.target_edit.setExtraSelections(selections(self.target_edit, target_pairs)
+                                            + decisions.get(id(self.target_edit), []))
+
+    def _ask_about_selection(self, event) -> bool:
+        """原文里选中了一句、直接开始打字：把这句引用进提问框，接着输入（不用先点提问框）。"""
+        cursor = self.inline_editor.source_view.textCursor()
+        text = event.text()
+        if (not cursor.hasSelection() or not text or not text.isprintable()
+                or event.modifiers() & (Qt.KeyboardModifier.ControlModifier
+                                        | Qt.KeyboardModifier.MetaModifier)
+                or not self.assist_input.isVisibleTo(self)):
+            return False
+        quote = " ".join(cursor.selectedText().split())
+        self.assist_input.setText(f"「{quote}」{text}")
+        self.assist_input.setFocus()
+        self.assist_input.end(False)
+        return True
+
+    def _source_tooltip(self, position) -> str:
+        """原文浮层里鼠标下的那个术语 → 「首选译名 · 点击检查器里的术语在全文定位」。"""
+        from . import term_highlight
+
+        cursor = self.inline_editor.source_view.cursorForPosition(position)
+        offset = cursor.position()
+        text = self.inline_editor.source_view.toPlainText()
+        for term in self.term_list.terms:
+            for start, end in term_highlight.spans(term.get("source"), text):
+                if start <= offset <= end:
+                    return i18n.tr('术语：{v0} → {v1}', v0=term.get("source"), v1=term.get("target"))
+        return ""
+
+    def _build_term_focus_bar(self) -> QWidget:
+        from . import term_highlight
+
+        bar = QFrame()
+        bar.setObjectName("termFocusBar")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(theme_module.SPACE["sm"], 3, 3, 3)
+        row.setSpacing(theme_module.SPACE["xs"])
+        self.term_focus_label = QLabel("")
+        self.term_focus_label.setTextFormat(Qt.TextFormat.PlainText)
+
+        def tool(text: str, tip: str, slot) -> QToolButton:
+            button = QToolButton()
+            button.setObjectName("roundButton")
+            button.setText(text)
+            button.setToolTip(tip)
+            button.setAccessibleName(tip)
+            button.clicked.connect(slot)
+            return button
+
+        self.term_prev_button = tool("↑", i18n.tr('上一处'), lambda: self.step_term_focus(-1))
+        self.term_next_button = tool("↓", i18n.tr('下一处'), lambda: self.step_term_focus(1))
+        self.term_close_button = tool("✕", i18n.tr('结束定位（Esc）'), self.clear_term_focus)
+        row.addWidget(self.term_focus_label, 1)
+        row.addWidget(self.term_prev_button)
+        row.addWidget(self.term_next_button)
+        row.addWidget(self.term_close_button)
+        bar.setVisible(False)
+        self.term_focus_bar = bar
+        self.term_markers = term_highlight.ScrollMarkers(self.segment_list.verticalScrollBar())
+        self.inline_editor.source_view.viewport().setMouseTracking(True)
+        self.inline_editor.source_view.viewport().installEventFilter(self)
+        self.inline_editor.source_view.installEventFilter(self)
+        self.target_edit.textChanged.connect(self._decorate_current_row)
+        return bar
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt naming
+        if (event.type() == QEvent.Type.KeyPress and watched is self.inline_editor.source_view
+                and self._ask_about_selection(event)):
+            return True
+        if (event.type() == QEvent.Type.ToolTip
+                and watched is self.inline_editor.source_view.viewport()):
+            from PySide6.QtWidgets import QToolTip
+
+            text = self._source_tooltip(event.pos())
+            if text:
+                QToolTip.showText(event.globalPos(), text, watched)
+            else:
+                QToolTip.hideText()
+            return True
+        return super().eventFilter(watched, event)
+
+    def focus_term(self, term) -> None:
+        """点击术语：网格里所有出现处高亮、滚动条标出位置，跳到当前段之后的第一处。"""
+        from . import term_highlight
+
+        if not term:
+            return self.clear_term_focus()
+        if self._term_focus is not None and self._term_focus.focus.source == term.get("source"):
+            return self.step_term_focus(1)
+        focus = term_highlight.Focus(str(term.get("source") or ""), str(term.get("target") or ""),
+                                     tuple(term.get("forbidden") or ()))
+        self._term_focus = term_highlight.occurrences(
+            self._rows, focus, lambda row: row.draft_text if row.has_draft else row.target)
+        self._apply_term_focus()
+        current = self._active_position
+        after = [pos for pos in self._term_focus.positions if pos > current]
+        if after and current not in self._term_focus.positions:
+            self._jump_occurrence(after[0])
+        self._sync_term_focus_label()
+
+    def _apply_term_focus(self) -> None:
+        found = self._term_focus
+        self.row_delegate.focus = found
+        self.term_list.set_active(found.focus.source if found else "")
+        was_visible = self.term_focus_bar.isVisible()
+        self.term_focus_bar.setVisible(found is not None)
+        if was_visible != (found is not None):
+            # 定位条出现 / 消失会改变网格高度：当前编辑的行不能因此滑出视野。
+            QTimer.singleShot(0, self._keep_active_row_visible)
+        self._sync_escape()
+        self._update_term_markers()
+        self.segment_list.viewport().update()
+
+    def _update_term_markers(self) -> None:
+        found = self._term_focus
+        if found is None:
+            self.term_markers.set_marks([])
+            return
+        header = self.segment_list.verticalHeader()
+        total = max(1, header.length())
+        self.term_markers.set_marks([
+            ((header.sectionPosition(pos) + header.sectionSize(pos) / 2) / total,
+             "warning" if pos in found.inconsistent else "accent")
+            for pos in found.positions])
+
+    def _sync_term_focus_label(self) -> None:
+        found = self._term_focus
+        if found is None:
+            return
+        n = len(found)
+        current = self._active_position
+        where = (found.positions.index(current) + 1) if current in found.positions else 0
+        parts = [f"{found.focus.source} → {found.focus.target}"]
+        parts.append(i18n.tr('第 {v0} / {v1} 处', v0=where, v1=n) if where
+                     else i18n.tr('共 {v0} 处', v0=n))
+        if found.inconsistent:
+            parts.append(i18n.tr('{v0} 处没用首选译名', v0=len(found.inconsistent)))
+        if self._filters_active():
+            parts.append(i18n.tr('（只在当前筛选结果里）'))
+        self.term_focus_label.setText(" · ".join(parts))
+        self.term_prev_button.setEnabled(n > 0)
+        self.term_next_button.setEnabled(n > 0)
+
+    def step_term_focus(self, step: int) -> None:
+        found = self._term_focus
+        if not found or not found.positions:
+            return
+        current = self._active_position
+        if step > 0:
+            later = [pos for pos in found.positions if pos > current]
+            target = later[0] if later else found.positions[0]
+        else:
+            earlier = [pos for pos in found.positions if pos < current]
+            target = earlier[-1] if earlier else found.positions[-1]
+        self._jump_occurrence(target)
+        self._sync_term_focus_label()
+
+    def _jump_occurrence(self, position: int) -> None:
+        if 0 <= position < len(self._rows):
+            self.select_segment(self._rows[position].index)
+
+    def _keep_active_row_visible(self) -> None:
+        position = self._active_position
+        if 0 <= position < self.segment_list.rowCount():
+            self.segment_list.scrollToItem(self.segment_list.item(position, 0),
+                                           QAbstractItemView.ScrollHint.EnsureVisible)
+            self._place_inline_editor()
+
+    def clear_term_focus(self) -> None:
+        self._term_focus = None
+        self._apply_term_focus()
+
+    def _refresh_term_focus(self) -> None:
+        """网格重画（筛选、保存、状态变化）之后按新的行重新找一遍。"""
+        if self._term_focus is None:
+            return
+        term = {"source": self._term_focus.focus.source, "target": self._term_focus.focus.target,
+                "forbidden": list(self._term_focus.focus.forbidden)}
+        from . import term_highlight
+
+        focus = term_highlight.Focus(term["source"], term["target"], tuple(term["forbidden"]))
+        self._term_focus = term_highlight.occurrences(
+            self._rows, focus, lambda row: row.draft_text if row.has_draft else row.target)
+        self._apply_term_focus()
+        self._sync_term_focus_label()
 
     def _toggle_followup_drawer(self) -> None:
         self.set_followup_drawer_open(not self.followup_drawer_open())
@@ -3542,6 +3860,7 @@ class WorkbenchView(QWidget):
         self.search_edit.setText(text)
 
     def _filters_changed(self, *_args) -> None:
+        QTimer.singleShot(0, self._sync_context_visibility)
         self._search = self.search_edit.text()
         self._only_edited = self.only_edited_box.isChecked()
         self._only_issues = self.only_issues_box.isChecked()
@@ -3694,6 +4013,7 @@ class WorkbenchView(QWidget):
             self._sync_drafts_banner()
             self._sync_word_count()
             self._schedule_row_heights()
+            self._refresh_term_focus()
             return
         for position, row in enumerate(self._rows):
             self._paint_row(position, row)
@@ -3707,6 +4027,7 @@ class WorkbenchView(QWidget):
         self._sync_drafts_banner()
         self._sync_word_count()
         self._schedule_row_heights()
+        self._refresh_term_focus()
 
     def _sync_word_count(self) -> None:
         """整份文档的字数与进度（按原文计）。状态没换就不重算。"""
@@ -4332,8 +4653,14 @@ class WorkbenchView(QWidget):
         analyzing = self._analyzing_index == row.index
         self.analyze_button.setEnabled(can_analyze and not analyzing)
         self.analyze_button.setText(i18n.tr('点评中…') if analyzing else i18n.tr('点评'))
-        self.term_list.set_terms(adapter.segment_terms(self._state, row.index))
+        terms = adapter.segment_terms(self._state, row.index)
+        self.term_list.set_terms(terms, self._document_term_counts(terms))
+        self.term_list.set_active(self._term_focus.focus.source if self._term_focus else "")
+        self.term_heading.setText(i18n.tr('术语 · {v0}', v0=len(terms)) if terms
+                                  else i18n.tr('术语'))
         self.context_view.set_context(adapter.segment_context(self._state, row.index))
+        self._sync_context_visibility()
+        self._decorate_current_row()
         if self._assist_index != row.index:
             self._assist_index = row.index
             self.note_box.set_note(self._notes.get(row.segment_uid))
@@ -4368,6 +4695,7 @@ class WorkbenchView(QWidget):
                 self._place_inline_editor()
 
     def _load_selected_row(self, position: int) -> None:
+        QTimer.singleShot(0, self._sync_term_focus_label)
         if position < 0 or position >= len(self._rows):
             self._activate_position(-1)
             return
@@ -4499,6 +4827,7 @@ class WorkbenchView(QWidget):
                 table.setRowHeight(position, height)
         if not self._heights_pending:
             self._height_timer.stop()
+            self._update_term_markers()
         self._place_inline_editor()
         if keep_anchor:
             after = table.visualRect(table.model().index(self._active_position, 1)).top()
@@ -4535,7 +4864,9 @@ class WorkbenchView(QWidget):
             return
         editor.setGeometry(rect.adjusted(4, 4, -4, -4))
         source_rect = table.visualRect(table.model().index(position, 1))
-        editor.set_source(self._rows[position].source)
+        if editor.source_view.toPlainText() != (self._rows[position].source or ""):
+            editor.set_source(self._rows[position].source)
+            self._decorate_current_row()   # 浮层换了原文：术语标注跟着重排
         editor.source_view.setGeometry(source_rect.adjusted(
             segment_editor.CELL_PAD + 1, 2, -2, -2))
         from folith.textual import text_direction
@@ -4806,11 +5137,13 @@ class WorkbenchView(QWidget):
                 selection.cursor = cursor
                 selection.format = fmt
                 selections.append(selection)
-            widget.setExtraSelections(selections)
+            self._decision_marks[id(widget)] = selections
+        self._decorate_current_row()
 
     def _clear_highlights(self) -> None:
-        self.inline_editor.source_view.setExtraSelections([])
-        self.target_edit.setExtraSelections([])
+        """清掉决策痕迹的高亮；术语标注是这一段的常驻标注，保留。"""
+        self._decision_marks = {}
+        self._decorate_current_row()
 
     def _request_find_replace(self) -> None:
         self.flush_draft()

@@ -41,14 +41,18 @@ FONT_STACK = ("SF Pro Text", "Helvetica Neue", "PingFang SC",
 MONO_STACK = ("SF Mono", "Menlo", "Monaco", "Courier New")
 #: 字号阶梯。层级靠"大小 + 粗细 + 颜色"三层表达，不靠加粗一切。
 FONT_SIZES = {
-    "micro": 11,      # 角标 / 极小说明
-    "caption": 12,    # 次要说明、卡片脚注
-    "label": 13,      # 分组标题；不用额外字距，保留阿拉伯语连写
-    "body": 14,       # 正文、输入框
-    "card": 15,       # 卡片/条目标题，比正文高一档
-    "section": 17,    # 区块标题（macOS Title 2）
-    "title": 22,      # 卡片/对话框标题
-    "display": 28,    # 页面主标题
+    # 一套「少而拉得开」的阶梯：相邻两级约 1.2 倍，再配合字重与颜色——1–2 px 的
+    # 差别肉眼分不出来（P10 复审：12/13/14/15/17 五档挤在一起，看起来都一样）。
+    "micro": 10,      # 角标、格式标签
+    "caption": 11,    # 次要说明、元信息（配 text-secondary）
+    "label": 11,      # 分组标题（与说明同号，靠 600 字重区分）
+    "footnote": 12,   # 表单字段标签
+    "body": 13,       # 正文、按钮、输入框（macOS 正文字号）
+    "reading": 14,    # 阅读区：段落网格、原文浮层、译文编辑框
+    "card": 15,       # 卡片 / 条目标题（600）
+    "section": 20,    # 区块标题（600）
+    "title": 26,      # 页面 / 对话框标题（700）
+    "display": 30,    # 展示标题
     "metric": 30,     # 指标数字
 }
 
