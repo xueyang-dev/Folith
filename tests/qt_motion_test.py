@@ -189,6 +189,16 @@ def test_changing_reference_content_does_not_move_the_actions(bench, app):
     assert bench.segment_extra_section.verticalScrollBar().value() > 0
 
 
+def test_reference_overflow_scrolls_without_compressing_term_rows(bench, app):
+    bench.term_list.set_terms([{"source": "A name", "target": "译名"},
+                               {"source": "Another name", "target": "另一个译名"}])
+    bench.context_view.setMinimumHeight(300)
+    QTest.qWait(50)  # nested scroll-area geometry settles through queued layout requests
+    assert bench.segment_extra_section.verticalScrollBar().maximum() > 0
+    for button in bench.term_list.buttons:
+        assert button.height() >= button.sizeHint().height()
+
+
 def test_drawer_restores_the_inspector_width_chosen_by_the_user(bench, monkeypatch):
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
     split = bench.translation_split
@@ -202,6 +212,17 @@ def test_drawer_restores_the_inspector_width_chosen_by_the_user(bench, monkeypat
     bench.set_followup_drawer_open(True)
     bench.set_followup_drawer_open(False)
     assert abs(split.sizes()[side] - before) <= 1
+
+
+def test_reference_scroll_area_is_readable_in_dark_theme(bench, app):
+    previous = style.current_theme()
+    try:
+        style.apply_theme(app, "dark")
+        app.processEvents()
+        background = bench.segment_extra_section.viewport().grab().toImage().pixelColor(1, 1)
+        assert background.lightness() < 100
+    finally:
+        style.apply_theme(app, previous)
 
 
 def test_drawer_styles_use_valid_tokens_in_every_theme():

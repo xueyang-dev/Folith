@@ -124,6 +124,8 @@ bench.set_followup_drawer_open(False)
 close_call_ms = (time.perf_counter() - at) * 1000
 pump(.5)
 heartbeat.stop()
+w.raise_()
+w.activateWindow()
 bench.focus_editor()
 pump(.05)
 focus_restored = app.focusWidget() is bench.target_edit

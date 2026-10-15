@@ -481,6 +481,7 @@ QFrame#popover {{
 QFrame#popover QListWidget {{ background: transparent; border: none; }}
 QFrame#popover QScrollArea, QFrame#popover QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 QFrame#followupDrawer {{ background: {t['bg-surface']}; border: none; }}
+QScrollArea#segmentReferences, QWidget#segmentReferencesBody {{ background: {t['bg-surface']}; border: none; }}
 /* 检查器的紧凑操作（一行几个）：图标 + 短标签，居中；主操作浅强调色，排除为红。 */
 QPushButton#inspectorTool, QPushButton#inspectorPrimary, QPushButton#inspectorDanger {{
     background: {t['control-bg']}; border: 1px solid {t['control-border']};

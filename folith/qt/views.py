@@ -2329,8 +2329,10 @@ class WorkbenchView(QWidget):
         inspector_layout.addWidget(results)
 
         self.segment_extra_section = QScrollArea()
+        self.segment_extra_section.setObjectName("segmentReferences")
         self.segment_extra_section.setWidgetResizable(True)
         self.segment_extra_section.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.segment_extra_section.viewport().setAutoFillBackground(False)
         self.segment_extra_section.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.segment_extra_section.setFixedHeight(360)
         self.segment_extra_section.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -2339,6 +2341,12 @@ class WorkbenchView(QWidget):
         self.segment_extra_section.setAccessibleDescription(
             i18n.tr('滚动查看本段的注意事项、术语、前后文和批注。'))
         references = QWidget()
+        references.setObjectName("segmentReferencesBody")
+        references.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # The scroll area must grow its content instead of squeezing reference
+        # widgets below their natural heights (which clips term button text).
+        for widget in (self.attention_list, self.term_list, self.context_view, self.note_box):
+            widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         extra = QVBoxLayout(references)
         extra.setContentsMargins(0, 0, 0, 0)
         extra.setSpacing(theme_module.SPACE["sm"])
@@ -2353,6 +2361,9 @@ class WorkbenchView(QWidget):
         extra.addWidget(self.note_box)
         extra.addStretch(1)
         self.segment_extra_section.setWidget(references)
+        # setWidget() enables autoFillBackground on its child. Its Base palette
+        # stays light on macOS even in our dark theme, obscuring pale text.
+        references.setAutoFillBackground(False)
         # 「段落事实」只是把顶上那行状态再说一遍：来源并进状态行，这一节不再单独占位。
         inspector_layout.addWidget(self.segment_extra_section)
         self.review_hint.setVisible(False)

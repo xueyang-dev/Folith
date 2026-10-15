@@ -1,0 +1,222 @@
+.F..F...F...                                                             [100%]
+=================================== FAILURES ===================================
+____________ test_report_pass_has_outline_exports_and_stable_reruns ____________
+
+tmp_path = PosixPath('/private/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_report_pass_has_outline_e0')
+
+    def test_report_pass_has_outline_exports_and_stable_reruns(tmp_path):
+>       at, old_output = _render_report(tmp_path, _report_state(), _base_artifacts())
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/report_workspace_test.py:87: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/report_workspace_test.py:57: in _render_report
+    at.run()
+venv/lib/python3.11/site-packages/streamlit/testing/v1/app_test.py:568: in run
+    return self._tree.run(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/streamlit/testing/v1/element_tree.py:2693: in run
+    return self._runner._run(widget_states, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/streamlit/testing/v1/app_test.py:501: in _run
+    self._tree = script_runner.run(
+venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:183: in run
+    require_widgets_deltas(self, timeout)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+runner = LocalScriptRunner(forward_msg_queue=<streamlit.runtime.forward_msg_queue.ForwardMsgQueue object at 0x11efa7ad0>, scrip...mini"
+  installed_agents: "opencode"
+}
+}, {}, {'client_state': page_script_hash: "0900556c33a33dd1502bc76e803ecbbd"
+}])
+timeout = 30
+
+    def require_widgets_deltas(runner: LocalScriptRunner, timeout: float = 3) -> None:
+        """Wait for the given ScriptRunner to emit a completion event. If the timeout
+        is reached, the runner will be shutdown and an error will be thrown.
+        """
+    
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            time.sleep(0.001)
+            if runner.script_stopped():
+                return
+    
+        # If we get here, the runner hasn't yet completed before our
+        # timeout. Create an error string for debugging.
+        err_string = f"AppTest script run timed out after {timeout}(s)"
+    
+        # Shutdown the runner before throwing an error, so that the script
+        # doesn't hang forever.
+        runner.request_stop()
+        runner.join()
+    
+>       raise RuntimeError(err_string)
+E       RuntimeError: AppTest script run timed out after 30(s)
+
+venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:246: RuntimeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-15 06:27:45.185 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:27:46.507 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:27:46.507 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:27:46.507 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:27:46.507 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+____________ test_report_missing_literature_evidence_is_actionable _____________
+
+tmp_path = PosixPath('/private/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_report_missing_literature0')
+
+    def test_report_missing_literature_evidence_is_actionable(tmp_path):
+        state = _report_state(quality="review_required")
+        artifacts = _base_artifacts()
+        artifacts["literature-sources.json"] = {
+            "sources": [{"source_id": "source-1", "title": "测试来源"}],
+        }
+        artifacts["literature-evidence.json"] = {"items": []}
+        artifacts["literature-claims.json"] = {"items": []}
+>       at, old_output = _render_report(tmp_path, state, artifacts)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/report_workspace_test.py:180: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/report_workspace_test.py:57: in _render_report
+    at.run()
+venv/lib/python3.11/site-packages/streamlit/testing/v1/app_test.py:568: in run
+    return self._tree.run(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/streamlit/testing/v1/element_tree.py:2693: in run
+    return self._runner._run(widget_states, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/streamlit/testing/v1/app_test.py:501: in _run
+    self._tree = script_runner.run(
+venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:183: in run
+    require_widgets_deltas(self, timeout)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+runner = LocalScriptRunner(forward_msg_queue=<streamlit.runtime.forward_msg_queue.ForwardMsgQueue object at 0x13d67ae10>, scrip...mini"
+  installed_agents: "opencode"
+}
+}, {}, {'client_state': page_script_hash: "0900556c33a33dd1502bc76e803ecbbd"
+}])
+timeout = 30
+
+    def require_widgets_deltas(runner: LocalScriptRunner, timeout: float = 3) -> None:
+        """Wait for the given ScriptRunner to emit a completion event. If the timeout
+        is reached, the runner will be shutdown and an error will be thrown.
+        """
+    
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            time.sleep(0.001)
+            if runner.script_stopped():
+                return
+    
+        # If we get here, the runner hasn't yet completed before our
+        # timeout. Create an error string for debugging.
+        err_string = f"AppTest script run timed out after {timeout}(s)"
+    
+        # Shutdown the runner before throwing an error, so that the script
+        # doesn't hang forever.
+        runner.request_stop()
+        runner.join()
+    
+>       raise RuntimeError(err_string)
+E       RuntimeError: AppTest script run timed out after 30(s)
+
+venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:246: RuntimeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-15 06:43:09.132 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:43:09.682 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:43:09.682 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:43:09.682 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:43:09.682 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+_____________ test_failed_report_exposes_retry_in_runtime_details ______________
+
+tmp_path = PosixPath('/private/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_failed_report_exposes_ret0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11cd41d10>
+
+    def test_failed_report_exposes_retry_in_runtime_details(tmp_path, monkeypatch):
+        runtime_view = {
+            "status": "failed", "progress_completed": 4, "progress_total": 11,
+            "current_operation": "生成报告章节", "headline": "生成报告章节",
+            "detail": "当前步骤失败", "last_activity_at": "2026-08-25T04:00:00+00:00",
+            "user_events": [],
+            "runtime": {"status": "failed", "phase": "academic_writing",
+                         "last_heartbeat_at": "2026-08-25T04:00:00+00:00",
+                         "last_progress_at": "2026-08-25T04:00:00+00:00", "worker": {}},
+        }
+        monkeypatch.setattr(core, "build_job_runtime_view",
+                            lambda job_id, state=None: runtime_view)
+>       at, old_output = _render_report(tmp_path, _report_state(), _base_artifacts())
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/report_workspace_test.py:290: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/report_workspace_test.py:57: in _render_report
+    at.run()
+venv/lib/python3.11/site-packages/streamlit/testing/v1/app_test.py:568: in run
+    return self._tree.run(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/streamlit/testing/v1/element_tree.py:2693: in run
+    return self._runner._run(widget_states, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/streamlit/testing/v1/app_test.py:501: in _run
+    self._tree = script_runner.run(
+venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:183: in run
+    require_widgets_deltas(self, timeout)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+runner = LocalScriptRunner(forward_msg_queue=<streamlit.runtime.forward_msg_queue.ForwardMsgQueue object at 0x10691eb10>, scrip...mini"
+  installed_agents: "opencode"
+}
+}, {}, {'client_state': page_script_hash: "0900556c33a33dd1502bc76e803ecbbd"
+}])
+timeout = 30
+
+    def require_widgets_deltas(runner: LocalScriptRunner, timeout: float = 3) -> None:
+        """Wait for the given ScriptRunner to emit a completion event. If the timeout
+        is reached, the runner will be shutdown and an error will be thrown.
+        """
+    
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            time.sleep(0.001)
+            if runner.script_stopped():
+                return
+    
+        # If we get here, the runner hasn't yet completed before our
+        # timeout. Create an error string for debugging.
+        err_string = f"AppTest script run timed out after {timeout}(s)"
+    
+        # Shutdown the runner before throwing an error, so that the script
+        # doesn't hang forever.
+        runner.request_stop()
+        runner.join()
+    
+>       raise RuntimeError(err_string)
+E       RuntimeError: AppTest script run timed out after 30(s)
+
+venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:246: RuntimeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-15 06:50:06.344 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:50:09.339 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:50:09.340 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:50:09.340 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-10-15 06:50:09.340 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:241
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/report_workspace_test.py::test_report_pass_has_outline_exports_and_stable_reruns
+FAILED tests/report_workspace_test.py::test_report_missing_literature_evidence_is_actionable
+FAILED tests/report_workspace_test.py::test_failed_report_exposes_retry_in_runtime_details
+3 failed, 9 passed, 5 warnings in 25.78s
