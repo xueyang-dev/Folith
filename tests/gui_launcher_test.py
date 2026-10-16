@@ -39,7 +39,7 @@ def test_server_args():
     assert Path(args[3]) == gui.ROOT / "app.py"
     assert "--server.headless" in args and "true" in args
     assert "--server.port" in args and "8501" in args
-    assert args[args.index("--theme.primaryColor") + 1] == "#004cfd"
+    assert args[args.index("--theme.primaryColor") + 1] == "#2b5fd1"
     assert args[args.index("--theme.textColor") + 1] == "#131c2e"
 
     # 默认必须**显式**绑定回环：不能依赖 Streamlit 的隐式默认值（那是 0.0.0.0）。

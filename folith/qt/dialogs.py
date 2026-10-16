@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from . import i18n
 from . import adapter
 from . import bootstrap
+from . import components
 from . import icons
 from . import prompts
 from . import style as style_module
@@ -516,8 +517,8 @@ class EngineDialog(QDialog):
         reviewer_body.addWidget(self.reviewer_fields)
 
         # 标题下一行写这条连接上次测试的结果（「已配置」不等于「能用」，12-B）。
-        self.translation_state = QLabel("")
-        self.reviewer_state = QLabel("")
+        self.translation_state = components.StatusLabel()
+        self.reviewer_state = components.StatusLabel()
         body.insertWidget(1, self.translation_state)
         reviewer_body.insertWidget(1, self.reviewer_state)
         page_layout.addWidget(connection_card)
@@ -537,7 +538,7 @@ class EngineDialog(QDialog):
         page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
         page_layout.setSpacing(theme_module.SPACE["sm"])
         card = self._build_vision_card()
-        self.vision_state = QLabel("")
+        self.vision_state = components.StatusLabel()
         card.layout().insertWidget(1, self.vision_state)
         page_layout.addWidget(card)
         page_layout.addWidget(self._apply_row("vision"))
@@ -547,10 +548,9 @@ class EngineDialog(QDialog):
         return page
 
     def refresh_connection_states(self) -> None:
-        """各连接标题下的状态行：✓ 已连接 / ⚠ 未测试 / ✕ 失败 / 沿用翻译模型。"""
+        """各连接标题下的状态行：圆点 + 同色文字（已连接 / 未测试 / 失败 / 沿用翻译模型）。"""
         from . import connection_status
 
-        marks = {"ok": "✓", "failed": "✕", "missing": "✕", "untested": "⚠", "inherited": "↳"}
         for role, label in (("translation", getattr(self, "translation_state", None)),
                             ("reviewer", getattr(self, "reviewer_state", None)),
                             ("vision", getattr(self, "vision_state", None))):
@@ -562,10 +562,8 @@ class EngineDialog(QDialog):
                     "inherited": i18n.tr('沿用翻译模型')}[row["state"]]
             if row["at"]:
                 text += " · " + i18n.tr('上次测试 {v0}', v0=row["at"].replace("T", " ")[:16])
-            label.setText(f"{marks[row['state']]} {text}")
-            label.setObjectName({"ok": "statusOk", "danger": "statusError",
-                                 "warning": "statusWarn"}.get(row["tone"], "hint"))
-            style_module.repolish(label)
+            label.set_status(text, {"ok": "done", "danger": "error",
+                                    "warning": "attention"}.get(row["tone"], "idle"))
 
     def _build_task_tab(self) -> QWidget:
         page = QWidget()

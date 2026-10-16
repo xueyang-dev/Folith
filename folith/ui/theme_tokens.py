@@ -48,10 +48,15 @@ SCHEMES = {'light': 'light', 'dark': 'dark', 'paper': 'light', 'green': 'light'}
 #   * shadows are warm and very light; hierarchy comes from spacing and type
 TOKENS: dict[str, dict[str, str]] = {
     'light': {
-        'bg-page': '#f4f7fc',
+        # 2026-10-16 色彩审校（docs/ui-audit/40-design-review-2026-10-16 第十一节）：
+        # 界面主色与 logo 分开。logo 仍是钴蓝 #004CFD（brand-logo-blue）；界面取同一
+        # 色相、降低彩度的 #2B5FD1（OKLCH C 0.267 → 0.185），四个语义色统一到 L 0.55，
+        # 页面底去掉蓝雾。纸面与夜间主题早就遵守"品牌蓝只属于 logo"，日间现在也一样。
+        'bg-page': '#f4f6f8',
         'bg-sidebar': '#f9fafb',
         # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
         'bg-glass': '#eef2f8',
+        'bg-shell-start': '#eef0f3', 'bg-shell-end': '#e6e9ed',
         'control-bg': '#ffffff',
         'control-border': 'rgba(19,28,46,.16)',
         'bg-surface': '#ffffff',
@@ -59,14 +64,14 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-surface-sunken': '#f2f4f7',
         'bg-surface-raised': '#ffffff',
         'bg-hover': '#f7f9fc',
-        'bg-selected': '#eef4ff',
+        'bg-selected': '#eef4fd',
         'text-primary': '#131c2e',
         'text-secondary': '#667085',
-        'text-muted': '#8a94a6',
+        'text-muted': '#7e8796',
         'text-on-accent': '#ffffff',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
         # as a button in every theme; white on it is >= 4.5:1.
-        'hero': '#004cfd', 'hero-hover': '#003fd6', 'hero-active': '#0034b0',
+        'hero': '#2b5fd1', 'hero-hover': '#2352b8', 'hero-active': '#1d469d',
         'text-on-hero': '#ffffff',
         'border-faint': '#ebeef3',
         'border-hairline': '#eef0f4',
@@ -74,28 +79,28 @@ TOKENS: dict[str, dict[str, str]] = {
         'border-subtle': '#dee3ea',
         'border-strong': '#c9d2df',
         'border-sidebar': '#e7eaf0',
-        'accent': '#004cfd',
-        'accent-hover': '#003fd6',
-        'accent-active': '#0034b0',
-        'accent-soft': '#eef4ff',
-        'accent-soft-hover': '#e3edff',
-        'accent-border': '#b9d1ff',
-        'focus-ring': 'rgba(0,76,253,.22)',
-        'focus-halo': 'rgba(18,103,232,.14)',
-        'success': '#22a06b',
-        'success-soft': '#ecfdf3',
-        'warning': '#b54708',
-        'warning-soft': '#fffaeb',
-        'danger': '#dc2626',
-        'danger-soft': '#fef3f2',
+        'accent': '#2b5fd1',
+        'accent-hover': '#2352b8',
+        'accent-active': '#1d469d',
+        'accent-soft': '#eef4fd',
+        'accent-soft-hover': '#e5edfc',
+        'accent-border': '#c0d2f3',
+        'focus-ring': 'rgba(43,95,209,.22)',
+        'focus-halo': 'rgba(43,95,209,.14)',
+        'success': '#25855b',
+        'success-soft': '#eefaf3',
+        'warning': '#9d621e',
+        'warning-soft': '#fff7e8',
+        'danger': '#bd423a',
+        'danger-soft': '#fff2f1',
         # Info = the "paused / noted" violet (design sheet: Info #8B5CF6).  Not an
         # action colour: only status pills and a few icon tints use it.
-        'info': '#6f4bdc',
-        'info-soft': '#f1ecff',
+        'info': '#7761b0',
+        'info-soft': '#f6f4ff',
         # Page wash: the home canvas fades from the page colour into a faint
         # brand-blue tint (135deg).  Dark stays flat on purpose (graphite).
-        'bg-gradient-start': '#f8fbff',
-        'bg-gradient-end': '#e9f1ff',
+        'bg-gradient-start': '#fbfbfc',
+        'bg-gradient-end': '#f5f6f8',
         'brand-navy': '#000d2d',
         'brand-ink': '#0b1f3b',
         'brand-logo-blue': '#004cfd',
@@ -134,6 +139,7 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-sidebar': '#202022',
         # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
         'bg-glass': '#232326',
+        'bg-shell-start': '#161618', 'bg-shell-end': '#121214',
         'control-bg': 'rgba(255,255,255,.08)',
         'control-border': 'rgba(255,255,255,.14)',
         'bg-surface': '#242426',
@@ -200,6 +206,7 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-sidebar': '#ece3d2',
         # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
         'bg-glass': '#e9dfcc',
+        'bg-shell-start': '#e9dfcc', 'bg-shell-end': '#e1d6c0',
         'control-bg': '#fbf7ee',
         'control-border': 'rgba(70,60,45,.22)',
         'bg-surface': '#fbf7ee',
@@ -269,6 +276,7 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-sidebar': '#f8faf9',
         # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
         'bg-glass': '#ebf3ef',
+        'bg-shell-start': '#e6efea', 'bg-shell-end': '#dde8e2',
         'control-bg': '#ffffff',
         'control-border': 'rgba(15,40,30,.18)',
         'bg-surface': '#ffffff',

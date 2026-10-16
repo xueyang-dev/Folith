@@ -166,13 +166,13 @@ class MainWindow(QMainWindow):
         self.sidebar = self.home.take_sidebar()
         self.sidebar_clip = components.ClippedWidget(self.sidebar, HomeView.SIDEBAR_WIDTH)
         self.sidebar_clip.setFixedWidth(HomeView.SIDEBAR_WIDTH)
-        shell = QWidget(self)
+        shell = components.ShellCanvas(self)
         shell_layout = QHBoxLayout(shell)
         shell_layout.setContentsMargins(0, 0, 0, 0)
         shell_layout.setSpacing(0)
         shell_layout.addWidget(self.sidebar_clip)
         self.stack_clip = components.TrailingClip(self.stack)
-        shell_layout.addWidget(self.stack_clip, 1)
+        shell_layout.addWidget(components.Sheet(self.stack_clip), 1)
         self.setCentralWidget(shell)
         self.stack.currentChanged.connect(self._sync_sidebar)
 
@@ -233,6 +233,7 @@ class MainWindow(QMainWindow):
     # ================= wiring =================
     def _wire(self) -> None:
         self.home.importRequested.connect(self.choose_import)
+        self.home.filesDropped.connect(self.import_dropped)
         self.home.openRequested.connect(self.open_job)
         self.home.checkRequested.connect(self.open_job_checks)
         self.home.deleteRequested.connect(self.delete_jobs_requested)
@@ -937,8 +938,24 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('尚未配置模型（{v0}）：文档会先导入，开始翻译前请在「设置」里配置模型连接。', v0=problem), error=True)
         self.import_paths(paths)
 
+    def import_dropped(self, paths: list[str]) -> None:
+        """拖进任务库的文档：留在任务库，结果显示在虚线格里（不自动打开第一个任务）。"""
+        problem = i18n.tr_dynamic(self.config.connection_problem())
+        if problem:
+            self._notice(i18n.tr('尚未配置模型（{v0}）：文档会先导入，开始翻译前请在「设置」里配置模型连接。', v0=problem), error=True)
+
+        def show(results) -> None:
+            self.home.show_drop_result([item.filename for item in results if item.ok],
+                                       [item.filename for item in results if not item.ok])
+            failed = [item for item in results if not item.ok]
+            if failed:   # 虚线格只说"几个失败"，原因放进通知里
+                self._notice("；".join(f"{item.filename}：{item.error}" for item in failed), error=True)
+
+        self.import_paths(paths, open_result=False, on_result=show)
+
     def import_paths(self, paths: list[str], *,
-                     autostart: bool | None = None) -> None:
+                     autostart: bool | None = None, open_result: bool = True,
+                     on_result=None) -> None:
         self._imports_active += 1
         if self._import_activity is None:
             self._import_activity = components.ButtonActivity(
@@ -969,7 +986,9 @@ class MainWindow(QMainWindow):
             created = [item for item in results if item.created]
             failed = [item for item in results if not item.ok]
             self.refresh_home()
-            if failed:
+            if on_result is not None:
+                on_result(results)
+            if failed and on_result is None:
                 self._failure(i18n.tr('部分文档未导入'),
                               "；".join(f"{item.filename}：{item.error}"
                                         for item in failed), task=False)
@@ -988,7 +1007,7 @@ class MainWindow(QMainWindow):
                 # 已经在看这个任务时**不要**重复 open_job：这个完成回调是异步的
                 # （worker 线程排队回主线程），重复载入会把工作台已有的选择与编辑器
                 # 内容再重置一次（实测：编辑器被清空、正文变成空态）。
-                if self._current_job_id != results[0].job_id:
+                if open_result and self._current_job_id != results[0].job_id:
                     self.open_job(results[0].job_id)
                 if decision:
                     self.start_or_resume()

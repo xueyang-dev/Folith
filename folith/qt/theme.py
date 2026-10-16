@@ -62,6 +62,52 @@ FONT_SIZES = {
 }
 
 
+#: 三层表面（E 层次 v2，``docs/ui-audit/40-design-review-2026-10-16`` 第十二节）：
+#:
+#: * ``shell`` —— 窗口底与侧栏：最深的一层灰（token ``bg-shell-start/end``）；
+#: * ``sheet`` —— 内容页：浮在外壳上的一张圆角纸（``bg-page``）；
+#: * ``card``  —— 页面上的卡片：最亮的白（``bg-surface``），**不画描边**，层级只靠投影。
+#:
+#: 每一档投影是几层叠加的圆角矩形（模拟模糊）：``(外扩, 下移, 不透明度)``。
+#: 颜色取主题 ``shadow-sm`` 里的 rgb（各主题的墨色不同），夜间整体加深
+#: （深底上同样的不透明度看不见）。
+ELEVATION = {
+    "flat": (),
+    # 卡片静止时：一道贴边的接触影 + 一圈很淡的环境影。
+    "raised": ((0.5, 0.0, 0.075), (1.5, 1.0, 0.04), (3.0, 2.0, 0.026), (5.0, 3.5, 0.016)),
+    # 悬停抬起 / 弹出层：影子更远、更散。
+    "floating": ((0.5, 0.0, 0.08), (2.0, 2.0, 0.06), (4.0, 4.0, 0.045), (7.0, 6.0, 0.03)),
+}
+#: 投影需要的留白（px）：卡片在自己的矩形里内缩这么多来画影子（左/上/右/下）。
+#: 上方几乎不留（影子朝下），下方留得最多。
+ELEVATION_PAD = (4, 2, 4, 7)
+ELEVATION_NIGHT_GAIN = 2.6
+#: 选中环：白色间隙 + 半透明主色环（不再是 2px 实心粗边，审校"控件语言不统一"）。
+SELECTION_RING = {"gap": 2.0, "width": 2.0, "alpha": 0.45}
+
+#: 文字角色：同一种信息在任何界面都长一个样（审校"字体层级"）。
+#: ``(字号, 字重, 颜色 token)``；字号只能取 FONT_STEPS。QSS 里用 ``QLabel[textRole="…"]``。
+TEXT_ROLES = {
+    "page-title": (22, 600, "text-primary"),     # 页面标题（任务库、术语与翻译记忆）
+    "card-title": (17, 600, "text-primary"),     # 卡片 / 面板标题（继续上次的工作、第 3 段）
+    "section": (14, 600, "text-primary"),        # 区块标题（其他任务、交付文件）
+    "name": (14, 600, "text-primary"),           # 文件名、术语原文——条目里最重要的那个词
+    "body": (13, 400, "text-primary"),           # 正文
+    "label": (12, 500, "text-secondary"),        # 字段 / 分组标签（AI 操作、本段术语）
+    "meta": (12, 400, "text-secondary"),         # 元信息（语言、段数、项目）
+    "time": (12, 400, "text-muted"),             # 时间与次要计数（12 分钟前）
+    "status": (12, 500, "text-secondary"),       # 状态文字（颜色由 tone 覆盖）
+}
+#: 状态语气 → 颜色 token。界面里所有状态都是"6px 圆点 + 同色文字"，只有这五种语气。
+STATUS_TONES = {
+    "active": "accent",      # 进行中 / 待审校 / 当前
+    "attention": "warning",  # 需要处理
+    "done": "success",       # 已完成 / 已交付 / 已连接
+    "error": "danger",       # 失败 / 无法读取
+    "idle": "text-muted",    # 未开始 / 未启用
+}
+
+
 def theme_names() -> tuple[str, ...]:
     return THEME_ORDER
 

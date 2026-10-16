@@ -23,8 +23,9 @@ from . import adapter
 ROLES = ("translation", "reviewer", "vision")
 ROLE_LABELS = {"translation": "翻译模型", "reviewer": "审校模型", "vision": "视觉模型"}
 #: 状态 → 呈现用的 tone。
+#: 未配置是"还没做"，不是错误：用警告色（色彩审校：红色留给真正失败的连接）。
 TONES = {"ok": "ok", "failed": "danger", "untested": "warning",
-         "missing": "danger", "inherited": "muted"}
+         "missing": "warning", "inherited": "muted"}
 _KEY = "connections/{role}"
 
 
@@ -154,7 +155,7 @@ def overview(config: adapter.EngineConfig, *, settings=None) -> dict:
     elif worst["state"] == "failed":
         template, tone = "{v0}连接失败", "danger"
     else:
-        template, tone = "{v0}未配置", "danger"
+        template, tone = "{v0}未配置", "warning"
     return {"text": template.replace("{v0}", worst["label"]), "template": template,
             "label": worst["label"], "tone": tone, "rows": rows}
 

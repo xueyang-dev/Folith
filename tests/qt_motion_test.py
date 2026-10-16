@@ -215,7 +215,7 @@ def test_drawer_restores_the_inspector_width_chosen_by_the_user(bench, monkeypat
     split = bench.translation_split
     sizes = split.sizes()
     side = split.indexOf(bench.right_panel)
-    grid = split.indexOf(bench.segment_list)
+    grid = split.indexOf(bench.grid_card)
     sizes[grid] -= 70
     sizes[side] += 70
     split.setSizes(sizes)

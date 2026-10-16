@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineE
                                QSizePolicy, QSplitter, QSplitterHandle, QToolButton, QVBoxLayout,
                                QWidget)
 
+from . import i18n
 from . import icons
 from . import motion
 from . import style as style_module
@@ -287,19 +288,7 @@ class _MetricCard(Card):
         self.value.setObjectName("metricValue")
         column.addLayout(head)
         column.addWidget(self.value)
-        self._shadow_applied = False
-        self._apply_shadow()
-
-    def _apply_shadow(self) -> None:
-        style_module.apply_card_shadow(self, level="sm")
-
-    def changeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        # 主题切换（QSS 重载）时让投影跟着换：投影色来自 token，不会自己更新。
-        if event.type() == QEvent.Type.StyleChange and self.graphicsEffect() is not None:
-            if style_module.current_theme() != getattr(self, "_shadow_theme", ""):
-                self._shadow_theme = style_module.current_theme()
-                self._apply_shadow()
-        super().changeEvent(event)
+        # 投影由 Card（style.Surface）自己画，不再叠 QGraphicsDropShadowEffect。
 
 
 class MetricCards(QFrame):
@@ -338,6 +327,178 @@ class MetricCards(QFrame):
 
     def cell(self, key: str):
         return self._cards.get(key)
+
+
+class DropTile(QFrame):
+    """任务卡片末尾的虚线「拖入文档」格：拖进来先告诉你能不能放，放下后给出结果。
+
+    五个状态（``state`` 属性，QSS 按它换色）：
+    ``idle`` 虚线 + 加号；``ready`` 文件拖到了页面上、且至少有一个能导入——强调色
+    实线 + 「松开即可导入」；``reject`` 拖来的全是不支持的格式——红色 + 原因；
+    ``busy`` 已放下、正在导入；``done`` / ``error`` 导入结果（几秒后回到 idle）。
+    它只是显示：接收与导入由页面完成。点一下 = 打开系统选择面板。
+    """
+
+    clicked = Signal()
+    #: 状态变成需要被看见的（可以放 / 不能放 / 结果）：页面把它滚进视野。
+    attentionNeeded = Signal()
+    WIDTH, HEIGHT = 168, 212
+
+    def __init__(self, formats: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("dropTile")
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(i18n.tr('拖入文档'))
+        self._formats = formats
+        self._idle = (i18n.tr('拖入文档'), formats)
+        column = QVBoxLayout(self)
+        column.setContentsMargins(12, 12, 12, 12)
+        column.setSpacing(6)
+        column.addStretch(1)
+        self.icon = QLabel()
+        self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title = QLabel()
+        self.title.setObjectName("dropTitle")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title.setWordWrap(True)
+        self.detail = QLabel()
+        self.detail.setObjectName("dropDetail")
+        self.detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.detail.setWordWrap(True)
+        column.addWidget(self.icon)
+        column.addWidget(self.title)
+        column.addWidget(self.detail)
+        column.addStretch(1)
+        self._reset = QTimer(self)
+        self._reset.setSingleShot(True)
+        self._reset.timeout.connect(self.set_idle)
+        self.set_idle()
+
+    def _show(self, state: str, icon_name: str, tone: str, title: str, detail: str,
+              *, revert_ms: int = 0) -> None:
+        self._reset.stop()
+        self.setProperty("state", state)
+        self.icon.setPixmap(icons.icon(icon_name, 22, tone).pixmap(22, 22))
+        self.title.setText(title)
+        self.detail.setText(detail)
+        self.setAccessibleDescription(f"{title} {detail}")
+        repolish(self)
+        repolish(self.title)
+        if revert_ms:
+            self._reset.start(revert_ms)
+        if state != "idle":
+            self.attentionNeeded.emit()
+
+    def state(self) -> str:
+        return str(self.property("state") or "idle")
+
+    def set_idle(self) -> None:
+        self._show("idle", "plus", "accent", *self._idle)
+
+    def set_ready(self, count: int) -> None:
+        self._show("ready", "upload", "accent", i18n.tr('松开即可导入'),
+                   i18n.tr('{v0} 个文档', v0=count) if count > 1 else self._formats)
+
+    def set_reject(self, names: list[str]) -> None:
+        self._show("reject", "alert", "danger", i18n.tr('这种格式不能导入'),
+                   i18n.tr('支持 {v0}', v0=self._formats))
+
+    def set_busy(self, count: int) -> None:
+        self._show("busy", "upload", "accent", i18n.tr('正在导入…'),
+                   i18n.tr('{v0} 个文档', v0=count))
+
+    def show_result(self, imported: list[str], failed: list[str], skipped: list[str] = ()) -> None:
+        """放下之后的结果：成功几个（点名前两个）、哪些没成、哪些格式不支持。"""
+        lines = []
+        if imported:
+            names = "、".join(imported[:2]) + (i18n.tr(' 等') if len(imported) > 2 else "")
+            lines.append(names)
+        if failed:
+            lines.append(i18n.tr('{v0} 个导入失败', v0=len(failed)))
+        if skipped:
+            lines.append(i18n.tr('{v0} 个格式不支持', v0=len(skipped)))
+        if imported and not (failed or skipped):
+            self._show("done", "check-circle", "success",
+                       i18n.tr('已导入 {v0} 个', v0=len(imported)), "\n".join(lines),
+                       revert_ms=6000)
+        elif imported:
+            self._show("warn", "alert", "warning",
+                       i18n.tr('已导入 {v0} 个', v0=len(imported)), "\n".join(lines),
+                       revert_ms=8000)
+        else:
+            self._show("error", "alert", "danger", i18n.tr('没有导入'),
+                       "\n".join(lines), revert_ms=8000)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _GlanceTile(QFrame):
+    def __init__(self, label: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("glanceTile")
+        column = QVBoxLayout(self)
+        column.setContentsMargins(14, 8, 14, 8)
+        column.setSpacing(0)
+        self.name = QLabel(label)
+        self.name.setObjectName("glanceLabel")
+        self.value = QLabel("—")
+        self.value.setObjectName("glanceValue")
+        self.hint = QLabel("")
+        self.hint.setObjectName("glanceHint")
+        column.addWidget(self.name)
+        column.addWidget(self.value)
+        column.addWidget(self.hint)
+
+
+class GlanceStrip(QFrame):
+    """E 层次 v2：一眼概览。四格数字嵌在一条下沉的凹槽里（没有四张各自的卡）。
+
+    接口与 :class:`MetricCards` 相同（``set_value`` / ``value`` / ``cell``），多一个
+    ``hint``：数字下面一行说明。凹槽比页面深一档、格子不带描边——凹进去的东西
+    不抢卡片的层次。
+    """
+
+    def __init__(self, items: list[tuple[str, str]], *, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("glanceStrip")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(4)
+        self._tiles: dict[str, _GlanceTile] = {}
+        for key, label in items:
+            tile = _GlanceTile(label, self)
+            tile.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            row.addWidget(tile, 1)
+            self._tiles[key] = tile
+
+    def set_value(self, key: str, value, *, emphasis: str = "default", hint: str = "") -> None:
+        tile = self._tiles.get(key)
+        if tile is None:
+            return
+        tile.value.setText(str(value))
+        tile.hint.setText(hint)
+        if tile.value.property("emphasis") != emphasis:
+            tile.value.setProperty("emphasis", emphasis)
+            repolish(tile.value)
+
+    def value(self, key: str) -> str:
+        tile = self._tiles.get(key)
+        return tile.value.text() if tile is not None else ""
+
+    def cell(self, key: str):
+        return self._tiles.get(key)
 
 
 # --------------------------------------------------------------------------
@@ -715,6 +876,69 @@ class SectionCard(Card):
 # --------------------------------------------------------------------------
 # Page canvas with the brand wash
 # --------------------------------------------------------------------------
+class Sheet(QWidget):
+    """E 层次 v2：内容页是浮在"外壳"上的一张圆角纸。
+
+    外壳（窗口底 + 侧栏）是一层更深的灰；内容页是它上面更亮的一张 14px 圆角面，
+    带三层柔和的投影。三层表面（外壳 < 页面 < 卡片）就是整个界面的层次来源，
+    页面里不再靠描边分区。夜间主题同样适用：外壳更深、页面更亮一点。
+    """
+
+    RADIUS = 14
+    GAP = 8
+
+    def __init__(self, content: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.content = content
+        self.setObjectName("transparent")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, self.GAP, self.GAP, self.GAP)
+        layout.setSpacing(0)
+        layout.addWidget(content)
+
+    def _sheet_rect(self) -> QRectF:
+        return QRectF(0, self.GAP, self.width() - self.GAP, self.height() - 2 * self.GAP)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().resizeEvent(event)
+        from PySide6.QtGui import QPainterPath, QRegion
+
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.content.rect()), self.RADIUS, self.RADIUS)
+        self.content.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        tokens = _tokens()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = self._sheet_rect()
+        dark = tokens.get("bg-page", "#fff").lower() < "#808080"
+        painter.setPen(Qt.PenStyle.NoPen)
+        for grow, offset, alpha in ((14, 8, 6), (7, 3, 8), (2, 1, 12)):
+            ink = style_module.shadow_ink()
+            ink.setAlpha(int(alpha * (2.2 if dark else 1.0)))
+            painter.setBrush(ink)
+            painter.drawRoundedRect(rect.adjusted(-grow / 2, -grow / 4 + offset, grow / 2, grow / 2 + offset),
+                                    self.RADIUS + grow / 3, self.RADIUS + grow / 3)
+        painter.end()
+
+
+class ShellCanvas(QWidget):
+    """窗口最底的一层（外壳）：比页面深一档的灰，纵向微渐变。"""
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        tokens = _tokens()
+        start = theme_module.qcolor(tokens.get("bg-shell-start", tokens["bg-glass"]))
+        end = theme_module.qcolor(tokens.get("bg-shell-end", tokens["bg-glass"]))
+        rect = QRectF(self.rect())
+        gradient = QLinearGradient(QPointF(0, rect.top()), QPointF(0, rect.bottom()))
+        gradient.setColorAt(0.0, start)
+        gradient.setColorAt(1.0, end)
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), gradient)
+        painter.end()
+
+
 class GradientCanvas(QWidget):
     """主工作区的底：页面色 → 淡淡的品牌蓝（135°，设计稿 Background Gradient）。
 
@@ -726,8 +950,7 @@ class GradientCanvas(QWidget):
         start = theme_module.qcolor(tokens.get("bg-gradient-start", tokens["bg-page"]))
         end = theme_module.qcolor(tokens.get("bg-gradient-end", tokens["bg-page"]))
         rect = QRectF(self.rect())
-        gradient = QLinearGradient(QPointF(rect.left(), rect.top()),
-                                   QPointF(rect.right(), rect.bottom()))
+        gradient = QLinearGradient(QPointF(0, rect.top()), QPointF(0, rect.bottom()))
         gradient.setColorAt(0.0, start)
         gradient.setColorAt(1.0, end)
         painter = QPainter(self)
@@ -1130,9 +1353,16 @@ class CoverArt(QWidget):
                              QColor(255, 255, 255, 55))
         painter.drawImage(rect, self._glass_image(source))
         scrim = QLinearGradient(rect.bottomLeft(), QPointF(rect.left(), rect.top() + rect.height() * 0.5))
-        scrim.setColorAt(0.0, QColor(0, 0, 8, int(255 * self._scrim)))
-        scrim.setColorAt(0.45, QColor(0, 0, 8, int(255 * self._scrim * 0.54)))
-        scrim.setColorAt(1.0, QColor(0, 0, 8, 0))
+        # 磨砂跟着主题走（色彩审校 C4）：夜间是暗层配白字；浅色主题是**浅色**磨砂配
+        # 深色字——白纸文档上压一层近黑，在浅色首页上就是一块发灰发脏的深色带。
+        if _night():
+            base, strength = QColor(0, 0, 8), self._scrim
+        else:
+            base, strength = theme_module.qcolor(_tokens()["bg-surface"]), 0.88
+        for stop, share in ((0.0, 1.0), (0.45, 0.62), (1.0, 0.0)):
+            colour = QColor(base)
+            colour.setAlpha(int(255 * strength * share))
+            scrim.setColorAt(stop, colour)
         painter.fillRect(rect, scrim)
         painter.setClipping(False)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -1259,8 +1489,13 @@ class ProgressLine(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
         rect = QRectF(self.rect())
-        painter.setBrush(QColor(255, 255, 255, 60) if getattr(self, "on_glass", False)
-                         else theme_module.qcolor(tokens["bg-surface-sunken"]))
+        if getattr(self, "on_glass", False):
+            # 玻璃上的轨道：夜间暗玻璃用半透明白，浅色磨砂用分隔线色。
+            track = (QColor(255, 255, 255, 60) if _night()
+                     else theme_module.qcolor(tokens["border-divider"]))
+        else:
+            track = theme_module.qcolor(tokens["bg-surface-sunken"])
+        painter.setBrush(track)
         painter.drawRoundedRect(rect, 2, 2)
         if self._value:
             painter.setBrush(theme_module.qcolor(tokens[self._token]))
@@ -1300,6 +1535,42 @@ class StatusDot(QWidget):
         painter.end()
 
 
+class StatusLabel(QWidget):
+    """界面里唯一的状态样子：6px 圆点 + 同色文字（theme.STATUS_TONES 五种语气）。
+
+    任务卡、继续卡、段落检查器、术语候选、设置里的连接状态都用它——状态不再一处是
+    芯片、一处是彩字、一处是彩色横幅。
+    """
+
+    def __init__(self, text: str = "", tone: str = "idle", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("transparent")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        self.dot = StatusDot(theme_module.STATUS_TONES["idle"])
+        self.label = style_module.ElideLabel(text, mode=Qt.TextElideMode.ElideRight)
+        style_module.set_text_role(self.label, "status")
+        row.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
+        self.set_status(text, tone)
+
+    def set_status(self, text: str, tone: str = "idle") -> None:
+        tone = tone if tone in theme_module.STATUS_TONES else "idle"
+        self._tone = tone
+        self.dot._token = theme_module.STATUS_TONES[tone]
+        self.dot.update()
+        self.label.setText(text)
+        self.label.setProperty("tone", tone)
+        repolish(self.label)
+
+    def tone(self) -> str:
+        return self._tone
+
+    def text(self) -> str:
+        return self.label.text()
+
+
 def relative_time(stamp: str, *, now=None) -> str:
     """ISO 时间戳 → "刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期"。
 
@@ -1332,7 +1603,7 @@ def relative_time(stamp: str, *, now=None) -> str:
 
 __all__ = [
     "BADGE_TONES", "DocThumb", "FilterChips", "GradientCanvas", "IconBadge", "MetricCards",
-    "ProgressLine", "SearchBar", "SectionCard", "StatusDot", "nav_item", "relative_time",
+    "ProgressLine", "SearchBar", "SectionCard", "StatusDot", "StatusLabel", "nav_item", "relative_time",
 ]
 
 
@@ -1971,12 +2242,14 @@ class FormRow(QWidget):
             self.title_label.setToolTip(tooltip)
 
 
-class FormGroup(QFrame):
-    """macOS「系统设置」式的圆角分组：一列 :class:`FormRow`，行间是从标题起的缩进发丝线。"""
+class FormGroup(style_module.Surface):
+    """macOS「系统设置」式的圆角分组：一列 :class:`FormRow`，行间是从标题起的缩进发丝线。
+
+    分组本身是一张卡片（:class:`style.Surface`，投影代替外框）。
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("settingsGroup")
+        super().__init__(parent, object_name="settingsGroup")
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 2, 0, 2)
         self._layout.setSpacing(0)

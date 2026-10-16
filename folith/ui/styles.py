@@ -24,20 +24,20 @@ _CSS = """
  --tp-navy: #000d2d;          /* 字标 / App 图标底 */
  --tp-brand-ink: #0b1f3b;     /* 正文级品牌深色（标题、当前项） */
  --tp-logo-blue: #004cfd;     /* 图标后页：钴蓝 */
- --tp-primary: #004cfd;
- --tp-primary-hover: #003fd6;
- --tp-primary-active: #0034b0;
+ --tp-primary: #2b5fd1;          /* 界面主色：与 logo 同色相、降低彩度 */
+ --tp-primary-hover: #2352b8;
+ --tp-primary-active: #1d469d;
  --tp-cyan: #00e8fe;          /* 图标渐变亮端 */
  --tp-azure: #0088fd;         /* 图标渐变中段 */
- --tp-primary-soft: #eef4ff;
- --tp-primary-soft-hover: #e3edff;
- --tp-border: #b9d1ff;
- --tp-focus-ring: rgba(0,76,253,.22);
- --tp-canvas: #f4f7fc;
+ --tp-primary-soft: #eef4fd;
+ --tp-primary-soft-hover: #e5edfc;
+ --tp-border: #c0d2f3;
+ --tp-focus-ring: rgba(43,95,209,.22);
+ --tp-canvas: #f4f6f8;
  --tp-surface: #ffffff;
  --tp-ink: #131c2e;
  --tp-sub: #667085;
- --tp-faint: #8a94a6;
+ --tp-faint: #7e8796;
  --tp-line: #dee3ea;
  --tp-line-subtle: #ebeef3;
  --tp-sidebar-line: #e7eaf0;
@@ -55,7 +55,7 @@ _CSS = """
  --tp-shadow-sm: 0 1px 2px rgba(16,24,40,.04);
  --tp-shadow-md: 0 2px 8px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
  --tp-shadow-lg: 0 8px 24px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.04);
- --tp-tint-active: #eef4ff;
+ --tp-tint-active: #eef4fd;
  --tp-tint-hover: #f7f9fc;
  --tp-warn: #b54708;
  --tp-warn-soft: #fffaeb;

@@ -90,7 +90,10 @@ def audit_theme_leaks(css: str, theme: str) -> list[str]:
             leaks.append(match.group(0).lower())
     # The logo keeps the brand colours in every theme on purpose.
     allowed = ('#004cfd', '#0088fd', '#00e8fe', '#82acff', '#a1c0ff', '#b6ceff',
-               '#4c709e', 'rgba(0,76,253')
+               '#4c709e', 'rgba(0,76,253',
+               # 日间界面主色（与 logo 同色相、低彩度）的焦点环默认值：
+               # 由各主题的 :root 覆盖，和原来的钴蓝焦点环是同一个位置。
+               'rgba(43,95,209')
     return sorted({leak for leak in leaks
                    if not any(leak.startswith(prefix) for prefix in allowed)})
 

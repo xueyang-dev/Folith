@@ -331,6 +331,42 @@ def library_run_view(row) -> tuple[str, str]:
     return tone, line or i18n.tr_dynamic(row.status_label)
 
 
+def _stage_line(row) -> str:
+    """「✓ 准备 — 翻译 79/128 — 审校 — 交付」：从列表行里**确实有**的字段推出走到哪一步。
+
+    列表行读不到审校与译文状态，所以只做保守判断：没开始 → 准备；跑到一半 → 翻译
+    （带段数）；100% → 翻译已完成、轮到交付（审校是否启用在工作台里才知道，这里不下结论，
+    灰着）；已冻结 → 全部完成。
+    """
+    tokens = theme_module.tokens(current_theme())
+    ok, accent, muted = tokens["success"], tokens["accent"], tokens["text-muted"]
+    runtime = getattr(row, "runtime", None) or {}
+    percent = _row_percent(row)
+    done_n, total_n = runtime.get("progress_completed"), runtime.get("progress_total")
+    labels = [i18n.tr(name) for name in ("准备", "翻译", "审校", "交付")]
+    if getattr(row, "snapshot_version", None):
+        states = ["done", "done", "done", "done"]
+    elif percent is None or (percent == 0 and not row.active and not done_n):
+        states = ["current", "todo", "todo", "todo"]
+    elif percent >= 100:
+        states = ["done", "done", "todo", "current"]
+    else:
+        states = ["done", "current", "todo", "todo"]
+    if states[1] == "current" and total_n:
+        labels[1] = f"{labels[1]} {int(done_n or 0)}/{int(total_n)}"
+    elif states[1] == "current" and percent is not None:
+        labels[1] = f"{labels[1]} {percent}%"
+    spans = []
+    for label, state in zip(labels, states):
+        if state == "done":
+            spans.append(f"<span style='color:{ok}'>✓ {label}</span>")
+        elif state == "current":
+            spans.append(f"<span style='color:{accent}'><b>{label}</b></span>")
+        else:
+            spans.append(f"<span style='color:{muted}'>{label}</span>")
+    return f" <span style='color:{muted}'>—</span> ".join(spans)
+
+
 def _row_format(row) -> str:
     name = str(getattr(row, "filename", "") or "")
     suffix = name.rsplit(".", 1)[-1] if "." in name else ""
@@ -495,10 +531,7 @@ class _TaskCard(QFrame):
             painter.drawRoundedRect(rect.adjusted(-grow / 3, grow / 4 + offset, grow / 3,
                                                   grow / 3 + offset), radius + grow / 4, radius + grow / 4)
         if self._selected or self.hasFocus():
-            tokens = theme_module.tokens(current_theme())
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(style_module.qcolor(tokens["accent"]), 2.5))
-            painter.drawRoundedRect(rect.adjusted(-3, -3, 3, 3), radius + 3, radius + 3)
+            style_module.paint_selection_ring(painter, rect, radius)
         painter.end()
 
     def focusOutEvent(self, event) -> None:  # noqa: N802 - Qt 命名
@@ -602,6 +635,8 @@ class HomeView(QWidget):
     moveToProjectRequested = Signal(list)
     settingsRequested = Signal()
     connectionRequested = Signal()          # 侧栏连接状态芯片：打开逐项状态的浮窗
+    #: 文档被拖进来、且至少有一个格式能导入（只带能导入的路径）。
+    filesDropped = Signal(list)
 
     COLUMNS = ("文档", "状态", "目标语言", "段落", "更新时间")
     #: 侧栏品牌字标的逻辑高度（px）。Golden Gate 版式里它在侧栏左下角、设置按钮左侧。
@@ -707,24 +742,19 @@ class HomeView(QWidget):
         engine_row.addWidget(self.engine_label, 0, Qt.AlignmentFlag.AlignVCenter)
         engine_row.addWidget(self.engine_model, 1, Qt.AlignmentFlag.AlignVCenter)
 
-        brand_row = QHBoxLayout()
-        brand_row.setContentsMargins(theme_module.SPACE["xxs"], 0, 0, 0)
-        brand_row.setSpacing(theme_module.SPACE["sm"])
-        brand_row.addWidget(self._logo_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        brand_row.addStretch(1)
-        brand_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        # 品牌字标在侧栏左上角（E 层次 v2）；底部只留连接状态 + 设置按钮同一行。
+        footer_row = QHBoxLayout()
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.setSpacing(theme_module.SPACE["sm"])
+        footer_row.addWidget(engine_card, 1)
+        footer_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         sidebar_footer = QFrame()
         sidebar_footer.setObjectName("sidebarFooterGG")
         footer_layout = QVBoxLayout(sidebar_footer)
         footer_layout.setContentsMargins(0, 0, 0, 0)
-        footer_layout.setSpacing(theme_module.SPACE["md"])
-        footer_layout.addWidget(engine_card)
-        footer_rule = QFrame()
-        footer_rule.setObjectName("hairline")
-        footer_rule.setFixedHeight(1)
-        footer_layout.addWidget(footer_rule)
-        footer_layout.addLayout(brand_row)
+        footer_layout.setSpacing(0)
+        footer_layout.addLayout(footer_row)
 
         sidebar = QWidget()
         self.sidebar = sidebar
@@ -736,6 +766,14 @@ class HomeView(QWidget):
         side.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["lg"],
                                 theme_module.SPACE["md"], theme_module.SPACE["md"])
         side.setSpacing(theme_module.SPACE["xs"])
+        # 与导航图标左缘对齐（按钮左内边距 + 1px 透明边）。
+        side.addSpacing(theme_module.SPACE["xs"])
+        logo_row = QHBoxLayout()
+        logo_row.setContentsMargins(theme_module.SPACE["md"] + 1, 0, 0, 0)
+        logo_row.addWidget(self._logo_label, 0, Qt.AlignmentFlag.AlignLeft)
+        logo_row.addStretch(1)
+        side.addLayout(logo_row)
+        side.addSpacing(theme_module.SPACE["md"])
         side.addWidget(self.import_button)
         # 分组之间 24px、组内 4px：只在"组"上写间距，行与行之间保持同一条节奏。
         side.addSpacing(theme_module.SPACE["xl"])
@@ -831,13 +869,12 @@ class HomeView(QWidget):
         # ---- 指标卡（接口与旧的内联指标条相同：set_value / value / cell） ---------
         # Golden Gate：四张指标卡并进了筛选芯片（"运行中 1"），不再单独占一行。
         # 对象保留（计数仍在这里维护，窗口/测试读它），但不显示。
-        self.stats = components.MetricCards([
-            ("total", i18n.tr('任务总数'), "projects", "accent"),
-            ("active", i18n.tr('运行中'), "pulse", "info"),
-            ("delivered", i18n.tr('已交付'), "check-circle", "ok"),
-            ("errored", i18n.tr('有错误'), "alert", "danger"),
+        self.stats = components.GlanceStrip([
+            ("total", i18n.tr('任务总数')),
+            ("active", i18n.tr('运行中')),
+            ("attention", i18n.tr('待处理问题')),
+            ("delivered", i18n.tr('已交付')),
         ])
-        self.stats.setParent(self)
         self.stats.setVisible(False)
         self._status_labels = {"all": i18n.tr('全部'), "active": i18n.tr('运行中'),
                                "delivered": i18n.tr('已交付'), "errored": i18n.tr('有错误')}
@@ -917,6 +954,13 @@ class HomeView(QWidget):
             icon="search", page=True, title=i18n.tr('这个筛选下没有任务'),
             hint=i18n.tr('换一个筛选，或清空搜索。'))
 
+        # ---- 拖入文档格：卡片末尾的虚线格；整个页面都接收拖放 ---------------
+        self.setAcceptDrops(True)
+        self.drop_tile = components.DropTile(
+            " · ".join(suffix.lstrip(".").upper() for suffix in adapter.SOURCE_SUFFIXES))
+        self.drop_tile.clicked.connect(self.importRequested.emit)
+        self.drop_tile.attentionNeeded.connect(self._reveal_drop_tile)
+
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.empty_page)
         self.stack.addWidget(self.table)
@@ -956,7 +1000,11 @@ class HomeView(QWidget):
         actions.addWidget(self.status_label)
 
         # 任务区块 = 一张容器卡：头部条（标题 + 状态筛选 + 视图/项目/排序） + 列表 + 脚注。
-        self.list_card = components.SectionCard(i18n.tr('任务列表'))
+        self.list_card = components.SectionCard(i18n.tr('其他任务'))
+        self.list_card.setObjectName("plainSection")
+        # 其他任务直接放在页面上（卡片里的卡片会多出一层无意义的面）：不画面也不画影。
+        self.list_card.set_elevation("flat")
+        self.list_card.set_fill("bg-page")
         self.list_card.add_header_widget(self.status_filter)
         self.list_card.header_layout.addStretch(1)
         for control in (self.view_switch, self.sort_box):
@@ -983,6 +1031,7 @@ class HomeView(QWidget):
         layout.setSpacing(theme_module.SPACE["lg"])
         layout.addLayout(page_header)
         layout.addWidget(self.setup_banner)
+        layout.addWidget(self.stats)
         layout.addWidget(self.continue_card)
         layout.addWidget(self.list_card, 1)
         layout.addWidget(self.empty_state, 1)
@@ -1001,6 +1050,60 @@ class HomeView(QWidget):
         self._previews.ready.connect(self._preview_ready)
 
     # -- 侧栏（窗口级导航） --------------------------------------------------
+    # -- 拖放：拖进来先告诉用户能不能放，放下后在虚线格里给结果 ------------------
+    @staticmethod
+    def _dropped_paths(event) -> list[str]:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        return [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+
+    @staticmethod
+    def _importable(path: str) -> bool:
+        from pathlib import Path
+
+        return Path(path).suffix.lower() in adapter.SOURCE_SUFFIXES
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        paths = self._dropped_paths(event)
+        if not paths:
+            event.ignore()
+            return
+        good = [path for path in paths if self._importable(path)]
+        if good:
+            self.drop_tile.set_ready(len(good))
+        else:
+            self.drop_tile.set_reject(paths)
+        event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        self.drop_tile.set_idle()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        from pathlib import Path
+
+        paths = self._dropped_paths(event)
+        good = [path for path in paths if self._importable(path)]
+        skipped = [Path(path).name for path in paths if not self._importable(path)]
+        event.acceptProposedAction()
+        self._drop_skipped = skipped
+        if not good:
+            self.drop_tile.show_result([], [], skipped)
+            return
+        self.drop_tile.set_busy(len(good))
+        self.filesDropped.emit(good)
+
+    def _reveal_drop_tile(self) -> None:
+        if self.drop_tile.isVisibleTo(self.card_page):
+            self.card_scroll.ensureWidgetVisible(self.drop_tile, 0, 12)
+
+    def show_drop_result(self, imported: list[str], failed: list[str]) -> None:
+        self.drop_tile.show_result(imported, failed, getattr(self, "_drop_skipped", []))
+
     def take_sidebar(self) -> QWidget:
         """把侧栏交给窗口，放在整个页面栈左侧：任务库、项目、术语页都看得到它。"""
         self._shell.removeWidget(self.sidebar)
@@ -1032,8 +1135,8 @@ class HomeView(QWidget):
         card = Card()
         card.setObjectName("continueCard")
         row = QHBoxLayout(card)
-        row.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
-                               theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        row.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["md"],
+                               theme_module.SPACE["xl"], theme_module.SPACE["md"])
         row.setSpacing(theme_module.SPACE["xl"])
         self.continue_paper = components.DocThumb(80, 104)
         row.addWidget(self.continue_paper, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -1047,6 +1150,9 @@ class HomeView(QWidget):
         self.continue_meta.setObjectName("subtitle")
         self.continue_status = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
         self.continue_status.setObjectName("continueStatus")
+        self.continue_stage = QLabel("")
+        self.continue_stage.setObjectName("stageLine")
+        self.continue_stage.setTextFormat(Qt.TextFormat.RichText)
         self.continue_progress = components.ProgressLine(0)
         self.continue_progress.setMaximumWidth(320)
         self.continue_button = QPushButton(i18n.tr('继续'))
@@ -1063,6 +1169,7 @@ class HomeView(QWidget):
         text.addWidget(self.continue_title)
         text.addWidget(self.continue_meta)
         text.addSpacing(theme_module.SPACE["xxs"])
+        text.addWidget(self.continue_stage)
         text.addWidget(self.continue_status)
         text.addWidget(self.continue_progress)
         text.addSpacing(theme_module.SPACE["sm"])
@@ -1107,6 +1214,7 @@ class HomeView(QWidget):
         progress = i18n.tr_dynamic(row.progress_label) if row.progress_label else ""
         parts = [part for part in (status, progress if progress != status else "") if part]
         self.continue_status.setText(" · ".join(parts))
+        self.continue_stage.setText(_stage_line(row))
         percent = _row_percent(row)
         self.continue_progress.setVisible(percent is not None)
         if percent is not None:
@@ -1311,8 +1419,9 @@ class HomeView(QWidget):
         # 高度 LOGO_HEIGHT（逻辑像素）：字标宽高比 3.62，52px 高 ≈ 188px 宽，正好铺满
         # 232px 侧栏的内容区（208px）；按设备像素比出图，Retina 屏上不发糊。
         ratio = max(1.0, float(self.devicePixelRatioF()))
-        logo = branding.logo_pixmap(round(self.LOGO_HEIGHT * ratio), theme,
-                                    tint=theme_module.tokens(theme)["accent"])
+        # 日间的界面主色与 logo 分开了（logo 仍是钴蓝）：日间不着色，logo 与原图逐像素一致。
+        tint = None if theme == "light" else theme_module.tokens(theme)["accent"]
+        logo = branding.logo_pixmap(round(self.LOGO_HEIGHT * ratio), theme, tint=tint)
         if not logo.isNull():
             logo.setDevicePixelRatio(ratio)
             self._logo_label.setPixmap(logo)
@@ -1355,14 +1464,17 @@ class HomeView(QWidget):
         self._sync_stats_line(scope, active, delivered)
         # ---- 指标卡 --------------------------------------------------------
         rows_count = len(rows)
-        self.stats.set_value("total", len(scope))
-        self.stats.set_value("active", len(active),
-                             emphasis="accent" if active else "muted")
-        self.stats.set_value("delivered", len(delivered),
-                             emphasis="default" if delivered else "muted")
-        # "有错误"是这四个数字里唯一需要被看见的那个：0 的时候退成灰，非 0 变红。
-        self.stats.set_value("errored", len(errored),
-                             emphasis="danger" if errored else "muted")
+        issue_total = sum(int(getattr(row, "attention_count", 0) or 0) for row in scope)
+        issue_jobs = len([row for row in scope if int(getattr(row, "attention_count", 0) or 0)])
+        self.stats.set_value("total", len(scope),
+                             hint=i18n.tr('{v0} 段', v0=f"{sum(r.segment_count or 0 for r in scope):,}"))
+        self.stats.set_value("active", len(active), emphasis="accent" if active else "muted",
+                             hint=_elide(active[0].title, 14) if active else i18n.tr('没有在跑的任务'))
+        self.stats.set_value("attention", issue_total, emphasis="warn" if issue_total else "muted",
+                             hint=i18n.tr('来自 {v0} 个任务', v0=issue_jobs) if issue_total else i18n.tr('一切正常'))
+        self.stats.set_value("delivered", len(delivered), emphasis="default" if delivered else "muted",
+                             hint=i18n.tr('有错误 {v0}', v0=len(errored)) if errored else "")
+        self.stats.setVisible(bool(scope))
         for key, count in (("all", len(scope)), ("active", len(active)),
                            ("delivered", len(delivered)), ("errored", len(errored))):
             button = self.status_filter.button(key)
@@ -1503,6 +1615,8 @@ class HomeView(QWidget):
         if focused_job or (self.focusWidget() is not None
                            and self.card_page.isAncestorOf(self.focusWidget())):
             self.card_scroll.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.drop_tile.hide()
+        self.drop_tile.setParent(self)        # 摘出卡片页，下面清空时不会跟着销毁
         while self.card_layout.count():
             item = self.card_layout.takeAt(0)
             widget = item.widget()
@@ -1551,11 +1665,23 @@ class HomeView(QWidget):
                 grid.addWidget(card, position // columns, position % columns)
                 self._cards[row.job_id] = card
                 self._request_preview(row.job_id, row.filename, card.paper)
+            last_grid, last_count = grid, len(items)
             for column in range(columns):
                 grid.setColumnStretch(column, 0)
             grid.setColumnStretch(columns, 1)     # 多出来的宽度留在右侧，卡片保持紧凑
             section_layout.addLayout(grid)
             self.card_layout.addWidget(section)
+        if groups:
+            # 虚线格排在最后一组的最后一张卡后面（与卡片同一套网格）。
+            self.drop_tile.setParent(last_grid.parentWidget())
+            last_grid.addWidget(self.drop_tile, last_count // columns, last_count % columns)
+            sample = next(iter(self._cards.values()), None)
+            if sample is not None:        # 与任务卡同宽同高（卡片自带投影留白，扣掉）
+                self.drop_tile.setFixedSize(
+                    card_width - _TaskCard.PAD.left() - _TaskCard.PAD.right(),
+                    sample.height() - _TaskCard.PAD.top() - _TaskCard.PAD.bottom())
+                last_grid.setAlignment(self.drop_tile, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            self.drop_tile.show()
         self.card_layout.addStretch(1)
         if focused_job in self._cards:
             self._cards[focused_job].setFocus(Qt.FocusReason.OtherFocusReason)
@@ -2660,7 +2786,14 @@ class WorkbenchView(QWidget):
         translation_split = components.ResizeSplitter(Qt.Orientation.Horizontal, self)
         self.right_panel = components.SlidingPanel(inspector_scroll)
         self._inspector_width = self.INSPECTOR_WIDTH
-        translation_split.addWidget(self.segment_list)
+        # 段落表放在一张卡片上（E 层次 v2）：表格本身透明，卡片给出圆角面和投影，
+        # 与右侧检查器同一层级，不再是"一块带发丝线的白板 + 一块阴影卡"两种材质。
+        self.grid_card = style_module.Surface(object_name="gridCard")
+        grid_layout = QVBoxLayout(self.grid_card)
+        grid_layout.setContentsMargins(0, theme_module.SPACE["xs"], 0, theme_module.SPACE["xs"])
+        grid_layout.setSpacing(0)
+        grid_layout.addWidget(self.segment_list)
+        translation_split.addWidget(self.grid_card)
         translation_split.addWidget(self.right_panel)
         translation_split.setStretchFactor(0, 1)
         translation_split.setStretchFactor(1, 0)
@@ -2668,7 +2801,7 @@ class WorkbenchView(QWidget):
         # 旧值下窗口缩到 940 宽时 splitter 给出 [455, 460] —— 右侧比左侧还宽，
         # 而左侧正是用户要扫的段落表。列表给一个最小宽度，保证它先拿到空间。
         translation_split.setSizes([860, self.INSPECTOR_WIDTH])
-        self.segment_list.setMinimumWidth(360)
+        self.grid_card.setMinimumWidth(360)
         self.translation_split = translation_split
         self.inspector_scroll = inspector_scroll
 
@@ -3017,7 +3150,7 @@ class WorkbenchView(QWidget):
         self.translation_split.setStretchFactor(0, 0)
         # 网格不能被拖成 0 宽（QSplitter 默认允许把子控件拖到折叠）。
         self.translation_split.setCollapsible(
-            self.translation_split.indexOf(self.segment_list), False)
+            self.translation_split.indexOf(self.grid_card), False)
         self.translation_split.set_collapse_threshold(self.source_clip, 240)
         self.translation_split.collapseRequested.connect(self._split_collapse_requested)
         self.translation_split.resetRequested.connect(self._split_reset_requested)
@@ -3725,7 +3858,7 @@ class WorkbenchView(QWidget):
         sizes = split.sizes()
         total = sum(sizes) or split.width() or max(self.width() - 40, 800)
         index = {widget: split.indexOf(widget) for widget in (
-            self.segment_list, self.right_panel)}
+            self.grid_card, self.right_panel)}
         index[self.pdf_panel] = split.indexOf(self.source_clip)
         # 右栏是"一个位置一个宽度"：检查器和检查与修复轮流占它，宽度相同，
         # 打开抽屉时网格不重排（设计审校 40 号 3.8）。
@@ -3740,7 +3873,7 @@ class WorkbenchView(QWidget):
         new = [0] * split.count()
         new[index[self.pdf_panel]] = pdf
         new[index[self.right_panel]] = side
-        new[index[self.segment_list]] = max(360, total - pdf - side)
+        new[index[self.grid_card]] = max(360, total - pdf - side)
         return new
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming

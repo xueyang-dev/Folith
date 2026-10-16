@@ -64,7 +64,7 @@ def server_args(port: int, lan: bool) -> list[str]:
             "--server.headless", "true",
             "--server.port", str(port),
             "--server.address", bind_address(lan),
-            "--theme.primaryColor", "#004cfd",
+            "--theme.primaryColor", "#2b5fd1",
             "--theme.textColor", "#131c2e",
             "--browser.gatherUsageStats", "false"]
     return args

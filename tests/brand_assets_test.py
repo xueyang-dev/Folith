@@ -38,6 +38,8 @@ PALETTE = {
     "azure": "#0088fd",    # 渐变中段
     "cyan": "#00e8fe",     # 渐变亮端
 }
+#: 日间界面主色：与 logo 钴蓝同色相、降低彩度（2026-10-16 色彩审校）。logo 本身不动。
+UI_PRIMARY = "#2b5fd1"
 
 # 正式品牌素材：由用户提供，界面与 README 直接使用，不由渲染脚本生成。
 OFFICIAL_PNG = (
@@ -175,19 +177,19 @@ def test_app_tokens_match_brand_palette():
         return match.group(1).lower()
 
     assert token("tp-logo-blue") == PALETTE["cobalt"]
-    assert token("tp-primary") == PALETTE["cobalt"]
+    assert token("tp-primary") == UI_PRIMARY
     assert token("tp-navy") == PALETTE["navy"]
     assert token("tp-azure") == PALETTE["azure"]
     assert token("tp-cyan") == PALETTE["cyan"]
     # hover / active 必须是同一色的更深阶，不能引入第二种蓝
-    assert token("tp-primary-hover") < PALETTE["cobalt"], "hover 应比主色更深"
+    assert token("tp-primary-hover") < UI_PRIMARY, "hover 应比主色更深"
     assert token("tp-primary-active") < token("tp-primary-hover"), \
         "active 应比 hover 更深"
 
 
 def test_streamlit_theme_matches_primary():
     gui = (ROOT / "gui.py").read_text(encoding="utf-8")
-    assert f'"--theme.primaryColor", "{PALETTE["cobalt"]}"' in gui, \
+    assert f'"--theme.primaryColor", "{UI_PRIMARY}"' in gui, \
         "Streamlit 主题主色必须与设计系统主色一致"
 
     app = (ROOT / "app.py").read_text(encoding="utf-8")

@@ -156,5 +156,5 @@ def test_inspector_and_drawer_share_one_width(translated):
     closed = translated._translation_column_sizes(drawer_open=False)
     opened = translated._translation_column_sizes(drawer_open=True)
     assert closed[side] == opened[side] == translated._inspector_width
-    grid = translated.translation_split.indexOf(translated.segment_list)
+    grid = translated.translation_split.indexOf(translated.grid_card)
     assert closed[grid] == opened[grid], "打开检查与修复时网格不重排"

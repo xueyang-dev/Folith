@@ -104,8 +104,9 @@ def test_theme_token_sets_match_and_include_the_new_roles():
     assert len({frozenset(value) for value in keys.values()}) == 1
     for name in ("info", "info-soft", "bg-gradient-start", "bg-gradient-end"):
         assert name in keys["light"]
-    # 品牌蓝与 logo 同源，设计稿的新色板不改它
-    assert theme_tokens.TOKENS["light"]["accent"] == "#004cfd"
+    # 界面主色与 logo 分开（2026-10-16 色彩审校）：logo 仍是钴蓝，界面是同色相的低彩度蓝。
+    assert theme_tokens.TOKENS["light"]["accent"] == "#2b5fd1"
+    assert theme_tokens.TOKENS["light"]["brand-logo-blue"] == "#004cfd"
 
 
 def _job(job_id, name, project_id=None, *, status="待处理", active=False,
@@ -148,7 +149,8 @@ def test_status_chip_filters_the_list_but_not_the_metrics(home):
     assert home.table.rowCount() == 1
     # 指标仍按"项目 + 搜索"的范围统计
     assert home.stats.value("total") == "4"
-    assert home.stats.value("errored") == "1"
+    # 概览是四格（总数 / 运行中 / 待处理问题 / 已交付）；出错的任务数写在「已交付」下面一行。
+    assert "1" in home.stats.cell("delivered").hint.text()
     home.status_filter.changed.emit("active")
     assert home.table.rowCount() == 1
     home.status_filter.changed.emit("all")
@@ -268,9 +270,9 @@ def test_logo_follows_the_theme_accent(app):
     from folith.qt import branding
 
     original = branding.logo_pixmap(48, "light")
-    day = branding.logo_pixmap(48, "light", tint=theme.tokens("light")["accent"])
+    day = branding.logo_pixmap(48, "light", tint=theme.tokens("light")["brand-logo-blue"])
     green = branding.logo_pixmap(48, "green", tint=theme.tokens("green")["accent"])
-    # 日间：强调色就是品牌蓝，着色是空操作，图片逐像素不变
+    # 日间：logo 保持品牌钴蓝（界面主色已与 logo 分开，侧栏日间不着色），图片逐像素不变
     assert day.toImage() == original.toImage()
     # 翠绿：彩色部分的色相移到绿区（约 0.37–0.45），不再是蓝（≈0.6）
     assert 0.3 < _hue(green) < 0.5 < _hue(original)
@@ -301,3 +303,15 @@ def test_green_logo_uses_the_designed_colour_ramp(app):
     assert any(g < 0x60 and g > r and g >= b for r, g, b in colours)
     assert any(g > 0xb0 and g > r and g >= b for r, g, b in colours)
     assert all(g >= r and g >= b - 8 for r, g, b in colours)
+
+
+def test_day_sidebar_logo_is_the_untouched_asset(app):
+    """界面主色改成低彩度蓝以后，日间侧栏的 logo 仍与原图逐像素一致。"""
+    from folith.qt import branding
+
+    style.apply_theme(app, "light")
+    view = views.HomeView()
+    shown = view._logo_label.pixmap()
+    original = branding.logo_pixmap(shown.height(), "light")
+    assert shown.toImage().convertToFormat(original.toImage().format()) == original.toImage()
+    view.deleteLater()

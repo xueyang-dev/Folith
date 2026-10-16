@@ -143,6 +143,13 @@ def build_qss(theme: str) -> str:
         glass_rim = "rgba(255,255,255,0.9)"
     f = theme_module.FONT_SIZES
     c = theme_module.CONTROL
+    # 任务卡封面玻璃上的文字色：暗玻璃（夜间）用白色系，浅色磨砂用正文色系。
+    if theme_module.resolve(theme) == "dark":
+        cover = {"title": "#ffffff", "meta": "rgba(255,255,255,0.78)",
+                 "status": "rgba(255,255,255,0.92)", "danger": "#ff9f9a", "ok": "#8fe6ad"}
+    else:
+        cover = {"title": t["text-primary"], "meta": t["text-secondary"],
+                 "status": t["text-primary"], "danger": t["danger"], "ok": t["success"]}
     sp = theme_module.SPACE
 
     def box(token: str, *, pad_y: int, border: int = 1) -> int:
@@ -166,14 +173,27 @@ def build_qss(theme: str) -> str:
                 f' font-size: {f["caption"]}px; font-weight: 600; }}')
         return "\n".join(rules)
 
+    def role_rules() -> str:
+        """文字角色与状态语气（theme.TEXT_ROLES / STATUS_TONES）：同一种信息处处同一个样子。"""
+        rules = [f'QLabel[textRole="{name}"] {{ font-size: {size}px; font-weight: {weight};'
+                 f' color: {t[colour]}; }}'
+                 for name, (size, weight, colour) in theme_module.TEXT_ROLES.items()]
+        rules += [f'QLabel[textRole="status"][tone="{tone}"] {{ color: {t[token]}; }}'
+                  for tone, token in theme_module.STATUS_TONES.items()]
+        return "\n".join(rules)
+
     def strip_rules() -> str:
-        """内联提示条：浅色底 + 同色描边（Web 界面的"1 段尚未审校"那种）。"""
+        """内联提示条：中性面 + 正文色，**颜色只在图标上**（色彩审校 C3）。
+
+        整条着色的横幅（暖黄底橙字、浅蓝底）放在冷色页面上是全屏最响的一块；
+        提示的语气由图标颜色表达就够了。只有错误保留浅红底：它要求立刻处理。
+        """
         rules = []
         for name, bg, border, fg in (
-            ("noticeStrip", "accent-soft", "accent-border", "brand-ink"),
-            ("warnStrip", "warning-soft", "border-subtle", "warning"),
+            ("noticeStrip", "bg-surface", "border-subtle", "text-primary"),
+            ("warnStrip", "bg-surface", "border-subtle", "text-primary"),
             ("dangerStrip", "danger-soft", "border-subtle", "danger"),
-            ("successStrip", "success-soft", "border-subtle", "success"),
+            ("successStrip", "bg-surface", "border-subtle", "text-primary"),
         ):
             rules.append(
                 f'QFrame#{name} {{ background: {t[bg]};'
@@ -202,10 +222,12 @@ QWidget#transparent, QFrame#transparent {{ background: transparent; }}
 
 /* ================= 文本层级 ================= */
 QLabel {{ background: transparent; }}
+{role_rules()}
 /* 页面标题用衬线展示字（macOS 的 New York，中文回退宋体）：和正文的无衬线拉开，
    层级不只靠字号。字体在 apply_theme 里从系统字体文件注册，没有就退回无衬线。 */
-QLabel#displayTitle {{ font-family: ".New York", "New York", "Songti SC", Georgia, serif; font-size: {f['display']}px; font-weight: 600; color: {t['brand-ink']}; }}
-QLabel#pageTitle {{ font-family: ".New York", "New York", "Songti SC", Georgia, serif; font-size: {f['title']}px; font-weight: 600; color: {t['brand-ink']}; }}
+QLabel#displayTitle {{ font-size: {f['title']}px; font-weight: 600; color: {t['text-primary']}; }}
+/* 页面标题与任务库同一种字（E 层次 v2）：无衬线 22/600 正文色，不再一页衬线一页无衬线。 */
+QLabel#pageTitle {{ font-size: {f['title']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#statsLine {{ font-size: {f['footnote']}px; color: {t['text-secondary']}; }}
 QLabel#brandName {{ font-size: {f['section']}px; font-weight: 700; color: {t['brand-ink']}; }}
 QLabel#brandSub {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
@@ -257,16 +279,16 @@ QLabel#assetMissing {{ font-size: {f['micro']}px; font-weight: 600; color: {t['d
 {chip_rules()}
 
 /* ================= 面（卡片） ================= */
-QFrame#card, QWidget#card {{
-    background: {t['bg-surface']};
-    border: 1px solid {t['border-hairline']};
-    border-radius: {r['md']}px;
+/* 卡片一层（E 层次 v2）：面由 style.Surface 自己画（填充 + 投影），QSS 只负责让它透明、
+   不画描边——层级靠投影和亮度，不靠发丝线。 */
+QFrame#card, QWidget#card, QFrame#headerCard, QWidget#headerCard,
+QFrame#sectionCard, QFrame#settingsGroup, QFrame#continueCard, QFrame#surface,
+QFrame#gridCard {{
+    background: transparent; border: none;
 }}
-QFrame#headerCard, QWidget#headerCard {{
-    background: {t['bg-surface']};
-    border: 1px solid {t['border-subtle']};
-    border-radius: {r['md']}px;
-}}
+/* 卡片上的表格：表格与表头都透明，只留表头下的一条发丝线（面由卡片给）。 */
+QFrame#gridCard QTableWidget {{ background: transparent; border: none; border-radius: 0; }}
+QFrame#gridCard QHeaderView::section {{ background: transparent; }}
 /* 卡片内的分区（事实列表、编辑器外壳） */
 QFrame#sunken, QWidget#sunken {{
     background: {t['bg-surface-sunken']};
@@ -381,12 +403,9 @@ QLabel#taskCardStatus {{ font-size: {f['caption']}px; color: {t['text-secondary'
 QLabel#taskCardStatus[state="danger"] {{ color: {t['danger']}; }}
 QLabel#taskCardStatus[state="ok"] {{ color: {t['success']}; }}
 /* 继续上次的工作：页面里唯一一张"抬起"的卡 */
-QFrame#continueCard {{
-    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['md']}px;
-}}
-QLabel#eyebrow {{ font-size: {f['caption']}px; font-weight: 600; color: {t['accent']}; }}
-QLabel#continueTitle {{ font-size: {f['title']}px; font-weight: 700; color: {t['text-primary']}; }}
+/* 小标题（"继续上次的工作"）不是动作也不是选中：不用主色（色彩审校 C6）。 */
+QLabel#eyebrow {{ font-size: {f['caption']}px; font-weight: 600; color: {t['text-secondary']}; }}
+QLabel#continueTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#continueStatus {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* ================= 译前准备：翻译风格（Golden Gate） ================= */
 QFrame#styleCard {{
@@ -444,10 +463,8 @@ QLabel#statValue[emphasis="muted"] {{ color: {t['text-muted']}; font-weight: 500
 QFrame#statSeparator {{ background: {t['border-hairline']}; border: none; max-width: 1px; }}
 
 /* ================= 侧栏 ================= */
-QWidget#sidebar {{
-    background: {t['bg-glass']};
-    border-right: 1px solid {t['border-sidebar']};
-}}
+/* 侧栏属于"外壳"那一层：透明，外壳的渐变从它后面透出来；不再有右边线。 */
+QWidget#sidebar {{ background: transparent; border: none; }}
 QWidget#sidebar QLabel {{ background: transparent; }}
 QPushButton#navItem {{
     background: transparent; border: 1px solid transparent;
@@ -630,13 +647,14 @@ QFrame#termFocusBar {{
     border-radius: {r['md']}px;
 }}
 QFrame#termFocusBar QLabel {{ background: transparent; }}
-/* 任务库的书面卡片：文字浮在底部磨砂玻璃上，一律白色系（玻璃之下的暗层保证对比度）。 */
+/* 任务库的书面卡片：文字浮在底部磨砂玻璃上。夜间是暗玻璃配白字；浅色主题是浅色
+   磨砂配正文色（components.CoverArt 按主题画玻璃，色彩审校 C4）。 */
 QWidget#coverOverlay, QWidget#coverOverlay QLabel {{ background: transparent; }}
-QLabel#coverTitle {{ font-size: {f['card']}px; font-weight: 600; color: #ffffff; }}
-QLabel#coverMeta {{ font-size: {f['caption']}px; color: rgba(255,255,255,0.78); }}
-QLabel#coverStatus {{ font-size: {f['caption']}px; color: rgba(255,255,255,0.92); }}
-QLabel#coverStatus[state="danger"] {{ color: #ff9f9a; }}
-QLabel#coverStatus[state="ok"] {{ color: #8fe6ad; }}
+QLabel#coverTitle {{ font-size: {f['card']}px; font-weight: 600; color: {cover['title']}; }}
+QLabel#coverMeta {{ font-size: {f['caption']}px; color: {cover['meta']}; }}
+QLabel#coverStatus {{ font-size: {f['caption']}px; color: {cover['status']}; }}
+QLabel#coverStatus[state="danger"] {{ color: {cover['danger']}; }}
+QLabel#coverStatus[state="ok"] {{ color: {cover['ok']}; }}
 QWidget#contextRow {{
     background: transparent; border: 1px solid {t['border-hairline']};
     border-radius: {r['md']}px;
@@ -803,10 +821,6 @@ QLabel#presetDesc {{ font-size: {f['caption']}px; color: {t['text-secondary']}; 
 
 /* 译前准备：macOS「系统设置」式的分组列表。分组是一块圆角面，行之间是从标题起的
    缩进发丝线（不穿过左侧图标块）；分组上方是一行小标题。 */
-QFrame#settingsGroup {{
-    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['md']}px;
-}}
 QFrame#settingsGroup QWidget#groupRow, QFrame#settingsGroup QLabel {{ background: transparent; }}
 QFrame#rowRule {{ background: {t['border-divider']}; border: none; }}
 QLabel#rowTitle {{ font-size: {f['body']}px; color: {t['text-primary']}; }}
@@ -1039,10 +1053,31 @@ QTabBar::tab:selected {{
 /* 图标徽标：圆底 + 双色图标；底色按语义色调（与芯片同一批 token） */
 /* （图标徽标 IconBadge 是自绘的圆：QSS 的 border-radius 超过半高会退化成直角。） */
 /* 指标卡：图标徽标 + 标签 / 大号数字。数字只在"需要被看见"时上色。 */
-QFrame#metricCard {{
-    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['md']}px;
-}}
+QFrame#metricCard {{ background: transparent; border: none; }}
+/* 拖入文档格：虚线 → 拖到上方时强调色实线 → 结果（成功绿 / 部分橙 / 失败红）。 */
+QFrame#dropTile {{ background: transparent; border: 1.5px dashed {t['border-strong']}; border-radius: {r['md']}px; }}
+QFrame#dropTile:hover, QFrame#dropTile:focus {{ border-color: {t['accent']}; background: {t['accent-soft']}; }}
+QFrame#dropTile[state="ready"] {{ border: 2px solid {t['accent']}; background: {t['accent-soft']}; }}
+QFrame#dropTile[state="busy"] {{ border: 1.5px solid {t['accent-border']}; background: {t['accent-soft']}; }}
+QFrame#dropTile[state="done"] {{ border: 1.5px solid {t['success']}; background: {t['success-soft']}; }}
+QFrame#dropTile[state="warn"] {{ border: 1.5px solid {t['warning']}; background: {t['warning-soft']}; }}
+QFrame#dropTile[state="reject"], QFrame#dropTile[state="error"] {{ border: 1.5px solid {t['danger']}; background: {t['danger-soft']}; }}
+QFrame#dropTile QLabel {{ background: transparent; }}
+QLabel#dropTitle {{ font-size: {f['body']}px; font-weight: 500; color: {t['text-primary']}; }}
+QLabel#dropDetail {{ font-size: {f['label']}px; color: {t['text-muted']}; }}
+QLabel#stageLine {{ font-size: {f['label']}px; color: {t['text-muted']}; }}
+/* 概览凹槽（E 层次 v2）：比页面深一档，格子没有描边。 */
+QFrame#glanceStrip {{ background: {t['bg-surface-sunken']}; border: none; border-radius: {r['md']}px; }}
+QFrame#glanceTile {{ background: transparent; border: none; border-radius: {r['md']}px; }}
+QFrame#glanceTile:hover {{ background: {t['bg-surface']}; }}
+QFrame#glanceTile QLabel {{ background: transparent; }}
+QLabel#glanceLabel {{ font-size: {f['label']}px; color: {t['text-secondary']}; }}
+QLabel#glanceValue {{ font-size: {f['title']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#glanceValue[emphasis="warn"] {{ color: {t['warning']}; }}
+QLabel#glanceValue[emphasis="accent"] {{ color: {t['accent']}; }}
+QLabel#glanceValue[emphasis="danger"] {{ color: {t['danger']}; }}
+QLabel#glanceValue[emphasis="muted"] {{ color: {t['text-muted']}; }}
+QLabel#glanceHint {{ font-size: {f['label']}px; color: {t['text-muted']}; }}
 QLabel#metricLabel {{ font-size: {f['caption']}px; font-weight: 500; color: {t['text-secondary']}; }}
 QLabel#metricValue {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
 QLabel#metricValue[emphasis="accent"] {{ color: {t['accent']}; }}
@@ -1077,14 +1112,12 @@ QPushButton#pill:checked {{
     color: {t['accent']}; font-weight: 600;
 }}
 /* 容器卡 + 头部条；卡内的表格不再自带描边（外框由卡片给） */
-QFrame#sectionCard {{
-    background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['md']}px;
-}}
 QFrame#sectionHeader {{
     background: transparent; border: none; border-bottom: 1px solid {t['border-hairline']};
 }}
 QFrame#sectionCard QWidget#pageCanvas {{ background: transparent; }}
+QFrame#plainSection, QFrame#plainSection QFrame#sectionHeader {{ background: transparent; border: none; }}
+QFrame#plainSection QTableWidget {{ background: {t['bg-surface']}; border: none; border-radius: {r['md']}px; }}
 QFrame#sectionCard QTableWidget {{
     border: none; border-radius: 0; background: transparent;
 }}
@@ -1238,13 +1271,134 @@ class Chip(QLabel):
         repolish(self)
 
 
-class Card(QFrame):
-    """内容卡片：surface + 发丝线 + 圆角（层级靠"面"，不靠边框堆叠）。"""
+def shadow_ink() -> QColor:
+    """当前主题投影的墨色（取 ``shadow-sm`` 的 rgb，不透明度由 ELEVATION 给）。"""
+    parts = _shadow_parts(theme_module.tokens(current_theme()).get("shadow-sm", ""))
+    return QColor(parts[3].red(), parts[3].green(), parts[3].blue()) if parts else QColor(15, 23, 42)
+
+
+def paint_elevation(painter: QPainter, rect: QRectF, radius: float, level: str = "raised",
+                    *, strength: float = 1.0) -> None:
+    """在 ``rect`` 外面画一档投影（几层叠加的圆角矩形，模拟模糊）。
+
+    ``strength`` 让悬停抬起可以在 raised 与 floating 之间平滑过渡（动画时传 0–1）。
+    """
+    layers = theme_module.ELEVATION.get(level, ())
+    if not layers:
+        return
+    ink = shadow_ink()
+    gain = theme_module.ELEVATION_NIGHT_GAIN if night_mode() else 1.0
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    for spread, offset, alpha in layers:
+        colour = QColor(ink)
+        colour.setAlphaF(max(0.0, min(1.0, alpha * gain * strength)))
+        painter.setBrush(colour)
+        painter.drawRoundedRect(rect.adjusted(-spread, -spread * 0.5 + offset, spread, spread + offset),
+                                radius + spread, radius + spread)
+    painter.restore()
+
+
+def paint_selection_ring(painter: QPainter, rect: QRectF, radius: float) -> None:
+    """选中 / 键盘焦点：白色间隙 + 半透明主色环（全界面同一种选中样子）。"""
+    ring = theme_module.SELECTION_RING
+    tokens = theme_module.tokens(current_theme())
+    gap, width = ring["gap"], ring["width"]
+    painter.save()
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(theme_module.qcolor(tokens["bg-surface"]), gap * 2))
+    painter.drawRoundedRect(rect, radius, radius)
+    colour = theme_module.qcolor(tokens["accent"])
+    colour.setAlphaF(ring["alpha"])
+    painter.setPen(QPen(colour, width))
+    grow = gap + width / 2
+    painter.drawRoundedRect(rect.adjusted(-grow, -grow, grow, grow), radius + grow, radius + grow)
+    painter.restore()
+
+
+class Surface(QFrame):
+    """E 层次 v2 的"卡片"一层：最亮的面，**没有描边**，层级只靠自己画的投影。
+
+    QSS 没有 box-shadow，``QGraphicsDropShadowEffect`` 又只有一层且会让文字失去
+    次像素抗锯齿，所以面自己画：在自身矩形里按 ``theme.ELEVATION_PAD`` 内缩出"纸"，
+    影子画在内缩出来的那圈留白里。这圈留白是控件自己的 ``contentsMargins``，布局
+    排在它里面，所以调用方照旧给布局写设计边距即可（别再对面本身调
+    ``setContentsMargins``，那会吃掉影子的位置）。
+
+    子类 / 调用方可以设 ``elevation``（flat / raised / floating）、``fill``（颜色 token）、
+    ``selected``（画选中环）。QSS 里这些对象名的背景一律透明（见 build_qss 的面一节）。
+    """
+
+    RADIUS = theme_module.RADIUS["md"]
+
+    def __init__(self, parent: QWidget | None = None, *, object_name: str = "surface",
+                 elevation: str = "raised", fill: str = "bg-surface") -> None:
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self._elevation = elevation
+        self._fill = fill
+        self._selected = False
+        self._lift = 0.0
+        pad = self.pad()
+        self.setContentsMargins(pad.left(), pad.top(), pad.right(), pad.bottom())
+
+    @staticmethod
+    def pad():
+        from PySide6.QtCore import QMargins
+
+        return QMargins(*theme_module.ELEVATION_PAD)
+
+    def paper_rect(self) -> QRectF:
+        pad = self.pad()
+        return QRectF(self.rect()).adjusted(pad.left(), pad.top(), -pad.right(), -pad.bottom())
+
+    def set_elevation(self, level: str) -> None:
+        self._elevation = level
+        self.update()
+
+    def set_fill(self, token: str) -> None:
+        self._fill = token
+        self.update()
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = bool(selected)
+        self.setProperty("selected", "true" if selected else "false")
+        self.update()
+
+    def set_lift(self, value: float) -> None:
+        """0 = 静止，1 = 悬停抬起（在 raised 与 floating 之间插值）。"""
+        self._lift = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = self.paper_rect()
+        if self._elevation != "flat":
+            paint_elevation(painter, rect, self.RADIUS, self._elevation, strength=1.0 - self._lift)
+            if self._lift:
+                paint_elevation(painter, rect, self.RADIUS, "floating", strength=self._lift)
+        painter.setPen(Qt.PenStyle.NoPen)
+        tokens = theme_module.tokens(current_theme())
+        painter.setBrush(theme_module.qcolor(tokens.get(self._fill, tokens["bg-surface"])))
+        painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        if self._selected:
+            paint_selection_ring(painter, rect, self.RADIUS)
+        painter.end()
+        super().paintEvent(event)
+
+
+class Card(Surface):
+    """内容卡片：最亮的面 + 投影，没有发丝线（层级靠"面"，不靠边框堆叠）。
+
+    ``raised=True`` 是旧的"抬起卡"（页头卡），现在与普通卡同一档投影——全界面只有
+    "卡片"这一种静止层级。
+    """
 
     def __init__(self, parent: QWidget | None = None, *, raised: bool = False) -> None:
-        super().__init__(parent)
-        self.setObjectName("headerCard" if raised else "card")
-        self.setFrameShape(QFrame.Shape.NoFrame)
+        super().__init__(parent, object_name="headerCard" if raised else "card")
 
 
 # ================= 视觉积木（Web 界面观感的复用件） =================
@@ -1287,6 +1441,15 @@ def apply_card_shadow(widget: QWidget, *, level: str = "md") -> None:
     effect.setBlurRadius(blur)
     effect.setColor(color)
     widget.setGraphicsEffect(effect)
+
+
+def set_text_role(label: QLabel, role: str) -> QLabel:
+    """给标签一个文字角色（theme.TEXT_ROLES）；未知角色直接报错，免得又长出新变体。"""
+    if role not in theme_module.TEXT_ROLES:
+        raise ValueError(f"unknown text role: {role}")
+    label.setProperty("textRole", role)
+    repolish(label)
+    return label
 
 
 def text_color(name: str = "text-primary") -> str:
@@ -1351,6 +1514,8 @@ class NoticeStrip(QFrame):
     TONES = {"info": "noticeStrip", "warn": "warnStrip",
              "danger": "dangerStrip", "ok": "successStrip"}
     ICONS = {"info": "info", "warn": "alert", "danger": "alert", "ok": "check-circle"}
+    #: 提示条的语气只靠图标颜色表达（条本身是中性面）。
+    ICON_TOKENS = {"info": "accent", "warn": "warning", "danger": "danger", "ok": "success"}
 
     def __init__(self, text: str = "", *, tone: str = "info",
                  parent: QWidget | None = None) -> None:
@@ -1380,7 +1545,7 @@ class NoticeStrip(QFrame):
     def set_tone(self, tone: str) -> None:
         self._tone = tone if tone in self.TONES else "info"
         self.setObjectName(self.TONES[self._tone])
-        self._icon.set_icon(self.ICONS[self._tone], "text-secondary")
+        self._icon.set_icon(self.ICONS[self._tone], self.ICON_TOKENS[self._tone])
         repolish(self)
 
     def set_text(self, text: str) -> None:

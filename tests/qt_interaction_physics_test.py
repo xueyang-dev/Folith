@@ -298,7 +298,7 @@ def bench(app, tmp_path, monkeypatch):
 def test_double_click_returns_the_inspector_to_its_default_width(bench, app):
     split = bench.translation_split
     side = split.indexOf(bench.right_panel)
-    grid = split.indexOf(bench.segment_list)
+    grid = split.indexOf(bench.grid_card)
     sizes = split.sizes()
     sizes[grid] -= 120
     sizes[side] += 120
@@ -313,7 +313,7 @@ def test_double_click_returns_the_inspector_to_its_default_width(bench, app):
 
 def test_grid_cannot_be_dragged_shut(bench):
     split = bench.translation_split
-    assert not split.isCollapsible(split.indexOf(bench.segment_list))
+    assert not split.isCollapsible(split.indexOf(bench.grid_card))
 
 
 def test_collapsing_the_source_closes_it_and_remembers_the_width(bench, app):
