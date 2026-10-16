@@ -127,11 +127,11 @@ def test_mark_primary_applies_the_theme_accent(app):
     app.processEvents()
     button = box.button(QDialogButtonBox.StandardButton.Save)
 
-    button.setObjectName("primaryAction")          # 只设名字：不生效
+    button.setProperty("kind", "primary")          # 只设属性、不重新 polish：不生效
     app.processEvents()
     plain = _button_background(button)
 
-    style.mark_primary(button)                     # 设名字 + 重新 polish
+    style.mark_primary(button)                     # 设属性 + 重新 polish
     app.processEvents()
     marked = _button_background(button)
 
@@ -157,7 +157,7 @@ def test_settings_apply_button_renders_as_the_primary_action(app):
         app.processEvents()
         assert dialog.findChild(QDialogButtonBox) is None, "设置窗口不该再有保存 / 取消"
         apply = dialog.models_apply_button
-        assert apply.objectName() == "primaryAction"
+        assert apply.property("kind") == "primary"
         assert _button_background(apply).lower() == \
             theme.tokens(name)["accent"].lower(), name
         dialog.close()

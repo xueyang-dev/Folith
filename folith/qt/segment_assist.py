@@ -95,7 +95,7 @@ class AttentionList(QWidget):
         if can_analyze:
             button = QPushButton(i18n.tr('正在审视…') if analyzing
                                  else i18n.tr('进一步审视本段'))
-            button.setObjectName("linkAction")
+            style_module.set_button(button, "plain")
             button.setIcon(icons.icon("sparkles", 14, "accent"))
             button.setToolTip(i18n.tr('让模型找出这一段值得注意的翻译取舍（一次模型调用；只说明，不改写）'))
             button.setEnabled(not analyzing)
@@ -132,7 +132,7 @@ class AttentionList(QWidget):
             actions.setSpacing(theme_module.SPACE["xs"])
             actions.addStretch(1)
             keep = QPushButton(i18n.tr('保留译文'))
-            keep.setObjectName("ghostAction")
+            style_module.set_button(keep, "plain")
             keep.setToolTip(i18n.tr('确认当前译文没有问题，记录为人工决定'))
             keep.clicked.connect(lambda _checked=False, data=dict(item):
                                  self.preserveRequested.emit(data))
@@ -435,7 +435,7 @@ class SuggestBox(QWidget):
         self.adopt_button.clicked.connect(
             lambda: self.adoptRequested.emit(self.candidate.text()))
         self.discard_button = QPushButton(i18n.tr('丢弃'))
-        self.discard_button.setObjectName("ghostAction")
+        style_module.set_button(self.discard_button, "plain")
         self.discard_button.clicked.connect(self.reset_candidate)
         row = QHBoxLayout()
         row.setSpacing(theme_module.SPACE["xs"])

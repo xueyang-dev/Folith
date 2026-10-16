@@ -66,12 +66,12 @@ def test_confirm_reports_the_real_choice(app, window):
     assert second.result() == 1                      # Accepted
 
 
-def test_danger_confirm_uses_a_solid_danger_button(app, window):
+def test_danger_confirm_uses_a_danger_button(app, window):
     danger = prompts.ConfirmDialog(window, "删除任务", "不可撤销", tone="danger")
     safe = prompts.ConfirmDialog(window, "冻结交付", "确定继续吗？")
     try:
-        assert danger.yes_button.objectName() == "dangerPrimary"
-        assert safe.yes_button.objectName() == "primaryAction"
+        assert danger.yes_button.property("kind") == "danger"
+        assert safe.yes_button.property("kind") == "primary"
     finally:
         danger.close()
         safe.close()

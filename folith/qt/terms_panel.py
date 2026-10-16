@@ -57,7 +57,7 @@ class TermsPanel(QWidget):
             widget.setIcon(icons.icon(icon_name, 16, token))
             widget.setIconSize(QSize(16, 16))
             if name:
-                widget.setObjectName(name)
+                style_module.set_button(widget, name)
             return widget
 
         self.banner = style_module.NoticeStrip("", tone="info")
@@ -125,7 +125,7 @@ class TermsPanel(QWidget):
         self.save_button = button(i18n.tr('保存草稿'), "save")
         self.save_button.clicked.connect(lambda: self.draftSaveRequested.emit(self.rows()))
         self.freeze_button = button(i18n.tr('冻结并继续翻译'), "check-circle",
-                                    "text-on-accent", "primaryAction")
+                                    "text-on-accent", "primary")
         self.freeze_button.clicked.connect(lambda: self.freezeRequested.emit(self.rows()))
         self.bypass_button = button(i18n.tr('跳过冻结，使用暂定术语'), "arrow-right")
         self.bypass_button.clicked.connect(self.bypassRequested.emit)

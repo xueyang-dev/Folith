@@ -626,7 +626,7 @@ class HomeView(QWidget):
         # ---- 侧栏动作（全部是真实入口，不放没实现的导航） -------------------
         # 「导入文档…」是侧栏顶部唯一的实心按钮：任务库的第一动作。
         self.import_button = QPushButton(i18n.tr('导入文档…'))
-        self.import_button.setObjectName("heroAction")
+        style_module.set_button(self.import_button, "primary")
         self.import_button.setIcon(icons.icon("upload", 18, "text-on-hero"))
         self.import_button.setIconSize(QSize(18, 18))
         self.import_button.setMinimumHeight(40)
@@ -916,7 +916,7 @@ class HomeView(QWidget):
         self.empty_label.setObjectName("hint")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_button = QPushButton(i18n.tr('导入文档…'))
-        self.empty_button.setObjectName("primaryAction")
+        style_module.set_button(self.empty_button, "primary")
         self.empty_button.setIcon(icons.icon("upload", 16, "text-on-accent"))
         self.empty_button.setIconSize(QSize(16, 16))
         self.empty_button.clicked.connect(self.importRequested.emit)
@@ -943,14 +943,14 @@ class HomeView(QWidget):
 
         # ---- 底部动作 + 状态 ------------------------------------------------
         self.open_button = QPushButton(i18n.tr('打开任务'))
-        self.open_button.setObjectName("primaryAction")
+        style_module.set_button(self.open_button, "primary")
         self.open_button.setIcon(icons.icon("arrow-right", 16, "text-on-accent"))
         self.open_button.setIconSize(QSize(16, 16))
         self.move_button = QPushButton(i18n.tr('移动到项目…'))
         self.move_button.setIcon(icons.icon("folder", 16, "text-secondary"))
         self.move_button.setIconSize(QSize(16, 16))
         self.delete_button = QPushButton(i18n.tr('删除任务'))
-        self.delete_button.setObjectName("dangerAction")
+        style_module.set_button(self.delete_button, "danger")
         self.delete_button.setIcon(icons.icon("trash", 16, "danger"))
         self.delete_button.setIconSize(QSize(16, 16))
         self.open_button.clicked.connect(self._open_selected)
@@ -1068,7 +1068,7 @@ class HomeView(QWidget):
         self.continue_progress = components.ProgressLine(0)
         self.continue_progress.setMaximumWidth(320)
         self.continue_button = QPushButton(i18n.tr('继续'))
-        self.continue_button.setObjectName("primaryAction")
+        style_module.set_button(self.continue_button, "primary")
         self.continue_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.continue_button.clicked.connect(
             lambda: self._continue_job_id and self.openRequested.emit(self._continue_job_id))
@@ -2083,10 +2083,10 @@ class WorkbenchView(QWidget):
             return button
 
         self.start_button = _icon_button(QPushButton(i18n.tr('开始翻译')), "play", "text-on-accent")
-        self.start_button.setObjectName("primaryAction")
+        style_module.set_button(self.start_button, "primary")
         self.pause_button = _icon_button(QPushButton(i18n.tr('暂停')), "pause")
         self.cancel_button = _icon_button(QPushButton(i18n.tr('取消任务')), "stop", "danger")
-        self.cancel_button.setObjectName("dangerAction")
+        style_module.set_button(self.cancel_button, "danger")
         self.retry_button = _icon_button(QPushButton(i18n.tr('重试当前步骤')), "refresh")
         for button, signal in ((self.start_button, self.startRequested),
                                (self.pause_button, self.pauseRequested),
@@ -2103,7 +2103,7 @@ class WorkbenchView(QWidget):
 
         # 推荐的下一步：随阶段变化（重试失败的审校 / 处理问题 / 冻结并交付）。
         self.stage_action_button = _icon_button(QPushButton(""), "arrow-right", "text-on-accent")
-        self.stage_action_button.setObjectName("primaryAction")
+        style_module.set_button(self.stage_action_button, "primary")
         self.stage_action_button.clicked.connect(self._run_stage_action)
         self.stage_action_button.setVisible(False)
         self._stage_action: dict | None = None
@@ -2267,7 +2267,7 @@ class WorkbenchView(QWidget):
         self.save_all_drafts_button = QPushButton(i18n.tr('全部保存'))
         self.save_all_drafts_button.clicked.connect(self._save_all_drafts)
         self.discard_all_drafts_button = QPushButton(i18n.tr('全部丢弃'))
-        self.discard_all_drafts_button.setObjectName("ghostAction")
+        style_module.set_button(self.discard_all_drafts_button, "plain")
         self.discard_all_drafts_button.clicked.connect(self._discard_all_drafts)
         banner.addWidget(self.drafts_label, 1)
         banner.addWidget(self.discard_all_drafts_button)
@@ -2338,20 +2338,20 @@ class WorkbenchView(QWidget):
         self.prev_button.clicked.connect(lambda: self._step(-1))
         self.next_button.clicked.connect(lambda: self._step(1))
         self.discard_draft_button = QPushButton(i18n.tr('放弃修改'))
-        self.discard_draft_button.setObjectName("ghostAction")
+        style_module.set_button(self.discard_draft_button, "plain")
         self.discard_draft_button.setToolTip(
             i18n.tr('删除这段未提交的草稿，编辑器回到当前已提交的译文'))
         self.discard_draft_button.clicked.connect(
             lambda: self.discardDraftRequested.emit(self._current_index))
         self.copy_source_button = _icon_button(QPushButton(i18n.tr('复制原文到译文')), "copy", "text-secondary")
-        self.copy_source_button.setObjectName("ghostAction")
+        style_module.set_button(self.copy_source_button, "plain")
         self.copy_source_button.clicked.connect(self._copy_source_to_target)
         self.save_next_button = QPushButton(i18n.tr('保存并下一段'))
         self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一个未确认的段（⌘↩）'))
         self.save_next_button.clicked.connect(self.save_and_next)
         self.submit_button = QPushButton(i18n.tr('保存'))
         self.submit_button.setToolTip(i18n.tr('保存并提交这一段（⌘S）'))
-        self.submit_button.setObjectName("primaryAction")
+        style_module.set_button(self.submit_button, "primary")
         self.submit_button.clicked.connect(self._submit)
         self.retranslate_button = _icon_button(QPushButton(i18n.tr('重译本段')), "sparkles", "text-secondary")
         self.retranslate_button.setToolTip(i18n.tr('只重译这一段，并刷新它的审校状态'))
@@ -2428,16 +2428,16 @@ class WorkbenchView(QWidget):
         for button in (self.review_button, self.review_selected_button, self.retranslate_button,
                        self.copy_source_button, self.restore_button, self.exclude_button,
                        self.structure_button, self.view_source_button):
-            button.setObjectName("panelAction")
+            style_module.set_button(button, "secondary")
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.review_button.setObjectName("panelPrimary")
+        style_module.set_button(self.review_button, "secondary")
         self.review_button.setIcon(icons.icon("shield-check", 16, "accent"))
-        self.exclude_button.setObjectName("panelDanger")
+        style_module.set_button(self.exclude_button, "danger")
         self.exclude_button.setIcon(icons.icon("eye-off", 16, "danger"))
         # 「AI 点评」挨着「审校本段」，并用一句话说清两者的区别：审校会改变审校
         # 状态，点评只给建议（此前它是"需要注意"里一个蓝色链接，名字和审校分不清）。
         self.analyze_button = _icon_button(QPushButton(i18n.tr('AI 点评本段')), "sparkles", "text-secondary")
-        self.analyze_button.setObjectName("panelAction")
+        style_module.set_button(self.analyze_button, "secondary")
         self.analyze_button.setToolTip(
             i18n.tr('让模型指出这一段值得注意的翻译取舍（最多 3 条，一次模型调用）；只给建议，不改变审校状态'))
         self.analyze_button.clicked.connect(self._request_analysis)
@@ -2486,7 +2486,7 @@ class WorkbenchView(QWidget):
         self.ask_box.askRequested.connect(
             lambda question: self.askAgentRequested.emit(self._current_index, question))
         for button in (self.term_add_button,):
-            button.setObjectName("panelAction")
+            style_module.set_button(button, "secondary")
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         inspector = Card()
@@ -2504,9 +2504,9 @@ class WorkbenchView(QWidget):
 
         # 操作固定在上方；数量会变的注意事项、术语与前后文在下方有界滚动，
         # 切换段落不再把操作按钮推走（P4 验证切片；无问题时仍隐藏注意标题）。
-        def tool(button: QPushButton, label: str, tip: str, name: str = "inspectorTool") -> QPushButton:
+        def tool(button: QPushButton, label: str, tip: str, kind: str = "secondary") -> QPushButton:
             button.setText(label)
-            button.setObjectName(name)
+            style_module.set_button(button, kind, small=True)
             button.setToolTip(tip)
             button.setAccessibleName(tip.split("：")[0].split("（")[0])
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -2528,11 +2528,11 @@ class WorkbenchView(QWidget):
                     self.view_source_button: i18n.tr('查看原位置'),
                     self.exclude_button: i18n.tr('排除本段')}[button]
             tool(button, label, f"{full}：{tip}" if tip and tip != full else full,
-                 "inspectorDanger" if button is self.exclude_button else "inspectorTool")
+                 "danger" if button is self.exclude_button else "secondary")
         tool(self.review_button, i18n.tr('审校'),
-             i18n.tr('审校本段：正式审校这一段，会更新它的审校状态'), "inspectorPrimary")
+             i18n.tr('审校本段：正式审校这一段，会更新它的审校状态'))
         tool(self.review_selected_button, i18n.tr('审校所选'),
-             i18n.tr('审校所选段落'), "inspectorPrimary")
+             i18n.tr('审校所选段落'))
         tool(self.analyze_button, i18n.tr('点评'), self.analyze_button.toolTip())
         tool(self.retranslate_button, i18n.tr('重译'),
              i18n.tr('重译本段：只重译这一段，并刷新它的审校状态'))
@@ -2544,7 +2544,7 @@ class WorkbenchView(QWidget):
         self.assist_retranslate = QPushButton(i18n.tr('按要求重译'))
         self.assist_ask = QPushButton(i18n.tr('提问'))
         for button in (self.assist_retranslate, self.assist_ask):
-            button.setObjectName("inspectorTool")
+            style_module.set_button(button, "secondary", small=True)
 
         def send(box) -> None:
             text = self.assist_input.text().strip()
@@ -2770,13 +2770,13 @@ class WorkbenchView(QWidget):
         self.delivery_label = QLabel(i18n.tr('交付状态：—'))
         self.delivery_label.setWordWrap(True)
         self.deliver_button = QPushButton(i18n.tr('审校完成后冻结交付'))
-        self.deliver_button.setObjectName("primaryAction")
+        style_module.set_button(self.deliver_button, "primary")
         self.deliver_button.clicked.connect(self.deliverRequested.emit)
         # 交付说明：写进交付快照的批准记录（以前固定写"桌面端人工确认"）。
         self.delivery_note = QLineEdit()
         self.delivery_note.setPlaceholderText(i18n.tr('交付说明（可选，例如：已完成人工审校）'))
         self.risk_button = QPushButton(i18n.tr('接受风险并交付…'))
-        self.risk_button.setObjectName("dangerAction")
+        style_module.set_button(self.risk_button, "danger")
         self.risk_button.setToolTip(
             i18n.tr('仍有必须处理的问题时，写下说明并确认后继续交付；问题不会被删除'))
         self.risk_button.clicked.connect(self.deliverWithRiskRequested.emit)

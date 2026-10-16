@@ -85,7 +85,7 @@ class StepButton(QAbstractButton):
     # ---- 尺寸 ---------------------------------------------------------------
     def _fonts(self) -> tuple[QFont, QFont]:
         label = QFont(self.font())
-        label.setPixelSize(theme_module.FONT_SIZES["body"] - 1)
+        label.setPixelSize(theme_module.FONT_SIZES["label"])
         label.setWeight(QFont.Weight.DemiBold if self._active else QFont.Weight.Medium)
         hint = QFont(self.font())
         hint.setPixelSize(theme_module.FONT_SIZES["caption"])
@@ -151,7 +151,7 @@ class StepButton(QAbstractButton):
                 painter.drawEllipse(marker)
                 painter.setPen(theme_module.qcolor(tokens["text-on-accent"]))
                 bang = QFont(self.font())
-                bang.setPixelSize(10)
+                bang.setPixelSize(theme_module.FONT_SIZES["micro"])
                 bang.setWeight(QFont.Weight.Bold)
                 painter.setFont(bang)
                 painter.drawText(marker, int(Qt.AlignmentFlag.AlignCenter), "!")

@@ -477,7 +477,7 @@ class _ProjectTab(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = 9.0
+        radius = float(theme_module.RADIUS["md"])
         if checked:
             fill, border = tokens["accent-soft"], tokens["accent-border"]
         elif self._hover:
@@ -1912,3 +1912,96 @@ class ResizeSplitter(QSplitter):
                 self.cancel_drag()
             return True
         return False
+
+
+# ---------------------------------------------------------------------------
+# 表单：分组 + 分组行（设计审校 40 号第三节：全应用只用这一种表单写法）
+# ---------------------------------------------------------------------------
+
+#: 分组行的左缩进：12 内边距 + 16 图标 + 12 间距。发丝线与折叠体都从这里开始。
+FORM_ROW_INSET = 40
+#: 没有图标的行：发丝线从内边距开始。
+FORM_ROW_INSET_PLAIN = 12
+#: 分组行最小高度（标题一行时；带说明的行自然长高）。
+FORM_ROW_HEIGHT = 44
+
+
+class FormRow(QWidget):
+    """一行设置：（图标）+ 标题（+ 一行说明）+（取值）+ 右侧控件。
+
+    左边永远是"这是什么"，右边永远是"现在是什么 / 改它"。图标统一用 ``text-muted``：
+    它只帮眼睛定位，不表达状态；颜色留给当前选择、需要注意的提示和主行动。
+    """
+
+    def __init__(self, title: str, *controls: QWidget, icon: str = "",
+                 hint: str = "", value: QWidget | None = None, tooltip: str = "",
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("groupRow")
+        self.setMinimumHeight(FORM_ROW_HEIGHT)
+        self.inset = FORM_ROW_INSET if icon else FORM_ROW_INSET_PLAIN
+        sp = theme_module.SPACE
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(sp["md"], sp["xs"] + 2, sp["md"], sp["xs"] + 2)
+        layout.setSpacing(sp["md"])
+        if icon:
+            layout.addWidget(icons.IconLabel(icon, 16, "text-muted"), 0,
+                             Qt.AlignmentFlag.AlignVCenter)
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("rowTitle")
+        self.hint_label: QLabel | None = None
+        stretch = 0 if value is not None else 1
+        if hint:
+            column = QVBoxLayout()
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(sp["xxs"])
+            column.addWidget(self.title_label)
+            self.hint_label = QLabel(hint)
+            self.hint_label.setObjectName("hint")
+            self.hint_label.setWordWrap(True)
+            column.addWidget(self.hint_label)
+            layout.addLayout(column, stretch)
+        else:
+            layout.addWidget(self.title_label, stretch, Qt.AlignmentFlag.AlignVCenter)
+        if value is not None:
+            layout.addWidget(value, 1, Qt.AlignmentFlag.AlignVCenter)
+        for control in controls:
+            layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+        if tooltip:
+            self.title_label.setToolTip(tooltip)
+
+
+class FormGroup(QFrame):
+    """macOS「系统设置」式的圆角分组：一列 :class:`FormRow`，行间是从标题起的缩进发丝线。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("settingsGroup")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 2, 0, 2)
+        self._layout.setSpacing(0)
+        self._count = 0
+
+    def add_row(self, widget: QWidget) -> QWidget:
+        if self._count:
+            holder = QWidget()
+            line = QHBoxLayout(holder)
+            line.setContentsMargins(getattr(widget, "inset", FORM_ROW_INSET), 0, 0, 0)
+            rule = QFrame()
+            rule.setObjectName("rowRule")
+            rule.setFixedHeight(1)
+            line.addWidget(rule)
+            self._layout.addWidget(holder)
+        self._layout.addWidget(widget)
+        self._count += 1
+        return widget
+
+    def clear(self) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()  # before detaching (see segment_assist._clear)
+                widget.setParent(None)
+                widget.deleteLater()
+        self._count = 0

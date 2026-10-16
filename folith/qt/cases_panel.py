@@ -88,10 +88,10 @@ class CasesPanel(QWidget):
         def button(text: str, name: str = "") -> QPushButton:
             widget = QPushButton(text)
             if name:
-                widget.setObjectName(name)
+                style_module.set_button(widget, name)
             return widget
 
-        self.approve_button = button(i18n.tr('批准纳入'), "primaryAction")
+        self.approve_button = button(i18n.tr('批准纳入'), "primary")
         self.exclude_button = button(i18n.tr('排除案例…'))
         self.edit_button = button(i18n.tr('修改当前译文'))
         self.replace_button = button(i18n.tr('从合格池替换'))

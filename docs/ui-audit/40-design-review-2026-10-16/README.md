@@ -190,7 +190,7 @@ QT_QPA_PLATFORM=offscreen venv/bin/python docs/ui-audit/40-design-review-2026-10
 | 顺序 | 内容 | 为什么先做 | 规模 |
 |---|---|---|---|
 | P0 ✅ | 3.1 空进度条、4.2 ✓+未启用、2.1 不能翻译时主按钮仍可点、5.1 重复主按钮（3.7 复核后不成立）。见下方"P0 处理记录" | 都是"界面在说错话"，每个改动小 | 小 |
-| P1 | 第三节基础收拢：字号 7 档、圆角 3 档、按钮 4 种、`FormRow` | 后面所有页面都依赖它；不先做，改页面只会再加变体 | 中 |
+| P1 ✅ | 第三节基础收拢：字号 7 档、圆角 3 档、按钮 4 种、`FormRow`。见下方"P1 处理记录" | 后面所有页面都依赖它；不先做，改页面只会再加变体 | 中 |
 | P2 | 工作台头部减负 + 右栏固定宽度（模板 B） | 用户停留最久的地方 | 中 |
 | P3 | 空状态统一（审校、术语、语言资产、任务库） | 第一次使用时看到的都是空状态 | 小 |
 | P4 | 设置与术语编辑改用分组行（模板 C）；任务内术语与全局术语页统一 | 结构改动，依赖 P1 | 中 |
@@ -217,3 +217,27 @@ QT_QPA_PLATFORM=offscreen venv/bin/python docs/ui-audit/40-design-review-2026-10
 
 ![](after-p0-translate.png)
 ![](after-p0-prepare.png)
+
+---
+
+## 八、P1 处理记录（2026-10-16）
+
+| 维度 | 之前 | 之后 | 位置 |
+|---|---|---|---|
+| 字号 | 12 个键、10 种值，QSS 里还有 `±1` 的算术 | `FONT_STEPS = (11, 12, 13, 14, 17, 22, 28)`；键保留为用途名，值只能取这 7 档；算术全部改成最近的一档 | `theme.py`、`style.py`、`stagebar.py` |
+| 圆角 | `xs/sm/md/lg/control` 五个键 + `±1/±2` 算术 | `RADIUS = {sm: 6, md: 10, pill}`：嵌套小元素 6，控件与面 10，胶囊只给芯片/进度/搜索框（写半高） | `theme.py`、`style.py`、`dialogs.py`、`components.py` |
+| 动作按钮 | 14 个按位置起名的变体（`primaryAction` `heroAction` `panelPrimary` `inspectorPrimary` `ghostAction` `linkAction` `dangerPrimary` `rowAction`…） | `style.set_button(button, kind, small=)`：primary / secondary / plain / danger × 常规 30 / 紧凑 26；46 处调用迁移，87 行旧 QSS 删除 | `style.py` 及 14 个界面模块 |
+| 表单 | `SettingsGroup` / `_icon_row` 只在准备页里 | `components.FormGroup` / `FormRow`（图标可选、可带一行说明、行高 44），准备页改用它们；P4 的设置与术语编辑直接用 | `components.py`、`setup_panel.py` |
+
+几处有意的取舍：
+
+- 侧栏「导入文档…」不再是 40px 的特大按钮，和其他主按钮一样高。"唯一的主行动"靠位置与颜色表达，不靠尺寸。
+- 破坏性确认（如删除任务）从实心红改为红字描边，与 macOS 的破坏性按钮一致；默认焦点在"取消"（P0 已修），所以不靠颜色防误按。
+- 检查器的「审校」从浅蓝"像已按下"改为普通紧凑按钮，图标保留强调色以示它是本段主操作；一屏唯一的实心主按钮在头部。
+- 链接按钮并入 plain：有了常规内边距，悬停有底色，不再是下划线文字。
+- 非动作按钮的对象名保留：导航项、分段、卡片、折叠头、图标按钮、筛选芯片都是另一种控件。
+
+守护测试：`tests/qt_design_tokens_test.py`：样式表里的字号只能取 7 档、圆角只能取 3 档或胶囊半高、`QPushButton#` 只能是上面那几种非动作控件，Python 里不能再出现旧按钮名。
+
+![](after-p1-translate.png)
+![](after-p1-home.png)

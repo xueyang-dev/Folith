@@ -70,7 +70,7 @@ class ReportPanel(QWidget):
         self.questions_layout = QVBoxLayout(self.questions_box)
         self.questions_layout.setContentsMargins(0, 0, 0, 0)
         self.repair_button = QPushButton("")
-        self.repair_button.setObjectName("primaryAction")
+        style_module.set_button(self.repair_button, "primary")
         self.repair_button.clicked.connect(self._emit_repair)
         self.open_review_button = QPushButton(i18n.tr('打开审校工作区'))
         self.open_review_button.clicked.connect(self.openReviewRequested.emit)

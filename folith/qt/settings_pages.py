@@ -37,7 +37,7 @@ def _open_url(url: str) -> bool:
 
 def _link(text: str, icon: str = "external-link") -> QPushButton:
     button = QPushButton(text)
-    button.setObjectName("linkAction")
+    style_module.set_button(button, "plain")
     button.setIcon(icons.icon(icon, 14, "accent"))
     button.setIconSize(QSize(14, 14))
     button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -411,7 +411,7 @@ class ConnectionPanel(QWidget):
             test = QPushButton(i18n.tr('测试'))
             test.clicked.connect(lambda _c=False, r=role: self.test(r))
             open_settings = QPushButton(i18n.tr('设置…'))
-            open_settings.setObjectName("linkAction")
+            style_module.set_button(open_settings, "plain")
             open_settings.clicked.connect(
                 lambda _c=False, r=role: self.settingsRequested.emit(
                     "vision" if r == "vision" else "models"))

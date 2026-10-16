@@ -153,7 +153,7 @@ class WelcomeDialog(QDialog):
         self.stack.addWidget(self._start_page())
 
         self.skip_button = QPushButton(i18n.tr('跳过引导'))
-        self.skip_button.setObjectName("linkAction")
+        style_module.set_button(self.skip_button, "plain")
         self.skip_button.clicked.connect(self.reject)
         self.back_button = QPushButton(i18n.tr('上一步'))
         self.back_button.clicked.connect(lambda: self.go(self.stack.currentIndex() - 1))
@@ -429,7 +429,7 @@ class CoachMarks:
         got = QPushButton(i18n.tr('知道了'))
         style_module.mark_primary(got)
         off = QPushButton(i18n.tr('不再显示提示'))
-        off.setObjectName("linkAction")
+        style_module.set_button(off, "plain")
         row = QHBoxLayout()
         row.addWidget(off)
         row.addStretch(1)

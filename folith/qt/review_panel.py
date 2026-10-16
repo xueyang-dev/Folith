@@ -63,7 +63,7 @@ class ReviewPanel(QWidget):
             widget.setIcon(icons.icon(icon_name, 16, token))
             widget.setIconSize(QSize(16, 16))
             if name:
-                widget.setObjectName(name)
+                style_module.set_button(widget, name)
             return widget
 
         # ---- 顶部：就绪状态 + 筛选 ------------------------------------------
@@ -123,14 +123,14 @@ class ReviewPanel(QWidget):
             i18n.tr('原文核对依据，例如：原页正文清晰可读，且与前后句连续。'))
         self.source_note_edit.textChanged.connect(self._sync_buttons)
         self.confirm_source_button = button(
-            i18n.tr('确认原文并重新翻译'), "check-circle", "text-on-accent", "primaryAction")
+            i18n.tr('确认原文并重新翻译'), "check-circle", "text-on-accent", "primary")
         self.confirm_source_button.clicked.connect(self._emit_confirm_source)
 
         self.apply_button = button(
-            i18n.tr('应用建议译文'), "sparkles", "text-on-accent", "primaryAction")
+            i18n.tr('应用建议译文'), "sparkles", "text-on-accent", "primary")
         self.apply_button.clicked.connect(self._emit_apply)
         self.confirm_button = button(i18n.tr('确认已解决'), "check", "text-on-accent",
-                                     "primaryAction")
+                                     "primary")
         self.confirm_button.clicked.connect(
             lambda: self._emit_resolve("human_fixed"))
         self.preserve_button = button(i18n.tr('保留当前译文'), "shield-check")

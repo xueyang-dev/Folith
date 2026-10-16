@@ -187,8 +187,9 @@ def _copy_column(title: str, hint="") -> QVBoxLayout:
     return column
 
 
-#: 分组行的左缩进：12 内边距 + 16 图标 + 12 间距。发丝线与折叠体都从这里开始。
-_ROW_INSET = 40
+#: 分组行的左缩进（发丝线与折叠体从这里开始）；分组与分组行在 components 里，全应用共用。
+_ROW_INSET = components.FORM_ROW_INSET
+SettingsGroup = components.FormGroup
 
 
 def _group_header(text: str) -> QLabel:
@@ -200,66 +201,8 @@ def _group_header(text: str) -> QLabel:
 
 def _icon_row(icon_name: str, title: str, *controls: QWidget,
               value: QWidget | None = None, tooltip: str = "") -> QWidget:
-    """一行次要设置：中性色图标 + 标题 +（取值）+ 右侧控件，最小高 40。
-
-    图标统一用 ``text-muted``：它只帮眼睛定位，不表达状态。颜色留给当前选择、
-    需要注意的提示和主行动。
-    """
-    row = QWidget()
-    row.setObjectName("groupRow")
-    row.setMinimumHeight(40)
-    layout = QHBoxLayout(row)
-    layout.setContentsMargins(12, 6, 12, 6)
-    layout.setSpacing(12)
-    layout.addWidget(icons.IconLabel(icon_name, 16, "text-muted"), 0,
-                     Qt.AlignmentFlag.AlignVCenter)
-    label = QLabel(title)
-    label.setObjectName("rowTitle")
-    layout.addWidget(label, 0 if value is not None else 1, Qt.AlignmentFlag.AlignVCenter)
-    if value is not None:
-        layout.addWidget(value, 1, Qt.AlignmentFlag.AlignVCenter)
-    for control in controls:
-        layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
-    if tooltip:
-        label.setToolTip(tooltip)
-    row.title_label = label
-    return row
-
-
-class SettingsGroup(QFrame):
-    """macOS「系统设置」式的圆角分组：一列设置行，行间是从标题起的缩进发丝线。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("settingsGroup")
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 2, 0, 2)
-        self._layout.setSpacing(0)
-        self._count = 0
-
-    def add_row(self, widget: QWidget) -> QWidget:
-        if self._count:
-            holder = QWidget()
-            line = QHBoxLayout(holder)
-            line.setContentsMargins(_ROW_INSET, 0, 0, 0)
-            rule = QFrame()
-            rule.setObjectName("rowRule")
-            rule.setFixedHeight(1)
-            line.addWidget(rule)
-            self._layout.addWidget(holder)
-        self._layout.addWidget(widget)
-        self._count += 1
-        return widget
-
-    def clear(self) -> None:
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.hide()  # before detaching (see segment_assist._clear)
-                widget.setParent(None)
-                widget.deleteLater()
-        self._count = 0
+    """一行次要设置：见 :class:`components.FormRow`。"""
+    return components.FormRow(title, *controls, icon=icon_name, value=value, tooltip=tooltip)
 
 
 class ToggleRow(QWidget):
@@ -861,12 +804,12 @@ class TaskSetupPanel(QWidget):
                                          | Qt.AlignmentFlag.AlignVCenter)
         self.glossary_value.setToolTip(hint)
         self.glossary_add_button = QPushButton(i18n.tr('添加…'))
-        self.glossary_add_button.setObjectName("rowAction")
+        style_module.set_button(self.glossary_add_button, "secondary", small=True)
         self.glossary_add_button.setToolTip(
             i18n.tr('支持 Excel、CSV、TBX（术语）和 TMX（翻译记忆）。'))
         self.glossary_add_button.clicked.connect(self.termbaseAddRequested.emit)
         self.glossary_remove_button = QPushButton(i18n.tr('移除'))
-        self.glossary_remove_button.setObjectName("rowAction")
+        style_module.set_button(self.glossary_remove_button, "secondary", small=True)
         self.glossary_remove_button.clicked.connect(self.termbaseRemoveRequested.emit)
         self.glossary_remove_button.setVisible(False)
         return _icon_row("termbase", i18n.tr('术语库'),
@@ -966,7 +909,7 @@ class TaskSetupPanel(QWidget):
         layout.addWidget(self.project_box, 1)
         # 只留一个「+」：名称在悬停提示与无障碍名里，行里不再多一个文字按钮。
         self.new_project_button = QPushButton("")
-        self.new_project_button.setObjectName("rowAction")
+        style_module.set_button(self.new_project_button, "secondary", small=True)
         self.new_project_button.setIcon(icons.icon("plus", 14, "text-secondary"))
         self.new_project_button.setAccessibleName(i18n.tr('新建项目…'))
         self.new_project_button.setToolTip(
@@ -1009,7 +952,7 @@ class TaskSetupPanel(QWidget):
         self.strategy_note.setObjectName("hint")
         self.strategy_note.setWordWrap(True)
         self.restore_button = QPushButton(i18n.tr('恢复默认'))
-        self.restore_button.setObjectName("linkAction")
+        style_module.set_button(self.restore_button, "plain")
         self.restore_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.restore_button.clicked.connect(self._restore_strategy_preset)
         status_row = QWidget()
@@ -1119,13 +1062,13 @@ class TaskSetupPanel(QWidget):
 
         # ---- 入口：智能画像 / 沿用设置（说明进悬停提示） ------------------------
         self.style_profile_button = QPushButton(i18n.tr('智能画像'))
-        self.style_profile_button.setObjectName("linkAction")
+        style_module.set_button(self.style_profile_button, "plain")
         self.style_profile_button.setIcon(icons.icon("sparkles", 14, "accent"))
         self.style_profile_button.setToolTip(
             i18n.tr('抽样读几段原文，让模型推荐适合的风格（需要一次模型调用）'))
         self.style_profile_button.clicked.connect(self.styleProfileRequested.emit)
         self.style_inherit_button = QPushButton(i18n.tr('沿用设置'))
-        self.style_inherit_button.setObjectName("linkAction")
+        style_module.set_button(self.style_inherit_button, "plain")
         self.style_inherit_button.setCheckable(True)
         self.style_inherit_button.setToolTip(i18n.tr('沿用设置里的风格规则'))
         self.style_inherit_button.clicked.connect(lambda: self.style_box.setCurrentIndex(0))
@@ -1138,7 +1081,7 @@ class TaskSetupPanel(QWidget):
 
         # 推荐结果只在用过「智能画像」之后才出现。
         self.style_accept_button = QPushButton(i18n.tr('接受推荐'))
-        self.style_accept_button.setObjectName("primaryAction")
+        style_module.set_button(self.style_accept_button, "primary")
         self.style_accept_button.clicked.connect(self._accept_style_recommendation)
         self.style_accept_button.setVisible(False)
         self.style_status = QLabel("")
@@ -1157,7 +1100,7 @@ class TaskSetupPanel(QWidget):
         self.profile_label.setObjectName("hint")
         self.profile_label.setWordWrap(True)
         self.profile_edit_button = QPushButton(i18n.tr('修改画像…'))
-        self.profile_edit_button.setObjectName("linkAction")
+        style_module.set_button(self.profile_edit_button, "plain")
         self.profile_edit_button.clicked.connect(self.profileEditRequested.emit)
         self.profile_row = QWidget()
         profile_row = QHBoxLayout(self.profile_row)
@@ -1474,7 +1417,7 @@ class TaskSetupPanel(QWidget):
 
     def _build_footer(self) -> QWidget:
         self.start_button = QPushButton(i18n.tr('开始翻译'))
-        self.start_button.setObjectName("primaryAction")
+        style_module.set_button(self.start_button, "primary")
         self.start_button.setIcon(icons.icon(
             "play", 16, "text-on-accent"))
         self.start_button.setIconSize(QSize(16, 16))
@@ -1491,7 +1434,7 @@ class TaskSetupPanel(QWidget):
         self.connection_note.setWordWrap(True)
         self.connection_note.setVisible(False)
         self.connection_button = QPushButton(i18n.tr('设置连接…'))
-        self.connection_button.setObjectName("linkAction")
+        style_module.set_button(self.connection_button, "plain")
         self.connection_button.clicked.connect(self.connectionSettingsRequested.emit)
         self.connection_button.setVisible(False)
         self.footer_bar = QWidget()

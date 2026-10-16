@@ -45,7 +45,7 @@ ISSUE_TONES = ("danger", "warning")
 
 def _tool(text: str, *, primary: bool = False) -> QPushButton:
     button = QPushButton(text)
-    button.setObjectName("inspectorPrimary" if primary else "inspectorTool")
+    style_module.set_button(button, "secondary", small=True)
     return button
 
 

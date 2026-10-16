@@ -85,8 +85,7 @@ QTableWidget, QListWidget, QTreeWidget {{
     alternate-background-color: transparent;
 }}
 /* 按下 = 比静止更深一档（macOS 的 push button 是"按下去"，不是"变蓝"）；
-   带 id 的按钮（#primaryAction / #dangerPrimary / #ghostAction…）权重更高，
-   各自保留自己的按下态。 */
+   带 kind 属性的按钮（primary / plain / danger）各自保留自己的按下态。 */
 QPushButton:pressed {{ background: {t['bg-surface-sunken']}; }}
 /* 悬停用**不透明**的浮起面：bg-hover 是半透明白，铺在页面上只抬 4 级亮度，
    按钮的悬停会几乎看不出来；而带 id 的按钮各有自己的 :hover，不受这条影响。 */
@@ -266,13 +265,13 @@ QFrame#card, QWidget#card {{
 QFrame#headerCard, QWidget#headerCard {{
     background: {t['bg-surface']};
     border: 1px solid {t['border-subtle']};
-    border-radius: {r['lg']}px;
+    border-radius: {r['md']}px;
 }}
 /* 卡片内的分区（事实列表、编辑器外壳） */
 QFrame#sunken, QWidget#sunken {{
     background: {t['bg-surface-sunken']};
     border: 1px solid {t['border-faint']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
 }}
 /* 虚线卡片：Web 界面的"系统任务区/空槽位" */
 QFrame#dashedCard, QWidget#dashedCard {{
@@ -302,7 +301,7 @@ QLabel#fieldHint {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 QFrame#inputGroup {{
     background: {t['bg-surface']};
     border: 1px solid {t['border-subtle']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
 }}
 QFrame#inputGroup[focus="true"] {{ border-color: {t['accent']}; }}
 QLineEdit#inputBare {{
@@ -364,23 +363,23 @@ QLabel#taskCardMeta {{ font-size: {f['caption']}px; color: {t['text-secondary']}
 QFrame#tileThumb {{
     background: {t['bg-surface-sunken']}; border: none;
     border-bottom: 1px solid {t['border-hairline']};
-    border-top-left-radius: {r['md'] - 1}px; border-top-right-radius: {r['md'] - 1}px;
+    border-top-left-radius: {r['md']}px; border-top-right-radius: {r['md']}px;
 }}
 QFrame#taskCard[selected="true"] QFrame#tileThumb {{ background: {t['accent-soft']}; }}
 QFrame#taskCard:focus {{ border: 2px solid {t['accent']}; }}
 QLabel#tileBadge {{
     background: {t['bg-surface']}; color: {t['text-secondary']};
-    border: 1px solid {t['border-hairline']}; border-radius: {r['xs'] + 2}px;
-    padding: 1px 6px; font-size: 10px; font-weight: 700;
+    border: 1px solid {t['border-hairline']}; border-radius: {r['sm']}px;
+    padding: 1px 6px; font-size: {f['micro']}px; font-weight: 700;
 }}
-QLabel#tileTime {{ font-size: {f['micro'] - 1}px; color: {t['text-muted']}; background: transparent; }}
+QLabel#tileTime {{ font-size: {f['micro']}px; color: {t['text-muted']}; background: transparent; }}
 QLabel#taskCardStatus {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#taskCardStatus[state="danger"] {{ color: {t['danger']}; }}
 QLabel#taskCardStatus[state="ok"] {{ color: {t['success']}; }}
 /* 继续上次的工作：页面里唯一一张"抬起"的卡 */
 QFrame#continueCard {{
     background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['lg']}px;
+    border-radius: {r['md']}px;
 }}
 QLabel#eyebrow {{ font-size: {f['caption']}px; font-weight: 600; color: {t['accent']}; }}
 QLabel#continueTitle {{ font-size: {f['title']}px; font-weight: 700; color: {t['text-primary']}; }}
@@ -388,7 +387,7 @@ QLabel#continueStatus {{ font-size: {f['caption']}px; color: {t['text-secondary'
 /* ================= 译前准备：翻译风格（Golden Gate） ================= */
 QFrame#styleCard {{
     background: {t['bg-surface']}; border: 1px solid {t['border-subtle']};
-    border-radius: {r['lg']}px;
+    border-radius: {r['md']}px;
 }}
 QFrame#styleCard:hover {{ border-color: {t['border-strong']}; }}
 QFrame#styleCard:focus {{ border-color: {t['accent']}; }}
@@ -398,10 +397,9 @@ QLabel#styleCardTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['
 QLabel#styleCardSummary {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#radioRing {{ border: 1.5px solid {t['border-strong']}; border-radius: 9px; background: transparent; }}
 QLabel#styleSample {{
-    background: {t['bg-surface-sunken']}; border-radius: {r['sm'] + 2}px;
-    padding: {sp['sm']}px {sp['md']}px; font-size: {f['caption'] + 1}px; color: {t['text-primary']};
+    background: {t['bg-surface-sunken']}; border-radius: {r['sm']}px;
+    padding: {sp['sm']}px {sp['md']}px; font-size: {f['label']}px; color: {t['text-primary']};
 }}
-QPushButton#linkAction:checked {{ color: {t['text-muted']}; }}
 QSlider::groove:horizontal {{ height: 4px; background: {t['bg-surface-sunken']}; border-radius: 2px; }}
 QSlider::sub-page:horizontal {{ background: {t['accent']}; border-radius: 2px; }}
 QSlider::sub-page:horizontal:disabled {{ background: {t['border-strong']}; }}
@@ -502,13 +500,13 @@ QLabel#monoValue {{ font-family: "SF Mono", Menlo, monospace; font-size: {f['cap
 QLabel#metricInline {{ font-weight: 600; color: {t['text-primary']}; }}
 QLabel#formatFile {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
 QLabel#betaBadge {{ font-size: {f['micro']}px; font-weight: 700; color: {t['warning']};
-    border: 1px solid {t['warning']}; border-radius: {r['xs']}px; padding: 0 4px; }}
+    border: 1px solid {t['warning']}; border-radius: {r['sm']}px; padding: 0 4px; }}
 QLabel#engineState {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#engineModel {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 /* 引擎状态：侧栏底部一枚浅色圆角条（状态点 + 已配置 + 模型名），与品牌行之间一条发丝线 */
 QFrame#engineCard {{
     background: {t['bg-surface-sunken']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['sm'] + 2}px;
+    border-radius: {r['md']}px;
 }}
 QFrame#engineCard QLabel {{ background: transparent; }}
 /* 圆形工具按钮（侧栏底部的设置、工具栏的返回/检查器）：QToolButton 自己的圆角必须
@@ -531,21 +529,6 @@ QFrame#popover QListWidget {{ background: transparent; border: none; }}
 QFrame#popover QScrollArea, QFrame#popover QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 QFrame#followupDrawer {{ background: {t['bg-surface']}; border: none; }}
 QScrollArea#segmentReferences, QWidget#segmentReferencesBody {{ background: {t['bg-surface']}; border: none; }}
-/* 检查器的紧凑操作（一行几个）：图标 + 短标签，居中；主操作浅强调色，排除为红。 */
-QPushButton#inspectorTool, QPushButton#inspectorPrimary, QPushButton#inspectorDanger {{
-    background: {t['control-bg']}; border: 1px solid {t['control-border']};
-    color: {t['text-primary']}; border-radius: {r['sm']}px;
-    padding: {sp['xs']}px {sp['xs']}px; font-size: {f['caption']}px; font-weight: 500;
-}}
-QPushButton#inspectorTool:hover {{ background: {t['bg-hover']}; }}
-QPushButton#inspectorPrimary {{ background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['accent']}; font-weight: 600; }}
-QPushButton#inspectorPrimary:hover {{ background: {t['accent-soft-hover']}; }}
-QPushButton#inspectorDanger {{ color: {t['danger']}; }}
-QPushButton#inspectorDanger:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
-QPushButton#inspectorTool:disabled, QPushButton#inspectorPrimary:disabled, QPushButton#inspectorDanger:disabled {{
-    background: {t['control-bg']}; border-color: {t['control-border']}; color: {t['text-muted']};
-}}
-QPushButton#inspectorTool::menu-indicator {{ image: none; width: 0px; }}
 /* 检查与修复：每一项一张卡，同一个结构（图标 / 标题 / 一句说明 / 动作）。
    严重程度只靠图标颜色区分（✕ 红 / ⚠ 黄 / ✓ 绿），不铺整块彩色底。 */
 QFrame#issueCard {{
@@ -569,14 +552,14 @@ QLabel#issueWarning {{ font-size: {f['caption']}px; color: {t['warning']}; }}
 QLabel#groupCaption {{ font-size: {f['label']}px; font-weight: 600; color: {t['text-secondary']};
     padding: 2px 2px 0 2px; }}
 QListWidget#issueList {{ background: {t['bg-surface-sunken']}; border: none;
-    border-radius: {r['sm']}px; font-size: {f['caption']}px; }}
+    border-radius: {r['md']}px; font-size: {f['caption']}px; }}
 QLabel#attentionHeading {{ font-size: {f['label']}px; font-weight: 700; color: {t['warning']}; }}
 /* 底栏字数：本身可点（打开字数浮窗）。 */
 QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}
 QLabel#wordTotal:hover {{ color: {t['accent']}; text-decoration: underline; }}
 QLabel#wordTotal:focus {{ color: {t['accent']}; }}
 /* 运行状态组：进度条 + 百分比 + 状态说明，整组可点（打开运行记录）。 */
-QFrame#runStatus {{ background: transparent; border: 1px solid transparent; border-radius: {r['sm']}px; }}
+QFrame#runStatus {{ background: transparent; border: 1px solid transparent; border-radius: {r['md']}px; }}
 QFrame#runStatus:hover {{ background: {t['bg-hover']}; }}
 QFrame#runStatus:focus {{ border-color: {t['focus-ring']}; }}
 QLabel#runStatusLine {{ color: {t['text-secondary']}; font-size: {f['micro']}px; background: transparent; }}
@@ -597,7 +580,7 @@ QPushButton {{
     background: {t['control-bg']};
     color: {t['text-primary']};
     border: 1px solid {t['control-border']};
-    border-radius: {r['control']}px;
+    border-radius: {r['md']}px;
     padding: {sp['xs']}px {sp['md'] + 2}px;
     min-height: {box('md', pad_y=sp['xs'])}px;
     font-weight: 500;
@@ -610,56 +593,6 @@ QPushButton:disabled {{
     background: {t['bg-surface-sunken']}; color: {t['disabled-ink']};
     border-color: {t['border-faint']};
 }}
-QPushButton#primaryAction {{
-    background: {t['accent']}; color: {t['text-on-accent']};
-    border: 1px solid {t['accent']}; font-weight: 600;
-}}
-QPushButton#primaryAction:hover {{ background: {t['accent-hover']}; border-color: {t['accent-hover']}; }}
-QPushButton#primaryAction:pressed {{ background: {t['accent-active']}; }}
-/* 页面唯一的主行动（侧栏「导入文档…」）：比普通主按钮更高、更大、更粗；
-   暗色主题用更深更饱和的蓝底配白字（浅蓝底上的白字对比度只有 2.3:1）。 */
-QPushButton#heroAction {{
-    background: {t['hero']}; color: {t['text-on-hero']};
-    border: 1px solid {t['hero']}; border-radius: {r['md']}px;
-    font-size: {f['section'] - 1}px; font-weight: 700; padding: 0 16px;
-    min-height: 38px; max-height: 38px;  /* 40px tall: QSS heights exclude the 1px border */
-}}
-QPushButton#heroAction:hover {{ background: {t['hero-hover']}; border-color: {t['hero-hover']}; }}
-QPushButton#heroAction:pressed {{ background: {t['hero-active']}; }}
-QPushButton#heroAction:focus {{ border-color: {t['focus-ring']}; }}
-QPushButton#primaryAction:disabled {{
-    background: {t['bg-surface-sunken']}; color: {t['disabled-ink']};
-    border-color: {t['border-faint']};
-}}
-QPushButton#subtleAction {{
-    background: {t['bg-surface-subtle']}; border-color: {t['border-hairline']};
-    color: {t['text-secondary']};
-}}
-QPushButton#subtleAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
-QPushButton#ghostAction {{ background: transparent; border-color: transparent; color: {t['text-secondary']}; }}
-QPushButton#ghostAction:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
-/* 工作台右侧操作栏：一行一个动作，左对齐、无边框，悬停才浮出底色 */
-/* 检查器操作分三档（acceptance-feedback 第 5 条）：
-   panelPrimary = 主操作（审校本段）；panelAction = 次要操作（描边）；
-   panelDanger  = 会改变交付内容的操作（排除本段，红字描边）。
-   此前 panelAction 是透明无边框，按钮看起来像一行普通文字。 */
-QPushButton#panelAction, QPushButton#panelPrimary, QPushButton#panelDanger {{
-    background: {t['control-bg']}; border: 1px solid {t['control-border']};
-    color: {t['text-primary']}; text-align: left; padding-left: {sp['sm'] + 2}px;
-}}
-QPushButton#panelAction:hover {{ background: {t['bg-hover']}; }}
-QPushButton#panelPrimary {{
-    background: {t['accent-soft']}; border-color: {t['accent-border']};
-    color: {t['accent']}; font-weight: 600;
-}}
-QPushButton#panelPrimary:hover {{ background: {t['accent-soft-hover']}; }}
-QPushButton#panelPrimary:disabled, QPushButton#panelDanger:disabled {{
-    background: {t['control-bg']}; border-color: {t['control-border']}; color: {t['text-muted']};
-}}
-QPushButton#panelDanger {{ color: {t['danger']}; border-color: {t['border-subtle']}; }}
-QPushButton#panelDanger:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
-QPushButton#panelAction:disabled {{ color: {t['text-muted']}; }}
-QPushButton#panelAction::menu-indicator {{ subcontrol-position: right center; right: {sp['sm']}px; }}
 /* 展开行的原文浮层：看起来就是表格里的字，只是可以选中 */
 QPlainTextEdit#inlineSource {{
     background: transparent; border: none; padding: 0; color: {t['text-primary']};
@@ -681,7 +614,7 @@ QLabel#termArrow {{ color: {t['text-muted']}; }}
 QLabel#termTarget {{ color: {t['text-primary']}; font-weight: 600; }}
 QLabel#termCount {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QToolButton#termInsert {{
-    background: transparent; border: none; border-radius: {r['xs']}px;
+    background: transparent; border: none; border-radius: {r['sm']}px;
     color: {t['accent']}; font-weight: 700; min-width: 22px; min-height: 20px; padding: 0;
 }}
 QToolButton#termInsert:hover {{ background: {t['bg-hover']}; }}
@@ -690,7 +623,7 @@ QLabel#termMissing {{ color: {t['warning']}; font-size: {f['caption']}px; }}
 /* 全文定位条：「Pixie · 第 3 / 12 处 ↑ ↓ ✕」 */
 QFrame#termFocusBar {{
     background: {t['accent-soft']}; border: 1px solid {t['accent-border']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
 }}
 QFrame#termFocusBar QLabel {{ background: transparent; }}
 /* 任务库的书面卡片：文字浮在底部磨砂玻璃上，一律白色系（玻璃之下的暗层保证对比度）。 */
@@ -702,7 +635,7 @@ QLabel#coverStatus[state="danger"] {{ color: #ff9f9a; }}
 QLabel#coverStatus[state="ok"] {{ color: #8fe6ad; }}
 QWidget#contextRow {{
     background: transparent; border: 1px solid {t['border-hairline']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
 }}
 QWidget#contextRow:hover {{ background: {t['bg-hover']}; }}
 QLabel#contextSource {{ color: {t['text-secondary']}; }}
@@ -710,10 +643,10 @@ QLabel#contextTarget {{ color: {t['text-primary']}; }}
 QLabel#forbiddenTerm {{ color: {t['danger']}; }}
 QLabel#warningText {{ color: {t['warning']}; }}
 QWidget#draftsBanner {{
-    background: {t['warning-soft']}; border-radius: {r['sm']}px;
+    background: {t['warning-soft']}; border-radius: {r['md']}px;
 }}
 QWidget#attentionItem {{
-    background: {t['bg-surface-subtle']}; border-radius: {r['sm']}px;
+    background: {t['bg-surface-subtle']}; border-radius: {r['md']}px;
 }}
 QLabel#agentAnswer {{ color: {t['text-primary']}; }}
 /* 就地编辑的保存条：未保存是普通提示色，草稿基于旧译文是危险色 */
@@ -739,30 +672,15 @@ QFrame#stageTrack {{
     background: {t['control-bg']}; border: 1px solid {t['control-border']};
     border-radius: 16px;
 }}
-QPushButton#dangerAction {{ color: {t['danger']}; border-color: {t['border-subtle']}; background: {t['bg-surface']}; }}
-QPushButton#dangerAction:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
-/* 破坏性动作的**主按钮**：确认删除/强制退出这种"按下就回不去"的一条，
-   用实心危险色，而不是白色底 + 红字（那看起来像次要动作）。 */
-QPushButton#dangerPrimary {{
-    background: {t['danger']}; color: {t['text-on-accent']};
-    border: 1px solid {t['danger']}; font-weight: 600;
-}}
-QPushButton#dangerPrimary:hover {{ background: {t['danger']}; border-color: {t['text-primary']}; }}
-QPushButton#dangerPrimary:focus {{ border-color: {t['text-primary']}; }}
 /* 对话框里的详情区（诊断 JSON / 异常堆栈）：默认收起，展开后是只读面板 */
 QTextBrowser#dialogDetail {{
     font-family: {", ".join(repr(name) for name in theme_module.MONO_STACK)};
     background: {t['bg-surface-sunken']};
     border: 1px solid {t['border-faint']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
     padding: {sp['sm']}px;
     color: {t['text-secondary']};
 }}
-QPushButton#linkAction {{
-    background: transparent; border: none; color: {t['accent']};
-    padding: 0 {sp['xxs']}px; min-height: 0; font-weight: 600;
-}}
-QPushButton#linkAction:hover {{ color: {t['accent-hover']}; text-decoration: underline; }}
 /* 工具栏方形图标按钮 */
 QPushButton#iconButton {{
     min-width: {box('md', pad_y=0)}px; max-width: {box('md', pad_y=0)}px;
@@ -772,15 +690,56 @@ QPushButton#iconButton {{
 QPushButton#iconButton:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#iconButton:checked {{ background: {t['accent-soft']}; color: {t['brand-ink']}; }}
 
+/* 按钮只有 4 种 × 2 尺寸（设计审校 40 号第三节），用 ``set_button(button, kind, small=)``
+   设定；不再按"放在哪里"另起 objectName（以前有 inspectorPrimary / panelPrimary /
+   heroAction / primaryAction 四个名字表达同一件事）。
+   * secondary（默认，不设 kind 也是它）：描边控件面；
+   * primary：实心强调色，一屏最多一个；
+   * plain：无框、强调色文字，悬停才浮出底色（原来的链接按钮与幽灵按钮）；
+   * danger：描边 + 危险色文字，悬停浮出浅红（macOS 的破坏性按钮也是红字）。
+   small：26px 高、12px 字，给检查器、分组行里的紧凑操作。
+   ⚠️ 每种的 :hover / :pressed / :disabled 都要显式写：属性选择器与伪类同权重，
+   平手时取后出现的那条。 */
+QPushButton[kind="primary"] {{
+    background: {t['accent']}; color: {t['text-on-accent']};
+    border: 1px solid {t['accent']}; font-weight: 600;
+}}
+QPushButton[kind="primary"]:hover {{ background: {t['accent-hover']}; border-color: {t['accent-hover']}; }}
+QPushButton[kind="primary"]:pressed {{ background: {t['accent-active']}; border-color: {t['accent-active']}; }}
+QPushButton[kind="primary"]:focus {{ border-color: {t['focus-ring']}; }}
+QPushButton[kind="primary"]:disabled {{
+    background: {t['bg-surface-sunken']}; color: {t['disabled-ink']}; border-color: {t['border-faint']};
+}}
+QPushButton[kind="plain"] {{
+    background: transparent; border-color: transparent; color: {t['accent']}; font-weight: 600;
+}}
+QPushButton[kind="plain"]:hover {{ background: {t['bg-hover']}; border-color: transparent; color: {t['accent-hover']}; }}
+QPushButton[kind="plain"]:pressed {{ background: {t['bg-selected']}; }}
+QPushButton[kind="plain"]:focus {{ border-color: {t['accent']}; }}
+QPushButton[kind="plain"]:checked {{ color: {t['text-muted']}; }}
+QPushButton[kind="plain"]:disabled {{ background: transparent; border-color: transparent; color: {t['disabled-ink']}; }}
+QPushButton[kind="danger"] {{ color: {t['danger']}; }}
+QPushButton[kind="danger"]:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
+QPushButton[kind="danger"]:pressed {{ background: {t['danger-soft']}; }}
+QPushButton[kind="danger"]:disabled {{
+    background: {t['bg-surface-sunken']}; color: {t['disabled-ink']}; border-color: {t['border-faint']};
+}}
+QPushButton[small="true"] {{
+    padding: {sp['xxs']}px {sp['sm'] + 2}px;
+    min-height: {box('sm', pad_y=sp['xxs'])}px;
+    font-size: {f['label']}px;
+}}
+QPushButton[small="true"]::menu-indicator {{ image: none; width: 0px; }}
+
 /* 分段控件（全部 / 待审校 / 已审校） */
 QFrame#segmentTrack {{
     background: {t['bg-surface-sunken']};
     border: 1px solid {t['border-hairline']};
-    border-radius: {r['sm'] + 1}px;
+    border-radius: {r['md']}px;
 }}
 QPushButton#segment {{
     background: transparent; border: 1px solid transparent;
-    border-radius: {r['sm'] - 1}px; padding: {sp['xxs']}px {sp['md']}px;
+    border-radius: {r['sm']}px; padding: {sp['xxs']}px {sp['md']}px;
     min-height: {box('sm', pad_y=sp['xxs'])}px; color: {t['text-secondary']}; font-weight: 500;
 }}
 QPushButton#segment:hover {{ color: {t['text-primary']}; }}
@@ -793,7 +752,7 @@ QPushButton#segment:checked {{
    同样的圆角与高度；不画系统的下拉小箭头。有筛选生效时整颗按钮高亮。 */
 QToolButton#toolbarButton {{
     background: {t['bg-surface-sunken']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['sm'] + 1}px; padding: {sp['xxs'] + 2}px {sp['md']}px;
+    border-radius: {r['md']}px; padding: {sp['xxs'] + 2}px {sp['md']}px;
     min-height: {box('sm', pad_y=sp['xxs']) + 2}px;
     color: {t['text-secondary']}; font-weight: 500;
 }}
@@ -817,7 +776,7 @@ QToolButton#toolbarButton:checked {{ background: {t['accent-soft']}; border-colo
    ⚠️ `:checked` 必须写在 `:hover` **之后**：两者 id 数与伪类数相同，平手时 Qt 取
    后出现的那条；`:checked:hover` 再显式写一条，避免悬停把选中态洗回静止色。 */
 QWidget#modeTrack {{
-    background: {t['bg-surface-sunken']}; border-radius: {r['sm'] + 2}px;
+    background: {t['bg-surface-sunken']}; border-radius: {r['md']}px;
 }}
 QPushButton#presetOption {{
     background: transparent;
@@ -842,31 +801,25 @@ QLabel#presetDesc {{ font-size: {f['caption']}px; color: {t['text-secondary']}; 
    缩进发丝线（不穿过左侧图标块）；分组上方是一行小标题。 */
 QFrame#settingsGroup {{
     background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['lg']}px;
+    border-radius: {r['md']}px;
 }}
 QFrame#settingsGroup QWidget#groupRow, QFrame#settingsGroup QLabel {{ background: transparent; }}
 QFrame#rowRule {{ background: {t['border-divider']}; border: none; }}
 QLabel#rowTitle {{ font-size: {f['body']}px; color: {t['text-primary']}; }}
-QLabel#rowValue {{ font-size: {f['body'] - 1}px; color: {t['text-secondary']}; }}
-QComboBox#primaryCombo {{ font-size: {f['body'] + 3}px; padding-left: 12px; }}
+QLabel#rowValue {{ font-size: {f['label']}px; color: {t['text-secondary']}; }}
+QComboBox#primaryCombo {{ font-size: {f['card']}px; padding-left: 12px; }}
 QLabel#overviewTitle {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
-QLabel#overviewNote {{ font-size: {f['caption'] + 1}px; color: {t['text-secondary']}; }}
+QLabel#overviewNote {{ font-size: {f['label']}px; color: {t['text-secondary']}; }}
 QLabel#groupHeader {{
     font-size: {f['label']}px; font-weight: 600; color: {t['text-secondary']};
     padding-left: 4px;
 }}
 QPushButton#settingsGroupHeader {{
-    background: transparent; border: none; border-radius: {r['lg']}px; padding: 0;
+    background: transparent; border: none; border-radius: {r['md']}px; padding: 0;
     min-height: 44px;
 }}
 QPushButton#settingsGroupHeader:hover {{ background: {t['bg-hover']}; }}
 QPushButton#settingsGroupHeader:focus {{ border: 1px solid {t['accent']}; }}
-QPushButton#rowAction {{
-    background: {t['control-bg']}; border: 1px solid {t['control-border']};
-    border-radius: 13px; padding: 2px 12px; min-height: 22px;
-    font-size: {f['caption'] + 1}px; color: {t['text-primary']};
-}}
-QPushButton#rowAction:hover {{ background: {t['bg-hover']}; }}
 
 /* 「高级设置」折叠头：整行可点的一节标题。静止时没有盒子（它是一行标题，不是
    按钮），悬停才浮一点底色；字号仍由内部的 #sectionLabel 决定。
@@ -883,7 +836,7 @@ QLineEdit, QPlainTextEdit, QTextBrowser, QTextEdit {{
     background: {t['bg-surface']};
     color: {t['text-primary']};
     border: 1px solid {t['border-subtle']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
     padding: {sp['xs']}px {sp['sm']}px;
     min-height: {box('md', pad_y=sp['xs'])}px;
     selection-background-color: {t['accent-soft']};
@@ -912,14 +865,14 @@ QTextBrowser#diagnosticsView {{ font-family: {", ".join(repr(name) for name in t
    `QTextBrowser {{ min-height: 0 }}` 会覆盖代码里的 setMinimumHeight。 */
 QTextBrowser#understandingView {{
     background: {t['bg-surface-sunken']}; border: 1px solid {t['border-faint']};
-    border-radius: {r['sm']}px; padding: {sp['sm']}px; color: {t['text-primary']};
+    border-radius: {r['md']}px; padding: {sp['sm']}px; color: {t['text-primary']};
     min-height: 300px;
 }}
 /* 工作台"检查项"：只读报告面（沉底面板），不要输入框那种聚焦边框 */
 QTextBrowser#qaView {{
     background: {t['bg-surface-sunken']};
     border: 1px solid {t['border-faint']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
     padding: {sp['sm']}px;
     color: {t['text-primary']};
 }}
@@ -927,7 +880,7 @@ QComboBox {{
     background: {t['bg-surface']};
     color: {t['text-primary']};
     border: 1px solid {t['border-subtle']};
-    border-radius: {r['sm']}px;
+    border-radius: {r['md']}px;
     padding: {sp['xs']}px {sp['sm']}px;
     min-height: {box('md', pad_y=sp['xs'])}px;
 }}
@@ -950,7 +903,7 @@ QCheckBox:hover {{ color: {t['text-primary']}; }}
 QCheckBox::indicator {{
     width: 16px; height: 16px;
     border: 1px solid {t['border-strong']};
-    border-radius: {r['xs']}px;
+    border-radius: {r['sm']}px;
     background: {t['bg-surface']};
 }}
 QCheckBox::indicator:hover {{ border-color: {t['accent']}; }}
@@ -987,7 +940,7 @@ QListWidget, QTableWidget, QTreeWidget {{
     gridline-color: {t['border-hairline']};
     alternate-background-color: {t['bg-surface-subtle']};
 }}
-QListWidget::item {{ padding: {sp['xs']}px {sp['sm']}px; border-radius: {r['xs']}px; }}
+QListWidget::item {{ padding: {sp['xs']}px {sp['sm']}px; border-radius: {r['sm']}px; }}
 QListWidget::item:hover, QTableWidget::item:hover {{ background: {t['bg-hover']}; }}
 QListWidget::item:selected, QTableWidget::item:selected {{
     background: {t['bg-selected']};
@@ -1084,7 +1037,7 @@ QTabBar::tab:selected {{
 /* 指标卡：图标徽标 + 标签 / 大号数字。数字只在"需要被看见"时上色。 */
 QFrame#metricCard {{
     background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['lg']}px;
+    border-radius: {r['md']}px;
 }}
 QLabel#metricLabel {{ font-size: {f['caption']}px; font-weight: 500; color: {t['text-secondary']}; }}
 QLabel#metricValue {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
@@ -1101,7 +1054,7 @@ QLineEdit#searchBar {{
 QLineEdit#searchBar:focus {{ border: 1px solid {t['accent']}; }}
 QLabel#keyHint {{
     background: {t['bg-surface-sunken']}; color: {t['text-muted']};
-    border: 1px solid {t['border-hairline']}; border-radius: {r['xs']}px;
+    border: 1px solid {t['border-hairline']}; border-radius: {r['sm']}px;
     padding: 1px {sp['sm']}px; font-size: {f['micro']}px; font-weight: 600;
 }}
 /* 药丸分段 / 筛选芯片：选中 = 浅色底 + 强调色字 */
@@ -1122,7 +1075,7 @@ QPushButton#pill:checked {{
 /* 容器卡 + 头部条；卡内的表格不再自带描边（外框由卡片给） */
 QFrame#sectionCard {{
     background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
-    border-radius: {r['lg']}px;
+    border-radius: {r['md']}px;
 }}
 QFrame#sectionHeader {{
     background: transparent; border: none; border-bottom: 1px solid {t['border-hairline']};
@@ -1243,15 +1196,28 @@ def repolish(widget: QWidget) -> None:
     widget.update()
 
 
-def mark_primary(button) -> None:
-    """把按钮标成主行动并让它立刻生效。
+#: 按钮的四种外观（设计审校 40 号第三节）。不按位置起名：检查器里的主操作和
+#: 页面上的主操作是同一种按钮。
+BUTTON_KINDS = ("primary", "secondary", "plain", "danger")
 
-    QSS 的对象名选择器只在 polish 时解析；构造之后再 `setObjectName` 的控件
-    （典型是 QDialogButtonBox 造出来的按钮）必须重新 polish，否则样式不会应用
-    —— 这正是"保存"按钮看起来还是默认按钮的原因。
+
+def set_button(button, kind: str = "secondary", *, small: bool = False) -> None:
+    """给按钮定外观：``kind`` 四选一，``small`` 是紧凑尺寸（26px 高）。
+
+    用动态属性而不是 objectName：属性选择器只在 polish 时解析，所以这里总是
+    重新 polish——构造之后才改外观的按钮（QDialogButtonBox 造出来的那种）也立刻生效。
+    属性名不能叫 ``size``：那是 QWidget 自己的属性，设成字符串会去改控件尺寸。
     """
-    button.setObjectName("primaryAction")
+    if kind not in BUTTON_KINDS:
+        raise ValueError(f"unknown button kind: {kind!r}")
+    button.setProperty("kind", kind)
+    button.setProperty("small", "true" if small else "false")
     repolish(button)
+
+
+def mark_primary(button) -> None:
+    """把按钮标成主行动并让它立刻生效（``set_button(button, "primary")``）。"""
+    set_button(button, "primary")
 
 
 class Chip(QLabel):
@@ -1399,7 +1365,7 @@ class NoticeStrip(QFrame):
         self._label = QLabel(text)
         self._label.setWordWrap(True)
         self._action = QPushButton("")
-        self._action.setObjectName("linkAction")
+        set_button(self._action, "plain")
         self._action.setVisible(False)
         row.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignTop)
         row.addWidget(self._label, 1)

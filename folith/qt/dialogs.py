@@ -967,7 +967,7 @@ class EngineDialog(QDialog):
             swatch.setStyleSheet(
                 f"QFrame {{ background: {tokens['bg-surface']};"
                 f" border: 1px solid {tokens['border-subtle']};"
-                f" border-radius: {theme_module.RADIUS['sm']}px; }}")
+                f" border-radius: {theme_module.RADIUS['md']}px; }}")
             swatch_layout = QVBoxLayout(swatch)
             swatch_layout.setContentsMargins(8, 8, 8, 8)
             swatch_layout.setSpacing(0)
@@ -975,7 +975,7 @@ class EngineDialog(QDialog):
             accent.setFixedHeight(spec["accent"])
             accent.setStyleSheet(
                 f"QFrame {{ background: {tokens['accent']}; border: none;"
-                f" border-radius: {theme_module.RADIUS['xs']}px; }}")
+                f" border-radius: {theme_module.RADIUS['sm']}px; }}")
             swatch_layout.addWidget(accent)
             caption = QLabel(theme_module.label(name))
             caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1862,7 +1862,7 @@ class RiskAcceptanceDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.ok_button.setText(i18n.tr('确认风险并创建交付版本'))
-        self.ok_button.setObjectName("dangerPrimary")
+        style_module.set_button(self.ok_button, "danger")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -2086,7 +2086,7 @@ class ProjectsPanel(QWidget):
         self.archive_button.setIcon(icons.icon(
             "folder", 16, "text-secondary"))
         self.delete_button = QPushButton(i18n.tr('删除项目…'))
-        self.delete_button.setObjectName("dangerAction")
+        style_module.set_button(self.delete_button, "danger")
         self.delete_button.setIcon(icons.icon(
             "trash", 16, "danger"))
         for button in (self.new_button, self.rename_button,

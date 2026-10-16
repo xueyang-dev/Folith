@@ -81,7 +81,7 @@ class _BaseDialog(QDialog):
         self._detail_view.setMinimumHeight(120)
         self._detail_view.setVisible(False)
         self._detail_button = QPushButton(i18n.tr('显示详情'))
-        self._detail_button.setObjectName("linkAction")
+        style_module.set_button(self._detail_button, "plain")
         self._detail_button.setCheckable(True)
         self._detail_button.setVisible(False)
         self._detail_button.toggled.connect(self._toggle_detail)
@@ -119,7 +119,7 @@ class _BaseDialog(QDialog):
                    danger: bool = False, default: bool = False) -> QPushButton:
         button = QPushButton(label)
         if danger:
-            button.setObjectName("dangerPrimary")
+            style_module.set_button(button, "danger")
         elif primary:
             style_module.mark_primary(button)
         button.clicked.connect(slot)
