@@ -48,10 +48,7 @@ def _panel(title: str, hint: str = "") -> tuple[Card, QVBoxLayout]:
     heading.setObjectName("cardTitle")
     outer.addWidget(heading)
     if hint:
-        note = QLabel(hint)
-        note.setObjectName("hint")
-        note.setWordWrap(True)
-        outer.addWidget(note)
+        heading.setToolTip(hint)
     return card, outer
 
 
@@ -68,10 +65,7 @@ def _field(label: str, widget: QWidget, hint: str = "") -> QWidget:
     column.addWidget(style_module.field_label(label))
     column.addWidget(widget)
     if hint:
-        note = QLabel(hint)
-        note.setObjectName("fieldHint")
-        note.setWordWrap(True)
-        column.addWidget(note)
+        widget.setToolTip(hint)
     return holder
 
 
@@ -136,7 +130,11 @@ class EngineDialog(QDialog):
         self.setWindowTitle(i18n.tr('设置'))
         self.setMinimumWidth(640)
         self.resize(720, 600)
-        self.config = config
+        self.config = dataclasses.replace(config, connections=[dict(c) for c in config.connections],
+                                          connection_roles=dict(config.connection_roles),
+                                          connection_models=dict(config.connection_models))
+        if not self.config.connections:
+            self.config.ensure_connections()
         self.runner = runner
         self._status = QLabel("")
         self._status.setWordWrap(True)
@@ -256,7 +254,7 @@ class EngineDialog(QDialog):
     CONNECTION_FIELDS = frozenset({
         "provider", "model", "api_key", "base_url", "reasoning_effort",
         "reviewer_mode", "reviewer_provider", "reviewer_model", "reviewer_api_key",
-        "reviewer_base_url"})
+        "reviewer_base_url", "connections", "connection_roles", "connection_models"})
 
     def _watch_immediate_fields(self) -> None:
         for box in (self.auto_term_box, self.review_box, self.tm_box, self.understanding_box,
@@ -266,7 +264,7 @@ class EngineDialog(QDialog):
                     self.deliver_original_pdf_box, self.deliver_epub_box):
             box.toggled.connect(self._immediate_changed)
         for combo in (self.theme_box, self.language_box, self.ocr_backend_box,
-                      self.ocr_mode_box, self.ocr_language_box):
+                      self.ocr_mode_box, self.ocr_language_box, self.default_mode_box, self.accent_box):
             combo.currentIndexChanged.connect(self._immediate_changed)
         self.target_box.currentTextChanged.connect(self._immediate_changed)
         self.ocr_language_box.editTextChanged.connect(self._immediate_changed)
@@ -308,10 +306,10 @@ class EngineDialog(QDialog):
         row = QHBoxLayout(holder)
         row.setContentsMargins(0, theme_module.SPACE["xs"], 0, 0)
         row.setSpacing(theme_module.SPACE["sm"])
-        hint = QLabel(i18n.tr('应用前会先测试连接；测试通过才保存。'))
+        hint = QLabel("")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
-        apply_button = QPushButton(i18n.tr('应用'))
+        apply_button = QPushButton(i18n.tr('保存用途'))
         style_module.mark_primary(apply_button)
         apply_button.clicked.connect(self.apply_connection)
         force = QPushButton(i18n.tr('仍然应用'))
@@ -388,163 +386,55 @@ class EngineDialog(QDialog):
 
     # -- connection --------------------------------------------------------
     def _build_connection_tab(self) -> QWidget:
-        page = QWidget()
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
-        page_layout.setSpacing(theme_module.SPACE["sm"])
-        connection_card, body = _panel(
-            i18n.tr('模型连接'), i18n.tr('译文与审校都通过这里的模型调用；API Key 只保存在本机。'))
-
+        from .connection_library import ConnectionLibrary
         self.provider_box = style_module.ComboBox()
-        self.provider_box.addItems(list(self.config.providers.keys()))
-        if self.config.provider:
-            self.provider_box.setCurrentText(self.config.provider)
-        self.provider_box.currentTextChanged.connect(self._provider_changed)
-
+        self.provider_box.addItems(list(self.config.providers))
         self.model_box = style_module.ComboBox()
+        self.model_box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_box.setMinimumContentsLength(20)
         self.model_box.setEditable(True)
         self.model_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.model_box.setCurrentText(self.config.model)
-
-        self.fetch_button = QPushButton(i18n.tr('获取可用模型'))
-        self.fetch_button.setIcon(icons.icon("refresh", 16))
-        self.fetch_button.setIconSize(QSize(16, 16))
-        self.fetch_button.clicked.connect(self._fetch_models)
-        model_row = QWidget()
-        model_layout = QHBoxLayout(model_row)
-        model_layout.setContentsMargins(0, 0, 0, 0)
-        model_layout.setSpacing(8)
-        model_layout.addWidget(self.model_box, 1)
-        model_layout.addWidget(self.fetch_button)
-
-        # 旧界面把"服务商 / 模型"并排放在一行：两项都短，分开排会白占一屏高度。
-        pair = QWidget()
-        pair_layout = QGridLayout(pair)
-        pair_layout.setContentsMargins(0, 0, 0, 0)
-        pair_layout.setHorizontalSpacing(12)
-        pair_layout.addWidget(_field(i18n.tr('模型提供商'), self.provider_box), 0, 0)
-        pair_layout.addWidget(_field(i18n.tr('模型'), model_row), 0, 1)
-        pair_layout.setColumnStretch(0, 1)
-        pair_layout.setColumnStretch(1, 2)
-
-        self.key_field = style_module.SecretField(self.config.api_key)
-        self.key_edit = self.key_field.line_edit        # 取值/校验仍走 QLineEdit
-        self.key_edit.setPlaceholderText(i18n.tr('保存在本机，仅当前用户可读'))
-
-        self.base_edit = QLineEdit(self.config.base_url)
-        self.base_edit.setPlaceholderText(i18n.tr('http(s)://主机/v1'))
-
-        self.test_button = QPushButton(i18n.tr('测试连接'))
-        self.test_button.setIcon(icons.icon("check-circle", 16))
-        self.test_button.setIconSize(QSize(16, 16))
-        self.test_button.clicked.connect(self._test_connection)
-        # 测试状态写在卡片标题下（translation_state）；这里只放这一次测试的结果。
-        self.test_label = QLabel("")
-        self.test_label.setObjectName("hint")
-        self.test_label.setWordWrap(True)
-        test_row = QWidget()
-        test_layout = QHBoxLayout(test_row)
-        test_layout.setContentsMargins(0, 0, 0, 0)
-        test_layout.setSpacing(theme_module.SPACE["sm"])
-        test_layout.addWidget(self.test_button)
-        test_layout.addWidget(self.test_label, 1)
-
-        # 推理强度：只对识别得出的推理模型提供（o 系列、gpt-5、deepseek-r1 等）；
-        # 其他模型保持自动，免得发出它们不支持的参数让翻译失败。
+        self.key_field = style_module.SecretField("")
+        self.key_edit = self.key_field.line_edit
+        self.base_edit = QLineEdit()
         self.reasoning_box = style_module.ComboBox()
-        self.reasoning_row = _field(
-            i18n.tr('推理强度'), self.reasoning_box,
-            i18n.tr('越高越仔细，也越慢、越贵。只对推理模型生效。'))
-        self.model_box.currentTextChanged.connect(lambda _text: self._sync_reasoning())
-
-        body.addWidget(pair)
-        body.addWidget(self.reasoning_row)
-        body.addWidget(_field(i18n.tr('API 密钥'), self.key_field,
-                              i18n.tr('留空表示沿用已保存的密钥；输入内容不会显示在诊断包或日志里。')))
-        body.addWidget(_field(i18n.tr('API 地址'), self.base_edit))
-        body.addWidget(_field(i18n.tr('连通性'), test_row))
-
-        reviewer_card, reviewer_body = _panel(
-            i18n.tr('独立审校模型（可选）'),
-            i18n.tr('译审同源时审校只是自查；换一个模型能降低同一模型自我确认的风险，代价是更慢、需要额外的额度。'))
-        self.reviewer_same_radio = style_module.RadioButton(i18n.tr('与翻译模型相同'))
-        self.reviewer_separate_radio = style_module.RadioButton(i18n.tr('单独配置'))
-        self.reviewer_group = QButtonGroup(self)
-        self.reviewer_group.addButton(self.reviewer_same_radio)
-        self.reviewer_group.addButton(self.reviewer_separate_radio)
-        self.reviewer_same_radio.setChecked(
-            self.config.reviewer_mode != "separate")
-        self.reviewer_separate_radio.setChecked(
-            self.config.reviewer_mode == "separate")
-        self.reviewer_same_radio.toggled.connect(self._reviewer_changed)
-        mode_row = QWidget()
-        mode_layout = QHBoxLayout(mode_row)
-        mode_layout.setContentsMargins(0, 0, 0, 0)
-        mode_layout.setSpacing(theme_module.SPACE["md"])
-        mode_layout.addWidget(self.reviewer_same_radio)
-        mode_layout.addWidget(self.reviewer_separate_radio)
-        mode_layout.addStretch(1)
-
-        self.reviewer_provider_box = style_module.ComboBox()
-        self.reviewer_provider_box.addItems([""] + list(self.config.providers.keys()))
-        self.reviewer_provider_box.setCurrentText(self.config.reviewer_provider)
-        self.reviewer_model_edit = QLineEdit(self.config.reviewer_model)
-        self.reviewer_fetch_button = QPushButton(i18n.tr('获取模型'))
-        self.reviewer_fetch_button.setIcon(icons.icon("refresh", 16))
-        self.reviewer_fetch_button.setIconSize(QSize(16, 16))
-        self.reviewer_fetch_button.clicked.connect(self._fetch_reviewer_models)
-        reviewer_model_row = QWidget()
-        reviewer_model_layout = QHBoxLayout(reviewer_model_row)
-        reviewer_model_layout.setContentsMargins(0, 0, 0, 0)
-        reviewer_model_layout.setSpacing(8)
-        reviewer_model_layout.addWidget(self.reviewer_model_edit, 1)
-        reviewer_model_layout.addWidget(self.reviewer_fetch_button)
-        self.reviewer_key_field = style_module.SecretField(self.config.reviewer_api_key)
-        self.reviewer_key_edit = self.reviewer_key_field.line_edit
-        self.reviewer_base_edit = QLineEdit(self.config.reviewer_base_url)
-        self.reviewer_fields = QWidget()
-        reviewer_fields_layout = QVBoxLayout(self.reviewer_fields)
-        reviewer_fields_layout.setContentsMargins(0, 0, 0, 0)
-        reviewer_fields_layout.setSpacing(theme_module.SPACE["sm"])
-        reviewer_fields_layout.addWidget(_field(i18n.tr('提供商'), self.reviewer_provider_box))
-        reviewer_fields_layout.addWidget(_field(i18n.tr('模型名'), reviewer_model_row))
-        reviewer_fields_layout.addWidget(_field(i18n.tr('API 密钥'), self.reviewer_key_field))
-        reviewer_fields_layout.addWidget(_field(
-            i18n.tr('API 地址'), self.reviewer_base_edit,
-            i18n.tr('留空时：提供商与正文相同则沿用正文地址，不同则必须填写。')))
-
-        reviewer_body.addWidget(mode_row)
-        reviewer_body.addWidget(self.reviewer_fields)
-
-        # 标题下一行写这条连接上次测试的结果（「已配置」不等于「能用」，12-B）。
-        self.translation_state = components.StatusLabel()
-        self.reviewer_state = components.StatusLabel()
-        body.insertWidget(1, self.translation_state)
-        reviewer_body.insertWidget(1, self.reviewer_state)
-        page_layout.addWidget(connection_card)
-        page_layout.addWidget(reviewer_card)
-        page_layout.addWidget(self._apply_row("models"))
-        page_layout.addStretch(1)
-
+        self.reasoning_row = _field(i18n.tr('推理强度'), self.reasoning_box)
+        self.fetch_button = QPushButton(i18n.tr('获取可用模型'))
+        self.fetch_button.clicked.connect(self._fetch_models)
+        self.test_button = QPushButton(i18n.tr('测试连接'))
+        self.test_button.clicked.connect(self._test_connection)
+        self.test_label = QLabel("")
+        self.test_label.setWordWrap(True)
+        self.provider_box.currentTextChanged.connect(self._provider_changed)
+        self.model_box.currentTextChanged.connect(self._sync_reasoning)
         self._provider_changed(self.provider_box.currentText())
-        self._reviewer_changed()
         self._sync_reasoning()
+        self.connection_library = ConnectionLibrary(self)
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.connection_library)
         return page
 
     def _build_vision_tab(self) -> QWidget:
-        """视觉理解连接（扫描件由它读成正文）+ 扫描件识别的默认值。"""
         page = QWidget()
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
-        page_layout.setSpacing(theme_module.SPACE["sm"])
-        card = self._build_vision_card()
-        self.vision_state = components.StatusLabel()
-        card.layout().insertWidget(1, self.vision_state)
-        page_layout.addWidget(card)
-        page_layout.addWidget(self._apply_row("vision"))
-        page_layout.addWidget(self._build_scan_group())
-        page_layout.addStretch(1)
-        self.refresh_connection_states()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        layout.setSpacing(theme_module.SPACE["sm"])
+        vision_field = self._build_vision_selector()
+        layout.addWidget(self._build_scan_group())
+        self._scan_body.insertWidget(2, vision_field)
+        layout.addWidget(self._apply_row("vision"))
+        layout.addStretch(1)
+
+        def update_fields():
+            online = self.ocr_backend_box.currentData() == "online"
+            vision_field.setVisible(online)
+            self.ocr_language_row.setVisible(not online)
+            if hasattr(self, "ocr_local_info"):
+                self.ocr_local_info.setVisible(not online)
+        self.ocr_backend_box.currentIndexChanged.connect(update_fields)
+        update_fields()
         return page
 
     def refresh_connection_states(self) -> None:
@@ -571,8 +461,6 @@ class EngineDialog(QDialog):
         outer.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
         outer.setSpacing(theme_module.SPACE["sm"])
 
-        workflow, workflow_body = _panel(
-            i18n.tr('翻译流程'), i18n.tr('这些是新建任务的默认值；已有任务保留它自己保存的选择。'))
         # 文案与「译前准备 · 翻译设置」逐字一致（同一个开关在两个面上必须同名）：
         # 这里曾经用「自动抽取并注入术语 / 完成后自动审校 / 复用翻译记忆」这套旧词，
         # 而准备面板用「自动识别术语 / 译后自动审校 / 使用翻译记忆」——同一个开关两个
@@ -596,7 +484,13 @@ class EngineDialog(QDialog):
             i18n.tr('工作模式'),
             i18n.tr('默认关闭。打开后，工作台会多出实践报告、案例与合规 QA 三页，'
                     '下面也可以勾选「生成实践报告」。'))
-        mode_body.addWidget(self.academic_box)
+        self.default_mode_box = style_module.ComboBox()
+        for label, key in (("快速", "快速"), ("标准", "标准"), ("精细", "学术增强")):
+            self.default_mode_box.addItem(i18n.tr(label), key)
+        self.default_mode_box.setCurrentIndex(max(0, self.default_mode_box.findData(
+            self.config.default_translation_mode)))
+        mode_body.addWidget(_field(i18n.tr('默认翻译方式'), self.default_mode_box))
+        workflow_body = mode_body
         outer.addWidget(mode_card)
         # 两列网格：六项都是单行短句，一列排下来会白占半屏。
         grid = QGridLayout()
@@ -605,7 +499,7 @@ class EngineDialog(QDialog):
         grid.setVerticalSpacing(8)
         for position, box in enumerate((self.auto_term_box, self.review_box,
                                         self.tm_box, self.understanding_box,
-                                        self.cleanup_box, self.report_box)):
+                                        self.cleanup_box, self.academic_box, self.report_box)):
             grid.addWidget(box, position // 2, position % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
@@ -616,7 +510,6 @@ class EngineDialog(QDialog):
         self.target_box.setCurrentText(self.config.target_lang)
         workflow_body.addWidget(_field(i18n.tr('目标语言'), self.target_box))
         workflow_body.addLayout(grid)
-        outer.addWidget(workflow)
 
         delivery, delivery_body = _panel(
             i18n.tr('交付文件'), i18n.tr('只生成勾选的格式；冻结交付后快照不可修改。'))
@@ -630,9 +523,6 @@ class EngineDialog(QDialog):
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(theme_module.SPACE["sm"])
             row.addWidget(box)
-            name = QLabel(filename)
-            name.setObjectName("formatFile")
-            row.addWidget(name)
             row.addStretch(1)
             setattr(self, f"_{attr}_holder", holder)
             return box, holder
@@ -673,9 +563,6 @@ class EngineDialog(QDialog):
         delivery_body.addLayout(groups)
         delivery_body.addSpacing(theme_module.SPACE["xs"])
         delivery_body.addWidget(original)
-        only_pdf = QLabel(i18n.tr('仅对 PDF 任务生效：按原文件的版式重建译文页面。'))
-        only_pdf.setObjectName("fieldHint")
-        delivery_body.addWidget(only_pdf)
         outer.addWidget(delivery)
         outer.addStretch(1)
         return page
@@ -683,7 +570,7 @@ class EngineDialog(QDialog):
     def _make_academic_box(self) -> None:
         # 实践报告 / 案例 / 终稿 QA 是专用能力：默认不出现，用户主动打开"学术专业模式"才显示。
         self.academic_box = style_module.CheckBox(
-            i18n.tr('学术专业模式：显示实践报告、案例与终稿 QA'))
+            i18n.tr('MTI：实践报告、案例与合规、终稿 QA'))
         self.academic_box.setChecked(bool(self.academic_preference or self.config.enable_report))
 
     def _select_ocr_language(self, value: str) -> None:
@@ -704,138 +591,58 @@ class EngineDialog(QDialog):
         self.ocr_language_box.setEditText(wanted)
 
     # -- vision connection -------------------------------------------------
-    def _build_vision_card(self) -> QWidget:
-        """扫描件默认走视觉理解：它用的模型可以和翻译模型分开。"""
-        view = adapter.vision_connection_view()
-        self._vision_view = view
-        card, body = _panel(
-            i18n.tr('视觉理解连接'),
-            i18n.tr('扫描件默认由视觉模型直接读成结构化正文。默认沿用上面的翻译模型；'
-                    '翻译模型不支持图像输入时，在这里单独配置一个支持图像的模型。'))
-        self.vision_same_radio = style_module.RadioButton(i18n.tr('沿用翻译模型（默认）'))
-        self.vision_separate_radio = style_module.RadioButton(i18n.tr('单独配置视觉模型'))
-        group = QButtonGroup(self)
-        group.addButton(self.vision_same_radio)
-        group.addButton(self.vision_separate_radio)
-        self.vision_separate_radio.setChecked(bool(view["dedicated"]))
-        self.vision_same_radio.setChecked(not view["dedicated"])
-        mode_row = QWidget()
-        mode_layout = QHBoxLayout(mode_row)
-        mode_layout.setContentsMargins(0, 0, 0, 0)
-        mode_layout.setSpacing(theme_module.SPACE["md"])
-        mode_layout.addWidget(self.vision_same_radio)
-        mode_layout.addWidget(self.vision_separate_radio)
-        mode_layout.addStretch(1)
-
-        self.vision_provider_box = style_module.ComboBox()
-        self.vision_provider_box.addItems(view["providers"])
-        if view["provider"] in view["providers"]:
-            self.vision_provider_box.setCurrentText(view["provider"])
-        self.vision_model_edit = QLineEdit(view["model"])
-        self.vision_model_edit.setPlaceholderText(i18n.tr('支持图像输入的模型名'))
-        self.vision_base_edit = QLineEdit(view["base_url"])
-        self.vision_base_edit.setPlaceholderText(i18n.tr('留空使用该提供商的官方地址；自定义中转站必须填写'))
-        self.vision_key_field = style_module.SecretField("")
-        self.vision_key_edit = self.vision_key_field.line_edit
-        self.vision_key_edit.setPlaceholderText(
-            i18n.tr('已保存，留空表示沿用') if view["has_key"] else i18n.tr('保存在本机，仅当前用户可读'))
-        self.vision_tokens_box = QSpinBox()
-        self.vision_tokens_box.setRange(view["min_tokens"], view["max_tokens_limit"])
-        self.vision_tokens_box.setSingleStep(1024)
-        self.vision_tokens_box.setValue(view["max_tokens"])
-        self.vision_reasoning_box = style_module.ComboBox()
-        for mode in view["reasoning_modes"]:
-            self.vision_reasoning_box.addItem(
-                i18n.tr(adapter.VISION_REASONING_LABELS.get(mode, mode)), mode)
-        index = self.vision_reasoning_box.findData(view["reasoning_mode"])
-        self.vision_reasoning_box.setCurrentIndex(max(index, 0))
-
-        self.vision_fields = QWidget()
-        fields = QVBoxLayout(self.vision_fields)
-        fields.setContentsMargins(0, 0, 0, 0)
-        fields.setSpacing(theme_module.SPACE["sm"])
-        pair = QWidget()
-        pair_layout = QGridLayout(pair)
-        pair_layout.setContentsMargins(0, 0, 0, 0)
-        pair_layout.setHorizontalSpacing(12)
-        pair_layout.addWidget(_field(i18n.tr('服务商'), self.vision_provider_box), 0, 0)
-        pair_layout.addWidget(_field(i18n.tr('视觉模型'), self.vision_model_edit), 0, 1)
-        pair_layout.setColumnStretch(0, 1)
-        pair_layout.setColumnStretch(1, 2)
-        fields.addWidget(pair)
-        fields.addWidget(_field(i18n.tr('API 密钥'), self.vision_key_field))
-        fields.addWidget(_field(i18n.tr('API 地址'), self.vision_base_edit))
-        tail = QWidget()
-        tail_layout = QGridLayout(tail)
-        tail_layout.setContentsMargins(0, 0, 0, 0)
-        tail_layout.setHorizontalSpacing(12)
-        tail_layout.addWidget(_field(
-            i18n.tr('输出上限（tokens）'), self.vision_tokens_box,
-            i18n.tr('输出被截断时该页会判为失败，而不是保存半页文字。')), 0, 0)
-        tail_layout.addWidget(_field(i18n.tr('推理模式'), self.vision_reasoning_box), 0, 1)
-        fields.addWidget(tail)
-
-        self.vision_status = QLabel("")
-        self.vision_status.setWordWrap(True)
-        self.vision_status.setObjectName("hint")
-        body.addWidget(mode_row)
-        body.addWidget(self.vision_fields)
-        body.addWidget(self.vision_status)
-        self.vision_same_radio.toggled.connect(self._vision_mode_changed)
-        self._vision_mode_changed()
-        return card
-
-    def _vision_mode_changed(self) -> None:
-        separate = self.vision_separate_radio.isChecked()
-        self.vision_fields.setVisible(separate)
-        status = self._vision_view["status"]
-        if separate:
-            _set_status(self.vision_status, "", "muted")
-        elif status.get("ok"):
-            _set_status(self.vision_status,
-                        i18n.tr('将沿用翻译连接：{v0} · {v1}',
-                                v0=status.get("model") or "", v1=status.get("provider") or ""),
-                        "ok")
-        else:
-            _set_status(self.vision_status,
-                        i18n.tr('视觉连接尚不可用：{v0}', v0=i18n.tr_dynamic(status.get("message") or "")),
-                        "muted")
+    def _build_vision_selector(self) -> QWidget:
+        self._vision_view = adapter.vision_connection_view()
+        self.vision_connection_box = style_module.ComboBox()
+        self.vision_connection_box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.vision_connection_box.setMinimumContentsLength(12)
+        model_box = self.connection_library.make_model_selector("vision")
+        self.connection_library.fill_selector(self.vision_connection_box, "vision")
+        self.vision_connection_box.currentIndexChanged.connect(
+            lambda _i: self.connection_library.select("vision"))
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.vision_connection_box, 1)
+        row.addWidget(model_box, 1)
+        return _field(i18n.tr('视觉模型'), holder)
 
     def _vision_form(self) -> dict:
-        return {"provider": self.vision_provider_box.currentText().strip(),
-                "model": self.vision_model_edit.text().strip(),
-                "api_key": self.vision_key_edit.text().strip(),
-                "base_url": self.vision_base_edit.text().strip(),
-                "max_tokens": int(self.vision_tokens_box.value()),
-                "reasoning_mode": str(self.vision_reasoning_box.currentData()
-                                      or "provider_default")}
+        selected = self.connection_library.roles.get("vision")
+        profile = next((p for p in self.connection_library.profiles
+                        if p["id"] == selected), None)
+        if not profile:
+            return {}
+        from folith.model_connections import environment_key
+        return {"provider": profile["provider"],
+                "model": self.connection_library.role_models.get("vision") or profile["model"],
+                "api_key": profile.get("api_key") or environment_key(profile["provider"]),
+                "base_url": profile.get("base_url", ""),
+                "max_tokens": self._vision_view["max_tokens"],
+                "reasoning_mode": self._vision_view["reasoning_mode"]}
 
     def _vision_changed(self) -> bool:
-        view = self._vision_view
-        if self.vision_separate_radio.isChecked() != bool(view["dedicated"]):
-            return True
-        if not view["dedicated"]:
-            return False
         form = self._vision_form()
-        return bool(form["api_key"]) or any(
-            form[key] != view[key] for key in
-            ("provider", "model", "base_url", "max_tokens", "reasoning_mode"))
+        if not form:
+            return bool(self._vision_view["dedicated"])
+        stored = adapter.core.load_ocr_online_config() or {}
+        return any(form.get(k) != stored.get(k) for k in
+                   ("provider", "model", "api_key", "base_url"))
 
     def _vision_problem(self) -> str:
-        """保存前的检查：选了"单独配置"就必须配完整。"""
-        if not self.vision_separate_radio.isChecked():
-            return ""
         form = self._vision_form()
+        if not form:
+            return ""
         return adapter.vision_connection_problem(
             provider=form["provider"], model=form["model"], api_key=form["api_key"],
-            has_saved_key=bool(self._vision_view["has_key"]))
+            has_saved_key=False)
 
     def _apply_vision(self) -> None:
-        """把视觉连接落盘（改过才写）。失败抛 ``AdapterError``。"""
         if not self._vision_changed():
             return
-        if self.vision_separate_radio.isChecked():
-            self._vision_view = adapter.save_vision_connection(**self._vision_form())
+        form = self._vision_form()
+        if form:
+            self._vision_view = adapter.save_vision_connection(**form)
         else:
             self._vision_view = adapter.clear_vision_connection()
 
@@ -872,13 +679,29 @@ class EngineDialog(QDialog):
         # 顺序与译前面板一致：来源是主决定，语言/mode 是它的参数。
         body.addWidget(_field(i18n.tr('提取来源'), self.ocr_backend_box))
         body.addWidget(_field(i18n.tr('何时识别'), self.ocr_mode_box))
-        body.addWidget(_field(i18n.tr('识别语言'), self.ocr_language_box))
+        self.ocr_language_row = _field(i18n.tr('识别语言'), self.ocr_language_box)
+        body.addWidget(self.ocr_language_row)
+        self._scan_body = body
 
-        notice = style_module.NoticeStrip(
-            i18n.tr('选「本机 OCR」时需要本机或随包安装 Tesseract 语言包，Beta 基线为 eng / chi_sim / ara，'
-                    '缺少时会明确报错、不会静默改用英语。默认的「视觉理解」不需要语言包。'), tone="info")
+        command = adapter.core._find_tesseract()
+        local_index = self.ocr_backend_box.findData("tesseract")
+        if local_index >= 0:
+            self.ocr_backend_box.model().item(local_index).setEnabled(bool(command))
+        if command:
+            info = QLabel("Tesseract " + adapter.core._ocr_backend_version("tesseract", command)
+                          + " · " + ", ".join(adapter.core.installed_ocr_languages()))
+            info.setWordWrap(True)
+            self.ocr_local_info = info
+            body.addWidget(info)
+        else:
+            install = QPushButton(i18n.tr('如何安装…'))
+            from .settings_pages import _open_url
+            install.clicked.connect(lambda: _open_url(
+                "https://tesseract-ocr.github.io/tessdoc/Installation.html"))
+            body.addWidget(install)
+            if self.ocr_backend_box.currentData() == "tesseract":
+                self.ocr_backend_box.setCurrentIndex(self.ocr_backend_box.findData("online"))
         page_layout.addWidget(ocr_card)
-        page_layout.addWidget(notice)
         return page
 
     def _build_appearance_tab(self) -> QWidget:
@@ -890,21 +713,22 @@ class EngineDialog(QDialog):
             i18n.tr('界面主题'),
             i18n.tr('「跟随系统」随 macOS 浅色/深色外观自动切换。所有主题共用同一份品牌配色，切换不会影响已导入的任务与译文。'))
         self.theme_box = style_module.ComboBox()
-        for name in (theme_module.FOLLOW_SYSTEM, *theme_module.theme_names()):
-            self.theme_box.addItem(theme_module.label(name), name)
+        for name in (theme_module.FOLLOW_SYSTEM, "light", "dark"):
+            self.theme_box.addItem(i18n.tr(theme_module.label(name)), name)
         index = self.theme_box.findData(self.theme_preference)
-        self.theme_box.setCurrentIndex(index if index >= 0 else 0)
-        self.theme_box.currentIndexChanged.connect(self._sync_theme_cards)
-        previews = self._build_theme_previews()
-        body.addWidget(_field(i18n.tr('主题'), self.theme_box))
-        body.addWidget(_field(i18n.tr('预览'), previews, i18n.tr('点一张色卡即可选中对应主题。')))
+        self.theme_box.setCurrentIndex(max(0, index))
+        body.addWidget(_field(i18n.tr('外观'), self.theme_box))
+        self.accent_box = style_module.ComboBox()
+        for name, label in (("blue", "蓝色"), ("green", "翠绿"), ("slate", "石板色")):
+            self.accent_box.addItem(i18n.tr(label), name)
+        body.addWidget(_field(i18n.tr('主题（高光色）'), self.accent_box))
 
         self.language_box = style_module.ComboBox()
         for code, label in i18n.available_languages():
             self.language_box.addItem(label, code)
         self._select_language(self.language_preference)
         body.addWidget(_field(
-            i18n.tr('界面语言'), self.language_box,
+            i18n.tr('界面语言（重启后生效）'), self.language_box,
             i18n.tr('非中文界面为实验功能（尚未完成独立的语言审阅）。切换后重启应用，整个窗口才会换成新语言；阿拉伯语会整体从右到左排版。')))
         page_layout.addWidget(card)
 
@@ -930,80 +754,6 @@ class EngineDialog(QDialog):
         if hasattr(self, "language_box"):
             self._select_language(self.language_preference)
 
-    def _build_theme_previews(self) -> QWidget:
-        """三张可点选的色卡：颜色直接取自 token，不写死。
-
-        此前色卡是"只能用来看"的方框——它长得像按钮却不是按钮，点了没有反应。
-        现在每张卡就是主题选择器：选中态用 accent 描边（状态由 `_sync_theme_cards`
-        跟随下拉框同步），下拉框仍然是保存时的唯一真值。
-
-        ⚠️ 卡片尺寸由 :data:`style.THEME_CARD` 与 QSS 的 ``#themeCard`` 共同约束
-        （QSS 的 min-height 会覆盖 setFixedSize，见 style.py 注释）。内边距 / 间隙 /
-        色块高度全部取自同一份常量，主题名不再贴着色块，也不会被裁掉。
-        """
-        spec = style_module.THEME_CARD
-        holder = QWidget()
-        row = QHBoxLayout(holder)
-        row.setContentsMargins(0, 0, 0, theme_module.SPACE["xs"])
-        row.setSpacing(10)
-        self._theme_cards: dict[str, QPushButton] = {}
-        for name in theme_module.theme_names():
-            tokens = theme_module.tokens(name)
-            card = QPushButton()
-            card.setObjectName("themeCard")
-            card.setCheckable(True)
-            card.setFixedSize(spec["width"], spec["height"])
-            card.setCursor(Qt.CursorShape.PointingHandCursor)
-            card.setToolTip(i18n.tr('使用「{v0}」主题', v0=theme_module.label(name)))
-            card.clicked.connect(
-                lambda _checked=False, value=name: self._pick_theme(value))
-            inner = QVBoxLayout(card)
-            inner.setContentsMargins(spec["pad"], spec["pad"], spec["pad"], spec["pad"])
-            inner.setSpacing(spec["gap"])
-            swatch = QFrame()
-            swatch.setFixedHeight(spec["swatch"])
-            swatch.setStyleSheet(
-                f"QFrame {{ background: {tokens['bg-surface']};"
-                f" border: 1px solid {tokens['border-subtle']};"
-                f" border-radius: {theme_module.RADIUS['md']}px; }}")
-            swatch_layout = QVBoxLayout(swatch)
-            swatch_layout.setContentsMargins(8, 8, 8, 8)
-            swatch_layout.setSpacing(0)
-            accent = QFrame()
-            accent.setFixedHeight(spec["accent"])
-            accent.setStyleSheet(
-                f"QFrame {{ background: {tokens['accent']}; border: none;"
-                f" border-radius: {theme_module.RADIUS['sm']}px; }}")
-            swatch_layout.addWidget(accent)
-            caption = QLabel(theme_module.label(name))
-            caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            # 说明文字用**当前主题**的文字色：卡片本身长在当前主题的面上，
-            # 只有色块才用被预览主题的 token（否则浅色模式下"夜间"这张卡的
-            # 主题名会拿夜间的浅灰字，落在白底上几乎看不见——真实截图实测）。
-            caption.setStyleSheet(
-                f"QLabel {{ color: {style_module.text_color('text-secondary')};"
-                f" font-size: {theme_module.FONT_SIZES['caption']}px;"
-                f" background: transparent; }}")
-            inner.addWidget(swatch)
-            inner.addWidget(caption)
-            row.addWidget(card)
-            self._theme_cards[name] = card
-        row.addStretch(1)
-        self._sync_theme_cards()
-        return holder
-
-    def _pick_theme(self, name: str) -> None:
-        index = self.theme_box.findData(name)
-        if index >= 0:
-            self.theme_box.setCurrentIndex(index)
-
-    def _sync_theme_cards(self, *_args) -> None:
-        """下拉框 -> 色卡选中态（保存仍以下拉框的 data 为准）。"""
-        current = str(self.theme_box.currentData() or "")
-        for name, card in getattr(self, "_theme_cards", {}).items():
-            card.setChecked(name == current)
-
-    # -- behaviour ---------------------------------------------------------
     def set_academic_preference(self, on: bool) -> None:
         """窗口把**当前**偏好带进对话框（原因同 set_language_preference）。"""
         self.academic_preference = bool(on)
@@ -1032,15 +782,6 @@ class EngineDialog(QDialog):
         else:
             self.base_edit.setToolTip(i18n.tr('留空使用该提供商的官方地址'))
 
-    def _reviewer_changed(self) -> None:
-        """同一模型时**整块收起**：四个灰输入框既不能用，又占着半个卡片。"""
-        separate = self.reviewer_separate_radio.isChecked()
-        self.reviewer_fields.setVisible(separate)
-        self.reviewer_fields.setEnabled(separate)
-        for widget in (self.reviewer_provider_box, self.reviewer_model_edit,
-                       self.reviewer_key_field, self.reviewer_base_edit):
-            widget.setEnabled(separate)
-
     #: 对话框真正**展示**的字段。其余字段必须原样保留——`_collect` 以前新建一份
     #: `EngineConfig` 只传这些字段，于是每次"打开设置 → 保存"都会把没展示的字段
     #: （翻译理论、风格规则、切分方式、并发数、标注、推理档位）静默重置成默认值。
@@ -1052,7 +793,7 @@ class EngineDialog(QDialog):
         "reviewer_base_url", "ocr_language", "ocr_mode", "ocr_backend",
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_terms_xlsx",
         "deliver_evidence", "deliver_pdf", "deliver_original_pdf",
-        "deliver_epub",
+        "deliver_epub", "connections", "connection_roles", "connection_models", "default_translation_mode",
     })
 
     def _collect(self) -> adapter.EngineConfig:
@@ -1072,12 +813,6 @@ class EngineDialog(QDialog):
             enable_understanding=self.understanding_box.isChecked(),
             enable_source_cleanup=self.cleanup_box.isChecked(),
             enable_report=self.report_box.isChecked(),
-            reviewer_mode="separate" if self.reviewer_separate_radio.isChecked()
-            else "same",
-            reviewer_provider=self.reviewer_provider_box.currentText().strip(),
-            reviewer_model=self.reviewer_model_edit.text().strip(),
-            reviewer_api_key=self.reviewer_key_edit.text().strip(),
-            reviewer_base_url=self.reviewer_base_edit.text().strip(),
             # 当前模型提供推理强度选项时才取对话框里的选择；不提供时这一项没有显示，
             # 保留原值（核心对不支持的模型会忽略它），不能被一次"保存"悄悄清掉。
             reasoning_effort=str(self.reasoning_box.currentData() or "")
@@ -1105,7 +840,19 @@ class EngineDialog(QDialog):
         config.deliver_pdf = self.deliver_pdf_box.isChecked()
         config.deliver_original_pdf = self.deliver_original_pdf_box.isChecked()
         config.deliver_epub = self.deliver_epub_box.isChecked()
-        return config
+        config.default_translation_mode = str(self.default_mode_box.currentData() or "标准")
+        from folith.model_connections import effective_config
+        config.connection_models = dict(self.connection_library.role_models)
+        return effective_config(config, self.connection_library.profiles,
+                                self.connection_library.roles)
+
+    def _editor_config(self):
+        from folith.model_connections import environment_key
+        provider = self.provider_box.currentText()
+        return dataclasses.replace(self.config, provider=provider, reviewer_mode="same",
+            model=self.model_box.currentText().strip(),
+            api_key=self.key_edit.text().strip() or environment_key(provider),
+            base_url=self.base_edit.text().strip())
 
     def _save(self) -> None:
         vision_problem = self._vision_problem()
@@ -1148,7 +895,7 @@ class EngineDialog(QDialog):
         self.accept()
 
     def _test_connection(self) -> None:
-        config = self._collect()
+        config = self._editor_config()
         self.test_button.setEnabled(False)
         _set_status(self.test_label, "正在测试…")
 
@@ -1164,6 +911,7 @@ class EngineDialog(QDialog):
             connection_status.record("translation", config, ok, message)
             # 标题下的状态行按**已保存**的配置显示；测的是界面上的值，一致时才会变成「已连接」。
             self.refresh_connection_states()
+            self.connection_library.refresh()
 
         def failed(message: str, _detail: str) -> None:
             self.test_button.setEnabled(True)
@@ -1195,37 +943,9 @@ class EngineDialog(QDialog):
         self.reasoning_box.blockSignals(False)
         self.reasoning_row.setVisible(bool(options))
 
-    def _fetch_reviewer_models(self) -> None:
-        """审校模型也能像翻译模型一样从服务商拉取列表，选一个填进去。"""
-        provider = self.reviewer_provider_box.currentText().strip()
-        api_key = self.reviewer_key_edit.text().strip() or self.key_edit.text().strip()
-        base_url = self.reviewer_base_edit.text().strip()
-        self.reviewer_fetch_button.setEnabled(False)
-
-        def done(result) -> None:
-            ok, models, message = result
-            self.reviewer_fetch_button.setEnabled(True)
-            if not ok or not models:
-                _set_status(self.test_label, str(message), "danger")
-                return
-            menu = QMenu(self.reviewer_fetch_button)
-            for name in models:
-                action = menu.addAction(str(name))
-                action.triggered.connect(
-                    lambda _checked=False, text=str(name): self.reviewer_model_edit.setText(text))
-            menu.popup(self.reviewer_fetch_button.mapToGlobal(
-                self.reviewer_fetch_button.rect().bottomLeft()))
-
-        def failed(message: str, _detail: str) -> None:
-            self.reviewer_fetch_button.setEnabled(True)
-            _set_status(self.test_label, f"获取失败：{message}", "danger")
-
-        self.runner.submit(adapter.provider_models, provider, api_key, base_url,
-                           on_done=done, on_error=failed, label="fetch-reviewer-models")
-
     def _fetch_models(self) -> None:
         provider = self.provider_box.currentText().strip()
-        api_key = self.key_edit.text().strip()
+        api_key = self._editor_config().api_key
         base_url = self.base_edit.text().strip()
         self.fetch_button.setEnabled(False)
         _set_status(self.test_label, "正在获取模型列表…")
@@ -1239,6 +959,8 @@ class EngineDialog(QDialog):
                 self.model_box.clear()
                 self.model_box.addItems([str(item) for item in models])
                 self.model_box.setCurrentText(current or str(models[0]))
+                known = [m.strip() for m in self.connection_library.models.text().split(",") if m.strip()]
+                self.connection_library.models.setText(", ".join(dict.fromkeys(known + [str(m) for m in models])))
 
         def failed(message: str, _detail: str) -> None:
             self.fetch_button.setEnabled(True)

@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import time
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,6 +120,11 @@ class EngineConfig:
     deliver_evidence: bool = True
     deliver_review_report: bool = False
 
+    default_translation_mode: str = "标准"
+    connections: list[dict] = field(default_factory=list)
+    connection_roles: dict[str, str] = field(default_factory=dict)
+    connection_models: dict[str, str] = field(default_factory=dict)
+
     # -- persistence -------------------------------------------------------
     @classmethod
     def load(cls) -> "EngineConfig":
@@ -138,18 +144,78 @@ class EngineConfig:
             cfg.reviewer_model = str(reviewer.get("model") or "")
             cfg.reviewer_api_key = str(reviewer.get("api_key") or "")
             cfg.reviewer_base_url = str(reviewer.get("base_url") or "")
-        return cfg
+        cfg.connections = list(saved.get("connections") or [])
+        cfg.connection_roles = dict(saved.get("connection_roles") or {})
+        cfg.connection_models = dict(saved.get("connection_models") or {})
+        cfg.ensure_connections()
+        from folith.model_connections import effective_config
+        return effective_config(cfg, cfg.connections, cfg.connection_roles)
+
+    def ensure_connections(self):
+        # Migrate existing connections in memory; the next explicit save writes
+        # the library to the same private file as the active configuration.
+        targets = {"translation": {k: getattr(self, k) for k in
+                   ("provider", "model", "api_key", "base_url")}}
+        if self.reviewer_mode != "separate":
+            self.connection_roles["reviewer"] = ""
+        if self.reviewer_mode == "separate":
+            targets["reviewer"] = {
+                "provider": self.reviewer_provider, "model": self.reviewer_model,
+                "api_key": (self.reviewer_api_key if self.connection_roles.get("reviewer")
+                            else self.reviewer_api_key or self.api_key),
+                "base_url": (self.reviewer_base_url if self.connection_roles.get("reviewer")
+                             else self.reviewer_base_url or (
+                                 self.base_url if self.reviewer_provider == self.provider else ""))}
+        vision = core.load_ocr_online_config() or {}
+        if vision:
+            targets["vision"] = vision
+        else:
+            self.connection_roles["vision"] = ""
+        for role, target in targets.items():
+            if not target.get("provider") or not target.get("model"):
+                continue
+            selected = next((c for c in self.connections
+                             if c.get("id") == self.connection_roles.get(role)), None)
+            if selected:
+                from folith.model_connections import environment_key
+                same = all(selected.get(k, "") == target.get(k, "")
+                           for k in ("provider", "base_url"))
+                same = same and (self.connection_models.get(role) or selected["model"]) == target["model"]
+                key = selected.get("api_key") or environment_key(selected["provider"])
+                if same and (selected.get("api_key", "") == target.get("api_key", "")
+                             or key == target.get("api_key", "")):
+                    continue
+            match = next((c for c in self.connections if all(
+                c.get(k, "") == target.get(k, "")
+                for k in ("provider", "model", "api_key", "base_url"))), None)
+            if match is None:
+                import uuid
+                match = {k: str(target.get(k) or "") for k in
+                         ("provider", "model", "api_key", "base_url")}
+                match.update(id=uuid.uuid4().hex, name=match["provider"],
+                             models=[match["model"]], custom=match["provider"] == "自定义中转站")
+                if role == "translation":
+                    match["reasoning_effort"] = self.reasoning_effort
+                self.connections.append(match)
+            self.connection_roles[role] = match["id"]
+            self.connection_models[role] = target["model"]
+        return self
 
     def save(self) -> Path:
+        selected = {role: next((c for c in self.connections
+                    if c["id"] == self.connection_roles.get(role)), {})
+                    for role in ("translation", "reviewer")}
         return core.save_provider_config(
-            self.provider, self.model, self.api_key,
+            self.provider, self.model, selected["translation"].get("api_key", self.api_key),
             base_url=self.base_url or None,
             reasoning_effort=self.reasoning_effort or None,
+            connections=self.connections, connection_roles=self.connection_roles,
+            connection_models=self.connection_models,
             reviewer=(
                 {"provider": self.reviewer_provider,
                  "model": self.reviewer_model,
-                 "api_key": self.reviewer_api_key,
-                 "base_url": self.reviewer_base_url}
+                 "api_key": selected["reviewer"].get("api_key", self.reviewer_api_key),
+                 "base_url": selected["reviewer"].get("base_url", self.reviewer_base_url)}
                 if self.reviewer_mode == "separate"
                 and self.reviewer_provider and self.reviewer_model else None),
         )
@@ -201,6 +267,13 @@ class EngineConfig:
             return "尚未填写模型名称"
         if not str(self.api_key or "").strip():
             return "尚未填写 API Key"
+        if self.reviewer_mode == "separate" and self.connection_roles.get("reviewer"):
+            if not self.reviewer_api_key:
+                return "审校模型缺少 API 密钥"
+            try:
+                core.resolve_openai_base_url(self.reviewer_provider, self.reviewer_base_url)
+            except ValueError as exc:
+                return str(exc)
         try:
             self.translator_base_url()
         except ValueError as exc:
@@ -528,11 +601,37 @@ def start_job(
     problem = config.connection_problem()
     if problem:
         raise AdapterError(problem)
+    state = load_state(job_id)
+    saved_pipeline = state.get("pipeline_config") or {}
+    requested = (state.get("ocr_backend_requested") or saved_pipeline.get("ocr_backend")
+                 or state.get("ocr_backend") or config.ocr_backend)
+    fallback = requested == "tesseract" and not core._find_tesseract()
+    notice = "本机 OCR 不可用，本次改用视觉理解"
+    if fallback:
+        def use_vision(latest):
+            latest["ocr_backend_requested"] = "tesseract"
+            latest["ocr_backend"] = "online"
+            if latest.get("pipeline_config"):
+                latest["pipeline_config"]["ocr_backend"] = "online"
+            latest["ocr_fallback_notice"] = notice
+        core.mutate_job_state(job_id, use_vision)
+        config = dataclasses.replace(config, ocr_backend="online")
+    elif state.get("ocr_backend_requested"):
+        def restore_local(latest):
+            latest["ocr_backend"] = latest.pop("ocr_backend_requested")
+            if latest.get("pipeline_config"):
+                latest["pipeline_config"]["ocr_backend"] = latest["ocr_backend"]
+            latest.pop("ocr_fallback_notice", None)
+        core.mutate_job_state(job_id, restore_local)
     try:
-        return _commands.start_job(
+        started = _commands.start_job(
             job_id, settings_sources(config, {}, user_defaults=user_defaults),
             filename=filename, file_bytes=file_bytes,
             project_id=project_id, target_lang=target_lang)
+        if fallback:
+            core._append_runtime_event(job_id, {"event": "ocr_backend_fallback", "message": notice},
+                                       visibility="user", category="extraction")
+        return started
     except _commands.ApplicationError as exc:
         # The desktop client keeps its own error type and message; the decision
         # itself belongs to the shared application command.
@@ -3929,8 +4028,9 @@ def task_setup_view(config: EngineConfig, job_id: str,
     saved_preset = str(state.get("strategy_preset") or "")
     pending = not started and not saved_preset
     if pending:
-        strategy = dict(_task_setup.STRATEGY_PRESETS["标准"])
-        preset = "标准"
+        preset = config.default_translation_mode if config.default_translation_mode in (
+            "快速", "标准", "学术增强") else "标准"
+        strategy = dict(_task_setup.STRATEGY_PRESETS[preset])
         delivery = dict(_task_setup.DELIVERY_PRESET_CONFIGS["standard"])
     else:
         strategy = {

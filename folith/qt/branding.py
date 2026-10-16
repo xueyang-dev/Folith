@@ -24,12 +24,8 @@ LOGO_FALLBACKS = ("folith/resources/brand/folith-lockup-transparent.png",
                   "folith/resources/brand/folith-logo-stacked.png")
 #: 只有图形、不含文字的标记。侧栏/页头里和文字 lockup 并排使用——
 #: 直接把整幅字标（自带品牌名）和文字放一起会出现"Folith 出现两次"的重复感。
-MARK_BY_THEME = {
-    "dark": "folith/resources/brand/_mono-on-dark.png",
-    "light": "folith/resources/brand/_mono-on-light.png",
-    "paper": "folith/resources/brand/_mono-on-light.png",
-    "green": "folith/resources/brand/_mono-on-light.png",
-}
+MARK_BY_THEME = dict.fromkeys(("light", "dark", "paper", "green"),
+                             "folith/resources/brand/folith-mark-hires.png")
 MARK_FALLBACKS = ("folith/resources/brand/foliothread-favicon.png",
                   "folith/resources/brand/foliothread-logo.png")
 
@@ -52,7 +48,7 @@ def app_icon():
 
 
 @lru_cache(maxsize=8)
-def mark_pixmap(height: int = 28, theme: str = "light"):
+def mark_pixmap(height: int = 28, theme: str = "light", *, tint: str | None = None):
     """只有图形的品牌标记（用于和文字 lockup 并排），缺失时退回字标。"""
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QPixmap
@@ -65,8 +61,12 @@ def mark_pixmap(height: int = 28, theme: str = "light"):
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
             continue
-        return pixmap.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
-    return logo_pixmap(height, theme)
+        pixmap = pixmap.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+        if tint:
+            stops = LOGO_RAMPS.get(theme)
+            return ramp_pixmap(pixmap, stops) if stops else tint_pixmap(pixmap, tint)
+        return pixmap
+    return logo_pixmap(height, theme, tint=tint)
 
 
 #: 资源图里品牌蓝的色相（`#004cfd`）。着色时以它为"原点"：目标色与它同色相，

@@ -82,7 +82,7 @@ def test_settings_is_a_non_modal_window_with_six_titled_pages(app):
     assert defaults.isAncestorOf(dialog.academic_box)
     assert not dialog.pages["general"].widget().isAncestorOf(dialog.academic_box)
     # 视觉连接与扫描件识别是单独一页。
-    assert dialog.pages["vision"].widget().isAncestorOf(dialog.vision_same_radio)
+    assert dialog.pages["vision"].widget().isAncestorOf(dialog.vision_connection_box)
     assert dialog.pages["vision"].widget().isAncestorOf(dialog.ocr_backend_box)
     dialog.close()
 
@@ -108,7 +108,8 @@ def test_apply_tests_the_connection_first(app, monkeypatch):
     dialog = dialogs.EngineDialog(_config(), _SyncRunner())
     applied = []
     dialog.connectionApplied.connect(lambda: applied.append(True))
-    dialog.model_box.setCurrentText("m2")
+    dialog.connection_library.profiles[0]["model"] = "m2"
+    dialog.connection_library.role_models["translation"] = "m2"
     dialog.apply_connection()
     assert saved == [] and applied == [], "a failing connection is not saved"
     assert "HTTP 401" in dialog._status.text()

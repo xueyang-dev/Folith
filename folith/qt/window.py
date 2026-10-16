@@ -452,6 +452,7 @@ class MainWindow(QMainWindow):
     ACADEMIC_KEY = "workspace/academic_mode"
     THEME_KEY = "appearance/theme"
     LANGUAGE_KEY = "appearance/language"
+    ACCENT_KEY = "appearance/accent"
 
     #: Task defaults the settings dialog actually exposes.  They are *client*
     #: preferences: a new task is created from them, and an existing task keeps
@@ -463,7 +464,7 @@ class MainWindow(QMainWindow):
     TASK_DEFAULT_KEYS = ("target_lang", "auto_term", "enable_review", "use_tm",
                          "enable_understanding", "enable_source_cleanup",
                          "enable_report", "ocr_language", "ocr_mode",
-                         "ocr_backend")
+                         "ocr_backend", "default_translation_mode")
     TASK_DEFAULT_BOOL_KEYS = frozenset({
         "auto_term", "enable_review", "use_tm", "enable_understanding",
         "enable_source_cleanup", "enable_report"})
@@ -488,6 +489,11 @@ class MainWindow(QMainWindow):
         """按偏好（含"跟随系统"）应用主题，返回实际生效的主题名。"""
         preference = str(self.settings.value(self.THEME_KEY,
                                             theme_module.FOLLOW_SYSTEM))
+        accent = str(self.settings.value(self.ACCENT_KEY,
+                       "green" if preference == "green" else "slate" if preference == "paper" else "blue"))
+        if preference in ("paper", "green"):
+            preference = "light"
+        theme_module.set_accent(accent)
         resolved = style_module.apply_theme(
             QApplication.instance(), preference,
             system_dark=self._system_dark())
@@ -590,8 +596,12 @@ class MainWindow(QMainWindow):
             self._connection_panel.settingsRequested.connect(self._connection_settings)
             self._connection_panel.changed.connect(self.refresh_engine_label)
             self._connection_popover = components.Popover(
-                i18n.tr('模型连接'), self._connection_panel, self)
+                i18n.tr('模型连接'), self._connection_panel, self, size=QSize(390, 210))
+        self._connection_panel.usage_state = (self.workbench._state
+            if self._current_job_id and self.workbench.job_id == self._current_job_id else {})
         self._connection_panel.refresh()
+        self._connection_popover._popup_size = QSize(390,
+            self._connection_panel.sizeHint().height() + 72)
         self._connection_popover.open_at(self.home.engine_card)
 
     def _connection_settings(self, page: str) -> None:
@@ -1679,6 +1689,12 @@ class MainWindow(QMainWindow):
                          else i18n.tr('另一个任务正在启动，请等它启动后再开始这个任务。'))
             return
         config, defaults = self.config, dict(self.stored_task_defaults)
+        state = self.workbench._state if self.workbench.job_id == job_id else {}
+        requested_ocr = (state.get("ocr_backend_requested")
+                         or (state.get("pipeline_config") or {}).get("ocr_backend")
+                         or state.get("ocr_backend") or config.ocr_backend)
+        if requested_ocr == "tesseract" and not adapter.core._find_tesseract():
+            self._notice(i18n.tr('本机 OCR 不可用，本次改用视觉理解'), job_id=job_id)
         self._starting_jobs.add(job_id)
         busy = components.ButtonActivity(
             [self.workbench.start_button, self.workbench.setup_panel.start_button],
@@ -1699,14 +1715,16 @@ class MainWindow(QMainWindow):
 
             adapter.core.mutate_job_state(job_id, apply_delivery)
             state = adapter.load_state(job_id)
-            return adapter.start_job(job_id, str(state.get("filename") or "当前任务"),
-                                     source if not state.get("p1_done") else None,
-                                     config, user_defaults=defaults)
+            result = adapter.start_job(job_id, str(state.get("filename") or "当前任务"),
+                                       source if not state.get("p1_done") else None,
+                                       config, user_defaults=defaults)
+            latest = adapter.load_state(job_id)
+            return result, str(latest.get("ocr_fallback_notice") or "")
 
         def done(_result) -> None:
             self._starting_jobs.discard(job_id)
             busy.close()
-            self._notice(i18n.tr('任务已启动'), job_id=job_id)
+            self._notice(i18n.tr_dynamic(_result[1]) if _result[1] else i18n.tr('任务已启动'), job_id=job_id)
             self.refresh_workbench(force=True)
 
         def failed(message: str, detail: str) -> None:
@@ -2849,6 +2867,9 @@ class MainWindow(QMainWindow):
         dialog.set_language_preference(str(self.settings.value(
             self.LANGUAGE_KEY, i18n.DEFAULT_LANGUAGE)))
         dialog.set_academic_preference(self.academic_mode())
+        dialog.accent_box.setCurrentIndex(max(0, dialog.accent_box.findData(str(
+            self.settings.value(self.ACCENT_KEY, "green" if self.settings.value(self.THEME_KEY) == "green"
+                                else "slate" if self.settings.value(self.THEME_KEY) == "paper" else "blue")))))
         dialog._loading = False
         dialog.preferencesChanged.connect(lambda: self._settings_preferences(dialog))
         dialog.connectionApplied.connect(lambda: self._settings_connection(dialog))
@@ -2939,7 +2960,10 @@ class MainWindow(QMainWindow):
         self.config = dataclasses.replace(dialog.config, **{
             name: getattr(self.config, name) for name in dialog.CONNECTION_FIELDS})
         self._save_client_defaults()
-        if str(self.settings.value(self.THEME_KEY, "")) != dialog.theme_preference:
+        accent = str(dialog.accent_box.currentData() or "blue")
+        accent_changed = str(self.settings.value(self.ACCENT_KEY, "blue")) != accent
+        self.settings.setValue(self.ACCENT_KEY, accent)
+        if accent_changed or str(self.settings.value(self.THEME_KEY, "")) != dialog.theme_preference:
             self.settings.setValue(self.THEME_KEY, dialog.theme_preference)
             self.apply_theme_preference()
         previous_language = i18n.language()

@@ -1506,6 +1506,10 @@ class TaskSetupPanel(QWidget):
             self._fill_combo(self.ocr_mode_box, self._choices.get("ocr_modes") or [])
             self._fill_combo(self.ocr_backend_box,
                              self._choices.get("ocr_backends") or [])
+            local_index = self.ocr_backend_box.findData("tesseract")
+            if local_index >= 0:
+                from . import adapter
+                self.ocr_backend_box.model().item(local_index).setEnabled(bool(adapter.core._find_tesseract()))
             self._fill_combo(self.ocr_quality_box,
                              self._choices.get("ocr_quality") or [])
             self.theory_box.clear()

@@ -54,7 +54,7 @@ FONT_SIZES = {
     "body": 13,       # 正文、按钮、输入框（macOS 正文字号）
     "reading": 14,    # 阅读区：段落网格、原文浮层、译文编辑框
     "card": 17,       # 卡片 / 面板 / 条目标题（600）
-    "nav": 17,        # 侧栏导航
+    "nav": 13,        # 侧栏导航
     "section": 17,    # 区块标题（600）——与卡片标题同档，页面里不再有第三层标题
     "title": 22,      # 页面 / 对话框标题（700）
     "display": 28,    # 展示标题（首页空状态、继续上次的工作）
@@ -120,11 +120,38 @@ def resolve(theme: str | None, *, system_dark: bool = False) -> str:
     return "dark" if system_dark else "light"
 
 
+_accent = "blue"
+
+
+def set_accent(name: str) -> None:
+    global _accent
+    _accent = name if name in ("blue", "green", "slate") else "blue"
+    tokens.cache_clear()
+
+
 @lru_cache(maxsize=8)
 def tokens(theme: str) -> dict[str, str]:
     """某一套主题的 token（未知主题名回退到日间）。"""
     name = theme if theme in THEME_ORDER else "light"
-    return dict(theme_tokens.TOKENS[name])
+    result = dict(theme_tokens.TOKENS[name])
+    if _accent != "blue" and name in ("light", "dark"):
+        source = theme_tokens.TOKENS["green" if _accent == "green" else "paper"]
+        keys = [k for k in result if k.startswith("accent") or k.startswith("hero")]
+        keys += ["text-on-accent", "text-on-hero", "focus-ring", "focus-halo"]
+        for key in keys:
+            result[key] = source[key]
+        if name == "dark":
+            colour = qcolor(source["accent"]).lighter(190)
+            result["accent"] = colour.name()
+            result["accent-hover"] = colour.lighter(110).name()
+            result["accent-active"] = colour.lighter(120).name()
+            result["accent-soft"] = f"rgba({colour.red()},{colour.green()},{colour.blue()},.16)"
+            result["accent-soft-hover"] = f"rgba({colour.red()},{colour.green()},{colour.blue()},.24)"
+            result["accent-border"] = f"rgba({colour.red()},{colour.green()},{colour.blue()},.34)"
+            result["focus-ring"] = f"rgba({colour.red()},{colour.green()},{colour.blue()},.30)"
+            result["focus-halo"] = f"rgba({colour.red()},{colour.green()},{colour.blue()},.22)"
+        result["bg-selected"] = result["accent-soft"]
+    return result
 
 
 def label(theme: str) -> str:

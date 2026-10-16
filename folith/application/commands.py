@@ -230,6 +230,9 @@ def apply_task_setup(
         # The panel's own round-trip keys: the resolver reads some of them back,
         # the rest only let the panel reopen with the user's choices intact.
         explicit = dict(as_settings_sources(values).explicit or {})
+        if "ocr_backend" in explicit:
+            state.pop("ocr_backend_requested", None)
+            state.pop("ocr_fallback_notice", None)
         for key in PANEL_STATE_KEYS:
             if key in explicit and explicit[key] is not None:
                 state[key] = explicit[key]

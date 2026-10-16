@@ -1253,10 +1253,19 @@ def test_window_theme_preference_round_trips(client):
     window = client["window"]
     app = client["app"]
 
-    for name in theme.theme_names():
+    for name in ("light", "dark"):
         window.settings.setValue(window.THEME_KEY, name)
         assert window.apply_theme_preference() == name
         assert theme.tokens(name)["accent"] in app.styleSheet()
+    # Previous combined themes become daytime with their own accent color.
+    for previous, accent in (("paper", "slate"), ("green", "green")):
+        window.settings.remove(window.ACCENT_KEY)
+        window.settings.setValue(window.THEME_KEY, previous)
+        assert window.apply_theme_preference() == "light"
+        dialog = window._settings_form()
+        assert dialog.theme_box.currentData() == "light"
+        assert dialog.accent_box.currentData() == accent
+        dialog.close()
 
     # "跟随系统" persists as the preference and resolves for the current system.
     window.settings.setValue(window.THEME_KEY, theme.FOLLOW_SYSTEM)
@@ -1866,11 +1875,15 @@ def test_saving_settings_never_resets_fields_the_dialog_does_not_show(client):
         assert getattr(collected, name) == value, \
             f"{name} 被设置对话框重置了：{getattr(collected, name)!r} != {value!r}"
 
-    # 展示的字段仍然按界面取值生效。
+    # 新模型表单先保存到连接库，才会用于任务；其余默认值直接取控件。
+    dialog.connection_library.kind.set_value("custom")
+    dialog.connection_library.change_kind("custom")
+    dialog.connection_library.provider_id.setText("test-api")
     dialog.provider_box.setCurrentText("自定义中转站")
     dialog.model_box.setCurrentText("demo-model")
     dialog.key_edit.setText("demo-key")
     dialog.base_edit.setText("http://127.0.0.1:9/v1")
+    dialog.connection_library.save()
     dialog.cleanup_box.setChecked(True)
     dialog.deliver_pdf_box.setChecked(True)
     collected = dialog._collect()

@@ -678,7 +678,8 @@ class HomeView(QWidget):
         style_module.set_button(self.import_button, "primary")
         self.import_button.setIcon(icons.icon("upload", 18, "text-on-hero"))
         self.import_button.setIconSize(QSize(18, 18))
-        self.import_button.setMinimumHeight(40)
+        self.import_button.setMinimumHeight(48)
+        self.import_button.setStyleSheet("font-size: 14px; font-weight: 600; min-height: 38px; padding: 4px 10px;")
         self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.import_button.clicked.connect(self.importRequested.emit)
         style_module.fit_button(self.import_button, max_width=self.SIDEBAR_WIDTH - 24)
@@ -784,7 +785,11 @@ class HomeView(QWidget):
         side.addSpacing(theme_module.SPACE["xs"])
         logo_row = QHBoxLayout()
         logo_row.setContentsMargins(theme_module.SPACE["md"] + 1, 0, 0, 0)
-        logo_row.addWidget(self._logo_label, 0, Qt.AlignmentFlag.AlignLeft)
+        self._brand_mark = QLabel()
+        self._brand_mark.setPixmap(branding.mark_pixmap(30, current_theme(), tint=(
+            None if current_theme() == "light" else theme_module.tokens(current_theme())["accent"])))
+        logo_row.addWidget(self._brand_mark, 0, Qt.AlignmentFlag.AlignVCenter)
+        logo_row.addWidget(self._logo_label, 1)
         logo_row.addStretch(1)
         side.addLayout(logo_row)
         side.addSpacing(theme_module.SPACE["md"])
@@ -816,6 +821,7 @@ class HomeView(QWidget):
         self.stats_line.setObjectName("statsLine")
         self.stats_line.setTextFormat(Qt.TextFormat.RichText)
         self.stats_line.setVisible(False)
+        self.stats_line.linkActivated.connect(self._status_filter_changed)
         title_box.addWidget(self.stats_line)
 
         self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
@@ -1014,8 +1020,10 @@ class HomeView(QWidget):
         actions.addWidget(self.status_label)
 
         # 任务区块 = 一张容器卡：头部条（标题 + 状态筛选 + 视图/项目/排序） + 列表 + 脚注。
-        self.list_card = components.SectionCard(i18n.tr('其他任务'))
+        self.list_card = components.SectionCard("")
         self.list_card.setObjectName("plainSection")
+        self.list_card.title_label.hide()
+        self.list_card.header_layout.takeAt(1)
         # 其他任务直接放在页面上（卡片里的卡片会多出一层无意义的面）：不画面也不画影。
         self.list_card.set_elevation("flat")
         self.list_card.set_fill("bg-page")
@@ -1152,7 +1160,7 @@ class HomeView(QWidget):
         row.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["md"],
                                theme_module.SPACE["xl"], theme_module.SPACE["md"])
         row.setSpacing(theme_module.SPACE["xl"])
-        self.continue_paper = components.DocThumb(80, 104)
+        self.continue_paper = components.DocThumb(44, 58)
         row.addWidget(self.continue_paper, 0, Qt.AlignmentFlag.AlignVCenter)
         text = QVBoxLayout()
         text.setSpacing(theme_module.SPACE["xs"])
@@ -1182,13 +1190,11 @@ class HomeView(QWidget):
         text.addWidget(eyebrow)
         text.addWidget(self.continue_title)
         text.addWidget(self.continue_meta)
-        text.addSpacing(theme_module.SPACE["xxs"])
         text.addWidget(self.continue_stage)
-        text.addWidget(self.continue_status)
+        self.continue_status.hide()
         text.addWidget(self.continue_progress)
-        text.addSpacing(theme_module.SPACE["sm"])
-        text.addLayout(buttons)
         row.addLayout(text, 1)
+        row.addLayout(buttons)
         card.setVisible(False)
         return card
 
@@ -1205,7 +1211,7 @@ class HomeView(QWidget):
         row = self._continue_candidate()
         # 搜索/筛选时它会和结果打架：只在"看全部"时出现。
         show = (row is not None and not self.search_edit.text().strip()
-                and self._status_key == "all")
+                and self._status_key == "all" and self.height() >= 720)
         self.continue_card.setVisible(show)
         if not show:
             self._continue_job_id = ""
@@ -1342,6 +1348,7 @@ class HomeView(QWidget):
 
     def _status_filter_changed(self, key: str) -> None:
         self._status_key = key or "all"
+        self.status_filter.set_value("" if self._status_key == "attention" else self._status_key)
         self._apply_filter()
 
     def _matches_status(self, row: adapter.JobRow) -> bool:
@@ -1352,6 +1359,8 @@ class HomeView(QWidget):
             return bool(getattr(row, "snapshot_version", None))
         if key == "errored":
             return bool(str(getattr(row, "error", "") or "").strip())
+        if key == "attention":
+            return bool(row.attention_count)
         return True
 
     def set_status(self, text: str) -> None:
@@ -1429,16 +1438,23 @@ class HomeView(QWidget):
         theme = current_theme()
         if theme == self._logo_theme:
             return
-        # 字标自带品牌名与标语，所以侧栏不再重复写文字。
-        # 高度 LOGO_HEIGHT（逻辑像素）：字标宽高比 3.62，52px 高 ≈ 188px 宽，正好铺满
-        # 232px 侧栏的内容区（208px）；按设备像素比出图，Retina 屏上不发糊。
-        ratio = max(1.0, float(self.devicePixelRatioF()))
-        # 日间的界面主色与 logo 分开了（logo 仍是钴蓝）：日间不着色，logo 与原图逐像素一致。
-        tint = None if theme == "light" else theme_module.tokens(theme)["accent"]
-        logo = branding.logo_pixmap(round(self.LOGO_HEIGHT * ratio), theme, tint=tint)
-        if not logo.isNull():
-            logo.setDevicePixelRatio(ratio)
-            self._logo_label.setPixmap(logo)
+        names = {
+            "zh-CN": ("Folith · 译页", "智能体翻译工作台"),
+            "en": ("Folith", "Agentic Translation Workspace"),
+            "ar": ("فوليث · صفحة الترجمة", "مساحة عمل الترجمة بالوكلاء"),
+            "ru": ("Фолит · Страница перевода", "Рабочая среда агентного перевода"),
+            "es": ("Fólit · Página de traducción", "Espacio de traducción con agentes"),
+        }
+        from html import escape
+        name, tagline = names.get(i18n.language(), names["en"])
+        self._logo_label.setText(f"<b>{escape(name)}</b><br><span style='font-size:10px'>"
+                                 f"{escape(tagline)}</span>")
+        self._logo_label.setWordWrap(True)
+        self._logo_label.setMinimumHeight(self.LOGO_HEIGHT)
+        self._logo_label.setMaximumWidth(self.SIDEBAR_WIDTH - 78)
+        if hasattr(self, "_brand_mark"):
+            self._brand_mark.setPixmap(branding.mark_pixmap(30, theme, tint=(
+                None if theme == "light" else theme_module.tokens(theme)["accent"])))
         self._logo_theme = theme
 
     def _sync_stats_line(self, scope, active, delivered) -> None:
@@ -1449,17 +1465,18 @@ class HomeView(QWidget):
             return
         attention = [row for row in scope if int(getattr(row, "attention_count", 0) or 0)]
 
-        def part(template: str, value: int) -> str:
+        def part(template: str, value: int, key: str) -> str:
             number = f"<b style='color:{style_module.text_color('text-primary')}'>{value:,}</b>"
-            return i18n.tr(template, v0="\x00").replace("\x00", number)
+            text = i18n.tr(template, v0="\x00").replace("\x00", number)
+            return f'<a href="{key}" style="color:inherit;text-decoration:none">{text}</a>'
 
-        parts = [part('{v0} 个任务', len(scope))]
+        parts = [part('{v0} 个任务', len(scope), 'all')]
         if active:
-            parts.append(part('{v0} 个进行中', len(active)))
+            parts.append(part('{v0} 个进行中', len(active), 'active'))
         if delivered:
-            parts.append(part('{v0} 个已交付', len(delivered)))
+            parts.append(part('{v0} 个已交付', len(delivered), 'delivered'))
         if attention:
-            parts.append(part('{v0} 个需要处理', len(attention)))
+            parts.append(part('{v0} 个需要处理', len(attention), 'attention'))
         self.stats_line.setText(" · ".join(parts))
         self.stats_line.setVisible(True)
         self.subtitle.setVisible(False)
@@ -1488,13 +1505,13 @@ class HomeView(QWidget):
                              hint=i18n.tr('来自 {v0} 个任务', v0=issue_jobs) if issue_total else i18n.tr('一切正常'))
         self.stats.set_value("delivered", len(delivered), emphasis="default" if delivered else "muted",
                              hint=i18n.tr('有错误 {v0}', v0=len(errored)) if errored else "")
-        self.stats.setVisible(bool(scope))
+        self.stats.setVisible(False)
         for key, count in (("all", len(scope)), ("active", len(active)),
                            ("delivered", len(delivered)), ("errored", len(errored))):
             button = self.status_filter.button(key)
             if button is not None:
                 label = self._status_labels[key]
-                button.setText(f"{label}  {count}" if count else label)
+                button.setText(label)
         self._refresh_continue()
         self.table.setRowCount(rows_count)
         for row_index, row in enumerate(rows):
@@ -1594,6 +1611,7 @@ class HomeView(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         """窗口宽度跨过断点时重排卡片：否则列数会和可用宽度脱节。"""
         super().resizeEvent(event)
+        self._refresh_continue()
         self._relayout_cards()
 
     def _relayout_cards(self) -> None:

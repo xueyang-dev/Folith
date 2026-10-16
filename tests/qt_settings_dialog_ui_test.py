@@ -81,51 +81,47 @@ def test_every_checkbox_uses_the_painted_checkmark_widget(app):
         dialog.close()
 
 
-def test_reviewer_fields_are_hidden_until_separate_mode(app):
-    same = _dialog(app)
+def test_reviewer_chooses_a_saved_connection(app):
+    dialog = _dialog(app, provider="OpenAI", model="translation-model", api_key="key")
     try:
-        assert same.reviewer_fields.isHidden() is True
-        assert same.reviewer_same_radio.isChecked() is True
+        library = dialog.connection_library
+        assert library.selectors["reviewer"].currentData() == ""
+        assert dialog._collect().reviewer_mode == "same"
+        profile = dict(library.profiles[0], id="review", name="Review",
+                       model="review-model", api_key="review-key")
+        library.profiles.append(profile)
+        library.refresh()
+        selector = library.selectors["reviewer"]
+        selector.setCurrentIndex(selector.findData("review"))
+        collected = dialog._collect()
+        assert collected.reviewer_mode == "separate"
+        assert collected.reviewer_model == "review-model"
+        assert collected.reviewer_api_key == "review-key"
+        selector.setCurrentIndex(0)
+        assert dialog._collect().reviewer_mode == "same"
     finally:
-        same.close()
-
-    separate = _dialog(app, reviewer_mode="separate")
-    try:
-        assert separate.reviewer_fields.isHidden() is False
-        assert separate.reviewer_separate_radio.isChecked() is True
-        # 切回同一模型必须收起，而不是留下四个灰输入框。
-        separate.reviewer_same_radio.setChecked(True)
-        app.processEvents()
-        assert separate.reviewer_fields.isHidden() is True
-        assert separate._collect().reviewer_mode == "same"
-        separate.reviewer_separate_radio.setChecked(True)
-        app.processEvents()
-        assert separate._collect().reviewer_mode == "separate"
-    finally:
-        separate.close()
+        dialog.close()
 
 
-def test_theme_cards_are_clickable_and_keep_token_colours(app):
+def test_appearance_and_accent_are_independent(app):
     dialog = _dialog(app)
     try:
-        previews = dialog._build_theme_previews()
+        assert [dialog.theme_box.itemData(i) for i in range(dialog.theme_box.count())] == [
+            "system", "light", "dark"]
         dialog.theme_box.setCurrentIndex(dialog.theme_box.findData("dark"))
-        app.processEvents()
-        assert dialog._theme_cards["dark"].isChecked() is True
-        assert dialog._theme_cards["light"].isChecked() is False
-
-        dialog._pick_theme("paper")
-        app.processEvents()
-        assert dialog.theme_box.currentData() == "paper"
-        assert dialog._theme_cards["paper"].isChecked() is True
-
-        blob = " ".join(child.styleSheet()
-                        for child in previews.findChildren(type(previews)))
-        for name in theme.theme_names():
-            tokens = theme.tokens(name)
-            assert tokens["accent"] in blob, name
-            assert tokens["bg-surface"] in blob, name
+        dialog.accent_box.setCurrentIndex(dialog.accent_box.findData("green"))
+        dialog.flush_preferences()
+        assert dialog.theme_preference == "dark"
+        before = theme.tokens("dark")
+        theme.set_accent("green")
+        after = theme.tokens("dark")
+        assert after["accent"] != before["accent"]
+        assert before["bg-selected"] != after["bg-selected"]
+        assert before["focus-ring"] != after["focus-ring"]
+        assert all(before[key] == after[key] for key in before
+                   if key.startswith("bg-") and key != "bg-selected")
     finally:
+        theme.set_accent("blue")
         dialog.close()
 
 

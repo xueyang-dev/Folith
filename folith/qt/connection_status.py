@@ -47,7 +47,8 @@ def endpoint(role: str, config: adapter.EngineConfig) -> dict | None:
         if config.reviewer_mode != "separate" or not config.reviewer_provider:
             return None
         return {"provider": config.reviewer_provider, "model": config.reviewer_model,
-                "api_key": config.reviewer_api_key or config.api_key,
+                "api_key": (config.reviewer_api_key if config.connection_roles.get("reviewer")
+                            else config.reviewer_api_key or config.api_key),
                 "base_url": config.reviewer_base_url
                 or (config.base_url if config.reviewer_provider == config.provider else "")}
     if role == "vision":

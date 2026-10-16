@@ -125,44 +125,47 @@ def dialog(app):
     dlg.close()
 
 
-def test_dialog_hides_the_dedicated_fields_by_default(dialog):
-    assert dialog.vision_same_radio.isChecked()
-    assert dialog.vision_fields.isHidden()
+def test_dialog_defaults_to_translation_with_no_duplicate_credential_form(dialog):
+    assert dialog.vision_connection_box.currentData() == ""
+    assert not hasattr(dialog, "vision_key_edit")
     assert not dialog._vision_changed()
 
 
-def test_dialog_shows_fields_when_choosing_a_dedicated_model(dialog):
-    dialog.vision_separate_radio.setChecked(True)
-    assert not dialog.vision_fields.isHidden()
+def _choose_vision(dialog, *, model="vision-x", key="sk-dialog"):
+    profile = {"id": "vision", "name": "Vision", "provider": _provider(),
+               "model": model, "models": [model], "api_key": key, "base_url": ""}
+    dialog.connection_library.profiles.append(profile)
+    dialog.connection_library.refresh()
+    combo = dialog.vision_connection_box
+    combo.setCurrentIndex(combo.findData("vision"))
+
+
+def test_dialog_chooses_a_dedicated_saved_connection(dialog):
+    _choose_vision(dialog)
     assert dialog._vision_changed()
-    assert dialog._vision_problem(), "没配完整就不能保存"
+    assert dialog._vision_problem() == ""
 
 
 def test_dialog_save_writes_the_vision_connection_only_when_it_changed(dialog, isolated_output):
     dialog._apply_vision()
     assert not core.ocr_online_config_path().exists(), "没改过不应写文件"
-    dialog.vision_separate_radio.setChecked(True)
-    dialog.vision_provider_box.setCurrentText(_provider())
-    dialog.vision_model_edit.setText("vision-x")
-    dialog.vision_key_edit.setText("sk-dialog")
-    assert dialog._vision_problem() == ""
+    _choose_vision(dialog)
     dialog._apply_vision()
     assert json.loads(core.ocr_online_config_path().read_text(encoding="utf-8"))["model"] == "vision-x"
+    assert not dialog._vision_changed()
 
 
 def test_dialog_switching_back_clears_the_saved_connection(dialog, isolated_output):
     adapter.save_vision_connection(provider=_provider(), model="m", api_key="k")
     dialog._vision_view = adapter.vision_connection_view()
-    dialog.vision_separate_radio.setChecked(False)
-    dialog.vision_same_radio.setChecked(True)
     assert dialog._vision_changed()
     dialog._apply_vision()
     assert not core.ocr_online_config_path().exists()
 
 
 def test_dialog_refuses_to_save_an_incomplete_dedicated_connection(dialog, isolated_output):
-    dialog.vision_separate_radio.setChecked(True)
+    _choose_vision(dialog, model="", key="")
     dialog._save()
-    assert dialog.result() == 0, "对话框不能在配置不完整时被接受"
+    assert dialog.result() == 0
     assert not dialog._status.isHidden() and dialog._status.text()
     assert not core.ocr_online_config_path().exists()

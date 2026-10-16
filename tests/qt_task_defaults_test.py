@@ -340,6 +340,7 @@ def test_the_settings_dialog_collects_the_defaults_that_get_persisted(
     with isolated_settings(tmp_path, monkeypatch):
         dialog = EngineDialog(adapter.EngineConfig(), TaskRunner())
         dialog.target_box.setCurrentText("English")
+        dialog.default_mode_box.setCurrentIndex(dialog.default_mode_box.findData("快速"))
         dialog.auto_term_box.setChecked(False)
         dialog.review_box.setChecked(False)
         dialog.tm_box.setChecked(False)
@@ -357,6 +358,7 @@ def test_the_settings_dialog_collects_the_defaults_that_get_persisted(
         reloaded._load_client_defaults()
 
     assert restarted.target_lang == "English"
+    assert restarted.default_translation_mode == "快速"
     assert restarted.auto_term is False
     assert restarted.enable_review is False
     assert restarted.use_tm is False

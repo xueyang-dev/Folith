@@ -227,7 +227,10 @@ def test_search_bar_hint_hides_while_typing(app):
 
 def test_sidebar_logo_is_large_enough_to_read(home):
     assert home.LOGO_HEIGHT >= 48
-    assert home._logo_label.pixmap().height() >= 48
+    assert "Folith" in home._logo_label.text()
+    assert "智能体翻译工作台" in home._logo_label.text()
+    assert "Agentic Translation Workspace" not in home._logo_label.text()
+    assert not home._brand_mark.pixmap().isNull()
 
 
 def test_filter_chips_use_the_pill_skin(app):
@@ -281,10 +284,10 @@ def test_logo_follows_the_theme_accent(app):
 def test_home_sidebar_logo_is_tinted_per_theme(app):
     style.apply_theme(app, "light")
     light_view = views.HomeView()
-    light_hue = _hue(light_view._logo_label.pixmap())
+    light_hue = _hue(light_view._brand_mark.pixmap())
     style.apply_theme(app, "green")
     green_view = views.HomeView()
-    assert _hue(green_view._logo_label.pixmap()) < light_hue - 0.1
+    assert _hue(green_view._brand_mark.pixmap()) < light_hue - 0.1
     style.apply_theme(app, "light")
     light_view.deleteLater()
     green_view.deleteLater()
@@ -311,7 +314,7 @@ def test_day_sidebar_logo_is_the_untouched_asset(app):
 
     style.apply_theme(app, "light")
     view = views.HomeView()
-    shown = view._logo_label.pixmap()
-    original = branding.logo_pixmap(shown.height(), "light")
+    shown = view._brand_mark.pixmap()
+    original = branding.mark_pixmap(shown.height(), "light")
     assert shown.toImage().convertToFormat(original.toImage().format()) == original.toImage()
     view.deleteLater()

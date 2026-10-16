@@ -486,7 +486,7 @@ QPushButton#navProject {{
     background: transparent; border: 1px solid transparent;
     border-radius: {r['sm']}px; padding: {sp['xs']}px {sp['md']}px;
     min-height: {36 - 2 * sp['xs'] - 2}px; text-align: left; color: {t['text-secondary']};
-    font-size: {f['card']}px; font-weight: 500;
+    font-size: {f['body']}px; font-weight: 500;
 }}
 QPushButton#navProject:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 QPushButton#navProject:checked {{
@@ -542,10 +542,7 @@ QToolButton#roundButton:pressed {{ background: {t['bg-selected']}; }}
 QToolButton#roundButton:focus {{ border-color: {t['accent']}; }}
 QToolButton#roundButton:checked {{ background: {t['accent-soft']}; border-color: {t['accent-border']}; }}
 /* 轻浮窗（运行记录、任务详情）：Qt.Popup，点外面 / Esc 关闭。 */
-QFrame#popover {{
-    background: {t['bg-surface-raised']}; border: 1px solid {t['border-subtle']};
-    border-radius: {r['md']}px;
-}}
+QFrame#popover {{ background: transparent; border: none; }}
 QFrame#popover QListWidget {{ background: transparent; border: none; }}
 QFrame#popover QScrollArea, QFrame#popover QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 QFrame#followupDrawer {{ background: {t['bg-surface']}; border: none; }}

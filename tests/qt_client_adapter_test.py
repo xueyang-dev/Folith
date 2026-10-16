@@ -2136,7 +2136,7 @@ def test_every_dialog_field_reaches_the_core_with_a_key_it_accepts(adapter_env):
                               if name.startswith("deliver_")}
     # `reviewer_mode` 是**客户端开关**：它只决定是否发送 reviewer_* 那一组键
     # （核心靠这些键是否存在判断"独立审校"），本身不是核心参数。
-    control_only = {"reviewer_mode"}
+    control_only = {"reviewer_mode", "connections", "connection_roles", "connection_models", "default_translation_mode"}
     for field in sorted(EngineDialog.OWNED_FIELDS):
         if field in delivered_in_container:
             assert (kwargs.get("delivery_config") or {}), "交付格式必须进入 delivery_config"

@@ -260,6 +260,9 @@ class AboutPage(QWidget):
             label = style_module.field_label(caption)
             grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(button, row, 1, Qt.AlignmentFlag.AlignLeft)
+        self.email_link = _link("xydev@outlook.sa")
+        self.email_link.clicked.connect(lambda: _open_url("mailto:xydev@outlook.sa"))
+        grid.addWidget(self.email_link, 3, 1, Qt.AlignmentFlag.AlignLeft)
         grid.setColumnStretch(1, 1)
         links_body.addLayout(grid)
         layout.addWidget(links)
@@ -421,18 +424,40 @@ class ConnectionPanel(QWidget):
             head.addWidget(title, 1)
             head.addWidget(open_settings)
             head.addWidget(test)
-            block = QVBoxLayout()
+            container = QWidget()
+            block = QVBoxLayout(container)
+            block.setContentsMargins(0, 0, 0, 0)
             block.setSpacing(2)
             block.addLayout(head)
             block.addWidget(message)
-            layout.addLayout(block)
-            self._rows[role] = {"dot": dot, "message": message, "test": test}
+            layout.addWidget(container)
+            self._rows[role] = {"dot": dot, "message": message, "test": test,
+                                "title": title, "container": container}
+        self.usage = QLabel("")
+        self.usage.setObjectName("hint")
+        layout.addWidget(self.usage)
         self.refresh()
 
     def refresh(self) -> dict:
-        overview = connection_status.overview(self.config_getter())
+        config = self.config_getter()
+        overview = connection_status.overview(config)
+        seen = []
         for row in overview["rows"]:
             widgets = self._rows[row["role"]]
+            target = connection_status.endpoint(row["role"], config)
+            identity = dict(target) if target else None
+            if identity:
+                from folith.model_connections import connection_base_url
+                try:
+                    identity["base_url"] = connection_base_url(identity["provider"], identity["base_url"])
+                except ValueError:
+                    pass  # Missing configuration keeps its original status.
+            widgets["container"].setVisible(identity is not None and identity not in seen)
+            if target:
+                seen.append(identity)
+                widgets["title"].setText(target["model"] or i18n.tr(row["label"]))
+                widgets["title"].setObjectName("fieldLabel")
+                widgets["title"].setToolTip(i18n.tr(row["label"]) + " · " + target["provider"])
             widgets["dot"].setProperty("state", {"ok": "ok", "danger": "error",
                                                  "warning": "warn"}.get(row["tone"], "muted"))
             style_module.repolish(widgets["dot"])
@@ -445,7 +470,24 @@ class ConnectionPanel(QWidget):
             widgets["message"].setText(text)
             widgets["test"].setEnabled(row["state"] not in ("missing", "inherited")
                                        and row["role"] not in self._busy)
+        text = self.usage_text()
+        self.usage.setText(text)
+        self.usage.setVisible(bool(text))
         return overview
+
+    def usage_text(self):
+        # Current task is explicit and cheap: avoid loading every job on opening
+        # a small status card. Home has no selected task, so no usage is invented.
+        state = getattr(self, "usage_state", {}) or {}
+        ledger = state.get("llm_usage") or {}
+        if not ledger.get("calls"):
+            return ""
+        total = int(ledger.get("total_tokens") or 0)
+        estimate = int(ledger.get("estimated_total_tokens") or 0)
+        text = i18n.tr('本任务：{v0} tokens', v0=f"{total:,}")
+        if estimate:
+            text += " · " + i18n.tr('其中估算 {v0}', v0=f"{estimate:,}")
+        return text
 
     def test(self, role: str) -> None:
         config = self.config_getter()

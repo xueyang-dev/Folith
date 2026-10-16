@@ -1926,7 +1926,7 @@ class Popover(QFrame):
                  size: QSize = QSize(440, 380)) -> None:
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("popover")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(size)
         self._popup_size = QSize(size)
         self._motion = motion.Motion(self)
@@ -1964,6 +1964,17 @@ class Popover(QFrame):
         self.content = content
         layout.addWidget(content, 1)
 
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(9, 7, -9, -11)
+        radius = theme_module.RADIUS["md"]
+        painter.setPen(Qt.PenStyle.NoPen)
+        style_module.paint_elevation(painter, rect, radius, "floating")
+        painter.setBrush(theme_module.qcolor(_tokens()["bg-surface-raised"]))
+        painter.drawRoundedRect(rect, radius, radius)
+        painter.end()
+
     def set_subtitle(self, text: str) -> None:
         self.subtitle_label.setText(text)
         self.subtitle_label.setVisible(bool(text))
@@ -1987,7 +1998,7 @@ class Popover(QFrame):
         self._closing = False
         self._accept_close = False
         self._motion.stop("popup")
-        self.body.setGeometry(QRect(QPoint(0, 0), target.size()))
+        self.body.setGeometry(QRect(QPoint(0, 0), target.size()).adjusted(10, 10, -10, -10))
         self.body.hide()
         self.show()
         self.raise_()
