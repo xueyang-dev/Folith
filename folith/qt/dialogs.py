@@ -597,8 +597,8 @@ class EngineDialog(QDialog):
         return page
 
     def _mode_steps_html(self, preset: dict) -> str:
-        lit = style_module.text_color("accent")
-        dim = style_module.text_color("text-muted")
+        lit = style_module.html_color("accent")
+        dim = style_module.html_color("text-muted")
         parts = []
         for label, key in self.MODE_STEPS:
             colour = lit if preset.get(key) else dim

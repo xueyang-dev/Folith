@@ -495,3 +495,21 @@ def test_ampersand_in_a_sidebar_label_is_shown_not_eaten(app):
     assert QPushButton.text(button) == "Terms && memory"
     assert button.text() == "Terms & memory"
     button.close()
+
+
+def test_stats_line_redraws_its_colours_after_a_theme_change(isolated, app):
+    from folith.qt import style
+    home = views.HomeView()
+    rows = [adapter.JobRow(str(i), f"doc{i}.docx", None, "English", "翻译中", "", "running", 2,
+                           "", True) for i in range(2)]
+    style.apply_theme(app, "light"); views.set_current_theme("light")
+    home.set_rows(rows)
+    light = home.stats_line.text()
+    assert style.html_color("text-secondary") in light
+    style.apply_theme(app, "dark"); views.set_current_theme("dark")
+    for _ in range(5):
+        app.processEvents()
+    assert style.html_color("text-secondary") in home.stats_line.text()
+    assert "rgba" not in home.stats_line.text(), "Qt 富文本读不懂 rgba()"
+    style.apply_theme(app, "light"); views.set_current_theme("light")
+    home.close()

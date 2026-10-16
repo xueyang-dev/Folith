@@ -2333,10 +2333,16 @@ class OptionCard(QPushButton):
 
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         super().changeEvent(event)
-        if event.type() in (QEvent.Type.EnabledChange, QEvent.Type.StyleChange):
+        if event.type() == QEvent.Type.EnabledChange:
             self._sync()
+        elif event.type() == QEvent.Type.StyleChange:
+            QTimer.singleShot(0, self._sync)      # 主题名在样式表之后才改
 
     def _sync(self, *_args) -> None:
+        # 标题颜色在这里写：QSS 的「父控件 :checked 下的子标签」在夜间主题里不可靠。
+        title = ("accent" if self.isChecked() else "text-primary") if self.isEnabled() \
+            else "text-muted"
+        self.title_label.setStyleSheet(f"color: {style_module.html_color(title)};")
         if not self._icon_name:
             return
         token = ("accent" if self.isChecked() else "text-secondary") if self.isEnabled() \

@@ -1475,7 +1475,7 @@ class HomeView(QWidget):
         # 名称 15/600，副标题 11 次要色：两行以内（阶段 1 画布）。
         self._logo_label.setText(
             f"<span style='font-size:15px;font-weight:600'>{escape(name)}</span><br>"
-            f"<span style='font-size:11px;color:{style_module.text_color('text-secondary')}'>"
+            f"<span style='font-size:11px;color:{style_module.html_color('text-secondary')}'>"
             f"{escape(tagline)}</span>")
         self._logo_label.setWordWrap(True)
         self._logo_label.setMinimumHeight(self.LOGO_HEIGHT)
@@ -1485,18 +1485,39 @@ class HomeView(QWidget):
                 None if theme == "light" else theme_module.tokens(theme)["accent"])))
         self._logo_theme = theme
 
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        """换主题时，自己写了颜色的富文本（字标副标题、统计行）跟着重画。"""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.StyleChange and not getattr(self, "_restyle_pending", False):
+            # 样式表先换、当前主题名后改（window.apply_theme_preference）：下一轮再取颜色。
+            self._restyle_pending = True
+            QTimer.singleShot(0, self._restyle_rich_text)
+
+    def _restyle_rich_text(self) -> None:
+        self._restyle_pending = False
+        if hasattr(self, "_logo_label"):
+            self._refresh_logo()
+        if getattr(self, "_stats_args", None):
+            self._sync_stats_line(*self._stats_args)
+
     def _sync_stats_line(self, scope, active, delivered) -> None:
         """「12 个任务 · 3 个进行中 · 5 个已交付 · 2 个需要处理」：数字加粗，一眼读完。"""
+        self._stats_args = (scope, active, delivered)
         if not scope:
             self.stats_line.setVisible(False)
             self.subtitle.setVisible(True)
             return
         attention = [row for row in scope if int(getattr(row, "attention_count", 0) or 0)]
 
-        def part(template: str, value: int, key: str) -> str:
-            number = f"<b style='color:{style_module.text_color('text-primary')}'>{value:,}</b>"
+        # 链接不会继承标签的颜色（富文本里 inherit 落回调色板的默认链接色，夜间几乎看不见）：
+        # 显式写次要文字色。
+        secondary = style_module.html_color('text-secondary')
+
+        def part(template: str, value: int, key: str, colour: str = "") -> str:
+            ink = colour or style_module.html_color('text-primary')
+            number = f"<b style='color:{ink}'>{value:,}</b>"
             text = i18n.tr_n(template, value, v0="\x00").replace("\x00", number)
-            return f'<a href="{key}" style="color:inherit;text-decoration:none">{text}</a>'
+            return f'<a href="{key}" style="color:{colour or secondary};text-decoration:none">{text}</a>'
 
         parts = [part('{v0} 个任务', len(scope), 'all')]
         if active:
@@ -1504,7 +1525,8 @@ class HomeView(QWidget):
         if delivered:
             parts.append(part('{v0} 个已交付', len(delivered), 'delivered'))
         if attention:
-            parts.append(part('{v0} 个需要处理', len(attention), 'attention'))
+            parts.append(part('{v0} 个需要处理', len(attention), 'attention',
+                              style_module.html_color('warning')))
         self.stats_line.setText(" · ".join(parts))
         self.stats_line.setVisible(True)
         self.subtitle.setVisible(False)

@@ -1472,6 +1472,24 @@ def text_color(name: str = "text-primary") -> str:
     return theme_module.tokens(current_theme())[name]
 
 
+def html_color(name: str = "text-primary", over: str = "bg-surface") -> str:
+    """富文本里用的颜色：不透明的 ``#rrggbb``。
+
+    夜间的文字色是 ``rgba(…, .92)``；Qt 富文本解析不了这种写法，会退回黑色
+    （夜间统计行里的数字几乎看不见）。这里按透明度把它叠到底色上，换成实色。
+    """
+    tokens = theme_module.tokens(current_theme())
+    colour = theme_module.qcolor(tokens[name])
+    alpha = colour.alphaF()
+    if alpha >= 0.999:
+        return colour.name()
+    base = theme_module.qcolor(tokens.get(over, tokens["bg-surface"]))
+    mix = lambda a, b: round(a * alpha + b * (1 - alpha))  # noqa: E731
+    from PySide6.QtGui import QColor
+    return QColor(mix(colour.red(), base.red()), mix(colour.green(), base.green()),
+                  mix(colour.blue(), base.blue())).name()
+
+
 #: 折行中文段落的行高（%）。字体栈里拉丁字体在前，中文回退到苹方时沿用的是拉丁字体的
 #: 行距（约 1.2 倍），中文挤成一团；折行说明统一放宽到 1.5 倍（画布 E 层次 v2）。
 PARAGRAPH_LINE_HEIGHT = 150
