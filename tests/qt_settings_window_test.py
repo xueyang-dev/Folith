@@ -81,8 +81,8 @@ def test_settings_is_a_non_modal_window_with_six_titled_pages(app):
     defaults = dialog.pages["defaults"].widget()
     assert defaults.isAncestorOf(dialog.academic_box)
     assert not dialog.pages["general"].widget().isAncestorOf(dialog.academic_box)
-    # 视觉连接与扫描件识别是单独一页。
-    assert dialog.pages["vision"].widget().isAncestorOf(dialog.vision_connection_box)
+    # 视觉模型和翻译、审校一起在「模型 › 用途」里选；扫描件怎么读是单独一页。
+    assert dialog.pages["models"].widget().isAncestorOf(dialog.vision_connection_box)
     assert dialog.pages["vision"].widget().isAncestorOf(dialog.ocr_backend_box)
     dialog.close()
 
@@ -158,11 +158,12 @@ def test_connection_panel_tests_one_role(app, monkeypatch):
     panel = ConnectionPanel(_SyncRunner(), lambda: config)
     changed = []
     panel.changed.connect(lambda: changed.append(True))
-    assert panel._rows["reviewer"]["test"].isEnabled() is False, "inherited: nothing to test"
-    panel.test("translation")
+    assert panel._rows["reviewer"]["container"].isHidden(), "inherited: merged into translation"
+    panel.test_button.click()
     assert changed == [True]
     assert connection_status.status("translation", config)["state"] == "ok"
-    assert "上次测试" in panel._rows["translation"]["message"].text()
+    assert panel._rows["translation"]["state"].text() == "已连接"
+    assert "上次测试" in panel._rows["translation"]["container"].toolTip()
 
 
 # ----------------------------------------------------------------- 存储 -------

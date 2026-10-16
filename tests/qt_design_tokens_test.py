@@ -29,6 +29,8 @@ NON_ACTION_BUTTONS = {
     "iconButton", "navItem", "navProject", "segment", "presetOption", "themeCard",
     "settingsGroupHeader", "disclosureHeader", "jumpLatest", "stageUtility",
     "pill",  # 筛选芯片
+    "accentOption",  # 设置 · 通用的主题色点（取代主题色卡 themeCard）
+    "optionCard",    # 可点选的选项卡片：视觉与识别的读取方式、默认翻译方式（阶段 1 画布）
 }
 #: 固定尺寸的圆形/胶囊（圆点、单选环、滑块、角标、圆形按钮、阶段胶囊、搜索框、
 #: 筛选芯片）写的是半高，不属于圆角阶梯。

@@ -791,7 +791,7 @@ class ProjectTabs(QWidget):
 # Navigation
 # --------------------------------------------------------------------------
 def nav_item(label: str, icon_name: str, *, checkable: bool = False,
-             icon_size: int = 22) -> QPushButton:
+             icon_size: int = 18) -> QPushButton:
     """侧栏导航项：静止 = 次要色线性图标；选中 = 强调色双色图标 + 左侧强调条（QSS）。"""
     button = style_module.ElideButton(label)
     button.setObjectName("navItem")
@@ -1926,7 +1926,7 @@ class Popover(QFrame):
     closed = Signal()
 
     def __init__(self, title: str, content: QWidget, parent: QWidget | None = None, *,
-                 size: QSize = QSize(440, 380)) -> None:
+                 size: QSize = QSize(440, 380), header: bool = True) -> None:
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("popover")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -1963,7 +1963,15 @@ class Popover(QFrame):
         layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                   theme_module.SPACE["md"], theme_module.SPACE["md"])
         layout.setSpacing(theme_module.SPACE["sm"])
-        layout.addLayout(head)
+        if header:
+            layout.addLayout(head)
+        else:
+            # 小卡（侧栏连接浮窗）：内容自己说清楚是什么，点外面或 Esc 关闭，不要 ×。
+            for widget in (self.title_label, self.subtitle_label, self.close_button):
+                widget.setParent(self.body)
+                widget.hide()
+            layout.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"] + 2,
+                                      theme_module.SPACE["lg"], theme_module.SPACE["lg"])
         self.content = content
         layout.addWidget(content, 1)
 
@@ -1982,13 +1990,18 @@ class Popover(QFrame):
         self.subtitle_label.setText(text)
         self.subtitle_label.setVisible(bool(text))
 
-    def open_at(self, anchor: QWidget) -> None:
-        """Show below ``anchor``, right edges aligned, clamped to its screen."""
+    def open_at(self, anchor: QWidget, *, align: str = "right") -> None:
+        """Show below ``anchor`` (above it near the screen bottom), clamped to its screen.
+
+        ``align="right"`` lines up the right edges (toolbar buttons); ``"left"`` lines up
+        the left edges (the sidebar's connection row, whose card grows into the page).
+        """
         self.resize(self._popup_size)
         below = anchor.mapToGlobal(QPoint(anchor.width(), anchor.height() + 6))
         x, y = below.x() - self.width(), below.y()
-        if self.layoutDirection() == Qt.LayoutDirection.RightToLeft:
-            x = anchor.mapToGlobal(QPoint(0, 0)).x()
+        left_edge = (align == "left") != (self.layoutDirection() == Qt.LayoutDirection.RightToLeft)
+        if left_edge:
+            x = anchor.mapToGlobal(QPoint(0, 0)).x() - 10
         screen = anchor.screen() or QGuiApplication.primaryScreen()
         if screen is not None:
             area = screen.availableGeometry()
@@ -2267,6 +2280,145 @@ FORM_ROW_INSET = 40
 FORM_ROW_INSET_PLAIN = 12
 #: 分组行最小高度（标题一行时；带说明的行自然长高）。
 FORM_ROW_HEIGHT = 44
+
+
+class OptionCard(QPushButton):
+    """可点选的选项卡片：（图标 +）标题，下面一行细节（阶段 1 画布：视觉与识别、默认翻译方式）。
+
+    选中 = 强调色描边 + 强调色标题；不可用 = 浅底灰字，细节行里可以放链接（如「如何安装」）。
+    QPushButton 的 sizeHint 看不见内部布局，所以用布局的尺寸覆盖它。
+    """
+
+    def __init__(self, key: str, title: str, detail: str = "", icon: str = "",
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("optionCard")
+        self.setCheckable(True)
+        self.setAutoExclusive(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setAccessibleName(title)
+        self.key = str(key)
+        self._icon_name = icon
+        column = QVBoxLayout(self)
+        column.setContentsMargins(theme_module.SPACE["md"] + 2, theme_module.SPACE["sm"] + 2,
+                                  theme_module.SPACE["md"] + 2, theme_module.SPACE["sm"] + 2)
+        column.setSpacing(theme_module.SPACE["xxs"])
+        head = QHBoxLayout()
+        head.setSpacing(theme_module.SPACE["xs"] + 2)
+        self.icon_label = QLabel()
+        self.icon_label.setVisible(bool(icon))
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("optionTitle")
+        head.addWidget(self.icon_label)
+        head.addWidget(self.title_label, 1)
+        self.detail_label = QLabel(detail)
+        self.detail_label.setObjectName("optionDetail")
+        self.detail_label.setTextFormat(Qt.TextFormat.RichText)
+        # 长语言（俄、阿）里细节行会比卡片宽：折行，而不是把整页撑出横向滚动。
+        self.detail_label.setWordWrap(True)
+        self.detail_label.setMinimumWidth(1)
+        self.detail_label.setVisible(bool(detail))
+        column.addLayout(head)
+        column.addWidget(self.detail_label)
+        self.toggled.connect(self._sync)
+        self._sync()
+
+    def set_detail(self, html: str) -> None:
+        self.detail_label.setText(html)
+        self.detail_label.setVisible(bool(html))
+        self.updateGeometry()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.EnabledChange, QEvent.Type.StyleChange):
+            self._sync()
+
+    def _sync(self, *_args) -> None:
+        if not self._icon_name:
+            return
+        token = ("accent" if self.isChecked() else "text-secondary") if self.isEnabled() \
+            else "text-muted"
+        self.icon_label.setPixmap(icons.icon(self._icon_name, 15, token).pixmap(15, 15))
+
+    def setText(self, value: str) -> None:  # noqa: N802 - 文案由内部标签承担
+        return
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt 命名
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt 命名
+        return self.layout().totalHeightForWidth(width)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        hint = self.layout().sizeHint()
+        return QSize(min(hint.width(), 220), self.heightForWidth(min(hint.width(), 220)))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        return QSize(96, self.layout().minimumSize().height())
+
+
+class AccentPicker(QWidget):
+    """一排主题色点（色点 + 名称）：选中的那个外面多一圈同色描边（阶段 1 画布）。"""
+
+    changed = Signal(str)
+    DOT = 20
+
+    def __init__(self, options: list[tuple[str, str, str]], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(theme_module.SPACE["lg"])
+        self._buttons: dict[str, QPushButton] = {}
+        for key, label, colour in options:
+            button = QPushButton(label)
+            button.setObjectName("accentOption")
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setIcon(self._dot_icon(colour))
+            button.setIconSize(QSize(self.DOT + 6, self.DOT + 6))
+            button.toggled.connect(lambda on, value=key: on and self.changed.emit(value))
+            layout.addWidget(button)
+            self._buttons[key] = button
+        layout.addStretch(1)
+
+    def _dot_icon(self, colour: str) -> QIcon:
+        icon = QIcon()
+        size = self.DOT + 6
+        for state, ring in ((QIcon.State.Off, False), (QIcon.State.On, True)):
+            ratio = 2
+            pixmap = QPixmap(size * ratio, size * ratio)
+            pixmap.setDevicePixelRatio(ratio)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            fill = theme_module.qcolor(colour)
+            if ring:
+                painter.setPen(QPen(fill, 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(QRectF(1, 1, size - 2, size - 2))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(fill)
+            painter.drawEllipse(QRectF(3 + (0 if ring else 0), 3, size - 6, size - 6))
+            painter.end()
+            icon.addPixmap(pixmap, QIcon.Mode.Normal, state)
+        return icon
+
+    def value(self) -> str:
+        return next((key for key, button in self._buttons.items() if button.isChecked()), "")
+
+    def set_value(self, value: str) -> None:
+        button = self._buttons.get(value)
+        if button is not None and not button.isChecked():
+            button.blockSignals(True)
+            button.setChecked(True)
+            button.blockSignals(False)
+
+    def button(self, value: str) -> QPushButton | None:
+        return self._buttons.get(value)
 
 
 class FormRow(QWidget):

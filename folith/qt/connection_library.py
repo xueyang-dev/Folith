@@ -2,15 +2,31 @@
 from __future__ import annotations
 
 import uuid
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit
-from . import adapter, components, connection_status, i18n, style
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
+from . import adapter, components, connection_status, i18n, icons, style
+from . import theme as theme_module
 from folith.model_connections import effective_config
 
 
 class ConnectionLibrary(QWidget):
+    """设置 · 模型（阶段 1 画布）：「连接」列表 + 「用途」分组 + 一个「测试并保存」。
+
+    添加 / 编辑连接在一张单独的面板（:attr:`editor`）里，点「添加连接」或「编辑」才出现；
+    页面本身保持很短。编辑面板里的控件仍是设置窗口原来那几个（提供商、模型、密钥、
+    地址），测试连接和获取模型走的是与真正翻译相同的路径。
+    """
+
+    STATE_TEXT = {"ok": "已连接", "failed": "连接失败", "untested": "未测试",
+                  "missing": "未配置完整"}
+    STATE_TONE = {"ok": "done", "failed": "error", "untested": "attention",
+                  "missing": "attention"}
+    ROLES = (("translation", "翻译"), ("reviewer", "审校"), ("vision", "视觉"))
+
     def __init__(self, dialog):
         super().__init__()
-        from .dialogs import _panel, _field
+        from .dialogs import _setting_row
         self.dialog = dialog
         self.profiles = [dict(p) for p in dialog.config.connections]
         self.roles = dict(dialog.config.connection_roles)
@@ -21,80 +37,229 @@ class ConnectionLibrary(QWidget):
         self._pending_id = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.saved = QVBoxLayout()
-        layout.addLayout(self.saved)
-        role_card, body = _panel(i18n.tr('模型用途'))
+        layout.setSpacing(theme_module.SPACE["md"])
+
+        # ---- 连接列表 -------------------------------------------------------
+        self.add_button = QPushButton(i18n.tr('添加连接'))
+        style.set_button(self.add_button, "plain", small=True)
+        self.add_button.setIcon(icons.icon("plus", 14, "accent"))
+        self.add_button.setIconSize(QSize(14, 14))
+        self.add_button.clicked.connect(self.open_editor)
+        self.list_group = components.FormGroup()
+        layout.addWidget(self.list_group)
+
+        # ---- 用途：翻译 / 审校 / 视觉，各选一个已保存的连接和它的模型 ----------------
+        dialog._vision_view = adapter.vision_connection_view()
+        dialog.vision_connection_box = style.ComboBox()
         self.selectors = {}
-        for role in ("translation", "reviewer"):
-            box = style.ComboBox()
+        self.role_group = components.FormGroup()
+        self.role_group.add_row(self._group_header(i18n.tr('用途')))
+        for role, label in self.ROLES:
+            box = dialog.vision_connection_box if role == "vision" else style.ComboBox()
             box.setSizeAdjustPolicy(box.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             box.setMinimumContentsLength(12)
+            box.setAccessibleName(i18n.tr(connection_status.ROLE_LABELS[role]))
             box.currentIndexChanged.connect(lambda _i, r=role: self.select(r))
             model_box = self.make_model_selector(role)
-            holder = QWidget()
-            row = QHBoxLayout(holder)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(box, 1)
-            row.addWidget(model_box, 1)
-            body.addWidget(_field(i18n.tr(connection_status.ROLE_LABELS[role]), holder))
-            self.selectors[role] = box
-        body.addWidget(dialog._apply_row("models"))
-        layout.addWidget(role_card)
-        self.editor, body = _panel(i18n.tr('添加连接'))
-        self.kind = style.SegmentedControl([
-            ("catalog", i18n.tr('第三方模型提供商')), ("custom", i18n.tr('自定义模型 API'))])
-        self.kind.set_value("catalog")
-        self.kind.changed.connect(self.change_kind)
-        body.addWidget(self.kind)
-        self.provider_id = QLineEdit()
-        self.id_row = _field(i18n.tr('提供商 ID'), self.provider_id)
-        body.addWidget(self.id_row)
-        self.name = QLineEdit()
-        body.addWidget(_field(i18n.tr('显示名称'), self.name))
-        # The existing editor widgets keep connection testing/model discovery on
-        # the same adapter path as actual translation.
-        self.provider_row = _field(i18n.tr('模型提供商'), dialog.provider_box)
-        body.addWidget(self.provider_row)
-        body.addWidget(_field(i18n.tr('API 密钥'), dialog.key_field))
-        dialog.key_edit.setPlaceholderText(i18n.tr('留空使用环境变量认证'))
-        self.custom_settings = QPushButton(i18n.tr('自定义设置'))
-        self.custom_settings.setCheckable(True)
-        self.address_row = _field(i18n.tr('API 地址'), dialog.base_edit)
-        self.custom_settings.toggled.connect(self.address_row.setVisible)
-        body.addWidget(self.custom_settings)
-        body.addWidget(self.address_row)
-        self.protocol = style.ComboBox()
-        self.protocol.addItem("OpenAI Chat Completions", "openai_compat")
-        self.protocol_row = _field(i18n.tr('API 协议'), self.protocol)
-        body.addWidget(self.protocol_row)
-        row = QHBoxLayout()
-        row.addWidget(dialog.model_box, 1)
-        row.addWidget(dialog.fetch_button)
-        body.addWidget(style.field_label(i18n.tr('模型目录')))
-        body.addLayout(row)
-        self.models = QLineEdit()
-        self.models.setPlaceholderText(i18n.tr('多个模型用逗号分隔'))
-        body.addWidget(self.models)
-        add = QPushButton(i18n.tr('添加模型'))
-        add.clicked.connect(self.add_model)
-        body.addWidget(add)
-        body.addWidget(dialog.reasoning_row)
-        body.addWidget(dialog.test_button)
-        body.addWidget(dialog.test_label)
-        actions = QHBoxLayout()
-        cancel = QPushButton(i18n.tr('取消'))
-        cancel.clicked.connect(self.reset)
-        save = QPushButton(i18n.tr('保存'))
-        style.mark_primary(save)
-        save.clicked.connect(self.save)
-        actions.addStretch()
-        actions.addWidget(cancel)
-        actions.addWidget(save)
-        body.addLayout(actions)
-        layout.addWidget(self.editor)
+            if role != "vision":
+                self.selectors[role] = box
+            self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
+        layout.addWidget(self.role_group)
+        layout.addStretch(1)
+        layout.addWidget(dialog._apply_row("models"))
+
+        self._build_editor()
         self.refresh()
         self.reset()
         self._prefill_from_config()
+
+    @staticmethod
+    def _group_header(title, *controls):
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
+                               theme_module.SPACE["sm"], theme_module.SPACE["xs"])
+        label = QLabel(title)
+        style.set_text_role(label, "section")
+        row.addWidget(label, 1)
+        for control in controls:
+            row.addWidget(control)
+        return holder
+
+    # ---- 添加 / 编辑连接的面板 ------------------------------------------------------
+    def _build_editor(self):
+        from .dialogs import _setting_row
+        dialog = self.dialog
+        self.editor = QDialog(dialog)
+        self.editor.setObjectName("connectionEditor")
+        self.editor.setWindowTitle(i18n.tr('添加连接'))
+        self.editor.setModal(True)
+        self.editor.setMinimumWidth(520)
+        body = QVBoxLayout(self.editor)
+        body.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        body.setSpacing(theme_module.SPACE["md"])
+        self.editor_title = QLabel(i18n.tr('添加连接'))
+        style.set_text_role(self.editor_title, "card-title")
+        body.addWidget(self.editor_title)
+        self.kind = style.SegmentedControl([
+            ("catalog", i18n.tr('模型提供商')), ("custom", i18n.tr('自定义 API'))])
+        self.kind.set_value("catalog")
+        self.kind.changed.connect(self.change_kind)
+        body.addWidget(self.kind)
+
+        fields = components.FormGroup()
+        self.provider_row = _setting_row(i18n.tr('提供商'), dialog.provider_box)
+        dialog.provider_box.setMinimumWidth(240)
+        self.provider_id = QLineEdit()
+        self.provider_id.setMinimumWidth(240)
+        self.id_row = _setting_row(i18n.tr('提供商 ID'), self.provider_id)
+        self.name = QLineEdit()
+        self.name.setMinimumWidth(240)
+        self.name.setPlaceholderText(i18n.tr('留空则用提供商名'))
+        dialog.key_edit.setPlaceholderText(i18n.tr('留空则用环境变量'))
+        dialog.key_field.setMinimumWidth(240)
+        dialog.base_edit.setMinimumWidth(240)
+        dialog.base_edit.setPlaceholderText("http(s)://…/v1")
+        self.address_row = _setting_row(i18n.tr('API 地址'), dialog.base_edit)
+        self.protocol = style.ComboBox()
+        self.protocol.addItem("OpenAI Chat Completions", "openai_compat")
+        self.protocol_row = _setting_row(i18n.tr('API 协议'), self.protocol)
+        for row in (self.provider_row, self.id_row, _setting_row(i18n.tr('名称'), self.name),
+                    _setting_row(i18n.tr('API 密钥'), dialog.key_field),
+                    self.address_row, self.protocol_row):
+            fields.add_row(row)
+        body.addWidget(fields)
+        self.custom_settings = QPushButton(i18n.tr('使用其他 API 地址'))
+        self.custom_settings.setCheckable(True)
+        style.set_button(self.custom_settings, "plain", small=True)
+        self.custom_settings.toggled.connect(lambda on: self.address_row.setVisible(
+            on or self.kind.value() == "custom"))
+        body.addWidget(self.custom_settings, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # 模型目录：一列模型，选中的就是这个连接的默认模型；「获取可用模型」整列替换。
+        models_head = QHBoxLayout()
+        models_label = QLabel(i18n.tr('模型'))
+        style.set_text_role(models_label, "section")
+        models_head.addWidget(models_label, 1)
+        style.set_button(dialog.fetch_button, "plain", small=True)
+        models_head.addWidget(dialog.fetch_button)
+        body.addLayout(models_head)
+        self.model_list = QListWidget()
+        self.model_list.setObjectName("modelCatalog")
+        self.model_list.setMinimumHeight(132)
+        self.model_list.currentTextChanged.connect(
+            lambda text: text and dialog.model_box.currentText() != text
+            and dialog.model_box.setCurrentText(text))
+        body.addWidget(self.model_list)
+        manual = QHBoxLayout()
+        self.models = QLineEdit()
+        self.models.setPlaceholderText(i18n.tr('手动添加模型（多个用逗号分隔）'))
+        self.models.returnPressed.connect(self.add_model)
+        add = QPushButton(i18n.tr('添加'))
+        style.set_button(add, "secondary", small=True)
+        add.clicked.connect(self.add_model)
+        manual.addWidget(self.models, 1)
+        manual.addWidget(add)
+        body.addLayout(manual)
+        body.addWidget(dialog.reasoning_row)
+        dialog.model_box.setParent(self.editor)
+        dialog.model_box.hide()          # 数据模型：列表里看到的就是它的条目
+        model = dialog.model_box.model()
+        for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset):
+            signal.connect(lambda *_a: self._sync_model_list())
+        dialog.model_box.currentTextChanged.connect(lambda _t: self._sync_model_list())
+        dialog.test_button.setParent(self.editor)
+        dialog.test_button.hide()
+        body.addWidget(dialog.test_label)
+
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        cancel = QPushButton(i18n.tr('取消'))
+        cancel.clicked.connect(self.close_editor)
+        self.cancel_button = cancel
+        self.force_save_button = QPushButton(i18n.tr('仍然保存'))
+        self.force_save_button.setVisible(False)
+        self.force_save_button.clicked.connect(lambda: self.save() and self.close_editor())
+        self.save_button = QPushButton(i18n.tr('测试并添加'))
+        style.mark_primary(self.save_button)
+        self.save_button.clicked.connect(self.test_and_save)
+        footer.addWidget(cancel)
+        footer.addWidget(self.force_save_button)
+        footer.addWidget(self.save_button)
+        body.addLayout(footer)
+
+    def _sync_model_list(self):
+        box = self.dialog.model_box
+        items = [box.itemText(i) for i in range(box.count())]
+        current = box.currentText().strip()
+        if current and current not in items:
+            items.append(current)
+        self.model_list.blockSignals(True)
+        self.model_list.clear()
+        for name in items:
+            item = QListWidgetItem(name)
+            self.model_list.addItem(item)
+            if name == current:
+                # 选中的就是默认模型：前面一个强调色对勾（画布上的单选点）。
+                item.setIcon(icons.icon("check", 14, "accent"))
+                item.setToolTip(i18n.tr('默认模型'))
+                self.model_list.setCurrentItem(item)
+        self.model_list.blockSignals(False)
+
+    def open_editor(self, key=""):
+        if key:
+            self.edit(key)
+        else:
+            self.reset()
+        self._sync_model_list()
+        self.force_save_button.setVisible(False)
+        from .dialogs import _set_status
+        _set_status(self.dialog.test_label, "")
+        from . import bootstrap
+        if not bootstrap.automation():
+            self.editor.open()
+
+    def embed_editor(self):
+        """首次引导：面板不弹出，直接作为页面的一部分（没有标题和「取消」）。"""
+        self._embedded = True
+        self.editor.setWindowFlags(Qt.WindowType.Widget)
+        self.editor_title.hide()
+        self.cancel_button.hide()
+        self.editor.show()
+
+    def close_editor(self):
+        if not getattr(self, "_embedded", False):
+            self.editor.close()
+        self.reset()
+
+    def test_and_save(self):
+        from .dialogs import _set_status
+        profile = self._editor_profile(quiet=True)
+        if profile is None:
+            self._editor_profile()          # 把原因写到状态行
+            _set_status(self.dialog.test_label, self.dialog._status.text(), "danger")
+            return
+        config = self.dialog._editor_config()
+        self.save_button.setEnabled(False)
+        _set_status(self.dialog.test_label, i18n.tr('正在测试连接…'))
+
+        def done(result):
+            ok, message = result
+            self.save_button.setEnabled(True)
+            if ok and self.save():
+                self.close_editor()
+                return
+            _set_status(self.dialog.test_label, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+            self.force_save_button.setVisible(True)
+
+        def failed(message, _detail):
+            self.save_button.setEnabled(True)
+            _set_status(self.dialog.test_label, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+            self.force_save_button.setVisible(True)
+
+        self.dialog.runner.submit(adapter.test_connection, config, on_done=done,
+                                  on_error=failed, label="test-new-connection")
 
     def _prefill_from_config(self):
         """还没有翻译连接时，编辑区先填上已有的设置（例如只填了密钥、还没选模型）。
@@ -132,7 +297,8 @@ class ConnectionLibrary(QWidget):
     def reset(self):
         self.editing = ""
         self._pending_id = ""
-        self.editor.layout().itemAt(0).widget().setText(i18n.tr('添加连接'))
+        self.editor_title.setText(i18n.tr('添加连接'))
+        self.save_button.setText(i18n.tr('测试并添加'))
         self.name.clear()
         self.provider_id.clear()
         self.models.clear()
@@ -143,38 +309,71 @@ class ConnectionLibrary(QWidget):
         self.change_kind("catalog")
 
     def refresh(self):
-        from .dialogs import _panel
-        while self.saved.count():
-            item = self.saved.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self.list_group.clear()
+        self.list_group.add_row(self._group_header(i18n.tr('连接'), self.add_button))
+        if not self.profiles:
+            empty = QLabel(i18n.tr('还没有连接。点「添加连接」填写提供商和密钥。'))
+            style.set_text_role(empty, "meta")
+            holder = QWidget()
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
+                                   theme_module.SPACE["md"], theme_module.SPACE["md"])
+            row.addWidget(empty)
+            self.list_group.add_row(holder)
         for p in self.profiles:
-            cfg = effective_config(self.dialog.config, [p], {"translation": p["id"]})
-            cfg.model = p["model"]
-            status = connection_status.status("translation", cfg)
-            card, body = _panel("")
-            body.takeAt(0).widget().deleteLater()
-            row = QHBoxLayout()
-            label = components.StatusLabel()
-            label.set_status(p["name"] + (" · " + i18n.tr('自定义') if p.get("custom") else ""),
-                             "done" if status["state"] == "ok" else "idle")
-            label.setToolTip(i18n.tr_dynamic(status["message"]))
-            row.addWidget(label, 1)
-            edit = QPushButton(i18n.tr('编辑'))
-            style.set_button(edit, "secondary", small=True)
-            edit.clicked.connect(lambda _c=False, key=p["id"]: self.edit(key))
-            # 删除是不可撤销的：危险色文字按钮 + 确认（默认焦点在取消上）。
-            remove = QPushButton(i18n.tr('删除'))
-            style.set_button(remove, "danger", small=True)
-            remove.clicked.connect(lambda _c=False, key=p["id"], name=p["name"]: self.confirm_delete(key, name))
-            row.addWidget(edit)
-            row.addWidget(remove)
-            body.addLayout(row)
-            self.saved.addWidget(card)
+            self.list_group.add_row(self._connection_row(p))
         for role, box in self.selectors.items():
             self.fill_selector(box, role)
         if hasattr(self.dialog, "vision_connection_box"):
             self.fill_selector(self.dialog.vision_connection_box, "vision")
+
+    def _connection_row(self, p):
+        """一行：圆点 · 名称（自定义标签）/ 提供商 · 模型 · 状态 · 编辑 · 删除。"""
+        cfg = effective_config(self.dialog.config, [p], {"translation": p["id"]})
+        cfg.model = p["model"]
+        status = connection_status.status("translation", cfg)
+        tone = self.STATE_TONE.get(status["state"], "idle")
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
+                               theme_module.SPACE["sm"], theme_module.SPACE["sm"])
+        row.setSpacing(theme_module.SPACE["md"])
+        row.addWidget(components.StatusDot(theme_module.STATUS_TONES[tone]), 0,
+                      Qt.AlignmentFlag.AlignVCenter)
+        column = QVBoxLayout()
+        column.setSpacing(0)
+        title = QHBoxLayout()
+        title.setSpacing(theme_module.SPACE["sm"])
+        name = QLabel(p["name"])
+        style.set_text_role(name, "name")
+        title.addWidget(name)
+        if p.get("custom"):
+            title.addWidget(style.Chip(i18n.tr('自定义'), "muted"))
+        title.addStretch(1)
+        column.addLayout(title)
+        models = list(dict.fromkeys([p["model"], *p.get("models", [])]))
+        provider = i18n.tr('OpenAI 兼容') if p.get("custom") else i18n.tr_dynamic(p["provider"])
+        detail = f"{provider} · {p['model']}"
+        if len(models) > 1:
+            detail = i18n.tr('{v0} 等 {v1} 个模型', v0=detail, v1=len(models))
+        meta = style.ElideLabel(detail, mode=Qt.TextElideMode.ElideRight)
+        style.set_text_role(meta, "meta")
+        column.addWidget(meta)
+        row.addLayout(column, 1)
+        state = components.StatusLabel(i18n.tr(self.STATE_TEXT.get(status["state"], "")), tone)
+        state.dot.hide()
+        state.setToolTip(i18n.tr_dynamic(status["message"]))
+        row.addWidget(state)
+        edit = QPushButton(i18n.tr('编辑'))
+        style.set_button(edit, "secondary", small=True)
+        edit.clicked.connect(lambda _c=False, key=p["id"]: self.open_editor(key))
+        # 删除是不可撤销的：危险色文字按钮 + 确认（默认焦点在取消上）。
+        remove = QPushButton(i18n.tr('删除'))
+        style.set_button(remove, "danger", small=True)
+        remove.clicked.connect(lambda _c=False, key=p["id"], name=p["name"]: self.confirm_delete(key, name))
+        row.addWidget(edit)
+        row.addWidget(remove)
+        return holder
 
     def fill_selector(self, box, role):
         box.blockSignals(True)
@@ -224,16 +423,21 @@ class ConnectionLibrary(QWidget):
         self.update_model_selector(role)
 
     def add_model(self):
+        """手动添加模型：加进目录并选中最后一个。"""
+        box = self.dialog.model_box
         values = [m.strip() for m in self.models.text().split(",") if m.strip()]
-        model = self.dialog.model_box.currentText().strip()
-        if model and model not in values:
-            values.append(model)
-        self.models.setText(", ".join(values))
+        for value in values:
+            if box.findText(value) < 0:
+                box.addItem(value)
+        if values:
+            box.setCurrentText(values[-1])
+        self.models.clear()
 
     def edit(self, key):
         p = next(p for p in self.profiles if p["id"] == key)
         self.editing = key
-        self.editor.layout().itemAt(0).widget().setText(i18n.tr('编辑连接'))
+        self.editor_title.setText(i18n.tr('编辑连接'))
+        self.save_button.setText(i18n.tr('测试并保存'))
         self.kind.set_value("custom" if p.get("custom") else "catalog")
         self.change_kind("custom" if p.get("custom") else "catalog")
         self.provider_id.setText(p.get("provider_id", ""))
@@ -245,7 +449,6 @@ class ConnectionLibrary(QWidget):
         self.dialog.key_edit.setText(p.get("api_key", ""))
         self.dialog.base_edit.setText(p.get("base_url", ""))
         self.custom_settings.setChecked(bool(p.get("base_url")))
-        self.models.setText(", ".join(p.get("models") or [p["model"]]))
         self.dialog.reasoning_box.setCurrentIndex(max(0,
             self.dialog.reasoning_box.findData(p.get("reasoning_effort", ""))))
 
@@ -277,7 +480,10 @@ class ConnectionLibrary(QWidget):
              "base_url": self.dialog.base_edit.text().strip(),
              "protocol": "openai_compat" if custom else adapter.core.PROVIDERS[
                  self.dialog.provider_box.currentText()]["kind"]}
-        p["models"] = list(dict.fromkeys([m.strip() for m in self.models.text().split(",") if m.strip()] + [p["model"]]))
+        box = self.dialog.model_box
+        typed = [m.strip() for m in self.models.text().split(",") if m.strip()]
+        p["models"] = list(dict.fromkeys(
+            [box.itemText(i) for i in range(box.count())] + typed + [p["model"]]))
         if not p["model"] or (custom and not p["base_url"]):
             fail(i18n.tr('请填写模型和 API 地址'))
             return None
@@ -315,7 +521,7 @@ class ConnectionLibrary(QWidget):
     def save(self):
         p = self._editor_profile()
         if p is None:
-            return
+            return False
         old = self.profiles
         old_roles = dict(self.roles)
         old_models = dict(self.role_models)
@@ -329,10 +535,11 @@ class ConnectionLibrary(QWidget):
         if self.persist():
             self.refresh()
             self.reset()
-        else:
-            self.profiles = old
-            self.roles = old_roles
-            self.role_models = old_models
+            return True
+        self.profiles = old
+        self.roles = old_roles
+        self.role_models = old_models
+        return False
 
     def persist(self):
         from .dialogs import _set_status

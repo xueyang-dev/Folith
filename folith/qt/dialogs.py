@@ -52,6 +52,25 @@ def _panel(title: str, hint: str = "") -> tuple[Card, QVBoxLayout]:
     return card, outer
 
 
+def _setting_row(title: str, *controls: QWidget) -> QWidget:
+    """设置分组里的一行：左边固定宽的名称，右边控件从左排起（阶段 1 画布）。"""
+    holder = QWidget()
+    row = QHBoxLayout(holder)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(theme_module.SPACE["md"])
+    for control in controls:
+        row.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+    row.addStretch(1)
+    line = components.FormRow(title, value=holder)
+    line.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
+    line.title_label.setWordWrap(True)        # 长语言的名称折成两行，不截断
+    return line
+
+
+#: 设置分组里左侧名称的宽度：五种语言里最长的「Interface language」也放得下。
+SETTING_LABEL_WIDTH = 132
+
+
 def _field(label: str, widget: QWidget, hint: str = "") -> QWidget:
     """表单字段：标签在控件**上方**（旧界面表单的排版，不是右侧窄列对齐）。
 
@@ -301,23 +320,28 @@ class EngineDialog(QDialog):
         super().hideEvent(event)
 
     # -- 「应用」：模型与视觉连接 -------------------------------------------------
+    def _apply_buttons(self) -> list:
+        return [getattr(self, name) for name in ("models_apply_button", "vision_apply_button")
+                if hasattr(self, name)]
+
+    def _force_buttons(self) -> list:
+        return [getattr(self, name) for name in ("models_force_button", "vision_force_button")
+                if hasattr(self, name)]
+
     def _apply_row(self, page: str) -> QWidget:
         holder = QWidget()
         row = QHBoxLayout(holder)
         row.setContentsMargins(0, theme_module.SPACE["xs"], 0, 0)
         row.setSpacing(theme_module.SPACE["sm"])
-        hint = QLabel("")
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        # 模型页保存的是"哪个用途用哪个连接"；视觉页就是这一页的设置，叫「保存」。
-        apply_button = QPushButton(i18n.tr('保存用途') if page == "models" else i18n.tr('保存'))
+        # 页面底部只有一个动作：用途改了以后「测试并保存」（阶段 1 画布）。
+        apply_button = QPushButton(i18n.tr('测试并保存') if page == "models" else i18n.tr('保存'))
         style_module.mark_primary(apply_button)
         apply_button.clicked.connect(self.apply_connection)
         force = QPushButton(i18n.tr('仍然应用'))
         force.setToolTip(i18n.tr('不等测试通过就保存这份连接（未配置好之前无法启动翻译）。'))
         force.setVisible(False)
         force.clicked.connect(lambda: self._commit_connection(self._collect(), tested=False))
-        row.addWidget(hint, 1)
+        row.addStretch(1)
         row.addWidget(force)
         row.addWidget(apply_button)
         setattr(self, f"{page}_apply_button", apply_button)
@@ -336,13 +360,13 @@ class EngineDialog(QDialog):
             _set_status(self._status, i18n.tr('无法应用：{v0}', v0=problem), "danger")
             self._show_force(True)
             return
-        for button in (self.models_apply_button, self.vision_apply_button):
+        for button in self._apply_buttons():
             button.setEnabled(False)
         _set_status(self._status, i18n.tr('正在测试连接…'))
 
         def done(result) -> None:
             ok, message = result
-            for button in (self.models_apply_button, self.vision_apply_button):
+            for button in self._apply_buttons():
                 button.setEnabled(True)
             from . import connection_status
 
@@ -354,7 +378,7 @@ class EngineDialog(QDialog):
                 self._show_force(True)
 
         def failed(message: str, _detail: str) -> None:
-            for button in (self.models_apply_button, self.vision_apply_button):
+            for button in self._apply_buttons():
                 button.setEnabled(True)
             _set_status(self._status, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
             self._show_force(True)
@@ -363,7 +387,7 @@ class EngineDialog(QDialog):
                            label="apply-connection")
 
     def _show_force(self, visible: bool) -> None:
-        for button in (self.models_force_button, self.vision_force_button):
+        for button in self._force_buttons():
             button.setVisible(visible)
 
     def _commit_connection(self, collected: adapter.EngineConfig, *, tested: bool,
@@ -423,21 +447,8 @@ class EngineDialog(QDialog):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
         layout.setSpacing(theme_module.SPACE["sm"])
-        vision_field = self._build_vision_selector()
         layout.addWidget(self._build_scan_group())
-        self._scan_body.insertWidget(2, vision_field)
-        # 保存按钮放进卡片底部，不再漂在卡片外面。
-        self._scan_body.addWidget(self._apply_row("vision"))
         layout.addStretch(1)
-
-        def update_fields():
-            online = self.ocr_backend_box.currentData() == "online"
-            vision_field.setVisible(online)
-            self.ocr_language_row.setVisible(not online)
-            if hasattr(self, "ocr_local_info"):
-                self.ocr_local_info.setVisible(not online)
-        self.ocr_backend_box.currentIndexChanged.connect(update_fields)
-        update_fields()
         return page
 
     def refresh_connection_states(self) -> None:
@@ -458,67 +469,96 @@ class EngineDialog(QDialog):
             label.set_status(text, {"ok": "done", "danger": "error",
                                     "warning": "attention"}.get(row["tone"], "idle"))
 
+    #: 默认翻译方式：（界面名, 预设键, 图标）。精细 = 核心里的「学术增强」预设。
+    DEFAULT_MODES = (("快速", "快速", "play"), ("标准", "标准", "check-circle"),
+                     ("精细", "学术增强", "shield-check"))
+    #: 模式卡片下面的四步：（名称, 预设里的开关）。亮 = 这个模式会做。
+    MODE_STEPS = (("画像", "enable_understanding"), ("术语", "auto_term"),
+                  ("记忆", "use_tm"), ("审校", "enable_review"))
+
     def _build_task_tab(self) -> QWidget:
+        """任务默认值（阶段 1 画布）：默认翻译方式 + MTI 一排小选项 · 目标语言与 PDF 纠错 · 交付文件。
+
+        翻译流程的四个开关（术语、记忆、画像、审校）由翻译方式决定，准备页里还能逐项改；
+        这里不再重复列出（控件仍在，保存时原样带回）。
+        """
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
-        outer.setSpacing(theme_module.SPACE["sm"])
+        outer.setSpacing(theme_module.SPACE["md"])
 
-        # 文案与「译前准备 · 翻译设置」逐字一致（同一个开关在两个面上必须同名）：
-        # 这里曾经用「自动抽取并注入术语 / 完成后自动审校 / 复用翻译记忆」这套旧词，
-        # 而准备面板用「自动识别术语 / 译后自动审校 / 使用翻译记忆」——同一个开关两个
-        # 名字，用户会以为是两件事。准备面板那份措辞更短、更适合窄控件，以它为准。
-        self.auto_term_box = style_module.CheckBox(i18n.tr('自动识别术语'))
+        # 文案与「译前准备 · 翻译设置」逐字一致（同一个开关在两个面上必须同名）。
+        self.auto_term_box = style_module.CheckBox(i18n.tr('自动识别术语'), page)
         self.auto_term_box.setChecked(self.config.auto_term)
-        self.review_box = style_module.CheckBox(i18n.tr('译后自动审校'))
+        self.review_box = style_module.CheckBox(i18n.tr('译后自动审校'), page)
         self.review_box.setChecked(self.config.enable_review)
-        self.tm_box = style_module.CheckBox(i18n.tr('使用翻译记忆'))
+        self.tm_box = style_module.CheckBox(i18n.tr('使用翻译记忆'), page)
         self.tm_box.setChecked(self.config.use_tm)
-        self.understanding_box = style_module.CheckBox(i18n.tr('建立文档画像'))
+        self.understanding_box = style_module.CheckBox(i18n.tr('建立文档画像'), page)
         self.understanding_box.setChecked(self.config.enable_understanding)
-        self.cleanup_box = style_module.CheckBox(i18n.tr('对 PDF 原文做模型纠错（更慢）'))
+        for box in (self.auto_term_box, self.review_box, self.tm_box, self.understanding_box):
+            box.hide()
+        self.cleanup_box = components.Switch()
+        self.cleanup_box.setAccessibleName(i18n.tr('PDF 原文先做模型纠错'))
         self.cleanup_box.setChecked(self.config.enable_source_cleanup)
-        self.report_box = style_module.CheckBox(i18n.tr('生成实践报告（需要更长的运行时间）'))
+        self.report_box = style_module.CheckBox(i18n.tr('完成后生成实践报告'))
         self.report_box.setChecked(self.config.enable_report)
         self.academic_box.toggled.connect(self._academic_toggled)
         self.report_box.setVisible(self.academic_box.isChecked())
-        # 工作模式决定工作台出现哪些页，属于工作流（8.3-4）：放在这一页最上面。
-        mode_card, mode_body = _panel(
-            i18n.tr('工作模式'),
-            i18n.tr('默认关闭。打开后，工作台会多出实践报告、案例与合规 QA 三页，'
-                    '下面也可以勾选「生成实践报告」。'))
-        self.default_mode_box = style_module.ComboBox()
-        for label, key in (("快速", "快速"), ("标准", "标准"), ("精细", "学术增强")):
+
+        # ---- 默认翻译方式：与准备页同一组选择，这里只预选，不会自动开跑 ----------
+        self.default_mode_box = style_module.ComboBox(page)
+        for label, key, _icon in self.DEFAULT_MODES:
             self.default_mode_box.addItem(i18n.tr(label), key)
         self.default_mode_box.setCurrentIndex(max(0, self.default_mode_box.findData(
             self.config.default_translation_mode)))
-        mode_body.addWidget(_field(i18n.tr('默认翻译方式'), self.default_mode_box))
-        workflow_body = mode_body
+        self.default_mode_box.hide()
+        from folith.application.task_setup import STRATEGY_PRESETS
+        self.mode_cards: dict[str, components.OptionCard] = {}
+        cards = QHBoxLayout()
+        cards.setSpacing(theme_module.SPACE["sm"])
+        for label, key, icon in self.DEFAULT_MODES:
+            preset = STRATEGY_PRESETS.get(key, {})
+            card = components.OptionCard(key, i18n.tr(label), self._mode_steps_html(preset),
+                                         icon=icon)
+            card.toggled.connect(lambda on, value=key: on and self.default_mode_box.setCurrentIndex(
+                self.default_mode_box.findData(value)))
+            cards.addWidget(card, 1)
+            self.mode_cards[key] = card
+        self.default_mode_box.currentIndexChanged.connect(lambda _i: self._sync_mode_cards())
+        self._sync_mode_cards()
+        mti = QHBoxLayout()
+        mti.setSpacing(theme_module.SPACE["lg"])
+        mti_label = QLabel("MTI")
+        style_module.set_text_role(mti_label, "label")
+        mti.addWidget(mti_label)
+        mti.addWidget(self.academic_box)
+        mti.addWidget(self.report_box)
+        mti.addStretch(1)
+        mode_card, mode_body = _panel(i18n.tr('默认翻译方式'))
+        mode_body.addLayout(cards)
+        mode_body.addLayout(mti)
         outer.addWidget(mode_card)
-        # 两列网格：六项都是单行短句，一列排下来会白占半屏。
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(8)
-        for position, box in enumerate((self.auto_term_box, self.review_box,
-                                        self.tm_box, self.understanding_box,
-                                        self.cleanup_box, self.academic_box, self.report_box)):
-            grid.addWidget(box, position // 2, position % 2)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+
+        # ---- 目标语言 · PDF 纠错 ------------------------------------------------
         self.target_box = style_module.ComboBox()
         self.target_box.setEditable(True)
         self.target_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.target_box.addItems(list(adapter.TARGET_LANGUAGES))
         self.target_box.setCurrentText(self.config.target_lang)
-        workflow_body.addWidget(_field(i18n.tr('目标语言'), self.target_box))
-        workflow_body.addLayout(grid)
+        self.target_box.setFixedWidth(200)
+        slower = QLabel(i18n.tr('更慢'))
+        style_module.set_text_role(slower, "time")
+        general = components.FormGroup()
+        general.add_row(_setting_row(i18n.tr('目标语言'), self.target_box))
+        general.add_row(components.FormRow(i18n.tr('PDF 原文先做模型纠错'), self.cleanup_box,
+                                           value=slower))
+        outer.addWidget(general)
 
-        delivery, delivery_body = _panel(
-            i18n.tr('交付文件'), i18n.tr('只生成勾选的格式；冻结交付后快照不可修改。'))
+        # ---- 交付文件：两列复选框，不再列文件名 -----------------------------------
+        delivery, delivery_body = _panel(i18n.tr('交付文件'))
 
-        def fmt(attr: str, label: str, filename: str, default: bool) -> tuple:
-            """格式名是复选框，文件名是后面一行灰色小字（8.3-6）。"""
+        def fmt(attr: str, label: str, default: bool, badge: str = "") -> tuple:
             box = style_module.CheckBox(i18n.tr(label))
             box.setChecked(bool(getattr(self.config, attr, default)))
             holder = QWidget()
@@ -526,54 +566,57 @@ class EngineDialog(QDialog):
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(theme_module.SPACE["sm"])
             row.addWidget(box)
+            if badge:
+                row.addWidget(style_module.Chip(badge, "muted"))
             row.addStretch(1)
             setattr(self, f"_{attr}_holder", holder)
             return box, holder
 
-        self.deliver_plain_box, plain = fmt("deliver_plain_docx", '纯译文 DOCX',
-                                            "translation.docx", True)
-        self.deliver_bilingual_box, bilingual = fmt("deliver_bilingual_docx", '双语对照 DOCX',
-                                                    "bilingual.docx", True)
-        self.deliver_pdf_box, pdf = fmt("deliver_pdf", '译文 PDF', "translation.pdf", False)
-        self.deliver_epub_box, epub = fmt("deliver_epub", 'EPUB 电子书',
-                                          "translation.epub", False)
-        self.deliver_terms_box, terms = fmt("deliver_terms_xlsx", '术语表 XLSX',
-                                            "terms.xlsx", True)
-        self.deliver_evidence_box, evidence = fmt("deliver_evidence", '段落证据 JSONL',
-                                                  "segment_evidence.jsonl", True)
+        self.deliver_plain_box, plain = fmt("deliver_plain_docx", '纯译文 DOCX', True)
+        self.deliver_bilingual_box, bilingual = fmt("deliver_bilingual_docx", '双语对照 DOCX', True)
+        self.deliver_pdf_box, pdf = fmt("deliver_pdf", '译文 PDF', False)
         self.deliver_original_pdf_box, original = fmt(
-            "deliver_original_pdf", '原排版译文 PDF', "original_layout.pdf", False)
-        # This dialog edits client defaults before a file is chosen, so it
-        # cannot know the source type; the hint states the constraint and the
-        # import mapping drops the option for a non-PDF source.
+            "deliver_original_pdf", '原排版译文 PDF', False, i18n.tr('Beta · 仅 PDF'))
+        # 默认值在选文件之前就定了，不知道源文件类型；导入时非 PDF 任务会去掉这一项。
         self.deliver_original_pdf_box.setToolTip(
             i18n.tr('仅 PDF 任务可用：按原文件的版式重建译文页面。'))
-        beta = QLabel("Beta")
-        beta.setObjectName("betaBadge")
-        original.layout().insertWidget(1, beta)
-        groups = QGridLayout()
-        groups.setContentsMargins(0, 0, 0, 0)
-        groups.setHorizontalSpacing(theme_module.SPACE["lg"])
-        groups.setVerticalSpacing(theme_module.SPACE["xs"])
-        for column, (caption, rows) in enumerate(((i18n.tr('文档'), (plain, bilingual, pdf)),
-                                                  (i18n.tr('电子书与数据'),
-                                                   (epub, terms, evidence)))):
-            groups.addWidget(style_module.field_label(caption), 0, column)
-            for index, widget in enumerate(rows, start=1):
-                groups.addWidget(widget, index, column)
-        groups.setColumnStretch(0, 1)
-        groups.setColumnStretch(1, 1)
-        delivery_body.addLayout(groups)
-        delivery_body.addSpacing(theme_module.SPACE["xs"])
-        delivery_body.addWidget(original)
+        self.deliver_epub_box, epub = fmt("deliver_epub", 'EPUB 电子书', False)
+        self.deliver_terms_box, terms = fmt("deliver_terms_xlsx", '术语表 XLSX', True)
+        self.deliver_evidence_box, evidence = fmt("deliver_evidence", '段落证据 JSONL', True)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(theme_module.SPACE["xl"])
+        grid.setVerticalSpacing(theme_module.SPACE["sm"])
+        for index, widget in enumerate((plain, bilingual, pdf, original, epub, terms, evidence)):
+            grid.addWidget(widget, index // 2, index % 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        delivery_body.addLayout(grid)
         outer.addWidget(delivery)
         outer.addStretch(1)
         return page
 
+    def _mode_steps_html(self, preset: dict) -> str:
+        lit = style_module.text_color("accent")
+        dim = style_module.text_color("text-muted")
+        parts = []
+        for label, key in self.MODE_STEPS:
+            colour = lit if preset.get(key) else dim
+            parts.append(f"<span style='color:{colour}'>●&nbsp;{i18n.tr(label)}</span>")
+        return "&nbsp; ".join(parts)          # 末尾是普通空格：窄时按步折行
+
+    def _sync_mode_cards(self) -> None:
+        current = str(self.default_mode_box.currentData() or "标准")
+        for key, card in self.mode_cards.items():
+            card.blockSignals(True)
+            card.setChecked(key == current)
+            card.blockSignals(False)
+            card._sync()
+
     def _make_academic_box(self) -> None:
         # 实践报告 / 案例 / 终稿 QA 是专用能力：默认不出现，用户主动打开"学术专业模式"才显示。
-        self.academic_box = style_module.CheckBox(
-            i18n.tr('MTI：实践报告、案例与合规、终稿 QA'))
+        self.academic_box = style_module.CheckBox(i18n.tr('实践报告 · 案例与合规 · 终稿 QA'))
+        self.academic_box.setToolTip(i18n.tr('打开后，工作台多出实践报告、案例与合规、终稿 QA 三页。'))
         self.academic_box.setChecked(bool(self.academic_preference or self.config.enable_report))
 
     def _select_ocr_language(self, value: str) -> None:
@@ -594,22 +637,6 @@ class EngineDialog(QDialog):
         self.ocr_language_box.setEditText(wanted)
 
     # -- vision connection -------------------------------------------------
-    def _build_vision_selector(self) -> QWidget:
-        self._vision_view = adapter.vision_connection_view()
-        self.vision_connection_box = style_module.ComboBox()
-        self.vision_connection_box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.vision_connection_box.setMinimumContentsLength(12)
-        model_box = self.connection_library.make_model_selector("vision")
-        self.connection_library.fill_selector(self.vision_connection_box, "vision")
-        self.vision_connection_box.currentIndexChanged.connect(
-            lambda _i: self.connection_library.select("vision"))
-        holder = QWidget()
-        row = QHBoxLayout(holder)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self.vision_connection_box, 1)
-        row.addWidget(model_box, 1)
-        return _field(i18n.tr('视觉模型'), holder)
-
     def _vision_form(self) -> dict:
         selected = self.connection_library.roles.get("vision")
         profile = next((p for p in self.connection_library.profiles
@@ -650,100 +677,171 @@ class EngineDialog(QDialog):
             self._vision_view = adapter.clear_vision_connection()
 
     def _build_scan_group(self) -> QWidget:
-        """扫描件的提取默认值（来源 / 时机 / 语言）：新任务的默认值，和翻译流程同属一页。"""
+        """扫描件怎么读（阶段 1 画布）：读取方式两张选项卡 · 何时识别三段 ·（本机 OCR 时）识别语言。
+
+        视觉模型在「模型 › 用途」里选，这里只显示用的是哪一个。三个下拉框仍是数据来源
+        （窗口、准备页与测试读它们），界面上看到的是选项卡和分段控件。
+        """
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(theme_module.SPACE["sm"])
-        ocr_card, body = _panel(
-            i18n.tr('扫描件识别'),
-            i18n.tr('只影响没有可用文本层的页面（扫描件）；文本层 PDF 与 DOCX 不走这一步。'))
         self.ocr_language_box = style_module.ComboBox()
         # 可编辑：既能从核心注册表里选（30 项，带中文标签），也能直接填语言代码。
         self.ocr_language_box.setEditable(True)
         self.ocr_language_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.ocr_language_box.setFixedWidth(220)
         for label, value in adapter.ocr_language_choices():
             self.ocr_language_box.addItem(label, value)
         self._select_ocr_language(self.config.ocr_language)
-        self.ocr_mode_box = style_module.ComboBox()
+        self.ocr_mode_box = style_module.ComboBox(page)
         # 标签给用户看，data 给核心用：两者必须对齐，否则核心会静默回退成 auto
         # （历史缺陷：界面写 always/never，核心只认 force/off）。
         for label, mode in adapter.OCR_MODE_CHOICES:
             self.ocr_mode_box.addItem(label, mode)
-        self.ocr_mode_box.setCurrentText(
-            adapter.ocr_mode_label(self.config.ocr_mode))
-        self.ocr_backend_box = style_module.ComboBox()
-        # 取值仍然是核心认识的那三个，但显示的是人话（此前直接显示 online / tesseract）。
-        # 标签取自 adapter 的**同一份**真源：这里曾手抄第二条副本，改一处漏一处。
+        self.ocr_mode_box.setCurrentText(adapter.ocr_mode_label(self.config.ocr_mode))
+        self.ocr_mode_box.hide()
+        self.ocr_backend_box = style_module.ComboBox(page)
         for label, value in adapter.OCR_BACKEND_CHOICES:
             self.ocr_backend_box.addItem(label, value)
         index = self.ocr_backend_box.findData(self.config.ocr_backend or "online")
         self.ocr_backend_box.setCurrentIndex(index if index >= 0 else 0)
-        # 顺序与译前面板一致：来源是主决定，语言/mode 是它的参数。
-        body.addWidget(_field(i18n.tr('提取来源'), self.ocr_backend_box))
-        body.addWidget(_field(i18n.tr('何时识别'), self.ocr_mode_box))
-        self.ocr_language_row = _field(i18n.tr('识别语言'), self.ocr_language_box)
-        body.addWidget(self.ocr_language_row)
-        self._scan_body = body
+        self.ocr_backend_box.hide()
 
         command = adapter.core._find_tesseract()
         local_index = self.ocr_backend_box.findData("tesseract")
         if local_index >= 0:
             self.ocr_backend_box.model().item(local_index).setEnabled(bool(command))
+        if not command and self.ocr_backend_box.currentData() == "tesseract":
+            self.ocr_backend_box.setCurrentIndex(self.ocr_backend_box.findData("online"))
+
+        # 读取方式：视觉理解（默认）/ 本机 OCR（可选附加，未安装时不可选）。
+        self.vision_option = components.OptionCard("online", i18n.tr('视觉理解'), icon="eye")
         if command:
-            info = QLabel("Tesseract " + adapter.core._ocr_backend_version("tesseract", command)
-                          + " · " + ", ".join(adapter.core.installed_ocr_languages()))
-            info.setWordWrap(True)
-            self.ocr_local_info = info
-            body.addWidget(info)
+            local_detail = ("Tesseract " + adapter.core._ocr_backend_version("tesseract", command)
+                            + " · " + ", ".join(adapter.core.installed_ocr_languages()))
         else:
+            local_detail = i18n.tr('未安装')
+        self.local_option = components.OptionCard("tesseract", i18n.tr('本机 OCR'),
+                                                  local_detail, icon="file-text")
+        self.local_option.setEnabled(bool(command))
+        self.ocr_local_info = self.local_option.detail_label if command else None
+        options = QWidget()
+        options_row = QHBoxLayout(options)
+        options_row.setContentsMargins(0, 0, 0, 0)
+        options_row.setSpacing(theme_module.SPACE["sm"])
+        options_row.addWidget(self.vision_option, 1)
+        options_row.addWidget(self.local_option, 1)
+        options.setMinimumWidth(380)
+        for option in (self.vision_option, self.local_option):
+            option.toggled.connect(lambda on, value=option.key: on and self.ocr_backend_box.setCurrentIndex(
+                self.ocr_backend_box.findData(value)))
+        read_controls = [options]
+        if not command:
             install = QPushButton(i18n.tr('如何安装…'))
+            style_module.set_button(install, "plain", small=True)
             from .settings_pages import _open_url
             from .support import TESSERACT_INSTALL_URL
             install.clicked.connect(lambda: _open_url(TESSERACT_INSTALL_URL))
-            body.addWidget(install)
-            if self.ocr_backend_box.currentData() == "tesseract":
-                self.ocr_backend_box.setCurrentIndex(self.ocr_backend_box.findData("online"))
-        page_layout.addWidget(ocr_card)
+            read_controls.append(install)
+
+        self.ocr_mode_picker = style_module.SegmentedControl(
+            [(mode, i18n.tr(label.split("（")[0])) for label, mode in adapter.OCR_MODE_CHOICES])
+        self.ocr_mode_picker.set_value(str(self.ocr_mode_box.currentData() or "auto"))
+        self.ocr_mode_picker.changed.connect(
+            lambda value: self.ocr_mode_box.setCurrentIndex(self.ocr_mode_box.findData(value)))
+        self.ocr_mode_box.currentIndexChanged.connect(
+            lambda _i: self.ocr_mode_picker.set_value(str(self.ocr_mode_box.currentData() or "")))
+
+        group = components.FormGroup()
+        heading = QLabel(i18n.tr('扫描件'))
+        style_module.set_text_role(heading, "section")
+        heading.setToolTip(i18n.tr('只影响没有可用文本层的页面（扫描件）；文本层 PDF 与 DOCX 不走这一步。'))
+        head = QWidget()
+        head_row = QHBoxLayout(head)
+        head_row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
+                                    theme_module.SPACE["md"], theme_module.SPACE["xs"])
+        head_row.addWidget(heading)
+        group.add_row(head)
+        group.add_row(_setting_row(i18n.tr('读取方式'), *read_controls))
+        group.add_row(_setting_row(i18n.tr('何时识别'), self.ocr_mode_picker))
+        self.ocr_language_row = _setting_row(i18n.tr('识别语言'), self.ocr_language_box)
+        group.add_row(self.ocr_language_row)
+        page_layout.addWidget(group)
+
+        def sync_backend(*_args):
+            value = str(self.ocr_backend_box.currentData() or "online")
+            for option in (self.vision_option, self.local_option):
+                option.blockSignals(True)
+                option.setChecked(option.key == value)
+                option.blockSignals(False)
+            self.ocr_language_row.setVisible(value != "online")
+        self.ocr_backend_box.currentIndexChanged.connect(sync_backend)
+        sync_backend()
+        self._sync_vision_detail()
+        if hasattr(self, "vision_connection_box"):
+            self.vision_connection_box.currentIndexChanged.connect(
+                lambda _i: self._sync_vision_detail())
+            self.connection_library.model_selectors["vision"].currentTextChanged.connect(
+                lambda _t: self._sync_vision_detail())
         return page
 
+    def _sync_vision_detail(self) -> None:
+        """视觉理解那张卡的第二行：用的是哪个连接 · 模型。"""
+        if not hasattr(self, "vision_option"):
+            return
+        library = getattr(self, "connection_library", None)
+        selected = library.roles.get("vision") if library else ""
+        profile = next((p for p in (library.profiles if library else [])
+                        if p["id"] == selected), None)
+        if profile:
+            model = library.role_models.get("vision") or profile["model"]
+            self.vision_option.set_detail(f"{profile['name']} · {model}")
+        else:
+            self.vision_option.set_detail(i18n.tr('在「模型 › 用途」里选择视觉模型'))
+
     def _build_appearance_tab(self) -> QWidget:
+        """外观（三段）· 主题色（色点）· 界面语言：一张分组卡，改了立即生效（阶段 1 画布）。
+
+        下拉框仍是保存时的数据来源（窗口读 ``theme_box`` / ``accent_box``），
+        只是不显示：用户看到的是分段控件和色点。
+        """
         page = QWidget()
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
         page_layout.setSpacing(theme_module.SPACE["sm"])
-        card, body = _panel(
-            i18n.tr('界面主题'),
-            i18n.tr('「跟随系统」随 macOS 浅色/深色外观自动切换。所有主题共用同一份品牌配色，切换不会影响已导入的任务与译文。'))
-        self.theme_box = style_module.ComboBox()
+        self.theme_box = style_module.ComboBox(page)
         for name in (theme_module.FOLLOW_SYSTEM, "light", "dark"):
             self.theme_box.addItem(i18n.tr(theme_module.label(name)), name)
         index = self.theme_box.findData(self.theme_preference)
         self.theme_box.setCurrentIndex(max(0, index))
-        body.addWidget(_field(i18n.tr('外观'), self.theme_box))
-        self.accent_box = style_module.ComboBox()
-        for name, label in (("blue", "蓝色"), ("green", "翠绿"), ("slate", "石板色")):
+        self.theme_box.hide()
+        self.accent_box = style_module.ComboBox(page)
+        for name, label in theme_module.ACCENT_LABELS:
             self.accent_box.addItem(i18n.tr(label), name)
-        body.addWidget(_field(i18n.tr('主题（高光色）'), self.accent_box))
+        self.accent_box.hide()
+        self.accent_picker = components.AccentPicker(
+            [(name, i18n.tr(label), theme_module.accent_swatch(name))
+             for name, label in theme_module.ACCENT_LABELS])
+        self.accent_picker.set_value(str(self.accent_box.currentData() or "blue"))
+        self.accent_picker.changed.connect(
+            lambda value: self.accent_box.setCurrentIndex(max(0, self.accent_box.findData(value))))
+        self.accent_box.currentIndexChanged.connect(
+            lambda _index: self.accent_picker.set_value(str(self.accent_box.currentData() or "blue")))
 
         self.language_box = style_module.ComboBox()
         for code, label in i18n.available_languages():
             self.language_box.addItem(label, code)
         self._select_language(self.language_preference)
-        body.addWidget(_field(
-            i18n.tr('界面语言（重启后生效）'), self.language_box,
-            i18n.tr('非中文界面为实验功能（尚未完成独立的语言审阅）。切换后重启应用，整个窗口才会换成新语言；阿拉伯语会整体从右到左排版。')))
-        page_layout.addWidget(card)
+        self.language_box.setFixedWidth(200)
+        restart = QLabel(i18n.tr('重启后生效'))
+        style_module.set_text_role(restart, "time")
 
-        keys, keys_body = _panel(i18n.tr('键盘'),
-                                 i18n.tr('常用操作都有快捷键；这里列出当前版本的全部快捷键。'))
-        self.shortcuts_button = QPushButton(i18n.tr('键盘快捷键…'))
-        self.shortcuts_button.clicked.connect(self.shortcutsRequested.emit)
-        row = QHBoxLayout()
-        row.addWidget(self.shortcuts_button)
-        row.addStretch(1)
-        keys_body.addLayout(row)
-        page_layout.addWidget(keys)
+        group = components.FormGroup()
+        group.add_row(_setting_row(i18n.tr('外观'), self._build_appearance_picker()))
+        group.add_row(_setting_row(i18n.tr('主题色'), self.accent_picker))
+        group.add_row(_setting_row(i18n.tr('界面语言'), self.language_box, restart))
+        page_layout.addWidget(group)
         page_layout.addStretch(1)
         return page
 

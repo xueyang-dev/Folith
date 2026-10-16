@@ -30,6 +30,20 @@ MARK_FALLBACKS = ("folith/resources/brand/foliothread-favicon.png",
                   "folith/resources/brand/foliothread-logo.png")
 
 
+#: 各界面语言的字标：名称 + 一句短副标题。阿、俄音译名字（不带「译页」），英、西写 Folith。
+WORDMARKS = {
+    "zh-CN": ("Folith · 译页", "智能体翻译工作台"),
+    "en": ("Folith", "Agentic Translation Workspace"),
+    "ar": ("فوليث", "ترجمة بالوكلاء الأذكياء"),
+    "ru": ("Фолит", "Перевод с ИИ\u2011агентами"),
+    "es": ("Folith", "Traducción con agentes de IA"),
+}
+
+
+def wordmark(language: str) -> tuple[str, str]:
+    return WORDMARKS.get(language, WORDMARKS["en"])
+
+
 def asset_path(relative: str) -> Path:
     return desktop_paths.resource_path(*relative.split("/"))
 

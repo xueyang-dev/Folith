@@ -218,7 +218,23 @@ QToolTip {{
     border-radius: {r['sm']}px;
     padding: {sp['xs']}px {sp['sm']}px;
 }}
-QWidget#transparent, QFrame#transparent {{ background: transparent; }}
+QWidget#transparent, QFrame#transparent, QStackedWidget#transparent {{ background: transparent; }}
+/* 选项卡片（视觉与识别的读取方式、默认翻译方式）：白面 + 发丝框；选中换成强调色描边。 */
+QPushButton#optionCard {{ background: {t['bg-surface']}; border: 1px solid {t['border-subtle']};
+    border-radius: {r['md']}px; padding: 0; text-align: left; }}
+QPushButton#optionCard:hover {{ border-color: {t['accent-border']}; }}
+QPushButton#optionCard:checked {{ border: 2px solid {t['accent']}; }}
+QPushButton#optionCard:disabled {{ background: {t['bg-surface-sunken']}; border-color: {t['border-subtle']}; }}
+QPushButton#optionCard QLabel {{ background: transparent; }}
+QLabel#optionTitle {{ font-size: {f['reading']}px; font-weight: 600; color: {t['text-primary']}; }}
+QPushButton#optionCard:checked QLabel#optionTitle {{ color: {t['accent']}; }}
+QPushButton#optionCard:disabled QLabel#optionTitle,
+QPushButton#optionCard:disabled QLabel#optionDetail {{ color: {t['text-muted']}; }}
+QLabel#optionDetail {{ font-size: {f['label']}px; color: {t['text-secondary']}; }}
+/* 设置 · 通用的主题色点：只有色点和名称，没有底和框（选中靠色点外圈）。 */
+QPushButton#accentOption {{ background: transparent; border: none; padding: 0;
+    min-height: 32px; color: {t['text-secondary']}; font-size: {f['body']}px; }}
+QPushButton#accentOption:checked, QPushButton#accentOption:hover {{ color: {t['text-primary']}; }}
 
 /* ================= 文本层级 ================= */
 QLabel {{ background: transparent; }}
@@ -228,7 +244,7 @@ QLabel {{ background: transparent; }}
 QLabel#displayTitle {{ font-size: {f['title']}px; font-weight: 600; color: {t['text-primary']}; }}
 /* 页面标题与任务库同一种字（E 层次 v2）：无衬线 22/600 正文色，不再一页衬线一页无衬线。 */
 QLabel#pageTitle {{ font-size: {f['title']}px; font-weight: 600; color: {t['text-primary']}; }}
-QLabel#statsLine {{ font-size: {f['footnote']}px; color: {t['text-secondary']}; }}
+QLabel#statsLine {{ font-size: {f['body']}px; color: {t['text-secondary']}; }}
 QLabel#brandName {{ font-size: {f['section']}px; font-weight: 700; color: {t['brand-ink']}; }}
 QLabel#brandSub {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
 QLabel#sectionTitle {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
@@ -405,7 +421,7 @@ QLabel#taskCardStatus[state="ok"] {{ color: {t['success']}; }}
 /* 继续上次的工作：页面里唯一一张"抬起"的卡 */
 /* 小标题（"继续上次的工作"）不是动作也不是选中：不用主色（色彩审校 C6）。 */
 QLabel#eyebrow {{ font-size: {f['caption']}px; font-weight: 600; color: {t['text-secondary']}; }}
-QLabel#continueTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#continueTitle {{ font-size: {f['reading']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#continueStatus {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* ================= 译前准备：翻译风格（Golden Gate） ================= */
 QFrame#styleCard {{
@@ -468,9 +484,9 @@ QWidget#sidebar {{ background: transparent; border: none; }}
 QWidget#sidebar QLabel {{ background: transparent; }}
 QPushButton#navItem {{
     background: transparent; border: 1px solid transparent;
-    border-radius: {r['md']}px; padding: {sp['xs'] + 2}px {sp['md']}px;
-    min-height: {44 - 2 * (sp['xs'] + 2) - 2}px; text-align: left; color: {t['text-secondary']};
-    font-size: {f['nav']}px; font-weight: 500;
+    border-radius: {r['sm'] + 2}px; padding: 0 {sp['sm'] + 2}px;
+    min-height: 34px; max-height: 34px; text-align: left; color: {t['text-secondary']};
+    font-size: {f['nav']}px; font-weight: 400;
 }}
 QPushButton#navItem:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
 /* 选中 = 一片浅色玻璃（2026-10-16 验收：浅蓝底不醒目，强调色描边又太硬）：半透明亮面、
@@ -478,7 +494,7 @@ QPushButton#navItem:hover {{ background: {t['bg-hover']}; color: {t['text-primar
    QIcon.State.On 给出）。 */
 QPushButton#navItem:checked {{
     background: {glass_fill}; border-color: {glass_rim};
-    color: {t['text-primary']}; font-weight: 600;
+    color: {t['text-primary']}; font-weight: 500;
 }}
 /* 侧栏小节标题（"最近项目"）与项目条目 */
 QLabel#navSection {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-muted']}; }}
@@ -1379,8 +1395,9 @@ class Surface(QFrame):
                 paint_elevation(painter, rect, self.RADIUS, "floating", strength=self._lift)
         painter.setPen(Qt.PenStyle.NoPen)
         tokens = theme_module.tokens(current_theme())
-        painter.setBrush(theme_module.qcolor(tokens.get(self._fill, tokens["bg-surface"])))
-        painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        if self._fill != "none":          # "none"：内容直接放在页面上，不画面
+            painter.setBrush(theme_module.qcolor(tokens.get(self._fill, tokens["bg-surface"])))
+            painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
         if self._selected:
             paint_selection_ring(painter, rect, self.RADIUS)
         painter.end()

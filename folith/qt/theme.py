@@ -54,7 +54,7 @@ FONT_SIZES = {
     "body": 13,       # 正文、按钮、输入框（macOS 正文字号）
     "reading": 14,    # 阅读区：段落网格、原文浮层、译文编辑框
     "card": 17,       # 卡片 / 面板 / 条目标题（600）
-    "nav": 13,        # 侧栏导航
+    "nav": 14,        # 侧栏导航（阶段 1：14/400，选中 14/500）
     "section": 17,    # 区块标题（600）——与卡片标题同档，页面里不再有第三层标题
     "title": 22,      # 页面 / 对话框标题（700）
     "display": 28,    # 展示标题（首页空状态、继续上次的工作）
@@ -121,6 +121,15 @@ def resolve(theme: str | None, *, system_dark: bool = False) -> str:
 
 
 _accent = "blue"
+
+
+#: 设置 · 通用里的主题色点：每个高光色在日间主题下的强调色。
+ACCENT_LABELS = (("blue", "蓝色"), ("green", "翠绿"), ("slate", "石板"))
+
+
+def accent_swatch(name: str) -> str:
+    source = {"green": "green", "slate": "paper"}.get(name, "light")
+    return theme_tokens.TOKENS[source]["accent"]
 
 
 def set_accent(name: str) -> None:

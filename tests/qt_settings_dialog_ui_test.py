@@ -27,7 +27,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QLabel, QLineEdit, QVBoxLayout  # noqa: E402
 
-from folith.qt import adapter, style, theme  # noqa: E402
+from folith.qt import adapter, dialogs, style, theme  # noqa: E402
 from folith.qt.dialogs import DiagnosticsDialog, EngineDialog  # noqa: E402
 from folith.qt.workers import TaskRunner  # noqa: E402
 
@@ -51,17 +51,17 @@ def _dialog(app, **config) -> EngineDialog:
     return dialog
 
 
-def test_field_labels_sit_above_their_controls(app):
-    """标签在上：字段容器的第一项是 fieldLabel，控件在它下面。"""
+def test_settings_rows_put_the_name_left_of_the_control(app):
+    """设置分组的一行：左边是名称（固定宽度，所有行对齐），右边是控件（阶段 1 画布）。"""
+    from folith.qt import components
     dialog = _dialog(app)
     try:
-        holder = dialog.key_field.parentWidget()      # _field(...) 生成的容器
-        layout = holder.layout()
-        assert isinstance(layout, QVBoxLayout)
-        first = layout.itemAt(0).widget()
-        assert isinstance(first, QLabel) and first.objectName() == "fieldLabel"
-        assert first.text() == "API 密钥"
-        assert layout.itemAt(1).widget() is dialog.key_field
+        row = dialog.key_field.parentWidget()
+        while row is not None and not isinstance(row, components.FormRow):
+            row = row.parentWidget()
+        assert row is not None, "API 密钥应在一行设置里"
+        assert row.title_label.text() == "API 密钥"
+        assert row.title_label.width() == dialogs.SETTING_LABEL_WIDTH
     finally:
         dialog.close()
 

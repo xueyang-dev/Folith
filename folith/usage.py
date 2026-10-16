@@ -153,6 +153,61 @@ def record_call(
             slot["completion_tokens"] += completion_tokens
             slot["total_tokens"] += total_tokens
             slot["estimated_total_tokens"] += total_tokens if not exact else 0
+    _add_daily(total_tokens, 0 if exact else total_tokens)
+
+
+#: 按天累计的用量（侧栏连接浮窗里的「今天 N tokens」）。只在桌面端设了路径后才写；
+#: 只存日期与两个数字，不存任何提示词内容。
+_DAILY_LOG: Dict[str, Any] = {"path": None}
+_DAILY_KEEP = 31
+
+
+def set_daily_log(path: Any) -> None:
+    """Point the per-day tally at a JSON file (``None`` turns it off)."""
+    _DAILY_LOG["path"] = path
+
+
+def _read_daily(path: Any) -> Dict[str, Any]:
+    import json
+    try:
+        with open(path, encoding="utf-8") as stream:
+            data = json.load(stream)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _add_daily(total_tokens: int, estimated_tokens: int) -> None:
+    path = _DAILY_LOG.get("path")
+    if not path:
+        return
+    import json
+    import os
+    day = time.strftime("%Y-%m-%d")
+    with _LOCK:
+        data = _read_daily(path)
+        slot = data.get(day) if isinstance(data.get(day), dict) else {}
+        slot = {"total_tokens": _nonnegative_int(slot.get("total_tokens")) + total_tokens,
+                "estimated_tokens": _nonnegative_int(slot.get("estimated_tokens")) + estimated_tokens}
+        data[day] = slot
+        for old in sorted(data)[:-_DAILY_KEEP]:
+            data.pop(old, None)
+        temporary = f"{path}.tmp"
+        try:
+            with open(temporary, "w", encoding="utf-8") as stream:
+                json.dump(data, stream)
+            os.replace(temporary, path)
+        except OSError:
+            pass  # 用量统计不能影响翻译本身
+
+
+def today_usage() -> Dict[str, int]:
+    """今天累计的 ``total_tokens`` 与其中估算的 ``estimated_tokens``。"""
+    path = _DAILY_LOG.get("path")
+    slot = _read_daily(path).get(time.strftime("%Y-%m-%d")) if path else None
+    slot = slot if isinstance(slot, dict) else {}
+    return {"total_tokens": _nonnegative_int(slot.get("total_tokens")),
+            "estimated_tokens": _nonnegative_int(slot.get("estimated_tokens"))}
 
 
 def tracked_call(call_fn, ledger: Dict[str, Any], *, role: str):

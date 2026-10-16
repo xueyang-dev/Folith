@@ -231,12 +231,12 @@ class WelcomeDialog(QDialog):
     def _connect_page(self) -> QWidget:
         page, column = self._page(
             i18n.tr('连接一个模型'),
-            i18n.tr('这是唯一必需的一步。填好服务商、API 密钥和模型，点「应用」——会先测试连接，'
-                    '通过后才保存。也可以先跳过，之后在 设置 › 模型 里配置。'))
-        models = self.form.pages["models"]
-        self.form.stack.removeWidget(models)
-        models.show()          # QStackedWidget hid it while it was a background page
-        column.addWidget(models, 1)
+            i18n.tr('这是唯一必需的一步。填好服务商、API 密钥和模型，点「测试并添加」——'
+                    '测试通过才保存。也可以先跳过，之后在 设置 › 模型 里添加。'))
+        # 就是设置里「添加连接」那张面板本身（不是第二套表单），这里直接嵌在页面上。
+        library = self.form.connection_library
+        library.embed_editor()
+        column.addWidget(library.editor, 1)
         self.connect_state = QLabel("")
         self.connect_state.setObjectName("statusOk")
         self.connect_state.setVisible(False)

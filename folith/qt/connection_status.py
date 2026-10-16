@@ -166,3 +166,13 @@ def describe(overview: dict) -> str:
     from . import i18n
 
     return i18n.tr(overview["template"], v0=i18n.tr(overview["label"]))
+
+
+def headline(config: adapter.EngineConfig) -> str:
+    """侧栏底部那一行：翻译用的连接名 · 模型（例如「DeepSeek · deepseek-v4-flash」）。"""
+    if not config.model:
+        return ""
+    selected = (config.connection_roles or {}).get("translation")
+    profile = next((p for p in config.connections or [] if p.get("id") == selected), None)
+    name = (profile or {}).get("name") or config.provider
+    return f"{name} · {config.model}" if name else config.model

@@ -22,7 +22,7 @@ import sys
 import weakref
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
@@ -101,6 +101,8 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.config = config
         self.paths = paths
+        from folith import usage as usage_module
+        usage_module.set_daily_log(Path(paths.data_dir) / "usage-daily.json")
         self.instance_lock = instance_lock
         self.runner = TaskRunner(self)
         self._motion = motion.Motion(self)
@@ -574,7 +576,8 @@ class MainWindow(QMainWindow):
         from . import connection_status
 
         try:
-            self.home.set_connection_overview(connection_status.overview(self.config))
+            self.home.set_connection_overview(connection_status.overview(self.config),
+                                              connection_status.headline(self.config))
         except Exception:  # noqa: BLE001 - the chip must never break the home page
             pass
         panel = getattr(self, "_connection_panel", None)
@@ -596,13 +599,12 @@ class MainWindow(QMainWindow):
             self._connection_panel.settingsRequested.connect(self._connection_settings)
             self._connection_panel.changed.connect(self.refresh_engine_label)
             self._connection_popover = components.Popover(
-                i18n.tr('模型连接'), self._connection_panel, self, size=QSize(390, 210))
-        self._connection_panel.usage_state = (self.workbench._state
-            if self._current_job_id and self.workbench.job_id == self._current_job_id else {})
+                i18n.tr('模型连接'), self._connection_panel, self, size=QSize(300, 210),
+                header=False)
         self._connection_panel.refresh()
-        self._connection_popover._popup_size = QSize(390,
-            self._connection_panel.sizeHint().height() + 72)
-        self._connection_popover.open_at(self.home.engine_card)
+        self._connection_popover._popup_size = QSize(300,
+            self._connection_panel.sizeHint().height() + 50)
+        self._connection_popover.open_at(self.home.engine_card, align="left")
 
     def _connection_settings(self, page: str) -> None:
         if getattr(self, "_connection_popover", None) is not None:

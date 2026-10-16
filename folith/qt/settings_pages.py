@@ -13,7 +13,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
+    QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QWidget,
 )
 
@@ -222,84 +222,66 @@ class AboutPage(QWidget):
         layout.setContentsMargins(0, theme_module.SPACE["lg"], 0, 0)
         layout.setSpacing(theme_module.SPACE["sm"])
 
-        logo = QLabel()
         from . import branding
+        from . import components
+        from .dialogs import _setting_row
 
-        logo.setPixmap(branding.app_icon().pixmap(QSize(64, 64)))
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name = QLabel("Folith")
-        name.setObjectName("pageTitle")
-        name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        version = QLabel(i18n.tr('版本 {v0}', v0=self._view["version"] or "—"))
-        version.setObjectName("sectionTitle")
-        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        build = QLabel(i18n.tr('构建 {v0}', v0=self._view["build"] or i18n.tr('未知'))
-                       + (i18n.tr('（随包）') if self._view["frozen"] else i18n.tr('（源码运行）')))
-        build.setObjectName("hint")
-        build.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        build.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        for widget in (logo, name, version, build):
-            layout.addWidget(widget)
+        # 品牌一行：图标 + 字标名称 + 版本（阶段 1 画布）。
+        logo = QLabel()
+        logo.setPixmap(branding.app_icon().pixmap(QSize(48, 48)))
+        name = QLabel(branding.wordmark(i18n.language())[0])
+        style_module.set_text_role(name, "card-title")
+        version = QLabel(i18n.tr('版本 {v0}', v0=self._view["version"] or "—")
+                         + " · " + i18n.tr('构建 {v0}', v0=self._view["build"] or i18n.tr('未知')))
+        style_module.set_text_role(version, "meta")
+        version.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        identity = QVBoxLayout()
+        identity.setSpacing(0)
+        identity.addWidget(name)
+        identity.addWidget(version)
+        brand = QHBoxLayout()
+        brand.setContentsMargins(theme_module.SPACE["xs"], 0, 0, 0)
+        brand.setSpacing(theme_module.SPACE["md"])
+        brand.addWidget(logo)
+        brand.addLayout(identity, 1)
+        layout.addLayout(brand)
         layout.addSpacing(theme_module.SPACE["sm"])
 
-        links, links_body = _panel(i18n.tr('链接'))
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(theme_module.SPACE["md"])
-        grid.setVerticalSpacing(theme_module.SPACE["xs"])
         self.project_link = _link("github.com/xueyang-dev/Folith")
         self.project_link.clicked.connect(lambda: _open_url(support.PROJECT_URL))
-        self.author_link = _link("@xueyang-dev")
+        self.author_link = _link("xueyang-dev")
         self.author_link.clicked.connect(lambda: _open_url(support.AUTHOR_URL))
-        self.issue_link = _link(i18n.tr('报告问题…'))
-        self.issue_link.setToolTip(i18n.tr('在 GitHub Issues 新建一条；只预填版本号与 macOS 版本，'
-                                           '不带任何文档内容或密钥。'))
-        self.issue_link.clicked.connect(lambda: _open_url(support.issue_url(self._view)))
-        # 邮箱单独一行、有自己的标签，图标是信封（点了打开本机邮件客户端），不是外链。
+        # 邮箱是信封图标（打开本机邮件客户端），不是外链。
         self.email_link = _link("xydev@outlook.sa", icon="mail")
         self.email_link.clicked.connect(lambda: _open_url("mailto:xydev@outlook.sa"))
-        for row, (caption, button) in enumerate(((i18n.tr('项目主页'), self.project_link),
-                                                 (i18n.tr('作者'), self.author_link),
-                                                 (i18n.tr('反馈'), self.issue_link),
-                                                 (i18n.tr('邮箱'), self.email_link))):
-            label = style_module.field_label(caption)
-            grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(button, row, 1, Qt.AlignmentFlag.AlignLeft)
-        grid.setColumnStretch(1, 1)
-        links_body.addLayout(grid)
-        layout.addWidget(links)
+        self.issue_link = _link(i18n.tr('在 GitHub 上提交'))
+        self.issue_link.setToolTip(i18n.tr('只预填版本号与 macOS 版本，不带任何文档内容或密钥。'))
+        self.issue_link.clicked.connect(lambda: _open_url(support.issue_url(self._view)))
 
-        update, update_body = _panel(
-            i18n.tr('更新'),
-            i18n.tr('只在你点「检查更新」时联网读取 GitHub 上的最新版本；不会自动下载或安装。'))
         self.update_button = QPushButton(i18n.tr('检查更新'))
-        self.update_button.setIcon(icons.icon("refresh", 16))
-        self.update_button.setIconSize(QSize(16, 16))
+        style_module.set_button(self.update_button, "secondary", small=True)
+        self.update_button.setToolTip(i18n.tr('只在你点这里时联网读取 GitHub 上的最新版本；不会自动下载或安装。'))
         self.update_button.clicked.connect(self.check_update)
         self.update_status = QLabel("")
-        self.update_status.setWordWrap(True)
         self.update_status.setVisible(False)
         self.download_link = _link(i18n.tr('打开下载页'))
         self.download_link.setVisible(False)
         self._download_url = ""
         self.download_link.clicked.connect(lambda: _open_url(self._download_url))
-        row = QHBoxLayout()
-        row.addWidget(self.update_button)
-        row.addWidget(self.update_status, 1)
-        row.addWidget(self.download_link)
-        row.addStretch(1)
-        update_body.addLayout(row)
-        layout.addWidget(update)
-
-        support_card, support_body = _panel(
-            i18n.tr('支持信息'),
-            i18n.tr('报告问题时可以附上诊断信息：版本、系统与运行事实，不含 API 密钥与文档正文。'))
         self.diagnostics_button = QPushButton(i18n.tr('诊断信息…'))
+        style_module.set_button(self.diagnostics_button, "secondary", small=True)
+        self.diagnostics_button.setToolTip(i18n.tr('版本、系统与运行事实，不含 API 密钥与文档正文。'))
         self.diagnostics_button.clicked.connect(self.diagnosticsRequested.emit)
-        row = QHBoxLayout()
-        row.addWidget(self.diagnostics_button)
-        row.addStretch(1)
-        support_body.addLayout(row)
-        layout.addWidget(support_card)
+
+        group = components.FormGroup()
+        group.add_row(_setting_row(i18n.tr('项目主页'), self.project_link))
+        group.add_row(_setting_row(i18n.tr('作者'), self.author_link))
+        group.add_row(_setting_row(i18n.tr('邮箱'), self.email_link))
+        group.add_row(_setting_row(i18n.tr('报告问题'), self.issue_link))
+        group.add_row(_setting_row(i18n.tr('更新'), self.update_button, self.update_status,
+                                   self.download_link))
+        group.add_row(_setting_row(i18n.tr('诊断信息'), self.diagnostics_button))
+        layout.addWidget(group)
         layout.addStretch(1)
 
     def check_update(self) -> None:
@@ -389,10 +371,21 @@ class ShortcutsDialog(QDialog):
 
 # =============================================================================
 class ConnectionPanel(QWidget):
-    """三条连接各一行：状态点、名称、说明、上次测试时间、「测试」与「设置…」。"""
+    """侧栏的模型连接小卡（阶段 1 画布）。
 
-    settingsRequested = Signal(str)          # 设置窗口里要打开的页："models" | "vision"
+    每个**不同的**连接一行：圆点 · 连接名 · 状态，下面一行「模型 · 用到它的用途」；
+    沿用翻译模型、或与别的用途完全相同的连接合并成一行。下面是今天的 token 用量，
+    最后是「测试」「设置…」两个小按钮。没有标题和关闭按钮：点外面就关。
+    """
+
+    settingsRequested = Signal(str)          # 设置窗口里要打开的页："models"
     changed = Signal()
+
+    STATE_TEXT = {"ok": "已连接", "failed": "连接失败", "untested": "未测试",
+                  "missing": "未配置", "inherited": "沿用翻译模型"}
+    STATE_TONE = {"ok": "done", "failed": "error", "untested": "attention",
+                  "missing": "attention", "inherited": "idle"}
+    ROLE_SHORT = {"translation": "翻译", "reviewer": "审校", "vision": "视觉"}
 
     def __init__(self, runner, config_getter, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -400,95 +393,161 @@ class ConnectionPanel(QWidget):
         self.config_getter = config_getter
         self._busy: set[str] = set()
         self._rows: dict[str, dict] = {}
+        self._groups: dict[str, list[str]] = {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(theme_module.SPACE["sm"])
+        layout.setContentsMargins(theme_module.SPACE["xs"], theme_module.SPACE["xs"],
+                                  theme_module.SPACE["xs"], 0)
+        layout.setSpacing(theme_module.SPACE["md"])
+        rows = QVBoxLayout()
+        rows.setSpacing(theme_module.SPACE["sm"])
         for role in connection_status.ROLES:
             dot = QLabel()
             dot.setObjectName("engineDot")
             dot.setFixedSize(8, 8)
-            title = QLabel(i18n.tr(connection_status.ROLE_LABELS[role]))
-            title.setObjectName("cardTitle")
-            message = QLabel("")
-            message.setObjectName("hint")
-            message.setWordWrap(True)
-            test = QPushButton(i18n.tr('测试'))
-            test.clicked.connect(lambda _c=False, r=role: self.test(r))
-            open_settings = QPushButton(i18n.tr('设置…'))
-            style_module.set_button(open_settings, "plain")
-            open_settings.clicked.connect(
-                lambda _c=False, r=role: self.settingsRequested.emit(
-                    "vision" if r == "vision" else "models"))
+            title = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
+            style_module.set_text_role(title, "name")
+            state = QLabel("")
+            style_module.set_text_role(state, "status")
+            message = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
+            style_module.set_text_role(message, "meta")
             head = QHBoxLayout()
             head.setSpacing(theme_module.SPACE["sm"])
             head.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
             head.addWidget(title, 1)
-            head.addWidget(open_settings)
-            head.addWidget(test)
+            head.addWidget(state, 0)
             container = QWidget()
             block = QVBoxLayout(container)
             block.setContentsMargins(0, 0, 0, 0)
-            block.setSpacing(2)
+            block.setSpacing(0)
             block.addLayout(head)
-            block.addWidget(message)
-            layout.addWidget(container)
-            self._rows[role] = {"dot": dot, "message": message, "test": test,
-                                "title": title, "container": container}
+            message_row = QHBoxLayout()
+            message_row.setContentsMargins(8 + theme_module.SPACE["sm"], 0, 0, 0)
+            message_row.addWidget(message)
+            block.addLayout(message_row)
+            rows.addWidget(container)
+            self._rows[role] = {"dot": dot, "title": title, "state": state,
+                                "message": message, "container": container}
+        layout.addLayout(rows)
+        rule = QFrame()
+        rule.setObjectName("statSeparator")
+        rule.setFixedHeight(1)
+        rule.setStyleSheet("max-width: 10000px;")
+        layout.addWidget(rule)
+        usage_row = QHBoxLayout()
+        usage_row.setSpacing(theme_module.SPACE["sm"])
         self.usage = QLabel("")
-        self.usage.setObjectName("hint")
-        layout.addWidget(self.usage)
+        self.usage.setTextFormat(Qt.TextFormat.RichText)
+        self.usage_note = QLabel("")
+        self.usage_note.setObjectName("hint")
+        usage_row.addWidget(self.usage)
+        usage_row.addStretch(1)
+        usage_row.addWidget(self.usage_note)
+        layout.addLayout(usage_row)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(theme_module.SPACE["sm"])
+        self.test_button = QPushButton(i18n.tr('测试'))
+        style_module.set_button(self.test_button, "secondary", small=True)
+        self.test_button.clicked.connect(self.test_all)
+        self.settings_button = QPushButton(i18n.tr('设置…'))
+        style_module.set_button(self.settings_button, "secondary", small=True)
+        self.settings_button.clicked.connect(lambda: self.settingsRequested.emit("models"))
+        buttons.addWidget(self.test_button)
+        buttons.addWidget(self.settings_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
         self.refresh()
+
+    @staticmethod
+    def _identity(role: str, config) -> dict | None:
+        target = connection_status.endpoint(role, config)
+        if not target:
+            return None
+        identity = dict(target)
+        from folith.model_connections import connection_base_url
+        try:
+            identity["base_url"] = connection_base_url(identity["provider"], identity["base_url"])
+        except ValueError:
+            pass  # 配置不完整时保持原样，状态行会说「未配置」
+        return identity
+
+    @staticmethod
+    def _connection_name(role: str, config, provider: str) -> str:
+        selected = (config.connection_roles or {}).get(role)
+        profile = next((p for p in config.connections or [] if p.get("id") == selected), None)
+        return str((profile or {}).get("name") or provider or "")
 
     def refresh(self) -> dict:
         config = self.config_getter()
         overview = connection_status.overview(config)
-        seen = []
+        groups: list[tuple[str, dict | None, list[str]]] = []
         for row in overview["rows"]:
-            widgets = self._rows[row["role"]]
-            target = connection_status.endpoint(row["role"], config)
-            identity = dict(target) if target else None
-            if identity:
-                from folith.model_connections import connection_base_url
-                try:
-                    identity["base_url"] = connection_base_url(identity["provider"], identity["base_url"])
-                except ValueError:
-                    pass  # Missing configuration keeps its original status.
-            widgets["container"].setVisible(identity is not None and identity not in seen)
-            if target:
-                seen.append(identity)
-                widgets["title"].setText(target["model"] or i18n.tr(row["label"]))
-                widgets["title"].setObjectName("fieldLabel")
-                widgets["title"].setToolTip(i18n.tr(row["label"]) + " · " + target["provider"])
-            widgets["dot"].setProperty("state", {"ok": "ok", "danger": "error",
-                                                 "warning": "warn"}.get(row["tone"], "muted"))
+            role = row["role"]
+            if row["state"] == "inherited" and groups:
+                groups[0][2].append(role)          # 沿用翻译模型：并进翻译那一行
+                continue
+            identity = self._identity(role, config)
+            owner = next((group for group in groups
+                          if identity is not None and group[1] == identity), None)
+            if owner is not None:
+                owner[2].append(role)              # 与别的用途完全相同的连接
+            else:
+                groups.append((role, identity, [role]))
+        self._groups = {lead: roles for lead, _identity, roles in groups}
+        rows = {row["role"]: row for row in overview["rows"]}
+        for role, widgets in self._rows.items():
+            widgets["container"].setVisible(role in self._groups)
+        for lead, identity, roles in groups:
+            widgets, row = self._rows[lead], rows[lead]
+            target = connection_status.endpoint(lead, config) or {}
+            name = self._connection_name(lead, config, target.get("provider", ""))
+            widgets["title"].setText(name or i18n.tr(row["label"]))
+            state = row["state"]
+            busy = lead in self._busy
+            state_text = i18n.tr('正在测试…') if busy else i18n.tr(self.STATE_TEXT[state])
+            tone = "active" if busy else self.STATE_TONE[state]
+            widgets["state"].setText(state_text)
+            widgets["state"].setStyleSheet(
+                f"color: {style_module.text_color(theme_module.STATUS_TONES[tone])};")
+            widgets["dot"].setProperty("state", {"done": "ok", "error": "error",
+                                                 "attention": "warn"}.get(tone, "muted"))
             style_module.repolish(widgets["dot"])
-            text = i18n.tr_dynamic(row["message"])
+            uses = "、".join(i18n.tr(self.ROLE_SHORT[r]) for r in roles)
+            model = target.get("model") or ""
+            widgets["message"].setText(f"{model} · {uses}" if model else uses)
+            tip = i18n.tr_dynamic(row["message"])
             if row["at"]:
-                text = i18n.tr('{v0} · 上次测试 {v1}', v0=text,
-                               v1=row["at"].replace("T", " ")[:16])
-            if row["role"] in self._busy:
-                text = i18n.tr('正在测试…')
-            widgets["message"].setText(text)
-            widgets["test"].setEnabled(row["state"] not in ("missing", "inherited")
-                                       and row["role"] not in self._busy)
-        text = self.usage_text()
-        self.usage.setText(text)
-        self.usage.setVisible(bool(text))
+                tip = i18n.tr('{v0} · 上次测试 {v1}', v0=tip, v1=row["at"].replace("T", " ")[:16])
+            widgets["container"].setToolTip(tip)
+        testable = [lead for lead in self._groups
+                    if rows[lead]["state"] not in ("missing", "inherited")]
+        self.test_button.setText(i18n.tr('全部测试') if len(testable) > 1 else i18n.tr('测试'))
+        self.test_button.setEnabled(bool(testable) and not self._busy)
+        self._sync_usage()
         return overview
 
-    def usage_text(self):
-        # Current task is explicit and cheap: avoid loading every job on opening
-        # a small status card. Home has no selected task, so no usage is invented.
-        state = getattr(self, "usage_state", {}) or {}
-        ledger = state.get("llm_usage") or {}
-        if not ledger.get("calls"):
-            return ""
-        total = int(ledger.get("total_tokens") or 0)
-        estimate = int(ledger.get("estimated_total_tokens") or 0)
-        text = i18n.tr('本任务：{v0} tokens', v0=f"{total:,}")
-        if estimate:
-            text += " · " + i18n.tr('其中估算 {v0}', v0=f"{estimate:,}")
-        return text
+    def _sync_usage(self) -> None:
+        from folith import usage as usage_module
+
+        today = usage_module.today_usage()
+        total, estimated = today["total_tokens"], today["estimated_tokens"]
+        number = f"<b>{total:,}</b> tokens"
+        self.usage.setText(i18n.tr('今天 {v0}', v0=number))
+        if not total:
+            note = ""
+        elif estimated >= total:
+            note = i18n.tr('全部为估算')
+        elif estimated:
+            note = i18n.tr('约 {v0} 为估算', v0=f"{estimated:,}")
+        else:
+            note = i18n.tr('全部为实际用量')
+        self.usage_note.setText(note)
+        self.usage_note.setVisible(bool(note))
+
+    def test_all(self) -> None:
+        rows = {row["role"]: row for row in connection_status.overview(self.config_getter())["rows"]}
+        for lead in list(self._groups):
+            if rows[lead]["state"] not in ("missing", "inherited"):
+                self.test(lead)
 
     def test(self, role: str) -> None:
         config = self.config_getter()

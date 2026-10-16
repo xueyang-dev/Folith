@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 import core
 from folith.qt import adapter, dialogs, connection_status, theme, views
 from folith.qt.settings_pages import ConnectionPanel
@@ -187,16 +187,22 @@ def test_default_mode_preselects_preparation_without_starting(mode, isolated):
     assert adapter.task_setup_view(cfg, "job", previous)["strategy_preset"] == "标准"
 
 
-def test_connection_card_collapses_inherited_roles_and_labels_estimates(isolated, app):
+def test_connection_card_collapses_inherited_roles_and_labels_estimates(isolated, app, monkeypatch):
+    from folith import usage
+    monkeypatch.setattr(usage, "_DAILY_LOG", {"path": str(isolated / "usage-daily.json")})
+    usage.record_call({}, role="translate", provider="OpenAI", model="m",
+                      system_prompt="x" * 800, user_prompt="", completion="y" * 400)
+    usage.record_call({}, role="translate", provider="OpenAI", model="m", system_prompt="",
+                      user_prompt="", usage={"prompt_tokens": 600, "completion_tokens": 300,
+                                             "total_tokens": 900})
     cfg = adapter.EngineConfig(provider="OpenAI", model="current-model", api_key="fake")
     panel = ConnectionPanel(Runner(), lambda: cfg)
-    panel.usage_state = {"llm_usage": {"calls": 2, "total_tokens": 1200, "estimated_total_tokens": 300}}
-    panel.refresh()
     assert not panel._rows["translation"]["container"].isHidden()
     assert panel._rows["reviewer"]["container"].isHidden()
     assert panel._rows["vision"]["container"].isHidden()
-    assert panel._rows["translation"]["title"].text() == "current-model"
-    assert "1,200" in panel.usage.text() and "估算 300" in panel.usage.text()
+    assert panel._rows["translation"]["title"].text() == "OpenAI"
+    assert panel._rows["translation"]["message"].text().startswith("current-model")
+    assert "1,200" in panel.usage.text() and "300" in panel.usage_note.text()
 
 
 def test_home_counts_once_and_attention_link_filters_actual_tasks(isolated, app):
@@ -377,7 +383,75 @@ def test_foreign_wordmark_is_a_short_name_and_a_short_tagline(language, expected
     home = views.HomeView()
     home._logo_theme = None
     home._refresh_logo()
-    name, _, tagline = home._logo_label.text().partition("<br>")
-    assert name == f"<b>{expected}</b>", "只写名字的音译，不直译「译页」"
-    assert len(tagline) - len("<span style='font-size:10px'></span>") <= 30
+    from PySide6.QtGui import QTextDocument
+    document = QTextDocument()
+    document.setHtml(home._logo_label.text())
+    name, tagline = document.toPlainText().splitlines()
+    assert name == expected, "只写名字的音译，不直译「译页」"
+    assert len(tagline) <= 30
     home.close()
+
+
+def test_daily_usage_tally_counts_estimates_separately(tmp_path, monkeypatch):
+    from folith import usage
+    monkeypatch.setattr(usage, "_DAILY_LOG", {"path": str(tmp_path / "daily.json")})
+    usage.record_call({}, role="t", provider="p", model="m", system_prompt="x" * 40,
+                      user_prompt="", completion="")
+    usage.record_call({}, role="t", provider="p", model="m", system_prompt="", user_prompt="",
+                      usage={"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
+    assert usage.today_usage() == {"total_tokens": 20, "estimated_tokens": 10}
+    monkeypatch.setattr(usage, "_DAILY_LOG", {"path": None})
+    assert usage.today_usage() == {"total_tokens": 0, "estimated_tokens": 0}
+
+
+def test_settings_pickers_drive_the_saved_values(isolated, app):
+    dialog = dialogs.EngineDialog(adapter.EngineConfig(), Runner())
+    dialog.accent_picker.button("green").click()
+    assert dialog.accent_box.currentData() == "green"
+    dialog.mode_cards["快速"].click()
+    assert dialog.default_mode_box.currentData() == "快速"
+    dialog.default_mode_box.setCurrentIndex(dialog.default_mode_box.findData("学术增强"))
+    assert dialog.mode_cards["学术增强"].isChecked() and not dialog.mode_cards["快速"].isChecked()
+    dialog.ocr_mode_picker.button("off").click()
+    assert dialog.ocr_mode_box.currentData() == "off"
+    dialog.vision_option.click()
+    assert dialog.ocr_backend_box.currentData() == "online"
+    assert dialog.ocr_language_row.isHidden()
+    dialog.close()
+
+
+def test_connection_editor_is_a_sheet_and_the_page_has_one_save(isolated, app):
+    dialog = dialogs.EngineDialog(adapter.EngineConfig(), Runner())
+    library = dialog.connection_library
+    page = dialog.pages["models"].widget()
+    assert not page.isAncestorOf(dialog.key_edit), "添加连接的表单在单独的面板里"
+    assert library.editor.isAncestorOf(dialog.key_edit)
+    saves = [b for b in page.findChildren(QPushButton) if b.text() in ("测试并保存", "保存用途", "保存")]
+    assert len(saves) == 1
+    dialog.provider_box.setCurrentText("DeepSeek")
+    library.models.setText("m-1, m-2")
+    library.add_model()
+    assert dialog.model_box.currentText() == "m-2"
+    assert [library.model_list.item(i).text() for i in range(library.model_list.count())][-2:] == ["m-1", "m-2"]
+    dialog.close()
+
+
+def test_labels_looked_up_from_tables_are_translated():
+    """The coverage script only sees literal tr() strings; labels kept in tables slip past it."""
+    from folith.qt import connection_status, theme as theme_module
+    from folith.qt.connection_library import ConnectionLibrary
+    from folith.qt.settings_pages import ConnectionPanel
+    keys = {theme_module.label(n) for n in (theme_module.FOLLOW_SYSTEM, "light", "dark")}
+    keys |= {label for _key, label in theme_module.ACCENT_LABELS}
+    keys |= {label for _key, _icon, label in dialogs.EngineDialog.PAGES}
+    keys |= {label for label, _key, _icon in dialogs.EngineDialog.DEFAULT_MODES}
+    keys |= {label for label, _key in dialogs.EngineDialog.MODE_STEPS}
+    keys |= set(ConnectionPanel.STATE_TEXT.values()) | set(ConnectionPanel.ROLE_SHORT.values())
+    keys |= set(ConnectionLibrary.STATE_TEXT.values()) | {l for _r, l in ConnectionLibrary.ROLES}
+    keys |= set(connection_status.ROLE_LABELS.values())
+    keys |= {label.split("（")[0] for label, _mode in adapter.OCR_MODE_CHOICES}
+    root = Path(__file__).resolve().parents[1] / "folith" / "resources" / "locales"
+    for language in ("en", "ru", "es", "ar"):
+        catalog = json.loads((root / f"qt-{language}.json").read_text(encoding="utf-8"))
+        missing = sorted(k for k in keys if catalog.get(k, k) == k)
+        assert not missing, (language, missing)
