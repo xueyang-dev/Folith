@@ -87,17 +87,20 @@ def test_progress_track_keeps_the_progress_bar_api_and_tones(app):
         track.grab()  # paints in every tone without raising
 
 
-def test_sheen_follows_reduce_motion(app, monkeypatch):
+def test_waiting_track_does_not_repaint_on_its_own(app, monkeypatch):
+    """等待模型时进度条不再自己动：30 帧的扫光让整窗不停重绘，菜单栏和台前调度跟着闪。"""
+    from PySide6.QtCore import QTimer
+
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
     track = components.ProgressTrack()
     track.resize(160, 6)
     track.show()
-    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
-    track.set_tone("waiting")
-    track._sync_sheen()
-    assert track._sheen.isActive()
-    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
-    track._sync_sheen()
-    assert not track._sheen.isActive()
+    for tone in ("waiting", "retrying"):
+        track.set_tone(tone)
+        QTest.qWait(400)  # the tone cross-fade finishes
+        assert not [timer for timer in track.findChildren(QTimer) if timer.isActive()], tone
+    track.setRange(0, 0)  # indeterminate
+    assert not [timer for timer in track.findChildren(QTimer) if timer.isActive()]
     track.close()
 
 
@@ -120,11 +123,22 @@ def test_status_group_opens_the_run_log_by_click_and_keyboard(app):
     app.processEvents()
     QTest.mouseClick(bench.run_status, Qt.MouseButton.LeftButton)
     app.processEvents()
-    assert bench.activity_popover.isVisible()
-    assert bench.activity_popover.isAncestorOf(bench.activity_panel)
-    bench.activity_popover.close_button.click()
+    popover = bench.activity_popover
+    assert popover.isVisible()
+    assert popover.isAncestorOf(bench.activity_panel)
+    # 从进度条下面长出来：居中对齐、没有缝，状态组与浮层同一块表面。
+    # (浮层本身会被夹在屏幕里；颈部始终正对着状态组。)
+    status = bench.run_status.mapToGlobal(bench.run_status.rect().center())
+    left, right = popover._neck
+    assert abs(popover.geometry().x() + (left + right) / 2 - status.x()) <= 1
+    bottom = bench.run_status.mapToGlobal(bench.run_status.rect().bottomLeft()).y()
+    assert popover.geometry().top() <= bottom + 1
+    assert bench.run_status.property("tethered") is True
+    assert popover.close_button.isHidden() and popover.title_label.isHidden()
+    popover.close()
     app.processEvents()
-    assert not bench.activity_popover.isVisible()
+    assert not popover.isVisible()
+    assert bench.run_status.property("tethered") is False
 
     bench.run_status.setFocus()
     QTest.keyClick(bench.run_status, Qt.Key.Key_Return)

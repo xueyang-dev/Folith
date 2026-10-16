@@ -1739,9 +1739,11 @@ class ProgressTrack(QWidget):
     """A native-looking progress bar (macOS NSProgressIndicator, bar style).
 
     Rounded, slightly sunken track; fill in the run's tone colour with a soft top
-    highlight.  ``waiting`` / ``retrying`` / an indeterminate range show a slow
-    moving sheen so a long model call never looks frozen; with reduced motion
-    the sheen is not drawn.  The value API mirrors ``QProgressBar``
+    highlight.  It never animates on its own: a running sheen repainted the window
+    ~30 times a second for the whole of every model wait, which made the macOS menu
+    bar and the Stage Manager thumbnail flicker (trial feedback 2026-10-16).  The
+    status line under it says what is happening and counts the seconds instead.
+    The value API mirrors ``QProgressBar``
     (``setRange`` / ``setValue`` / ``minimum`` / ``maximum`` / ``value``;
     ``setRange(0, 0)`` means indeterminate).
     """
@@ -1758,10 +1760,6 @@ class ProgressTrack(QWidget):
         self._stage = None
         self._snap_next = True
         self._motion = motion.Motion(self)
-        self._phase = 0.0
-        self._sheen = QTimer(self)
-        self._sheen.setInterval(33)
-        self._sheen.timeout.connect(self._advance)
 
     # QProgressBar-compatible value API --------------------------------
     def setRange(self, minimum: int, maximum: int) -> None:  # noqa: N802 - Qt naming
@@ -1772,7 +1770,6 @@ class ProgressTrack(QWidget):
             self._motion.stop("value")
             self._display_value = float(self._value)
             self._snap_next = True
-        self._sync_sheen()
         self.update()
 
     def setValue(self, value: int) -> None:  # noqa: N802 - Qt naming
@@ -1818,7 +1815,6 @@ class ProgressTrack(QWidget):
         tone = tone if tone in PROGRESS_TONES else "running"
         if tone != self._tone:
             self._previous_tone, self._tone = self._tone, tone
-            self._sync_sheen()
             self._motion.animate("tone", 0, 1, self._set_tone_mix, kind="progress")
 
     def _set_tone_mix(self, value: float) -> None:
@@ -1827,31 +1823,6 @@ class ProgressTrack(QWidget):
 
     def tone(self) -> str:
         return self._tone
-
-    # -------------------------------------------------------------------
-    def _wants_sheen(self) -> bool:
-        return (self.indeterminate() or self._tone in ("waiting", "retrying")) \
-            and not motion.reduced()
-
-    def _sync_sheen(self) -> None:
-        if self._wants_sheen() and self.isVisible():
-            if not self._sheen.isActive():
-                self._sheen.start()
-        else:
-            self._sheen.stop()
-
-    def _advance(self) -> None:
-        speed = 0.008 if self._tone == "retrying" else 0.016
-        self._phase = (self._phase + speed) % 1.0
-        self.update()
-
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().showEvent(event)
-        self._sync_sheen()
-
-    def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().hideEvent(event)
-        self._sheen.stop()
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt naming
         tokens = _tokens()
@@ -1890,24 +1861,6 @@ class ProgressTrack(QWidget):
             body.setColorAt(1.0, colour)
             painter.setBrush(body)
             painter.drawRoundedRect(fill, radius, radius)
-        # Sheen: a soft band sweeping across (indeterminate or waiting).
-        if self._wants_sheen():
-            band = rect.width() * 0.35
-            start = -band + (rect.width() + band) * self._phase
-            x = rect.right() - start - band if rtl else rect.left() + start
-            sheen = QLinearGradient(QPointF(x, 0), QPointF(x + band, 0))
-            glow = QColor(colour if width <= 0 else QColor(255, 255, 255))
-            glow.setAlpha(0)
-            peak = QColor(glow)
-            peak.setAlpha(90 if width > 0 else 120)
-            sheen.setColorAt(0.0, glow)
-            sheen.setColorAt(0.5, peak)
-            sheen.setColorAt(1.0, glow)
-            painter.setBrush(sheen)
-            clip = QPainterPath()
-            clip.addRoundedRect(rect, radius, radius)
-            painter.setClipPath(clip)
-            painter.drawRect(QRectF(x, rect.top(), band, rect.height()))
         painter.end()
 
 
@@ -1936,6 +1889,9 @@ class Popover(QFrame):
         self._closing = False
         self._accept_close = False
         self._anchor_rect = QRect()
+        #: 展开它的那个控件（``tether=True`` 时）：浮层画成从它底边长出来的一块。
+        self._tether: QWidget | None = None
+        self._neck = (0.0, 0.0)
         self.body = QWidget(self)
         self.body.resize(size)
         self.title_label = QLabel(title)
@@ -1975,9 +1931,46 @@ class Popover(QFrame):
         self.content = content
         layout.addWidget(content, 1)
 
+    #: 系着锚点时：颈部高度、颈部与面板相接处的内凹圆角。
+    TETHER_NECK = 6
+    TETHER_FILLET = 6
+
+    def _tether_path(self) -> tuple[QPainterPath, QRectF]:
+        """颈部（锚点宽）+ 面板（浮层宽），相接处是内凹圆角——一整块，像从锚点底边长出来。"""
+        neck, fillet = self.TETHER_NECK, self.TETHER_FILLET
+        radius = theme_module.RADIUS["md"]
+        panel = QRectF(self.rect()).adjusted(9, neck, -9, -11)
+        # 展开动画的头几帧窗口还很矮：面板至少保持圆角的高度（超出部分被窗口裁掉）。
+        panel.setHeight(max(panel.height(), 2 * radius + 1))
+        left, right = self._neck
+        left = max(panel.left() + radius + fillet, left)
+        right = min(panel.right() - radius - fillet, right)
+        path = QPainterPath()
+        path.addRoundedRect(panel, radius, radius)
+        stem = QPainterPath()
+        stem.addRect(QRectF(left, -1, right - left, neck + radius + 1))
+        path = path.united(stem)
+        for x, side in ((left, -1), (right, 1)):
+            corner = QPainterPath()
+            square = QRectF(x if side > 0 else x - fillet, neck - fillet, fillet, fillet)
+            corner.addRect(square)
+            hole = QPainterPath()
+            centre = QPointF(x + side * fillet, neck - fillet)
+            hole.addEllipse(centre, fillet, fillet)
+            path = path.united(corner.subtracted(hole))
+        return path, panel
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._tether is not None:
+            path, panel = self._tether_path()
+            painter.setPen(Qt.PenStyle.NoPen)
+            style_module.paint_elevation(painter, panel, theme_module.RADIUS["md"], "floating")
+            painter.setBrush(theme_module.qcolor(_tokens()["bg-surface-raised"]))
+            painter.drawPath(path)
+            painter.end()
+            return
         rect = QRectF(self.rect()).adjusted(9, 7, -9, -11)
         radius = theme_module.RADIUS["md"]
         painter.setPen(Qt.PenStyle.NoPen)
@@ -1990,31 +1983,52 @@ class Popover(QFrame):
         self.subtitle_label.setText(text)
         self.subtitle_label.setVisible(bool(text))
 
-    def open_at(self, anchor: QWidget, *, align: str = "right") -> None:
+    def open_at(self, anchor: QWidget, *, align: str = "right", tether: bool = False) -> None:
         """Show below ``anchor`` (above it near the screen bottom), clamped to its screen.
 
         ``align="right"`` lines up the right edges (toolbar buttons); ``"left"`` lines up
-        the left edges (the sidebar's connection row, whose card grows into the page).
+        the left edges (the sidebar's connection row, whose card grows into the page);
+        ``"center"`` centres it under the anchor.
+
+        ``tether=True``: no gap — the popover grows out of the anchor's bottom edge.  The
+        anchor gets ``tethered=true`` (QSS fills it with the popover's surface and squares
+        its bottom corners) so the two read as one shape, and the popover unfolds downwards.
         """
         self.resize(self._popup_size)
-        below = anchor.mapToGlobal(QPoint(anchor.width(), anchor.height() + 6))
+        gap = 0 if tether else 6
+        below = anchor.mapToGlobal(QPoint(anchor.width(), anchor.height() + gap))
         x, y = below.x() - self.width(), below.y()
         left_edge = (align == "left") != (self.layoutDirection() == Qt.LayoutDirection.RightToLeft)
-        if left_edge:
-            x = anchor.mapToGlobal(QPoint(0, 0)).x() - 10
+        origin = anchor.mapToGlobal(QPoint(0, 0))
+        if align == "center":
+            x = origin.x() + anchor.width() // 2 - self.width() // 2
+        elif left_edge:
+            x = origin.x() - 10
+        if tether:
+            y -= 1  # 盖住锚点底边那 1px，接缝处不漏底色
         screen = anchor.screen() or QGuiApplication.primaryScreen()
         if screen is not None:
             area = screen.availableGeometry()
             x = max(area.left() + 8, min(x, area.right() - self.width() - 8))
-            if y + self.height() > area.bottom() - 8:
-                y = max(area.top() + 8,
-                        anchor.mapToGlobal(QPoint(0, 0)).y() - self.height() - 6)
+            if not tether and y + self.height() > area.bottom() - 8:
+                y = max(area.top() + 8, origin.y() - self.height() - 6)
         target = QRect(x, y, self._popup_size.width(), self._popup_size.height())
-        self._anchor_rect = QRect(anchor.mapToGlobal(QPoint(0, 0)), anchor.size())
+        self._set_tether(anchor if tether else None)
+        if tether:
+            self._neck = (float(origin.x() - x), float(origin.x() - x + anchor.width()))
+            self._anchor_rect = QRect(x, y, target.width(), self.TETHER_NECK + 1)
+        else:
+            self._anchor_rect = QRect(origin, anchor.size())
         self._closing = False
         self._accept_close = False
         self._motion.stop("popup")
-        self.body.setGeometry(QRect(QPoint(0, 0), target.size()).adjusted(10, 10, -10, -10))
+        inner = QRect(QPoint(0, 0), target.size())
+        if tether:
+            inner = inner.adjusted(9 + theme_module.SPACE["md"], self.TETHER_NECK + theme_module.SPACE["md"],
+                                   -9 - theme_module.SPACE["md"], -11 - theme_module.SPACE["md"])
+        else:
+            inner = inner.adjusted(10, 10, -10, -10)
+        self.body.setGeometry(inner)
         self.body.hide()
         self.show()
         self.raise_()
@@ -2049,9 +2063,17 @@ class Popover(QFrame):
 
         self._animate_geometry(self.geometry(), self._anchor_rect, "popover-close", finish)
 
+    def _set_tether(self, anchor: QWidget | None) -> None:
+        previous, self._tether = self._tether, anchor
+        for widget, value in ((previous, False), (anchor, True)):
+            if widget is not None:
+                widget.setProperty("tethered", value)
+                style_module.repolish(widget)
+
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
         self._motion.stop("popup")
         super().hideEvent(event)
+        self._set_tether(None)
         self.closed.emit()
 
 

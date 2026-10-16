@@ -1,14 +1,10 @@
-"""活动页：任务最近发生了什么（只读）。
+"""运行记录：任务最近发生了什么（只读），从顶栏的进度条下面展开。
 
-旧界面有"运行抽屉"，任务卡住或失败时能看到卡在哪一步。这里把用户可见的运行时
-事件折叠成人话的时间线；完整的技术日志留在磁盘上，可一键在 Finder 中显示。
+只有一条滚动的状态时间线，底下一个「在 Finder 中显示完整日志」；没有标题、关闭按钮
+或步骤详情——某一步的完整说明在悬停提示里，完整的技术日志留在磁盘上。
 
-跟随与详情的约定：
-
-* 停在底部时新记录进来就跟到底；用户往上翻了（或刚动过滚轮 / 键盘），不抢视口，
-  底部浮出"回到最新"，带上翻走之后新来了几条；
-* 最新一步正在运行时，详情区锁定展开并跟着这一步（收起按钮不可用）；
-  运行结束后交还收起的权利，详情保持原样，不会自己合上。
+跟随的约定：停在底部时新记录进来就跟到底；用户往上翻了（或刚动过滚轮 / 键盘），
+不抢视口，底部浮出"回到最新"，带上翻走之后新来了几条。
 """
 from __future__ import annotations
 
@@ -17,7 +13,7 @@ import time
 from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
-    QToolButton, QVBoxLayout, QWidget, QPlainTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from . import components
@@ -46,16 +42,14 @@ class ActivityPanel(QWidget):
         self._input_at = float("-inf")
         self._unseen = 0
         self._live = False
-        self._expanded = False
-        self.heading = QLabel(i18n.tr('运行记录'))
-        self.heading.setObjectName("sectionTitle")
-        self.hint = QLabel(i18n.tr('最近的步骤，最新的在最下面。完整日志请在 Finder 中查看。'))
-        self.hint.setObjectName("hint")
-        self.hint.setWordWrap(True)
         self.list = QListWidget()
         self.list.setObjectName("activityList")
         self.list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        # 浮层窄：长步骤换行，不横向滚动。
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setWordWrap(True)
         self.list.verticalScrollBar().valueChanged.connect(self._scrolled)
         self.list.verticalScrollBar().rangeChanged.connect(self._range_changed)
         self.list.verticalScrollBar().sliderPressed.connect(self._user_input)
@@ -73,51 +67,22 @@ class ActivityPanel(QWidget):
         self.empty = QLabel(i18n.tr('还没有活动记录。任务开始运行后，这里会显示每一步。'))
         self.empty.setProperty("role", "muted")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setWordWrap(True)
         self.log_button = QPushButton(i18n.tr('在 Finder 中显示完整日志'))
         self.log_button.setIcon(icons.icon("folder", 16, "text-secondary"))
         self.log_button.setIconSize(QSize(16, 16))
         self.log_button.clicked.connect(self.revealLogRequested.emit)
 
-        bar = QHBoxLayout()
-        bar.addWidget(self.heading)
-        bar.addStretch(1)
-        bar.addWidget(self.log_button)
+        foot = QHBoxLayout()
+        foot.setContentsMargins(0, 0, 0, 0)
+        foot.addWidget(self.log_button)
+        foot.addStretch(1)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        layout.addLayout(bar)
-        layout.addWidget(self.hint)
         layout.addWidget(self.list, 1)
-        self.detail_caption = QLabel(i18n.tr('步骤详情'), self)
-        self.detail_caption.setObjectName("groupCaption")
-        self.detail_toggle = QToolButton(self)
-        self.detail_toggle.setObjectName("issueToggle")
-        self.detail_toggle.setFixedSize(20, 20)
-        self.detail_toggle.setIconSize(QSize(14, 14))
-        self.detail_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.detail_toggle.setAccessibleName(i18n.tr('详情'))
-        self.detail_toggle.clicked.connect(self._toggle_detail)
-        self.detail_head = QWidget(self)
-        head = QHBoxLayout(self.detail_head)
-        head.setContentsMargins(0, 0, 0, 0)
-        head.addWidget(self.detail_caption)
-        head.addStretch(1)
-        head.addWidget(self.detail_toggle)
-        self.detail_head.setVisible(False)
-        self.detail = QPlainTextEdit(self)
-        self.detail.setReadOnly(True)
-        self.detail.setAccessibleName(i18n.tr('通知详情'))
-        self.detail.setVisible(False)
-        self.list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self.list.currentItemChanged.connect(self._selection_changed)
-        self.list.itemClicked.connect(self._item_clicked)
-        layout.addWidget(self.detail_head)
-        layout.addWidget(self.detail, 1)
-        self.retry_button = QPushButton(i18n.tr('重试当前步骤'), self)
-        self.retry_button.setAccessibleDescription(i18n.tr('重试当前任务失败的步骤。'))
-        self.retry_button.setVisible(False)
-        layout.addWidget(self.retry_button)
-        layout.addWidget(self.empty)
+        layout.addWidget(self.empty, 1)
+        layout.addLayout(foot)
         self.set_rows([])
 
     def set_rows(self, rows: list[dict], *, signature: str = "") -> None:
@@ -126,34 +91,18 @@ class ActivityPanel(QWidget):
         position = scrollbar.value()
         before = self.list.count()
         live = bool(rows) and str(rows[-1].get("status") or "") == "running"
-        # 运行中的这一步由面板跟随：没选中、或选中的就是（上一次的）最后一行。
-        follow_live = live and self.list.currentRow() in (-1, before - 1)
-        selected_item = self.list.currentItem()
-        selected = selected_item.data(Qt.ItemDataRole.UserRole) if selected_item else None
         self._rebuilding = True
-        self.list.blockSignals(True)
         self.list.clear()
         for row in rows:
             status = str(row.get("status") or "completed")
+            label = i18n.tr_dynamic(str(row.get("label") or ""))
             item = QListWidgetItem(
-                f"{_MARK.get(status, '·')}  {row.get('timestamp') or ''}   "
-                f"{i18n.tr_dynamic(str(row.get('label') or ''))}")
+                f"{_MARK.get(status, '·')}  {row.get('timestamp') or ''}   {label}")
             item.setForeground(style_module.qcolor(
                 style_module.text_color(_TONE.get(status, "text-secondary"))))
-            item.setData(Qt.ItemDataRole.UserRole, str(row.get("label") or "") +
-                         ("\n\n" + str(row["detail"]) if row.get("detail") else ""))
-            item.setToolTip(str(row.get("label") or ""))
+            # 步骤的完整说明（例如失败原因）放在悬停提示里。
+            item.setToolTip(label + ("\n\n" + str(row["detail"]) if row.get("detail") else ""))
             self.list.addItem(item)
-        if follow_live:
-            self.list.setCurrentRow(self.list.count() - 1)
-            # 锁定展开的状态就是交还时的状态：运行结束后详情不会自己合上。
-            self._expanded = True
-        elif selected is not None:
-            for index in range(self.list.count()):
-                if self.list.item(index).data(Qt.ItemDataRole.UserRole) == selected:
-                    self.list.setCurrentRow(index)
-                    break
-        self.list.blockSignals(False)
         self._live = live
         self.empty.setVisible(not rows)
         self.list.setVisible(bool(rows))
@@ -166,7 +115,6 @@ class ActivityPanel(QWidget):
                 self._unseen += max(0, len(rows) - before)
         self._rebuilding = False
         self._scrolled()
-        self._sync_detail()
 
     # ---- 跟随到底 / 回到最新 ----
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
@@ -228,40 +176,8 @@ class ActivityPanel(QWidget):
         self._unseen = 0
         self._scrolled()
 
-    # ---- 详情：运行中锁定展开 ----
-    def _selection_changed(self, item, _previous=None):
-        if item is not None:
-            self._expanded = True
-        self._sync_detail()
-
-    def _item_clicked(self, _item) -> None:
-        self._expanded = True
-        self._sync_detail()
-
-    def _toggle_detail(self) -> None:
-        if self._live:
-            return  # 运行中不收起：内容还在变，收起会让视口跳动
-        self._expanded = not self._expanded
-        self._sync_detail()
-
     def live(self) -> bool:
         return self._live
-
-    def _sync_detail(self) -> None:
-        item = self.list.currentItem()
-        following = self._live and self.list.currentRow() == self.list.count() - 1
-        open_ = item is not None and (self._live or self._expanded)
-        self.detail.setPlainText(item.data(Qt.ItemDataRole.UserRole) if item else "")
-        self.detail.setVisible(open_)
-        self.detail_head.setVisible(item is not None)
-        self.detail_caption.setText(i18n.tr('正在进行') if following else i18n.tr('步骤详情'))
-        self.detail_toggle.setEnabled(not self._live)
-        self.detail_toggle.setIcon(icons.icon("chevron-up" if open_ else "chevron-down", 14,
-                                              "text-secondary"))
-        if self._live:
-            self.detail_toggle.setToolTip(i18n.tr('步骤运行中，完成后可收起'))
-        else:
-            self.detail_toggle.setToolTip(i18n.tr('收起详情') if open_ else i18n.tr('展开详情'))
 
     def signature(self) -> str:
         return self._signature

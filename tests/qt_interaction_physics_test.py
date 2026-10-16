@@ -117,10 +117,10 @@ def test_pinned_panel_follows_new_rows(panel, app):
     assert panel.jump_button.isHidden()
 
 
-def test_pinned_panel_stays_at_the_bottom_when_the_detail_opens(panel, app):
-    panel.set_rows(_rows(40, last="running"))  # 运行中：详情展开，列表变矮
+def test_running_rows_keep_the_panel_pinned(panel, app):
+    panel.set_rows(_rows(40, last="running"))
     app.processEvents()
-    assert not panel.detail.isHidden()
+    assert panel.live()
     assert panel.distance_from_bottom() == 0
 
 
@@ -158,43 +158,16 @@ def test_jump_button_sits_inside_the_list(panel, app):
     assert panel.list.rect().contains(panel.jump_button.geometry())
 
 
-# ---- 运行中锁定展开 -----------------------------------------------------------
-def test_running_step_locks_the_detail_open_then_hands_control_back(panel, app):
+# ---- 只有时间线 + 完整日志 ---------------------------------------------------------
+def test_panel_is_only_the_timeline_and_the_full_log_button(panel, app):
+    """运行记录从进度条展开：没有标题、关闭按钮或步骤详情区，详情在悬停提示里。"""
     panel.set_rows(_rows(3, last="running"))
-    assert panel.live()
-    assert not panel.detail.isHidden(), "运行中的这一步应自动展开"
-    assert panel.detail_caption.text() == "正在进行"
-    assert "第 2 步" in panel.detail.toPlainText()
-    assert not panel.detail_toggle.isEnabled()
-    panel.detail_toggle.click()
-    assert not panel.detail.isHidden(), "运行中不能收起"
-    # 下一步开始：详情跟着走到新的运行步骤
-    panel.set_rows(_rows(4, last="running"))
-    assert "第 3 步" in panel.detail.toPlainText()
-    # 运行结束：详情保持原样，收起按钮交还给用户
-    panel.set_rows(_rows(4))
-    assert not panel.live()
-    assert not panel.detail.isHidden()
-    assert panel.detail_caption.text() == "步骤详情"
-    assert panel.detail_toggle.isEnabled()
-    panel.detail_toggle.click()
-    assert panel.detail.isHidden()
-
-
-def test_a_row_the_user_picked_is_not_taken_over_by_the_running_step(panel, app):
-    panel.set_rows(_rows(5, last="running"))
-    panel.list.setCurrentRow(1)
-    panel.set_rows(_rows(6, last="running"))
-    assert panel.list.currentRow() == 1
-    assert "第 1 步" in panel.detail.toPlainText()
-    assert not panel.detail.isHidden()
-
-
-def test_idle_panel_keeps_detail_closed_until_a_row_is_picked(panel, app):
-    panel.set_rows(_rows(3))
-    assert panel.detail.isHidden()
-    panel.list.setCurrentRow(0)
-    assert not panel.detail.isHidden()
+    for name in ("heading", "hint", "detail", "detail_toggle", "retry_button"):
+        assert not hasattr(panel, name), name
+    assert "第 2 步的说明" in panel.list.item(2).toolTip()
+    layout = panel.layout()
+    assert layout.indexOf(panel.list) < layout.count() - 1, "完整日志按钮在列表下面"
+    assert panel.log_button.parent() is panel
 
 
 # ---- 分割条 -------------------------------------------------------------------

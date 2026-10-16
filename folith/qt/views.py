@@ -3205,7 +3205,6 @@ class WorkbenchView(QWidget):
         self.followup_panel.locateRequested.connect(self._locate_segment_from_followup)
         self.followup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         self.activity_panel = ActivityPanel()
-        self.activity_panel.retry_button.clicked.connect(self.retryRequested.emit)
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))
         self.tabs.addTab(delivery_page,
@@ -3314,12 +3313,9 @@ class WorkbenchView(QWidget):
         drawer_escape.setEnabled(False)
         self.addAction(drawer_escape)
         self.drawer_escape = drawer_escape
-        self.activity_panel.heading.setVisible(False)  # the popover has the title
-        self.activity_panel.hint.setVisible(False)     # repeats the Finder button
-        # In a 440 px popover long steps wrap instead of scrolling sideways.
-        self.activity_panel.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.activity_panel.list.setWordWrap(True)
-        self.activity_popover = components.Popover(i18n.tr('运行记录'), self.activity_panel, self)
+        # 运行记录从进度条下面展开（tether）：没有标题和关闭按钮，点外面或 Esc 收回。
+        self.activity_popover = components.Popover(i18n.tr('运行记录'), self.activity_panel, self,
+                                                   size=QSize(440, 320), header=False)
         self.details_panel = TaskDetailsPanel()
         self.details_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         self.details_panel.promoteRequested.connect(self.promoteMemoryRequested.emit)
@@ -3487,13 +3483,15 @@ class WorkbenchView(QWidget):
         self._render_activity()
 
     def open_activity(self) -> None:
-        """运行记录浮窗：锚定在运行状态组下面；运行状态组不可见时锚定在顶栏右端。"""
+        """运行记录：从运行状态组（进度条）下面居中展开；它不可见时锚定在顶栏右端。"""
         anchor = self.run_status if self.run_status.isVisible() else self.stage_bar.more_button
         if not anchor.isVisible():
             anchor = self
         self._render_activity()
-        self.activity_popover.set_subtitle(self.run_status.line.text())
-        self.activity_popover.open_at(anchor)
+        if anchor is self.run_status:
+            self.activity_popover.open_at(anchor, align="center", tether=True)
+        else:
+            self.activity_popover.open_at(anchor)
 
     def open_details(self) -> None:
         """任务详情浮窗：锚定在顶栏的 ⓘ 上。"""
@@ -4689,7 +4687,6 @@ class WorkbenchView(QWidget):
         self.pause_button.setText(i18n.tr('正在暂停…') if pausing else i18n.tr('暂停'))
         self.cancel_button.setVisible(running or "cancel" in actions)
         self.retry_button.setVisible("retry" in actions)
-        self.activity_panel.retry_button.setVisible("retry" in actions)
         notice = self._live_task_notice(runtime)
         if notice:
             self.run_status.setVisible(True)

@@ -50,8 +50,8 @@ def test_task_error_is_nonmodal_persistent_and_readable(window, app, monkeypatch
     assert message in rows[-1]['label'] and rows[-1]['detail'] == 'Full traceback'
     assert rows[-1]['status'] == 'failed'
     main.workbench.open_activity()
-    main.workbench.activity_panel.list.setCurrentRow(len(rows) - 1)
-    assert 'Full traceback' in main.workbench.activity_panel.detail.toPlainText()
+    panel = main.workbench.activity_panel
+    assert 'Full traceback' in panel.list.item(panel.list.count() - 1).toolTip()
     assert not main.findChildren(QStatusBar)
 
 

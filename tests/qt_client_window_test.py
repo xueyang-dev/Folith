@@ -4004,7 +4004,6 @@ def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, mo
     assert dialog is not None and dialog.isVisible()
     assert dialog.windowModality() == Qt.WindowModality.NonModal
     assert QApplication.activeModalWidget() is None
-    assert not dialog.progress._wants_sheen()
     held.calls[0]["on_error"]("Failed", "detail")
     assert not dialog.isVisible() and window.home.import_button.isEnabled()
 

@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
         self.data_dir_notice = bootstrap.enforce_output_dir(paths)
 
         self.identity = adapter.app_identity()
-        self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
+        self.setWindowTitle(self._app_title())
         self.resize(1180, 800)
         from . import branding
 
@@ -176,6 +176,8 @@ class MainWindow(QMainWindow):
         self.stack_clip = components.TrailingClip(self.stack)
         shell_layout.addWidget(components.Sheet(self.stack_clip), 1)
         self.setCentralWidget(shell)
+        self._shell_layout = shell_layout
+        self._extend_shell_under_title_bar()
         self.stack.currentChanged.connect(self._sync_sidebar)
 
         from .notifications import Toast
@@ -479,6 +481,39 @@ class MainWindow(QMainWindow):
             return
         app.setLayoutDirection(Qt.LayoutDirection.RightToLeft if i18n.is_rtl()
                                else Qt.LayoutDirection.LeftToRight)
+
+    def _extend_shell_under_title_bar(self) -> None:
+        """macOS：外壳一直铺到标题栏底下，标题栏不再是一条与外壳不同色的系统灰带。
+
+        Qt 6.9 的 ``ExpandedClientAreaHint``（数值上就是旧的
+        ``MaximizeUsingFullscreenGeometryHint``）让内容区伸进标题栏，
+        ``NoTitleBarBackgroundHint`` 让标题栏本身透明；红绿灯与窗口标题仍由系统画、
+        仍可拖动。内容只往下让出安全区的高度（``_sync_safe_area``），外壳的底色铺满。
+        """
+        if sys.platform != "darwin" or QApplication.platformName() != "cocoa":
+            return
+        import warnings
+
+        expanded = getattr(Qt.WindowType, "ExpandedClientAreaHint", None)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            if expanded is None:
+                expanded = Qt.WindowType.MaximizeUsingFullscreenGeometryHint
+            self.setWindowFlag(expanded, True)
+            self.setWindowFlag(Qt.WindowType.NoTitleBarBackgroundHint, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
+        handle = self.windowHandle()
+        if handle is None:
+            self.winId()
+            handle = self.windowHandle()
+        if handle is not None:
+            handle.safeAreaMarginsChanged.connect(lambda *_: self._sync_safe_area())
+        self._sync_safe_area()
+
+    def _sync_safe_area(self) -> None:
+        handle = self.windowHandle()
+        top = handle.safeAreaMargins().top() if handle is not None else 0
+        self._shell_layout.setContentsMargins(0, top, 0, 0)
 
     def _system_dark(self) -> bool:
         try:
@@ -898,7 +933,7 @@ class MainWindow(QMainWindow):
         # for half a second after 「返回」 before anything moved.
         self.stack.setCurrentWidget(self.home)
         self._sync_sidebar()
-        self.setWindowTitle(i18n.tr('Folith — 学术翻译工作台'))
+        self.setWindowTitle(self._app_title())
         self._sync_menu_state()
         self._refresh_home_async()
         if returning:
@@ -2991,11 +3026,19 @@ class MainWindow(QMainWindow):
             self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
             self.refresh_workbench(force=True)
 
+    @staticmethod
+    def _app_title() -> str:
+        """任务库的窗口标题：与侧栏字标同一套名字与副标题（各语言见 ``branding.WORDMARKS``）。"""
+        from . import branding
+
+        name, subtitle = branding.wordmark(i18n.language())
+        return f"{name} — {subtitle}"
+
     def show_about(self) -> None:
         """「关于 Folith」直接打开设置的「关于」页（12-H：支持信息只有一个家）。"""
         if _automation():
             identity = adapter.app_identity()
-            self._notice(i18n.tr("Folith 学术翻译工作台 {v0}", v0=identity.get("app_version") or "")
+            self._notice(self._app_title() + " " + str(identity.get("app_version") or "")
                          + " · " + i18n.tr("构建：{v0}", v0=identity.get("build_id")
                                            or i18n.tr("未知")), task=False)
             return

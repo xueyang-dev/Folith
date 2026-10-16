@@ -65,7 +65,10 @@ class Toast(QFrame):
         parent = self.parentWidget()
         self.setFixedWidth(max(120, min(580, parent.width() - 32)))
         self.adjustSize()
-        self.move((parent.width() - self.width()) // 2, parent.menuBar().height() + 12)
+        # macOS 上内容伸进了透明标题栏：从安全区下面开始算，不压住窗口标题。
+        handle = parent.windowHandle()
+        top = handle.safeAreaMargins().top() if handle is not None else 0
+        self.move((parent.width() - self.width()) // 2, parent.menuBar().height() + top + 12)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.Resize and self.isVisible():

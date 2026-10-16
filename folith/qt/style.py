@@ -596,6 +596,11 @@ QLabel#wordTotal:focus {{ color: {t['accent']}; }}
 QFrame#runStatus {{ background: transparent; border: 1px solid transparent; border-radius: {r['md']}px; }}
 QFrame#runStatus:hover {{ background: {t['bg-hover']}; }}
 QFrame#runStatus:focus {{ border-color: {t['focus-ring']}; }}
+/* 运行记录展开时，状态组与浮层是一整块：同一层表面色，底边方角接上浮层的颈部。 */
+QFrame#runStatus[tethered="true"] {{
+    background: {t['bg-surface-raised']}; border-color: transparent;
+    border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+}}
 QLabel#runStatusLine {{ color: {t['text-secondary']}; font-size: {f['micro']}px; background: transparent; }}
 QLabel#runStatusLine[tone="retrying"], QLabel#runStatusLine[tone="stalled"] {{ color: {t['warning']}; }}
 QLabel#runStatusLine[tone="failed"] {{ color: {t['danger']}; }}
