@@ -261,6 +261,8 @@ def test_reasoning_effort_is_offered_only_for_reasoning_models(qapp):
 
     dialog = EngineDialog(adapter.EngineConfig(provider="OpenAI", model="gpt-4o",
                                                target_lang="简体中文"), TaskRunner())
+    # 推理强度在连接编辑区里：先打开正在用的那条连接。
+    dialog.connection_library.edit(dialog.connection_library.roles["translation"])
     assert dialog.reasoning_row.isHidden()
     assert dialog._collect().reasoning_effort == ""
     dialog.model_box.setCurrentText("o3")
@@ -270,4 +272,4 @@ def test_reasoning_effort_is_offered_only_for_reasoning_models(qapp):
     dialog.model_box.setCurrentText("gpt-4o")        # 不支持的模型：这一项收起，保留原值
     assert dialog.reasoning_row.isHidden()
     assert dialog._collect().reasoning_effort == ""   # 原配置就是自动
-    assert dialog.reviewer_fetch_button.text() == "获取模型"
+    # 审校改为从已保存的连接里选，不再有自己的「获取模型」按钮。

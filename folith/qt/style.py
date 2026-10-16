@@ -32,7 +32,7 @@ CHIP_TONES = {
     "pdf": ("danger-soft", "danger"),
 }
 
-#: 外观页主题预览色卡的几何（px）。QSS 与 ``EngineDialog._build_theme_previews``
+#: 原外观页主题预览色卡的几何（px，色卡已不用，QSS 仍引用）。QSS 与它
 #: 共用这一份真值：2×pad + 色块 + 间隙 + 主题名行高 + 2×2px 边框 = 卡片高度，
 #: 内容不再被裁掉。改这里时 QSS 里的 #themeCard 会自动跟上（同一常量）。
 THEME_CARD = {"width": 124, "height": 84, "swatch": 40, "gap": 6, "pad": 8, "accent": 10}
@@ -1483,6 +1483,45 @@ class ParagraphLabel(QLabel):
 
     def text(self) -> str:  # noqa: D401 - Qt 命名
         return self._plain
+
+
+class ElideButton(QPushButton):
+    """文字放不下时省略（"…"）而不是被截成半个字的按钮：侧栏导航、导入按钮。
+
+    外语界面里同一个标签可能长出一倍（"Terms and translation memory"、
+    "Импортировать документ…"）；QPushButton 自己不会省略，只会把字裁掉。
+    ``text()`` 仍返回完整文字，完整文字也放进悬停提示。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = ""
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        self._full_text = str(text or "")
+        self._apply_elide()
+
+    def text(self) -> str:  # noqa: D401 - Qt 命名
+        return self._full_text
+
+    def minimumSizeHint(self):  # noqa: N802 - Qt 命名
+        hint = super().minimumSizeHint()
+        return QSize(min(hint.width(), self.iconSize().width() + 48), hint.height())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().resizeEvent(event)
+        self._apply_elide()
+
+    def _apply_elide(self) -> None:
+        icon = self.iconSize().width() + 8 if not self.icon().isNull() else 0
+        room = self.width() - icon - 40
+        metrics = self.fontMetrics()
+        shown = self._full_text
+        if self.width() > 0 and metrics.horizontalAdvance(shown) > room:
+            shown = metrics.elidedText(shown, Qt.TextElideMode.ElideRight, max(room, 20))
+        QPushButton.setText(self, shown)
+        self.setToolTip(self._full_text if shown != self._full_text else "")
 
 
 class ElideLabel(QLabel):

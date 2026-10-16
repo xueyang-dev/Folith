@@ -347,7 +347,10 @@ class DropTile(QFrame):
     def __init__(self, formats: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("dropTile")
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        # 默认尺寸只是起点：放进任务库时由外层占位格撑满，和封面一样大。
+        self.resize(self.WIDTH, self.HEIGHT)
+        self.setMinimumSize(120, 160)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(i18n.tr('拖入文档'))
@@ -790,7 +793,7 @@ class ProjectTabs(QWidget):
 def nav_item(label: str, icon_name: str, *, checkable: bool = False,
              icon_size: int = 22) -> QPushButton:
     """侧栏导航项：静止 = 次要色线性图标；选中 = 强调色双色图标 + 左侧强调条（QSS）。"""
-    button = QPushButton(label)
+    button = style_module.ElideButton(label)
     button.setObjectName("navItem")
     button.setCheckable(checkable)
     button.setIcon(icons.icon(icon_name, icon_size, "text-secondary",

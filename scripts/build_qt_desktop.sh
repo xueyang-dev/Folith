@@ -49,6 +49,9 @@ if [[ "$PLATFORM" == "macos" ]]; then
   if [[ "$WITH_OCR" == "1" ]]; then
     "$PYTHON" "$ROOT/scripts/stage_tesseract_payload.py" --force \
       --out "$OUT_DIR/tesseract" > "$OUT_DIR/tesseract-payload.json"
+  else
+    # 打包会带上目录里现成的 OCR 载荷：上一次构建留下的也算，所以要先删掉。
+    rm -rf "$OUT_DIR/tesseract" "$OUT_DIR/tesseract-payload.json"
   fi
   # App identity for Dock / Finder / app switcher.
   "$PYTHON" "$ROOT/scripts/build_app_icon.py" --out "$OUT_DIR/Folith.icns" \

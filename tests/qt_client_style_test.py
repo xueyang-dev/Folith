@@ -165,19 +165,16 @@ def test_settings_apply_button_renders_as_the_primary_action(app):
         dialog.close()
 
 
-def test_theme_previews_use_token_colours(app):
-    """外观页的三张色卡必须来自 token（不写死颜色）。"""
-    from folith.qt import adapter, style, theme
+def test_appearance_picker_follows_the_settings_value(app):
+    """首次引导的外观三段和设置里的「外观」是同一个值。"""
+    from folith.qt import adapter, theme
     from folith.qt.dialogs import EngineDialog
     from folith.qt.workers import TaskRunner
 
-    style.apply_theme(app, "light")
     dialog = EngineDialog(adapter.EngineConfig(), TaskRunner())
-    previews = dialog._build_theme_previews()
-    styles = [child.styleSheet() for child in previews.findChildren(type(previews))]
-    blob = " ".join(styles) + " " + previews.styleSheet()
-    for name in theme.theme_names():
-        tokens = theme.tokens(name)
-        assert tokens["accent"] in blob, name
-        assert tokens["bg-surface"] in blob, name
+    picker = dialog._build_appearance_picker()
+    picker.button("dark").click()
+    assert dialog.theme_box.currentData() == "dark"
+    dialog.theme_box.setCurrentIndex(dialog.theme_box.findData(theme.FOLLOW_SYSTEM))
+    assert picker.value() == theme.FOLLOW_SYSTEM
     dialog.close()

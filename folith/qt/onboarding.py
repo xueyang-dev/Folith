@@ -251,7 +251,7 @@ class WelcomeDialog(QDialog):
 
         target = _field(i18n.tr('默认目标语言'), self.form.target_box)
         column.addWidget(target)
-        column.addWidget(_field(i18n.tr('界面主题'), self.form._build_theme_previews()))
+        column.addWidget(_field(i18n.tr('外观'), self.form._build_appearance_picker()))
         more = QLabel(i18n.tr('交付格式、审校与术语等默认值在 设置 › 任务默认值 里。'))
         more.setObjectName("hint")
         more.setWordWrap(True)

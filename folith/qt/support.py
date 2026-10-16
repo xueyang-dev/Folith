@@ -26,6 +26,8 @@ PROJECT_URL = "https://github.com/xueyang-dev/Folith"
 AUTHOR_URL = "https://github.com/xueyang-dev"
 ISSUES_URL = "https://github.com/xueyang-dev/Folith/issues/new"
 RELEASES_API = "https://api.github.com/repos/xueyang-dev/Folith/releases/latest"
+#: 本机 OCR 是可选附加，不随应用打包；未安装时设置里给出这份官方安装说明。
+TESSERACT_INSTALL_URL = "https://tesseract-ocr.github.io/tessdoc/Installation.html"
 
 #: 派生缓存：删掉只会让下次多花调用，不改变任何译文、术语、记忆或交付。
 CACHE_ENTRIES = ("ocr_profile_cache", "translation_cache.json", "knowledge_cache.json")

@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu(i18n.tr('文件'))
 
-        import_action = QAction(i18n.tr('导入文档…'), self)
+        import_action = QAction(i18n.tr('导入文档'), self)
         import_action.setShortcut(QKeySequence.StandardKey.Open)
         import_action.triggered.connect(self.choose_import)
 
@@ -925,7 +925,7 @@ class MainWindow(QMainWindow):
         self.runner.submit(read, on_done=done, on_error=failed, label="home-list")
 
     def choose_import(self) -> None:
-        """「导入文档…」：系统面板 → 建任务。
+        """「导入文档」：系统面板 → 建任务。
 
         脚本化运行不弹面板（会一直等一个没人点的对话框）；需要脚本导入时调用
         :meth:`import_paths` 直接给路径。未配置模型只做**非模态**提示，

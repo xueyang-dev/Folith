@@ -309,7 +309,8 @@ class EngineDialog(QDialog):
         hint = QLabel("")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
-        apply_button = QPushButton(i18n.tr('保存用途'))
+        # 模型页保存的是"哪个用途用哪个连接"；视觉页就是这一页的设置，叫「保存」。
+        apply_button = QPushButton(i18n.tr('保存用途') if page == "models" else i18n.tr('保存'))
         style_module.mark_primary(apply_button)
         apply_button.clicked.connect(self.apply_connection)
         force = QPushButton(i18n.tr('仍然应用'))
@@ -378,6 +379,7 @@ class EngineDialog(QDialog):
                         "danger")
             return False
         self.config = merged
+        self.connection_library.adopt(merged)
         self._show_force(False)
         _set_status(self._status, i18n.tr('连接正常，已应用：{v0}', v0=message) if tested
                     else i18n.tr('已应用（未通过测试）。'), "ok" if tested else "muted")
@@ -424,7 +426,8 @@ class EngineDialog(QDialog):
         vision_field = self._build_vision_selector()
         layout.addWidget(self._build_scan_group())
         self._scan_body.insertWidget(2, vision_field)
-        layout.addWidget(self._apply_row("vision"))
+        # 保存按钮放进卡片底部，不再漂在卡片外面。
+        self._scan_body.addWidget(self._apply_row("vision"))
         layout.addStretch(1)
 
         def update_fields():
@@ -696,8 +699,8 @@ class EngineDialog(QDialog):
         else:
             install = QPushButton(i18n.tr('如何安装…'))
             from .settings_pages import _open_url
-            install.clicked.connect(lambda: _open_url(
-                "https://tesseract-ocr.github.io/tessdoc/Installation.html"))
+            from .support import TESSERACT_INSTALL_URL
+            install.clicked.connect(lambda: _open_url(TESSERACT_INSTALL_URL))
             body.addWidget(install)
             if self.ocr_backend_box.currentData() == "tesseract":
                 self.ocr_backend_box.setCurrentIndex(self.ocr_backend_box.findData("online"))
@@ -743,6 +746,19 @@ class EngineDialog(QDialog):
         page_layout.addWidget(keys)
         page_layout.addStretch(1)
         return page
+
+    def _build_appearance_picker(self) -> QWidget:
+        """首次引导用的外观三段：和「外观」下拉框是同一个值，两边互相跟随。"""
+        picker = style_module.SegmentedControl(
+            [(name, i18n.tr(theme_module.label(name)))
+             for name in (theme_module.FOLLOW_SYSTEM, "light", "dark")])
+        picker.set_value(str(self.theme_box.currentData() or theme_module.FOLLOW_SYSTEM))
+        picker.changed.connect(
+            lambda value: self.theme_box.setCurrentIndex(max(0, self.theme_box.findData(value))))
+        self.theme_box.currentIndexChanged.connect(
+            lambda _index: picker.set_value(
+                str(self.theme_box.currentData() or theme_module.FOLLOW_SYSTEM)))
+        return picker
 
     def _select_language(self, code: str) -> None:
         index = self.language_box.findData(i18n.normalize(code))
@@ -842,9 +858,23 @@ class EngineDialog(QDialog):
         config.deliver_epub = self.deliver_epub_box.isChecked()
         config.default_translation_mode = str(self.default_mode_box.currentData() or "标准")
         from folith.model_connections import effective_config
-        config.connection_models = dict(self.connection_library.role_models)
-        return effective_config(config, self.connection_library.profiles,
-                                self.connection_library.roles)
+        library = self.connection_library
+        profiles, roles = list(library.profiles), dict(library.roles)
+        config.connection_models = dict(library.role_models)
+        pending = library.pending_profile()
+        if pending is not None:
+            previous = next((p for p in profiles if p["id"] == pending["id"]), None)
+            if previous is None:
+                profiles.append(pending)
+                roles["translation"] = pending["id"]
+            else:
+                profiles[profiles.index(previous)] = pending
+                # 用途原本跟着这条连接的默认模型走：编辑区换了模型，用途也跟着换。
+                for role, selected in roles.items():
+                    if selected == pending["id"] and \
+                            config.connection_models.get(role, previous["model"]) == previous["model"]:
+                        config.connection_models[role] = pending["model"]
+        return effective_config(config, profiles, roles)
 
     def _editor_config(self):
         from folith.model_connections import environment_key

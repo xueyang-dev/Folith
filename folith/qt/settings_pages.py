@@ -254,15 +254,16 @@ class AboutPage(QWidget):
         self.issue_link.setToolTip(i18n.tr('在 GitHub Issues 新建一条；只预填版本号与 macOS 版本，'
                                            '不带任何文档内容或密钥。'))
         self.issue_link.clicked.connect(lambda: _open_url(support.issue_url(self._view)))
+        # 邮箱单独一行、有自己的标签，图标是信封（点了打开本机邮件客户端），不是外链。
+        self.email_link = _link("xydev@outlook.sa", icon="mail")
+        self.email_link.clicked.connect(lambda: _open_url("mailto:xydev@outlook.sa"))
         for row, (caption, button) in enumerate(((i18n.tr('项目主页'), self.project_link),
                                                  (i18n.tr('作者'), self.author_link),
-                                                 (i18n.tr('反馈'), self.issue_link))):
+                                                 (i18n.tr('反馈'), self.issue_link),
+                                                 (i18n.tr('邮箱'), self.email_link))):
             label = style_module.field_label(caption)
             grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(button, row, 1, Qt.AlignmentFlag.AlignLeft)
-        self.email_link = _link("xydev@outlook.sa")
-        self.email_link.clicked.connect(lambda: _open_url("mailto:xydev@outlook.sa"))
-        grid.addWidget(self.email_link, 3, 1, Qt.AlignmentFlag.AlignLeft)
         grid.setColumnStretch(1, 1)
         links_body.addLayout(grid)
         layout.addWidget(links)

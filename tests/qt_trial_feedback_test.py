@@ -322,3 +322,62 @@ def test_same_api_and_model_collapse_even_with_resolved_official_review_url(isol
                            {"translation": p["id"], "reviewer": p["id"]})
     panel = ConnectionPanel(Runner(), lambda: cfg)
     assert panel._rows["reviewer"]["container"].isHidden()
+
+
+# ---- 整改阶段 0（remediation-plan.md）------------------------------------------
+def test_short_window_slims_the_continue_card_instead_of_hiding_it(isolated, app):
+    home = views.HomeView()
+    rows = [adapter.JobRow(str(i), f"doc{i}.pdf", None, "English", "翻译中", "", "running", 2,
+                           "", True) for i in range(2)]
+    home.set_rows(rows)
+    home.resize(980, 640)
+    home.show()
+    for _ in range(5):
+        app.processEvents()
+    if home._continue_candidate() is not None:
+        assert home.continue_card.isVisible(), "最常用的入口不能在小窗口里消失"
+        assert not home.continue_paper.isVisible() and not home.continue_meta.isVisible()
+    home.resize(1200, 900)
+    for _ in range(5):
+        app.processEvents()
+    if home._continue_candidate() is not None:
+        assert home.continue_paper.isVisible()
+    home.close()
+
+
+def test_long_labels_elide_and_keep_their_full_text(app):
+    from folith.qt import style
+
+    button = style.ElideButton("Terms and translation memory")
+    button.show()          # 未显示的控件收不到 resizeEvent
+    button.resize(120, 30)
+    app.processEvents()
+    assert button.text() == "Terms and translation memory"
+    from PySide6.QtWidgets import QPushButton
+    assert QPushButton.text(button).endswith("…")
+    assert button.toolTip() == "Terms and translation memory"
+    button.resize(600, 30)
+    app.processEvents()
+    assert QPushButton.text(button) == "Terms and translation memory" and button.toolTip() == ""
+
+
+def test_every_interface_string_is_translated():
+    import subprocess
+
+    result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1]
+                                                 / "scripts" / "qt_i18n_coverage.py"), "--strict"],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout[-800:]
+
+
+@pytest.mark.parametrize("language, expected", [("ru", "Фолит"), ("es", "Folith"), ("ar", "فوليث")])
+def test_foreign_wordmark_is_a_short_name_and_a_short_tagline(language, expected, app, monkeypatch):
+    from folith.qt import i18n
+    monkeypatch.setattr(i18n, "language", lambda: language)
+    home = views.HomeView()
+    home._logo_theme = None
+    home._refresh_logo()
+    name, _, tagline = home._logo_label.text().partition("<br>")
+    assert name == f"<b>{expected}</b>", "只写名字的音译，不直译「译页」"
+    assert len(tagline) - len("<span style='font-size:10px'></span>") <= 30
+    home.close()

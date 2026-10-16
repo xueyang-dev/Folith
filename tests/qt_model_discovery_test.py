@@ -66,7 +66,11 @@ def fetch(monkeypatch):
 
 
 def _dialog(app, **config):
+    """打开设置。已保存的翻译连接要先点「编辑」才进编辑区——和用户的操作一样。"""
     dialog = EngineDialog(adapter.EngineConfig(target_lang="简体中文", **config), _SyncRunner())
+    active = dialog.connection_library.roles.get("translation")
+    if active:
+        dialog.connection_library.edit(active)
     app.processEvents()
     return dialog
 

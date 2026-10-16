@@ -17,6 +17,8 @@ class ConnectionLibrary(QWidget):
         self.role_models = dict(dialog.config.connection_models)
         self.model_selectors = {}
         self.editing = ""
+        #: 编辑区里尚未保存的那条连接的 id：多次读取编辑区时保持不变。
+        self._pending_id = ""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.saved = QVBoxLayout()
@@ -45,7 +47,7 @@ class ConnectionLibrary(QWidget):
         self.kind.changed.connect(self.change_kind)
         body.addWidget(self.kind)
         self.provider_id = QLineEdit()
-        self.id_row = _field("Provider ID", self.provider_id)
+        self.id_row = _field(i18n.tr('提供商 ID'), self.provider_id)
         body.addWidget(self.id_row)
         self.name = QLineEdit()
         body.addWidget(_field(i18n.tr('显示名称'), self.name))
@@ -92,6 +94,25 @@ class ConnectionLibrary(QWidget):
         layout.addWidget(self.editor)
         self.refresh()
         self.reset()
+        self._prefill_from_config()
+
+    def _prefill_from_config(self):
+        """还没有翻译连接时，编辑区先填上已有的设置（例如只填了密钥、还没选模型）。
+
+        否则旧配置里的提供商、密钥和地址在新界面上看不到，一保存就丢了。
+        """
+        config = self.dialog.config
+        if self.roles.get("translation") or not config.provider:
+            return
+        custom = config.provider == "自定义中转站"
+        self.kind.set_value("custom" if custom else "catalog")
+        self.change_kind("custom" if custom else "catalog")
+        self.dialog.provider_box.setCurrentText(config.provider)
+        if config.model:
+            self.dialog.model_box.setCurrentText(config.model)
+        self.dialog.key_edit.setText(config.api_key)
+        self.dialog.base_edit.setText(config.base_url)
+        self.custom_settings.setChecked(bool(config.base_url))
 
     def change_kind(self, kind):
         custom = kind == "custom"
@@ -110,6 +131,7 @@ class ConnectionLibrary(QWidget):
 
     def reset(self):
         self.editing = ""
+        self._pending_id = ""
         self.editor.layout().itemAt(0).widget().setText(i18n.tr('添加连接'))
         self.name.clear()
         self.provider_id.clear()
@@ -138,10 +160,15 @@ class ConnectionLibrary(QWidget):
                              "done" if status["state"] == "ok" else "idle")
             label.setToolTip(i18n.tr_dynamic(status["message"]))
             row.addWidget(label, 1)
-            for text, action in ((i18n.tr('编辑'), self.edit), (i18n.tr('删除'), self.delete)):
-                button = QPushButton(text)
-                button.clicked.connect(lambda _c=False, key=p["id"], fn=action: fn(key))
-                row.addWidget(button)
+            edit = QPushButton(i18n.tr('编辑'))
+            style.set_button(edit, "secondary", small=True)
+            edit.clicked.connect(lambda _c=False, key=p["id"]: self.edit(key))
+            # 删除是不可撤销的：危险色文字按钮 + 确认（默认焦点在取消上）。
+            remove = QPushButton(i18n.tr('删除'))
+            style.set_button(remove, "danger", small=True)
+            remove.clicked.connect(lambda _c=False, key=p["id"], name=p["name"]: self.confirm_delete(key, name))
+            row.addWidget(edit)
+            row.addWidget(remove)
             body.addLayout(row)
             self.saved.addWidget(card)
         for role, box in self.selectors.items():
@@ -222,15 +249,23 @@ class ConnectionLibrary(QWidget):
         self.dialog.reasoning_box.setCurrentIndex(max(0,
             self.dialog.reasoning_box.findData(p.get("reasoning_effort", ""))))
 
-    def save(self):
+    def _editor_profile(self, quiet=False):
+        """把编辑区读成一条连接；填得不完整时返回 None（``quiet`` 时不写状态）。"""
         from .dialogs import _set_status
+
+        def fail(message):
+            if not quiet:
+                _set_status(self.dialog._status, message, "danger")
+
         custom = self.kind.value() == "custom"
         provider_id = self.provider_id.text().strip()
         if custom and (not provider_id or any(p.get("provider_id") == provider_id
                 and p["id"] != self.editing for p in self.profiles)):
-            _set_status(self.dialog._status, i18n.tr('Provider ID 必须填写且不能重复'), "danger")
-            return
-        p = {"id": self.editing or uuid.uuid4().hex,
+            fail(i18n.tr('提供商 ID 必须填写且不能重复'))
+            return None
+        if not self.editing and not self._pending_id:
+            self._pending_id = uuid.uuid4().hex
+        p = {"id": self.editing or self._pending_id,
              "name": self.name.text().strip() or self.dialog.provider_box.currentText(),
              "provider_id": provider_id, "custom": custom,
              "reasoning_effort": (str(self.dialog.reasoning_box.currentData() or "")
@@ -244,14 +279,42 @@ class ConnectionLibrary(QWidget):
                  self.dialog.provider_box.currentText()]["kind"]}
         p["models"] = list(dict.fromkeys([m.strip() for m in self.models.text().split(",") if m.strip()] + [p["model"]]))
         if not p["model"] or (custom and not p["base_url"]):
-            _set_status(self.dialog._status, i18n.tr('请填写模型和 API 地址'), "danger")
-            return
+            fail(i18n.tr('请填写模型和 API 地址'))
+            return None
         try:
             if p["base_url"]:
                 p["base_url"] = adapter.core.normalize_openai_base_url(p["base_url"])
             adapter.core.resolve_openai_base_url(p["provider"], p["base_url"])
         except ValueError as exc:
-            _set_status(self.dialog._status, str(exc), "danger")
+            fail(str(exc))
+            return None
+        return p
+
+    def pending_profile(self):
+        """编辑区里看得见、但还没单独「保存」的那条连接；没有时返回 None。
+
+        两种情况算数：正在编辑一条已保存的连接（改动以编辑区为准），或者还没有
+        翻译连接、编辑区已经填好（它就是要用的那条）。页面上的保存 / 测试并保存
+        都按用户眼前看到的内容来，不会悄悄丢掉编辑区里的改动。
+        """
+        if not self.editing and self.roles.get("translation"):
+            return None
+        return self._editor_profile(quiet=True)
+
+    def adopt(self, config):
+        """「测试并保存」落盘之后，列表跟上已保存的连接，编辑区清空。"""
+        staged = any(p["id"] in (self._pending_id, self.editing) for p in config.connections
+                     if p["id"])
+        self.profiles = [dict(p) for p in config.connections]
+        self.roles = dict(config.connection_roles)
+        self.role_models = dict(config.connection_models)
+        self.refresh()
+        if staged:
+            self.reset()
+
+    def save(self):
+        p = self._editor_profile()
+        if p is None:
             return
         old = self.profiles
         old_roles = dict(self.roles)
@@ -287,6 +350,16 @@ class ConnectionLibrary(QWidget):
         self.dialog.connectionApplied.emit()
         _set_status(self.dialog._status, i18n.tr('已保存'), "ok")
         return True
+
+    def confirm_delete(self, key, name):
+        from . import bootstrap, prompts
+
+        if not bootstrap.automation() and not prompts.ConfirmDialog.ask(
+                self.dialog, i18n.tr('删除连接'),
+                i18n.tr('删除「{v0}」？用到它的用途会改为未选择，密钥一并删除。', v0=name),
+                yes=i18n.tr('删除'), no=i18n.tr('取消'), tone="danger"):
+            return
+        self.delete(key)
 
     def delete(self, key):
         old = self.profiles

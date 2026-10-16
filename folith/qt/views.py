@@ -516,7 +516,8 @@ class _TaskCard(QFrame):
         self.overlay.setGeometry(rect)
         if self.attention.isVisibleTo(self):
             hint = self.attention.sizeHint()
-            self.attention.move(rect.right() - hint.width() - 10, rect.bottom() - hint.height() - 26)
+            # 右上角：封面上方没有文字，角标不会压住文件名（试用反馈 41 号，整改 H3）。
+            self.attention.move(rect.right() - hint.width() - 8, rect.top() + 8)
             self.attention.raise_()
         self.update()
 
@@ -673,8 +674,8 @@ class HomeView(QWidget):
         self._refresh_logo()
 
         # ---- 侧栏动作（全部是真实入口，不放没实现的导航） -------------------
-        # 「导入文档…」是侧栏顶部唯一的实心按钮：任务库的第一动作。
-        self.import_button = QPushButton(i18n.tr('导入文档…'))
+        # 「导入文档」是侧栏顶部唯一的实心按钮：任务库的第一动作。
+        self.import_button = style_module.ElideButton(i18n.tr('导入文档'))
         style_module.set_button(self.import_button, "primary")
         self.import_button.setIcon(icons.icon("upload", 18, "text-on-hero"))
         self.import_button.setIconSize(QSize(18, 18))
@@ -735,7 +736,7 @@ class HomeView(QWidget):
         # ⚠️ 属性名是 **state** 不是 tone：`QLabel[tone="…"]` 是 chip 的全局属性选择器，
         # 同名会让这个点套上 chip 的底色/描边/padding（详见 style.py 的说明）。
         self.engine_dot.setProperty("state", "warn")
-        self.engine_label = QLabel(i18n.tr('未配置'))
+        self.engine_label = style_module.ElideLabel(i18n.tr('未配置'), mode=Qt.TextElideMode.ElideRight)
         self.engine_label.setObjectName("engineState")
         self.engine_model = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
         self.engine_model.setObjectName("engineModel")
@@ -754,7 +755,8 @@ class HomeView(QWidget):
                                       theme_module.SPACE["sm"] + 2, theme_module.SPACE["sm"])
         engine_row.setSpacing(theme_module.SPACE["sm"])
         engine_row.addWidget(self.engine_dot, 0, Qt.AlignmentFlag.AlignVCenter)
-        engine_row.addWidget(self.engine_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        # 状态在外语里会长出很多（"Translation model not set up"）：两段都可省略，不裁半个字。
+        engine_row.addWidget(self.engine_label, 1, Qt.AlignmentFlag.AlignVCenter)
         engine_row.addWidget(self.engine_model, 1, Qt.AlignmentFlag.AlignVCenter)
 
         # 品牌字标在侧栏左上角（E 层次 v2）；底部只留连接状态 + 设置按钮同一行。
@@ -789,8 +791,8 @@ class HomeView(QWidget):
         self._brand_mark.setPixmap(branding.mark_pixmap(30, current_theme(), tint=(
             None if current_theme() == "light" else theme_module.tokens(current_theme())["accent"])))
         logo_row.addWidget(self._brand_mark, 0, Qt.AlignmentFlag.AlignVCenter)
+        # 字标独占剩余宽度：再加一个弹簧会分走一半，副标题就提前折行。
         logo_row.addWidget(self._logo_label, 1)
-        logo_row.addStretch(1)
         side.addLayout(logo_row)
         side.addSpacing(theme_module.SPACE["md"])
         side.addWidget(self.import_button)
@@ -962,11 +964,11 @@ class HomeView(QWidget):
         # ---- 空状态 --------------------------------------------------------
         # 一个任务都没有：整张「任务列表」卡（筛选、视图切换、排序、底部动作）让位给
         # 页面上的一个空状态（设计审校 40 号 1.3–1.5：不再是卡里的卡，也不再摆着
-        # 三个禁用按钮）。它的按钮是次级的：主行动是侧栏顶部的「导入文档…」。
+        # 三个禁用按钮）。它的按钮是次级的：主行动是侧栏顶部的「导入文档」。
         self.empty_state = style_module.EmptyState(
             icon="file-text", page=True, title=i18n.tr('还没有任务'),
-            hint=i18n.tr('点击「导入文档…」选择 PDF 或 DOCX，即可开始翻译。'),
-            action=i18n.tr('导入文档…'))
+            hint=i18n.tr('点击「导入文档」选择 PDF 或 DOCX，即可开始翻译。'),
+            action=i18n.tr('导入文档'))
         self.empty_state.actionTriggered.connect(self.importRequested.emit)
         self.empty_state.setVisible(False)
         # 有任务、只是这个筛选下没有：列表位置上一句说明，不给动作。
@@ -980,6 +982,15 @@ class HomeView(QWidget):
             " · ".join(suffix.lstrip(".").upper() for suffix in adapter.SOURCE_SUFFIXES))
         self.drop_tile.clicked.connect(self.importRequested.emit)
         self.drop_tile.attentionNeeded.connect(self._reveal_drop_tile)
+        # 虚线格装在一个与任务卡**外框一样大**的格子里，四周留出与卡片相同的投影留白：
+        # 这样它的上沿、宽度、高度都和旁边的封面对齐（试用反馈：大小高度不一致）。
+        self.drop_holder = QWidget(self)
+        self.drop_holder.setObjectName("transparent")
+        holder_layout = QVBoxLayout(self.drop_holder)
+        holder_layout.setContentsMargins(_TaskCard.PAD)
+        holder_layout.setSpacing(0)
+        holder_layout.addWidget(self.drop_tile)
+        self.drop_holder.hide()
 
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.empty_page)
@@ -1166,6 +1177,8 @@ class HomeView(QWidget):
         text.setSpacing(theme_module.SPACE["xs"])
         eyebrow = QLabel(i18n.tr('继续上次的工作'))
         eyebrow.setObjectName("eyebrow")
+        self.continue_eyebrow = eyebrow
+        self.continue_row = row
         self.continue_title = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideMiddle)
         self.continue_title.setObjectName("continueTitle")
         self.continue_meta = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
@@ -1198,6 +1211,18 @@ class HomeView(QWidget):
         card.setVisible(False)
         return card
 
+    #: 低于这个高度，"继续"卡收成一行（只留名称、阶段和按钮），把纵向空间留给封面；
+    #: 它是最常用的入口，所以收窄而不是隐藏。
+    CONTINUE_COMPACT_HEIGHT = 720
+
+    def _sync_continue_density(self) -> None:
+        compact = self.height() < self.CONTINUE_COMPACT_HEIGHT
+        for widget in (self.continue_paper, self.continue_eyebrow, self.continue_meta):
+            widget.setVisible(not compact)
+        space = theme_module.SPACE
+        self.continue_row.setContentsMargins(space["xl"], space["sm"] if compact else space["md"],
+                                             space["xl"], space["sm"] if compact else space["md"])
+
     def _continue_candidate(self) -> adapter.JobRow | None:
         """最近更新的、还没交付也没出错的任务（运行中的优先）。"""
         candidates = [row for row in self._rows
@@ -1211,8 +1236,9 @@ class HomeView(QWidget):
         row = self._continue_candidate()
         # 搜索/筛选时它会和结果打架：只在"看全部"时出现。
         show = (row is not None and not self.search_edit.text().strip()
-                and self._status_key == "all" and self.height() >= 720)
+                and self._status_key == "all")
         self.continue_card.setVisible(show)
+        self._sync_continue_density()
         if not show:
             self._continue_job_id = ""
             return
@@ -1441,9 +1467,10 @@ class HomeView(QWidget):
         names = {
             "zh-CN": ("Folith · 译页", "智能体翻译工作台"),
             "en": ("Folith", "Agentic Translation Workspace"),
-            "ar": ("فوليث · صفحة الترجمة", "مساحة عمل الترجمة بالوكلاء"),
-            "ru": ("Фолит · Страница перевода", "Рабочая среда агентного перевода"),
-            "es": ("Fólit · Página de traducción", "Espacio de traducción con agentes"),
+            # 阿、俄用本文字音译 Folith（不带「译页」，越短越好）；副标题是一句短的意译。
+            "ar": ("فوليث", "ترجمة بالوكلاء الأذكياء"),
+            "ru": ("Фолит", "Перевод с ИИ\u2011агентами"),
+            "es": ("Folith", "Traducción con agentes de IA"),
         }
         from html import escape
         name, tagline = names.get(i18n.language(), names["en"])
@@ -1631,11 +1658,18 @@ class HomeView(QWidget):
         for card in self._cards.values():
             if card.width() != width:
                 card.set_tile_width(width)
+        self._size_drop_holder()
+
+    def _size_drop_holder(self) -> None:
+        """虚线格的外框 = 任务卡的外框（卡片换宽度时跟着换）。"""
+        sample = next(iter(self._cards.values()), None)
+        if sample is not None and self.drop_holder.size() != sample.size():
+            self.drop_holder.setFixedSize(sample.size())
 
     def _project_label(self, project_id: str) -> str:
         if not project_id:
-            return "未归属项目"
-        return self._project_names.get(project_id) or "未命名项目"
+            return i18n.tr('未归属项目')
+        return self._project_names.get(project_id) or i18n.tr('未命名项目')
 
     def _fill_cards(self, rows: list[adapter.JobRow]) -> None:
         """按项目分组重建卡片页：分组标题 + 网格任务卡（选中态与表格同步）。"""
@@ -1647,8 +1681,8 @@ class HomeView(QWidget):
         if focused_job or (self.focusWidget() is not None
                            and self.card_page.isAncestorOf(self.focusWidget())):
             self.card_scroll.setFocus(Qt.FocusReason.OtherFocusReason)
-        self.drop_tile.hide()
-        self.drop_tile.setParent(self)        # 摘出卡片页，下面清空时不会跟着销毁
+        self.drop_holder.hide()
+        self.drop_holder.setParent(self)      # 摘出卡片页，下面清空时不会跟着销毁
         while self.card_layout.count():
             item = self.card_layout.takeAt(0)
             widget = item.widget()
@@ -1705,15 +1739,13 @@ class HomeView(QWidget):
             self.card_layout.addWidget(section)
         if groups:
             # 虚线格排在最后一组的最后一张卡后面（与卡片同一套网格）。
-            self.drop_tile.setParent(last_grid.parentWidget())
-            last_grid.addWidget(self.drop_tile, last_count // columns, last_count % columns)
-            sample = next(iter(self._cards.values()), None)
-            if sample is not None:        # 与任务卡同宽同高（卡片自带投影留白，扣掉）
-                self.drop_tile.setFixedSize(
-                    card_width - _TaskCard.PAD.left() - _TaskCard.PAD.right(),
-                    sample.height() - _TaskCard.PAD.top() - _TaskCard.PAD.bottom())
-                last_grid.setAlignment(self.drop_tile, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            self.drop_holder.setParent(last_grid.parentWidget())
+            last_grid.addWidget(self.drop_holder, last_count // columns, last_count % columns)
+            last_grid.setAlignment(self.drop_holder,
+                                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            self._size_drop_holder()
             self.drop_tile.show()
+            self.drop_holder.show()
         self.card_layout.addStretch(1)
         if focused_job in self._cards:
             self._cards[focused_job].setFocus(Qt.FocusReason.OtherFocusReason)

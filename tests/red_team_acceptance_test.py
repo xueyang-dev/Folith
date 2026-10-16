@@ -809,14 +809,16 @@ def test_external_evidence_attack_and_prompt_scan():
                 transport_url_lines.add((function_path, first_line + node.lineno - 1))
     # P5 support navigation and the manually requested release check are UI /
     # transport configuration, not model-authored citation evidence. Allow only
-    # these four assignments; prompts elsewhere in the file remain scanned.
+    # these assignments (plus the optional local-OCR install guide); prompts
+    # elsewhere in the file remain scanned.
     support_path = "folith/qt/support.py"
     with open(os.path.join(repo_root, support_path), encoding="utf-8") as stream:
         support_tree = ast.parse(stream.read())
     for node in support_tree.body:
         if isinstance(node, ast.Assign) and any(
                 isinstance(target, ast.Name) and target.id in {
-                    "PROJECT_URL", "AUTHOR_URL", "ISSUES_URL", "RELEASES_API"}
+                    "PROJECT_URL", "AUTHOR_URL", "ISSUES_URL", "RELEASES_API",
+                    "TESSERACT_INSTALL_URL"}
                 for target in node.targets):
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 transport_url_lines.add((support_path, node.value.lineno))
@@ -849,7 +851,8 @@ def test_external_evidence_attack_and_prompt_scan():
         if "PRESERVE_RE" in line or "example.com" in line and "系统" not in line:
             continue
         if any(endpoint in line for endpoint in (
-                "https://api.deepseek.com", "https://opencode.ai/zen/go/v1")):
+                "https://api.deepseek.com", "https://opencode.ai/zen/go/v1",
+                "https://api.openai.com/v1")):
             continue
         # 本机回环地址是本地开发/验证工具的默认目标，不是 prompt 里的引用 URL
         if any(host in line for host in (
