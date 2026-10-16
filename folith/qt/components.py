@@ -1542,20 +1542,56 @@ class StatusLabel(QWidget):
     芯片、一处是彩字、一处是彩色横幅。
     """
 
-    def __init__(self, text: str = "", tone: str = "idle", parent: QWidget | None = None) -> None:
+    def __init__(self, text: str = "", tone: str = "idle", parent: QWidget | None = None,
+                 *, wrap: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("transparent")
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
         self.dot = StatusDot(theme_module.STATUS_TONES["idle"])
-        self.label = style_module.ElideLabel(text, mode=Qt.TextElideMode.ElideRight)
+        # 单行省略（卡片、设置里的短状态）；wrap=True 时折行（检查器里的整句状态），
+        # 圆点对齐第一行文字的中线。
+        if wrap:
+            self.label = style_module.ParagraphLabel(text)
+        else:
+            self.label = style_module.ElideLabel(text, mode=Qt.TextElideMode.ElideRight)
         style_module.set_text_role(self.label, "status")
-        row.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
+        #: 折行模式下状态短语之后的说明（次要色，不着色）——只有状态本身带语气色。
+        self.detail = None
+        if wrap:
+            dot_box = QVBoxLayout()
+            dot_box.setContentsMargins(0, max(0, (self.label.fontMetrics().height() - 8) // 2 + 1), 0, 0)
+            dot_box.addWidget(self.dot)
+            dot_box.addStretch(1)
+            row.addLayout(dot_box)
+            column = QVBoxLayout()
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(2)
+            column.addWidget(self.label)
+            self.detail = style_module.ParagraphLabel("")
+            style_module.set_text_role(self.detail, "meta")
+            self.detail.setVisible(False)
+            column.addWidget(self.detail)
+            row.addLayout(column, 1)
+        else:
+            row.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
+        self._tone = "idle"
         self.set_status(text, tone)
 
-    def set_status(self, text: str, tone: str = "idle") -> None:
+    # QLabel 兼容：原来用纯标签的地方（setText / text）不用改调用方式，语气保持不变。
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        self.label.setText(text)
+
+    def setWordWrap(self, on: bool) -> None:  # noqa: N802 - Qt 命名
+        if isinstance(self.label, QLabel) and not isinstance(self.label, style_module.ElideLabel):
+            self.label.setWordWrap(on)
+
+    def set_tone(self, tone: str) -> None:
+        self.set_status(self.label.text(), tone)
+
+    def set_status(self, text: str, tone: str = "idle", detail: str = "") -> None:
         tone = tone if tone in theme_module.STATUS_TONES else "idle"
         self._tone = tone
         self.dot._token = theme_module.STATUS_TONES[tone]
@@ -1563,12 +1599,34 @@ class StatusLabel(QWidget):
         self.label.setText(text)
         self.label.setProperty("tone", tone)
         repolish(self.label)
+        if self.detail is not None:
+            self.detail.setText(detail)
+            self.detail.setVisible(bool(detail))
 
     def tone(self) -> str:
         return self._tone
 
     def text(self) -> str:
-        return self.label.text()
+        detail = self.detail.text() if self.detail is not None else ""
+        return self.label.text() + (("\n" + detail) if detail else "")
+
+
+def status_dot_icon(tone: str):
+    """表格单元格里用的状态圆点（``QIcon``）：与 :class:`StatusLabel` 同色同大小。"""
+    from PySide6.QtGui import QIcon, QPixmap
+
+    token = theme_module.STATUS_TONES.get(tone, theme_module.STATUS_TONES["idle"])
+    ratio = 2
+    pixmap = QPixmap(8 * ratio, 8 * ratio)
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(theme_module.qcolor(_tokens().get(token, _tokens()["text-muted"])))
+    painter.drawEllipse(QRectF(1, 1, 6, 6))
+    painter.end()
+    return QIcon(pixmap)
 
 
 def relative_time(stamp: str, *, now=None) -> str:

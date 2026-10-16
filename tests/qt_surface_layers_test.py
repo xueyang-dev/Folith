@@ -93,3 +93,41 @@ def test_set_text_role_rejects_unknown_roles(app):
     assert label.property("textRole") == "meta"
     with pytest.raises(ValueError):
         style.set_text_role(label, "hero")
+
+
+def test_paragraph_label_keeps_plain_text_and_sets_line_height(app):
+    label = style.ParagraphLabel("第一行 <b>不是标签</b>\n第二行")
+    assert label.text() == "第一行 <b>不是标签</b>\n第二行"
+    assert label.wordWrap()
+    assert f"line-height:{style.PARAGRAPH_LINE_HEIGHT}%" in QLabel.text(label)
+    assert "&lt;b&gt;" in QLabel.text(label) and "<br>" in QLabel.text(label)
+
+
+def test_wrapped_status_colours_only_the_status_phrase(app):
+    status = components.StatusLabel("", wrap=True)
+    status.set_status("可以冻结交付", "active", "交付文件按任务声明生成。")
+    assert status.label.property("tone") == "active"
+    assert status.detail.property("textRole") == "meta"
+    assert status.detail.isVisibleTo(status)
+    assert status.text() == "可以冻结交付\n交付文件按任务声明生成。"
+    status.set_status("尚未选择段落", "idle")
+    assert not status.detail.isVisibleTo(status)
+    status.setText("草稿保存失败")          # 老调用方式仍然可用，语气不变
+    assert status.tone() == "idle" and status.text() == "草稿保存失败"
+
+
+def test_segment_status_tone():
+    from types import SimpleNamespace as Row
+
+    from folith.qt import views
+
+    assert views._segment_status_tone(Row(status="已审校")) == "done"
+    assert views._segment_status_tone(Row(status="待审校")) == "active"
+    assert views._segment_status_tone(Row(status="待翻译")) == "idle"
+    assert views._segment_status_tone(Row(status="已排除", excluded=True)) == "idle"
+    assert views._segment_status_tone(Row(status="待审校", stale_draft=True)) == "attention"
+
+
+def test_status_dot_icon_draws_something(app):
+    for tone in theme.STATUS_TONES:
+        assert not components.status_dot_icon(tone).isNull()

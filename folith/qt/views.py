@@ -367,6 +367,19 @@ def _stage_line(row) -> str:
     return f" <span style='color:{muted}'>—</span> ".join(spans)
 
 
+def _segment_status_tone(row) -> str:
+    """一段的状态语气（theme.STATUS_TONES）：已审校 = 完成；草稿基于旧译文 = 需处理；
+    待翻译 / 已排除 = 未开始；其余（待审校、人工修改）= 进行中。"""
+    if getattr(row, "stale_draft", False):
+        return "attention"
+    status = str(getattr(row, "status", "") or "")
+    if getattr(row, "excluded", False) or status in ("待翻译", "已排除"):
+        return "idle"
+    if status == "已审校":
+        return "done"
+    return "active"
+
+
 def _row_format(row) -> str:
     name = str(getattr(row, "filename", "") or "")
     suffix = name.rsplit(".", 1)[-1] if "." in name else ""
@@ -442,9 +455,10 @@ class _TaskCard(QFrame):
                 "paused": "muted", "idle": "muted"}.get(run_tone, tone)
         if row.runtime_status == "unreadable":
             tone = "danger"
-        dot = components.StatusDot({"ok": "success", "warn": "warning", "danger": "danger",
-                                    "info": "accent", "brand": "brand-ink"}.get(tone, "text-muted"),
-                                   hollow=False)
+        # 卡片语气 → 统一的状态语气（theme.STATUS_TONES），颜色与检查器、设置里的状态点一致。
+        status_tone = {"ok": "done", "warn": "attention", "danger": "error",
+                       "info": "active", "brand": "active"}.get(tone, "idle")
+        dot = components.StatusDot(theme_module.STATUS_TONES[status_tone], hollow=False)
         status_text = (run_line if run_tone in ("running", "waiting", "retrying", "stalled", "failed", "paused")
                        else i18n.tr_dynamic(row.status_label)) or "—"
         percent = _row_percent(row)
@@ -2431,8 +2445,8 @@ class WorkbenchView(QWidget):
         self.segment_list.horizontalHeader().sectionResized.connect(self._columns_resized)
 
         # ---- 右侧检查器 ----------------------------------------------------
-        self.segment_status = QLabel(i18n.tr('尚未选择段落'))
-        self.segment_status.setObjectName("hint")
+        # 检查器标题下的状态：圆点 + 同色文字（与任务卡、设置同一种状态样子）。
+        self.segment_status = components.StatusLabel(i18n.tr('尚未选择段落'), "idle", wrap=True)
         self.fact_state = QLabel("—")
         self.fact_review = QLabel("—")
         self.fact_source = QLabel("—")
@@ -2883,8 +2897,8 @@ class WorkbenchView(QWidget):
         # ---- 交付标签页 ----------------------------------------------------
         # 交付清单按 Web 界面的表达重做：一行一个文件（类型图标 + 名称 + 大小），
         # 按用途分组；没有冻结交付、没有排除段落时给明确的空状态，而不是一块空白列表。
-        self.delivery_label = QLabel(i18n.tr('交付状态：—'))
-        self.delivery_label.setWordWrap(True)
+        # 交付状态：圆点 + 同色文字（可以冻结 = 进行中，还有问题 = 需处理，已冻结 = 完成）。
+        self.delivery_label = components.StatusLabel(i18n.tr('交付状态：—'), "idle", wrap=True)
         self.deliver_button = QPushButton(i18n.tr('审校完成后冻结交付'))
         style_module.set_button(self.deliver_button, "primary")
         self.deliver_button.clicked.connect(self.deliverRequested.emit)
@@ -4646,7 +4660,16 @@ class WorkbenchView(QWidget):
             numbers = "、".join(str(index + 1) for index in missing[:20])
             detail += i18n.tr("\n有 {v0} 段尚无译文：第 {v1}{v2} 段。", v0=len(missing), v1=numbers,
                               v2=i18n.tr(' 等') if len(missing) > 20 else "")
-        self.delivery_label.setText(i18n.tr("交付状态：{v0}", v0=status) + detail)
+        if (preview.get("snapshot") or {}).get("current"):
+            delivery_tone = "done"
+        elif issues or missing:
+            delivery_tone = "attention"
+        elif preview.get("can_deliver"):
+            delivery_tone = "active"
+        else:
+            delivery_tone = "idle"
+        # 译文里的说明以分隔符开头（原来接在状态后面）；单独成行时去掉它。
+        self.delivery_label.set_status(status, delivery_tone, detail.strip().lstrip("；;؛、 ").strip())
         self.deliver_button.setEnabled(bool(preview.get("can_deliver")))
         self.risk_button.setVisible(bool(preview.get("can_accept_risk")))
         self.delivery_note.setEnabled(bool(preview.get("can_deliver")
@@ -4868,7 +4891,7 @@ class WorkbenchView(QWidget):
 
     def _render_segment_detail(self) -> None:
         if not (0 <= self._current_index < len(self._all_rows)) or not self._rows:
-            self.segment_status.setText(i18n.tr('尚未选择段落'))
+            self.segment_status.set_status(i18n.tr('尚未选择段落'), "idle")
             self.attention_list.set_items([], [])
             self.attention_label.setVisible(False)
             self.attention_list.setVisible(False)
@@ -4918,7 +4941,7 @@ class WorkbenchView(QWidget):
         if row.has_draft:
             parts.append("⚠ 草稿基于旧译文，提交会覆盖较新的文本"
                          if row.stale_draft else "有未提交草稿")
-        self.segment_status.setText(" · ".join(parts))
+        self.segment_status.set_status(" · ".join(parts), _segment_status_tone(row))
         self.fact_state.setText(row.status)
         self.fact_review.setText("已审校" if row.reviewed else "未审校")
         pairs_now = self._state.get("pairs") or []
@@ -5031,7 +5054,7 @@ class WorkbenchView(QWidget):
             return
         if row.excluded:
             self._current_index = row.index
-            self.segment_status.setText(i18n.tr('该段落已被排除，不参与翻译与交付。'))
+            self.segment_status.set_status(i18n.tr('该段落已被排除，不参与翻译与交付。'), "idle")
             return
         if self._dirty and self._loaded_uid:
             self.flush_draft()
@@ -5250,7 +5273,7 @@ class WorkbenchView(QWidget):
             self.draftSaved.emit(self.job_id, self._loaded_uid, text)
             adapter.save_draft(self.job_id, self._loaded_uid, text, committed)
         except Exception as exc:  # noqa: BLE001 - never lose the text silently
-            self.segment_status.setText(i18n.tr('草稿保存失败：{v0}', v0=exc))
+            self.segment_status.set_status(i18n.tr('草稿保存失败：{v0}', v0=exc), "error")
             return False
         self._dirty = False
         marker = i18n.tr(" · 已保存草稿")
@@ -5435,7 +5458,7 @@ class WorkbenchView(QWidget):
         if index == self._current_index:
             self._render_segment_detail()
             if error:
-                self.segment_status.setText(error)
+                self.segment_status.set_status(error, "error")
 
     def _locate_decision(self, decision: dict) -> None:
         """把决策痕迹对应的原文 / 译文片段标出来（只是高亮，不改文字、不动光标）。"""
@@ -5479,7 +5502,7 @@ class WorkbenchView(QWidget):
         try:
             adapter.save_segment_note(self.job_id, self._loaded_uid, text)
         except OSError as exc:
-            self.segment_status.setText(i18n.tr('批注保存失败：{v0}', v0=exc))
+            self.segment_status.set_status(i18n.tr('批注保存失败：{v0}', v0=exc), "error")
             return
         self._notes = adapter.segment_notes(self.job_id)
         self.note_box.set_note(self._notes.get(self._loaded_uid))

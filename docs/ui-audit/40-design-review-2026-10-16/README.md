@@ -387,4 +387,16 @@ QT_QPA_PLATFORM=offscreen venv/bin/python docs/ui-audit/40-design-review-2026-10
 ![](layers-settings.png)
 ![](layers-translate-dark.png)
 
-**还没做**：Qt 的 QLabel 不支持 `line-height`，中文行高只能在富文本里统一；段落检查器里的状态（"3/5 · 待审校"）、交付状态行、术语候选的情况列还没换成 `StatusLabel`；任务库卡片里的状态点仍按旧的语气表取色（颜色一致，代码未合并）。
+**残余项处理（同日）**：
+
+| 项 | 改法 |
+|---|---|
+| 检查器状态（"3/5 · 待审校"） | 换成折行的 `StatusLabel`：已审校 = 完成、待审校 / 人工修改 = 进行中、待翻译 / 已排除 = 未开始、草稿基于旧译文 = 需处理、保存失败 = 错误（`views._segment_status_tone`） |
+| 交付状态行 | 只有状态短语带语气色（可以冻结 = 进行中、还有问题 = 需处理、已冻结 = 完成），说明另起一行用次要色；不再是一整句粗体蓝字 |
+| 术语候选 | 置信度一列带同色状态点：有冲突 = 需处理、高置信度 = 完成、新术语 = 进行中（`components.status_dot_icon`） |
+| 任务卡状态点 | 改从 `theme.STATUS_TONES` 取色，与检查器、设置同一张表 |
+| 中文行高 | 原因是字体栈里拉丁字体在前，中文沿用了约 1.2 倍的拉丁行距。折行说明（空状态说明、提示条、折行状态）改用 `style.ParagraphLabel`：富文本段落 `line-height:150%`，`text()` 仍返回纯文本 |
+
+**仍然没做**：段落表格里的原文 / 译文由 Qt 的条目绘制直接画字，术语高亮按那套排版算位置；改行高要连高亮一起重写，这次不动。
+
+![](layers-deliver-status.png)

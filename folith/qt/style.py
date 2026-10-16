@@ -1457,6 +1457,37 @@ def text_color(name: str = "text-primary") -> str:
     return theme_module.tokens(current_theme())[name]
 
 
+#: 折行中文段落的行高（%）。字体栈里拉丁字体在前，中文回退到苹方时沿用的是拉丁字体的
+#: 行距（约 1.2 倍），中文挤成一团；折行说明统一放宽到 1.5 倍（画布 E 层次 v2）。
+PARAGRAPH_LINE_HEIGHT = 150
+
+
+class ParagraphLabel(QLabel):
+    """折行的说明文字：中文行高统一为 :data:`PARAGRAPH_LINE_HEIGHT`。
+
+    QLabel 不支持 ``line-height`` 的 QSS，但它的富文本支持；这里把纯文本转义后包进一个
+    带行高的段落。``text()`` 仍然返回调用方给的纯文本（测试、读屏、复制都不受影响）。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._plain = ""
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setWordWrap(True)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        import html
+
+        self._plain = str(text or "")
+        body = html.escape(self._plain).replace("\n", "<br>")
+        super().setText(f'<p style="margin:0; line-height:{PARAGRAPH_LINE_HEIGHT}%">{body}</p>'
+                        if body else "")
+
+    def text(self) -> str:  # noqa: D401 - Qt 命名
+        return self._plain
+
+
 class ElideLabel(QLabel):
     """单行省略标签：宽度变了就按当前宽度重新省略，完整文本留在悬停提示里。
 
@@ -1531,8 +1562,7 @@ class NoticeStrip(QFrame):
         from . import icons
 
         self._icon = icons.IconLabel(size=16)
-        self._label = QLabel(text)
-        self._label.setWordWrap(True)
+        self._label = ParagraphLabel(text)
         self._action = QPushButton("")
         set_button(self._action, "plain")
         self._action.setVisible(False)
@@ -1886,7 +1916,7 @@ class EmptyState(QFrame):
         self.title_label = QLabel(title)
         self.title_label.setObjectName("emptyTitle")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hint_label = QLabel(hint)
+        self.hint_label = ParagraphLabel(hint)
         self.hint_label.setObjectName("emptyHint")
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint_label.setWordWrap(True)

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from folith import language_assets as assets
 
+from . import components
 from . import i18n
 from . import style as style_module
 
@@ -307,6 +308,13 @@ class LibraryView(QWidget):
                       assets.confidence_text(row), i18n.tr_dynamic(assets.usage_text(row)), row["document"])
             for c, value in enumerate(values):
                 self.cand_table.setItem(r, c, QTableWidgetItem(str(value or "")))
+            # 置信度一列带状态点：有冲突 = 需处理，高置信度 = 完成，新术语 = 进行中。
+            tone = ("attention" if row.get("has_conflict") else
+                    "done" if row.get("high_confidence") else
+                    "active" if row.get("is_new") else "idle")
+            confidence = self.cand_table.item(r, 3)
+            confidence.setIcon(components.status_dot_icon(tone))
+            confidence.setData(Qt.ItemDataRole.UserRole + 1, tone)
         self.cand_table.blockSignals(False)
         total_all = len(self._data.get("candidates") or [])
         self.cand_body.setVisible(bool(total_all))
