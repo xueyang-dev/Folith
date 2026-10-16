@@ -155,14 +155,14 @@ def test_view_counts_tabs_and_fills_the_candidate_table(qapp, workspace):
     assert "3" in view.tabs.tabText(0) and "待审核" in view.tabs.tabText(0)
     assert view.cand_table.rowCount() == 3
     assert view.term_table.rowCount() >= 2
-    assert not view.accept_button.isEnabled(), "没选中不能审核"
+    assert view.accept_button.isHidden(), "没选中时不出现审核动作（隐藏优于禁用）"
 
 
 def test_selecting_a_candidate_shows_context_and_enables_actions(qapp, workspace):
     view = _view()
     view.cand_table.selectRow(0)
-    assert view.accept_button.isEnabled() and view.reject_button.isEnabled()
-    assert view.jump_button.isEnabled()
+    assert not view.accept_button.isHidden() and not view.reject_button.isHidden()
+    assert not view.jump_button.isHidden()
     assert "→" in view.cand_detail.toPlainText()
 
 
@@ -187,7 +187,7 @@ def test_multi_select_allows_bulk_and_relabels_the_button(qapp, workspace):
                      QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
     assert len(view.selected_candidates()) == 2
     assert "2" in view.accept_button.text()
-    assert not view.jump_button.isEnabled(), "多选时不能跳到单个位置"
+    assert view.jump_button.isHidden(), "多选时不能跳到单个位置"
 
 
 def test_quick_filters_and_search_narrow_the_table(qapp, workspace):
@@ -245,7 +245,7 @@ def test_term_tab_opens_the_owning_task(qapp, workspace):
     view.openJobRequested.connect(lambda job, index: seen.append((job, index)))
     for row in range(view.term_table.rowCount()):
         view.term_table.selectRow(row)
-        if view.term_open.isEnabled():
+        if not view.term_open.isHidden():
             view.term_open.click()
             break
     assert seen and seen[0][1] == -1
@@ -281,9 +281,9 @@ def test_library_terms_can_be_edited_and_deleted_in_their_task(qapp, workspace):
     view.termDeleteRequested.connect(deletes.append)
     for row in range(view.term_table.rowCount()):
         view.term_table.selectRow(row)
-        if view.term_edit.isEnabled():
+        if not view.term_edit.isHidden():
             break
-    assert view.term_edit.isEnabled()
+    assert not view.term_edit.isHidden()
     view.term_edit.click()
     view.term_delete.click()
     assert edits and deletes and edits[0]["source"] == deletes[0]["source"]

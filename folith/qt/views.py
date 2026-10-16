@@ -903,38 +903,19 @@ class HomeView(QWidget):
         self._card_columns_applied = 0
 
         # ---- 空状态 --------------------------------------------------------
-        self.empty_card = Card()
-        empty_layout = QVBoxLayout(self.empty_card)
-        empty_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["xxl"],
-                                        theme_module.SPACE["xl"], theme_module.SPACE["xxl"])
-        empty_layout.setSpacing(theme_module.SPACE["sm"])
-        empty_icon = icons.IconLabel("file-text", 40, "text-muted")
-        empty_title = QLabel(i18n.tr('还没有任务'))
-        empty_title.setObjectName("sectionTitle")
-        empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label = QLabel(i18n.tr('点击「导入文档…」选择 PDF 或 DOCX，即可开始翻译。'))
-        self.empty_label.setObjectName("hint")
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_button = QPushButton(i18n.tr('导入文档…'))
-        style_module.set_button(self.empty_button, "primary")
-        self.empty_button.setIcon(icons.icon("upload", 16, "text-on-accent"))
-        self.empty_button.setIconSize(QSize(16, 16))
-        self.empty_button.clicked.connect(self.importRequested.emit)
-        empty_buttons = QHBoxLayout()
-        empty_buttons.addStretch(1)
-        empty_buttons.addWidget(self.empty_button)
-        empty_buttons.addStretch(1)
-        empty_layout.addWidget(empty_icon, 0, Qt.AlignmentFlag.AlignHCenter)
-        empty_layout.addWidget(empty_title)
-        empty_layout.addWidget(self.empty_label)
-        empty_layout.addSpacing(theme_module.SPACE["sm"])
-        empty_layout.addLayout(empty_buttons)
-        empty_wrap = QVBoxLayout()
-        empty_wrap.addStretch(1)
-        empty_wrap.addWidget(self.empty_card)
-        empty_wrap.addStretch(2)
-        self.empty_page = QWidget()
-        self.empty_page.setLayout(empty_wrap)
+        # 一个任务都没有：整张「任务列表」卡（筛选、视图切换、排序、底部动作）让位给
+        # 页面上的一个空状态（设计审校 40 号 1.3–1.5：不再是卡里的卡，也不再摆着
+        # 三个禁用按钮）。它的按钮是次级的：主行动是侧栏顶部的「导入文档…」。
+        self.empty_state = style_module.EmptyState(
+            icon="file-text", page=True, title=i18n.tr('还没有任务'),
+            hint=i18n.tr('点击「导入文档…」选择 PDF 或 DOCX，即可开始翻译。'),
+            action=i18n.tr('导入文档…'))
+        self.empty_state.actionTriggered.connect(self.importRequested.emit)
+        self.empty_state.setVisible(False)
+        # 有任务、只是这个筛选下没有：列表位置上一句说明，不给动作。
+        self.empty_page = style_module.EmptyState(
+            icon="search", page=True, title=i18n.tr('这个筛选下没有任务'),
+            hint=i18n.tr('换一个筛选，或清空搜索。'))
 
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.empty_page)
@@ -1004,6 +985,7 @@ class HomeView(QWidget):
         layout.addWidget(self.setup_banner)
         layout.addWidget(self.continue_card)
         layout.addWidget(self.list_card, 1)
+        layout.addWidget(self.empty_state, 1)
 
         shell = QHBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
@@ -1135,6 +1117,8 @@ class HomeView(QWidget):
     # -- data --------------------------------------------------------------
     def set_rows(self, rows: list[adapter.JobRow]) -> None:
         self._rows = list(rows)
+        self.list_card.setVisible(bool(self._rows))
+        self.empty_state.setVisible(not self._rows)
         self._sync_project_tabs()
         self._apply_filter()
 
@@ -1677,9 +1661,11 @@ class HomeView(QWidget):
 
     def _selection_changed(self) -> None:
         ids = self.selected_job_ids()
-        self.open_button.setEnabled(len(ids) == 1)
-        self.move_button.setEnabled(bool(ids))
-        self.delete_button.setEnabled(bool(ids))
+        # 作用于选中任务的动作：没选中就不出现（隐藏优于禁用；双击/回车也能打开）。
+        for button, wanted in ((self.open_button, len(ids) == 1),
+                               (self.move_button, bool(ids)), (self.delete_button, bool(ids))):
+            button.setEnabled(wanted)
+            button.setVisible(wanted)
         self.move_button.setText(
             i18n.tr("移动到项目…（{v0} 个）", v0=len(ids)) if len(ids) > 1
             else i18n.tr("移动到项目…"))

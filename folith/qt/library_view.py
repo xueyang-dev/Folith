@@ -130,9 +130,11 @@ class LibraryView(QWidget):
         filters = QHBoxLayout()
         filters.addWidget(self.cand_query, 1)
         filters.addWidget(self.cand_kind)
-        cand_page = QWidget()
-        cand = QVBoxLayout(cand_page)
-        cand.setContentsMargins(0, 8, 0, 0)
+        # 一页的数据整个为空：筛选、表格、详情与动作一起让位给一个空状态
+        # （设计审校 40 号第五节）；只是"这个筛选下没有"时仍用表格位置的一行说明。
+        self.cand_body = QWidget()
+        cand = QVBoxLayout(self.cand_body)
+        cand.setContentsMargins(0, 0, 0, 0)
         cand.addLayout(filters)
         cand.addWidget(self.cand_quick)
         # 没有候选时表格隐藏，多出的高度给空状态说明，而不是把筛选分段条拉高。
@@ -142,6 +144,14 @@ class LibraryView(QWidget):
         cand.addWidget(self.cand_more)
         cand.addWidget(self.cand_detail)
         cand.addLayout(actions)
+        self.cand_empty_state = style_module.EmptyState(
+            icon="sparkles", page=True, title=i18n.tr('没有待审核的候选词条'),
+            hint=i18n.tr('翻译中发现的新术语会出现在这里，由你决定是否纳入项目术语。'))
+        cand_page = QWidget()
+        cand_outer = QVBoxLayout(cand_page)
+        cand_outer.setContentsMargins(0, 8, 0, 0)
+        cand_outer.addWidget(self.cand_body, 1)
+        cand_outer.addWidget(self.cand_empty_state, 1)
 
         # ---- 术语库 ----------------------------------------------------------
         self.term_query = QLineEdit()
@@ -162,9 +172,9 @@ class LibraryView(QWidget):
         self.term_delete = QPushButton(i18n.tr('删除…'))
         style_module.set_button(self.term_delete, "danger")
         self.term_delete.clicked.connect(lambda: self.termDeleteRequested.emit(self.selected_term()))
-        term_page = QWidget()
-        term = QVBoxLayout(term_page)
-        term.setContentsMargins(0, 8, 0, 0)
+        self.term_body = QWidget()
+        term = QVBoxLayout(self.term_body)
+        term.setContentsMargins(0, 0, 0, 0)
         term.addWidget(self.term_query)
         term.addWidget(self.term_table, 1)
         term.addWidget(self.term_more)
@@ -174,6 +184,16 @@ class LibraryView(QWidget):
             term_actions.addWidget(widget)
         term_actions.addStretch(1)
         term.addLayout(term_actions)
+        self.term_empty_state = style_module.EmptyState(
+            icon="termbase", page=True, title=i18n.tr('术语库是空的'),
+            hint=i18n.tr('接受的候选和手动添加的术语会出现在这里。'),
+            action=i18n.tr('添加术语…'))
+        self.term_empty_state.actionTriggered.connect(self.newTermRequested.emit)
+        term_page = QWidget()
+        term_outer = QVBoxLayout(term_page)
+        term_outer.setContentsMargins(0, 8, 0, 0)
+        term_outer.addWidget(self.term_body, 1)
+        term_outer.addWidget(self.term_empty_state, 1)
 
         # ---- 翻译记忆 --------------------------------------------------------
         self.tm_query = QLineEdit()
@@ -193,14 +213,23 @@ class LibraryView(QWidget):
         tm_filters = QHBoxLayout()
         tm_filters.addWidget(self.tm_query, 1)
         tm_filters.addWidget(self.tm_project)
+        # 翻译记忆按项目隔离：空的时候项目选择仍然留着，好切到别的项目看。
+        self.tm_body = QWidget()
+        tm_rows = QVBoxLayout(self.tm_body)
+        tm_rows.setContentsMargins(0, 0, 0, 0)
+        tm_rows.addWidget(self.tm_table, 1)
+        tm_rows.addWidget(self.tm_more)
+        tm_rows.addWidget(self.tm_note)
+        tm_rows.addWidget(self.tm_clear, 0, Qt.AlignmentFlag.AlignLeft)
+        self.tm_empty_state = style_module.EmptyState(
+            icon="memory", page=True, title=i18n.tr('这个项目还没有翻译记忆'),
+            hint=i18n.tr('翻译记忆按项目隔离；可以在上方切换到其他项目。'))
         tm_page = QWidget()
         tm = QVBoxLayout(tm_page)
         tm.setContentsMargins(0, 8, 0, 0)
         tm.addLayout(tm_filters)
-        tm.addWidget(self.tm_table, 1)
-        tm.addWidget(self.tm_more)
-        tm.addWidget(self.tm_note)
-        tm.addWidget(self.tm_clear, 0, Qt.AlignmentFlag.AlignLeft)
+        tm.addWidget(self.tm_body, 1)
+        tm.addWidget(self.tm_empty_state, 1)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(cand_page, "")
@@ -280,6 +309,8 @@ class LibraryView(QWidget):
                 self.cand_table.setItem(r, c, QTableWidgetItem(str(value or "")))
         self.cand_table.blockSignals(False)
         total_all = len(self._data.get("candidates") or [])
+        self.cand_body.setVisible(bool(total_all))
+        self.cand_empty_state.setVisible(not total_all)
         self.cand_empty.setVisible(not rows)
         self.cand_empty.setText(i18n.tr('没有待审核的候选词条。') if not total_all
                                 else i18n.tr('这个筛选下没有候选词条。'))
@@ -298,17 +329,20 @@ class LibraryView(QWidget):
 
     def _candidate_selected(self) -> None:
         picked = self.selected_candidates()
-        for button in (self.accept_button, self.task_button, self.reject_button):
-            button.setEnabled(bool(picked) and not self._busy)
         count = len(picked)
+        # 作用于选中项的操作：没选中就不出现（隐藏优于禁用）。
+        for button in (self.accept_button, self.task_button, self.reject_button):
+            button.setVisible(bool(picked))
+            button.setEnabled(not self._busy)
         self.accept_button.setText(i18n.tr('接受为项目术语') if count <= 1
                                    else i18n.tr('接受所选 {v0} 条为项目术语', v0=count))
-        self.jump_button.setEnabled(count == 1)
-        self.edit_accept_button.setEnabled(count == 1 and not self._busy)
+        self.jump_button.setVisible(count == 1)
+        self.edit_accept_button.setVisible(count == 1)
+        self.edit_accept_button.setEnabled(not self._busy)
         self.high_button.setEnabled(not self._busy)
         if count != 1:
             self.cand_detail.setHtml(
-                f"<p><i>{_escape(i18n.tr('选择一条候选查看上下文与出现位置。') if not count else i18n.tr('已选 {v0} 条；可批量处理。', v0=count))}</i></p>")
+                f"<p>{_escape(i18n.tr('选择一条候选查看上下文与出现位置。') if not count else i18n.tr('已选 {v0} 条；可批量处理。', v0=count))}</p>")
             return
         row = picked[0]
         parts = [f"<h3>{_escape(row['source'])} → {_escape(row['target'])}</h3>",
@@ -352,6 +386,9 @@ class LibraryView(QWidget):
 
     # ================= 术语库 =================
     def _fill_terms(self) -> None:
+        total_all = len(self._data.get("terms") or [])
+        self.term_body.setVisible(bool(total_all))
+        self.term_empty_state.setVisible(not total_all)
         rows = assets.filter_terms(self._data.get("terms") or [], query=self.term_query.text())
         shown = rows[: self._limit["terms"]]
         self._shown["terms"] = shown
@@ -372,11 +409,13 @@ class LibraryView(QWidget):
 
     def _term_selected(self) -> None:
         row = self.selected_term()
-        self.term_open.setEnabled(bool(row.get("job_id")))
+        self.term_open.setVisible(bool(row.get("job_id")))
         # 编辑 / 删除作用在具体某个任务的术语表上；只来自项目记忆的术语没有任务可改。
         editable = bool([task for task in row.get("tasks") or [] if task.get("job_id")])
-        self.term_edit.setEnabled(editable and not self._busy)
-        self.term_delete.setEnabled(editable and not self._busy)
+        self.term_edit.setVisible(editable)
+        self.term_delete.setVisible(editable)
+        self.term_edit.setEnabled(not self._busy)
+        self.term_delete.setEnabled(not self._busy)
         if not row:
             self.term_detail.setHtml("")
             return
@@ -397,6 +436,10 @@ class LibraryView(QWidget):
 
     # ================= 翻译记忆 =================
     def _fill_tm(self) -> None:
+        has_tm = bool(self._data.get("tm"))
+        self.tm_body.setVisible(has_tm)
+        self.tm_query.setVisible(has_tm)
+        self.tm_empty_state.setVisible(not has_tm)
         rows = assets.filter_tm(self._data.get("tm") or [], query=self.tm_query.text())
         shown = rows[: self._limit["tm"]]
         self._shown["tm"] = shown

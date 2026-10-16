@@ -292,6 +292,10 @@ QFrame#emptyState, QWidget#emptyState {{
     border-radius: {r['md']}px;
 }}
 QLabel#emptyTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
+/* 整页空状态：直接放在页面底色上，不是卡里的虚线卡 */
+QFrame#emptyState[page="true"] {{ background: transparent; border: none; }}
+QFrame#emptyState[page="true"] QLabel#emptyTitle {{ font-size: {f['card']}px; }}
+QFrame#emptyState[page="true"] QLabel#emptyHint {{ font-size: {f['body']}px; }}
 QLabel#emptyHint {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 /* 表单：标签在输入框**上方**（旧界面如此），而不是右对齐挤在左侧窄列里 */
 /* 字段标签比输入框里的正文小一档（macOS 设置窗口的做法），层级才分得开。 */
@@ -1688,13 +1692,23 @@ class EmptyState(QFrame):
     交付清单为空、被排除段落为空这类"什么都没发生"的位置，如果没有专门表达，
     界面上留下的就是一块空白列表——看起来像加载失败。这里把旧界面（首页"还没有任务"）
     的同一套表达固定成一个控件，各页复用它，不再各写一种空槽位。
+
+    两种用法（设计审校 40 号第五节）：
+
+    * 卡片里的一块空槽位（默认）：浅底虚线框；
+    * ``page=True``：**替换整页结构**的空状态——没有表格、筛选、表单和禁用按钮，
+      只有居中的说明和最多一个动作（``action``）。它直接放在页面底色上，不再是卡里的卡。
     """
 
+    actionTriggered = Signal()
+
     def __init__(self, *, icon: str = "info", title: str = "", hint: str = "",
+                 action: str = "", action_kind: str = "secondary", page: bool = False,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("emptyState")
-        from PySide6.QtWidgets import QVBoxLayout
+        self.setProperty("page", "true" if page else "false")
+        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
 
         column = QVBoxLayout(self)
         column.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
@@ -1702,7 +1716,7 @@ class EmptyState(QFrame):
         column.setSpacing(theme_module.SPACE["xs"])
         from . import icons
 
-        self.icon_label = icons.IconLabel(size=30)
+        self.icon_label = icons.IconLabel(size=40 if page else 30)
         self.set_icon(icon)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("emptyTitle")
@@ -1711,12 +1725,33 @@ class EmptyState(QFrame):
         self.hint_label.setObjectName("emptyHint")
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint_label.setWordWrap(True)
+        self.action_button = QPushButton("")
+        self.action_button.clicked.connect(self.actionTriggered.emit)
         column.addStretch(1)
         column.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self.title_label)
-        column.addWidget(self.hint_label)
+        if page:
+            # 说明限宽居中：折行的 QLabel 不能直接带 AlignHCenter 放进布局——那样它按
+            # 单行宽度取高度，折行后的第二行会被裁掉。放进一个限宽的行里，两侧留弹性。
+            line = QHBoxLayout()
+            line.addStretch(1)
+            self.hint_label.setFixedWidth(420)
+            line.addWidget(self.hint_label)
+            line.addStretch(1)
+            column.addLayout(line)
+        else:
+            column.addWidget(self.hint_label)
+        column.addSpacing(theme_module.SPACE["sm"])
+        column.addWidget(self.action_button, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addStretch(1)
+        self.set_action(action, action_kind)
         self.setVisible(bool(title))
+
+    def set_action(self, text: str, kind: str = "secondary") -> None:
+        """空状态的唯一动作（空字符串 = 没有动作）。"""
+        self.action_button.setText(text)
+        set_button(self.action_button, kind)
+        self.action_button.setVisible(bool(text))
 
     def set_icon(self, name: str) -> None:
         self.icon_label.set_icon(name, "text-muted")

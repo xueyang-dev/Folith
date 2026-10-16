@@ -180,11 +180,24 @@ class ReviewPanel(QWidget):
         body.addLayout(left, 0)
         body.addWidget(detail_card, 1)
 
+        # 队列与详情装在一个容器里：审校队列整个是空的时，它整体让位给一个空状态
+        # （设计审校 40 号 4.1：不再画五个 0 计数的筛选、一个空列表和一块空白详情）。
+        self.content = QWidget()
+        content_layout = QVBoxLayout(self.content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(10)
+        content_layout.addLayout(top)
+        content_layout.addLayout(body, 1)
+        self.empty_state = style_module.EmptyState(icon="shield-check", page=True,
+                                                   action=i18n.tr('审校全部段落'))
+        self.empty_state.actionTriggered.connect(self.reviewAllRequested.emit)
+        self.empty_state.setVisible(False)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
-        layout.addLayout(top)
-        layout.addLayout(body, 1)
+        layout.addWidget(self.content, 1)
+        layout.addWidget(self.empty_state, 1)
 
         self._render_detail()
 
@@ -207,6 +220,23 @@ class ReviewPanel(QWidget):
             for value, label in FILTERS])
         self.filter_control.set_value(self._filter)
         self._rebuild_list()
+        self._sync_empty(readiness)
+
+    def _sync_empty(self, readiness: dict) -> None:
+        """队列整个是空的：整页换成一个空状态，最多一个动作。"""
+        empty = not self._items
+        self.content.setVisible(not empty)
+        if not empty:
+            self.empty_state.setVisible(False)
+            return
+        status = str(readiness.get("status") or "")
+        title = i18n.tr_dynamic(str(readiness.get("label") or "")) or i18n.tr('尚未审校')
+        hint = i18n.tr_dynamic(str(readiness.get("detail") or ""))
+        # 审校已完成：没有要做的事，就不给按钮。
+        self.empty_state.set_text(title, hint)
+        done = status == "current" or (bool(readiness.get("ready")) and status != "not_required")
+        self.empty_state.set_action("" if done else i18n.tr('审校全部段落'))
+        self.empty_state.setEnabled(not self._busy)
 
     def _set_filter(self, value: str) -> None:
         self._filter = value or "all"

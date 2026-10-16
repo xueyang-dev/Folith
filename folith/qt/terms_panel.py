@@ -50,6 +50,8 @@ class TermsPanel(QWidget):
         self._busy = False
         self._message = ""
         self._shown: list[int] = []
+        #: 术语为 0 时点了「添加术语…」：只露出新建表单，不露空表格和筛选。
+        self._adding = False
 
         def button(text: str, icon_name: str, token: str = "text-secondary",
                    name: str = "") -> QPushButton:
@@ -154,27 +156,47 @@ class TermsPanel(QWidget):
         editor_layout.addLayout(form)
         editor_layout.addLayout(edit_actions)
 
+        # 术语为 0 时整页是一个空状态（设计审校 40 号 6.2：原来提示条、"0 个术语"、
+        # 空表格、整张新建表单和四个禁用按钮把同一个"空"说了四遍）。
+        self.empty_state = style_module.EmptyState(
+            icon="termbase", page=True, title=i18n.tr('这个任务还没有术语'),
+            hint=i18n.tr('添加一条术语，翻译会按它统一译名。'),
+            action=i18n.tr('添加术语…'))
+        self.empty_state.actionTriggered.connect(self._start_adding)
+        self.editor_card = editor_card
+        self.filter_bar = QWidget()
+        filters = QHBoxLayout(self.filter_bar)
+        filters.setContentsMargins(0, 0, 0, 0)
+        filters.addWidget(self.search_edit, 1)
+        filters.addWidget(self.filter_box)
+        filters.addWidget(self.conflict_box)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
         layout.addWidget(self.banner)
         layout.addWidget(self.heading)
-        filters = QHBoxLayout()
-        filters.addWidget(self.search_edit, 1)
-        filters.addWidget(self.filter_box)
-        filters.addWidget(self.conflict_box)
-        layout.addLayout(filters)
+        layout.addWidget(self.filter_bar)
         layout.addWidget(self.table, 1)
+        layout.addWidget(self.empty_state, 1)
         layout.addWidget(editor_card)
         layout.addLayout(gate_actions)
         layout.addWidget(self.hint)
+        layout.addStretch(0)
         self._sync()
+
+    def _start_adding(self) -> None:
+        self._adding = True
+        self._sync()
+        self.source_edit.setFocus()
 
     # ================= 数据 =================
     def apply(self, job_id: str, view: dict, *, force: bool = False,
               busy: bool = False) -> None:
         """刷新。用户有暂存修改时不覆盖（除非 ``force``，例如落盘之后）。"""
         switched = job_id != self._job_id
+        if switched:
+            self._adding = False
         self._message = ""
         self._job_id = job_id
         self._view = view or {}
@@ -368,21 +390,35 @@ class TermsPanel(QWidget):
                 i18n.tr('翻译开始后修改术语，受影响的译文和审校结果需要重新确认。')
                 if not staged else
                 i18n.tr('翻译开始前可以暂存修改；点「保存草稿」或「冻结」才会写入任务。'), "info")
+        empty = total == 0 and not view.get("frozen") and not view.get("blocks_start")
+        if total:
+            self._adding = False
+        # 空：只有空状态；点了「添加术语…」：只有新建表单。表格、筛选与提示条
+        # 在有第一条术语之后才出现。
+        self.empty_state.setVisible(empty and not self._adding)
+        for widget in (self.banner, self.heading, self.filter_bar, self.table):
+            widget.setVisible(not empty)
+        self.editor_card.setVisible(not empty or self._adding)
         position = self._current()
         has_row = position >= 0
         editable = not self._busy
-        self.apply_row_button.setEnabled(editable and has_row)
-        self.delete_button.setEnabled(editable and has_row)
+        # 作用于选中行的操作：没选中就不出现（隐藏优于禁用，审校文档第五节第 4 条）。
+        self.apply_row_button.setVisible(has_row)
+        self.apply_row_button.setEnabled(editable)
+        self.delete_button.setVisible(has_row)
+        self.delete_button.setEnabled(editable)
         selected = len(self._selected())
-        self.lock_selected_button.setEnabled(editable and selected > 0)
-        self.reject_selected_button.setEnabled(editable and selected > 0)
+        self.lock_selected_button.setVisible(selected > 0)
+        self.lock_selected_button.setEnabled(editable)
+        self.reject_selected_button.setVisible(selected > 0)
+        self.reject_selected_button.setEnabled(editable)
         self.add_button.setEnabled(editable)
-        self.lock_all_button.setVisible(staged)
-        self.lock_all_button.setEnabled(editable and total > 0)
-        self.save_button.setVisible(staged)
-        self.save_button.setEnabled(editable and (self._dirty or total > 0))
-        self.freeze_button.setVisible(staged)
-        self.freeze_button.setEnabled(editable and total > 0)
+        self.lock_all_button.setVisible(staged and total > 0)
+        self.lock_all_button.setEnabled(editable)
+        self.save_button.setVisible(staged and (self._dirty or total > 0))
+        self.save_button.setEnabled(editable)
+        self.freeze_button.setVisible(staged and total > 0)
+        self.freeze_button.setEnabled(editable)
         self.bypass_button.setVisible(
             staged and bool(view.get("quality_mode")) and not view.get("frozen")
             and not view.get("bypassed"))
