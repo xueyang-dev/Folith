@@ -21,8 +21,10 @@ STEP_IDS = (PREPARE, TRANSLATE, REVIEW, DELIVER)
 STEP_LABELS = {PREPARE: "准备", TRANSLATE: "翻译", REVIEW: "审校", DELIVER: "交付"}
 
 #: 步骤状态。`done` 已完成；`current` 轮到它；`attention` 轮到它且有东西卡住；
-#: `todo` 还没轮到；`locked` 暂时不可进入（任务还没开始）。
-DONE, CURRENT, ATTENTION, TODO, LOCKED = "done", "current", "attention", "todo", "locked"
+#: `todo` 还没轮到；`locked` 暂时不可进入（任务还没开始）；`skipped` 这个任务不走
+#: 这一步（没启用独立审校）——放行后面的步骤，但不打"完成"的勾：没做过的事不算做完。
+DONE, CURRENT, ATTENTION, TODO, LOCKED, SKIPPED = (
+    "done", "current", "attention", "todo", "locked", "skipped")
 
 _RUNNING = frozenset({"running", "pausing", "cancelling", "resume_requested",
                       "starting", "queued", "waiting_external", "waiting_manual"})
@@ -76,7 +78,7 @@ def _review_step(translated: bool, review: Mapping) -> tuple[dict, bool]:
         # 没启用独立审校也可能有未解决的阻断项（旧的交付门禁仍然看它们）。
         if blocking:
             return _step(REVIEW, ATTENTION, i18n.tr("必须处理 {v0}", v0=blocking)), False
-        return _step(REVIEW, DONE, i18n.tr("未启用")), True
+        return _step(REVIEW, SKIPPED, i18n.tr("未启用")), True
     if failed:
         return _step(REVIEW, ATTENTION, i18n.tr("{v0} 段未完成", v0=failed)), False
     if stale:

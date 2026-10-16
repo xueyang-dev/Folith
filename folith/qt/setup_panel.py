@@ -1338,6 +1338,9 @@ class TaskSetupPanel(QWidget):
                                      if problem else "")
         self.connection_note.setVisible(bool(problem))
         self.connection_button.setVisible(bool(problem))
+        # 做不了的事不该是一个可点的蓝色主按钮：旁边已经说了原因和去哪里配置。
+        self.start_button.setEnabled(not problem)
+        self.start_button.setToolTip(self.connection_note.text())
 
     def document_profile(self) -> dict:
         """当前该显示/编辑的画像：用户保存过的优先，否则是智能画像的建议。"""

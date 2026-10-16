@@ -115,5 +115,7 @@ def test_setup_panel_warns_when_the_connection_is_missing():
     panel.set_connection_problem("尚未选择模型提供商")
     assert "尚未选择模型提供商" in panel.connection_note.text()
     assert not panel.connection_button.isHidden()
+    assert not panel.start_button.isEnabled(), "a start that cannot run is not a live primary button"
     panel.set_connection_problem("")
     assert panel.connection_note.isHidden()
+    assert panel.start_button.isEnabled()

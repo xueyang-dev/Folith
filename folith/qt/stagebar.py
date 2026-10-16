@@ -93,7 +93,9 @@ class StepButton(QAbstractButton):
 
     def _shows_hint(self) -> bool:
         """提示只在当前一步、或这一步卡住时出现（胶囊里放不下四句状态）。"""
-        return bool(self._hint) and (self._active or self._state == stage_model.ATTENTION)
+        # 跳过的一步总是带着"未启用"：否则它和还没轮到的一步长得一样。
+        return bool(self._hint) and (self._active or self._state in (
+            stage_model.ATTENTION, stage_model.SKIPPED))
 
     def _has_marker(self) -> bool:
         return self._state in (stage_model.DONE, stage_model.ATTENTION)
@@ -154,7 +156,7 @@ class StepButton(QAbstractButton):
                 painter.setFont(bang)
                 painter.drawText(marker, int(Qt.AlignmentFlag.AlignCenter), "!")
             cursor += self.MARKER + 5
-        if state == stage_model.LOCKED:
+        if state in (stage_model.LOCKED, stage_model.SKIPPED) and not self._active:
             label_color = tokens["text-muted"]
         elif self._active:
             label_color = tokens["accent"]
@@ -294,7 +296,8 @@ class StageBar(QWidget):
                 button.set_step(item["label"], item["state"], item.get("hint", ""))
             if index > 0:
                 self._connectors[index - 1].set_done(previous_done)
-            previous_done = button.state() == stage_model.DONE
+            # 跳过的一步不挡路：后面那段连线照样算通。
+            previous_done = button.state() in (stage_model.DONE, stage_model.SKIPPED)
         self._sync_active()
 
     def set_more_pages(self, pages: list[tuple[str, str]], *, badge: int = 0) -> None:

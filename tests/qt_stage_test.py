@@ -153,7 +153,10 @@ def test_blocking_findings_still_count_when_independent_review_is_off():
     review["progress"]["blocking"] = 0
     cleared = stage.stage_view(started=True, runtime={"status": "completed"},
                                state={"p2_done": True}, review=review, delivery={})
-    assert _steps(cleared)["review"]["state"] == stage.DONE
+    assert _steps(cleared)["review"]["state"] == stage.SKIPPED
+    assert _steps(cleared)["review"]["hint"] == "未启用"
+    # 跳过的审校不打"完成"的勾，但照样放行交付。
+    assert _steps(cleared)["deliver"]["state"] == stage.CURRENT
 
 
 def test_a_clean_review_hands_over_to_delivery():

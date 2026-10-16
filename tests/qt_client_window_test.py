@@ -1826,7 +1826,8 @@ def test_blocking_count_only_counts_unresolved_findings(client):
     app.processEvents()
     review_step = workbench.stage_bar.steps["review"]
     assert "必须处理" not in review_step.hint(), review_step.hint()
-    assert review_step.state() == "done"
+    # 这个任务没启用独立审校：放行，但不画成"已完成"的勾。
+    assert review_step.state() == "skipped"
 
 
 def test_saving_settings_never_resets_fields_the_dialog_does_not_show(client):
@@ -3214,13 +3215,14 @@ def test_review_step_reflects_the_gate_not_only_the_flags(client):
     assert workbench.deliver_button.isEnabled() is False
     assert "审校未完成" in workbench.delivery_label.text()
 
-    # 不需要审校的任务：保持原来的中性显示
+    # 不需要审校的任务：中性的"未启用"，不是完成的勾
     state.pop("translation_core_review_required")
     core.save_job_state(job_id, state)
     window.refresh_workbench(force=True)
     app.processEvents()
     review_step = workbench.stage_bar.steps["review"]
-    assert review_step.state() == "done", review_step.state()
+    assert review_step.state() == "skipped", review_step.state()
+    assert review_step.hint() == "未启用"
 
 
 def test_blocking_chip_and_filter_agree_on_the_same_rule(client):

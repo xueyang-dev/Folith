@@ -3775,6 +3775,18 @@ class WorkbenchView(QWidget):
 
     def _sync_stage_page(self) -> None:
         self.stage_bar.set_active_page(self.current_page_id())
+        self._sync_stage_action()
+
+    def _sync_stage_action(self) -> None:
+        """头部的"下一步"主按钮。交付页自己有「冻结交付」（和交付说明放在一起），
+        在那一页头部就不再放一个做同一件事的主按钮——一屏只有一个主按钮。"""
+        action = getattr(self, "_stage_action", None)
+        on_its_page = bool(action) and action.get("kind") == "deliver" \
+            and self.current_page_id() == "deliver"
+        self.stage_action_button.setVisible(bool(action) and not on_its_page)
+        if action:
+            self.stage_action_button.setText(str(action.get("label") or ""))
+        self._sync_header_actions()
 
     def _sync_more_pages(self) -> None:
         """"更多"菜单里的页面：随 PDF 来源与学术模式变化。收不收起由内容决定。"""
@@ -3794,13 +3806,8 @@ class WorkbenchView(QWidget):
         self.stage_bar.set_stages(view)
         # 术语与"更多"里的页面只对已经开始的任务有意义：准备阶段没有术语表、没有记录。
         self.stage_bar.set_side_visible(self._task_started())
-        self._sync_stage_page()
         self._stage_action = view.get("action")
-        action = self._stage_action
-        self.stage_action_button.setVisible(bool(action))
-        if action:
-            self.stage_action_button.setText(str(action.get("label") or ""))
-        self._sync_header_actions()
+        self._sync_stage_page()
 
     def _run_stage_action(self) -> None:
         action = self._stage_action or {}
@@ -4434,6 +4441,10 @@ class WorkbenchView(QWidget):
             recognised = i18n.tr("已识别 {v0}/{v1} 页", v0=int(streaming.get("pages_done") or 0),
                                  v1=int(streaming.get("pages_total") or 0))
             line = f"{line} · {recognised}" if line else recognised
+        # 跑完了就不要进度条：没有阶段进度时它停在 0，和下面的"已完成"自相矛盾；
+        # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
+        self.run_status.track.setVisible(started and tone != "done")
+        self.run_status.percent.setVisible(started and tone != "done")
         self.run_status.set_state(tone=tone, line=line)
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
