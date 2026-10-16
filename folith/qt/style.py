@@ -591,7 +591,7 @@ QLabel#runStatusPercent {{ color: {t['text-secondary']}; font-size: {f['micro']}
 QToolButton#roundButton[check="warning"] {{ border-color: {t['warning']}; background: {t['warning-soft']}; }}
 QToolButton#roundButton[check="danger"] {{ border-color: {t['danger']}; background: {t['danger-soft']}; }}
 QLabel#countBadge {{
-    background: {t['danger']}; color: {t['text-on-accent']}; border-radius: 7px;
+    background: {t['danger']}; color: {t['text-on-status']}; border-radius: 7px;
     min-width: 14px; max-height: 14px; padding: 0 3px; font-size: {f['micro']}px; font-weight: 600;
 }}
 QToolButton#roundButton[check="warning"] QLabel#countBadge {{ background: {t['warning']}; }}
@@ -723,11 +723,11 @@ QPushButton#iconButton:checked {{ background: {t['accent-soft']}; color: {t['bra
    ⚠️ 每种的 :hover / :pressed / :disabled 都要显式写：属性选择器与伪类同权重，
    平手时取后出现的那条。 */
 QPushButton[kind="primary"] {{
-    background: {t['accent']}; color: {t['text-on-accent']};
-    border: 1px solid {t['accent']}; font-weight: 600;
+    background: {t['accent-fill']}; color: {t['text-on-accent']};
+    border: 1px solid {t['accent-fill']}; font-weight: 600;
 }}
-QPushButton[kind="primary"]:hover {{ background: {t['accent-hover']}; border-color: {t['accent-hover']}; }}
-QPushButton[kind="primary"]:pressed {{ background: {t['accent-active']}; border-color: {t['accent-active']}; }}
+QPushButton[kind="primary"]:hover {{ background: {t['accent-fill-hover']}; border-color: {t['accent-fill-hover']}; }}
+QPushButton[kind="primary"]:pressed {{ background: {t['accent-fill-active']}; border-color: {t['accent-fill-active']}; }}
 QPushButton[kind="primary"]:focus {{ border-color: {t['focus-ring']}; }}
 QPushButton[kind="primary"]:disabled {{
     background: {t['bg-surface-sunken']}; color: {t['disabled-ink']}; border-color: {t['border-faint']};
@@ -925,7 +925,7 @@ QCheckBox::indicator {{
     background: {t['bg-surface']};
 }}
 QCheckBox::indicator:hover {{ border-color: {t['accent']}; }}
-QCheckBox::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']}; }}
+QCheckBox::indicator:checked {{ background: {t['accent-fill']}; border-color: {t['accent-fill']}; }}
 QRadioButton {{ background: transparent; spacing: {sp['sm']}px; color: {t['text-secondary']}; }}
 QRadioButton:hover {{ color: {t['text-primary']}; }}
 QRadioButton::indicator {{
@@ -938,7 +938,7 @@ QRadioButton::indicator:hover {{ border-color: {t['accent']}; }}
 /* 选中态与复选框同构：外圈填 accent，内层圆点由 style.RadioButton 自绘
    （QSS 画不了内层圆，只写 border 会得到一个方角大方块）。 */
 QRadioButton::indicator:checked {{
-    background: {t['accent']}; border-color: {t['accent']};
+    background: {t['accent-fill']}; border-color: {t['accent-fill']};
 }}
 QGroupBox {{
     border: 1px solid {t['border-hairline']};
@@ -1201,7 +1201,7 @@ def apply_theme(app, theme: str, *, system_dark: bool = False) -> str:
     palette.setColor(QPalette.ColorRole.Text, qcolor(t["text-primary"]))
     palette.setColor(QPalette.ColorRole.Button, qcolor(t["bg-surface"]))
     palette.setColor(QPalette.ColorRole.ButtonText, qcolor(t["text-primary"]))
-    palette.setColor(QPalette.ColorRole.Highlight, qcolor(t["accent"]))
+    palette.setColor(QPalette.ColorRole.Highlight, qcolor(t["accent-fill"]))
     palette.setColor(QPalette.ColorRole.HighlightedText, qcolor(t["text-on-accent"]))
     palette.setColor(QPalette.ColorRole.ToolTipBase, qcolor(t["bg-surface-raised"]))
     palette.setColor(QPalette.ColorRole.ToolTipText, qcolor(t["text-primary"]))

@@ -158,8 +158,10 @@ def test_settings_apply_button_renders_as_the_primary_action(app):
         assert dialog.findChild(QDialogButtonBox) is None, "设置窗口不该再有保存 / 取消"
         apply = dialog.models_apply_button
         assert apply.property("kind") == "primary"
+        # Primary buttons use the solid accent fill: deeper than `accent` at night,
+        # so the white label stays readable.
         assert _button_background(apply).lower() == \
-            theme.tokens(name)["accent"].lower(), name
+            theme.tokens(name)["accent-fill"].lower(), name
         dialog.close()
 
 

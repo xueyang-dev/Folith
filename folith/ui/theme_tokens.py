@@ -69,6 +69,7 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-secondary': '#667085',
         'text-muted': '#7e8796',
         'text-on-accent': '#ffffff',
+        'text-on-status': '#ffffff',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
         # as a button in every theme; white on it is >= 4.5:1.
         'hero': '#2b5fd1', 'hero-hover': '#2352b8', 'hero-active': '#1d469d',
@@ -82,6 +83,9 @@ TOKENS: dict[str, dict[str, str]] = {
         'accent': '#2b5fd1',
         'accent-hover': '#2352b8',
         'accent-active': '#1d469d',
+        'accent-fill': '#2b5fd1',
+        'accent-fill-hover': '#2352b8',
+        'accent-fill-active': '#1d469d',
         'accent-soft': '#eef4fd',
         'accent-soft-hover': '#e5edfc',
         'accent-border': '#c0d2f3',
@@ -153,7 +157,8 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-primary': 'rgba(255,255,255,.92)',
         'text-secondary': 'rgba(235,235,245,.62)',
         'text-muted': 'rgba(235,235,245,.38)',
-        'text-on-accent': '#131316',
+        'text-on-accent': '#ffffff',
+        'text-on-status': '#131316',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
         # as a button in every theme; white on it is >= 4.5:1.
         'hero': '#2a62e8', 'hero-hover': '#3470f5', 'hero-active': '#2257d0',
@@ -169,6 +174,9 @@ TOKENS: dict[str, dict[str, str]] = {
         'accent': '#82acff',
         'accent-hover': '#a1c0ff',
         'accent-active': '#b6ceff',
+        'accent-fill': '#3a6fe0',  # 实心强调色：主按钮、勾选框、选中行。夜间比 accent 深，白字才读得清
+        'accent-fill-hover': '#3d72e3',
+        'accent-fill-active': '#3366d6',
         'accent-soft': 'rgba(130,172,255,.16)',
         'accent-soft-hover': 'rgba(130,172,255,.24)',
         'accent-border': 'rgba(130,172,255,.34)',
@@ -219,6 +227,7 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-secondary': '#5f594e',
         'text-muted': '#6f6858',
         'text-on-accent': '#faf7ef',
+        'text-on-status': '#faf7ef',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
         # as a button in every theme; white on it is >= 4.5:1.
         'hero': '#4c5a66', 'hero-hover': '#3e4b56', 'hero-active': '#333e48',
@@ -232,6 +241,9 @@ TOKENS: dict[str, dict[str, str]] = {
         'accent': '#4c5a66',
         'accent-hover': '#3e4b56',
         'accent-active': '#333e48',
+        'accent-fill': '#4c5a66',
+        'accent-fill-hover': '#3e4b56',
+        'accent-fill-active': '#333e48',
         'accent-soft': '#e1dcce',
         'accent-soft-hover': '#d8d2c1',
         'accent-border': 'rgba(76,90,102,.42)',
@@ -289,6 +301,7 @@ TOKENS: dict[str, dict[str, str]] = {
         'text-secondary': '#64748b',
         'text-muted': '#7a8699',
         'text-on-accent': '#ffffff',
+        'text-on-status': '#ffffff',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
         # as a button in every theme; white on it is >= 4.5:1.
         'hero': '#0f6b4f', 'hero-hover': '#0b5a42', 'hero-active': '#084833',
@@ -302,6 +315,9 @@ TOKENS: dict[str, dict[str, str]] = {
         'accent': '#0f6b4f',
         'accent-hover': '#0b5a42',
         'accent-active': '#084833',
+        'accent-fill': '#0f6b4f',
+        'accent-fill-hover': '#0b5a42',
+        'accent-fill-active': '#084833',
         'accent-soft': '#e6f4ee',
         'accent-soft-hover': '#d5ece2',
         'accent-border': '#a8d8c4',

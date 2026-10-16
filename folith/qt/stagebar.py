@@ -149,7 +149,7 @@ class StepButton(QAbstractButton):
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(theme_module.qcolor(tokens["warning"]))
                 painter.drawEllipse(marker)
-                painter.setPen(theme_module.qcolor(tokens["text-on-accent"]))
+                painter.setPen(theme_module.qcolor(tokens["text-on-status"]))
                 bang = QFont(self.font())
                 bang.setPixelSize(theme_module.FONT_SIZES["micro"])
                 bang.setWeight(QFont.Weight.Bold)
