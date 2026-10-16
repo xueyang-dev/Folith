@@ -238,27 +238,36 @@ def test_steps_open_their_pages_and_prepare_is_inert_once_done(qapp):
     assert bar.steps["prepare"].isEnabled() is False
 
 
-def test_active_page_lights_the_matching_step_or_utility(qapp):
+def test_active_page_lights_the_matching_step_or_more(qapp):
     bar = _bar(qapp, stage.stage_view(
         started=True, runtime={"status": "completed"},
         state={"p2_done": True, "pairs": [{}]}, review=_review(), delivery={}))
-    bar.set_more_pages([("followup", "检查与修复"), ("activity", "运行记录")], badge=3)
+    bar.set_more_pages([("terms", "术语"), ("report", "报告")],
+                       actions=[("followup", "检查与修复"), ("activity", "运行记录")])
     bar.set_active_page("review")
     assert bar.steps["review"].is_active() and not bar.steps["deliver"].is_active()
+    assert not bar.more_button.isChecked()
     bar.set_active_page("terms")
-    assert bar.terms_button.isChecked() and not bar.steps["review"].is_active()
-    bar.set_active_page("activity")
-    assert bar.more_button.isChecked()
-    assert "(3)" in bar.more_button.text()
+    # 正在看「更多」里的一页：按钮亮起并写出这一页的名字。
+    assert bar.more_button.isChecked() and not bar.steps["review"].is_active()
+    assert bar.more_button.text() == "术语"
+    labels = [a.text() for a in bar.more_menu.actions()]
+    assert labels == ["术语", "报告", "", "检查与修复", "运行记录"], labels
+    checkable = [a.isCheckable() for a in bar.more_menu.actions() if a.text()]
+    assert checkable == [True, True, False, False], "面板动作不是页面，不打勾"
+    seen = []
+    bar.pageRequested.connect(seen.append)
+    bar.more_menu.actions()[3].trigger()
+    assert seen == ["followup"]
 
 
 def test_side_entries_hide_before_the_task_starts(qapp):
     bar = _bar(qapp, stage.stage_view(started=False, runtime={}, state={}, review={},
                                       delivery={}))
-    bar.set_more_pages([("followup", "检查与修复")])
+    bar.set_more_pages([("terms", "术语")], actions=[("followup", "检查与修复")])
     bar.set_side_visible(False)
-    assert bar.terms_button.isHidden() and bar.more_button.isHidden()
+    assert bar.more_button.isHidden()
     bar.set_side_visible(True)
-    assert not bar.terms_button.isHidden() and not bar.more_button.isHidden()
+    assert not bar.more_button.isHidden()
     bar.set_more_pages([])
-    assert bar.more_button.isHidden(), "没有任何页面时，更多整个收起"
+    assert bar.more_button.isHidden(), "菜单里什么都没有时，更多整个收起"

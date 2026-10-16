@@ -226,6 +226,7 @@ class StageBar(QWidget):
         self.setObjectName("stageBar")
         self._active_page = ""
         self._more: list[tuple[str, str]] = []
+        self._actions: list[tuple[str, str]] = []
         self._badge = 0
         self._side_visible = True
 
@@ -252,10 +253,10 @@ class StageBar(QWidget):
                 lambda _checked=False, s=step_id: self.pageRequested.emit(STEP_PAGES[s]))
             self.steps[step_id] = button
             track_row.addWidget(button)
-        # 胶囊居中：左右各一段弹性空间，旁路入口（术语 / 更多）贴右。
+        # 胶囊居中：左右各一段弹性空间，旁路入口「更多」紧跟在胶囊右边。
         row.addStretch(1)
         row.addWidget(self.track)
-        row.addStretch(1)
+        row.addSpacing(theme_module.SPACE["sm"])
 
         def utility(text: str) -> QPushButton:
             button = QPushButton(text)
@@ -265,11 +266,8 @@ class StageBar(QWidget):
             button.setFixedHeight(StepButton.HEIGHT + 4)
             return button
 
-        self.terms_button = utility(i18n.tr('术语'))
-        self.terms_button.setIcon(icons.icon("file-sheet", 16,
-                                             "text-secondary"))
-        self.terms_button.setIconSize(QSize(16, 16))
-        self.terms_button.clicked.connect(lambda: self.pageRequested.emit("terms"))
+        # 术语、检查与修复、运行记录、任务详情都在「更多」里（设计审校 40 号第四节）：
+        # 头部只留返回、文件名、步骤条和一个主按钮。
         self.more_button = utility(i18n.tr('更多'))
         self.more_button.setIcon(icons.icon("chevron-down", 16,
                                             "text-secondary"))
@@ -277,9 +275,8 @@ class StageBar(QWidget):
         self.more_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.more_menu = QMenu(self.more_button)
         self.more_button.setMenu(self.more_menu)
-        row.addWidget(self.terms_button)
-        row.addSpacing(theme_module.SPACE["xs"])
         row.addWidget(self.more_button)
+        row.addStretch(1)
         self.more_button.setVisible(False)
 
     # ---- 数据 ---------------------------------------------------------------
@@ -300,13 +297,17 @@ class StageBar(QWidget):
             previous_done = button.state() in (stage_model.DONE, stage_model.SKIPPED)
         self._sync_active()
 
-    def set_more_pages(self, pages: list[tuple[str, str]], *, badge: int = 0) -> None:
-        """"更多"菜单里的页面（页面 id, 标签）。没有任何页面时整个入口收起。"""
+    def set_more_pages(self, pages: list[tuple[str, str]], *, badge: int = 0,
+                       actions: list[tuple[str, str]] = ()) -> None:
+        """"更多"菜单：上半是页面（页面 id, 标签，可勾选），分隔线下是打开面板的
+        动作（检查与修复、运行记录、任务详情——不是页面，不勾选）。都没有时整个入口收起。"""
         # 每秒都会被调用（随任务状态刷新）：内容没变就不要动菜单，否则用户正打开着
         # "更多"时它会被清掉重建，菜单当场消失。
-        if list(pages) == self._more and int(badge) == self._badge:
+        if list(pages) == self._more and list(actions) == self._actions \
+                and int(badge) == self._badge:
             return
         self._more = list(pages)
+        self._actions = list(actions)
         self._badge = int(badge)
         self.more_menu.clear()
         for page_id, label in self._more:
@@ -315,14 +316,19 @@ class StageBar(QWidget):
             action.setChecked(page_id == self._active_page)
             action.triggered.connect(
                 lambda _checked=False, p=page_id: self.pageRequested.emit(p))
-        self.more_button.setVisible(self._side_visible and bool(self._more))
+        if self._more and self._actions:
+            self.more_menu.addSeparator()
+        for page_id, label in self._actions:
+            action = self.more_menu.addAction(label)
+            action.triggered.connect(
+                lambda _checked=False, p=page_id: self.pageRequested.emit(p))
+        self.more_button.setVisible(self._side_visible and bool(self._more or self._actions))
         self._sync_active()
 
     def set_side_visible(self, visible: bool) -> None:
-        """旁路入口（术语 / 更多）整体显示或收起。"更多"另外受自己是否有页面约束。"""
+        """旁路入口「更多」显示或收起（另外受菜单里是否有内容约束）。"""
         self._side_visible = bool(visible)
-        self.terms_button.setVisible(self._side_visible)
-        self.more_button.setVisible(self._side_visible and bool(self._more))
+        self.more_button.setVisible(self._side_visible and bool(self._more or self._actions))
 
     def more_page_ids(self) -> list[str]:
         return [page_id for page_id, _label in self._more]
@@ -343,11 +349,10 @@ class StageBar(QWidget):
                                               else stage_model.PREPARE))
             else:
                 button.set_active(True)
-        self.terms_button.setChecked(page == "terms")
         self.more_button.setChecked(page in self.more_page_ids())
         # 正在看"更多"里的某一页时，按钮就写这一页的名字：只亮不写字，用户不知道自己在哪。
         title = next((label for page_id, label in self._more if page_id == page),
                      i18n.tr('更多'))
         self.more_button.setText(title + (f" ({self._badge})" if self._badge else ""))
-        for action, (page_id, _label) in zip(self.more_menu.actions(), self._more):
+        for action, (page_id, _label) in zip(self.more_menu.actions()[:len(self._more)], self._more):
             action.setChecked(page_id == page)

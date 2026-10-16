@@ -1924,7 +1924,8 @@ class WorkbenchView(QWidget):
     """
 
     #: 检查器的默认宽度；双击它左侧的分割条回到这个宽度。
-    INSPECTOR_WIDTH = 300
+    #: 右栏（检查器 / 检查与修复）的默认宽度：两者共用一个宽度，切换时网格不跳（模板 B）。
+    INSPECTOR_WIDTH = 320
 
     backRequested = Signal()
     startRequested = Signal()
@@ -2075,7 +2076,6 @@ class WorkbenchView(QWidget):
         # 布局把剩下的余量分不到它头上，就会回流给返回按钮和状态芯片（实测两者
         # 被撑到 281px，像两个巨大的空按钮）。
         self.title_label.setMinimumWidth(120)
-        self.chip_state = Chip("—", "muted")
 
         def _icon_button(button: QPushButton, name: str, token: str = "text-secondary"):
             button.setIcon(icons.icon(name, 16, token))
@@ -2124,6 +2124,10 @@ class WorkbenchView(QWidget):
         self.details_button.setToolTip(i18n.tr('任务详情'))
         self.details_button.setAccessibleName(i18n.tr('任务详情'))
         self.details_button.clicked.connect(self.open_details)
+        # 任务详情在「更多」里；这枚按钮不再放进头部，只作为浮窗的备用锚点留着。
+        self.details_button.setVisible(False)
+        # 「检查与修复」图标只在有事要处理（或抽屉开着）时出现；平时从「更多」进。
+        self.check_button.setVisible(False)
 
         # 运行控制单独放进一个零边距容器：全部隐藏时整组收掉，不留空槽位。
         run_controls = QHBoxLayout()
@@ -2139,18 +2143,12 @@ class WorkbenchView(QWidget):
         # ---- Golden Gate 统一工具栏（一行，贴住窗口顶边，底部一条发丝线） ----------
         #   返回 · 文件名（下面一行是状态芯片 + 运行说明） · 阶段胶囊（居中）
         #   · 术语/更多 · 进度 · 运行动作
-        subtitle = QHBoxLayout()
-        subtitle.setContentsMargins(0, 0, 0, 0)
-        subtitle.setSpacing(theme_module.SPACE["xs"] + 2)
-        # 芯片按内容高居中：QLabel 的垂直策略允许被拉伸，不给对齐就会被撑到与按钮同高。
-        self.chip_state.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        subtitle.addWidget(self.chip_state, 0, Qt.AlignmentFlag.AlignVCenter)
-        subtitle.addStretch(1)
+        # 文件名一行。任务状态不再在这里另起一枚芯片：步骤条已经说了每一步的状态，
+        # 主按钮说下一步（设计审校 40 号第四节：一件事只在一处说）。
         identity = QVBoxLayout()
         identity.setContentsMargins(0, 0, 0, 0)
-        identity.setSpacing(1)
-        identity.addWidget(self.title_label)
-        identity.addLayout(subtitle)
+        identity.setSpacing(0)
+        identity.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignVCenter)
         identity_box = QWidget()
         identity_box.setLayout(identity)
         identity_box.setMinimumWidth(180)
@@ -2170,7 +2168,6 @@ class WorkbenchView(QWidget):
         header_layout.addWidget(self.stage_bar, 2)
         header_layout.addWidget(self.run_status, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.check_button, 0, Qt.AlignmentFlag.AlignVCenter)
-        header_layout.addWidget(self.details_button, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.header_actions_bar, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ---- 翻译标签页 ----------------------------------------------------
@@ -2684,7 +2681,7 @@ class WorkbenchView(QWidget):
         # 检查器 400（原 460）：它是**编辑当前一段**的面板，不该比段落列表还宽。
         # 旧值下窗口缩到 940 宽时 splitter 给出 [455, 460] —— 右侧比左侧还宽，
         # 而左侧正是用户要扫的段落表。列表给一个最小宽度，保证它先拿到空间。
-        translation_split.setSizes([860, 300])
+        translation_split.setSizes([860, self.INSPECTOR_WIDTH])
         self.segment_list.setMinimumWidth(360)
         self.translation_split = translation_split
         self.inspector_scroll = inspector_scroll
@@ -3266,7 +3263,7 @@ class WorkbenchView(QWidget):
 
     def open_activity(self) -> None:
         """运行记录浮窗：锚定在运行状态组下面；运行状态组不可见时锚定在顶栏右端。"""
-        anchor = self.run_status if self.run_status.isVisible() else self.check_button
+        anchor = self.run_status if self.run_status.isVisible() else self.stage_bar.more_button
         if not anchor.isVisible():
             anchor = self
         self._render_activity()
@@ -3275,7 +3272,7 @@ class WorkbenchView(QWidget):
 
     def open_details(self) -> None:
         """任务详情浮窗：锚定在顶栏的 ⓘ 上。"""
-        anchor = self.details_button if self.details_button.isVisible() else self.check_button
+        anchor = self.stage_bar.more_button
         self.details_popover.open_at(anchor if anchor.isVisible() else self)
         self._details_key = ()
         self._render_details()
@@ -3299,6 +3296,7 @@ class WorkbenchView(QWidget):
                 self._inspector_width = width
         self._drawer_open = open_
         self.check_button.setChecked(open_)
+        self._sync_check_button()
         self._drawer_open_for_escape = open_
         self.drawer_escape.setEnabled(open_ or self._term_focus is not None)
         if open_:
@@ -3638,6 +3636,11 @@ class WorkbenchView(QWidget):
         self._apply_term_focus()
         self._sync_term_focus_label()
 
+    def _sync_check_button(self) -> None:
+        """「检查与修复」图标是一个提醒：有待处理项、或抽屉正开着时才在头部出现。"""
+        self.check_button.setVisible(
+            bool(self.job_id) and (self._followup_count > 0 or self._drawer_open))
+
     def _toggle_followup_drawer(self) -> None:
         self.set_followup_drawer_open(not self.followup_drawer_open())
 
@@ -3677,7 +3680,7 @@ class WorkbenchView(QWidget):
         self.right_panel.settle(self._drawer_open)
         self.followup_panel.set_preview_deferred(False)
         self._resume_source_render()
-        if not self._drawer_open and self.right_panel.isVisibleTo(self):
+        if self.right_panel.isVisibleTo(self):
             self._inspector_width = self.translation_split.sizes()[
                 self.translation_split.indexOf(self.right_panel)]
         if self.source_open():
@@ -3698,15 +3701,15 @@ class WorkbenchView(QWidget):
         if before is self.source_clip and self.source_open():
             self._pdf_width = 0  # 0 = 默认约 40%
             changed = True
-        if after is self.right_panel and not self._drawer_open:
+        if after is self.right_panel:
             self._inspector_width = self.INSPECTOR_WIDTH
             changed = True
         if changed:
             self._transition_columns()
 
     def _layout_translation_columns(self) -> None:
-        """按当前打开的面板分配宽度：原页约 40%（或用户拖过的宽度）、检查与修复
-        约 440px、检查器保持原宽；窗口太窄时，原页打开会让检查器让位。"""
+        """按当前打开的面板分配宽度：原页约 40%（或用户拖过的宽度）、右栏（检查器
+        或检查与修复）共用一个宽度；窗口太窄时，原页打开会让检查器让位。"""
         split = self.translation_split
         self._motion.stop("translation-columns")
         drawer_open = self.followup_drawer_open()
@@ -3738,10 +3741,10 @@ class WorkbenchView(QWidget):
         index = {widget: split.indexOf(widget) for widget in (
             self.segment_list, self.right_panel)}
         index[self.pdf_panel] = split.indexOf(self.source_clip)
+        # 右栏是"一个位置一个宽度"：检查器和检查与修复轮流占它，宽度相同，
+        # 打开抽屉时网格不重排（设计审校 40 号 3.8）。
         side = 0
-        if drawer_open:
-            side = min(440, max(360, total // 3))
-        elif not (source and self.width() < 1200):
+        if drawer_open or not (source and self.width() < 1200):
             side = self._inspector_width
         pdf = 0
         if source:
@@ -3790,12 +3793,18 @@ class WorkbenchView(QWidget):
 
     def _sync_more_pages(self) -> None:
         """"更多"菜单里的页面：随 PDF 来源与学术模式变化。收不收起由内容决定。"""
-        pages: list[tuple[str, str]] = []
+        pages: list[tuple[str, str]] = [("terms", i18n.tr('术语'))]
         if self.academic_visible():
             pages.extend((("report", i18n.tr('报告')), ("cases", i18n.tr('案例')),
                           ("qa", i18n.tr('合规与 QA'))))
-        # 待处理数只挂在「检查与修复」图标上：挂在「更多」上会读成"运行记录 (2)"。
-        self.stage_bar.set_more_pages(pages)
+        count = self._followup_count
+        actions = [("followup", i18n.tr('检查与修复 · {v0} 项待处理', v0=count) if count
+                    else i18n.tr('检查与修复')),
+                   ("activity", i18n.tr('运行记录')),
+                   ("details", i18n.tr('任务详情'))]
+        # 待处理数写在菜单项里、挂在头部的提醒图标上；不挂在「更多」按钮上：
+        # 那会读成"术语 (2)"。
+        self.stage_bar.set_more_pages(pages, actions=actions)
 
     def _render_stage(self) -> None:
         """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
@@ -3920,6 +3929,7 @@ class WorkbenchView(QWidget):
         count = self.followup_panel.issue_count()
         self._followup_count = count
         self.check_button.set_count(count, self.followup_panel.worst_tone() or "warning")
+        self._sync_check_button()
         self._sync_more_pages()
 
     def _locate_segment_from_followup(self, index: int) -> None:
@@ -4370,36 +4380,21 @@ class WorkbenchView(QWidget):
         self.status_label.setProperty("error", "true" if troubled else "false")
         style_module.repolish(self.status_label)
 
-        # 状态芯片只回答一件事：这个任务现在处于什么状态。
-        # * 正在运行 / 出了问题：说运行的事（核心的运行视图）；
-        # * 其余时候：用与任务列表同一个标签（`task_status_label`）。否则头部会说
-        #   "已完成"（翻译跑完了），而交付页说"待审校"（审校没过）——同一个任务
-        #   两个答案。
-        task_label = str((self._delivery_preview or {}).get("status_label") or "")
-        if started and not running and not troubled and task_label:
-            chip_raw, chip_tone = task_label, status_tone_for_label(task_label)
-        else:
-            chip_raw, chip_tone = headline, RUNTIME_STATUS_TONES.get(headline, "muted")
-        chip_text = i18n.tr_dynamic(chip_raw) or "—"
-        # 状态芯片说了"已完成"，右边再写一遍"已完成"就是同一句话读两次：
-        # 只有运行区带来的信息**超出**芯片时才显示这一行文字（按原文比较，
-        # 显示时再翻译——两边都翻译后比较会因为词表不同而漏判）。
+        # 运行说明不复述标题本身（"翻译中"之后再写"翻译中"）：只有运行区带来的
+        # 信息**超出**标题时才显示（按原文比较，显示时再翻译——两边都翻译后比较会
+        # 因为词表不同而漏判）。头部原来的状态芯片已经去掉，步骤条说任务状态。
         note = detail or label or ""
-        if note in (chip_raw, headline):
+        if note == headline:
             note = ""
         note = i18n.tr_dynamic(note)
 
-        # 任务还没开始：状态芯片、运行说明、进度与运行控制整组收掉。"未完成 · 当前
+        # 任务还没开始：运行说明、进度与运行控制整组收掉。"未完成 · 当前
         # 进度已保存"对一个还没开始的任务是错的；「开始翻译」由准备面板承担，
         # 两个"开始翻译"并存会让用户不确定哪个才带上刚选的策略（面板里那个会
         # 先把选择写回任务再启动）。
         self.run_status.track.setVisible(started)
         self.run_status.percent.setVisible(started)
-        header_visible = started
-        self.chip_state.setVisible(header_visible)
-        self.chip_state.setText(chip_text)
-        self.chip_state.set_tone(chip_tone)
-        self.run_status.setVisible(header_visible)
+        self.run_status.setVisible(started)
         if not started:
             notice = self._live_task_notice()
             if notice:
@@ -4446,6 +4441,9 @@ class WorkbenchView(QWidget):
         self.run_status.track.setVisible(started and tone != "done")
         self.run_status.percent.setVisible(started and tone != "done")
         self.run_status.set_state(tone=tone, line=line)
+        # 运行状态只在有话说时占头部：运行中、等模型、重试、停滞、失败、暂停。
+        # 跑完了或空闲时收起——步骤条已经说了完成，运行记录在「更多」里。
+        self.run_status.setVisible(started and tone not in ("done", "idle"))
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
         # * `available_actions` 是核心给出的可执行动作（resume/retry/cancel/…）；

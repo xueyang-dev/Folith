@@ -1,4 +1,4 @@
-"""设计审校 P0（docs/ui-audit/40-design-review-2026-10-16）：界面不能说错话。
+"""设计审校 P0 / P2（docs/ui-audit/40-design-review-2026-10-16）：界面不能说错话，头部只说一次。
 
 一个译完、没启用独立审校的任务：
 * 头部运行状态写着"已完成"时不再挂一根空进度条；
@@ -107,11 +107,14 @@ def translated(tmp_path, monkeypatch, qt_app):
         qt_app.processEvents()
 
 
-def test_a_finished_run_shows_no_empty_progress_bar(translated):
+def test_a_finished_run_leaves_the_header(translated):
+    """P0：不能有停在 0 的进度条；P2：跑完了整组运行状态让出头部，运行记录在「更多」里。"""
     status = translated.run_status
-    assert not status.isHidden()
     assert "已完成" in status.line.text()
     assert status.track.isHidden(), "“已完成”旁边不该是一根停在 0 的进度条"
+    assert status.isHidden()
+    labels = [a.text() for a in translated.stage_bar.more_menu.actions()]
+    assert "运行记录" in labels and "任务详情" in labels and "术语" in labels
 
 
 def test_review_that_is_off_is_not_ticked_as_done(translated):
@@ -132,3 +135,26 @@ def test_delivery_page_has_one_primary_action(translated):
     assert not translated.deliver_button.isHidden()
     translated.show_page("translate")
     assert not translated.stage_action_button.isHidden()
+
+
+# ---- P2：头部减负 + 右栏一个宽度 --------------------------------------------
+
+def test_header_keeps_identity_stage_and_one_action(translated):
+    assert not hasattr(translated, "chip_state"), "任务状态由步骤条说，头部不再有芯片"
+    assert translated.details_button.isHidden(), "任务详情在「更多」里"
+    assert translated._followup_count == 0
+    assert translated.check_button.isHidden(), "没有待处理项时不挂提醒图标"
+    translated._followup_count = 2
+    translated._sync_check_button()
+    assert not translated.check_button.isHidden()
+    translated._followup_count = 0
+    translated._sync_check_button()
+
+
+def test_inspector_and_drawer_share_one_width(translated):
+    side = translated.translation_split.indexOf(translated.right_panel)
+    closed = translated._translation_column_sizes(drawer_open=False)
+    opened = translated._translation_column_sizes(drawer_open=True)
+    assert closed[side] == opened[side] == translated._inspector_width
+    grid = translated.translation_split.indexOf(translated.segment_list)
+    assert closed[grid] == opened[grid], "打开检查与修复时网格不重排"
