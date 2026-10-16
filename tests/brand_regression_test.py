@@ -39,6 +39,8 @@ LEGACY_ALLOWLIST_FILES = {
     "docs/assets/foliothread-workflow.html",
     "docs/assets/foliothread-workflow.svg",
     "docs/brand.md",
+    # The foliothread -> folith migration plan has to name the legacy package.
+    "docs/naming-launch-checklist.md",
     "pyproject.toml",
     "folith/brand.py",
     "folith/project.py",
