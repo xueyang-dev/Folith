@@ -1621,5 +1621,10 @@
   "选中一句，直接输入问题或重译要求…": "Selecciona una frase y escribe tu pregunta o petición de retraducción…",
   "{v0} 个进行中": "{v0} en curso",
   "{v0} 个已交付": "{v0} entregadas",
-  "{v0} 个需要处理": "{v0} requieren atención"
+  "{v0} 个需要处理": "{v0} requieren atención",
+  "回到最新": "Ir a lo último",
+  "{v0} 条新记录": "{v0} nuevos",
+  "步骤详情": "Detalles del paso",
+  "正在进行": "En curso",
+  "步骤运行中，完成后可收起": "El paso está en curso; podrás ocultarlo cuando termine"
 }

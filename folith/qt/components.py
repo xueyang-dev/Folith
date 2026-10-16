@@ -21,7 +21,8 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSiz
 from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QLinearGradient,
                            QIcon, QPainter, QPainterPath, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
+                               QSizePolicy, QSplitter, QSplitterHandle, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from . import icons
 from . import motion
@@ -1696,3 +1697,218 @@ class Popover(QFrame):
         self._motion.stop("popup")
         super().hideEvent(event)
         self.closed.emit()
+
+
+# --------------------------------------------------------------------------
+# Scroll edge fade
+# --------------------------------------------------------------------------
+class ScrollEdgeFade(QObject):
+    """Fade a scroll area's content out at an edge it can still scroll past.
+
+    The fade is an opacity mask on the viewport, not a painted colour band, so
+    it works over glass, cards and every theme without knowing the background.
+    At rest against an edge that edge is sharp; with nothing to scroll the
+    effect is removed entirely and the viewport paints as before.
+    """
+
+    SIZE = 24
+    #: Alpha ramp across the fade, eased (t ** 1.5) so the edge has no visible step.
+    STOPS = tuple((i / 6, (i / 6) ** 1.5) for i in range(7))
+
+    def __init__(self, area, size: int = SIZE) -> None:
+        super().__init__(area)
+        self._area = area
+        self._size = size
+        self._edges: tuple[bool, bool] | None = None
+        bar = area.verticalScrollBar()
+        bar.valueChanged.connect(self.refresh)
+        bar.rangeChanged.connect(self.refresh)
+        area.viewport().installEventFilter(self)
+        self.refresh()
+
+    def edges(self) -> tuple[bool, bool]:
+        """(top, bottom): which edges are currently faded."""
+        return self._edges or (False, False)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        if event.type() == QEvent.Type.Resize:
+            self._edges = None
+            self.refresh()
+        return False
+
+    def refresh(self, *_args) -> None:
+        bar = self._area.verticalScrollBar()
+        edges = (bar.value() > bar.minimum(), bar.value() < bar.maximum())
+        if edges == self._edges:
+            return
+        self._edges = edges
+        viewport = self._area.viewport()
+        effect = viewport.graphicsEffect()
+        ours = effect if getattr(effect, "_edge_fade", False) else None
+        if not any(edges):
+            if ours is not None:
+                viewport.setGraphicsEffect(None)  # Qt deletes the effect
+            return
+        if effect is not None and ours is None:
+            return  # someone else's effect owns this viewport
+        if ours is None:
+            from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+            ours = QGraphicsOpacityEffect(viewport)
+            ours._edge_fade = True
+            viewport.setGraphicsEffect(ours)
+        height = max(1, viewport.height())
+        size = min(self._size, height / 3) / height
+        gradient = QLinearGradient(0, 0, 0, height)
+        black = QColor(0, 0, 0)
+        for at, alpha in self.STOPS:
+            if edges[0]:
+                black.setAlphaF(alpha)
+                gradient.setColorAt(at * size, QColor(black))
+            if edges[1]:
+                black.setAlphaF(alpha)
+                gradient.setColorAt(1 - at * size, QColor(black))
+        black.setAlphaF(1.0)
+        if not edges[0]:
+            gradient.setColorAt(0, QColor(black))
+        if not edges[1]:
+            gradient.setColorAt(1, QColor(black))
+        ours.setOpacity(1.0)
+        ours.setOpacityMask(gradient)
+
+
+def scroll_fade(area, size: int = ScrollEdgeFade.SIZE) -> ScrollEdgeFade:
+    """Install :class:`ScrollEdgeFade` on ``area`` (a QAbstractScrollArea)."""
+    return ScrollEdgeFade(area, size)
+
+
+# --------------------------------------------------------------------------
+# Resize splitter
+# --------------------------------------------------------------------------
+class _ResizeHandle(QSplitterHandle):
+    """A splitter handle with a dead zone, Esc-to-cancel and double-click."""
+
+    #: Pointer travel (px) before a press becomes a drag: a click or the first
+    #: half of a double-click must not nudge the columns.
+    DEAD_ZONE = 4
+
+    def __init__(self, orientation, splitter) -> None:
+        super().__init__(orientation, splitter)
+        self._press: QPoint | None = None
+        self._dragging = False
+        self.cancelled = False
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press = event.globalPosition().toPoint()
+            self._dragging = False
+            self.cancelled = False
+            self.splitter()._drag_began(self)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self._press is None or self.cancelled:
+            return
+        if not self._dragging:
+            travel = event.globalPosition().toPoint() - self._press
+            if max(abs(travel.x()), abs(travel.y())) < self.DEAD_ZONE:
+                return
+            self._dragging = True
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton and self._press is not None:
+            dragged = self._dragging and not self.cancelled
+            self._press = None
+            self._dragging = False
+            self.splitter()._drag_ended(self, dragged)
+        if not self.cancelled:
+            super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton:
+            splitter = self.splitter()
+            splitter.resetRequested.emit(splitter.indexOf(self))
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class ResizeSplitter(QSplitter):
+    """QSplitter with deliberate drags.
+
+    * a 4 px dead zone, so clicks never move the columns;
+    * Esc during a drag puts every pane back where the drag started;
+    * double-click on a handle emits :attr:`resetRequested` (handle index) so
+      the owner can return that pane to its default width;
+    * a pane given a collapse threshold, dragged and released narrower than
+      it, emits :attr:`collapseRequested` with its width before the drag --
+      the owner closes it through its own toggle and remembers that width.
+    """
+
+    resetRequested = Signal(int)
+    collapseRequested = Signal(QWidget, int)
+
+    def __init__(self, orientation, parent=None) -> None:
+        super().__init__(orientation, parent)
+        self._thresholds: dict[QWidget, int] = {}
+        self._start_sizes: list[int] | None = None
+        self._handle: _ResizeHandle | None = None
+
+    def createHandle(self):  # noqa: N802 - Qt naming
+        return _ResizeHandle(self.orientation(), self)
+
+    def set_collapse_threshold(self, widget: QWidget, width: int) -> None:
+        self._thresholds[widget] = int(width)
+
+    def dragging(self) -> bool:
+        return self._handle is not None
+
+    def cancel_drag(self) -> bool:
+        """Undo the drag in progress; returns False when there is none."""
+        handle, start = self._handle, self._start_sizes
+        if handle is None or start is None:
+            return False
+        handle.cancelled = True
+        self.setSizes(start)
+        index = self.indexOf(handle)
+        position = handle.pos().x() if self.orientation() == Qt.Orientation.Horizontal \
+            else handle.pos().y()
+        self.splitterMoved.emit(position, index)  # listeners re-read the widths
+        self._release()
+        return True
+
+    def _drag_began(self, handle: _ResizeHandle) -> None:
+        self._release()
+        self._handle = handle
+        self._start_sizes = self.sizes()
+        QApplication.instance().installEventFilter(self)
+
+    def _drag_ended(self, handle: _ResizeHandle, dragged: bool) -> None:
+        start = self._start_sizes or []
+        self._release()
+        if not dragged:
+            return
+        sizes = self.sizes()
+        for widget, width in self._thresholds.items():
+            index = self.indexOf(widget)
+            if index < 0 or not widget.isVisibleTo(self) or index >= len(start):
+                continue
+            if sizes[index] < width <= start[index]:
+                self.collapseRequested.emit(widget, start[index])
+                return
+
+    def _release(self) -> None:
+        if self._handle is not None:
+            QApplication.instance().removeEventFilter(self)
+        self._handle = None
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        kind = event.type()
+        if self._handle is not None and kind in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress) \
+                and event.key() == Qt.Key.Key_Escape:
+            event.accept()  # the workbench's own Esc shortcut must not fire mid-drag
+            if kind == QEvent.Type.KeyPress:
+                self.cancel_drag()
+            return True
+        return False

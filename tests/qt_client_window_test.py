@@ -1175,7 +1175,7 @@ def test_unsafe_exit_offers_force_quit_and_says_what_it_guarantees(client, monke
     # First run: confirm the ordinary "quit?" prompt, then choose keep-waiting.
     decisions = {"退出 Folith": True, "无法安全退出": False}
 
-    def confirm(title, message, yes="确定", no="取消"):
+    def confirm(title, message, yes="确定", no="取消", tone="info"):
         prompts.append((title, message, yes, no))
         return decisions.get(title, False)
 
@@ -2183,6 +2183,12 @@ def test_main_window_confirm_uses_the_apps_own_dialog(client, monkeypatch):
     assert calls and calls[-1]["title"] == "删除任务"
     assert calls[-1]["yes"] == "永久删除"
     assert calls[-1]["no"] == "取消"
+    assert calls[-1]["tone"] == "info"
+    # 不可撤销的操作必须以危险语义弹出（红色按钮，回车落在取消上）。
+    window.delete_job("no-such-job")
+    assert calls[-1]["title"] == "删除任务" and calls[-1]["tone"] == "danger"
+    window.clear_project_memory("some-project")
+    assert calls[-1]["tone"] == "danger"
 
 
 def test_busy_dialog_always_leaves_a_way_out(client, monkeypatch):
@@ -2307,7 +2313,7 @@ def test_window_asks_before_overwriting_saved_delivery_files(client, monkeypatch
     # 1) 用户在冲突提示里选择"取消"：不覆盖、不写出任何东西。
     prompts: list[str] = []
     monkeypatch.setattr(window, "_confirm",
-                        lambda title, message, yes="确定", no="取消":
+                        lambda title, message, yes="确定", no="取消", tone="info":
                         prompts.append(title) or False)
     window.save_snapshot(int(version))
     app.processEvents()
@@ -2317,7 +2323,7 @@ def test_window_asks_before_overwriting_saved_delivery_files(client, monkeypatch
 
     # 2) 用户确认覆盖：文件被替换成交付内容，且全部资产都写出来。
     monkeypatch.setattr(window, "_confirm",
-                        lambda title, message, yes="确定", no="取消":
+                        lambda title, message, yes="确定", no="取消", tone="info":
                         prompts.append(title) or True)
     window.save_snapshot(int(version))
     assert _pump(app, 180, lambda: len(list(dest.iterdir())) == len(names)), \
@@ -2858,7 +2864,7 @@ def test_home_batch_delete_deletes_idle_tasks_and_refuses_running_ones(client):
         assert "3 个" in window.home.delete_button.text()
 
         prompts: list[str] = []
-        window._confirm = lambda title, message, yes="确定", no="取消": \
+        window._confirm = lambda title, message, yes="确定", no="取消", tone="info": \
             prompts.append(message) or True
         window.failures.clear()
         window.delete_jobs_requested(ids[0])       # 首页信号：处理整批
@@ -3751,7 +3757,8 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
     monkeypatch.setattr(window, "save_snapshot",
                         lambda version, job_id=None: saved.append((version, job_id)))
     monkeypatch.setattr(window, "_confirm",
-                        lambda title, message, yes=None, no=None: prompts.append(title) or True)
+                        lambda title, message, yes=None, no=None, tone="info":
+                        prompts.append(title) or True)
     monkeypatch.setattr(window, "_notice",
                         lambda message, **_k: notices.append(str(message)))
 

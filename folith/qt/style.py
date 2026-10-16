@@ -555,6 +555,13 @@ QFrame#issueCard {{
 QToolButton#issueToggle {{ background: transparent; border: none; border-radius: {r['sm']}px;
     padding: 0; min-width: 20px; min-height: 20px; }}
 QToolButton#issueToggle:hover {{ background: {t['bg-hover']}; }}
+/* 运行记录翻上去后浮在底部的"回到最新"：胶囊高 28，圆角取半高（大于半高 Qt 会画成方角） */
+QPushButton#jumpLatest {{
+    background: {t['bg-surface']}; color: {t['text-primary']};
+    border: 1px solid {t['border-strong']}; border-radius: 14px;
+    min-height: 26px; max-height: 26px; padding: 0 12px; font-size: {f['caption']}px;
+}}
+QPushButton#jumpLatest:hover {{ background: {t['bg-hover']}; }}
 QLabel#issueTitle {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel#issueSummary {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#issueEvidence {{ font-size: {f['caption']}px; color: {t['text-primary']}; }}

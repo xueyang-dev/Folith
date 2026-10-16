@@ -678,12 +678,15 @@ class MainWindow(QMainWindow):
         prompts.NoticeDialog.notify(self, title, message, tone="danger")
 
     def _confirm(self, title: str, message: str,
-                 yes: str | None = None, no: str | None = None) -> bool:
+                 yes: str | None = None, no: str | None = None, *,
+                 tone: str = "info") -> bool:
+        """``tone="danger"``：不可撤销的操作（删除、清空、丢弃、覆盖）——红色确认按钮，
+        回车与默认焦点落在取消上。"""
         if _automation():
             return True
         return prompts.ConfirmDialog.ask(
             self, title, message,
-            yes=yes or i18n.tr('确定'), no=no or i18n.tr('取消'))
+            yes=yes or i18n.tr('确定'), no=no or i18n.tr('取消'), tone=tone)
 
     def _busy(self, message: str):
         """等待指示器（见 `prompts.BusyDialog`：真实运行里必须留一条出路）。"""
@@ -825,7 +828,7 @@ class MainWindow(QMainWindow):
                 i18n.tr('删除术语'),
                 i18n.tr('将从这些任务的术语表里删除「{v0}」：{v1}\n\n删除会生成新的术语版本。确定吗？',
                         v0=row.get("source"), v1=where),
-                yes=i18n.tr('删除'), no=i18n.tr('取消')):
+                yes=i18n.tr('删除'), no=i18n.tr('取消'), tone="danger"):
             return
         failed = []
         for task in tasks:
@@ -864,7 +867,7 @@ class MainWindow(QMainWindow):
         if not project_id or not self._confirm(
                 i18n.tr('清空翻译记忆'),
                 i18n.tr('这会删除所选项目的全部翻译记忆，且不可恢复。其他项目不受影响。\n\n确定清空吗？'),
-                yes=i18n.tr('清空'), no=i18n.tr('取消')):
+                yes=i18n.tr('清空'), no=i18n.tr('取消'), tone="danger"):
             return
         adapter.clear_project_memory(project_id)
         self._notice(i18n.tr('已清空该项目的翻译记忆。'), task=False)
@@ -1148,7 +1151,8 @@ class MainWindow(QMainWindow):
             question = i18n.tr(
                 '将永久删除选中的 {v0} 个任务及其输出目录（含交付快照）：\n\n{v1}\n\n这个操作不可撤销。确定删除吗？',
                 v0=len(ids), v1=preview)
-        if not self._confirm(i18n.tr('删除任务'), question, yes=i18n.tr('永久删除'), no=i18n.tr('取消')):
+        if not self._confirm(i18n.tr('删除任务'), question, yes=i18n.tr('永久删除'),
+                             no=i18n.tr('取消'), tone="danger"):
             return
         deleted: list[str] = []
         refused: list[str] = []
@@ -1184,7 +1188,7 @@ class MainWindow(QMainWindow):
         if not self._confirm(
                 i18n.tr('删除任务'),
                 i18n.tr('将永久删除任务「{v0}」及其输出目录，包括交付快照。\n\n这个操作不可撤销。确定删除吗？', v0=name),
-                yes=i18n.tr('永久删除'), no=i18n.tr('取消')):
+                yes=i18n.tr('永久删除'), no=i18n.tr('取消'), tone="danger"):
             return
         try:
             adapter.delete_job(job_id)
@@ -1941,7 +1945,7 @@ class MainWindow(QMainWindow):
         if not self._confirm(
                 i18n.tr('放弃草稿'),
                 i18n.tr('第 {v0} 段的未提交草稿将被删除，编辑器回到当前已提交的译文。\n\n确定放弃吗？', v0=index + 1),
-                yes=i18n.tr('放弃草稿'), no=i18n.tr('保留')):
+                yes=i18n.tr('放弃草稿'), no=i18n.tr('保留'), tone="danger"):
             return
         adapter.clear_draft(job_id, row.segment_uid)
         self._notice(i18n.tr('已放弃第 {v0} 段的草稿。', v0=index + 1))
@@ -2117,7 +2121,7 @@ class MainWindow(QMainWindow):
         if not self._confirm(
                 i18n.tr('重新扫描 PDF 原文'),
                 i18n.tr('将用新的设置重新读取整份 PDF。已有译文与新原文的对齐会失效，需要重新翻译与审校；视觉理解会重新请求模型。\n\n确定重新扫描吗？'),
-                yes=i18n.tr('重新扫描'), no=i18n.tr('取消'), ):
+                yes=i18n.tr('重新扫描'), no=i18n.tr('取消'), tone="danger"):
             return
         try:
             adapter.request_source_rescan(job_id, **options)
@@ -2241,7 +2245,7 @@ class MainWindow(QMainWindow):
                 if not self._confirm(
                         i18n.tr('删除空段'),
                         i18n.tr('删除第 {v0} 段（它没有任何内容）。可用「撤销上一次结构操作」退回。', v0=index + 1),
-                        yes=i18n.tr('删除'), no=i18n.tr('取消')):
+                        yes=i18n.tr('删除'), no=i18n.tr('取消'), tone="danger"):
                     return
                 adapter.delete_empty_segment(job_id, index)
                 message = i18n.tr('已删除空段。')
@@ -2339,7 +2343,7 @@ class MainWindow(QMainWindow):
         if not self._confirm(
                 i18n.tr('删除术语'),
                 i18n.tr('删除后会生成新的术语版本，受影响的译文需要重新确认。\n\n确定删除吗？'),
-                yes=i18n.tr('删除'), no=i18n.tr('取消')):
+                yes=i18n.tr('删除'), no=i18n.tr('取消'), tone="danger"):
             return
         self._glossary_action(adapter.delete_glossary_entry, entry_id,
                               failure=i18n.tr('无法删除术语'))
@@ -2589,7 +2593,7 @@ class MainWindow(QMainWindow):
             return
         if not self._confirm(i18n.tr('丢弃全部修改'),
                              i18n.tr('所有未保存的修改都会被删除，译文回到已提交的版本。确定吗？'),
-                             yes=i18n.tr('全部丢弃'), no=i18n.tr('取消')):
+                             yes=i18n.tr('全部丢弃'), no=i18n.tr('取消'), tone="danger"):
             return
         count = adapter.discard_all_drafts(job_id)
         self._notice(i18n.tr('已丢弃 {v0} 段未保存的修改。', v0=count))
@@ -2740,7 +2744,7 @@ class MainWindow(QMainWindow):
                 i18n.tr("以下文件已存在：\n\n{v0}\n\n覆盖它们吗？"
                         "选择「取消」可另选文件夹。",
                         v0="\n".join(plan["conflicts"])),
-                yes=i18n.tr('覆盖'), no=i18n.tr('取消')):
+                yes=i18n.tr('覆盖'), no=i18n.tr('取消'), tone="danger"):
             self._notice(i18n.tr('已取消{v0}（未覆盖任何文件）。', v0=kind))
             return None
         return True
@@ -3135,7 +3139,7 @@ class MainWindow(QMainWindow):
                 i18n.tr("。\n\n选择「强制退出」只保证已落盘的结果可恢复；"
                         "选择「继续等待」将返回应用。")
             if self._confirm(i18n.tr('无法安全退出'), message,
-                             yes=i18n.tr('强制退出'), no=i18n.tr('继续等待')):
+                             yes=i18n.tr('强制退出'), no=i18n.tr('继续等待'), tone="danger"):
                 self._acquire_close(forced=True)
             else:
                 self._exit_in_progress = False

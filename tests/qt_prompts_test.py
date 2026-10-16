@@ -77,6 +77,42 @@ def test_danger_confirm_uses_a_solid_danger_button(app, window):
         safe.close()
 
 
+def test_enter_on_a_danger_confirm_cancels_instead_of_deleting(app, window):
+    """危险确认框弹出时直接按回车，不能执行不可撤销的操作：回车与焦点都在取消上。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    danger = prompts.ConfirmDialog(window, "删除任务", "不可撤销",
+                                   yes="永久删除", no="取消", tone="danger")
+    danger.show()
+    app.processEvents()
+    try:
+        assert danger.no_button.isDefault() and not danger.yes_button.isDefault()
+        assert danger.focusWidget() is danger.no_button
+        QTest.keyClick(danger, Qt.Key.Key_Return)
+        app.processEvents()
+        assert danger.accepted_by_user is False
+        assert danger.result() == 0
+    finally:
+        danger.close()
+
+
+def test_enter_on_a_safe_confirm_still_confirms(app, window):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    safe = prompts.ConfirmDialog(window, "冻结交付", "确定继续吗？")
+    safe.show()
+    app.processEvents()
+    try:
+        assert safe.yes_button.isDefault() and not safe.no_button.isDefault()
+        QTest.keyClick(safe, Qt.Key.Key_Return)
+        app.processEvents()
+        assert safe.accepted_by_user is True
+    finally:
+        safe.close()
+
+
 def test_notice_keeps_detail_collapsed_until_toggled(app, window):
     dialog = prompts.NoticeDialog(window, "导入失败", "有 2 个文档没有导入",
                                  tone="danger", detail="traceback…")

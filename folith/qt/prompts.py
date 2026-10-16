@@ -129,7 +129,11 @@ class _BaseDialog(QDialog):
 
 
 class ConfirmDialog(_BaseDialog):
-    """确认：一个主按钮 + 一个取消按钮；危险动作的主按钮是实心危险色。"""
+    """确认：一个主按钮 + 一个取消按钮；危险动作的主按钮是实心危险色。
+
+    危险动作的回车与初始焦点落在**取消**上：弹窗一出现就按回车（或手快连按两下）
+    不能把任务永久删掉，确认必须明确点到红色按钮上。
+    """
 
     def __init__(self, parent: QWidget | None, title: str, message: str, *,
                  yes: str = "确定", no: str = "取消", detail: str = "",
@@ -138,11 +142,11 @@ class ConfirmDialog(_BaseDialog):
         self.set_message(message)
         self.set_detail(detail)
         self._accepted = False
-        self.no_button = self.add_button(no, self.reject)
+        danger = tone == "danger"
+        self.no_button = self.add_button(no, self.reject, default=danger)
         self.yes_button = self.add_button(
-            yes, self._accept, primary=(tone != "danger"),
-            danger=(tone == "danger"), default=True)
-        self.yes_button.setFocus()
+            yes, self._accept, primary=not danger, danger=danger, default=not danger)
+        (self.no_button if danger else self.yes_button).setFocus()
 
     def _accept(self) -> None:
         self._accepted = True

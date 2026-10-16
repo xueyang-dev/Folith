@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QFormLayout, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QPlainTextEdit, QProgressBar,
-    QPushButton, QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
     QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -1923,6 +1923,9 @@ class WorkbenchView(QWidget):
       `tabs` 只是页面容器，它的标签栏不显示（见 `show_page` / `stage.stage_view`）。
     """
 
+    #: 检查器的默认宽度；双击它左侧的分割条回到这个宽度。
+    INSPECTOR_WIDTH = 300
+
     backRequested = Signal()
     startRequested = Signal()
     pauseRequested = Signal()
@@ -2668,10 +2671,12 @@ class WorkbenchView(QWidget):
         inspector_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         inspector_scroll.viewport().setAutoFillBackground(False)
         inspector_scroll.setWidget(inspector)
+        components.scroll_fade(inspector_scroll)
 
-        translation_split = QSplitter(Qt.Orientation.Horizontal, self)
+        # 拖拽有 4px 死区、Esc 撤销、双击把那一栏恢复默认宽度；原页拖得太窄就收起。
+        translation_split = components.ResizeSplitter(Qt.Orientation.Horizontal, self)
         self.right_panel = components.SlidingPanel(inspector_scroll)
-        self._inspector_width = 300
+        self._inspector_width = self.INSPECTOR_WIDTH
         translation_split.addWidget(self.segment_list)
         translation_split.addWidget(self.right_panel)
         translation_split.setStretchFactor(0, 1)
@@ -3027,6 +3032,12 @@ class WorkbenchView(QWidget):
         self.source_clip.hide()
         self.translation_split.insertWidget(0, self.source_clip)
         self.translation_split.setStretchFactor(0, 0)
+        # 网格不能被拖成 0 宽（QSplitter 默认允许把子控件拖到折叠）。
+        self.translation_split.setCollapsible(
+            self.translation_split.indexOf(self.segment_list), False)
+        self.translation_split.set_collapse_threshold(self.source_clip, 240)
+        self.translation_split.collapseRequested.connect(self._split_collapse_requested)
+        self.translation_split.resetRequested.connect(self._split_reset_requested)
         self._pdf_ok = False
         self._pdf_width = 0
         self._pdf_follow = QTimer(self)
@@ -3071,6 +3082,7 @@ class WorkbenchView(QWidget):
         drawer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         drawer_scroll.viewport().setAutoFillBackground(False)
         drawer_scroll.setWidget(self.followup_panel)
+        components.scroll_fade(drawer_scroll)
         drawer_layout.addWidget(drawer_scroll, 1)
         self.right_panel.set_drawer(self.followup_drawer)
         drawer_escape = QAction(self)
@@ -3097,6 +3109,7 @@ class WorkbenchView(QWidget):
         details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         details_scroll.viewport().setAutoFillBackground(False)
         details_scroll.setWidget(self.details_panel)
+        components.scroll_fade(details_scroll)
         self.details_popover = components.Popover(i18n.tr('任务详情'), details_scroll, self,
                                                   size=QSize(560, 620))
         self._details_key: tuple = ()
@@ -3670,6 +3683,26 @@ class WorkbenchView(QWidget):
         if self.source_open():
             self._pdf_width = self.translation_split.sizes()[
                 self.translation_split.indexOf(self.source_clip)]
+
+    def _split_collapse_requested(self, widget, width: int) -> None:
+        """原页被拖到阈值以下松手：按原页开关收起，下次打开回到拖之前的宽度。"""
+        if widget is self.source_clip and self.source_open():
+            self._pdf_width = width
+            self.set_source_open(False)
+
+    def _split_reset_requested(self, handle: int) -> None:
+        """双击分割条：把它两侧的侧栏（原页 / 检查器）恢复默认宽度。"""
+        split = self.translation_split
+        before, after = split.widget(handle - 1), split.widget(handle)
+        changed = False
+        if before is self.source_clip and self.source_open():
+            self._pdf_width = 0  # 0 = 默认约 40%
+            changed = True
+        if after is self.right_panel and not self._drawer_open:
+            self._inspector_width = self.INSPECTOR_WIDTH
+            changed = True
+        if changed:
+            self._transition_columns()
 
     def _layout_translation_columns(self) -> None:
         """按当前打开的面板分配宽度：原页约 40%（或用户拖过的宽度）、检查与修复
