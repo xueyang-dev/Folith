@@ -170,6 +170,35 @@ def test_sidebar_projects_follow_and_drive_the_project_filter(home):
     assert buttons["p1"].isChecked()
 
 
+def test_project_tabs_replace_the_dropdown(home):
+    """任务列表上方是一排项目标签（全部 / 每个项目 + 任务数），下拉框只是数据模型。"""
+    tabs = home.project_tabs
+    assert not home.project_tabs_row.isHidden() and home.project_filter.isHidden()
+    assert home.list_card.isAncestorOf(tabs), "tabs sit inside the list card, under its header"
+    assert list(tabs.tabs) == ["", "p1", "p2"], "空着的系统项目不占标签"
+    assert [tab.count for tab in tabs.tabs.values()] == [4, 2, 2]
+    assert tabs.tabs["p1"].text() == "Alpha"
+    tabs.tabs["p2"].click()
+    assert home.project_filter.currentData() == "p2"
+    assert home.table.rowCount() == 2
+    assert home._project_nav_buttons["p2"].isChecked(), "sidebar follows the tabs"
+    home._project_nav_buttons["p1"].click()
+    assert tabs.value() == "p1" and tabs.tabs["p1"].isChecked()
+    tabs.tabs[""].click()
+    assert home.project_filter.currentData() == "" and home.table.rowCount() == 4
+    # 颜色按项目 id 固定：刷新、换顺序都不变。
+    assert components.project_dot_token("p1") == components.project_dot_token("p1")
+    assert components.project_dot_token("") == "text-muted"
+
+
+def test_project_tabs_hide_without_user_projects(app):
+    view = views.HomeView()
+    view.set_projects([{"project_id": "sys", "name": "未分类", "is_system": True}])
+    view.set_rows(ROWS)
+    assert view.project_tabs_row.isHidden()
+    view.deleteLater()
+
+
 def test_nav_item_is_themed_and_checkable(app):
     button = components.nav_item("任务库", "projects", checkable=True)
     assert button.isCheckable() and button.objectName() == "navItem"
