@@ -95,7 +95,8 @@ def test_every_locale_catalog_has_the_same_keys():
     for code, path in directories.items():
         data = json.loads(path.read_text(encoding="utf-8"))
         missing = set(base) - set(data)
-        extra = set(data) - set(base)
+        # "<原文>#one" 是单数形式（i18n.tr_n），只有需要它的语言才有。
+        extra = {key for key in set(data) - set(base) if not key.endswith("#one")}
         assert not missing, f"{code} 缺 {len(missing)} 条：{sorted(missing)[:3]}"
         assert not extra, f"{code} 多 {len(extra)} 条：{sorted(extra)[:3]}"
 

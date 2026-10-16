@@ -455,3 +455,43 @@ def test_labels_looked_up_from_tables_are_translated():
         catalog = json.loads((root / f"qt-{language}.json").read_text(encoding="utf-8"))
         missing = sorted(k for k in keys if catalog.get(k, k) == k)
         assert not missing, (language, missing)
+
+
+def test_counts_are_singular_for_one_and_markdown_is_listed_once(app, monkeypatch):
+    from folith.qt import i18n
+    monkeypatch.setattr(i18n, "_state", {**i18n._state, "code": "en"})
+    assert i18n.tr_n('{v0} 个任务', 1, v0=1) == "1 task"
+    assert i18n.tr_n('{v0} 个任务', 3, v0=3) == "3 tasks"
+    home = views.HomeView()
+    formats = home.drop_tile._formats
+    assert formats.count("MD") == 1 and "MARKDOWN" not in formats
+    home.close()
+
+
+def test_first_cover_fits_even_with_the_setup_banner(isolated, app):
+    home = views.HomeView()
+    home.set_engine_problem("no provider")
+    rows = [adapter.JobRow(str(i), f"doc{i}.docx", None, "English", "翻译中", "", "running", 2,
+                           "", True) for i in range(3)]
+    home.set_rows(rows)
+    home._set_view_mode("cards")
+    home.resize(980, 640)
+    home.show()
+    for _ in range(10):
+        app.processEvents()
+    card = next(iter(home._cards.values()))
+    viewport = home.card_scroll.viewport()
+    bottom = card.mapTo(viewport, card.rect().bottomLeft()).y()
+    assert bottom <= viewport.height(), (bottom, viewport.height())
+    home.close()
+
+
+def test_ampersand_in_a_sidebar_label_is_shown_not_eaten(app):
+    from folith.qt import style
+    button = style.ElideButton("Terms & memory")
+    button.resize(220, 36)
+    button.show()
+    app.processEvents()
+    assert QPushButton.text(button) == "Terms && memory"
+    assert button.text() == "Terms & memory"
+    button.close()

@@ -71,7 +71,7 @@ def leftover_literals() -> list[tuple[str, int, str]]:
                 parent_is_tr = any(
                     isinstance(other, ast.Call)
                     and isinstance(other.func, ast.Attribute)
-                    and other.func.attr in {"tr", "tr_dynamic"}
+                    and other.func.attr in {"tr", "tr_n", "tr_dynamic"}
                     and node in other.args
                     for other in ast.walk(tree))
                 if not parent_is_tr:

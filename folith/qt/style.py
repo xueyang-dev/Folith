@@ -1039,8 +1039,9 @@ QStatusBar QLabel#statusMessage[error="true"] {{ color: {t['danger']}; }}
 QStatusBar QLabel#statusPath {{ color: {t['text-muted']}; font-size: {f['micro']}px; }}
 
 /* ================= 滚动条 ================= */
-QScrollBar:vertical {{ background: transparent; width: 11px; margin: 2px; }}
-QScrollBar:horizontal {{ background: transparent; height: 11px; margin: 2px; }}
+/* 细一点（试用反馈 H5：常显的粗滚动条把列表框成"页面里又一层"）：手柄 5px。 */
+QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
+QScrollBar:horizontal {{ background: transparent; height: 9px; margin: 2px; }}
 QScrollBar::handle {{ background: {t['border-strong']}; border-radius: {r['pill']}px; min-height: 28px; min-width: 28px; }}
 QScrollBar::handle:hover {{ background: {t['text-muted']}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
@@ -1537,7 +1538,8 @@ class ElideButton(QPushButton):
         shown = self._full_text
         if self.width() > 0 and metrics.horizontalAdvance(shown) > room:
             shown = metrics.elidedText(shown, Qt.TextElideMode.ElideRight, max(room, 20))
-        QPushButton.setText(self, shown)
+        # 「&」在按钮文字里是助记符标记（"Terms & memory" 会显示成 "Terms _memory"）：转义。
+        QPushButton.setText(self, shown.replace("&", "&&"))
         self.setToolTip(self._full_text if shown != self._full_text else "")
 
 

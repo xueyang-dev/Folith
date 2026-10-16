@@ -1751,5 +1751,8 @@
   "原排版译文 PDF": "PDF con el diseño original",
   "EPUB 电子书": "Libro electrónico EPUB",
   "术语表 XLSX": "Glosario XLSX",
-  "段落证据 JSONL": "Evidencia por segmento JSONL"
+  "段落证据 JSONL": "Evidencia por segmento JSONL",
+  "{v0} 个任务#one": "{v0} tarea",
+  "{v0} 个已交付#one": "{v0} entregada",
+  "{v0} 个需要处理#one": "{v0} requiere atención"
 }

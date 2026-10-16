@@ -188,9 +188,18 @@
 
 **组件**：新增 `components.OptionCard`（选项卡片）与 `components.AccentPicker`（主题色点）；`qt_design_tokens_test` 的按钮变体白名单相应加了 `optionCard`、`accentOption` 两项（后者取代已不用的主题色卡）。
 
-**仍然留着的**：980×640 且显示「尚未配置模型连接」提示条时，第一张封面的底边会被动作栏挡住（配好连接后提示条消失，封面完整可见，已有测试覆盖这一情况）。
+**收尾（阶段 2 之后）**：
+
+- 980×640 且显示「尚未配置模型连接」提示条时第一张封面被动作栏挡住：封面尺寸现在也按卡片区的可见高度收，第一排总是完整可见（新测试覆盖有提示条的情况）；
+- 英文 / 西语单复数：新增 `i18n.tr_n`，数量为 1 时取目录里的「原文#one」（"1 task"、"1 tarea"）；覆盖率脚本与插桩脚本都认 `tr_n`；
+- 拖入格的格式行不再出现「MD · MARKDOWN」；
+- 侧栏「Terms & memory」曾显示成「Terms _memory」（按钮文字里的 & 是助记符）：`ElideButton` 转义 &；
+- 滚动条变细（手柄 5px），列表不再像套了一层框。
+
+目标语言下拉与「继续」卡里的语言名（English、日本語、简体中文……）保持各自的本名，不翻译。
 
 ![](stage2/home-1200-zh-CN.png)
 ![](stage2/settings-models-zh-CN.png)
 ![](stage2/settings-add-zh-CN.png)
 ![](stage2/settings-defaults-ru.png)
+![](stage2/home-980-en-banner.png)

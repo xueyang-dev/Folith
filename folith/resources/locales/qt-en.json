@@ -1751,5 +1751,7 @@
   "原排版译文 PDF": "PDF in original layout",
   "EPUB 电子书": "EPUB e-book",
   "术语表 XLSX": "Glossary XLSX",
-  "段落证据 JSONL": "Segment evidence JSONL"
+  "段落证据 JSONL": "Segment evidence JSONL",
+  "{v0} 个任务#one": "{v0} task",
+  "{v0} 个需要处理#one": "{v0} needs attention"
 }

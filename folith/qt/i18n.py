@@ -174,3 +174,19 @@ def tr(text: str, **fmt) -> str:
             return source.format(**fmt)
         except (KeyError, IndexError, ValueError):
             return source
+
+
+def tr_n(text: str, count: int, **fmt) -> str:
+    """Like :func:`tr`, but picks the singular form when ``count == 1``.
+
+    A catalog may carry ``"<原文>#one"`` for languages that change the noun
+    ("1 task", "1 tarea"); languages without it fall back to the normal entry.
+    """
+    if int(count) == 1 and _state["code"] != DEFAULT_LANGUAGE:
+        singular = _catalog("qt", _state["code"]).get(f"{text}#one")
+        if singular:
+            try:
+                return singular.format(**fmt) if fmt else singular
+            except (KeyError, IndexError, ValueError):
+                pass
+    return tr(text, **fmt)

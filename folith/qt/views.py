@@ -986,7 +986,10 @@ class HomeView(QWidget):
         # ---- 拖入文档格：卡片末尾的虚线格；整个页面都接收拖放 ---------------
         self.setAcceptDrops(True)
         self.drop_tile = components.DropTile(
-            " · ".join(suffix.lstrip(".").upper() for suffix in adapter.SOURCE_SUFFIXES))
+            # .md 与 .markdown 是同一种格式：只写一次 MD（试用截图里出现过「MD · MARKDOWN」）。
+            " · ".join(dict.fromkeys(
+                "MD" if suffix == ".markdown" else suffix.lstrip(".").upper()
+                for suffix in adapter.SOURCE_SUFFIXES)))
         self.drop_tile.clicked.connect(self.importRequested.emit)
         self.drop_tile.attentionNeeded.connect(self._reveal_drop_tile)
         # 虚线格装在一个与任务卡**外框一样大**的格子里，四周留出与卡片相同的投影留白：
@@ -1492,7 +1495,7 @@ class HomeView(QWidget):
 
         def part(template: str, value: int, key: str) -> str:
             number = f"<b style='color:{style_module.text_color('text-primary')}'>{value:,}</b>"
-            text = i18n.tr(template, v0="\x00").replace("\x00", number)
+            text = i18n.tr_n(template, value, v0="\x00").replace("\x00", number)
             return f'<a href="{key}" style="color:inherit;text-decoration:none">{text}</a>'
 
         parts = [part('{v0} 个任务', len(scope), 'all')]
@@ -1620,7 +1623,21 @@ class HomeView(QWidget):
         available = self._cards_available()
         gap = theme_module.SPACE["lg"]
         share = (available - gap * (columns - 1)) // max(1, columns)
-        return int(max(_TaskCard.MIN_WIDTH, min(_TaskCard.MAX_WIDTH, share)))
+        width = int(max(_TaskCard.MIN_WIDTH, min(_TaskCard.MAX_WIDTH, share)))
+        # 也按高度收：第一排封面要整张看得见（矮窗口 + 顶部提示条时，封面曾被动作栏挡住）。
+        # 视口里除了封面，还有分组标题一行和上下留白。
+        viewport = self.card_scroll.viewport().height() if hasattr(self, "card_scroll") else 0
+        if viewport > 0:
+            pad = _TaskCard.PAD
+            room = viewport - self.CARD_HEADING_ROOM - pad.top() - pad.bottom()
+            by_height = int(room / _TaskCard.ASPECT) + pad.left() + pad.right()
+            width = min(width, max(self.CARD_MIN_SHORT_WIDTH, by_height))
+        return width
+
+    #: 卡片视口里封面以外占的高度：分组标题（约 22）+ 行距 + 卡片页上下内边距。
+    CARD_HEADING_ROOM = 22 + 12 + 2 * 12
+    #: 再矮也不把封面缩到比这更窄（宁可让第一排露出滚动）。
+    CARD_MIN_SHORT_WIDTH = 132
 
     def _card_columns(self) -> int:
         """能并排放下几张 ≥ ``_TaskCard.MIN_WIDTH`` 的卡（Golden Gate 的缩略图网格）。
@@ -1711,7 +1728,7 @@ class HomeView(QWidget):
                 heading = QLabel(self._project_label(project_id))
                 heading.setObjectName("groupHeading")
                 heading_row.addWidget(heading)
-                count = QLabel(i18n.tr('{v0} 个任务', v0=len(items)))
+                count = QLabel(i18n.tr_n('{v0} 个任务', len(items), v0=len(items)))
                 count.setObjectName("hint")
                 heading_row.addWidget(count, 0, Qt.AlignmentFlag.AlignBaseline)
                 heading_row.addStretch(1)

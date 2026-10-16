@@ -140,7 +140,7 @@ class Collector(ast.NodeVisitor):
         elif isinstance(node.func, ast.Attribute):
             name = node.func.attr
         # 已经是 i18n.tr(...) 的调用不再包第二层（重复运行必须是幂等的）
-        if name == "tr" and isinstance(node.func, ast.Attribute) \
+        if name in ("tr", "tr_n") and isinstance(node.func, ast.Attribute) \
                 and isinstance(node.func.value, ast.Name) \
                 and node.func.value.id == "i18n":
             return
@@ -262,7 +262,7 @@ def collect_tr_strings() -> dict[str, list[str]]:
             continue
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                    and node.func.attr == "tr" and node.args \
+                    and node.func.attr in ("tr", "tr_n") and node.args \
                     and isinstance(node.args[0], ast.Constant):
                 value = str(node.args[0].value)
                 if CJK.search(value):
