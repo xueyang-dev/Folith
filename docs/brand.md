@@ -40,10 +40,10 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 | --- | --- | --- | --- |
 | 品牌标准图 | `docs/assets/folith-brand-standard.png` | 用户提供 | 本规范的完整参考 |
 | 主横向组合 | `folith-lockup.png` | 用户提供 | README 首屏、透明版的原始素材 |
-| 透明横向组合 | `folith-lockup-transparent.png` | 原图逐像素去白底 | 日间与纸面主题侧栏 |
-| 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 同一原图，仅调整文字颜色 | 夜间主题侧栏 |
+| 透明横向组合 | `folith-lockup-transparent.png` | 原图逐像素去白底，图标换为 2026-10-16 修正版 | 日间与纸面主题侧栏 |
+| 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 同一原图，仅调整文字颜色；图标同上 | 夜间主题侧栏 |
 | 图标（透明底） | `folith-mark.png` | 用户提供 | 页面图标（浏览器标签页、安装入口） |
-| 图标（透明底，高清母版） | `folith-mark-hires.png` | 用户提供（1254×1254） | 白底应用图标的原始母版（`scripts/build_app_icon.py` 保留原色，仅缩放居中） |
+| 图标（透明底，高清母版） | `folith-mark-hires.png` | 2026-10-16 修正版（1254×1254），由 `docs/logo-exploration/folith-mark-final.svg` 渲染 | 白底应用图标的原始母版（`scripts/build_app_icon.py` 保留原色，仅缩放居中） |
 | App 图标（原始深底版） | `folith-app-icon.png` | 用户提供 | 保留的原始素材；Qt 当前应用入口改用下行白底版 |
 | App 图标（P9 白底版） | `folith-app-icon-white.png` | 由高清母版合成 | Qt 应用 / 关于 / 欢迎与桌面 `.icns`；1024px 透明画布、824px 纯白连续曲线底板、品牌标宽约 70% |
 | 深色底横向组合 | `folith-logo-dark.png` | SVG 派生 | 旧补充素材，侧栏不再使用 |
@@ -217,3 +217,17 @@ python -m pytest tests/brand_assets_test.py -q
 重生成：`venv/bin/python scripts/build_app_icon.py --out build/qt-desktop/Folith.icns --png-out folith/resources/brand/folith-app-icon-white.png`。
 
 外形为指数 4 的超椭圆，是连续曲率底板的近似，不声称是 Apple 系统掩膜的精确复制。纯白底板下有轻微投影；只对轮廓超采样，品牌标按原比例缩小一次，不改色。传统 `.icns` 含 16–1024px 的完整帧，外角透明。浅色 / 深色均使用白底版；独立深色 / 着色资产仍留到有完整 Xcode / Icon Composer 后另做。系统是否额外套底座须在实际安装后人工确认，不能从资产图推断。
+
+
+## 图标几何修正（2026-10-16）
+
+原图标的两页是"斜切"（竖边 + 倾斜的上下边），两页大小不同、错位不对称，放在白色方形底板上显得偏右下：中心对称度 91%，外接框比画布中心低 1.5%。修正版保留原来的颜色、渐变、文/A 和指针，只改几何：
+
+- 两页同样大小，保留原来的斜切角度，沿对角线等距错开，外轮廓中心对称（100%）。
+- 两页前后穿插的分界线下移，浅色页占可见面积 57%（原图 55%），抵消深色更重的视觉分量。
+- 面积与原图相同，视觉重心居中并上提 1.5%。
+
+过程与对照：`docs/logo-exploration/`（`README.md`、`variants-compare.png`、`symmetric-split-compare.png`、`final-before-after.png`）。矢量源 `docs/logo-exploration/folith-mark-final.svg`，由 `variants.py` 生成；原图的 1:1 矢量复刻为 `folith-mark-replica.svg`。
+
+已替换：`folith-mark-hires.png`、`folith-app-icon-white.png`、`folith-lockup-transparent.png`、`folith-lockup-transparent-dark.png`。**尚未替换**：README 首屏的 `folith-lockup.png`、页面图标 `folith-mark.png`、原始深底 `folith-app-icon.png`，以及 `folith-mark.svg` 等 SVG 派生源，它们仍是旧几何。
+

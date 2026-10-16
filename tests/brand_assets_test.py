@@ -46,7 +46,7 @@ OFFICIAL_PNG = (
     "folith-lockup.png",    # 主横向组合（README 首屏、侧栏品牌位）
     "folith-mark.png",      # 图标（透明底，页面图标）
     "folith-app-icon.png",  # App 图标
-    "folith-mark-hires.png",  # 图标高清母版（用户提供，1254×1254）
+    "folith-mark-hires.png",  # 图标高清母版（1254×1254；2026-10-16 几何修正版，见 docs/brand.md）
 )
 # 补充变体：由 scripts/render_brand_assets.py 从 SVG 源渲染（kit 未覆盖的版位）。
 DERIVED_PNG = (
