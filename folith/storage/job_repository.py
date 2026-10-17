@@ -246,7 +246,11 @@ def load_job_state_cached(
         _translation_evidence.reconcile_runtime_review_truth(state)
         state = core._reconcile_final_delivery_snapshot(job_id, state)
 
-        # Store in LRU cache
+        # Store in LRU cache.  Only the newest signature of a job is worth
+        # keeping: every save or journal append makes the older ones stale,
+        # and each holds a full copy of the state.
+        for stale in [k for k in _STATE_CACHE if k[0] == signature[0]]:
+            del _STATE_CACHE[stale]
         if len(_STATE_CACHE) >= _STATE_CACHE_MAX_ENTRIES:
             _STATE_CACHE.popitem(last=False)
         _STATE_CACHE[signature] = state

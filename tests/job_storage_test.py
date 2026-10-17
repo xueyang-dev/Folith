@@ -250,3 +250,25 @@ def test_summary_and_runtime_overlay_live_status(temp_job_env: Path):
     rt_view = core.read_runtime_view(job_id)
     assert rt_view["status"] == "running"
     assert rt_view["progress_done"] == 10
+
+
+def test_state_cache_keeps_one_entry_per_job(temp_job_env: Path):
+    """A changed file signature replaces the job's cache entry, not adds one."""
+    job_id = "test-job-one-entry"
+    state = core.new_job_state("sample.docx")
+    state["pairs"] = [{"source": "Hello", "target": "你好"}]
+    core.save_job_state(job_id, state)
+    other = "test-job-other"
+    core.save_job_state(other, core.new_job_state("other.docx"))
+    core.load_job_state(other)
+
+    path = repo.get_job_state_path(job_id)
+    for padding in range(1, 4):
+        # Change the signature behind the cache's back (no save, no invalidate).
+        path.write_text(path.read_text(encoding="utf-8") + " " * padding, encoding="utf-8")
+        assert core.load_job_state(job_id)["pairs"][0]["target"] == "你好"
+
+    keys = [k for k in repo._STATE_CACHE if k[0] == job_id]
+    assert len(keys) == 1
+    assert keys[0][2] == path.stat().st_size
+    assert [k for k in repo._STATE_CACHE if k[0] == other]
