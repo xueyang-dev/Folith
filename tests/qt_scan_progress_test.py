@@ -1,0 +1,89 @@
+"""扫描书识别期间的工作台：空状态显示识别进度；情境提示不再引用已删除的控件。"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+pytest.importorskip("PySide6")
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from folith.qt import i18n, views  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def chinese():
+    i18n.set_language("zh-CN")
+    yield
+
+
+def _bench(runtime, state=None):
+    bench = views.WorkbenchView()
+    bench._state = state if state is not None else {}
+    bench._all_rows = []
+    bench._last_runtime = runtime
+    bench._setup_view = None  # 没有准备视图 = 按「已开始」处理
+    return bench
+
+
+def _running(done, total=75, status="running"):
+    return {"status": status,
+            "stage_progress": {"completed": done, "total": total, "unit": "页"}}
+
+
+def test_empty_state_shows_recognition_progress_and_updates(app):
+    bench = _bench(_running(3))
+    bench._sync_segment_placeholder()
+    assert bench.no_segments_state.title_label.text() == "正在识别第 3/75 页"
+    assert "满 5 页后开始翻译" in bench.no_segments_state.hint_label.text()
+    assert "点上方" not in bench.no_segments_state.hint_label.text()
+    bench._last_runtime = _running(4)
+    bench._sync_segment_placeholder()
+    assert bench.no_segments_state.title_label.text() == "正在识别第 4/75 页"
+
+
+def test_empty_state_for_a_short_book_and_for_a_paused_run(app):
+    bench = _bench(_running(1, total=3, status="paused"))
+    bench._sync_segment_placeholder()
+    assert bench.no_segments_state.title_label.text() == "正在识别第 1/3 页"
+    assert "满 3 页后开始翻译" in bench.no_segments_state.hint_label.text()
+
+
+def test_other_runs_keep_the_ordinary_empty_state(app):
+    for runtime in ({}, {"status": "idle", "stage_progress": {"completed": 2, "total": 9, "unit": "页"}},
+                    {"status": "running", "stage_progress": {"completed": 2, "total": 9, "unit": "批次"}}):
+        bench = _bench(runtime)
+        bench._sync_segment_placeholder()
+        assert bench.no_segments_state.title_label.text() == "还没有可编辑的段落"
+
+
+def test_offer_tips_does_not_reference_removed_controls(app):
+    from folith.qt import window as window_module
+
+    offered = []
+    bench = SimpleNamespace(
+        _showing_setup=False, _pdf_ok=True,
+        current_page_id=lambda: "translate",
+        check_button=SimpleNamespace(tone=lambda: "ok"),
+        run_status=object(),
+        view_source_button=SimpleNamespace(isVisible=lambda: True))
+    marks = SimpleNamespace(showing=lambda: False,
+                            offer=lambda tip, anchor: offered.append((tip, anchor)) or True)
+    stack = SimpleNamespace(currentWidget=lambda: bench)
+    fake = SimpleNamespace(stack=stack, workbench=bench, isVisible=lambda: True,
+                           coach_marks=lambda: marks)
+    assert window_module.MainWindow._offer_tips(fake, {"status": "idle"}) == "pdf"
+    assert offered[0][1] is bench.view_source_button
+    bench.view_source_button = SimpleNamespace(isVisible=lambda: False)
+    assert window_module.MainWindow._offer_tips(fake, {"status": "idle"}) == ""

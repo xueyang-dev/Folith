@@ -1753,5 +1753,7 @@
   "{v0} 个任务#one": "{v0} task",
   "{v0} 个需要处理#one": "{v0} needs attention",
   "在左侧展开本任务的术语表": "Open this task's glossary on the left",
-  "收起术语": "Close glossary"
+  "收起术语": "Close glossary",
+  "正在识别第 {v0}/{v1} 页": "Recognising page {v0}/{v1}",
+  "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "Translation starts once {v0} pages are read. Recognised pages are saved and are not re-read after a pause or reopen."
 }

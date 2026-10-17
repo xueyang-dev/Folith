@@ -10525,15 +10525,64 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
     return start, len(paras)
 
 
+_SCAN_EVENT_EVERY_PAGES = 5  # 用户可见事件的最小间隔页数；进度条逐页更新
+
+
+def _scan_stream_tick(job_id, state, tracker, done, total, retried):
+    """等窗口期间主线程的逐页钩子：更新进度，并在暂停时到达暂停检查点。
+
+    必须在 ScanStream 的锁外调用：暂停会阻塞在这里，识别线程要能继续把
+    已在途的页存下来。
+    """
+    if done != tracker["done"] or retried != tracker["retried"]:
+        tracker["done"], tracker["retried"] = done, retried
+        detail = f"视觉识别 {done}/{total} 页"
+        if retried:
+            detail += f"（其中 {retried} 页重试后读成）"
+        emit = done >= total or done - tracker["event_at"] >= _SCAN_EVENT_EVERY_PAGES
+        extra = {}
+        if emit:
+            tracker["event_at"] = done
+            extra = dict(event=f"【阶段一】{detail}", event_name="scan_progress",
+                         event_visibility="user", event_category="progress")
+        # 不传 status：暂停请求期间保持 pausing，不能被这里改回 running。
+        update_runtime_state(
+            job_id, progress=True,
+            stage_progress={"completed": done, "total": total, "unit": "页",
+                            "in_flight": []},
+            operation_label="视觉识别", phase_label=detail, **extra)
+    runtime = load_runtime_state(job_id) or {}
+    if runtime.get("pause_requested") and not runtime.get("cancel_requested"):
+        # 已在途的页让它们读完并存进检查点；不再提交新页（page_gate 拦着）。
+        save_job_state(job_id, state)
+        if runtime.get("status") != "paused":
+            update_runtime_state(
+                job_id, phase_label="正在暂停：等正在识别的页完成",
+                event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
+                event_visibility="user", event_category="lifecycle")
+    _runtime_pause_checkpoint(job_id)
+    if _runtime_cancel_requested(job_id):
+        raise RuntimeError("任务已请求取消")
+
+
 def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
                          ocr_mode, on_status=None):
-    """等下一个窗口识别完并提交；返回新增翻译单元的区间（可能为空）。"""
+    """等下一个窗口识别完并提交；返回新增翻译单元的区间（可能为空）。
+
+    第一个窗口（还没有任何可译段落时）只要 ``first_window_pages`` 页，让译文尽早
+    出现；之后每个窗口 ``window_pages`` 页。
+    """
     previous_pages = int((state.get("streaming_ingest") or {}).get("pages_done") or 0)
-    target = max(stream.pages_done, previous_pages) + stream.window_pages
+    window = stream.window_pages if state.get("paras") else stream.first_window_pages
+    target = max(stream.pages_done, previous_pages) + window
     if on_status:
         on_status(f"【阶段一】视觉识别：{stream.pages_done}/{stream.pages_total} 页"
                   f"（满 {min(target, stream.pages_total)} 页后先交给翻译）…")
-    stream.wait_for_pages(target)
+    tracker = {"done": stream.pages_done, "retried": stream.pages_retried,
+               "event_at": stream.pages_done}
+    stream.wait_for_pages(
+        target, on_tick=lambda done, total, retried: _scan_stream_tick(
+            job_id, state, tracker, done, total, retried))
     snapshot = stream.snapshot()
     start, end = _commit_scan_stream(
         state, snapshot, filename=filename, facts=stream.facts,
@@ -11125,7 +11174,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             except Exception:
                 pass
             if on_status:
-                on_status("【阶段一】视觉识别（边识别边翻译：每识别 20 页先交给翻译）…")
+                from folith import streaming_ingest as _streaming_ingest
+                on_status(
+                    f"【阶段一】视觉识别（边识别边翻译：先识别 {_streaming_ingest.FIRST_WINDOW_PAGES} 页"
+                    f"即开始翻译，之后每 {_streaming_ingest.DEFAULT_WINDOW_PAGES} 页交给翻译一次）…")
             scan_stream = _start_scan_stream(
                 job_id, filename, file_bytes, online_config=effective_online_config,
                 source_language=effective_source_language,
