@@ -340,14 +340,19 @@ def _la_apply_decision(row, decision):
     except Exception as exc:
         return False, f"处理失败：{exc}"
     if ok and decision == "project_term":
-        try:
-            project = core.promote_job_to_project(
-                row["job_id"], actor="用户", state=state)
-        except Exception as exc:
-            return False, f"候选已接受并写入任务术语表，但提升到项目记忆失败：{exc}"
-        if project is None:
-            return False, "候选已接受并写入任务术语表，但项目记忆不可用"
-        message = f"{message}；已提升到项目「{project.get('name') or '未命名项目'}」"
+        owner = core.project_for_job(row["job_id"])
+        if owner is None or core.is_system_project(owner):
+            message = f"{message}；任务在「未分类」里，术语只写入这个任务自己的术语表"
+        else:
+            try:
+                project, report = core.promote_term_to_project(
+                    row["job_id"], str(row.get("source") or ""), actor="用户")
+            except Exception as exc:
+                return False, f"候选已接受并写入任务术语表，但收进项目术语库失败：{exc}"
+            name = project.get("name") or "未命名项目"
+            message = (f"{message}；和项目「{name}」术语库里的译名不一致，已放进待审核"
+                       if report.get("conflicts")
+                       else f"{message}；已加入项目术语，收进项目「{name}」的术语库")
     return bool(ok), str(message or "")
 
 

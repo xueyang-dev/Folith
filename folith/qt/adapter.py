@@ -2213,7 +2213,7 @@ def library_data(tm_project_id: str = "") -> dict:
 
 
 def decide_candidate(row: dict, decision: str) -> str:
-    """审核一条候选词条；"接受为项目术语"还会把任务提升进项目记忆。返回说明。"""
+    """审核一条候选词条；"接受为项目术语"只把这一条术语收进项目术语库。返回说明。"""
     if decision not in CANDIDATE_DECISIONS:
         raise AdapterError(f"不支持的审核决定：{decision}")
     try:
@@ -2224,21 +2224,34 @@ def decide_candidate(row: dict, decision: str) -> str:
     if not ok:
         raise AdapterError(str(message or "处理失败"))
     if decision == "project_term":
-        try:
-            project = core.promote_job_to_project(row["job_id"], actor="用户", state=state)
-        except Exception as exc:  # noqa: BLE001 - 候选已写入任务术语表，提升失败要如实说
-            raise AdapterError(f"候选已接受并写入任务术语表，但提升到项目记忆失败：{exc}") from exc
-        if project is None:
-            raise AdapterError("候选已接受并写入任务术语表，但项目记忆不可用")
-        message = f"{message}；已提升到项目「{project.get('name') or '未命名项目'}」"
+        message = f"{message}；{_promote_accepted_term(row, str(row.get('source') or ''))}"
     return str(message or "")
+
+
+def _promote_accepted_term(row: dict, source: str) -> str:
+    """候选被接受后，只把**这一条**术语提升进项目术语库；返回一句说明。
+
+    任务在「未分类」时不提升（那里没有项目术语库），术语只留在任务自己的术语表里。
+    项目里已有另一个任务给出的不同译名时，进「待审核」，不覆盖。
+    """
+    owner = core.project_for_job(row["job_id"])
+    if owner is None or core.is_system_project(owner):
+        return "任务在「未分类」里，术语只写入这个任务自己的术语表"
+    try:
+        project, report = core.promote_term_to_project(row["job_id"], source, actor="用户")
+    except Exception as exc:  # noqa: BLE001 - 候选已写入任务术语表，提升失败要如实说
+        raise AdapterError(f"候选已接受并写入任务术语表，但收进项目术语库失败：{exc}") from exc
+    name = project.get("name") or "未命名项目"
+    if report.get("conflicts"):
+        return f"和项目「{name}」术语库里的译名不一致，已放进待审核，没有覆盖"
+    return f"已收进项目「{name}」的术语库"
 
 
 def accept_candidate_with(row: dict, target: str) -> str:
     """先改建议译文再接受为项目术语（候选的译法不对时，不必先接受再去改）。
 
     接受后在该任务的术语表里找到这条术语，把首选译名改成用户写的（生成新的术语
-    版本），然后再提升到项目记忆——项目里存的就是改过的译名。
+    版本），然后只把这一条提升到项目术语库——项目里存的就是改过的译名。
     """
     target = str(target or "").strip()
     if not target:
@@ -2259,9 +2272,7 @@ def accept_candidate_with(row: dict, target: str) -> str:
         update_glossary_entry(row["job_id"], str(entry.get("id")), preferred=target,
                               status="locked", domain=str(entry.get("domain") or ""),
                               note=str(entry.get("note") or ""))
-    project = core.promote_job_to_project(row["job_id"], actor="用户")
-    name = (project or {}).get("name") or "未命名项目"
-    return f"已接受「{row.get('source')} → {target}」并提升到项目「{name}」"
+    return f"已接受「{row.get('source')} → {target}」；{_promote_accepted_term(row, str(entry.get('source') or ''))}"
 
 
 def decide_candidates(rows: Sequence[dict], decision: str) -> dict:

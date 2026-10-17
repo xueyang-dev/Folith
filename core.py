@@ -636,6 +636,14 @@ from folith.engine.projects import (  # noqa: F401  (re-export: core keeps its p
     list_projects,
     list_unassigned_jobs,
     load_project,
+    move_jobs_to_project,
+    preview_move_jobs,
+    project_direction,
+    promote_term_to_project,
+    remove_project_term,
+    set_project_direction,
+    set_project_term,
+    suggest_project_for_direction,
     project_for_job,
     project_injection,
     project_memory_view,
@@ -10723,7 +10731,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     # 只对尚未开始工作的任务注入：进行中的任务不能因为项目记忆变化而改术语。
     project_entries: list = []
     if not state.get("glossary") and not str(state.get("glossary_frozen") or ""):
-        project_entries, project_style, project_meta = _project_memory_injection(state)
+        project_entries, project_style, project_meta = _project_memory_injection(
+            state, target_lang=target_lang)
         if project_entries or project_style:
             known = {str(e.get("source") or "").casefold()
                      for e in normalize_glossary(list(user_glossary or []))}
