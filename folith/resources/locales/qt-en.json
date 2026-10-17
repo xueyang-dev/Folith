@@ -1955,5 +1955,7 @@
   "项目术语库里是「{v0}」，这里建议「{v1}」。确认会改用新译名；保留则什么都不变。": "The project glossary has “{v0}”; this suggests “{v1}”. Confirming switches to the new translation; keeping changes nothing.",
   "任务术语表": "Task glossary",
   "全部来源": "All sources",
-  "{v0} 条术语，{v1} 条已确认": "{v0} terms, {v1} confirmed"
+  "{v0} 条术语，{v1} 条已确认": "{v0} terms, {v1} confirmed",
+  "正在识别第 {v0}/{v1} 页": "Recognising page {v0}/{v1}",
+  "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "Translation starts once {v0} pages are read. Recognised pages are saved and are not re-read after a pause or reopen."
 }

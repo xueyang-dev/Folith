@@ -4602,6 +4602,22 @@ class WorkbenchView(QWidget):
         """把新建的项目填进准备面板的选择器并选中（见 ``TaskSetupPanel.add_project``）。"""
         self.setup_panel.add_project(project_id, name)
 
+    def _recognition_progress(self) -> tuple[int, int] | None:
+        """扫描书正在后台识别、还没有段落提交时的 (已识别页, 总页)；否则 None。
+
+        识别进度由运行时状态逐页更新（``stage_progress`` 单位为「页」）。
+        """
+        runtime = self._last_runtime or {}
+        if str(runtime.get("status") or "") not in RUNNING_STATUSES | {"paused"}:
+            return None
+        progress = runtime.get("stage_progress") or {}
+        if str(progress.get("unit") or "") != "页":
+            return None
+        total = int(progress.get("total") or 0)
+        if total <= 0:
+            return None
+        return min(int(progress.get("completed") or 0), total), total
+
     def _sync_segment_placeholder(self) -> None:
         """决定正文区放什么：译前准备 / 段落网格 / 空状态说明。
 
@@ -4627,6 +4643,15 @@ class WorkbenchView(QWidget):
         if show_setup or has_rows:
             return
         state = self._state or {}
+        recognising = self._recognition_progress()
+        if recognising and not (state.get("paras") or state.get("pairs")):
+            done, total = recognising
+            from folith.streaming_ingest import FIRST_WINDOW_PAGES
+            self.no_segments_state.set_text(
+                i18n.tr('正在识别第 {v0}/{v1} 页', v0=done, v1=total),
+                i18n.tr('满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。',
+                        v0=min(FIRST_WINDOW_PAGES, total)))
+            return
         if state.get("excluded_segments"):
             title = "所有段落都被排除了"
             hint = ("被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，"

@@ -274,3 +274,142 @@ def test_layout_flags_are_decoded_and_bad_values_ignored():
                               '{"t":"paragraph","s":"c d","p":"yes"}]}')
     assert (blocks[0].continues_previous, blocks[0].continues_next) == (True, False)
     assert (blocks[1].continues_previous, blocks[1].continues_next) == (None, None)
+
+
+# ---- 暂停 / 逐页进度 / 首窗口 -------------------------------------------------
+
+class SlowVisionProvider:
+    """每页慢慢读（单线程），记录每页被请求的次数。"""
+
+    cache_identity = None
+
+    def __init__(self, delay=0.3):
+        self.delay = delay
+        self.requests = {}
+        self.lock = threading.Lock()
+
+    def understand_page(self, envelope):
+        with self.lock:
+            self.requests[envelope.page_index] = self.requests.get(envelope.page_index, 0) + 1
+        threading.Event().wait(self.delay)
+        return PageUnderstanding(page_blocks(envelope.page_index), "vlm",
+                                 {"model": "slow", "attempt_count": 2 if envelope.page_index == 1 else 1})
+
+
+def _wait(predicate, timeout=20.0):
+    import time
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+@pytest.fixture
+def slow_job(streaming_job, monkeypatch):
+    _vision, started, args = streaming_job
+    started.set()
+    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "1")
+    slow = SlowVisionProvider()
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (slow, None))
+    outcome = {}
+
+    def run(job_id, pages=30):
+        def target():
+            try:
+                outcome["state"] = core.run_job_pipeline(job_id, "scan.pdf", scanned_pdf(pages), **args)
+            except BaseException as exc:  # noqa: BLE001
+                outcome["error"] = exc
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        return thread
+
+    return slow, outcome, run
+
+
+def _runtime(job_id):
+    return core.load_runtime_state(job_id)
+
+
+def test_first_window_is_five_pages():
+    from folith.streaming_ingest import DEFAULT_WINDOW_PAGES, FIRST_WINDOW_PAGES, ScanStream
+    assert FIRST_WINDOW_PAGES == 5 and DEFAULT_WINDOW_PAGES == 20
+    stream = ScanStream("a.pdf", scanned_pdf(3), SlowVisionProvider(0))
+    try:
+        assert stream.first_window_pages == 5 and stream.window_pages == 20
+    finally:
+        stream.close()
+
+
+def test_translation_starts_after_first_window_not_twenty(slow_job, monkeypatch):
+    slow, outcome, run = slow_job
+    original = core._advance_scan_stream
+    commits = []
+
+    def spy(job_id, state, *a, **k):
+        result = original(job_id, state, *a, **k)
+        commits.append(state["streaming_ingest"]["pages_done"])
+        return result
+
+    monkeypatch.setattr(core, "_advance_scan_stream", spy)
+    run("first-window", 30).join(60)
+    assert "error" not in outcome, outcome.get("error")
+    # 单线程慢读：第一次提交恰在 5 页（至多多一两页在途）；下一窗口再加 20 页。
+    assert 5 <= commits[0] <= 7
+    assert commits[1] == 30 or commits[1] - commits[0] >= 20
+
+
+def test_progress_moves_per_page_and_pause_does_not_deadlock(slow_job):
+    slow, outcome, run = slow_job
+    thread = run("pause-job")
+    # 每完成一页，进度条与「最后进展」就更新（窗口还没满，没有任何提交）。
+    assert _wait(lambda: int((_runtime("pause-job").get("stage_progress") or {}).get("completed") or 0) >= 1)
+    first = _runtime("pause-job")
+    assert first["stage_progress"]["unit"] == "页" and first["stage_progress"]["total"] == 30
+    assert first["last_progress_at"]
+    assert _wait(lambda: int(_runtime("pause-job")["stage_progress"]["completed"]) >= 2)
+
+    core.update_runtime_state("pause-job", pause_requested=True, status="pausing")
+    assert _wait(lambda: _runtime("pause-job")["status"] == "paused", timeout=5), \
+        "暂停应在一页的在途时间内到达，而不是等窗口满"
+    paused_at = int(_runtime("pause-job")["stage_progress"]["completed"])
+    assert paused_at < 5  # 首窗口没满就暂停了
+    assert core.load_job_state("pause-job") is not None
+    import time
+    time.sleep(1.2)  # 暂停期间不再提交新页（在途的页可以读完）
+    assert int(_runtime("pause-job")["stage_progress"]["completed"]) <= paused_at + 2
+    assert thread.is_alive()
+
+    core.update_runtime_state("pause-job", pause_requested=False, status="running")
+    thread.join(60)
+    assert not thread.is_alive() and "error" not in outcome, outcome.get("error")
+    state = outcome["state"]
+    assert state["streaming_ingest"]["status"] == "complete" and state["p2_done"]
+    assert set(slow.requests.values()) == {1}  # 续跑没有重读任何一页
+    assert len(slow.requests) == 30
+    events = [e["message"] for e in _runtime("pause-job")["events"]]
+    assert any("正在暂停：等正在识别的页完成" in m for m in events)
+    # 事件日志不逐页刷屏：30 页最多每 5 页一条进度事件。
+    assert sum(1 for e in _runtime("pause-job")["events"] if e["event"] == "scan_progress") <= 7
+
+
+def test_cancel_while_paused_during_streaming(slow_job):
+    slow, outcome, run = slow_job
+    thread = run("cancel-job")
+    assert _wait(lambda: int((_runtime("cancel-job").get("stage_progress") or {}).get("completed") or 0) >= 1)
+    core.update_runtime_state("cancel-job", pause_requested=True, status="pausing")
+    assert _wait(lambda: _runtime("cancel-job")["status"] == "paused", timeout=5)
+    core.update_runtime_state("cancel-job", cancel_requested=True)
+    thread.join(30)
+    assert not thread.is_alive()
+    assert isinstance(outcome.get("error"), RuntimeError) and "取消" in str(outcome["error"])
+
+
+def test_cancel_while_waiting_for_window(slow_job):
+    slow, outcome, run = slow_job
+    thread = run("cancel-wait")
+    assert _wait(lambda: int((_runtime("cancel-wait").get("stage_progress") or {}).get("completed") or 0) >= 1)
+    core.update_runtime_state("cancel-wait", cancel_requested=True)
+    thread.join(30)
+    assert not thread.is_alive() and "取消" in str(outcome.get("error"))

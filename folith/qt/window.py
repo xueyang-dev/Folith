@@ -2992,8 +2992,9 @@ class MainWindow(QMainWindow):
             status = str((runtime or {}).get("status") or "")
             if status in views_module.RUNNING_STATUSES:
                 candidates.append(("translate", bench.run_status))
-            if getattr(bench, "_pdf_ok", False):
-                candidates.append(("pdf", bench.source_button))
+            # 原页入口是检查器里的「原位置」；它只在选中段落后才可见。
+            if getattr(bench, "_pdf_ok", False) and bench.view_source_button.isVisible():
+                candidates.append(("pdf", bench.view_source_button))
         for tip, anchor in candidates:
             if marks.offer(tip, anchor):
                 return tip
