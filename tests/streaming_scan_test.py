@@ -687,3 +687,48 @@ def test_recovered_page_returns_to_its_place_without_touching_existing_translati
         resumed["streaming_ingest"]["paragraph_pages"])
     # 译文内容也是按页序：导出读的就是这份 pairs。
     assert core.validate_delivery_translation_state(resumed)["status"] != "fail"
+
+
+# ---- 暂停后换了视觉模型：没读的页改用新连接 ----
+
+def test_resume_after_a_halt_reads_the_remaining_pages_with_the_new_provider(tmp_path):
+    from folith.streaming_ingest import ScanStream
+    old = ScriptedVisionProvider({i: _page_error("service_error", 524) for i in range(2, 40)})
+    new = ScriptedVisionProvider(identity={"provider": "relay", "model": "other-model"})
+    stream = ScanStream("a.pdf", scanned_pdf(14), old, checkpoint_dir=tmp_path, workers=1)
+    assert _wait(lambda: stream.streak_tripped, timeout=20)
+    assert stream.timeout_streak == 3 and not stream.finished
+    stream.swap_provider(new, "relay · other-model")
+    assert stream.provider_label == "relay · other-model"
+    stream.clear_halt()
+    snapshot = _drain(stream)
+    stream.close()
+    assert snapshot["finished"] and snapshot["failed_pages"] == []
+    assert max(old.requests) <= 2 + 3 + 2  # 旧连接只可能收到暂停前已在途的请求
+    assert set(new.requests) >= {7, 8, 13}  # 没读的页全部走新连接
+    assert any("Page 14 " in p for p in snapshot["paragraphs"])
+
+
+def test_pipeline_continue_after_auto_pause_uses_the_changed_vision_connection(streaming_job, monkeypatch):
+    _vision, started, args = streaming_job
+    started.set()
+    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "1")
+    old = ScriptedVisionProvider({i: _page_error("service_error", 524) for i in range(2, 30)})
+    new = ScriptedVisionProvider(identity={"provider": "relay", "model": "other-model"})
+    current = {"provider": old}
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (current["provider"], None))
+    book, outcome = scanned_pdf(30), {}
+    thread = threading.Thread(
+        target=lambda: outcome.update(state=core.run_job_pipeline(
+            "swap", "scan.pdf", book, **args)), daemon=True)
+    thread.start()
+    assert _wait(lambda: _runtime("swap").get("status") == "paused", timeout=20)
+
+    current["provider"] = new  # 用户在设置里换了视觉模型，然后点「继续」
+    core.update_runtime_state("swap", pause_requested=False, status="running")
+    thread.join(60)
+    assert not thread.is_alive() and outcome["state"]["p2_done"]
+    assert max(old.requests) <= 2 + 3 + 2
+    assert set(new.requests) >= {10, 20, 29}
+    assert outcome["state"]["streaming_ingest"]["failed_pages"] == []
+    assert any("other-model" in str(event) for event in core.read_runtime_events("swap"))

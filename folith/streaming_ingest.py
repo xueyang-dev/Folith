@@ -30,6 +30,50 @@ TIMEOUT_STREAK_LIMIT = 3
 _WAIT_SLICE_S = 0.5
 
 
+class _ProviderHub:
+    """可以中途换掉的读页 provider：暂停后用户换了视觉模型，没读的页改用新连接。
+
+    识别线程池里每个读页线程按需 ``clone()`` 自己的一份 provider（传输层把单次请求的
+    诊断写在实例上）；``current`` 换掉之后，各线程在下一页请求前重新克隆，在途的请求
+    由旧连接读完。
+    """
+
+    def __init__(self, provider):
+        self.current = provider
+
+    @property
+    def cache_identity(self):
+        return getattr(self.current, "cache_identity", None)
+
+    def clone(self):
+        return _HubWorker(self)
+
+    def understand_page(self, envelope):
+        return self.current.understand_page(envelope)
+
+
+class _HubWorker:
+    def __init__(self, hub):
+        self._hub = hub
+        self._seen = None
+        self._provider = None
+
+    def _resolve(self):
+        current = self._hub.current
+        if current is not self._seen:
+            clone = getattr(current, "clone", None)
+            self._provider = clone() if callable(clone) else current
+            self._seen = current
+        return self._provider
+
+    @property
+    def transport(self):
+        return getattr(self._provider, "transport", None)
+
+    def understand_page(self, envelope):
+        return self._resolve().understand_page(envelope)
+
+
 class ScanStream:
     """后台逐页识别一份 PDF，主线程按需取走定稿的段落。"""
 
@@ -78,7 +122,7 @@ class ScanStream:
             return self._stop.is_set() or bool(gate and gate())
 
         self._cancelled = cancelled
-        self._filename, self._data, self._provider = filename, data, provider
+        self._filename, self._data, self._provider = filename, data, _ProviderHub(provider)
         self._spatial_engine, self._dpi = spatial_engine, dpi
         self._checkpoint_dir, self._workers = checkpoint_dir, workers
 
@@ -108,6 +152,11 @@ class ScanStream:
     @property
     def streak_tripped(self) -> bool:
         return self._halted.is_set()
+
+    def swap_provider(self, provider, label: str = "") -> None:
+        """换视觉连接：之后才开始读的页（含补读）用新 provider，已识别的页缓存照常复用。"""
+        self._provider.current = provider
+        self.provider_label = label
 
     def clear_halt(self) -> None:
         """主线程已暂停并继续（用户可能已换模型）：重新计数，识别继续。"""

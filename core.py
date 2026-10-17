@@ -10626,9 +10626,39 @@ def _reconcile_vision_connection(job_id, state):
     return message
 
 
+def _vlm_label(provider):
+    identity = getattr(provider, "cache_identity", None) or {}
+    return " · ".join(str(identity.get(key)) for key in ("provider", "model")
+                      if identity.get(key))
+
+
+def _refresh_scan_provider(job_id, stream, state):
+    """暂停后继续：视觉连接换了，没读的页改用新连接（已识别的页照常复用缓存）。"""
+    refresh = getattr(stream, "refresh_provider", None)
+    if refresh is None:
+        return False
+    try:
+        provider = refresh(state)
+    except Exception:  # noqa: BLE001 - 新连接配不出来就继续用原来的
+        return False
+    old = stream._provider.current
+    old_identity = getattr(old, "cache_identity", None)
+    new_identity = getattr(provider, "cache_identity", None)
+    if provider is None or (provider is old if old_identity is None and new_identity is None
+                            else new_identity == old_identity):
+        return False
+    label = _vlm_label(provider)
+    stream.swap_provider(provider, label)
+    message = f"视觉连接已更换，未识别的页改用『{label or '新连接'}』继续"
+    update_runtime_state(job_id, event=message, event_name="vision_connection_switched",
+                         event_visibility="user", event_category="orchestration",
+                         phase_label=message)
+    return True
+
+
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                        source_language=None, ocr_language=None, ocr_psm=None,
-                       failed_pages=None):
+                       failed_pages=None, online_config_resolver=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
 
@@ -10643,9 +10673,7 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
         ocr_online_config=online_config, cancel_check=cancel_check,
         source_language=source_language, ocr_language=ocr_language,
         ocr_psm=ocr_psm)
-    identity = getattr(provider, "cache_identity", None) or {}
-    label = " · ".join(str(identity.get(key)) for key in ("provider", "model")
-                       if identity.get(key))
+    label = _vlm_label(provider)
     # 上次没读成的页：这次读完全书后补读（文字接在末尾，已翻译的前文不动）。
     late = {int(row["page"]) - 1: row for row in failed_pages or []
             if isinstance(row, dict) and row.get("page")}
@@ -10653,6 +10681,15 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                         checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
                         page_gate=page_gate, late_pages=late, provider_label=label)
     stream.facts = _pdf_extraction_facts(file_bytes)
+
+    def refresh_provider(state):
+        config = online_config_resolver(state) if online_config_resolver else online_config
+        return _vlm_runtime(
+            ocr_online_config=config, cancel_check=cancel_check,
+            source_language=source_language, ocr_language=ocr_language,
+            ocr_psm=ocr_psm)[0]
+
+    stream.refresh_provider = refresh_provider
     return stream
 
 
@@ -10946,6 +10983,8 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
     if tracker.pop("pausing", False) or tracker.get("streak"):
         # 继续之后：检查点恢复的是暂停前的旧标签，让下一个 tick 重写进度。
         tracker["done"] = -1
+        # 暂停期间用户可能换了视觉模型：没读的页改用新连接。
+        _refresh_scan_provider(job_id, stream, state)
     if tracker.pop("streak", False):
         tracker.pop("streak_message", None)
         stream.clear_halt()  # 用户可能已换了视觉模型：重新计数，识别继续
@@ -11573,6 +11612,18 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
 
     # ---------------- 阶段一（整本扫描书）：边识别边翻译 ----------------
     scan_stream = None
+
+    def _current_vision_config(current_state):
+        """继续时当下应使用的视觉连接（任务钉住的连接若与当前不同，按用户的选择取舍）。"""
+        if ocr_online is not None:
+            return effective_online_config
+        _reconcile_vision_connection(job_id, current_state)
+        fresh = _effective_ocr_source(
+            ocr_backend, current_state.get("pipeline_config") or {},
+            ocr_paddle_model=ocr_paddle_model, ocr_online=ocr_online,
+            prefer_saved=bool(current_state.get("pipeline_config")))[3]
+        return fresh or effective_online_config
+
     streaming_status = (state.get("streaming_ingest") or {}).get("status")
     if not state.get("p2_done") and (
             streaming_status == "running"
@@ -11598,7 +11649,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 job_id, filename, file_bytes, online_config=effective_online_config,
                 source_language=effective_source_language,
                 ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
-                failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"))
+                failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"),
+                online_config_resolver=_current_vision_config)
             registry = _SCAN_STREAMS.get()
             if registry is not None:
                 registry.append(scan_stream)
