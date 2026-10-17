@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from folith import language_assets as assets
 from folith import source_languages
 
 from . import adapter
@@ -29,8 +30,11 @@ def _label(text: str = "", role: str = "body", *, wrap: bool = False) -> QLabel:
 
 
 def _dir(label: str) -> str:
-    """方向短写（"英 → 中"）按界面语言翻译各个字。"""
-    return " → ".join(i18n.tr_dynamic(part.strip()) for part in str(label).split("→"))
+    """方向短写（"英 → 中"）：中文界面用单字，其它语言用语言代码。"""
+    if i18n.language() == i18n.DEFAULT_LANGUAGE:
+        return str(label)
+    return " → ".join(assets.SHORT_LANGUAGE_CODES.get(part.strip()) or i18n.tr_dynamic(part.strip())
+                      for part in str(label).split("→"))
 
 
 def _sheet_base(dialog: QDialog, title: str, width: int) -> QVBoxLayout:

@@ -47,7 +47,11 @@ def _text(text: str = "", role: str = "body", *, wrap: bool = False) -> QLabel:
 
 
 def _dir(label: str) -> str:
-    return " → ".join(i18n.tr_dynamic(part.strip()) for part in str(label).split("→"))
+    """方向短写（"英 → 中"）：中文界面用单字，其它语言用语言代码。"""
+    if i18n.language() == i18n.DEFAULT_LANGUAGE:
+        return str(label)
+    return " → ".join(assets.SHORT_LANGUAGE_CODES.get(part.strip()) or i18n.tr_dynamic(part.strip())
+                      for part in str(label).split("→"))
 
 
 def _tone_color(tone: str) -> str:

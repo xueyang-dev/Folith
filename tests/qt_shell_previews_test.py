@@ -252,7 +252,7 @@ def window(tmp_path, monkeypatch, app):
     app.processEvents()
 
 
-def test_sidebar_stays_on_the_left_for_tasks_projects_and_terms(window, app):
+def test_sidebar_stays_on_the_left_for_tasks_and_projects(window, app):
     main = window["window"]
     home = main.home
     assert main.sidebar.parent() is not home, "侧栏属于窗口，不只属于任务库"
@@ -269,11 +269,7 @@ def test_sidebar_stays_on_the_left_for_tasks_projects_and_terms(window, app):
     app.processEvents()
     assert home.manage_projects_button.isChecked()
 
-    home.library_button.click()
-    app.processEvents()
-    assert main.stack.currentWidget() is main.library
-    assert main.sidebar.isVisible() and home.library_button.isChecked()
-    assert not main.library.back_button.isVisible(), "返回入口是侧栏的「任务库」"
+    assert not hasattr(home, "library_button"), "术语与翻译记忆已并入项目，侧栏不再有单独入口"
 
     home.tasks_button.click()
     app.processEvents()

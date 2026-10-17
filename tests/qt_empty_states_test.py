@@ -22,7 +22,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from folith.qt import adapter, style, views  # noqa: E402
-from folith.qt.library_view import LibraryView  # noqa: E402
+from folith.qt.projects_view import ProjectsView  # noqa: E402
 from folith.qt.review_panel import ReviewPanel  # noqa: E402
 from folith.qt.terms_panel import TermsPanel  # noqa: E402
 
@@ -85,17 +85,38 @@ def test_terms_with_no_entries_is_one_empty_state(app):
     assert panel.delete_button.isHidden(), "没有选中行，作用于选中行的操作不出现"
 
 
-def test_language_assets_tabs_empty_out_cleanly(app):
-    view = LibraryView()
-    view.apply({})
-    assert view.cand_body.isHidden() and not view.cand_empty_state.isHidden()
-    assert view.term_body.isHidden() and not view.term_empty_state.isHidden()
-    assert view.tm_body.isHidden() and not view.tm_empty_state.isHidden()
-    assert not view.tm_project.isHidden(), "翻译记忆空了也要能切换项目"
+def test_projects_page_with_no_projects_is_one_empty_state(app):
+    view = ProjectsView()
+    view.resize(1200, 800)
+    view.apply_overview({})
+    assert not view.empty.isHidden(), "没有项目也没有「未分类」时整页让位给一个空状态"
+    assert view.tab_bar.isHidden() and view.pages.isHidden()
     asked = []
-    view.newTermRequested.connect(lambda: asked.append(True))
-    view.term_empty_state.action_button.click()
+    view.new_button.clicked.disconnect()
+    view.new_button.clicked.connect(lambda: asked.append(True))
+    view.new_button.click()
     assert asked == [True]
+
+
+def test_project_tabs_empty_out_cleanly(app):
+    view = ProjectsView()
+    view.apply_overview({"projects": [{"project_id": "p1", "name": "空项目", "job_count": 0,
+                                       "pending": 0, "archived": False, "is_system": False,
+                                       "direction_label": "未设定", "description": ""}],
+                         "unsorted": None, "pending_total": 0})
+    view.apply_detail({"project": {"project_id": "p1", "name": "空项目", "direction_label": "未设定",
+                                   "description": ""},
+                       "terms": [], "tm": [], "tasks": [], "log": [], "style_rule_count": 0,
+                       "conflict_count": 0, "review_tasks": 0,
+                       "review": {"groups": [], "collapsed": 0, "counts": {}, "total": 0,
+                                  "items": []}})
+    assert view.term_table.isHidden() and not view.term_empty.isHidden()
+    assert view.tm_table.isHidden() and not view.tm_empty.isHidden()
+    assert view.review_tree.isHidden() and not view.review_empty.isHidden()
+    added = []
+    view._add_term = lambda values=None: added.append(True)
+    view.term_empty.action_button.click()
+    assert added == [True]
 
 
 def _job(job_id: str) -> adapter.JobRow:

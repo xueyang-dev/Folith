@@ -119,33 +119,18 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def test_knowledge_dialog_resolves_conflicts(qapp, conflicted):
-    from folith.qt.dialogs import ProjectKnowledgeDialog
-
-    project = next(p for p in adapter.project_rows() if p["project_id"] == conflicted)
-    dialog = ProjectKnowledgeDialog(project)
-    assert dialog.conflicts.count() == 2 and dialog.adopt_button.isEnabled()
-    dialog.keep_button.click()
-    assert dialog.conflicts.count() == 1
-    dialog.keep_all_button.click()
-    assert dialog.conflicts.count() == 0 and not dialog.keep_all_button.isEnabled()
-    assert "锁定术语" in dialog.summary.toPlainText()
-
-
-def test_project_dialog_exposes_the_memory_actions(qapp, env):
-    from folith.qt.dialogs import ProjectDialog
-    from folith.qt.workers import TaskRunner
+def test_projects_view_exposes_the_memory_actions(qapp, env):
+    from folith.qt.projects_view import ProjectsView
 
     local = _local_project()
-    dialog = ProjectDialog(TaskRunner()) if "runner" in ProjectDialog.__init__.__code__.co_varnames \
-        else ProjectDialog()
-    assert not dialog.knowledge_button.isEnabled(), "没选中项目时不能打开项目知识"
-    for row in range(dialog.table.rowCount()):
-        if dialog._rows[row]["project_id"] == local["project_id"]:
-            dialog.table.selectRow(row)
-    assert dialog.knowledge_button.isEnabled() and dialog.export_button.isEnabled()
-    target = env / "from-dialog.json"
-    dialog._export_memory(str(target))
+    view = ProjectsView()
+    view.apply_overview(adapter.projects_overview())
+    view.select(local["project_id"])
+    assert view.selected_project()["project_id"] == local["project_id"]
+    target = env / "from-view.json"
+    view._export_memory(str(target))
     assert target.is_file()
-    dialog._import_memory(str(target))
-    assert "生态学专著" in dialog.status.text()
+    view._import_memory(str(target))
+    assert "生态学专著" in view.status.text()
+    assert "删除项目…" in view.menu_labels() and "导入记忆…" in view.menu_labels()
+    assert "并入「未分类」记忆…" not in view.menu_labels()

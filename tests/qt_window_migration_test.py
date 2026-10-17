@@ -48,17 +48,22 @@ def _open(client, job_id):
     return window
 
 
-def test_library_candidates_can_be_decided_from_the_window(client):
+def test_project_review_candidates_can_be_decided_from_the_window(client):
     core = client["core"]
     _save(core, "wmlib000000001", _job("wmlib000000001", "alpha.docx",
           candidates=[_candidate("volumetric sensor", "体积传感器")]))
     window = client["window"]
-    window.show_library()
-    assert _pump(client["app"], 15, lambda: window.library.cand_table.rowCount() == 1), \
-        "语言资产页应读出这条候选"
-    window.library.cand_table.selectRow(0)
-    window.library.reject_button.click()
-    assert _pump(client["app"], 15, lambda: window.library.cand_table.rowCount() == 0)
+    window.manage_projects()
+    view = window.projects
+    assert _pump(client["app"], 15, lambda: view.selected_key() == "unsorted"
+                 and bool(view._detail)), "项目页应读出「未分类」的内容"
+    view._tab_changed("review")
+    view._toggle_singles()      # 这条候选只出现一次：默认收起，点「显示」展开
+    assert _pump(client["app"], 15, lambda: len(view._review_items) == 1), \
+        "待审核页应读出这条候选"
+    view.review_tree.selectRow(next(iter(view._review_rows)))
+    view.reject_button.click()
+    assert _pump(client["app"], 15, lambda: len(view._review_items) == 0)
     state = client["adapter"].load_state("wmlib000000001")
     assert state["knowledge_candidates"][0]["decision"] == "rejected"
 

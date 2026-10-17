@@ -1361,29 +1361,28 @@ def test_home_can_move_a_task_to_another_project(client, monkeypatch):
     app.processEvents()
     assert window.home.move_button.isEnabled() is True
 
-    # The chooser returns the target project (the dialog itself is native-ish UI;
-    # what matters is that the window acts on the choice).
-    class _Chooser:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
+    # 「移到项目」面板本身是模态界面；这里只关心窗口会照面板给出的请求去做。
+    class _Sheet:
+        def __init__(self, ids, *_args, **_kwargs) -> None:
+            self.ids = list(ids)
 
-        def exec(self) -> bool:
-            return True
+        def exec(self):
+            from PySide6.QtWidgets import QDialog
 
-        def selected_project(self) -> str:
-            return project_id
+            return QDialog.DialogCode.Accepted
 
-        def move_translations(self) -> bool:
-            return False
+        def request(self) -> dict:
+            return {"job_ids": self.ids, "project_id": project_id,
+                    "carry_terms": True, "carry_tm": True}
 
     # 必须替换 `window` 命名空间里的符号：`move_to_project` 在导入时就绑定了它，
-    # 替换 dialogs 模块里的同名符号不会生效（那样会弹出真正的模态对话框并卡住）。
-    monkeypatch.setattr(window_module, "ProjectPickerDialog", _Chooser)
+    # 替换 project_sheets 模块里的同名符号不会生效（那样会弹出真正的模态对话框并卡住）。
+    monkeypatch.setattr(window_module, "MoveToProjectSheet", _Sheet)
     notices: list[str] = []
     monkeypatch.setattr(window, "_notice",
                         lambda text, error=False, **kwargs: notices.append(text))
     window.move_to_project([job_id])
-    app.processEvents()
+    assert _pump(app, 15, lambda: adapter.load_state(job_id)["project_id"] == project_id)
 
     assert adapter.load_state(job_id)["project_id"] == project_id
     assert any("移动" in text for text in notices), notices
@@ -1395,10 +1394,10 @@ def test_home_can_move_a_task_to_another_project(client, monkeypatch):
     assert window.home.table.rowCount() == 1
 
 
-def test_project_dialog_reports_why_a_non_empty_project_cannot_be_deleted(client):
-    """§6.C：项目下仍有任务时拒绝删除，并把核心给出的原因显示给用户。"""
+def test_project_page_reports_why_a_non_empty_project_cannot_be_deleted(client):
+    """§6.C：项目下仍有任务时拒绝删除，并把原因显示给用户。"""
     from folith.qt import adapter as adapter_module
-    from folith.qt.dialogs import ProjectDialog
+    from folith.qt.projects_view import ProjectsView
 
     adapter = client["adapter"]
     app = client["app"]
@@ -1411,31 +1410,25 @@ def test_project_dialog_reports_why_a_non_empty_project_cannot_be_deleted(client
     source.write_bytes(_make_docx(["占位任务。"]))
     adapter.import_documents([source], config, project_id=project_id)
 
-    dialog = ProjectDialog()
-    dialog.show()
+    view = ProjectsView()
+    view.show()
+    view.apply_overview(adapter.projects_overview())
+    view.select(project_id)
     app.processEvents()
-    rows = [dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount())]
-    assert "有任务的项目" in rows
-    index = rows.index("有任务的项目")
-    dialog.table.selectRow(index)
-    app.processEvents()
-    assert dialog.delete_button.isEnabled() is True
+    assert view.selected_project()["name"] == "有任务的项目"
+    assert "删除项目…" in view.menu_labels()
 
-    dialog._delete()  # 未确认名称；因为仍有任务，核心应先拒绝
+    view._delete()  # 未确认名称；因为仍有任务，应先拒绝
     app.processEvents()
-    assert "仍有" in dialog.status.text(), dialog.status.text()
+    assert "仍有" in view.status.text(), view.status.text()
     # 被拒绝的删除不得动到项目目录。
     assert (adapter_module.core.OUTPUT_DIR / "projects" / project_id).exists()
 
-    # 系统工作区不可重命名/归档/删除。
-    system_index = next(row for row in range(dialog.table.rowCount())
-                        if dialog.table.item(row, 2).text() == "系统工作区")
-    dialog.table.selectRow(system_index)
-    app.processEvents()
-    assert dialog.delete_button.isEnabled() is False
-    assert dialog.archive_button.isEnabled() is False
-    assert dialog.rename_button.isEnabled() is False
-    dialog.close()
+    # 系统工作区不可重命名/归档/删除：「未分类」的更多菜单里只有导出。
+    view.select("unsorted")
+    assert view.selected_project() is None
+    assert view.menu_labels() == ["导出…"]
+    view.close()
 
 
 def test_workbench_excludes_a_segment_and_restores_it_from_the_delivery_tab(client):
@@ -2131,11 +2124,12 @@ def test_macos_menu_roles_and_standard_shortcuts(client):
 def test_dialogs_never_block_a_scripted_run(client, monkeypatch):
     """脚本化运行时对话框不得弹模态——这类挂死真实发生过。
 
-    `EngineDialog` 的"配置不完整仍要保存吗"、`ProjectDialog` 的项目名输入、
+    `EngineDialog` 的"配置不完整仍要保存吗"、项目页的新建项目输入、
     诊断导出的提示框都必须先问自动化开关。
     """
     from folith.qt import adapter, bootstrap
-    from folith.qt.dialogs import EngineDialog, ProjectDialog
+    from folith.qt.dialogs import EngineDialog
+    from folith.qt.projects_view import ProjectsView
 
     assert bootstrap.automation() is True   # 用例环境就是脚本化运行
 
@@ -2148,11 +2142,12 @@ def test_dialogs_never_block_a_scripted_run(client, monkeypatch):
     dialog.close()
 
     # 2) 项目名输入：不弹框，也不擅自编名字。
-    projects = ProjectDialog()
+    projects = ProjectsView()
     projects.show()
+    before = len(adapter.project_rows())
     projects._create()                      # 不应挂起
     assert "不弹出输入框" in projects.status.text(), projects.status.text()
-    assert projects.table.rowCount() == len(adapter.project_rows())
+    assert len(adapter.project_rows()) == before
     projects.close()
 
     # 3) 诊断导出：把结果写进状态标签，不弹框。
@@ -2925,20 +2920,6 @@ def test_home_batch_move_sends_all_selected_tasks(client, monkeypatch):
 
     sent: list[list[str]] = []
 
-    class _Chooser:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        def exec(self):
-            return True
-
-        def selected_project(self):
-            return project_id
-
-        def move_translations(self):
-            return False
-
-    monkeypatch.setattr(window_module, "ProjectPickerDialog", _Chooser)
     monkeypatch.setattr(window, "move_to_project",
                         lambda job_ids: sent.append(list(job_ids)))
     window.home.move_button.click()

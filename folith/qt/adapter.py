@@ -2174,42 +2174,8 @@ def set_final_qa_fact(job_id: str, field: str, confirmed: bool) -> dict:
 # 词条永远待审。行模型来自 ``folith.language_assets``（与界面框架无关），这里只负责
 # 把任务/项目/记忆读出来喂给它，并把审核决定交给核心。
 
-LIBRARY_TABS = (("candidates", "待审核"), ("terms", "术语库"), ("tm", "翻译记忆"))
 CANDIDATE_DECISIONS = {"project_term": "接受为项目术语", "task_only": "仅用于本任务",
                        "rejected": "拒绝"}
-
-
-def library_data(tm_project_id: str = "") -> dict:
-    from folith import language_assets as _assets
-
-    jobs = list(core.list_jobs())
-    projects = core.list_active_project_options() + [
-        p for p in core.list_projects() if p.get("archived_at")]
-    ordered = [str(p["project_id"]) for p in projects] or [core.SYSTEM_PROJECT_ID]
-    labels = {str(p["project_id"]): p["name"] for p in projects}
-    if tm_project_id not in ordered:
-        tm_project_id = ordered[0]
-    tm_rows = _assets.build_tm_rows(core.load_tm(tm_project_id))
-    task_rows = _assets.build_term_rows(jobs)
-    by_project = {str(p.get("project_id")): p for p in projects}
-    by_job = {str(j.get("job_id")): j for j in jobs}
-    for row in task_rows:
-        job = by_job.get(str(row.get("job_id") or "")) or {}
-        row["project_id"] = core.resolved_project_id(job.get("state") or {})
-        project = by_project.get(row["project_id"])
-        row["project_name"] = str((project or {}).get("name") or "未分类")
-    project_rows = _assets.build_project_term_rows(projects, task_rows=task_rows)
-    terms = _assets.group_terms([*task_rows, *project_rows])
-    candidates = _assets.build_candidate_rows(jobs)
-    return {
-        "terms": terms, "tm": tm_rows, "candidates": candidates,
-        "projects": [{"project_id": pid, "name": labels.get(pid, pid)} for pid in ordered],
-        "tm_project_id": tm_project_id,
-        "jobs": [(str(j.get("job_id")), str((j.get("state") or {}).get("filename") or "?"))
-                 for j in jobs],
-        "summary": {"candidates": len(candidates), "terms": len(terms), "tm": len(tm_rows),
-                    "conflicts": sum(1 for c in candidates if c["has_conflict"])},
-    }
 
 
 def decide_candidate(row: dict, decision: str) -> str:

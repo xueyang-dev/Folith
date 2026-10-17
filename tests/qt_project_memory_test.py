@@ -93,18 +93,6 @@ def test_fragments_are_listed_and_excluded_together(env):  # noqa: F811
     assert all(pair.get("excluded") for pair in adapter.load_state(job_id)["pairs"])
 
 
-def test_move_dialog_can_create_a_project(env):  # noqa: F811
-    from PySide6.QtWidgets import QApplication
-
-    QApplication.instance() or QApplication([])
-    from folith.qt.dialogs import ProjectPickerDialog
-
-    dialog = ProjectPickerDialog([], job_count=1)
-    dialog._new_project("客户 C")
-    assert dialog.selected_project()
-    assert "客户 C" in dialog.list.currentItem().text()
-
-
 def test_setup_panel_warns_when_the_connection_is_missing():
     from PySide6.QtWidgets import QApplication
 

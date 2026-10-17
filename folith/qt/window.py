@@ -1346,7 +1346,7 @@ class MainWindow(QMainWindow):
     def move_to_project(self, job_ids: list) -> None:
         """「移到项目」面板：任务改归属的唯一入口。运行中的任务由核心拒绝，原因如实显示。"""
         ids = [str(job) for job in job_ids or [] if str(job or "").strip()]
-        if not ids or _automation():
+        if not ids:
             return
         sheet = MoveToProjectSheet(ids, self)
         if sheet.exec() != QDialog.DialogCode.Accepted:

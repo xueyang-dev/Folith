@@ -29,7 +29,6 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from folith.qt import adapter, style, views  # noqa: E402
-from folith.qt.dialogs import ProjectDialog, ProjectPickerDialog  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -154,44 +153,6 @@ def test_card_grid_is_rebuilt_without_ghost_widgets(home):
     remaining = home.card_page.findChildren(views._TaskCard)
     assert len(remaining) == 2
     assert first not in remaining
-
-
-def test_project_dialog_uses_the_shared_row_delegate_and_icon_buttons(app):
-    dialog = ProjectDialog()
-    dialog.show()
-    app.processEvents()
-    try:
-        assert isinstance(dialog.table.itemDelegate(), style.RowDelegate)
-        for button in (dialog.new_button, dialog.rename_button,
-                       dialog.archive_button, dialog.delete_button):
-            assert not button.icon().isNull(), button.text()
-        if dialog.table.rowCount():
-            assert not dialog.table.item(0, 0).icon().isNull(), "项目行应有图标"
-    finally:
-        dialog.close()
-
-
-def test_project_picker_uses_painted_checkbox_and_folder_icons(app):
-    picker = ProjectPickerDialog(PROJECTS, job_count=2)
-    picker.show()
-    app.processEvents()
-    try:
-        assert isinstance(picker.move_tm_box, style.CheckBox)
-        item = picker.list.item(0)
-        assert item is not None and not item.icon().isNull()
-        assert picker.selected_project()
-    finally:
-        picker.close()
-
-    empty = ProjectPickerDialog([], job_count=1)
-    empty.show()
-    app.processEvents()
-    try:
-        assert empty.empty_state.isHidden() is False
-        assert empty.selected_project() == ""
-    finally:
-        empty.close()
-
 
 
 # ------------------------------------------------------------ 首页搜索 -------
