@@ -234,7 +234,7 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "",
         "- 本说明只描述 DMG 内的 `Folith.app`：Qt Widgets 原生客户端"
         f"（bundle id `{app.get('bundle_identifier', '')}`），由 `packaging/folith-qt.spec` "
-        "从 `qt_client.py` 冻结。这是 0.5.0 Beta 唯一的桌面入口。",
+        "从 `qt_client.py` 冻结。这是 0.6.0 Beta 唯一的桌面入口。",
         "- 源码等价入口：`python -m folith.qt`（或 `python qt_client.py`），需另装 PySide6。",
         "- 源码与 Pip 安装的 `folith` 命令（含兼容别名）以及 `start.sh` / `start.command` / "
         "`start.bat` 仍启动旧 Streamlit 启动器（`gui.py`，保留一个版本），**不是**本客户端，"
