@@ -1993,10 +1993,9 @@ def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
     raw = runtime.get("runtime") if isinstance(runtime.get("runtime"), dict) else runtime
     operation = str(raw.get("operation_id") or raw.get("operation")
                     or runtime.get("operation_id") or "")
-    stage_id = str(raw.get("stage") or "")
-    stage = i18n.tr(_RUN_STAGE_LABELS[stage_id]) if stage_id in _RUN_STAGE_LABELS else ""
-    count = f"{completed:,} / {total:,} {i18n.tr_dynamic(unit)}".strip() if total else ""
-    head = " · ".join(part for part in (stage, count) if part)
+    # 状态行只写最新一条状态消息（最新的用户可见事件 / 阶段说明），不再带「阶段 · N / M 页」
+    # 前缀：进度已经由进度条和百分比说了。
+    latest = i18n.tr_dynamic(str(raw.get("last_event") or "").strip())
     last_progress = _parse_iso(raw.get("last_progress_at"))
     waiting_since = _parse_iso(raw.get("model_wait_started_at"))
     if status == "completed":
@@ -2006,24 +2005,24 @@ def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
         return "done", (i18n.tr('已完成 · {v0} 分钟', v0=max(1, minutes)) if started
                         else i18n.tr('已完成'))
     if status == "failed":
-        return "failed", " · ".join(p for p in (head, note or i18n.tr('步骤失败')) if p)
+        return "failed", note or i18n.tr('步骤失败')
     if status == "stalled":
-        return "stalled", " · ".join(p for p in (head, note or i18n.tr('暂无运行信号')) if p)
+        return "stalled", note or i18n.tr('暂无运行信号')
     if status in ("paused", "interrupted", "cancelled", "idle_incomplete"):
-        return "paused", " · ".join(p for p in (head, note) if p) or i18n.tr('已暂停')
+        return "paused", note or i18n.tr('已暂停')
     if not running:
-        return "idle", " · ".join(p for p in (head, note) if p)
+        return "idle", note
     if "retry" in operation:
-        return "retrying", " · ".join(p for p in (head, note) if p)
+        return "retrying", latest or note
     if last_progress and now - last_progress > _STALL_AFTER_S:
         minutes = int((now - last_progress) // 60)
-        return "stalled", " · ".join(p for p in (head, i18n.tr(
-            '已有 {v0} 分钟没有进展，可以暂停后重试', v0=max(2, minutes))) if p)
+        stalled = i18n.tr('已有 {v0} 分钟没有进展，可以暂停后重试', v0=max(2, minutes))
+        # 页级重试 / 失败也在这里：停滞提示不能把它们盖住。
+        return "stalled", " · ".join(p for p in (stalled, latest) if p)
     if waiting_since and (not last_progress or waiting_since >= last_progress):
         seconds = int(max(0, now - waiting_since))
-        wait = i18n.tr('正在等待模型响应 · {v0} 秒', v0=seconds)
-        return "waiting", " · ".join(p for p in (head, wait) if p)
-    return "running", " · ".join(p for p in (head, note) if p)
+        return "waiting", i18n.tr('正在等待模型响应 · {v0} 秒', v0=seconds)
+    return "running", latest or note
 
 
 class ClickableLabel(QLabel):
@@ -2055,6 +2054,108 @@ class ClickableLabel(QLabel):
         super().keyPressEvent(event)
 
 
+class StatusLineLabel(QLabel):
+    """状态行文字：不省略；每次换字都按完整宽度重排，并把全文放进悬停提示。"""
+
+    def fullText(self) -> str:  # noqa: N802 - 与 ElideLabel 同名，调用方不用改
+        return self.text()
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        super().setText(text)
+        self.setToolTip(text)
+        self.adjustSize()
+        view = self.parentWidget().parentWidget() if self.parentWidget() else None
+        if isinstance(view, MarqueeLine):
+            view.refit()
+
+
+class MarqueeLine(QScrollArea):
+    """一行不省略的状态文字：放不下时可横向滚动，悬停时慢慢自动滚，移开回到开头。
+
+    ``label`` 是真正显示文字的 QLabel（样式、``tone`` 属性都在它身上）。文字完整保留
+    在悬停提示里；触控板 / Shift+滚轮横向滚动。
+    """
+
+    #: 自动滚动：每 ``TICK_MS`` 毫秒走 ``STEP_PX`` 像素；到头后停一会儿再回到开头重来。
+    TICK_MS = 30
+    STEP_PX = 1
+    HOLD_TICKS = 40
+
+    def __init__(self, label: QLabel, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.label = label
+        label.setWordWrap(False)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.setWidget(label)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWidgetResizable(False)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.viewport().setAutoFillBackground(False)
+        self.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.TICK_MS)
+        self._timer.timeout.connect(self._advance)
+        self._hold = 0
+        self.set_text("")
+
+    def set_text(self, text: str) -> None:
+        self.label.setText(text)
+        self.setToolTip(text)
+
+    def refit(self) -> None:
+        self.setFixedHeight(self.label.height() + 2)
+        if not self.overflows():
+            self.horizontalScrollBar().setValue(0)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        self.label.adjustSize()  # 样式 / 字体生效之后再量一次
+        self.refit()
+
+    def overflows(self) -> bool:
+        return self.label.width() > self.viewport().width()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        return QSize(0, self.label.height() + 2)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        delta = event.angleDelta()
+        step = delta.x() or delta.y()
+        if self.overflows() and step:
+            bar = self.horizontalScrollBar()
+            bar.setValue(bar.value() - step)
+            self._timer.stop()  # 用户自己在滚，自动滚动让位
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().enterEvent(event)
+        self._hold = self.HOLD_TICKS // 2
+        if self.overflows():
+            self._timer.start()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().leaveEvent(event)
+        self._timer.stop()
+        self.horizontalScrollBar().setValue(0)
+
+    def _advance(self) -> None:
+        bar = self.horizontalScrollBar()
+        if self._hold > 0:
+            self._hold -= 1
+            return
+        if bar.value() >= bar.maximum():
+            bar.setValue(0)
+            self._hold = self.HOLD_TICKS
+            return
+        bar.setValue(bar.value() + self.STEP_PX)
+        if bar.value() >= bar.maximum():
+            self._hold = self.HOLD_TICKS
+
+
 class RunStatusGroup(QFrame):
     """顶栏的运行状态组：进度条 + 百分比，下面一行写「阶段 · 进度 · 正在做什么」。
 
@@ -2074,8 +2175,9 @@ class RunStatusGroup(QFrame):
         self.track = components.ProgressTrack()
         self.percent = QLabel("")
         self.percent.setObjectName("runStatusPercent")
-        self.line = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideRight)
+        self.line = StatusLineLabel("")
         self.line.setObjectName("runStatusLine")
+        self.line_view = MarqueeLine(self.line)
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(theme_module.SPACE["xs"] + 2)
@@ -2085,13 +2187,13 @@ class RunStatusGroup(QFrame):
         # 四周留够白：展开运行记录时这一块是「凸」字的上半截，进度条贴着它的上、左、右
         # 边会显得局促（试用反馈）。
         layout.setContentsMargins(*self.PADDING)
-        layout.setSpacing(3)
+        layout.setSpacing(4)
         layout.addLayout(top)
-        layout.addWidget(self.line)
+        layout.addWidget(self.line_view)
         self.setFixedWidth(256)
 
     #: 内容到状态组四边的距离（左、上、右、下）。
-    PADDING = (14, 9, 14, 6)
+    PADDING = (14, 6, 14, 7)
 
     def set_state(self, *, tone: str, line: str, line_tone: str | None = None) -> None:
         """``line_tone``：只给文字着色（例如一次操作失败），进度条仍表示任务本身的状态。"""
@@ -2099,9 +2201,9 @@ class RunStatusGroup(QFrame):
         share = self.track.fraction()
         self.percent.setText("" if share is None or tone == "done"
                              else f"{int(round(share * 100))}%")
-        self.line.setText(line)
         self.line.setProperty("tone", line_tone or tone)
         style_module.repolish(self.line)
+        self.line_view.set_text(line)
         self.setAccessibleDescription(line)
 
     #: 展开运行记录时「凸」字上半截相对状态组四边的内缩（留给投影）。
@@ -4905,12 +5007,6 @@ class WorkbenchView(QWidget):
         tone, line = run_status_view(runtime, note=note, running=running,
                                      completed=completed, total=total,
                                      unit=str(stage_progress.get("unit") or ""))
-        # 边识别边翻译：识别还在后台推进时如实说明（原先挤在步骤条里）。
-        streaming = (self._state or {}).get("streaming_ingest") or {}
-        if streaming.get("status") == "running" and streaming.get("pages_total"):
-            recognised = i18n.tr("已识别 {v0}/{v1} 页", v0=int(streaming.get("pages_done") or 0),
-                                 v1=int(streaming.get("pages_total") or 0))
-            line = f"{line} · {recognised}" if line else recognised
         # 跑完了就不要进度条：没有阶段进度时它停在 0，和下面的"已完成"自相矛盾；
         # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
         self.run_status.track.setVisible(tone != "done")

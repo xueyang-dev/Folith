@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from folith import request_control
+from folith import page_events, request_control
 from folith.ocr_evidence import OCRBackend, OCRBlock, OCRRuntimeInfo
 
 ONLINE_OCR_BACKEND = "online"
@@ -143,6 +143,12 @@ class OnlineOCRConfig:
     proxy_bypass: bool = False
     #: Where the credential came from, for the settings UI only.
     credential_source: str = ""
+    #: ``provider|base_url`` of the saved connection that supplied ``api_key``.  A key must
+    #: only ever travel to the endpoint of the connection that owns it; empty = not tracked.
+    credential_owner: str = field(default="", repr=False)
+
+    def endpoint_id(self) -> str:
+        return f"{self.provider}|{str(self.base_url or '').rstrip('/')}"
 
     def normalized(self) -> "OnlineOCRConfig":
         reasoning = str(self.reasoning_mode or "").strip().lower()
@@ -173,6 +179,10 @@ class OnlineOCRConfig:
             return "线上 OCR 缺少访问凭据；请在 OCR 设置中填写或引用已有凭据。"
         if not self.base_url:
             return "线上 OCR 缺少服务地址（需要 http(s)://…/v1）。"
+        if self.credential_owner and self.credential_owner != self.endpoint_id():
+            # 最后一道闸：密钥属于另一个连接时，宁可让任务失败也不把它发给这个地址。
+            return ("线上 OCR 的访问凭据属于另一个连接，与当前服务地址不一致；"
+                    "已拒绝发送请求。请在设置里重新选择视觉连接。")
         return ""
 
     # -- non-secret descriptors ------------------------------------------
@@ -256,6 +266,15 @@ def _retry_after_seconds(response: Any) -> Optional[float]:
         return None
 
 
+#: 网关 / 读取超时：服务商那一页多半一直处理不完，再试几次只是白等几分钟，最多再试一次。
+TIMEOUT_STATUSES = frozenset({408, 504, 524})
+TIMEOUT_MAX_RETRIES = 1
+
+
+def is_timeout_error(error: "OnlineOCRRequestError") -> bool:
+    return error.code == "timeout" or error.http_status in TIMEOUT_STATUSES
+
+
 def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
     """Turn an SDK/transport exception into an explicit retry decision.
 
@@ -289,6 +308,12 @@ def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
         return OnlineOCRRequestError(
             "invalid_request",
             f"线上 OCR 请求被服务拒绝（HTTP {status}）；请检查模型名与参数设置。",
+            retryable=False, http_status=status)
+    if status == 402 or (status == 429 and any(
+            marker in lowered for marker in ("quota", "billing", "insufficient", "balance",
+                                             "余额", "额度", "欠费"))):
+        return OnlineOCRRequestError(
+            "quota_error", f"线上 OCR 额度或余额不足（HTTP {status}）；请检查服务商账户。",
             retryable=False, http_status=status)
     if status == 429:
         return OnlineOCRRequestError("rate_limited", "线上 OCR 服务限流（HTTP 429）。",
@@ -596,8 +621,15 @@ class OnlineOCRBackend(OCRBackend):
                 if classified.http_status == 429:
                     controller.note_rate_limited(classified.retry_after)
                 last_error = classified
-                if not classified.retryable or attempt >= self.config.max_retries:
+                retries = self.config.max_retries
+                if is_timeout_error(classified):
+                    retries = min(retries, TIMEOUT_MAX_RETRIES)
+                if not classified.retryable or attempt >= retries:
                     break
+                page_events.emit("retry", attempt=attempt + 1,
+                                 attempts=retries + 1,
+                                 http_status=classified.http_status,
+                                 code=classified.code, message=classified.message[:120])
                 delay = _bounded_backoff(attempt, classified.retry_after)
                 self._last_timings[f"retry_backoff_{attempt}"] = delay
                 self._sleep_slices(delay)
@@ -668,6 +700,10 @@ class OnlineOCRBackend(OCRBackend):
             self._last_timings["request_s"] = time.perf_counter() - started
             return segments, None
         # every attempt failed
+        page_events.emit("failed", attempts=len(attempts),
+                         http_status=getattr(last_error, "http_status", None),
+                         code=getattr(last_error, "code", ""),
+                         message=str(getattr(last_error, "message", ""))[:120])
         error = last_error or OnlineOCRRequestError("request_failed", "线上 OCR 请求失败。",
                                                     retryable=False)
         self._last_request = {
@@ -691,6 +727,8 @@ class OnlineOCRBackend(OCRBackend):
 
     def _fail(self, code: str, message: str, attempts, usage_total, request_ids,
               started) -> Tuple[List[OCRBlock], Optional[str]]:
+        page_events.emit("failed", attempts=len(attempts), http_status=None,
+                         code=code, message=str(message)[:120])
         self._last_request = {
             "status": "failed",
             "backend": self.name,

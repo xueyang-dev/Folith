@@ -638,6 +638,30 @@ def start_job(
         raise AdapterError(str(exc)) from exc
 
 
+def vision_connection_conflict(job_id: str) -> dict | None:
+    """续跑前：任务钉住的视觉连接还在、但与当前视觉连接不同、且用户还没选过 → 需要询问。
+
+    原连接已被删除时返回 ``None``：核心会直接改用当前连接并在运行记录里说明。
+    """
+    conflict = core.vision_connection_conflict(load_state(job_id).get("pipeline_config"))
+    if conflict and conflict["pinned_exists"] and not conflict["choice"]:
+        return {key: conflict[key] for key in
+                ("pinned_label", "current_label", "pinned_id", "current_id")}
+    return None
+
+
+def set_vision_choice(job_id: str, conflict: dict, choice: str) -> None:
+    """把「用当前 / 继续用原连接」的选择记进任务，下次续跑不再询问。"""
+    if choice not in ("current", "pinned"):
+        raise AdapterError("未知的连接选择。")
+
+    def _write(latest: dict) -> None:
+        config = latest.setdefault("pipeline_config", {})
+        config["ocr_online_choice"] = {"choice": choice, "pinned": conflict["pinned_id"],
+                                       "current": conflict["current_id"]}
+    core.mutate_job_state(job_id, _write)
+
+
 def pause_job(job_id: str) -> bool:
     return _commands.pause_job(job_id)
 

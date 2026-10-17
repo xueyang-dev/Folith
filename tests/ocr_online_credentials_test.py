@@ -55,14 +55,16 @@ def test_a_saved_ocr_connection_survives_a_translation_model_change(tmp_path, mo
     assert resolved.base_url == "https://opencode.ai/zen/go/v1"
     assert resolved.api_key == "ocr-key"
 
-    # Explicitly referencing the translation credentials reuses the key but the
-    # saved OCR target still wins over the (now different) translation service.
+    # The saved OCR target still wins over the (now different) translation service,
+    # and its key follows it: DeepSeek's translation key must never be sent to the
+    # OpenCode Go endpoint, so the key comes from the connection that owns that endpoint.
     referencing = {**snapshot, "credential_source": "translation_profile"}
     resolved_reference, error = core.resolve_ocr_online_config(referencing)
     assert error is None
     assert resolved_reference.provider == "OpenCode Go"
     assert resolved_reference.model == "vision-A"
-    assert resolved_reference.api_key == "translation-key"
+    assert resolved_reference.api_key == "ocr-key"
+    assert resolved_reference.credential_owner == resolved_reference.endpoint_id()
 
 
 def test_status_is_readable_without_any_recognition_request(tmp_path, monkeypatch):

@@ -413,3 +413,179 @@ def test_cancel_while_waiting_for_window(slow_job):
     core.update_runtime_state("cancel-wait", cancel_requested=True)
     thread.join(30)
     assert not thread.is_alive() and "取消" in str(outcome.get("error"))
+
+
+class RetryingVisionProvider(SlowVisionProvider):
+    """第 2 页先报一次重试事件（和线上传输层一样经 page_events），再读成。"""
+
+    def __init__(self, release):
+        super().__init__(0.0)
+        self.release = release
+
+    def understand_page(self, envelope):
+        from folith import page_events
+        if envelope.page_index == 1:
+            page_events.emit("retry", attempt=1, attempts=3, http_status=524,
+                             code="http_error", message="gateway timeout")
+            assert self.release.wait(20)
+        return super().understand_page(envelope)
+
+
+def test_page_retry_becomes_the_latest_status_and_stall_is_not_hiding_it(streaming_job, monkeypatch):
+    _vision, started, args = streaming_job
+    started.set()
+    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "2")
+    release = threading.Event()
+    monkeypatch.setattr(core, "_vlm_runtime",
+                        lambda *a, **k: (RetryingVisionProvider(release), None))
+    outcome = {}
+    thread = threading.Thread(
+        target=lambda: outcome.update(state=core.run_job_pipeline(
+            "retry-job", "scan.pdf", scanned_pdf(8), **args)), daemon=True)
+    thread.start()
+    expected = "第 2 页：服务商超时（HTTP 524），正在重试 2/3"
+    assert _wait(lambda: _runtime("retry-job").get("last_event") == expected)
+    assert any(e["message"] == expected for e in _runtime("retry-job")["events"])
+    release.set()
+    thread.join(60)
+    assert not thread.is_alive() and outcome["state"]["p2_done"]
+
+
+def test_scan_pausing_label_does_not_survive_continue(slow_job):
+    slow, outcome, run = slow_job
+    thread = run("stale-label")
+    assert _wait(lambda: int((_runtime("stale-label").get("stage_progress") or {}).get("completed") or 0) >= 1)
+    core.update_runtime_state("stale-label", pause_requested=True, status="pausing")
+    assert _wait(lambda: _runtime("stale-label")["status"] == "paused", timeout=5)
+    core.update_runtime_state("stale-label", pause_requested=False, status="running")
+    assert _wait(lambda: "正在暂停" not in str(_runtime("stale-label").get("phase_label"))
+                 and _runtime("stale-label")["status"] == "running", timeout=5)
+    # 继续后，状态行文字是当前识别进度，而不是暂停中的说明。
+    assert _wait(lambda: str(_runtime("stale-label").get("last_event")).startswith("视觉识别")
+                 or "已继续" in str(_runtime("stale-label").get("last_event")), timeout=5)
+    assert "正在暂停" not in str(_runtime("stale-label").get("phase_label"))
+    thread.join(60)
+    assert "error" not in outcome
+
+
+# ---- 单页失败不再让任务失败；连续超时自动暂停 ----------------------------------
+
+def _page_error(code, status, message="boom"):
+    from folith.document_understanding import DocumentUnderstandingError
+    return DocumentUnderstandingError(
+        message, {"error_code": code, "http_status": status, "page_id": "pX"})
+
+
+class ScriptedVisionProvider:
+    """按页号决定失败 / 成功的读页替身；``fail`` 可以在测试里改，用来模拟「换了模型」。"""
+
+    def __init__(self, fail=None, identity=None):
+        self.fail = dict(fail or {})
+        self.cache_identity = identity or {"provider": "relay", "model": "flash-1"}
+        self.requests = {}
+        self.lock = threading.Lock()
+
+    def understand_page(self, envelope):
+        with self.lock:
+            self.requests[envelope.page_index] = self.requests.get(envelope.page_index, 0) + 1
+        error = self.fail.get(envelope.page_index)
+        if error is not None:
+            raise error
+        return PageUnderstanding(page_blocks(envelope.page_index), "vlm", {"model": "scripted"})
+
+
+def _drain(stream):
+    stream.wait_for_pages(stream.pages_total)
+    return stream.snapshot()
+
+
+def test_a_page_level_service_error_skips_the_page_and_the_stream_finishes(tmp_path):
+    from folith.streaming_ingest import ScanStream
+    provider = ScriptedVisionProvider({2: _page_error("service_error", 524)})
+    stream = ScanStream("a.pdf", scanned_pdf(6), provider, checkpoint_dir=tmp_path, workers=1)
+    snapshot = _drain(stream)
+    assert snapshot["finished"] and snapshot["pages_done"] == 6  # 失败的页也算「已处理」
+    assert [row["page"] for row in snapshot["failed_pages"]] == [3]
+    assert snapshot["failed_pages"][0]["reason"] == "服务商超时"
+    assert (tmp_path / "document_understanding" / "2-failure.json").exists()
+    pages = snapshot["document"]["pages"]
+    assert pages[2]["recognition"] == "failed" and pages[2]["recognition_error"]["http_status"] == 524
+    assert not any("Page 3 " in p for p in snapshot["paragraphs"])  # 没有悄悄拼进别的文字
+    assert any("Page 4 " in p for p in snapshot["paragraphs"])
+    stream.close()
+
+
+def test_resume_retries_failed_pages_and_appends_them_without_rereading_the_rest(tmp_path):
+    from folith.streaming_ingest import ScanStream
+    source = scanned_pdf(6)  # 同一份字节：缓存身份含源文件哈希
+    first = ScriptedVisionProvider({2: _page_error("service_error", 524)})
+    stream = ScanStream("a.pdf", source, first, checkpoint_dir=tmp_path, workers=1)
+    failed = _drain(stream)["failed_pages"]
+    stream.close()
+    committed = list(stream.snapshot()["paragraphs"])
+
+    # 换了一个视觉模型再继续：其余页沿用已识别的结果，只补读失败的那一页。
+    second = ScriptedVisionProvider(identity={"provider": "relay", "model": "other-model"})
+    resumed = ScanStream("a.pdf", source, second, checkpoint_dir=tmp_path, workers=1,
+                         late_pages={row["page"] - 1: row for row in failed})
+    snapshot = _drain(resumed)
+    resumed.close()
+    assert second.requests == {2: 1}
+    assert snapshot["failed_pages"] == []
+    assert snapshot["paragraphs"][:len(committed)] == committed  # 前文不变，补读的页接在末尾
+    assert snapshot["paragraphs"][-1].startswith("Page 3 ")
+    assert not (tmp_path / "document_understanding" / "2-failure.json").exists()
+    assert "recognition" not in snapshot["document"]["pages"][2]
+
+
+def test_one_page_524_does_not_fail_the_task(streaming_job, monkeypatch):
+    _vision, started, args = streaming_job
+    started.set()
+    provider = ScriptedVisionProvider({7: _page_error("service_error", 524)})
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (provider, None))
+    state = core.run_job_pipeline("one-bad-page", "scan.pdf", scanned_pdf(12), **args)
+    assert state["p2_done"] and state["streaming_ingest"]["status"] == "complete"
+    assert [row["page"] for row in state["streaming_ingest"]["failed_pages"]] == [8]
+    warnings = state["extraction_report"].get("warnings") or []
+    assert any("第 8 页识别失败" in str(w) for w in warnings)
+
+
+def test_auth_errors_still_fail_the_task(streaming_job, monkeypatch):
+    _vision, started, args = streaming_job
+    started.set()
+    provider = ScriptedVisionProvider({0: _page_error("auth_error", 401, "bad key")})
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (provider, None))
+    with pytest.raises(Exception) as caught:
+        core.run_job_pipeline("auth-fail", "scan.pdf", scanned_pdf(6), **args)
+    assert "bad key" in str(caught.value)
+
+
+def test_three_consecutive_timeouts_pause_with_a_suggestion_and_resume_continues(streaming_job, monkeypatch):
+    _vision, started, args = streaming_job
+    started.set()
+    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "1")
+    # 前 2 页成功，第 3 页起每页都 524。
+    provider = ScriptedVisionProvider({i: _page_error("service_error", 524) for i in range(2, 30)})
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (provider, None))
+    outcome = {}
+    thread = threading.Thread(
+        target=lambda: outcome.update(state=core.run_job_pipeline(
+            "streak", "scan.pdf", scanned_pdf(30), **args)), daemon=True)
+    thread.start()
+    assert _wait(lambda: _runtime("streak").get("status") == "paused", timeout=20)
+    runtime = _runtime("streak")
+    assert "视觉识别连续 3 页超时" in runtime["last_event"]
+    assert "relay · flash-1" in runtime["last_event"] and "设置 › 视觉与识别" in runtime["last_event"]
+    assert thread.is_alive()
+    import time
+    time.sleep(0.8)
+    assert max(provider.requests) <= 2 + 3 + 2  # 暂停后不再往下读
+
+    # 用户换了模型（这里：不再失败），继续。
+    provider.fail.clear()
+    core.update_runtime_state("streak", pause_requested=False, status="running")
+    thread.join(60)
+    assert not thread.is_alive() and outcome["state"]["p2_done"]
+    # 失败的 3 页在读完全书后补读成功，不再留在失败清单里。
+    assert outcome["state"]["streaming_ingest"]["failed_pages"] == []
+    assert "正在暂停" not in str(_runtime("streak").get("phase_label"))

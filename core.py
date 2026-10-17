@@ -251,13 +251,18 @@ def _runtime_cancel_requested(job_id):
     return bool((load_runtime_state(job_id) or {}).get("cancel_requested"))
 
 
-def _runtime_pause_checkpoint(job_id):
-    """Pause cooperatively between operations; keep in-memory results and lease."""
+def _runtime_pause_checkpoint(job_id, paused_message=None):
+    """Pause cooperatively between operations; keep in-memory results and lease.
+
+    ``paused_message``：暂停的原因（例如连续超时的建议），作为「已暂停」的最新状态；
+    缺省是通用的「任务已暂停」。
+    """
     if not job_id or not load_runtime_state(job_id).get("pause_requested"):
         return
     previous = load_runtime_state(job_id)
     update_runtime_state(job_id, status="paused", phase="paused",
-                         event="任务已暂停，可继续处理", event_name="job_paused",
+                         event=paused_message or "任务已暂停，可继续处理",
+                         event_name="job_paused",
                          event_visibility="user", event_category="lifecycle")
     while load_runtime_state(job_id).get("pause_requested"):
         if _runtime_cancel_requested(job_id):
@@ -519,6 +524,9 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     ocr_source_options,
     paddle_model_options,
     resolve_ocr_online_config,
+    vision_connection_conflict,
+    vision_connection_label,
+    credential_for_endpoint,
     save_ocr_online_config,
 )
 from folith.engine.document_export import (  # noqa: F401  (re-export: core keeps its public surface)
@@ -10416,8 +10424,41 @@ def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
     return total > 0 and len(scanned) == total
 
 
+def _reconcile_vision_connection(job_id, state):
+    """续跑时，任务钉住的视觉连接与当前视觉连接不同：决定用哪个，并留痕。
+
+    * 原连接还在已保存的连接里：沿用用户记下的选择（``pipeline_config.ocr_online_choice``，
+      由界面的询问写入）；没有记录就用当前连接——自动化 / 无界面的调用方也走这条。
+    * 原连接已被删除：直接用当前连接，并在运行记录与最新状态里说明。
+    选「当前」时把任务里钉住的连接换成当前的；已识别的页照常复用（页缓存不看模型）。
+    """
+    saved = state.get("pipeline_config")
+    conflict = vision_connection_conflict(saved)
+    if conflict is None:
+        return None
+    choice = conflict["choice"]
+    if conflict["pinned_exists"] and choice == "pinned":
+        return None
+    if not conflict["pinned_exists"]:
+        message = f"原识别连接已删除，改用当前连接『{conflict['current_label']}』继续"
+    elif choice == "current":
+        message = f"按你的选择，改用当前连接『{conflict['current_label']}』继续识别"
+    else:
+        message = (f"这个任务原来用『{conflict['pinned_label']}』识别，"
+                   f"现在改用当前视觉连接『{conflict['current_label']}』继续")
+    saved["ocr_online"] = conflict["current_descriptor"]
+    saved["ocr_online_choice"] = {"choice": "current", "pinned": conflict["pinned_id"],
+                                  "current": conflict["current_id"]}
+    save_job_state(job_id, state)
+    update_runtime_state(job_id, event=message, event_name="vision_connection_switched",
+                         event_visibility="user", event_category="orchestration",
+                         phase_label=message)
+    return message
+
+
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
-                       source_language=None, ocr_language=None, ocr_psm=None):
+                       source_language=None, ocr_language=None, ocr_psm=None,
+                       failed_pages=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
 
@@ -10432,9 +10473,15 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
         ocr_online_config=online_config, cancel_check=cancel_check,
         source_language=source_language, ocr_language=ocr_language,
         ocr_psm=ocr_psm)
+    identity = getattr(provider, "cache_identity", None) or {}
+    label = " · ".join(str(identity.get(key)) for key in ("provider", "model")
+                       if identity.get(key))
+    # 上次没读成的页：这次读完全书后补读（文字接在末尾，已翻译的前文不动）。
+    late = {int(row["page"]) - 1: row for row in failed_pages or []
+            if isinstance(row, dict) and row.get("page")}
     stream = ScanStream(filename, file_bytes, provider, spatial_engine=spatial_engine,
                         checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
-                        page_gate=page_gate)
+                        page_gate=page_gate, late_pages=late, provider_label=label)
     stream.facts = _pdf_extraction_facts(file_bytes)
     return stream
 
@@ -10483,6 +10530,10 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
             "边识别边翻译：已定稿的原文与重新识别的结果不一致，"
             "请删除该任务后重新导入。")
     document = snapshot["document"]
+    failed_pages = list(snapshot.get("failed_pages") or [])
+    warnings = list(warnings) + [
+        f"第 {row['page']} 页识别失败（{row.get('reason') or row.get('code') or '请求失败'}），"
+        "原文缺失；继续任务时会补读" for row in failed_pages]
     report = _build_extraction_report(filename, paragraphs, facts=facts,
                                       warnings=list(warnings))
     report.update({
@@ -10529,6 +10580,7 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
         "pages_total": snapshot["pages_total"],
         "paragraphs": len(paragraphs),
         "segments": len(paras),
+        "failed_pages": failed_pages,
     }
     return start, len(paras)
 
@@ -10536,11 +10588,35 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
 _SCAN_EVENT_EVERY_PAGES = 5  # 用户可见事件的最小间隔页数；进度条逐页更新
 
 
-def _scan_stream_tick(job_id, state, tracker, done, total, retried):
+def _scan_page_failure_reason(status, code, message=""):
+    if status in (408, 504, 524) or code in ("timeout", "service_error", "transient_error"):
+        return f"服务商超时（HTTP {status}）" if status else "服务商超时"
+    if status == 429 or code == "rate_limited":
+        return "服务商限流（HTTP 429）"
+    if status and int(status) >= 500:
+        return f"服务商暂时不可用（HTTP {status}）"
+    return str(message or code or "请求失败")[:60]
+
+
+def _scan_page_event_text(event):
+    """工作线程报告的页级事件 → 一句给用户看的话。"""
+    from folith.document_understanding import FATAL_PAGE_ERROR_CODES
+    page = event.get("page")
+    code = str(event.get("code") or "")
+    reason = _scan_page_failure_reason(event.get("http_status"), code, event.get("message"))
+    if event.get("kind") == "retry":
+        return (f"第 {page} 页：{reason}，正在重试 "
+                f"{int(event.get('attempt') or 0) + 1}/{int(event.get('attempts') or 0)}")
+    if code in FATAL_PAGE_ERROR_CODES:
+        return f"第 {page} 页识别失败：{reason}"
+    return f"第 {page} 页识别失败（{reason}），已跳过，可稍后重试"
+
+
+def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
     """等窗口期间主线程的逐页钩子：更新进度，并在暂停时到达暂停检查点。
 
     必须在 ScanStream 的锁外调用：暂停会阻塞在这里，识别线程要能继续把
-    已在途的页存下来。
+    已在途的页存下来。工作线程里的重试 / 失败事件也在这里由主线程写进运行状态。
     """
     if done != tracker["done"] or retried != tracker["retried"]:
         tracker["done"], tracker["retried"] = done, retried
@@ -10548,7 +10624,7 @@ def _scan_stream_tick(job_id, state, tracker, done, total, retried):
         if retried:
             detail += f"（其中 {retried} 页重试后读成）"
         emit = done >= total or done - tracker["event_at"] >= _SCAN_EVENT_EVERY_PAGES
-        extra = {}
+        extra = {"last_event": detail}
         if emit:
             tracker["event_at"] = done
             extra = dict(event=f"【阶段一】{detail}", event_name="scan_progress",
@@ -10559,16 +10635,46 @@ def _scan_stream_tick(job_id, state, tracker, done, total, retried):
             stage_progress={"completed": done, "total": total, "unit": "页",
                             "in_flight": []},
             operation_label="视觉识别", phase_label=detail, **extra)
+    page_events = stream.drain_page_events()
+    if page_events:
+        # 重试 / 失败不算进展（停滞提示照旧），但要让用户看到正在发生什么。
+        failed = [item for item in page_events if item.get("kind") == "failed"]
+        message = _scan_page_event_text((failed or page_events)[-1])
+        update_runtime_state(
+            job_id, phase_label=message, event=message,
+            event_name="scan_page_failed" if failed else "scan_page_retry",
+            event_visibility="user", event_category="progress")
+    pause_message = None
+    if stream.streak_tripped and not tracker.get("streak"):
+        # 连续几页都超时：自动暂停（走同一条暂停路径，最终是「已暂停」），建议换模型。
+        tracker["streak"] = True
+        where = f"（{stream.provider_label}）" if stream.provider_label else ""
+        pause_message = (
+            f"视觉识别连续 {stream.timeout_streak_limit} 页超时：服务商{where}处理图片太慢或不稳定。"
+            "建议在 设置 › 视觉与识别 换一个视觉模型，然后继续任务；已识别的页不会重读。")
+        tracker["streak_message"] = pause_message
+        update_runtime_state(
+            job_id, pause_requested=True, status="pausing", phase_label=pause_message,
+            event=pause_message, event_name="scan_timeout_streak",
+            event_visibility="user", event_category="lifecycle")
+    pause_message = tracker.get("streak_message")
     runtime = load_runtime_state(job_id) or {}
-    if runtime.get("pause_requested") and not runtime.get("cancel_requested"):
+    if (runtime.get("pause_requested") and not runtime.get("cancel_requested")
+            and not tracker.get("streak")):
         # 已在途的页让它们读完并存进检查点；不再提交新页（page_gate 拦着）。
         save_job_state(job_id, state)
-        if runtime.get("status") != "paused":
+        if runtime.get("status") != "paused" and not tracker.get("pausing"):
+            tracker["pausing"] = True
             update_runtime_state(
-                job_id, phase_label="正在暂停：等正在识别的页完成",
-                event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
+                job_id, event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
                 event_visibility="user", event_category="lifecycle")
-    _runtime_pause_checkpoint(job_id)
+    _runtime_pause_checkpoint(job_id, paused_message=pause_message)
+    if tracker.pop("pausing", False) or tracker.get("streak"):
+        # 继续之后：检查点恢复的是暂停前的旧标签，让下一个 tick 重写进度。
+        tracker["done"] = -1
+    if tracker.pop("streak", False):
+        tracker.pop("streak_message", None)
+        stream.clear_halt()  # 用户可能已换了视觉模型：重新计数，识别继续
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
@@ -10590,7 +10696,7 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
                "event_at": stream.pages_done}
     stream.wait_for_pages(
         target, on_tick=lambda done, total, retried: _scan_stream_tick(
-            job_id, state, tracker, done, total, retried))
+            job_id, state, stream, tracker, done, total, retried))
     snapshot = stream.snapshot()
     start, end = _commit_scan_stream(
         state, snapshot, filename=filename, facts=stream.facts,
@@ -10715,6 +10821,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state, segmentation_mode)
     previous_performance = state.get("performance")
     saved_runtime_config = state.get("pipeline_config") or {}
+    if ocr_online is None and saved_runtime_config:
+        _reconcile_vision_connection(job_id, state)
+        saved_runtime_config = state.get("pipeline_config") or {}
     effective_ocr_language, effective_ocr_dpi, effective_ocr_psm, \
         effective_ocr_quality, resolved_ocr = _effective_ocr_config(
             ocr_language, ocr_dpi, ocr_psm, saved_runtime_config, ocr_quality)
@@ -10730,6 +10839,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             effective_online_config = _ocr_online.OnlineOCRConfig(
                 provider=provider, model=model, api_key=api_key, base_url=visual_base,
                 credential_source="translation_profile",
+                credential_owner=f"{provider}|{visual_base.rstrip('/')}",
                 reasoning_mode=("thinking_disabled" if provider == "OpenCode Go"
                                 and model == "deepseek-v4.1-flash" else "provider_default"))
             effective_online_descriptor = effective_online_config.describe()
@@ -10875,10 +10985,27 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             "base_url": reviewer_base_url,
         },
         fallback_provider=provider, fallback_model=model,
-        fallback_api_key=api_key,
+        # 另一个服务商的审校连接不借用正文模型的密钥（那把钥匙不属于它的地址）。
+        fallback_api_key=(api_key if resolved_reviewer_provider == provider else ""),
         fallback_base_url=(primary_base_url
                            if resolved_reviewer_provider == provider else ""))
     saved_auxiliary = state.get("auxiliary_config") or {}
+    if (saved_auxiliary and not auxiliary_api_key and saved_auxiliary.get("provider")
+            and (saved_auxiliary.get("provider"), (saved_auxiliary.get("base_url") or "").rstrip("/"))
+            != (provider, str(primary_base_url or "").rstrip("/"))):
+        # 任务里记着一个辅助连接（只存了地址，没存密钥）：密钥必须取自拥有这个地址的
+        # 已保存连接；找不到就放弃这个辅助连接、整体回到正文模型，绝不把正文模型的
+        # 密钥发到另一个服务的地址。
+        try:
+            _aux_base = _resolve_online_ocr_base_url(
+                saved_auxiliary["provider"], saved_auxiliary.get("base_url") or "")
+            _aux_found = credential_for_endpoint(saved_auxiliary["provider"], _aux_base)
+        except ValueError:
+            _aux_found = None
+        if _aux_found:
+            auxiliary_api_key = _aux_found[0]
+        else:
+            saved_auxiliary = {}
     resolved_auxiliary_provider = (auxiliary_provider
                                    or saved_auxiliary.get("provider") or provider)
     auxiliary_config = _model_roles.normalize_role_config(
@@ -11041,6 +11168,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             pipeline_config["ocr_online"] = dict(effective_online_descriptor)
         else:
             pipeline_config.pop("ocr_online", None)
+        if isinstance(saved_runtime_config.get("ocr_online_choice"), dict):
+            # 用户对「原连接 / 当前连接」的选择随任务保存，下次续跑不再重复询问。
+            pipeline_config["ocr_online_choice"] = dict(saved_runtime_config["ocr_online_choice"])
     else:
         pipeline_config.pop("enable_source_cleanup", None)
     state["pipeline_config"] = pipeline_config
@@ -11190,7 +11320,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             scan_stream = _start_scan_stream(
                 job_id, filename, file_bytes, online_config=effective_online_config,
                 source_language=effective_source_language,
-                ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm)
+                ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
+                failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"))
             registry = _SCAN_STREAMS.get()
             if registry is not None:
                 registry.append(scan_stream)

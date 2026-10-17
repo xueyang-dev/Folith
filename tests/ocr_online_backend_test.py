@@ -331,3 +331,29 @@ def test_error_classification_covers_transport_shapes():
     assert limited.retryable and limited.retry_after == 3
     assert classify_request_error(FakeStatusError(500)).retryable
     assert classify_request_error(ConnectionError("connection refused")).retryable
+
+
+@pytest.mark.parametrize("status", [524, 504, 408])
+def test_gateway_timeouts_are_retried_at_most_once(status):
+    backend, client = backend_with([FakeStatusError(status), FakeStatusError(status),
+                                    segments_response(["never reached"])])
+    backend._sleep = lambda _seconds: None
+    blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1, language="ara", dpi=350)
+    assert blocks == [] and error
+    assert len(client.requests) == 2  # 一次重试，而不是 max_retries=2 的三次
+    assert backend._last_request["attempt_count"] == 2
+    assert [a["http_status"] for a in backend._last_request["attempts"]] == [status, status]
+
+
+def test_other_retryable_errors_keep_the_full_retry_policy():
+    backend, client = backend_with([FakeStatusError(502), FakeStatusError(503),
+                                    segments_response(["ok"])])
+    backend._sleep = lambda _seconds: None
+    blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1, language="ara", dpi=350)
+    assert error is None and len(client.requests) == 3
+
+
+def test_quota_and_billing_errors_are_not_retried_and_are_fatal():
+    for failure in (FakeStatusError(402), FakeStatusError(429, "insufficient_quota: billing")):
+        error = classify_request_error(failure)
+        assert error.code == "quota_error" and not error.retryable

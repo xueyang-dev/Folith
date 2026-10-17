@@ -1,7 +1,8 @@
 """One structured VLM adapter and the native PDF adapter for DocumentIR v1."""
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from typing import Optional
 import json
 import hashlib
 from pathlib import Path
@@ -17,6 +18,7 @@ import fitz
 
 from folith.document_ir import (BLOCK_TYPES, DocumentUnderstandingProvider, PageEnvelope, PageUnderstanding,
                                 SemanticBlock, SourceSpan, new_document, normalized_bbox)
+from folith import page_events
 from folith.ocr_online import OnlineOCRBackend
 from folith.spatial_index import SpatialTextIndex, align_blocks
 
@@ -102,6 +104,40 @@ class DocumentUnderstandingError(ValueError):
     def __init__(self, message, diagnostics):
         super().__init__(message)
         self.diagnostics = diagnostics
+
+
+#: 这些错误和某一页无关（凭据、模型名、额度、没配置）：重试 / 跳页都没有意义，整个任务失败。
+#: 其余的读页失败（服务商超时、5xx、限流、截断、没按格式回答……）只算这一页失败。
+FATAL_PAGE_ERROR_CODES = frozenset({"auth_error", "invalid_request", "quota_error", "unconfigured"})
+#: 「服务商处理这一页太慢 / 不稳定」一类的失败：连续出现说明换个模型更好。
+TIMEOUT_LIKE_ERROR_CODES = frozenset({"timeout", "service_error", "transient_error"})
+
+
+@dataclass
+class PageFailed:
+    """一页读失败（重试用尽）：任务继续，这一页之后可以重试。"""
+
+    page_index: int
+    page_id: str
+    code: str
+    http_status: Optional[int]
+    message: str
+
+    @property
+    def timeout_like(self) -> bool:
+        return self.code in TIMEOUT_LIKE_ERROR_CODES or self.http_status in (408, 504, 524)
+
+    def describe(self) -> str:
+        """给用户看的原因（「服务商超时」…）。"""
+        if self.timeout_like:
+            return "服务商超时"
+        if self.code == "rate_limited":
+            return "服务商限流"
+        if self.code == "truncated":
+            return "输出被截断"
+        if self.code == "incomplete_response":
+            return "模型没有正常结束"
+        return self.message[:60] or self.code or "请求失败"
 
 
 def language_hint(language: str) -> str:
@@ -311,7 +347,7 @@ def _provider_for_worker(provider):
 
 
 def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoint_dir,
-                         cancel_check, started):
+                         cancel_check, started, identity_matches=None, skip_failed=False):
     """在工作线程里读一页：本地定位（可选）、缓存、VLM 请求、区域对齐。"""
     i = envelope.page_index
     index = SpatialTextIndex(envelope.page_id)
@@ -327,7 +363,8 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
     if cache_path and cache_path.exists():
         try:
             cached = json.loads(cache_path.read_text(encoding='utf-8'))
-            if cached['identity'] == identity:
+            if (identity_matches(cached['identity']) if identity_matches
+                    else cached['identity'] == identity):
                 semantic = PageUnderstanding([SemanticBlock(**b) for b in cached['blocks']],
                                              cached['provider'], cached['diagnostics'])
                 semantic.diagnostics = {**semantic.diagnostics, 'cache_hit':True,
@@ -344,11 +381,22 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                        'regions':len(index.regions), 'spatial_available':bool(index.regions),
                        'error':str(exc), 'latency_s':time.perf_counter()-started,
                        'request':dict(getattr(getattr(provider, 'transport', None), '_last_request', {}))}
+            _diag = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
+            if _diag:
+                failure['error_code'] = _diag.get('error_code')
+                failure['http_status'] = _diag.get('http_status')
+                failure['attempts'] = _diag.get('attempts')
             LOG.error('document_page %s', json.dumps(failure, ensure_ascii=False))
             if checkpoint_dir:
                 path = Path(checkpoint_dir)/'document_understanding'/f'{i}-failure.json'
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(failure, ensure_ascii=False), encoding='utf-8')
+            diagnostics = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
+            code = str((diagnostics or {}).get('error_code') or '')
+            if skip_failed and diagnostics is not None and code not in FATAL_PAGE_ERROR_CODES \
+                    and not (cancel_check and cancel_check()):
+                return PageFailed(i, envelope.page_id, code,
+                                  (diagnostics or {}).get('http_status'), str(exc))
             raise
         if cache_path:
             cache_path.parent.mkdir(parents=True,exist_ok=True)
@@ -357,13 +405,16 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                                              'provider':semantic.provider, 'diagnostics':semantic.diagnostics},
                                             ensure_ascii=False),encoding='utf-8')
             os.replace(temporary,cache_path)
+            # 之前失败过、这次读成了：旧的失败记录不再有效。
+            (cache_path.parent/f'{i}-failure.json').unlink(missing_ok=True)
     anchors = align_blocks(envelope, semantic.blocks, index)
     return semantic, anchors, index, started
 
 
 def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvider, *, spatial_engine=None,
                             max_pages=None, dpi=150, cancel_check=None, checkpoint_dir=None,
-                            page_indices=None, workers=None):
+                            page_indices=None, workers=None, page_event_sink=None,
+                            skip_failed_pages=False, reuse_across_models=False):
     """按页序逐页产出 ``(envelope, result)``；被选中的页并发读取。
 
     ``result`` 为 ``None`` 表示这一页不需要读（只登记页面）。渲染留在调用线程
@@ -379,11 +430,33 @@ def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvi
     worker_count = page_worker_count(workers)
     local = threading.local()
 
+    def identity_matches(cached):
+        if cached == identity:
+            return True
+        if not reuse_across_models:
+            return False
+        # 边识别边翻译的任务：已识别的页属于这个任务，换视觉模型后继续时不重读
+        # （已定稿并开始翻译的原文要和重新识别的结果一致）。
+        try:
+            old, new = cached['provider'], identity['provider']
+            return (cached['source_sha256'] == identity['source_sha256']
+                    and cached['dpi'] == identity['dpi']
+                    and all(old.get(key) == new.get(key)
+                            for key in ('prompt_version', 'language')))
+        except (KeyError, TypeError, AttributeError):
+            return False
+
     def job(envelope, started):
         if not hasattr(local, 'provider'):
             local.provider = _provider_for_worker(provider)
-        return _understand_page_job(local.provider, envelope, spatial_engine, identity,
-                                    checkpoint_dir, cancel_check, started)
+        page_events.bind(envelope.page_index + 1, page_event_sink)
+        try:
+            return _understand_page_job(local.provider, envelope, spatial_engine, identity,
+                                        checkpoint_dir, cancel_check, started,
+                                        identity_matches=identity_matches,
+                                        skip_failed=skip_failed_pages)
+        finally:
+            page_events.unbind()
 
     pending = deque()
     in_flight = 0
@@ -439,10 +512,37 @@ class VisualDocumentAssembler:
         self.document = new_document(filename, filename)
         self.paragraphs = []
         self.diagnostics = []
+        self.failed_pages = {}  # page_id -> PageFailed：读失败、等待重试的页
         self._tail = None  # (block record, 段落索引, 末行续段标记)：最后一个正文段
 
-    def add_page(self, envelope, result):
-        self.document['pages'].append(envelope.to_page())
+    def add_page(self, envelope, result, *, late=False):
+        """``late``：补读之前失败的页——页登记已经在，文字接在全书末尾，不跨页续段。"""
+        page = envelope.to_page()
+        if late:
+            self._tail = None
+        else:
+            self.document['pages'].append(page)
+        if isinstance(result, PageFailed):
+            # 这一页没读到：留下标记（页上的 recognition=failed 与诊断），不和前后页拼接。
+            self._tail = None
+            for entry in self.document['pages']:
+                if entry.get('page_id') == envelope.page_id:
+                    entry['recognition'] = 'failed'
+                    entry['recognition_error'] = {'code': result.code, 'http_status': result.http_status,
+                                                  'message': result.message[:200]}
+            self.failed_pages[envelope.page_id] = result
+            self.diagnostics = [d for d in self.diagnostics if d.get('page_id') != envelope.page_id]
+            self.diagnostics.append({'page_id': envelope.page_id, 'provider': 'vlm',
+                                     'semantic_result': 'failed', 'error_code': result.code,
+                                     'http_status': result.http_status, 'error': result.message[:200]})
+            return
+        if late:
+            self.failed_pages.pop(envelope.page_id, None)
+            self.diagnostics = [d for d in self.diagnostics if d.get('page_id') != envelope.page_id]
+            for entry in self.document['pages']:
+                if entry.get('page_id') == envelope.page_id:
+                    entry.pop('recognition', None)
+                    entry.pop('recognition_error', None)
         if result is None:
             # 没读的页（混合 PDF 的原生页、抽样跳过的页）隔开了前后，不能跨它续段。
             self._tail = None

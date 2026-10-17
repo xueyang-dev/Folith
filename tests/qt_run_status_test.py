@@ -45,19 +45,26 @@ def _view(status, *, running, raw=None, total=3201, completed=2905, note=""):
 
 def test_tones_and_lines_say_the_same_thing():
     tone, line = _view("running", running=True,
-                       raw={"last_progress_at": _at(5), "model_wait_started_at": _at(12)})
-    assert tone == "running" and line.startswith("翻译 · 2,905 / 3,201 段")
+                       raw={"last_progress_at": _at(5), "model_wait_started_at": _at(12),
+                            "last_event": "正在翻译批次 12"})
+    # 只写最新一条状态消息，不再带「翻译 · N / M 段」前缀（进度条与百分比已经说了）。
+    assert tone == "running" and line == "正在翻译批次 12"
 
     tone, line = _view("running", running=True,
                        raw={"last_progress_at": _at(20), "model_wait_started_at": _at(12)})
-    assert tone == "waiting" and "正在等待模型响应 · 12 秒" in line
+    assert tone == "waiting" and line == "正在等待模型响应 · 12 秒"
 
     tone, line = _view("running", running=True, note="正在重试翻译请求（第 2/3 次尝试）",
                        raw={"operation_id": "translation_retry", "last_progress_at": _at(5)})
     assert tone == "retrying" and "第 2/3 次" in line
 
     tone, line = _view("running", running=True, raw={"last_progress_at": _at(300)})
-    assert tone == "stalled" and "5 分钟没有进展" in line
+    assert tone == "stalled" and "5 分钟没有进展" in line and "翻译 ·" not in line
+
+    # 停滞提示不盖住页级重试：最新状态接在后面。
+    tone, line = _view("running", running=True, raw={
+        "last_progress_at": _at(420), "last_event": "第 12 页：服务商超时（HTTP 524），正在重试 2/3"})
+    assert tone == "stalled" and "7 分钟没有进展" in line and "第 12 页：服务商超时" in line
 
     assert _view("stalled", running=False)[0] == "stalled"
     tone, line = _view("failed", running=False, note="服务商暂时不可用（HTTP 500）")
