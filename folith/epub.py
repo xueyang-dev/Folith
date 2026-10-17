@@ -223,6 +223,94 @@ def _docx_source(source: bytes):
     return paragraphs, nodes, media, warnings, cover
 
 
+def _visual_pdf_source(state: dict, source: bytes):
+    """Use the persisted semantic source, rather than re-reading a text layer.
+
+    Whole scan pages are not illustrations. Only figures with real source
+    geometry can be cropped; page-only figures are explicitly reported omitted.
+    Paragraph references still bind against the original semantic paragraphs,
+    so cleanup and CAT structure edits retain their existing export contract.
+    """
+    from .document_ir import normalized_bbox
+
+    document = (state.get("extraction_report") or {}).get("document_ir") or {}
+    blocks = document.get("blocks") or []
+    by_id = {block["block_id"]: block for block in blocks}
+    ids = document.get("translation_block_ids") or []
+    if not ids or len(set(ids)) != len(ids) or any(bid not in by_id for bid in ids):
+        raise EpubExportError("EPUB 缺少已识别正文的文档结构，无法导出扫描件。")
+    paragraphs = [_text(by_id[bid]["text"]) for bid in ids]
+    refs = {bid: index for index, bid in enumerate(ids)}
+    pages = {page["page_id"]: page for page in document.get("pages") or []}
+    visual_pages = {span["page_id"] for block in blocks
+                    if (block.get("provenance") or {}).get("provider") == "vlm"
+                    for span in (block.get("source_anchor") or {}).get("source_spans") or []}
+
+    def source_order(block):
+        spans = (block.get("source_anchor") or {}).get("source_spans") or []
+        page_index = min((pages[s["page_id"]]["page_index"] for s in spans
+                          if s.get("page_id") in pages), default=len(pages))
+        # Native drawing order need not be reading order (a later paragraph
+        # can be drawn before an earlier image). Keep the existing native EPUB
+        # geometry order; semantic blocks use the provider's reading order.
+        if (block.get("provenance") or {}).get("provider") == "native_pdf":
+            boxes = [s["bbox"] for s in spans if s.get("bbox") and s.get("page_id") in pages
+                     and pages[s["page_id"]]["page_index"] == page_index]
+            if boxes:
+                first = min(boxes, key=lambda box: (box[1], box[0]))
+                return page_index, first[1], first[0]
+        return page_index, block["reading_order"], 0
+
+    nodes, media = [], {}
+    warnings = ["扫描件 EPUB 使用已识别正文重建；不保留原页排版，也不把整张扫描页作为插图。"]
+    with fitz.open(stream=source, filetype="pdf") as pdf:
+        for block in sorted(blocks, key=source_order):
+            bid = block["block_id"]
+            if bid in refs:
+                role = "heading" if block["type"] in {"title", "heading"} else "body"
+                nodes.append({"kind": "text", "ref": refs[bid], "role": role})
+            elif block["type"] == "figure":
+                spans = (block.get("source_anchor") or {}).get("source_spans") or []
+                if ((block.get("provenance") or {}).get("provider") == "native_pdf"
+                        and any(s.get("page_id") in visual_pages for s in spans)):
+                    # Mixed PDFs retain raw native layout evidence for scanned
+                    # pages too. The full-page scan is not a semantic figure.
+                    continue
+                crops = []
+                complete = bool(spans)
+                for span in spans:
+                    page = pages.get(span.get("page_id"))
+                    box = normalized_bbox(span.get("bbox")) if span.get(
+                        "grounding_quality") in {"exact", "strong", "approximate"} else None
+                    if page and box and 0 <= page["page_index"] < len(pdf):
+                        crop = (page["page_index"], tuple(box))
+                        if crop not in crops:
+                            crops.append(crop)
+                    else:
+                        complete = False
+                if not complete:
+                    numbers = sorted({pages[s["page_id"]]["page_index"] + 1 for s in spans
+                                      if s.get("page_id") in pages})
+                    location = "PDF 第 " + "、".join(map(str, numbers)) + " 页的" if numbers else ""
+                    warnings.append(f"{location}插图缺少完整区域坐标，未纳入 EPUB。")
+                    continue
+                for page_index, box in crops:
+                    page = pdf[page_index]
+                    rotation = page.rotation
+                    page.set_rotation(0)
+                    try:
+                        rect = fitz.Rect(box[0] * page.rect.width, box[1] * page.rect.height,
+                                         box[2] * page.rect.width, box[3] * page.rect.height)
+                        data = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rect,
+                                              alpha=False).tobytes("png")
+                    finally:
+                        page.set_rotation(rotation)
+                    name = f"images/image-{len(media) + 1:04d}.png"
+                    media[name] = (data, "image/png")
+                    nodes.append({"kind": "image", "name": name})
+    return paragraphs, nodes, media, warnings, None
+
+
 def _pdf_source(source: bytes):
     blocks = pdf_ingestion.classify_blocks(pdf_ingestion.extract_layout_blocks(source))
     records = [record for record in pdf_ingestion.reconstruct_paragraph_records(blocks)
@@ -344,7 +432,10 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
         if filename.lower().endswith(".docx"):
             paragraphs, nodes, media, warnings, cover = _docx_source(source)
         elif filename.lower().endswith(".pdf"):
-            paragraphs, nodes, media, warnings, cover = _pdf_source(source)
+            if (state.get("extraction_report") or {}).get("semantic_source") in {"vlm", "mixed"}:
+                paragraphs, nodes, media, warnings, cover = _visual_pdf_source(state, source)
+            else:
+                paragraphs, nodes, media, warnings, cover = _pdf_source(source)
         elif filename.lower().endswith((".epub", ".txt", ".md", ".markdown")):
             from .text_import import extract_text_source
             paragraphs, omitted, _facts = extract_text_source(filename, source)
