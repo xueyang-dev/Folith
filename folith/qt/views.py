@@ -2553,6 +2553,9 @@ class WorkbenchView(QWidget):
         self.run_status.clicked.connect(self.open_activity)
         self.progress = self.run_status.track
         self.status_label = self.run_status.line
+        # 正在进行的一次性操作（审校、交付、导出…），按任务记：顶栏状态组显示它，
+        # 不再弹「请稍候」框。值是 {"message", "done", "total", "progress_text"}。
+        self._operations: dict[str, dict] = {}
         self.check_button = CheckStatusButton()
         self.check_button.clicked.connect(self._toggle_followup_drawer)
         self.details_button = QToolButton()
@@ -4964,6 +4967,9 @@ class WorkbenchView(QWidget):
             note = ""
         note = i18n.tr_dynamic(note)
 
+        if self._render_operation():
+            return
+
         # 任务还没开始：运行说明、进度与运行控制整组收掉。"未完成 · 当前
         # 进度已保存"对一个还没开始的任务是错的；「开始翻译」由准备面板承担，
         # 两个"开始翻译"并存会让用户不确定哪个才带上刚选的策略（面板里那个会
@@ -5040,6 +5046,54 @@ class WorkbenchView(QWidget):
             self.run_status.set_state(tone=tone, line=notice[1],
                                       line_tone="failed" if notice[2] else None)
         self._sync_header_actions()
+
+    # ---- 一次性操作（审校、交付、导出…）显示在顶栏状态组里 ----
+    def begin_operation(self, job_id: str, message: str, progress_text=None) -> None:
+        """``progress_text(done, total)`` 给出有进度时的那一行（没有就一直显示 ``message``）。"""
+        self._operations[job_id] = {"message": message, "done": 0, "total": 0,
+                                    "progress_text": progress_text}
+        if job_id == self.job_id:
+            self._render_runtime()
+
+    def set_operation_progress(self, job_id: str, done: int, total: int) -> None:
+        operation = self._operations.get(job_id)
+        if operation is None:
+            return
+        operation["done"], operation["total"] = int(done), int(total)
+        if job_id == self.job_id:
+            self._render_runtime()
+
+    def end_operation(self, job_id: str) -> None:
+        if self._operations.pop(job_id, None) is not None and job_id == self.job_id:
+            self._render_runtime()
+
+    def operation_active(self, job_id: str) -> bool:
+        return job_id in self._operations
+
+    def _render_operation(self) -> bool:
+        """当前任务有一次性操作在进行：状态组只说它，运行控制让开。"""
+        operation = self._operations.get(self.job_id)
+        if operation is None:
+            return False
+        done, total = operation["done"], operation["total"]
+        if total:
+            self.progress.setRange(0, total)
+            self.progress.setValue(min(done, total))
+            text = operation["progress_text"]
+            line = text(done, total) if text is not None else operation["message"]
+        else:
+            self.progress.setRange(0, 0)      # 没有可数的进度：忙碌条
+            line = operation["message"]
+        self.run_status.track.setVisible(True)
+        self.run_status.percent.setVisible(True)
+        self.run_status.setVisible(True)
+        self.run_status.set_state(tone="running", line=line)
+        # 操作占着任务的执行锁：开始、暂停、取消、重试此刻都不可用。
+        for button in (self.start_button, self.pause_button, self.cancel_button,
+                       self.retry_button):
+            button.setVisible(False)
+        self._sync_header_actions()
+        return True
 
     def _live_task_notice(self, runtime: dict | None = None):
         """还在有效期内、属于当前任务、且运行状态没变过的那条操作结果；否则清掉。"""

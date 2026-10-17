@@ -139,3 +139,17 @@ def test_stale_cancel_flag_does_not_abort_a_manual_review(tmp_path, monkeypatch)
         "review", [0], provider, "k", "m", "简体中文")
     assert result["reviewed_segment_ids"] == [0]
     assert core.load_runtime_state("review")["status"] == "cancelled"
+
+
+def test_review_reports_progress_after_each_checkpoint(tmp_path, monkeypatch):
+    job(tmp_path, monkeypatch)
+    seen = []
+
+    def progress(done, total):
+        saved = core.load_job_state("review")
+        seen.append((done, total, sum(bool(pair.get("reviewed")) for pair in saved["pairs"])))
+
+    core.review_translation_segments("review", [0, 1], "p", "k", "m", "简体中文",
+                                     call_llm_fn=lambda *a, **kw: "[]", on_progress=progress)
+    # Each report follows that segment's save: the UI never runs ahead of disk.
+    assert seen == [(1, 2, 1), (2, 2, 2)]

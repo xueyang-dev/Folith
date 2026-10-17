@@ -10006,6 +10006,7 @@ def _targeted_final_review_ids(state, limit=8):
 def review_translation_segments(
     job_id, indexes, provider, api_key, model, target_lang, *, style_rules="",
     call_llm_fn=None, base_url=None, review_focus="", focus_findings=None,
+    on_progress=None,
 ):
     """Run the existing independent reviewer on current persisted segments.
 
@@ -10060,7 +10061,7 @@ def review_translation_segments(
     reviewed, failed_ids = [], []
     tm = load_tm(tm_project_id(state)) if state.get("use_tm", True) else {}
     tm_changed = False
-    for segment_id in segment_ids:
+    for position, segment_id in enumerate(segment_ids, 1):
         pair = pairs[segment_id]
         source = str(pair.get("source") or "")
         target = str(pair.get("target") or "")
@@ -10156,6 +10157,9 @@ def review_translation_segments(
         state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
         state["delivery_status"] = _delivery.compute_delivery_status(state)
         save_job_state(job_id, state)
+        if on_progress is not None:
+            # ``(done, total)`` after each checkpoint; the caller only displays it.
+            on_progress(position, len(segment_ids))
     return state, {
         "reviewed_segment_ids": reviewed,
         "failed_segment_ids": failed_ids,

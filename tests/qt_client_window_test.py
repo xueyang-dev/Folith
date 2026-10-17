@@ -3783,6 +3783,53 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
     assert saved == [(4, job_a)], saved
 
 
+def test_workbench_operation_runs_in_the_header_not_a_wait_dialog(client, monkeypatch):
+    """审校、交付这类一次性操作在工作台顶栏的运行状态组里显示，不再弹「请稍候」框。"""
+    window, app = client["window"], client["app"]
+    job_a, job_b = _two_jobs(client)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(window, "_busy", lambda *_: pytest.fail("no wait dialog in the workbench"))
+    notices: list[str] = []
+    monkeypatch.setattr(window, "_notice", lambda message, **_k: notices.append(str(message)))
+
+    window.open_job(job_a)
+    app.processEvents()
+    bench = window.workbench
+    window.review_all()
+    assert [call["label"] for call in held.calls] == ["审校"], held.calls
+    assert bench.operation_active(job_a)
+    assert bench.run_status.isVisible() and bench.run_status.track.isVisible()
+    assert "正在审校全部 3 段" in bench.run_status.line.text()
+
+    # 逐段进度回到顶栏：进度条和那一行一起走。
+    held.calls[0]["kwargs"]["on_progress"](2, 3)
+    assert bench.progress.maximum() == 3 and bench.progress.value() == 2
+    assert bench.run_status.line.text() == "正在审校 · 已完成 2/3 段"
+    # 每秒一次的运行状态刷新不会把它盖掉。
+    bench._render_runtime()
+    assert bench.run_status.line.text() == "正在审校 · 已完成 2/3 段"
+
+    # 同一个任务上不叠第二个操作。
+    window.review_all()
+    assert len(held.calls) == 1
+    assert notices and "上一个操作还在进行" in notices[-1]
+
+    # 切到别的任务：那里没有这个操作；切回来它还在。
+    window.open_job(job_b)
+    app.processEvents()
+    assert not bench.operation_active(job_b)
+    assert "审校" not in bench.run_status.line.text()
+    window.open_job(job_a)
+    app.processEvents()
+    assert bench.run_status.line.text() == "正在审校 · 已完成 2/3 段"
+
+    held.calls[0]["on_done"]({"state": {}, "result": {"reviewed_segment_ids": [0, 1, 2],
+                                                      "failed_segment_ids": []}})
+    app.processEvents()
+    assert not bench.operation_active(job_a)
+
+
 def test_save_snapshot_writes_the_requested_task_not_the_current_one(client, monkeypatch):
     window, adapter, app = client["window"], client["adapter"], client["app"]
     job_a, job_b = _two_jobs(client)

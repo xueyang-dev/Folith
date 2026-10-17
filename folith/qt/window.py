@@ -64,6 +64,21 @@ class _NullProgress:
         return None
 
 
+class _HeaderOperation:
+    """The busy indicator when it lives in the workbench header (same ``close`` API)."""
+
+    def __init__(self, workbench, job_id: str) -> None:
+        self.workbench = workbench
+        self.job_id = job_id
+
+    def close(self) -> None:
+        self.workbench.end_operation(self.job_id)
+
+
+def _review_progress_text(done: int, total: int) -> str:
+    return i18n.tr('正在审校 · 已完成 {v0}/{v1} 段', v0=done, v1=total)
+
+
 def _non_interactive_exit() -> bool:
     """退出流程的自动化开关（与旧壳共享的 `FOLITH_EXIT_FORCE_PROMPT=0`）。"""
     return os.environ.get(SUSPICIOUS_QUIT_ENV) == "0"
@@ -1836,13 +1851,34 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('当前没有可重试的失败步骤。'), error=True)
 
     def _run_with_busy(self, label: str, message: str, fn, *args,
-                       on_done=None, **kwargs) -> None:
+                       on_done=None, progress_text=None, for_job: str | None = None,
+                       **kwargs) -> None:
         """在后台线程里跑一个适配层动作，并显示等待指示器。
 
+        在任务的工作台里，等待指示器就是顶栏的运行状态组（不弹「请稍候」框，
+        用户可以继续看、可以离开）；其他页面仍用等待框。``progress_text(done, total)``
+        表示 ``fn`` 接受 ``on_progress`` 并逐步汇报进度。``for_job``：操作属于哪个任务
+        （缺省为当前任务；替别的任务做事时必须传）。
         额外的关键字参数原样转发给 ``fn``（例如保存交付文件时的 ``overwrite``）。
         """
-        busy = self._busy(message)
-        job_id = self._current_job_id
+        job_id = for_job or self._current_job_id
+        in_header = (bool(job_id) and self.stack.currentWidget() is self.workbench
+                     and job_id == self.workbench.job_id)
+        if in_header:
+            if self.workbench.operation_active(job_id):
+                # 上一个操作还占着这个任务：不叠第二个（核心也会以"正在后台处理"拒绝）。
+                self._notice(i18n.tr('上一个操作还在进行，请等它完成。'),
+                             error=True, job_id=job_id)
+                return
+            self.workbench.begin_operation(job_id, message, progress_text)
+            busy = _HeaderOperation(self.workbench, job_id)
+        else:
+            busy = self._busy(message)
+        on_progress = None
+        if progress_text is not None:
+            def on_progress(done: int, total: int) -> None:
+                if in_header:
+                    self.workbench.set_operation_progress(job_id, done, total)
 
         def done(result) -> None:
             busy.close()
@@ -1858,7 +1894,7 @@ class MainWindow(QMainWindow):
             self.refresh_workbench(force=True)
 
         self.runner.submit(fn, *args, on_done=done, on_error=failed,
-                           label=label, **kwargs)
+                           on_progress=on_progress, label=label, **kwargs)
 
     def submit_edit(self, index: int) -> None:
         """提交一段人工修改：写盘在后台进行，界面立即继续。
@@ -2515,7 +2551,7 @@ class MainWindow(QMainWindow):
             return
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校所选 {v0} 段…', v0=len(valid)),
                             adapter.review_segments, job_id, valid, self.config,
-                            on_done=self._review_done)
+                            on_done=self._review_done, progress_text=_review_progress_text)
 
     def review_all(self) -> None:
         state = self._cached_state
@@ -2526,7 +2562,7 @@ class MainWindow(QMainWindow):
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校全部 {v0} 段…', v0=len(indexes)),
                             adapter.review_segments, self._current_job_id,
                             indexes, self.config,
-                            on_done=self._review_done)
+                            on_done=self._review_done, progress_text=_review_progress_text)
 
     def deliver(self) -> None:
         job_id = self._current_job_id
@@ -2885,7 +2921,7 @@ class MainWindow(QMainWindow):
         self._run_with_busy(
             i18n.tr('保存交付文件'), i18n.tr('正在写出交付文件…'),
             adapter.copy_delivery_assets, job_id, version, target,
-            overwrite=overwrite,
+            overwrite=overwrite, for_job=job_id,
             on_done=lambda written: self._notice(
                 i18n.tr('已保存 {v0} 个文件到 {v1}', v0=len(written), v1=target)))
 

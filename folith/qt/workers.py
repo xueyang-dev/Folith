@@ -20,6 +20,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 class _TaskSignals(QObject):
     done = Signal(object)
     failed = Signal(str, str)  # (message, traceback)
+    progress = Signal(int, int)  # (done, total)
 
 
 class Task(QRunnable):
@@ -74,10 +75,16 @@ class TaskRunner(QObject):
         *args: Any,
         on_done: Callable[[Any], None] | None = None,
         on_error: Callable[[str, str], None] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
         label: str = "",
         **kwargs: Any,
     ) -> Task:
+        """``on_progress``：``fn`` 收到一个 ``on_progress(done, total)`` 关键字参数，
+        在工作线程里调用；回调在 GUI 线程上执行。"""
         task = Task(fn, *args, label=label, **kwargs)
+        if on_progress is not None:
+            task.kwargs["on_progress"] = task.signals.progress.emit
+            task.signals.progress.connect(on_progress)
         self._running.append(task)
 
         def _finish() -> None:

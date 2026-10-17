@@ -1962,5 +1962,7 @@
   "选择识别连接": "Elegir la conexión de reconocimiento",
   "这个任务原来用『{v0}』识别，现在的视觉连接是『{v1}』。用哪个继续？": "Esta tarea se reconoció con «{v0}»; la conexión de visión actual es «{v1}». ¿Con cuál continuar?",
   "用当前连接": "Usar la conexión actual",
-  "继续用原连接": "Mantener la conexión original"
+  "继续用原连接": "Mantener la conexión original",
+  "正在审校 · 已完成 {v0}/{v1} 段": "Revisando · {v0}/{v1} segmentos listos",
+  "上一个操作还在进行，请等它完成。": "La operación anterior sigue en curso. Espera a que termine."
 }

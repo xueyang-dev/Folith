@@ -1140,7 +1140,7 @@ def excluded_segments(job_id: str, state: dict | None = None) -> list[dict]:
 
 
 def review_segments(job_id: str, indexes: Sequence[int], config: EngineConfig,
-                    *, focus: str = "") -> dict:
+                    *, focus: str = "", on_progress=None) -> dict:
     """Run the existing reviewer on the selected segments (already persisted)."""
     problem = config.connection_problem()
     if problem:
@@ -1154,7 +1154,8 @@ def review_segments(job_id: str, indexes: Sequence[int], config: EngineConfig,
         str((core.load_job_state(job_id) or {}).get("target_lang")
             or config.target_lang),
         style_rules=config.style_rules or DEFAULT_STYLE_RULES,
-        base_url=config.translator_base_url(), review_focus=focus)
+        base_url=config.translator_base_url(), review_focus=focus,
+        on_progress=on_progress)
     return {"state": state, "result": result}
 
 
