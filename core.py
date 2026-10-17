@@ -2410,9 +2410,9 @@ def fetch_provider_models(provider, api_key, base_url=None):
 # ================= 确定性检查（对齐 localize-anything 的机械检查）=================
 PRESERVE_RE = re.compile(
     r'(?P<placeholder>%[sd]|%1\$[sd]|\{[A-Za-z_][A-Za-z0-9_]*\}|\{\{[A-Za-z_][A-Za-z0-9_]*\}\})'
-    r'|(?P<url>https?://\S+|www\.\S+)'
-    r'|(?P<email>[\w.+-]+@[\w-]+(?:\.[\w-]+)+)'
-    r'|(?P<doi>10\.\d{4,9}/[^\s]+)'
+    rf'|(?P<url>{_numerals.URL_PATTERN})'
+    rf'|(?P<email>{_numerals.EMAIL_PATTERN})'
+    rf'|(?P<doi>{_numerals.DOI_PATTERN})'
     r'|(?P<citation>\[\d+(?:[-,]\s*\d+)*\])',
     re.IGNORECASE,
 )
@@ -2424,6 +2424,10 @@ PRESERVE_SEVERITY = {
     "doi": "actionable",
     "citation": "actionable",
 }
+
+#: Machine identifiers keep every character, digits included; other preserved
+#: tokens (citation markers) may write their digits as the target's numerals.
+_VERBATIM_PRESERVE_KINDS = frozenset({"url", "email", "doi"})
 
 
 
@@ -2488,15 +2492,21 @@ def check_translation_batch(sources, targets, glossary, target_lang,
                 source_span=src, target_span=tgt,
                 reason="译文与英文源段完全相同，疑似整段未翻译"))
         for token, kind in extract_preserved_tokens(src).items():
-            if token not in tgt:
-                severity = PRESERVE_SEVERITY.get(kind, "actionable")
-                findings.append(_deterministic_finding(
-                    i, severity, "format_integrity",
-                    f"译文遗漏必须保留的{kind}「{token}」",
-                    f"原文包含必须保留的 {kind}「{token}」，但当前译文中找不到该内容。",
-                    "补回该保留项后重新检查占位符、链接或引用格式，确认其余译文未被破坏。",
-                    source_span=token, target_span="",
-                    reason=f"保留项 {kind}「{token}」在译文中丢失", kind=kind))
+            if token in tgt:
+                continue
+            # A citation [٣] that a Chinese / English translation writes as [3]
+            # is kept; identifiers must match character for character.
+            if kind not in _VERBATIM_PRESERVE_KINDS and _numerals.fold_digits(
+                    token, target_lang) in _numerals.fold_digits(tgt, target_lang):
+                continue
+            severity = PRESERVE_SEVERITY.get(kind, "actionable")
+            findings.append(_deterministic_finding(
+                i, severity, "format_integrity",
+                f"译文遗漏必须保留的{kind}「{token}」",
+                f"原文包含必须保留的 {kind}「{token}」，但当前译文中找不到该内容。",
+                "补回该保留项后重新检查占位符、链接或引用格式，确认其余译文未被破坏。",
+                source_span=token, target_span="",
+                reason=f"保留项 {kind}「{token}」在译文中丢失", kind=kind))
         for residual, sev in find_residuals(src, tgt, target_lang):
             findings.append(_deterministic_finding(
                 i, sev, "source_language_residue", f"译文残留源语片段「{residual}」",
@@ -3287,10 +3297,12 @@ def _translator_system(glossary_text, style_rules, target_lang):
             "人名、地名、机构名、品牌名和作品名不应一律保留源语：遵循已提供的术语表、"
             "实体提示和全书既定译法；没有既定译法时，选择目标语言中自然、连贯的表达，"
             "并在后文保持一致。只有明确标为“保留原文”的词条才按其规则原样保留。URL、"
-            "邮箱、DOI、引用标注（如 [12]）和其他机器标识符保持准确，不要改动其字符。\n"
+            "邮箱、DOI 和其他机器标识符逐字符保持不变（其中的数字也不改写）；引用标注"
+            "（如 [12]）保留括号、格式和位置，标号数值不变。\n"
             "数字、电话号码、日期和脚注/引用标号的数值保持不变，但改用目标语言通行的"
             "数字写法：原文的阿拉伯-印度数字（如 ١٢٣、۴۵）在中文、英文等译文中写作 123、45，"
-            "脚注标号 (١) 写作 (1)，括号与位置不变；目标语言本身使用这种数字时保持原样。\n"
+            "脚注标号 (١) 写作 (1)、引用标注 [٣] 写作 [3]，括号与位置不变；"
+            "目标语言本身使用这种数字时保持原样。\n"
             f"{glossary_text}\n"
             f"{style_rules}\n"
             "翻译前请在内部检查：指代与照应关系、术语和专名、理论/非字面用法、"

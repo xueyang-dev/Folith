@@ -8,8 +8,9 @@ must stay the same; only the script changes.
 
 The conversion is deliberately narrow: a digit run that sits next to an Arabic
 letter belongs to Arabic text the translation quotes on purpose (a title kept
-in the original), so it is left alone.  Targets that use these numerals
-themselves are never touched.
+in the original), so it is left alone.  Machine identifiers -- URLs, e-mail
+addresses, DOIs -- keep every character, digits included.  Targets that use
+these numerals themselves are never touched.
 """
 from __future__ import annotations
 
@@ -22,6 +23,14 @@ _TO_ASCII = str.maketrans({**{digit: str(index % 10) for index, digit in enumera
                            "٫": ".",     # ARABIC DECIMAL SEPARATOR
                            "٬": ","})    # ARABIC THOUSANDS SEPARATOR
 _RUN = re.compile(f"[{_DIGITS}]+(?:[٫٬][{_DIGITS}]+)*")
+
+#: Identifiers whose characters must survive verbatim.  ``core.PRESERVE_RE``
+#: builds its url / email / doi groups from these, so the checker and the
+#: converter agree on what an identifier is.
+URL_PATTERN = r"https?://\S+|www\.\S+"
+EMAIL_PATTERN = r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+DOI_PATTERN = r"10\.\d{4,9}/[^\s]+"
+_IDENTIFIER = re.compile(f"{URL_PATTERN}|{EMAIL_PATTERN}|{DOI_PATTERN}", re.IGNORECASE)
 _ARABIC_SCRIPT = re.compile(
     "[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]")
 
@@ -54,7 +63,11 @@ def normalize_digits(text: str, target_lang: str | None) -> str:
     if not text or keeps_eastern_digits(target_lang) or not _RUN.search(text):
         return text
 
+    identifiers = [match.span() for match in _IDENTIFIER.finditer(text)]
+
     def convert(match: re.Match) -> str:
+        if any(start <= match.start() < end for start, end in identifiers):
+            return match.group(0)
         before = _neighbour(text, match.start() - 1, -1)
         after = _neighbour(text, match.end(), 1)
         if (before and _arabic_letter(before)) or (after and _arabic_letter(after)):
@@ -62,6 +75,19 @@ def normalize_digits(text: str, target_lang: str | None) -> str:
         return match.group(0).translate(_TO_ASCII)
 
     return _RUN.sub(convert, text)
+
+
+def fold_digits(text: str, target_lang: str | None) -> str:
+    """Compare-only form of *text*: every Eastern Arabic digit read as 0-9.
+
+    The checker uses it on both the source token and the translation, so a
+    citation ``[٣]`` that the translation writes as ``[3]`` counts as kept.
+    Unlike :func:`normalize_digits` it ignores context; it never produces text
+    that is shown or saved.
+    """
+    if not text or keeps_eastern_digits(target_lang):
+        return text
+    return text.translate(_TO_ASCII)
 
 
 def normalize_targets(targets, target_lang: str | None) -> list:

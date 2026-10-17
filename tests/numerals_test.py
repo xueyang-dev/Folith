@@ -55,3 +55,50 @@ def test_translate_batch_converts_fresh_and_cached_results():
 def test_translator_prompt_states_the_digit_rule():
     prompt = core._translator_system("", "", "简体中文")
     assert "(١) 写作 (1)" in prompt
+
+
+# An Arabic source with a footnote marker, a page number, a citation and a URL
+# whose path ends in an Eastern Arabic digit.
+_MIXED_SOURCE = "انظر الحاشية (١) وص ١٢ والمرجع [٣] و http://x.org/٤"
+
+
+@pytest.mark.parametrize("text", [
+    "见 http://x.org/٤ 与 www.x.org/a٥",
+    "写信到 user٢@x.org",
+    "DOI 10.1234/abc٦",
+])
+def test_identifier_digits_are_never_converted(text):
+    assert numerals.normalize_digits(text, "简体中文") == text
+
+
+@pytest.mark.parametrize("target, model_output", [
+    ("简体中文", "见注释 (١) 和第 ١٢ 页及参考文献 [٣] 与 http://x.org/٤"),
+    ("English", "See note (١), p. ١٢, reference [٣] and http://x.org/٤"),
+])
+def test_converted_citations_and_kept_urls_pass_the_check(target, model_output):
+    translation = numerals.normalize_digits(model_output, target)
+    assert "[3]" in translation and "http://x.org/٤" in translation
+    findings = core.check_translation_batch([_MIXED_SOURCE], [translation], [], target)
+    assert [f for f in findings if f["category"] == "format_integrity"] == []
+
+
+def test_a_changed_url_or_a_missing_citation_is_still_reported():
+    findings = core.check_translation_batch(
+        [_MIXED_SOURCE], ["见注释 (1) 和第 12 页及参考文献 与 http://x.org/4"], [], "简体中文")
+    reasons = {f["reason"] for f in findings if f["category"] == "format_integrity"}
+    assert reasons == {"保留项 citation「[٣]」在译文中丢失",
+                       "保留项 url「http://x.org/٤」在译文中丢失"}
+
+
+def test_arabic_targets_still_compare_citations_exactly():
+    translation = "انظر المرجع [٣]"
+    assert numerals.normalize_digits(translation, "العربية") == translation
+    assert core.check_translation_batch(["See [٣]"], [translation], [], "العربية") == []
+    findings = core.check_translation_batch(["See [٣]"], ["انظر المرجع [3]"], [], "العربية")
+    assert [f["reason"] for f in findings] == ["保留项 citation「[٣]」在译文中丢失"]
+
+
+def test_translator_prompt_no_longer_freezes_citation_digits():
+    prompt = core._translator_system("", "", "简体中文")
+    assert "[٣] 写作 [3]" in prompt
+    assert "引用标注（如 [12]）和其他机器标识符" not in prompt
