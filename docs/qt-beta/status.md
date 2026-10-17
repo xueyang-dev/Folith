@@ -235,7 +235,7 @@ venv/bin/python scripts/qt_release_checks.py --check-notes
   [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md)。
 - 其余无技术阻断。剩余必需项依赖人工/外部条件（第 16–20 项）或外部凭据（签名/公证）。
 - 远端 CI 未运行（无远端授权）：`qt-macos` job 已按同一解释器环境接线，本机命令可复现，**不宣称远端 CI 通过**。
-- 未提供项目删除入口（只提供任务删除，含运行中保护与明确确认）；不为了补旧探针回到 Streamlit 调试。
+- 项目删除入口已提供（见 §2 的 12k：确认、运行中保护、删除前备份）；不为了补旧探针回到 Streamlit 调试。
 - Windows / Intel Mac / Windows ARM：未验收，不宣称支持。
 - LibreOffice 未随包：渲染 QA 保持 `NOT_RUN`，不以缺少它阻塞可用 DOCX 的 Beta。
 
