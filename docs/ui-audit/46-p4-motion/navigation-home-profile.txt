@@ -4,36 +4,36 @@
    List reduced from 350 to 35 due to restriction <35>
 
    ncalls  tottime  percall  cumtime  percall filename:lineno(function)
-        1    0.000    0.000    0.505    0.505 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:816(show_home)
-        1    0.000    0.000    0.499    0.499 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:671(refresh_home)
-        1    0.000    0.000    0.497    0.497 /Users/xueyang/Dev/FolioThread/folith/qt/adapter.py:262(list_jobs)
-        1    0.006    0.006    0.497    0.497 /Users/xueyang/Dev/FolioThread/folith/application/read_models.py:278(list_jobs)
-        1    0.006    0.006    0.490    0.490 /Users/xueyang/Dev/FolioThread/folith/application/read_models.py:220(_summary_row)
-        2    0.000    0.000    0.465    0.233 /Users/xueyang/Dev/FolioThread/core.py:8654(load_job_state)
-        2    0.000    0.000    0.465    0.233 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:190(load_job_state_cached)
-        2    0.001    0.000    0.465    0.233 /Users/xueyang/Dev/FolioThread/folith/storage/job_repository.py:177(_isolated_copy)
+        1    0.000    0.000    0.505    0.505 <repo>/folith/qt/window.py:816(show_home)
+        1    0.000    0.000    0.499    0.499 <repo>/folith/qt/window.py:671(refresh_home)
+        1    0.000    0.000    0.497    0.497 <repo>/folith/qt/adapter.py:262(list_jobs)
+        1    0.006    0.006    0.497    0.497 <repo>/folith/application/read_models.py:278(list_jobs)
+        1    0.006    0.006    0.490    0.490 <repo>/folith/application/read_models.py:220(_summary_row)
+        2    0.000    0.000    0.465    0.233 <repo>/core.py:8654(load_job_state)
+        2    0.000    0.000    0.465    0.233 <repo>/folith/storage/job_repository.py:190(load_job_state_cached)
+        2    0.001    0.000    0.465    0.233 <repo>/folith/storage/job_repository.py:177(_isolated_copy)
         2    0.381    0.190    0.381    0.190 {built-in method _pickle.loads}
-        1    0.000    0.000    0.255    0.255 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:486(delivery_snapshot_status)
+        1    0.000    0.000    0.255    0.255 <repo>/folith/engine/delivery_state.py:486(delivery_snapshot_status)
         2    0.084    0.042    0.084    0.042 {built-in method _pickle.dumps}
-        1    0.000    0.000    0.019    0.019 /Users/xueyang/Dev/FolioThread/folith/engine/delivery_state.py:539(recovery_summary)
-        1    0.003    0.003    0.019    0.019 /Users/xueyang/Dev/FolioThread/folith/checkpoint.py:110(recovery_summary)
-        1    0.002    0.002    0.014    0.014 /Users/xueyang/Dev/FolioThread/folith/checkpoint.py:92(read_events)
+        1    0.000    0.000    0.019    0.019 <repo>/folith/engine/delivery_state.py:539(recovery_summary)
+        1    0.003    0.003    0.019    0.019 <repo>/folith/checkpoint.py:110(recovery_summary)
+        1    0.002    0.002    0.014    0.014 <repo>/folith/checkpoint.py:92(read_events)
      5961    0.002    0.000    0.011    0.000 /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/json/__init__.py:299(loads)
      5961    0.003    0.000    0.008    0.000 /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/json/decoder.py:332(decode)
         2    0.002    0.001    0.005    0.003 {method 'setCurrentWidget' of 'PySide6.QtWidgets.QStackedWidget' objects}
-        2    0.000    0.000    0.004    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:1281(_fill_cards)
+        2    0.000    0.000    0.004    0.002 <repo>/folith/qt/views.py:1281(_fill_cards)
      5961    0.003    0.000    0.003    0.000 /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/json/decoder.py:343(raw_decode)
-        1    0.000    0.000    0.002    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:994(set_rows)
-        1    0.000    0.000    0.002    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:1161(_apply_filter)
-        1    0.000    0.000    0.002    0.002 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:1266(resizeEvent)
+        1    0.000    0.000    0.002    0.002 <repo>/folith/qt/views.py:994(set_rows)
+        1    0.000    0.000    0.002    0.002 <repo>/folith/qt/views.py:1161(_apply_filter)
+        1    0.000    0.000    0.002    0.002 <repo>/folith/qt/views.py:1266(resizeEvent)
         4    0.001    0.000    0.002    0.000 {method 'setParent' of 'PySide6.QtWidgets.QWidget' objects}
-        2    0.000    0.000    0.001    0.001 /Users/xueyang/Dev/FolioThread/folith/qt/views.py:330(__init__)
+        2    0.000    0.000    0.001    0.001 <repo>/folith/qt/views.py:330(__init__)
     11922    0.001    0.000    0.001    0.000 {method 'match' of 're.Pattern' objects}
-      769    0.000    0.000    0.001    0.000 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:2705(eventFilter)
+      769    0.000    0.000    0.001    0.000 <repo>/folith/qt/window.py:2705(eventFilter)
         4    0.000    0.000    0.001    0.000 /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/pathlib.py:1053(read_text)
     30827    0.001    0.000    0.001    0.000 {method 'get' of 'dict' objects}
         4    0.000    0.000    0.001    0.000 {method 'read' of '_io.TextIOWrapper' objects}
-      769    0.000    0.000    0.001    0.000 /Users/xueyang/Dev/FolioThread/folith/qt/window.py:2716(_intercept_quit)
+      769    0.000    0.000    0.001    0.000 <repo>/folith/qt/window.py:2716(_intercept_quit)
 19931/19929    0.001    0.000    0.001    0.000 {built-in method builtins.isinstance}
         1    0.001    0.001    0.001    0.001 {method 'splitlines' of 'str' objects}
        16    0.000    0.000    0.001    0.000 {method 'addWidget' of 'PySide6.QtWidgets.QBoxLayout' objects}

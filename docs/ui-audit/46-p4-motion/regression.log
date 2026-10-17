@@ -243,5 +243,5 @@ pytest cases 通过   : 3663
 有效失败文件        : 2
 总耗时              : 19m52s
 失败文件：brand_regression_test.py, qt_acceptance_kit_test.py
-失败日志：/Users/xueyang/Dev/FolioThread/.regression-logs
+失败日志：<repo>/.regression-logs
 TSV 写入 docs/ui-audit/46-p4-motion/regression.tsv

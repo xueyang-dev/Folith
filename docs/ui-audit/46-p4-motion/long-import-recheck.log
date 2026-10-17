@@ -12,7 +12,7 @@ tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respec
   <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
 
 tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
-  /Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  <repo>/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
     self._action.clicked.disconnect()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

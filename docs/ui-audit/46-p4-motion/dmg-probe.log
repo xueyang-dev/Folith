@@ -1,5 +1,5 @@
 {
-  "dmg": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg",
+  "dmg": "<repo>/dist/qt-desktop/Folith-Qt-0.5.0-macos-arm64.dmg",
   "started_at": 1792041520.925424,
   "steps": [
     {
@@ -21,7 +21,7 @@
     {
       "at": 3.97,
       "step": "installed",
-      "app": "/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folith-qt-install-falpfnwi/Folith.app"
+      "app": "<tmp>/folith-qt-install-falpfnwi/Folith.app"
     },
     {
       "at": 6.6,
@@ -59,7 +59,7 @@
     }
   ],
   "sha256": "f480a1f88c895a53276364f52868b16bd88615ef66cc078a926808930f4bd8e6",
-  "path_without_homebrew": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/xueyang/.opencode/bin:/Users/xueyang/.local/bin:/Users/xueyang/anaconda3/bin:/Users/xueyang/.local/bin:/Library/Frameworks/Python.framework/Versions/3.11/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/xueyang/.codex/tmp/arg0/codex-arg0YlmuFu:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/xueyang/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/xueyang/.opencode/bin:/Users/xueyang/.local/bin:/Users/xueyang/anaconda3/bin:/Library/Frameworks/Python.framework/Versions/3.11/bin:/Users/xueyang/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+  "path_without_homebrew": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:~/.opencode/bin:~/.local/bin:~/anaconda3/bin:~/.local/bin:/Library/Frameworks/Python.framework/Versions/3.11/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:~/.codex/tmp/arg0/codex-arg0YlmuFu:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:~/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:~/.opencode/bin:~/.local/bin:~/anaconda3/bin:/Library/Frameworks/Python.framework/Versions/3.11/bin:~/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
   "homebrew_on_path": false,
   "free_bytes": 12268208128,
   "needed_bytes": 629145600,
@@ -85,7 +85,7 @@
     "tessconfigs"
   ],
   "ocr_payload_ok": true,
-  "installed_app": "/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folith-qt-install-falpfnwi/Folith.app",
+  "installed_app": "<tmp>/folith-qt-install-falpfnwi/Folith.app",
   "smoke": {
     "exit_code": 0,
     "stderr_tail": "h/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal \"clicked()\".\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\nThis plugin does not support propagateSizeHints()\n",
@@ -95,12 +95,12 @@
       "app_version": "0.5.0",
       "build_id": "git:7b70ad5",
       "frozen": true,
-      "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-7b70ad5/dmg/data",
-      "log_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-7b70ad5/dmg/logs",
+      "data_dir": "<repo>/tmp/qt-beta/p4-7b70ad5/dmg/data",
+      "log_dir": "<repo>/tmp/qt-beta/p4-7b70ad5/dmg/logs",
       "python": "3.11.3",
       "platform": "darwin"
     },
-    "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-7b70ad5/dmg/data",
+    "data_dir": "<repo>/tmp/qt-beta/p4-7b70ad5/dmg/data",
     "jobs": 0,
     "engine_configured": false,
     "qt_version": "6.11.2",

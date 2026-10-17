@@ -30,7 +30,7 @@ __________________ test_quickstart_is_a_usable_one_page_guide __________________
                 text, json.loads(record.read_text(encoding="utf-8"))["sha256"])
 E           AssertionError: assert False
 E            +  where False = <function _sha_matches at 0x14a994360>('# 验收速览（一页）\n\n> 详细步骤在 [manual-acceptance.md](manual-acceptance.md)；这一页只回答三个问题：\n> **现在是什么状态、你要做哪几件事、怎么回传**。\n\n## 一、现...- 有项失败 → 我按失败项定位到控件/焦点/线程层面修复，再出新候选重验；**不堆补丁、不改技术路线**。\n- 公开分发（Developer ID / 硬化运行时 / 签名 / 公证 / staple）属另行授权范围，本轮不做。\n', '215a81856c7153e52d62eadea930bea437ea406252f43151e7c6046d5dffba2d')
-E            +    where <function _sha_matches at 0x14a994360> = <module 'qt_docs_audit' from '/Users/xueyang/Dev/FolioThread/scripts/qt_docs_audit.py'>._sha_matches
+E            +    where <function _sha_matches at 0x14a994360> = <module 'qt_docs_audit' from '<repo>/scripts/qt_docs_audit.py'>._sha_matches
 
 tests/qt_acceptance_kit_test.py:173: AssertionError
 =============================== warnings summary ===============================
@@ -46,7 +46,7 @@ tests/qt_acceptance_kit_test.py::test_kit_shortcuts_match_the_registered_actions
   <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
 
 tests/qt_acceptance_kit_test.py::test_kit_shortcuts_match_the_registered_actions
-  /Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  <repo>/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
     self._action.clicked.disconnect()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

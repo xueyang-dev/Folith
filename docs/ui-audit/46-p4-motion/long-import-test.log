@@ -2,7 +2,7 @@ F                                                                        [100%]
 =================================== FAILURES ===================================
 ______ test_long_import_progress_is_nonmodal_and_respects_reduced_motion _______
 
-client = {'adapter': <module 'folith.qt.adapter' from '/Users/xueyang/Dev/FolioThread/folith/qt/adapter.py'>, 'app': <PySide6.Q...r/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/pytest-of-xueyang/pytest-576/test_long_import_progress_is_n0/data'), ...}
+client = {'adapter': <module 'folith.qt.adapter' from '<repo>/folith/qt/adapter.py'>, 'app': <PySide6.Q...r/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/pytest-of-xueyang/pytest-576/test_long_import_progress_is_n0/data'), ...}
 monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10975b1d0>
 
     def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, monkeypatch):
@@ -42,7 +42,7 @@ tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respec
   <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
 
 tests/qt_client_window_test.py::test_long_import_progress_is_nonmodal_and_respects_reduced_motion
-  /Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  <repo>/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
     self._action.clicked.disconnect()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

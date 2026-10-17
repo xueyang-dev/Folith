@@ -119,10 +119,10 @@
       "snapshots": 1
     }
   ],
-  "data_dir": "/Users/xueyang/Dev/FolioThread/tmp/qt-beta/p4-complete-source/data",
+  "data_dir": "<repo>/tmp/qt-beta/p4-complete-source/data",
   "fixtures": [
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/fixtures/selftest.docx",
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/fixtures/selftest.pdf"
+    "<repo>/docs/ui-audit/46-p4-motion/fixtures/selftest.docx",
+    "<repo>/docs/ui-audit/46-p4-motion/fixtures/selftest.pdf"
   ],
   "job_ids": [
     "1f71e513846310b2",
@@ -210,12 +210,12 @@
     "current": true
   },
   "saved_files": [
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/bilingual.docx",
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/delivery_manifest.json",
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/segment_evidence.jsonl",
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/source_cleanup.json",
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/terms.xlsx",
-    "/Users/xueyang/Dev/FolioThread/docs/ui-audit/46-p4-motion/交付 结果 中文/translation.docx"
+    "<repo>/docs/ui-audit/46-p4-motion/交付 结果 中文/bilingual.docx",
+    "<repo>/docs/ui-audit/46-p4-motion/交付 结果 中文/delivery_manifest.json",
+    "<repo>/docs/ui-audit/46-p4-motion/交付 结果 中文/segment_evidence.jsonl",
+    "<repo>/docs/ui-audit/46-p4-motion/交付 结果 中文/source_cleanup.json",
+    "<repo>/docs/ui-audit/46-p4-motion/交付 结果 中文/terms.xlsx",
+    "<repo>/docs/ui-audit/46-p4-motion/交付 结果 中文/translation.docx"
   ],
   "exit_before": {
     "safe_to_exit": true,

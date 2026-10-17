@@ -4,7 +4,7 @@
 =================================== FAILURES ===================================
 ________ test_start_is_inline_defers_io_and_restores_buttons_on_failure ________
 
-client = {'adapter': <module 'folith.qt.adapter' from '/Users/xueyang/Dev/FolioThread/folith/qt/adapter.py'>, 'app': <PySide6.Q...r/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/pytest-of-xueyang/pytest-573/test_start_is_inline_defers_io0/data'), ...}
+client = {'adapter': <module 'folith.qt.adapter' from '<repo>/folith/qt/adapter.py'>, 'app': <PySide6.Q...r/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/pytest-of-xueyang/pytest-573/test_start_is_inline_defers_io0/data'), ...}
 monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7031b5c090>
 
     def test_start_is_inline_defers_io_and_restores_buttons_on_failure(client, monkeypatch):
@@ -72,7 +72,7 @@ tests/qt_followup_test.py: 1 warning
 tests/qt_pdf_panel_test.py: 2 warnings
 tests/qt_task_setup_test.py: 3 warnings
 tests/qt_client_window_test.py: 2 warnings
-  /Users/xueyang/Dev/FolioThread/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  <repo>/folith/qt/style.py:1323: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
     self._action.clicked.disconnect()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

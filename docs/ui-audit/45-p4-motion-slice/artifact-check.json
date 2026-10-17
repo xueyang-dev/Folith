@@ -32,7 +32,7 @@
     "changed": []
   },
   "app": {
-    "path": "/Users/xueyang/Dev/FolioThread/dist/qt-desktop/Folith.app",
+    "path": "<repo>/dist/qt-desktop/Folith.app",
     "exists": true,
     "executable_exists": true
   },

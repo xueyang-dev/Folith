@@ -2,7 +2,7 @@
 =================================== FAILURES ===================================
 ____________ test_report_pass_has_outline_exports_and_stable_reruns ____________
 
-tmp_path = PosixPath('/private/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_report_pass_has_outline_e0')
+tmp_path = PosixPath('<tmp>/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_report_pass_has_outline_e0')
 
     def test_report_pass_has_outline_exports_and_stable_reruns(tmp_path):
 >       at, old_output = _render_report(tmp_path, _report_state(), _base_artifacts())
@@ -63,7 +63,7 @@ venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:24
 2026-10-15 06:27:46.507 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
 ____________ test_report_missing_literature_evidence_is_actionable _____________
 
-tmp_path = PosixPath('/private/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_report_missing_literature0')
+tmp_path = PosixPath('<tmp>/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_report_missing_literature0')
 
     def test_report_missing_literature_evidence_is_actionable(tmp_path):
         state = _report_state(quality="review_required")
@@ -131,7 +131,7 @@ venv/lib/python3.11/site-packages/streamlit/testing/v1/local_script_runner.py:24
 2026-10-15 06:43:09.682 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
 _____________ test_failed_report_exposes_retry_in_runtime_details ______________
 
-tmp_path = PosixPath('/private/var/folders/70/m56f428103j8mb2ssqj6zr4c0000gn/T/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_failed_report_exposes_ret0')
+tmp_path = PosixPath('<tmp>/folio-regression-q4wtctkc/report_workspace_test/pytest-base/test_failed_report_exposes_ret0')
 monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11cd41d10>
 
     def test_failed_report_exposes_retry_in_runtime_details(tmp_path, monkeypatch):

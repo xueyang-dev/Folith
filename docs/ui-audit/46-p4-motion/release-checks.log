@@ -1,5 +1,5 @@
-{"ok": true, "manifest": "/Users/xueyang/Dev/FolioThread/build/qt-desktop/release-manifest.json", "distributions": 9, "forbidden_found": []}
-{"ok": true, "notes": "/Users/xueyang/Dev/FolioThread/docs/qt-beta/release-notes.md"}
+{"ok": true, "manifest": "<repo>/build/qt-desktop/release-manifest.json", "distributions": 9, "forbidden_found": []}
+{"ok": true, "notes": "<repo>/docs/qt-beta/release-notes.md"}
 <!-- candidate-identity:begin -->
 | 项 | 值 |
 | --- | --- |
