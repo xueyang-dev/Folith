@@ -272,7 +272,7 @@ def test_configured_delivery_builds_every_selected_format_and_nothing_else():
         assets = core.delivery_snapshot_assets(job_id, 1)
         expected = {
             "translation.docx", "bilingual.docx", "translation.pdf",
-            "translation.epub", "epub_export_report.json",
+            "translation.epub", "epub_export_report.json", "docx_export_report.json",
             "annotated_bilingual.docx", "terms.xlsx", "terms.tbx",
             "memory.tmx", "bilingual.jsonl", "segment_evidence.jsonl",
             "selected_cases.json", "academic_workspace.zip",

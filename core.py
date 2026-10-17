@@ -9331,8 +9331,13 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
             ).encode("utf-8")
         if state.get("p2_done") and pairs:
             if config["deliver_plain_docx"]:
-                bundle["translation.docx"] = _bytes(translations_to_word(
-                    pairs, target_lang=state.get("target_lang") or target_lang))
+                from folith.engine.document_export import build_translation_docx
+                docx_state = dict(state, target_lang=state.get("target_lang") or target_lang)
+                docx_bytes, docx_report = build_translation_docx(docx_state, source)
+                bundle["translation.docx"] = _bytes(docx_bytes)
+                bundle["docx_export_report.json"] = (
+                    json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
+                ).encode("utf-8")
             if config["deliver_bilingual_docx"]:
                 bundle["bilingual.docx"] = _bytes(pairs_to_word(
                     pairs, source_lang=state.get("source_lang"),

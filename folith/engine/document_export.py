@@ -244,6 +244,81 @@ def translations_to_word(pairs, target_lang=None):
     return out
 
 
+def build_translation_docx(state, source):
+    """Rebuild translated DOCX in source order, retaining supported pictures."""
+    from folith.epub import (
+        EpubExportError, _docx_source, _pdf_source, _join_targets,
+        _translation_groups,
+    )
+    from docx.shared import Emu
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    filename = str(state.get("filename") or "").lower()
+    pairs = state.get("pairs") or []
+    report = {"image_count": 0, "warnings": []}
+    if not source or not filename.endswith((".pdf", ".docx")):
+        report["warnings"] = ["缺少原始文件，无法恢复图片。" if not source else
+                              "此来源的译文 DOCX 为纯文字重建，不保留源文件图片。"]
+        return translations_to_word(pairs, state.get("target_lang")), report
+    try:
+        paragraphs, nodes, media, warnings, cover = (
+            _docx_source(source) if filename.endswith(".docx") else _pdf_source(source))
+        report.update(image_count=len(media), warnings=[
+            warning.replace("EPUB", "译文 DOCX") for warning in warnings])
+        if not media:
+            return translations_to_word(pairs, state.get("target_lang")), report
+        groups, groups_by_ref = _translation_groups(state, paragraphs)
+    except EpubExportError as exc:
+        raise RuntimeError(str(exc).replace("EPUB", "译文 DOCX")) from exc
+    except Exception as exc:
+        raise RuntimeError(f"译文 DOCX 无法读取源文件：{exc}") from exc
+
+    doc = Document()
+    _apply_doc_fonts(doc)
+    doc.add_heading("译文", 0)
+    section = doc.sections[0]
+    max_width = section.page_width - section.left_margin - section.right_margin
+    max_height = section.page_height - section.top_margin - section.bottom_margin
+    # Leave space for the picture paragraph's line box and spacing.
+    max_height -= Emu(360000)
+    emitted = set()
+    if cover:
+        nodes = [{"kind": "image", "name": cover}] + nodes
+    for node in nodes:
+        if node["kind"] == "text":
+            for index in groups_by_ref.get(node["ref"], []):
+                if index in emitted:
+                    continue
+                emitted.add(index)
+                target = _join_targets(groups[index]["targets"])
+                paragraph = (doc.add_heading(target, level=1)
+                             if target and node["role"] == "heading"
+                             else doc.add_paragraph(target))
+                _apply_paragraph_direction(paragraph, state.get("target_lang"))
+        elif node["kind"] == "image":
+            paragraph = doc.add_paragraph()
+            paragraph.paragraph_format.first_line_indent = 0
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            picture = paragraph.add_run().add_picture(io.BytesIO(media[node["name"]][0]))
+            scale = min(1, max_width / picture.width, max_height / picture.height)
+            picture.width = Emu(round(picture.width * scale))
+            picture.height = Emu(round(picture.height * scale))
+        elif node["kind"] == "caption":
+            paragraph = doc.add_paragraph(node["text"], style="Caption")
+            _apply_paragraph_direction(paragraph, state.get("source_lang"))
+    if len(emitted) != len(groups):
+        raise RuntimeError("译文 DOCX 有译文无法定位到原文，已停止导出以避免遗漏。")
+    report["placement"] = "图片位于对应完整段落之后；跨图片合并的译文整体位于图片之前。"
+    report["warnings"] = list(dict.fromkeys(
+        [warning.replace("EPUB", "译文 DOCX") for warning in warnings]
+        + ["图片内部文字保持原样，PDF 图注保留原文；文档重新排版，不保留原页码和坐标。"]
+    ))
+    out = io.BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out, report
+
+
 def translations_to_pdf(pairs, target_lang=None):
     """Render a paginated, Unicode-aware translation PDF with PyMuPDF Story."""
     paragraphs = "".join(

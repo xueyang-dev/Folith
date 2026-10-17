@@ -420,6 +420,37 @@ def _xhtml(title: str, body: str, language: str, direction: str | None = None) -
             f'<link rel="stylesheet" type="text/css" href="style.css"/></head><body>{body}</body></html>').encode("utf-8")
 
 
+def _translation_groups(state: dict, paragraphs: list[str]):
+    """Resolve translated paragraphs once for both reflow delivery formats."""
+    working = deepcopy(state)
+    raw = working.get("source_paras")
+    if raw is None or not raw:
+        # An untouched legacy task can be matched to the source; no guesses
+        # based on mutable paragraph indexes or fuzzy string search.
+        working["source_paras"] = list(paragraphs)
+        raw = paragraphs
+    if [_normal(p) for p in raw] != [_normal(p) for p in paragraphs]:
+        raise EpubExportError("EPUB 原文段落与任务来源不一致，无法可靠定位图片；请重新导入源文件建立图文关联。")
+    bind_source_references(working)
+    pairs = working.get("pairs") or []
+    if not pairs or any(SOURCE_REFS not in pair for pair in pairs):
+        raise EpubExportError("EPUB 缺少图文来源关联；此任务的段落结构已变更或来源映射不完整，请重新导入建立关联。")
+    groups = []
+    for pair in pairs:
+        refs = tuple(pair[SOURCE_REFS])
+        if not refs or any(type(ref) is not int or not 0 <= ref < len(paragraphs) for ref in refs):
+            raise EpubExportError("EPUB 段落来源关联无效，请重新导入源文件。")
+        if groups and groups[-1]["refs"] == refs:
+            groups[-1]["targets"].append(pair.get("target") or "")
+        else:
+            groups.append({"refs": refs, "targets": [pair.get("target") or ""]})
+    groups_by_ref = {}
+    for index, group in enumerate(groups):
+        for ref in group["refs"]:
+            groups_by_ref.setdefault(ref, []).append(index)
+    return groups, groups_by_ref
+
+
 def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> tuple[bytes, dict]:
     """Create a self-contained EPUB 3 and a human-readable scope report."""
     if not source:
@@ -451,32 +482,8 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
         raise
     except Exception as exc:
         raise EpubExportError(f"EPUB 无法读取源文件：{exc}") from exc
-    working = deepcopy(state)
-    raw = working.get("source_paras")
-    if raw is None or not raw:
-        # An untouched legacy task can be matched to the source; no guesses
-        # based on mutable paragraph indexes or fuzzy string search.
-        working["source_paras"] = list(paragraphs)
-        raw = paragraphs
-    if [_normal(p) for p in raw] != [_normal(p) for p in paragraphs]:
-        raise EpubExportError("EPUB 原文段落与任务来源不一致，无法可靠定位图片；请重新导入源文件建立图文关联。")
-    bind_source_references(working)
-    pairs = working.get("pairs") or []
-    if not pairs or any(SOURCE_REFS not in pair for pair in pairs):
-        raise EpubExportError("EPUB 缺少图文来源关联；此任务的段落结构已变更或来源映射不完整，请重新导入建立关联。")
-    groups = []
-    for pair in pairs:
-        refs = tuple(pair[SOURCE_REFS])
-        if not refs or any(type(ref) is not int or not 0 <= ref < len(paragraphs) for ref in refs):
-            raise EpubExportError("EPUB 段落来源关联无效，请重新导入源文件。")
-        if groups and groups[-1]["refs"] == refs:
-            groups[-1]["targets"].append(pair.get("target") or "")
-        else:
-            groups.append({"refs": refs, "targets": [pair.get("target") or ""]})
-    groups_by_ref = {}
-    for index, group in enumerate(groups):
-        for ref in group["refs"]:
-            groups_by_ref.setdefault(ref, []).append(index)
+    groups, groups_by_ref = _translation_groups(state, paragraphs)
+    pairs = state.get("pairs") or []
     title = str(state.get("book_title") or Path(filename).stem or "译文")
     language = _language(str(state.get("target_lang") or "简体中文"))
     direction = text_direction(" ".join(str(pair.get("target") or "") for pair in pairs),
