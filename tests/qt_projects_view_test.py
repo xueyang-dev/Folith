@@ -100,15 +100,15 @@ def test_unsorted_page_is_a_readonly_summary_with_make_project_buttons(env, app)
     _load(view, adapter, "unsorted")
     assert [k for k, _ in view._tab_options(view._detail)] == ["terms", "tm", "review"]
     assert view.menu_labels() == ["导出…"]
-    moved: list[list] = []
-    view.moveRequested.connect(moved.append)
+    moved: list[str] = []
+    view.newFromTaskRequested.connect(moved.append)
     from PySide6.QtWidgets import QPushButton
 
     buttons = [b for b in view.page_unsorted_terms.findChildren(QPushButton)
                if b.text().startswith("用这个任务新建项目")]
     assert len(buttons) == 3
     buttons[0].click()
-    assert len(moved) == 1 and len(moved[0]) == 1
+    assert len(moved) == 1 and moved[0]
 
 
 def test_batch_accept_goes_through_a_preview(env, app):  # noqa: F811

@@ -254,6 +254,9 @@ class MainWindow(QMainWindow):
         self.projects.reloadRequested.connect(self.refresh_projects)
         self.projects.openJobRequested.connect(self.open_library_job)
         self.projects.moveRequested.connect(self.move_to_project)
+        self.projects.newFromTaskRequested.connect(
+            lambda job_id: self.move_to_project([job_id], mode="new"))
+        self.projects.pullRequested.connect(self._pull_unsorted_into)
         self.projects.acceptRequested.connect(self.accept_review_item)
         self.projects.decideRequested.connect(self.decide_review_item)
         self.projects.batchAcceptRequested.connect(self.batch_accept_items)
@@ -1343,12 +1346,18 @@ class MainWindow(QMainWindow):
         self.home.set_current_nav(
             "projects" if current is self.projects else "tasks")
 
-    def move_to_project(self, job_ids: list) -> None:
+    def _pull_unsorted_into(self, project_id: str) -> None:
+        """项目页「把「未分类」的任务移进来…」：从第一个未归属任务开始，其余在面板里勾选。"""
+        jobs = adapter.unsorted_jobs()
+        if jobs:
+            self.move_to_project([jobs[0]["job_id"]], project_id=project_id)
+
+    def move_to_project(self, job_ids: list, *, project_id: str = "", mode: str = "") -> None:
         """「移到项目」面板：任务改归属的唯一入口。运行中的任务由核心拒绝，原因如实显示。"""
         ids = [str(job) for job in job_ids or [] if str(job or "").strip()]
         if not ids:
             return
-        sheet = MoveToProjectSheet(ids, self)
+        sheet = MoveToProjectSheet(ids, self, project_id=project_id, mode=mode)
         if sheet.exec() != QDialog.DialogCode.Accepted:
             return
         request = sheet.request()

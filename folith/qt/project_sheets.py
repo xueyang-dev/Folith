@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
@@ -233,7 +233,7 @@ class MoveToProjectSheet(QDialog):
     """移到项目（已有项目 / 新建项目）。取代旧的项目选择框。"""
 
     def __init__(self, job_ids: list[str], parent: QWidget | None = None, *,
-                 project_id: str = "") -> None:
+                 project_id: str = "", mode: str = "") -> None:
         super().__init__(parent)
         self.job_ids = [str(j) for j in job_ids]
         self._summaries = adapter.job_summaries_for_move(self.job_ids)
@@ -319,9 +319,11 @@ class MoveToProjectSheet(QDialog):
         self.after_list.setSpacing(10)
         holder = QWidget()
         holder.setLayout(self.after_list)
+        holder.setObjectName("transparent")
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.viewport().setAutoFillBackground(False)
         scroll.setWidget(holder)
         scroll.setMaximumHeight(300)
         scroll.setMinimumHeight(60)
@@ -371,6 +373,8 @@ class MoveToProjectSheet(QDialog):
         self.error.setVisible(False)
         layout.addWidget(self.error)
 
+        if mode == "new":
+            self.mode.set_value("new")
         self.mode.changed.connect(lambda _v: self._refresh())
         self.project_box.currentIndexChanged.connect(lambda _i: self._refresh())
         self.carry_terms.toggled.connect(lambda _c: self._refresh())
@@ -539,7 +543,6 @@ class MoveToProjectSheet(QDialog):
             note.setObjectName("transparent")
             inner = QVBoxLayout(note)
             inner.setContentsMargins(24, 0, 0, 0)
-            project = self._preview.get("project_name") or ""
             lead = _label(i18n.tr(
                 '项目是 {v0}，这个任务的术语和翻译记忆不会带过去；任务本身照样移入，以后翻译也不会用到这个项目的术语。',
                 v0=_dir(self._preview.get("direction_label") or "")), "body", wrap=True)
@@ -555,7 +558,6 @@ class MoveToProjectSheet(QDialog):
                 row.addWidget(button)
                 row.addStretch(1)
                 inner.addLayout(row)
-            del project
             box.addWidget(note)
             return card
         added = len(report["terms_added"]) + len(report["terms_updated"])
@@ -577,7 +579,6 @@ class MoveToProjectSheet(QDialog):
         return card
 
     def _conflict_table(self, conflicts: list[dict]) -> QWidget:
-        tokens = theme_module.tokens(style_module.current_theme())
         table = QFrame()
         table.setObjectName("transparent")
         grid = QGridLayout(table)
@@ -594,7 +595,6 @@ class MoveToProjectSheet(QDialog):
         if len(conflicts) > 6:
             grid.addWidget(_label(i18n.tr('还有 {v0} 条', v0=len(conflicts) - 6), "time"),
                            7, 0, 1, 3)
-        del tokens
         return table
 
     def _pick(self, project_id: str) -> None:

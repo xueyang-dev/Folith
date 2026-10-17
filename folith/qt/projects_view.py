@@ -54,6 +54,15 @@ def _dir(label: str) -> str:
                       for part in str(label).split("→"))
 
 
+def _scroll_area() -> QScrollArea:
+    """透明的滚动区：viewport 不自己填底色，页面底色（或深色主题）才不会被一块白盖住。"""
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.viewport().setAutoFillBackground(False)
+    return area
+
+
 def _tone_color(tone: str) -> str:
     tokens = theme_module.tokens(style_module.current_theme())
     return tokens[theme_module.STATUS_TONES.get(tone, "text-muted")]
@@ -122,6 +131,10 @@ class ProjectsView(QWidget):
     reloadRequested = Signal()
     openJobRequested = Signal(str, int)
     moveRequested = Signal(list)
+    #: 「用这个任务新建项目…」：直接打开「新建项目」那一页
+    newFromTaskRequested = Signal(str)
+    #: 「把「未分类」的任务移进来…」：目标项目已选好
+    pullRequested = Signal(str)
     newProjectRequested = Signal()
     acceptRequested = Signal(dict, str)         # 待审核项, 译名
     decideRequested = Signal(dict, str)         # 待审核项, task_only / rejected / keep
@@ -187,9 +200,7 @@ class ProjectsView(QWidget):
         box.addSpacing(6)
         box.addWidget(self.rule)
         box.addSpacing(6)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = _scroll_area()
         holder = QWidget()
         holder.setObjectName("transparent")
         self.list_box = QVBoxLayout(holder)
@@ -420,9 +431,7 @@ class ProjectsView(QWidget):
 
     # ================= 概览 =================
     def _build_overview(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = _scroll_area()
         holder = QWidget()
         holder.setObjectName("transparent")
         self.overview_box = QVBoxLayout(holder)
@@ -534,8 +543,10 @@ class ProjectsView(QWidget):
             tone = ("error" if task.get("runtime_status") == "failed" else
                     "active" if task.get("active") else
                     "done" if "交付" in str(task.get("status")) else "idle")
-            row.addWidget(components.StatusLabel(
-                i18n.tr_dynamic(str(task.get("status") or "")) or i18n.tr('未开始'), tone))
+            status = components.StatusLabel(
+                i18n.tr_dynamic(str(task.get("status") or "")) or i18n.tr('未开始'), tone)
+            status.setMinimumWidth(96)
+            row.addWidget(status)
             open_button = QPushButton(i18n.tr('打开'))
             style_module.set_button(open_button, "plain", small=True)
             open_button.clicked.connect(lambda _c=False, j=task["job_id"]: self.openJobRequested.emit(j, -1))
@@ -543,6 +554,7 @@ class ProjectsView(QWidget):
             box.addLayout(row)
         if len(tasks) > 8:
             box.addWidget(_text(i18n.tr('还有 {v0} 个，在任务库中查看', v0=len(tasks) - 8), "time"))
+        box.addStretch(1)
         return card
 
     def _log_card(self) -> QWidget:
@@ -560,6 +572,7 @@ class ProjectsView(QWidget):
             row.addWidget(_text(i18n.tr_dynamic(entry["what"]), "body", wrap=True), 1)
             row.addWidget(_text(components.relative_time(entry["when"]), "time"))
             box.addLayout(row)
+        box.addStretch(1)
         return card
 
     def _open_conflicts(self) -> None:
@@ -770,9 +783,7 @@ class ProjectsView(QWidget):
 
     # ================= 未分类：各任务的术语 =================
     def _build_unsorted_terms(self) -> QWidget:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = _scroll_area()
         holder = QWidget()
         holder.setObjectName("transparent")
         self.unsorted_box = QVBoxLayout(holder)
@@ -819,7 +830,7 @@ class ProjectsView(QWidget):
         make = QPushButton(i18n.tr('用这个任务新建项目…'))
         style_module.set_button(make, "secondary", small=True)
         make.setIcon(icons.icon("folder", 14, "accent"))
-        make.clicked.connect(lambda _c=False, j=task["job_id"]: self.moveRequested.emit([j]))
+        make.clicked.connect(lambda _c=False, j=task["job_id"]: self.newFromTaskRequested.emit(j))
         head.addWidget(make)
         box.addLayout(head)
         grid = QGridLayout()
@@ -1257,11 +1268,13 @@ class ProjectsView(QWidget):
         self._note(i18n.tr('已删除项目「{v0}」；删除前已写入可恢复备份', v0=name))
 
     def _pull_unsorted(self) -> None:
-        jobs = adapter.unsorted_jobs()
-        if not jobs:
+        project = self.selected_project()
+        if not project:
+            return
+        if not adapter.unsorted_jobs():
             self._note(i18n.tr('「未分类」里没有任务。'))
             return
-        self.moveRequested.emit([j["job_id"] for j in jobs[:1]])
+        self.pullRequested.emit(project["project_id"])
 
     def _clear_tm(self) -> None:
         project = self.selected_project()
