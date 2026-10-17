@@ -2484,6 +2484,9 @@ def _log_text(record: dict) -> str:
     if resolution:
         side = "采用新译名" if resolution.get("adopted") == "incoming" else "保留原译名"
         return f"{side}：{resolution.get('source')}"
+    edit = record.get("term_edit")
+    if edit:
+        return f"添加术语：{edit.get('source')} → {edit.get('target')}"
     added = record.get("added") or {}
     parts = []
     if added.get("glossary"):
@@ -2696,6 +2699,38 @@ def job_summaries_for_move(job_ids: Sequence[str]) -> list[dict]:
                         state.get("source_lang"), state.get("target_lang")),
                     "project_name": core.project_name_for_id(core.resolved_project_id(state))})
     return out
+
+
+def job_carry_counts(job_ids: Sequence[str]) -> dict:
+    """「一起带过去」旁边的数字：已锁定术语、暂定术语、可进翻译记忆的已审校译对。"""
+    from folith.engine import projects as _ep
+    locked = provisional = tm = 0
+    for job_id in job_ids:
+        state = core.load_job_state(job_id) or {}
+        for entry in _ep._task_terms(state):
+            if entry.get("status") == "locked":
+                locked += 1
+            elif entry.get("status") != "rejected":
+                provisional += 1
+        tm += len(_ep._move_tm_pairs(state))
+    return {"locked": locked, "provisional": provisional, "tm": tm}
+
+
+def unsorted_jobs(exclude: Sequence[str] = ()) -> list[dict]:
+    """「未分类」里的任务（供"同时移入其他未归属任务"）。"""
+    from folith import language_assets as _assets
+    skip = {str(j) for j in exclude}
+    rows = []
+    for job in core.list_project_jobs(core.SYSTEM_PROJECT_ID):
+        if str(job["job_id"]) in skip:
+            continue
+        state = job.get("state") or {}
+        rows.append({"job_id": job["job_id"],
+                     "name": str(state.get("filename") or job["job_id"]),
+                     "direction_label": _assets.direction_label(
+                         state.get("source_lang"), state.get("target_lang")),
+                     "term_count": len(_assets.build_term_rows([job]))})
+    return rows
 
 
 def move_targets(job_ids: Sequence[str]) -> list[dict]:

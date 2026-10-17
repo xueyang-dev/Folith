@@ -731,6 +731,9 @@ def set_term(project: Mapping[str, Any], source: str, target: str, *,
         item for item in project["pending_conflicts"]
         if not (item["kind"] == "glossary" and item["source"].casefold() == key)]
     _append_glossary_version(project, actor=actor, source_job_id="")
+    project["promotion_log"] = list(project["promotion_log"]) + [{
+        "at": _now_iso(), "actor": str(actor or "").strip() or "user", "source_job_id": "",
+        "added": {}, "term_edit": {"source": source, "target": target, "how": how}}]
     return project
 
 
