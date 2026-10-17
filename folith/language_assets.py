@@ -798,3 +798,32 @@ def build_candidate_rows_lite(
                                       if isinstance(i, int) and not isinstance(i, bool)],
             })
     return rows
+
+
+# ---------------- 语言方向的短写法 ----------------
+
+_SHORT_LANGUAGE = {
+    "english": "英", "简体中文": "中", "繁体中文": "繁", "日本語": "日", "한국어": "韩",
+    "deutsch": "德", "français": "法", "español": "西", "italiano": "意",
+    "português": "葡", "русский": "俄", "türkçe": "土", "العربية": "阿",
+    "اردو": "乌", "فارسی": "波", "ئۇيغۇرچە": "维", "עברית": "希",
+}
+SHORT_LANGUAGE_NAMES = ("英", "中", "繁", "日", "韩", "德", "法", "西", "意", "葡",
+                        "俄", "土", "阿", "乌", "波", "维", "希", "自动", "未设定")
+
+
+def short_language(value: Any, *, unknown: str = "自动") -> str:
+    from .source_languages import match
+    from .textual import normalize_language
+    text = str(value or "").strip()
+    if not text:
+        return unknown
+    saved = match(text) or text
+    return _SHORT_LANGUAGE.get(normalize_language(saved), text)
+
+
+def direction_label(source: Any, target: Any) -> str:
+    """「英 → 中」。目标语言都没有时是「未设定」，不编一个方向。"""
+    if not str(target or "").strip():
+        return "未设定"
+    return f"{short_language(source)} → {short_language(target, unknown='未设定')}"
