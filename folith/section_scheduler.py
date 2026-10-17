@@ -21,9 +21,13 @@ allowing *independent* sections to run in parallel:
   and is returned as data, so the caller can keep committing strictly in global
   batch order.
 
-This is a scheduling primitive, not a policy change.  It is off by default
-(:func:`default_enabled`) until a quality-equivalence benchmark justifies
-raising the default concurrency.
+This is a scheduling primitive, not a policy change, and it is **not wired into
+the translation pipeline**: only ``tests/section_scheduler_test.py`` and
+``scripts/translation_concurrency_benchmark.py`` use it.  ``core.translate_stage``
+never imports this module or reads ``FOLIOTHREAD_TRANSLATION_SECTION_SCHEDULER``,
+so setting that variable does not change how a real task is translated.  Wiring
+it in waits for a quality-equivalence benchmark that justifies raising the
+default concurrency.
 """
 from __future__ import annotations
 
@@ -35,6 +39,11 @@ SECTION_SCHEDULER_ENV = "FOLIOTHREAD_TRANSLATION_SECTION_SCHEDULER"
 
 
 def default_enabled() -> bool:
+    """Whether the env var asks for section scheduling (benchmark/tests only).
+
+    Nothing in the pipeline calls this; ``True`` does not turn the scheduler on
+    for real translation runs (see the module docstring).
+    """
     raw = os.environ.get(SECTION_SCHEDULER_ENV)
     if raw is None:
         return False
