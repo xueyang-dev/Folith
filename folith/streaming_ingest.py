@@ -19,12 +19,14 @@ from typing import Any, Callable, Dict, List, Optional
 
 import fitz
 
-from folith.document_understanding import VisualDocumentAssembler, iter_page_understanding
+from folith.document_understanding import PageFailed, VisualDocumentAssembler, iter_page_understanding
 
 #: 后续窗口：每攒够这么多页就交给翻译一次，批量大些效率高。
 DEFAULT_WINDOW_PAGES = 20
 #: 第一窗口：满这么多页就先开始翻译，用户不必等 20 页（慢模型每页可能 40–90 秒）。
 FIRST_WINDOW_PAGES = 5
+#: 连续这么多页都因服务商超时 / 不稳定而失败，就自动暂停并建议换视觉模型。
+TIMEOUT_STREAK_LIMIT = 3
 _WAIT_SLICE_S = 0.5
 
 
@@ -36,12 +38,24 @@ class ScanStream:
                  page_gate: Optional[Callable[[], bool]] = None,
                  workers: Optional[int] = None, dpi: int = 150,
                  window_pages: int = DEFAULT_WINDOW_PAGES,
-                 first_window_pages: int = FIRST_WINDOW_PAGES):
+                 first_window_pages: int = FIRST_WINDOW_PAGES,
+                 late_pages: Optional[Dict[int, dict]] = None,
+                 provider_label: str = "",
+                 timeout_streak_limit: int = TIMEOUT_STREAK_LIMIT):
         with fitz.open(stream=data, filetype="pdf") as pdf:
             self.pages_total = len(pdf)
         self.window_pages = max(1, int(window_pages or DEFAULT_WINDOW_PAGES))
         self.first_window_pages = max(1, int(first_window_pages or FIRST_WINDOW_PAGES))
         self.pages_done = 0
+        self.provider_label = provider_label
+        self.timeout_streak_limit = max(1, int(timeout_streak_limit))
+        self.timeout_streak = 0
+        # 连续超时触发后，识别线程在下一页前停住，直到主线程处理完（暂停→继续）。
+        self._halted = threading.Event()
+        # 上次没读成的页（page_index → 失败信息）：第一遍跳过，读完全书后补读，
+        # 文字接在末尾，已定稿并翻译的前文不受影响。
+        self._late = {int(k): dict(v) for k, v in (late_pages or {}).items()}
+        self._late_pending = set(self._late)
         self.pages_retried = 0  # 重试过才读成的页（模型曾中途失败）
         self.finished = False
         self.error: Optional[BaseException] = None
@@ -58,25 +72,92 @@ class ScanStream:
         gate = page_gate or cancel_check
 
         def cancelled():
+            while (self._halted.is_set() and not self._stop.is_set()
+                   and not (cancel_check and cancel_check())):
+                threading.Event().wait(0.2)
             return self._stop.is_set() or bool(gate and gate())
 
-        self._pages = iter_page_understanding(
-            filename, data, provider, spatial_engine=spatial_engine, dpi=dpi,
-            cancel_check=cancelled, checkpoint_dir=checkpoint_dir, workers=workers,
-            page_event_sink=self._page_events.append)
+        self._cancelled = cancelled
+        self._filename, self._data, self._provider = filename, data, provider
+        self._spatial_engine, self._dpi = spatial_engine, dpi
+        self._checkpoint_dir, self._workers = checkpoint_dir, workers
+
+        self._pages = self._iterate(
+            [i for i in range(self.pages_total) if i not in self._late]
+            if self._late else None)
         self._thread = threading.Thread(target=self._run, name="scan-stream", daemon=True)
         self._thread.start()
+
+    def _iterate(self, page_indices):
+        return iter_page_understanding(
+            self._filename, self._data, self._provider, spatial_engine=self._spatial_engine,
+            dpi=self._dpi, cancel_check=self._cancelled, checkpoint_dir=self._checkpoint_dir,
+            workers=self._workers, page_indices=page_indices,
+            page_event_sink=self._page_events.append,
+            skip_failed_pages=True, reuse_across_models=True)
+
+    def _note_result(self, result) -> None:
+        """按页序统计连续超时；够数就让识别线程停住等主线程处理。"""
+        if isinstance(result, PageFailed):
+            self.timeout_streak = self.timeout_streak + 1 if result.timeout_like else 0
+            if self.timeout_streak >= self.timeout_streak_limit:
+                self._halted.set()
+        elif result is not None:
+            self.timeout_streak = 0
+
+    @property
+    def streak_tripped(self) -> bool:
+        return self._halted.is_set()
+
+    def clear_halt(self) -> None:
+        """主线程已暂停并继续（用户可能已换模型）：重新计数，识别继续。"""
+        with self._cond:
+            # 这次连续失败的页读完全书后补读一遍（换了模型多半能读成）。
+            for failed in self._assembler.failed_pages.values():
+                self._late.setdefault(failed.page_index, {
+                    "page": failed.page_index + 1, "code": failed.code,
+                    "http_status": failed.http_status, "reason": failed.describe()})
+                self._late_pending.add(failed.page_index)
+        self.timeout_streak = 0
+        self._halted.clear()
+
+    def failed_pages_info(self) -> List[dict]:
+        """读失败、等待重试的页（页码从 1 起）。"""
+        with self._cond:
+            rows = {failed.page_index: {"page": failed.page_index + 1, "code": failed.code,
+                                        "http_status": failed.http_status,
+                                        "reason": failed.describe()}
+                    for failed in self._assembler.failed_pages.values()}
+            for index in self._late_pending:
+                rows.setdefault(index, {**self._late[index], "page": index + 1})
+        return [rows[key] for key in sorted(rows)]
 
     def _run(self) -> None:
         try:
             for envelope, result in self._pages:
                 with self._cond:
                     self._assembler.add_page(envelope, result)
+                    self._note_result(result)
                     self.pages_done += 1
                     if self._assembler.diagnostics and int(
                             self._assembler.diagnostics[-1].get("attempt_count") or 0) > 1:
                         self.pages_retried += 1
                     self._cond.notify_all()
+            if self._late:
+                # 补读上次没读成的页：只处理它们，其余页的结果在第一遍里已经登记过。
+                late_pages = self._iterate(sorted(self._late))
+                try:
+                    for envelope, result in late_pages:
+                        if envelope.page_index not in self._late_pending:
+                            continue
+                        with self._cond:
+                            self._assembler.add_page(envelope, result, late=True)
+                            self._late_pending.discard(envelope.page_index)
+                            self._note_result(result)
+                            self.pages_retried += 0 if isinstance(result, PageFailed) else 1
+                            self._cond.notify_all()
+                finally:
+                    late_pages.close()
             with self._cond:
                 self._result = self._assembler.finish()
                 self.finished = True
@@ -106,6 +187,8 @@ class ScanStream:
         暂停时识别线程被 ``page_gate`` 拦住，不会等不到窗口而互相卡死。
         """
         target = min(int(pages), self.pages_total)
+        if on_tick is not None:
+            on_tick(self.pages_done, self.pages_total, self.pages_retried)
         while True:
             with self._cond:
                 if self.error is not None:
@@ -146,6 +229,7 @@ class ScanStream:
                 "pages_done": self.pages_done,
                 "pages_total": self.pages_total,
                 "finished": self.finished,
+                "failed_pages": self.failed_pages_info(),
             }
 
     def close(self) -> None:

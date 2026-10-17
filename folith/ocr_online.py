@@ -256,6 +256,15 @@ def _retry_after_seconds(response: Any) -> Optional[float]:
         return None
 
 
+#: 网关 / 读取超时：服务商那一页多半一直处理不完，再试几次只是白等几分钟，最多再试一次。
+TIMEOUT_STATUSES = frozenset({408, 504, 524})
+TIMEOUT_MAX_RETRIES = 1
+
+
+def is_timeout_error(error: "OnlineOCRRequestError") -> bool:
+    return error.code == "timeout" or error.http_status in TIMEOUT_STATUSES
+
+
 def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
     """Turn an SDK/transport exception into an explicit retry decision.
 
@@ -289,6 +298,12 @@ def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
         return OnlineOCRRequestError(
             "invalid_request",
             f"线上 OCR 请求被服务拒绝（HTTP {status}）；请检查模型名与参数设置。",
+            retryable=False, http_status=status)
+    if status == 402 or (status == 429 and any(
+            marker in lowered for marker in ("quota", "billing", "insufficient", "balance",
+                                             "余额", "额度", "欠费"))):
+        return OnlineOCRRequestError(
+            "quota_error", f"线上 OCR 额度或余额不足（HTTP {status}）；请检查服务商账户。",
             retryable=False, http_status=status)
     if status == 429:
         return OnlineOCRRequestError("rate_limited", "线上 OCR 服务限流（HTTP 429）。",
@@ -596,10 +611,13 @@ class OnlineOCRBackend(OCRBackend):
                 if classified.http_status == 429:
                     controller.note_rate_limited(classified.retry_after)
                 last_error = classified
-                if not classified.retryable or attempt >= self.config.max_retries:
+                retries = self.config.max_retries
+                if is_timeout_error(classified):
+                    retries = min(retries, TIMEOUT_MAX_RETRIES)
+                if not classified.retryable or attempt >= retries:
                     break
                 page_events.emit("retry", attempt=attempt + 1,
-                                 attempts=self.config.max_retries + 1,
+                                 attempts=retries + 1,
                                  http_status=classified.http_status,
                                  code=classified.code, message=classified.message[:120])
                 delay = _bounded_backoff(attempt, classified.retry_after)

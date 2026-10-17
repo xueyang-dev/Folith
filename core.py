@@ -251,13 +251,18 @@ def _runtime_cancel_requested(job_id):
     return bool((load_runtime_state(job_id) or {}).get("cancel_requested"))
 
 
-def _runtime_pause_checkpoint(job_id):
-    """Pause cooperatively between operations; keep in-memory results and lease."""
+def _runtime_pause_checkpoint(job_id, paused_message=None):
+    """Pause cooperatively between operations; keep in-memory results and lease.
+
+    ``paused_message``：暂停的原因（例如连续超时的建议），作为「已暂停」的最新状态；
+    缺省是通用的「任务已暂停」。
+    """
     if not job_id or not load_runtime_state(job_id).get("pause_requested"):
         return
     previous = load_runtime_state(job_id)
     update_runtime_state(job_id, status="paused", phase="paused",
-                         event="任务已暂停，可继续处理", event_name="job_paused",
+                         event=paused_message or "任务已暂停，可继续处理",
+                         event_name="job_paused",
                          event_visibility="user", event_category="lifecycle")
     while load_runtime_state(job_id).get("pause_requested"):
         if _runtime_cancel_requested(job_id):
@@ -10409,7 +10414,8 @@ def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
 
 
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
-                       source_language=None, ocr_language=None, ocr_psm=None):
+                       source_language=None, ocr_language=None, ocr_psm=None,
+                       failed_pages=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
 
@@ -10424,9 +10430,15 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
         ocr_online_config=online_config, cancel_check=cancel_check,
         source_language=source_language, ocr_language=ocr_language,
         ocr_psm=ocr_psm)
+    identity = getattr(provider, "cache_identity", None) or {}
+    label = " · ".join(str(identity.get(key)) for key in ("provider", "model")
+                       if identity.get(key))
+    # 上次没读成的页：这次读完全书后补读（文字接在末尾，已翻译的前文不动）。
+    late = {int(row["page"]) - 1: row for row in failed_pages or []
+            if isinstance(row, dict) and row.get("page")}
     stream = ScanStream(filename, file_bytes, provider, spatial_engine=spatial_engine,
                         checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
-                        page_gate=page_gate)
+                        page_gate=page_gate, late_pages=late, provider_label=label)
     stream.facts = _pdf_extraction_facts(file_bytes)
     return stream
 
@@ -10475,6 +10487,10 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
             "边识别边翻译：已定稿的原文与重新识别的结果不一致，"
             "请删除该任务后重新导入。")
     document = snapshot["document"]
+    failed_pages = list(snapshot.get("failed_pages") or [])
+    warnings = list(warnings) + [
+        f"第 {row['page']} 页识别失败（{row.get('reason') or row.get('code') or '请求失败'}），"
+        "原文缺失；继续任务时会补读" for row in failed_pages]
     report = _build_extraction_report(filename, paragraphs, facts=facts,
                                       warnings=list(warnings))
     report.update({
@@ -10521,6 +10537,7 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
         "pages_total": snapshot["pages_total"],
         "paragraphs": len(paragraphs),
         "segments": len(paras),
+        "failed_pages": failed_pages,
     }
     return start, len(paras)
 
@@ -10528,23 +10545,28 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
 _SCAN_EVENT_EVERY_PAGES = 5  # 用户可见事件的最小间隔页数；进度条逐页更新
 
 
+def _scan_page_failure_reason(status, code, message=""):
+    if status in (408, 504, 524) or code in ("timeout", "service_error", "transient_error"):
+        return f"服务商超时（HTTP {status}）" if status else "服务商超时"
+    if status == 429 or code == "rate_limited":
+        return "服务商限流（HTTP 429）"
+    if status and int(status) >= 500:
+        return f"服务商暂时不可用（HTTP {status}）"
+    return str(message or code or "请求失败")[:60]
+
+
 def _scan_page_event_text(event):
     """工作线程报告的页级事件 → 一句给用户看的话。"""
+    from folith.document_understanding import FATAL_PAGE_ERROR_CODES
     page = event.get("page")
-    status = event.get("http_status")
     code = str(event.get("code") or "")
-    if status in (408, 504, 524) or code == "timeout":
-        reason = f"服务商超时（HTTP {status}）" if status else "服务商超时"
-    elif status == 429:
-        reason = "请求过于频繁（HTTP 429）"
-    elif status and int(status) >= 500:
-        reason = f"服务商暂时不可用（HTTP {status}）"
-    else:
-        reason = str(event.get("message") or code or "请求失败")[:60]
+    reason = _scan_page_failure_reason(event.get("http_status"), code, event.get("message"))
     if event.get("kind") == "retry":
         return (f"第 {page} 页：{reason}，正在重试 "
                 f"{int(event.get('attempt') or 0) + 1}/{int(event.get('attempts') or 0)}")
-    return f"第 {page} 页识别失败：{reason}"
+    if code in FATAL_PAGE_ERROR_CODES:
+        return f"第 {page} 页识别失败：{reason}"
+    return f"第 {page} 页识别失败（{reason}），已跳过，可稍后重试"
 
 
 def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
@@ -10579,8 +10601,23 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
             job_id, phase_label=message, event=message,
             event_name="scan_page_failed" if failed else "scan_page_retry",
             event_visibility="user", event_category="progress")
+    pause_message = None
+    if stream.streak_tripped and not tracker.get("streak"):
+        # 连续几页都超时：自动暂停（走同一条暂停路径，最终是「已暂停」），建议换模型。
+        tracker["streak"] = True
+        where = f"（{stream.provider_label}）" if stream.provider_label else ""
+        pause_message = (
+            f"视觉识别连续 {stream.timeout_streak_limit} 页超时：服务商{where}处理图片太慢或不稳定。"
+            "建议在 设置 › 视觉与识别 换一个视觉模型，然后继续任务；已识别的页不会重读。")
+        tracker["streak_message"] = pause_message
+        update_runtime_state(
+            job_id, pause_requested=True, status="pausing", phase_label=pause_message,
+            event=pause_message, event_name="scan_timeout_streak",
+            event_visibility="user", event_category="lifecycle")
+    pause_message = tracker.get("streak_message")
     runtime = load_runtime_state(job_id) or {}
-    if runtime.get("pause_requested") and not runtime.get("cancel_requested"):
+    if (runtime.get("pause_requested") and not runtime.get("cancel_requested")
+            and not tracker.get("streak")):
         # 已在途的页让它们读完并存进检查点；不再提交新页（page_gate 拦着）。
         save_job_state(job_id, state)
         if runtime.get("status") != "paused" and not tracker.get("pausing"):
@@ -10588,10 +10625,13 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
             update_runtime_state(
                 job_id, event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
                 event_visibility="user", event_category="lifecycle")
-    _runtime_pause_checkpoint(job_id)
-    if tracker.pop("pausing", False):
+    _runtime_pause_checkpoint(job_id, paused_message=pause_message)
+    if tracker.pop("pausing", False) or tracker.get("streak"):
         # 继续之后：检查点恢复的是暂停前的旧标签，让下一个 tick 重写进度。
         tracker["done"] = -1
+    if tracker.pop("streak", False):
+        tracker.pop("streak_message", None)
+        stream.clear_halt()  # 用户可能已换了视觉模型：重新计数，识别继续
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
@@ -11212,7 +11252,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             scan_stream = _start_scan_stream(
                 job_id, filename, file_bytes, online_config=effective_online_config,
                 source_language=effective_source_language,
-                ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm)
+                ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
+                failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"))
             registry = _SCAN_STREAMS.get()
             if registry is not None:
                 registry.append(scan_stream)
