@@ -10528,11 +10528,30 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
 _SCAN_EVENT_EVERY_PAGES = 5  # 用户可见事件的最小间隔页数；进度条逐页更新
 
 
-def _scan_stream_tick(job_id, state, tracker, done, total, retried):
+def _scan_page_event_text(event):
+    """工作线程报告的页级事件 → 一句给用户看的话。"""
+    page = event.get("page")
+    status = event.get("http_status")
+    code = str(event.get("code") or "")
+    if status in (408, 504, 524) or code == "timeout":
+        reason = f"服务商超时（HTTP {status}）" if status else "服务商超时"
+    elif status == 429:
+        reason = "请求过于频繁（HTTP 429）"
+    elif status and int(status) >= 500:
+        reason = f"服务商暂时不可用（HTTP {status}）"
+    else:
+        reason = str(event.get("message") or code or "请求失败")[:60]
+    if event.get("kind") == "retry":
+        return (f"第 {page} 页：{reason}，正在重试 "
+                f"{int(event.get('attempt') or 0) + 1}/{int(event.get('attempts') or 0)}")
+    return f"第 {page} 页识别失败：{reason}"
+
+
+def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
     """等窗口期间主线程的逐页钩子：更新进度，并在暂停时到达暂停检查点。
 
     必须在 ScanStream 的锁外调用：暂停会阻塞在这里，识别线程要能继续把
-    已在途的页存下来。
+    已在途的页存下来。工作线程里的重试 / 失败事件也在这里由主线程写进运行状态。
     """
     if done != tracker["done"] or retried != tracker["retried"]:
         tracker["done"], tracker["retried"] = done, retried
@@ -10540,7 +10559,7 @@ def _scan_stream_tick(job_id, state, tracker, done, total, retried):
         if retried:
             detail += f"（其中 {retried} 页重试后读成）"
         emit = done >= total or done - tracker["event_at"] >= _SCAN_EVENT_EVERY_PAGES
-        extra = {}
+        extra = {"last_event": detail}
         if emit:
             tracker["event_at"] = done
             extra = dict(event=f"【阶段一】{detail}", event_name="scan_progress",
@@ -10551,16 +10570,28 @@ def _scan_stream_tick(job_id, state, tracker, done, total, retried):
             stage_progress={"completed": done, "total": total, "unit": "页",
                             "in_flight": []},
             operation_label="视觉识别", phase_label=detail, **extra)
+    page_events = stream.drain_page_events()
+    if page_events:
+        # 重试 / 失败不算进展（停滞提示照旧），但要让用户看到正在发生什么。
+        failed = [item for item in page_events if item.get("kind") == "failed"]
+        message = _scan_page_event_text((failed or page_events)[-1])
+        update_runtime_state(
+            job_id, phase_label=message, event=message,
+            event_name="scan_page_failed" if failed else "scan_page_retry",
+            event_visibility="user", event_category="progress")
     runtime = load_runtime_state(job_id) or {}
     if runtime.get("pause_requested") and not runtime.get("cancel_requested"):
         # 已在途的页让它们读完并存进检查点；不再提交新页（page_gate 拦着）。
         save_job_state(job_id, state)
-        if runtime.get("status") != "paused":
+        if runtime.get("status") != "paused" and not tracker.get("pausing"):
+            tracker["pausing"] = True
             update_runtime_state(
-                job_id, phase_label="正在暂停：等正在识别的页完成",
-                event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
+                job_id, event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
                 event_visibility="user", event_category="lifecycle")
     _runtime_pause_checkpoint(job_id)
+    if tracker.pop("pausing", False):
+        # 继续之后：检查点恢复的是暂停前的旧标签，让下一个 tick 重写进度。
+        tracker["done"] = -1
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
@@ -10582,7 +10613,7 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
                "event_at": stream.pages_done}
     stream.wait_for_pages(
         target, on_tick=lambda done, total, retried: _scan_stream_tick(
-            job_id, state, tracker, done, total, retried))
+            job_id, state, stream, tracker, done, total, retried))
     snapshot = stream.snapshot()
     start, end = _commit_scan_stream(
         state, snapshot, filename=filename, facts=stream.facts,

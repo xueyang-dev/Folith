@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from folith import request_control
+from folith import page_events, request_control
 from folith.ocr_evidence import OCRBackend, OCRBlock, OCRRuntimeInfo
 
 ONLINE_OCR_BACKEND = "online"
@@ -598,6 +598,10 @@ class OnlineOCRBackend(OCRBackend):
                 last_error = classified
                 if not classified.retryable or attempt >= self.config.max_retries:
                     break
+                page_events.emit("retry", attempt=attempt + 1,
+                                 attempts=self.config.max_retries + 1,
+                                 http_status=classified.http_status,
+                                 code=classified.code, message=classified.message[:120])
                 delay = _bounded_backoff(attempt, classified.retry_after)
                 self._last_timings[f"retry_backoff_{attempt}"] = delay
                 self._sleep_slices(delay)
@@ -668,6 +672,10 @@ class OnlineOCRBackend(OCRBackend):
             self._last_timings["request_s"] = time.perf_counter() - started
             return segments, None
         # every attempt failed
+        page_events.emit("failed", attempts=len(attempts),
+                         http_status=getattr(last_error, "http_status", None),
+                         code=getattr(last_error, "code", ""),
+                         message=str(getattr(last_error, "message", ""))[:120])
         error = last_error or OnlineOCRRequestError("request_failed", "线上 OCR 请求失败。",
                                                     retryable=False)
         self._last_request = {
@@ -691,6 +699,8 @@ class OnlineOCRBackend(OCRBackend):
 
     def _fail(self, code: str, message: str, attempts, usage_total, request_ids,
               started) -> Tuple[List[OCRBlock], Optional[str]]:
+        page_events.emit("failed", attempts=len(attempts), http_status=None,
+                         code=code, message=str(message)[:120])
         self._last_request = {
             "status": "failed",
             "backend": self.name,

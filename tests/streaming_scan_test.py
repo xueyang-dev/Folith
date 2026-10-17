@@ -413,3 +413,56 @@ def test_cancel_while_waiting_for_window(slow_job):
     core.update_runtime_state("cancel-wait", cancel_requested=True)
     thread.join(30)
     assert not thread.is_alive() and "取消" in str(outcome.get("error"))
+
+
+class RetryingVisionProvider(SlowVisionProvider):
+    """第 2 页先报一次重试事件（和线上传输层一样经 page_events），再读成。"""
+
+    def __init__(self, release):
+        super().__init__(0.0)
+        self.release = release
+
+    def understand_page(self, envelope):
+        from folith import page_events
+        if envelope.page_index == 1:
+            page_events.emit("retry", attempt=1, attempts=3, http_status=524,
+                             code="http_error", message="gateway timeout")
+            assert self.release.wait(20)
+        return super().understand_page(envelope)
+
+
+def test_page_retry_becomes_the_latest_status_and_stall_is_not_hiding_it(streaming_job, monkeypatch):
+    _vision, started, args = streaming_job
+    started.set()
+    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "2")
+    release = threading.Event()
+    monkeypatch.setattr(core, "_vlm_runtime",
+                        lambda *a, **k: (RetryingVisionProvider(release), None))
+    outcome = {}
+    thread = threading.Thread(
+        target=lambda: outcome.update(state=core.run_job_pipeline(
+            "retry-job", "scan.pdf", scanned_pdf(8), **args)), daemon=True)
+    thread.start()
+    expected = "第 2 页：服务商超时（HTTP 524），正在重试 2/3"
+    assert _wait(lambda: _runtime("retry-job").get("last_event") == expected)
+    assert any(e["message"] == expected for e in _runtime("retry-job")["events"])
+    release.set()
+    thread.join(60)
+    assert not thread.is_alive() and outcome["state"]["p2_done"]
+
+
+def test_scan_pausing_label_does_not_survive_continue(slow_job):
+    slow, outcome, run = slow_job
+    thread = run("stale-label")
+    assert _wait(lambda: int((_runtime("stale-label").get("stage_progress") or {}).get("completed") or 0) >= 1)
+    core.update_runtime_state("stale-label", pause_requested=True, status="pausing")
+    assert _wait(lambda: _runtime("stale-label")["status"] == "paused", timeout=5)
+    core.update_runtime_state("stale-label", pause_requested=False, status="running")
+    assert _wait(lambda: "正在暂停" not in str(_runtime("stale-label").get("phase_label"))
+                 and _runtime("stale-label")["status"] == "running", timeout=5)
+    # 继续后，状态行文字是当前识别进度，而不是暂停中的说明。
+    assert _wait(lambda: str(_runtime("stale-label").get("last_event")).startswith("视觉识别")
+                 or "已继续" in str(_runtime("stale-label").get("last_event")), timeout=5)
+    assert "正在暂停" not in str(_runtime("stale-label").get("phase_label"))
+    thread.join(60)
+    assert "error" not in outcome

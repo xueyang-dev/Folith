@@ -87,3 +87,36 @@ def test_offer_tips_does_not_reference_removed_controls(app):
     assert offered[0][1] is bench.view_source_button
     bench.view_source_button = SimpleNamespace(isVisible=lambda: False)
     assert window_module.MainWindow._offer_tips(fake, {"status": "idle"}) == ""
+
+
+def test_header_status_line_is_scrollable_not_elided_and_tooltip_has_full_text(app):
+    group = views.RunStatusGroup()
+    group.show()
+    app.processEvents()
+    long_text = "第 12 页：服务商超时（HTTP 524），正在重试 2/3；" * 4
+    group.set_state(tone="retrying", line=long_text)
+    app.processEvents()
+    view = group.line_view
+    assert group.line.text() == long_text and "…" not in group.line.text()
+    assert group.line.toolTip() == long_text and view.toolTip() == long_text
+    assert view.overflows()
+    bar = view.horizontalScrollBar()
+    assert bar.maximum() > 0 and bar.value() == 0
+    # 横向滚轮 / Shift+滚轮滚动。
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    event = QWheelEvent(QPointF(10, 5), QPointF(10, 5), QPoint(0, 0), QPoint(-60, 0),
+                        Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+    app.sendEvent(view.viewport(), event)
+    assert bar.value() > 0
+    # 悬停自动滚动，移开回到开头。
+    view._hold = 0
+    view.enterEvent(None)
+    assert view._timer.isActive()
+    view._advance()
+    assert bar.value() > 0
+    view.leaveEvent(None)
+    assert not view._timer.isActive() and bar.value() == 0
+    group.set_state(tone="running", line="短")
+    assert not view.overflows()
+    group.close()

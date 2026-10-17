@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import copy
 import threading
-from typing import Any, Callable, Dict, Optional
+from collections import deque
+from typing import Any, Callable, Dict, List, Optional
 
 import fitz
 
@@ -44,6 +45,8 @@ class ScanStream:
         self.pages_retried = 0  # 重试过才读成的页（模型曾中途失败）
         self.finished = False
         self.error: Optional[BaseException] = None
+        # 工作线程里的页级重试 / 失败事件（deque.append 线程安全），主线程在 tick 里取走。
+        self._page_events: deque = deque(maxlen=200)
         self._assembler = VisualDocumentAssembler(filename)
         self._result = None
         self._cond = threading.Condition()
@@ -59,7 +62,8 @@ class ScanStream:
 
         self._pages = iter_page_understanding(
             filename, data, provider, spatial_engine=spatial_engine, dpi=dpi,
-            cancel_check=cancelled, checkpoint_dir=checkpoint_dir, workers=workers)
+            cancel_check=cancelled, checkpoint_dir=checkpoint_dir, workers=workers,
+            page_event_sink=self._page_events.append)
         self._thread = threading.Thread(target=self._run, name="scan-stream", daemon=True)
         self._thread.start()
 
@@ -83,6 +87,15 @@ class ScanStream:
                 self._cond.notify_all()
         finally:
             self._pages.close()
+
+    def drain_page_events(self) -> List[dict]:
+        """取走自上次以来工作线程报告的页级事件（重试 / 失败）。"""
+        events = []
+        while True:
+            try:
+                events.append(self._page_events.popleft())
+            except IndexError:
+                return events
 
     def wait_for_pages(self, pages: int,
                        on_tick: Optional[Callable[[int, int, int], None]] = None) -> None:

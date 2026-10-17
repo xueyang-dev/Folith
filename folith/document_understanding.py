@@ -17,6 +17,7 @@ import fitz
 
 from folith.document_ir import (BLOCK_TYPES, DocumentUnderstandingProvider, PageEnvelope, PageUnderstanding,
                                 SemanticBlock, SourceSpan, new_document, normalized_bbox)
+from folith import page_events
 from folith.ocr_online import OnlineOCRBackend
 from folith.spatial_index import SpatialTextIndex, align_blocks
 
@@ -363,7 +364,7 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
 
 def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvider, *, spatial_engine=None,
                             max_pages=None, dpi=150, cancel_check=None, checkpoint_dir=None,
-                            page_indices=None, workers=None):
+                            page_indices=None, workers=None, page_event_sink=None):
     """按页序逐页产出 ``(envelope, result)``；被选中的页并发读取。
 
     ``result`` 为 ``None`` 表示这一页不需要读（只登记页面）。渲染留在调用线程
@@ -382,8 +383,12 @@ def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvi
     def job(envelope, started):
         if not hasattr(local, 'provider'):
             local.provider = _provider_for_worker(provider)
-        return _understand_page_job(local.provider, envelope, spatial_engine, identity,
-                                    checkpoint_dir, cancel_check, started)
+        page_events.bind(envelope.page_index + 1, page_event_sink)
+        try:
+            return _understand_page_job(local.provider, envelope, spatial_engine, identity,
+                                        checkpoint_dir, cancel_check, started)
+        finally:
+            page_events.unbind()
 
     pending = deque()
     in_flight = 0
