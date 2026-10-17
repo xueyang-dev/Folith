@@ -297,5 +297,4 @@ def test_collapsing_the_source_closes_it_and_remembers_the_width(bench, app):
     bench.translation_split.collapseRequested.emit(bench.source_clip, 480)
     app.processEvents()
     assert not bench.source_open()
-    assert not bench.source_button.isChecked()
     assert bench._pdf_width == 480

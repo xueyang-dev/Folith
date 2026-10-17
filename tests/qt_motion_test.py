@@ -108,46 +108,6 @@ def test_visible_target_row_keeps_its_position_even_with_reduced_motion(bench, m
         assert bench.inline_editor.isVisible()
 
 
-@pytest.mark.parametrize("rtl", [False, True])
-def test_drawer_clips_at_final_width_and_rapid_toggles_settle(bench, app, monkeypatch, rtl):
-    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
-    bench.setLayoutDirection(Qt.LayoutDirection.RightToLeft if rtl
-                             else Qt.LayoutDirection.LeftToRight)
-    bench.set_followup_drawer_open(True)
-    width = bench.followup_drawer.width()
-    QTest.qWait(80)
-    panel = bench.right_panel
-    assert 0 < panel.fraction < 1
-    assert bench.followup_drawer.width() == width
-    assert (bench.followup_drawer.x() < 0) if rtl else (bench.followup_drawer.x() > 0)
-    for i in range(20):
-        bench.set_followup_drawer_open(bool(i % 2))
-    assert bench.followup_drawer_open()
-    assert panel.fraction == 1 and not bench._motion.running("translation-columns")
-    assert bench.followup_drawer.isVisible() and not bench.inspector_scroll.isVisible()
-    QTest.keyClick(bench.drawer_close, Qt.Key.Key_Escape)
-    app.processEvents()
-    assert not bench.followup_drawer_open()
-    assert bench.inspector_scroll.isVisible()
-    assert app.focusWidget() is bench.target_edit
-    assert not [widget for widget in app.topLevelWidgets()
-                if widget.isVisible() and widget is not bench]
-
-
-def test_resizing_and_hiding_during_transition_leave_no_animation(bench, monkeypatch):
-    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
-    bench.set_followup_drawer_open(True)
-    QTest.qWait(50)
-    bench.resize(1300, 800)
-    assert not bench._motion.running("translation-columns")
-    assert bench.right_panel.fraction == 1
-    QTest.qWait(250)
-    bench.set_followup_drawer_open(False)
-    bench.hide()
-    assert not bench._motion.running("translation-columns")
-    assert bench.right_panel.fraction == 0
-
-
 def test_opening_drawer_reuses_current_state_and_refreshes_new_state(bench, monkeypatch):
     calls = []
     original = adapter.followup_view
@@ -430,36 +390,18 @@ def test_trailing_clip_keeps_the_page_width_and_its_minimum(app):
     assert page.geometry().width() == 800
 
 
-def test_an_interrupted_drawer_keeps_both_sides_at_their_final_widths(bench, app, monkeypatch):
-    """P4 审校第 7 条：展开途中立即收起，两侧都按各自终态宽度排版，不按半路宽度。"""
-    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
-    open_width = bench._translation_column_sizes(drawer_open=True)[
-        bench.translation_split.indexOf(bench.right_panel)]
-    bench._motion._last.clear()
-    bench.set_followup_drawer_open(True)
-    QTest.qWait(motion.DURATION["panel"] // 3)
-    assert bench._motion.running("translation-columns")
-    bench._motion._last.clear()  # an interruption, not a rapid repeat that snaps
-    bench.set_followup_drawer_open(False)
-    assert bench.right_panel._widths is not None
-    inspector_width, drawer_width = bench.right_panel._widths
-    assert drawer_width == open_width
-    assert inspector_width == bench._inspector_width
-    QTest.qWait(motion.DURATION["panel"] + 150)
-    assert not bench.followup_drawer_open() and bench.right_panel.fraction == 0
-
-
-def test_escape_in_the_editor_keeps_the_drawer_open(bench, app, monkeypatch):
-    """P4 审校第 8 条：侧栏打开时在译文框里按 Esc，仍是「焦点还给表格」，不收起侧栏。"""
+def test_check_and_repair_card_leaves_the_columns_alone(bench, app, monkeypatch):
+    """检查与修复是从图标下面展开的卡片：开、关都不动三栏，Esc 收起后焦点回到编辑框。"""
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
     bench.select_segment(1)
+    sizes = bench.translation_split.sizes()
     bench.set_followup_drawer_open(True)
-    bench.target_edit.setFocus()
-    app.processEvents()
-    QTest.keyClick(bench.target_edit, Qt.Key.Key_Escape)
-    app.processEvents()
-    assert bench.followup_drawer_open()
-    assert app.focusWidget() is bench.segment_list
-    QTest.keyClick(bench.segment_list, Qt.Key.Key_Escape)
+    assert not bench._motion.running("translation-columns")
+    assert bench.translation_split.sizes() == sizes
+    assert bench.followup_popover.isVisible()
+    QTest.keyClick(bench.followup_popover, Qt.Key.Key_Escape)
     app.processEvents()
     assert not bench.followup_drawer_open()
+    assert not bench.check_button.isChecked()
+    assert bench.translation_split.sizes() == sizes
+    assert bench.inspector_scroll.isVisible()

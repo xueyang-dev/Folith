@@ -269,7 +269,9 @@ def test_workbench_points_at_the_terms_tab_when_candidates_block_the_start(qapp,
     assert not bench.terms_gate.isHidden(), "被术语门禁挡住时必须有提示"
     assert "冻结" in bench.terms_gate.text()
     bench.terms_gate.action_button().click()
-    assert bench.tabs.currentWidget() is bench.terms_panel
+    # 术语表在翻译页左栏展开（2026-10-17 试用反馈），不是一整页。
+    assert bench.terms_open()
+    assert bench.left_stack.currentWidget() is bench.terms_side
 
 
 def test_workbench_shows_no_gate_notice_once_frozen(qapp, job):

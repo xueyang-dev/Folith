@@ -132,6 +132,10 @@ def accent_swatch(name: str) -> str:
     return theme_tokens.TOKENS[source]["accent"]
 
 
+def accent() -> str:
+    return _accent
+
+
 def set_accent(name: str) -> None:
     global _accent
     _accent = name if name in ("blue", "green", "slate") else "blue"

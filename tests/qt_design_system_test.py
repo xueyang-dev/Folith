@@ -309,12 +309,40 @@ def test_green_logo_uses_the_designed_colour_ramp(app):
 
 
 def test_day_sidebar_logo_is_the_untouched_asset(app):
-    """界面主色改成低彩度蓝以后，日间侧栏的 logo 仍与原图逐像素一致。"""
+    """日间、蓝色主题色：侧栏标记就是品牌向量图本身，按屏幕像素比渲染。"""
     from folith.qt import branding
 
     style.apply_theme(app, "light")
     view = views.HomeView()
     shown = view._brand_mark.pixmap()
-    original = branding.mark_pixmap(shown.height(), "light")
-    assert shown.toImage().convertToFormat(original.toImage().format()) == original.toImage()
+    dpr = max(1.0, view.devicePixelRatioF())
+    original = branding.mark_pixmap(28, "blue", dpr)
+    assert shown.devicePixelRatio() == original.devicePixelRatio()
+    assert shown.toImage() == original.toImage()
     view.deleteLater()
+
+
+def test_accent_switch_redraws_the_mark_from_its_own_svg_and_back(app):
+    """换主题色：标记换成该色的 SVG，尺寸与清晰度不变；换回来与最初逐像素相同。"""
+    from folith.qt import branding
+
+    style.apply_theme(app, "light")
+    view = views.HomeView()
+    first = view._brand_mark.pixmap().toImage()
+    size = view._brand_mark.pixmap().deviceIndependentSize()
+    try:
+        for accent in ("green", "slate", "blue"):
+            theme.set_accent(accent)
+            style.apply_theme(app, "light")
+            app.processEvents()
+            view._restyle_rich_text()
+            shown = view._brand_mark.pixmap()
+            assert shown.deviceIndependentSize() == size, accent
+            expected = branding.mark_pixmap(28, branding.mark_variant("light", accent),
+                                            max(1.0, view.devicePixelRatioF()))
+            assert shown.toImage() == expected.toImage(), accent
+        assert view._brand_mark.pixmap().toImage() == first
+    finally:
+        theme.set_accent("blue")
+        style.apply_theme(app, "light")
+        view.deleteLater()

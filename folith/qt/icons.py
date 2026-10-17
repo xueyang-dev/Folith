@@ -455,6 +455,11 @@ class IconLabel(QWidget):
 
     def set_icon(self, name: str, color: str | QColor = "text-secondary", *,
                  duotone: bool = False) -> None:
+        key = (name, str(color) if not isinstance(color, QColor) else color.name(QColor.NameFormat.HexArgb),
+               duotone)
+        if key == getattr(self, "_icon_key", None):
+            return  # 轮询每秒都会设一次同样的图标：不重绘
+        self._icon_key = key
         self._icon = icon(name, self._size, color, duotone=duotone)
         self.update()
 

@@ -133,14 +133,14 @@ def build_qss(theme: str) -> str:
     t = theme_module.tokens(theme)
     r = theme_module.RADIUS
     # 侧栏选中项的「玻璃片」：浅色半透明面 + 同色系的亮边，投影由 components.glass_selection 加。
+    # 第三轮试用反馈：选中态太抢、投影太重——改成平的半透明面（不再上白下灰的渐变），
+    # 亮边几乎看不出来，投影只剩一道贴边的接触影。
     if theme_module.resolve(theme) == "dark":
-        glass_fill = ("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,0.14), "
-                      "stop:1 rgba(255,255,255,0.07))")
-        glass_rim = "rgba(255,255,255,0.12)"
+        glass_fill = "rgba(255,255,255,0.08)"
+        glass_rim = "rgba(255,255,255,0.06)"
     else:
-        glass_fill = ("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,0.96), "
-                      "stop:1 rgba(255,255,255,0.74))")
-        glass_rim = "rgba(255,255,255,0.9)"
+        glass_fill = "rgba(255,255,255,0.62)"
+        glass_rim = "rgba(255,255,255,0.7)"
     f = theme_module.FONT_SIZES
     c = theme_module.CONTROL
     # 任务卡封面玻璃上的文字色：暗玻璃（夜间）用白色系，浅色磨砂用正文色系。
@@ -211,6 +211,8 @@ QWidget {{
     font-size: {f['body']}px;
 }}
 QMainWindow, QDialog, QStackedWidget, QTabWidget::pane {{ background: {t['bg-page']}; }}
+/* 应用自己的确认 / 通知：窗口本身就是一张纸（最亮的表面），里面不再套卡片。 */
+QDialog#promptDialog {{ background: {t['bg-surface-raised']}; }}
 QToolTip {{
     background: {t['bg-surface-raised']};
     color: {t['text-primary']};
@@ -561,7 +563,9 @@ QToolButton#roundButton:checked {{ background: {t['accent-soft']}; border-color:
 QFrame#popover {{ background: transparent; border: none; }}
 QFrame#popover QListWidget {{ background: transparent; border: none; }}
 QFrame#popover QScrollArea, QFrame#popover QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
-QFrame#followupDrawer {{ background: {t['bg-surface']}; border: none; }}
+/* 检查与修复是浮层里的内容：底色交给浮层（「凸」字卡片同一层表面），自己不再铺一层。 */
+QFrame#followupDrawer {{ background: transparent; border: none; }}
+QFrame#followupDrawer QScrollArea, QFrame#followupDrawer QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QScrollArea#segmentReferences, QWidget#segmentReferencesBody {{ background: {t['bg-surface']}; border: none; }}
 /* 检查与修复：每一项一张卡，同一个结构（图标 / 标题 / 一句说明 / 动作）。
    严重程度只靠图标颜色区分（✕ 红 / ⚠ 黄 / ✓ 绿），不铺整块彩色底。 */
@@ -596,11 +600,8 @@ QLabel#wordTotal:focus {{ color: {t['accent']}; }}
 QFrame#runStatus {{ background: transparent; border: 1px solid transparent; border-radius: {r['md']}px; }}
 QFrame#runStatus:hover {{ background: {t['bg-hover']}; }}
 QFrame#runStatus:focus {{ border-color: {t['focus-ring']}; }}
-/* 运行记录展开时，状态组与浮层是一整块：同一层表面色，底边方角接上浮层的颈部。 */
-QFrame#runStatus[tethered="true"] {{
-    background: {t['bg-surface-raised']}; border-color: transparent;
-    border-bottom-left-radius: 0; border-bottom-right-radius: 0;
-}}
+/* 运行记录展开时，状态组画成「凸」字的上半截（RunStatusGroup.paintEvent），这里只让出底色。 */
+QFrame#runStatus[tethered="true"] {{ background: transparent; border-color: transparent; }}
 QLabel#runStatusLine {{ color: {t['text-secondary']}; font-size: {f['micro']}px; background: transparent; }}
 QLabel#runStatusLine[tone="retrying"], QLabel#runStatusLine[tone="stalled"] {{ color: {t['warning']}; }}
 QLabel#runStatusLine[tone="failed"] {{ color: {t['danger']}; }}
@@ -1245,11 +1246,31 @@ def apply_theme(app, theme: str, *, system_dark: bool = False) -> str:
 
 
 def repolish(widget: QWidget) -> None:
-    """动态属性（如 chip 的 tone）改动后必须重新 polish 才会生效。"""
+    """动态属性（如 chip 的 tone）改动后必须重新 polish 才会生效。
+
+    很多地方每秒都随轮询调用它，而属性其实没变：那时什么都不做。否则每次都是一次
+    重新套样式 + 重绘，透明的祖先链跟着重画，后台的 Folith 在台前调度里一直闪
+    （2026-10-16 试用反馈）。键 = 对象名、动态属性、自身样式表与当前主题；
+    换主题时 Qt 已经整体重套过样式，这里键里的主题名变了也会再套一次。
+    """
+    names = [bytes(name).decode(errors="replace") for name in widget.dynamicPropertyNames()]
+    # Qt 样式表引擎自己的属性（_q_styleSheetWidgetFont 等）的 repr 带对象地址、每次都不同：不算。
+    try:
+        key = (widget.objectName(), widget.styleSheet(), current_theme(),
+               tuple((name, repr(widget.property(name))) for name in names
+                     if not name.startswith("_q_")))
+    except (RuntimeError, TypeError):
+        key = None  # 有读不出来的属性：不知道变没变，照常重套
+    if key is not None and getattr(widget, "_folith_polish_key", None) == key:
+        return
     style = widget.style()
     style.unpolish(widget)
     style.polish(widget)
     widget.update()
+    try:
+        widget._folith_polish_key = key
+    except AttributeError:  # pragma: no cover - a wrapper that refuses attributes
+        pass
 
 
 #: 按钮的四种外观（设计审校 40 号第三节）。不按位置起名：检查器里的主操作和

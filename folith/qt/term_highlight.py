@@ -151,6 +151,8 @@ class ScrollMarkers(QWidget):
         scrollbar.installEventFilter(self)
 
     def set_marks(self, marks: list[tuple[float, str]]) -> None:
+        if list(marks) == self.marks and self.isHidden() != bool(self.marks):
+            return  # 轮询每秒都会给同样的标记：不重排、不重绘
         self.marks = list(marks)
         self.setVisible(bool(self.marks))
         self._fit()

@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 import core
 from folith.qt import adapter, dialogs, connection_status, theme, views
 from folith.qt.settings_pages import ConnectionPanel
@@ -513,3 +513,254 @@ def test_stats_line_redraws_its_colours_after_a_theme_change(isolated, app):
     assert "rgba" not in home.stats_line.text(), "Qt 富文本读不懂 rgba()"
     style.apply_theme(app, "light"); views.set_current_theme("light")
     home.close()
+
+
+# ---- 试用反馈第三轮（2026-10-16 晚）：拖动窗口、页面间隙、设置窗口 -----------------
+def test_window_drag_area_moves_the_window_but_not_through_buttons(app, monkeypatch):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QWindow
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton
+
+    from folith.qt import components
+
+    moves = []
+    monkeypatch.setattr(QWindow, "startSystemMove", lambda self: moves.append(self) or True)
+    bar = QFrame()
+    layout = QHBoxLayout(bar)
+    button = QPushButton("x")
+    layout.addWidget(button)
+    layout.addStretch(1)
+    bar.resize(400, 60)
+    components.WindowDragArea(bar)
+    bar.show()
+    app.processEvents()
+    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    assert moves == [], "a click on a button is still a click"
+    QTest.mousePress(bar, Qt.MouseButton.LeftButton, pos=QPoint(300, 30))
+    assert len(moves) == 1, "an empty spot drags the window"
+    bar.close()
+
+
+def test_run_status_click_is_not_taken_for_a_window_drag(app, monkeypatch):
+    from PySide6.QtGui import QWindow
+    from PySide6.QtTest import QTest
+
+    moves = []
+    monkeypatch.setattr(QWindow, "startSystemMove", lambda self: moves.append(self) or True)
+    bench = views.WorkbenchView()
+    bench.resize(1400, 800)
+    bench.show()
+    bench.run_status.setVisible(True)
+    app.processEvents()
+    QTest.mouseClick(bench.run_status, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    assert moves == []
+    assert bench.activity_popover.isVisible()
+    bench.activity_popover.close()
+    bench.close()
+
+
+def test_sheet_keeps_equal_gaps_when_the_sidebar_is_collapsed(app):
+    from folith.qt import components
+
+    sheet = components.Sheet(QWidget())
+    sheet.resize(600, 400)
+    assert sheet.leading_gap() == 0
+    sheet.set_leading_gap(components.Sheet.GAP)
+    margins = sheet.layout().contentsMargins()
+    assert margins.left() == margins.right() == components.Sheet.GAP
+    assert sheet._sheet_rect().left() == components.Sheet.GAP
+
+
+def test_settings_window_stays_in_front_of_the_main_window(app):
+    from folith.qt import adapter, dialogs
+
+    class Runner:
+        def submit(self, *_a, **_k):
+            return None
+
+    dialog = dialogs.EngineDialog(adapter.EngineConfig(), Runner())
+    assert dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    assert not dialog.isModal()
+    dialog.close()
+
+
+# ---- 第四轮：交付文件名、操作台宽度 ---------------------------------------------
+@pytest.mark.parametrize("source, asset, expected", [
+    ("The Midnight Library.pdf", "bilingual.docx", "The Midnight Library_bilingual.docx"),
+    ("论文_刘英.pdf", "terms.xlsx", "论文_刘英_terms.xlsx"),
+    ("a:b.docx", "translation.docx", "a_b_translation.docx"),
+    ("", "bilingual.docx", "bilingual.docx"),
+])
+def test_delivered_files_are_named_after_the_source_document(source, asset, expected):
+    assert adapter.delivery_file_name(source, asset) == expected
+
+
+@pytest.mark.parametrize("language", ["zh-CN", "en", "ru"])
+def test_segment_panel_is_never_clipped_sideways(app, language):
+    """操作台左右永远完整：每个按钮都在可见宽度以内，只上下滚动。"""
+    from folith.qt import i18n
+
+    previous = i18n.language()
+    i18n.set_language(language)
+    try:
+        bench = views.WorkbenchView()
+        bench.show()
+        for width in (1400, 1000):
+            bench.resize(width, 800)
+            app.processEvents()
+            bench._layout_translation_columns()
+            app.processEvents()
+            inspector = bench.inspector_scroll.widget()
+            assert bench.inspector_scroll.viewport().width() >= inspector.minimumSizeHint().width()
+            clipped = [button.text() for button in inspector.findChildren(QPushButton)
+                       if button.isVisible()
+                       and button.mapTo(inspector, button.rect().topRight()).x() >= inspector.width()]
+            assert clipped == [], (language, width, clipped)
+        bench.close()
+    finally:
+        i18n.set_language(previous)
+
+
+# ---- 后台闪烁：空闲轮询不重建、不重排 ---------------------------------------------
+def test_repolish_skips_when_nothing_changed(app):
+    from PySide6.QtWidgets import QLabel
+
+    from folith.qt import style
+
+    label = QLabel("x")
+    label.setProperty("tone", "done")
+    style.repolish(label)
+    first = getattr(label, "_folith_polish_key", None)
+    assert first is not None
+    polished = []
+    original = label.style().polish
+    label.style().polish = lambda widget: polished.append(widget) or original(widget)
+    style.repolish(label)
+    assert polished == [], "same properties: no re-style, no repaint"
+    label.setProperty("tone", "failed")
+    style.repolish(label)
+    assert label._folith_polish_key != first
+
+
+def test_term_and_context_lists_are_not_rebuilt_with_the_same_content(app):
+    from folith.qt import segment_assist
+
+    terms = segment_assist.TermList()
+    terms.set_terms([{"source": "a", "target": "b"}], {"a": 2})
+    chip = terms.buttons[0]
+    terms.set_terms([{"source": "a", "target": "b"}], {"a": 2})
+    assert terms.buttons[0] is chip
+    terms.set_terms([{"source": "a", "target": "c"}], {"a": 2})
+    assert terms.buttons[0] is not chip
+
+    context = segment_assist.ContextView()
+    value = {"previous": {"index": 1, "source": "s", "target": "t"}}
+    context.set_context(value)
+    row = context.rows["previous"]
+    context.set_context(dict(value))
+    assert context.rows["previous"] is row
+
+
+# ---- 2026-10-17 第六轮：暂停后继续、凸形卡片、术语左栏、RTL ---------------------------
+def test_continue_on_a_paused_live_task_resumes_instead_of_starting(app, monkeypatch):
+    """暂停的任务 worker 还活着、握着任务锁：「继续翻译」走 continue，不再走启动
+    （启动要先写任务状态，被锁拒绝成「无法启动任务 · 任务正在后台处理」）。"""
+    from folith.qt import window as window_module
+
+    calls = []
+    host = type("Host", (), {})()
+    host._current_job_id = "job-paused"
+    host._starting_jobs = set()
+    host.continue_job = lambda: calls.append("continue")
+    host._notice = lambda *a, **k: calls.append(("notice", a))
+    monkeypatch.setattr(adapter, "job_is_alive", lambda job_id: True)
+    monkeypatch.setattr(adapter, "start_job", lambda *a, **k: calls.append("start"))
+    window_module.MainWindow.start_or_resume(host)
+    assert calls == ["continue"]
+
+
+def test_popover_draws_its_own_shadow_only(app):
+    """系统窗口阴影按展开动画的第一帧算，刚展开时卡片外面套一圈灰框。"""
+    from folith.qt import components
+
+    popover = components.Popover("x", QWidget())
+    assert popover.windowFlags() & Qt.WindowType.NoDropShadowWindowHint
+
+
+def test_tabs_leave_room_around_the_progress_bar_and_the_shield(app):
+    run = views.RunStatusGroup()
+    left, top, right, _bottom = run.PADDING
+    assert left - run.TAB_INSET >= 10 and right - run.TAB_INSET >= 10
+    assert top - run.TAB_INSET >= 6
+    tab = views.CheckTab(views.CheckStatusButton())
+    left, top, right, _bottom = tab.PADDING
+    assert min(left, top, right) - tab.TAB_INSET >= 5
+
+
+def test_rtl_cells_are_laid_out_right_to_left(app):
+    from folith.qt import segment_editor
+
+    assert segment_editor.cell_direction("كلمة التحرير: مع اندماج (Terry Smith).") \
+        == Qt.LayoutDirection.RightToLeft
+    assert segment_editor.cell_direction("编者按：随着社会学") == Qt.LayoutDirection.LeftToRight
+    assert segment_editor.cell_direction("") == Qt.LayoutDirection.LeftToRight
+    from PySide6.QtWidgets import QPlainTextEdit
+
+    edit = QPlainTextEdit()
+    segment_editor.set_text_direction(edit, Qt.LayoutDirection.RightToLeft)
+    option = edit.document().defaultTextOption()
+    assert option.textDirection() == Qt.LayoutDirection.RightToLeft
+    assert option.alignment() & Qt.AlignmentFlag.AlignRight
+
+
+def _started_bench(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "terms0000000000001"
+    state = core.new_job_state("a.docx")
+    state.update(p1_done=True, paras=["Alpha.", "Beta."],
+                 pairs=[{"source": "Alpha.", "target": "甲。"}, {"source": "Beta.", "target": ""}])
+    core.save_job_state(job_id, state)
+    bench = views.WorkbenchView()
+    state = adapter.load_state(job_id)
+    bench.load(job_id, adapter.EngineConfig(target_lang="简体中文"), state,
+               adapter.segment_rows(job_id, state), [])
+    return bench
+
+
+def test_header_has_no_more_menu_and_a_details_button(app, tmp_path, monkeypatch):
+    bench = _started_bench(tmp_path, monkeypatch)
+    bench.resize(1400, 800)
+    bench.show()
+    app.processEvents()
+    assert not bench.stage_bar.more_button.isVisible(), "nothing left in 更多 without academic mode"
+    assert bench.details_button.isVisible()
+    assert bench.check_tab.isVisible(), "检查与修复 is its only entry now"
+    assert bench.run_status.isVisible(), "the run log opens from the status"
+    bench.close()
+
+
+def test_terms_open_in_the_left_column_not_a_whole_page(app, tmp_path, monkeypatch):
+    bench = _started_bench(tmp_path, monkeypatch)
+    bench.resize(1400, 800)
+    bench.show()
+    app.processEvents()
+    assert bench.terms_button.isVisible()
+    assert not hasattr(bench, "source_button") or not bench.source_button.isVisible()
+    assert bench.tabs.indexOf(bench.terms_panel) == -1, "术语 is no longer a page"
+    bench.show_page("terms")
+    bench._layout_translation_columns()
+    app.processEvents()
+    assert bench.terms_open() and not bench.source_open()
+    assert bench.terms_button.isChecked()
+    assert bench.left_stack.currentWidget() is bench.terms_side
+    split = bench.translation_split
+    sizes = split.sizes()
+    assert 0 < sizes[split.indexOf(bench.source_clip)] < bench.width() // 2
+    assert bench.current_page_id() == "translate"
+    bench.terms_close_button.click()
+    bench._layout_translation_columns()
+    assert not bench.terms_open()
+    assert split.sizes()[split.indexOf(bench.source_clip)] == 0
+    bench.close()

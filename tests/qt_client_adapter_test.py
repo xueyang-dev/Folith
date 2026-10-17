@@ -83,6 +83,11 @@ class StubEndpoint:
             self._handle.close()
 
 
+def _delivered(adapter, job_id: str, asset: str) -> str:
+    """写到用户文件夹里的名字：``<原文件名>_<产物>``（见 adapter.delivery_file_name）。"""
+    return adapter.delivery_file_name(adapter.load_state(job_id).get("filename"), asset)
+
+
 @pytest.fixture()
 def adapter_env(tmp_path, monkeypatch):
     """Isolate one adapter against a temp data directory."""
@@ -295,7 +300,7 @@ def test_full_slice_import_translate_edit_review_deliver_reopen(adapter_env):
         destination = tmp / "交付 结果"  # Chinese + space in the path
         written = adapter.copy_delivery_assets(job_id, result["version"], destination)
         assert written and all(path.is_file() for path in written)
-        assert any(path.name == "translation.docx" for path in written)
+        assert any(path.name == _delivered(adapter, job_id, "translation.docx") for path in written)
 
         state = adapter.load_state(job_id)
         assert state["delivery_status"] == "final"
@@ -598,12 +603,13 @@ def test_delivered_files_keep_tricky_unicode_exactly(adapter_env):
     destination = tmp / "交付 结果 混排"          # 中文 + 空格路径
     written = adapter.copy_delivery_assets(job_id, result["version"], destination)
     names = {path.name for path in written}
-    assert {"translation.docx", "bilingual.docx"} <= names, names
+    assert {_delivered(adapter, job_id, "translation.docx"),
+            _delivered(adapter, job_id, "bilingual.docx")} <= names, names
 
     from docx import Document
 
     # 1) 纯译文：段落文本必须**完全相等**（不 strip、不归一化）
-    doc = Document(str(destination / "translation.docx"))
+    doc = Document(str(destination / _delivered(adapter, job_id, "translation.docx")))
     paragraphs = [item.text for item in doc.paragraphs]
     assert paragraphs[0] == "译文", paragraphs[:2]
     assert paragraphs[1:1 + len(targets)] == targets, paragraphs[1:1 + len(targets)]
@@ -612,7 +618,7 @@ def test_delivered_files_keep_tricky_unicode_exactly(adapter_env):
         [[ord(char) for char in text] for text in targets]
 
     # 2) 双语：目标列同样逐字相等
-    bilingual = Document(str(destination / "bilingual.docx"))
+    bilingual = Document(str(destination / _delivered(adapter, job_id, "bilingual.docx")))
     assert bilingual.tables, "双语交付必须有表格"
     rows = [[cell.text for cell in row.cells] for row in bilingual.tables[0].rows]
     assert len(rows) == len(targets) + 1, rows            # 表头 + 每段一行
@@ -1315,14 +1321,16 @@ def test_saving_delivery_assets_is_complete_and_never_silently_overwrites(
     # 1) 正常保存到"中文 + 空格"路径：每个资产都在，内容与快照逐字节一致。
     dest = tmp_path / "交付 结果 中文"
     written = adapter.copy_delivery_assets(job_id, version, dest)
-    assert {path.name for path in written} == names
+    assert {path.name for path in written} == {_delivered(adapter, job_id, name) for name in names}
     for name, source in adapter.snapshot_asset_paths(job_id, version):
-        assert (dest / name).read_bytes() == source.read_bytes(), name
+        target = dest / _delivered(adapter, job_id, name)
+        assert target.read_bytes() == source.read_bytes(), name
 
     # 2) 全新目标里已有一个同名文件：默认拒绝，且原有内容原封不动。
     other = tmp_path / "另一个 文件夹"
     other.mkdir()
-    collision = other / sorted(names)[0]
+    delivered = {_delivered(adapter, job_id, name) for name in names}
+    collision = other / sorted(delivered)[0]
     collision.write_text("这是用户自己的文件，不能被悄悄覆盖", encoding="utf-8")
     plan = adapter.delivery_save_plan(job_id, version, other)
     assert plan["conflicts"] == [collision.name], plan["conflicts"]
@@ -1335,7 +1343,7 @@ def test_saving_delivery_assets_is_complete_and_never_silently_overwrites(
 
     # 3) 明确确认覆盖后才替换。
     written = adapter.copy_delivery_assets(job_id, version, other, overwrite=True)
-    assert {path.name for path in written} == names
+    assert {path.name for path in written} == delivered
     assert collision.read_bytes() != "这是用户自己的文件，不能被悄悄覆盖".encode()
 
     # 4) 快照里有文件缺失：拒绝保存，不产生"看起来成功"的不完整交付。
@@ -1373,7 +1381,7 @@ def test_export_copy_is_complete_and_never_silently_overwrites(
     assert written, "导出应该写出文件"
     assert all(path.is_file() for path in written)
     names = {path.name for path in written}
-    assert "translation.docx" in names
+    assert _delivered(adapter, job_id, "translation.docx") in names
 
     # 同名文件 → 默认拒绝，原文件不变，目录里不多出其它文件。
     other = tmp_path / "已有内容 的目录"
@@ -1485,17 +1493,17 @@ def test_export_copy_content_is_usable_and_honest(adapter_env, tmp_path):
     adapter.export_current_assets(job_id, dest, None)
 
     translation = [p.text for p in docx.Document(
-        str(dest / "translation.docx")).paragraphs if p.text.strip()]
+        str(dest / _delivered(adapter, job_id, "translation.docx"))).paragraphs if p.text.strip()]
     assert translation[0] == "译文"           # 标题
     assert translation[1:] == ["First.", "人工：乙段。"]
 
-    bilingual = docx.Document(str(dest / "bilingual.docx"))
+    bilingual = docx.Document(str(dest / _delivered(adapter, job_id, "bilingual.docx")))
     rows = [[cell.text for cell in row.cells] for row in bilingual.tables[0].rows]
     assert rows[0] == ["原文", "译文"]
     assert rows[1] == ["甲段。", "First."]
     assert rows[2] == ["乙段。", "人工：乙段。"]
 
-    manifest = json.loads((dest / "delivery_manifest.json").read_text(
+    manifest = json.loads((dest / _delivered(adapter, job_id, "delivery_manifest.json")).read_text(
         encoding="utf-8"))
     assert manifest.get("delivery_status") != "final", \
         "导出不是冻结交付，manifest 不能写 final"

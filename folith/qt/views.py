@@ -790,8 +790,7 @@ class HomeView(QWidget):
         logo_row = QHBoxLayout()
         logo_row.setContentsMargins(theme_module.SPACE["md"] + 1, 0, 0, 0)
         self._brand_mark = QLabel()
-        self._brand_mark.setPixmap(branding.mark_pixmap(28, current_theme(), tint=(
-            None if current_theme() == "light" else theme_module.tokens(current_theme())["accent"])))
+        self._brand_mark.setPixmap(self._mark_pixmap())
         logo_row.addWidget(self._brand_mark, 0, Qt.AlignmentFlag.AlignVCenter)
         # 字标独占剩余宽度：再加一个弹簧会分走一半，副标题就提前折行。
         logo_row.addWidget(self._logo_label, 1)
@@ -1468,7 +1467,9 @@ class HomeView(QWidget):
         from . import branding
 
         theme = current_theme()
-        if theme == self._logo_theme:
+        # 换主题色（不换主题）也要重画标记：键里带上主题色与屏幕像素比。
+        key = (theme, theme_module.accent(), self.devicePixelRatioF())
+        if key == self._logo_theme:
             return
         from html import escape
         name, tagline = branding.wordmark(i18n.language())
@@ -1481,9 +1482,14 @@ class HomeView(QWidget):
         self._logo_label.setMinimumHeight(self.LOGO_HEIGHT)
         self._logo_label.setMaximumWidth(self.SIDEBAR_WIDTH - 78)
         if hasattr(self, "_brand_mark"):
-            self._brand_mark.setPixmap(branding.mark_pixmap(28, theme, tint=(
-                None if theme == "light" else theme_module.tokens(theme)["accent"])))
-        self._logo_theme = theme
+            self._brand_mark.setPixmap(self._mark_pixmap())
+        self._logo_theme = key
+
+    def _mark_pixmap(self):
+        from . import branding
+
+        return branding.mark_pixmap(28, branding.mark_variant(current_theme(), theme_module.accent()),
+                                    max(1.0, self.devicePixelRatioF()))
 
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         """换主题时，自己写了颜色的富文本（字标副标题、统计行）跟着重画。"""
@@ -2004,6 +2010,12 @@ class ClickableLabel(QLabel):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()  # 不让按下冒泡成拖动窗口（见 components.WindowDragArea）
+            return
+        super().mousePressEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
@@ -2044,11 +2056,16 @@ class RunStatusGroup(QFrame):
         top.addWidget(self.track, 1, Qt.AlignmentFlag.AlignVCenter)
         top.addWidget(self.percent, 0, Qt.AlignmentFlag.AlignVCenter)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(theme_module.SPACE["xs"] + 2, 4, theme_module.SPACE["xs"] + 2, 4)
+        # 四周留够白：展开运行记录时这一块是「凸」字的上半截，进度条贴着它的上、左、右
+        # 边会显得局促（试用反馈）。
+        layout.setContentsMargins(*self.PADDING)
         layout.setSpacing(3)
         layout.addLayout(top)
         layout.addWidget(self.line)
-        self.setFixedWidth(232)
+        self.setFixedWidth(256)
+
+    #: 内容到状态组四边的距离（左、上、右、下）。
+    PADDING = (14, 9, 14, 6)
 
     def set_state(self, *, tone: str, line: str, line_tone: str | None = None) -> None:
         """``line_tone``：只给文字着色（例如一次操作失败），进度条仍表示任务本身的状态。"""
@@ -2060,6 +2077,39 @@ class RunStatusGroup(QFrame):
         self.line.setProperty("tone", line_tone or tone)
         style_module.repolish(self.line)
         self.setAccessibleDescription(line)
+
+    #: 展开运行记录时「凸」字上半截相对状态组四边的内缩（留给投影）。
+    TAB_INSET = 3
+
+    def tab_rect(self) -> QRectF:
+        inset = self.TAB_INSET
+        return QRectF(inset, inset, self.width() - 2 * inset, self.height() - inset)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().paintEvent(event)
+        if self.property("tethered") is not True:
+            return
+        # 「凸」字的上半截：浮层的颈部从它底边接下去（components.Popover tether）。
+        # 上、左、右三面有投影和一圈发丝线，底边敞开，与浮层连成一块。
+        path = components.tab_path(self.tab_rect(), theme_module.RADIUS["md"])
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        components.paint_tab_shadow(painter, self.tab_rect(), theme_module.RADIUS["md"])
+        tokens = theme_module.tokens(current_theme())
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme_module.qcolor(tokens["bg-surface-raised"]))
+        painter.drawPath(path)
+        painter.setPen(QPen(components.outline_colour(), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(components.tab_outline(self.tab_rect(), theme_module.RADIUS["md"]))
+        painter.end()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        # 收下按下：否则它冒泡到顶栏，被当成拖动窗口，松开时就点不开运行记录。
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
         if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
@@ -2073,6 +2123,48 @@ class RunStatusGroup(QFrame):
             self.clicked.emit()
             return
         super().keyPressEvent(event)
+
+
+class CheckTab(QWidget):
+    """「检查与修复」图标外面的一圈留白：展开卡片时它画成「凸」字的上半截。
+
+    图标本身是 30px 的圆；直接拿它当上半截，圆贴着卡片的边，很挤（试用反馈）。
+    """
+
+    #: 「凸」字上半截相对这一圈四边的内缩（留给投影）。
+    TAB_INSET = 2
+    PADDING = (8, 7, 8, 5)
+
+    def __init__(self, button: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.button = button
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(*self.PADDING)
+        layout.addWidget(button)
+
+    def tab_rect(self) -> QRectF:
+        inset = self.TAB_INSET
+        return QRectF(inset, inset, self.width() - 2 * inset, self.height() - inset)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if self.property("tethered") is not True:
+            return
+        rect = self.tab_rect()
+        radius = theme_module.RADIUS["md"]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        components.paint_tab_shadow(painter, rect, radius)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme_module.qcolor(theme_module.tokens(current_theme())["bg-surface-raised"]))
+        painter.drawPath(components.tab_path(rect, radius))
+        painter.setPen(QPen(components.outline_colour(), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(components.tab_outline(rect, radius))
+        painter.end()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        # 留白处的按下不冒泡成拖动窗口。
+        event.accept()
 
 
 class CheckStatusButton(QToolButton):
@@ -2143,7 +2235,7 @@ class WorkbenchView(QWidget):
 
     #: 检查器的默认宽度；双击它左侧的分割条回到这个宽度。
     #: 右栏（检查器 / 检查与修复）的默认宽度：两者共用一个宽度，切换时网格不跳（模板 B）。
-    INSPECTOR_WIDTH = 320
+    INSPECTOR_WIDTH = 360
 
     backRequested = Signal()
     startRequested = Signal()
@@ -2342,10 +2434,12 @@ class WorkbenchView(QWidget):
         self.details_button.setToolTip(i18n.tr('任务详情'))
         self.details_button.setAccessibleName(i18n.tr('任务详情'))
         self.details_button.clicked.connect(self.open_details)
-        # 任务详情在「更多」里；这枚按钮不再放进头部，只作为浮窗的备用锚点留着。
+        # 任务详情：顶栏最右的 ⓘ（「更多」菜单撤掉了，2026-10-17 试用反馈）。任务开始后出现。
         self.details_button.setVisible(False)
-        # 「检查与修复」图标只在有事要处理（或抽屉开着）时出现；平时从「更多」进。
-        self.check_button.setVisible(False)
+        # 「检查与修复」图标：任务开始后常驻（有待处理项变色、带数字）。外面一圈留白，
+        # 展开卡片时那一圈画成「凸」字上半截。
+        self.check_tab = CheckTab(self.check_button)
+        self.check_tab.setVisible(False)
 
         # 运行控制单独放进一个零边距容器：全部隐藏时整组收掉，不留空槽位。
         run_controls = QHBoxLayout()
@@ -2377,6 +2471,8 @@ class WorkbenchView(QWidget):
 
         header_card = QFrame()
         header_card.setObjectName("unifiedToolbar")
+        # 顶栏的空白处（文件名、按钮之间）也能拖动窗口，像 macOS 的统一工具栏。
+        self._header_drag = components.WindowDragArea(header_card)
         header_layout = QHBoxLayout(header_card)
         header_layout.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["sm"],
                                          theme_module.SPACE["lg"], theme_module.SPACE["sm"])
@@ -2385,8 +2481,9 @@ class WorkbenchView(QWidget):
         header_layout.addWidget(identity_box, 1)
         header_layout.addWidget(self.stage_bar, 2)
         header_layout.addWidget(self.run_status, 0, Qt.AlignmentFlag.AlignVCenter)
-        header_layout.addWidget(self.check_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.check_tab, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.header_actions_bar, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.details_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ---- 翻译标签页 ----------------------------------------------------
         self.search_edit = QLineEdit()
@@ -2454,17 +2551,18 @@ class WorkbenchView(QWidget):
         self.find_replace_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.find_replace_button.clicked.connect(self._request_find_replace)
         toolbar.addWidget(self.find_replace_button)
-        # 原页：只有 PDF 来源的任务才显示；点一下在左侧展开（⌘⌥P）。
-        self.source_button = QToolButton()
-        self.source_button.setObjectName("toolbarButton")
-        self.source_button.setCheckable(True)
-        self.source_button.setText(i18n.tr('原页'))
-        self.source_button.setIcon(icons.icon("file", 16, "text-secondary"))
-        self.source_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.source_button.setToolTip(i18n.tr('在左侧展开 PDF 原页，跟随选中的段落（⌘⌥P）'))
-        self.source_button.clicked.connect(lambda checked: self.set_source_open(checked))
-        self.source_button.setVisible(False)
-        toolbar.addWidget(self.source_button)
+        # 术语：在左侧展开术语表（和 PDF 原页同一个位置、同样宽），不再是整页。
+        # 原页不在这里另放按钮：检查器的「原位置」就是它的入口（⌘⌥P 照旧）。
+        self.terms_button = QToolButton()
+        self.terms_button.setObjectName("toolbarButton")
+        self.terms_button.setCheckable(True)
+        self.terms_button.setText(i18n.tr('术语'))
+        self.terms_button.setIcon(icons.icon("file-sheet", 16, "text-secondary"))
+        self.terms_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.terms_button.setToolTip(i18n.tr('在左侧展开本任务的术语表'))
+        self.terms_button.clicked.connect(lambda checked: self.set_terms_open(checked))
+        self.terms_button.setVisible(False)
+        toolbar.addWidget(self.terms_button)
         toolbar.addStretch(1)
         # ⚠️ Qt 布局坑（macOS + QSS 主题实测）：QHBoxLayout 给 QLabel / QCheckBox
         # 分配的槽位比控件自身的 sizeHint **窄**（复选框 110→99、"筛选"标签 24→22），
@@ -2609,11 +2707,6 @@ class WorkbenchView(QWidget):
         self.review_button.clicked.connect(
             lambda: self.reviewCurrentRequested.emit(self._current_index))
 
-        nav_row = QHBoxLayout()
-        nav_row.setSpacing(theme_module.SPACE["xs"])
-        nav_row.addWidget(self.prev_button)
-        nav_row.addWidget(self.next_button)
-        nav_row.addStretch(1)
 
         # 编辑框下面那一条：只在改过之后出现（未保存 / 放弃 / 保存并下一段 / 保存）。
         self.target_edit = self.inline_editor.edit
@@ -2709,9 +2802,18 @@ class WorkbenchView(QWidget):
         inspector_layout.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"],
                                             theme_module.SPACE["lg"], theme_module.SPACE["md"])
         inspector_layout.setSpacing(theme_module.SPACE["sm"])
-        title_row = QHBoxLayout()
-        title_row.addWidget(self.selection_title, 1)
-        title_row.addLayout(nav_row)
+        # 标题 + 上一段 / 下一段：窄栏或长语言里按钮折到标题下面一行，而不是被挤出去。
+        title_row = components.FlowRow(spacing=theme_module.SPACE["xs"])
+        self.selection_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        nav_pair = QWidget()
+        nav_pair.setObjectName("transparent")
+        nav = QHBoxLayout(nav_pair)
+        nav.setContentsMargins(0, 0, 0, 0)
+        nav.setSpacing(theme_module.SPACE["xs"])
+        nav.addWidget(self.prev_button, 1)
+        nav.addWidget(self.next_button, 1)
+        title_row.addWidget(self.selection_title)
+        title_row.addWidget(nav_pair)  # 上一段 / 下一段 总是挨在一起，要折就一起折
         inspector_layout.addLayout(title_row)
         inspector_layout.addWidget(self.segment_status)
         self.segment_status.setWordWrap(True)
@@ -2775,12 +2877,12 @@ class WorkbenchView(QWidget):
             box.input.setVisible(False)
             box.button.setVisible(False)
 
-        def row_of(*widgets) -> QHBoxLayout:
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(theme_module.SPACE["xs"])
+        def row_of(*widgets) -> components.FlowRow:
+            # 放得下就一行等分铺满，放不下就折行：操作台永远不会把按钮挤出右边。
+            row = components.FlowRow()
             for widget in widgets:
-                row.addWidget(widget, 1)
+                widget.setSizePolicy(QSizePolicy.Policy.Expanding, widget.sizePolicy().verticalPolicy())
+                row.addWidget(widget)
             return row
 
         # 只对单独一段有意义的部分：选多段时整组收起。
@@ -2805,10 +2907,10 @@ class WorkbenchView(QWidget):
         inspector_layout.addLayout(row_of(self.review_button, self.review_selected_button,
                                           self.analyze_button, self.retranslate_button))
         self.assist_row = QWidget()
-        assist = QHBoxLayout(self.assist_row)
-        assist.setContentsMargins(0, 0, 0, 0)
-        assist.setSpacing(theme_module.SPACE["xs"])
-        assist.addWidget(self.assist_input, 1)
+        assist = components.FlowRow(self.assist_row)
+        self.assist_input.setMinimumWidth(160)
+        self.assist_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        assist.addWidget(self.assist_input)
         assist.addWidget(self.assist_retranslate)
         assist.addWidget(self.assist_ask)
         inspector_layout.addWidget(self.assist_row)
@@ -2910,6 +3012,10 @@ class WorkbenchView(QWidget):
         self.grid_card.setMinimumWidth(360)
         self.translation_split = translation_split
         self.inspector_scroll = inspector_scroll
+        # 操作台（段落检查器）是核心位置：左右宽度永远完整显示，只上下滚动——
+        # 宽度下限取它内容的最小宽度，拖分割条、缩窗口都只压段落表（第三轮试用反馈）。
+        translation_split.setCollapsible(translation_split.indexOf(self.right_panel), False)
+        self._sync_inspector_min()
 
         translation_page = QWidget()
         translation_layout = QVBoxLayout(translation_page)
@@ -3179,9 +3285,34 @@ class WorkbenchView(QWidget):
         self.terms_panel.entryAddRequested.connect(self.glossaryEntryAddRequested.emit)
         self.terms_panel.statusRequested.connect(self.glossaryStatusRequested.emit)
         self.terms_panel.entryDeleteRequested.connect(self.glossaryEntryDeleteRequested.emit)
-        self.tabs.addTab(self.terms_panel,
-                         icons.icon("file-sheet", 16, "text-secondary"),
-                         i18n.tr('术语'))
+        self.terms_panel.set_compact(True)
+        # 术语表在翻译页左侧展开（与原页轮流占同一栏），带标题与收起按钮。
+        self.terms_side = QWidget()
+        terms_title = QLabel(i18n.tr('术语'))
+        terms_title.setObjectName("sectionTitle")
+        terms_close = QToolButton()
+        terms_close.setObjectName("roundButton")
+        terms_close.setIcon(icons.icon("x", 16, "text-secondary"))
+        terms_close.setIconSize(QSize(16, 16))
+        terms_close.setToolTip(i18n.tr('收起术语'))
+        terms_close.setAccessibleName(i18n.tr('收起术语'))
+        terms_close.clicked.connect(lambda: self.set_terms_open(False))
+        self.terms_close_button = terms_close
+        terms_head = QHBoxLayout()
+        terms_head.setContentsMargins(0, 0, 0, 0)
+        terms_head.addWidget(terms_title, 1)
+        terms_head.addWidget(terms_close)
+        terms_layout = QVBoxLayout(self.terms_side)
+        terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
+        terms_layout.addLayout(terms_head)
+        # 窗口矮时整栏上下滚动（表格、表单、冻结按钮都在），左右不滚。
+        terms_scroll = QScrollArea()
+        terms_scroll.setWidgetResizable(True)
+        terms_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        terms_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        terms_scroll.viewport().setAutoFillBackground(False)
+        terms_scroll.setWidget(self.terms_panel)
+        terms_layout.addWidget(terms_scroll, 1)
         self.review_panel = ReviewPanel()
         self.review_panel.styleRuleRequested.connect(self.styleRuleRequested.emit)
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
@@ -3247,8 +3378,14 @@ class WorkbenchView(QWidget):
         # 原页：工作台左侧可展开的面板（acceptance-feedback D2），不再是一整页。
         self.pdf_panel = PdfPanel()
         self.pdf_panel.closeRequested.connect(lambda: self.set_source_open(False))
-        self.source_clip = components.ClippedWidget(self.pdf_panel, 400)
+        # 左栏：原页与术语轮流占它（一个位置一个宽度）。`_source_open` 指左栏开着，
+        # `_left_mode` 说开的是哪一个。
+        self.left_stack = QStackedWidget()
+        self.left_stack.addWidget(self.pdf_panel)
+        self.left_stack.addWidget(self.terms_side)
+        self.source_clip = components.ClippedWidget(self.left_stack, 400)
         self._source_open = False
+        self._left_mode = "source"
         self._source_locate_pending = False
         self.source_clip.hide()
         self.translation_split.insertWidget(0, self.source_clip)
@@ -3270,9 +3407,9 @@ class WorkbenchView(QWidget):
         source_shortcut.setShortcut(QKeySequence("Ctrl+Alt+P"))
         source_shortcut.triggered.connect(lambda: self.set_source_open(not self.source_open()))
         self.addAction(source_shortcut)
-        # 检查与修复：从右侧滑出的面板，暂时替换段落检查器（点网格里的段落不会
-        # 关掉它，可以逐条处理）；运行记录：从运行状态组弹出的浮窗。两者都不再
-        # 占满主屏（acceptance-feedback D3 / Q1 / Q2）。
+        # 检查与修复：从顶栏的盾牌图标下面展开的「凸」字下拉卡片（与运行记录同一种），
+        # 不再挤占右栏、也不会自己弹出来挡住操作键（2026-10-16 第三轮试用反馈）。
+        # 点外面或 Esc 收起；处理某一条（定位段落、预览）时卡片保持打开。
         self.followup_drawer = QFrame()
         self.followup_drawer.setObjectName("followupDrawer")
         self.followup_drawer.setAccessibleName(i18n.tr('检查与修复'))
@@ -3280,32 +3417,17 @@ class WorkbenchView(QWidget):
             i18n.tr('处理任务中需要注意的问题；按 Esc 收起并返回编辑框。'))
         self._drawer_open = False
         self._motion = motion.Motion(self)
-        drawer_title = QLabel(i18n.tr('检查与修复'))
-        drawer_title.setObjectName("sectionTitle")
-        drawer_close = QToolButton()
-        drawer_close.setObjectName("roundButton")
-        drawer_close.setIcon(icons.icon("x", 14, "text-secondary"))
-        drawer_close.setIconSize(QSize(14, 14))
-        drawer_close.setAccessibleName(i18n.tr('关闭检查与修复'))
-        self.drawer_close = drawer_close
-        drawer_close.clicked.connect(lambda: self.set_followup_drawer_open(False))
-        drawer_head = QHBoxLayout()
-        drawer_head.setContentsMargins(0, 0, 0, 0)
-        drawer_head.addWidget(drawer_title, 1)
-        drawer_head.addWidget(drawer_close)
         drawer_layout = QVBoxLayout(self.followup_drawer)
-        drawer_layout.setContentsMargins(theme_module.SPACE["sm"], 0, 0, 0)
-        drawer_layout.setSpacing(theme_module.SPACE["sm"])
-        drawer_layout.addLayout(drawer_head)
+        drawer_layout.setContentsMargins(0, 0, 0, 0)
+        drawer_layout.setSpacing(0)
         drawer_scroll = QScrollArea()
         drawer_scroll.setWidgetResizable(True)
         drawer_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         drawer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         drawer_scroll.viewport().setAutoFillBackground(False)
         drawer_scroll.setWidget(self.followup_panel)
-        components.scroll_fade(drawer_scroll)
         drawer_layout.addWidget(drawer_scroll, 1)
-        self.right_panel.set_drawer(self.followup_drawer)
+        self._followup_popover = None  # 第一次打开时才建（见 followup_popover）
         drawer_escape = QAction(self)
         drawer_escape.setShortcut(QKeySequence("Esc"))
         drawer_escape.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -3333,7 +3455,7 @@ class WorkbenchView(QWidget):
         self._details_key: tuple = ()
         #: 页面 id → 页面。步骤条与代码里的跳转都用页面 id，不再依赖页签序号。
         self._pages: dict[str, QWidget] = {
-            "translate": translation_page, "terms": self.terms_panel,
+            "translate": translation_page,
             "review": self.review_panel, "deliver": delivery_page,
             "report": self.report_panel, "cases": self.cases_panel,
             "qa": self.qa_panel,
@@ -3451,6 +3573,9 @@ class WorkbenchView(QWidget):
         if page_id == "source":
             self.set_source_open(True)
             return
+        if page_id == "terms":
+            self.set_terms_open(True)
+            return
         if page_id == "details":
             self.open_details()
             return
@@ -3484,7 +3609,7 @@ class WorkbenchView(QWidget):
 
     def open_activity(self) -> None:
         """运行记录：从运行状态组（进度条）下面居中展开；它不可见时锚定在顶栏右端。"""
-        anchor = self.run_status if self.run_status.isVisible() else self.stage_bar.more_button
+        anchor = self.run_status if self.run_status.isVisible() else self.details_button
         if not anchor.isVisible():
             anchor = self
         self._render_activity()
@@ -3495,43 +3620,67 @@ class WorkbenchView(QWidget):
 
     def open_details(self) -> None:
         """任务详情浮窗：锚定在顶栏的 ⓘ 上。"""
-        anchor = self.stage_bar.more_button
+        anchor = self.details_button
         self.details_popover.open_at(anchor if anchor.isVisible() else self)
         self._details_key = ()
         self._render_details()
+
+    @property
+    def followup_popover(self) -> components.Popover:
+        """检查与修复的下拉卡片：第一次打开时才建。"""
+        if self._followup_popover is None:
+            self._followup_popover = components.Popover(
+                i18n.tr('检查与修复'), self.followup_drawer, self, size=QSize(440, 520),
+                header=False)
+            self._followup_popover.closed.connect(self._followup_closed)
+        return self._followup_popover
 
     def followup_drawer_open(self) -> bool:
         return self._drawer_open
 
     def set_followup_drawer_open(self, open_: bool) -> None:
-        """打开时切回翻译页，面板暂时替换右侧的段落检查器；关闭时检查器回来。"""
+        """打开 = 从盾牌图标下面展开检查与修复卡片（并切回翻译页）；关闭 = 收起它。"""
         open_ = bool(open_)
-        if open_ == self.followup_drawer_open():
-            self.check_button.setChecked(open_)
-            if open_:
-                self.tabs.setCurrentWidget(self._pages["translate"])
-            return
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
-        if open_ and self.right_panel.fraction == 0:
-            width = self.translation_split.sizes()[self.translation_split.indexOf(self.right_panel)]
-            if width:
-                self._inspector_width = width
+        if open_ == self.followup_drawer_open():
+            self.check_button.setChecked(open_)
+            return
         self._drawer_open = open_
         self.check_button.setChecked(open_)
         self._sync_check_button()
-        self._drawer_open_for_escape = open_
-        self.drawer_escape.setEnabled(open_ or self._term_focus is not None)
         if open_:
             # apply() already refreshes this data when the task state changes.
-            # Clearing its signature here re-scans a whole book on every click
-            # (~450 ms), freezing the transition before its first frame.
+            # Clearing its signature here re-scans a whole book on every click.
             self._render_followup()
-        self._transition_columns()
-        if open_:
-            self.drawer_close.setFocus()
-        else:
-            self.focus_editor()
+            if self.check_tab.isVisible():
+                # 图标可能刚刚因为打开而出现：先让顶栏排好版，浮层才对得准它。
+                header = self.check_tab.parentWidget()
+                if header is not None and header.layout() is not None:
+                    header.layout().activate()
+                # 卡片高度跟着内容走（只有一两条时不留一大片空白），最高 520。
+                extra = self.followup_popover.body_margin(True)
+                inner = 440 - extra.width()
+                content = self.followup_panel
+                wanted = content.heightForWidth(inner) if content.hasHeightForWidth() else -1
+                wanted = wanted if wanted > 0 else content.sizeHint().height()
+                self.followup_popover.set_popup_size(
+                    QSize(440, max(160, min(520, wanted + extra.height()))))
+                self.followup_popover.open_at(self.check_tab, align="center", tether=True)
+            else:
+                self.followup_popover.open_at(self)
+        elif self._followup_popover is not None:
+            self._followup_popover.close()
+
+    def _followup_closed(self) -> None:
+        """卡片被收起（点外面、Esc 或再点一次图标）：图标复位，焦点回到编辑框。"""
+        self._followup_closed_at = time.monotonic()
+        if not self._drawer_open:
+            return
+        self._drawer_open = False
+        self.check_button.setChecked(False)
+        self._sync_check_button()
+        self.focus_editor()
 
     def _transition_columns(self) -> None:
         """A single interruptible transition coordinates both side panels."""
@@ -3560,13 +3709,13 @@ class WorkbenchView(QWidget):
             # once at its destination width, never at each intermediate width.
             split.setSizes([round(a + (b - a) * value)
                             for a, b in zip(start_sizes, end_sizes)])
-            self.right_panel.set_fraction(start_fraction + (float(self._drawer_open) - start_fraction) * value)
+            self.right_panel.set_fraction(start_fraction * (1.0 - value))
             self._place_inline_editor()
 
         def settled() -> None:
             self.source_clip.setVisible(self._source_open)
             self.source_clip.freeze(None)
-            self.right_panel.settle(self._drawer_open)
+            self.right_panel.settle(False)
             self.right_panel.setVisible(bool(end_sizes[side]))
             self.followup_panel.set_preview_deferred(False)
             self._resume_source_render()
@@ -3589,8 +3738,8 @@ class WorkbenchView(QWidget):
         self.set_followup_drawer_open(False)
 
     def _sync_escape(self) -> None:
-        self.drawer_escape.setEnabled(self.followup_drawer_open()
-                                      or self._term_focus is not None)
+        # 检查与修复是 Qt.Popup：Esc 由它自己收起，这里只管术语聚焦。
+        self.drawer_escape.setEnabled(self._term_focus is not None)
 
     # ================= 术语：本段标注、悬停高亮、全文定位 =================
     def _filters_active(self) -> bool:
@@ -3860,28 +4009,63 @@ class WorkbenchView(QWidget):
         self._sync_term_focus_label()
 
     def _sync_check_button(self) -> None:
-        """「检查与修复」图标是一个提醒：有待处理项、或抽屉正开着时才在头部出现。"""
-        self.check_button.setVisible(
-            bool(self.job_id) and (self._followup_count > 0 or self._drawer_open))
+        """「检查与修复」图标：任务开始后常驻（它是唯一入口，「更多」菜单撤掉了）；
+        开始前只在有待处理项、或卡片正开着时出现。"""
+        shown = bool(self.job_id) and (self._task_started() or self._followup_count > 0
+                                       or self._drawer_open)
+        self.check_tab.setVisible(shown)
+        self.check_button.setVisible(shown)
 
     def _toggle_followup_drawer(self) -> None:
+        # 卡片开着时点图标：Qt 先因"点在外面"把它收起，这次点击就只是收起，不再重开。
+        if time.monotonic() - getattr(self, "_followup_closed_at", 0.0) < 0.3:
+            self.check_button.setChecked(False)
+            return
         self.set_followup_drawer_open(not self.followup_drawer_open())
 
     # ---- 翻译页的列：原页 | 段落网格 | 检查器 / 检查与修复 ---------------------
-    def source_open(self) -> bool:
+    def left_open(self) -> bool:
+        """左栏（原页或术语）开着。"""
         return self._source_open
+
+    def source_open(self) -> bool:
+        return self._source_open and self._left_mode == "source"
+
+    def terms_open(self) -> bool:
+        return self._source_open and self._left_mode == "terms"
 
     def set_source_open(self, open_: bool) -> None:
         """原页在工作台左侧展开 / 收起；中间的网格随之收缩（acceptance-feedback D2）。"""
-        open_ = bool(open_) and self._pdf_ok
-        self.source_button.setChecked(open_)
-        if open_ == self.source_open():
+        self._set_left_panel("source", bool(open_) and self._pdf_ok)
+
+    def set_terms_open(self, open_: bool) -> None:
+        """术语表在工作台左侧展开 / 收起（与原页同一栏；2026-10-17 试用反馈）。"""
+        self._set_left_panel("terms", bool(open_) and bool(self.job_id))
+
+    def _set_left_panel(self, mode: str, open_: bool) -> None:
+        if not open_ and self._left_mode != mode:
+            # 收起一个本来就没开着的面板（左栏开的是另一个）：什么也不动。
+            self._sync_left_buttons()
             return
+        was_open = self._source_open
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
+            self._left_mode = mode
+            self.left_stack.setCurrentWidget(self.pdf_panel if mode == "source" else self.terms_side)
         self._source_open = open_
-        self._source_locate_pending = open_ and self._current_index >= 0
+        self._sync_left_buttons()
+        if open_ and mode == "terms":
+            self._render_terms()
+        if was_open == open_:
+            # 左栏本来就开着、只是换了内容：不重排列宽；换到原页时定位当前段。
+            if open_ and mode == "source":
+                self._follow_source()
+            return
+        self._source_locate_pending = open_ and mode == "source" and self._current_index >= 0
         self._transition_columns()
+
+    def _sync_left_buttons(self) -> None:
+        self.terms_button.setChecked(self.terms_open())
 
     def _follow_source(self) -> None:
         if self.source_open() and self._current_index >= 0:
@@ -3900,28 +4084,28 @@ class WorkbenchView(QWidget):
         self._motion.stop("translation-columns")
         self.source_clip.freeze(None)
         self.source_clip.setVisible(self._source_open)
-        self.right_panel.settle(self._drawer_open)
+        self.right_panel.settle(False)
         self.followup_panel.set_preview_deferred(False)
         self._resume_source_render()
         if self.right_panel.isVisibleTo(self):
             self._inspector_width = self.translation_split.sizes()[
                 self.translation_split.indexOf(self.right_panel)]
-        if self.source_open():
+        if self.left_open():
             self._pdf_width = self.translation_split.sizes()[
                 self.translation_split.indexOf(self.source_clip)]
 
     def _split_collapse_requested(self, widget, width: int) -> None:
         """原页被拖到阈值以下松手：按原页开关收起，下次打开回到拖之前的宽度。"""
-        if widget is self.source_clip and self.source_open():
+        if widget is self.source_clip and self.left_open():
             self._pdf_width = width
-            self.set_source_open(False)
+            self._set_left_panel(self._left_mode, False)
 
     def _split_reset_requested(self, handle: int) -> None:
         """双击分割条：把它两侧的侧栏（原页 / 检查器）恢复默认宽度。"""
         split = self.translation_split
         before, after = split.widget(handle - 1), split.widget(handle)
         changed = False
-        if before is self.source_clip and self.source_open():
+        if before is self.source_clip and self.left_open():
             self._pdf_width = 0  # 0 = 默认约 40%
             changed = True
         if after is self.right_panel:
@@ -3935,8 +4119,8 @@ class WorkbenchView(QWidget):
         或检查与修复）共用一个宽度；窗口太窄时，原页打开会让检查器让位。"""
         split = self.translation_split
         self._motion.stop("translation-columns")
-        drawer_open = self.followup_drawer_open()
-        source = self.source_open()
+        drawer_open = False  # 检查与修复是浮层，不占右栏
+        source = self.left_open()
         narrow = self.width() and self.width() < 1200
         self.source_clip.setVisible(source)
         self.source_clip.freeze(None)
@@ -3949,6 +4133,19 @@ class WorkbenchView(QWidget):
         # editor must follow them, or it hangs past the grid's new right edge.
         QTimer.singleShot(0, self._place_inline_editor)
 
+    def inspector_min_width(self) -> int:
+        """操作台完整显示所需的宽度：内容的最小宽度 + 纵向滚动条。"""
+        inspector = self.inspector_scroll.widget()
+        bar = self.inspector_scroll.verticalScrollBar().sizeHint().width()
+        return inspector.minimumSizeHint().width() + bar + 2
+
+    def _sync_inspector_min(self) -> int:
+        width = self.inspector_min_width()
+        if self.right_panel.minimumWidth() != width:
+            self.right_panel.setMinimumWidth(width)
+        self._inspector_width = max(self._inspector_width, width)
+        return width
+
     def _translation_column_sizes(self, *, drawer_open: bool | None = None) -> list[int]:
         """Compute the destination without laying out and then undoing a frame.
 
@@ -3957,8 +4154,8 @@ class WorkbenchView(QWidget):
         """
         split = self.translation_split
         if drawer_open is None:
-            drawer_open = self.followup_drawer_open()
-        source = self.source_open()
+            drawer_open = False  # 检查与修复是浮层，不占右栏
+        source = self.left_open()
         sizes = split.sizes()
         total = sum(sizes) or split.width() or max(self.width() - 40, 800)
         index = {widget: split.indexOf(widget) for widget in (
@@ -3967,13 +4164,15 @@ class WorkbenchView(QWidget):
         # 右栏是"一个位置一个宽度"：检查器和检查与修复轮流占它，宽度相同，
         # 打开抽屉时网格不重排（设计审校 40 号 3.8）。
         side = 0
+        minimum = self._sync_inspector_min()
         if drawer_open or not (source and self.width() < 1200):
-            side = self._inspector_width
+            side = max(self._inspector_width, minimum)
         pdf = 0
         if source:
             pdf = self._pdf_width or int(total * 0.4)
             pdf = max(320, min(pdf, total - side - 360))
-        side = min(side, max(0, total - pdf - 360))
+        # 窗口不够时先压段落表、再压原页，操作台不低于完整宽度。
+        side = max(minimum, min(side, total - pdf - 360)) if side else 0
         new = [0] * split.count()
         new[index[self.pdf_panel]] = pdf
         new[index[self.right_panel]] = side
@@ -3984,9 +4183,9 @@ class WorkbenchView(QWidget):
         super().resizeEvent(event)
         if self._motion.running("translation-columns"):
             self._layout_translation_columns()
-        if self.source_open():
+        if self.left_open():
             narrow = self.width() < 1200
-            if self.inspector_scroll.isVisibleTo(self) == narrow and not self.followup_drawer_open():
+            if self.inspector_scroll.isVisibleTo(self) == narrow:
                 self._layout_translation_columns()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
@@ -4015,19 +4214,16 @@ class WorkbenchView(QWidget):
         self._sync_header_actions()
 
     def _sync_more_pages(self) -> None:
-        """"更多"菜单里的页面：随 PDF 来源与学术模式变化。收不收起由内容决定。"""
-        pages: list[tuple[str, str]] = [("terms", i18n.tr('术语'))]
+        """"更多"菜单只剩学术模式的页（报告、案例、合规与 QA）；没开学术模式就不出现。
+
+        其余入口各有各的位置（2026-10-17 试用反馈）：术语在翻译页工具栏、检查与修复
+        是盾牌图标、运行记录点进度条、任务详情是 ⓘ。
+        """
+        pages: list[tuple[str, str]] = []
         if self.academic_visible():
             pages.extend((("report", i18n.tr('报告')), ("cases", i18n.tr('案例')),
                           ("qa", i18n.tr('合规与 QA'))))
-        count = self._followup_count
-        actions = [("followup", i18n.tr('检查与修复 · {v0} 项待处理', v0=count) if count
-                    else i18n.tr('检查与修复')),
-                   ("activity", i18n.tr('运行记录')),
-                   ("details", i18n.tr('任务详情'))]
-        # 待处理数写在菜单项里、挂在头部的提醒图标上；不挂在「更多」按钮上：
-        # 那会读成"术语 (2)"。
-        self.stage_bar.set_more_pages(pages, actions=actions)
+        self.stage_bar.set_more_pages(pages)
 
     def _render_stage(self) -> None:
         """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
@@ -4036,8 +4232,15 @@ class WorkbenchView(QWidget):
             state=self._state, review=self.review_panel.view(),
             delivery=self._delivery_preview, terms_blocked=self._terms_blocked)
         self.stage_bar.set_stages(view)
-        # 术语与"更多"里的页面只对已经开始的任务有意义：准备阶段没有术语表、没有记录。
-        self.stage_bar.set_side_visible(self._task_started())
+        # 术语、检查与修复、任务详情与"更多"里的页面只对已经开始的任务有意义：
+        # 准备阶段没有术语表、没有记录。
+        started = self._task_started()
+        self.stage_bar.set_side_visible(started)
+        self.details_button.setVisible(started)
+        self.terms_button.setVisible(started)
+        if not started and self.terms_open():
+            self.set_terms_open(False)
+        self._sync_check_button()
         self._stage_action = view.get("action")
         self._sync_stage_page()
 
@@ -4126,8 +4329,6 @@ class WorkbenchView(QWidget):
         """打开"合规与 QA"页时，把 DOCX 结构检查的最新结论记下（和旧界面一样，写入只发生在这里）。"""
         if self.tabs.widget(index) is self.details_panel:
             self._render_details()
-        if self.tabs.widget(index) is self.terms_panel and self.job_id:
-            self._render_terms()
         if self.tabs.widget(index) is not self.qa_panel or not self.job_id:
             return
         try:
@@ -4210,7 +4411,7 @@ class WorkbenchView(QWidget):
         # (~0.35 s on a book).  Off-page the panel gets the same view without
         # those counts (the start gate and layout stay current); the counts are
         # filled in when the page is shown (see _tab_changed).
-        on_page = force or self.tabs.currentWidget() is self.terms_panel
+        on_page = force or self.terms_open()
         if on_page:
             self._terms_key = key
         try:
@@ -4263,7 +4464,6 @@ class WorkbenchView(QWidget):
         except Exception:  # noqa: BLE001 - 读不出原文时当作没有原页
             self._pdf_ok = False
         self.pdf_panel.load(job_id if self._pdf_ok else "")
-        self.source_button.setVisible(self._pdf_ok)
         if not self._pdf_ok:
             self.set_source_open(False)
         self.view_source_button.setVisible(self._pdf_ok)
@@ -4615,13 +4815,14 @@ class WorkbenchView(QWidget):
         # 进度已保存"对一个还没开始的任务是错的；「开始翻译」由准备面板承担，
         # 两个"开始翻译"并存会让用户不确定哪个才带上刚选的策略（面板里那个会
         # 先把选择写回任务再启动）。
-        self.run_status.track.setVisible(started)
-        self.run_status.percent.setVisible(started)
-        self.run_status.setVisible(started)
+        # 每秒都会走到这里：可见性只在算出最终值之后设一次。先显示再隐藏会让顶栏
+        # 每秒重排两次、整窗重绘（后台的 Folith 在台前调度里一直闪）。
         if not started:
+            self.run_status.track.setVisible(False)
+            self.run_status.percent.setVisible(False)
             notice = self._live_task_notice()
+            self.run_status.setVisible(bool(notice))
             if notice:
-                self.run_status.setVisible(True)
                 self.run_status.set_state(tone="idle", line=notice[1],
                                           line_tone="failed" if notice[2] else None)
             for button in (self.start_button, self.pause_button, self.cancel_button,
@@ -4661,12 +4862,13 @@ class WorkbenchView(QWidget):
             line = f"{line} · {recognised}" if line else recognised
         # 跑完了就不要进度条：没有阶段进度时它停在 0，和下面的"已完成"自相矛盾；
         # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
-        self.run_status.track.setVisible(started and tone != "done")
-        self.run_status.percent.setVisible(started and tone != "done")
+        self.run_status.track.setVisible(tone != "done")
+        self.run_status.percent.setVisible(tone != "done")
         self.run_status.set_state(tone=tone, line=line)
-        # 运行状态只在有话说时占头部：运行中、等模型、重试、停滞、失败、暂停。
-        # 跑完了或空闲时收起——步骤条已经说了完成，运行记录在「更多」里。
-        self.run_status.setVisible(started and tone not in ("done", "idle"))
+        # 任务开始后运行状态一直在：跑完了只剩「已完成 · N 分钟」一行（没有进度条），
+        # 它也是运行记录唯一的入口（「更多」菜单撤掉了）。
+        notice = self._live_task_notice(runtime)
+        self.run_status.setVisible(True)
 
         # 按钮可见性一律跟随核心的运行视图契约，不再自己猜标签：
         # * `available_actions` 是核心给出的可执行动作（resume/retry/cancel/…）；
@@ -4687,9 +4889,7 @@ class WorkbenchView(QWidget):
         self.pause_button.setText(i18n.tr('正在暂停…') if pausing else i18n.tr('暂停'))
         self.cancel_button.setVisible(running or "cancel" in actions)
         self.retry_button.setVisible("retry" in actions)
-        notice = self._live_task_notice(runtime)
         if notice:
-            self.run_status.setVisible(True)
             self.run_status.set_state(tone=tone, line=notice[1],
                                       line_tone="failed" if notice[2] else None)
         self._sync_header_actions()
@@ -5162,8 +5362,8 @@ class WorkbenchView(QWidget):
         try:
             if self.target_edit.toPlainText() != (target or ""):
                 self.target_edit.setPlainText(target or "")
-            self.target_edit.setLayoutDirection(
-                Qt.LayoutDirection.RightToLeft
+            segment_editor.set_text_direction(
+                self.target_edit, Qt.LayoutDirection.RightToLeft
                 if text_direction(target or "", language) == "rtl"
                 else Qt.LayoutDirection.LeftToRight)
             self.target_edit.document().setModified(False)
@@ -5304,8 +5504,8 @@ class WorkbenchView(QWidget):
             segment_editor.CELL_PAD + 1, 2, -2, -2))
         from folith.textual import text_direction
 
-        editor.source_view.setLayoutDirection(
-            Qt.LayoutDirection.RightToLeft
+        segment_editor.set_text_direction(
+            editor.source_view, Qt.LayoutDirection.RightToLeft
             if text_direction(self._rows[position].source, None) == "rtl"
             else Qt.LayoutDirection.LeftToRight)
         if not editor.source_view.isVisible():

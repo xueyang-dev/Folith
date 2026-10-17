@@ -1751,5 +1751,7 @@
   "术语表 XLSX": "Glossary XLSX",
   "段落证据 JSONL": "Segment evidence JSONL",
   "{v0} 个任务#one": "{v0} task",
-  "{v0} 个需要处理#one": "{v0} needs attention"
+  "{v0} 个需要处理#one": "{v0} needs attention",
+  "在左侧展开本任务的术语表": "Open this task's glossary on the left",
+  "收起术语": "Close glossary"
 }

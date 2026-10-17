@@ -20,9 +20,9 @@ import sys
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QLinearGradient,
                            QIcon, QPainter, QPainterPath, QPen, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QSizePolicy, QSplitter, QSplitterHandle, QToolButton, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit,
+                               QPushButton, QSizePolicy, QSplitter, QSplitterHandle, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from . import i18n
 from . import icons
@@ -73,8 +73,9 @@ class SlidingPanel(QWidget):
         self._widths = (inspector_width, drawer_width)
         self._place()
         self.inspector.show()
-        self.drawer.show()
-        self.drawer.raise_()
+        if self.drawer is not None:
+            self.drawer.show()
+            self.drawer.raise_()
 
     def set_fraction(self, fraction: float) -> None:
         self.fraction = fraction
@@ -82,9 +83,11 @@ class SlidingPanel(QWidget):
 
     def settle(self, open_: bool) -> None:
         self._widths = None
+        open_ = bool(open_) and self.drawer is not None
         self.fraction = float(open_)
         self.inspector.setVisible(not open_)
-        self.drawer.setVisible(open_)
+        if self.drawer is not None:
+            self.drawer.setVisible(open_)
         self._place()
 
     def _place(self) -> None:
@@ -831,9 +834,9 @@ class _GlassShadow(QObject):
             effect = QGraphicsDropShadowEffect(self.button)
             self.button.setGraphicsEffect(effect)
         night = theme_module.resolve(style_module.current_theme()) == "dark"
-        effect.setOffset(0, 2)
-        effect.setBlurRadius(16 if night else 14)
-        effect.setColor(QColor(0, 0, 0, 110) if night else QColor(30, 41, 70, 34))
+        effect.setOffset(0, 1)
+        effect.setBlurRadius(4)
+        effect.setColor(QColor(0, 0, 0, 50) if night else QColor(30, 41, 70, 16))
 
 
 def glass_selection(button: QPushButton) -> QPushButton:
@@ -893,14 +896,28 @@ class Sheet(QWidget):
     def __init__(self, content: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.content = content
+        self._lead = 0
         self.setObjectName("transparent")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, self.GAP, self.GAP, self.GAP)
         layout.setSpacing(0)
         layout.addWidget(content)
 
+    def set_leading_gap(self, gap: int) -> None:
+        """侧栏收起时（工作台），页面左边也留出与右边相同的间隙，圆角不贴窗口边。"""
+        gap = max(0, min(self.GAP, int(gap)))
+        if gap == self._lead:
+            return
+        self._lead = gap
+        self.layout().setContentsMargins(gap, self.GAP, self.GAP, self.GAP)
+        self.update()
+
+    def leading_gap(self) -> int:
+        return self._lead
+
     def _sheet_rect(self) -> QRectF:
-        return QRectF(0, self.GAP, self.width() - self.GAP, self.height() - 2 * self.GAP)
+        return QRectF(self._lead, self.GAP, self.width() - self.GAP - self._lead,
+                      self.height() - 2 * self.GAP)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         super().resizeEvent(event)
@@ -924,6 +941,151 @@ class Sheet(QWidget):
             painter.drawRoundedRect(rect.adjusted(-grow / 2, -grow / 4 + offset, grow / 2, grow / 2 + offset),
                                     self.RADIUS + grow / 3, self.RADIUS + grow / 3)
         painter.end()
+
+
+class WindowDragArea(QObject):
+    """把一块空白区域变成"标题栏"：按住拖动整个窗口，双击缩放（macOS 的习惯）。
+
+    窗口内容伸进了透明标题栏（见 ``MainWindow._extend_shell_under_title_bar``），系统
+    标题栏的拖动区域被内容挡住了，所以由这里接管。只处理落在该控件本身（或子控件没有
+    接收、冒泡上来）的按下；按钮、输入框等自己接收了的点击不受影响。``top_band``
+    给出时，只有这条高度以内算拖动区域（外壳的其余部分是侧栏背景）。
+    """
+
+    def __init__(self, widget: QWidget, *, top_band=None) -> None:
+        super().__init__(widget)
+        self._widget = widget
+        self._top_band = top_band
+        widget.installEventFilter(self)
+
+    def _inside(self, event) -> bool:
+        if self._top_band is None:
+            return True
+        return event.position().y() < self._top_band()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        # 拆除过程中仍可能收到事件，那时 Python 这一半的属性可能已经不在了。
+        if watched is not getattr(self, "_widget", None):
+            return False
+        kind = event.type()
+        if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton \
+                and self._inside(event):
+            handle = self._widget.window().windowHandle()
+            if handle is not None and handle.startSystemMove():
+                return True
+        elif kind == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton \
+                and self._inside(event):
+            window = self._widget.window()
+            window.showNormal() if window.isMaximized() else window.showMaximized()
+            return True
+        return False
+
+
+def _expands(item) -> bool:
+    widget = item.widget()
+    if widget is None:
+        return False
+    return widget.sizePolicy().horizontalPolicy() in (
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Ignored)
+
+
+class FlowRow(QLayout):
+    """一行按钮：放得下就排成一行、铺满宽度；放不下就按顺序折到下一行，每行同样铺满。
+
+    操作台（段落检查器）的按钮行用它：长语言（俄语）或窄栏里不再把按钮挤出可见区域，
+    最小宽度只是最宽的那一个按钮。多出来的宽度分给横向可扩展的控件，都不可扩展时平分。
+    """
+
+    def __init__(self, parent: QWidget | None = None, spacing: int | None = None) -> None:
+        super().__init__(parent)
+        self._items = []
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(theme_module.SPACE["xs"] if spacing is None else spacing)
+
+    # QLayout plumbing
+    def addItem(self, item) -> None:  # noqa: N802 - Qt naming
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):  # noqa: N802 - Qt naming
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):  # noqa: N802 - Qt naming
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):  # noqa: N802 - Qt naming
+        return Qt.Orientation.Horizontal
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt naming
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt naming
+        return self._arrange(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect) -> None:  # noqa: N802 - Qt naming
+        super().setGeometry(rect)
+        self._arrange(rect, apply=True)
+
+    def _visible(self) -> list:
+        return [item for item in self._items if not item.isEmpty()]
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
+        items = self._visible()
+        width = sum(item.sizeHint().width() for item in items) + self.spacing() * max(0, len(items) - 1)
+        height = max((item.sizeHint().height() for item in items), default=0)
+        margins = self.contentsMargins()
+        return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
+
+    def minimumSize(self) -> QSize:  # noqa: N802 - Qt naming
+        items = self._visible()
+        width = max((max(item.minimumSize().width(), item.sizeHint().width()) for item in items),
+                    default=0)
+        height = max((item.sizeHint().height() for item in items), default=0)
+        margins = self.contentsMargins()
+        return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
+
+    def _arrange(self, rect, *, apply: bool) -> int:
+        margins = self.contentsMargins()
+        inner = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        space = self.spacing()
+        rows: list[list] = []
+        row: list = []
+        used = 0
+        for item in self._visible():
+            width = item.sizeHint().width()
+            if row and used + space + width > inner.width():
+                rows.append(row)
+                row, used = [], 0
+            used += (space if row else 0) + width
+            row.append(item)
+        if row:
+            rows.append(row)
+        y = inner.y()
+        rtl = self.parentWidget() is not None and \
+            self.parentWidget().layoutDirection() == Qt.LayoutDirection.RightToLeft
+        for items in rows:
+            height = max(item.sizeHint().height() for item in items)
+            if apply:
+                widths = [item.sizeHint().width() for item in items]
+                extra = max(0, inner.width() - sum(widths) - space * (len(items) - 1))
+                grows = [_expands(item) for item in items]
+                if not any(grows):
+                    grows = [True] * len(items)
+                share, remainder = divmod(extra, grows.count(True))
+                x = inner.x()
+                for index, item in enumerate(items):
+                    width = widths[index]
+                    if grows[index]:
+                        width += share + (1 if remainder > 0 else 0)
+                        remainder = max(0, remainder - 1)
+                    width = min(width, inner.width())
+                    left = inner.right() - (x - inner.x()) - width + 1 if rtl else x
+                    item.setGeometry(QRect(left, y, width, height))
+                    x += width + space
+            y += height + space
+        return max(0, y - space - inner.y()) + margins.top() + margins.bottom()
 
 
 class ShellCanvas(QWidget):
@@ -1597,8 +1759,9 @@ class StatusLabel(QWidget):
     def set_status(self, text: str, tone: str = "idle", detail: str = "") -> None:
         tone = tone if tone in theme_module.STATUS_TONES else "idle"
         self._tone = tone
-        self.dot._token = theme_module.STATUS_TONES[tone]
-        self.dot.update()
+        if self.dot._token != theme_module.STATUS_TONES[tone]:
+            self.dot._token = theme_module.STATUS_TONES[tone]
+            self.dot.update()
         self.label.setText(text)
         self.label.setProperty("tone", tone)
         repolish(self.label)
@@ -1770,7 +1933,7 @@ class ProgressTrack(QWidget):
             self._motion.stop("value")
             self._display_value = float(self._value)
             self._snap_next = True
-        self.update()
+            self.update()
 
     def setValue(self, value: int) -> None:  # noqa: N802 - Qt naming
         previous = self._value
@@ -1868,6 +2031,54 @@ class ProgressTrack(QWidget):
 # Popover
 # --------------------------------------------------------------------------
 
+def tab_path(rect: QRectF, radius: float) -> QPainterPath:
+    """「凸」字上半截的外形：上面两个圆角，底边是直的（下面接浮层）。"""
+    path = QPainterPath()
+    path.moveTo(rect.left(), rect.bottom())
+    path.lineTo(rect.left(), rect.top() + radius)
+    path.arcTo(QRectF(rect.left(), rect.top(), 2 * radius, 2 * radius), 180, -90)
+    path.lineTo(rect.right() - radius, rect.top())
+    path.arcTo(QRectF(rect.right() - 2 * radius, rect.top(), 2 * radius, 2 * radius), 90, -90)
+    path.lineTo(rect.right(), rect.bottom())
+    path.closeSubpath()
+    return path
+
+
+def tab_outline(rect: QRectF, radius: float) -> QPainterPath:
+    """同一外形的发丝线：左、上、右三面，底边敞开。"""
+    rect = rect.adjusted(0.5, 0.5, -0.5, 0)
+    path = QPainterPath()
+    path.moveTo(rect.left(), rect.bottom() + 1)
+    path.lineTo(rect.left(), rect.top() + radius)
+    path.arcTo(QRectF(rect.left(), rect.top(), 2 * radius, 2 * radius), 180, -90)
+    path.lineTo(rect.right() - radius, rect.top())
+    path.arcTo(QRectF(rect.right() - 2 * radius, rect.top(), 2 * radius, 2 * radius), 90, -90)
+    path.lineTo(rect.right(), rect.bottom() + 1)
+    return path
+
+
+#: 「凸」字周围的柔和投影：向上、向左右散开的几层（外扩，不透明度）。
+TAB_SHADOW = ((1.0, 0.09), (2.0, 0.05), (3.0, 0.025))
+
+
+def paint_tab_shadow(painter: QPainter, rect: QRectF, radius: float) -> None:
+    ink = style_module.shadow_ink()
+    gain = theme_module.ELEVATION_NIGHT_GAIN if style_module.night_mode() else 1.0
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    for spread, alpha in TAB_SHADOW:
+        colour = QColor(ink)
+        colour.setAlphaF(min(1.0, alpha * gain))
+        painter.setBrush(colour)
+        painter.drawPath(tab_path(rect.adjusted(-spread, -spread, spread, 0), radius + spread))
+    painter.restore()
+
+
+def outline_colour() -> QColor:
+    """浮层与「凸」字共用的发丝线颜色。"""
+    return theme_module.qcolor(_tokens()["border-subtle"])
+
+
 class Popover(QFrame):
     """A light popover anchored under a control (run log, task details, …).
 
@@ -1880,7 +2091,10 @@ class Popover(QFrame):
 
     def __init__(self, title: str, content: QWidget, parent: QWidget | None = None, *,
                  size: QSize = QSize(440, 380), header: bool = True) -> None:
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        # 不要系统窗口阴影：投影是自己画的。macOS 的阴影按第一帧（展开动画里那一小条）
+        # 算出来再跟着窗口拉伸，刚展开时卡片外面会套一圈灰框（试用反馈的照片）。
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint)
         self.setObjectName("popover")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(size)
@@ -1967,7 +2181,14 @@ class Popover(QFrame):
             path, panel = self._tether_path()
             painter.setPen(Qt.PenStyle.NoPen)
             style_module.paint_elevation(painter, panel, theme_module.RADIUS["md"], "floating")
+            # 颈部两侧接着「凸」字上半截的投影往下走（上沿在窗口外，被裁掉）。
+            left, right = self._neck
+            paint_tab_shadow(painter, QRectF(left, -40, right - left, 40 + self.TETHER_NECK),
+                             theme_module.RADIUS["md"])
             painter.setBrush(theme_module.qcolor(_tokens()["bg-surface-raised"]))
+            painter.drawPath(path)
+            painter.setPen(QPen(outline_colour(), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
             painter.end()
             return
@@ -1978,6 +2199,17 @@ class Popover(QFrame):
         painter.setBrush(theme_module.qcolor(_tokens()["bg-surface-raised"]))
         painter.drawRoundedRect(rect, radius, radius)
         painter.end()
+
+    def set_popup_size(self, size: QSize) -> None:
+        """下次打开时的大小（例如按内容决定高度）。"""
+        self._popup_size = QSize(size)
+
+    def body_margin(self, tether: bool) -> QSize:
+        """浮层外框比内容多出来的宽、高（投影留白 + 内边距；系着锚点时还有颈部）。"""
+        if tether:
+            pad = theme_module.SPACE["md"]
+            return QSize(2 * (9 + pad), self.TETHER_NECK + pad + 11 + pad)
+        return QSize(20, 20)
 
     def set_subtitle(self, text: str) -> None:
         self.subtitle_label.setText(text)
@@ -2015,7 +2247,9 @@ class Popover(QFrame):
         target = QRect(x, y, self._popup_size.width(), self._popup_size.height())
         self._set_tether(anchor if tether else None)
         if tether:
-            self._neck = (float(origin.x() - x), float(origin.x() - x + anchor.width()))
+            # 颈部与锚点画出来的「凸」字上半截同宽（锚点四边内缩 TAB_INSET 留给投影）。
+            inset = float(getattr(anchor, "TAB_INSET", 0))
+            self._neck = (origin.x() - x + inset, origin.x() - x + anchor.width() - inset)
             self._anchor_rect = QRect(x, y, target.width(), self.TETHER_NECK + 1)
         else:
             self._anchor_rect = QRect(origin, anchor.size())

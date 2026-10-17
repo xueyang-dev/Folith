@@ -26,7 +26,6 @@ from . import i18n
 from . import icons
 from . import style as style_module
 from . import theme as theme_module
-from .style import Card
 
 #: 语义色调 -> (图标名, token 名)
 TONES: dict[str, tuple[str, str]] = {
@@ -43,16 +42,17 @@ class _BaseDialog(QDialog):
     def __init__(self, parent: QWidget | None, title: str, *,
                  tone: str = "info", width: int = 460) -> None:
         super().__init__(parent)
+        self.setObjectName("promptDialog")
         self.setWindowTitle(title)
         self.setMinimumWidth(width)
         self.setModal(True)
 
-        self._card = Card()
+        # 内容直接落在窗口面上：窗口自己就是那张纸，里面不再套一张带边框和投影的卡片。
+        self._card = QWidget()
+        self._card.setObjectName("transparent")
         card_layout = QVBoxLayout(self._card)
-        card_layout.setContentsMargins(theme_module.SPACE["lg"],
-                                       theme_module.SPACE["md"],
-                                       theme_module.SPACE["lg"],
-                                       theme_module.SPACE["md"])
+        card_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                       theme_module.SPACE["xl"], theme_module.SPACE["lg"])
         card_layout.setSpacing(theme_module.SPACE["sm"])
 
         self._icon = icons.IconLabel(TONES.get(tone, TONES["info"])[0], 20, TONES.get(tone, TONES["info"])[1])
@@ -95,8 +95,7 @@ class _BaseDialog(QDialog):
         self._card_layout = card_layout
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["lg"],
-                                 theme_module.SPACE["lg"], theme_module.SPACE["lg"])
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._card)
 
     # -- 内容 -------------------------------------------------------------
@@ -229,11 +228,13 @@ class BusyDialog(QDialog):
         self.setMinimumWidth(360)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setModal(True)
+        self.setObjectName("promptDialog")
 
-        card = Card()
+        card = QWidget()
+        card.setObjectName("transparent")
         column = QVBoxLayout(card)
-        column.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"],
-                                  theme_module.SPACE["lg"], theme_module.SPACE["md"])
+        column.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
         column.setSpacing(theme_module.SPACE["sm"])
         row = QHBoxLayout()
         row.setSpacing(theme_module.SPACE["sm"])
@@ -254,8 +255,7 @@ class BusyDialog(QDialog):
         column.addLayout(run_button_row)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["lg"],
-                                 theme_module.SPACE["lg"], theme_module.SPACE["lg"])
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(card)
         # 点「在后台运行」= 隐藏这个框，任务继续跑（不是取消）。
         self.run_button.clicked.connect(self.hide)

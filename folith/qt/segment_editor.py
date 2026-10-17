@@ -20,9 +20,20 @@ from PySide6.QtWidgets import (
     QTableWidget, QVBoxLayout, QWidget,
 )
 
+from functools import lru_cache
+
 from . import i18n
 from . import style as style_module
 from . import theme as theme_module
+
+
+@lru_cache(maxsize=4096)
+def cell_direction(text: str) -> Qt.LayoutDirection:
+    """一格文字的书写方向：按强方向字符的多少判断（阿拉伯语、希伯来语……从右往左）。"""
+    from folith.textual import text_direction
+
+    return (Qt.LayoutDirection.RightToLeft if text_direction(text, None) == "rtl"
+            else Qt.LayoutDirection.LeftToRight)
 
 #: 普通行的高度（与表格默认行高一致）。
 ROW_HEIGHT = 26
@@ -32,6 +43,23 @@ FOOTER_HEIGHT = 32
 MIN_EDITOR_LINES = 2
 #: 单元格内边距。
 CELL_PAD = 6
+
+
+def set_text_direction(edit, direction: Qt.LayoutDirection) -> None:
+    """编辑框按书写方向排：只改 layoutDirection 不够——文档的段落方向和对齐不跟着变，
+    阿拉伯语译文仍是左对齐（试用反馈图 5）。"""
+    if edit.layoutDirection() != direction:
+        edit.setLayoutDirection(direction)
+    document = edit.document()
+    option = document.defaultTextOption()
+    rtl = direction == Qt.LayoutDirection.RightToLeft
+    alignment = Qt.AlignmentFlag.AlignAbsolute | (
+        Qt.AlignmentFlag.AlignRight if rtl else Qt.AlignmentFlag.AlignLeft)
+    if option.textDirection() == direction and option.alignment() == alignment:
+        return
+    option.setTextDirection(direction)
+    option.setAlignment(alignment)
+    document.setDefaultTextOption(option)
 
 
 class _TargetEdit(QPlainTextEdit):
@@ -173,6 +201,9 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
             return
         # 每一行都整段换行、顶部对齐（行高按较长的一方自适应，见 WorkbenchView）。
         option.features |= QStyleOptionViewItem.ViewItemFeature.WrapText
+        # 译成阿拉伯语等从右往左的语言：这一格按 RTL 排（右对齐、标点与括号随之镜像），
+        # 不是左对齐的 LTR 段落（试用反馈图 5）。AlignLeft 在 RTL 方向下会被翻成右对齐。
+        option.direction = cell_direction(str(option.text or ""))
         option.displayAlignment = (Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         option.textElideMode = Qt.TextElideMode.ElideNone
         share = self.saved.get(index.data(Qt.ItemDataRole.UserRole), 0.0)
@@ -209,6 +240,6 @@ def install_repositioning(table: QTableWidget, callback) -> None:
 
 
 __all__ = [
-    "FOOTER_HEIGHT", "InlineSegmentEditor", "ROW_HEIGHT", "WorkbenchRowDelegate",
+    "FOOTER_HEIGHT", "cell_direction", "set_text_direction", "InlineSegmentEditor", "ROW_HEIGHT", "WorkbenchRowDelegate",
     "install_repositioning", "source_height",
 ]

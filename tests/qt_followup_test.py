@@ -212,15 +212,26 @@ def test_check_icon_counts_the_open_items_and_opens_the_drawer(qapp, job):
     assert bench.check_button.tone() == "warning"
     assert "(" not in bench.stage_bar.more_button.text()
     assert "followup" not in bench.stage_bar.more_page_ids()
-    # 点图标：右侧面板打开、段落检查器让位；再点一次收起。
+    # 点图标：从图标下面展开「凸」字下拉卡片，段落检查器不让位；再点一次收起。
+    bench.resize(1400, 800)
+    bench.show()
+    qapp.processEvents()
+    sizes = bench.translation_split.sizes()
     bench.check_button.click()
     assert bench.followup_drawer_open()
-    assert not bench.inspector_scroll.isVisibleTo(bench)
-    bench.show_page("followup")  # old jump target still lands on the drawer
-    assert bench.followup_drawer_open()
-    bench.check_button.click()
-    assert not bench.followup_drawer_open()
+    assert bench.followup_popover.isVisible()
+    assert bench.followup_popover.isAncestorOf(bench.followup_panel)
+    assert bench.check_tab.property("tethered") is True
     assert bench.inspector_scroll.isVisibleTo(bench)
+    assert bench.translation_split.sizes() == sizes, "the columns do not move"
+    bench.show_page("followup")  # old jump target still lands on the card
+    assert bench.followup_drawer_open()
+    bench.check_button.click()
+    qapp.processEvents()
+    assert not bench.followup_drawer_open()
+    assert not bench.followup_popover.isVisible()
+    assert not bench.check_button.isChecked()
+    bench.close()
 
 
 # --------------------------------------------------------- 重新扫描 PDF -------

@@ -275,12 +275,22 @@ class TermList(QWidget):
         self._layout.setSpacing(3)
         self.buttons: list[TermChip] = []
         self.terms: list[dict] = []
+        self._key = None
 
     def set_terms(self, terms: list[dict], counts: dict | None = None) -> None:
+        terms = [dict(term) for term in terms or []]
+        counts = counts or {}
+        # 每秒的轮询都会用同样的术语再调一次：内容没变就什么都不做。以前每次都拆掉重建
+        # 所有术语条，整个检查器重新排版、整窗重绘——后台的 Folith 在台前调度和菜单栏里
+        # 一直闪（2026-10-16 试用反馈）。
+        key = repr((terms, sorted((str(k), repr(v)) for k, v in counts.items()
+                                  if any(str(t.get("source") or "") == str(k) for t in terms))))
+        if key == self._key:
+            return
+        self._key = key
         _clear(self._layout)
         self.buttons = []
-        self.terms = [dict(term) for term in terms or []]
-        counts = counts or {}
+        self.terms = terms
         if not self.terms:
             self._layout.addWidget(_wrapped(i18n.tr('本段没有命中术语。'), "hint"))
             return
@@ -347,8 +357,16 @@ class ContextView(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(theme_module.SPACE["xs"])
         self.rows: dict[str, _ContextRow] = {}
+        self._key = None
 
     def set_context(self, context: dict) -> None:
+        # 轮询每秒都会用同样的前后文再调一次：没变就不重建（重建会让检查器重排、整窗重绘）。
+        key = repr({k: (v.get("index"), v.get("source"), v.get("target"))
+                    for k, v in (context or {}).items()
+                    if k in ("previous", "next") and isinstance(v, dict)})
+        if key == self._key:
+            return
+        self._key = key
         _clear(self._layout)
         self.rows = {}
         for key, label in (("previous", i18n.tr('上一段')), ("next", i18n.tr('下一段'))):

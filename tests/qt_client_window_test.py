@@ -2317,8 +2317,10 @@ def test_window_asks_before_overwriting_saved_delivery_files(client, monkeypatch
 
     dest = tmp / "保存 目标"
     dest.mkdir()
-    names = [name for name, _path in adapter.snapshot_asset_paths(job_id, version)]
-    victim = dest / names[0]
+    source_name = adapter.load_state(job_id).get("filename")
+    names = [adapter.delivery_file_name(source_name, name)
+             for name, _path in adapter.snapshot_asset_paths(job_id, version)]
+    victim = dest / names[0]  # 写到用户文件夹里的名字：<原文件名>_<产物>
     victim.write_text("用户自己的文件", encoding="utf-8")
 
     # 目标目录固定为这个（跳过系统面板）。

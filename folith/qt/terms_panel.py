@@ -14,10 +14,11 @@ import re
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QFormLayout, QHeaderView, QLabel,
+    QLineEdit, QPushButton, QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from . import components
 from . import i18n
 from . import icons
 from . import style as style_module
@@ -101,14 +102,19 @@ class TermsPanel(QWidget):
         self.filter_box.currentIndexChanged.connect(self._fill_table)
         self.conflict_box = style_module.CheckBox(i18n.tr('只看冲突项'))
         self.conflict_box.toggled.connect(self._fill_table)
+        # 复选框的实际宽度比 sizeHint 宽，按整框排，否则折行算错、末字被裁掉。
+        self.conflict_box.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
         form = QFormLayout()
         form.setHorizontalSpacing(12)
+        # macOS 默认输入框停在建议宽度：窄栏里留一大块空白。
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow(i18n.tr('源术语'), self.source_edit)
         form.addRow(i18n.tr('首选译名'), self.preferred_edit)
         form.addRow(i18n.tr('状态'), self.status_box)
         form.addRow(i18n.tr('领域'), self.domain_edit)
         form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
         form.addRow(i18n.tr('备注'), self.note_edit)
+        self.form_layout = form
 
         self.apply_row_button = button(i18n.tr('应用到所选术语'), "check")
         self.apply_row_button.clicked.connect(self._apply_row)
@@ -137,17 +143,16 @@ class TermsPanel(QWidget):
         self.hint.setWordWrap(True)
         self.hint.setProperty("role", "muted")
 
-        edit_actions = QHBoxLayout()
+        # 按钮行放不下就折行：术语表在翻译页左栏里展开，只有约 400px 宽。
+        edit_actions = components.FlowRow(spacing=6)
         for widget in (self.apply_row_button, self.add_button, self.delete_button,
                        self.lock_selected_button, self.reject_selected_button,
                        self.lock_all_button):
             edit_actions.addWidget(widget)
-        edit_actions.addStretch(1)
-        gate_actions = QHBoxLayout()
+        gate_actions = components.FlowRow(spacing=6)
         for widget in (self.freeze_button, self.save_button, self.bypass_button,
                        self.unfreeze_button):
             gate_actions.addWidget(widget)
-        gate_actions.addStretch(1)
 
         editor_card = Card()
         editor_layout = QVBoxLayout(editor_card)
@@ -165,9 +170,10 @@ class TermsPanel(QWidget):
         self.empty_state.actionTriggered.connect(self._start_adding)
         self.editor_card = editor_card
         self.filter_bar = QWidget()
-        filters = QHBoxLayout(self.filter_bar)
-        filters.setContentsMargins(0, 0, 0, 0)
-        filters.addWidget(self.search_edit, 1)
+        filters = components.FlowRow(self.filter_bar, spacing=6)
+        self.search_edit.setMinimumWidth(160)
+        self.search_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        filters.addWidget(self.search_edit)
         filters.addWidget(self.filter_box)
         filters.addWidget(self.conflict_box)
 
@@ -184,6 +190,19 @@ class TermsPanel(QWidget):
         layout.addWidget(self.hint)
         layout.addStretch(0)
         self._sync()
+
+    #: 窄栏里收起的列：次数、备注（备注在下面的表单里照样能看能改）。
+    COMPACT_HIDDEN = (3, 4)
+
+    def set_compact(self, compact: bool) -> None:
+        """放进翻译页左栏时：表格只留源术语、译名、状态三列。"""
+        for column in self.COMPACT_HIDDEN:
+            self.table.setColumnHidden(column, compact)
+        self.form_layout.setRowWrapPolicy(
+            QFormLayout.RowWrapPolicy.WrapLongRows if compact
+            else QFormLayout.RowWrapPolicy.DontWrapRows)
+        # 窄栏里表格至少露出几行，不被下面的表单挤成一条缝（整栏上下滚动）。
+        self.table.setMinimumHeight(200 if compact else 0)
 
     def _start_adding(self) -> None:
         self._adding = True

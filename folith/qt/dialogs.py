@@ -145,6 +145,9 @@ class EngineDialog(QDialog):
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowFlag(Qt.WindowType.Window, True)
+        # 设置窗口始终在主窗口前面：点了主窗口它也不会被压到后面、找不回来。
+        # 应用切到后台时它跟着藏起来（macwindow.hide_when_app_inactive），不会盖住别的应用。
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setModal(False)
         self.setWindowTitle(i18n.tr('设置'))
         self.setMinimumWidth(640)
@@ -232,6 +235,12 @@ class EngineDialog(QDialog):
         self.show_page("general")
 
     # -- 页签 ---------------------------------------------------------------
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        from . import macwindow
+
+        macwindow.hide_when_app_inactive(self)
+
     def show_page(self, key: str) -> None:
         if key not in self.pages:
             key = "general"

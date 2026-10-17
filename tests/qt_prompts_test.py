@@ -173,7 +173,7 @@ def test_busy_dialog_is_modal_with_one_way_out(app, window):
 
 
 def test_every_prompt_paints_with_theme_tokens(app, window):
-    """四个对话框都必须落在一张 Card 上（面/发丝线由 QSS 提供，不写死颜色）。"""
+    """对话框内容直接落在窗口面上（主题的最亮表面，由 QSS 提供），不再套一张带边框的卡片。"""
     dialogs = [
         prompts.ConfirmDialog(window, "标题", "正文"),
         prompts.NoticeDialog(window, "标题", "正文"),
@@ -182,8 +182,8 @@ def test_every_prompt_paints_with_theme_tokens(app, window):
     ]
     try:
         for dialog in dialogs:
-            cards = dialog.findChildren(style.Card)
-            assert cards, type(dialog).__name__
+            assert dialog.objectName() == "promptDialog", type(dialog).__name__
+            assert not dialog.findChildren(style.Card), type(dialog).__name__
     finally:
         for dialog in dialogs:
             dialog.close()

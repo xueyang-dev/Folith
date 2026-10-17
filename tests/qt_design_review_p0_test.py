@@ -108,13 +108,14 @@ def translated(tmp_path, monkeypatch, qt_app):
 
 
 def test_a_finished_run_leaves_the_header(translated):
-    """P0：不能有停在 0 的进度条；P2：跑完了整组运行状态让出头部，运行记录在「更多」里。"""
+    """P0：不能有停在 0 的进度条。跑完了只留「已完成」一行——它是运行记录的入口
+    （「更多」菜单撤掉了，2026-10-17 试用反馈）。"""
     status = translated.run_status
     assert "已完成" in status.line.text()
     assert status.track.isHidden(), "“已完成”旁边不该是一根停在 0 的进度条"
-    assert status.isHidden()
-    labels = [a.text() for a in translated.stage_bar.more_menu.actions()]
-    assert "运行记录" in labels and "任务详情" in labels and "术语" in labels
+    assert not status.isHidden()
+    assert translated.stage_bar.more_menu.actions() == []
+    assert not translated.details_button.isHidden() and not translated.terms_button.isHidden()
 
 
 def test_review_that_is_off_is_not_ticked_as_done(translated):
@@ -141,13 +142,11 @@ def test_delivery_page_has_one_primary_action(translated):
 
 def test_header_keeps_identity_stage_and_one_action(translated):
     assert not hasattr(translated, "chip_state"), "任务状态由步骤条说，头部不再有芯片"
-    assert translated.details_button.isHidden(), "任务详情在「更多」里"
+    assert not translated.details_button.isHidden(), "任务详情是顶栏的 ⓘ"
     assert translated._followup_count == 0
-    assert translated.check_button.isHidden(), "没有待处理项时不挂提醒图标"
-    translated._followup_count = 2
-    translated._sync_check_button()
-    assert not translated.check_button.isHidden()
-    translated._followup_count = 0
+    # 「检查与修复」图标在任务开始后常驻（它是唯一入口）；有待处理项时变色带数字。
+    assert not translated.check_tab.isHidden()
+    assert translated.check_button.badge.isHidden()
     translated._sync_check_button()
 
 

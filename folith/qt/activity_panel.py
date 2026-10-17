@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import components
 from . import i18n
 from . import icons
 from . import style as style_module
@@ -55,7 +54,7 @@ class ActivityPanel(QWidget):
         self.list.verticalScrollBar().sliderPressed.connect(self._user_input)
         self.list.viewport().installEventFilter(self)
         self.list.installEventFilter(self)
-        self.fade = components.scroll_fade(self.list)
+        # 不加滚动渐隐：浮层是从进度条长出来的，顶边是实的（2026-10-16 试用反馈）。
         # 浮在列表上（父对象是列表而不是 viewport：viewport 的子控件会跟着内容滚走）。
         self.jump_button = QPushButton(i18n.tr('回到最新'), self.list)
         self.jump_button.setObjectName("jumpLatest")

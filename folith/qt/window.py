@@ -174,10 +174,14 @@ class MainWindow(QMainWindow):
         shell_layout.setSpacing(0)
         shell_layout.addWidget(self.sidebar_clip)
         self.stack_clip = components.TrailingClip(self.stack)
-        shell_layout.addWidget(components.Sheet(self.stack_clip), 1)
+        self.sheet = components.Sheet(self.stack_clip)
+        shell_layout.addWidget(self.sheet, 1)
         self.setCentralWidget(shell)
         self._shell_layout = shell_layout
         self._extend_shell_under_title_bar()
+        # 顶部那条外壳（标题栏 + 页面上方的间隙）任意位置都能拖动窗口。
+        self._shell_drag = components.WindowDragArea(
+            shell, top_band=lambda: shell_layout.contentsMargins().top() + components.Sheet.GAP)
         self.stack.currentChanged.connect(self._sync_sidebar)
 
         from .notifications import Toast
@@ -1070,9 +1074,9 @@ class MainWindow(QMainWindow):
                            on_error=failed, label="import")
 
     def open_job_checks(self, job_id: str) -> None:
+        """从「需要处理」进入任务：只打开任务，检查与修复不自己弹出来（会挡住操作键），
+        顶栏的盾牌图标带着待处理数，点它展开。"""
         self.open_job(job_id)
-        if self._current_job_id == job_id:
-            self.workbench.set_followup_drawer_open(True)
 
     # ---- 文档飞入 / 飞回（任务库卡片 ↔ 工作台） -------------------------------
     def _card_document(self, job_id: str):
@@ -1370,20 +1374,25 @@ class MainWindow(QMainWindow):
             start = self.sidebar_clip.width() if self.sidebar_clip.isVisibleTo(self) else 0
             # The page is laid out once, at its final width, and slides out from
             # under the sidebar; only the sidebar's clip width changes per frame.
-            shell = self.stack_clip.width() + start
+            shell = self.stack_clip.width() + start + self.sheet.leading_gap()
+            final_lead = 0 if visible else components.Sheet.GAP
             if not initial and self.isVisible() and shell > 0:
-                self.stack_clip.freeze(max(1, shell - target))
+                self.stack_clip.freeze(max(1, shell - target - final_lead))
+
+            def frame(value: float) -> None:
+                self.sidebar_clip.setFixedWidth(round(value))
+                # 侧栏收起时页面左边留出与右边一样的间隙，随侧栏宽度渐变过去。
+                share = 1.0 - max(0.0, min(1.0, value / HomeView.SIDEBAR_WIDTH))
+                self.sheet.set_leading_gap(round(components.Sheet.GAP * share))
 
             def settled() -> None:
                 self._sidebar_settle = None
-                self.sidebar_clip.setFixedWidth(target)
+                frame(target)
                 self.sidebar_clip.setVisible(visible)
                 self.stack_clip.freeze(None)
 
             self._sidebar_settle = settled
-            self._motion.animate("sidebar", start, target,
-                                 lambda value: self.sidebar_clip.setFixedWidth(round(value)),
-                                 kind="view", finished=settled)
+            self._motion.animate("sidebar", start, target, frame, kind="view", finished=settled)
         self.home.set_current_nav(
             "projects" if current is self.projects else
             "library" if current is self.library else "tasks")
@@ -1724,6 +1733,11 @@ class MainWindow(QMainWindow):
             # The click is still answered instead of silently ignored.
             self._notice(i18n.tr('任务正在启动，请稍候。') if job_id in self._starting_jobs
                          else i18n.tr('另一个任务正在启动，请等它启动后再开始这个任务。'))
+            return
+        if adapter.job_is_alive(job_id):
+            # 暂停的任务 worker 还活着、握着任务锁：「继续翻译」是让它接着跑，
+            # 不是再启动一次——启动要先写任务状态，会被锁拒绝（试用反馈：暂停后无法继续）。
+            self.continue_job()
             return
         config, defaults = self.config, dict(self.stored_task_defaults)
         state = self.workbench._state if self.workbench.job_id == job_id else {}

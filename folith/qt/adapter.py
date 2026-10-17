@@ -3223,6 +3223,28 @@ def delivery_snapshots(job_id: str) -> list[dict]:
     return core.list_delivery_snapshots(job_id)
 
 
+_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def delivery_file_name(source_name: str, asset_name: str) -> str:
+    """写到用户文件夹里的文件名：``<原文件名>_<产物>.<扩展名>``。
+
+    快照里的产物叫 ``bilingual.docx``、``translation.docx``、``terms.xlsx``……每个任务
+    都一样；直接用它们，几个任务存进同一个文件夹就全是同名文件。原文件名去掉扩展名
+    和文件系统不接受的字符；没有原文件名时退回产物名本身。
+    """
+    asset = Path(str(asset_name or "")).name
+    stem = _UNSAFE_NAME.sub("_", Path(str(source_name or "")).stem).strip(" ._")
+    if not stem or not asset:
+        return asset
+    return f"{stem}_{asset}"
+
+
+def _source_name(job_id: str, state: dict | None = None) -> str:
+    state = state if state is not None else load_state(job_id)
+    return str((state or {}).get("filename") or "")
+
+
 def snapshot_asset_paths(job_id: str, version: int) -> list[tuple[str, Path]]:
     manifest = next((item for item in core.list_delivery_snapshots(job_id)
                      if item.get("snapshot_version") == int(version)), None)
@@ -3242,15 +3264,16 @@ def delivery_save_plan(job_id: str, version: int,
     * 目标目录已有同名文件时**不能悄悄覆盖**（那可能是别的文件）。
     """
     dest_dir = Path(destination).expanduser()
+    source_name = _source_name(job_id)
     missing: list[str] = []
     conflicts: list[str] = []
     planned: list[tuple[str, Path, Path]] = []
     for name, source in snapshot_asset_paths(job_id, version):
         if not name:
             continue
-        target = dest_dir / Path(name).name
+        target = dest_dir / delivery_file_name(source_name, name)
         if not Path(source).is_file():
-            missing.append(Path(name).name)
+            missing.append(target.name)
             continue
         planned.append((name, Path(source), target))
         if target.exists():
@@ -3299,9 +3322,11 @@ def export_plan(job_id: str, destination: str | os.PathLike[str],
         provider=config.provider if config else "",
         model=config.model if config else "")
     dest_dir = Path(destination).expanduser()
-    missing = sorted(Path(name).name for name, data in bundle.items()
+    source_name = _source_name(job_id, state)
+    missing = sorted(delivery_file_name(source_name, name) for name, data in bundle.items()
                      if data is None)
-    names = [Path(name).name for name, data in bundle.items() if data is not None]
+    names = [delivery_file_name(source_name, name) for name, data in bundle.items()
+             if data is not None]
     conflicts = sorted(name for name in names if (dest_dir / name).exists())
     return {"destination": dest_dir, "missing": missing,
             "conflicts": conflicts, "names": names}
@@ -3328,8 +3353,10 @@ def export_current_assets(job_id: str, destination: str | os.PathLike[str],
         provider=config.provider if config else "",
         model=config.model if config else "")
     dest_dir = Path(destination).expanduser()
-    missing = [Path(name).name for name, data in bundle.items() if data is None]
-    planned = [(Path(name).name, data) for name, data in bundle.items()
+    source_name = _source_name(job_id, state)
+    missing = [delivery_file_name(source_name, name) for name, data in bundle.items()
+               if data is None]
+    planned = [(delivery_file_name(source_name, name), data) for name, data in bundle.items()
                if data is not None]
     if missing:
         # 与"保存冻结交付"同一条规则：不悄悄少写一个，让用户以为导出完整。

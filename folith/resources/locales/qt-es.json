@@ -1752,5 +1752,7 @@
   "段落证据 JSONL": "Evidencia por segmento JSONL",
   "{v0} 个任务#one": "{v0} tarea",
   "{v0} 个已交付#one": "{v0} entregada",
-  "{v0} 个需要处理#one": "{v0} requiere atención"
+  "{v0} 个需要处理#one": "{v0} requiere atención",
+  "在左侧展开本任务的术语表": "Abrir el glosario de esta tarea a la izquierda",
+  "收起术语": "Cerrar glosario"
 }

@@ -22,12 +22,20 @@ LOGO_BY_THEME = {
 }
 LOGO_FALLBACKS = ("folith/resources/brand/folith-lockup-transparent.png",
                   "folith/resources/brand/folith-logo-stacked.png")
-#: 只有图形、不含文字的标记。侧栏/页头里和文字 lockup 并排使用——
-#: 直接把整幅字标（自带品牌名）和文字放一起会出现"Folith 出现两次"的重复感。
-MARK_BY_THEME = dict.fromkeys(("light", "dark", "paper", "green"),
-                             "folith/resources/brand/folith-mark-hires.png")
-MARK_FALLBACKS = ("folith/resources/brand/foliothread-favicon.png",
-                  "folith/resources/brand/foliothread-logo.png")
+#: 只有图形、不含文字的标记（侧栏 / 页头里和文字并排）。每个主题色一份向量图：
+#: 蓝色就是 ``folith-mark-hires.png`` 的向量原稿（docs/logo-exploration/folith-mark-final.svg，
+#: 两者逐像素一致）；翠绿 / 石板只换后页与前页两条渐变的色标，形状与字形完全相同。
+#: 按设备像素比直接从 SVG 渲染，换主题色也不会糊、不会缩小（旧做法是把 28px 位图逐像素改色）。
+#: （``folith-mark.svg`` 是更早的另一版画法，不能用在这里。）
+MARK_SVG = {
+    "blue": "folith/resources/brand/folith-mark-blue.svg",
+    "green": "folith/resources/brand/folith-mark-green.svg",
+    "slate": "folith/resources/brand/folith-mark-slate.svg",
+}
+#: SVG viewBox 的宽高比（1254 × 1254，与 hires 位图相同）。
+MARK_ASPECT = 1.0
+MARK_FALLBACKS = ("folith/resources/brand/folith-mark-hires.png",
+                  "folith/resources/brand/foliothread-favicon.png")
 
 
 #: 各界面语言的字标：名称 + 一句短副标题。阿、俄音译名字（不带「译页」），英、西写 Folith。
@@ -61,26 +69,35 @@ def app_icon():
     return _icon(APP_ICON)
 
 
-@lru_cache(maxsize=8)
-def mark_pixmap(height: int = 28, theme: str = "light", *, tint: str | None = None):
-    """只有图形的品牌标记（用于和文字 lockup 并排），缺失时退回字标。"""
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QPixmap
+def mark_variant(theme: str = "light", accent: str = "blue") -> str:
+    """主题色 → 标记的配色（旧的「翠绿 / 纸面」主题名也认）。"""
+    if accent == "green" or theme == "green":
+        return "green"
+    if accent == "slate" or theme == "paper":
+        return "slate"
+    return "blue"
 
-    primary = MARK_BY_THEME.get(str(theme or "light").lower(), MARK_BY_THEME["light"])
-    for candidate in (primary, *MARK_FALLBACKS):
-        path = asset_path(candidate)
-        if not path.is_file():
-            continue
-        pixmap = QPixmap(str(path))
-        if pixmap.isNull():
-            continue
-        pixmap = pixmap.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
-        if tint:
-            stops = LOGO_RAMPS.get(theme)
-            return ramp_pixmap(pixmap, stops) if stops else tint_pixmap(pixmap, tint)
-        return pixmap
-    return logo_pixmap(height, theme, tint=tint)
+
+@lru_cache(maxsize=16)
+def mark_pixmap(height: int = 28, variant: str = "blue", dpr: float = 2.0):
+    """只有图形的品牌标记：从这个主题色的 SVG 按 ``dpr`` 渲染成 ``height`` 逻辑像素高。"""
+    from PySide6.QtCore import QSize, Qt
+    from PySide6.QtGui import QIcon, QPixmap
+
+    size = QSize(round(height * MARK_ASPECT), height)
+    path = asset_path(MARK_SVG.get(variant, MARK_SVG["blue"]))
+    if path.is_file():
+        pixmap = QIcon(str(path)).pixmap(size, dpr)
+        if not pixmap.isNull():
+            return pixmap
+    for candidate in MARK_FALLBACKS:
+        fallback = asset_path(candidate)
+        if fallback.is_file():
+            pixmap = QPixmap(str(fallback)).scaledToHeight(
+                round(height * dpr), Qt.TransformationMode.SmoothTransformation)
+            pixmap.setDevicePixelRatio(dpr)
+            return pixmap
+    return QPixmap()
 
 
 #: 资源图里品牌蓝的色相（`#004cfd`）。着色时以它为"原点"：目标色与它同色相，
