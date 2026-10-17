@@ -248,6 +248,9 @@ class BatchAcceptDialog(QDialog):
 class MoveToProjectSheet(QDialog):
     """移到项目（已有项目 / 新建项目）。取代旧的项目选择框。"""
 
+    #: 「移过去之后」预览卡的最大高度；内容超过它才出滚动条。
+    PREVIEW_MAX = 440
+
     def __init__(self, job_ids: list[str], parent: QWidget | None = None, *,
                  project_id: str = "", mode: str = "") -> None:
         super().__init__(parent)
@@ -514,11 +517,15 @@ class MoveToProjectSheet(QDialog):
             self.after_list.addWidget(self._report_card(report, system))
         self.after_list.addStretch(1)
         holder = self.after_scroll.widget()
-        holder.adjustSize()
-        # 任务不多时整块摆开，不出滚动条；很多时最高 360 再滚动。
-        # 内容放得下就整块摆开、不出滚动条；超过 360 才滚动。
-        height = holder.sizeHint().height() + 8
-        self.after_scroll.setFixedHeight(min(height, 360))
+        # 按实际宽度算内容高度（折行的说明文字在窄宽度下更高）；放得下就整块摆开，
+        # 超过上限才滚动。
+        width = max(self.after_scroll.viewport().width(), self.width() - 80, 400)
+        layout = self.after_list
+        height = layout.totalHeightForWidth(width) if layout.hasHeightForWidth() \
+            else holder.sizeHint().height()
+        height = max(height, holder.sizeHint().height()) + 12
+        holder.setMinimumHeight(height)        # 内容不被压扁；放不下才由滚动区滚动
+        self.after_scroll.setFixedHeight(min(height, self.PREVIEW_MAX))
         self.adjustSize()
 
     def _carry_existing_checks_visible(self, visible: bool) -> None:

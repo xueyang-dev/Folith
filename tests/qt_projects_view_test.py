@@ -276,14 +276,45 @@ def test_more_menu_marks_delete_as_danger_and_it_is_activatable(env, app):  # no
     assert fired == [1]
 
 
-def test_move_preview_scrollbar_only_when_content_overflows(env, app):  # noqa: F811
+def _visible_bars(sheet):
+    from PySide6.QtWidgets import QScrollBar
+
+    return [b for b in sheet.findChildren(QScrollBar) if b.isVisible()]
+
+
+def test_move_preview_has_no_scrollbar_anywhere_when_content_fits(env, app):  # noqa: F811
     from folith.qt.project_sheets import MoveToProjectSheet
 
     adapter, ids, _v, _r = _view(env, app)
-    sheet = MoveToProjectSheet(["notes"], project_id=ids["device"])
+    core = env["core"]
+    # 最拥挤的一页：全部冲突表 + 方向不同说明 + 两个任务。
+    for source, target in (("rollback", "回退"), ("feature flag", "功能标志"), ("hotfix", "紧急修复")):
+        core.set_project_term(ids["device"], source, target)
+    sheet = MoveToProjectSheet(["notes", "arabic"], project_id=ids["device"])
     sheet.show()
     app.processEvents()
-    assert not sheet.after_scroll.verticalScrollBar().isVisible()
+    assert _visible_bars(sheet) == []
+    scroll = sheet.after_scroll
+    assert scroll.widget().sizeHint().height() <= scroll.height()
+
+
+def test_move_preview_scrolls_when_many_tasks_overflow(env, app):  # noqa: F811
+    from tests.project_language_fixture import add_job
+    from folith.qt.project_sheets import MoveToProjectSheet
+
+    adapter, ids, _v, _r = _view(env, app)
+    core = env["core"]
+    for n in range(5):
+        add_job(core, f"extra-{n}", f"附加任务 {n}.docx", project_id=None,
+                terms=[{"source": f"term{n}", "target": f"术语{n}", "preferred": f"术语{n}",
+                        "status": "locked", "behavior": "translate"}])
+    sheet = MoveToProjectSheet(["notes"] + [f"extra-{n}" for n in range(5)],
+                               project_id=ids["device"])
+    sheet.show()
+    app.processEvents()
+    bar = sheet.after_scroll.verticalScrollBar()
+    assert bar.isVisible() and bar.maximum() > 0
+    assert sheet.after_scroll.height() == sheet.PREVIEW_MAX
 
 
 def test_conflict_strip_is_amber_with_the_button_inside(env, app):  # noqa: F811
