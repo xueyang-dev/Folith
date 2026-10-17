@@ -62,7 +62,7 @@ def test_project_review_candidates_can_be_decided_from_the_window(client):
 
     def keep_buttons():
         return [b for b in view.page_unsorted_terms.findChildren(QPushButton)
-                if b.text() == "只用于这个任务"]
+                if b.toolTip() == "只用于这个任务"]
 
     assert _pump(client["app"], 15, lambda: len(keep_buttons()) == 1), \
         "「未分类」里这条候选应并进任务自己的术语列表，状态是待审核"

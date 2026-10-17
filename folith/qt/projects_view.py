@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
@@ -1192,12 +1193,15 @@ class ProjectsView(QWidget):
             self.unsorted_box.addWidget(style_module.EmptyState(
                 icon="inbox", page=True, title=i18n.tr('没有未归属的任务'),
                 hint=i18n.tr('导入文档时没有选项目的任务会先放在这里。')))
+        # 各卡片共用一套列规则（状态 = 芯片宽、出现 = 窄列右对齐、动作列只有存在动作时才占宽，
+        # 原文 / 译名平分剩下的空间），所以整页对齐；宽度全部跟着视口，不设固定像素。
+        has_action = any(t["status"] == "pending" for task in tasks for t in task["terms"])
         for task in tasks:
-            self.unsorted_box.addWidget(self._unsorted_card(task))
+            self.unsorted_box.addWidget(self._unsorted_card(task, has_action))
         self.unsorted_box.addStretch(1)
 
-    def _unsorted_card(self, task: dict) -> QWidget:
-        card = style_module.Card()
+    def _unsorted_card(self, task: dict, has_action: bool = False) -> QWidget:
+        card = _TaskCard()
         box = QVBoxLayout(card)
         box.setContentsMargins(0, 0, 0, 6)
         box.setSpacing(0)
@@ -1220,26 +1224,30 @@ class ProjectsView(QWidget):
         make = QPushButton(i18n.tr('用这个任务新建项目…'))
         style_module.set_button(make, "secondary", small=True)
         make.setIcon(icons.icon("folder", 14, "accent"))
+        card.make_button = make        # 卡片太窄时变成只有图标的按钮（带提示）
+        make.setToolTip(i18n.tr('用这个任务新建项目…'))
         make.clicked.connect(lambda _c=False, j=task["job_id"]: self.newFromTaskRequested.emit(j))
         head.addWidget(make)
         box.addLayout(head)
-        # 所有卡片用同一套列：原文 / 译名按固定比例伸缩，状态、出现、动作三列固定宽度，
-        # 所以整页的列是对齐的。
         grid = QGridLayout()
         grid.setContentsMargins(16, 4, 16, 0)
-        grid.setHorizontalSpacing(12)
+        grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
+        chip_width = style_module.Chip(i18n.tr('已确认')).sizeHint().width() + 4
         for column, text in enumerate((i18n.tr('原文'), i18n.tr('译名'), i18n.tr('状态'), i18n.tr('出现'))):
             title = _text(text, "time")
             title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            if column == 3:
+                title.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(title, 0, column)
-        grid.addWidget(QWidget(), 0, 4)       # 动作列始终有内容，固定宽度才会生效
-        for column, stretch in enumerate((6, 5)):
-            grid.setColumnStretch(column, stretch)
-            grid.setColumnMinimumWidth(column, 60)
-        for column, width in ((2, 80), (3, 44), (4, 176)):
-            grid.setColumnMinimumWidth(column, width)
-            grid.setColumnStretch(column, 0)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnMinimumWidth(2, chip_width)
+        grid.setColumnMinimumWidth(3, 40)
+        card.grid, card.has_action = grid, has_action
+        if has_action:
+            grid.addWidget(QWidget(), 0, 4)       # 动作列在每张卡里都存在，宽度才一致
+            grid.setColumnMinimumWidth(4, card.action_width(False))
         for r, term in enumerate(task["terms"], start=1):
             for column, (text, role) in enumerate(((term["source"], "name"), (term["target"], "body"))):
                 label = _elide(text, role)
@@ -1263,6 +1271,8 @@ class ProjectsView(QWidget):
             if term["status"] == "pending":
                 keep = QPushButton(i18n.tr('只用于这个任务'))
                 style_module.set_button(keep, "plain", small=True)
+                keep.setToolTip(i18n.tr('只用于这个任务'))
+                card.keep_buttons.append(keep)
                 keep.clicked.connect(lambda _c=False, i=term["item"]: self.decideRequested.emit(i, "task_only"))
                 grid.addWidget(keep, r, 4, Qt.AlignmentFlag.AlignRight)
         box.addLayout(grid)
@@ -1577,6 +1587,44 @@ class ProjectsView(QWidget):
                            v0=result["project"].get("name") or ""))
         self._mark_changed()
         self.reloadRequested.emit()
+
+
+class _TaskCard(style_module.Card):
+    """未分类里的任务卡。窄时（约 1000 宽的窗口）：「用这个任务新建项目…」和行内的
+    「只用于这个任务」收成只有图标的按钮（带提示），标题行与列宽都不再挤。"""
+
+    NARROW = 520
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.make_button: QPushButton | None = None
+        self.keep_buttons: list[QPushButton] = []
+        self.grid: QGridLayout | None = None
+        self.has_action = False
+        self._compact: bool | None = None
+
+    def action_width(self, compact: bool) -> int:
+        sample = QPushButton("" if compact else i18n.tr('只用于这个任务'))
+        if compact:
+            sample.setIcon(icons.icon("check", 14, "accent"))
+        style_module.set_button(sample, "plain", small=True)
+        return sample.sizeHint().width()
+
+    def apply(self, compact: bool) -> None:
+        self._compact = compact
+        if self.make_button is not None:
+            self.make_button.setText("" if compact else self.make_button.toolTip())
+        for button in self.keep_buttons:
+            button.setText("" if compact else button.toolTip())
+            button.setIcon(icons.icon("check", 14, "accent") if compact else QIcon())
+        if self.grid is not None and self.has_action:
+            self.grid.setColumnMinimumWidth(4, self.action_width(compact))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        compact = event.size().width() < self.NARROW
+        if compact != self._compact:
+            self.apply(compact)
 
 
 class _DangerLabel(QLabel):

@@ -165,7 +165,7 @@ def test_unsorted_page_is_a_readonly_summary_with_make_project_buttons(env, app)
     # 候选并进各任务自己的术语列表，状态是「待审核」；这里唯一的动作是「只用于此任务」。
     decided: list[tuple] = []
     view.decideRequested.connect(lambda item, decision: decided.append((item["source"], decision)))
-    keep = [b for b in view.page_unsorted_terms.findChildren(QPushButton) if b.text() == "只用于这个任务"]
+    keep = [b for b in view.page_unsorted_terms.findChildren(QPushButton) if b.toolTip() == "只用于这个任务"]
     assert len(keep) == 1
     keep[0].click()
     assert decided == [("canary build", "task_only")]
@@ -486,3 +486,36 @@ def test_unsorted_cards_use_confirmed_pending_chips_and_one_column_layout(env, a
           for label in view.page_unsorted_terms.findChildren(QLabel) if label.text() == "译名"}
     assert len(xs) == 1, xs
     view.close()
+
+
+def test_unsorted_detail_fits_the_viewport_at_1000x600_with_a_long_file_name(env, app):  # noqa: F811
+    from PySide6.QtWidgets import QLabel, QScrollArea, QWidget
+
+    from tests.project_language_fixture import add_job
+    from folith.qt.projects_view import ProjectsView
+
+    adapter, core = env["adapter"], env["core"]
+    build(core)
+    add_job(core, "long-unsorted", LONG_NAME, project_id=None,
+            candidates=[], terms=[{"source": "sensorium", "target": "感官系统", "preferred": "感官系统",
+                                   "status": "provisional", "behavior": "translate"}])
+    for width in (900, 1000 - 240 + 0, 1280 - 240):
+        view = ProjectsView(margins=(8, 12, 12, 12))
+        view.setFixedSize(max(width, 760), 555)
+        view.show()
+        view.apply_overview(adapter.projects_overview())
+        view.select("unsorted")
+        _load(view, adapter, "unsorted")
+        app.processEvents()
+        scroll = view.page_unsorted_terms
+        assert isinstance(scroll, QScrollArea)
+        viewport = scroll.viewport()
+        assert scroll.widget().width() <= viewport.width()
+        assert not scroll.horizontalScrollBar().isVisible()
+        for child in scroll.widget().findChildren(QWidget):
+            if child.isVisible():
+                right = child.mapTo(viewport, child.rect().topRight()).x()
+                assert right <= viewport.width() + 1, (type(child).__name__, right, viewport.width())
+        sources = [l for l in scroll.widget().findChildren(QLabel) if l.text() == "rollback"]
+        assert sources and sources[0].width() >= 120, sources[0].width()
+        view.close()
