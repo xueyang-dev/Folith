@@ -224,7 +224,8 @@ class MainWindow(QMainWindow):
             self._notice(self.data_dir_notice, task=False)
 
         try:
-            QApplication.styleHints().colorSchemeChanged.connect(
+            hints = style_module.style_hints()
+            hints.colorSchemeChanged.connect(
                 lambda _scheme: self._system_appearance_changed())
         except Exception:  # noqa: BLE001 - signal absent on older Qt
             pass
@@ -520,11 +521,7 @@ class MainWindow(QMainWindow):
         self._shell_layout.setContentsMargins(0, top, 0, 0)
 
     def _system_dark(self) -> bool:
-        try:
-            hints = QApplication.styleHints()
-            return hints.colorScheme() == Qt.ColorScheme.Dark
-        except Exception:  # noqa: BLE001 - older Qt / non-cocoa platform
-            return False
+        return style_module.system_is_dark()
 
     def apply_theme_preference(self) -> str:
         """按偏好（含"跟随系统"）应用主题，返回实际生效的主题名。"""
@@ -535,14 +532,23 @@ class MainWindow(QMainWindow):
         if preference in ("paper", "green"):
             preference = "light"
         theme_module.set_accent(accent)
-        resolved = style_module.apply_theme(
-            QApplication.instance(), preference,
-            system_dark=self._system_dark())
-        views_module.set_current_theme(resolved)
-        self.theme_preference = preference
+        # 平台会在 setColorScheme 里同步发 colorSchemeChanged：应用主题期间的信号是
+        # 我们自己引起的，忽略（否则嵌套重入，内层刚设好的主题被外层覆盖，半深半浅）。
+        self._applying_theme = True
+        try:
+            resolved = style_module.apply_theme(
+                QApplication.instance(), preference,
+                system_dark=(self._system_dark()
+                             if preference == theme_module.FOLLOW_SYSTEM else False))
+            views_module.set_current_theme(resolved)
+            self.theme_preference = preference
+        finally:
+            self._applying_theme = False
         return resolved
 
     def _system_appearance_changed(self) -> None:
+        if getattr(self, "_applying_theme", False):
+            return
         if self.theme_preference == theme_module.FOLLOW_SYSTEM:
             self.apply_theme_preference()
             self.refresh_home()

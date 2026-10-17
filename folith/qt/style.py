@@ -1158,6 +1158,65 @@ def font_for(theme: str, *, mono: bool = False) -> QFont:
     return font
 
 
+def style_hints():
+    """QApplication 的 ``QStyleHints``（没有 QApplication 或老 Qt 时 ``None``）。
+
+    集中在一处取，测试可以替换成模拟 macOS 的版本。
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return None
+    try:
+        return app.styleHints()
+    except (AttributeError, RuntimeError):  # noqa: BLE001
+        return None
+
+
+#: 我们当前**钉住**的原生外观（``None`` = 没钉，交给系统）。
+#: 不能用 ``hints.colorScheme()`` 判断：跟随系统时它报的是系统实际的 Light / Dark，
+#: 永远不等于 ``Unknown``，于是每次应用主题都会再写一次 ``setColorScheme(Unknown)``，
+#: 平台为此重发一轮主题变更（全部控件重新 polish、再触发 colorSchemeChanged）——
+#: 这就是"跟随系统"之后整个客户端变卡的原因。
+_PINNED_SCHEME = None
+
+
+def release_native_appearance() -> None:
+    """撤销钉住的原生外观，让 ``colorScheme()`` 重新报系统的真实外观。
+
+    必须在**读系统外观之前**调用：钉住夜间后 ``colorScheme()`` 报的是我们自己钉的
+    Dark，不是系统；不先撤销就读，会把"系统是深色"当成事实，窗口留在夜间。
+    """
+    global _PINNED_SCHEME
+    if _PINNED_SCHEME is None:
+        return
+    hints = style_hints()
+    _PINNED_SCHEME = None
+    if hints is None:
+        return
+    from PySide6.QtCore import Qt
+
+    try:
+        hints.setColorScheme(Qt.ColorScheme.Unknown)
+    except (AttributeError, RuntimeError, TypeError):  # noqa: BLE001 - 老 Qt / 非 cocoa
+        pass
+
+
+def system_is_dark() -> bool:
+    """系统当前是不是深色（先撤销我们钉住的外观，所以读到的一定是系统自己的）。"""
+    release_native_appearance()
+    hints = style_hints()
+    if hints is None:
+        return False
+    from PySide6.QtCore import Qt
+
+    try:
+        return hints.colorScheme() == Qt.ColorScheme.Dark
+    except (AttributeError, RuntimeError):  # noqa: BLE001
+        return False
+
+
 def _sync_native_appearance(preference: str, resolved: str) -> None:
     """让**原生窗口外观**跟着界面主题走（macOS 标题栏因此与内容同一材质）。
 
@@ -1165,26 +1224,25 @@ def _sync_native_appearance(preference: str, resolved: str) -> None:
     NSApp 的 appearance，原生标题栏 / 菜单 / sheet 随之变深或变浅。没有这一步时
     "显式选夜间、系统仍是浅色"会让标题栏留在浅色，与内容区形成断层。
 
-    跟随系统时传 ``Unknown``（把决定权还给系统），只有显式选择才钉住外观；
-    值相同就不调用 —— ``setColorScheme`` 会发 ``colorSchemeChanged``，而窗口接了
-    这个信号，无脑写会形成回环。
+    跟随系统时撤销钉住（把决定权还给系统），只有显式选择才钉住外观；
+    只在**状态变化**时才调用 —— ``setColorScheme`` 会发 ``colorSchemeChanged`` 并让
+    平台重发主题变更，而窗口接了这个信号，无脑写会形成回环、拖慢整个界面。
     """
+    global _PINNED_SCHEME
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication
 
-    app = QApplication.instance()
-    if app is None:
+    if preference not in theme_module.THEME_ORDER:
+        release_native_appearance()
         return
+    hints = style_hints()
+    if hints is None:
+        return
+    wanted = Qt.ColorScheme.Dark if resolved == "dark" else Qt.ColorScheme.Light
+    if _PINNED_SCHEME == wanted:
+        return
+    _PINNED_SCHEME = wanted
     try:
-        hints = app.styleHints()
-        explicit = preference in theme_module.THEME_ORDER
-        if not explicit:
-            wanted = Qt.ColorScheme.Unknown
-        else:
-            wanted = (Qt.ColorScheme.Dark if resolved == "dark"
-                      else Qt.ColorScheme.Light)
-        if hints.colorScheme() != wanted:
-            hints.setColorScheme(wanted)
+        hints.setColorScheme(wanted)
     except (AttributeError, RuntimeError, TypeError):  # noqa: BLE001 - 老 Qt / 非 cocoa
         pass
 
