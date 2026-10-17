@@ -667,6 +667,15 @@ def _render_adv_performance_tab(summary: Dict[str, Any], active_run: Any) -> Non
         st.markdown(f"- **未计入调度耗时**: `{unacc_s} 秒 ({unacc_pct}%)`")
 
 
+def _token_metric(metrics: Dict[str, Any], key: str) -> str:
+    """Unreported usage is unknown, not 0; partial sums are marked as lower bounds."""
+    total = metrics.get(key)
+    if total is None:
+        return "未知"
+    usage = (metrics.get("token_usage") or {}).get(key.replace("total_", "", 1)) or {}
+    return f"{total:,}" if usage.get("complete", True) else f"≥{total:,}（部分）"
+
+
 def _render_adv_pipeline_tab(summary: Dict[str, Any]) -> None:
     """Render pipeline stage timings with bounded percentages."""
     stages = summary.get("stages", {})
@@ -678,6 +687,8 @@ def _render_adv_pipeline_tab(summary: Dict[str, Any]) -> None:
     rows = []
     for s_name, s_info in stages.items():
         w_s = s_info.get("wall_time_s", 0.0)
+        if s_info.get("no_work"):
+            w_s = 0.0
         pct_val = s_info.get("pct_of_total", 0.0)
         # Guarantee valid bounded percentage
         try:
@@ -747,11 +758,11 @@ def _render_adv_diagnostics_tab(summary: Dict[str, Any]) -> None:
     st.markdown("##### Token 消耗统计")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Prompt Tokens", f"{m.get('total_prompt_tokens', 0):,}")
+        st.metric("Prompt Tokens", _token_metric(m, "total_prompt_tokens"))
     with c2:
-        st.metric("Output Tokens", f"{m.get('total_completion_tokens', 0):,}")
+        st.metric("Output Tokens", _token_metric(m, "total_completion_tokens"))
     with c3:
-        st.metric("Cached Tokens", f"{m.get('total_cached_tokens', 0):,}")
+        st.metric("Cached Tokens", _token_metric(m, "total_cached_tokens"))
     with c4:
         st.metric("重试次数", f"{err.get('retries', 0)}")
 

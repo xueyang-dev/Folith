@@ -237,13 +237,23 @@ class PipelineProfiler:
             if run:
                 for s_name, s_rec in snapshot.get("stages", {}).items():
                     if s_name not in run.stages or s_name in self._trace_stage_names:
+                        items = s_rec.get("items", [])
+                        lifetime = s_rec.get("wall_time_s", 0.0)
+                        # Work time = union of item intervals; a stage with no
+                        # items did no measured work (lifetime is kept apart).
+                        work = s_rec.get("interval_union_s") if items else 0.0
+                        if work is None:
+                            work = 0.0
                         run.stages[s_name] = {
                             "stage_name": s_name,
                             "first_started_at": s_rec.get("started_at"),
                             "last_finished_at": s_rec.get("finished_at"),
-                            "wall_time_s": s_rec.get("active_wall_time_s", s_rec.get("wall_time_s", 0.0)),
+                            "wall_time_s": work,
+                            "busy_time_s": s_rec.get("item_wall_sum_s") or 0.0,
+                            "lifetime_s": lifetime,
+                            "no_work": not items,
                             "cpu_time_s": 0.0,
-                            "spans_count": len(s_rec.get("items", [])),
+                            "spans_count": len(items),
                             "items_in": s_rec.get("item_count", 0),
                             "items_out": s_rec.get("completed_item_count", 0),
                             "status": s_rec.get("status", "success"),

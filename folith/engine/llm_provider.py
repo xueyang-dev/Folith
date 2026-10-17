@@ -88,7 +88,43 @@ def set_llm_reasoning_effort(value):
     return _c._LLM_CTX.reasoning_effort
 
 
-def effective_request_route(provider, model):
+REASONING_MODES = ("provider_default", "thinking_disabled")
+# usage-ledger role -> configurable role.  Reviewer is intentionally absent.
+_MODE_ROLE_OF = {"translation": "translator", "annotation": "translator",
+                 "translator": "translator", "auxiliary": "auxiliary"}
+
+
+def normalize_reasoning_mode(value):
+    value = str(value or "").strip().lower()
+    return value if value in REASONING_MODES else "provider_default"
+
+
+def set_llm_reasoning_modes(translator=None, auxiliary=None):
+    """Set the per-thread text-path reasoning mode for each role.
+
+    Default (``provider_default``) sends nothing extra.  ``thinking_disabled``
+    sends ``extra_body={"thinking": {"type": "disabled"}}``, the same opt-in
+    control the online-OCR path uses.  Empty values clear the setting.
+    """
+    modes = {"translator": normalize_reasoning_mode(translator),
+             "auxiliary": normalize_reasoning_mode(auxiliary)}
+    _c._LLM_CTX.reasoning_modes = modes
+    return dict(modes)
+
+
+def resolve_reasoning_mode(explicit=None, role=None):
+    """Mode for a request: explicit argument > this thread's role setting."""
+    if explicit is not None:
+        return normalize_reasoning_mode(explicit)
+    if role is None:
+        from folith import usage as _usage
+        role = _usage.CURRENT_ROLE.get()
+    configurable = _MODE_ROLE_OF.get(role)
+    modes = getattr(_c._LLM_CTX, "reasoning_modes", None) or {}
+    return normalize_reasoning_mode(modes.get(configurable)) if configurable else "provider_default"
+
+
+def effective_request_route(provider, model, role=None):
     """What a request made on this thread reaches, beyond provider and model.
 
     The same provider and model name can sit behind different endpoints (two
@@ -106,7 +142,12 @@ def effective_request_route(provider, model):
     reasoning = getattr(_c._LLM_CTX, "reasoning_effort", None)
     if reasoning not in reasoning_effort_options(provider, model):
         reasoning = None
-    return {"base_url": base_url, "reasoning_effort": reasoning or ""}
+    route = {"base_url": base_url, "reasoning_effort": reasoning or ""}
+    if resolve_reasoning_mode(role=role) == "thinking_disabled":
+        # Only present when opted in, so default-route cache keys are unchanged
+        # while thinking-on and thinking-off results can never mix.
+        route["reasoning_mode"] = "thinking_disabled"
+    return route
 
 
 def clean_xml_chars(text):

@@ -139,6 +139,7 @@ INTERNAL_CORE_OPTIONS = frozenset({
     "source_cleanup_concurrency", "source_cleanup_confidence_threshold",
     "source_cleanup_max_retries", "source_cleanup_request_interval",
     "ocr_workers", "ocr_queue_size",
+    "reasoning_mode", "auxiliary_reasoning_mode",
     "on_status", "on_caption",
 })
 
