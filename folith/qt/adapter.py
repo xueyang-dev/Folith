@@ -1642,7 +1642,7 @@ def segment_pdf_location(job_id: str, index: int, state: dict | None = None,
 # 旧界面的"长文处理收尾"：长文跑完后常留下几类尾巴——全文理解降级、标注批次失败、
 # 同一个专名在不同段译法不一。Qt 原来只有一个"重试"按钮，看不到尾巴是什么。
 
-FOLLOWUP_PARTS = ("understanding", "annotation")
+FOLLOWUP_PARTS = ("understanding", "annotation", "scan_pages")
 
 
 #: 导入报告里混进来的两类警告：全文理解（单元摘要 / 全文概要）与文档画像。它们在
@@ -1701,6 +1701,7 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         else _warning_reason(profile_warnings),
     }
     entities = facts["entities"]
+    scan_pages = facts["scan_pages"]
     try:
         recovery = dict(core.recovery_summary(job_id, state))
     except Exception:  # noqa: BLE001
@@ -1719,9 +1720,11 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         "annotation": annotation,
         "profile": profile_view,
         "entities": entities,
+        # 读失败、至今没补读成功的扫描页：译稿缺页，挡住交付。
+        "scan_pages": {"pages": scan_pages},
         "busy": busy,
         "has_work": bool(
-            understanding.get("status") == "degraded"
+            understanding.get("status") == "degraded" or scan_pages
             or annotation.get("status") == "partial" or entities or failures
             or recovery.get("current_batch") or profile_view["missing"]),
     }

@@ -24,16 +24,22 @@ def state_facts(state: dict) -> dict:
                         and not item.get("confirmed") and not item.get("resolved")
                         and 0 <= int(item["segment_index"]) < len(pairs)
                         and not pairs[int(item["segment_index"])].get("excluded")})
+    ingest = state.get("streaming_ingest") if isinstance(state.get("streaming_ingest"), dict) else {}
+    from folith import delivery as _delivery
+
+    unrecovered = set(_delivery.unrecovered_scan_pages(state))
+    scan_pages = [dict(row) for row in ingest.get("failed_pages") or []
+                  if isinstance(row, dict) and row.get("page") in unrecovered]
     try:
         entities = [dict(item) for item in core.entity_consistency_queue(state)]
     except Exception:  # preserve the existing malformed-registry fallback
         entities = []
-    count = sum((bool(failures), bool(profile_missing), bool(fragments), bool(entities),
+    count = sum((bool(failures), bool(scan_pages), bool(profile_missing), bool(fragments), bool(entities),
                  outcomes["understanding"].get("status") == "degraded",
                  outcomes["annotation"].get("status") == "partial"))
     return dict(outcomes, profile_missing=bool(profile_missing), fragments=fragments,
-                entities=entities, attention_count=count,
-                attention_tone="danger" if failures else "warning" if count else "")
+                entities=entities, scan_pages=scan_pages, attention_count=count,
+                attention_tone="danger" if failures or scan_pages else "warning" if count else "")
 
 
 def summary(job_id: str, state: dict) -> dict:

@@ -1964,5 +1964,9 @@
   "用当前连接": "Usar la conexión actual",
   "继续用原连接": "Mantener la conexión original",
   "正在审校 · 已完成 {v0}/{v1} 段": "Revisando · {v0}/{v1} segmentos listos",
-  "上一个操作还在进行，请等它完成。": "La operación anterior sigue en curso. Espera a que termine."
+  "上一个操作还在进行，请等它完成。": "La operación anterior sigue en curso. Espera a que termine.",
+  "有 {v0} 页没读成": "{v0} páginas no se pudieron leer",
+  "这些页的原文缺失，译稿不完整，不能交付。补读时只读失败的页，其余页沿用已识别的结果。": "Falta el texto original de estas páginas, así que la traducción está incompleta y no se puede entregar. Al releer solo se leen las páginas fallidas; el resto conserva el texto ya reconocido.",
+  "补读失败页": "Releer páginas fallidas",
+  "第 {v0} 页：{v1}": "Página {v0}: {v1}"
 }

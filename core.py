@@ -9884,6 +9884,9 @@ def prepare_workflow_retry(job_id, part):
         "requested_at": _finalization.now_iso()})
     if part == "understanding":
         state["understanding_retry_requested"] = True
+    elif part == "scan_pages":
+        # 不需要额外标记：流水线继续时发现有未补读的失败页，就会重建识别流补读。
+        pass
     elif part == "annotation":
         if workflow_outcomes(state)["annotation"]["legacy_unlocated"]:
             state["annotations_done_offset"] = 0
@@ -10708,8 +10711,8 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
         "ocr_mode": ocr_mode, "ocr_trigger": "scanned_pdf_streaming",
         "page_diagnostics": (document.get("provenance") or {}).get("page_diagnostics") or [],
     })
-    if not snapshot["finished"]:
-        report["status"] = "partial"
+    if not snapshot["finished"] or failed_pages:
+        report["status"] = "partial"  # 缺页的书：原文不完整，交付门禁据此拦截
     state["extraction_report"] = report
     state["source_paras"] = list(paragraphs)
     paras = state.setdefault("paras", [])
@@ -10750,6 +10753,26 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
         "failed_pages": failed_pages,
     }
     return start, len(paras)
+
+
+def _reopen_scan_stream_for_failed_pages(state):
+    """译完但有页没读成：把任务退回「识别中」，让流水线重建识别流去补读那些页。
+
+    其余页的结果来自页缓存，不会重读；补读到的文字只追加（已译的段落不动），
+    译完后整本按原页序重排。
+    """
+    from folith import delivery as _delivery
+    ingest = state.get("streaming_ingest")
+    if not (isinstance(ingest, dict) and state.get("p2_done")
+            and _delivery.unrecovered_scan_pages(state)):
+        return False
+    ingest["status"] = "running"
+    state["p2_done"] = False
+    state["p3_done"] = False
+    state["annotations_done"] = False
+    if state.get("delivery_status") in ("approved", "final"):
+        _invalidate_final_delivery_state(state)  # 补读会改变译稿：旧的确认作废
+    return True
 
 
 _SCAN_EVENT_EVERY_PAGES = 5  # 用户可见事件的最小间隔页数；进度条逐页更新
@@ -11443,6 +11466,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             })
             state["p1_done"] = True
             save_job_state(job_id, state)
+
+    # 已完成但缺页的扫描书：继续 / 重跑时重新打开识别流，补读失败的页。
+    _reopen_scan_stream_for_failed_pages(state)
 
     # Whole-book consistency review is a post-translation checkpoint.  Run it
     # before the completed-task fast path as well, so older jobs that already

@@ -153,7 +153,7 @@ class IssueCard(QFrame):
 
 
 class FollowupPanel(QWidget):
-    retryRequested = Signal(str)                    # "understanding" | "annotation"
+    retryRequested = Signal(str)                    # "understanding" | "annotation" | "scan_pages"
     resumeRequested = Signal()
     previewRequested = Signal(str, str)             # source, target
     repairRequested = Signal(str, str, list)        # source, target, preview
@@ -219,6 +219,16 @@ class FollowupPanel(QWidget):
             lambda: self.retryRequested.emit("understanding"))
         self.understanding_card.add_action(self.understanding_button)
         self.understanding_card.finish_actions()
+        # 读失败的扫描页：译稿缺页，挡住交付；继续时只补读这些页。
+        self.scan_pages_card = IssueCard("danger", collapsible=True, expanded=False)
+        self.scan_pages_list = QListWidget()
+        self.scan_pages_list.setMaximumHeight(140)
+        self.scan_pages_card.details_layout.addWidget(self.scan_pages_list)
+        self.scan_pages_button = _tool(i18n.tr('补读失败页'), primary=True)
+        self.scan_pages_button.clicked.connect(
+            lambda: self.retryRequested.emit("scan_pages"))
+        self.scan_pages_card.add_action(self.scan_pages_button)
+        self.scan_pages_card.finish_actions()
         self.annotation_card = IssueCard("warning")
         self.annotation_button = _tool("", primary=True)
         self.annotation_button.clicked.connect(
@@ -230,6 +240,7 @@ class FollowupPanel(QWidget):
         retry = QVBoxLayout(self.retry_card)
         retry.setContentsMargins(0, 0, 0, 0)
         retry.setSpacing(theme_module.SPACE["sm"])
+        retry.addWidget(self.scan_pages_card)
         retry.addWidget(self.understanding_card)
         retry.addWidget(self.annotation_card)
 
@@ -360,7 +371,8 @@ class FollowupPanel(QWidget):
     # ================= 汇总（给顶栏的检查图标） =================
     def issue_cards(self) -> list[IssueCard]:
         """当前需要用户处理的项（可见、且是 ✕ / ⚠）。"""
-        cards = (self.failures_card, self.recovery_card, self.understanding_card,
+        cards = (self.failures_card, self.recovery_card, self.scan_pages_card,
+                 self.understanding_card,
                  self.annotation_card, self.profile_card, self.entity_card, self.fragments_card)
         return [card for card in cards
                 if not card.isHidden() and card.tone() in ISSUE_TONES
@@ -381,9 +393,11 @@ class FollowupPanel(QWidget):
 
         self._apply_failures(self._view.get("failures") or [])
         self._apply_recovery(self._view.get("recovery") or {})
+        self._apply_scan_pages(self._view.get("scan_pages") or {})
         self._apply_understanding(self._view.get("understanding") or {})
         self._apply_annotation(self._view.get("annotation") or {})
-        self.retry_card.setVisible(not self.understanding_card.isHidden()
+        self.retry_card.setVisible(not self.scan_pages_card.isHidden()
+                                   or not self.understanding_card.isHidden()
                                    or not self.annotation_card.isHidden())
         self._apply_profile(self._view.get("profile") or {})
         self._apply_entities(list(self._view.get("entities") or []), keep_source)
@@ -457,6 +471,21 @@ class FollowupPanel(QWidget):
         self.recovery_card.set_summary(("　·　".join(facts) + "\n" if facts else "") + text)
         self.resume_button.setVisible(resumable)
         self.resume_button.setEnabled(not self._busy)
+
+    def _apply_scan_pages(self, scan_pages: dict) -> None:
+        pages = list(scan_pages.get("pages") or [])
+        self.scan_pages_card.setVisible(bool(pages))
+        if not pages:
+            return
+        self.scan_pages_card.set_title(i18n.tr('有 {v0} 页没读成', v0=len(pages)))
+        self.scan_pages_card.set_summary(i18n.tr(
+            '这些页的原文缺失，译稿不完整，不能交付。补读时只读失败的页，其余页沿用已识别的结果。'))
+        self.scan_pages_list.clear()
+        for row in pages:
+            self.scan_pages_list.addItem(i18n.tr(
+                '第 {v0} 页：{v1}', v0=row.get("page"),
+                v1=i18n.tr_dynamic(str(row.get("reason") or row.get("code") or ""))))
+        self.scan_pages_button.setEnabled(not self._busy)
 
     def _apply_understanding(self, understanding: dict) -> None:
         degraded = understanding.get("status") == "degraded"

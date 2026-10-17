@@ -419,6 +419,24 @@ def compute_delivery_status(state: Dict[str, Any]) -> str:
     return "draft"
 
 
+def unrecovered_scan_pages(state: Dict[str, Any]) -> List[int]:
+    """扫描书里读失败、至今没有补读成功的页（页码从 1 起）。
+
+    这些页的原文不在 ``pairs`` 里：译稿缺页，不能冻结交付，也不能「接受风险」跳过。
+    """
+    ingest = state.get("streaming_ingest")
+    rows = ingest.get("failed_pages") if isinstance(ingest, dict) else None
+    pages = {int(row["page"]) for row in rows or []
+             if isinstance(row, dict) and str(row.get("page") or "").isdigit()}
+    return sorted(pages)
+
+
+def scan_pages_message(pages: List[int]) -> str:
+    shown = "、".join(str(page) for page in pages[:8]) + ("…" if len(pages) > 8 else "")
+    return (f"第 {shown} 页识别失败，原文缺失（共 {len(pages)} 页）；"
+            "请在「检查与修复」补读失败页后再交付")
+
+
 def report_ready(state: Dict[str, Any]) -> bool:
     """A requested academic report must pass its final report gate."""
     if not state.get("report_enabled", False):
@@ -437,6 +455,9 @@ def approve_delivery(state: Dict[str, Any], note: str = "", actor: str = "user",
     """
     if not state.get("p2_done"):
         return state, False, ["翻译尚未完成，不能创建最终交付版本"]
+    missing_pages = unrecovered_scan_pages(state)
+    if missing_pages:
+        return state, False, [scan_pages_message(missing_pages)]
     if not report_ready(state):
         return state, False, ["实践报告尚未完成或未通过校验，不能创建最终交付版本"]
     from .translation_evidence import translation_review_readiness

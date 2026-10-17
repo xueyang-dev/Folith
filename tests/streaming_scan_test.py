@@ -589,3 +589,54 @@ def test_three_consecutive_timeouts_pause_with_a_suggestion_and_resume_continues
     # 失败的 3 页在读完全书后补读成功，不再留在失败清单里。
     assert outcome["state"]["streaming_ingest"]["failed_pages"] == []
     assert "正在暂停" not in str(_runtime("streak").get("phase_label"))
+
+
+# ---- 缺页的书不能交付，继续任务要补读失败页 ----
+
+_BOOK_12 = scanned_pdf(12)  # 同一份字节：页缓存身份含源文件哈希
+
+
+def _run_with_failed_page_8(streaming_job, monkeypatch, job_id):
+    _vision, started, args = streaming_job
+    started.set()
+    provider = ScriptedVisionProvider({7: _page_error("service_error", 524)})
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (provider, None))
+    state = core.run_job_pipeline(job_id, "scan.pdf", _BOOK_12, **args)
+    return args, provider, state
+
+
+def test_a_book_with_an_unrecovered_failed_page_cannot_be_delivered(streaming_job, monkeypatch):
+    from folith import delivery
+    _args, _provider, state = _run_with_failed_page_8(streaming_job, monkeypatch, "gate-missing")
+    validation = core.validate_delivery_translation_state(state)
+    assert validation["blocking"] and validation["status"] == "fail"
+    missing = [i for i in validation["issues"] if i.get("code") == "source_pages_missing"]
+    assert missing and "第 8 页" in missing[0]["message"] and missing[0]["severity"] == "blocking"
+    assert state["extraction_report"]["status"] == "partial"
+    _state, ok, errors = delivery.approve_delivery(state, accept_blocking=True)
+    assert not ok and any("第 8 页" in str(e) for e in errors)
+    with pytest.raises(RuntimeError):
+        core.create_delivery_snapshot("gate-missing", state)
+
+
+def test_continuing_a_finished_task_rereads_the_failed_page(streaming_job, monkeypatch):
+    args, first, state = _run_with_failed_page_8(streaming_job, monkeypatch, "gate-resume")
+    assert state["p2_done"] and first.requests[7] >= 1
+    healthy = ScriptedVisionProvider()
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (healthy, None))
+    resumed = core.run_job_pipeline("gate-resume", "scan.pdf", _BOOK_12, **args)
+    assert healthy.requests == {7: 1}  # 只补读失败的那一页，其余页沿用缓存
+    assert resumed["p2_done"] and resumed["streaming_ingest"]["failed_pages"] == []
+    assert resumed["extraction_report"]["status"] == "complete"
+    assert any(p["source"].startswith("Page 8 ") and p["target"].strip() for p in resumed["pairs"])
+    validation = core.validate_delivery_translation_state(resumed)
+    assert not [i for i in validation["issues"] if i.get("code") == "source_pages_missing"]
+
+
+def test_failed_pages_are_a_repair_item_in_the_followup_view(streaming_job, monkeypatch):
+    from folith.qt import adapter
+    _args, _provider, state = _run_with_failed_page_8(streaming_job, monkeypatch, "gate-followup")
+    view = adapter.followup_view("gate-followup", state)
+    assert [row["page"] for row in view["scan_pages"]["pages"]] == [8]
+    assert view["has_work"]
+    adapter.prepare_followup_retry("gate-followup", "scan_pages")

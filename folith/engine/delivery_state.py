@@ -295,6 +295,13 @@ def validate_delivery_translation_state(state):
             "message": "双语 pairs 数量与源文段落数量不一致，不能生成完整交付物",
             "severity": "blocking",
         })
+    missing_pages = _delivery.unrecovered_scan_pages(state)
+    if missing_pages:
+        issues.append({
+            "code": "source_pages_missing",
+            "message": _delivery.scan_pages_message(missing_pages),
+            "severity": "blocking",
+        })
     entity_findings = _entity_registry.EntityRegistry(
         state.get("entity_registry") or []
     ).consistency_findings(pairs)

@@ -482,3 +482,23 @@ def test_first_show_entity_preview_waits_until_drawer_settles(qapp, job):
     assert previews == [("Lydia", "莉迪亚")]
     panel.close()
     panel.deleteLater()
+
+
+def test_failed_scan_pages_show_a_danger_card_with_a_reread_action(qapp):
+    from folith.qt.followup_panel import FollowupPanel
+
+    state = core.new_job_state("scan.pdf")
+    state.update(p2_done=True, streaming_ingest={"status": "complete", "failed_pages": [
+        {"page": 8, "code": "service_error", "reason": "服务商超时"}]})
+    view = adapter.followup_view("no-such-job", state)
+    panel = FollowupPanel()
+    panel.apply(view)
+    assert not panel.scan_pages_card.isHidden() and panel.scan_pages_card in panel.issue_cards()
+    assert panel.worst_tone() == "danger" and panel.scan_pages_list.count() == 1
+    asked = []
+    panel.retryRequested.connect(asked.append)
+    panel.scan_pages_button.click()
+    assert asked == ["scan_pages"]
+    panel.apply(adapter.followup_view("no-such-job", core.new_job_state("scan.pdf")))
+    assert panel.scan_pages_card.isHidden()
+    panel.deleteLater()
