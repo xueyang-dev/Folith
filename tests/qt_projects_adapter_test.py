@@ -46,7 +46,8 @@ def test_unsorted_detail_is_a_readonly_summary(env):  # noqa: F811
     names = [t["name"] for t in detail["tasks"]]
     assert "Release notes 4.2.md" in names and len(names) == 3
     notes = next(t for t in detail["tasks"] if t["name"].startswith("Release"))
-    assert (notes["term_count"], notes["locked_count"], notes["more"]) == (4, 3, 0)
+    assert (notes["term_count"], notes["locked_count"], notes["more"]) == (5, 3, 0)
+    assert [t["status"] for t in notes["terms"]].count("pending") == 1     # 候选并进任务自己的术语列表
     assert notes["direction_label"] == "英 → 中"
 
 
@@ -90,3 +91,76 @@ def test_conflict_item_resolves_both_ways(env):  # noqa: F811
     again = adapter.project_detail(ids["device"])
     assert not [i for i in again["review"]["items"] if i.get("kind") == "conflict"]
     assert {t["source"]: t["target"] for t in again["terms"]}["status light"] == "状态指示灯"
+
+
+def _items(adapter, project_id, **kw):
+    return {i["source"]: i for i in adapter.project_detail(project_id, **kw)["review"]["items"]}
+
+
+def test_task_terms_show_up_as_pending_terms_of_the_project(env):  # noqa: F811
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    detail = adapter.project_detail(ids["device"])
+    assert detail["term_counts"] == {"confirmed": 3, "pending": 7, "all": 10}
+    items = _items(adapter, ids["device"])
+    outlet, plug = items["power outlet"], items["smart plug"]
+    assert (outlet["kind"], outlet["basis"], outlet["basis_label"]) == ("task_term", "task", "任务术语表")
+    assert plug["task_status"] == "locked" and outlet["task_status"] == "provisional"
+    # 不写进 project.json：项目术语库里仍然只有已确认的三条。
+    assert len(core.load_project(ids["device"])["glossary"]) == 3
+    # 项目列表角标和术语库的「待审核」同一个数。
+    assert next(p for p in adapter.projects_overview()["projects"]
+                if p["project_id"] == ids["device"])["pending"] == 7
+
+
+def test_a_project_with_only_task_terms_has_a_nonempty_glossary(env):  # noqa: F811
+    from tests.project_language_fixture import add_job
+
+    adapter, core = env["adapter"], env["core"]
+    project = core.create_project("只有任务术语", source_lang="English", target_lang="简体中文")
+    terms = [{"source": "drone", "target": "无人机", "preferred": "无人机", "status": "provisional",
+              "behavior": "translate", "occurrences": [1]}]
+    add_job(core, "t1", "a.pdf", project_id=project["project_id"], terms=terms)
+    detail = adapter.project_detail(project["project_id"])
+    assert detail["terms"] == [] and detail["term_counts"] == {"confirmed": 0, "pending": 1, "all": 1}
+    assert [i["source"] for i in detail["review"]["items"]] == ["drone"]
+
+
+def test_confirming_a_task_term_moves_it_into_the_glossary_in_place(env):  # noqa: F811
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    adapter.accept_review_item(_items(adapter, ids["device"])["power outlet"], "电源插口")
+    detail = adapter.project_detail(ids["device"])
+    assert {t["source"]: t["target"] for t in detail["terms"]}["power outlet"] == "电源插口"
+    assert "power outlet" not in _items(adapter, ids["device"])
+    assert detail["term_counts"]["pending"] == 6
+    # 任务自己的术语表里这条也锁定成了用户确认的译名。
+    entry = next(e for e in core.load_job_state("site-copy")["glossary"] if e["source"] == "power outlet")
+    assert (entry["status"], entry["preferred"]) == ("locked", "电源插口")
+
+
+def test_rejecting_a_task_term_removes_it_but_task_only_is_not_offered(env):  # noqa: F811
+    import pytest
+
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    plug = _items(adapter, ids["device"])["smart plug"]
+    with pytest.raises(adapter.AdapterError):
+        adapter.decide_review_item(plug, "task_only")
+    adapter.decide_review_item(plug, "rejected")
+    assert "smart plug" not in _items(adapter, ids["device"])
+
+
+def test_pending_terms_are_never_injected_into_new_tasks(env):  # noqa: F811
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    pending = set(_items(adapter, ids["device"]))
+    assert {"power outlet", "hub", "status light"} <= pending
+    injected = {e["source"] for e in core.project_injection(
+        ids["device"], target_lang="简体中文")["glossary"]}
+    assert injected == {"firmware update", "status light", "pairing mode"}
+    assert not injected & (pending - {"status light"})
+    # 确认之后才会注入。
+    adapter.accept_review_item(_items(adapter, ids["device"])["power outlet"], "")
+    assert "power outlet" in {e["source"] for e in core.project_injection(
+        ids["device"], target_lang="简体中文")["glossary"]}

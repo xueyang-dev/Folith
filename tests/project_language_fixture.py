@@ -56,7 +56,10 @@ def build(core):
     add_job(core, "help-center", "帮助中心文章.docx", project_id=device_id,
             candidates=[_candidate("motion sensor", "运动传感器", hits=5),
                         _candidate("motion sensors", "运动传感器", hits=2)])
-    add_job(core, "site-copy", "官网产品页文案.md", project_id=device_id)
+    # 任务自己术语表里的条目（暂定 / 已锁定）：还没进项目术语库，在术语库里是「待审核」。
+    add_job(core, "site-copy", "官网产品页文案.md", project_id=device_id,
+            terms=[_term("power outlet", "电源插座", "provisional", occurrences=[1, 2]),
+                   _term("smart plug", "智能插头", occurrences=[1])])
     add_job(core, "letter", "季度投资者信.pdf", project_id=device_id)
     add_job(core, "report-a", "年度报告.docx", project_id=annual["project_id"])
     add_job(core, "arabic", "展会海报文案.docx", project_id=None, source="简体中文",

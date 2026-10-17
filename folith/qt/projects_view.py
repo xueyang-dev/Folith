@@ -30,10 +30,11 @@ from . import prompts
 from . import style as style_module
 from . import theme as theme_module
 
-TABS = (("overview", "概览"), ("terms", "术语库"), ("tm", "翻译记忆"), ("review", "待审核"))
-UNSORTED_TABS = (("terms", "各任务的术语"), ("tm", "共享翻译记忆"), ("review", "待审核"))
-BASIS_FILTERS = (("all", "全部"), ("reviewed", "来自已审校译文"),
-                 ("machine", "来自机器译文"), ("conflict", "和术语库不一致"))
+TABS = (("overview", "概览"), ("terms", "术语库"), ("tm", "翻译记忆"))
+UNSORTED_TABS = (("terms", "各任务的术语"), ("tm", "共享翻译记忆"))
+#: 术语库里「待审核」的来源筛选。
+BASIS_FILTERS = (("all", "全部来源"), ("task", "任务术语表"), ("reviewed", "已审校译文"),
+                 ("machine", "机器译文"), ("conflict", "和术语库不一致"))
 PAGE = 300                                  # 一次最多摆出的行数；筛选始终作用于全部
 
 
@@ -227,6 +228,11 @@ class ProjectsView(QWidget):
         self._selected = ""                 # 项目 id；"unsorted" = 未分类
         self._tab = "overview"
         self._basis = "all"
+        self._term_status = "all"          # 术语库的状态筛选：all / confirmed / pending
+        self._keep_source = ""             # 确认等操作之后重新选中的那一行（按原文）
+        self._term_rows: list[dict] = []
+        self._review_items: list[dict] = []
+        self._review_rows: dict[int, int] = {}
         self._show_singles = False
         self._archived_open = False
         self._review_items: list[dict] = []
@@ -364,7 +370,8 @@ class ProjectsView(QWidget):
             return
         self._selected = key
         self._tab = "terms" if key == "unsorted" else "overview"
-        self._basis, self._show_singles = "all", False
+        self._basis, self._show_singles, self._term_status = "all", False, "all"
+        self._keep_source = ""
         self._fill_nav()
         self._request_detail()
 
@@ -409,9 +416,8 @@ class ProjectsView(QWidget):
         self.page_overview = self._build_overview()
         self.page_terms = self._build_terms()
         self.page_tm = self._build_tm()
-        self.page_review = self._build_review()
         self.page_unsorted_terms = self._build_unsorted_terms()
-        for page in (self.page_overview, self.page_terms, self.page_tm, self.page_review,
+        for page in (self.page_overview, self.page_terms, self.page_tm,
                      self.page_unsorted_terms):
             self.pages.addWidget(page)
         box.addWidget(self.pages, 1)
@@ -452,10 +458,9 @@ class ProjectsView(QWidget):
     def _tab_options(self, detail: dict) -> list[tuple[str, str]]:
         unsorted = self._selected == "unsorted"
         counts = {
-            "terms": len(detail.get("terms") or []) if not unsorted
+            "terms": int((detail.get("term_counts") or {}).get("all") or 0) if not unsorted
             else int(detail.get("term_total") or 0),
             "tm": len(detail.get("tm") or []),
-            "review": int((detail.get("review") or {}).get("total") or 0),
         }
         options = []
         for key, label in (UNSORTED_TABS if unsorted else TABS):
@@ -467,7 +472,6 @@ class ProjectsView(QWidget):
     def _show_tab(self) -> None:
         unsorted = self._selected == "unsorted"
         target = {"overview": self.page_overview, "tm": self.page_tm,
-                  "review": self.page_review,
                   "terms": self.page_unsorted_terms if unsorted else self.page_terms}[self._tab]
         self.pages.setCurrentWidget(target)
 
@@ -494,7 +498,6 @@ class ProjectsView(QWidget):
             self.export_button.setText(i18n.tr('导出…'))
             self._fill_unsorted_terms()
             self._fill_tm()
-            self._fill_review()
         else:
             project = self._detail.get("project") or {}
             self.title.setText(str(project.get("name") or ""))
@@ -507,7 +510,6 @@ class ProjectsView(QWidget):
             self._fill_overview()
             self._fill_terms()
             self._fill_tm()
-            self._fill_review()
         self._show_tab()
 
     # ================= 概览 =================
@@ -574,12 +576,12 @@ class ProjectsView(QWidget):
             self.overview_box.addWidget(self._notice_row(
                 i18n.tr('语言方向是按这个项目里的任务推断的（{v0}）。', v0=_dir(project["direction_label"])),
                 i18n.tr('确认方向…'), self._set_direction))
-        review_total = int((detail.get("review") or {}).get("total") or 0)
+        review_total = int((detail.get("term_counts") or {}).get("pending") or 0)
         stats = (
-            (i18n.tr('术语库'), str(len(detail.get("terms") or [])), i18n.tr('新任务自动使用'), "terms"),
+            (i18n.tr('术语库'), str(len(detail.get("terms") or [])), i18n.tr('已确认，新任务自动使用'), "terms"),
             (i18n.tr('翻译记忆'), str(len(detail.get("tm") or [])), i18n.tr('已审校的句对'), "tm"),
             (i18n.tr('待审核'), str(review_total),
-             i18n.tr('来自 {v0} 个任务', v0=detail.get("review_tasks", 0)), "review"),
+             i18n.tr('来自 {v0} 个任务', v0=detail.get("review_tasks", 0)), "pending"),
             (i18n.tr('风格规则'), str(detail.get("style_rule_count", 0)), i18n.tr('审校中确认'), ""))
         self.stat_grid = _Reflow([self._stat_tile(*stat) for stat in stats],
                                  min_item=150, allowed=(4, 2, 1))
@@ -605,8 +607,10 @@ class ProjectsView(QWidget):
         box.addWidget(number)
         box.addWidget(_text(hint, "time"))
         if target:
-            tile.mousePressEvent = lambda _e, key=target: self.tab_bar.set_value(key) \
-                or self._tab_changed(key)
+            tile.mousePressEvent = lambda _e, key=target: self._open_terms(
+                "pending" if key == "pending" else "all")
+        if target == "tm":
+            tile.mousePressEvent = lambda _e: self.tab_bar.set_value("tm") or self._tab_changed("tm")
         return tile
 
     def _tasks_card(self) -> QWidget:
@@ -662,12 +666,21 @@ class ProjectsView(QWidget):
         box.addStretch(1)
         return card
 
-    def _open_conflicts(self) -> None:
-        self._basis = "conflict"
-        self._tab = "review"
-        self._request_detail()
+    def _open_terms(self, status: str, basis: str = "all") -> None:
+        """跳到术语库，并打开某个状态 / 来源筛选（「待审核」统计卡、冲突提示条用）。"""
+        self._tab, self._term_status = "terms", status
+        if basis != self._basis:
+            self._basis = basis
+            self._request_detail()
+            return
+        self.tab_bar.set_value("terms")
+        self._fill_terms()
+        self._show_tab()
 
-    # ================= 术语库 =================
+    def _open_conflicts(self) -> None:
+        self._open_terms("pending", "conflict")
+
+    # ================= 术语库（已确认 + 待审核，一张表） =================
     def _build_terms(self) -> QWidget:
         page = QWidget()
         box = QVBoxLayout(page)
@@ -679,8 +692,6 @@ class ProjectsView(QWidget):
         self.term_query.setClearButtonEnabled(True)
         self.term_query.textChanged.connect(lambda _t: self._fill_terms())
         bar.addWidget(self.term_query, 1)
-        self.term_note = _elide("", "time")
-        bar.addWidget(self.term_note)
         self.term_import = QPushButton(i18n.tr('从文件导入…'))
         self.term_import.setToolTip(i18n.tr('导入别处导出的项目记忆文件（只增不改）'))
         self.term_import.clicked.connect(lambda: self._import_memory())
@@ -691,17 +702,49 @@ class ProjectsView(QWidget):
         bar.addWidget(self.term_import)
         bar.addWidget(self.term_add)
         box.addLayout(bar)
-        self.term_table = _table([i18n.tr('原文'), i18n.tr('译名'), i18n.tr('领域'),
-                                  i18n.tr('怎么来的'), i18n.tr('用到')])
-        terms_header = self.term_table.horizontalHeader()
-        terms_header.setStretchLastSection(False)
-        terms_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        terms_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        terms_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        terms_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        terms_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+
+        filters = QHBoxLayout()
+        self.term_filter = style_module.SegmentedControl([("all", "")])
+        self.term_filter.changed.connect(self._term_filter_changed)
+        filters.addWidget(self.term_filter)
+        self.basis_combo = style_module.ComboBox()
+        self.basis_combo.setAccessibleName(i18n.tr('待审核的来源'))
+        self.basis_combo.activated.connect(lambda _i: self._basis_changed(self.basis_combo.currentData()))
+        filters.addWidget(self.basis_combo)
+        filters.addStretch(1)
+        box.addLayout(filters)
+        self.term_note = _text("", "time", wrap=True)
+        box.addWidget(self.term_note)
+        self.batch_button = QPushButton(i18n.tr('批量确认…'))
+        self.batch_button.clicked.connect(self._batch_accept)
+        self.singles_button = QPushButton("")
+        style_module.set_button(self.singles_button, "plain", small=True)
+        self.singles_button.clicked.connect(self._toggle_singles)
+        actions_row = QHBoxLayout()
+        actions_row.addWidget(self.singles_button)
+        actions_row.addStretch(1)
+        actions_row.addWidget(self.batch_button)
+        box.addLayout(actions_row)
+
+        self.term_table = _table(["", i18n.tr('原文'), i18n.tr('译名'), i18n.tr('状态'),
+                                  i18n.tr('来源'), i18n.tr('出现')])
+        header = self.term_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.term_table.setColumnWidth(0, 40)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.term_table.setColumnWidth(3, 84)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.term_table.setColumnWidth(4, 132)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.term_table.itemSelectionChanged.connect(self._term_selected)
         box.addWidget(self.term_table, 1)
+        self.term_none = _text(i18n.tr('没有符合条件的术语。'), "meta")
+        box.addWidget(self.term_none)
+
+        # 已确认的行：详情 + 编辑 / 移除。
         self.term_detail = style_module.Card()
         detail = QVBoxLayout(self.term_detail)
         detail.setContentsMargins(16, 10, 16, 10)
@@ -720,9 +763,53 @@ class ProjectsView(QWidget):
         actions.addStretch(1)
         detail.addLayout(actions)
         box.addWidget(self.term_detail)
+
+        # 待审核的行：译名可改，确认 / 只用于这个任务 / 不是术语。
+        self.review_detail = style_module.Card()
+        review = QVBoxLayout(self.review_detail)
+        review.setContentsMargins(16, 10, 16, 10)
+        review.setSpacing(6)
+        head = QHBoxLayout()
+        self.detail_title = _text("", "name")
+        self.detail_meta = _elide("", "time")
+        head.addWidget(self.detail_title)
+        head.addWidget(self.detail_meta, 1)
+        review.addLayout(head)
+        self.detail_context = _text("", "body", wrap=True)
+        self.detail_context.setTextFormat(Qt.TextFormat.RichText)
+        review.addWidget(self.detail_context)
+        review_actions = QHBoxLayout()
+        review_actions.setSpacing(8)
+        self.name_label = _text(i18n.tr('译名'), "label")
+        self.name_edit = QLineEdit()
+        self.name_edit.setMinimumWidth(80)
+        self.accept_button = QPushButton(i18n.tr('确认'))
+        style_module.set_button(self.accept_button, "primary")
+        self.task_button = QPushButton(i18n.tr('只用于这个任务'))
+        self.look_button = QPushButton(i18n.tr('看原文'))
+        style_module.set_button(self.look_button, "plain")
+        self.reject_button = QPushButton(i18n.tr('不是术语'))
+        style_module.set_button(self.reject_button, "danger")
+        self.accept_button.clicked.connect(self._accept_current)
+        self.task_button.clicked.connect(lambda: self._decide_current("task_only"))
+        self.reject_button.clicked.connect(lambda: self._decide_current("rejected"))
+        self.look_button.clicked.connect(self._look)
+        review_actions.addWidget(self.name_label)
+        review_actions.addWidget(self.name_edit, 1)
+        review_actions.addWidget(self.accept_button)
+        review.addLayout(review_actions)
+        more_actions = QHBoxLayout()
+        more_actions.setSpacing(8)
+        more_actions.addWidget(self.task_button)
+        more_actions.addStretch(1)
+        more_actions.addWidget(self.look_button)
+        more_actions.addWidget(self.reject_button)
+        review.addLayout(more_actions)
+        box.addWidget(self.review_detail)
+
         self.term_empty = style_module.EmptyState(
             icon="termbase", page=True, title=i18n.tr('术语库是空的'),
-            hint=i18n.tr('在待审核里收进候选，或者手动添加；新任务会自动使用。'),
+            hint=i18n.tr('任务里出现的术语会先在这里等你确认；也可以手动添加。'),
             action=i18n.tr('添加术语…'))
         self.term_empty.actionTriggered.connect(lambda: self._add_term())
         box.addWidget(self.term_empty, 1)
@@ -730,49 +817,186 @@ class ProjectsView(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
-        # 窄窗口：「怎么来的」让位给原文 / 译名（来源在下方的详情里仍可看到）。
-        self.term_table.setColumnHidden(3, event.size().width() < 232 + 620)
+        # 窄窗口：「来源」让位给原文 / 译名（来源在下方的详情里仍可看到）。
+        self.term_table.setColumnHidden(4, event.size().width() < 232 + 620)
+
+    def _term_filter_changed(self, key: str) -> None:
+        if not key or key == self._term_status:
+            return
+        self._term_status = key
+        if key != "pending" and self._basis != "all":
+            self._basis = "all"
+            self._request_detail()
+            return
+        self._fill_terms()
+
+    def _term_entries(self) -> list[dict]:
+        """表里的全部行（未筛选）：已确认的术语 + 待审核项，按原文排序，确认后行不会跳位。"""
+        entries = [{"kind": "confirmed", "source": t["source"], "term": t}
+                   for t in self._detail.get("terms") or []]
+        entries += [{"kind": "pending", "source": i["source"], "item": i}
+                    for i in (self._detail.get("review") or {}).get("items") or []]
+        entries.sort(key=lambda e: (e["source"].casefold(), e["kind"]))
+        return entries
 
     def _fill_terms(self) -> None:
-        terms = self._detail.get("terms") or []
-        needle = self.term_query.text().strip().casefold()
-        rows = [t for t in terms if not needle or needle in " ".join(
-            [t["source"], t["target"], t["domain"]]).casefold()]
-        self._term_rows = rows[:PAGE]
-        project = self._detail.get("project") or {}
-        self.term_note.setText(i18n.tr('已锁定，新任务（{v0}）会自动使用',
-                                       v0=_dir(project.get("direction_label") or i18n.tr('未设定'))))
-        self.term_table.setRowCount(len(self._term_rows))
-        for r, term in enumerate(self._term_rows):
-            origin = i18n.tr_dynamic(term["origin_text"])
-            if term["origin_job"]:
-                origin += " · " + term["origin_job"].rsplit(".", 1)[0]
-            used = (i18n.tr('{v0} 个任务 · {v1} 处', v0=len(term["used_tasks"]), v1=term["used_total"])
-                    if term["used_tasks"] else i18n.tr('尚未用到'))
-            for c, value in enumerate((term["source"], term["target"], term["domain"], origin, used)):
-                self.term_table.setItem(r, c, _cell(value))
-        has = bool(terms)
-        for widget in (self.term_table, self.term_query, self.term_detail):
-            widget.setVisible(has)
-        self.term_empty.setVisible(not has)
-        if self._term_rows:
-            self.term_table.selectRow(0)
-        self._term_selected()
+        detail = self._detail
+        counts = detail.get("term_counts") or {}
+        review = detail.get("review") or {}
+        confirmed, pending = int(counts.get("confirmed") or 0), int(counts.get("pending") or 0)
+        options = [("all", i18n.tr('全部') + f"  {confirmed + pending}"),
+                   ("confirmed", i18n.tr('已确认') + f"  {confirmed}"),
+                   ("pending", i18n.tr('待审核') + f"  {pending}")]
+        self.term_filter.set_options(options)
+        self.term_filter.set_value(self._term_status)
+        # 来源下拉：只在看「待审核」时出现，数字取自收起之后的各来源条数。
+        self.basis_combo.blockSignals(True)
+        self.basis_combo.clear()
+        by_basis = review.get("counts") or {}
+        for key, label in BASIS_FILTERS:
+            self.basis_combo.addItem(
+                i18n.tr_dynamic(label) + f"  {by_basis.get(key, 0)}", key)
+        self.basis_combo.setCurrentIndex(max(0, self.basis_combo.findData(self._basis)))
+        self.basis_combo.blockSignals(False)
+        in_pending = self._term_status == "pending"
+        self.basis_combo.setVisible(in_pending)
+        collapsed = int(review.get("collapsed") or 0)
+        self.singles_button.setVisible(bool(collapsed) or self._show_singles)
+        self.singles_button.setText(
+            i18n.tr('显示只出现过 1 次的 {v0} 条', v0=collapsed) if not self._show_singles
+            else i18n.tr('收起只出现过 1 次的'))
+        project = detail.get("project") or {}
+        self.term_note.setText(i18n.tr(
+            '已确认的术语会自动用于新任务（{v0}）；待审核的确认后才会用',
+            v0=_dir(project.get("direction_label") or i18n.tr('未设定'))))
 
-    def selected_term(self) -> dict:
+        needle = self.term_query.text().strip().casefold()
+        status = self._term_status
+        rows = []
+        for entry in self._term_entries():
+            if status != "all" and entry["kind"] != status:
+                continue
+            if needle:
+                data = entry.get("term") or entry["item"]
+                hay = " ".join([entry["source"], str(data.get("target") or ""),
+                                str(data.get("domain") or "")]).casefold()
+                if needle not in hay:
+                    continue
+            rows.append(entry)
+        keep = self._keep_source
+        self._term_rows = rows[:PAGE]
+        self._review_items = [e["item"] for e in self._term_rows if e["kind"] == "pending"]
+        self._review_rows = {}
+        table = self.term_table
+        table.blockSignals(True)
+        table.setRowCount(len(self._term_rows))
+        for r, entry in enumerate(self._term_rows):
+            self._fill_term_row(r, entry)
+        table.blockSignals(False)
+        has_any = bool(confirmed or pending or collapsed)
+        for widget in (table, self.term_query, self.term_filter):
+            widget.setVisible(has_any)
+        self.term_note.setVisible(has_any)
+        self.term_empty.setVisible(not has_any)
+        self.term_none.setVisible(has_any and not self._term_rows)
+        self.batch_button.setVisible(any(e["kind"] == "pending" for e in self._term_rows)
+                                     and bool(project))
+        if self._term_rows:
+            index = next((i for i, e in enumerate(self._term_rows) if e["source"] == keep), 0)
+            table.selectRow(index)
+        self._keep_source = ""
+        self._term_selected()
+        self._sync_batch()
+
+    def _fill_term_row(self, r: int, entry: dict) -> None:
+        table = self.term_table
+        pending = entry["kind"] == "pending"
+        if pending:
+            item = entry["item"]
+            source = item["source"] + (
+                "  · " + " · ".join(item["variants"]) if item.get("variants") else "")
+            check = style_module.CheckBox("")
+            check.setFixedSize(20, 20)
+            check.setAccessibleName(i18n.tr('选择 {v0}', v0=item["source"]))
+            check.toggled.connect(lambda _c: self._sync_batch())
+            holder = QWidget()
+            holder.setObjectName("transparent")
+            lay = QHBoxLayout(holder)
+            lay.setContentsMargins(10, 0, 0, 0)
+            lay.addWidget(check)
+            table.setCellWidget(r, 0, holder)
+            self._review_rows[r] = self._review_items.index(item)
+            target, tone = item["target"], {"conflict": "warn"}.get(item["basis"], "info")
+            status, origin = i18n.tr('待审核'), i18n.tr_dynamic(item["basis_label"])
+            if item["basis"] == "conflict":
+                status = i18n.tr('待审核')
+            hits = str(item["hits"]) if item.get("positions_known") or item.get("kind") != "conflict" else "—"
+        else:
+            term = entry["term"]
+            source, target, tone = term["source"], term["target"], "ok"
+            status, origin = i18n.tr('已确认'), i18n.tr_dynamic(term["origin_text"])
+            hits = str(term["used_total"]) if term["used_tasks"] else "—"
+        table.setItem(r, 0, QTableWidgetItem(""))
+        table.setItem(r, 1, _cell(source))
+        table.setItem(r, 2, _cell(target))
+        chip_host = QWidget()
+        chip_host.setObjectName("transparent")
+        chip_lay = QHBoxLayout(chip_host)
+        chip_lay.setContentsMargins(0, 0, 6, 0)
+        chip_lay.addWidget(style_module.Chip(status, tone))
+        chip_lay.addStretch(1)
+        table.setCellWidget(r, 3, chip_host)
+        table.setItem(r, 3, QTableWidgetItem(""))
+        table.setItem(r, 4, _cell(origin))
+        count = QTableWidgetItem(hits)
+        count.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        table.setItem(r, 5, count)
+
+    def selected_entry(self) -> dict:
         row = self.term_table.currentRow()
         return self._term_rows[row] if 0 <= row < len(self._term_rows) else {}
 
+    def selected_term(self) -> dict:
+        entry = self.selected_entry()
+        return entry.get("term") or {} if entry.get("kind") == "confirmed" else {}
+
+    def selected_review_item(self) -> dict:
+        entry = self.selected_entry()
+        return entry.get("item") or {} if entry.get("kind") == "pending" else {}
+
+    def checked_review_items(self) -> list[dict]:
+        table = self.term_table
+        out = []
+        for row, index in self._review_rows.items():
+            holder = table.cellWidget(row, 0)
+            box = holder.findChild(style_module.CheckBox) if holder else None
+            if box is not None and box.isChecked():
+                out.append(self._review_items[index])
+        return out
+
+    def _sync_batch(self) -> None:
+        count = len(self.checked_review_items())
+        self.batch_button.setText(i18n.tr('批量确认 {v0} 条…', v0=count) if count
+                                  else i18n.tr('批量确认…'))
+
     def _term_selected(self) -> None:
         self._clear(self.term_detail_body)
-        term = self.selected_term()
-        self.term_detail.setVisible(bool(term) and bool(self._detail.get("terms")))
-        if not term:
+        entry = self.selected_entry()
+        confirmed = entry.get("kind") == "confirmed"
+        pending = entry.get("kind") == "pending"
+        self.term_detail.setVisible(confirmed)
+        self.review_detail.setVisible(pending)
+        if pending:
+            self._review_selected()
+        if not confirmed:
             return
+        term = entry["term"]
         origin = i18n.tr_dynamic(term["origin_text"])
         if term["origin_job"]:
             origin += " · " + term["origin_job"].rsplit(".", 1)[0]
         lines = [(i18n.tr('怎么来的'), origin)]
+        if term["domain"]:
+            lines.append((i18n.tr('领域'), term["domain"]))
         if term["forbidden"]:
             lines.append((i18n.tr('不要译成'), "、".join(term["forbidden"])))
         if term["note"]:
@@ -902,6 +1126,17 @@ class ProjectsView(QWidget):
         self.unsorted_box.addWidget(style_module.NoticeStrip(
             i18n.tr('这些术语各归各的任务，不会用到别的任务上；这里只是汇总给你查看和导出。'),
             tone="info"))
+        collapsed = int((self._detail.get("review") or {}).get("collapsed") or 0)
+        if collapsed or self._show_singles:
+            self.unsorted_singles = QPushButton(
+                i18n.tr('显示只出现过 1 次的 {v0} 条', v0=collapsed) if not self._show_singles
+                else i18n.tr('收起只出现过 1 次的'))
+            style_module.set_button(self.unsorted_singles, "plain", small=True)
+            self.unsorted_singles.clicked.connect(self._toggle_singles)
+            row = QHBoxLayout()
+            row.addWidget(self.unsorted_singles)
+            row.addStretch(1)
+            self.unsorted_box.addLayout(row)
         tasks = self._detail.get("tasks") or []
         if not tasks:
             self.unsorted_box.addWidget(style_module.EmptyState(
@@ -953,225 +1188,53 @@ class ProjectsView(QWidget):
         grid.setColumnStretch(1, 5)
         grid.setColumnStretch(2, 2)
         grid.setColumnMinimumWidth(2, 84)
+        grid.setColumnMinimumWidth(0, 40)
+        grid.setColumnMinimumWidth(1, 40)
         grid.setColumnMinimumWidth(3, 32)
         for r, term in enumerate(task["terms"], start=1):
-            grid.addWidget(_text(term["source"], "name"), r, 0)
-            grid.addWidget(_text(term["target"], "body"), r, 1)
-            locked = term["status"] == "locked"
-            grid.addWidget(components.StatusLabel(
-                i18n.tr('已锁定') if locked else i18n.tr('暂定'), "done" if locked else "idle"), r, 2)
+            grid.addWidget(_elide(term["source"], "name"), r, 0)
+            grid.addWidget(_elide(term["target"], "body"), r, 1)
+            if term["status"] == "pending":
+                label, tone = i18n.tr('待审核'), "attention"
+            elif term["status"] == "locked":
+                label, tone = i18n.tr('已锁定'), "done"
+            else:
+                label, tone = i18n.tr('暂定'), "idle"
+            status = components.StatusLabel(label, tone)
+            if term["status"] == "pending":
+                status.setToolTip(i18n.tr_dynamic(term.get("basis_label") or ""))
+            grid.addWidget(status, r, 2)
             grid.addWidget(_text(str(term["hits"]), "meta"), r, 3, Qt.AlignmentFlag.AlignRight)
+            if term["status"] == "pending":
+                keep = QPushButton(i18n.tr('只用于此任务'))
+                style_module.set_button(keep, "plain", small=True)
+                keep.setToolTip(i18n.tr('只用于这个任务'))
+                keep.clicked.connect(lambda _c=False, i=term["item"]: self.decideRequested.emit(i, "task_only"))
+                grid.addWidget(keep, r, 4)
         box.addLayout(grid)
         if task["more"]:
             box.addWidget(_text("  " + i18n.tr('还有 {v0} 条', v0=task["more"]), "time"))
         return card
 
-    # ================= 待审核 =================
-    def _build_review(self) -> QWidget:
-        page = QWidget()
-        box = QVBoxLayout(page)
-        box.setContentsMargins(0, 0, 0, 0)
-        box.setSpacing(8)
-        bar = QHBoxLayout()
-        self.basis_bar = style_module.SegmentedControl([("all", "")])
-        self.basis_bar.changed.connect(self._basis_changed)
-        bar.addWidget(self.basis_bar)
-        bar.addStretch(1)
-        box.addLayout(bar)
-        note_row = QHBoxLayout()
-        self.review_note = _elide("", "time")
-        self.batch_button = QPushButton(i18n.tr('批量收进…'))
-        self.batch_button.clicked.connect(self._batch_accept)
-        self.singles_button = QPushButton("")
-        style_module.set_button(self.singles_button, "plain", small=True)
-        self.singles_button.clicked.connect(self._toggle_singles)
-        note_row.addWidget(self.review_note, 1)
-        note_row.addWidget(self.singles_button)
-        note_row.addWidget(self.batch_button)
-        box.addLayout(note_row)
-        self.review_tree = _table(["", i18n.tr('候选'), i18n.tr('建议译法'),
-                                   i18n.tr('依据'), i18n.tr('出现')])
-        header = self.review_tree.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.review_tree.setColumnWidth(0, 44)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.review_tree.setColumnWidth(3, 124)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.review_tree.itemSelectionChanged.connect(self._review_selected)
-        box.addWidget(self.review_tree, 1)
-
-        self.review_detail = style_module.Card()
-        detail = QVBoxLayout(self.review_detail)
-        detail.setContentsMargins(16, 10, 16, 10)
-        detail.setSpacing(6)
-        head = QHBoxLayout()
-        self.detail_title = _text("", "name")
-        self.detail_meta = _text("", "time")
-        head.addWidget(self.detail_title)
-        head.addWidget(self.detail_meta, 1)
-        detail.addLayout(head)
-        self.detail_context = _text("", "body", wrap=True)
-        self.detail_context.setTextFormat(Qt.TextFormat.RichText)
-        detail.addWidget(self.detail_context)
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
-        self.name_label = _text(i18n.tr('译名'), "label")
-        self.name_edit = QLineEdit()
-        self.name_edit.setMinimumWidth(160)
-        self.accept_button = QPushButton(i18n.tr('收进术语库'))
-        style_module.set_button(self.accept_button, "primary")
-        self.task_button = QPushButton(i18n.tr('只用于这个任务'))
-        self.look_button = QPushButton(i18n.tr('看原文'))
-        style_module.set_button(self.look_button, "plain")
-        self.reject_button = QPushButton(i18n.tr('不是术语'))
-        style_module.set_button(self.reject_button, "danger")
-        self.accept_button.clicked.connect(self._accept_current)
-        self.task_button.clicked.connect(lambda: self._decide_current("task_only"))
-        self.reject_button.clicked.connect(lambda: self._decide_current("rejected"))
-        self.look_button.clicked.connect(self._look)
-        self.name_edit.setMinimumWidth(80)
-        actions.addWidget(self.name_label)
-        actions.addWidget(self.name_edit, 1)
-        actions.addWidget(self.accept_button)
-        detail.addLayout(actions)
-        more_actions = QHBoxLayout()
-        more_actions.setSpacing(8)
-        more_actions.addWidget(self.task_button)
-        more_actions.addStretch(1)
-        more_actions.addWidget(self.look_button)
-        more_actions.addWidget(self.reject_button)
-        detail.addLayout(more_actions)
-        box.addWidget(self.review_detail)
-        self.review_empty = style_module.EmptyState(
-            icon="sparkles", page=True, title=i18n.tr('没有待审核的候选词条'),
-            hint=i18n.tr('翻译中发现的新术语会出现在这里，由你决定是否收进术语库。'))
-        box.addWidget(self.review_empty, 1)
-        return page
-
+    # ================= 待审核行的动作（都在术语库的行与详情里） =================
     def _basis_changed(self, key: str) -> None:
         if key and key != self._basis:
             self._basis = key
+            self._keep_source = self.selected_entry().get("source", "")
             self._request_detail()
 
     def _toggle_singles(self) -> None:
         self._show_singles = not self._show_singles
         self._request_detail()
 
-    def _fill_review(self) -> None:
-        review = self._detail.get("review") or {}
-        counts = review.get("counts") or {}
-        unsorted = self._selected == "unsorted"
-        options = []
-        for key, label in BASIS_FILTERS:
-            if unsorted and key == "conflict":
-                continue
-            options.append((key, f"{i18n.tr_dynamic(label)}  {counts.get(key, 0)}"))
-        self.basis_bar.set_options(options)
-        self.basis_bar.set_value(self._basis if self._basis in dict(options) else "all")
-        collapsed = int(review.get("collapsed") or 0)
-        self.review_note.setText(
-            i18n.tr('词形变体已合并（hub / hubs 算一条）') + (
-                " · " + i18n.tr('只出现过 1 次的 {v0} 条已收起', v0=collapsed)
-                if collapsed and not self._show_singles else ""))
-        self.singles_button.setVisible(bool(collapsed) or self._show_singles)
-        self.singles_button.setText(i18n.tr('显示') if not self._show_singles else i18n.tr('收起'))
-        table = self.review_tree
-        table.blockSignals(True)
-        table.clearSpans()
-        table.setRowCount(0)
-        self._review_items = []
-        self._review_rows: dict[int, int] = {}          # 表格行 -> 待审核项下标
-        first_row = -1
-        for document, items in review.get("groups") or []:
-            row = table.rowCount()
-            table.insertRow(row)
-            table.setSpan(row, 0, 1, 5)
-            head = QTableWidgetItem(f"{document}    {i18n.tr('{v0} 条', v0=len(items))}")
-            head.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            font = head.font()
-            font.setBold(True)
-            head.setFont(font)
-            head.setIcon(icons.icon("file-text", 16, "text-secondary"))
-            table.setItem(row, 0, head)
-            for item in items[:PAGE]:
-                row = table.rowCount()
-                table.insertRow(row)
-                source = item["source"] + (
-                    "  · " + " · ".join(item["variants"]) if item.get("variants") else "")
-                check = style_module.CheckBox("")
-                check.setFixedSize(20, 20)
-                check.setAccessibleName(i18n.tr('选择 {v0}', v0=item["source"]))
-                check.toggled.connect(lambda _c: self._sync_batch())
-                holder = QWidget()
-                holder.setObjectName("transparent")
-                lay = QHBoxLayout(holder)
-                lay.setContentsMargins(12, 0, 0, 0)
-                lay.addWidget(check)
-                table.setCellWidget(row, 0, holder)
-                table.setItem(row, 0, QTableWidgetItem(""))
-                table.setItem(row, 1, _cell(source))
-                table.setItem(row, 2, _cell(item["target"]))
-                tone = {"reviewed": "ok", "machine": "muted", "conflict": "warn"}[item["basis"]]
-                chip_host = QWidget()
-                chip_host.setObjectName("transparent")
-                chip_lay = QHBoxLayout(chip_host)
-                chip_lay.setContentsMargins(0, 0, 8, 0)
-                chip_lay.addWidget(style_module.Chip(i18n.tr_dynamic(item["basis_label"]), tone))
-                chip_lay.addStretch(1)
-                table.setCellWidget(row, 3, chip_host)
-                table.setItem(row, 3, QTableWidgetItem(""))
-                hits = QTableWidgetItem(str(item["hits"]) if item.get("positions_known") or item.get("kind") != "conflict" else "—")
-                hits.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                table.setItem(row, 4, hits)
-                self._review_rows[row] = len(self._review_items)
-                self._review_items.append(item)
-                if first_row < 0:
-                    first_row = row
-        table.blockSignals(False)
-        has = bool(review.get("total")) or bool(collapsed)
-        shown = bool(self._review_items)
-        self.review_tree.setVisible(shown)
-        self.review_detail.setVisible(shown)
-        self.review_empty.setVisible(not has)
-        if has and not shown:
-            self.review_empty.setVisible(False)
-        self.basis_bar.setVisible(has)
-        self.batch_button.setVisible(shown and not unsorted)
-        if first_row >= 0:
-            table.selectRow(first_row)
-        self._review_selected()
-        self._sync_batch()
-
-    def selected_review_item(self) -> dict:
-        index = self._review_rows.get(self.review_tree.currentRow())
-        return self._review_items[index] if index is not None else {}
-
-    def checked_review_items(self) -> list[dict]:
-        table = self.review_tree
-        out = []
-        for row, index in self._review_rows.items():
-            holder = table.cellWidget(row, 0)
-            box = holder.findChild(style_module.CheckBox) if holder else None
-            if box is not None and box.isChecked():
-                out.append(self._review_items[index])
-        return out
-
-    def _sync_batch(self) -> None:
-        count = len(self.checked_review_items())
-        self.batch_button.setText(i18n.tr('批量收进 {v0} 条…', v0=count) if count
-                                  else i18n.tr('批量收进…'))
-
     def _review_selected(self) -> None:
         item = self.selected_review_item()
-        unsorted = self._selected == "unsorted"
         self.review_detail.setVisible(bool(item))
         if not item:
             return
         conflict = item.get("basis") == "conflict"
-        title = item["source"]
+        task_term = item.get("kind") == "task_term"
+        documents = [d.rsplit(".", 1)[0] for d in item.get("documents") or []]
         meta = []
         if item.get("variants"):
             meta.append(i18n.tr('也写作 {v0}', v0=" / ".join(item["variants"])))
@@ -1179,12 +1242,18 @@ class ProjectsView(QWidget):
             meta.append(i18n.tr('{v0} 处', v0=item["hits"]))
         meta.append(i18n.tr('来自{v0}', v0=i18n.tr_dynamic(item["basis_label"]))
                     if not conflict else i18n.tr_dynamic(item["basis_label"]))
-        self.detail_title.setText(title)
+        if len(documents) == 1:
+            meta.append(documents[0])
+        elif documents:
+            meta.append(i18n.tr('{v0} 个任务', v0=len(documents)))
+        self.detail_title.setText(item["source"])
         self.detail_meta.setText(" · ".join(meta))
         context = ""
         if conflict:
-            context = i18n.tr('项目术语库里是「{v0}」，这里建议「{v1}」。收进会改用新译名；保留则什么都不变。',
+            context = i18n.tr('项目术语库里是「{v0}」，这里建议「{v1}」。确认会改用新译名；保留则什么都不变。',
                               v0=item.get("local", ""), v1=item["target"])
+        elif task_term:
+            context = i18n.tr('这是任务自己术语表里的条目，确认后才会进入项目术语库、用于新任务。')
         elif item.get("source_context"):
             context = f"{_escape(item['source_context'])} → {_escape(item.get('target_context') or '')}"
             context = context.replace(_escape(item["source"]), f"<b>{_escape(item['source'])}</b>")
@@ -1192,34 +1261,29 @@ class ProjectsView(QWidget):
         self.detail_context.setText(context)
         self.detail_context.setVisible(bool(context))
         self.name_edit.setText(item["target"])
-        project_review = not unsorted
         for widget in (self.name_label, self.name_edit):
-            widget.setVisible(project_review and not conflict)
+            widget.setVisible(not conflict)
         if conflict:
             self.accept_button.setText(i18n.tr('改用「{v0}」', v0=item["target"]))
             self.task_button.setText(i18n.tr('保留原译名'))
-        elif unsorted:
-            self.accept_button.setText(i18n.tr('只用于这个任务'))
-            self.task_button.setVisible(False)
         else:
-            self.accept_button.setText(i18n.tr('收进术语库'))
+            self.accept_button.setText(i18n.tr('确认'))
             self.task_button.setText(i18n.tr('只用于这个任务'))
-        self.task_button.setVisible(not unsorted)
+        # 任务术语本来就只在这个任务里，没有「只用于这个任务」可选。
+        self.task_button.setVisible(not task_term)
         self.reject_button.setVisible(not conflict)
         self.look_button.setVisible(bool(item.get("job_id")) and not conflict)
 
     def _accept_current(self) -> None:
         item = self.selected_review_item()
-        if not item:
-            return
-        if self._selected == "unsorted":
-            self.decideRequested.emit(item, "task_only")
-        else:
+        if item:
+            self._keep_source = item["source"]
             self.acceptRequested.emit(item, self.name_edit.text().strip())
 
     def _decide_current(self, decision: str) -> None:
         item = self.selected_review_item()
         if item:
+            self._keep_source = item["source"]
             self.decideRequested.emit(item, "keep" if item.get("kind") == "conflict" else decision)
 
     def _look(self) -> None:
@@ -1229,12 +1293,16 @@ class ProjectsView(QWidget):
         member = (item.get("members") or [item])[0]
         entries = member.get("position_entries") or []
         index = entries[0]["index"] if entries else member.get("first_observed_segment")
-        self.openJobRequested.emit(str(item["job_id"]), int(index) if isinstance(index, int) else -1)
+        if index is None and member.get("occurrences"):
+            index = member["occurrences"][0]
+        self.openJobRequested.emit(str(member.get("job_id") or item["job_id"]),
+                                   int(index) if isinstance(index, int) else -1)
 
     def _batch_accept(self) -> None:
         items = self.checked_review_items()
         if not items:
-            items = [i for i in self._review_items if i["basis"] == "reviewed"]
+            # 没勾选时：把依据可靠的（已审校译文、任务术语表）一起确认；机器译文要自己勾。
+            items = [i for i in self._review_items if i["basis"] in ("reviewed", "task")]
         if items:
             self.batchAcceptRequested.emit(items)
 

@@ -354,7 +354,7 @@ def test_seen_once_candidates_collapse_but_conflicts_stay():
             cand("clash", "冲突", hits=1, conflict=True)]
     view = assets.review_view(rows)
     assert view["collapsed"] == 1 and view["total"] == 2
-    assert view["counts"] == {"all": 2, "reviewed": 1, "machine": 0, "conflict": 1}
+    assert view["counts"] == {"all": 2, "task": 0, "reviewed": 1, "machine": 0, "conflict": 1}
     assert assets.review_view(rows, show_singles=True)["total"] == 3
     only = assets.review_view(rows, basis="conflict")
     assert [r["source"] for r in only["items"]] == ["clash"]

@@ -112,7 +112,19 @@ def test_project_tabs_empty_out_cleanly(app):
                                   "items": []}})
     assert view.term_table.isHidden() and not view.term_empty.isHidden()
     assert view.tm_table.isHidden() and not view.tm_empty.isHidden()
-    assert view.review_tree.isHidden() and not view.review_empty.isHidden()
+    assert view.review_detail.isHidden()
+    # 只要有待审核的术语，术语库就不是空的：空状态只在真的一条都没有时出现。
+    item = {"source": "drone", "target": "无人机", "basis": "task", "basis_label": "任务术语表",
+            "kind": "task_term", "hits": 1, "variants": [], "documents": ["a.pdf"], "job_id": "j1",
+            "positions_known": True}
+    view.apply_detail({"project": {"project_id": "p1", "name": "空项目", "direction_label": "未设定",
+                                   "description": ""},
+                       "terms": [], "tm": [], "tasks": [], "log": [], "style_rule_count": 0,
+                       "conflict_count": 0, "review_tasks": 1,
+                       "term_counts": {"confirmed": 0, "pending": 1, "all": 1},
+                       "review": {"groups": [], "collapsed": 0, "counts": {"all": 1}, "total": 1,
+                                  "items": [item]}})
+    assert view.term_empty.isHidden() and not view.term_table.isHidden()
     added = []
     view._add_term = lambda values=None: added.append(True)
     view.term_empty.action_button.click()

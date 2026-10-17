@@ -2326,6 +2326,35 @@ def _against_project_terms(candidates: list[dict], project: dict) -> list[dict]:
     return rows
 
 
+def _decided_keys(job_list: list[dict]) -> set[tuple[str, str]]:
+    """已经在待审核里处理过的候选（任务, 原文）——它们对应的任务术语不再回到待审核。"""
+    keys = set()
+    for job in job_list:
+        for candidate in (job.get("state") or {}).get("knowledge_candidates") or []:
+            if isinstance(candidate, dict) and candidate.get("decision"):
+                keys.add((str(job.get("job_id") or ""),
+                          str(candidate.get("source") or "").strip().casefold()))
+    return keys
+
+
+def _pending_rows(project: dict, job_list: list[dict], *, lite: bool = False) -> list[dict]:
+    """项目术语库里「待审核」的全部来源：任务术语表条目、智能体候选、不一致的冲突。
+
+    只在读取时由各任务派生，不写进 project.json；确认才会写进项目术语库。
+    """
+    from folith import language_assets as _assets
+
+    candidates = (_assets.build_candidate_rows_lite if lite else _assets.build_candidate_rows)(job_list)
+    seen = {(str(c.get("job_id")), str(c.get("source") or "").strip().casefold(),
+             str(c.get("target") or "").strip().casefold()) for c in candidates}
+    decided = _decided_keys(job_list)
+    task_terms = [t for t in _assets.build_task_term_rows(job_list)
+                  if (t["job_id"], t["source"].casefold(), t["target"].strip().casefold()) not in seen
+                  and (t["job_id"], t["source"].casefold()) not in decided]
+    rows = _against_project_terms([*candidates, *task_terms], project)
+    return [*rows, *_conflict_rows(project, job_list)]
+
+
 def pending_total() -> int:
     """侧栏「项目」角标：所有项目与「未分类」待审核条数之和（与各页签一致）。"""
     return int(projects_overview().get("pending_total") or 0)
@@ -2343,11 +2372,12 @@ def projects_overview() -> dict:
         pid = str(row["project_id"])
         job_list = grouped.get(pid, [])
         record = core.load_project(pid) if not row["is_system"] else None
-        candidates = _assets.build_candidate_rows_lite(job_list)
-        conflicts = _conflict_rows(record or {}, job_list) if record else []
         if record:
-            candidates = _against_project_terms(candidates, record)
-        pending = _assets.pending_review_count([*candidates, *conflicts])
+            pending = _assets.pending_review_count(
+                _pending_rows(record, job_list, lite=True), by_document=False)
+        else:
+            pending = _assets.pending_review_count(
+                _assets.build_candidate_rows_lite(job_list))
         entry = {**row, "pending": pending, "job_count": len(job_list)}
         if row["is_system"]:
             entry["term_count"] = sum(
@@ -2412,12 +2442,14 @@ def project_detail(project_id: str, *, basis: str = "all",
             "forbidden": list(entry.get("forbidden") or []),
             "origin_how": origin.get("how") or "", "origin_job": origin.get("job_name") or "",
             "origin_text": _ORIGIN_TEXT.get(origin.get("how") or "", "审核收进"),
+            "status": "confirmed",
             "used_tasks": hit_tasks, "used_total": sum(n for _name, n in hit_tasks)})
     terms.sort(key=lambda t: t["source"].casefold())
     tm_rows = _assets.build_tm_rows(core.load_tm(project["project_id"]))
-    candidates = _against_project_terms(_assets.build_candidate_rows(job_list), project)
-    conflicts = _conflict_rows(project, job_list)
-    review = _review_payload([*candidates, *conflicts], basis, show_singles)
+    pending_rows = _pending_rows(project, job_list)
+    conflicts = [r for r in pending_rows if r.get("kind") == "conflict"]
+    review = _assets.review_view(pending_rows, basis=basis, show_singles=show_singles,
+                                 by_document=False)
     tasks = []
     for job in job_list:
         row = rows_by_id.get(str(job["job_id"]))
@@ -2442,6 +2474,8 @@ def project_detail(project_id: str, *, basis: str = "all",
                     "updated_at": str(project.get("updated_at") or ""),
                     "description": str(project.get("description") or "")},
         "terms": terms, "tm": tm_rows, "review": review, "tasks": tasks, "log": log[:8],
+        "term_counts": {"confirmed": len(terms), "pending": review["total"],
+                        "all": len(terms) + review["total"]},
         "style_rule_count": len(project.get("style_rules") or []),
         "conflict_count": len(conflicts),
         "review_tasks": len({r.get("job_id") for r in review["items"] if r.get("job_id")}),
@@ -2494,12 +2528,30 @@ def unsorted_detail(*, basis: str = "all", show_singles: bool = False,
             "term_count": len(terms), "locked_count": locked,
             "terms": [{"source": t["source"], "target": t["preferred"], "status": t["status"],
                        "hits": t["usage"]} for t in terms[:per_task]],
+            "all_terms": [{"source": t["source"]} for t in terms],
             "more": max(0, len(terms) - per_task)})
     tm_rows = _assets.build_tm_rows(core.load_tm(core.SYSTEM_PROJECT_ID))
     candidates = _assets.build_candidate_rows(job_list)
+    review = _review_payload(candidates, basis, show_singles)
+    # 候选并进各任务自己的术语列表，状态是「待审核」；已经在任务术语表里的不重复。
+    by_job: dict[str, list[dict]] = {}
+    for item in review["items"]:
+        by_job.setdefault(str(item.get("job_id") or ""), []).append(item)
+    for task in tasks:
+        known = {t["source"].casefold() for t in task["all_terms"]}
+        pending = [i for i in by_job.get(task["job_id"], [])
+                   if i["source"].casefold() not in known]
+        task["pending_total"] = len(pending)
+        task["term_count"] += len(pending)
+        room = max(0, per_task - len(task["terms"]))
+        task["terms"] += [{"source": i["source"], "target": i["target"], "status": "pending",
+                           "hits": i["hits"], "basis_label": i["basis_label"], "item": i}
+                          for i in pending[:max(room, 3)]]
+        task["more"] = max(0, task["term_count"] - len(task["terms"]))
+        del task["all_terms"]
     return {"tasks": tasks, "tm": tm_rows,
             "term_total": sum(t["term_count"] for t in tasks),
-            "review": _review_payload(candidates, basis, show_singles)}
+            "review": review}
 
 
 # ---- 项目术语库的人工编辑 -------------------------------------------------
@@ -2554,6 +2606,8 @@ def accept_review_item(item: dict, target: str = "") -> str:
         resolve_project_conflict(owner["project_id"], item["conflict_id"], adopt_incoming=True)
         return f"已改用「{item.get('target')}」"
     members = item.get("members") or [item]
+    task_members = [m for m in members if m.get("kind") == "task_term"]
+    members = [m for m in members if m.get("kind") != "task_term"]
     # 先把全部成员都接受下来，再改译名：改译名会让受影响段落失效，并带走同一段落上
     # 还没决定的候选，所以不能边接受边改。
     for member in members:
@@ -2575,7 +2629,31 @@ def accept_review_item(item: dict, target: str = "") -> str:
                                       note=str(entry.get("note") or ""))
     notes = [_promote_accepted_term(member, str(member.get("source") or ""))
              for member in members]
+    notes += [_accept_task_term(member, target) for member in task_members]
     return notes[0] if notes else ""
+
+
+def _task_entry(job_id: str, entry_id: str) -> dict:
+    from folith import models as _models
+    state = core.load_job_state(job_id) or {}
+    entry = next((e for e in _models.normalize_glossary(state.get("glossary") or [])
+                  if str(e.get("id")) == entry_id), None)
+    if entry is None:
+        raise AdapterError("任务术语表里已经没有这一条了。")
+    return entry
+
+
+def _accept_task_term(member: dict, target: str = "") -> str:
+    """任务术语表里的一条术语 → 项目术语库（已确认）。暂定的先锁定；译名可以顺手改。"""
+    job_id, entry_id = str(member.get("job_id") or ""), str(member.get("entry_id") or "")
+    entry = _task_entry(job_id, entry_id)
+    target = str(target or "").strip() or str(entry.get("preferred") or entry.get("target") or "")
+    if entry.get("status") != "locked" or target != str(entry.get("preferred") or ""):
+        update_glossary_entry(job_id, entry_id, preferred=target, status="locked",
+                              domain=str(entry.get("domain") or ""),
+                              note=str(entry.get("note") or ""),
+                              forbidden=entry.get("forbidden") or None)
+    return _promote_accepted_term(member, str(member.get("source") or ""))
 
 
 def decide_review_item(item: dict, decision: str) -> str:
@@ -2591,7 +2669,18 @@ def decide_review_item(item: dict, decision: str) -> str:
     members = item.get("members") or [item]
     last = ""
     for member in members:
-        last = decide_candidate(member, decision)
+        if member.get("kind") == "task_term":
+            # 任务术语已经只在这个任务里；「不是术语」= 在任务术语表里标成已拒绝。
+            if decision != "rejected":
+                raise AdapterError("这条术语本来就只在这个任务里。")
+            entry = _task_entry(str(member["job_id"]), str(member["entry_id"]))
+            update_glossary_entry(str(member["job_id"]), str(entry["id"]),
+                                  preferred=str(entry.get("preferred") or entry.get("target") or ""),
+                                  status="rejected", domain=str(entry.get("domain") or ""),
+                                  note=str(entry.get("note") or ""))
+            last = "已标为不是术语"
+        else:
+            last = decide_candidate(member, decision)
     return last
 
 

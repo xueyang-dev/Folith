@@ -852,7 +852,7 @@ class MainWindow(QMainWindow):
                             adapter.decide_review_item, item, decision, on_done=done)
 
     def batch_accept_items(self, items: list) -> None:
-        """批量收进：先预览（新增几条、几条和术语库不一致），确认后再执行。"""
+        """批量确认：先预览（新增几条、几条和术语库不一致），确认后再执行。"""
         key = self.projects.selected_key()
         if not items or not key or key == "unsorted":
             return
@@ -871,7 +871,7 @@ class MainWindow(QMainWindow):
                 self._notice(i18n.tr('{v0} 条已处理，{v1} 条未处理：{v2}', v0=ok, v1=len(bad), v2=bad[0]),
                              error=not ok, task=False)
             else:
-                self._notice(i18n.tr('已收进 {v0} 条术语。', v0=ok), task=False)
+                self._notice(i18n.tr('已确认 {v0} 条术语。', v0=ok), task=False)
             self.refresh_projects()
 
         self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),

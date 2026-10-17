@@ -45,8 +45,9 @@ def test_overview_opens_the_project_with_the_most_pending_and_pins_unsorted(env,
     assert view.selected_key() == ids["device"]
     assert requested[-1][0] == ids["device"]
     _load(view, adapter, ids["device"])
-    labels = [view.tab_bar.button(k).text() for k in ("overview", "terms", "tm", "review")]
-    assert labels[0].startswith("概览") and "3" in labels[1] and "5" in labels[3]
+    labels = [view.tab_bar.button(k).text() for k in ("overview", "terms", "tm")]
+    assert labels[0].startswith("概览") and "10" in labels[1]    # 3 条已确认 + 7 条待审核
+    assert view.tab_bar.button("review") is None
     assert "设备说明书项目" == view.title.text()
     assert "英 → 中" in view.subtitle.text()
     # 未分类置顶，并且是列表里的第一行。
@@ -54,53 +55,103 @@ def test_overview_opens_the_project_with_the_most_pending_and_pins_unsorted(env,
     assert "导出记忆" in view.export_button.text()
 
 
-def test_review_tab_groups_by_document_with_basis_labels(env, app):  # noqa: F811
-    adapter, ids, view, requested = _view(env, app)
-    _load(view, adapter, ids["device"])
-    view._tab_changed("review")
+def _chip_texts(view, column=3):
     from PySide6.QtWidgets import QLabel
 
-    labels = [view.review_tree.cellWidget(r, 3).findChild(QLabel).text() for r in view._review_rows]
-    assert set(labels) == {"已审校译文", "机器译文", "和术语库不一致"}
-    assert not any("0." in v for v in labels), "不再显示小数置信度"
+    return [view.term_table.cellWidget(r, column).findChild(QLabel).text()
+            for r in range(view.term_table.rowCount())]
+
+
+def test_terms_tab_lists_confirmed_and_pending_in_one_table(env, app):  # noqa: F811
+    adapter, ids, view, requested = _view(env, app)
+    _load(view, adapter, ids["device"])
+    options = {k: view.term_filter.button(k).text() for k in ("all", "confirmed", "pending")}
+    assert "10" in options["all"] and "3" in options["confirmed"] and "7" in options["pending"]
+    sources = [e["source"] for e in view._term_rows]
+    assert sources == sorted(sources, key=str.casefold)         # 一张表，按原文排，确认后不跳位
+    assert set(_chip_texts(view)) == {"已确认", "待审核"}
+    origins = {e["source"]: view.term_table.item(r, 4).text() for r, e in enumerate(view._term_rows)}
+    assert origins["hub"] == "已审校译文" and origins["power outlet"] == "任务术语表"
+    assert origins["quick start guide"] == "机器译文" and origins["status light"] in (
+        "手动添加", "和术语库不一致")
     hub = next(i for i in view._review_items if i["source"] == "hub")
     assert hub["variants"] == ["hubs"]
-    # 只出现一次的收起，点「显示」会重新请求带 show_singles 的详情。
-    assert view.singles_button.isVisible() or not view.singles_button.isHidden()
+    # 只出现一次的候选收起，点「显示」会重新请求带 show_singles 的详情；任务术语表条目不收起。
+    assert "smart plug" in sources and "once only" not in sources
     view.singles_button.click()
     assert requested[-1][2] is True
+    assert not hasattr(view, "page_review")
+
+
+def test_status_and_source_filters(env, app):  # noqa: F811
+    adapter, ids, view, requested = _view(env, app)
+    view.show()
+    _load(view, adapter, ids["device"])
+    view._tab_changed("terms")
+    view.term_filter.set_value("confirmed")
+    view._term_filter_changed("confirmed")
+    assert {e["kind"] for e in view._term_rows} == {"confirmed"} and len(view._term_rows) == 3
+    assert view.basis_combo.isHidden() and view.batch_button.isHidden()
+    view._term_filter_changed("pending")
+    assert {e["kind"] for e in view._term_rows} == {"pending"} and len(view._term_rows) == 7
+    assert not view.basis_combo.isHidden()
+    # 来源下拉：选一个来源会重新请求（服务端按来源筛选）。
+    view._basis_changed("task")
+    assert requested[-1][1] == "task"
+    _load(view, adapter, ids["device"], basis="task")
+    assert [e["source"] for e in view._term_rows] == ["power outlet", "smart plug"]
+    view._term_filter_changed("all")           # 离开「待审核」时来源筛选回到「全部」
+    assert view._basis == "all"
 
 
 def test_accept_uses_the_editable_translation_field(env, app):  # noqa: F811
     adapter, ids, view, _requested = _view(env, app)
     _load(view, adapter, ids["device"])
-    view._tab_changed("review")
+    view._term_filter_changed("pending")
     got: list[tuple] = []
     view.acceptRequested.connect(lambda item, target: got.append((item["source"], target)))
-    view.review_tree.selectRow(next(iter(view._review_rows)))
-    assert view.accept_button.text() == "收进术语库"
+    view.term_table.selectRow(next(r for r, e in enumerate(view._term_rows) if e["source"] == "hub"))
+    assert view.accept_button.text() == "确认" and not view.review_detail.isHidden()
+    assert view.term_detail.isHidden()
     view.name_edit.setText("集线盒")
     view.accept_button.click()
     assert got == [("hub", "集线盒")]
 
 
+def test_confirmed_rows_show_the_term_detail_not_the_review_actions(env, app):  # noqa: F811
+    adapter, ids, view, _requested = _view(env, app)
+    _load(view, adapter, ids["device"])
+    view.term_table.selectRow(next(r for r, e in enumerate(view._term_rows)
+                                   if e["source"] == "firmware update"))
+    assert view.review_detail.isHidden() and not view.term_detail.isHidden()
+    assert view.selected_term()["target"] == "固件更新" and not view.selected_review_item()
+
+
 def test_conflict_rows_switch_the_primary_action(env, app):  # noqa: F811
     adapter, ids, view, _requested = _view(env, app)
     _load(view, adapter, ids["device"])
-    view._tab_changed("review")
-    row = next(r for r, i in view._review_rows.items()
-               if view._review_items[i]["basis"] == "conflict")
-    view.review_tree.selectRow(row)
+    row = next(r for r, e in enumerate(view._term_rows)
+               if e["kind"] == "pending" and e["item"]["basis"] == "conflict")
+    view.term_table.selectRow(row)
     assert "状态灯" in view.accept_button.text()
     assert view.task_button.text() == "保留原译名"
     assert view.name_edit.isHidden() and view.reject_button.isHidden()
+
+
+def test_task_term_rows_can_only_be_confirmed_or_rejected(env, app):  # noqa: F811
+    adapter, ids, view, _requested = _view(env, app)
+    _load(view, adapter, ids["device"])
+    view.term_table.selectRow(next(r for r, e in enumerate(view._term_rows)
+                                   if e["source"] == "power outlet"))
+    assert view.task_button.isHidden() and not view.reject_button.isHidden()
+    assert "任务自己术语表" in view.detail_context.text()
 
 
 def test_unsorted_page_is_a_readonly_summary_with_make_project_buttons(env, app):  # noqa: F811
     adapter, ids, view, _requested = _view(env, app)
     view.select("unsorted")
     _load(view, adapter, "unsorted")
-    assert [k for k, _ in view._tab_options(view._detail)] == ["terms", "tm", "review"]
+    assert [k for k, _ in view._tab_options(view._detail)] == ["terms", "tm"]
     assert view.menu_labels() == ["导出…"]
     moved: list[str] = []
     view.newFromTaskRequested.connect(moved.append)
@@ -111,16 +162,23 @@ def test_unsorted_page_is_a_readonly_summary_with_make_project_buttons(env, app)
     assert len(buttons) == 3
     buttons[0].click()
     assert len(moved) == 1 and moved[0]
+    # 候选并进各任务自己的术语列表，状态是「待审核」；这里唯一的动作是「只用于此任务」。
+    decided: list[tuple] = []
+    view.decideRequested.connect(lambda item, decision: decided.append((item["source"], decision)))
+    keep = [b for b in view.page_unsorted_terms.findChildren(QPushButton) if b.text() == "只用于此任务"]
+    assert len(keep) == 1
+    keep[0].click()
+    assert decided == [("canary build", "task_only")]
 
 
 def test_batch_accept_goes_through_a_preview(env, app):  # noqa: F811
     adapter, ids, view, _requested = _view(env, app)
     _load(view, adapter, ids["device"])
-    view._tab_changed("review")
+    view._term_filter_changed("pending")
     batches: list[list] = []
     view.batchAcceptRequested.connect(batches.append)
-    view.batch_button.click()
-    assert batches and all(i["basis"] == "reviewed" for i in batches[0])
+    view.batch_button.click()      # 没勾选：依据可靠的（已审校译文 + 任务术语表）一起确认
+    assert batches and {i["basis"] for i in batches[0]} == {"reviewed", "task"}
     plan = adapter.preview_accept(ids["device"], batches[0])
     assert plan["add"] and not plan["differs"]
     from folith.qt.project_sheets import BatchAcceptDialog
@@ -137,7 +195,7 @@ def test_move_sheet_new_project_shows_counts_and_builds_the_request(env, app):  
     sheet.mode.set_value("new")
     sheet._refresh()
     assert sheet.carry_terms_title.text() == "3 条已锁定的术语，收进项目术语库"
-    assert "1 条暂定术语留在任务里" in sheet.carry_terms_hint.text()
+    assert "1 条暂定术语随任务过去" in sheet.carry_terms_hint.text()
     assert "2 条翻译记忆" in sheet.carry_tm_title.text()
     assert sheet.name_edit.text() == "Release notes 4.2"    # 取自文件名（去掉扩展名）
     sheet.name_edit.setText("发布说明")
@@ -237,12 +295,11 @@ def test_conflict_row_keeps_the_real_occurrence_count(env, app):  # noqa: F811
     adapter, ids, view, _r = _view(env, app)
     env["core"].promote_term_to_project("manual-ch3", "status light")   # 登记成待决冲突
     _load(view, adapter, ids["device"])
-    view._tab_changed("review")
     row = next(i for i in view._review_items if i["basis"] == "conflict")
     assert row["kind"] == "conflict"
     assert row["source"] == "status light" and row["hits"] == 3
-    assert view.review_tree.item(next(r for r, i in view._review_rows.items()
-                                      if view._review_items[i] is row), 4).text() == "3"
+    assert view.term_table.item(next(r for r, e in enumerate(view._term_rows)
+                                     if e.get("item") is row), 5).text() == "3"
 
 
 def test_translation_memory_table_has_equal_text_columns_and_no_empty_column(env, app):  # noqa: F811
@@ -358,9 +415,11 @@ def test_detail_never_scrolls_horizontally_at_narrow_width_with_a_long_task_name
         view.apply_overview(adapter.projects_overview())
         for key in (ids["device"], "unsorted"):
             _load(view, adapter, key)
-            for tab in ("overview", "terms", "tm", "review"):
+            for tab in ("overview", "terms", "tm"):
                 view.tab_bar.set_value(tab)
                 view._tab_changed(tab)
+                if tab == "terms":
+                    view._term_filter_changed("pending" if key != "unsorted" else "all")
                 app.processEvents()
                 for area in view.findChildren(QScrollArea):
                     if area.isVisible():

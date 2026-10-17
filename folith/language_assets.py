@@ -660,14 +660,18 @@ def target_language_options(rows: Iterable[Mapping[str, Any]]) -> List[str]:
 BASIS_REVIEWED = "reviewed"
 BASIS_MACHINE = "machine"
 BASIS_CONFLICT = "conflict"
+#: 任务自己术语表里的条目（还没进项目术语库）——不是智能体新发现的候选。
+BASIS_TASK = "task"
 BASIS_LABELS = {BASIS_REVIEWED: "已审校译文", BASIS_MACHINE: "机器译文",
-                BASIS_CONFLICT: "和术语库不一致"}
+                BASIS_CONFLICT: "和术语库不一致", BASIS_TASK: "任务术语表"}
 
 
 def candidate_basis(row: Mapping[str, Any]) -> str:
     """候选的依据。有冲突的永远标冲突；其余按置信度档位分成两类。"""
     if row.get("has_conflict") or row.get("kind") == "conflict":
         return BASIS_CONFLICT
+    if row.get("kind") == "task_term":
+        return BASIS_TASK
     if row.get("high_confidence"):
         return BASIS_REVIEWED
     return BASIS_MACHINE
@@ -704,7 +708,29 @@ def hit_count(row: Mapping[str, Any]) -> int:
     return max(1, len(row.get("observed_segments") or []))
 
 
-def merge_variant_rows(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+def build_task_term_rows(jobs: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """任务术语表里还能算「待审核」的条目：暂定或已锁定、有译名、没被拒绝。
+
+    和候选行同形（``kind == "task_term"``），这样项目术语库可以把它们和候选、冲突
+    放在一张表里；每条对应任务术语表里的一个条目（``entry_id``）。
+    """
+    rows: List[Dict[str, Any]] = []
+    for row in build_term_rows(jobs):
+        if row["status"] == "rejected" or not str(row["preferred"] or "").strip():
+            continue
+        rows.append({
+            "kind": "task_term", "row_id": f"task::{row['job_id']}::{row['entry_id']}",
+            "job_id": row["job_id"], "document": row["document"], "entry_id": row["entry_id"],
+            "source": row["source"], "target": row["preferred"], "domain": row["domain"],
+            "task_status": row["status"], "has_conflict": False, "high_confidence": False,
+            "occurrence_count": row["usage"], "positions_known": bool(row["usage"]),
+            "occurrences": list(row["occurrences"]), "observed_segments": [],
+        })
+    return rows
+
+
+def merge_variant_rows(rows: Sequence[Mapping[str, Any]], *,
+                       by_document: bool = True) -> List[Dict[str, Any]]:
     """同一文档里词形变体、同一译名的候选合成一条（hub / hubs 算一条）。
 
     合并后的行带 ``members``（原始候选行，决定时对每一条都生效）、``variants``
@@ -713,7 +739,8 @@ def merge_variant_rows(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]
     order: List[Tuple[str, str, str]] = []
     buckets: Dict[Tuple[str, str, str], List[Mapping[str, Any]]] = {}
     for row in rows:
-        key = (str(row.get("document") or ""), variant_key(row.get("source")),
+        key = (str(row.get("document") or "") if by_document else "",
+               variant_key(row.get("source")),
                str(row.get("target") or "").strip().casefold())
         if key not in buckets:
             buckets[key] = []
@@ -728,11 +755,11 @@ def merge_variant_rows(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]
         item["variants"] = [str(m["source"]) for m in members
                             if str(m.get("source")) != str(lead.get("source"))]
         item["hits"] = sum(hit_count(m) for m in members)
-        item["basis"] = (BASIS_CONFLICT if any(candidate_basis(m) == BASIS_CONFLICT
-                                               for m in members)
-                         else BASIS_REVIEWED if any(candidate_basis(m) == BASIS_REVIEWED
-                                                    for m in members)
-                         else BASIS_MACHINE)
+        bases = {candidate_basis(m) for m in members}
+        item["basis"] = next((b for b in (BASIS_CONFLICT, BASIS_REVIEWED, BASIS_TASK)
+                              if b in bases), BASIS_MACHINE)
+        item["documents"] = list(dict.fromkeys(
+            str(m.get("document") or "") for m in members if m.get("document")))
         item["basis_label"] = BASIS_LABELS[item["basis"]]
         merged.append(item)
     merged.sort(key=lambda r: (-int(r["hits"]), str(r.get("source") or "").casefold()))
@@ -740,27 +767,28 @@ def merge_variant_rows(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]
 
 
 def review_view(rows: Sequence[Mapping[str, Any]], *, basis: str = "all",
-                show_singles: bool = False) -> Dict[str, Any]:
+                show_singles: bool = False, by_document: bool = True) -> Dict[str, Any]:
     """待审核列表的展示模型：合并 → 收起只出现一次的 → 按依据筛选 → 按文档分组。
 
     只出现一次且没有冲突的候选默认收起（噪声最多的一类）；冲突永远显示。
     ``counts`` 是收起之后、筛选之前的各依据条数，供筛选按钮显示数字。
     """
-    merged = merge_variant_rows(rows)
+    merged = merge_variant_rows(rows, by_document=by_document)
+    # 任务术语表里的条目是用户/任务自己列的，不算「噪声」：只出现一次也不收起。
     visible = [row for row in merged
-               if show_singles or row["hits"] > 1 or row["basis"] == BASIS_CONFLICT]
+               if show_singles or row["hits"] > 1 or row["basis"] in (BASIS_CONFLICT, BASIS_TASK)]
     collapsed = len(merged) - len(visible)
     counts = {"all": len(visible)}
-    for key in (BASIS_REVIEWED, BASIS_MACHINE, BASIS_CONFLICT):
+    for key in (BASIS_TASK, BASIS_REVIEWED, BASIS_MACHINE, BASIS_CONFLICT):
         counts[key] = sum(1 for row in visible if row["basis"] == key)
     shown = visible if basis in ("", "all") else [r for r in visible if r["basis"] == basis]
     return {"groups": group_candidates_by_document(shown), "collapsed": collapsed,
             "counts": counts, "total": len(visible), "items": shown}
 
 
-def pending_review_count(rows: Sequence[Mapping[str, Any]]) -> int:
-    """侧栏角标 / 项目角标用的数：与「待审核」页签默认展示的条数一致。"""
-    return review_view(rows)["total"]
+def pending_review_count(rows: Sequence[Mapping[str, Any]], *, by_document: bool = True) -> int:
+    """侧栏角标 / 项目角标用的数：与术语库里「待审核」筛选默认展示的条数一致。"""
+    return review_view(rows, by_document=by_document)["total"]
 
 
 def build_candidate_rows_lite(

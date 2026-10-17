@@ -57,15 +57,19 @@ def test_project_review_candidates_can_be_decided_from_the_window(client):
     view = window.projects
     assert _pump(client["app"], 15, lambda: view.selected_key() == "unsorted"
                  and bool(view._detail)), "项目页应读出「未分类」的内容"
-    view._tab_changed("review")
     view._toggle_singles()      # 这条候选只出现一次：默认收起，点「显示」展开
-    assert _pump(client["app"], 15, lambda: len(view._review_items) == 1), \
-        "待审核页应读出这条候选"
-    view.review_tree.selectRow(next(iter(view._review_rows)))
-    view.reject_button.click()
-    assert _pump(client["app"], 15, lambda: len(view._review_items) == 0)
+    from PySide6.QtWidgets import QPushButton
+
+    def keep_buttons():
+        return [b for b in view.page_unsorted_terms.findChildren(QPushButton)
+                if b.text() == "只用于此任务"]
+
+    assert _pump(client["app"], 15, lambda: len(keep_buttons()) == 1), \
+        "「未分类」里这条候选应并进任务自己的术语列表，状态是待审核"
+    keep_buttons()[0].click()
+    assert _pump(client["app"], 15, lambda: len(keep_buttons()) == 0)
     state = client["adapter"].load_state("wmlib000000001")
-    assert state["knowledge_candidates"][0]["decision"] == "rejected"
+    assert state["knowledge_candidates"][0]["decision"] == "task_only"
 
 
 def test_terms_freeze_from_the_window_clears_the_gate(client, monkeypatch):

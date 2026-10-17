@@ -1,7 +1,7 @@
 """项目页用到的几张面板：移到项目、新建项目、语言方向、批量收进预览。
 
 「移到项目」是任务改归属的**唯一入口**（任务库、项目页、未分类都用它）。面板在点按钮之前
-就把结果摆出来：随任务带过去几条术语、哪几条和术语库不一致（不会覆盖，进待审核）、
+就把结果摆出来：随任务带过去几条术语、哪几条和术语库不一致（不会覆盖，标为待审核）、
 几条暂定术语留在任务里、翻译记忆并入几条；方向不同时说明什么不会带过去，并给出
 方向相同的项目。预览来自适配层的干跑，和真正执行用同一套判断。
 """
@@ -202,22 +202,22 @@ class DirectionDialog(QDialog):
 
 
 class BatchAcceptDialog(QDialog):
-    """批量收进之前的预览：新增几条、已经一致几条、和术语库不一致几条。"""
+    """批量确认之前的预览：新增几条、已经一致几条、和术语库不一致几条。"""
 
     def __init__(self, plan: dict, project_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = _sheet_base(self, i18n.tr('批量收进'), 520)
-        layout.addWidget(_label(i18n.tr('批量收进'), "card-title"))
+        layout = _sheet_base(self, i18n.tr('批量确认'), 520)
+        layout.addWidget(_label(i18n.tr('批量确认'), "card-title"))
         layout.addWidget(_label(
-            i18n.tr('收进项目「{v0}」的术语库之前，先看一下会发生什么。', v0=project_name),
+            i18n.tr('确认之后，这些术语会进入项目「{v0}」的术语库，新任务会自动使用。先看一下会发生什么。', v0=project_name),
             "meta", wrap=True))
         add, same, differs = plan.get("add") or [], plan.get("same") or [], plan.get("differs") or []
         self.add_count = len(add)
-        rows = [("ok", i18n.tr('{v0} 条新术语收进术语库', v0=len(add)))]
+        rows = [("ok", i18n.tr('{v0} 条术语确认进术语库', v0=len(add)))]
         if same:
             rows.append(("idle", i18n.tr('{v0} 条和术语库里已有的一致，不重复添加', v0=len(same))))
         if differs:
-            rows.append(("attention", i18n.tr('{v0} 条和术语库里的译名不一致：不会覆盖，留在待审核由你决定',
+            rows.append(("attention", i18n.tr('{v0} 条和术语库里的译名不一致：不会覆盖，仍是「待审核」由你决定',
                                               v0=len(differs))))
         for tone, text in rows:
             row = QHBoxLayout()
@@ -236,7 +236,7 @@ class BatchAcceptDialog(QDialog):
         buttons.addStretch(1)
         cancel = QPushButton(i18n.tr('取消'))
         cancel.clicked.connect(self.reject)
-        self.ok_button = QPushButton(i18n.tr('收进 {v0} 条', v0=len(add)))
+        self.ok_button = QPushButton(i18n.tr('确认 {v0} 条', v0=len(add)))
         style_module.mark_primary(self.ok_button)
         self.ok_button.setVisible(bool(add))
         self.ok_button.clicked.connect(self.accept)
@@ -476,7 +476,7 @@ class MoveToProjectSheet(QDialog):
         self.carry_terms_title.setText(
             i18n.tr('{v0} 条已锁定的术语，收进项目术语库', v0=counts["locked"]))
         self.carry_terms_hint.setText(
-            i18n.tr('这个项目以后的新任务会自动使用；另外 {v0} 条暂定术语留在任务里',
+            i18n.tr('这个项目以后的新任务会自动使用；另外 {v0} 条暂定术语随任务过去，在术语库里是「待审核」，确认后才会用',
                     v0=counts["provisional"]))
         self.carry_tm_title.setText(
             i18n.tr('这个任务的 {v0} 条翻译记忆，复制一份', v0=counts["tm"]))
@@ -616,15 +616,15 @@ class MoveToProjectSheet(QDialog):
                 box.addWidget(self._bullet("ok", i18n.tr('{v0} 条术语收进项目术语库', v0=added)))
             if conflicts and not added:
                 box.addWidget(self._bullet("warn", i18n.tr(
-                    '术语都和项目现有译名不一致：不覆盖，放进「待审核」由你决定')))
+                    '术语都和项目现有译名不一致：不覆盖，在术语库里标为「待审核」由你决定')))
             elif conflicts:
                 box.addWidget(self._bullet("warn", i18n.tr(
-                    '{v0} 条和项目现有译名不一致：不覆盖，放进「待审核」由你决定', v0=len(conflicts))))
+                    '{v0} 条和项目现有译名不一致：不覆盖，在术语库里标为「待审核」由你决定', v0=len(conflicts))))
             if conflicts:
                 box.addWidget(_amber(self._conflict_table(conflicts)))
             if report["terms_provisional"]:
                 box.addWidget(self._bullet("idle", i18n.tr(
-                    '{v0} 条暂定术语留在任务里', v0=report["terms_provisional"]), muted=True))
+                    '{v0} 条暂定术语随任务过去，在术语库里是「待审核」', v0=report["terms_provisional"]), muted=True))
         if self.carry_tm.isChecked() and (report["tm_added"] or report["tm_skipped"]):
             parts = []
             if report["tm_added"]:
