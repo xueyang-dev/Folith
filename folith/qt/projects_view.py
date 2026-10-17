@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -229,6 +229,8 @@ class ProjectsView(QWidget):
         self._selected = ""                 # 项目 id；"unsorted" = 未分类
         self._tab = "overview"
         self._basis = "all"
+        self._fill_token = 0
+        self._detail_cache: dict[tuple, dict] = {}     # 看过的项目详情：切回去时先显示它，再在后台刷新
         self._term_status = "all"          # 术语库的状态筛选：all / confirmed / pending
         self._keep_source = ""             # 确认等操作之后重新选中的那一行（按原文）
         self._term_rows: list[dict] = []
@@ -311,7 +313,8 @@ class ProjectsView(QWidget):
                 self._selected = ""
             self._tab = "terms" if self._selected == "unsorted" else "overview"
         self._fill_nav()
-        self._request_detail()
+        self._detail_cache.clear()          # 列表刷新 = 有东西变了（确认、移动……）：重新读
+        self._request_detail(use_cache=False)
 
     def _exists(self, key: str) -> bool:
         if key == "unsorted":
@@ -434,11 +437,15 @@ class ProjectsView(QWidget):
         content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         return content
 
-    def _request_detail(self) -> None:
+    def _request_detail(self, use_cache: bool = True) -> None:
         if not self._selected:
             self._render_empty()
             return
-        self.detailRequested.emit(self._selected, self._basis, self._show_singles)
+        key = (self._selected, self._basis, self._show_singles)
+        cached = self._detail_cache.get(key) if use_cache else None
+        if cached is not None:
+            self._apply_detail_now(cached)       # 立刻显示上次的内容，后台再读一遍最新的
+        self.detailRequested.emit(*key)
 
     def _render_empty(self) -> None:
         for widget in (self.tab_bar, self.pages, self.export_button, self.more_button):
@@ -480,7 +487,15 @@ class ProjectsView(QWidget):
 
     # ================= 详情 =================
     def apply_detail(self, detail: dict) -> None:
-        """后台读取完成。详情属于哪个项目由 ``_detail_for`` 记着，过期的结果直接丢掉。"""
+        """后台读取完成（窗口已经丢掉过期的结果）。内容和已显示的一样就不重画，免得闪。"""
+        key = (self._selected, self._basis, self._show_singles)
+        same = self._detail_cache.get(key) == detail and self._detail is self._detail_cache.get(key)
+        self._detail_cache[key] = detail
+        if same:
+            return
+        self._apply_detail_now(detail)
+
+    def _apply_detail_now(self, detail: dict) -> None:
         self._detail = detail or {}
         self.empty.setVisible(False)
         unsorted = self._selected == "unsorted"
@@ -940,8 +955,14 @@ class ProjectsView(QWidget):
         table = self.term_table
         table.blockSignals(True)
         table.setRowCount(len(self._term_rows))
-        for r, entry in enumerate(self._term_rows):
-            self._fill_term_row(r, entry)
+        # 行里的芯片 / 复选框是真控件，几百行一次建完会卡一下：先建能看到的（和要选中的那一行），
+        # 其余在空闲时分批补上。切到别的项目 / 再次刷新时，没补完的批次作废。
+        self._fill_token += 1
+        target = next((i for i, e in enumerate(self._term_rows) if e["source"] == keep), 0)
+        first = max(self.FIRST_ROWS, target + 1)
+        for r in range(min(first, len(self._term_rows))):
+            self._fill_term_row(r, self._term_rows[r])
+        self._fill_rest(first, self._fill_token)
         table.blockSignals(False)
         has_any = bool(confirmed or pending or collapsed)
         for widget in (table, self.term_query, self.term_filter):
@@ -958,6 +979,33 @@ class ProjectsView(QWidget):
         self._keep_source = ""
         self._term_selected()
         self._sync_batch()
+
+    FIRST_ROWS = 40
+    ROW_CHUNK = 60
+
+    def _fill_rest(self, start: int, token: int) -> None:
+        if start >= len(self._term_rows):
+            return
+
+        def step(at=start) -> None:
+            if token != self._fill_token:
+                return
+            end = min(at + self.ROW_CHUNK, len(self._term_rows))
+            table = self.term_table
+            table.setUpdatesEnabled(False)
+            for r in range(at, end):
+                self._fill_term_row(r, self._term_rows[r])
+            table.setUpdatesEnabled(True)
+            if end < len(self._term_rows):
+                QTimer.singleShot(0, lambda: step(end))
+        QTimer.singleShot(0, step)
+
+    def flush_rows(self) -> None:
+        """把还没补上的行立刻补完（测试、导出用）。"""
+        self._fill_token += 1
+        for r in range(len(self._term_rows)):
+            if self.term_table.item(r, 1) is None:
+                self._fill_term_row(r, self._term_rows[r])
 
     def _fill_term_row(self, r: int, entry: dict) -> None:
         table = self.term_table
@@ -1196,9 +1244,24 @@ class ProjectsView(QWidget):
         # 各卡片共用一套列规则（状态 = 芯片宽、出现 = 窄列右对齐、动作列只有存在动作时才占宽，
         # 原文 / 译名平分剩下的空间），所以整页对齐；宽度全部跟着视口，不设固定像素。
         has_action = any(t["status"] == "pending" for task in tasks for t in task["terms"])
-        for task in tasks:
-            self.unsorted_box.addWidget(self._unsorted_card(task, has_action))
         self.unsorted_box.addStretch(1)
+        # 卡片是真控件，任务多时一次建完会卡一下：先建前几张，其余在空闲时分批补上。
+        self._fill_token += 1
+        token = self._fill_token
+        first = 3
+        for task in tasks[:first]:
+            self.unsorted_box.insertWidget(self.unsorted_box.count() - 1,
+                                           self._unsorted_card(task, has_action))
+
+        def more(at: int = first) -> None:
+            if token != self._fill_token or at >= len(tasks):
+                return
+            for task in tasks[at:at + 3]:
+                self.unsorted_box.insertWidget(self.unsorted_box.count() - 1,
+                                               self._unsorted_card(task, has_action))
+            QTimer.singleShot(0, lambda: more(at + 3))
+        if len(tasks) > first:
+            QTimer.singleShot(0, more)
 
     def _unsorted_card(self, task: dict, has_action: bool = False) -> QWidget:
         card = _TaskCard()
@@ -1341,7 +1404,22 @@ class ProjectsView(QWidget):
         item = self.selected_review_item()
         if item:
             self._keep_source = item["source"]
+            self._mark_confirmed(self.term_table.currentRow())      # 立刻让这一行变成已确认
             self.acceptRequested.emit(item, self.name_edit.text().strip())
+
+    def _mark_confirmed(self, row: int) -> None:
+        """乐观更新：确认之后这一行马上显示「已确认」；真正的数据随后台刷新校正。"""
+        entry = self.selected_entry()
+        if entry.get("kind") != "pending":
+            return
+        host = self.term_table.cellWidget(row, 3)
+        chip = host.findChild(style_module.Chip) if host else None
+        if chip is not None:
+            chip.setText(i18n.tr('已确认'))
+            chip.set_tone("ok")
+        origin = self.term_table.item(row, 4)
+        if origin is not None:
+            origin.setText(i18n.tr('审核收进'))
 
     def _decide_current(self, decision: str) -> None:
         item = self.selected_review_item()

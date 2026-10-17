@@ -2265,7 +2265,9 @@ def clear_project_memory(project_id: str) -> None:
 
 
 def _jobs_by_project() -> tuple[list[dict], dict[str, list[dict]]]:
-    jobs = list(core.list_jobs())
+    """全部任务的摘要（精简状态 + 候选行），按项目分组。签名没变的任务不重读。"""
+    from folith import project_digest
+    jobs = project_digest.read_digests(core)
     grouped: dict[str, list[dict]] = {}
     for job in jobs:
         grouped.setdefault(core.resolved_project_id(job.get("state") or {}), []).append(job)
@@ -2326,6 +2328,11 @@ def _against_project_terms(candidates: list[dict], project: dict) -> list[dict]:
     return rows
 
 
+def _cached_candidate_rows(job_list: list[dict]) -> list[dict]:
+    """各任务缓存好的完整候选行（摘要里算过，任务没变就不重算）。"""
+    return [dict(row) for job in job_list for row in job.get("candidate_rows") or []]
+
+
 def _decided_keys(job_list: list[dict]) -> set[tuple[str, str]]:
     """已经在待审核里处理过的候选（任务, 原文）——它们对应的任务术语不再回到待审核。"""
     keys = set()
@@ -2344,7 +2351,8 @@ def _pending_rows(project: dict, job_list: list[dict], *, lite: bool = False) ->
     """
     from folith import language_assets as _assets
 
-    candidates = (_assets.build_candidate_rows_lite if lite else _assets.build_candidate_rows)(job_list)
+    candidates = (_assets.build_candidate_rows_lite(job_list) if lite
+                  else _cached_candidate_rows(job_list))
     seen = {(str(c.get("job_id")), str(c.get("source") or "").strip().casefold(),
              str(c.get("target") or "").strip().casefold()) for c in candidates}
     decided = _decided_keys(job_list)
@@ -2531,7 +2539,7 @@ def unsorted_detail(*, basis: str = "all", show_singles: bool = False,
             "all_terms": [{"source": t["source"]} for t in terms],
             "more": max(0, len(terms) - per_task)})
     tm_rows = _assets.build_tm_rows(core.load_tm(core.SYSTEM_PROJECT_ID))
-    candidates = _assets.build_candidate_rows(job_list)
+    candidates = _cached_candidate_rows(job_list)
     review = _review_payload(candidates, basis, show_singles)
     # 候选并进各任务自己的术语列表，状态是「待审核」；已经在任务术语表里的不重复。
     by_job: dict[str, list[dict]] = {}
@@ -4290,12 +4298,16 @@ def project_rows() -> list[dict]:
     if not any(project.get("is_system") for project in projects):
         projects = [core.system_project_view(), *projects]
     rows: list[dict] = []
+    # 任务数从任务摘要里数（签名没变就不重读状态），不再为每个项目各读一遍全部任务。
+    try:
+        from collections import Counter
+        from folith import project_digest
+        counts = Counter(str(core.resolved_project_id(d["state"]))
+                         for d in project_digest.read_digests(core))
+    except Exception:  # noqa: BLE001 - 列表必须仍能显示
+        counts = Counter()
     for project in projects:
-        try:
-            summary = core.project_summary(project)
-            count = int(summary.get("job_count") or 0)
-        except Exception:  # noqa: BLE001 - 列表必须仍能显示
-            count = 0
+        count = int(counts.get(str(project.get("project_id")), 0))
         rows.append({
             "project_id": project.get("project_id"),
             "name": project.get("name") or "未命名项目",

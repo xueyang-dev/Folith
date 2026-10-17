@@ -477,7 +477,8 @@ def test_unsorted_cards_use_confirmed_pending_chips_and_one_column_layout(env, a
     view.apply_overview(adapter.projects_overview())
     view.select("unsorted")
     _load(view, adapter, "unsorted")
-    app.processEvents()
+    for _ in range(8):          # 卡片分批补上
+        app.processEvents()
     texts = {label.text() for label in view.page_unsorted_terms.findChildren(QLabel)}
     assert {"已确认", "待审核"} <= texts and not texts & {"已锁定", "暂定"}
     assert any("条已确认" in t for t in texts) and not any("条已锁定" in t for t in texts)
@@ -519,3 +520,39 @@ def test_unsorted_detail_fits_the_viewport_at_1000x600_with_a_long_file_name(env
         sources = [l for l in scroll.widget().findChildren(QLabel) if l.text() == "rollback"]
         assert sources and sources[0].width() >= 120, sources[0].width()
         view.close()
+
+
+def test_a_long_term_list_fills_in_batches_and_the_selected_row_is_ready(env, app):  # noqa: F811
+    from folith.qt.projects_view import ProjectsView
+
+    adapter, ids, view, _r = _view(env, app)
+    detail = adapter.project_detail(ids["device"])
+    base = detail["review"]["items"][0]
+    items = [{**base, "source": f"term {n:03d}", "target": f"术语{n}", "members": [], "variants": []}
+             for n in range(250)]
+    detail["review"] = {**detail["review"], "items": items, "total": 250}
+    detail["term_counts"] = {"confirmed": 3, "pending": 250, "all": 253}
+    view.apply_detail(detail)
+    table = view.term_table
+    filled = sum(1 for r in range(table.rowCount()) if table.item(r, 1) is not None)
+    assert 0 < filled < table.rowCount()           # 先只建能看到的那一批
+    assert table.item(table.currentRow(), 1) is not None
+    for _ in range(20):
+        app.processEvents()
+    assert all(table.item(r, 1) is not None for r in range(table.rowCount()))
+    # 切换时没补完的批次作废，不会写进新内容。
+    view.apply_detail(detail)
+    view._fill_token += 1
+    view.flush_rows()
+    assert all(table.item(r, 1) is not None for r in range(table.rowCount()))
+
+
+def test_switching_back_to_a_seen_project_shows_it_before_the_background_read(env, app):  # noqa: F811
+    adapter, ids, view, requested = _view(env, app)
+    _load(view, adapter, ids["device"])
+    view.select(ids["annual"])
+    _load(view, adapter, ids["annual"])
+    requested.clear()
+    view.select(ids["device"])
+    assert view.title.text() == "设备说明书项目"      # 立刻显示上次的内容
+    assert requested and requested[-1][0] == ids["device"]   # 同时请求后台刷新

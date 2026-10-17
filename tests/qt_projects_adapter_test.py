@@ -164,3 +164,50 @@ def test_pending_terms_are_never_injected_into_new_tasks(env):  # noqa: F811
     adapter.accept_review_item(_items(adapter, ids["device"])["power outlet"], "")
     assert "power outlet" in {e["source"] for e in core.project_injection(
         ids["device"], target_lang="简体中文")["glossary"]}
+
+
+def test_switching_projects_reads_no_task_state_when_nothing_changed(env, monkeypatch):  # noqa: F811
+    from folith import project_digest
+
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    project_digest.clear()
+    adapter.projects_overview()                      # 第一次：每个任务读一遍
+    loads = dict(project_digest.STATS)
+    reads: list[str] = []
+    real = core.load_job_state
+    monkeypatch.setattr(core, "load_job_state", lambda job_id, *a, **k: reads.append(job_id) or real(job_id, *a, **k))
+    for key in (ids["device"], ids["annual"], ids["device"]):
+        adapter.project_detail(key)
+    adapter.unsorted_detail()
+    adapter.projects_overview()
+    adapter.pending_total()
+    real_reads = [r for r in reads if real(r) is not None]
+    assert real_reads == [], real_reads              # 缓存命中：没有任何任务状态被读取
+    assert project_digest.STATS["loads"] == loads["loads"]
+    # 只有变了的任务才重读：改一个任务，恰好重读它一次。
+    state = real("manual-ch3")
+    state["knowledge_candidates"] = state["knowledge_candidates"][:-1]
+    core.save_job_state("manual-ch3", state)
+    reads.clear()
+    adapter.project_detail(ids["device"])
+    adapter.project_detail(ids["annual"])
+    assert [r for r in reads if real(r) is not None] == ["manual-ch3"], reads
+
+
+def test_badge_counts_are_computed_once_per_refresh_with_the_cheap_path(env, monkeypatch):  # noqa: F811
+    from folith import language_assets
+
+    adapter, core = env["adapter"], env["core"]
+    build(core)
+    calls = {"lite": 0, "full": 0}
+    lite, full = language_assets.build_candidate_rows_lite, language_assets.build_candidate_rows
+    monkeypatch.setattr(language_assets, "build_candidate_rows_lite",
+                        lambda jobs: calls.__setitem__("lite", calls["lite"] + 1) or lite(jobs))
+    monkeypatch.setattr(language_assets, "build_candidate_rows",
+                        lambda jobs, **k: calls.__setitem__("full", calls["full"] + 1) or full(jobs, **k))
+    adapter.projects_overview()                     # 第一次：任务摘要在这里建好（完整候选行每个任务算一次）
+    calls.update(lite=0, full=0)
+    overview = adapter.projects_overview()
+    rows = len(overview["projects"]) + 1            # 每个项目（含未分类）各数一次，不是每条候选一次
+    assert calls["lite"] == rows and calls["full"] == 0, calls
