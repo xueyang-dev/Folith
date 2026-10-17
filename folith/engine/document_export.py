@@ -247,7 +247,7 @@ def translations_to_word(pairs, target_lang=None):
 def build_translation_docx(state, source):
     """Rebuild translated DOCX in source order, retaining supported pictures."""
     from folith.epub import (
-        EpubExportError, _docx_source, _pdf_source, _join_targets,
+        EpubExportError, ImageOnlySourceError, _docx_source, _pdf_source, _join_targets,
         _translation_groups,
     )
     from docx.shared import Emu
@@ -268,6 +268,11 @@ def build_translation_docx(state, source):
         if not media:
             return translations_to_word(pairs, state.get("target_lang")), report
         groups, groups_by_ref = _translation_groups(state, paragraphs)
+    except ImageOnlySourceError as exc:
+        # 扫描件没有可关联的文本：退回纯文字重建（加图片之前的行为），不阻断交付。
+        report.update(image_count=0, warnings=[
+            str(exc).replace("EPUB", "译文 DOCX") + " 已改为纯文字重建，不保留图片。"])
+        return translations_to_word(pairs, state.get("target_lang")), report
     except EpubExportError as exc:
         raise RuntimeError(str(exc).replace("EPUB", "译文 DOCX")) from exc
     except Exception as exc:

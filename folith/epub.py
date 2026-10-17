@@ -29,6 +29,10 @@ class EpubExportError(RuntimeError):
     pass
 
 
+class ImageOnlySourceError(EpubExportError):
+    """来源只有图像（扫描件）：没有文本可以和译文对上。"""
+
+
 def _text(value: Any) -> str:
     # XML 1.0 characters, including supplementary-plane Unicode.
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]", "", str(value or ""))
@@ -331,7 +335,7 @@ def _pdf_source(source: bytes):
             page_blocks = [block for block in blocks if block["page_number"] == page_number]
             images = [block for block in page_blocks if block["role"] == "image"]
             if images and not records:
-                raise EpubExportError("EPUB 原文件只有图像、没有可关联的文本；扫描页不属于普通文本 PDF 导出范围。")
+                raise ImageOnlySourceError("EPUB 原文件只有图像、没有可关联的文本；扫描页不属于普通文本 PDF 导出范围。")
             # A leading image-only page is the original book cover. Render
             # the whole page, including margins and vector decorations, once.
             if page_number == 1 and images and not any(1 in record["page_numbers"] for record in records):

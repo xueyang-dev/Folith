@@ -5,7 +5,7 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 
 ## 入口
 
-- 本说明只描述 DMG 内的 `Folith.app`：Qt Widgets 原生客户端（bundle id `dev.folith.qt`），由 `packaging/folith-qt.spec` 从 `qt_client.py` 冻结。这是 0.5.0 Beta 唯一的桌面入口。
+- 本说明只描述 DMG 内的 `Folith.app`：Qt Widgets 原生客户端（bundle id `dev.folith.qt`），由 `packaging/folith-qt.spec` 从 `qt_client.py` 冻结。这是 0.6.0 Beta 唯一的桌面入口。
 - 源码等价入口：`python -m folith.qt`（或 `python qt_client.py`），需另装 PySide6。
 - 源码与 Pip 安装的 `folith` 命令（含兼容别名）以及 `start.sh` / `start.command` / `start.bat` 仍启动旧 Streamlit 启动器（`gui.py`，保留一个版本），**不是**本客户端，Pip 安装说明也不能当作本客户端的安装说明。
 - 旧 Streamlit + pywebview 桌面壳（`Folith-<版本>-macos-arm64.dmg`）已退役，`docs/desktop-d3/` 下的说明只作历史基线。
@@ -27,13 +27,13 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 
 ## 产物
 
-- 应用版本 / build id：`0.5.0` / `git:28f708b`
-- 构建时间（UTC）：`2026-10-15T12:11:08+00:00`
+- 应用版本 / build id：`0.6.0` / `git:d44fb5c`
+- 构建时间（UTC）：`2026-10-17T20:02:24+00:00`
 - 打包后端：`pyinstaller`；worktree dirty：`False`
 - 目标平台 / 架构：`macos` / `arm64`
 - 随包运行时：Python `3.11.3` / PySide6 `6.11.2` / Qt `6.11.2`
-- DMG：`Folith-Qt-0.5.0-macos-arm64.dmg`
-- DMG sha256：`f346ef1912abe2acc64085c1f67cd3cfdcb49dbf140d3b404dd291a75587ad9d`（200.5 MB）
+- DMG：`Folith-Qt-0.6.0-macos-arm64.dmg`
+- DMG sha256：`2e902e023cb78e25335982a841a011c0083cdbde91d73e78bc1dc7f9cf37a634`（199.5 MB）
 
 ## 支持的系统
 

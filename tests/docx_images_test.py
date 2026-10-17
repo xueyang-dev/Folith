@@ -169,3 +169,17 @@ def test_tall_bitmap_preserves_aspect_ratio_and_fits_page():
     assert picture.height < section.page_height - section.top_margin - section.bottom_margin
     assert picture.width / picture.height == pytest.approx(0.1, abs=0.00001)
     assert parts.index('[image]') == 2
+
+
+def test_image_only_source_falls_back_to_plain_docx(monkeypatch):
+    from folith import epub
+
+    def no_text(_source):
+        raise epub.ImageOnlySourceError('EPUB 原文件只有图像、没有可关联的文本')
+
+    monkeypatch.setattr(epub, '_pdf_source', no_text)
+    state = {'filename': 'scan.pdf', 'target_lang': '简体中文',
+             'pairs': [{'source': 'Scanned line.', 'target': '扫描行。'}]}
+    payload, report = build_translation_docx(state, b'%PDF-1.4 scanned')
+    assert '扫描行。' in [p.text for p in Document(io.BytesIO(payload if isinstance(payload, bytes) else payload.getvalue())).paragraphs]
+    assert report['image_count'] == 0 and '纯文字重建' in report['warnings'][0]
