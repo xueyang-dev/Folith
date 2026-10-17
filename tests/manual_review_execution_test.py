@@ -104,3 +104,38 @@ def test_bulk_review_checkpoints_before_next_request_and_survives_interruption(t
     state, result = review(lambda *a, **kw: "[]", (1,))
     assert result["reviewed_segment_ids"] == [1]
     assert all(pair["reviewed"] for pair in state["pairs"])
+
+
+def test_manual_review_model_calls_leave_the_last_run_status_alone(tmp_path, monkeypatch):
+    # Regression: the execution lock binds the job on this thread so saves are
+    # allowed, but a direct review is not a run. Its model calls must not flip
+    # a finished task to waiting_external/running (the exit check and the
+    # move/delete guards would then see it as still running).
+    job(tmp_path, monkeypatch)
+    core.update_runtime_state("review", status="completed", phase="completed")
+    requests = []
+
+    def transport(*args, **kwargs):
+        requests.append(kwargs.get("runtime_job_id"))
+        return "[]"
+
+    monkeypatch.setattr(core, "_call_llm_transport", transport)
+    provider = next(iter(core.PROVIDERS))
+    state, result = core.review_translation_segments(
+        "review", [0, 1], provider, "k", "m", "简体中文")
+
+    assert requests == [None, None]
+    assert result["reviewed_segment_ids"] == [0, 1]
+    assert core.load_runtime_state("review")["status"] == "completed"
+    assert not core.job_is_active("review")
+
+
+def test_stale_cancel_flag_does_not_abort_a_manual_review(tmp_path, monkeypatch):
+    job(tmp_path, monkeypatch)
+    core.update_runtime_state("review", status="cancelled", cancel_requested=True)
+    monkeypatch.setattr(core, "_call_llm_transport", lambda *a, **kw: "[]")
+    provider = next(iter(core.PROVIDERS))
+    _, result = core.review_translation_segments(
+        "review", [0], provider, "k", "m", "简体中文")
+    assert result["reviewed_segment_ids"] == [0]
+    assert core.load_runtime_state("review")["status"] == "cancelled"

@@ -10,7 +10,22 @@ from folith import job_lock as _job_lock
 from folith import project as _project
 from folith import store_lock as _store_lock
 from functools import wraps
+import threading
 from folith.engine._link import core as _c
+
+
+# Jobs whose execution lock is held by a direct stage call (manual review,
+# retranslation) rather than a pipeline worker.  Process-wide on purpose: the
+# runtime context is copied into helper threads by job id only, and only one
+# owner of a job's lock can exist in a process at a time.
+_DIRECT_EXECUTIONS = set()
+_DIRECT_EXECUTIONS_LOCK = threading.Lock()
+
+
+def _direct_execution_active(job_id):
+    """True while a direct stage call (not a pipeline worker) owns ``job_id``."""
+    with _DIRECT_EXECUTIONS_LOCK:
+        return job_id in _DIRECT_EXECUTIONS
 
 
 def _exclusive_job_execution(job_id_position):
@@ -26,9 +41,13 @@ def _exclusive_job_execution(job_id_position):
             if execution_lock is None:
                 raise RuntimeError("任务正在后台处理，请等待完成后重试。")
             _c._RUNTIME_CTX.job_id = job_id
+            with _DIRECT_EXECUTIONS_LOCK:
+                _DIRECT_EXECUTIONS.add(job_id)
             try:
                 return function(*args, **kwargs)
             finally:
+                with _DIRECT_EXECUTIONS_LOCK:
+                    _DIRECT_EXECUTIONS.discard(job_id)
                 if previous is None:
                     _c._RUNTIME_CTX.__dict__.pop("job_id", None)
                 else:

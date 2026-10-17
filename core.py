@@ -234,6 +234,19 @@ def _runtime_job_id():
     return getattr(_RUNTIME_CTX, "job_id", None)
 
 
+def _runtime_worker_job_id():
+    """The job a pipeline worker is running on this thread, if any.
+
+    Direct stage calls (manual review, retranslation) also bind the job so
+    their state saves are allowed, but they are not a run: model calls made
+    there must not pause, cancel or rewrite the task's runtime status.
+    """
+    job_id = _runtime_job_id()
+    if job_id and _direct_execution_active(job_id):
+        return None
+    return job_id
+
+
 
 # ================= 权威状态的跨进程事务锁 =================
 # `state.json` / `project.json` 的原子替换只保证"文件不会被写坏"，不保证
@@ -300,7 +313,7 @@ def continue_job(job_id):
 
 def _llm_cancel_check():
     """Cancellation probe bound to the job currently running on this thread."""
-    job_id = _runtime_job_id()
+    job_id = _runtime_worker_job_id()
     if not job_id:
         return None
     return lambda: _runtime_cancel_requested(job_id)
@@ -610,6 +623,7 @@ from folith.engine.tm_store import (  # noqa: F401  (re-export: core keeps its p
     translation_cache_path,
 )
 from folith.engine.locks import (  # noqa: F401  (re-export: core keeps its public surface)
+    _direct_execution_active,
     _exclusive_job_execution,
     _serialized_job_mutation,
     _serialized_project_mutation,
@@ -2076,7 +2090,7 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
     cfg = PROVIDERS.get(provider)
     if not cfg:
         return ""
-    runtime_job_id = _runtime_job_id()
+    runtime_job_id = _runtime_worker_job_id()
     if runtime_job_id:
         _runtime_pause_checkpoint(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
@@ -3373,9 +3387,9 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     cancel_check = _llm_cancel_check()
     last_err = None
     for _attempt in range(3):
-        if _attempt and _runtime_job_id():
+        if _attempt and _runtime_worker_job_id():
             update_runtime_state(
-                _runtime_job_id(),
+                _runtime_worker_job_id(),
                 event=f"翻译请求未完成，正在重试（第 {_attempt + 1}/3 次尝试）",
                 event_name="translation_retry", event_visibility="user",
                 event_category="external_wait", phase="retry",
@@ -3410,7 +3424,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
                     cache="miss"))
             return targets
         except Exception as e:
-            _workflow_errors.raise_if_fatal(e, _runtime_job_id())
+            _workflow_errors.raise_if_fatal(e, _runtime_worker_job_id())
             if "任务已请求取消" in str(e):
                 raise
             last_err = e
@@ -4002,7 +4016,7 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
                 return AnnotationBatchResult(status="parse_failed", error="标注字段或段落索引无效")
             return AnnotationBatchResult(out, status="success" if out else "empty")
         except Exception as e:
-            _workflow_errors.raise_if_fatal(e, _runtime_job_id())
+            _workflow_errors.raise_if_fatal(e, _runtime_worker_job_id())
             if "请求取消" in str(e):
                 raise
             if is_rate_limited(e):
