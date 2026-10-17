@@ -62,6 +62,39 @@ def _safe_int(val: Any) -> int:
         return 0
 
 
+def _optional_int(val: Any) -> Optional[int]:
+    """Provider-reported count: ``None`` stays unknown, it is never coerced to 0."""
+    if val is None or isinstance(val, bool):
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def aggregate_optional(records: List[Dict[str, Any]], key: str) -> Dict[str, Any]:
+    """Sum a nullable per-call field without treating unknown as zero.
+
+    ``total`` is the sum over calls that reported the field (``None`` when no
+    call did); ``complete`` is true only if every call reported it.
+    """
+    known = [r[key] for r in records if r.get(key) is not None]
+    return {
+        "total": sum(known) if known else None,
+        "calls_reported": len(known),
+        "calls_total": len(records),
+        "complete": bool(records) and len(known) == len(records),
+    }
+
+
+def _fmt_optional_total(agg: Dict[str, Any]) -> str:
+    if agg["total"] is None:
+        return "unknown"
+    if agg["complete"]:
+        return f"{agg['total']:,}"
+    return f"≥{agg['total']:,} (partial: {agg['calls_reported']}/{agg['calls_total']} calls reported)"
+
+
 def generate_run_id() -> str:
     now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand_hex = hashlib.sha256(os.urandom(16)).hexdigest()[:8]
@@ -458,6 +491,7 @@ class RunContext:
         self._active_requests: Dict[int, Dict[str, Any]] = {}
         self._events_count = 0
         self._span_stage_map: Dict[str, str] = {}
+        self._stage_intervals: Dict[str, List[Tuple[float, float]]] = {}
         self._sampler = ResourceSampler(self.resources_path, interval=1.5)
 
         # In-memory metrics accumulators
@@ -593,7 +627,12 @@ class RunContext:
 
             record = self.stages[stage_name]
             if is_stage_root:
+                # wall_time_s is the union of (possibly concurrent) root spans,
+                # recomputed in _finalize_throughputs; busy_time_s is their sum.
                 record["wall_time_s"] = round(record["wall_time_s"] + (span.duration_ms / 1000.0), 4)
+                record["busy_time_s"] = record["wall_time_s"]
+                self._stage_intervals.setdefault(stage_name, []).append(
+                    (span.started_monotonic, span.started_monotonic + span.duration_ms / 1000.0))
                 record["cpu_time_s"] = round(record["cpu_time_s"] + (span.cpu_time_ms / 1000.0), 4)
             record["spans_count"] += 1
             record["items_in"] += span.items_in
@@ -634,6 +673,7 @@ class RunContext:
             "use_tm", "strict_terminology_governance", "batch_size", "max_batch_chars",
             "enable_understanding", "enable_source_cleanup", "translation_concurrency",
             "knowledge_feedback_interval", "segmentation_mode", "reasoning_effort",
+            "reasoning_mode", "auxiliary_reasoning_mode",
             "source_cleanup_concurrency", "source_cleanup_max_retries", "ocr_workers",
             "ocr_queue_size", "ocr_backend", "ocr_mode", "review_overlap", "max_review_in_flight",
         )
@@ -642,7 +682,7 @@ class RunContext:
         for role in ("translator", "reviewer", "auxiliary"):
             role_config = config.get(role)
             if isinstance(role_config, dict):
-                snapshot[role] = {key: role_config[key] for key in ("provider", "model", "reasoning_effort")
+                snapshot[role] = {key: role_config[key] for key in ("provider", "model", "reasoning_effort", "reasoning_mode")
                                   if isinstance(role_config.get(key), str)}
         self.record_point("run_configuration", configuration=snapshot, resume=resume,
                           app_version=app_version(), build_id=build_id(),
@@ -699,16 +739,24 @@ class RunContext:
         input_segments: int = 1,
         input_chars: int = 0,
         output_chars: int = 0,
-        prompt_tokens: int = 0,
-        completion_tokens: int = 0,
-        cached_tokens: int = 0,
-        total_tokens: int = 0,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        cached_tokens: Optional[int] = None,
+        total_tokens: Optional[int] = None,
+        reasoning_tokens: Optional[int] = None,
+        reasoning_chars: Optional[int] = None,
         ttft_s: Optional[float] = None,
         status: str = "success",
         retry_count: int = 0,
         error_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        # Token fields are nullable: None = the provider did not report it.
+        prompt_tokens = _optional_int(prompt_tokens)
+        completion_tokens = _optional_int(completion_tokens)
+        total_tokens = _optional_int(total_tokens)
+        if not total_tokens and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
         rec = {
             "timestamp": _now_iso(),
             "provider": str(provider or "unknown"),
@@ -718,10 +766,13 @@ class RunContext:
             "input_segments": _safe_int(input_segments),
             "input_chars": _safe_int(input_chars),
             "output_chars": _safe_int(output_chars),
-            "prompt_tokens": _safe_int(prompt_tokens),
-            "completion_tokens": _safe_int(completion_tokens),
-            "cached_tokens": _safe_int(cached_tokens),
-            "total_tokens": _safe_int(total_tokens or (prompt_tokens + completion_tokens)),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cached_tokens": _optional_int(cached_tokens),
+            "total_tokens": total_tokens,
+            "reasoning_tokens": _optional_int(reasoning_tokens),
+            # Auxiliary observation (length of returned reasoning text), NOT a token count.
+            "reasoning_chars": _optional_int(reasoning_chars),
             "ttft_s": _safe_float(ttft_s) if ttft_s is not None else None,
             "ttft_available": ttft_s is not None,
             "status": status,
@@ -895,8 +946,43 @@ class RunContext:
 
             return summary
 
-    def _finalize_throughputs(self) -> None:
+    def _finalize_stage_times(self) -> None:
+        """Make ``wall_time_s`` mean work time, never the stage's lifetime.
+
+        A stage that recorded no spans/items did no measured work: it reports
+        0 plus ``no_work`` and keeps its first-start→last-finish span as
+        ``lifetime_s``.  Stages built from spans report the union of their
+        root-span intervals (concurrent spans are not double counted) and keep
+        the plain sum as ``busy_time_s``.
+        """
         for stage_name, rec in self.stages.items():
+            if "lifetime_s" not in rec:
+                rec["lifetime_s"] = rec.get("wall_time_s", 0.0)
+            if not rec.get("spans_count"):
+                rec["no_work"] = True
+                rec["wall_time_s"] = 0.0
+                rec["busy_time_s"] = 0.0
+                continue
+            rec["no_work"] = False
+            intervals = sorted(self._stage_intervals.get(stage_name, ()))
+            if intervals:
+                union = 0.0
+                left, right = intervals[0]
+                for start, end in intervals[1:]:
+                    if start > right:
+                        union += right - left
+                        left, right = start, end
+                    else:
+                        right = max(right, end)
+                union += right - left
+                rec["wall_time_s"] = round(union, 4)
+
+    def _finalize_throughputs(self) -> None:
+        self._finalize_stage_times()
+        for stage_name, rec in self.stages.items():
+            if rec.get("no_work"):
+                rec["throughput"] = {}
+                continue
             wall_s = max(0.001, rec["wall_time_s"])
             tp = {}
             if rec["items_out"] > 0:
@@ -948,10 +1034,16 @@ class RunContext:
         # Model requests summary
         model_latencies = [m["duration_s"] for m in self.model_calls]
         model_pcts = compute_percentiles(model_latencies)
-        total_prompt_tok = sum(m.get("prompt_tokens", 0) for m in self.model_calls)
-        total_out_tok = sum(m.get("completion_tokens", 0) for m in self.model_calls)
-        total_cached_tok = sum(m.get("cached_tokens", 0) for m in self.model_calls)
-        total_tok = sum(m.get("total_tokens", 0) for m in self.model_calls)
+        token_usage = {key: aggregate_optional(self.model_calls, key) for key in (
+            "prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens",
+            "reasoning_tokens", "reasoning_chars")}
+        total_prompt_tok = token_usage["prompt_tokens"]["total"]
+        total_out_tok = token_usage["completion_tokens"]["total"]
+        total_cached_tok = token_usage["cached_tokens"]["total"]
+        total_tok = token_usage["total_tokens"]["total"]
+        # Throughput only over calls that actually reported completion tokens.
+        reported_calls = [m for m in self.model_calls if m.get("completion_tokens") is not None]
+        reported_latency = sum(m["duration_s"] for m in reported_calls)
         model_calls_success = sum(1 for m in self.model_calls if m.get("status") == "success")
         model_calls_failed = sum(1 for m in self.model_calls if m.get("status") != "success")
 
@@ -973,6 +1065,10 @@ class RunContext:
             cpu = s_data["cpu_time_s"]
             stage_breakdown[s_name] = {
                 "wall_time_s": w,
+                "no_work": bool(s_data.get("no_work", False)),
+                "spans_count": s_data.get("spans_count", 0),
+                "busy_time_s": s_data.get("busy_time_s"),
+                "lifetime_s": s_data.get("lifetime_s"),
                 "pct_of_total": pct,
                 "cpu_time_s": cpu,
                 "cpu_wall_ratio": round(cpu / max(0.001, w), 2),
@@ -1014,12 +1110,18 @@ class RunContext:
                 "total_calls": len(self.model_calls),
                 "successful_calls": model_calls_success,
                 "failed_calls": model_calls_failed,
+                # None = no call reported the field; otherwise the sum over
+                # reporting calls only.  See ``token_usage`` for completeness.
                 "total_prompt_tokens": total_prompt_tok,
                 "total_completion_tokens": total_out_tok,
                 "total_cached_tokens": total_cached_tok,
                 "total_tokens": total_tok,
+                "total_reasoning_tokens": token_usage["reasoning_tokens"]["total"],
+                "total_reasoning_chars": token_usage["reasoning_chars"]["total"],
+                "token_usage": token_usage,
                 "avg_call_latency_s": model_pcts.get("avg", 0.0),
-                "tokens_per_second": round(total_out_tok / max(0.001, sum(model_latencies)), 2) if model_latencies else 0.0,
+                "tokens_per_second": (round(total_out_tok / max(0.001, reported_latency), 2)
+                                      if reported_calls and total_out_tok is not None else None),
             },
             "tm_and_cache": {
                 "tm_lookups": tm_lookups,
@@ -1070,6 +1172,12 @@ class RunContext:
         r = summary.get("resources", {})
         lp = summary.get("latency_percentiles", {})
         err = summary.get("errors_and_retries", {})
+        _empty = {"total": None, "calls_reported": 0, "calls_total": 0, "complete": False}
+        tu = {k: (m.get("token_usage") or {}).get(k, _empty) for k in (
+            "prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens",
+            "reasoning_tokens", "reasoning_chars")}
+        tps = m.get("tokens_per_second")
+        tps_text = f"{tps} tokens/s" if tps is not None else "unknown (no completion usage reported)"
 
         # Generate rule-based bottlenecks
         bottlenecks = []
@@ -1132,11 +1240,15 @@ class RunContext:
         stage_rows = []
         for s_name, s_info in stages.items():
             tp_str = ", ".join(f"{v} {k}" for k, v in s_info.get("throughput", {}).items()) or "—"
+            if s_info.get("no_work"):
+                stage_rows.append(
+                    f"| `{s_name}` | — (not run / no work recorded) | — | — | — | — | {s_info.get('status')} |")
+                continue
             stage_rows.append(
                 f"| `{s_name}` | {s_info.get('wall_time_s')} s | {s_info.get('pct_of_total')}% | {s_info.get('cpu_time_s')} s | {s_info.get('cpu_wall_ratio')} | {tp_str} | {s_info.get('status')} |"
             )
         stages_table = (
-            "| Stage | Wall Time | % Total | CPU Time | CPU/Wall Ratio | Throughput | Status |\n"
+            "| Stage | Work Time (union of spans) | % Total | CPU Time | CPU/Wall Ratio | Throughput | Status |\n"
             "|---|---|---|---|---|---|---|\n" + "\n".join(stage_rows)
             if stage_rows
             else "_No stages recorded._"
@@ -1171,8 +1283,9 @@ class RunContext:
 
 ## Model Performance
 - **Total Requests**: {m.get('total_calls', 0)} (Successful: {m.get('successful_calls', 0)}, Failed: {m.get('failed_calls', 0)})
-- **Tokens Breakdown**: Prompt: {m.get('total_prompt_tokens', 0):,} | Cached: {m.get('total_cached_tokens', 0):,} | Output: {m.get('total_completion_tokens', 0):,} | Total: {m.get('total_tokens', 0):,}
-- **Throughput**: {m.get('tokens_per_second', 0.0)} tokens/s
+- **Tokens Breakdown** (unreported = unknown, not zero): Prompt: {_fmt_optional_total(tu['prompt_tokens'])} | Cached: {_fmt_optional_total(tu['cached_tokens'])} | Output: {_fmt_optional_total(tu['completion_tokens'])} | Reasoning: {_fmt_optional_total(tu['reasoning_tokens'])} | Total: {_fmt_optional_total(tu['total_tokens'])}
+- **Reasoning Text Returned** (chars, not tokens): {_fmt_optional_total(tu['reasoning_chars'])}
+- **Throughput**: {tps_text}
 - **Latency**: Avg {m.get('avg_call_latency_s', 0.0)} s | P50 {lp.get('model_call_seconds', {}).get('p50', 0.0)} s | P95 {lp.get('model_call_seconds', {}).get('p95', 0.0)} s | Max {lp.get('model_call_seconds', {}).get('max', 0.0)} s
 
 ## TM / Terminology / Cache
@@ -1227,7 +1340,7 @@ class RunContext:
                 "peak_ram_mb": summary.get("resources", {}).get("process_rss_peak_mb", 0.0),
                 "tm_hit_ratio": summary.get("tm_and_cache", {}).get("tm_hit_ratio", 0.0),
                 "model_calls": summary.get("model_metrics", {}).get("total_calls", 0),
-                "total_tokens": summary.get("model_metrics", {}).get("total_tokens", 0),
+                "total_tokens": summary.get("model_metrics", {}).get("total_tokens"),
                 "stages": {k: v.get("wall_time_s", 0.0) for k, v in summary.get("stages", {}).items()},
             }
             # Append and keep up to 50 runs

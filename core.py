@@ -565,6 +565,9 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     resolve_openai_base_url,
     set_llm_base_url,
     set_llm_reasoning_effort,
+    set_llm_reasoning_modes,
+    resolve_reasoning_mode as _resolve_reasoning_mode,
+    normalize_reasoning_mode as _normalize_reasoning_mode,
 )
 from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keeps its public surface)
     _count_sentences,
@@ -2046,7 +2049,7 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
 
 def call_llm(provider, api_key, model, system_prompt, user_prompt,
              temperature=0.1, base_url=None, response_format=None,
-             reasoning_effort=None):
+             reasoning_effort=None, reasoning_mode=None):
     """底层大模型统一路由（超时 150 秒，模型可配置）。
 
     支持官方接口与 OpenAI /chat/completions 兼容中转站：
@@ -2081,6 +2084,7 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             cfg, provider, api_key, model, system_prompt, user_prompt,
             temperature=temperature, base_url=base_url,
             response_format=response_format, reasoning_effort=reasoning_effort,
+            reasoning_mode=reasoning_mode,
             runtime_job_id=runtime_job_id, started_at=_llm_started)
     except BaseException as exc:
         try:
@@ -2120,7 +2124,8 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
 
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
                         *, temperature=0.1, base_url=None, response_format=None,
-                        reasoning_effort=None, runtime_job_id=None, started_at=None):
+                        reasoning_effort=None, reasoning_mode=None,
+                        runtime_job_id=None, started_at=None):
     """Perform one provider request on a pooled transport client."""
     if cfg["kind"] == "gemini":
         def _build_gemini_client():
@@ -2155,10 +2160,12 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
                     request_id=getattr(res, "request_id", None),
                     input_chars=len(system_prompt or "") + len(user_prompt or ""),
                     output_chars=len(out_text),
-                    prompt_tokens=getattr(usage, "prompt_token_count", 0) if usage else 0,
-                    completion_tokens=getattr(usage, "candidates_token_count", 0) if usage else 0,
-                    cached_tokens=getattr(usage, "cached_content_token_count", 0) if usage else 0,
-                    total_tokens=getattr(usage, "total_token_count", 0) if usage else 0,
+                    prompt_tokens=getattr(usage, "prompt_token_count", None),
+                    completion_tokens=getattr(usage, "candidates_token_count", None),
+                    cached_tokens=getattr(usage, "cached_content_token_count", None),
+                    total_tokens=getattr(usage, "total_token_count", None),
+                    # Gemini reports thinking tokens separately; None if absent.
+                    reasoning_tokens=getattr(usage, "thoughts_token_count", None),
                     ttft_s=None,
                     metadata={"usage_available": usage is not None},
                 )
@@ -2180,6 +2187,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         # The thread setting belongs to the translator role.  A separate
         # reviewer or an unknown relay model must not inherit it accidentally.
         resolved_reasoning = None
+    resolved_reasoning_mode = _resolve_reasoning_mode(reasoning_mode)
     if resolved_base:
         kwargs["base_url"] = resolved_base
     proxy_bypass = _llm_transport.proxy_bypass_for(cfg.get("proxy_bypass"), resolved_base)
@@ -2231,6 +2239,9 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     if response_format and cfg.get("capabilities", {}).get(
             "supports_response_format"):
         request["response_format"] = response_format
+    if resolved_reasoning_mode == "thinking_disabled":
+        # Same DeepSeek-family control the OCR path sends; opt-in only.
+        request["extra_body"] = {"thinking": {"type": "disabled"}}
     if provider == "OpenCode Go":
         session_id = runtime_job_id or getattr(_LLM_CTX, "opencode_session", None)
         if not session_id:
@@ -2245,6 +2256,9 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         out_text = (res.choices[0].message.content or "").strip()
         usage = getattr(res, "usage", None)
         pt_details = getattr(usage, "prompt_tokens_details", None) if usage else None
+        ct_details = getattr(usage, "completion_tokens_details", None) if usage else None
+        message = res.choices[0].message
+        reasoning_text = getattr(message, "reasoning_content", None)
         run = trace.get_active_run(runtime_job_id)
         if run and started_at is not None:
             run.record_model_call(
@@ -2254,12 +2268,16 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
                 request_id=getattr(res, "id", None),
                 input_chars=len(system_prompt or "") + len(user_prompt or ""),
                 output_chars=len(out_text),
-                prompt_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                completion_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
-                cached_tokens=getattr(pt_details, "cached_tokens", 0) if pt_details else 0,
-                total_tokens=getattr(usage, "total_tokens", 0) if usage else 0,
+                # Fields the provider did not return stay None (unknown), never 0.
+                prompt_tokens=getattr(usage, "prompt_tokens", None),
+                completion_tokens=getattr(usage, "completion_tokens", None),
+                cached_tokens=getattr(pt_details, "cached_tokens", None),
+                total_tokens=getattr(usage, "total_tokens", None),
+                reasoning_tokens=getattr(ct_details, "reasoning_tokens", None),
+                reasoning_chars=(len(reasoning_text) if isinstance(reasoning_text, str) else None),
                 ttft_s=None,
-                metadata={"usage_available": usage is not None},
+                metadata={"usage_available": usage is not None,
+                          "reasoning_mode": resolved_reasoning_mode or "provider_default"},
             )
     finally:
         if not _llm_transport.client_pool_enabled():
@@ -3331,7 +3349,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             provider=provider, model=model, system_prompt=sys_prompt,
             user_prompt=user_prompt, temperature=0.3,
             response_format=response_format,
-            route=effective_request_route(provider, model))
+            route=effective_request_route(provider, model, role="translation"))
         cached = result_cache.get(cache_key)
         if cached is not None and len(cached) == len(segments):
             if prompt_stats is not None:
@@ -4028,12 +4046,14 @@ def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, wo
     """Bounded requests; shared state is only changed by the ordered consumer."""
     inherited_base = getattr(_LLM_CTX, "base_url", None)
     inherited_reasoning = getattr(_LLM_CTX, "reasoning_effort", None)
+    inherited_modes = getattr(_LLM_CTX, "reasoning_modes", None)
 
     def request(task):
         bi, offset, pairs, indexes = task
         _RUNTIME_CTX.job_id = job_id
         _LLM_CTX.base_url = inherited_base
         _LLM_CTX.reasoning_effort = inherited_reasoning
+        _LLM_CTX.reasoning_modes = inherited_modes
         _LLM_CTX.batch_id = bi + 1
         _LLM_CTX.input_segments = len(indexes)
         token = _usage.CURRENT_ROLE.set("annotation")
@@ -5217,6 +5237,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
 
     inherited_base_url = getattr(_LLM_CTX, "base_url", None)
     inherited_reasoning = getattr(_LLM_CTX, "reasoning_effort", None)
+    inherited_modes = getattr(_LLM_CTX, "reasoning_modes", None)
     inherited_job_id = getattr(_RUNTIME_CTX, "job_id", job_id)
 
     def _process_batch_payload(bi, run_review=True, effective_pairs=None):
@@ -5225,6 +5246,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _LLM_CTX.base_url = inherited_base_url
         if inherited_reasoning is not None:
             _LLM_CTX.reasoning_effort = inherited_reasoning
+        if inherited_modes is not None:
+            _LLM_CTX.reasoning_modes = inherited_modes
         if inherited_job_id is not None:
             _RUNTIME_CTX.job_id = inherited_job_id
 
@@ -10627,6 +10650,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                      knowledge_feedback=True,
                      enable_source_cleanup=None,
                      reasoning_effort=None, source_cleanup_concurrency=None,
+                     reasoning_mode=None, auxiliary_reasoning_mode=None,
                      ocr_workers=None, ocr_queue_size=None,
                      source_cleanup_confidence_threshold=None,
                      source_cleanup_max_retries=None,
@@ -10658,6 +10682,17 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state, segmentation_mode)
     previous_performance = state.get("performance")
     saved_runtime_config = state.get("pipeline_config") or {}
+    # Text-path thinking control, default OFF (nothing sent).  Precedence:
+    # explicit argument > saved task config > FOLITH_*REASONING_MODE env var.
+    effective_reasoning_mode = _normalize_reasoning_mode(
+        reasoning_mode if reasoning_mode is not None
+        else saved_runtime_config.get("reasoning_mode")
+        or os.environ.get("FOLITH_REASONING_MODE"))
+    effective_aux_reasoning_mode = _normalize_reasoning_mode(
+        auxiliary_reasoning_mode if auxiliary_reasoning_mode is not None
+        else saved_runtime_config.get("auxiliary_reasoning_mode")
+        or os.environ.get("FOLITH_AUXILIARY_REASONING_MODE"))
+    set_llm_reasoning_modes(effective_reasoning_mode, effective_aux_reasoning_mode)
     effective_ocr_language, effective_ocr_dpi, effective_ocr_psm, \
         effective_ocr_quality, resolved_ocr = _effective_ocr_config(
             ocr_language, ocr_dpi, ocr_psm, saved_runtime_config, ocr_quality)
@@ -10865,6 +10900,11 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         "translator": _model_roles.public_role_config(translator_config),
         "reviewer": _model_roles.public_role_config(reviewer_config),
     }
+    # Recorded only when opted in, so old task snapshots stay byte-compatible.
+    if effective_reasoning_mode != "provider_default":
+        pipeline_config["reasoning_mode"] = effective_reasoning_mode
+    if effective_aux_reasoning_mode != "provider_default":
+        pipeline_config["auxiliary_reasoning_mode"] = effective_aux_reasoning_mode
     # Auxiliary work (profile, synopsis, glossary observation) can use a
     # cheaper model without changing the authoritative translator/reviewer.
     # Keep this outside the historical pipeline_config shape unless explicitly
@@ -10986,7 +11026,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     else:
         pipeline_config.pop("enable_source_cleanup", None)
     state["pipeline_config"] = pipeline_config
-    active_run.record_run_configuration({**pipeline_config, "auxiliary": auxiliary_config},
+    active_run.record_run_configuration({**pipeline_config, "auxiliary": auxiliary_config,
+                                         "reasoning_mode": effective_reasoning_mode,
+                                         "auxiliary_reasoning_mode": effective_aux_reasoning_mode},
                                         resume=bool(saved_runtime_config))
     state["quality_mode"] = bool(strict_terminology_governance)
     state["ocr_language"] = effective_ocr_language or ""

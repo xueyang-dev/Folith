@@ -97,7 +97,7 @@ def extract_observations(
         cache_key = cache.key_for(
             provider=provider, model=model, system_prompt=system_prompt,
             user_prompt=numbered, temperature=FEEDBACK_TEMPERATURE,
-            route=effective_request_route(provider, model))
+            route=effective_request_route(provider, model, role="auxiliary"))
         cached = cache.get(cache_key)
         if cached is not None:
             return [dict(item) for item in cached], None
