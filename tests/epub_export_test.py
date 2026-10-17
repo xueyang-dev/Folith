@@ -235,6 +235,125 @@ def test_scanned_page_does_not_masquerade_as_an_inline_picture():
         build_translation_epub({"filename": "scan.pdf", "pairs": [{"source": "OCR", "target": "识别译文"}]}, source)
 
 
+def visual_pdf_state():
+    from folith.document_ir import PageEnvelope, SemanticBlock
+    from folith.document_understanding import VisualDocumentAssembler
+    from folith.document_ir import PageUnderstanding
+    from folith.spatial_index import SpatialTextIndex
+    import time
+
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=500, height=650)
+        page.insert_image(page.rect, stream=illustration())
+        source = pdf.tobytes()
+    assembler = VisualDocumentAssembler("scan.pdf")
+    blocks = [SemanticBlock("title", "A scanned chapter"),
+              SemanticBlock("paragraph", "Text before the picture. Another sentence."),
+              SemanticBlock("figure", ""), SemanticBlock("caption", "A caption."),
+              SemanticBlock("paragraph", "Text after the picture."),
+              SemanticBlock("figure", "")]
+    anchors = [[{"page_id": "p1", "bbox": None, "grounding_method": "page_only",
+                 "grounding_quality": "page_only"}] for _ in blocks]
+    anchors[2] = [{"page_id": "p1", "bbox": [0.2, 0.3, 0.8, 0.5],
+                   "grounding_method": "region_alignment", "grounding_quality": "strong"}]
+    assembler.add_page(PageEnvelope("scan.pdf", "p1", 0, 500, 650),
+                       (PageUnderstanding(blocks, "vlm"), anchors,
+                        SpatialTextIndex("p1"), time.perf_counter()))
+    raw = assembler.paragraphs
+    state = core.new_job_state("scan.pdf")
+    state["source_paras"] = raw
+    state["extraction_report"] = {"semantic_source": "vlm", "document_ir": assembler.document}
+    units, _ = core._apply_source_segmentation(state, raw, mode="sentence")
+    state.update(paras=units, target_lang="简体中文", p1_done=True, p2_done=True,
+                 pairs=[{"source": text, "target": f"识别译文{i}"} for i, text in enumerate(units)])
+    return source, state
+
+
+@pytest.mark.parametrize("semantic_source", ["vlm", "mixed"])
+def test_semantic_pdf_epub_uses_recognized_text_and_only_grounded_figures(semantic_source):
+    source, state = visual_pdf_state()
+    state["extraction_report"]["semantic_source"] = semantic_source
+    before = deepcopy(state)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert state == before
+    book = content(data)
+    body = ET.fromstring(book).find("h:body", XHTML)
+    body_text = "".join(body.itertext())
+    for pair in state["pairs"]:
+        assert body_text.count(pair["target"]) == 1
+    assert report["image_count"] == 1
+    assert book.index("识别译文1") < book.index("<img ") < book.index("识别译文3")
+    assert "<h1" in book
+    assert any("缺少完整区域坐标" in warning for warning in report["warnings"])
+    with ZipFile(io.BytesIO(data)) as archive:
+        pix = fitz.Pixmap(archive.read("EPUB/images/image-0001.png"))
+        assert (pix.width, pix.height) == (600, 260)  # region, not the whole scan
+
+
+def test_semantic_epub_keeps_cat_merge_and_exclusion_references(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    source, state = visual_pdf_state()
+    core.save_source("semantic", source)
+    # First bind the source identity before structure edits, as the editor does.
+    assert bind_source_references(state)
+    core.save_job_state("semantic", state)
+    state = core.mutate_translation_segments("semantic", 1, "merge")
+    data, _ = build_translation_epub(state, source)
+    assert content(data).count("识别译文1") == 1
+    assert content(data).count("识别译文2") == 1
+    state = core.mutate_translation_segments("semantic", 1, "exclude", exclude_reason="test")
+    data, _ = build_translation_epub(state, source)
+    assert "识别译文1" not in content(data)
+    assert content(data).count("<img ") == 1
+
+
+def test_semantic_epub_rejects_mismatched_canonical_source():
+    source, state = visual_pdf_state()
+    state["source_paras"][0] = "Different recognized source"
+    with pytest.raises(EpubExportError, match="来源不一致"):
+        build_translation_epub(state, source)
+
+
+def test_mixed_pdf_uses_page_order_and_does_not_embed_full_scan():
+    from folith.document_ir import PageUnderstanding, SemanticBlock
+    from folith.document_understanding import understand_mixed_pdf
+
+    class Provider:
+        def understand_page(self, page):
+            return PageUnderstanding([SemanticBlock("paragraph", "Recognized middle page.")], "vlm")
+
+    with fitz.open(stream=pdf_source(), filetype="pdf") as pdf:
+        page = pdf.new_page(width=500, height=650)
+        page.insert_image(page.rect, stream=illustration())
+        page = pdf.new_page(width=500, height=650)
+        page.insert_text((50, 70), "The final native paragraph.")
+        source = pdf.tobytes()
+    raw, document = understand_mixed_pdf("mixed.pdf", source, [1], Provider())
+    state = core.new_job_state("mixed.pdf")
+    state.update(source_paras=raw, target_lang="简体中文",
+                 extraction_report={"semantic_source": "mixed", "document_ir": document})
+    units, _ = core._apply_source_segmentation(state, raw, mode="paragraph")
+    state.update(paras=units, pairs=[{"source": text, "target": f"译文{i}"}
+                                     for i, text in enumerate(units)])
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    book = content(data)
+    # The native illustration survives; the full-page scan does not.
+    assert report["image_count"] == 1
+    bodies = []
+    with ZipFile(io.BytesIO(data)) as archive:
+        for name in sorted(archive.namelist()):
+            if "/chapter-" in name:
+                bodies.extend("".join(node.itertext()) for node in
+                              ET.fromstring(archive.read(name)).find("h:body", XHTML)
+                              if node.tag in {f'{{{XHTML["h"]}}}p', f'{{{XHTML["h"]}}}h1'})
+    assert bodies == [pair["target"] for pair in state["pairs"]]
+    first = next(pair["target"] for pair in state["pairs"] if "first paragraph" in pair["source"])
+    second = next(pair["target"] for pair in state["pairs"] if "second paragraph" in pair["source"])
+    assert book.index(first) < book.index("<img ") < book.index(second)
+
+
 def test_image_only_plate_in_text_pdf_is_preserved():
     with fitz.open(stream=pdf_source(), filetype="pdf") as doc:
         page = doc.new_page(width=500, height=650)

@@ -3245,6 +3245,15 @@ PROJECT_NAME_LIMIT = 80
 # 集合只有一个来源：`RUNTIME_ACTIVE_STATUSES`（历史上这里曾有一份逐字重复的副本）。
 def job_is_active(job_id, state=None):
     """任务是否正在运行（不可改归属）。"""
+    # Direct manual review/retranslation owns the same execution lock as a
+    # pipeline worker, even when runtime_state still describes the last run.
+    # Preserve delete/project guards while those model calls are in flight.
+    path = job_dir(job_id) / ".worker.lock"
+    if path.is_file():
+        execution_lock = _job_lock.acquire(path, blocking=False)
+        if execution_lock is None:
+            return True
+        execution_lock.close()
     try:
         view = build_job_runtime_view(job_id, state)
         status = view.get("runtime_status") or view.get("status")
@@ -9979,7 +9988,7 @@ def _targeted_final_review_ids(state, limit=8):
         selected.items(), key=lambda item: (item[1], item[0]))[:bounded_limit]]
 
 
-@_serialized_job_mutation
+@_exclusive_job_execution(0)
 def review_translation_segments(
     job_id, indexes, provider, api_key, model, target_lang, *, style_rules="",
     call_llm_fn=None, base_url=None, review_focus="", focus_findings=None,
@@ -9989,6 +9998,10 @@ def review_translation_segments(
     ``review_focus`` and ``focus_findings`` are optional context for the
     post-translation whole-book pass.  They do not change the normal manual
     refresh path and keep the global conflict visible to the reviewer.
+
+    Own the existing worker lifetime lock, not the state transaction lock,
+    while waiting for the model. Competing operations fail immediately as busy;
+    completed segments are checkpointed before starting the next request.
     """
     from folith import delivery as _delivery
     from folith.terminology import (
@@ -10115,19 +10128,20 @@ def review_translation_segments(
             "refresh": True, "failed": failed,
             **({"review_focus": str(review_focus)} if review_focus else {}),
         })
-    if tm_changed:
-        save_tm(tm, tm_project_id(state))
-    _recount_reviewed_segments(state)
-    queue = _delivery.review_queue_findings(state)
-    stats = state.setdefault("review_stats", {})
-    for severity in ("blocking", "actionable", "informational"):
-        stats[severity] = sum(item.get("severity") == severity for item in queue)
-    stats["review_failed"] = sum(
-        item.get("decision") == "failed" and _translation_evidence._current_translation_review(
-            item) for item in state.get("review_evidence") or [] if isinstance(item, dict))
-    state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
-    state["delivery_status"] = _delivery.compute_delivery_status(state)
-    save_job_state(job_id, state)
+        if tm_changed:
+            save_tm(tm, tm_project_id(state))
+            tm_changed = False
+        _recount_reviewed_segments(state)
+        queue = _delivery.review_queue_findings(state)
+        stats = state.setdefault("review_stats", {})
+        for severity in ("blocking", "actionable", "informational"):
+            stats[severity] = sum(item.get("severity") == severity for item in queue)
+        stats["review_failed"] = sum(
+            item.get("decision") == "failed" and _translation_evidence._current_translation_review(
+                item) for item in state.get("review_evidence") or [] if isinstance(item, dict))
+        state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
+        state["delivery_status"] = _delivery.compute_delivery_status(state)
+        save_job_state(job_id, state)
     return state, {
         "reviewed_segment_ids": reviewed,
         "failed_segment_ids": failed_ids,
@@ -10270,6 +10284,7 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
 
 
 
+@_exclusive_job_execution(0)
 def retranslate_segments(job_id, indexes, provider, api_key, model, target_lang,
                          style_rules="", glossary=None, on_status=None,
                          on_caption=None, actor="user", reviewer_provider=None,
