@@ -10002,11 +10002,39 @@ def _targeted_final_review_ids(state, limit=8):
         selected.items(), key=lambda item: (item[1], item[0]))[:bounded_limit]]
 
 
+#: Manual / whole-book review: paragraphs per model request.  Each request
+#: carries ~6.5k characters of fixed reviewer prompt and packet, so short
+#: paragraphs reviewed one by one spend almost all of their time and tokens on
+#: that overhead (and ~20 s of model latency each).
+MANUAL_REVIEW_BATCH_SEGMENTS = 10
+#: Source + target characters per request, so long paragraphs make smaller batches.
+MANUAL_REVIEW_BATCH_CHARS = 6000
+#: Requests in flight at once (the provider gate still applies its cooldowns).
+MANUAL_REVIEW_IN_FLIGHT = 2
+
+
+def _manual_review_groups(segment_ids, pairs, limit, char_limit):
+    """Split sorted segment ids into consecutive runs within both limits."""
+    groups, current, size = [], [], 0
+    for segment_id in segment_ids:
+        pair = pairs[segment_id]
+        chars = len(str(pair.get("source") or "")) + len(str(pair.get("target") or ""))
+        if current and (segment_id != current[-1] + 1 or len(current) >= limit
+                        or size + chars > char_limit):
+            groups.append(current)
+            current, size = [], 0
+        current.append(segment_id)
+        size += chars
+    if current:
+        groups.append(current)
+    return groups
+
+
 @_exclusive_job_execution(0)
 def review_translation_segments(
     job_id, indexes, provider, api_key, model, target_lang, *, style_rules="",
     call_llm_fn=None, base_url=None, review_focus="", focus_findings=None,
-    on_progress=None,
+    on_progress=None, batch_size=None, max_in_flight=None,
 ):
     """Run the existing independent reviewer on current persisted segments.
 
@@ -10015,8 +10043,12 @@ def review_translation_segments(
     refresh path and keep the global conflict visible to the reviewer.
 
     Own the existing worker lifetime lock, not the state transaction lock,
-    while waiting for the model. Competing operations fail immediately as busy;
-    completed segments are checkpointed before starting the next request.
+    while waiting for the model. Competing operations fail immediately as busy.
+    Consecutive paragraphs go out ``batch_size`` (default
+    ``MANUAL_REVIEW_BATCH_SEGMENTS``) per request, ``max_in_flight`` requests at
+    a time; each batch is checkpointed as soon as its result is applied.  A
+    failed batch is retried paragraph by paragraph; an access or balance
+    failure stops the run instead.
     """
     from folith import delivery as _delivery
     from folith.terminology import (
@@ -10060,92 +10092,118 @@ def review_translation_segments(
             "entries") or [])
     reviewed, failed_ids = [], []
     tm = load_tm(tm_project_id(state)) if state.get("use_tm", True) else {}
-    tm_changed = False
-    for position, segment_id in enumerate(segment_ids, 1):
-        pair = pairs[segment_id]
-        source = str(pair.get("source") or "")
-        target = str(pair.get("target") or "")
+    done_count = 0
+
+    def prepare(ids):
+        """Everything one request needs, built from the state as it is now.
+
+        Runs on this (the owning) thread.  The model call runs elsewhere, so it
+        gets copies: applying an earlier batch keeps mutating ``state``.
+        """
+        group_pairs = [pairs[segment_id] for segment_id in ids]
+        sources = [str(pair.get("source") or "") for pair in group_pairs]
+        targets = [str(pair.get("target") or "") for pair in group_pairs]
         section_profile = _batch_section_profile(
-            state.get("document_profile"), segment_id, 1)
+            state.get("document_profile"), ids[0], len(ids))
         selected, _ = _select_glossary(
-            [source], glossary + _knowledge.provisional_hints(
+            sources, glossary + _knowledge.provisional_hints(
                 state.get("knowledge_candidates") or [],
                 authoritative_entries=glossary),
-            state.get("document_profile"), section_profile,
-            segment_ids=[segment_id])
+            state.get("document_profile"), section_profile, segment_ids=ids)
         glossary_text = _glossary_block(selected)
+        # Groups are consecutive runs, so batch-local index i is ids[0] + i.
         deterministic = _globalize_batch_findings(check_translation_batch(
-            [source], [target], glossary, target_lang,
-            section_profile=section_profile), segment_id)
+            sources, targets, glossary, target_lang,
+            section_profile=section_profile), ids[0])
         review_context = _runtime_review_context(
-            state, segment_id, 1, glossary_text, style_rules, target_lang)
+            state, ids[0], len(ids), glossary_text, style_rules, target_lang)
         if review_focus:
-            risk_items = [
-                {
-                    key: item.get(key)
-                    for key in (
-                        "segment_id", "type", "category", "severity", "reason",
-                        "source", "preferred_target", "observed_target",
-                        "observed_targets",
-                    ) if item.get(key) is not None
-                } for item in (focus_findings or [])
-                if isinstance(item, dict)
-                and item.get("segment_id", item.get("segment_index")) == segment_id
-            ][:4]
+            risk_items = []
+            for segment_id in ids:
+                risk_items.extend([
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "segment_id", "type", "category", "severity", "reason",
+                            "source", "preferred_target", "observed_target",
+                            "observed_targets",
+                        ) if item.get(key) is not None
+                    } for item in (focus_findings or [])
+                    if isinstance(item, dict)
+                    and item.get("segment_id", item.get("segment_index")) == segment_id
+                ][:4])
             review_context["review_focus"] = str(review_focus)
             review_context["whole_book_consistency_risks"] = risk_items
-        packet = _translation_evidence.build_runtime_review_packet(
-            state, [pair], [segment_id], glossary,
-            deterministic_checks=deterministic, review_context=review_context)
+        packet = copy.deepcopy(_translation_evidence.build_runtime_review_packet(
+            state, group_pairs, ids, glossary,
+            deterministic_checks=deterministic, review_context=review_context))
         evidence_index = _translation_evidence.TranslationEvidenceIndex(
-            state.get("paras") or [item.get("source") or "" for item in pairs],
-            pairs, glossary, state.get("document_profile"),
+            list(state.get("paras") or [item.get("source") or "" for item in pairs]),
+            [dict(item) for item in pairs], glossary, state.get("document_profile"),
             state.get("document_synopsis"), state.get("section_digests"),
-            state.get("findings"))
-        findings, failed, trace = \
-            _translation_evidence.review_translation_batch_with_evidence(
-                [source], [target], glossary_text, style_rules, target_lang,
-                provider, api_key, model, evidence_index,
-                call_llm=review_call, segment_ids=[segment_id],
-                translation_core_packet=packet)
+            [dict(item) for item in state.get("findings") or [] if isinstance(item, dict)])
+        return {"ids": list(ids), "sources": sources, "targets": targets,
+                "glossary_text": glossary_text, "deterministic": deterministic,
+                "packet": packet, "evidence_index": evidence_index}
+
+    def request(prepared):
+        """The model call (and its evidence round); touches no shared state."""
+        return _translation_evidence.review_translation_batch_with_evidence(
+            prepared["sources"], prepared["targets"], prepared["glossary_text"],
+            style_rules, target_lang, provider, api_key, model,
+            prepared["evidence_index"], call_llm=review_call,
+            segment_ids=prepared["ids"],
+            translation_core_packet=prepared["packet"])
+
+    def apply(prepared, outcome):
+        """Record one request's result, then checkpoint (save) before moving on."""
+        nonlocal done_count
+        ids = prepared["ids"]
+        findings, failed, trace = outcome
         event_id = (
-            f"translation-review-{job_id}-refresh-{segment_id}-"
+            f"translation-review-{job_id}-refresh-{ids[0]}-"
             f"{len(state.get('review_evidence') or [])}")
         records = [_review_finding_record(item, event_id) for item in findings]
         state.setdefault("findings", []).extend(records)
         _translation_evidence.register_runtime_review_event(
-            state, trace, records, event_id, [segment_id])
-        focus_risk_present = bool(review_focus and any(
-            isinstance(item, dict)
-            and item.get("segment_id", item.get("segment_index")) == segment_id
-            and not item.get("resolved")
-            for item in (focus_findings or [])))
-        if failed:
-            failed_ids.append(segment_id)
-            pair["reviewed"] = False
-            pair["review_status"] = "review_failed"
-        elif not focus_risk_present and not any(
-                item.get("severity") in {"blocking", "actionable"}
-                for item in [*deterministic, *records]):
-            reviewed.append(segment_id)
-            pair["reviewed"] = True
-            pair["review_status"] = "reviewed_clean"
-            pair["accepted_target"] = target
-            pair["target_provenance"] = "reviewed"
-            if state.get("use_tm", True) and _tm_eligible(source, target):
-                if tm_put(tm, source, target, state_target_lang(state)):
-                    tm_changed = True
-        else:
-            pair["reviewed"] = False
-            pair["review_status"] = "reviewed_with_findings"
+            state, trace, records, event_id, ids)
+        tm_changed = False
+        for segment_id, source, target in zip(ids, prepared["sources"],
+                                              prepared["targets"]):
+            pair = pairs[segment_id]
+            # The reviewer only accepts findings that name a segment of this
+            # batch, so attribution by segment_id is exact.
+            own = [item for item in [*prepared["deterministic"], *records]
+                   if item.get("segment_id", item.get("segment_index")) == segment_id]
+            focus_risk_present = bool(review_focus and any(
+                isinstance(item, dict)
+                and item.get("segment_id", item.get("segment_index")) == segment_id
+                and not item.get("resolved")
+                for item in (focus_findings or [])))
+            if failed:
+                failed_ids.append(segment_id)
+                pair["reviewed"] = False
+                pair["review_status"] = "review_failed"
+            elif not focus_risk_present and not any(
+                    item.get("severity") in {"blocking", "actionable"} for item in own):
+                reviewed.append(segment_id)
+                pair["reviewed"] = True
+                pair["review_status"] = "reviewed_clean"
+                pair["accepted_target"] = target
+                pair["target_provenance"] = "reviewed"
+                if state.get("use_tm", True) and _tm_eligible(source, target):
+                    if tm_put(tm, source, target, state_target_lang(state)):
+                        tm_changed = True
+            else:
+                pair["reviewed"] = False
+                pair["review_status"] = "reviewed_with_findings"
         _checkpoint.append_event(job_dir(job_id), {
-            "phase": "semantic_review_done", "segment_ids": [segment_id],
+            "phase": "semantic_review_done", "segment_ids": list(ids),
             "refresh": True, "failed": failed,
             **({"review_focus": str(review_focus)} if review_focus else {}),
         })
         if tm_changed:
             save_tm(tm, tm_project_id(state))
-            tm_changed = False
         _recount_reviewed_segments(state)
         queue = _delivery.review_queue_findings(state)
         stats = state.setdefault("review_stats", {})
@@ -10157,9 +10215,66 @@ def review_translation_segments(
         state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
         state["delivery_status"] = _delivery.compute_delivery_status(state)
         save_job_state(job_id, state)
+        done_count += len(ids)
         if on_progress is not None:
             # ``(done, total)`` after each checkpoint; the caller only displays it.
-            on_progress(position, len(segment_ids))
+            on_progress(done_count, len(segment_ids))
+
+    def fatal_failure(outcome):
+        _findings, failed, trace = outcome
+        if not failed:
+            return None
+        message = str((trace or {}).get("error") or "")
+        reason = _workflow_errors.fatal_reason(RuntimeError(message))
+        return _workflow_errors.WorkflowStopped(message, reason=reason) if reason else None
+
+    groups = _manual_review_groups(
+        segment_ids, pairs, batch_size or MANUAL_REVIEW_BATCH_SEGMENTS,
+        MANUAL_REVIEW_BATCH_CHARS)
+    in_flight = max(1, int(max_in_flight or MANUAL_REVIEW_IN_FLIGHT))
+    upcoming = iter(groups)
+    pending = []
+    pool = ThreadPoolExecutor(max_workers=in_flight,
+                              thread_name_prefix="manual-review")
+
+    def submit_next():
+        ids = next(upcoming, None)
+        if ids is None:
+            return
+        prepared = prepare(ids)
+        context = contextvars.copy_context()  # usage role and similar context vars
+        pending.append((prepared, pool.submit(context.run, request, prepared)))
+
+    try:
+        for _ in range(in_flight):
+            submit_next()
+        # Results are applied (and saved) strictly in paragraph order; the next
+        # batch is prepared after that, so it sees every result but the one
+        # still in flight.
+        while pending:
+            prepared, future = pending.pop(0)
+            outcome = future.result()
+            stopped = fatal_failure(outcome)
+            if stopped is None and outcome[1] and len(prepared["ids"]) > 1:
+                # One bad paragraph must not fail its neighbours: retry this
+                # batch one paragraph at a time.
+                for segment_id in prepared["ids"]:
+                    single = prepare([segment_id])
+                    single_outcome = request(single)
+                    apply(single, single_outcome)
+                    stopped = fatal_failure(single_outcome)
+                    if stopped is not None:
+                        break
+            else:
+                apply(prepared, outcome)
+            if stopped is not None:
+                # Access or balance problems fail every later request too.
+                raise stopped
+            submit_next()
+    finally:
+        # A request still in flight only returns text; nothing it does touches
+        # the task, so do not hold the task lock waiting for it.
+        pool.shutdown(wait=False, cancel_futures=True)
     return state, {
         "reviewed_segment_ids": reviewed,
         "failed_segment_ids": failed_ids,

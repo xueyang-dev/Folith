@@ -16,17 +16,17 @@ def job(tmp_path, monkeypatch):
     core.save_job_state("review", state)
 
 
-def review(call, indexes=(0,)):
+def review(call, indexes=(0,), **kwargs):
     return core.review_translation_segments("review", indexes, "p", "k", "m", "简体中文",
-                                            call_llm_fn=call)
+                                            call_llm_fn=call, **kwargs)
 
 
-def run_thread(call, indexes=(0,)):
+def run_thread(call, indexes=(0,), **kwargs):
     results, errors = [], []
 
     def run():
         try:
-            results.append(review(call, indexes))
+            results.append(review(call, indexes, **kwargs))
         except BaseException as exc:
             errors.append(exc)
 
@@ -86,7 +86,8 @@ def test_bulk_review_checkpoints_before_next_request_and_survives_interruption(t
             raise KeyboardInterrupt("simulated interruption")
         return "[]"
 
-    thread, results, errors = run_thread(call, (0, 1))
+    # One paragraph per request, one at a time: the checkpoint contract itself.
+    thread, results, errors = run_thread(call, (0, 1), batch_size=1, max_in_flight=1)
     try:
         assert entered.wait(5)
         saved = core.load_job_state("review")
@@ -124,7 +125,7 @@ def test_manual_review_model_calls_leave_the_last_run_status_alone(tmp_path, mon
     state, result = core.review_translation_segments(
         "review", [0, 1], provider, "k", "m", "简体中文")
 
-    assert requests == [None, None]
+    assert requests and all(item is None for item in requests)
     assert result["reviewed_segment_ids"] == [0, 1]
     assert core.load_runtime_state("review")["status"] == "completed"
     assert not core.job_is_active("review")
@@ -150,6 +151,7 @@ def test_review_reports_progress_after_each_checkpoint(tmp_path, monkeypatch):
         seen.append((done, total, sum(bool(pair.get("reviewed")) for pair in saved["pairs"])))
 
     core.review_translation_segments("review", [0, 1], "p", "k", "m", "简体中文",
-                                     call_llm_fn=lambda *a, **kw: "[]", on_progress=progress)
+                                     call_llm_fn=lambda *a, **kw: "[]", on_progress=progress,
+                                     batch_size=1, max_in_flight=1)
     # Each report follows that segment's save: the UI never runs ahead of disk.
     assert seen == [(1, 2, 1), (2, 2, 2)]
