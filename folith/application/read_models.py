@@ -287,7 +287,9 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
     snapshot_version: Optional[int] = None
     diverged = False
     try:
-        snapshot = core.delivery_snapshot_status(job_id)
+        # The list only shows the version and divergence: skip the asset
+        # hashing and the per-refresh state reload of the strict check.
+        snapshot = core.delivery_snapshot_status_light(job_id)
         latest = snapshot.get("latest") or {}
         snapshot_version = latest.get("snapshot_version")
         diverged = bool(snapshot.get("diverged"))

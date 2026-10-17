@@ -368,6 +368,10 @@ class ReviewScheduler:
         """Shut down the internal executor pool."""
         self.cancel()
         self._executor.shutdown(wait=wait)
+        if wait:
+            # The joined review workers never closed their pooled LLM clients.
+            from folith import llm_transport
+            llm_transport.get_registry().prune_dead_threads()
 
     def record_hidden_latency(self, hidden_s: float) -> None:
         with self._condition:

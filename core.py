@@ -784,6 +784,7 @@ from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps
     delivery_snapshot_archive,
     delivery_snapshot_assets,
     delivery_snapshot_status,
+    delivery_snapshot_status_light,
     delivery_status_label,
     dependency_impact_view,
     list_delivery_snapshots,
@@ -4132,6 +4133,19 @@ def _batch_timing(job_id, stage, batch_id, phase, **metadata):
         run.record_point("batch_timing", stage=stage, batch_id=batch_id, phase=phase, **metadata)
 
 
+def _release_dead_pool_clients():
+    """Close pooled LLM clients owned by executor threads that have exited.
+
+    Clients are pooled per thread, and a ``ThreadPoolExecutor`` worker never
+    runs the per-worker cleanup, so call this once a pool has shut down
+    (its threads joined) or every run would leave its workers' sockets open.
+    """
+    try:
+        _llm_transport.get_registry().prune_dead_threads()
+    except Exception:  # noqa: BLE001 - cleanup must not mask the run's outcome
+        pass
+
+
 def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers):
     """Bounded requests; shared state is only changed by the ordered consumer."""
     inherited_base = getattr(_LLM_CTX, "base_url", None)
@@ -4165,25 +4179,28 @@ def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, wo
             _LLM_CTX.__dict__.clear()
 
     pending = {}
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ft-annot") as executor:
-        try:
-            for i in range(min(workers, len(tasks))):
-                _batch_timing(job_id, "annotation", tasks[i][0] + 1, "queued")
-                pending[i] = executor.submit(request, tasks[i])
-            for i in range(len(tasks)):
-                if job_id:
-                    _runtime_pause_checkpoint(job_id)
-                    if _runtime_cancel_requested(job_id):
-                        raise RuntimeError("任务已请求取消")
-                yield pending.pop(i).result()
-                # Refill only after the consumer has durably committed this result.
-                next_i = i + workers
-                if next_i < len(tasks):
-                    _batch_timing(job_id, "annotation", tasks[next_i][0] + 1, "queued")
-                    pending[next_i] = executor.submit(request, tasks[next_i])
-        finally:
-            for future in pending.values():
-                future.cancel()
+    try:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ft-annot") as executor:
+            try:
+                for i in range(min(workers, len(tasks))):
+                    _batch_timing(job_id, "annotation", tasks[i][0] + 1, "queued")
+                    pending[i] = executor.submit(request, tasks[i])
+                for i in range(len(tasks)):
+                    if job_id:
+                        _runtime_pause_checkpoint(job_id)
+                        if _runtime_cancel_requested(job_id):
+                            raise RuntimeError("任务已请求取消")
+                    yield pending.pop(i).result()
+                    # Refill only after the consumer has durably committed this result.
+                    next_i = i + workers
+                    if next_i < len(tasks):
+                        _batch_timing(job_id, "annotation", tasks[next_i][0] + 1, "queued")
+                        pending[next_i] = executor.submit(request, tasks[next_i])
+            finally:
+                for future in pending.values():
+                    future.cancel()
+    finally:
+        _release_dead_pool_clients()
 
 
 def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
@@ -6660,6 +6677,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                     _commit_batch_with_timing(bundle)
                     del futures[bi]
     finally:
+        # The ft-trans pool (if any) has joined its workers by now.
+        _release_dead_pool_clients()
         # Mandatory immediate snapshot on leaving the loop: normal completion,
         # user cancellation and fatal failure all converge here, so a committed
         # batch can never be left sitting inside the deferred cadence window.

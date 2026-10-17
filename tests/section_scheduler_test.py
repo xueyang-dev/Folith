@@ -9,6 +9,8 @@ the total segment count.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from folith import section_scheduler as sched
 
 
@@ -62,6 +64,22 @@ def test_scheduler_is_off_by_default(monkeypatch):
     assert sched.default_enabled() is False
     monkeypatch.setenv(sched.SECTION_SCHEDULER_ENV, "1")
     assert sched.default_enabled() is True
+
+
+def test_pipeline_does_not_use_the_scheduler():
+    """The module docstring promises the env var has no effect on real runs.
+
+    If this fails, the scheduler was wired in: update the docstring and
+    ``default_enabled`` to say what the variable now does.
+    """
+    root = Path(__file__).resolve().parents[1]
+    sources = [root / "core.py", *sorted((root / "folith").rglob("*.py"))]
+    users = [path.relative_to(root).as_posix() for path in sources
+             if path.name != "section_scheduler.py"
+             and ("section_scheduler" in path.read_text(encoding="utf-8")
+                  or sched.SECTION_SCHEDULER_ENV in path.read_text(encoding="utf-8"))]
+    assert users == []
+    assert "not wired into" in (sched.__doc__ or "")
 
 
 def test_serial_schedule_matches_document_order():

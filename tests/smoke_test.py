@@ -13,7 +13,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
+import pytest
 from docx import Document
+
+
+@pytest.fixture(autouse=True)
+def _restore_call_llm():
+    """Many tests below swap in a fake ``core.call_llm``; put the real one back.
+
+    Without this the fake leaked into later test files in the same pytest run
+    (``tests/llm_transport_test.py`` then saw report text instead of ``OK``).
+    The ``__main__`` runner calls the tests directly and does not need it.
+    """
+    original = core.call_llm
+    yield
+    core.call_llm = original
 
 
 def test_opencode_go_provider_route():

@@ -511,6 +511,48 @@ def delivery_snapshot_status(job_id, state=None):
     }
 
 
+#: job dir -> ((latest snapshot version, state signature), status) for
+#: ``delivery_snapshot_status_light``; one entry per task.
+_LIGHT_STATUS_CACHE = {}
+
+
+def delivery_snapshot_status_light(job_id):
+    """``delivery_snapshot_status`` for the task list: no hashing, no reload.
+
+    Asset integrity is reduced to "the files are present" (no read, no
+    sha256), and the state identity is computed once per persisted state and
+    snapshot version and then reused while neither changes.  Opening or
+    exporting a delivery still goes through the strict
+    ``delivery_snapshot_status`` / ``delivery_snapshot_assets``.
+    """
+    from folith.storage import job_repository as _job_repository
+
+    job_root = _c.job_dir(job_id)
+    latest = _snapshots.latest_snapshot(job_root)
+    if latest is None:
+        return {"latest": None, "current": False, "diverged": False, "integrity": False}
+    version = latest["snapshot_version"]
+    signature = _job_repository.state_signature(job_id, output_dir=job_root.parent)
+    key = (version, signature)
+    cached = _LIGHT_STATUS_CACHE.get(str(job_root))
+    if cached is not None and cached[0] == key:
+        return dict(cached[1])
+    state = _c.load_job_state(job_id)
+    matches = _snapshots.state_identity(state or {}) == latest.get("translation_state_identity")
+    names = [item.get("name") for item in latest.get("assets") or []]
+    integrity = bool(names) and all(
+        name and _snapshots.asset_path(job_root, version, name).is_file() for name in names)
+    status = {
+        "latest": latest,
+        "current": bool(matches and integrity and state
+                        and state.get("delivery_status") == "final"),
+        "diverged": not matches,
+        "integrity": integrity,
+    }
+    _LIGHT_STATUS_CACHE[str(job_root)] = (key, status)
+    return dict(status)
+
+
 def delivery_snapshot_assets(job_id, version):
     manifest = next((item for item in list_delivery_snapshots(job_id)
                      if item.get("snapshot_version") == int(version)), None)

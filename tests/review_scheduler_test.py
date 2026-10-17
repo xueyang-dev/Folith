@@ -222,7 +222,7 @@ def test_compute_overlap_metrics():
     assert metrics["max_review_backlog"] == 2
 
 
-def test_e2e_translation_equivalence_sequential_vs_overlap():
+def test_e2e_translation_equivalence_sequential_vs_overlap(monkeypatch):
     """Verify that Reviewer Overlap produces 100% equivalent translation invariants.
 
     Invariants checked:
@@ -247,7 +247,7 @@ def test_e2e_translation_equivalence_sequential_vs_overlap():
 
     old_output_dir = core.OUTPUT_DIR
     try:
-        core.call_llm = fake_llm
+        monkeypatch.setattr(core, "call_llm", fake_llm)
         sources = [
             f"Paragraph {i}: The quick brown fox jumps over the lazy dog in session {i // 2}."
             for i in range(8)
@@ -327,7 +327,7 @@ def test_e2e_translation_equivalence_sequential_vs_overlap():
         core.OUTPUT_DIR = old_output_dir
 
 
-def test_overlap_with_simulated_latency():
+def test_overlap_with_simulated_latency(monkeypatch):
     """Verify that review latency is hidden behind translation generation."""
     tmp = Path(tempfile.mkdtemp(prefix="ft-lat-"))
     old_output_dir = core.OUTPUT_DIR
@@ -346,7 +346,7 @@ def test_overlap_with_simulated_latency():
         return json.dumps(results, ensure_ascii=False)
 
     try:
-        core.call_llm = simulated_llm
+        monkeypatch.setattr(core, "call_llm", simulated_llm)
         sources = [f"Paragraph {i}: Testing overlap latency." for i in range(8)]  # 4 batches of size 2
 
         # Sequential run
@@ -422,7 +422,7 @@ def test_ordered_commit_barrier_with_out_of_order_completion():
     scheduler.shutdown()
 
 
-def test_strategy_b_stable_barrier():
+def test_strategy_b_stable_barrier(monkeypatch):
     """Verify that Strategy B (stable) runs successfully with ordered barriers."""
     tmp = Path(tempfile.mkdtemp(prefix="ft-stratb-"))
     old_output_dir = core.OUTPUT_DIR
@@ -436,7 +436,7 @@ def test_strategy_b_stable_barrier():
         return json.dumps(results, ensure_ascii=False)
 
     try:
-        core.call_llm = fake_llm
+        monkeypatch.setattr(core, "call_llm", fake_llm)
         sources = [f"Section {i} content." for i in range(6)]
         state = {"paras": list(sources), "pairs": [], "findings": []}
         core.save_job_state("stratb-job", state)
@@ -454,7 +454,7 @@ def test_strategy_b_stable_barrier():
         core.OUTPUT_DIR = old_output_dir
 
 
-def test_crash_recovery_resumption_with_overlap():
+def test_crash_recovery_resumption_with_overlap(monkeypatch):
     """Verify that a job interrupted mid-stage resumes correctly with Reviewer Overlap."""
     tmp = Path(tempfile.mkdtemp(prefix="ft-res-"))
     old_output_dir = core.OUTPUT_DIR
@@ -472,7 +472,7 @@ def test_crash_recovery_resumption_with_overlap():
         return json.dumps(results, ensure_ascii=False)
 
     try:
-        core.call_llm = recording_llm
+        monkeypatch.setattr(core, "call_llm", recording_llm)
         sources = [f"Paragraph {i}: Content." for i in range(6)]  # 3 batches of size 2
 
         # 1. Pre-populate first batch (2 segments) as already committed
