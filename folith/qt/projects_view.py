@@ -133,6 +133,8 @@ class ProjectsView(QWidget):
     moveRequested = Signal(list)
     #: 「用这个任务新建项目…」：直接打开「新建项目」那一页
     newFromTaskRequested = Signal(str)
+    #: 清空这个项目的翻译记忆（确认框由窗口弹）
+    clearMemoryRequested = Signal(str)
     #: 「把「未分类」的任务移进来…」：目标项目已选好
     pullRequested = Signal(str)
     newProjectRequested = Signal()
@@ -1278,16 +1280,8 @@ class ProjectsView(QWidget):
 
     def _clear_tm(self) -> None:
         project = self.selected_project()
-        if not project:
-            return
-        if not bootstrap.automation() and not prompts.ConfirmDialog.ask(
-                self, i18n.tr('清空翻译记忆'),
-                i18n.tr('这会删除「{v0}」的全部翻译记忆，且不可恢复。其他项目不受影响。\n\n确定清空吗？',
-                        v0=project["name"]),
-                yes=i18n.tr('清空'), no=i18n.tr('取消'), tone="danger"):
-            return
-        adapter.clear_project_memory(project["project_id"])
-        self.reloadRequested.emit()
+        if project:
+            self.clearMemoryRequested.emit(project["project_id"])
 
     def _export_memory(self, path: str = "") -> None:
         key = self._selected

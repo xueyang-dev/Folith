@@ -1832,7 +1832,6 @@
   "无法重命名：{v0}": "Cannot rename: {v0}",
   "无法更改归档状态：{v0}": "Cannot change archive state: {v0}",
   "无法删除：{v0}": "Cannot delete: {v0}",
-  "这会删除「{v0}」的全部翻译记忆，且不可恢复。其他项目不受影响。\n\n确定清空吗？": "This deletes all translation memory of “{v0}” and cannot be undone. Other projects are not affected.\n\nClear it?",
   "保存到项目「{v0}」的术语库；新任务会自动使用，已有任务不受影响。": "Saved to the glossary of “{v0}”; new tasks use it automatically, existing tasks are unaffected.",
   "领域（可选）": "Domain (optional)",
   "备注（可选）": "Note (optional)",

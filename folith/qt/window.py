@@ -257,6 +257,7 @@ class MainWindow(QMainWindow):
         self.projects.newFromTaskRequested.connect(
             lambda job_id: self.move_to_project([job_id], mode="new"))
         self.projects.pullRequested.connect(self._pull_unsorted_into)
+        self.projects.clearMemoryRequested.connect(self.clear_project_memory)
         self.projects.acceptRequested.connect(self.accept_review_item)
         self.projects.decideRequested.connect(self.decide_review_item)
         self.projects.batchAcceptRequested.connect(self.batch_accept_items)
@@ -825,7 +826,13 @@ class MainWindow(QMainWindow):
         if not force and now - getattr(self, "_pending_stamp", 0.0) < 45:
             return
         self._pending_stamp = now
-        self.runner.submit(adapter.pending_total, on_done=self.home.set_pending_badge,
+        def done(count) -> None:
+            try:
+                self.home.set_pending_badge(count)
+            except RuntimeError:    # 窗口已经关了，后台结果才到
+                pass
+
+        self.runner.submit(adapter.pending_total, on_done=done,
                            on_error=lambda *_a: None, label="pending-badge")
 
     def accept_review_item(self, item: dict, target: str) -> None:
@@ -869,6 +876,16 @@ class MainWindow(QMainWindow):
 
         self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
                             adapter.accept_review_items, pick, on_done=done)
+
+    def clear_project_memory(self, project_id: str) -> None:
+        if not project_id or not self._confirm(
+                i18n.tr('清空翻译记忆'),
+                i18n.tr('这会删除所选项目的全部翻译记忆，且不可恢复。其他项目不受影响。\n\n确定清空吗？'),
+                yes=i18n.tr('清空'), no=i18n.tr('取消'), tone="danger"):
+            return
+        adapter.clear_project_memory(project_id)
+        self._notice(i18n.tr('已清空该项目的翻译记忆。'), task=False)
+        self.refresh_projects()
 
     def open_library_job(self, job_id: str, index: int) -> None:
         self.open_job(job_id)
