@@ -2174,46 +2174,12 @@ def set_final_qa_fact(job_id: str, field: str, confirmed: bool) -> dict:
 # 词条永远待审。行模型来自 ``folith.language_assets``（与界面框架无关），这里只负责
 # 把任务/项目/记忆读出来喂给它，并把审核决定交给核心。
 
-LIBRARY_TABS = (("candidates", "待审核"), ("terms", "术语库"), ("tm", "翻译记忆"))
 CANDIDATE_DECISIONS = {"project_term": "接受为项目术语", "task_only": "仅用于本任务",
                        "rejected": "拒绝"}
 
 
-def library_data(tm_project_id: str = "") -> dict:
-    from folith import language_assets as _assets
-
-    jobs = list(core.list_jobs())
-    projects = core.list_active_project_options() + [
-        p for p in core.list_projects() if p.get("archived_at")]
-    ordered = [str(p["project_id"]) for p in projects] or [core.SYSTEM_PROJECT_ID]
-    labels = {str(p["project_id"]): p["name"] for p in projects}
-    if tm_project_id not in ordered:
-        tm_project_id = ordered[0]
-    tm_rows = _assets.build_tm_rows(core.load_tm(tm_project_id))
-    task_rows = _assets.build_term_rows(jobs)
-    by_project = {str(p.get("project_id")): p for p in projects}
-    by_job = {str(j.get("job_id")): j for j in jobs}
-    for row in task_rows:
-        job = by_job.get(str(row.get("job_id") or "")) or {}
-        row["project_id"] = core.resolved_project_id(job.get("state") or {})
-        project = by_project.get(row["project_id"])
-        row["project_name"] = str((project or {}).get("name") or "未分类")
-    project_rows = _assets.build_project_term_rows(projects, task_rows=task_rows)
-    terms = _assets.group_terms([*task_rows, *project_rows])
-    candidates = _assets.build_candidate_rows(jobs)
-    return {
-        "terms": terms, "tm": tm_rows, "candidates": candidates,
-        "projects": [{"project_id": pid, "name": labels.get(pid, pid)} for pid in ordered],
-        "tm_project_id": tm_project_id,
-        "jobs": [(str(j.get("job_id")), str((j.get("state") or {}).get("filename") or "?"))
-                 for j in jobs],
-        "summary": {"candidates": len(candidates), "terms": len(terms), "tm": len(tm_rows),
-                    "conflicts": sum(1 for c in candidates if c["has_conflict"])},
-    }
-
-
 def decide_candidate(row: dict, decision: str) -> str:
-    """审核一条候选词条；"接受为项目术语"还会把任务提升进项目记忆。返回说明。"""
+    """审核一条候选词条；"接受为项目术语"只把这一条术语收进项目术语库。返回说明。"""
     if decision not in CANDIDATE_DECISIONS:
         raise AdapterError(f"不支持的审核决定：{decision}")
     try:
@@ -2224,21 +2190,34 @@ def decide_candidate(row: dict, decision: str) -> str:
     if not ok:
         raise AdapterError(str(message or "处理失败"))
     if decision == "project_term":
-        try:
-            project = core.promote_job_to_project(row["job_id"], actor="用户", state=state)
-        except Exception as exc:  # noqa: BLE001 - 候选已写入任务术语表，提升失败要如实说
-            raise AdapterError(f"候选已接受并写入任务术语表，但提升到项目记忆失败：{exc}") from exc
-        if project is None:
-            raise AdapterError("候选已接受并写入任务术语表，但项目记忆不可用")
-        message = f"{message}；已提升到项目「{project.get('name') or '未命名项目'}」"
+        message = f"{message}；{_promote_accepted_term(row, str(row.get('source') or ''))}"
     return str(message or "")
+
+
+def _promote_accepted_term(row: dict, source: str) -> str:
+    """候选被接受后，只把**这一条**术语提升进项目术语库；返回一句说明。
+
+    任务在「未分类」时不提升（那里没有项目术语库），术语只留在任务自己的术语表里。
+    项目里已有另一个任务给出的不同译名时，进「待审核」，不覆盖。
+    """
+    owner = core.project_for_job(row["job_id"])
+    if owner is None or core.is_system_project(owner):
+        return "任务在「未分类」里，术语只写入这个任务自己的术语表"
+    try:
+        project, report = core.promote_term_to_project(row["job_id"], source, actor="用户")
+    except Exception as exc:  # noqa: BLE001 - 候选已写入任务术语表，提升失败要如实说
+        raise AdapterError(f"候选已接受并写入任务术语表，但收进项目术语库失败：{exc}") from exc
+    name = project.get("name") or "未命名项目"
+    if report.get("conflicts"):
+        return f"和项目「{name}」术语库里的译名不一致，已放进待审核，没有覆盖"
+    return f"已收进项目「{name}」的术语库"
 
 
 def accept_candidate_with(row: dict, target: str) -> str:
     """先改建议译文再接受为项目术语（候选的译法不对时，不必先接受再去改）。
 
     接受后在该任务的术语表里找到这条术语，把首选译名改成用户写的（生成新的术语
-    版本），然后再提升到项目记忆——项目里存的就是改过的译名。
+    版本），然后只把这一条提升到项目术语库——项目里存的就是改过的译名。
     """
     target = str(target or "").strip()
     if not target:
@@ -2259,9 +2238,7 @@ def accept_candidate_with(row: dict, target: str) -> str:
         update_glossary_entry(row["job_id"], str(entry.get("id")), preferred=target,
                               status="locked", domain=str(entry.get("domain") or ""),
                               note=str(entry.get("note") or ""))
-    project = core.promote_job_to_project(row["job_id"], actor="用户")
-    name = (project or {}).get("name") or "未命名项目"
-    return f"已接受「{row.get('source')} → {target}」并提升到项目「{name}」"
+    return f"已接受「{row.get('source')} → {target}」；{_promote_accepted_term(row, str(entry.get('source') or ''))}"
 
 
 def decide_candidates(rows: Sequence[dict], decision: str) -> dict:
@@ -2279,6 +2256,576 @@ def decide_candidates(rows: Sequence[dict], decision: str) -> dict:
 def clear_project_memory(project_id: str) -> None:
     """清空某个项目的翻译记忆（只影响这个项目）。"""
     core.save_tm({}, project_id)
+
+
+# ================= 项目页：概览 / 术语库 / 翻译记忆 / 待审核 =================
+#
+# 语言资产住在项目里（plan A）：术语库与翻译记忆是项目的，待审核是项目里各任务
+# 发现的候选加上"和术语库不一致"的待决冲突。「未分类」只汇总各任务自己的术语。
+
+
+def _jobs_by_project() -> tuple[list[dict], dict[str, list[dict]]]:
+    """全部任务的摘要（精简状态 + 候选行），按项目分组。签名没变的任务不重读。"""
+    from folith import project_digest
+    jobs = project_digest.read_digests(core)
+    grouped: dict[str, list[dict]] = {}
+    for job in jobs:
+        grouped.setdefault(core.resolved_project_id(job.get("state") or {}), []).append(job)
+    return jobs, grouped
+
+
+def _conflict_rows(project: dict, jobs: list[dict]) -> list[dict]:
+    """项目里"和术语库不一致"的待决冲突，做成与候选同形的行。"""
+    names = {str(j.get("job_id")): str((j.get("state") or {}).get("filename") or "")
+             for j in jobs}
+    states = {str(j.get("job_id")): j.get("state") or {} for j in jobs}
+    rows = []
+    for item in project.get("pending_conflicts") or []:
+        if item.get("kind") != "glossary":
+            continue
+        # 出现次数取自提出这条译名的任务：它术语表里这条术语的真实命中段落数。
+        hits = 0
+        key = item["source"].casefold()
+        for entry in (states.get(str(item.get("source_job_id") or "")) or {}).get("glossary") or []:
+            if str(entry.get("source") or "").casefold() == key:
+                hits = len(entry.get("occurrences") or [])
+                break
+        rows.append({
+            "kind": "conflict", "conflict_id": item["conflict_id"],
+            "row_id": f"conflict::{item['conflict_id']}",
+            "source": item["source"], "target": item["incoming"],
+            "local": item["local"], "job_id": item.get("source_job_id") or "",
+            "document": names.get(str(item.get("source_job_id") or ""))
+            or str(item.get("imported_from") or "") or "导入的记忆",
+            "has_conflict": True, "high_confidence": False,
+            "positions_known": bool(hits), "occurrence_count": hits, "observed_segments": [],
+            "conflict_summary": f"项目术语库里是「{item['local']}」"})
+    return rows
+
+
+def _against_project_terms(candidates: list[dict], project: dict) -> list[dict]:
+    """候选对照项目术语库：已经一样的不再审核；译名不同的标成"和术语库不一致"。
+
+    同一条已经登记成待决冲突的，只保留冲突那一行，不重复出现。
+    """
+    known = {e["source"].casefold(): str(e.get("preferred") or e.get("target") or "")
+             for e in project.get("glossary") or []}
+    pending = {(c["source"].casefold(), c["incoming"].casefold())
+               for c in project.get("pending_conflicts") or [] if c.get("kind") == "glossary"}
+    rows = []
+    for row in candidates:
+        key = str(row.get("source") or "").casefold()
+        target = str(row.get("target") or "")
+        if (key, target.casefold()) in pending:
+            continue
+        current = known.get(key)
+        if current is not None and current.casefold() == target.casefold():
+            continue
+        if current is not None:
+            row = {**row, "has_conflict": True,
+                   "conflict_summary": f"项目术语库里是「{current}」", "local": current}
+        rows.append(row)
+    return rows
+
+
+def _cached_candidate_rows(job_list: list[dict]) -> list[dict]:
+    """各任务缓存好的完整候选行（摘要里算过，任务没变就不重算）。"""
+    return [dict(row) for job in job_list for row in job.get("candidate_rows") or []]
+
+
+def _decided_keys(job_list: list[dict]) -> set[tuple[str, str]]:
+    """已经在待审核里处理过的候选（任务, 原文）——它们对应的任务术语不再回到待审核。"""
+    keys = set()
+    for job in job_list:
+        for candidate in (job.get("state") or {}).get("knowledge_candidates") or []:
+            if isinstance(candidate, dict) and candidate.get("decision"):
+                keys.add((str(job.get("job_id") or ""),
+                          str(candidate.get("source") or "").strip().casefold()))
+    return keys
+
+
+def _pending_rows(project: dict, job_list: list[dict], *, lite: bool = False) -> list[dict]:
+    """项目术语库里「待审核」的全部来源：任务术语表条目、智能体候选、不一致的冲突。
+
+    只在读取时由各任务派生，不写进 project.json；确认才会写进项目术语库。
+    """
+    from folith import language_assets as _assets
+
+    candidates = (_assets.build_candidate_rows_lite(job_list) if lite
+                  else _cached_candidate_rows(job_list))
+    seen = {(str(c.get("job_id")), str(c.get("source") or "").strip().casefold(),
+             str(c.get("target") or "").strip().casefold()) for c in candidates}
+    decided = _decided_keys(job_list)
+    task_terms = [t for t in _assets.build_task_term_rows(job_list)
+                  if (t["job_id"], t["source"].casefold(), t["target"].strip().casefold()) not in seen
+                  and (t["job_id"], t["source"].casefold()) not in decided]
+    rows = _against_project_terms([*candidates, *task_terms], project)
+    return [*rows, *_conflict_rows(project, job_list)]
+
+
+def pending_total() -> int:
+    """侧栏「项目」角标：所有项目与「未分类」待审核条数之和（与各页签一致）。"""
+    return int(projects_overview().get("pending_total") or 0)
+
+
+def projects_overview() -> dict:
+    """项目列表（左栏）：每个项目的方向、任务数、待审核数；「未分类」另列。"""
+    from folith import language_assets as _assets
+
+    _jobs, grouped = _jobs_by_project()
+    rows = project_rows()
+    system_id = core.SYSTEM_PROJECT_ID
+    projects, unsorted, total = [], None, 0
+    for row in rows:
+        pid = str(row["project_id"])
+        job_list = grouped.get(pid, [])
+        record = core.load_project(pid) if not row["is_system"] else None
+        if record:
+            pending = _assets.pending_review_count(
+                _pending_rows(record, job_list, lite=True), by_document=False)
+        else:
+            pending = _assets.pending_review_count(
+                _assets.build_candidate_rows_lite(job_list))
+        entry = {**row, "pending": pending, "job_count": len(job_list)}
+        if row["is_system"]:
+            entry["term_count"] = sum(
+                len(_assets.build_term_rows([j])) for j in job_list)
+            unsorted = entry
+        else:
+            direction = core.project_direction(record or {})
+            entry.update(
+                source_lang=direction["source_lang"], target_lang=direction["target_lang"],
+                direction_inferred=direction["inferred"],
+                direction_label=_assets.direction_label(
+                    direction["source_lang"], direction["target_lang"]),
+                updated_at=str((record or {}).get("updated_at") or ""))
+            projects.append(entry)
+        total += pending
+    return {"unsorted": unsorted, "projects": projects, "pending_total": total,
+            "system_id": system_id}
+
+
+def _term_usage(project_jobs: list[dict]) -> dict[str, list[tuple[str, int]]]:
+    usage: dict[str, list[tuple[str, int]]] = {}
+    from folith import language_assets as _assets
+    for row in _assets.build_term_rows(project_jobs):
+        usage.setdefault(str(row["source"]).casefold(), []).append(
+            (row["document"], int(row.get("usage") or 0)))
+    return usage
+
+
+_ORIGIN_TEXT = {"review": "审核收进", "manual": "手动添加", "import": "导入",
+                "move": "随任务带来"}
+
+
+def _review_payload(rows: list[dict], basis: str, show_singles: bool) -> dict:
+    from folith import language_assets as _assets
+    return _assets.review_view(rows, basis=basis, show_singles=show_singles)
+
+
+def project_detail(project_id: str, *, basis: str = "all",
+                   show_singles: bool = False) -> dict:
+    """某个项目右栏需要的全部数据（概览 / 术语库 / 翻译记忆 / 待审核）。
+
+    后台线程里调用：要读取项目下所有任务。
+    """
+    from folith import language_assets as _assets
+
+    project = core.load_project(project_id)
+    if project is None:
+        raise AdapterError("找不到这个项目。")
+    _jobs, grouped = _jobs_by_project()
+    job_list = grouped.get(str(project["project_id"]), [])
+    rows_by_id = {str(r.job_id): r for r in list_jobs()}
+    usage = _term_usage(job_list)
+    terms = []
+    for entry in project["glossary"]:
+        key = entry["source"].casefold()
+        origin = (project.get("term_origins") or {}).get(key) or {}
+        places = usage.get(key, [])
+        hit_tasks = [(name, n) for name, n in places if n]
+        terms.append({
+            "source": entry["source"], "target": entry.get("preferred") or entry.get("target") or "",
+            "domain": entry.get("domain") or "", "note": entry.get("note") or "",
+            "forbidden": list(entry.get("forbidden") or []),
+            "origin_how": origin.get("how") or "", "origin_job": origin.get("job_name") or "",
+            "origin_text": _ORIGIN_TEXT.get(origin.get("how") or "", "审核收进"),
+            "status": "confirmed",
+            "used_tasks": hit_tasks, "used_total": sum(n for _name, n in hit_tasks)})
+    terms.sort(key=lambda t: t["source"].casefold())
+    tm_rows = _assets.build_tm_rows(core.load_tm(project["project_id"]))
+    pending_rows = _pending_rows(project, job_list)
+    conflicts = [r for r in pending_rows if r.get("kind") == "conflict"]
+    review = _assets.review_view(pending_rows, basis=basis, show_singles=show_singles,
+                                 by_document=False)
+    tasks = []
+    for job in job_list:
+        row = rows_by_id.get(str(job["job_id"]))
+        tasks.append({"job_id": job["job_id"],
+                      "name": str((job.get("state") or {}).get("filename") or job["job_id"]),
+                      "status": row.status_label if row else "",
+                      "progress": row.progress_label if row else "",
+                      "runtime_status": row.runtime_status if row else "",
+                      "active": bool(row.active) if row else False,
+                      "percent": row.progress_percent if row else None})
+    log = []
+    for record in reversed(project.get("promotion_log") or []):
+        log.append({"what": _log_text(record), "when": str(record.get("at") or "")})
+    direction = core.project_direction(project)
+    detail = {
+        "project": {**project_rows_by_id().get(str(project["project_id"]), {}),
+                    "source_lang": direction["source_lang"],
+                    "target_lang": direction["target_lang"],
+                    "direction_inferred": direction["inferred"],
+                    "direction_label": _assets.direction_label(
+                        direction["source_lang"], direction["target_lang"]),
+                    "updated_at": str(project.get("updated_at") or ""),
+                    "description": str(project.get("description") or "")},
+        "terms": terms, "tm": tm_rows, "review": review, "tasks": tasks, "log": log[:8],
+        "term_counts": {"confirmed": len(terms), "pending": review["total"],
+                        "all": len(terms) + review["total"]},
+        "style_rule_count": len(project.get("style_rules") or []),
+        "conflict_count": len(conflicts),
+        "review_tasks": len({r.get("job_id") for r in review["items"] if r.get("job_id")}),
+    }
+    return detail
+
+
+def project_rows_by_id() -> dict[str, dict]:
+    return {str(r["project_id"]): r for r in project_rows()}
+
+
+def _log_text(record: dict) -> str:
+    resolution = record.get("conflict_resolution")
+    if resolution:
+        side = "采用新译名" if resolution.get("adopted") == "incoming" else "保留原译名"
+        return f"{side}：{resolution.get('source')}"
+    edit = record.get("term_edit")
+    if edit:
+        return f"添加术语：{edit.get('source')} → {edit.get('target')}"
+    added = record.get("added") or {}
+    parts = []
+    if added.get("glossary"):
+        parts.append(f"收进 {added['glossary']} 条术语")
+    if added.get("style_rules"):
+        parts.append(f"确认 {added['style_rules']} 条风格规则")
+    if added.get("human_decisions"):
+        parts.append(f"记录 {added['human_decisions']} 条人工决定")
+    return "、".join(parts) or "更新项目记忆"
+
+
+def unsorted_detail(*, basis: str = "all", show_singles: bool = False,
+                    per_task: int = 4) -> dict:
+    """「未分类」右栏：各任务的术语（只读汇总）、共享翻译记忆、待审核。"""
+    from folith import language_assets as _assets
+
+    _jobs, grouped = _jobs_by_project()
+    job_list = grouped.get(core.SYSTEM_PROJECT_ID, [])
+    tasks = []
+    for job in job_list:
+        state = job.get("state") or {}
+        terms = _assets.build_term_rows([job])
+        locked = sum(1 for t in terms if t["status"] == "locked")
+        terms.sort(key=lambda t: (t["status"] != "locked", -int(t.get("usage") or 0),
+                                  t["source"].casefold()))
+        source, target = state.get("source_lang") or "", state.get("target_lang") or ""
+        tasks.append({
+            "job_id": job["job_id"], "name": str(state.get("filename") or job["job_id"]),
+            "source_lang": source, "target_lang": target,
+            "direction_label": _assets.direction_label(source, target),
+            "term_count": len(terms), "locked_count": locked,
+            "terms": [{"source": t["source"], "target": t["preferred"], "status": t["status"],
+                       "hits": t["usage"]} for t in terms[:per_task]],
+            "all_terms": [{"source": t["source"]} for t in terms],
+            "more": max(0, len(terms) - per_task)})
+    tm_rows = _assets.build_tm_rows(core.load_tm(core.SYSTEM_PROJECT_ID))
+    candidates = _cached_candidate_rows(job_list)
+    review = _review_payload(candidates, basis, show_singles)
+    # 候选并进各任务自己的术语列表，状态是「待审核」；已经在任务术语表里的不重复。
+    by_job: dict[str, list[dict]] = {}
+    for item in review["items"]:
+        by_job.setdefault(str(item.get("job_id") or ""), []).append(item)
+    for task in tasks:
+        known = {t["source"].casefold() for t in task["all_terms"]}
+        pending = [i for i in by_job.get(task["job_id"], [])
+                   if i["source"].casefold() not in known]
+        task["pending_total"] = len(pending)
+        task["term_count"] += len(pending)
+        room = max(0, per_task - len(task["terms"]))
+        task["terms"] += [{"source": i["source"], "target": i["target"], "status": "pending",
+                           "hits": i["hits"], "basis_label": i["basis_label"], "item": i}
+                          for i in pending[:max(room, 3)]]
+        task["more"] = max(0, task["term_count"] - len(task["terms"]))
+        del task["all_terms"]
+    return {"tasks": tasks, "tm": tm_rows,
+            "term_total": sum(t["term_count"] for t in tasks),
+            "review": review}
+
+
+# ---- 项目术语库的人工编辑 -------------------------------------------------
+
+
+def add_project_term(project_id: str, source: str, target: str, *, domain: str = "",
+                     note: str = "") -> dict:
+    """添加或改写项目术语库里的一条术语（写进项目，不写任务）。"""
+    try:
+        return core.set_project_term(project_id, source, target, domain=domain, note=note)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def remove_project_term(project_id: str, source: str) -> dict:
+    try:
+        return core.remove_project_term(project_id, source)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def set_project_direction(project_id: str, source_lang: str, target_lang: str) -> dict:
+    try:
+        return core.set_project_direction(project_id, source_lang, target_lang)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def term_target_project(job_id: str) -> dict | None:
+    """「添加术语」该写进哪个项目：任务所属的项目；任务在「未分类」时没有。"""
+    owner = core.project_for_job(job_id)
+    if owner is None or core.is_system_project(owner):
+        return None
+    return {"project_id": owner["project_id"], "name": owner["name"]}
+
+
+# ---- 待审核：收进 / 只用于这个任务 / 不是术语 -----------------------------------
+
+
+def accept_review_item(item: dict, target: str = "") -> str:
+    """收进术语库。``item`` 是合并后的待审核行；``target`` 为空时用建议译名。
+
+    词形变体合并的行对每个成员都生效。"和术语库不一致"的冲突行 = 采用新译名。
+    """
+    target = str(target or "").strip()
+    if item.get("kind") == "conflict":
+        owner = next((p for p in core.list_projects() if any(
+            c.get("conflict_id") == item.get("conflict_id")
+            for c in p.get("pending_conflicts") or [])), None)
+        if owner is None:
+            raise AdapterError("这条冲突已经处理过了。")
+        resolve_project_conflict(owner["project_id"], item["conflict_id"], adopt_incoming=True)
+        return f"已改用「{item.get('target')}」"
+    members = item.get("members") or [item]
+    task_members = [m for m in members if m.get("kind") == "task_term"]
+    members = [m for m in members if m.get("kind") != "task_term"]
+    # 先把全部成员都接受下来，再改译名：改译名会让受影响段落失效，并带走同一段落上
+    # 还没决定的候选，所以不能边接受边改。
+    for member in members:
+        try:
+            _state, ok, message = core.review_knowledge_candidate(
+                member["job_id"], member["candidate_id"], "project_term")
+        except (RuntimeError, ValueError, KeyError) as exc:
+            raise AdapterError(f"处理失败：{exc}") from exc
+        if not ok:
+            raise AdapterError(str(message or "处理失败"))
+    for member in members:
+        if target and target != str(member.get("target") or ""):
+            source = str(member.get("source") or "").strip().casefold()
+            entry = next((e for e in (core.load_job_state(member["job_id"]) or {}).get("glossary") or []
+                          if str(e.get("source") or "").strip().casefold() == source), None)
+            if entry is not None and str(entry.get("preferred") or entry.get("target") or "") != target:
+                update_glossary_entry(member["job_id"], str(entry.get("id")), preferred=target,
+                                      status="locked", domain=str(entry.get("domain") or ""),
+                                      note=str(entry.get("note") or ""))
+    notes = [_promote_accepted_term(member, str(member.get("source") or ""))
+             for member in members]
+    notes += [_accept_task_term(member, target) for member in task_members]
+    return notes[0] if notes else ""
+
+
+def _task_entry(job_id: str, entry_id: str) -> dict:
+    from folith import models as _models
+    state = core.load_job_state(job_id) or {}
+    entry = next((e for e in _models.normalize_glossary(state.get("glossary") or [])
+                  if str(e.get("id")) == entry_id), None)
+    if entry is None:
+        raise AdapterError("任务术语表里已经没有这一条了。")
+    return entry
+
+
+def _accept_task_term(member: dict, target: str = "") -> str:
+    """任务术语表里的一条术语 → 项目术语库（已确认）。暂定的先锁定；译名可以顺手改。"""
+    job_id, entry_id = str(member.get("job_id") or ""), str(member.get("entry_id") or "")
+    entry = _task_entry(job_id, entry_id)
+    target = str(target or "").strip() or str(entry.get("preferred") or entry.get("target") or "")
+    if entry.get("status") != "locked" or target != str(entry.get("preferred") or ""):
+        update_glossary_entry(job_id, entry_id, preferred=target, status="locked",
+                              domain=str(entry.get("domain") or ""),
+                              note=str(entry.get("note") or ""),
+                              forbidden=entry.get("forbidden") or None)
+    return _promote_accepted_term(member, str(member.get("source") or ""))
+
+
+def decide_review_item(item: dict, decision: str) -> str:
+    """只用于这个任务（task_only）或不是术语（rejected）；冲突行 = 保留原译名。"""
+    if item.get("kind") == "conflict":
+        owner = next((p for p in core.list_projects() if any(
+            c.get("conflict_id") == item.get("conflict_id")
+            for c in p.get("pending_conflicts") or [])), None)
+        if owner is None:
+            raise AdapterError("这条冲突已经处理过了。")
+        resolve_project_conflict(owner["project_id"], item["conflict_id"], adopt_incoming=False)
+        return "已保留项目里原来的译名"
+    members = item.get("members") or [item]
+    last = ""
+    for member in members:
+        if member.get("kind") == "task_term":
+            # 任务术语已经只在这个任务里；「不是术语」= 在任务术语表里标成已拒绝。
+            if decision != "rejected":
+                raise AdapterError("这条术语本来就只在这个任务里。")
+            entry = _task_entry(str(member["job_id"]), str(member["entry_id"]))
+            update_glossary_entry(str(member["job_id"]), str(entry["id"]),
+                                  preferred=str(entry.get("preferred") or entry.get("target") or ""),
+                                  status="rejected", domain=str(entry.get("domain") or ""),
+                                  note=str(entry.get("note") or ""))
+            last = "已标为不是术语"
+        else:
+            last = decide_candidate(member, decision)
+    return last
+
+
+def preview_accept(project_id: str, items: Sequence[dict]) -> dict:
+    """批量收进之前的预览：新增几条、已经一致几条、和术语库不一致几条。"""
+    project = core.load_project(project_id) or {}
+    known = {e["source"].casefold(): str(e.get("preferred") or e.get("target") or "")
+             for e in project.get("glossary") or []}
+    plan: dict[str, list] = {"add": [], "same": [], "differs": []}
+    for item in items:
+        source, target = str(item.get("source") or ""), str(item.get("target") or "")
+        current = known.get(source.casefold())
+        if item.get("kind") == "conflict" or (current is not None and current != target):
+            plan["differs"].append({"source": source, "target": target, "local": current or
+                                    str(item.get("local") or "")})
+        elif current is None:
+            plan["add"].append({"source": source, "target": target})
+        else:
+            plan["same"].append({"source": source, "target": target})
+    return plan
+
+
+def accept_review_items(items: Sequence[dict]) -> dict:
+    """批量收进：逐条处理，失败的不拖累其余的。"""
+    done, failed = 0, []
+    for item in items:
+        try:
+            accept_review_item(item)
+            done += 1
+        except AdapterError as exc:
+            failed.append(f"{item.get('source')}（{exc}）")
+    return {"done": done, "failed": failed}
+
+
+# ---- 移到项目 -----------------------------------------------------------------
+
+
+def _move_view(result: dict) -> dict:
+    project = result.get("project") or {}
+    return {**result, "project_name": str(project.get("name") or ""),
+            "project_id": str(project.get("project_id") or ""),
+            "direction_label": __import__("folith.language_assets", fromlist=["x"]).direction_label(
+                (result.get("direction") or {}).get("source_lang"),
+                (result.get("direction") or {}).get("target_lang"))}
+
+
+def move_preview(job_ids: Sequence[str], *, project_id: str = "", new_project: dict | None = None,
+                 carry_terms: bool = True, carry_tm: bool = True) -> dict:
+    """干跑：「移到项目」面板在点按钮之前显示的内容。不写任何东西。"""
+    try:
+        return _move_view(core.preview_move_jobs(
+            list(job_ids), project_id=project_id or None, new_project=new_project,
+            carry_terms=carry_terms, carry_tm=carry_tm))
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def move_jobs(job_ids: Sequence[str], *, project_id: str = "", new_project: dict | None = None,
+              carry_terms: bool = True, carry_tm: bool = True) -> dict:
+    """真正移动（唯一入口，任务库与项目页共用）。"""
+    try:
+        return _move_view(core.move_jobs_to_project(
+            list(job_ids), project_id=project_id or None, new_project=new_project,
+            carry_terms=carry_terms, carry_tm=carry_tm))
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def job_summaries_for_move(job_ids: Sequence[str]) -> list[dict]:
+    """面板标题用：任务名、方向、现在在哪个项目。"""
+    from folith import language_assets as _assets
+    out = []
+    for job_id in job_ids:
+        state = core.load_job_state(job_id) or {}
+        out.append({"job_id": job_id, "name": str(state.get("filename") or job_id),
+                    "source_lang": state.get("source_lang") or "",
+                    "target_lang": state.get("target_lang") or "",
+                    "direction_label": _assets.direction_label(
+                        state.get("source_lang"), state.get("target_lang")),
+                    "project_name": core.project_name_for_id(core.resolved_project_id(state))})
+    return out
+
+
+def job_carry_counts(job_ids: Sequence[str]) -> dict:
+    """「一起带过去」旁边的数字：已锁定术语、暂定术语、可进翻译记忆的已审校译对。"""
+    from folith.engine import projects as _ep
+    locked = provisional = tm = 0
+    for job_id in job_ids:
+        state = core.load_job_state(job_id) or {}
+        for entry in _ep._task_terms(state):
+            if entry.get("status") == "locked":
+                locked += 1
+            elif entry.get("status") != "rejected":
+                provisional += 1
+        tm += len(_ep._move_tm_pairs(state))
+    return {"locked": locked, "provisional": provisional, "tm": tm}
+
+
+def unsorted_jobs(exclude: Sequence[str] = ()) -> list[dict]:
+    """「未分类」里的任务（供"同时移入其他未归属任务"）。"""
+    from folith import language_assets as _assets
+    skip = {str(j) for j in exclude}
+    rows = []
+    for job in core.list_project_jobs(core.SYSTEM_PROJECT_ID):
+        if str(job["job_id"]) in skip:
+            continue
+        state = job.get("state") or {}
+        rows.append({"job_id": job["job_id"],
+                     "name": str(state.get("filename") or job["job_id"]),
+                     "direction_label": _assets.direction_label(
+                         state.get("source_lang"), state.get("target_lang")),
+                     "term_count": len(_assets.build_term_rows([job]))})
+    return rows
+
+
+def move_targets(job_ids: Sequence[str]) -> list[dict]:
+    """可选的目标项目（含方向与术语库条数），当前所在项目不列出。"""
+    from folith import language_assets as _assets
+    current = {core.resolved_project_id(core.load_job_state(j) or {}) for j in job_ids}
+    options = []
+    for project in core.list_active_projects():
+        if project["project_id"] in current:
+            continue
+        direction = core.project_direction(project)
+        options.append({
+            "project_id": project["project_id"], "name": project["name"],
+            "is_system": bool(project.get("is_system")),
+            "source_lang": direction["source_lang"], "target_lang": direction["target_lang"],
+            "direction_label": "" if project.get("is_system") else _assets.direction_label(
+                direction["source_lang"], direction["target_lang"]),
+            "term_count": len(project.get("glossary") or [])})
+    if not any(o["is_system"] for o in options) and core.SYSTEM_PROJECT_ID not in current:
+        options.append({"project_id": core.SYSTEM_PROJECT_ID, "name": "未分类",
+                        "is_system": True, "source_lang": "", "target_lang": "",
+                        "direction_label": "", "term_count": 0})
+    options.sort(key=lambda o: (o["is_system"], o["name"]))
+    return options
 
 
 # ================= 学术专业模式：实践报告 =================
@@ -3751,12 +4298,16 @@ def project_rows() -> list[dict]:
     if not any(project.get("is_system") for project in projects):
         projects = [core.system_project_view(), *projects]
     rows: list[dict] = []
+    # 任务数从任务摘要里数（签名没变就不重读状态），不再为每个项目各读一遍全部任务。
+    try:
+        from collections import Counter
+        from folith import project_digest
+        counts = Counter(str(core.resolved_project_id(d["state"]))
+                         for d in project_digest.read_digests(core))
+    except Exception:  # noqa: BLE001 - 列表必须仍能显示
+        counts = Counter()
     for project in projects:
-        try:
-            summary = core.project_summary(project)
-            count = int(summary.get("job_count") or 0)
-        except Exception:  # noqa: BLE001 - 列表必须仍能显示
-            count = 0
+        count = int(counts.get(str(project.get("project_id")), 0))
         rows.append({
             "project_id": project.get("project_id"),
             "name": project.get("name") or "未命名项目",
@@ -3875,7 +4426,7 @@ def save_style_rule(job_id: str, rule: str, *, note: str = "",
         raise AdapterError(str(exc)) from exc
 
 
-def create_project(name: str) -> dict:
+def create_project(name: str, *, source_lang: str = "", target_lang: str = "") -> dict:
     cleaned = str(name or "").strip()
     if not cleaned:
         raise AdapterError("项目名称不能为空。")
@@ -3883,7 +4434,7 @@ def create_project(name: str) -> dict:
         core.validate_project_name(cleaned)
     except ValueError as exc:
         raise AdapterError(str(exc)) from exc
-    return core.create_project(cleaned)
+    return core.create_project(cleaned, source_lang=source_lang, target_lang=target_lang)
 
 
 # ================= 译前准备（pre-translation setup） =================

@@ -233,7 +233,16 @@ def empty_project(project_id: str, name: str, *,
         # 每个调用方各自解释时间戳。
         "status": PROJECT_ACTIVE,
         "archived_at": "",
+        # 语言方向：术语与翻译记忆只在同一方向的任务之间复用。空串 = 尚未设定
+        # （旧项目，或还没有任务）；读取时可由项目里的任务推断，见
+        # `engine.projects.project_direction`。
+        "source_lang": "",
+        "target_lang": "",
         "glossary": [],
+        # 每条术语是怎么进来的：{source.casefold(): {how, job_id, job_name, at}}。
+        # 既供界面显示「怎么来的」，也是跨任务合并时判断"是不是同一个任务在
+        # 修正自己的术语"的依据。
+        "term_origins": {},
         "glossary_versions": [],
         "style_rules": [],
         "human_decisions": [],
@@ -425,7 +434,10 @@ def normalize_project(raw: Any) -> Dict[str, Any]:
     project["archived_at"] = "" if is_system else str(raw.get("archived_at") or "")
     # `status` 由 `archived_at` 派生：旧记录没有这个字段也能正确分区。
     project["status"] = PROJECT_ARCHIVED if project["archived_at"] else PROJECT_ACTIVE
+    project["source_lang"] = str(raw.get("source_lang") or "").strip()
+    project["target_lang"] = str(raw.get("target_lang") or "").strip()
     project["glossary"] = models.normalize_glossary(raw.get("glossary") or [])
+    project["term_origins"] = _normalize_origins(raw.get("term_origins"))
     versions = []
     for version in raw.get("glossary_versions") or []:
         if not isinstance(version, Mapping):
@@ -479,6 +491,7 @@ def _normalize_conflicts(values: Any) -> List[Dict[str, Any]]:
             "incoming": str(value.get("incoming") or ""),
             "detected_at": str(value.get("detected_at") or ""),
             "imported_from": str(value.get("imported_from") or ""),
+            "source_job_id": str(value.get("source_job_id") or ""),
         }
         if record["conflict_id"] in seen:
             continue
@@ -488,7 +501,8 @@ def _normalize_conflicts(values: Any) -> List[Dict[str, Any]]:
 
 
 def record_conflict(project: Dict[str, Any], *, kind: str, source: str,
-                    local: str, incoming: str, imported_from: str = "") -> bool:
+                    local: str, incoming: str, imported_from: str = "",
+                    source_job_id: str = "") -> bool:
     """登记一条待决定冲突；返回是否为新登记（幂等）。"""
     records = list(project.get("pending_conflicts") or [])
     identifier = conflict_id(kind, source, local, incoming)
@@ -502,6 +516,7 @@ def record_conflict(project: Dict[str, Any], *, kind: str, source: str,
         "incoming": str(incoming),
         "detected_at": _now_iso(),
         "imported_from": str(imported_from or ""),
+        "source_job_id": str(source_job_id or ""),
     })
     project["pending_conflicts"] = records
     return True
@@ -532,6 +547,69 @@ def locked_entries(values: Iterable[Any]) -> List[models.GlossaryEntry]:
 # ================= 记忆累积 =================
 
 
+def _term_target(entry: Mapping[str, Any]) -> str:
+    return str(entry.get("preferred") or entry.get("target") or "").strip()
+
+
+def _normalize_origins(values: Any) -> Dict[str, Dict[str, str]]:
+    origins: Dict[str, Dict[str, str]] = {}
+    if not isinstance(values, Mapping):
+        return origins
+    for key, value in values.items():
+        if not str(key or "").strip() or not isinstance(value, Mapping):
+            continue
+        origins[str(key).casefold()] = {
+            "how": str(value.get("how") or ""),
+            "job_id": str(value.get("job_id") or ""),
+            "job_name": str(value.get("job_name") or ""),
+            "at": str(value.get("at") or ""),
+        }
+    return origins
+
+
+ORIGIN_REVIEW = "review"      # 审核收进（候选 / 任务提升）
+ORIGIN_MANUAL = "manual"      # 手动添加或编辑
+ORIGIN_IMPORT = "import"      # 导入记忆文件
+ORIGIN_MOVE = "move"          # 移任务时随任务带来
+
+
+def plan_term_merge(project: Mapping[str, Any], glossary: Iterable[Any],
+                    *, source_job_id: str = "") -> Dict[str, Any]:
+    """纯计算：把一批任务术语并入项目会发生什么（预览与真实合并共用这一份判断）。
+
+    只看 locked 术语。同一个 source：
+
+    - 项目里没有 → `added`；
+    - 译名相同 → `same`（什么都不做）；
+    - 译名不同：若项目里这条术语正是**同一个任务**提升进来的（任务在修正自己
+      的术语），可以就地更新 → `updated`；否则是**另一个任务**的不同译法，
+      不覆盖，列入 `conflicts` 由人决定。
+    """
+    project = normalize_project(project)
+    origins = project["term_origins"]
+    current = {entry["source"].casefold(): entry for entry in project["glossary"]}
+    plan: Dict[str, List[Dict[str, Any]]] = {
+        "added": [], "same": [], "updated": [], "conflicts": []}
+    seen = set()
+    for entry in locked_entries(glossary or []):
+        key = entry["source"].casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        existing = current.get(key)
+        if existing is None:
+            plan["added"].append(entry)
+        elif _term_target(existing) == _term_target(entry):
+            plan["same"].append(entry)
+        elif source_job_id and origins.get(key, {}).get("job_id") == source_job_id:
+            plan["updated"].append(entry)
+        else:
+            plan["conflicts"].append({
+                "source": entry["source"], "incoming": _term_target(entry),
+                "local": _term_target(existing), "entry": entry})
+    return plan
+
+
 def merge_confirmed_knowledge(
     project: Mapping[str, Any],
     *,
@@ -539,17 +617,24 @@ def merge_confirmed_knowledge(
     style_rules: Iterable[Any] | None = None,
     human_decisions: Iterable[Any] | None = None,
     source_job_id: str = "",
+    source_job_name: str = "",
     actor: str = "",
+    how: str = ORIGIN_REVIEW,
+    report: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """把某个任务里**已被人工确认**的知识并入项目记忆。
 
     幂等：内容未变化时不新增版本、不制造重复记录，只在确有新增时追加
     `promotion_log`，让"项目记忆为什么变成现在这样"可追溯。
+
+    **不静默覆盖**：另一个任务给出的不同译名只登记为待审核冲突（见
+    `plan_term_merge`）。显式的人工编辑走 `set_term`，不经过这里。
+    `report` 若传入，会被写入 {added, same, updated, conflicts} 的条数。
     """
     project = normalize_project(project)
     added = {"glossary": 0, "style_rules": 0, "human_decisions": 0}
 
-    incoming = locked_entries(glossary or [])
+    plan = plan_term_merge(project, glossary or [], source_job_id=source_job_id)
     merged = list(project["glossary"])
     # 按 source 归并，而不是按 entry id：`models.entry_id` 把 target 也算进 ID，
     # 因此"人工修正首选译名"会得到一个新的 id。若按 id 归并，同一个 source 会在
@@ -557,18 +642,29 @@ def merge_confirmed_knowledge(
     # 项目记忆的不变式是：**一个 source 至多一条锁定条目**。
     positions = {entry["source"].casefold(): index
                  for index, entry in enumerate(merged)}
-    for entry in incoming:
-        key = entry["source"].casefold()
-        if key in positions:
-            # 人工修正优先：就地替换，保持原有顺序与集合大小。
-            merged[positions[key]] = entry
-            continue
-        positions[key] = len(merged)
+    origins = dict(project["term_origins"])
+    stamp = {"how": how, "job_id": str(source_job_id or ""),
+             "job_name": str(source_job_name or ""), "at": _now_iso()}
+    for entry in plan["updated"]:
+        merged[positions[entry["source"].casefold()]] = entry
+        origins[entry["source"].casefold()] = dict(stamp)
+    for entry in plan["added"]:
+        positions[entry["source"].casefold()] = len(merged)
         merged.append(entry)
+        origins[entry["source"].casefold()] = dict(stamp)
         added["glossary"] += 1
     project["glossary"] = models.normalize_glossary(merged)
+    project["term_origins"] = origins
+    for conflict in plan["conflicts"]:
+        record_conflict(project, kind="glossary", source=conflict["source"],
+                        local=conflict["local"], incoming=conflict["incoming"],
+                        imported_from=str(source_job_name or ""),
+                        source_job_id=str(source_job_id or ""))
+    if report is not None:
+        report.update({key: len(plan[key]) for key in
+                       ("added", "same", "updated", "conflicts")})
 
-    if incoming:
+    if plan["added"] or plan["updated"]:
         _append_glossary_version(project, actor=actor, source_job_id=source_job_id)
 
     style = list(project["style_rules"])
@@ -598,6 +694,93 @@ def merge_confirmed_knowledge(
             "source_job_id": str(source_job_id or ""),
             "added": dict(added),
         }]
+    return project
+
+
+def set_term(project: Mapping[str, Any], source: str, target: str, *,
+             domain: str = "", note: str = "", forbidden: Iterable[str] = (),
+             actor: str = "", how: str = ORIGIN_MANUAL) -> Dict[str, Any]:
+    """显式的人工编辑：添加或**就地改写**项目术语库里的一条术语。
+
+    这是唯一允许直接替换项目术语译名的路径——因为动手的人看着这条术语在改。
+    """
+    project = normalize_project(project)
+    if is_system_project(project):
+        raise ValueError(f"「{SYSTEM_PROJECT_NAME}」不保存术语；请先把任务移入一个项目")
+    source, target = str(source or "").strip(), str(target or "").strip()
+    if not source or not target:
+        raise ValueError("原文和译名都不能为空")
+    key = source.casefold()
+    entry = models.normalize_glossary_entry({
+        "source": source, "target": target, "preferred": target,
+        "proposed_target": target, "status": "locked", "behavior": "translate",
+        "domain": domain, "note": note, "forbidden": list(forbidden or []),
+        "scope": "project"})
+    glossary = list(project["glossary"])
+    for index, existing in enumerate(glossary):
+        if existing["source"].casefold() == key:
+            glossary[index] = entry
+            break
+    else:
+        glossary.append(entry)
+    project["glossary"] = models.normalize_glossary(glossary)
+    project["term_origins"] = {**project["term_origins"], key: {
+        "how": how, "job_id": "", "job_name": "", "at": _now_iso()}}
+    # 同一原文上待决的冲突已经被这次人工编辑取代
+    project["pending_conflicts"] = [
+        item for item in project["pending_conflicts"]
+        if not (item["kind"] == "glossary" and item["source"].casefold() == key)]
+    _append_glossary_version(project, actor=actor, source_job_id="")
+    project["promotion_log"] = list(project["promotion_log"]) + [{
+        "at": _now_iso(), "actor": str(actor or "").strip() or "user", "source_job_id": "",
+        "added": {}, "term_edit": {"source": source, "target": target, "how": how}}]
+    return project
+
+
+def remove_term(project: Mapping[str, Any], source: str,
+                *, actor: str = "") -> Dict[str, Any]:
+    project = normalize_project(project)
+    key = str(source or "").strip().casefold()
+    kept = [e for e in project["glossary"] if e["source"].casefold() != key]
+    if len(kept) == len(project["glossary"]):
+        raise ValueError(f"术语库里没有「{source}」")
+    project["glossary"] = kept
+    origins = dict(project["term_origins"])
+    origins.pop(key, None)
+    project["term_origins"] = origins
+    _append_glossary_version(project, actor=actor, source_job_id="")
+    return project
+
+
+# ================= 语言方向 =================
+
+
+def direction_key(source_lang: Any, target_lang: Any) -> tuple[str, str]:
+    from .textual import normalize_language
+    return normalize_language(source_lang), normalize_language(target_lang)
+
+
+def directions_compatible(a_source: Any, a_target: Any,
+                          b_source: Any, b_target: Any) -> bool:
+    """两个方向能否共用术语 / 翻译记忆。
+
+    目标语言必须都已知且相同——译名是目标语言的东西，对不上就不能复用。原文语言
+    两边都已知时也必须相同；任何一边未知（自动识别）时不据此否决。
+    """
+    a_src, a_tgt = direction_key(a_source, a_target)
+    b_src, b_tgt = direction_key(b_source, b_target)
+    if not a_tgt or not b_tgt or a_tgt != b_tgt:
+        return False
+    return not (a_src and b_src and a_src != b_src)
+
+
+def set_direction(project: Mapping[str, Any], source_lang: str,
+                  target_lang: str) -> Dict[str, Any]:
+    project = normalize_project(project)
+    if is_system_project(project):
+        raise ValueError(f"「{SYSTEM_PROJECT_NAME}」是系统工作区，没有语言方向")
+    project["source_lang"] = str(source_lang or "").strip()
+    project["target_lang"] = str(target_lang or "").strip()
     return project
 
 
@@ -812,6 +995,9 @@ def import_memory(existing: Mapping[str, Any] | None, payload: Mapping[str, Any]
         if current is None:
             positions[key] = entry
             merged.append(entry)
+            project["term_origins"] = {**project["term_origins"], key: {
+                "how": ORIGIN_IMPORT, "job_id": "", "job_name": origin,
+                "at": _now_iso()}}
             report["glossary_added"] += 1
         elif str(current.get("preferred") or current.get("target") or "") != \
                 str(entry.get("preferred") or entry.get("target") or ""):

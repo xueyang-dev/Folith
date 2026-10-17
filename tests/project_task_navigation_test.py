@@ -41,6 +41,8 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
@@ -272,17 +274,16 @@ def test_legacy_default_project_id_never_raises_missing_project():
         assert len(core.export_project_memory("default")) > 0
 
 
-def test_promoting_confirmed_terms_lands_in_the_task_container():
-    """未分类任务的提升动作写进系统工作区，而不是一个不存在的默认项目。"""
+def test_promoting_from_unsorted_is_refused_and_writes_nothing():
+    """「未分类」没有可写入的项目术语库：提升被拒绝，系统工作区里不会多出术语。"""
     with nav_env():
         state = core.new_job_state("solo.docx")
         state.update({"project_id": None, "glossary": [LOCKED]})
         core.save_job_state("solo", state)
 
-        updated = core.promote_job_to_project("solo", actor="用户")
-        assert updated["project_id"] == core.system_project_id()
-        assert updated["glossary"], "已确认术语必须被提升"
-        assert core.load_project(core.system_project_id())["glossary"]
+        with pytest.raises(ValueError, match="移入一个项目"):
+            core.promote_job_to_project("solo", actor="用户")
+        assert not (core.load_project(core.system_project_id()) or {}).get("glossary")
 
 
 # ================= 侧栏「项目」分组 =================

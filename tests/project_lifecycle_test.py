@@ -163,7 +163,7 @@ def test_system_project_cannot_be_renamed_archived_or_deleted():
 
 
 def test_system_project_owns_its_own_memory_space():
-    """系统项目是真实容器：它的记忆可以注入，也可以累积。"""
+    """系统项目是真实容器：记忆可以累积，但「未分类」从不向任务注入。"""
     with project_env():
         system = core.ensure_system_project()
         merged = project_module.merge_confirmed_knowledge(
@@ -172,7 +172,7 @@ def test_system_project_owns_its_own_memory_space():
         view = core.project_memory_view(core.load_project(system["project_id"]))
         assert view["glossary_count"] == 1
         injection = core.project_injection(system["project_id"])
-        assert [entry["target"] for entry in injection["glossary"]] == ["林冠郁闭"]
+        assert injection["glossary"] == []
 
 
 # ================= 身份：UUID 是主键，名称只是标签 =================

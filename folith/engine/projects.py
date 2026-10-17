@@ -163,7 +163,7 @@ def _create_project_record(project):
         return _project.save_project(_c.OUTPUT_DIR, project)
 
 
-def create_project(name, description=""):
+def create_project(name, description="", *, source_lang="", target_lang=""):
     """创建项目；返回项目记录。
 
     ID 是现场生成的 UUIDv4，**不由名称派生**：改名不换 ID，同名不同项目也不会
@@ -178,6 +178,8 @@ def create_project(name, description=""):
     project = _project.empty_project(
         _project.new_project_id(), cleaned,
         description=str(description or "").strip()[:_c.PROJECT_DESCRIPTION_LIMIT])
+    project["source_lang"] = str(source_lang or "").strip()
+    project["target_lang"] = str(target_lang or "").strip()
     return _create_project_record(project)
 
 
@@ -449,7 +451,7 @@ def promote_job_to_project(job_id, *, actor="user", state=None):
     if state is None:
         return None
     project = project_for_job(job_id, state)
-    if project is None:
+    if project is None or _project.is_system_project(project):
         raise ValueError("这个任务还没有归入任何项目；请先把任务移入一个项目。")
 
     with project_mutation_lock(project["project_id"]):
@@ -468,6 +470,7 @@ def promote_job_to_project(job_id, *, actor="user", state=None):
             style_rules=state.get("confirmed_style_rules") or [],
             human_decisions=human_actions,
             source_job_id=job_id,
+            source_job_name=str(state.get("filename") or ""),
             actor=actor,
         )
         # `save_project` re-enters the lock and refuses to resurrect a project
@@ -478,9 +481,15 @@ def promote_job_to_project(job_id, *, actor="user", state=None):
 def project_memory_view(project=None):
     """项目记忆摘要；TM 计数取自既有受控存储（项目文件不持有 TM）。"""
     project = project if project is not None else system_project_view()
-    return _project.memory_view(project,
+    view = _project.memory_view(project,
                                 translation_memory_count=len(
                                     _c.load_tm(project["project_id"])))
+    if not view["is_system"]:
+        direction = project_direction(project)
+        view.update(source_lang=direction["source_lang"],
+                    target_lang=direction["target_lang"],
+                    direction_inferred=direction["inferred"])
+    return view
 
 
 def project_summary(project):
@@ -703,20 +712,39 @@ def import_project_memory(raw, *, name=None, description=""):
     return saved, report
 
 
-def project_injection(project_id):
+def _empty_injection():
+    return {"glossary": [], "style_rules": "", "glossary_version": None,
+            "glossary_hash": ""}
+
+
+def _injection_allowed(project, target_lang, source_lang):
+    """项目记忆能否注入这个任务：未分类永不注入；方向对不上也不注入。
+
+    项目有方向、而任务的目标语言说不清时同样不注入——译名属于目标语言，
+    证明不了就不复用（和翻译记忆的作用域规则一致）。项目没有方向（旧项目、
+    推断不出）时保持原行为。
+    """
+    if _project.is_system_project(project):
+        return False
+    direction = project_direction(project)
+    if not direction["target_lang"]:
+        return True
+    return _project.directions_compatible(
+        direction["source_lang"], direction["target_lang"],
+        source_lang, target_lang)
+
+
+def project_injection(project_id, target_lang=None, source_lang=None):
     """新任务启动时注入的项目记忆（锁定术语 + 确认风格规则）。
 
-    系统工作区同样可以持有记忆（它就是"未分类任务"的容器），因此这里不特殊
-    跳过；找不到记录时才返回空注入。
+    「未分类」不注入：它只汇总各任务自己的术语，不向新任务提供任何东西。
+    方向（目标语言）与项目不同的任务也不注入。
     """
     if not str(project_id or "").strip():
-        project_id = _project.SYSTEM_PROJECT_ID
+        return _empty_injection()
     project = load_project(project_id)
-    if project is None and _project.is_system_project_id(project_id):
-        project = system_project_view()
-    if project is None:
-        return {"glossary": [], "style_rules": "", "glossary_version": None,
-                "glossary_hash": ""}
+    if project is None or not _injection_allowed(project, target_lang, source_lang):
+        return _empty_injection()
     return _project.injection_for(project)
 
 
@@ -725,12 +753,12 @@ def _project_now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _project_memory_injection(state):
+def _project_memory_injection(state, target_lang=None):
     """读取任务所属项目的记忆，供管线注入。
 
-    返回 (glossary_entries, style_text, meta)；任务**不属于任何项目**、项目不存在
-    或记忆为空时返回空值，因此对「无项目」的任务与没有项目的旧任务都是完全无副
-    作用的。
+    返回 (glossary_entries, style_text, meta)；任务属于「未分类」、项目不存在、
+    语言方向对不上或记忆为空时返回空值，因此对没有项目的任务完全无副作用。
+    `target_lang` 是这次运行的目标语言（任务记录里可能还没写入）。
     """
     try:
         project_id = resolved_project_id(state)
@@ -738,6 +766,9 @@ def _project_memory_injection(state):
             return [], "", {}
         project = load_project(project_id)
         if project is None:
+            return [], "", {}
+        if not _injection_allowed(project, target_lang or (state or {}).get("target_lang"),
+                                  (state or {}).get("source_lang")):
             return [], "", {}
         injection = _project.injection_for(project)
     except Exception:  # 项目记忆损坏不应阻断翻译
@@ -749,3 +780,319 @@ def _project_memory_injection(state):
     }
     return injection["glossary"], injection["style_rules"], meta
 
+
+# ================= 语言方向 =================
+
+
+def _job_direction(state):
+    """任务的语言方向（保存值原样）；说不清的一侧是空串。"""
+    state = state or {}
+    return (str(state.get("source_lang") or "").strip(),
+            str(state.get("target_lang") or "").strip())
+
+
+def project_direction(project):
+    """项目的语言方向：已设定的优先，否则由项目里的任务推断。
+
+    返回 {"source_lang", "target_lang", "inferred"}；设定和推断都没有时两个语言
+    都是空串（调用方据此提示用户设置）。推断取项目里**最多任务使用**的方向，
+    并列时取先出现的；只看目标语言已知的任务。
+    """
+    project = _project.normalize_project(project)
+    if _project.is_system_project(project):
+        return {"source_lang": "", "target_lang": "", "inferred": False}
+    if project["target_lang"]:
+        return {"source_lang": project["source_lang"],
+                "target_lang": project["target_lang"], "inferred": False}
+    counts, first = {}, {}
+    for job in list_project_jobs(project["project_id"]):
+        source, target = _job_direction(job["state"])
+        key = _project.direction_key(source, target)
+        if not key[1]:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        first.setdefault(key, (source, target))
+    if not counts:
+        return {"source_lang": project["source_lang"], "target_lang": "",
+                "inferred": False}
+    best = max(counts, key=lambda key: counts[key])
+    return {"source_lang": first[best][0], "target_lang": first[best][1],
+            "inferred": True}
+
+
+@_serialized_project_mutation
+def set_project_direction(project_id, source_lang, target_lang):
+    """设置项目的语言方向（人工动作）。已有术语 / 记忆不会被改写。"""
+    project = require_project(project_id)
+    if not str(target_lang or "").strip():
+        raise ValueError("目标语言不能为空")
+    return save_project(_project.set_direction(project, source_lang, target_lang))
+
+
+# ================= 单条术语 =================
+
+
+def _task_term_entry(state, source):
+    key = str(source or "").strip().casefold()
+    frozen = (state.get("glossary_frozen") or {}).get("entries") or []
+    for pool in (state.get("glossary") or [], frozen):
+        for entry in pool:
+            if str(entry.get("source") or "").strip().casefold() == key \
+                    and entry.get("status") == "locked":
+                return entry
+    return None
+
+
+def promote_term_to_project(job_id, source, *, actor="user"):
+    """只把任务里**这一条**已锁定术语提升进项目术语库。
+
+    不带走风格规则、人工决定或任务里的其它术语。任务在「未分类」时拒绝：
+    那里没有可写入的项目术语库。另一个任务已给出不同译名时，登记为待审核冲突，
+    不覆盖。返回 (项目, 合并报告)。
+    """
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    owner = project_for_job(job_id, state)
+    if owner is None or _project.is_system_project(owner):
+        raise ValueError("这个任务在「未分类」里；请先把它移入一个项目。")
+    entry = _task_term_entry(state, source)
+    if entry is None:
+        raise ValueError(f"任务术语表里没有已锁定的「{source}」")
+    report = {}
+    with project_mutation_lock(owner["project_id"]):
+        current = load_project(owner["project_id"]) or owner
+        merged = _project.merge_confirmed_knowledge(
+            current, glossary=[entry], source_job_id=job_id,
+            source_job_name=str(state.get("filename") or ""), actor=actor,
+            report=report)
+        return save_project(merged), report
+
+
+@_serialized_project_mutation
+def set_project_term(project_id, source, target, *, domain="", note="",
+                     forbidden=(), actor="用户"):
+    """人工添加或编辑项目术语库里的一条术语（唯一允许就地改写译名的入口）。"""
+    project = require_project(project_id)
+    return save_project(_project.set_term(
+        project, source, target, domain=domain, note=note, forbidden=forbidden,
+        actor=actor))
+
+
+@_serialized_project_mutation
+def remove_project_term(project_id, source, *, actor="用户"):
+    project = require_project(project_id)
+    return save_project(_project.remove_term(project, source, actor=actor))
+
+
+# ================= 移到项目：一个操作，先预览再执行 =================
+
+
+def _task_terms(state):
+    frozen = (state.get("glossary_frozen") or {}).get("entries")
+    return list(frozen or state.get("glossary") or [])
+
+
+def _move_tm_pairs(state):
+    """任务里可以进翻译记忆的已审校译对：[(键, 原文, 译文, 语言)]。"""
+    language = state_target_lang(state)
+    pairs = []
+    for pair in state.get("pairs") or []:
+        source = str(pair.get("source") or "")
+        target = str(pair.get("target") or "")
+        if not pair.get("reviewed") or not _tm_eligible(source, target):
+            continue
+        key = _c.tm_scope_key(language, source)
+        if key:
+            pairs.append((key, source, target, language))
+    return pairs
+
+
+def suggest_project_for_direction(source_lang, target_lang, *, exclude=""):
+    """方向相同的活动项目（第一个），没有则 None。"""
+    for project in list_active_projects():
+        if _project.is_system_project(project) or project["project_id"] == exclude:
+            continue
+        direction = project_direction(project)
+        if direction["target_lang"] and _project.directions_compatible(
+                direction["source_lang"], direction["target_lang"],
+                source_lang, target_lang):
+            return {"project_id": project["project_id"], "name": project["name"],
+                    "source_lang": direction["source_lang"],
+                    "target_lang": direction["target_lang"]}
+    return None
+
+
+def _move_run(job_ids, *, project_id=None, new_project=None, carry_terms=True,
+              carry_tm=True, commit=False, actor="用户"):
+    from contextlib import ExitStack, nullcontext
+
+    job_ids = [str(job) for job in job_ids or [] if str(job or "").strip()]
+    if not job_ids:
+        raise ValueError("请先选择至少一个任务")
+    created = False
+    if new_project is not None:
+        name = validate_project_name(new_project.get("name"))
+        target = _project.empty_project(_project.new_project_id(), name)
+        target["source_lang"] = str(new_project.get("source_lang") or "").strip()
+        target["target_lang"] = str(new_project.get("target_lang") or "").strip()
+        if not target["target_lang"]:
+            first = _c.load_job_state(job_ids[0])
+            if first is not None:
+                target["source_lang"], target["target_lang"] = _job_direction(first)
+        created = True
+    else:
+        target = require_project(project_id)
+    to_system = _project.is_system_project(target)
+    target_id = target["project_id"]
+
+    reports, moved, skipped = [], [], []
+    with ExitStack() as stack:
+        persisted = not created
+        if commit and not created and not to_system:
+            stack.enter_context(project_mutation_lock(target_id))
+            target = require_project(target_id)
+        direction = ({"source_lang": "", "target_lang": "", "inferred": False}
+                     if to_system else project_direction(target)
+                     if not created else {
+                         "source_lang": target["source_lang"],
+                         "target_lang": target["target_lang"], "inferred": False})
+        tm = {} if to_system or created else _c.load_tm(target_id)
+        tm_dirty = False
+        project_dirty = False
+        adopted = False
+
+        for job_id in job_ids:
+            lock = job_state_mutation_lock(job_id) if commit else nullcontext()
+            with lock:
+                state = _c.load_job_state(job_id)
+                report = {"job_id": job_id, "name": "", "status": "move",
+                          "reason": "", "source_lang": "", "target_lang": "",
+                          "terms_added": [], "terms_updated": [],
+                          "terms_conflicting": [], "terms_same": 0,
+                          "terms_provisional": 0, "tm_added": 0, "tm_skipped": 0,
+                          "direction_mismatch": False, "suggested_project": None,
+                          "carries_nothing": False}
+                if state is None:
+                    report.update(status="skip", reason="任务不存在")
+                    reports.append(report)
+                    skipped.append({"job_id": job_id, "reason": report["reason"]})
+                    continue
+                report["name"] = str(state.get("filename") or job_id)
+                report["source_lang"], report["target_lang"] = _job_direction(state)
+                if resolved_project_id(state) == target_id:
+                    report.update(status="skip", reason="已在该项目中")
+                elif _c.job_is_active(job_id, state):
+                    report.update(status="skip", reason="任务正在运行，无法改归属")
+                if report["status"] == "skip":
+                    reports.append(report)
+                    skipped.append({"job_id": job_id, "reason": report["reason"]})
+                    continue
+
+                entries = _task_terms(state)
+                report["terms_provisional"] = sum(
+                    1 for e in entries if e.get("status") not in ("locked", "rejected"))
+                job_source, job_target = report["source_lang"], report["target_lang"]
+                if to_system:
+                    report["carries_nothing"] = True
+                else:
+                    if not direction["target_lang"] and job_target:
+                        # 项目还没有方向：以第一个移入的任务为准
+                        direction = {"source_lang": job_source,
+                                     "target_lang": job_target, "inferred": False}
+                        target = _project.set_direction(target, job_source, job_target)
+                        project_dirty = adopted = True
+                    compatible = _project.directions_compatible(
+                        direction["source_lang"], direction["target_lang"],
+                        job_source, job_target)
+                    if not compatible:
+                        report["direction_mismatch"] = True
+                        report["carries_nothing"] = True
+                        report["suggested_project"] = suggest_project_for_direction(
+                            job_source, job_target, exclude=target_id)
+                    else:
+                        if carry_terms:
+                            merge_report = {}
+                            before = {e["source"].casefold(): e
+                                      for e in target["glossary"]}
+                            plan = _project.plan_term_merge(
+                                target, entries, source_job_id=job_id)
+                            target = _project.merge_confirmed_knowledge(
+                                target, glossary=entries, source_job_id=job_id,
+                                source_job_name=report["name"], actor=actor,
+                                how=_project.ORIGIN_MOVE, report=merge_report)
+                            report["terms_added"] = [
+                                {"source": e["source"],
+                                 "target": _project._term_target(e)}
+                                for e in plan["added"]]
+                            report["terms_updated"] = [
+                                {"source": e["source"],
+                                 "target": _project._term_target(e)}
+                                for e in plan["updated"]]
+                            report["terms_conflicting"] = [
+                                {"source": c["source"], "task": c["incoming"],
+                                 "project": c["local"]} for c in plan["conflicts"]]
+                            report["terms_same"] = len(plan["same"])
+                            project_dirty = project_dirty or any(
+                                plan[k] for k in ("added", "updated", "conflicts"))
+                        if carry_tm:
+                            for key, source, text, language in _move_tm_pairs(state):
+                                current = tm.get(key)
+                                if current is None:
+                                    _c.tm_put(tm, source, text, language)
+                                    report["tm_added"] += 1
+                                    tm_dirty = True
+                                elif str(current.get("target") or "") != text:
+                                    report["tm_skipped"] += 1
+                reports.append(report)
+                moved.append(job_id)
+                if commit:
+                    if created and not persisted:
+                        target = _create_project_record(target)
+                        persisted = True
+                        project_dirty = False
+                        stack.enter_context(project_mutation_lock(target_id))
+                    if project_dirty and not to_system:
+                        target = save_project(target)
+                        project_dirty = False
+                    if tm_dirty:
+                        _c.save_tm(tm, target_id)
+                        tm_dirty = False
+                    state["project_id"] = target_id
+                    _c.save_job_state(job_id, state)
+    # 没有任何任务可移时 `persisted` 仍为 False：不会留下空项目。
+    return {"project": target, "created": created and persisted if commit else created,
+            "moved": moved, "skipped": skipped, "reports": reports,
+            "direction": direction, "direction_adopted": adopted}
+
+
+def preview_move_jobs(job_ids, *, project_id=None, new_project=None,
+                      carry_terms=True, carry_tm=True):
+    """干跑：不写任何东西，返回每个任务移过去之后会发生什么。
+
+    每个任务一份 report：terms_added / terms_conflicting / terms_same /
+    terms_provisional（留在任务里）、tm_added / tm_skipped、direction_mismatch
+    与方向相同的 suggested_project。多个任务按顺序累计（后一个任务看得到前一个
+    带来的术语）。
+    """
+    return _move_run(job_ids, project_id=project_id, new_project=new_project,
+                     carry_terms=carry_terms, carry_tm=carry_tm, commit=False)
+
+
+def move_jobs_to_project(job_ids, *, project_id=None, new_project=None,
+                         carry_terms=True, carry_tm=True, actor="用户"):
+    """把任务移入项目，并按规则带上术语与翻译记忆（唯一的移动入口）。
+
+    - 已锁定术语进项目术语库；暂定术语留在任务里；
+    - 翻译记忆只增不改；
+    - 同原文不同译名 → 登记为「和术语库不一致」待审核，不覆盖；
+    - 语言方向不同 → 任务照样移入，但不带术语和记忆；
+    - 目标是「未分类」→ 什么都不带；来源项目的记忆保持原样；
+    - `new_project={"name", "source_lang", "target_lang"}` = 先建项目（方向缺省
+      取自第一个任务）再同样移动。
+    """
+    if _project.is_system_project_id(project_id or ""):
+        ensure_system_project()
+    return _move_run(job_ids, project_id=project_id, new_project=new_project,
+                     carry_terms=carry_terms, carry_tm=carry_tm, commit=True,
+                     actor=actor)

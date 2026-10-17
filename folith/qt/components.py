@@ -2764,3 +2764,57 @@ class FormGroup(style_module.Surface):
                 widget.setParent(None)
                 widget.deleteLater()
         self._count = 0
+
+
+class CountBadge(QWidget):
+    """计数小药丸：18px 高、半高圆角、11px 半粗体（侧栏「项目」与项目列表的待审核数）。
+
+    自己画，不走 QLabel 的芯片 QSS：那一套带 10px 横向内边距和描边，数字会被撑成方块。
+    ``tone``：``info``（强调色浅底）/ ``muted``（中性）。
+    """
+
+    HEIGHT = 18
+
+    def __init__(self, text: str = "", tone: str = "info", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = str(text)
+        self._tone = tone
+        self.setFixedHeight(self.HEIGHT)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._fit()
+
+    def _font(self):
+        font = self.font()
+        font.setPixelSize(11)
+        font.setWeight(font.Weight.DemiBold)
+        return font
+
+    def _fit(self) -> None:
+        from PySide6.QtGui import QFontMetrics
+
+        width = QFontMetrics(self._font()).horizontalAdvance(self._text) + 12
+        self.setFixedWidth(max(self.HEIGHT + 4, width))
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        self._text = str(text)
+        self._fit()
+        self.update()
+
+    def text(self) -> str:
+        return self._text
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        tokens = theme_module.tokens(style_module.current_theme())
+        fill, ink = ((tokens["accent-soft"], tokens["accent"]) if self._tone == "info"
+                     else (tokens["bg-subtle"] if "bg-subtle" in tokens else tokens["border-hairline"],
+                           tokens["text-secondary"]))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme_module.qcolor(fill))
+        painter.drawRoundedRect(QRectF(self.rect()), self.HEIGHT / 2, self.HEIGHT / 2)
+        painter.setFont(self._font())
+        painter.setPen(theme_module.qcolor(ink))
+        painter.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter, self._text)
+        painter.end()

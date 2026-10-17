@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import sys
+import time
 import weakref
 from pathlib import Path
 
@@ -40,9 +41,9 @@ from . import components, motion
 from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
-from .dialogs import (DiagnosticsDialog, EngineDialog,
-                      ProjectPickerDialog, ProjectsPanel)
-from .library_view import LibraryView
+from .dialogs import DiagnosticsDialog, EngineDialog
+from .project_sheets import BatchAcceptDialog, MoveToProjectSheet
+from .projects_view import NewTermDialog, ProjectsView
 from .views import HomeView, WorkbenchView
 from .workers import TaskRunner
 
@@ -158,12 +159,11 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.home)
         self.stack.addWidget(self.workbench)
-        self.library = LibraryView(self)
-        self.stack.addWidget(self.library)
-        # 项目管理是一页（不再是对话框），与任务库、术语页共用左侧侧栏。
-        self.projects = ProjectsPanel(self, margins=(20, 12, 20, 12))
+        # 项目是一页（主从布局：左边项目列表，右边概览 / 术语库 / 翻译记忆 / 待审核），
+        # 与任务库共用左侧侧栏。术语与翻译记忆住在项目里，不再有单独的一页。
+        self.projects = ProjectsView(self, margins=(8, 12, 12, 12))
         self.stack.addWidget(self.projects)
-        # 侧栏属于窗口而不是任务库：任务库 / 项目 / 术语页切换时它一直在左侧，
+        # 侧栏属于窗口而不是任务库：任务库 / 项目页切换时它一直在左侧，
         # 「任务库」导航项就是返回入口。进入工作台时收起，把宽度留给段落网格。
         self.sidebar = self.home.take_sidebar()
         self.sidebar_clip = components.ClippedWidget(self.sidebar, HomeView.SIDEBAR_WIDTH)
@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._restore_geometry()
         self.refresh_home()
+        self.refresh_pending_badge(force=True)
         self.refresh_engine_label()
         if self.data_dir_notice:
             # `enforce_output_dir` 是**替用户把相对路径改回数据目录并成功了**
@@ -249,16 +250,18 @@ class MainWindow(QMainWindow):
         self.home.manageProjectsRequested.connect(self.manage_projects)
         self.home.tasksRequested.connect(self._nav_tasks)
         self.projects.projectsChanged.connect(self._projects_changed)
-        self.home.libraryRequested.connect(self.show_library)
-        self.library.backRequested.connect(self.show_home)
-        self.library.refreshRequested.connect(self.refresh_library)
-        self.library.decideRequested.connect(self.decide_candidates)
-        self.library.openJobRequested.connect(self.open_library_job)
-        self.library.newTermRequested.connect(self.new_library_term)
-        self.library.clearMemoryRequested.connect(self.clear_project_memory)
-        self.library.acceptEditedRequested.connect(self.accept_candidate_edited)
-        self.library.termEditRequested.connect(self.edit_library_term)
-        self.library.termDeleteRequested.connect(self.delete_library_term)
+        self.projects.detailRequested.connect(self.load_project_detail)
+        self.projects.reloadRequested.connect(self.refresh_projects)
+        self.projects.openJobRequested.connect(self.open_library_job)
+        self.projects.moveRequested.connect(self.move_to_project)
+        self.projects.newFromTaskRequested.connect(
+            lambda job_id: self.move_to_project([job_id], mode="new"))
+        self.projects.pullRequested.connect(self._pull_unsorted_into)
+        self.projects.clearMemoryRequested.connect(self.clear_project_memory)
+        self.projects.acceptRequested.connect(self.accept_review_item)
+        self.projects.decideRequested.connect(self.decide_review_item)
+        self.projects.batchAcceptRequested.connect(self.batch_accept_items)
+        self.projects.pendingChanged.connect(self.home.set_pending_badge)
         self.home.moveToProjectRequested.connect(self.move_to_project)
         self.home.settingsRequested.connect(self.open_settings)
         self.home.connectionRequested.connect(self.show_connections)
@@ -792,128 +795,87 @@ class MainWindow(QMainWindow):
         # 脚注不再重复"共 N 个任务"（指标条已经报了数）：留空 → 脚注显示选中摘要。
         self.home.set_status("")
 
-    # ================= 语言资产库 =================
-    def show_library(self) -> None:
-        self.workbench.flush_draft()
-        self._current_job_id = ""
-        self.stack.setCurrentWidget(self.library)
-        self._sync_sidebar()
-        self.setWindowTitle(i18n.tr('Folith — 术语与翻译记忆'))
-        self._sync_menu_state()
-        self.refresh_library(self.library.tm_project_id())
+    # ================= 项目页（术语库 / 翻译记忆 / 待审核都在项目里） =================
+    def refresh_projects(self) -> None:
+        """读取项目列表与各项目的待审核数（任务多时较慢，放到后台）。"""
+        self._pending_stamp = time.monotonic()
+        self.runner.submit(adapter.projects_overview, on_done=self.projects.apply_overview,
+                           on_error=lambda message, _detail: self.projects._note(message),
+                           label="projects-overview")
 
-    def refresh_library(self, tm_project_id: str = "") -> None:
-        """读取全部任务的术语、候选和各项目记忆（任务多时较慢，放到后台）。"""
-        self._run_with_busy(
-            i18n.tr('读取语言资产'), i18n.tr('正在读取术语与翻译记忆…'),
-            adapter.library_data, tm_project_id or "",
-            on_done=self.library.apply)
+    def load_project_detail(self, key: str, basis: str, show_singles: bool) -> None:
+        """读取右栏内容；读完时用户若已切到别的项目，这份结果就丢掉。"""
+        def done(detail) -> None:
+            if self.projects.selected_key() == key:
+                self.projects.apply_detail(detail)
 
-    def decide_candidates(self, rows: list, decision: str) -> None:
-        if not rows:
+        def failed(message: str, _detail: str) -> None:
+            self.projects._note(message)
+
+        if key == "unsorted":
+            self.runner.submit(adapter.unsorted_detail, basis=basis, show_singles=show_singles,
+                               on_done=done, on_error=failed, label="project-detail")
+        else:
+            self.runner.submit(adapter.project_detail, key, basis=basis,
+                               show_singles=show_singles, on_done=done, on_error=failed,
+                               label="project-detail")
+
+    def refresh_pending_badge(self, *, force: bool = False) -> None:
+        """侧栏「项目」角标：隔一阵子在后台数一次，不挡界面。"""
+        now = time.monotonic()
+        if not force and now - getattr(self, "_pending_stamp", 0.0) < 45:
             return
-        label = i18n.tr_dynamic(adapter.CANDIDATE_DECISIONS.get(decision, decision))
-        if len(rows) > 1 and not self._confirm(
-                i18n.tr('批量审核'),
-                i18n.tr('将对 {v0} 条候选执行「{v1}」。\n\n确定继续吗？', v0=len(rows), v1=label),
-                yes=i18n.tr('继续'), no=i18n.tr('取消')):
+        self._pending_stamp = now
+        def done(count) -> None:
+            try:
+                self.home.set_pending_badge(count)
+            except RuntimeError:    # 窗口已经关了，后台结果才到
+                pass
+
+        self.runner.submit(adapter.pending_total, on_done=done,
+                           on_error=lambda *_a: None, label="pending-badge")
+
+    def accept_review_item(self, item: dict, target: str) -> None:
+        def done(message: str) -> None:
+            self._notice(i18n.tr_dynamic(message), task=False)
+            self.refresh_projects()
+
+        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+                            adapter.accept_review_item, item, target, on_done=done)
+
+    def decide_review_item(self, item: dict, decision: str) -> None:
+        def done(message: str) -> None:
+            self._notice(i18n.tr_dynamic(message), task=False)
+            self.refresh_projects()
+
+        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+                            adapter.decide_review_item, item, decision, on_done=done)
+
+    def batch_accept_items(self, items: list) -> None:
+        """批量确认：先预览（新增几条、几条和术语库不一致），确认后再执行。"""
+        key = self.projects.selected_key()
+        if not items or not key or key == "unsorted":
             return
+        plan = adapter.preview_accept(key, items)
+        project = self.projects.selected_project() or {}
+        if not _automation():
+            dialog = BatchAcceptDialog(plan, str(project.get("name") or ""), self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+        pick = [i for i in items if i.get("kind") != "conflict" and (
+            {"source": i["source"], "target": i["target"]} in plan["add"])]
 
         def done(result) -> None:
             ok, bad = result["done"], result["failed"]
             if bad:
                 self._notice(i18n.tr('{v0} 条已处理，{v1} 条未处理：{v2}', v0=ok, v1=len(bad), v2=bad[0]),
-                             error=not ok)
+                             error=not ok, task=False)
             else:
-                self._notice(i18n.tr('已处理 {v0} 条候选。', v0=ok))
-            self.refresh_library(self.library.tm_project_id())
-
-        self._run_with_busy(
-            i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
-            adapter.decide_candidates, rows, decision, on_done=done)
-
-    def accept_candidate_edited(self, row: dict) -> None:
-        """改译名后接受：建议译文不对时，先写对再接受为项目术语。"""
-        from PySide6.QtWidgets import QInputDialog
-
-        if _automation():
-            return
-        text, ok = QInputDialog.getText(
-            self, i18n.tr('改译名后接受'),
-            i18n.tr('「{v0}」的译名：', v0=row.get("source")), text=str(row.get("target") or ""))
-        if not ok or not str(text).strip():
-            return
-
-        def done(message: str) -> None:
-            self._notice(i18n.tr_dynamic(message))
-            self.refresh_library(self.library.tm_project_id())
+                self._notice(i18n.tr('已确认 {v0} 条术语。', v0=ok), task=False)
+            self.refresh_projects()
 
         self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
-                            adapter.accept_candidate_with, row, str(text), on_done=done)
-
-    def edit_library_term(self, row: dict) -> None:
-        if not row or _automation():
-            return
-        from .dialogs import LibraryTermDialog
-
-        dialog = LibraryTermDialog(row, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        task, values = dialog.task(), dialog.values()
-        try:
-            message = adapter.update_glossary_entry(
-                str(task.get("job_id")), str(task.get("entry_id")),
-                preferred=values["preferred"], status=values["status"],
-                domain=values["domain"], forbidden=values["forbidden"])
-        except adapter.AdapterError as exc:
-            self._failure(i18n.tr('无法保存术语'), str(exc), task=False)
-            return
-        self._notice(i18n.tr_dynamic(message), task=False)
-        self.refresh_library(self.library.tm_project_id())
-
-    def delete_library_term(self, row: dict) -> None:
-        tasks = [task for task in (row or {}).get("tasks") or [] if task.get("job_id")]
-        if not tasks:
-            return
-        where = "、".join(str(task.get("document") or task.get("job_id")) for task in tasks)
-        if not self._confirm(
-                i18n.tr('删除术语'),
-                i18n.tr('将从这些任务的术语表里删除「{v0}」：{v1}\n\n删除会生成新的术语版本。确定吗？',
-                        v0=row.get("source"), v1=where),
-                yes=i18n.tr('删除'), no=i18n.tr('取消'), tone="danger"):
-            return
-        failed = []
-        for task in tasks:
-            try:
-                adapter.delete_glossary_entry(str(task["job_id"]), str(task.get("entry_id")))
-            except adapter.AdapterError as exc:
-                failed.append(str(exc))
-        self._notice(i18n.tr('已删除术语。') if not failed
-                     else i18n.tr('部分任务没有删除：{v0}', v0=failed[0]), error=bool(failed))
-        self.refresh_library(self.library.tm_project_id())
-
-    def open_library_job(self, job_id: str, index: int) -> None:
-        self.open_job(job_id)
-        if index >= 0 and self.stack.currentWidget() is self.workbench:
-            self.workbench.show_segment_for_edit(index)
-
-    def new_library_term(self) -> None:
-        jobs = self.library._data.get("jobs") or []
-        if not jobs:
-            self._notice(i18n.tr('还没有任务，先导入文档再添加术语。'), error=True, task=False)
-            return
-        dialog = dialogs.NewTermDialog(jobs, self)
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        values = dialog.values()
-        try:
-            adapter.add_glossary_entry(values["job_id"], values["source"], values["target"],
-                                       domain=values["domain"])
-        except adapter.AdapterError as exc:
-            self._failure(i18n.tr('无法新增术语'), str(exc), task=False)
-            return
-        self._notice(i18n.tr('已创建术语。'), task=False)
-        self.refresh_library(self.library.tm_project_id())
+                            adapter.accept_review_items, pick, on_done=done)
 
     def clear_project_memory(self, project_id: str) -> None:
         if not project_id or not self._confirm(
@@ -923,7 +885,12 @@ class MainWindow(QMainWindow):
             return
         adapter.clear_project_memory(project_id)
         self._notice(i18n.tr('已清空该项目的翻译记忆。'), task=False)
-        self.refresh_library(project_id)
+        self.refresh_projects()
+
+    def open_library_job(self, job_id: str, index: int) -> None:
+        self.open_job(job_id)
+        if index >= 0 and self.stack.currentWidget() is self.workbench:
+            self.workbench.show_segment_for_edit(index)
 
     def show_home(self) -> None:
         self.workbench.flush_draft()
@@ -1336,8 +1303,8 @@ class MainWindow(QMainWindow):
         """「项目」：切到项目页（侧栏保持在左侧）。"""
         self.workbench.flush_draft()
         self._current_job_id = ""
-        self.projects.reload()
         self.stack.setCurrentWidget(self.projects)
+        self.refresh_projects()
         self._sync_sidebar()
         self.setWindowTitle("Folith — " + i18n.tr('项目'))
         self._sync_menu_state()
@@ -1394,44 +1361,54 @@ class MainWindow(QMainWindow):
             self._sidebar_settle = settled
             self._motion.animate("sidebar", start, target, frame, kind="view", finished=settled)
         self.home.set_current_nav(
-            "projects" if current is self.projects else
-            "library" if current is self.library else "tasks")
+            "projects" if current is self.projects else "tasks")
 
-    def move_to_project(self, job_ids: list) -> None:
-        """把一个任务改归属；运行中的任务由核心拒绝，原因如实显示。"""
+    def _pull_unsorted_into(self, project_id: str) -> None:
+        """项目页「把「未分类」的任务移进来…」：从第一个未归属任务开始，其余在面板里勾选。"""
+        jobs = adapter.unsorted_jobs()
+        if jobs:
+            self.move_to_project([jobs[0]["job_id"]], project_id=project_id)
+
+    def move_to_project(self, job_ids: list, *, project_id: str = "", mode: str = "") -> None:
+        """「移到项目」面板：任务改归属的唯一入口。运行中的任务由核心拒绝，原因如实显示。"""
         ids = [str(job) for job in job_ids or [] if str(job or "").strip()]
         if not ids:
             return
-        projects = [row for row in adapter.project_rows()
-                    if not row.get("archived")]
-        if not projects:
-            self._notice(i18n.tr('还没有可用项目；请先在「项目…」中新建。'), error=True, task=False)
+        sheet = MoveToProjectSheet(ids, self, project_id=project_id, mode=mode)
+        if sheet.exec() != QDialog.DialogCode.Accepted:
             return
-        dialog = ProjectPickerDialog(projects, job_count=len(ids), parent=self)
-        if not dialog.exec():
-            return
-        target = dialog.selected_project()
-        if not target:
-            return
-        try:
-            result = adapter.assign_jobs_to_project(
-                ids, target, move_translations=dialog.move_translations())
-        except adapter.AdapterError as exc:
-            self._failure(i18n.tr('无法移动任务'), str(exc), task=False)
-            return
-        moved = len(result.get("moved") or [])
-        skipped = result.get("skipped") or []
-        name = (result.get("project") or {}).get("name") or i18n.tr('项目')
-        message = i18n.tr('已把 {v0} 个任务移动到「{v1}」', v0=moved, v1=name)
-        if result.get("tm_added"):
-            message += i18n.tr('；并入 {v0} 条已审校译文', v0=result['tm_added'])
-        if skipped:
-            reasons = "；".join(
-                f"{item.get('job_id')}：{i18n.tr_dynamic(str(item.get('reason') or ''))}"
-                for item in skipped)
-            message += i18n.tr('。跳过 {v0} 个：{v1}', v0=len(skipped), v1=reasons)
-        self.refresh_home()
-        self._notice(message, error=bool(skipped), task=False)
+        request = sheet.request()
+
+        def done(result) -> None:
+            moved = len(result.get("moved") or [])
+            skipped = result.get("skipped") or []
+            name = result.get("project_name") or i18n.tr('项目')
+            message = i18n.tr('已把 {v0} 个任务移动到「{v1}」', v0=moved, v1=name)
+            terms = sum(len(r["terms_added"]) for r in result.get("reports") or [])
+            clash = sum(len(r["terms_conflicting"]) for r in result.get("reports") or [])
+            tm = sum(r["tm_added"] for r in result.get("reports") or [])
+            if terms:
+                message += i18n.tr('；收进 {v0} 条术语', v0=terms)
+            if tm:
+                message += i18n.tr('；并入 {v0} 条翻译记忆', v0=tm)
+            if clash:
+                message += i18n.tr('；{v0} 条译名和术语库不一致，已放进待审核', v0=clash)
+            if skipped:
+                reasons = "；".join(
+                    f"{item.get('job_id')}：{i18n.tr_dynamic(str(item.get('reason') or ''))}"
+                    for item in skipped)
+                message += i18n.tr('。跳过 {v0} 个：{v1}', v0=len(skipped), v1=reasons)
+            self.refresh_home()
+            if self.stack.currentWidget() is self.projects:
+                self.refresh_projects()
+            self.refresh_pending_badge(force=True)
+            self._notice(message, error=bool(skipped), task=False)
+
+        def failed(message: str, _detail: str) -> None:
+            self._failure(i18n.tr('无法移动任务'), message, task=False)
+
+        self.runner.submit(adapter.move_jobs, request.pop("job_ids"), on_done=done,
+                           on_error=failed, label="move-jobs", **request)
 
     def import_legacy(self) -> None:
         # 与导入/保存一致：走受自动化守卫的目录选择器——直接调
@@ -1467,6 +1444,7 @@ class MainWindow(QMainWindow):
             if self._home_counter >= HOME_REFRESH_SECONDS:
                 self._home_counter = 0
                 self.refresh_home()
+                self.refresh_pending_badge()
 
     @staticmethod
     def _state_started(state: dict) -> bool:
@@ -2689,20 +2667,31 @@ class MainWindow(QMainWindow):
         self.workbench.reload_current_segment(force=True)
 
     def add_term_from_selection(self, source: str, target: str) -> None:
-        """工作台「加入术语库」：原文/译文里选中的词预先填好，确认后写进本任务术语表。"""
+        """工作台「加入术语库」：选中的词预先填好，确认后写进**项目**的术语库。
+
+        任务在「未分类」时没有项目术语库，术语只写进这个任务自己的术语表。
+        """
         job_id = self._current_job_id
         if not job_id:
             return
-        from .dialogs import NewTermDialog
-
-        name = str((self._cached_state or {}).get("filename") or job_id)
-        dialog = NewTermDialog([(job_id, name)], self)
-        dialog.source_edit.setText(source)
-        dialog.target_edit.setText(target)
+        owner = adapter.term_target_project(job_id)
+        dialog = NewTermDialog(
+            project_name=(owner or {}).get("name") or "", source=source, target=target,
+            hint="" if owner else i18n.tr(
+                '这个任务在「未分类」里，术语只保存在这个任务自己的术语表。移入项目后才能收进项目术语库。'),
+            parent=self)
         (dialog.target_edit if source and not target else dialog.source_edit).setFocus()
         if _automation() or dialog.exec() != QDialog.DialogCode.Accepted:
             return
         values = dialog.values()
+        if owner is not None:
+            try:
+                adapter.add_project_term(owner["project_id"], values["source"], values["target"],
+                                         domain=values["domain"], note=values["note"])
+            except adapter.AdapterError as exc:
+                self._failure(i18n.tr('无法新增术语'), str(exc), task=False)
+                return
+        # 当前任务的术语表同步写入：这样本任务马上按这个译名检查，不必等下一个任务。
         self.add_glossary_entry({"source": values["source"], "preferred": values["target"],
                                  "domain": values["domain"], "status": "locked"})
 

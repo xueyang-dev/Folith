@@ -650,3 +650,212 @@ def target_language_options(rows: Iterable[Mapping[str, Any]]) -> List[str]:
     """返回术语任务实际持久化的目标语言，不把它冒充成完整语言对。"""
     return sorted({str(row.get("target_lang") or "").strip()
                    for row in rows if str(row.get("target_lang") or "").strip()})
+
+
+# ---------------- 项目内待审核：依据标签、词形合并、只出现一次的收起 ----------------
+#
+# 候选的置信度只有两档（0.7 = 来自已审校译文，0.35 = 来自机器译文），把它显示成
+# 小数是假精度。界面改成说"依据"：已审校译文 / 机器译文 / 和术语库不一致。
+
+BASIS_REVIEWED = "reviewed"
+BASIS_MACHINE = "machine"
+BASIS_CONFLICT = "conflict"
+#: 任务自己术语表里的条目（还没进项目术语库）——不是智能体新发现的候选。
+BASIS_TASK = "task"
+BASIS_LABELS = {BASIS_REVIEWED: "已审校译文", BASIS_MACHINE: "机器译文",
+                BASIS_CONFLICT: "和术语库不一致", BASIS_TASK: "任务术语表"}
+
+
+def candidate_basis(row: Mapping[str, Any]) -> str:
+    """候选的依据。有冲突的永远标冲突；其余按置信度档位分成两类。"""
+    if row.get("has_conflict") or row.get("kind") == "conflict":
+        return BASIS_CONFLICT
+    if row.get("kind") == "task_term":
+        return BASIS_TASK
+    if row.get("high_confidence"):
+        return BASIS_REVIEWED
+    return BASIS_MACHINE
+
+
+def _singular(word: str) -> str:
+    lower = word.casefold()
+    if len(lower) > 4 and lower.endswith("ies"):
+        return lower[:-3] + "y"
+    if len(lower) > 4 and lower.endswith(("ses", "xes", "ches", "shes")):
+        return lower[:-2]
+    if len(lower) > 3 and lower.endswith("s") and not lower.endswith(("ss", "us", "is")):
+        return lower[:-1]
+    return lower
+
+
+def variant_key(source: Any) -> str:
+    """词形变体合并用的键：大小写不计，最后一个词取单数（hub / Hubs 同键）。
+
+    只吸收复数这一类最常见的变体，不做词干还原——合并错的代价比不合并高。
+    """
+    words = str(source or "").split()
+    if not words:
+        return ""
+    words = [word.casefold() for word in words]
+    words[-1] = _singular(words[-1])
+    return " ".join(words)
+
+
+def hit_count(row: Mapping[str, Any]) -> int:
+    """候选出现了几次：真实命中优先，其次观察到的段落数，都没有按 1 次算。"""
+    if row.get("positions_known"):
+        return max(1, int(row.get("occurrence_count") or 0))
+    return max(1, len(row.get("observed_segments") or []))
+
+
+def build_task_term_rows(jobs: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """任务术语表里还能算「待审核」的条目：暂定或已锁定、有译名、没被拒绝。
+
+    和候选行同形（``kind == "task_term"``），这样项目术语库可以把它们和候选、冲突
+    放在一张表里；每条对应任务术语表里的一个条目（``entry_id``）。
+    """
+    rows: List[Dict[str, Any]] = []
+    for row in build_term_rows(jobs):
+        if row["status"] == "rejected" or not str(row["preferred"] or "").strip():
+            continue
+        rows.append({
+            "kind": "task_term", "row_id": f"task::{row['job_id']}::{row['entry_id']}",
+            "job_id": row["job_id"], "document": row["document"], "entry_id": row["entry_id"],
+            "source": row["source"], "target": row["preferred"], "domain": row["domain"],
+            "task_status": row["status"], "has_conflict": False, "high_confidence": False,
+            "occurrence_count": row["usage"], "positions_known": bool(row["usage"]),
+            "occurrences": list(row["occurrences"]), "observed_segments": [],
+        })
+    return rows
+
+
+def merge_variant_rows(rows: Sequence[Mapping[str, Any]], *,
+                       by_document: bool = True) -> List[Dict[str, Any]]:
+    """同一文档里词形变体、同一译名的候选合成一条（hub / hubs 算一条）。
+
+    合并后的行带 ``members``（原始候选行，决定时对每一条都生效）、``variants``
+    （其它写法）、累计的 ``hits``，以及 ``basis``。
+    """
+    order: List[Tuple[str, str, str]] = []
+    buckets: Dict[Tuple[str, str, str], List[Mapping[str, Any]]] = {}
+    for row in rows:
+        key = (str(row.get("document") or "") if by_document else "",
+               variant_key(row.get("source")),
+               str(row.get("target") or "").strip().casefold())
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(row)
+    merged: List[Dict[str, Any]] = []
+    for key in order:
+        members = buckets[key]
+        lead = min(members, key=lambda r: len(str(r.get("source") or "")))
+        item = dict(lead)
+        item["members"] = [dict(m) for m in members]
+        item["variants"] = [str(m["source"]) for m in members
+                            if str(m.get("source")) != str(lead.get("source"))]
+        item["hits"] = sum(hit_count(m) for m in members)
+        bases = {candidate_basis(m) for m in members}
+        item["basis"] = next((b for b in (BASIS_CONFLICT, BASIS_REVIEWED, BASIS_TASK)
+                              if b in bases), BASIS_MACHINE)
+        item["documents"] = list(dict.fromkeys(
+            str(m.get("document") or "") for m in members if m.get("document")))
+        item["basis_label"] = BASIS_LABELS[item["basis"]]
+        merged.append(item)
+    merged.sort(key=lambda r: (-int(r["hits"]), str(r.get("source") or "").casefold()))
+    return merged
+
+
+def review_view(rows: Sequence[Mapping[str, Any]], *, basis: str = "all",
+                show_singles: bool = False, by_document: bool = True) -> Dict[str, Any]:
+    """待审核列表的展示模型：合并 → 收起只出现一次的 → 按依据筛选 → 按文档分组。
+
+    只出现一次且没有冲突的候选默认收起（噪声最多的一类）；冲突永远显示。
+    ``counts`` 是收起之后、筛选之前的各依据条数，供筛选按钮显示数字。
+    """
+    merged = merge_variant_rows(rows, by_document=by_document)
+    # 任务术语表里的条目是用户/任务自己列的，不算「噪声」：只出现一次也不收起。
+    visible = [row for row in merged
+               if show_singles or row["hits"] > 1 or row["basis"] in (BASIS_CONFLICT, BASIS_TASK)]
+    collapsed = len(merged) - len(visible)
+    counts = {"all": len(visible)}
+    for key in (BASIS_TASK, BASIS_REVIEWED, BASIS_MACHINE, BASIS_CONFLICT):
+        counts[key] = sum(1 for row in visible if row["basis"] == key)
+    shown = visible if basis in ("", "all") else [r for r in visible if r["basis"] == basis]
+    return {"groups": group_candidates_by_document(shown), "collapsed": collapsed,
+            "counts": counts, "total": len(visible), "items": shown}
+
+
+def pending_review_count(rows: Sequence[Mapping[str, Any]], *, by_document: bool = True) -> int:
+    """侧栏角标 / 项目角标用的数：与术语库里「待审核」筛选默认展示的条数一致。"""
+    return review_view(rows, by_document=by_document)["total"]
+
+
+def build_candidate_rows_lite(
+    jobs: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """只带计数所需字段的候选行（不取原文上下文；任务多时比完整行快得多）。"""
+    rows: List[Dict[str, Any]] = []
+    for job in jobs or []:
+        state = job.get("state") or {}
+        if not isinstance(state, Mapping):
+            continue
+        glossary: Dict[str, List[str]] = {}
+        for entry in models.normalize_glossary(_glossary_entries(state)):
+            glossary.setdefault(entry["source"].casefold(), []).append(
+                str(entry.get("preferred") or entry.get("target") or "").strip().casefold())
+        for candidate in state.get("knowledge_candidates") or []:
+            if not isinstance(candidate, Mapping) or candidate.get("decision"):
+                continue
+            source = str(candidate.get("source") or "").strip()
+            target = str(candidate.get("observed_target") or "").strip()
+            known = glossary.get(source.casefold(), [])
+            confidence = _as_float(candidate.get("confidence"))
+            occurrences = [i for i in candidate.get("occurrences") or []
+                           if isinstance(i, int) and not isinstance(i, bool)]
+            rows.append({
+                "job_id": str(job.get("job_id") or ""),
+                "document": str(state.get("filename") or ""),
+                "source": source, "target": target,
+                "has_conflict": any(t != target.casefold() for t in known),
+                "high_confidence": bool(confidence is not None
+                                        and confidence >= HIGH_CONFIDENCE_THRESHOLD),
+                "occurrence_count": len(occurrences),
+                "positions_known": bool(occurrences),
+                "observed_segments": [i for i in candidate.get("observed_segments") or []
+                                      if isinstance(i, int) and not isinstance(i, bool)],
+            })
+    return rows
+
+
+# ---------------- 语言方向的短写法 ----------------
+
+_SHORT_LANGUAGE = {
+    "english": "英", "简体中文": "中", "繁体中文": "繁", "日本語": "日", "한국어": "韩",
+    "deutsch": "德", "français": "法", "español": "西", "italiano": "意",
+    "português": "葡", "русский": "俄", "türkçe": "土", "العربية": "阿",
+    "اردو": "乌", "فارسی": "波", "ئۇيغۇرچە": "维", "עברית": "希",
+}
+#: 非中文界面里的写法：语言代码。不进翻译目录——"中"这样的单字键会和别处的"中"
+#: （中等）撞车。
+SHORT_LANGUAGE_CODES = {
+    "英": "EN", "中": "ZH", "繁": "ZH-TW", "日": "JA", "韩": "KO", "德": "DE", "法": "FR",
+    "西": "ES", "意": "IT", "葡": "PT", "俄": "RU", "土": "TR", "阿": "AR", "乌": "UR",
+    "波": "FA", "维": "UG", "希": "HE"}
+
+
+def short_language(value: Any, *, unknown: str = "自动") -> str:
+    from .source_languages import match
+    from .textual import normalize_language
+    text = str(value or "").strip()
+    if not text:
+        return unknown
+    saved = match(text) or text
+    return _SHORT_LANGUAGE.get(normalize_language(saved), text)
+
+
+def direction_label(source: Any, target: Any) -> str:
+    """「英 → 中」。目标语言都没有时是「未设定」，不编一个方向。"""
+    if not str(target or "").strip():
+        return "未设定"
+    return f"{short_language(source)} → {short_language(target, unknown='未设定')}"

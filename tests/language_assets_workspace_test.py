@@ -779,9 +779,9 @@ def test_quick_accept_saves_to_project_termbase():
         assert state["glossary"][0]["status"] == "locked"
         assert state["glossary_frozen"]["version"] == 1
         assert state["knowledge_candidates"][0]["decision"] == "project_term"
+        # 任务在「未分类」里：术语只写进任务自己的术语表，不进任何项目术语库。
         project = core.load_project(core.system_project_id())
-        assert project is not None
-        assert [entry["source"] for entry in project["glossary"]] == ["point cloud"]
+        assert not (project or {}).get("glossary")
 
 
 def test_two_stage_accept_saves_to_project_termbase_and_updates_list():

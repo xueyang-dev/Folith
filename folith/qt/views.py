@@ -646,7 +646,6 @@ class HomeView(QWidget):
     #: 侧栏「任务库」：从项目页 / 术语页回到任务库。
     tasksRequested = Signal()
     manageProjectsRequested = Signal()
-    libraryRequested = Signal()
     moveToProjectRequested = Signal(list)
     settingsRequested = Signal()
     connectionRequested = Signal()          # 侧栏连接状态芯片：打开逐项状态的浮窗
@@ -693,20 +692,21 @@ class HomeView(QWidget):
             style_module.fit_button(button, max_width=self.SIDEBAR_WIDTH - 24)
             return button
 
-        # 侧栏是窗口级的导航：任务库 / 项目 / 术语与翻译记忆三页共用（窗口通过
+        # 侧栏是窗口级的导航：任务库 / 项目 / 项目两页共用（窗口通过
         # :meth:`take_sidebar` 把它放到页面栈左侧），当前页由 :meth:`set_current_nav` 点亮。
         self.tasks_button = nav_button(i18n.tr('任务库'), "projects", checkable=True)
         self.tasks_button.setChecked(True)
         self.tasks_button.clicked.connect(self.tasksRequested.emit)
         self.manage_projects_button = nav_button(i18n.tr('项目'), "folder", checkable=True)
-        self.manage_projects_button.setToolTip(i18n.tr('新建、重命名、归档项目，管理项目知识'))
+        self.manage_projects_button.setToolTip(
+            i18n.tr('项目：术语库、翻译记忆和待审核的候选术语都在项目里'))
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
-        self.library_button = nav_button(i18n.tr('术语与翻译记忆'), "termbase", checkable=True)
-        self.library_button.setToolTip(i18n.tr('跨任务浏览术语与翻译记忆，并审核 Agent 发现的候选词条'))
-        self.library_button.clicked.connect(self.libraryRequested.emit)
+        # 待审核的候选术语总数：角标挂在「项目」上（原来的「术语与翻译记忆」页并进了项目）。
+        self.pending_badge = components.CountBadge("", "info", self.manage_projects_button)
+        self.pending_badge.setVisible(False)
+        self.manage_projects_button.installEventFilter(self)
         self._nav_buttons = {"tasks": self.tasks_button,
-                             "projects": self.manage_projects_button,
-                             "library": self.library_button}
+                             "projects": self.manage_projects_button}
 
         # 设置：侧栏左下角的圆形按钮（文案仍然是「设置…」，作为无障碍名称与提示）。
         self.settings_button = QToolButton()
@@ -801,7 +801,6 @@ class HomeView(QWidget):
         side.addSpacing(theme_module.SPACE["lg"] + theme_module.SPACE["xs"])
         side.addWidget(self.tasks_button)
         side.addWidget(self.manage_projects_button)
-        side.addWidget(self.library_button)
         side.addSpacing(theme_module.SPACE["xl"])
         side.addWidget(self.project_nav_label)
         side.addSpacing(theme_module.SPACE["xs"])
@@ -1153,10 +1152,34 @@ class HomeView(QWidget):
         self._shell.removeWidget(self.sidebar)
         return self.sidebar
 
+    def set_pending_badge(self, count: int) -> None:
+        """侧栏「项目」上的待审核总数；0 时不显示。"""
+        self.pending_badge.setText(str(count) if count < 1000 else "999+")
+        self.pending_badge.setVisible(count > 0)
+        self.manage_projects_button.setToolTip(
+            i18n.tr('项目：术语库、翻译记忆和待审核的候选术语都在项目里')
+            + (" · " + i18n.tr('{v0} 条待审核', v0=count) if count else ""))
+        self._place_badge()
+
+    def _place_badge(self) -> None:
+        button = self.manage_projects_button
+        badge = self.pending_badge
+        badge.adjustSize()
+        badge.move(button.width() - badge.width() - 12, (button.height() - badge.height()) // 2)
+
     def set_current_nav(self, name: str) -> None:
-        """点亮当前页对应的侧栏项（``tasks`` / ``projects`` / ``library``）。"""
+        """点亮当前页对应的侧栏项（``tasks`` / ``projects``）。"""
         for key, button in self._nav_buttons.items():
             button.setChecked(key == name)
+        # 项目页自己就有项目列表：侧栏的「最近项目」在这一页是重复的，其它页照常显示。
+        self._recent_hidden = name == "projects"
+        self._sync_recent_projects()
+
+    def _sync_recent_projects(self) -> None:
+        hidden = getattr(self, "_recent_hidden", False)
+        self.project_nav_label.setVisible(bool(self._project_nav_buttons) and not hidden)
+        for button in self._project_nav_buttons.values():
+            button.setVisible(not hidden)
 
     # -- 卡片缩略图 ---------------------------------------------------------
     def _request_preview(self, job_id: str, filename: str, paper) -> None:
@@ -1358,7 +1381,7 @@ class HomeView(QWidget):
                 lambda _checked=False, pid=project_id: self._pick_project_from_nav(pid))
             self.project_nav_box.addWidget(button)
             self._project_nav_buttons[project_id] = button
-        self.project_nav_label.setVisible(bool(self._project_nav_buttons))
+        self._sync_recent_projects()
         self._sync_project_nav()
 
     def _pick_project_from_nav(self, project_id: str) -> None:
@@ -1866,6 +1889,9 @@ class HomeView(QWidget):
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt 命名
         """表格拿到键盘焦点时给它一个"当前行即选中行"的起点（键盘可达性的前提）。"""
+        if watched is getattr(self, "manage_projects_button", None) \
+                and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self._place_badge()
         if watched is getattr(self, "table", None) and event.type() == QEvent.Type.FocusIn:
             self._select_current_row_for_keyboard()
         if (event.type() == QEvent.Type.Resize and hasattr(self, "card_scroll")
