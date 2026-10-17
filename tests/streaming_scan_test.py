@@ -515,7 +515,7 @@ def test_a_page_level_service_error_skips_the_page_and_the_stream_finishes(tmp_p
     stream.close()
 
 
-def test_resume_retries_failed_pages_and_appends_them_without_rereading_the_rest(tmp_path):
+def test_resume_retries_failed_pages_keeps_committed_text_and_reports_each_pages_position(tmp_path):
     from folith.streaming_ingest import ScanStream
     source = scanned_pdf(6)  # 同一份字节：缓存身份含源文件哈希
     first = ScriptedVisionProvider({2: _page_error("service_error", 524)})
@@ -532,8 +532,13 @@ def test_resume_retries_failed_pages_and_appends_them_without_rereading_the_rest
     resumed.close()
     assert second.requests == {2: 1}
     assert snapshot["failed_pages"] == []
-    assert snapshot["paragraphs"][:len(committed)] == committed  # 前文不变，补读的页接在末尾
+    # 流内部只追加：已定稿（已经交给翻译）的前文一个字都不挪，所以段落序号稳定……
+    assert snapshot["paragraphs"][:len(committed)] == committed
     assert snapshot["paragraphs"][-1].startswith("Page 3 ")
+    # ……但每段自己带着页码，交给状态层按原页序重排。
+    pages = snapshot["paragraph_pages"]
+    assert len(pages) == len(snapshot["paragraphs"]) and pages[-1] == 2
+    assert [p for p in pages[:-1]] == sorted(p for p in pages[:-1])
     assert not (tmp_path / "document_understanding" / "2-failure.json").exists()
     assert "recognition" not in snapshot["document"]["pages"][2]
 
@@ -640,3 +645,45 @@ def test_failed_pages_are_a_repair_item_in_the_followup_view(streaming_job, monk
     assert [row["page"] for row in view["scan_pages"]["pages"]] == [8]
     assert view["has_work"]
     adapter.prepare_followup_retry("gate-followup", "scan_pages")
+
+
+# ---- 补读的页回到原来的页序 ----
+
+def _page_of(source):
+    import re
+    match = re.match(r"Page (\d+) ", source)
+    return int(match.group(1)) if match else 1  # 「Chapter One」在第 1 页
+
+
+def test_recovered_page_returns_to_its_place_without_touching_existing_translations(streaming_job, monkeypatch):
+    args, _first, state = _run_with_failed_page_8(streaming_job, monkeypatch, "order-resume")
+    before = {pair["source"]: pair["target"] for pair in state["pairs"]}
+    assert not any(_page_of(source) == 8 and source.startswith("Page 8") for source in before)
+    healthy = ScriptedVisionProvider()
+    monkeypatch.setattr(core, "_vlm_runtime", lambda *a, **k: (healthy, None))
+    resumed = core.run_job_pipeline("order-resume", "scan.pdf", _BOOK_12, **args)
+    sources = [pair["source"] for pair in resumed["pairs"]]
+    pages = [_page_of(source) for source in sources]
+    assert pages == sorted(pages) and set(pages) == set(range(1, 13))  # 第 8 页回到第 7、9 页之间
+    assert resumed["paras"] == sources and resumed["source_paras"] == resumed["source_paragraphs"]
+    assert [_page_of(p) for p in resumed["source_paragraphs"]] == sorted(
+        _page_of(p) for p in resumed["source_paragraphs"])
+    for source, target in before.items():  # 已有译文不丢、不错位
+        assert next(p for p in resumed["pairs"] if p["source"] == source)["target"] == target
+    # 并行数组跟着一起挪：原文锚点、分段区间都还指着自己的段落。
+    for index, source in enumerate(sources):
+        assert resumed["segment_source_spans"][index][0]["page_id"] == f"p{_page_of(source)}"
+    ranges = resumed["segmentation"]["paragraph_ranges"]
+    for row in ranges:
+        paragraph = resumed["source_paragraphs"][row["paragraph_index"]]
+        assert resumed["paras"][row["start"]:row["end"]] and all(
+            _page_of(resumed["paras"][i]) == _page_of(paragraph)
+            for i in range(row["start"], row["end"]))
+    assert [row["start"] for row in ranges] == sorted(row["start"] for row in ranges)
+    document = resumed["extraction_report"]["document_ir"]
+    block_pages = [int(block_id.split("-")[0][1:]) for block_id in document["translation_block_ids"]]
+    assert block_pages == sorted(block_pages)
+    assert resumed["streaming_ingest"]["paragraph_pages"] == sorted(
+        resumed["streaming_ingest"]["paragraph_pages"])
+    # 译文内容也是按页序：导出读的就是这份 pairs。
+    assert core.validate_delivery_translation_state(resumed)["status"] != "fail"

@@ -53,7 +53,7 @@ class ScanStream:
         # 连续超时触发后，识别线程在下一页前停住，直到主线程处理完（暂停→继续）。
         self._halted = threading.Event()
         # 上次没读成的页（page_index → 失败信息）：第一遍跳过，读完全书后补读，
-        # 文字接在末尾，已定稿并翻译的前文不受影响。
+        # 文字先接在末尾（已定稿并翻译的前文不受影响），段落自带页码，译完后按页序重排。
         self._late = {int(k): dict(v) for k, v in (late_pages or {}).items()}
         self._late_pending = set(self._late)
         self.pages_retried = 0  # 重试过才读成的页（模型曾中途失败）
@@ -225,6 +225,7 @@ class ScanStream:
             }
             return {
                 "paragraphs": list(paragraphs[:committed]),
+                "paragraph_pages": list(self._assembler.paragraph_pages[:committed]),
                 "document": document,
                 "pages_done": self.pages_done,
                 "pages_total": self.pages_total,

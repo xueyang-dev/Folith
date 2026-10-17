@@ -10751,8 +10751,92 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
         "paragraphs": len(paragraphs),
         "segments": len(paras),
         "failed_pages": failed_pages,
+        "paragraph_pages": list(snapshot.get("paragraph_pages") or []),
     }
     return start, len(paras)
+
+
+def _apply_scan_page_order(job_id, state):
+    """补读到的页是追加在末尾翻译的：译完后把整本按原页序重排。
+
+    选择「回插并重排」而不是在导出 / 阅读视图里按页序投影：``pairs`` / ``paras`` 是
+    整条流水线（审校发现、交付快照、导出、编辑界面）共用的位置契约，只在某个出口投影，
+    其余出口会各自读出错误的顺序。识别流内部保持只追加（已定稿的段落序号不动），
+    重排只在这里发生一次：以段落自带的页码做稳定排序，段落与翻译单元的所有并行数组
+    （译文、原文锚点、分段区间、DocumentIR 的翻译块）按同一个排列移动，译文随原文走，
+    不丢、不错位；序号变了的段落，依赖旧序号的审校结论统一判过期。
+    """
+    ingest = state.get("streaming_ingest")
+    pages = list((ingest or {}).get("paragraph_pages") or [])
+    sources = list(state.get("source_paragraphs") or [])
+    paras = list(state.get("paras") or [])
+    ranges = list((state.get("segmentation") or {}).get("paragraph_ranges") or [])
+    if not pages or len(pages) != len(sources):
+        return False
+    order = sorted(range(len(pages)), key=lambda i: (pages[i], i))  # 稳定排序
+    if order == list(range(len(pages))):
+        return False
+    rows = {int(row["paragraph_index"]): row for row in ranges}
+    cursor, contiguous = 0, len(rows) == len(sources)
+    for index in range(len(sources)):
+        row = rows.get(index)
+        if not contiguous or row is None or int(row["start"]) != cursor:
+            contiguous = False
+            break
+        cursor = int(row["end"])
+    pairs = list(state.get("pairs") or [])
+    if not contiguous or cursor != len(paras) or (pairs and len(pairs) != len(paras)):
+        raise RuntimeError("补读的页无法按原页序排回：分段区间与译文数量不一致，请重新导入任务。")
+
+    segment_order, new_ranges, new_paragraph_of = [], [], {}
+    for new_index, old_index in enumerate(order):
+        row = rows[old_index]
+        start = len(segment_order)
+        segment_order.extend(range(int(row["start"]), int(row["end"])))
+        new_ranges.append({**row, "paragraph_index": new_index, "start": start,
+                           "end": len(segment_order)})
+        new_paragraph_of[old_index] = new_index
+    new_segment_of = {old: new for new, old in enumerate(segment_order)}
+
+    def permute(values, mapping):
+        return [values[i] for i in mapping] if len(values) == len(mapping) else values
+
+    state["source_paragraphs"] = permute(sources, order)
+    state["source_paras"] = permute(list(state.get("source_paras") or []), order)
+    state["paras"] = permute(paras, segment_order)
+    if pairs:
+        state["pairs"] = permute(pairs, segment_order)
+    for key in ("segment_source_spans", "segment_source_marks"):
+        state[key] = permute(list(state.get(key) or []), segment_order)
+    ingest["paragraph_pages"] = [pages[i] for i in order]
+    segmentation = state["segmentation"]
+    segmentation["paragraph_ranges"] = new_ranges
+    gate = segmentation.get("gate") or {}
+    for item in gate.get("blocked_paragraphs") or []:
+        item["paragraph_index"] = new_paragraph_of.get(
+            int(item["paragraph_index"]), item["paragraph_index"])
+    for flag in (state.get("source_quality_gate") or {}).get("flags") or []:
+        if isinstance(flag, dict) and flag.get("segment_index") is not None:
+            flag["segment_index"] = new_segment_of.get(
+                int(flag["segment_index"]), flag["segment_index"])
+    document = (state.get("extraction_report") or {}).get("document_ir")
+    if isinstance(document, dict):
+        ids = list(document.get("translation_block_ids") or [])
+        document["translation_block_ids"] = permute(ids, order)
+
+        def block_page(block):
+            match = re.match(r"p(\d+)-", str(block.get("block_id") or ""))
+            return int(match.group(1)) if match else 0
+        blocks = sorted(document.get("blocks") or [], key=block_page)  # 稳定：页内顺序不变
+        for position, block in enumerate(blocks):
+            block["reading_order"] = position
+        document["blocks"] = blocks
+    first = next(i for i, old in enumerate(segment_order) if old != i)
+    _mark_translation_truth_changed(
+        job_id, state, range(first, len(paras)),
+        "补读的页按原页序排回正文，后续段落的序号发生变化", actor="system",
+        action="scan_page_order")
+    return True
 
 
 def _reopen_scan_stream_for_failed_pages(state):
@@ -11891,6 +11975,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                                 "runtime_telemetry"):
             if profiler.get(_required_stage) is None:
                 profiler.skipped(_required_stage, metadata={"reason": "not_applicable"})
+        if scan_stream is not None or (state.get("streaming_ingest") or {}).get("paragraph_pages"):
+            _apply_scan_page_order(job_id, state)
         state["performance"] = profiler.persist()
         state["p2_done"] = True
         from folith.epub import bind_source_references

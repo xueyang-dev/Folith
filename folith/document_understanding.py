@@ -511,12 +511,16 @@ class VisualDocumentAssembler:
     def __init__(self, filename):
         self.document = new_document(filename, filename)
         self.paragraphs = []
+        self.paragraph_pages = []  # 与 paragraphs 一一对应：每段起始的页（页序从 0 起）
         self.diagnostics = []
         self.failed_pages = {}  # page_id -> PageFailed：读失败、等待重试的页
         self._tail = None  # (block record, 段落索引, 末行续段标记)：最后一个正文段
 
     def add_page(self, envelope, result, *, late=False):
-        """``late``：补读之前失败的页——页登记已经在，文字接在全书末尾，不跨页续段。"""
+        """``late``：补读之前失败的页——页登记已经在，文字接在全书末尾，不跨页续段。
+
+        段落序号只追加、不回插：已定稿并交给翻译的段落不能挪位。每段的起始页记在
+        ``paragraph_pages``，调用方译完后按页序重排（见 core 的 ``_apply_scan_page_order``）。"""
         page = envelope.to_page()
         if late:
             self._tail = None
@@ -587,10 +591,12 @@ class VisualDocumentAssembler:
                                                    'text':cell['text'], 'reading_order':len(document['blocks']),
                                                    'source_anchor':cell['source_anchor'], 'provenance':record['provenance']})
                         self.paragraphs.append(cell['text'])
+                        self.paragraph_pages.append(envelope.page_index)
                         document['translation_block_ids'].append(cid)
                 self._tail = None
             elif translatable:
                 self.paragraphs.append(block.text)
+                self.paragraph_pages.append(envelope.page_index)
                 document['translation_block_ids'].append(bid)
                 # 每个正文段都可能被下一页续上：留到看见下一页再决定。
                 self._tail = ((record, len(self.paragraphs) - 1, block.continues_next)
