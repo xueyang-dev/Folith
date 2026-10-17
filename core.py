@@ -71,6 +71,7 @@ from folith import usage as _usage
 from folith import llm_transport as _llm_transport
 from folith import request_control as _request_control
 from folith import workflow_errors as _workflow_errors
+from folith import numerals as _numerals
 from folith import job_lock as _job_lock
 from folith import store_lock as _store_lock
 from folith import review_scheduler as _review_scheduler
@@ -3287,6 +3288,9 @@ def _translator_system(glossary_text, style_rules, target_lang):
             "实体提示和全书既定译法；没有既定译法时，选择目标语言中自然、连贯的表达，"
             "并在后文保持一致。只有明确标为“保留原文”的词条才按其规则原样保留。URL、"
             "邮箱、DOI、引用标注（如 [12]）和其他机器标识符保持准确，不要改动其字符。\n"
+            "数字、电话号码、日期和脚注/引用标号的数值保持不变，但改用目标语言通行的"
+            "数字写法：原文的阿拉伯-印度数字（如 ١٢٣、۴۵）在中文、英文等译文中写作 123、45，"
+            "脚注标号 (١) 写作 (1)，括号与位置不变；目标语言本身使用这种数字时保持原样。\n"
             f"{glossary_text}\n"
             f"{style_rules}\n"
             "翻译前请在内部检查：指代与照应关系、术语和专名、理论/非字面用法、"
@@ -3379,7 +3383,8 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
                     user_prompt=user_prompt, render_stats=render_stats,
                     attempt=0, output_chars=sum(len(item) for item in cached),
                     cache="hit"))
-            return list(cached)
+            # Older cache entries predate the digit rule.
+            return _numerals.normalize_targets(list(cached), target_lang)
     # Rate limiting is handled by the shared provider controller: it paces
     # request starts and pushes one cooldown every worker observes, instead of
     # each worker sleeping a fixed 15 s and then stampeding the provider.
@@ -3410,8 +3415,9 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             finally:
                 _LLM_CTX.prompt_cost = previous_cost
             controller.note_success()
-            targets = _translation_protocol.parse_translation_response(
-                res, len(segments))
+            targets = _numerals.normalize_targets(
+                _translation_protocol.parse_translation_response(res, len(segments)),
+                target_lang)
             if result_cache is not None and cache_key is not None:
                 # Only a fully parsed, count-matching batch is cacheable.  A
                 # partial or malformed reply never reaches this line.
@@ -3613,7 +3619,8 @@ def repair_batch(sources, targets, findings, glossary_text, style_rules, target_
             controller.note_success()
             arr = _translation_protocol.parse_translation_response(
                 res, len(sources))
-            return [clean_xml_chars(item).strip() for item in arr]
+            return [_numerals.normalize_digits(clean_xml_chars(item).strip(), target_lang)
+                    for item in arr]
         except Exception as e:
             if "任务已请求取消" in str(e):
                 raise
