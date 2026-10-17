@@ -516,17 +516,30 @@ class MoveToProjectSheet(QDialog):
                 self.after_list.addWidget(rule)
             self.after_list.addWidget(self._report_card(report, system))
         self.after_list.addStretch(1)
-        holder = self.after_scroll.widget()
-        # 按实际宽度算内容高度（折行的说明文字在窄宽度下更高）；放得下就整块摆开，
-        # 超过上限才滚动。
-        width = max(self.after_scroll.viewport().width(), self.width() - 80, 400)
+        self._fit_preview()
+        self.adjustSize()
+
+    def _fit_preview(self) -> None:
+        """预览卡高度 = 内容在**实际宽度**下的高度（放不下才封顶并出滚动条）。
+
+        折行的说明文字在窄宽度下更高，所以必须用视口的真实宽度量；
+        还没显示（视口宽度未定）时用对话框宽度估一个。
+        """
+        scroll = self.after_scroll
+        width = scroll.viewport().width()
+        if width < 200:
+            width = max(self.width(), self.minimumWidth()) - 76
         layout = self.after_list
         height = layout.totalHeightForWidth(width) if layout.hasHeightForWidth() \
-            else holder.sizeHint().height()
-        height = max(height, holder.sizeHint().height()) + 12
-        holder.setMinimumHeight(height)        # 内容不被压扁；放不下才由滚动区滚动
-        self.after_scroll.setFixedHeight(min(height, self.PREVIEW_MAX))
-        self.adjustSize()
+            else scroll.widget().sizeHint().height()
+        scroll.widget().setMinimumHeight(height)
+        scroll.setFixedHeight(min(height + 2, self.PREVIEW_MAX))
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        if self.after_box.isVisibleTo(self):
+            self._fit_preview()
+            self.adjustSize()
 
     def _carry_existing_checks_visible(self, visible: bool) -> None:
         """已有项目：只留两个简单的勾选（数字放在下面的预览里）。"""

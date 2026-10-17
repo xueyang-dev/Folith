@@ -295,7 +295,14 @@ def test_move_preview_has_no_scrollbar_anywhere_when_content_fits(env, app):  # 
     app.processEvents()
     assert _visible_bars(sheet) == []
     scroll = sheet.after_scroll
-    assert scroll.widget().sizeHint().height() <= scroll.height()
+    # 内容放得下：卡片底部不留大片空白（内边距 + 几像素以内）。
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QWidget
+
+    holder = scroll.widget()
+    bottoms = [c.mapTo(holder, QPoint(0, c.height())).y()
+               for c in holder.findChildren(QWidget) if c.isVisible()]
+    assert scroll.height() - max(bottoms) <= 16, (scroll.height(), max(bottoms))
 
 
 def test_move_preview_scrolls_when_many_tasks_overflow(env, app):  # noqa: F811
@@ -304,14 +311,15 @@ def test_move_preview_scrolls_when_many_tasks_overflow(env, app):  # noqa: F811
 
     adapter, ids, _v, _r = _view(env, app)
     core = env["core"]
-    for n in range(5):
+    for n in range(10):
         add_job(core, f"extra-{n}", f"附加任务 {n}.docx", project_id=None,
                 terms=[{"source": f"term{n}", "target": f"术语{n}", "preferred": f"术语{n}",
                         "status": "locked", "behavior": "translate"}])
-    sheet = MoveToProjectSheet(["notes"] + [f"extra-{n}" for n in range(5)],
+    sheet = MoveToProjectSheet(["notes"] + [f"extra-{n}" for n in range(10)],
                                project_id=ids["device"])
     sheet.show()
-    app.processEvents()
+    for _ in range(5):
+        app.processEvents()
     bar = sheet.after_scroll.verticalScrollBar()
     assert bar.isVisible() and bar.maximum() > 0
     assert sheet.after_scroll.height() == sheet.PREVIEW_MAX
