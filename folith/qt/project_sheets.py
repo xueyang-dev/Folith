@@ -49,6 +49,22 @@ def _sheet_base(dialog: QDialog, title: str, width: int) -> QVBoxLayout:
     return layout
 
 
+def _amber(inner: QWidget, left: int = 24) -> QWidget:
+    """琥珀色浅底的提示块（warn token）：不一致的译名表、方向不同的说明。"""
+    block = style_module.Surface(elevation="flat", fill="warning-soft")
+    block.RADIUS = theme_module.RADIUS["sm"]
+    box = QVBoxLayout(block)
+    box.setContentsMargins(12, 8, 12, 8)
+    box.setSpacing(6)
+    box.addWidget(inner)
+    holder = QWidget()
+    holder.setObjectName("transparent")
+    outer = QHBoxLayout(holder)
+    outer.setContentsMargins(left, 0, 0, 0)
+    outer.addWidget(block)
+    return holder
+
+
 def _group(*rows: QWidget) -> style_module.Surface:
     """白色分组：行与行之间一条发丝线（由行自己的上边框承担，这里只放内容）。"""
     surface = style_module.Surface(elevation="flat")
@@ -328,7 +344,11 @@ class MoveToProjectSheet(QDialog):
         scroll.setMaximumHeight(300)
         scroll.setMinimumHeight(60)
         self.after_scroll = scroll
-        after.addWidget(scroll)
+        card = style_module.Surface(elevation="flat")
+        card_box = QVBoxLayout(card)
+        card_box.setContentsMargins(10, 8, 10, 8)
+        card_box.addWidget(scroll)
+        after.addWidget(card)
         layout.addWidget(self.after_box)
 
         # ---- 同时移入其他未归属任务 ----------------------------------------------
@@ -368,6 +388,8 @@ class MoveToProjectSheet(QDialog):
         self.ok_button.clicked.connect(self._accept)
         footer.addWidget(cancel)
         footer.addWidget(self.ok_button)
+        # 多出来的高度只留在底部：不要被均摊到标题、分组之间。
+        layout.addStretch(1)
         layout.addLayout(footer)
         self.error = _label("", "status", wrap=True)
         self.error.setVisible(False)
@@ -483,7 +505,12 @@ class MoveToProjectSheet(QDialog):
             self._carry_existing_checks_visible(False)
         else:
             self._carry_existing_checks_visible(True)
-        for report in self._preview.get("reports") or []:
+        for number, report in enumerate(self._preview.get("reports") or []):
+            if number:
+                rule = QFrame()
+                rule.setObjectName("hairline")
+                rule.setFixedHeight(1)
+                self.after_list.addWidget(rule)
             self.after_list.addWidget(self._report_card(report, system))
         self.after_list.addStretch(1)
         holder = self.after_scroll.widget()
@@ -542,7 +569,8 @@ class MoveToProjectSheet(QDialog):
             note = QFrame()
             note.setObjectName("transparent")
             inner = QVBoxLayout(note)
-            inner.setContentsMargins(24, 0, 0, 0)
+            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setSpacing(6)
             lead = _label(i18n.tr(
                 '项目是 {v0}，这个任务的术语和翻译记忆不会带过去；任务本身照样移入，以后翻译也不会用到这个项目的术语。',
                 v0=_dir(self._preview.get("direction_label") or "")), "body", wrap=True)
@@ -558,31 +586,40 @@ class MoveToProjectSheet(QDialog):
                 row.addWidget(button)
                 row.addStretch(1)
                 inner.addLayout(row)
-            box.addWidget(note)
+            box.addWidget(_amber(note))
             return card
         added = len(report["terms_added"]) + len(report["terms_updated"])
         if self.carry_terms.isChecked():
-            box.addWidget(self._bullet("ok", i18n.tr('{v0} 条术语收进项目术语库', v0=added)))
             conflicts = report["terms_conflicting"]
-            if conflicts:
+            if added:
+                box.addWidget(self._bullet("ok", i18n.tr('{v0} 条术语收进项目术语库', v0=added)))
+            if conflicts and not added:
+                box.addWidget(self._bullet("warn", i18n.tr(
+                    '术语都和项目现有译名不一致：不覆盖，放进「待审核」由你决定')))
+            elif conflicts:
                 box.addWidget(self._bullet("warn", i18n.tr(
                     '{v0} 条和项目现有译名不一致：不覆盖，放进「待审核」由你决定', v0=len(conflicts))))
-                box.addWidget(self._conflict_table(conflicts))
+            if conflicts:
+                box.addWidget(_amber(self._conflict_table(conflicts)))
             if report["terms_provisional"]:
                 box.addWidget(self._bullet("idle", i18n.tr(
                     '{v0} 条暂定术语留在任务里', v0=report["terms_provisional"]), muted=True))
-        if self.carry_tm.isChecked():
-            text = i18n.tr('翻译记忆并入 {v0} 条', v0=report["tm_added"])
+        if self.carry_tm.isChecked() and (report["tm_added"] or report["tm_skipped"]):
+            parts = []
+            if report["tm_added"]:
+                parts.append(i18n.tr('翻译记忆并入 {v0} 条', v0=report["tm_added"]))
             if report["tm_skipped"]:
-                text += i18n.tr('；另有 {v0} 条项目里已有译法，不覆盖', v0=report["tm_skipped"])
-            box.addWidget(self._bullet("idle", text, muted=True))
+                parts.append((i18n.tr('另有 {v0} 条项目里已有译法，不覆盖', v0=report["tm_skipped"])
+                              if parts else i18n.tr('{v0} 条翻译记忆项目里已有译法，不覆盖',
+                                                    v0=report["tm_skipped"])))
+            box.addWidget(self._bullet("idle", "；".join(parts), muted=True))
         return card
 
     def _conflict_table(self, conflicts: list[dict]) -> QWidget:
         table = QFrame()
         table.setObjectName("transparent")
         grid = QGridLayout(table)
-        grid.setContentsMargins(24, 2, 0, 2)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(2)
         for column, text in enumerate((i18n.tr('原文'), i18n.tr('这个任务'), i18n.tr('项目术语库'))):

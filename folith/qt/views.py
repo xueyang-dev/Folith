@@ -702,7 +702,7 @@ class HomeView(QWidget):
             i18n.tr('项目：术语库、翻译记忆和待审核的候选术语都在项目里'))
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
         # 待审核的候选术语总数：角标挂在「项目」上（原来的「术语与翻译记忆」页并进了项目）。
-        self.pending_badge = style_module.Chip("", "info", self.manage_projects_button)
+        self.pending_badge = components.CountBadge("", "info", self.manage_projects_button)
         self.pending_badge.setVisible(False)
         self.manage_projects_button.installEventFilter(self)
         self._nav_buttons = {"tasks": self.tasks_button,
@@ -1171,6 +1171,15 @@ class HomeView(QWidget):
         """点亮当前页对应的侧栏项（``tasks`` / ``projects``）。"""
         for key, button in self._nav_buttons.items():
             button.setChecked(key == name)
+        # 项目页自己就有项目列表：侧栏的「最近项目」在这一页是重复的，其它页照常显示。
+        self._recent_hidden = name == "projects"
+        self._sync_recent_projects()
+
+    def _sync_recent_projects(self) -> None:
+        hidden = getattr(self, "_recent_hidden", False)
+        self.project_nav_label.setVisible(bool(self._project_nav_buttons) and not hidden)
+        for button in self._project_nav_buttons.values():
+            button.setVisible(not hidden)
 
     # -- 卡片缩略图 ---------------------------------------------------------
     def _request_preview(self, job_id: str, filename: str, paper) -> None:
@@ -1372,7 +1381,7 @@ class HomeView(QWidget):
                 lambda _checked=False, pid=project_id: self._pick_project_from_nav(pid))
             self.project_nav_box.addWidget(button)
             self._project_nav_buttons[project_id] = button
-        self.project_nav_label.setVisible(bool(self._project_nav_buttons))
+        self._sync_recent_projects()
         self._sync_project_nav()
 
     def _pick_project_from_nav(self, project_id: str) -> None:

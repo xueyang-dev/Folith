@@ -1924,5 +1924,9 @@
   "任务正在运行，无法改归属": "The task is running; its project cannot be changed",
   "任务不存在": "Task not found",
   "已拒绝该知识候选": "Candidate rejected",
-  "已记录为仅本任务采用": "Recorded as used for this task only"
+  "已记录为仅本任务采用": "Recorded as used for this task only",
+  "术语都和项目现有译名不一致：不覆盖，放进「待审核」由你决定": "All terms differ from the project's current translations: not overwritten, put in Review for you to decide",
+  "{v0} 条翻译记忆项目里已有译法，不覆盖": "{v0} translation memory entries already have a translation in the project and are not overwritten",
+  "另有 {v0} 条项目里已有译法，不覆盖": "another {v0} already have a translation in the project and are not overwritten",
+  "选择 {v0}": "Select {v0}"
 }

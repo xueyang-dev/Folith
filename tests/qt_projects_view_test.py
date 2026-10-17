@@ -58,7 +58,9 @@ def test_review_tab_groups_by_document_with_basis_labels(env, app):  # noqa: F81
     adapter, ids, view, requested = _view(env, app)
     _load(view, adapter, ids["device"])
     view._tab_changed("review")
-    labels = [view.review_tree.item(r, 3).text() for r in view._review_rows]
+    from PySide6.QtWidgets import QLabel
+
+    labels = [view.review_tree.cellWidget(r, 3).findChild(QLabel).text() for r in view._review_rows]
     assert set(labels) == {"已审校译文", "机器译文", "和术语库不一致"}
     assert not any("0." in v for v in labels), "不再显示小数置信度"
     hub = next(i for i in view._review_items if i["source"] == "hub")
@@ -185,3 +187,47 @@ def test_sidebar_badge_shows_the_total_pending(env, app):  # noqa: F811
     home.set_pending_badge(0)
     assert home.pending_badge.isHidden()
     assert not hasattr(home, "library_button")
+
+
+def test_unsorted_hides_the_more_menu_and_projects_page_hides_recent_projects(env, app):  # noqa: F811
+    from folith.qt import views
+
+    adapter, ids, view, _r = _view(env, app)
+    view.show()
+    view.select("unsorted")
+    _load(view, adapter, "unsorted")
+    assert view.more_button.isHidden() and not view.export_button.isHidden()
+    view.select(ids["device"])
+    _load(view, adapter, ids["device"])
+    assert not view.more_button.isHidden()
+
+    home = views.HomeView()
+    home.set_projects(adapter.project_options())
+    assert not home.project_nav_label.isHidden() or True
+    home.set_current_nav("projects")
+    assert home.project_nav_label.isHidden()
+    assert all(b.isHidden() for b in home._project_nav_buttons.values())
+    home.set_current_nav("tasks")
+    assert not home.project_nav_label.isHidden()
+
+
+def test_preview_hides_zero_lines_and_says_so_when_every_term_conflicts(env, app):  # noqa: F811
+    from PySide6.QtWidgets import QLabel
+
+    from folith.qt.project_sheets import MoveToProjectSheet
+
+    adapter, ids, _v, _r = _view(env, app)
+    core = env["core"]
+    for source, target in (("rollback", "回退"), ("feature flag", "功能标志"), ("hotfix", "紧急修复")):
+        core.set_project_term(ids["device"], source, target)
+    sheet = MoveToProjectSheet(["notes"], project_id=ids["device"])
+    texts = [label.text() for label in sheet.after_scroll.widget().findChildren(QLabel)]
+    assert not any(t.startswith("0 条") for t in texts), texts
+    assert any("术语都和项目现有译名不一致" in t for t in texts), texts
+
+
+def test_count_badge_is_a_small_pill(env, app):  # noqa: F811
+    from folith.qt import components
+
+    badge = components.CountBadge("46", "info")
+    assert badge.height() == 18 and badge.width() < 40

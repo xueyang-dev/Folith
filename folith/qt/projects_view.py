@@ -37,10 +37,21 @@ BASIS_FILTERS = (("all", "全部"), ("reviewed", "来自已审校译文"),
 PAGE = 300                                  # 一次最多摆出的行数；筛选始终作用于全部
 
 
+#: 单元格文字永远靠列的左缘（绝对左，不随文字方向翻转）；文字自己的方向不变。
+LEADING = (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute
+           | Qt.AlignmentFlag.AlignVCenter)
+
+
+def _cell(text: object) -> QTableWidgetItem:
+    item = QTableWidgetItem(str(text or ""))
+    item.setTextAlignment(LEADING)
+    return item
+
+
 def _text(text: str = "", role: str = "body", *, wrap: bool = False) -> QLabel:
     label = QLabel(text)
     # 阿拉伯语等从右往左的文字在 QLabel 里默认靠右；列表里的术语列要和别的列一样靠左。
-    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    label.setAlignment(LEADING)
     style_module.set_text_role(label, role)
     label.setWordWrap(wrap)
     return label
@@ -113,7 +124,7 @@ class _ListRow(style_module.Surface):
         text.addWidget(self.meta)
         row.addLayout(text, 1)
         if pending:
-            row.addWidget(style_module.Chip(str(pending), "info"))
+            row.addWidget(components.CountBadge(str(pending), "muted" if key == "unsorted" else "info"))
         self.setToolTip(f"{name}\n{meta}")
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
@@ -408,6 +419,7 @@ class ProjectsView(QWidget):
             self._tab = valid[0]
         self.tab_bar.set_options(options)
         self.tab_bar.set_value(self._tab)
+        self.more_button.setVisible(not unsorted)     # 未分类的「更多」里只有导出，和旁边的按钮重复
         if unsorted:
             self.title.setText(i18n.tr('未分类'))
             count = int((self._overview.get("unsorted") or {}).get("job_count") or 0)
@@ -600,8 +612,8 @@ class ProjectsView(QWidget):
         self.term_import.setToolTip(i18n.tr('导入别处导出的项目记忆文件（只增不改）'))
         self.term_import.clicked.connect(lambda: self._import_memory())
         self.term_add = QPushButton(i18n.tr('添加术语'))
-        style_module.set_button(self.term_add, "primary")
-        self.term_add.setIcon(icons.icon("plus", 16, "text-on-accent"))
+        style_module.set_button(self.term_add, "secondary")
+        self.term_add.setIcon(icons.icon("plus", 16, "text-secondary"))
         self.term_add.clicked.connect(lambda: self._add_term())
         bar.addWidget(self.term_import)
         bar.addWidget(self.term_add)
@@ -653,7 +665,7 @@ class ProjectsView(QWidget):
             used = (i18n.tr('{v0} 个任务 · {v1} 处', v0=len(term["used_tasks"]), v1=term["used_total"])
                     if term["used_tasks"] else i18n.tr('尚未用到'))
             for c, value in enumerate((term["source"], term["target"], term["domain"], origin, used)):
-                self.term_table.setItem(r, c, QTableWidgetItem(str(value or "")))
+                self.term_table.setItem(r, c, _cell(value))
         has = bool(terms)
         for widget in (self.term_table, self.term_query, self.term_detail):
             widget.setVisible(has)
@@ -772,7 +784,7 @@ class ProjectsView(QWidget):
                       row.get("target_lang") or i18n.tr('未标注（不会自动复用）'),
                       str(row.get("updated_at") or "")[:16].replace("T", " "))
             for c, value in enumerate(values):
-                self.tm_table.setItem(r, c, QTableWidgetItem(str(value or "")))
+                self.tm_table.setItem(r, c, _cell(value))
         has = bool(self._detail.get("tm"))
         self.tm_table.setVisible(has)
         self.tm_query.setVisible(has)
@@ -885,13 +897,13 @@ class ProjectsView(QWidget):
         header = self.review_tree.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.review_tree.setColumnWidth(0, 36)
+        self.review_tree.setColumnWidth(0, 44)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.review_tree.setColumnWidth(3, 150)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.review_tree.itemSelectionChanged.connect(self._review_selected)
-        self.review_tree.itemChanged.connect(lambda *_a: self._sync_batch())
         box.addWidget(self.review_tree, 1)
 
         self.review_detail = style_module.Card()
@@ -918,7 +930,7 @@ class ProjectsView(QWidget):
         self.look_button = QPushButton(i18n.tr('看原文'))
         style_module.set_button(self.look_button, "plain")
         self.reject_button = QPushButton(i18n.tr('不是术语'))
-        style_module.set_button(self.reject_button, "plain")
+        style_module.set_button(self.reject_button, "danger")
         self.accept_button.clicked.connect(self._accept_current)
         self.task_button.clicked.connect(lambda: self._decide_current("task_only"))
         self.reject_button.clicked.connect(lambda: self._decide_current("rejected"))
@@ -986,17 +998,28 @@ class ProjectsView(QWidget):
                 table.insertRow(row)
                 source = item["source"] + (
                     "  · " + " · ".join(item["variants"]) if item.get("variants") else "")
-                check = QTableWidgetItem("")
-                check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
-                               | Qt.ItemFlag.ItemIsSelectable)
-                check.setCheckState(Qt.CheckState.Unchecked)
-                table.setItem(row, 0, check)
-                table.setItem(row, 1, QTableWidgetItem(source))
-                table.setItem(row, 2, QTableWidgetItem(item["target"]))
-                basis = QTableWidgetItem(i18n.tr_dynamic(item["basis_label"]))
-                basis.setForeground(style_module.qcolor(_tone_color(
-                    {"reviewed": "done", "machine": "idle", "conflict": "attention"}[item["basis"]])))
-                table.setItem(row, 3, basis)
+                check = style_module.CheckBox("")
+                check.setFixedSize(20, 20)
+                check.setAccessibleName(i18n.tr('选择 {v0}', v0=item["source"]))
+                check.toggled.connect(lambda _c: self._sync_batch())
+                holder = QWidget()
+                holder.setObjectName("transparent")
+                lay = QHBoxLayout(holder)
+                lay.setContentsMargins(12, 0, 0, 0)
+                lay.addWidget(check)
+                table.setCellWidget(row, 0, holder)
+                table.setItem(row, 0, QTableWidgetItem(""))
+                table.setItem(row, 1, _cell(source))
+                table.setItem(row, 2, _cell(item["target"]))
+                tone = {"reviewed": "ok", "machine": "muted", "conflict": "warn"}[item["basis"]]
+                chip_host = QWidget()
+                chip_host.setObjectName("transparent")
+                chip_lay = QHBoxLayout(chip_host)
+                chip_lay.setContentsMargins(0, 0, 8, 0)
+                chip_lay.addWidget(style_module.Chip(i18n.tr_dynamic(item["basis_label"]), tone))
+                chip_lay.addStretch(1)
+                table.setCellWidget(row, 3, chip_host)
+                table.setItem(row, 3, QTableWidgetItem(""))
                 hits = QTableWidgetItem(str(item["hits"]) if item.get("kind") != "conflict" else "—")
                 hits.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 table.setItem(row, 4, hits)
@@ -1025,9 +1048,13 @@ class ProjectsView(QWidget):
 
     def checked_review_items(self) -> list[dict]:
         table = self.review_tree
-        return [self._review_items[index] for row, index in self._review_rows.items()
-                if table.item(row, 0) is not None
-                and table.item(row, 0).checkState() == Qt.CheckState.Checked]
+        out = []
+        for row, index in self._review_rows.items():
+            holder = table.cellWidget(row, 0)
+            box = holder.findChild(style_module.CheckBox) if holder else None
+            if box is not None and box.isChecked():
+                out.append(self._review_items[index])
+        return out
 
     def _sync_batch(self) -> None:
         count = len(self.checked_review_items())

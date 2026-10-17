@@ -1925,5 +1925,9 @@
   "任务正在运行，无法改归属": "La tarea se está ejecutando: no se puede cambiar su proyecto",
   "任务不存在": "Tarea no encontrada",
   "已拒绝该知识候选": "Candidato rechazado",
-  "已记录为仅本任务采用": "Registrado como de uso solo en esta tarea"
+  "已记录为仅本任务采用": "Registrado como de uso solo en esta tarea",
+  "术语都和项目现有译名不一致：不覆盖，放进「待审核」由你决定": "Todos los términos difieren de las traducciones actuales del proyecto: no se sobrescriben y pasan a «Por revisar»",
+  "{v0} 条翻译记忆项目里已有译法，不覆盖": "{v0} entradas de memoria ya tienen traducción en el proyecto y no se sobrescriben",
+  "另有 {v0} 条项目里已有译法，不覆盖": "otras {v0} ya tienen traducción en el proyecto y no se sobrescriben",
+  "选择 {v0}": "Seleccionar {v0}"
 }
