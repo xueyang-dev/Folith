@@ -1,5 +1,19 @@
 # Folith · 译页：Windows / macOS 客户端化规划
 
+> **2026-10-17 现状（0.6 发布前）：本文的 Streamlit + pywebview 路线已被取代，正文保留作 2026-10-03 的历史规划，不再是待办。**
+>
+> | 本文的里程碑 | 实际结果 |
+> | --- | --- |
+> | D0 架构 Spike | macOS 的 PyInstaller + pywebview 切片得到 `GO`（见 [D0 决策](desktop-d0/d0-decision.md)）；Windows 缺设备，未验证。随后产品改走 PySide6 / Qt Widgets，决策为 `GO — Qt Widgets / macOS arm64`（见 [S8](qt-beta/s8-decision.md)） |
+> | D1 生命周期与数据安全 | 在 Qt 客户端上重新实现并验证：稳定数据目录、退出与恢复、单实例、旧数据接入、诊断（见 [Qt Beta 状态](qt-beta/status.md)） |
+> | D2 可安装 Beta | 仅 macOS arm64：Qt DMG，未签名、未公证，受邀测试。0.6 发布工程顺序见[发布计划](release-plan.md)；7 条强制人工验收尚未完成 |
+> | D3 公开分发 | 签名、公证、真实下载验证仍待处理，属另行授权范围 |
+> | D4 产品演进 | Windows、Intel Mac 未排期，不宣称支持；凭据库、更新器（现仅手动检查更新）、完整项目转移等未立项 |
+>
+> 现行产品方向：**Qt 是唯一的主客户端**；旧 Streamlit 界面（`folith` 命令、`gui.py`）只保留一个版本作对照，不再扩展；旧的 Streamlit + pywebview 桌面壳已退役（[0.5.0 记录](desktop-d3/release-notes-0.5.0.md)只作历史）。§10 的「近期不迁移 Tauri / Electron」结论仍然有效，只是前端已是 Qt。
+>
+> 0.6 之后的下一步：(1) 用干净提交构建 0.6 候选，完成 7 条强制人工验收；(2) 解决 Qt 退出测试的原生崩溃与发布预检发现的本机绝对路径；(3) 签名与公证；(4) 之后才考虑 Windows 或 Intel 构建，且必须各有实机验收。
+
 **Desktop Roadmap v1.1 — Engineering Hardening** · 2026-10-03。依据当前本地工作树（含未提交实现）与官方资料审计修订；文中待做事项不代表已发布能力。本轮只修改路线图，不实现 D0 或构建安装包。
 
 ## 1. 建议结论

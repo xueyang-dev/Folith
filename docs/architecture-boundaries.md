@@ -2,6 +2,8 @@
 
 2026-09-14 更新。下文 Phase 1 / v0.4 / v0.5 条目是历史边界记录，不是当前待办顺序。当前本地进度与后续优先级以[开发蓝图](foliothread-agentic-native-blueprint.md#7-当前进度与开发路线)为准；近期先完成 UI 打磨并正式发布，再推进 CAT 内核。
 
+> **2026-10-17 补充：** Qt 是唯一主客户端（`folith/qt/`、`python -m folith.qt`）；下文表中的 `gui.py` / Streamlit 界面是保留一个版本的旧入口。学术 / 实践报告能力（§3）在 Qt 客户端里是默认关闭、需手动开启的可选模式。语言资产放在项目内（见 [项目与长期记忆](project-memory.md) 顶部说明）。扫描页以视觉模型为主路径、OCR 只做定位，Paddle 已移除。其余边界决策不变。
+
 ## 当前新增约束：CAT 内核
 
 - DOCX 原格式输出采用 [DOCX Contract v1](docx-contract-v1.md)：保留原 package，仅修改声明的可翻译范围；不得用重建文档冒充 surgical round-trip。该能力尚未实现。
