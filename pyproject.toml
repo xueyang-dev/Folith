@@ -23,7 +23,6 @@ Issues = "https://github.com/xueyang-dev/Folith/issues"
 [project.optional-dependencies]
 desktop = ["pywebview>=5.0"]
 test = ["pytest>=8,<9", "pikepdf>=10"]
-paddle = ["paddleocr==3.7.0", "paddlex==3.7.2", "paddlepaddle==3.3.1"]
 
 [project.scripts]
 folith = "gui:main"

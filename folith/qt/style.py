@@ -573,6 +573,11 @@ QFrame#issueCard {{
     background: {t['bg-surface']}; border: 1px solid {t['border-hairline']};
     border-radius: {r['md']}px;
 }}
+/* 下拉卡片里的各项不再是卡中卡：没有边框和底色，只用一道发丝线隔开。 */
+QFrame#followupDrawer QFrame#issueCard {{
+    background: transparent; border: none; border-bottom: 1px solid {t['border-hairline']};
+    border-radius: 0;
+}}
 QToolButton#issueToggle {{ background: transparent; border: none; border-radius: {r['sm']}px;
     padding: 0; min-width: 20px; min-height: 20px; }}
 QToolButton#issueToggle:hover {{ background: {t['bg-hover']}; }}

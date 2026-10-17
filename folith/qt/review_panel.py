@@ -308,11 +308,18 @@ class ReviewPanel(QWidget):
             value = str(item.get(key) or "").strip()
             if value and not any(value in part for part in parts):
                 parts.append(f"<p><b>{_escape(i18n.tr(label))}：</b>{_escape(value)}</p>")
+        from folith.textual import text_direction
+
         for label, key in (("原文", "source"), ("当前译文", "target"),
                            ("建议译文", "suggested_target")):
             value = str(item.get(key) or "").strip()
             if value:
-                parts.append(f"<p><b>{_escape(i18n.tr(label))}：</b><br>{_escape(value)}</p>")
+                # 原文与译文各按自己的书写方向排：中文原文从左往右、阿拉伯语译文从右往左，
+                # 同一个面板里混排（试用反馈）。
+                rtl = text_direction(value, None) == "rtl"
+                block = ' dir="rtl"' if rtl else ""
+                parts.append(f"<p style=\"margin-bottom:0\"><b>{_escape(i18n.tr(label))}：</b></p>"
+                             f"<p{block} style=\"margin-top:2px\">{_escape(value)}</p>")
         self.item_body.setHtml("".join(parts))
         self._sync_buttons()
 
@@ -370,6 +377,9 @@ class ReviewPanel(QWidget):
             self.hint.setText(i18n.tr(
                 '这段在 OCR 清洗前后都疑似残片。请先回看 PDF 原页确认它确实是正文；'
                 '核对前不会把它发给翻译或审校模型。'))
+        elif item.get("invariant"):
+            self.hint.setText(i18n.tr(
+                '这是交付完整性检查：译文本身不能直接交付。改好译文或重译本段后会自动放行导出。'))
         elif not decidable and kind == "finding":
             self.hint.setText(i18n.tr(
                 '此发现来自临时定位，无法安全记录人工决定；请先修改译文或重新审校该段。'))

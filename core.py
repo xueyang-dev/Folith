@@ -3035,7 +3035,11 @@ def _runtime_review_context(
             and isinstance(item.get("segment_index"), int)
             and not isinstance(item.get("segment_index"), bool)
         )
+        adjacent_ids, adjacent_target = _adjacent_review_targets(
+            pairs, offset, batch_len)
+        target_dependency_ids.update(adjacent_ids)
         return {
+            "adjacent_target_context": adjacent_target,
             "document_profile": profile,
             "document_synopsis": state.get("document_synopsis") or {},
             "section_profile": _batch_section_profile(profile, offset, batch_len) or {},
@@ -3053,6 +3057,52 @@ def _runtime_review_context(
             "_dependency_segment_ids": dependency_ids,
             "_dependency_target_segment_ids": sorted(target_dependency_ids),
         }
+
+
+#: How many segments on each side of a review batch carry their current
+#: translation into the review as alignment context.
+ADJACENT_REVIEW_TARGET_SPAN = 2
+
+
+def _adjacent_review_targets(pairs, offset, batch_len, span=ADJACENT_REVIEW_TARGET_SPAN):
+    """Current translations of the segments just before and after a review batch.
+
+    Translation sees neighbouring targets, so a sentence split across segments
+    may have its content moved across the boundary.  ``previous_target_context``
+    only carries reviewed targets and nothing after the batch, which made the
+    reviewer report the same move as an omission on one side and an addition on
+    the other.  These targets are *alignment context only*, whatever their
+    review state: the reviewer is told not to judge them.
+
+    Returns ``(segment_ids, items)``.  Only targets that exist are returned --
+    the caller makes each one a target dependency, and an empty target that is
+    filled in later must not stale the review it never informed.  Items carry
+    ``relation``/``distance`` rather than a segment id: the reviewer may only
+    cite the batch's own ids, and a finding on any other id fails the review.
+    """
+    start = max(0, int(offset or 0))
+    end = start + max(0, int(batch_len or 0))
+    ids, items = [], []
+    for index, relation, distance in [
+            *((index, "previous", start - index)
+              for index in range(max(0, start - span), min(start, len(pairs)))),
+            *((index, "next", index - end + 1)
+              for index in range(end, min(len(pairs), end + span)))]:
+        pair = pairs[index]
+        if not isinstance(pair, dict):
+            continue
+        target = str(pair.get("accepted_target") or pair.get("target") or "")
+        if not target.strip():
+            continue
+        ids.append(index)
+        items.append({
+            "relation": relation,
+            "distance": distance,
+            "source": str(pair.get("source") or ""),
+            "target": target,
+            "reviewed": bool(pair.get("reviewed")),
+        })
+    return ids, items
 
 
 def _runtime_review_dependency_ids(state, offset, batch_len, previous_target=None):
@@ -10024,6 +10074,80 @@ def _targeted_final_review_ids(state, limit=8):
         selected.items(), key=lambda item: (item[1], item[0]))[:bounded_limit]]
 
 
+#: Sentence-final punctuation, Latin, CJK and Arabic-script.  A segment whose
+#: source ends in anything else (a letter, a comma, ``،``) stops mid-sentence.
+_SENTENCE_FINAL = frozenset('.!?…:;。！？；：؟۔')
+_SENTENCE_CLOSERS = '"\'”’»」』）)]】〕》'
+#: Upper bound on one sentence-group review: unpunctuated text (OCR, headings
+#: in a row) must not chain a whole chapter into a single request.
+REVIEW_SENTENCE_GROUP_LIMIT = 6
+
+
+def _source_ends_mid_sentence(text):
+    """Whether a source segment stops before its sentence does.
+
+    Text with no letters at all (``* * *``, page numbers) is never a sentence
+    fragment, so a separator never joins its neighbours into one group.
+    """
+    value = str(text or "").strip()
+    if not any(char.isalpha() for char in value):
+        return False
+    value = value.rstrip(_SENTENCE_CLOSERS).rstrip()
+    return bool(value) and value[-1] not in _SENTENCE_FINAL
+
+
+def _sentence_review_groups(pairs, segment_ids, blocked_source_indexes=(),
+                            document_profile=None,
+                            limit=REVIEW_SENTENCE_GROUP_LIMIT):
+    """Group requested segments with the rest of the sentence they belong to.
+
+    A source sentence split across segments is translated with its neighbours
+    in view, so its content can legitimately move across the boundary.  Each
+    requested segment is extended backwards and forwards over every segment of
+    the same sentence -- including unrequested ones -- so the whole sentence is
+    judged, and freshly re-judged, in one review call.  Groups stop at
+    sentence-final punctuation, untranslated or unchecked sources, section
+    boundaries and ``limit``.  Returns ascending lists of contiguous ids.
+    """
+    blocked = set(blocked_source_indexes or ())
+    limit = max(1, int(limit or 1))
+
+    def _section(index):
+        section = _batch_section_profile(document_profile, index, 1) or {}
+        return section.get("id", section.get("start_segment"))
+
+    def _joinable(left, right):
+        if left in blocked or right in blocked:
+            return False
+        left_pair, right_pair = pairs[left], pairs[right]
+        if not isinstance(left_pair, dict) or not isinstance(right_pair, dict):
+            return False
+        if not str(left_pair.get("target") or "").strip() \
+                or not str(right_pair.get("target") or "").strip():
+            return False
+        if not any(char.isalpha() for char in str(right_pair.get("source") or "")):
+            return False
+        return _source_ends_mid_sentence(left_pair.get("source")) \
+            and _section(left) == _section(right)
+
+    covered = set()
+    groups = []
+    for segment_id in sorted(set(segment_ids)):
+        if segment_id in covered:
+            continue
+        start = end = segment_id
+        while start > 0 and end - start + 1 < limit \
+                and start - 1 not in covered and _joinable(start - 1, start):
+            start -= 1
+        while end + 1 < len(pairs) and end - start + 1 < limit \
+                and _joinable(end, end + 1):
+            end += 1
+        group = list(range(start, end + 1))
+        covered.update(group)
+        groups.append(group)
+    return groups
+
+
 #: Manual / whole-book review: paragraphs per model request.  Each request
 #: carries ~6.5k characters of fixed reviewer prompt and packet, so short
 #: paragraphs reviewed one by one spend almost all of their time and tokens on
@@ -10035,21 +10159,29 @@ MANUAL_REVIEW_BATCH_CHARS = 6000
 MANUAL_REVIEW_IN_FLIGHT = 2
 
 
-def _manual_review_groups(segment_ids, pairs, limit, char_limit):
-    """Split sorted segment ids into consecutive runs within both limits."""
-    groups, current, size = [], [], 0
-    for segment_id in segment_ids:
-        pair = pairs[segment_id]
-        chars = len(str(pair.get("source") or "")) + len(str(pair.get("target") or ""))
-        if current and (segment_id != current[-1] + 1 or len(current) >= limit
+def _manual_review_groups(sentence_groups, pairs, limit, char_limit):
+    """Pack sentence groups into consecutive request batches within both limits.
+
+    A sentence group (:func:`_sentence_review_groups`) is never split across
+    requests: the reviewer must read the whole sentence at once, so one group
+    larger than the limits becomes its own batch.  Returns (ids, groups)
+    pairs -- the batch's ids and the sentence groups it is made of.
+    """
+    batches, current, parts, size = [], [], [], 0
+    for group in sentence_groups:
+        chars = sum(len(str(pairs[i].get("source") or "")) + len(str(pairs[i].get("target") or ""))
+                    for i in group)
+        if current and (group[0] != current[-1] + 1
+                        or len(current) + len(group) > limit
                         or size + chars > char_limit):
-            groups.append(current)
-            current, size = [], 0
-        current.append(segment_id)
+            batches.append((current, parts))
+            current, parts, size = [], [], 0
+        current = current + list(group)
+        parts.append(list(group))
         size += chars
     if current:
-        groups.append(current)
-    return groups
+        batches.append((current, parts))
+    return batches
 
 
 @_exclusive_job_execution(0)
@@ -10069,8 +10201,13 @@ def review_translation_segments(
     Consecutive paragraphs go out ``batch_size`` (default
     ``MANUAL_REVIEW_BATCH_SEGMENTS``) per request, ``max_in_flight`` requests at
     a time; each batch is checkpointed as soon as its result is applied.  A
-    failed batch is retried paragraph by paragraph; an access or balance
+    failed batch is retried one sentence group at a time; an access or balance
     failure stops the run instead.
+
+    A requested segment whose sentence continues into its neighbours is
+    reviewed together with them (:func:`_sentence_review_groups`), so the
+    result may list segments that were not requested, and progress counts
+    every segment actually reviewed.
     """
     from folith import delivery as _delivery
     from folith.terminology import (
@@ -10182,8 +10319,9 @@ def review_translation_segments(
         nonlocal done_count
         ids = prepared["ids"]
         findings, failed, trace = outcome
+        span = str(ids[0]) if len(ids) == 1 else f"{ids[0]}-{ids[-1]}"
         event_id = (
-            f"translation-review-{job_id}-refresh-{ids[0]}-"
+            f"translation-review-{job_id}-refresh-{span}-"
             f"{len(state.get('review_evidence') or [])}")
         records = [_review_finding_record(item, event_id) for item in findings]
         state.setdefault("findings", []).extend(records)
@@ -10240,7 +10378,7 @@ def review_translation_segments(
         done_count += len(ids)
         if on_progress is not None:
             # ``(done, total)`` after each checkpoint; the caller only displays it.
-            on_progress(done_count, len(segment_ids))
+            on_progress(done_count, total_count)
 
     def fatal_failure(outcome):
         _findings, failed, trace = outcome
@@ -10250,8 +10388,11 @@ def review_translation_segments(
         reason = _workflow_errors.fatal_reason(RuntimeError(message))
         return _workflow_errors.WorkflowStopped(message, reason=reason) if reason else None
 
+    sentence_groups = _sentence_review_groups(
+        pairs, segment_ids, blocked_source_indexes, state.get("document_profile"))
+    total_count = sum(len(group) for group in sentence_groups)
     groups = _manual_review_groups(
-        segment_ids, pairs, batch_size or MANUAL_REVIEW_BATCH_SEGMENTS,
+        sentence_groups, pairs, batch_size or MANUAL_REVIEW_BATCH_SEGMENTS,
         MANUAL_REVIEW_BATCH_CHARS)
     in_flight = max(1, int(max_in_flight or MANUAL_REVIEW_IN_FLIGHT))
     upcoming = iter(groups)
@@ -10260,10 +10401,12 @@ def review_translation_segments(
                               thread_name_prefix="manual-review")
 
     def submit_next():
-        ids = next(upcoming, None)
-        if ids is None:
+        batch = next(upcoming, None)
+        if batch is None:
             return
+        ids, parts = batch
         prepared = prepare(ids)
+        prepared["parts"] = parts
         context = contextvars.copy_context()  # usage role and similar context vars
         pending.append((prepared, pool.submit(context.run, request, prepared)))
 
@@ -10277,11 +10420,12 @@ def review_translation_segments(
             prepared, future = pending.pop(0)
             outcome = future.result()
             stopped = fatal_failure(outcome)
-            if stopped is None and outcome[1] and len(prepared["ids"]) > 1:
-                # One bad paragraph must not fail its neighbours: retry this
-                # batch one paragraph at a time.
-                for segment_id in prepared["ids"]:
-                    single = prepare([segment_id])
+            if stopped is None and outcome[1] and len(prepared["parts"]) > 1:
+                # One bad sentence must not fail its neighbours: retry this
+                # batch one sentence group at a time (a group is never split,
+                # so its segments are still judged together).
+                for part in prepared["parts"]:
+                    single = prepare(part)
                     single_outcome = request(single)
                     apply(single, single_outcome)
                     stopped = fatal_failure(single_outcome)

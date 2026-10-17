@@ -1117,8 +1117,9 @@ def _packet_truth_matches(
 #:     list in the user prompt already carries verbatim.  Only the identity and
 #:     provenance fields survive.
 #: ``neighbour_source_dup``
-#:     ``previous_source_context`` entries whose text is already the ``source``
-#:     of a ``previous_target_context`` entry.
+#:     ``previous_source_context`` / ``next_source_context`` entries whose text
+#:     is already the ``source`` of a ``previous_target_context`` or
+#:     ``adjacent_target_context`` entry.
 #: ``glossary_boilerplate``
 #:     Per-entry glossary metadata that carries no review constraint: a constant
 #:     129-character provenance record, the document-scale occurrence index,
@@ -1153,6 +1154,7 @@ REVIEW_VIEW_AGGRESSIVE_REDUCTIONS = frozenset({"context_minimal"})
 REVIEW_VIEW_MINIMAL_CONTEXT_FIELDS = (
     "document_profile", "document_synopsis", "section_profile", "section_digest",
     "previous_source_context", "previous_target_context", "next_source_context",
+    "adjacent_target_context",
 )
 
 #: Glossary fields the reviewer actually needs: the term, the required
@@ -1250,18 +1252,20 @@ def _slim_neighbour_context(
 ) -> Dict[str, Any]:
     if "neighbour_source_dup" not in reductions:
         return context
-    previous_source = context.get("previous_source_context")
-    previous_target = context.get("previous_target_context")
-    if not isinstance(previous_source, list) or not isinstance(previous_target, list):
-        return context
     covered = {
         _normalised_text(item.get("source"))
-        for item in previous_target if isinstance(item, Mapping)
+        for key in ("previous_target_context", "adjacent_target_context")
+        if isinstance(context.get(key), list)
+        for item in context[key]
+        if isinstance(item, Mapping) and str(item.get("source") or "").strip()
     }
-    context["previous_source_context"] = [
-        item for item in previous_source
-        if _normalised_text(item) not in covered
-    ]
+    if not covered:
+        return context
+    for key in ("previous_source_context", "next_source_context"):
+        sources = context.get(key)
+        if isinstance(sources, list):
+            context[key] = [item for item in sources
+                            if _normalised_text(item) not in covered]
     return context
 
 
@@ -1413,6 +1417,20 @@ def _translation_core_findings(
     return result
 
 
+#: Source text is often split mid-sentence (verse lines, PDF line breaks), and
+#: translation reorders content across those boundaries into target-language
+#: word order.  Judged one segment at a time, the same move reads as an
+#: omission in one segment and an addition in the next.
+CROSS_SEGMENT_REVIEW_RULE = (
+    "原文可能在句子中间被切成多段，译者会按目标语语序把内容挪到相邻段。"
+    "判定漏译或增译前，先把相邻段的原文与译文连起来读（本批内的相邻段，"
+    "以及审校包 context.adjacent_target_context 给出的批外相邻段）；"
+    "若内容只是移到了相邻段译文中、连读后语义完整，不要报漏译或增译。"
+    "adjacent_target_context 里的段落只用于对齐，不在本次审校范围，不要为它们生成 finding。"
+    "若句子延续到批外而那一段的译文不可见，句末成分的疑似漏译最多报 informational。"
+)
+
+
 def _call(call_llm: Callable, provider: str, api_key: str, model: str,
           system_prompt: str, user_prompt: str) -> Any:
     try:
@@ -1509,6 +1527,7 @@ def review_translation_batch_with_evidence(
             + "只报告真实存在的问题，不要为低风险或主观偏好制造 finding；"
             "没有充分证据不要生成 blocking finding。"
             "severity 只允许 blocking、actionable、informational。"
+            + CROSS_SEGMENT_REVIEW_RULE +
             "若需全文证据，先在 evidence_requests 请求工具"
             "（{\"tool\": \"get_segment\", \"arguments\": {}}），拿到证据后再作最终判断。"
             "严格输出 JSON 对象 {\"findings\": [...], \"evidence_requests\": [...]}；"

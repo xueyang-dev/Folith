@@ -1,5 +1,9 @@
 # Local OCR subsystem
 
+> 2026-10-17 状态：本文的 Paddle 安装及模型说明为历史实验记录。项目已移除
+> `paddle` 安装依赖组，并清理本地 Paddle 环境、训练源码、模型与实验产物。
+> 当前扫描页主流程为视觉模型理解原文、Tesseract 辅助坐标定位。
+
 > **Three selectable OCR sources.** As of 2026-10-03 a task chooses one of
 > **Tesseract** (default), **PaddleOCR** (with a task-level model selection that
 > includes the book-specific Arabic adaptation) or an **OpenAI-compatible online

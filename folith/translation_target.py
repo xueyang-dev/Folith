@@ -21,6 +21,18 @@ def _issue(code: str, message: str, *, segment_index: Any = None) -> Dict[str, A
     return result
 
 
+def _carries_text(value: Any) -> bool:
+    """A transport form carries the translation as a string somewhere inside it."""
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return bool(value) and (any(_carries_text(item) for item in value.values())
+                                or any(str(key).strip() for key in value))
+    if isinstance(value, list):
+        return any(_carries_text(item) for item in value)
+    return False
+
+
 def _json_transport(value: str) -> bool:
     candidate = value.strip()
     if not candidate or candidate[0] not in "[{":
@@ -29,7 +41,9 @@ def _json_transport(value: str) -> bool:
         parsed = json.loads(candidate)
     except (TypeError, ValueError):
         return False
-    return isinstance(parsed, (list, dict))
+    # 「[1]」「[12, 13]」是脚注编号，不是模型把译文包在 JSON 里：没有文字的数组不算。
+    # 空的 {} / [] 仍然算（模型没给出任何东西）。
+    return isinstance(parsed, (list, dict)) and (not parsed or _carries_text(parsed))
 
 
 def is_translation_transport_wrapper(value: Any) -> bool:
@@ -64,7 +78,9 @@ def validate_translation_target(
         if allow_empty:
             issue["severity"] = "actionable"
         issues.append(issue)
-    elif not allow_json and is_translation_transport_wrapper(target_text):
+    elif (not allow_json and target_text.strip() != source_text.strip()
+          and is_translation_transport_wrapper(target_text)):
+        # 与原文一字不差的不是包装：原文本身就长这样（脚注编号、代码、数据行）。
         issues.append(_issue(
             "transport_wrapper",
             "译文仍是 JSON/Markdown transport wrapper，不能作为普通正文交付",

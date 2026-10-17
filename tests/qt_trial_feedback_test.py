@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QPointF, QSettings, Qt
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 import core
 from folith.qt import adapter, dialogs, connection_status, theme, views
@@ -694,7 +694,7 @@ def test_tabs_leave_room_around_the_progress_bar_and_the_shield(app):
     left, top, right, _bottom = run.PADDING
     assert left - run.TAB_INSET >= 10 and right - run.TAB_INSET >= 10
     assert top - run.TAB_INSET >= 6
-    tab = views.CheckTab(views.CheckStatusButton())
+    tab = views.RoundTab(views.CheckStatusButton())
     left, top, right, _bottom = tab.PADDING
     assert min(left, top, right) - tab.TAB_INSET >= 5
 
@@ -764,3 +764,96 @@ def test_terms_open_in_the_left_column_not_a_whole_page(app, tmp_path, monkeypat
     assert not bench.terms_open()
     assert split.sizes()[split.indexOf(bench.source_clip)] == 0
     bench.close()
+
+
+# ---- 第七轮：下拉卡片精简、圆顶「凸」字、任务详情同一种卡片 -------------------------
+def test_round_tab_top_is_concentric_with_its_button(app):
+    tab = views.RoundTab(views.CheckStatusButton())
+    left, top, right, _bottom = tab.PADDING
+    assert left == top == right, "equal padding keeps the semicircle concentric with the button"
+
+
+def test_check_card_has_no_overview_and_details_unfold_from_the_info_button(app, tmp_path, monkeypatch):
+    bench = _started_bench(tmp_path, monkeypatch)
+    bench.resize(1400, 900)
+    bench.show()
+    app.processEvents()
+    bench.followup_panel.apply({"failures": [{"start": 0, "end": 1, "count": 2, "reason": "x"}]})
+    assert bench.followup_panel.overview.isHidden(), "the shield already carries the count"
+    assert bench.details_tab.isVisible()
+    assert bench.popover_height() >= bench.window().height() // 2
+    bench.open_details()
+    app.processEvents()
+    assert bench.details_popover.isVisible()
+    assert bench.details_tab.property("tethered") is True
+    assert bench.details_popover.height() >= bench.popover_height() - 1
+    bench.details_popover.close()
+    bench.close()
+
+
+def test_tether_at_the_screen_edge_runs_straight_into_the_card(app):
+    """ⓘ 在窗口最右、卡片被屏幕挡住不能居中：颈部不被夹窄，卡片的边与上半截对齐。"""
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QToolButton
+
+    from folith.qt import components
+
+    host = QWidget()
+    area = app.primaryScreen().availableGeometry()
+    host.setGeometry(area.right() - 300, area.top() + 40, 300, 200)
+    tab = views.RoundTab(QToolButton())
+    tab.setParent(host)
+    tab.adjustSize()
+    tab.move(host.width() - tab.width() - 2, 4)
+    host.show()
+    app.processEvents()
+    popover = components.Popover("x", QWidget(), host, size=QSize(420, 300), header=False)
+    popover.open_at(tab, align="center", tether=True)
+    app.processEvents()
+    pad = 9
+    assert popover._neck[1] == pytest.approx(popover._popup_size.width() - pad, abs=1)
+    path, panel = popover._tether_path()
+    assert path.contains(QPointF(panel.right() - 1, panel.top() + 1)), "square corner on the flush side"
+    popover.close()
+    host.close()
+
+
+# ---- 第八轮：脚注编号不是 transport wrapper；硬门禁不给"已解决"按钮 ------------------------
+@pytest.mark.parametrize("source, target, ok", [
+    ("[1]", "[1]", True), ("[12, 13]", "[12, 13]", True), ("注释", "[1]", True),
+    ("x", '["译文"]', False), ("x", '{"translation": "y"}', False), ("x", "{}", False),
+])
+def test_footnote_markers_are_not_transport_wrappers(source, target, ok):
+    from folith import translation_target
+
+    assert translation_target.validate_translation_target(source, target)["ok"] is ok
+
+
+def test_invariant_findings_offer_only_edit_or_retranslate():
+    from folith import workbench_view
+
+    assert workbench_view._is_invariant({"type": "delivery_invariant"})
+    assert workbench_view._is_invariant({"detector": "Translation Target Invariant"})
+    assert not workbench_view._is_invariant({"type": "terminology"})
+
+
+def test_details_card_is_always_flush_right(app):
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QToolButton
+
+    from folith.qt import components
+
+    host = QWidget()
+    host.resize(900, 300)
+    tab = views.RoundTab(QToolButton())
+    tab.setParent(host)
+    tab.adjustSize()
+    tab.move(300, 4)  # 右边空间充足
+    host.show()
+    app.processEvents()
+    popover = components.Popover("x", QWidget(), host, size=QSize(420, 300), header=False)
+    popover.open_at(tab, align="center", tether=True, flush="right")
+    app.processEvents()
+    assert popover._neck[1] == pytest.approx(popover._popup_size.width() - 9, abs=1)
+    popover.close()
+    host.close()

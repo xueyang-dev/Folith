@@ -112,7 +112,7 @@
 - Python 3.10 或更高版本
 - macOS / Windows / Linux
 - （可选）[Tesseract OCR](https://github.com/tesseract-ocr/tesseract)（如需离线识别扫描件 PDF）
-- （可选）本地 PaddleOCR / PP-OCRv5：Python 3.10–3.13，macOS Apple Silicon、Windows/Linux x86_64。安装当前源码包时使用 `python -m pip install '.[paddle]'`；默认仍使用 Tesseract。模型仅在实际 OCR 时下载，安装后可离线使用。古书实测中原版 Paddle 并未整体优于 Tesseract，详见 [OCR 安装、模型与实测限制](docs/ocr-subsystem.md)；另有 [《علم الدين》书内微调实验与独立模型](docs/paddle-arabic-finetuning.md)。
+- 扫描页主流程使用视觉模型理解原文，本机 Tesseract 提供原文位置坐标。Paddle 实验环境、模型和训练产物已清理，项目不再提供 `paddle` 安装依赖组；[历史微调报告](docs/paddle-arabic-finetuning.md)仅供参考。
 - （可选）线上 OCR API：任务里可显式选择 OpenAI 兼容的图像转写接口（独立于翻译模型配置，可引用已有凭据）。默认关闭，只在明确选择时使用；配置与边界见[三路 OCR 来源](docs/ocr-sources.md)，实测与请求消耗见[实测记录](docs/ocr-sources-verification.md)。
 
 ### 0.5.0 Qt 受邀 Beta

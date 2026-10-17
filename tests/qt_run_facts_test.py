@@ -99,12 +99,12 @@ def test_task_details_shows_understanding_and_usage(app):
     panel = TaskDetailsPanel()
     panel.apply_run_facts(adapter.run_facts(STATE))
     assert not panel.understanding_card.isHidden()
-    html = panel.understanding_view.toPlainText()
-    assert "一本讲城市热岛的书" in html and "第一章" in html and "首句备用" in html
-    assert not panel.understanding_notice.isHidden()
+    # 任务详情只放全文摘要（2026-10-17 试用反馈：太多太杂）；各单元摘要不再铺开。
+    text = panel.understanding_view.text()
+    assert "一本讲城市热岛的书" in text and "第一章" not in text
     assert not panel.usage_card.isHidden()
     assert "12" in panel.usage_summary.text() and "34,567" in panel.usage_summary.text()
-    assert "不是账单" in panel.usage_note.text()
+    assert "不是账单" in panel.usage_summary.toolTip()
     assert "翻译记忆直接复用 3 段" in panel.reuse_label.text()
     panel.apply_run_facts(adapter.run_facts({}))
     assert panel.understanding_card.isHidden() and panel.usage_card.isHidden()

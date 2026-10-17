@@ -410,7 +410,12 @@ class FollowupPanel(QWidget):
         count = self.issue_count()
         self.empty.setVisible(count == 0)
         self.overview.setText(i18n.tr('需要处理 · {v0}', v0=count) if count else "")
-        self.overview.setVisible(bool(count))
+        self.overview.setVisible(bool(count) and getattr(self, "_show_overview", True))
+
+    def set_show_overview(self, shown: bool) -> None:
+        """「需要处理 · N」那一行（放进带数字的盾牌下拉卡片时不需要）。"""
+        self._show_overview = bool(shown)
+        self.overview.setVisible(self._show_overview and bool(self.issue_count()))
 
     def _apply_failures(self, failures: list[dict]) -> None:
         """翻译协议失败、当前译文还没补上的批次：列出段范围与原因，可定位过去。"""

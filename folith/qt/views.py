@@ -2187,13 +2187,13 @@ class RunStatusGroup(QFrame):
         # 四周留够白：展开运行记录时这一块是「凸」字的上半截，进度条贴着它的上、左、右
         # 边会显得局促（试用反馈）。
         layout.setContentsMargins(*self.PADDING)
-        layout.setSpacing(4)
+        layout.setSpacing(3)
         layout.addLayout(top)
         layout.addWidget(self.line_view)
         self.setFixedWidth(256)
 
     #: 内容到状态组四边的距离（左、上、右、下）。
-    PADDING = (14, 6, 14, 7)
+    PADDING = (14, 9, 14, 6)
 
     def set_state(self, *, tone: str, line: str, line_tone: str | None = None) -> None:
         """``line_tone``：只给文字着色（例如一次操作失败），进度条仍表示任务本身的状态。"""
@@ -2253,15 +2253,17 @@ class RunStatusGroup(QFrame):
         super().keyPressEvent(event)
 
 
-class CheckTab(QWidget):
-    """「检查与修复」图标外面的一圈留白：展开卡片时它画成「凸」字的上半截。
+class RoundTab(QWidget):
+    """圆形图标按钮（检查与修复、任务详情）外面的一圈留白：展开卡片时它画成「凸」字
+    的上半截——顶上是与按钮同心的半圆，两侧直落、丝滑接进卡片的边框。
 
     图标本身是 30px 的圆；直接拿它当上半截，圆贴着卡片的边，很挤（试用反馈）。
     """
 
     #: 「凸」字上半截相对这一圈四边的内缩（留给投影）。
     TAB_INSET = 2
-    PADDING = (8, 7, 8, 5)
+    #: 上、左、右留白相同：半圆与按钮的圆同心。
+    PADDING = (7, 7, 7, 4)
 
     def __init__(self, button: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -2278,7 +2280,7 @@ class CheckTab(QWidget):
         if self.property("tethered") is not True:
             return
         rect = self.tab_rect()
-        radius = theme_module.RADIUS["md"]
+        radius = rect.width() / 2  # 顶上是半圆，与里面的圆形按钮同心
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         components.paint_tab_shadow(painter, rect, radius)
@@ -2293,6 +2295,9 @@ class CheckTab(QWidget):
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
         # 留白处的按下不冒泡成拖动窗口。
         event.accept()
+
+
+CheckTab = RoundTab
 
 
 class CheckStatusButton(QToolButton):
@@ -2569,8 +2574,10 @@ class WorkbenchView(QWidget):
         self.details_button.setVisible(False)
         # 「检查与修复」图标：任务开始后常驻（有待处理项变色、带数字）。外面一圈留白，
         # 展开卡片时那一圈画成「凸」字上半截。
-        self.check_tab = CheckTab(self.check_button)
+        self.check_tab = RoundTab(self.check_button)
         self.check_tab.setVisible(False)
+        self.details_tab = RoundTab(self.details_button)
+        self.details_tab.setVisible(False)
 
         # 运行控制单独放进一个零边距容器：全部隐藏时整组收掉，不留空槽位。
         run_controls = QHBoxLayout()
@@ -2614,7 +2621,7 @@ class WorkbenchView(QWidget):
         header_layout.addWidget(self.run_status, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.check_tab, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.header_actions_bar, 0, Qt.AlignmentFlag.AlignVCenter)
-        header_layout.addWidget(self.details_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.details_tab, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ---- 翻译标签页 ----------------------------------------------------
         self.search_edit = QLineEdit()
@@ -3466,6 +3473,8 @@ class WorkbenchView(QWidget):
         self.followup_panel.rescanRequested.connect(self.rescanRequested.emit)
         self.followup_panel.locateRequested.connect(self._locate_segment_from_followup)
         self.followup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
+        # 在下拉卡片里：「需要处理 · N」是重复信息（盾牌上已经有数字），不显示。
+        self.followup_panel.set_show_overview(False)
         self.activity_panel = ActivityPanel()
         self.activity_panel.revealLogRequested.connect(
             lambda: self.revealLogRequested.emit(self.job_id))
@@ -3582,7 +3591,9 @@ class WorkbenchView(QWidget):
         details_scroll.setWidget(self.details_panel)
         components.scroll_fade(details_scroll)
         self.details_popover = components.Popover(i18n.tr('任务详情'), details_scroll, self,
-                                                  size=QSize(560, 620))
+                                                  size=QSize(520, 560), header=False)
+        self.details_popover.closed.connect(
+            lambda: setattr(self, "_details_closed_at", time.monotonic()))
         self._details_key: tuple = ()
         #: 页面 id → 页面。步骤条与代码里的跳转都用页面 id，不再依赖页签序号。
         self._pages: dict[str, QWidget] = {
@@ -3751,10 +3762,24 @@ class WorkbenchView(QWidget):
 
     def open_details(self) -> None:
         """任务详情浮窗：锚定在顶栏的 ⓘ 上。"""
-        anchor = self.details_button
-        self.details_popover.open_at(anchor if anchor.isVisible() else self)
+        # 卡片开着时再点 ⓘ：Qt 先因"点在外面"把它收起，这次点击就只是收起，不再重开。
+        if time.monotonic() - getattr(self, "_details_closed_at", 0.0) < 0.3:
+            return
+        if self.details_tab.isVisible():
+            # 与检查与修复同一种「凸」字卡片：从 ⓘ 下面长出来，约半个窗口高。
+            self.details_popover.set_popup_size(QSize(520, self.popover_height()))
+            # 固定成右侧对齐成一条直线的样式，不随右边有没有空间变来变去（试用反馈）。
+            self.details_popover.open_at(self.details_tab, align="center", tether=True,
+                                         flush="right")
+        else:
+            self.details_popover.open_at(self)
         self._details_key = ()
         self._render_details()
+
+    def popover_height(self) -> int:
+        """顶栏下拉卡片的高度：约半个窗口（试用反馈：太矮，内容看不全）。"""
+        window = self.window()
+        return max(360, (window.height() if window is not None else self.height()) // 2)
 
     @property
     def followup_popover(self) -> components.Popover:
@@ -3795,8 +3820,11 @@ class WorkbenchView(QWidget):
                 content = self.followup_panel
                 wanted = content.heightForWidth(inner) if content.hasHeightForWidth() else -1
                 wanted = wanted if wanted > 0 else content.sizeHint().height()
-                self.followup_popover.set_popup_size(
-                    QSize(440, max(160, min(520, wanted + extra.height()))))
+                # 有待处理项时约半个窗口高（一打开就看得到要处理的内容）；什么都没有时
+                # 跟着内容走，不留一大片空白。
+                tall = self.popover_height()
+                height = tall if self._followup_count else min(tall, wanted + extra.height())
+                self.followup_popover.set_popup_size(QSize(440, max(160, height)))
                 self.followup_popover.open_at(self.check_tab, align="center", tether=True)
             else:
                 self.followup_popover.open_at(self)
@@ -4368,6 +4396,7 @@ class WorkbenchView(QWidget):
         started = self._task_started()
         self.stage_bar.set_side_visible(started)
         self.details_button.setVisible(started)
+        self.details_tab.setVisible(started)
         self.terms_button.setVisible(started)
         if not started and self.terms_open():
             self.set_terms_open(False)

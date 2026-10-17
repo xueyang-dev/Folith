@@ -83,6 +83,11 @@ def _identity_detail(context: Mapping[str, Any]) -> str:
     return str(context.get("category_label") or "审校问题")
 
 
+def _is_invariant(finding: Mapping[str, Any]) -> bool:
+    return (finding.get("type") == "delivery_invariant"
+            or finding.get("detector") == "Translation Target Invariant")
+
+
 def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[str, Any]:
     context = delivery.finding_context(dict(state), dict(finding))
     segment_id = context.get("segment_index")
@@ -111,8 +116,12 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[
         "core_finding": core_finding,
         "requires_human_confirmation": bool(
             finding.get("requires_human_confirmation")),
+        # 交付完整性（Translation Target Invariant）是硬门禁：记一条"已解决 / 保留"
+        # 不会让导出放行，只有改译文或重译才行——所以不给这两个按钮（试用反馈：
+        # 点了确认已解决，导出照样被拦）。
         "decidable": not (core_finding and finding.get(
-            "identity_stability") == "provisional"),
+            "identity_stability") == "provisional") and not _is_invariant(finding),
+        "invariant": _is_invariant(finding),
         "severity": severity,
         "severity_label": context.get("severity_label"),
         "finding_type": context.get("finding_type"),

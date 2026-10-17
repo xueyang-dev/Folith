@@ -58,11 +58,26 @@ def test_full_review_sends_ten_paragraphs_per_request_and_saves_per_batch(tmp_pa
 
 def test_batches_follow_consecutive_runs_and_the_character_budget(monkeypatch):
     pairs = [{"source": "a" * 10, "target": "b" * 10} for _ in range(30)]
-    assert core._manual_review_groups([0, 1, 2, 5, 6, 20], pairs, 10, 6000) == \
+    def ids(batches):
+        return [batch_ids for batch_ids, _ in batches]
+
+    groups = [[0], [1], [2], [5], [6], [20]]
+    assert ids(core._manual_review_groups(groups, pairs, 10, 6000)) == \
         [[0, 1, 2], [5, 6], [20]]
     long_pairs = [{"source": "a" * 2000, "target": "b" * 1000} for _ in range(5)]
-    assert core._manual_review_groups(list(range(5)), long_pairs, 10, 6000) == \
+    groups = [[i] for i in range(5)]
+    assert ids(core._manual_review_groups(groups, long_pairs, 10, 6000)) == \
         [[0, 1], [2, 3], [4]]
+
+
+def test_a_sentence_group_is_never_split_across_batches():
+    pairs = [{"source": "a", "target": "b"} for _ in range(12)]
+    groups = [[0, 1, 2, 3], [4, 5, 6, 7, 8], [9, 10, 11]]
+    batches = core._manual_review_groups(groups, pairs, 10, 6000)
+    assert batches == [
+        ([0, 1, 2, 3, 4, 5, 6, 7, 8], [[0, 1, 2, 3], [4, 5, 6, 7, 8]]),
+        ([9, 10, 11], [[9, 10, 11]]),
+    ]
 
 
 def test_two_requests_are_in_flight_at_once(tmp_path, monkeypatch):

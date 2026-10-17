@@ -2157,14 +2157,28 @@ class Popover(QFrame):
         # 展开动画的头几帧窗口还很矮：面板至少保持圆角的高度（超出部分被窗口裁掉）。
         panel.setHeight(max(panel.height(), 2 * radius + 1))
         left, right = self._neck
-        left = max(panel.left() + radius + fillet, left)
-        right = min(panel.right() - radius - fillet, right)
+        # 锚点贴着卡片的边（例如顶栏最右的 ⓘ，卡片被屏幕挡住不能居中）：那一侧颈部
+        # 与卡片的边对齐成一条直线，卡片那个角是直角，不再有内凹圆角——否则颈部被
+        # 夹窄，和上半截对不上，看起来是断开的。
+        flush_left = left <= panel.left() + radius + fillet
+        flush_right = right >= panel.right() - radius - fillet
+        if flush_left:
+            left = panel.left()
+        if flush_right:
+            right = panel.right()
         path = QPainterPath()
         path.addRoundedRect(panel, radius, radius)
+        for flush, x in ((flush_left, panel.left()), (flush_right, panel.right() - radius)):
+            if flush:
+                corner = QPainterPath()
+                corner.addRect(QRectF(x, panel.top(), radius, radius))
+                path = path.united(corner)
         stem = QPainterPath()
         stem.addRect(QRectF(left, -1, right - left, neck + radius + 1))
         path = path.united(stem)
         for x, side in ((left, -1), (right, 1)):
+            if (side < 0 and flush_left) or (side > 0 and flush_right):
+                continue
             corner = QPainterPath()
             square = QRectF(x if side > 0 else x - fillet, neck - fillet, fillet, fillet)
             corner.addRect(square)
@@ -2215,7 +2229,8 @@ class Popover(QFrame):
         self.subtitle_label.setText(text)
         self.subtitle_label.setVisible(bool(text))
 
-    def open_at(self, anchor: QWidget, *, align: str = "right", tether: bool = False) -> None:
+    def open_at(self, anchor: QWidget, *, align: str = "right", tether: bool = False,
+                flush: str = "") -> None:
         """Show below ``anchor`` (above it near the screen bottom), clamped to its screen.
 
         ``align="right"`` lines up the right edges (toolbar buttons); ``"left"`` lines up
@@ -2249,7 +2264,19 @@ class Popover(QFrame):
         if tether:
             # 颈部与锚点画出来的「凸」字上半截同宽（锚点四边内缩 TAB_INSET 留给投影）。
             inset = float(getattr(anchor, "TAB_INSET", 0))
-            self._neck = (origin.x() - x + inset, origin.x() - x + anchor.width() - inset)
+            # 卡片被屏幕边挡住、锚点离卡片的边比圆角还近：把卡片挪到边与锚点的上半截
+            # 对齐（画成一条直线，见 _tether_path），而不是把颈部夹窄。
+            pad, reach = 9, theme_module.RADIUS["md"] + self.TETHER_FILLET
+            tab_left, tab_right = origin.x() + inset, origin.x() + anchor.width() - inset
+            if flush == "right":
+                # 固定样式：卡片右边与上半截右边对齐成一条直线（顶栏最右的 ⓘ）。
+                x = round(tab_right - target.width() + pad)
+            elif tab_right > x + target.width() - pad - reach:
+                x = round(tab_right - target.width() + pad)
+            elif tab_left < x + pad + reach:
+                x = round(tab_left - pad)
+            target.moveLeft(x)
+            self._neck = (tab_left - x, tab_right - x)
             self._anchor_rect = QRect(x, y, target.width(), self.TETHER_NECK + 1)
         else:
             self._anchor_rect = QRect(origin, anchor.size())
