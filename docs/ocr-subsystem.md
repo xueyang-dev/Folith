@@ -122,13 +122,11 @@ matching phrase remains unmapped. Line boxes are not exact word alignment.
 
 ## Install and choose an engine
 
-The base install has no Paddle dependency. For the current source checkout:
+**Removed (2026-10-17):** the `paddle` extra no longer exists, so
+`pip install '.[paddle]'` does not work. The text below is kept as a historical
+record of the pins that were used.
 
-```bash
-python -m pip install '.[paddle]'
-```
-
-For a wheel built from this source, select its `paddle` extra when installing.
+The base install has no Paddle dependency.
 Pins are PaddleOCR 3.7.0, PaddleX 3.7.2, PaddlePaddle CPU 3.3.1. They were
 validated together on Python 3.11.3. Folith's base Python requirement remains
 3.10+. The optional OCR adapter accepts 3.10–3.13, matching published CPU wheels
