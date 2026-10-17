@@ -753,6 +753,7 @@ from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps
     delivery_snapshot_archive,
     delivery_snapshot_assets,
     delivery_snapshot_status,
+    delivery_snapshot_status_light,
     delivery_status_label,
     dependency_impact_view,
     list_delivery_snapshots,

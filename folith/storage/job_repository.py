@@ -187,6 +187,27 @@ def _isolated_copy(state: Dict[str, Any]) -> Dict[str, Any]:
         return copy.deepcopy(state)
 
 
+def state_signature(
+    job_id: str, output_dir: Optional[Path] = None,
+) -> Optional[Tuple[str, int, int, int, int]]:
+    """``(job_id, state mtime, state size, journal mtime, journal size)``.
+
+    Changes whenever the persisted state or its journal does; ``None`` when the
+    job has no state file.  Two stats, no read.
+    """
+    try:
+        stat = get_job_state_path(job_id, output_dir=output_dir).stat()
+    except OSError:
+        return None
+    try:
+        jstat = state_journal.journal_path(job_id, output_dir=output_dir).stat()
+        journal_signature = (jstat.st_mtime_ns, jstat.st_size)
+    except OSError:
+        journal_signature = (0, 0)
+    return (str(job_id), stat.st_mtime_ns, stat.st_size,
+            journal_signature[0], journal_signature[1])
+
+
 def load_job_state_cached(
     job_id: str,
     output_dir: Optional[Path] = None,
@@ -198,20 +219,9 @@ def load_job_state_cached(
     cannot corrupt the cached internal representation.
     """
     p = get_job_state_path(job_id, output_dir=output_dir)
-    try:
-        stat = p.stat()
-    except OSError:
+    signature = state_signature(job_id, output_dir=output_dir)
+    if signature is None:
         return None
-
-    journal_path = state_journal.journal_path(job_id, output_dir=output_dir)
-    try:
-        jstat = journal_path.stat()
-        journal_signature = (jstat.st_mtime_ns, jstat.st_size)
-    except OSError:
-        journal_signature = (0, 0)
-
-    signature = (str(job_id), stat.st_mtime_ns, stat.st_size,
-                 journal_signature[0], journal_signature[1])
 
     if not force_reload and signature in _STATE_CACHE:
         _STATS["cache_hits"] += 1
