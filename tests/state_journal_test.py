@@ -509,6 +509,64 @@ def test_journal_is_retired_only_after_the_snapshot_covers_it(
     assert journal.max_seq(job_id) == 0
 
 
+def _inflate_last_record(job_id: str) -> int:
+    """Make the newest record larger than the tail-scan window.
+
+    A long document's batch carries the whole entity registry in ``set``, so a
+    single record of several hundred KB is ordinary, not adversarial.
+    """
+    records = journal.read_mutations(job_id)
+    registry = {f"entity-{i}": {"source": f"Name {i}", "target": "名" * 400}
+                for i in range(700)}
+    records[-1].setdefault("set", {})["entity_registry"] = registry
+    _rewrite_journal(job_id, records)
+    assert len(json.dumps(records[-1], ensure_ascii=False).encode("utf-8")) \
+        > journal._TAIL_SCAN_BYTES
+    return records[-1]["seq"]
+
+
+def test_record_larger_than_the_scan_window_is_still_seen(temp_job_env: Path):
+    job_id = "oversized-record"
+    _crash_run(job_id, _paragraphs(12))
+    newest = _inflate_last_record(job_id)
+
+    assert journal.max_seq(job_id) == newest
+
+    state = json.loads(core.job_state_path(job_id).read_text(encoding="utf-8"))
+    state["journal_cursor"] = 0
+    report = journal.replay(job_id, state)
+    assert report["applied"] == newest
+    assert len(state["pairs"]) == 12
+    assert len(state["entity_registry"]) == 700
+
+
+def test_oversized_record_keeps_the_journal_through_a_behind_save(
+        temp_job_env: Path):
+    """The rotation guard must not read "no records" as "all applied"."""
+    job_id = "oversized-guard"
+    _crash_run(job_id, _paragraphs(12))
+    newest = _inflate_last_record(job_id)
+
+    seed = json.loads(core.job_state_path(job_id).read_text(encoding="utf-8"))
+    core.save_job_state(job_id, seed)
+    assert [r["seq"] for r in journal.read_mutations(job_id)][-1] == newest
+
+
+def test_undeterminable_tail_blocks_rotation_but_not_replay(temp_job_env: Path):
+    job_id = "garbage-tail"
+    _crash_run(job_id, _paragraphs(12))
+    path = journal.journal_path(job_id)
+    with path.open("ab") as stream:
+        stream.write(b"not json\n" * (journal._TAIL_SCAN_LINES + 1))
+
+    state = json.loads(core.job_state_path(job_id).read_text(encoding="utf-8"))
+    state["journal_cursor"] = 0
+    assert journal.rotate_if_applied(job_id, state) is False
+    assert path.exists()
+    report = journal.replay(job_id, state)
+    assert report["applied"] == 6, "the readable prefix is still replayed"
+
+
 def test_journal_disabled_restores_the_bounded_cadence(
         temp_job_env: Path, monkeypatch):
     """The pre-journal behaviour must remain exactly reachable."""

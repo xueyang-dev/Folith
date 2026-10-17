@@ -551,6 +551,7 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     _trace_http_request,
     _trace_http_response,
     clean_xml_chars,
+    effective_request_route,
     is_rate_limited,
     llm_thread_stats,
     llm_thread_stats_delta,
@@ -3291,10 +3292,11 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
 
     ``result_cache`` (optional ``folith.translation_cache.TranslationResultCache``)
     reuses an identical, already-paid computation.  The identity is the rendered
-    request itself, so any change that would change what the model sees — source,
-    glossary, context, style, model, generation settings — is a miss by
-    construction.  A cache hit skips the provider call only; ordering, TM,
-    review and persistence are untouched.
+    request itself plus where it goes, so any change that would change what the
+    model sees or which model answers — source, glossary, context, style, model,
+    endpoint, generation settings — is a miss by construction.  A cache hit
+    skips the provider call only; ordering, TM, review and persistence are
+    untouched.
     """
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(segments))
     render_stats = {}
@@ -3328,7 +3330,8 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
         cache_key = _translation_cache.prompt_fingerprint(
             provider=provider, model=model, system_prompt=sys_prompt,
             user_prompt=user_prompt, temperature=0.3,
-            response_format=response_format)
+            response_format=response_format,
+            route=effective_request_route(provider, model))
         cached = result_cache.get(cache_key)
         if cached is not None and len(cached) == len(segments):
             if prompt_stats is not None:
@@ -8867,23 +8870,79 @@ def task_context_of(state):
                         state.get("source_lang"))
 
 
+def _task_id_digest(document_id, context, alternate=0):
+    parts = [document_id] + [context[field] for field in _TASK_ID_FIELDS]
+    if alternate:
+        parts.append(f"#{alternate}")
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
 def task_job_id(file_bytes, *, project_id=None, target_lang=None,
                 source_lang=None):
     """**任务身份**：文档身份 + 本地化上下文，确定性推导，不读磁盘。"""
     context = task_context(project_id, target_lang, source_lang)
-    digest = "\x1f".join([file_job_id(file_bytes)]
-                         + [context[field] for field in _TASK_ID_FIELDS])
-    return hashlib.sha256(digest.encode("utf-8")).hexdigest()[:16]
+    return _task_id_digest(file_job_id(file_bytes), context)
+
+
+def task_matches_context(state, context):
+    """已存在的任务此刻是否仍是 `context` 这个活。
+
+    任务 ID 在创建时由上下文推导，但译前准备可以改项目和目标语言，ID 不随之
+    变化——所以"ID 存在"不能证明"上下文一致"，必须核对任务记录本身。
+    只比较任务**记录了**的字段：译前准备只会写入、不会清空它们，没记录就
+    说明从创建起没改过，ID 推导时的上下文仍然成立。请求没指定源语言（导入时
+    总是如此）也不比较源语言：源语言由「准备」页选择或智能画像识别后写进
+    任务，它不改变"这是哪个活"。
+    """
+    actual = task_context_of(state)
+    return all(actual[field] == context[field] for field in _TASK_ID_FIELDS
+               if actual[field]
+               and (field != "source_lang" or context.get("source_lang")))
+
+
+#: 推导 ID 被一个改过上下文的任务占用时，最多再试几个确定性的备选 ID 去找
+#: 这个上下文的任务；找不到才在第一个空位新建。
+_TASK_ID_ALTERNATES = 8
+
+
+def resolve_scoped_task_id(document_id, context, legacy_id=None):
+    """按文档身份 + 上下文找该打开的任务 ID（GUI 与命令行共用的规则）。
+
+    1. 推导 ID（及其备选 ID）上的任务仍是这个上下文 -> 续做它；
+    2. 否则，以**文档身份**命名的旧任务存在且上下文可证明一致 -> 沿用；
+    3. 否则在第一个空着的推导 / 备选 ID 上新建。
+
+    备选 ID 的存在理由：译前把任务改成另一种语言后，它仍占着原语言推导出的
+    ID。不核对就会"按英文重新导入，打开的却是阿拉伯语任务"；核对后原 ID 被
+    占，又需要一个确定的新位置——下次同样导入还得落回同一个任务。
+    """
+    first_free = None
+    alternate = 0
+    while True:
+        job_id = _task_id_digest(document_id, context, alternate)
+        state = load_job_state(job_id)
+        if state is None:
+            first_free = first_free or job_id
+        elif task_matches_context(state, context):
+            return job_id
+        alternate += 1
+        if alternate > _TASK_ID_ALTERNATES and first_free:
+            break
+    if legacy_id and legacy_id != first_free:
+        legacy_state = load_job_state(legacy_id)
+        if legacy_state is not None and task_context_of(legacy_state) == context:
+            return legacy_id
+    return first_free
 
 
 def resolve_task_id(file_bytes, *, project_id=None, target_lang=None,
                     source_lang=None):
     """这份文档在**这个本地化上下文**下应当打开的任务 ID。
 
-    三条规则，顺序即优先级：
+    三条规则，顺序即优先级（见 `resolve_scoped_task_id`）：
 
-    1. 按上下文推导出的任务已存在 -> 续做它（"同一个文件、同一个项目、
-       同一种目标语言"就是同一个任务，重传即续传）；
+    1. 按上下文推导出的任务存在、且它记录的上下文**仍然**一致 -> 续做它
+       （"同一个文件、同一个项目、同一种目标语言"就是同一个任务，重传即续传）；
     2. 否则，若历史版本留下的、以**内容哈希**命名的旧任务存在，且它记录的
        项目 / 目标语言与请求的上下文**可证明一致** -> 沿用它（旧任务不因
        这次修复而失联）；
@@ -8892,17 +8951,10 @@ def resolve_task_id(file_bytes, *, project_id=None, target_lang=None,
     规则 2 里的"可证明一致"是关键：旧任务没有目标语言记录时**不会**被认领，
     宁可让用户重建一个任务，也不把另一种语言的旧任务当成这个活。
     """
-    context = task_context(project_id, target_lang, source_lang)
-    candidate = task_job_id(file_bytes, project_id=project_id,
-                            target_lang=target_lang, source_lang=source_lang)
-    if load_job_state(candidate) is not None:
-        return candidate
-    legacy_id = file_job_id(file_bytes)
-    if legacy_id != candidate:
-        legacy_state = load_job_state(legacy_id)
-        if legacy_state is not None and task_context_of(legacy_state) == context:
-            return legacy_id
-    return candidate
+    document_id = file_job_id(file_bytes)
+    return resolve_scoped_task_id(
+        document_id, task_context(project_id, target_lang, source_lang),
+        legacy_id=document_id)
 
 
 def resolve_job_id(job_ref):

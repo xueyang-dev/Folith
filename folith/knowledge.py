@@ -64,7 +64,7 @@ def extract_observations(
     identical, already-paid extraction.  The identity is the rendered request
     itself, so any change that would change what the model sees — the segment
     ids, the source text, the target text, the system prompt, the provider, the
-    model, the temperature — is a miss by construction.  A hit skips the
+    model, the endpoint, the temperature — is a miss by construction.  A hit skips the
     provider call only: the caller still runs the full merge, so project state,
     ordering, precedence and provenance are unchanged.
     """
@@ -93,9 +93,11 @@ def extract_observations(
     )
     cache_key = None
     if cache is not None:
+        from folith.engine.llm_provider import effective_request_route
         cache_key = cache.key_for(
             provider=provider, model=model, system_prompt=system_prompt,
-            user_prompt=numbered, temperature=FEEDBACK_TEMPERATURE)
+            user_prompt=numbered, temperature=FEEDBACK_TEMPERATURE,
+            route=effective_request_route(provider, model))
         cached = cache.get(cache_key)
         if cached is not None:
             return [dict(item) for item in cached], None

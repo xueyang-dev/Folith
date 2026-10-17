@@ -88,6 +88,27 @@ def set_llm_reasoning_effort(value):
     return _c._LLM_CTX.reasoning_effort
 
 
+def effective_request_route(provider, model):
+    """What a request made on this thread reaches, beyond provider and model.
+
+    The same provider and model name can sit behind different endpoints (two
+    relays both serving ``gpt-4o``), and the thread's reasoning effort changes
+    the request body.  Caches keyed on "the same request" must include both,
+    resolved exactly as :func:`core._call_llm_transport` resolves them.
+    """
+    cfg = _c.PROVIDERS.get(provider) or {}
+    if cfg.get("kind") == "gemini":
+        return {}
+    try:
+        base_url = resolve_openai_base_url(provider) or ""
+    except ValueError:
+        base_url = ""             # the request itself will fail; nothing to reuse
+    reasoning = getattr(_c._LLM_CTX, "reasoning_effort", None)
+    if reasoning not in reasoning_effort_options(provider, model):
+        reasoning = None
+    return {"base_url": base_url, "reasoning_effort": reasoning or ""}
+
+
 def clean_xml_chars(text):
     if not isinstance(text, str):
         return str(text)

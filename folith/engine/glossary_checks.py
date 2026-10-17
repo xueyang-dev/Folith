@@ -99,11 +99,39 @@ def parse_termbase_tbx(file_stream):
     return entries
 
 
+#: TMX 1.4b 的行内代码元素：内容是原格式的标记（`<b>`、`{1}` 之类），不是
+#: 译文的一部分——丢掉元素内容，保留元素之后的文字（tail）。
+_TMX_CODE_TAGS = frozenset({"bpt", "ept", "it", "ph", "ut"})
+
+
+def _tmx_seg_text(node):
+    """`<seg>` 的完整文字；含无法可靠处理的行内内容时返回 None。
+
+    只读 `seg.text` 会在第一个行内标签处截断（`The <hi>meeting</hi> starts`
+    只剩 `The`），截断后的半句还会作为记忆入库。`<hi>` 是带格式的正文，照常
+    读出；代码元素见 `_TMX_CODE_TAGS`；其他元素（含 `<sub>`）语义不明，整个
+    单元跳过，宁可不导入，不导入半句。
+    """
+    parts = [node.text or ""]
+    for child in node:
+        name = _local_name(child.tag)
+        if name == "hi":
+            inner = _tmx_seg_text(child)
+            if inner is None:
+                return None
+            parts.append(inner)
+        elif name not in _TMX_CODE_TAGS:
+            return None
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
 def import_tmx(file_stream, project_id=None, target_lang=None):
     """导入 TMX 翻译记忆（Trados / memoQ 等导出的标准格式）。
 
     按 <tu> 的 <tuv><seg> 文本对入库：仅接受源文含字母/数字且译文非空的
-    单元；与现有翻译记忆冲突的源文跳过（不覆盖项目内已审校条目）。
+    单元；与现有翻译记忆冲突的源文跳过（不覆盖项目内已审校条目）。<seg> 里的
+    行内标签按 `_tmx_seg_text` 处理，含无法可靠处理的行内内容的单元也计入跳过。
 
     条目必须带上**目标语言**，否则不入库——语言未知的记忆一旦落盘，就会成为
     下一次跨语言命中的来源。语言取调用方显式给出的 `target_lang`（调用方
@@ -126,16 +154,24 @@ def import_tmx(file_stream, project_id=None, target_lang=None):
             continue
         texts = []
         languages = []
+        unsupported = False
         for tuv in tu:
             if _local_name(tuv.tag) != "tuv":
                 continue
             seg = next((c for c in tuv if _local_name(c.tag) == "seg"), None)
-            if seg is not None and (seg.text or "").strip():
-                texts.append(seg.text.strip())
+            text = _tmx_seg_text(seg) if seg is not None else ""
+            if text is None:
+                unsupported = True
+                break
+            if text.strip():
+                texts.append(text.strip())
                 languages.append(tuv.get("{http://www.w3.org/XML/1998/namespace}lang")
                                  or tuv.get("lang") or "")
             if len(texts) >= 2:
                 break
+        if unsupported:
+            skipped += 1
+            continue
         if len(texts) >= 2:
             src, tgt = texts[0], texts[-1]
             language = declared_lang or str(languages[-1] or "").strip()

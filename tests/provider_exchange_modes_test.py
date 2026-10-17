@@ -577,3 +577,41 @@ def test_official_reasoning_auto_mode_omits_temperature(monkeypatch):
         assert core.reasoning_effort_options('OpenAI', 'gpt-5-chat-latest') == ()
     finally:
         core.reset_llm_clients()
+
+
+def _tmx(body: str) -> io.BytesIO:
+    return io.BytesIO(f'''<?xml version="1.0"?>
+<tmx version="1.4"><body>{body}</body></tmx>'''.encode("utf-8"))
+
+
+def test_tmx_inline_tags_do_not_truncate_the_segment(tmp_path, monkeypatch):
+    """`seg.text` 只到第一个行内标签为止；截断的半句不得作为记忆入库。"""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    result = core.import_tmx(_tmx(
+        '<tu><tuv xml:lang="en"><seg>The <hi>meeting</hi> starts tomorrow.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg><hi>会议</hi>明天开始。</seg></tuv></tu>'
+        '<tu><tuv xml:lang="en"><seg>Press <bpt i="1">&lt;b&gt;</bpt>Save'
+        '<ept i="1">&lt;/b&gt;</ept> now.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>现在按<bpt i="1">&lt;b&gt;</bpt>保存'
+        '<ept i="1">&lt;/b&gt;</ept>。</seg></tuv></tu>'), target_lang="简体中文")
+
+    assert result == {"added": 2, "skipped": 0}
+    tm = core.load_tm()
+    assert core.tm_lookup(tm, "The meeting starts tomorrow.",
+                          target_lang="简体中文")[0]["target"] == "会议明天开始。"
+    assert core.tm_lookup(tm, "Press Save now.",
+                          target_lang="简体中文")[0]["target"] == "现在按保存。", \
+        "行内代码是原格式标记，不是译文"
+    assert core.tm_lookup(tm, "The", target_lang="简体中文")[0] is None
+
+
+def test_tmx_unit_with_unknown_inline_content_is_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    result = core.import_tmx(_tmx(
+        '<tu><tuv xml:lang="en"><seg>Kept as is</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>保持原样</seg></tuv></tu>'
+        '<tu><tuv xml:lang="en"><seg>Odd <foo>inline</foo> unit</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>奇怪的单元</seg></tuv></tu>'), target_lang="简体中文")
+
+    assert result == {"added": 1, "skipped": 1}
+    assert core.tm_lookup(core.load_tm(), "Odd", target_lang="简体中文")[0] is None

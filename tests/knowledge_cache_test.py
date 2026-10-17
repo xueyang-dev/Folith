@@ -407,3 +407,38 @@ def test_cached_replay_does_not_count_as_model_usage(tmp_path):
     # The saving is reported on the cache, never mixed into the usage ledger.
     assert warm["knowledge_cache"]["hits"] == 3
     assert warm["knowledge_cache"]["retained_observation_tokens"] > 0
+
+
+def test_endpoint_change_invalidates(tmp_path):
+    """Same provider and model name behind another relay is another model."""
+    def run(job_id, base_url, provider):
+        old_output, old_llm = core.OUTPUT_DIR, core.call_llm
+        core.OUTPUT_DIR = tmp_path
+        core.set_llm_base_url(base_url)
+        try:
+            state = core.new_job_state("knowledge-cache.docx")
+            state["paras"] = list(PARAGRAPHS)
+            core.save_job_state(job_id, state)
+            core.call_llm = provider
+            return core.translate_stage(
+                state, job_id, [], "自定义中转站", "key", "model",
+                "简体中文", "", enable_review=False, use_tm=False, batch_size=4,
+                use_translation_cache=False)
+        finally:
+            core.set_llm_base_url(None)
+            core.OUTPUT_DIR, core.call_llm = old_output, old_llm
+
+    run("relay-a", "https://relay-a.example/v1", Provider())
+    provider = Provider()
+    result = run("relay-b", "https://relay-b.example/v1", provider)
+    assert provider.knowledge_calls > 0
+    assert result["knowledge_feedback_policy"]["cache_hits"] == 0
+
+
+def test_fingerprint_covers_the_route():
+    base = dict(provider="P", model="M", system_prompt="S", user_prompt="U",
+                temperature=0.1)
+    assert knowledge_cache.feedback_fingerprint(
+        **base, route={"base_url": "https://a/v1"}) != \
+        knowledge_cache.feedback_fingerprint(
+            **base, route={"base_url": "https://b/v1"})

@@ -339,3 +339,92 @@ def test_cli_document_identity_is_stable_and_content_based(tmp_path):
     assert first[0] == "book.docx" and first[1] == b"docx-bytes"
     assert first[2] == second[2], "同一份文档必须得到同一个文档身份"
     assert first[2] == core.file_job_id(b"docx-bytes")
+
+
+# ================= 译前改了项目 / 目标语言：ID 不再证明上下文 =================
+# 译前准备可以改目标语言和项目，但任务 ID 是按创建时的上下文推导的、不会跟着变。
+# 只看"ID 是否存在"就会：先按英文导入，译前改成阿拉伯语，再按英文导入——打开的
+# 却是那个阿拉伯语任务。
+
+
+def _import(data, target_lang, *, project_id=None):
+    from folith.application import commands
+    from folith.application.settings import SettingsSources
+
+    return commands.import_document(
+        "paper.txt", data, SettingsSources(explicit={"target_lang": target_lang}),
+        project_id=project_id)
+
+
+def _setup(job_id, target_lang):
+    from folith.application import commands
+    from folith.application.settings import SettingsSources
+
+    commands.apply_task_setup(
+        job_id, SettingsSources(explicit={"target_lang": target_lang}),
+        target_lang=target_lang)
+
+
+def test_reimport_after_the_language_was_changed_does_not_open_the_other_language():
+    with job_env():
+        first = _import(DOC_BYTES, "English")
+        _setup(first.job_id, "العربية")
+
+        again = _import(DOC_BYTES, "English")
+
+        assert again.job_id != first.job_id
+        assert again.created is True
+        assert core.load_job_state(again.job_id)["target_lang"] == "English"
+        assert core.load_job_state(first.job_id)["target_lang"] == "العربية", \
+            "改过语言的任务本身不受影响"
+
+
+def test_moved_away_identity_resolves_to_the_same_new_task_every_time():
+    """备选 ID 是确定的：同样的导入每次都落回同一个任务，不会越建越多。"""
+    with job_env():
+        first = _import(DOC_BYTES, "English")
+        _setup(first.job_id, "العربية")
+
+        second = _import(DOC_BYTES, "English")
+        third = _import(DOC_BYTES, "English")
+
+        assert third.job_id == second.job_id
+        assert third.created is False
+
+
+def test_changed_language_task_is_still_found_by_its_original_id_owner():
+    """改语言之后再改回来：原 ID 上的任务又是这个上下文的活，照常续做。"""
+    with job_env():
+        first = _import(DOC_BYTES, "English")
+        _setup(first.job_id, "العربية")
+        _setup(first.job_id, "English")
+
+        again = _import(DOC_BYTES, "English")
+
+        assert again.job_id == first.job_id
+        assert again.created is False
+
+
+def test_source_language_chosen_in_setup_does_not_fork_the_task():
+    """源语言由准备页写进任务；导入从不带源语言，不能因此认不出原任务。"""
+    with job_env():
+        first = _import(DOC_BYTES, "English")
+        state = core.load_job_state(first.job_id)
+        state["source_lang"] = "Русский"
+        core.save_job_state(first.job_id, state)
+
+        again = _import(DOC_BYTES, "English")
+
+        assert again.job_id == first.job_id
+
+
+def test_cli_does_not_resume_a_task_whose_language_was_changed():
+    with job_env():
+        document_id = core.file_job_id(b"pdf-bytes")
+        zh = translate_pdf.resolve_job_id(document_id, LANG_ZH)
+        _create_task(zh, project_id=None, target_lang=LANG_FR)
+
+        again = translate_pdf.resolve_job_id(document_id, LANG_ZH)
+
+        assert again != zh
+        assert core.load_job_state(again) is None

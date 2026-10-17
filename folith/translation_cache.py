@@ -32,7 +32,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import job_lock as _job_lock
 
-CACHE_VERSION = 1
+#: 2: the effective route (endpoint + reasoning effort) joined the identity, so
+#: entries written under version 1 cannot prove which endpoint produced them.
+CACHE_VERSION = 2
 DEFAULT_MAX_ENTRIES = 4096
 #: Refuse to persist a single absurd entry rather than let one huge batch
 #: dominate the cache file.
@@ -51,7 +53,8 @@ def _canonical(value: Any) -> str:
 
 def prompt_fingerprint(*, provider: str, model: str, system_prompt: str,
                        user_prompt: str, temperature: Any,
-                       response_format: Optional[Dict[str, Any]] = None) -> str:
+                       response_format: Optional[Dict[str, Any]] = None,
+                       route: Optional[Dict[str, Any]] = None) -> str:
     """Stable identity of one effective translation request.
 
     Volatile values (timestamps, request ids, UI state) are absent by
@@ -66,6 +69,7 @@ def prompt_fingerprint(*, provider: str, model: str, system_prompt: str,
         "response_format": response_format or None,
         "system": system_prompt or "",
         "user": user_prompt or "",
+        "route": dict(route or {}),
     }
     return hashlib.sha256(_canonical(material).encode("utf-8")).hexdigest()
 

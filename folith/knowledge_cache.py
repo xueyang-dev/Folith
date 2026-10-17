@@ -46,7 +46,9 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from . import job_lock as _job_lock
 
-CACHE_VERSION = 1
+#: 2: the effective route (endpoint + reasoning effort) joined the identity, so
+#: entries written under version 1 cannot prove which endpoint produced them.
+CACHE_VERSION = 2
 #: One entry is one batch's observation list.  4096 entries covers a very long
 #: document (or several) without letting the file grow without bound.
 DEFAULT_MAX_ENTRIES = 4096
@@ -70,7 +72,8 @@ def _canonical(value: Any) -> str:
 
 def feedback_fingerprint(*, provider: str, model: str, system_prompt: str,
                          user_prompt: str, temperature: Any,
-                         response_format: Optional[Dict[str, Any]] = None) -> str:
+                         response_format: Optional[Dict[str, Any]] = None,
+                         route: Optional[Dict[str, Any]] = None) -> str:
     """Stable identity of one effective knowledge-extraction request.
 
     Volatile values (timestamps, request ids, batch indices that are already
@@ -86,6 +89,7 @@ def feedback_fingerprint(*, provider: str, model: str, system_prompt: str,
         "response_format": response_format or None,
         "system": system_prompt or "",
         "user": user_prompt or "",
+        "route": dict(route or {}),
     }
     return hashlib.sha256(_canonical(material).encode("utf-8")).hexdigest()
 
@@ -163,11 +167,12 @@ class KnowledgeObservationCache:
     @staticmethod
     def key_for(*, provider: str, model: str, system_prompt: str,
                 user_prompt: str, temperature: Any = 0.1,
-                response_format: Optional[Dict[str, Any]] = None) -> str:
+                response_format: Optional[Dict[str, Any]] = None,
+                route: Optional[Dict[str, Any]] = None) -> str:
         return feedback_fingerprint(
             provider=provider, model=model, system_prompt=system_prompt,
             user_prompt=user_prompt, temperature=temperature,
-            response_format=response_format)
+            response_format=response_format, route=route)
 
     # -- lookup ---------------------------------------------------------
     def get(self, key: Optional[str]) -> Optional[List[Dict[str, Any]]]:

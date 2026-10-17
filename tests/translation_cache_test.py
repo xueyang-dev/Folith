@@ -314,3 +314,79 @@ def test_translation_cache_can_be_disabled(tmp_path: Path):
         core.OUTPUT_DIR, core.call_llm = old_output, old_call
 
     assert not (tmp_path / "translation_cache.json").exists()
+
+
+# The same provider and model name can sit behind two different endpoints, and
+# reasoning effort changes the request body.  Neither is visible in the prompt,
+# so both have to be part of "the same request" explicitly.
+RELAY = "自定义中转站"
+
+
+def _relay_run(tmp_path, job_id, *, base_url, model="gpt-5", reasoning=None,
+               calls=None):
+    old_output, old_call = core.OUTPUT_DIR, core.call_llm
+    core.OUTPUT_DIR = tmp_path
+
+    def llm(provider, api_key, model_name, system, user, temperature=0.1, **kwargs):
+        if "翻译流知识抽取器" in system:
+            return "[]"
+        if calls is not None:
+            calls.append(model_name)
+        count = len(_requested_sources(user)) or 1
+        return json.dumps([f"译文第{i + 1}段。" for i in range(count)],
+                          ensure_ascii=False)
+
+    core.call_llm = llm
+    core.set_llm_base_url(base_url)
+    core.set_llm_reasoning_effort(reasoning)
+    try:
+        state = core.new_job_state("doc.txt")
+        state["paras"] = ["Hello world.", "Another sentence."]
+        return core.translate_stage(
+            state, job_id, [], RELAY, "key", model, "简体中文", "",
+            enable_review=False, use_tm=False)
+    finally:
+        core.set_llm_base_url(None)
+        core.set_llm_reasoning_effort(None)
+        core.OUTPUT_DIR, core.call_llm = old_output, old_call
+
+
+def test_stage_cache_misses_on_changed_endpoint(tmp_path: Path):
+    _relay_run(tmp_path, "relay-a", base_url="https://relay-a.example/v1")
+    calls = []
+    second = _relay_run(tmp_path, "relay-b", base_url="https://relay-b.example/v1",
+                        calls=calls)
+    assert calls, "a different endpoint must reach the provider"
+    assert second["translation_cache"]["hits"] == 0
+
+
+def test_stage_cache_still_hits_on_the_same_endpoint(tmp_path: Path):
+    _relay_run(tmp_path, "relay-same-1", base_url="https://relay-a.example/v1")
+    calls = []
+    _relay_run(tmp_path, "relay-same-2", base_url="https://relay-a.example/v1",
+               calls=calls)
+    assert calls == []
+
+
+def test_stage_cache_misses_on_changed_reasoning_effort(tmp_path: Path):
+    _relay_run(tmp_path, "effort-low", base_url="https://relay-a.example/v1",
+               reasoning="low")
+    calls = []
+    _relay_run(tmp_path, "effort-high", base_url="https://relay-a.example/v1",
+               reasoning="high", calls=calls)
+    assert calls
+
+
+def test_fingerprint_covers_the_route():
+    assert _fingerprint(route={"base_url": "https://a/v1"}) != \
+        _fingerprint(route={"base_url": "https://b/v1"})
+    assert _fingerprint(route={"reasoning_effort": "low"}) != \
+        _fingerprint(route={"reasoning_effort": "high"})
+
+
+def test_version_one_file_is_discarded(tmp_path: Path):
+    """Entries written before the route joined the identity cannot be trusted."""
+    path = tmp_path / "translation_cache.json"
+    path.write_text(json.dumps({"version": 1, "entries": {"k": ["旧"]}}),
+                    encoding="utf-8")
+    assert _tc.load(path).entries == {}

@@ -248,49 +248,67 @@ def read_mutations(job_id: str, after_seq: int = 0,
     return out
 
 
-def max_seq(job_id: str, output_dir: Optional[Path] = None) -> int:
-    """Highest readable ``seq``, scanning backwards so a load stays cheap.
+def _tail_seq(path: Path) -> Optional[int]:
+    """Highest ``seq`` among the journal's last complete lines, or ``None``.
 
-    Scans at most ``_TAIL_SCAN_LINES`` lines from the end.  A journal longer
-    than that tail belongs to a job whose snapshot is behind by more than the
-    scan window, in which case the returned value is a *lower bound* -- and
-    that is safe, because the only consumer is the rotation guard, which must
-    err on the side of keeping the journal.
+    ``None`` means the journal has complete lines but none of the ones scanned
+    yields a ``seq`` -- the value cannot be established, and the caller must not
+    act as if the journal were empty.  An empty journal, or one that holds only
+    a torn partial line, is a definite ``0``.
+
+    The window starts at ``_TAIL_SCAN_BYTES`` and grows towards the start of the
+    file while it holds no usable line, so a single record larger than the
+    window (one batch carrying a long document's entity registry, say) is read
+    whole instead of being mistaken for "no records".
     """
-    path = journal_path(job_id, output_dir=output_dir)
     try:
         file_size = path.stat().st_size
     except OSError:
         return 0
     if file_size == 0:
         return 0
-    start = max(0, file_size - _TAIL_SCAN_BYTES)
-    try:
-        with path.open("rb") as stream:
-            stream.seek(start)
-            tail = stream.read()
-    except OSError:
-        return 0
-    chunks = tail.split(b"\n")
-    if start > 0:
-        chunks = chunks[1:]           # the first chunk may be a partial line
-    if tail.endswith(b"\n"):
-        chunks = chunks[:-1]          # the element after the final newline
-    seen = 0
-    for chunk in reversed(chunks):
-        if not chunk.strip():
-            continue
-        seen += 1
-        if seen > _TAIL_SCAN_LINES:
-            break
+    window = _TAIL_SCAN_BYTES
+    while True:
+        start = max(0, file_size - window)
         try:
-            record = json.loads(chunk.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            continue
-        seq = record.get("seq") if isinstance(record, dict) else None
-        if isinstance(seq, int) and not isinstance(seq, bool):
-            return seq
-    return 0
+            with path.open("rb") as stream:
+                stream.seek(start)
+                tail = stream.read(file_size - start)
+        except OSError:
+            return None
+        # ``split`` always leaves the text after the final newline last: empty
+        # for a clean journal, a torn line after an interrupted write.  Either
+        # way it is not a complete record.
+        chunks = tail.split(b"\n")[:-1]
+        if start > 0:
+            chunks = chunks[1:]           # the first chunk may be a partial line
+        seen = 0
+        for chunk in reversed(chunks):
+            if not chunk.strip():
+                continue
+            seen += 1
+            if seen > _TAIL_SCAN_LINES:
+                return None
+            try:
+                record = json.loads(chunk.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            seq = record.get("seq") if isinstance(record, dict) else None
+            if isinstance(seq, int) and not isinstance(seq, bool):
+                return seq
+        if start == 0:
+            return None if seen else 0
+        window *= 4
+
+
+def max_seq(job_id: str, output_dir: Optional[Path] = None) -> int:
+    """Highest readable ``seq``, scanning backwards so a load stays cheap.
+
+    Returns ``0`` both for "no journal" and for "could not be established"; the
+    two consumers that must tell those apart (:func:`replay` and
+    :func:`rotate_if_applied`) use :func:`_tail_seq` directly.
+    """
+    return _tail_seq(journal_path(job_id, output_dir=output_dir)) or 0
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +439,10 @@ def replay(job_id: str, state: Dict[str, Any],
     start = cursor(state)
     if not isinstance(state, dict):
         return {"applied": 0, "cursor": start, "gap": False, "dropped": 0}
-    if max_seq(job_id, output_dir=output_dir) <= start:
+    # The tail scan is only a fast path for "nothing to replay".  When it
+    # cannot tell, read the journal in full: skipping would lose records.
+    newest = _tail_seq(journal_path(job_id, output_dir=output_dir))
+    if newest is not None and newest <= start:
         return {"applied": 0, "cursor": start, "gap": False, "dropped": 0}
 
     records = read_mutations(job_id, after_seq=start, output_dir=output_dir)
@@ -486,7 +507,8 @@ def rotate_if_applied(job_id: str, state: Dict[str, Any],
     the guard, not the caller, decides.  Erring towards keeping the journal is
     always safe; dropping a record a snapshot does not contain is not.
     """
-    if cursor(state) < max_seq(job_id, output_dir=output_dir):
+    newest = _tail_seq(journal_path(job_id, output_dir=output_dir))
+    if newest is None or cursor(state) < newest:
         return False
     return rotate(job_id, output_dir=output_dir)
 

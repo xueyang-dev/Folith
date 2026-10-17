@@ -91,14 +91,14 @@ def resolve_job_id(document_id, target_lang, explicit=None):
     """
     if explicit:
         return explicit
-    identity = document_id.encode("utf-8")
-    scoped = core.task_job_id(identity, target_lang=target_lang)
+    context = core.task_context(target_lang=target_lang)
+    scoped = core.resolve_scoped_task_id(
+        core.file_job_id(document_id.encode("utf-8")), context)
     if core.load_job_state(scoped) is not None:
         return scoped
     legacy = core.load_job_state(document_id)
     if legacy is not None and (
-            core.task_context_of(legacy)["target_lang"]
-            == core.task_context(target_lang=target_lang)["target_lang"]):
+            core.task_context_of(legacy)["target_lang"] == context["target_lang"]):
         return document_id
     return scoped
 
