@@ -231,3 +231,66 @@ def test_count_badge_is_a_small_pill(env, app):  # noqa: F811
 
     badge = components.CountBadge("46", "info")
     assert badge.height() == 18 and badge.width() < 40
+
+
+def test_conflict_row_keeps_the_real_occurrence_count(env, app):  # noqa: F811
+    adapter, ids, view, _r = _view(env, app)
+    env["core"].promote_term_to_project("manual-ch3", "status light")   # 登记成待决冲突
+    _load(view, adapter, ids["device"])
+    view._tab_changed("review")
+    row = next(i for i in view._review_items if i["basis"] == "conflict")
+    assert row["kind"] == "conflict"
+    assert row["source"] == "status light" and row["hits"] == 3
+    assert view.review_tree.item(next(r for r, i in view._review_rows.items()
+                                      if view._review_items[i] is row), 4).text() == "3"
+
+
+def test_translation_memory_table_has_equal_text_columns_and_no_empty_column(env, app):  # noqa: F811
+    from PySide6.QtWidgets import QHeaderView
+
+    adapter, ids, view, _r = _view(env, app)
+    core = env["core"]
+    tm = {}
+    core.tm_put(tm, "Hello.", "你好。", "简体中文")
+    core.save_tm(tm, ids["device"])
+    _load(view, adapter, ids["device"])
+    assert view.tm_table.columnCount() == 3
+    header = view.tm_table.horizontalHeader()
+    assert header.sectionResizeMode(0) == header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+
+
+def test_more_menu_marks_delete_as_danger_and_it_is_activatable(env, app):  # noqa: F811
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from folith.qt.projects_view import _DangerAction
+
+    adapter, ids, view, _r = _view(env, app)
+    _load(view, adapter, ids["device"])
+    view._open_more()
+    danger = [a for a in view._menu.actions() if isinstance(a, _DangerAction)]
+    assert len(danger) == 1 and danger[0].text() == "删除项目…"
+    fired = []
+    danger[0].triggered.connect(lambda *_: fired.append(1))
+    QTest.keyClick(danger[0]._label, Qt.Key.Key_Return)
+    assert fired == [1]
+
+
+def test_move_preview_scrollbar_only_when_content_overflows(env, app):  # noqa: F811
+    from folith.qt.project_sheets import MoveToProjectSheet
+
+    adapter, ids, _v, _r = _view(env, app)
+    sheet = MoveToProjectSheet(["notes"], project_id=ids["device"])
+    sheet.show()
+    app.processEvents()
+    assert not sheet.after_scroll.verticalScrollBar().isVisible()
+
+
+def test_conflict_strip_is_amber_with_the_button_inside(env, app):  # noqa: F811
+    from PySide6.QtWidgets import QPushButton
+
+    adapter, ids, view, _r = _view(env, app)
+    _load(view, adapter, ids["device"])
+    strip = view._notice_row("x", "逐条处理", lambda: None, "warn")
+    button = strip.findChild(QPushButton)
+    assert button is not None and button.text() == "逐条处理"

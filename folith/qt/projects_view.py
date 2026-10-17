@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QPushButton, QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from folith import language_assets as assets
@@ -463,16 +463,27 @@ class ProjectsView(QWidget):
                 self._clear(item.layout())
 
     def _notice_row(self, text: str, button: str, slot, tone: str = "info") -> QWidget:
-        strip = style_module.NoticeStrip(text, tone=tone)
-        holder = QWidget()
-        row = QHBoxLayout(holder)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(strip, 1)
+        """提示条，动作按钮在条内右端。warn = 琥珀色（浅底、琥珀图标、深琥珀字）。"""
+        if tone != "warn":
+            strip = style_module.NoticeStrip(text, tone=tone)
+            strip.set_action(button, slot)
+            style_module.set_button(strip.action_button(), "secondary", small=True)
+            return strip
+        tokens = theme_module.tokens(style_module.current_theme())
+        strip = style_module.Surface(elevation="flat", fill="warning-soft")
+        strip.RADIUS = theme_module.RADIUS["md"]
+        row = QHBoxLayout(strip)
+        row.setContentsMargins(14, 8, 14, 8)
+        row.setSpacing(10)
+        row.addWidget(icons.IconLabel("alert", 16, "warning"), 0, Qt.AlignmentFlag.AlignVCenter)
+        label = _text(text, "body", wrap=True)
+        label.setStyleSheet(f"color: {tokens['warning']}; background: transparent;")
+        row.addWidget(label, 1)
         action = QPushButton(button)
         style_module.set_button(action, "secondary", small=True)
         action.clicked.connect(slot)
-        row.addWidget(action)
-        return holder
+        row.addWidget(action, 0, Qt.AlignmentFlag.AlignVCenter)
+        return strip
 
     def _fill_overview(self) -> None:
         self._clear(self.overview_box)
@@ -765,7 +776,13 @@ class ProjectsView(QWidget):
         self.tm_query.setClearButtonEnabled(True)
         self.tm_query.textChanged.connect(lambda _t: self._fill_tm())
         box.addWidget(self.tm_query)
-        self.tm_table = _table([i18n.tr('原文'), i18n.tr('译文'), i18n.tr('目标语言'), i18n.tr('更新')])
+        # 翻译记忆存储里没有条目时间戳，所以不放「更新」列（空列比没有更糟）。
+        self.tm_table = _table([i18n.tr('原文'), i18n.tr('译文'), i18n.tr('目标语言')])
+        tm_header = self.tm_table.horizontalHeader()
+        tm_header.setStretchLastSection(False)
+        tm_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        tm_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tm_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         box.addWidget(self.tm_table, 1)
         self.tm_note = _text("", "meta", wrap=True)
         box.addWidget(self.tm_note)
@@ -781,8 +798,7 @@ class ProjectsView(QWidget):
         self.tm_table.setRowCount(len(shown))
         for r, row in enumerate(shown):
             values = (row["source"], row["target"],
-                      row.get("target_lang") or i18n.tr('未标注（不会自动复用）'),
-                      str(row.get("updated_at") or "")[:16].replace("T", " "))
+                      row.get("target_lang") or i18n.tr('未标注（不会自动复用）'))
             for c, value in enumerate(values):
                 self.tm_table.setItem(r, c, _cell(value))
         has = bool(self._detail.get("tm"))
@@ -1020,7 +1036,7 @@ class ProjectsView(QWidget):
                 chip_lay.addStretch(1)
                 table.setCellWidget(row, 3, chip_host)
                 table.setItem(row, 3, QTableWidgetItem(""))
-                hits = QTableWidgetItem(str(item["hits"]) if item.get("kind") != "conflict" else "—")
+                hits = QTableWidgetItem(str(item["hits"]) if item.get("positions_known") or item.get("kind") != "conflict" else "—")
                 hits.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 table.setItem(row, 4, hits)
                 self._review_rows[row] = len(self._review_items)
@@ -1072,7 +1088,7 @@ class ProjectsView(QWidget):
         meta = []
         if item.get("variants"):
             meta.append(i18n.tr('也写作 {v0}', v0=" / ".join(item["variants"])))
-        if item.get("kind") != "conflict":
+        if item.get("kind") != "conflict" or item.get("positions_known"):
             meta.append(i18n.tr('{v0} 处', v0=item["hits"]))
         meta.append(i18n.tr('来自{v0}', v0=i18n.tr_dynamic(item["basis_label"]))
                     if not conflict else i18n.tr_dynamic(item["basis_label"]))
@@ -1142,10 +1158,13 @@ class ProjectsView(QWidget):
         project = self.selected_project() or {}
 
         def add(label, slot, *, danger=False):
-            action = menu.addAction(label)
-            action.triggered.connect(lambda _c=False: slot())
             if danger:
-                action.setProperty("danger", True)
+                # 原生菜单项画不出红色：用带样式的标签做 QWidgetAction（点击、回车、空格都能触发）。
+                action = _DangerAction(label, menu)
+                menu.addAction(action)
+            else:
+                action = menu.addAction(label)
+            action.triggered.connect(lambda _c=False: slot())
             return action
 
         if unsorted:
@@ -1350,6 +1369,64 @@ class ProjectsView(QWidget):
                            v0=result["project"].get("name") or ""))
         self._mark_changed()
         self.reloadRequested.emit()
+
+
+class _DangerLabel(QLabel):
+    """菜单里的危险项：danger 色文字，悬停 / 键盘焦点时 danger-soft 底。"""
+
+    activated = Signal()
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._paint(False)
+
+    def _paint(self, active: bool) -> None:
+        tokens = theme_module.tokens(style_module.current_theme())
+        background = tokens["danger-soft"] if active else "transparent"
+        self.setStyleSheet(f"QLabel {{ color: {tokens['danger']}; background: {background};"
+                           " padding: 5px 24px 5px 22px; border-radius: 4px; }")
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._paint(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._paint(self.hasFocus())
+        super().leaveEvent(event)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._paint(True)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._paint(False)
+        super().focusOutEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.activated.emit()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.activated.emit()
+        else:
+            super().keyPressEvent(event)
+
+
+class _DangerAction(QWidgetAction):
+    def __init__(self, text: str, parent) -> None:
+        super().__init__(parent)
+        self.setText(text)
+        self._label = _DangerLabel(text)
+        self.setDefaultWidget(self._label)
+        self._label.activated.connect(self._fire)
+
+    def _fire(self) -> None:
+        menu = self.parent()
+        if menu is not None:
+            menu.close()
+        self.trigger()
 
 
 def _escape(text: object) -> str:

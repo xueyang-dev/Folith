@@ -2276,10 +2276,18 @@ def _conflict_rows(project: dict, jobs: list[dict]) -> list[dict]:
     """项目里"和术语库不一致"的待决冲突，做成与候选同形的行。"""
     names = {str(j.get("job_id")): str((j.get("state") or {}).get("filename") or "")
              for j in jobs}
+    states = {str(j.get("job_id")): j.get("state") or {} for j in jobs}
     rows = []
     for item in project.get("pending_conflicts") or []:
         if item.get("kind") != "glossary":
             continue
+        # 出现次数取自提出这条译名的任务：它术语表里这条术语的真实命中段落数。
+        hits = 0
+        key = item["source"].casefold()
+        for entry in (states.get(str(item.get("source_job_id") or "")) or {}).get("glossary") or []:
+            if str(entry.get("source") or "").casefold() == key:
+                hits = len(entry.get("occurrences") or [])
+                break
         rows.append({
             "kind": "conflict", "conflict_id": item["conflict_id"],
             "row_id": f"conflict::{item['conflict_id']}",
@@ -2288,7 +2296,7 @@ def _conflict_rows(project: dict, jobs: list[dict]) -> list[dict]:
             "document": names.get(str(item.get("source_job_id") or ""))
             or str(item.get("imported_from") or "") or "导入的记忆",
             "has_conflict": True, "high_confidence": False,
-            "positions_known": False, "occurrence_count": 0, "observed_segments": [],
+            "positions_known": bool(hits), "occurrence_count": hits, "observed_segments": [],
             "conflict_summary": f"项目术语库里是「{item['local']}」"})
     return rows
 

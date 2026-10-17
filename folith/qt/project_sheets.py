@@ -341,8 +341,8 @@ class MoveToProjectSheet(QDialog):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.viewport().setAutoFillBackground(False)
         scroll.setWidget(holder)
-        scroll.setMaximumHeight(300)
-        scroll.setMinimumHeight(60)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.after_scroll = scroll
         card = style_module.Surface(elevation="flat")
         card_box = QVBoxLayout(card)
@@ -516,8 +516,9 @@ class MoveToProjectSheet(QDialog):
         holder = self.after_scroll.widget()
         holder.adjustSize()
         # 任务不多时整块摆开，不出滚动条；很多时最高 360 再滚动。
-        self.after_scroll.setMinimumHeight(min(holder.sizeHint().height() + 4, 360))
-        self.after_scroll.setMaximumHeight(360)
+        # 内容放得下就整块摆开、不出滚动条；超过 360 才滚动。
+        height = holder.sizeHint().height() + 8
+        self.after_scroll.setFixedHeight(min(height, 360))
         self.adjustSize()
 
     def _carry_existing_checks_visible(self, visible: bool) -> None:
