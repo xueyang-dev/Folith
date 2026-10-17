@@ -53,6 +53,15 @@ def _terms(path: Path) -> tuple[list[str], list[list[str]]]:
     return [str(item) for item in header], rows
 
 
+def _asset(delivery_dir: Path, name: str) -> Path:
+    """交付文件名带来源前缀（``<来源>_translation.docx``）；没有前缀的旧名也认。"""
+    plain = delivery_dir / name
+    if plain.exists():
+        return plain
+    prefixed = sorted(delivery_dir.glob(f"*_{name}"))
+    return prefixed[0] if prefixed else plain
+
+
 def check(delivery_dir: Path, state_path: Path) -> dict:
     problems: list[str] = []
     facts: dict = {}
@@ -62,7 +71,7 @@ def check(delivery_dir: Path, state_path: Path) -> dict:
     targets = [str(pair.get("target") or "") for pair in pairs]
 
     # ---- translation.docx ------------------------------------------------
-    translation = delivery_dir / "translation.docx"
+    translation = _asset(delivery_dir, "translation.docx")
     if not translation.is_file():
         problems.append(f"缺少 translation.docx：{translation}")
     else:
@@ -88,7 +97,7 @@ def check(delivery_dir: Path, state_path: Path) -> dict:
         facts["translation"]["human_edited_segments"] = edited
 
     # ---- bilingual.docx --------------------------------------------------
-    bilingual = delivery_dir / "bilingual.docx"
+    bilingual = _asset(delivery_dir, "bilingual.docx")
     if not bilingual.is_file():
         problems.append(f"缺少 bilingual.docx：{bilingual}")
     else:
@@ -113,7 +122,7 @@ def check(delivery_dir: Path, state_path: Path) -> dict:
                         f"bilingual.docx 第 {index + 1} 行译文不是当前译文")
 
     # ---- terms.xlsx ------------------------------------------------------
-    terms = delivery_dir / "terms.xlsx"
+    terms = _asset(delivery_dir, "terms.xlsx")
     if not terms.is_file():
         problems.append(f"缺少 terms.xlsx：{terms}")
     else:
@@ -130,7 +139,7 @@ def check(delivery_dir: Path, state_path: Path) -> dict:
             problems.append("有术语但 terms.xlsx 只有表头")
 
     # ---- delivery_manifest.json -----------------------------------------
-    manifest_path = delivery_dir / "delivery_manifest.json"
+    manifest_path = _asset(delivery_dir, "delivery_manifest.json")
     if not manifest_path.is_file():
         problems.append(f"缺少 delivery_manifest.json：{manifest_path}")
     else:
@@ -153,7 +162,7 @@ def check(delivery_dir: Path, state_path: Path) -> dict:
                 f"{manifest.get('delivery_status')!r}")
 
     # ---- segment_evidence.jsonl -----------------------------------------
-    evidence = delivery_dir / "segment_evidence.jsonl"
+    evidence = _asset(delivery_dir, "segment_evidence.jsonl")
     if not evidence.is_file():
         problems.append(f"缺少 segment_evidence.jsonl：{evidence}")
     else:
