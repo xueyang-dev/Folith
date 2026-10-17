@@ -317,3 +317,44 @@ def test_two_tasks_in_one_move_see_each_others_terms():
         result = core.preview_move_jobs(["a", "b"], project_id=pid)
         assert len(result["reports"][0]["terms_added"]) == 1
         assert len(result["reports"][1]["terms_conflicting"]) == 1
+
+
+# ---------- 待审核展示模型 ----------
+
+from folith import language_assets as assets  # noqa: E402
+
+
+def cand(source, target, *, doc="a.docx", hits=3, high=True, conflict=False):
+    return {"source": source, "target": target, "document": doc, "job_id": "j",
+            "candidate_id": f"{source}-{target}", "high_confidence": high,
+            "has_conflict": conflict, "positions_known": True,
+            "occurrence_count": hits, "observed_segments": []}
+
+
+def test_confidence_becomes_a_basis_label_not_a_number():
+    assert assets.candidate_basis(cand("a", "b", high=True)) == "reviewed"
+    assert assets.candidate_basis(cand("a", "b", high=False)) == "machine"
+    assert assets.candidate_basis(cand("a", "b", conflict=True)) == "conflict"
+
+
+def test_word_form_variants_merge_into_one_row():
+    rows = [cand("hub", "集线器", hits=4), cand("hubs", "集线器", hits=3),
+            cand("hub", "中枢", hits=2)]
+    items = assets.merge_variant_rows(rows)
+    assert len(items) == 2
+    top = items[0]
+    assert (top["source"], top["variants"], top["hits"]) == ("hub", ["hubs"], 7)
+    assert len(top["members"]) == 2
+    assert assets.variant_key("Companies") == "company"
+    assert assets.variant_key("status") == "status"
+
+
+def test_seen_once_candidates_collapse_but_conflicts_stay():
+    rows = [cand("hub", "集线器", hits=5), cand("once", "一次", hits=1, high=False),
+            cand("clash", "冲突", hits=1, conflict=True)]
+    view = assets.review_view(rows)
+    assert view["collapsed"] == 1 and view["total"] == 2
+    assert view["counts"] == {"all": 2, "reviewed": 1, "machine": 0, "conflict": 1}
+    assert assets.review_view(rows, show_singles=True)["total"] == 3
+    only = assets.review_view(rows, basis="conflict")
+    assert [r["source"] for r in only["items"]] == ["clash"]
