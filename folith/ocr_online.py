@@ -143,6 +143,12 @@ class OnlineOCRConfig:
     proxy_bypass: bool = False
     #: Where the credential came from, for the settings UI only.
     credential_source: str = ""
+    #: ``provider|base_url`` of the saved connection that supplied ``api_key``.  A key must
+    #: only ever travel to the endpoint of the connection that owns it; empty = not tracked.
+    credential_owner: str = field(default="", repr=False)
+
+    def endpoint_id(self) -> str:
+        return f"{self.provider}|{str(self.base_url or '').rstrip('/')}"
 
     def normalized(self) -> "OnlineOCRConfig":
         reasoning = str(self.reasoning_mode or "").strip().lower()
@@ -173,6 +179,10 @@ class OnlineOCRConfig:
             return "线上 OCR 缺少访问凭据；请在 OCR 设置中填写或引用已有凭据。"
         if not self.base_url:
             return "线上 OCR 缺少服务地址（需要 http(s)://…/v1）。"
+        if self.credential_owner and self.credential_owner != self.endpoint_id():
+            # 最后一道闸：密钥属于另一个连接时，宁可让任务失败也不把它发给这个地址。
+            return ("线上 OCR 的访问凭据属于另一个连接，与当前服务地址不一致；"
+                    "已拒绝发送请求。请在设置里重新选择视觉连接。")
         return ""
 
     # -- non-secret descriptors ------------------------------------------

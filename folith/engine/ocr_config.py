@@ -437,13 +437,61 @@ def _resolve_online_ocr_base_url(provider, base_url):
     return normalized
 
 
+def _endpoint_id(provider, base_url):
+    try:
+        resolved = _resolve_online_ocr_base_url(provider, base_url)
+    except ValueError:
+        return None
+    return f"{provider}|{resolved.rstrip('/')}"
+
+
+def saved_credentials():
+    """Every saved credential with the endpoint it belongs to.
+
+    ``[(origin, provider, model, endpoint_id, api_key)]`` from the translation
+    profile, each saved connection and the OCR-only profile.  A key is only ever
+    paired with the endpoint of the entry it came from.
+    """
+    from folith.model_connections import environment_key
+    rows = []
+    config = _c.load_provider_config() or {}
+
+    def add(origin, entry):
+        provider = str(entry.get("provider") or "")
+        if not provider:
+            return
+        endpoint = _endpoint_id(provider, entry.get("base_url"))
+        key = str(entry.get("api_key") or "") or environment_key(provider)
+        if endpoint:
+            rows.append((origin, provider, str(entry.get("model") or ""), endpoint, key))
+
+    add("translation_profile", config)
+    for connection in config.get("connections") or []:
+        if isinstance(connection, dict):
+            add("connection", connection)
+    add("ocr_profile", _c.load_ocr_online_config() or {})
+    return rows
+
+
+def credential_for_endpoint(provider, resolved_base, prefer=""):
+    """``(api_key, owner_endpoint_id)`` of the saved connection owning this endpoint, else ``None``."""
+    target = f"{provider}|{str(resolved_base or '').rstrip('/')}"
+    rows = [row for row in saved_credentials() if row[3] == target and row[4]]
+    rows.sort(key=lambda row: 0 if row[0] == prefer else 1)
+    return (rows[0][4], rows[0][3]) if rows else None
+
+
 def resolve_ocr_online_config(saved=None, *, descriptor=None):
     """Build the runtime online OCR config from a task descriptor + credentials.
 
     ``descriptor`` is the secret-free snapshot persisted with the task.  The
-    credential itself always comes from disk (the OCR profile, or the saved
-    translation profile when the task explicitly references it) so it is never
-    written into job state, the cache identity, logs or reports.
+    credential itself always comes from disk, so it is never written into job
+    state, the cache identity, logs or reports.
+
+    Key and endpoint always belong to the same saved connection: when the task
+    pins a provider/endpoint, the key is looked up from the saved connection
+    that owns *that* endpoint — never from whichever connection is current.  If
+    no saved connection owns it, the result is a ``connection_missing`` error.
     """
     snapshot = descriptor if isinstance(descriptor, dict) else (
         saved if isinstance(saved, dict) else {})
@@ -453,6 +501,7 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
         source = "ocr_profile"
     profile = (_c.load_provider_config() or {} if source == "translation_profile"
                else _c.load_ocr_online_config() or {})
+    pinned = bool(snapshot.get("provider") or snapshot.get("base_url"))
     provider = str(snapshot.get("provider") or profile.get("provider") or "")
     model = str(snapshot.get("model") or profile.get("model") or "")
     base_url = str(snapshot.get("base_url") or profile.get("base_url") or "")
@@ -460,11 +509,21 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
         resolved_base = _resolve_online_ocr_base_url(provider, base_url)
     except ValueError as exc:
         return None, {"error": "invalid_base_url", "message": str(exc)}
+    owner = f"{provider}|{resolved_base.rstrip('/')}"
+    api_key = str(profile.get("api_key") or "")
+    if pinned:
+        found = credential_for_endpoint(provider, resolved_base, prefer=source)
+        if found is None and not (profile.get("provider") == provider and not snapshot.get("base_url")):
+            return None, {"error": "connection_missing",
+                          "message": (f"这个任务使用的连接「{provider} · {model}」（{resolved_base}）"
+                                      "已不在已保存的连接里，无法取得它的访问凭据。")}
+        api_key = found[0] if found else api_key
+        owner = found[1] if found else owner
     config = _ocr_online.OnlineOCRConfig(
         provider=provider,
         base_url=resolved_base,
         model=model,
-        api_key=str(profile.get("api_key") or ""),
+        api_key=api_key,
         max_tokens=int(snapshot.get("max_tokens") or profile.get("max_tokens")
                        or _ocr_online.DEFAULT_MAX_TOKENS),
         temperature=float(snapshot.get("temperature")
@@ -481,8 +540,48 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
                         else profile.get("max_retries") or _ocr_online.DEFAULT_MAX_RETRIES),
         proxy_bypass=bool((_c.PROVIDERS.get(provider) or {}).get("proxy_bypass")),
         credential_source=source,
+        credential_owner=owner,
     ).normalized()
     return config, None
+
+
+def vision_connection_label(config_or_descriptor):
+    value = config_or_descriptor
+    get = value.get if isinstance(value, dict) else (lambda k, d="": getattr(value, k, d))
+    return " · ".join(str(get(key) or "") for key in ("provider", "model") if get(key))
+
+
+def vision_connection_conflict(saved_pipeline_config):
+    """Compare the connection pinned in a task with what the vision role resolves to now.
+
+    Returns ``None`` when there is nothing to decide (no pinned online connection, no
+    current one, or both are the same endpoint).  Otherwise a dict with labels, the two
+    endpoint ids, whether the pinned connection still exists among the saved ones
+    (``pinned_exists``) and the recorded choice if it still applies.
+    """
+    saved = saved_pipeline_config if isinstance(saved_pipeline_config, dict) else {}
+    pinned = saved.get("ocr_online")
+    if not isinstance(pinned, dict) or not (pinned.get("provider") and pinned.get("base_url")):
+        return None
+    current, error = resolve_ocr_online_config(None)
+    if error is not None or current is None or current.unavailable_reason():
+        return None
+    pinned_endpoint = _endpoint_id(str(pinned.get("provider")), pinned.get("base_url"))
+    if pinned_endpoint is None or pinned_endpoint == current.endpoint_id():
+        return None
+    pinned_config, pinned_error = resolve_ocr_online_config(pinned)
+    choice = saved.get("ocr_online_choice") if isinstance(saved.get("ocr_online_choice"), dict) else {}
+    applies = (choice.get("pinned") == pinned_endpoint
+               and choice.get("current") == current.endpoint_id())
+    return {
+        "pinned_label": vision_connection_label(pinned),
+        "current_label": vision_connection_label(current),
+        "pinned_id": pinned_endpoint,
+        "current_id": current.endpoint_id(),
+        "pinned_exists": pinned_error is None and bool(pinned_config and pinned_config.api_key),
+        "choice": str(choice.get("choice") or "") if applies else "",
+        "current_descriptor": current.describe(),
+    }
 
 
 def ocr_online_status(saved=None):

@@ -165,6 +165,40 @@ class ConfirmDialog(_BaseDialog):
         return dialog.accepted_by_user
 
 
+class ChoiceDialog(_BaseDialog):
+    """多选一：每个选项一个按钮（第一个是默认主按钮），再加一个取消。
+
+    ``ask`` 返回被点的选项序号；取消 / 关闭窗口返回 ``None``。
+    """
+
+    def __init__(self, parent: QWidget | None, title: str, message: str, *,
+                 options: list[str], cancel: str = "取消") -> None:
+        super().__init__(parent, title, tone="info")
+        self.set_message(message)
+        self.set_detail("")
+        self.choice: int | None = None
+        self.cancel_button = self.add_button(cancel, self.reject)
+        self.option_buttons = []
+        for index, label in enumerate(options):
+            button = self.add_button(
+                label, lambda _checked=False, i=index: self._pick(i),
+                primary=index == 0, default=index == 0)
+            self.option_buttons.append(button)
+        if self.option_buttons:
+            self.option_buttons[0].setFocus()
+
+    def _pick(self, index: int) -> None:
+        self.choice = index
+        self.accept()
+
+    @classmethod
+    def ask(cls, parent: QWidget | None, title: str, message: str, *,
+            options: list[str], cancel: str = "取消") -> int | None:
+        dialog = cls(parent, title, message, options=options, cancel=cancel)
+        dialog.exec()
+        return dialog.choice
+
+
 class NoticeDialog(_BaseDialog):
     """通知：只有一个关闭按钮；`detail` 默认收起。"""
 

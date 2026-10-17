@@ -1739,6 +1739,8 @@ class MainWindow(QMainWindow):
             # 不是再启动一次——启动要先写任务状态，会被锁拒绝（试用反馈：暂停后无法继续）。
             self.continue_job()
             return
+        if not self._choose_vision_connection(job_id):
+            return
         config, defaults = self.config, dict(self.stored_task_defaults)
         state = self.workbench._state if self.workbench.job_id == job_id else {}
         requested_ocr = (state.get("ocr_backend_requested")
@@ -1784,6 +1786,35 @@ class MainWindow(QMainWindow):
             self._failure(i18n.tr('无法启动任务'), message, detail, job_id=job_id)
 
         self.runner.submit(start, on_done=done, on_error=failed, label="start-job")
+
+    def _choose_vision_connection(self, job_id: str) -> bool:
+        """续跑时，任务原来的视觉连接与现在的不同：问用户用哪个（默认当前）。
+
+        返回 False 表示用户取消。脚本化运行里不弹窗：选当前连接，核心会写进运行记录。
+        """
+        try:
+            conflict = adapter.vision_connection_conflict(job_id)
+        except Exception:  # noqa: BLE001 - 询问失败不能挡住启动；核心仍会按当前连接处理
+            return True
+        if not conflict:
+            return True
+        choice = "current"
+        if not _automation():
+            picked = prompts.ChoiceDialog.ask(
+                self, i18n.tr('选择识别连接'),
+                i18n.tr('这个任务原来用『{v0}』识别，现在的视觉连接是『{v1}』。用哪个继续？',
+                        v0=conflict["pinned_label"], v1=conflict["current_label"]),
+                options=[i18n.tr('用当前连接'), i18n.tr('继续用原连接')],
+                cancel=i18n.tr('取消'))
+            if picked is None:
+                return False
+            choice = "pinned" if picked == 1 else "current"
+        try:
+            adapter.set_vision_choice(job_id, conflict, choice)
+        except Exception as exc:  # noqa: BLE001
+            self._failure(i18n.tr('无法启动任务'), str(exc), job_id=job_id)
+            return False
+        return True
 
     def pause_job(self) -> None:
         if self._current_job_id and adapter.pause_job(self._current_job_id):

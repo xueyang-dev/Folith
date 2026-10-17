@@ -1755,5 +1755,9 @@
   "在左侧展开本任务的术语表": "Open this task's glossary on the left",
   "收起术语": "Close glossary",
   "正在识别第 {v0}/{v1} 页": "Recognising page {v0}/{v1}",
-  "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "Translation starts once {v0} pages are read. Recognised pages are saved and are not re-read after a pause or reopen."
+  "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "Translation starts once {v0} pages are read. Recognised pages are saved and are not re-read after a pause or reopen.",
+  "选择识别连接": "Choose the recognition connection",
+  "这个任务原来用『{v0}』识别，现在的视觉连接是『{v1}』。用哪个继续？": "This task was recognised with “{v0}”; the vision connection is now “{v1}”. Which one should it continue with?",
+  "用当前连接": "Use current connection",
+  "继续用原连接": "Keep the original connection"
 }

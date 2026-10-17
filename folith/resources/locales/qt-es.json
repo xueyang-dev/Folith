@@ -1756,5 +1756,9 @@
   "在左侧展开本任务的术语表": "Abrir el glosario de esta tarea a la izquierda",
   "收起术语": "Cerrar glosario",
   "正在识别第 {v0}/{v1} 页": "Reconociendo la página {v0}/{v1}",
-  "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "La traducción empieza al leer {v0} páginas. Las páginas reconocidas se guardan y no se vuelven a leer tras una pausa o al reabrir."
+  "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "La traducción empieza al leer {v0} páginas. Las páginas reconocidas se guardan y no se vuelven a leer tras una pausa o al reabrir.",
+  "选择识别连接": "Elegir la conexión de reconocimiento",
+  "这个任务原来用『{v0}』识别，现在的视觉连接是『{v1}』。用哪个继续？": "Esta tarea se reconoció con «{v0}»; la conexión de visión actual es «{v1}». ¿Con cuál continuar?",
+  "用当前连接": "Usar la conexión actual",
+  "继续用原连接": "Mantener la conexión original"
 }
