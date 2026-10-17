@@ -1954,5 +1954,6 @@
   "这是任务自己术语表里的条目，确认后才会进入项目术语库、用于新任务。": "This entry comes from the task's own glossary; once confirmed it enters the project glossary and is used by new tasks.",
   "项目术语库里是「{v0}」，这里建议「{v1}」。确认会改用新译名；保留则什么都不变。": "The project glossary has “{v0}”; this suggests “{v1}”. Confirming switches to the new translation; keeping changes nothing.",
   "任务术语表": "Task glossary",
-  "全部来源": "All sources"
+  "全部来源": "All sources",
+  "{v0} 条术语，{v1} 条已确认": "{v0} terms, {v1} confirmed"
 }

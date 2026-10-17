@@ -165,7 +165,7 @@ def test_unsorted_page_is_a_readonly_summary_with_make_project_buttons(env, app)
     # 候选并进各任务自己的术语列表，状态是「待审核」；这里唯一的动作是「只用于此任务」。
     decided: list[tuple] = []
     view.decideRequested.connect(lambda item, decision: decided.append((item["source"], decision)))
-    keep = [b for b in view.page_unsorted_terms.findChildren(QPushButton) if b.text() == "只用于此任务"]
+    keep = [b for b in view.page_unsorted_terms.findChildren(QPushButton) if b.text() == "只用于这个任务"]
     assert len(keep) == 1
     keep[0].click()
     assert decided == [("canary build", "task_only")]
@@ -436,3 +436,53 @@ def test_detail_never_scrolls_horizontally_at_narrow_width_with_a_long_task_name
             assert columns in (2, 1) and view.card_grid.columns() == 1
         view.close()
 
+
+
+def test_pending_view_shows_at_least_six_rows_at_1000x600(env, app):  # noqa: F811
+    from folith.qt.projects_view import ProjectsView
+
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    view = ProjectsView(margins=(8, 12, 12, 12))
+    view.setFixedSize(1000 - 240, 555)      # 窗口 1000×600 里页面卡片的实际高度（去掉菜单栏与外壳间隙）
+    view.show()
+    view.apply_overview(adapter.projects_overview())
+    _load(view, adapter, ids["device"])
+    view.tab_bar.set_value("terms")
+    view._tab_changed("terms")
+    view._term_filter_changed("pending")
+    view.term_table.selectRow(0)
+    app.processEvents()
+    table = view.term_table
+    visible_rows = table.viewport().height() // table.verticalHeader().defaultSectionSize()
+    assert visible_rows >= 6, (visible_rows, table.viewport().height())
+    # 提示行不常驻（已有已确认术语时只是筛选条上的提示）；详情的动作在窄页上最多两行。
+    assert view.term_note.isHidden() and view.term_filter.toolTip()
+    assert view.review_actions.rowCount() == 1
+    view.close()
+
+
+def test_unsorted_cards_use_confirmed_pending_chips_and_one_column_layout(env, app):  # noqa: F811
+    from PySide6.QtWidgets import QLabel
+
+    from tests.project_language_fixture import add_job
+    from folith.qt.projects_view import ProjectsView
+
+    adapter, core = env["adapter"], env["core"]
+    build(core)
+    add_job(core, "long-unsorted", LONG_NAME, project_id=None)
+    view = ProjectsView(margins=(8, 12, 12, 12))
+    view.resize(900, 700)
+    view.show()
+    view.apply_overview(adapter.projects_overview())
+    view.select("unsorted")
+    _load(view, adapter, "unsorted")
+    app.processEvents()
+    texts = {label.text() for label in view.page_unsorted_terms.findChildren(QLabel)}
+    assert {"已确认", "待审核"} <= texts and not texts & {"已锁定", "暂定"}
+    assert any("条已确认" in t for t in texts) and not any("条已锁定" in t for t in texts)
+    # 同一页上各卡片的「译名」列起点一致（固定的列布局）。
+    xs = {label.mapTo(view.page_unsorted_terms.widget(), label.rect().topLeft()).x()
+          for label in view.page_unsorted_terms.findChildren(QLabel) if label.text() == "译名"}
+    assert len(xs) == 1, xs
+    view.close()
