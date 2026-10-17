@@ -1,5 +1,7 @@
 # Folith 桌面客户端：成果交接（Streamlit + pywebview → PySide6 / Qt Widgets）
 
+> **2026-10-17：这是 2026-10-03 的交接文档，Qt Spike 之后的现状见[Qt Beta 状态](qt-beta/status.md)。** 下文 §6 的 Qt Spike 计划已完成并得到 `GO`（[S8](qt-beta/s8-decision.md)）；Streamlit + pywebview 桌面壳已退役；§7 里的构建与旧界面命令是当时的写法，以[发布计划](release-plan.md)和 `scripts/qt_beta_chain.sh` 为准。
+
 日期：2026-10-03 · 仓库：`<workspace>`
 背景：产品方向调整为 **Python + PySide6（Qt Widgets）**，Windows / macOS 共用界面与业务核心、分别打包。
 本文件收尾既有 Streamlit + pywebview 桌面工程（D0–D3），保存成果、证据、已知问题与未验证范围，
