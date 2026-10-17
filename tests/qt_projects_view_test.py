@@ -333,3 +333,47 @@ def test_conflict_strip_is_amber_with_the_button_inside(env, app):  # noqa: F811
     strip = view._notice_row("x", "逐条处理", lambda: None, "warn")
     button = strip.findChild(QPushButton)
     assert button is not None and button.text() == "逐条处理"
+
+
+LONG_NAME = "2 Part3提取自The Sensorium Of The Drone And Communities (Kathrin Maurer).pdf"
+
+
+def test_detail_never_scrolls_horizontally_at_narrow_width_with_a_long_task_name(env, app):  # noqa: F811
+    from PySide6.QtWidgets import QScrollArea
+
+    from tests.project_language_fixture import add_job
+
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    add_job(core, "long-name", LONG_NAME, project_id=ids["device"],
+            terms=[{"source": "drone", "target": "无人机", "preferred": "无人机",
+                    "status": "locked", "behavior": "translate"}])
+    add_job(core, "long-unsorted", LONG_NAME, project_id=None)
+    from folith.qt.projects_view import ProjectsView
+
+    for width in (1000, 1280):
+        view = ProjectsView(margins=(20, 12, 20, 12))
+        view.resize(width - 220, 600)  # 窗口去掉侧栏后的页面宽度
+        view.show()
+        view.apply_overview(adapter.projects_overview())
+        for key in (ids["device"], "unsorted"):
+            _load(view, adapter, key)
+            for tab in ("overview", "terms", "tm", "review"):
+                view.tab_bar.set_value(tab)
+                view._tab_changed(tab)
+                app.processEvents()
+                for area in view.findChildren(QScrollArea):
+                    if area.isVisible():
+                        bar = area.horizontalScrollBar()
+                        assert not bar.isVisible() and bar.maximum() == 0, (width, key, tab)
+        _load(view, adapter, ids["device"])
+        view.tab_bar.set_value("overview")
+        view._tab_changed("overview")
+        app.processEvents()
+        columns = view.stat_grid.columns()
+        if width >= 1280:
+            assert columns == 4 and view.card_grid.columns() == 2
+        if width <= 1000:
+            assert columns in (2, 1) and view.card_grid.columns() == 1
+        view.close()
+

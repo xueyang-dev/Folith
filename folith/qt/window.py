@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.workbench)
         # 项目是一页（主从布局：左边项目列表，右边概览 / 术语库 / 翻译记忆 / 待审核），
         # 与任务库共用左侧侧栏。术语与翻译记忆住在项目里，不再有单独的一页。
-        self.projects = ProjectsView(self, margins=(20, 12, 20, 12))
+        self.projects = ProjectsView(self, margins=(8, 12, 12, 12))
         self.stack.addWidget(self.projects)
         # 侧栏属于窗口而不是任务库：任务库 / 项目页切换时它一直在左侧，
         # 「任务库」导航项就是返回入口。进入工作台时收起，把宽度留给段落网格。

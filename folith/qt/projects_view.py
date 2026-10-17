@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMenu, QPushButton, QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
@@ -40,6 +40,66 @@ PAGE = 300                                  # 一次最多摆出的行数；筛�
 #: 单元格文字永远靠列的左缘（绝对左，不随文字方向翻转）；文字自己的方向不变。
 LEADING = (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute
            | Qt.AlignmentFlag.AlignVCenter)
+
+
+def _elide(text: str = "", role: str = "body") -> style_module.ElideLabel:
+    """单行省略标签：长文件名省略显示，不撑开所在的行（宽度跟着容器走）。"""
+    label = style_module.ElideLabel(text)
+    label.setAlignment(LEADING)
+    style_module.set_text_role(label, role)
+    return label
+
+
+class _Reflow(QWidget):
+    """按宽度换行的网格：每格至少 ``min_item`` 宽，放不下就少放几列（2×2、竖排……）。
+
+    内容宽度永远跟着视口走，不会撑出横向滚动条。``columns_for`` 可以限定允许的列数
+    （例如四张统计卡只允许 4 / 2 / 1 列）。
+    """
+
+    def __init__(self, items: list[QWidget], *, min_item: int, spacing: int = 10,
+                 weights: tuple[int, ...] = (), allowed: tuple[int, ...] = ()) -> None:
+        super().__init__()
+        self.setObjectName("transparent")
+        self._items = items
+        self._min_item = min_item
+        self._weights = weights
+        self._allowed = allowed or tuple(range(len(items), 0, -1))
+        self._cols = 0
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(spacing)
+        self._grid.setVerticalSpacing(spacing)
+        for item in items:
+            item.setParent(self)
+        self._arrange(10_000)
+
+    def columns_for(self, width: int) -> int:
+        fit = max(1, width // self._min_item)
+        return next((c for c in sorted(self._allowed, reverse=True) if c <= fit), 1)
+
+    def _arrange(self, width: int) -> None:
+        cols = self.columns_for(width)
+        if cols == self._cols:
+            return
+        self._cols = cols
+        for item in self._items:
+            self._grid.removeWidget(item)
+        for column in range(len(self._items) + 1):
+            self._grid.setColumnStretch(column, 0)
+        for index, item in enumerate(self._items):
+            self._grid.addWidget(item, index // cols, index % cols)
+        for column in range(cols):
+            weight = self._weights[column] if cols == len(self._items) and \
+                column < len(self._weights) else 1
+            self._grid.setColumnStretch(column, weight)
+
+    def columns(self) -> int:
+        return self._cols
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        self._arrange(event.size().width())
 
 
 def _cell(text: object) -> QTableWidgetItem:
@@ -71,6 +131,8 @@ def _scroll_area() -> QScrollArea:
     area.setWidgetResizable(True)
     area.setFrameShape(QFrame.Shape.NoFrame)
     area.viewport().setAutoFillBackground(False)
+    # 详情的内容宽度永远跟着视口走：不出横向滚动条。
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     return area
 
 
@@ -87,6 +149,8 @@ def _table(headers: list[str]) -> QTableWidget:
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     table.setShowGrid(False)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setTextElideMode(Qt.TextElideMode.ElideRight)
     table.horizontalHeader().setStretchLastSection(True)
     table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
     table.horizontalHeader().setDefaultAlignment(
@@ -117,9 +181,8 @@ class _ListRow(style_module.Surface):
         row.addWidget(icons.IconLabel(icon, 18, "accent" if selected else tone))
         text = QVBoxLayout()
         text.setSpacing(0)
-        title = _text(name, "name")
-        title.setMinimumWidth(0)
-        self.meta = _text(meta, "time")
+        title = _elide(name, "name")
+        self.meta = _elide(meta, "time")
         text.addWidget(title)
         text.addWidget(self.meta)
         row.addLayout(text, 1)
@@ -186,12 +249,12 @@ class ProjectsView(QWidget):
     # ================= 左栏 =================
     def _build_nav(self) -> QWidget:
         nav = QWidget()
-        nav.setFixedWidth(264)
+        nav.setFixedWidth(232)
         box = QVBoxLayout(nav)
-        box.setContentsMargins(12, 12, 12, 8)
+        box.setContentsMargins(4, 12, 8, 8)
         box.setSpacing(2)
         head = QHBoxLayout()
-        head.setContentsMargins(8, 0, 0, 8)
+        head.setContentsMargins(10, 0, 0, 8)
         title = _text(i18n.tr('项目'), "page-title")
         head.addWidget(title, 1)
         self.new_button = style_module.icon_button("plus", i18n.tr('新建项目'))
@@ -316,7 +379,7 @@ class ProjectsView(QWidget):
     def _build_content(self) -> QWidget:
         content = QWidget()
         box = QVBoxLayout(content)
-        box.setContentsMargins(28, 14, 20, 12)
+        box.setContentsMargins(24, 14, 16, 12)
         box.setSpacing(12)
         head = QHBoxLayout()
         titles = QVBoxLayout()
@@ -340,6 +403,9 @@ class ProjectsView(QWidget):
         self.tab_bar.changed.connect(self._tab_changed)
         box.addWidget(self.tab_bar, 0, Qt.AlignmentFlag.AlignLeft)
         self.pages = QStackedWidget()
+        # 页签的最小宽度不参与窗口的最小宽度：窄窗口里内容跟着视口收缩，不撑出横向滚动。
+        self.pages.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.pages.setMinimumWidth(0)
         self.page_overview = self._build_overview()
         self.page_terms = self._build_terms()
         self.page_tm = self._build_tm()
@@ -357,6 +423,7 @@ class ProjectsView(QWidget):
             action=i18n.tr('新建项目…'))
         self.empty.actionTriggered.connect(self._create)
         box.addWidget(self.empty, 1)
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         return content
 
     def _request_detail(self) -> None:
@@ -450,6 +517,7 @@ class ProjectsView(QWidget):
         holder.setObjectName("transparent")
         self.overview_box = QVBoxLayout(holder)
         self.overview_box.setContentsMargins(0, 0, 8, 0)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.overview_box.setSpacing(14)
         scroll.setWidget(holder)
         return scroll
@@ -506,9 +574,6 @@ class ProjectsView(QWidget):
             self.overview_box.addWidget(self._notice_row(
                 i18n.tr('语言方向是按这个项目里的任务推断的（{v0}）。', v0=_dir(project["direction_label"])),
                 i18n.tr('确认方向…'), self._set_direction))
-        tiles = QGridLayout()
-        tiles.setHorizontalSpacing(10)
-        tiles.setVerticalSpacing(10)
         review_total = int((detail.get("review") or {}).get("total") or 0)
         stats = (
             (i18n.tr('术语库'), str(len(detail.get("terms") or [])), i18n.tr('新任务自动使用'), "terms"),
@@ -516,20 +581,17 @@ class ProjectsView(QWidget):
             (i18n.tr('待审核'), str(review_total),
              i18n.tr('来自 {v0} 个任务', v0=detail.get("review_tasks", 0)), "review"),
             (i18n.tr('风格规则'), str(detail.get("style_rule_count", 0)), i18n.tr('审校中确认'), ""))
-        for column, (label, value, hint, target) in enumerate(stats):
-            tiles.addWidget(self._stat_tile(label, value, hint, target), 0, column)
-            tiles.setColumnStretch(column, 1)
-        self.overview_box.addLayout(tiles)
+        self.stat_grid = _Reflow([self._stat_tile(*stat) for stat in stats],
+                                 min_item=150, allowed=(4, 2, 1))
+        self.overview_box.addWidget(self.stat_grid)
         conflicts = int(detail.get("conflict_count") or 0)
         if conflicts:
             self.overview_box.addWidget(self._notice_row(
                 i18n.tr('有 {v0} 条术语的译名和术语库里的不一致，等你决定用哪一个。', v0=conflicts),
                 i18n.tr('逐条处理'), self._open_conflicts, "warn"))
-        columns = QHBoxLayout()
-        columns.setSpacing(14)
-        columns.addWidget(self._tasks_card(), 3)
-        columns.addWidget(self._log_card(), 2)
-        self.overview_box.addLayout(columns)
+        self.card_grid = _Reflow([self._tasks_card(), self._log_card()], min_item=360,
+                                 spacing=14, weights=(3, 2), allowed=(2, 1))
+        self.overview_box.addWidget(self.card_grid)
         self.overview_box.addStretch(1)
 
     def _stat_tile(self, label: str, value: str, hint: str, target: str) -> QWidget:
@@ -563,7 +625,7 @@ class ProjectsView(QWidget):
             row = QHBoxLayout()
             row.setSpacing(8)
             row.addWidget(icons.IconLabel("file-text", 16, "text-secondary"))
-            name = _text(task["name"], "body")
+            name = _elide(task["name"], "body")
             row.addWidget(name, 1)
             tone = ("error" if task.get("runtime_status") == "failed" else
                     "active" if task.get("active") else
@@ -617,7 +679,7 @@ class ProjectsView(QWidget):
         self.term_query.setClearButtonEnabled(True)
         self.term_query.textChanged.connect(lambda _t: self._fill_terms())
         bar.addWidget(self.term_query, 1)
-        self.term_note = _text("", "time")
+        self.term_note = _elide("", "time")
         bar.addWidget(self.term_note)
         self.term_import = QPushButton(i18n.tr('从文件导入…'))
         self.term_import.setToolTip(i18n.tr('导入别处导出的项目记忆文件（只增不改）'))
@@ -631,6 +693,13 @@ class ProjectsView(QWidget):
         box.addLayout(bar)
         self.term_table = _table([i18n.tr('原文'), i18n.tr('译名'), i18n.tr('领域'),
                                   i18n.tr('怎么来的'), i18n.tr('用到')])
+        terms_header = self.term_table.horizontalHeader()
+        terms_header.setStretchLastSection(False)
+        terms_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        terms_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        terms_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        terms_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        terms_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.term_table.itemSelectionChanged.connect(self._term_selected)
         box.addWidget(self.term_table, 1)
         self.term_detail = style_module.Card()
@@ -658,6 +727,11 @@ class ProjectsView(QWidget):
         self.term_empty.actionTriggered.connect(lambda: self._add_term())
         box.addWidget(self.term_empty, 1)
         return page
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        # 窄窗口：「怎么来的」让位给原文 / 译名（来源在下方的详情里仍可看到）。
+        self.term_table.setColumnHidden(3, event.size().width() < 232 + 620)
 
     def _fill_terms(self) -> None:
         terms = self._detail.get("terms") or []
@@ -695,7 +769,10 @@ class ProjectsView(QWidget):
         self.term_detail.setVisible(bool(term) and bool(self._detail.get("terms")))
         if not term:
             return
-        lines = []
+        origin = i18n.tr_dynamic(term["origin_text"])
+        if term["origin_job"]:
+            origin += " · " + term["origin_job"].rsplit(".", 1)[0]
+        lines = [(i18n.tr('怎么来的'), origin)]
         if term["forbidden"]:
             lines.append((i18n.tr('不要译成'), "、".join(term["forbidden"])))
         if term["note"]:
@@ -703,8 +780,6 @@ class ProjectsView(QWidget):
         if term["used_tasks"]:
             lines.append((i18n.tr('出现在'), "　".join(
                 f"{name.rsplit('.', 1)[0]} · {i18n.tr('{v0} 处', v0=n)}" for name, n in term["used_tasks"])))
-        if not lines:
-            lines.append((i18n.tr('详情'), i18n.tr('没有备注或禁用译名。')))
         for label, value in lines:
             row = QHBoxLayout()
             title = _text(label, "label")
@@ -847,22 +922,27 @@ class ProjectsView(QWidget):
         head.addWidget(icons.IconLabel("file-text", 16, "text-secondary"))
         names = QVBoxLayout()
         names.setSpacing(0)
-        names.addWidget(_text(task["name"], "name"))
-        names.addWidget(_text(
+        names.addWidget(_elide(task["name"], "name"))
+        names.addWidget(_elide(
             f"{_dir(task['direction_label'])} · "
             + i18n.tr('{v0} 条术语，{v1} 条已锁定', v0=task["term_count"], v1=task["locked_count"]),
             "time"))
         head.addLayout(names, 1)
+        box.addLayout(head)
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(16, 0, 14, 8)
+        buttons.setSpacing(8)
+        buttons.addStretch(1)
         open_button = QPushButton(i18n.tr('打开任务'))
         style_module.set_button(open_button, "plain", small=True)
         open_button.clicked.connect(lambda _c=False, j=task["job_id"]: self.openJobRequested.emit(j, -1))
-        head.addWidget(open_button)
+        buttons.addWidget(open_button)
         make = QPushButton(i18n.tr('用这个任务新建项目…'))
         style_module.set_button(make, "secondary", small=True)
         make.setIcon(icons.icon("folder", 14, "accent"))
         make.clicked.connect(lambda _c=False, j=task["job_id"]: self.newFromTaskRequested.emit(j))
-        head.addWidget(make)
-        box.addLayout(head)
+        buttons.addWidget(make)
+        box.addLayout(buttons)
         grid = QGridLayout()
         grid.setContentsMargins(16, 4, 16, 0)
         grid.setHorizontalSpacing(16)
@@ -872,6 +952,8 @@ class ProjectsView(QWidget):
         grid.setColumnStretch(0, 6)
         grid.setColumnStretch(1, 5)
         grid.setColumnStretch(2, 2)
+        grid.setColumnMinimumWidth(2, 84)
+        grid.setColumnMinimumWidth(3, 32)
         for r, term in enumerate(task["terms"], start=1):
             grid.addWidget(_text(term["source"], "name"), r, 0)
             grid.addWidget(_text(term["target"], "body"), r, 1)
@@ -895,18 +977,17 @@ class ProjectsView(QWidget):
         self.basis_bar.changed.connect(self._basis_changed)
         bar.addWidget(self.basis_bar)
         bar.addStretch(1)
-        self.batch_button = QPushButton(i18n.tr('批量收进…'))
-        self.batch_button.clicked.connect(self._batch_accept)
-        bar.addWidget(self.batch_button)
         box.addLayout(bar)
         note_row = QHBoxLayout()
-        self.review_note = _text("", "time")
+        self.review_note = _elide("", "time")
+        self.batch_button = QPushButton(i18n.tr('批量收进…'))
+        self.batch_button.clicked.connect(self._batch_accept)
         self.singles_button = QPushButton("")
         style_module.set_button(self.singles_button, "plain", small=True)
         self.singles_button.clicked.connect(self._toggle_singles)
-        note_row.addWidget(self.review_note)
+        note_row.addWidget(self.review_note, 1)
         note_row.addWidget(self.singles_button)
-        note_row.addStretch(1)
+        note_row.addWidget(self.batch_button)
         box.addLayout(note_row)
         self.review_tree = _table(["", i18n.tr('候选'), i18n.tr('建议译法'),
                                    i18n.tr('依据'), i18n.tr('出现')])
@@ -917,7 +998,7 @@ class ProjectsView(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.review_tree.setColumnWidth(3, 150)
+        self.review_tree.setColumnWidth(3, 124)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.review_tree.itemSelectionChanged.connect(self._review_selected)
         box.addWidget(self.review_tree, 1)
@@ -951,12 +1032,18 @@ class ProjectsView(QWidget):
         self.task_button.clicked.connect(lambda: self._decide_current("task_only"))
         self.reject_button.clicked.connect(lambda: self._decide_current("rejected"))
         self.look_button.clicked.connect(self._look)
-        for widget in (self.name_label, self.name_edit, self.accept_button, self.task_button):
-            actions.addWidget(widget)
-        actions.addStretch(1)
-        actions.addWidget(self.look_button)
-        actions.addWidget(self.reject_button)
+        self.name_edit.setMinimumWidth(80)
+        actions.addWidget(self.name_label)
+        actions.addWidget(self.name_edit, 1)
+        actions.addWidget(self.accept_button)
         detail.addLayout(actions)
+        more_actions = QHBoxLayout()
+        more_actions.setSpacing(8)
+        more_actions.addWidget(self.task_button)
+        more_actions.addStretch(1)
+        more_actions.addWidget(self.look_button)
+        more_actions.addWidget(self.reject_button)
+        detail.addLayout(more_actions)
         box.addWidget(self.review_detail)
         self.review_empty = style_module.EmptyState(
             icon="sparkles", page=True, title=i18n.tr('没有待审核的候选词条'),
