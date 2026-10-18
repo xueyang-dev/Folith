@@ -7393,6 +7393,17 @@ def _job_execution_alive(job_id):
     return owner != os.getpid() and _runtime_pid_alive(owner)
 
 
+def _runtime_live_state(runtime):
+    """Recover an old false-stall label without losing cancel/pause intent."""
+    if runtime.get("cancel_requested"):
+        status, label = "cancelling", "正在取消"
+    elif runtime.get("pause_requested"):
+        status, label = "pausing", "正在暂停"
+    else:
+        status, label = "running", runtime.get("operation_label") or "正在处理"
+    return {"status": status, "phase": status, "phase_label": label}
+
+
 def get_job_runtime_status(job_id, state=None):
     """Return the durable runtime status and reconcile dead local workers."""
     state = state if isinstance(state, dict) else load_job_state(job_id)
@@ -7405,6 +7416,10 @@ def get_job_runtime_status(job_id, state=None):
     if status == "completed" and state and _annotation_blocks_completion(state):
         return {**runtime, "status": "idle_incomplete", "phase": "idle_incomplete",
                 "phase_label": "正文已完成，标注仍有失败批次"}
+    if status == "stalled" and is_job_worker_alive(job_id):
+        # Old clients could publish stalled while this very thread kept running.
+        # Reconcile the view immediately; its heartbeat repairs durable state.
+        return {**runtime, **_runtime_live_state(runtime)}
     if status in RUNTIME_ACTIVE_STATUSES:
         worker = runtime.get("worker") or {}
         pid = worker.get("owner_pid")
@@ -7418,9 +7433,16 @@ def get_job_runtime_status(job_id, state=None):
         if status == "resume_requested" and not pid \
                 and transition_age is not None and transition_age <= RUNTIME_STALL_SECONDS:
             return runtime
+        # A live local execution is stronger evidence than a delayed heartbeat.
+        # CPU-heavy extraction and temporary file access failures are not proof
+        # that a worker stopped. Progress also proves a foreign owner is active.
+        if registered or is_job_worker_alive(job_id):
+            return runtime
         if not _runtime_pid_alive(pid):
             return _runtime_mark_lost(job_id, "interrupted",
                                    _lost_worker_message(runtime, state))
+        if last_progress and (now - last_progress).total_seconds() <= RUNTIME_STALL_SECONDS:
+            return runtime
         if lease and lease < now or heartbeat and (
                 now - heartbeat).total_seconds() > RUNTIME_STALL_SECONDS:
             if registered or _job_execution_alive(job_id):
@@ -7502,6 +7524,15 @@ def primary_runtime_action_for_status(status):
     return PRIMARY_RUNTIME_ACTIONS.get(str(status or ""))
 
 
+def runtime_actions_for_job(job_id, status):
+    """Apply execution ownership to the status-only action policy."""
+    actions = runtime_actions_for_status(status)
+    if status != "paused" and {"retry", "resume"}.intersection(actions) \
+            and _job_execution_alive(job_id):
+        actions = [action for action in actions if action not in {"retry", "resume"}]
+    return actions
+
+
 def build_job_runtime_view(job_id, state=None):
     """Canonical user-facing runtime view shared by every product surface."""
     state = state if isinstance(state, dict) else load_job_state(job_id)
@@ -7564,7 +7595,12 @@ def build_job_runtime_view(job_id, state=None):
         detail = error.get("message") if isinstance(error, dict) else str(error)
     else:
         detail = runtime.get("phase_label") or ""
+    actions = runtime_actions_for_job(job_id, status)
     primary_action = primary_runtime_action_for_status(status)
+    if primary_action not in actions:
+        primary_action = None
+    if status == "stalled" and "retry" not in actions:
+        detail = "后台任务仍在运行，正在等待新的运行信号；请等待当前步骤结束或取消任务。"
     return {
         "status": status,
         "workflow_outcomes": workflow_outcomes(state or {}),
@@ -7581,7 +7617,7 @@ def build_job_runtime_view(job_id, state=None):
         "progress_completed": completed,
         "progress_total": total,
         "stage_progress": runtime.get("stage_progress") or {},
-        "available_actions": runtime_actions_for_status(status),
+        "available_actions": actions,
         "primary_action": primary_action,
         "show_no_worker_warning": status in {
             "idle_incomplete", "interrupted", "cancelled"},
@@ -7799,16 +7835,41 @@ def _academic_resume_context(state, runtime=None):
     }
 
 
-def _runtime_heartbeat_loop(job_id, stop_event):
+def _runtime_heartbeat_loop(job_id, stop_event, worker_id=None):
+    failure_logged = False
     while not stop_event.wait(RUNTIME_HEARTBEAT_SECONDS):
-        current = load_runtime_state(job_id)
-        if current.get("status") not in RUNTIME_ACTIVE_STATUSES:
-            return
         try:
             _workflow_errors.check(job_id)
-            update_runtime_state(job_id, heartbeat=True)
+            with _RUNTIME_LOCK:
+                current = load_runtime_state(job_id)
+                owner_id = (current.get("worker") or {}).get("worker_id")
+                if worker_id and owner_id and owner_id != worker_id:
+                    return
+                if current.get("status") not in RUNTIME_ACTIVE_STATUSES | {"stalled"}:
+                    # A transient read can return idle defaults. Only the parent
+                    # worker's stop event determines this thread's lifetime.
+                    # Terminal states must never be resurrected by a heartbeat.
+                    if current.get("status") == "idle" and not failure_logged:
+                        _append_runtime_technical_log(job_id, "heartbeat state unavailable; will retry")
+                        failure_logged = True
+                    continue
+                changes = _runtime_live_state(current) if current.get("status") == "stalled" else {}
+                update_runtime_state(job_id, heartbeat=True, **changes)
+            if failure_logged:
+                _append_runtime_technical_log(job_id, "heartbeat update recovered")
+                failure_logged = False
         except _workflow_errors.WorkflowStopped:
             return
+        except Exception as exc:  # heartbeat failure must not silently kill monitoring
+            if not failure_logged:
+                frames = traceback.extract_tb(exc.__traceback__)
+                location = " -> ".join(f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+                                       for frame in frames)
+                _append_runtime_technical_log(
+                    job_id, f"heartbeat update failed: {type(exc).__name__}"
+                    f" errno={getattr(exc, 'errno', None)} winerror={getattr(exc, 'winerror', None)}"
+                    f" at {location}; will retry")
+                failure_logged = True
 
 
 def _runtime_status_callback(job_id, state, label):
@@ -7866,7 +7927,9 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                     segment_operation=None):
     stop_event = threading.Event()
     heartbeat = threading.Thread(target=_runtime_heartbeat_loop,
-                                 args=(job_id, stop_event), daemon=True)
+                                 args=(job_id, stop_event,
+                                       getattr(threading.current_thread(), "worker_id", None)),
+                                 daemon=True)
     _RUNTIME_CTX.job_id = job_id
     set_llm_base_url(base_url)
     set_llm_reasoning_effort((pipeline_kwargs or {}).get("reasoning_effort"))

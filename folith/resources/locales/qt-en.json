@@ -1985,5 +1985,7 @@
   "资源管理器": "File Explorer",
   "文件管理器": "file manager",
   "电脑": "computer",
-  "偏好设置…": "Preferences…"
+  "偏好设置…": "Preferences…",
+  "后台任务仍在运行，请等待当前步骤结束或取消任务后再重试。": "The background task is still running. Wait for this step to finish, or cancel it before retrying.",
+  "后台任务仍在运行，正在等待新的运行信号；请等待当前步骤结束或取消任务。": "The background task is still running and waiting for a new activity signal. Wait for this step to finish or cancel the task."
 }

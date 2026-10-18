@@ -151,7 +151,7 @@ class _RuntimeTelemetryCoalescer:
             pass
         writer = self._writer or _c.update_runtime_state
         try:
-            writer(self.job_id, event=event, event_name=event_name, **changes)
+            writer(self.job_id, progress=True, event=event, event_name=event_name, **changes)
             self._stats["flushes"] += 1
             self._stats["events"] += 1
         except Exception:  # noqa: BLE001 - telemetry must never break a request

@@ -1773,6 +1773,21 @@ def test_action_buttons_follow_the_core_runtime_contract(client):
         assert views.RUNTIME_STATUS_TONES[label] == "warn"
 
 
+@pytest.mark.parametrize("alive,expected", [
+    (True, "后台任务仍在运行，请等待当前步骤结束或取消任务后再重试。"),
+    (False, "当前没有可重试的失败步骤。"),
+])
+def test_rejected_retry_explains_live_worker(client, monkeypatch, alive, expected):
+    window, adapter = client["window"], client["adapter"]
+    window._current_job_id = "retry-explanation"
+    monkeypatch.setattr(adapter, "retry_job", lambda job: False)
+    monkeypatch.setattr(adapter, "job_is_alive", lambda job: alive)
+    notices = []
+    monkeypatch.setattr(window, "_notice", lambda message, **kwargs: notices.append(message))
+    window.retry_job()
+    assert notices == [expected]
+
+
 def test_blocking_count_only_counts_unresolved_findings(client):
     """步骤条上「必须处理 N」必须只数**未解决**的阻断项。
 

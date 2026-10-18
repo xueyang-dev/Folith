@@ -57,5 +57,5 @@ with the offscreen backend. Offscreen/mocked checks do not validate real Cocoa
 title bars, native file panels, taskbar integration or a rebuilt installer.
 Those require native acceptance on each operating system.
 
-The live-worker/stalled-state defect is tracked separately in GitHub issue #13;
-this UI change does not claim to fix its initial heartbeat failure.
+The live-worker/stalled-state defect in GitHub issue #13 is addressed by the
+follow-up documented in [Heartbeat recovery](issue-13-heartbeat-recovery.md).

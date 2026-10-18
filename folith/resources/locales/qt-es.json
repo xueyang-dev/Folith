@@ -1986,5 +1986,7 @@
   "资源管理器": "Explorador de archivos",
   "文件管理器": "gestor de archivos",
   "电脑": "ordenador",
-  "偏好设置…": "Preferencias…"
+  "偏好设置…": "Preferencias…",
+  "后台任务仍在运行，请等待当前步骤结束或取消任务后再重试。": "La tarea en segundo plano sigue en ejecución. Espera a que termine este paso o cancélala antes de reintentar.",
+  "后台任务仍在运行，正在等待新的运行信号；请等待当前步骤结束或取消任务。": "La tarea en segundo plano sigue en ejecución y espera una nueva señal de actividad. Espera a que termine este paso o cancela la tarea."
 }

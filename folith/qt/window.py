@@ -1829,7 +1829,10 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('已准备重试当前步骤，请点击「开始 / 继续翻译」。'))
             self.refresh_workbench(force=True)
         else:
-            self._notice(i18n.tr('当前没有可重试的失败步骤。'), error=True)
+            if self._current_job_id and adapter.job_is_alive(self._current_job_id):
+                self._notice(i18n.tr('后台任务仍在运行，请等待当前步骤结束或取消任务后再重试。'), error=True)
+            else:
+                self._notice(i18n.tr('当前没有可重试的失败步骤。'), error=True)
 
     def _run_with_busy(self, label: str, message: str, fn, *args,
                        on_done=None, progress_text=None, for_job: str | None = None,
