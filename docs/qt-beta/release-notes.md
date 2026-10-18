@@ -5,10 +5,10 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 
 ## 入口
 
-- 本说明只描述 DMG 内的 `Folith.app`：Qt Widgets 原生客户端（bundle id `dev.folith.qt`），由 `packaging/folith-qt.spec` 从 `qt_client.py` 冻结。这是 0.6.0 Beta 唯一的桌面入口。
+- 本说明只描述 DMG 内的 `Folith.app`：Qt Widgets 原生客户端（bundle id `dev.folith.qt`），由 `packaging/folith-qt.spec` 从 `qt_client.py` 冻结。这是唯一的桌面入口。
 - 源码等价入口：`python -m folith.qt`（或 `python qt_client.py`），需另装 PySide6。
-- 源码与 Pip 安装的 `folith` 命令（含兼容别名）以及 `start.sh` / `start.command` / `start.bat` 仍启动旧 Streamlit 启动器（`gui.py`，保留一个版本），**不是**本客户端，Pip 安装说明也不能当作本客户端的安装说明。
-- 旧 Streamlit + pywebview 桌面壳（`Folith-<版本>-macos-arm64.dmg`）已退役，`docs/desktop-d3/` 下的说明只作历史基线。
+- Pip 安装的 `folith` 命令（含兼容别名 `foliothread`）启动同一个 Qt 客户端。
+- 旧 Streamlit 界面与 pywebview 桌面壳已从源码中移除，`docs/desktop-d3/` 下的说明只作历史基线。
 
 ## 本候选范围
 

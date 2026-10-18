@@ -438,29 +438,6 @@ def test_legacy_state_without_ocr_mode_defaults_to_auto():
     assert state.get("ocr_mode") == "auto"
 
 
-def test_new_task_exposes_ocr_mode_selector(tmp_path, monkeypatch):
-    from streamlit.testing.v1 import AppTest
-    from pathlib import Path
-
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
-    at = AppTest.from_file(str(app_path), default_timeout=60)
-    at.session_state["app_view"] = "new"
-    at.session_state["workspace_mode"] = False
-    at.session_state["task_step"] = 1
-    at.session_state["ocr_mode"] = "force"
-    at.session_state["task_files"] = [{"name": "scan.pdf", "bytes": b"%PDF-1.4"}]
-    at.run()
-    assert not at.exception, at.exception
-    keys = {widget.key for widget in at.selectbox}
-    assert "ocr_mode" in keys
-    selector = next(widget for widget in at.selectbox if widget.key == "ocr_mode")
-    assert selector.value == "force"
-    options = list(selector.proto.options)
-    assert any("Auto" in option for option in options)
-    assert any("Text layer only" in option for option in options)
-
-
 def test_real_clean_chinese_pdf_is_accepted(monkeypatch, fake_ocr):
     import fitz
     document = fitz.open()

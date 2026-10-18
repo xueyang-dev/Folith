@@ -417,95 +417,6 @@ def fixtures_dir(tmp_path_factory):
     return docx, glossary
 
 
-def test_ui_projects_surface_lists_and_opens_a_project(fixtures_dir):
-    """项目列表必须给出记忆摘要，并且能进入项目详情看到共享记忆。"""
-    from streamlit.testing.v1 import AppTest
-
-    with project_env():
-        project = core.create_project("学术专著")
-        seeded = project_module.merge_confirmed_knowledge(
-            core.load_project(project["project_id"]),
-            glossary=[LOCKED],
-            style_rules=[{"rule": "保持学术书面语", "status": "confirmed"}],
-            actor="reviewer", source_job_id="earlier")
-        core.save_project(seeded)
-        state = core.new_job_state("in-project.docx")
-        state["project_id"] = project["project_id"]
-        core.save_job_state("member", state)
-
-        at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
-        at.session_state["app_view"] = "projects"
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-
-        page = "\n".join(str(m.value) for m in at.markdown)
-        assert "学术专著" in page, "项目列表必须显示项目名"
-        assert "术语 1 · 规则 1" in page, \
-            "项目卡片必须显示已积累的记忆摘要"
-
-        at.button(key=f"project_open_{project['project_id']}").click()
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        assert at.session_state["active_project_id"] == project["project_id"]
-        assert "学术专著" in "\n".join(str(m.value) for m in at.markdown)
-
-        # 概览是工作中心：给出真实的知识统计；「任务」tab 只列属于本项目的任务。
-        overview = "\n".join(str(m.value) for m in at.markdown)
-        assert "工作概览" in overview and "项目知识" in overview, overview[:300]
-        # 每张 summary card = label / 主值 / 短注三元组，说明保持短句。
-        for label, value, note in (("术语", 1, "已确认"), ("规则", 1, "已确认"),
-                                   ("记忆", 0, "尚无")):
-            assert (f'<div class="tp-stat-label">{label}</div>'
-                    f'<div class="tp-stat-value">{value}</div>'
-                    f'<div class="tp-stat-note">{note}</div>') in overview, label
-        at.button(key="project_tab_tasks").click()
-        at.run()
-        assert at.button(key="project_task_open_member") is not None, \
-            [b.key for b in at.button]
-
-
-def test_ui_promotion_moves_confirmed_terms_into_project_memory():
-    """Memory gate 在界面上可用：提升后项目记忆才拥有可注入的术语。"""
-    from streamlit.testing.v1 import AppTest
-
-    with project_env(OfflineProvider()):
-        project = core.create_project("promote-ui")
-        state = core.new_job_state("promote.docx")
-        state.update({"project_id": project["project_id"], "p1_done": True,
-                      "p2_done": False, "quality_mode": True,
-                      "stage": "GLOSSARY_PENDING",
-                      "paras": ["The canopy closure index was recomputed."],
-                      "glossary": [{**LOCKED, "id": "t1", "occurrences": [0]}]})
-        core.save_job_state("promote-job", state)
-        core.save_source("promote-job", b"source")
-
-        at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
-        at.session_state["active_job_id"] = "promote-job"
-        at.session_state["app_view"] = "workspace"
-        at.session_state["workspace_mode"] = True
-        at.session_state["workspace_section"] = "terms"
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-
-        promote = next((b for b in at.button if b.label == "提升到项目记忆"), None)
-        assert promote is not None, \
-            f"术语页必须提供提升到项目记忆的动作：{[b.label for b in at.button]}"
-        assert promote.disabled is False, "存在锁定术语时必须允许提升"
-        # 界面必须说明"会提升什么"，而不是给一个语义模糊的按钮
-        page = "\n".join(str(c.value) for c in at.caption)
-        assert "可提升" in page and "锁定术语 1 条" in page, page[:200]
-        assert "候选术语与未审校译文不会进入项目记忆" in page
-
-        promote.click()
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-
-        stored = core.load_project(project["project_id"])
-        assert [e["source"] for e in stored["glossary"]] == ["canopy closure"]
-        assert core.project_injection(project["project_id"])["glossary"], \
-            "提升后必须能注入到同项目的新任务"
-
-
 # ================= 翻译记忆按项目隔离 =================
 
 SIGNAL = "Signal sentence about canopy structure and light competition."
@@ -651,60 +562,6 @@ def test_tm_writeback_lands_in_the_job_project():
             "不得写进默认项目的（历史全局）记忆"
 
 
-def test_ui_library_shows_per_project_memory():
-    """翻译记忆必须按项目展示，而不是只给一个全局数字。"""
-    from streamlit.testing.v1 import AppTest
-
-    with project_env():
-        project = core.create_project("project-a")
-        core.save_tm({"s1": {"target": "t1", "reviewed": True}},
-                     project["project_id"])
-        core.save_tm({"legacy": {"target": "旧译文", "reviewed": True}},
-                     core.DEFAULT_PROJECT_ID)
-
-        at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
-        at.session_state["app_view"] = "library"
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-
-        # 按项目统计现在属于「翻译记忆」Tab（一级 Tab 之间职责分离）。
-        at.segmented_control[0].set_value("tm").run()
-        assert not at.exception, [e.value for e in at.exception]
-
-        metrics = {m.label: m.value for m in at.metric}
-        assert metrics.get("project-a") == "1", metrics
-        assert metrics.get(core.DEFAULT_PROJECT_NAME) == "1", metrics
-        assert any(s.label == "查看哪个项目的记忆" for s in at.selectbox), \
-            "必须可以选择查看哪个项目的记忆"
-
-
-def test_ui_project_can_adopt_system_memory():
-    """项目记忆 tab 必须提供显式的"并入系统工作区记忆"动作，并说明隔离事实。"""
-    with project_env():
-        project = core.create_project("project-a")
-        core.save_tm({"legacy": {"target": "旧译文", "reviewed": True}},
-                     core.DEFAULT_PROJECT_ID)
-
-        at = _project_detail(project["project_id"], tab="knowledge")
-        assert not at.exception, [e.value for e in at.exception]
-
-        # 并入动作住在「已审核记忆」模块里，而模块详情默认收起——先展开，
-        # 否则断言的是"没点开所以没有"，不是"能力缺失"。
-        at.button(key="pd_knowledge_toggle_memory").click()
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-
-        page = "\n".join(str(c.value) for c in at.caption)
-        assert "不会自动共享" in page, f"必须说明记忆按项目隔离：{page[:200]}"
-        adopt = next((b for b in at.button if "并入本项目" in b.label), None)
-        assert adopt is not None, f"缺少并入动作：{[b.label for b in at.button]}"
-
-        adopt.click()
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        assert "legacy" in core.load_tm(project["project_id"])
-
-
 # ================= 缺口一：批量移动任务 =================
 
 
@@ -798,36 +655,6 @@ def test_running_job_cannot_be_moved():
         assert result["skipped"][0]["reason"] == "任务正在运行，无法改归属"
         assert core.resolved_project_id(core.load_job_state("run")) == \
             project_a["project_id"], "被拒绝时归属不得改变"
-
-
-def test_ui_can_move_jobs_into_a_project():
-    """项目详情必须能批量移入任务，并显示任务当前所在项目。"""
-    from streamlit.testing.v1 import AppTest
-
-    with project_env():
-        project_a = core.create_project("project-a")
-        project_b = core.create_project("project-b")
-        for job_id in ("mv1", "mv2"):
-            state = core.new_job_state(f"{job_id}.docx")
-            state["project_id"] = project_b["project_id"]
-            core.save_job_state(job_id, state)
-
-        at = _project_detail(project_a["project_id"], tab="tasks")
-        assert not at.exception, [e.value for e in at.exception]
-
-        mover = next((m for m in at.multiselect if m.label == "选择要移入的任务"), None)
-        assert mover is not None, f"缺少批量移动控件：{[m.label for m in at.multiselect]}"
-        assert any("project-b" in str(option) for option in mover.options), \
-            "候选项必须标出任务当前所在项目"
-
-        mover.select(mover.options[0])
-        at.run()
-        go = next((b for b in at.button if b.label == "移入本项目"), None)
-        assert go is not None and not go.disabled
-        go.click()
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        assert len(core.list_project_jobs(project_a["project_id"])) == 1
 
 
 # ================= 缺口二：项目记忆导出 / 导入 =================
@@ -934,33 +761,6 @@ def test_import_can_rename_to_avoid_touching_an_existing_project():
         original = core.load_project(project["project_id"])
         assert original["name"] == "生态学专著"
         assert original["glossary"], "原项目不得被改名或清空"
-
-
-def test_ui_project_exports_and_imports_memory():
-    """项目页必须提供导出下载与导入入口（导入是 modal，不是首屏表单）。"""
-    from streamlit.testing.v1 import AppTest
-
-    with project_env():
-        project = _seed_portable_project()
-
-        detail = _project_detail(project["project_id"], tab="knowledge")
-        assert not detail.exception, [e.value for e in detail.exception]
-        labels = [d.label for d in getattr(detail, "download_button", [])]
-        assert any("导出项目记忆" in label for label in labels), labels
-
-        listing = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
-        listing.session_state["app_view"] = "projects"
-        listing.run()
-        assert not listing.exception, [e.value for e in listing.exception]
-        assert not getattr(listing, "file_uploader", []), \
-            "导入表单不得占据项目首屏"
-        next(b for b in listing.button
-             if b.key == "project_new_import").click()
-        listing.run()
-        assert not listing.exception, [e.value for e in listing.exception]
-        assert any("项目文件" in u.label
-                   for u in getattr(listing, "file_uploader", [])), \
-            "「新建项目」菜单必须提供导入入口"
 
 
 # ================= 缺口三：翻译记忆的排版等价匹配 =================
@@ -1272,94 +1072,6 @@ def test_delete_writes_a_recoverable_backup():
         assert report["glossary_added"] == 1
 
 
-def test_ui_project_archive_restore_and_guarded_delete():
-    """界面：设置 tab 给出归档 / 恢复 / 删除；删除必须二次确认后才可用。"""
-    with project_env():
-        project = core.create_project("生态学专著")
-
-        detail = _project_detail(project["project_id"], tab="settings")
-        assert not detail.exception, [e.value for e in detail.exception]
-
-        assert detail.button(key=f"settings_archive_{project['project_id']}") is not None, \
-            f"缺少归档入口：{[b.label for b in detail.button]}"
-        assert detail.button(key=f"settings_delete_{project['project_id']}") is not None
-        # 危险操作走 modal：二次确认（逐字输入项目名称）在弹窗里完成。
-        detail.button(key=f"settings_delete_{project['project_id']}").click()
-        detail.run()
-        assert not detail.exception, [e.value for e in detail.exception]
-        confirm = detail.button(key="project_form_confirm")
-        assert confirm.disabled is True, "未输入项目名称前删除必须禁用"
-        detail.text_input(key="project_form_confirm_name").set_value("生态学专著")
-        detail.run()
-        assert detail.button(key="project_form_confirm").disabled is False
-        detail.button(key="project_form_cancel").click()
-        detail.run()
-        assert core.load_project(project["project_id"]) is not None, "取消不得删除项目"
-
-        # 归档：可恢复，且不删除任何东西。
-        detail.button(key=f"settings_archive_{project['project_id']}").click()
-        detail.run()
-        detail.button(key="project_form_confirm").click()
-        detail.run()
-        assert core.load_project(project["project_id"]).get("archived_at")
-        assert detail.session_state["active_project_tab"] == "settings", \
-            "归档后停留在该项目的设置 tab（它仍然可以打开）"
-
-        at = _project_detail(project["project_id"], tab="settings")
-        assert at.button(key=f"settings_restore_{project['project_id']}") is not None, \
-            f"归档后必须能恢复：{[b.label for b in at.button]}"
-        at.button(key=f"settings_restore_{project['project_id']}").click()
-        at.run()
-        at.button(key="project_form_confirm").click()
-        at.run()
-        assert not core.load_project(project["project_id"]).get("archived_at")
-        assert project["project_id"] in [
-            p["project_id"] for p in core.list_active_projects()]
-
-        # 系统工作区不是项目：它进入 Task Inbox，不渲染项目设置 tab，
-        # 因此 archive / delete / rename 入口一概不存在。
-        system = _project_detail(core.SYSTEM_PROJECT_ID, tab="settings")
-        assert not system.exception, [e.value for e in system.exception]
-        keys = [b.key for b in system.button]
-        assert f"settings_archive_{core.SYSTEM_PROJECT_ID}" not in keys
-        assert f"settings_delete_{core.SYSTEM_PROJECT_ID}" not in keys
-        assert f"settings_rename_{core.SYSTEM_PROJECT_ID}" not in keys
-        assert all(b.key != "project_tab_settings" for b in system.button), \
-            "系统工作区不得渲染项目「设置」tab"
-
-
-def test_new_task_selector_only_offers_active_projects():
-    """新建任务不应把已归档项目作为可选项。"""
-    from docx import Document as Docx
-    from streamlit.testing.v1 import AppTest
-
-    with project_env() as tmp:
-        active = core.create_project("活动项目")
-        archived = core.create_project("已归档项目")
-        core.archive_project(archived["project_id"], True)
-        document = Docx()
-        document.add_paragraph("A sentence for the project selector.")
-        path = tmp / "pick.docx"
-        document.save(str(path))
-
-        at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
-        at.session_state["app_view"] = "new"
-        at.session_state["task_step"] = 1
-        at.session_state["task_files"] = [{"name": path.name,
-                                          "bytes": path.read_bytes()}]
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        # 项目上下文只有一个来源：侧栏 switcher。它的列表里不出现归档项目。
-        at.button(key="current_project_selector").click()
-        at.run()
-        rows = [b.label for b in at.button
-                if b.key and b.key.startswith("switcher_pick_")]
-        assert any("活动项目" in label for label in rows), rows
-        assert not any("已归档项目" in label for label in rows), \
-            f"已归档项目不应作为上下文：{rows}"
-        assert active["project_id"]
-
-
 # ================= 导入冲突的持久化与一键采纳 =================
 
 
@@ -1514,81 +1226,6 @@ def test_resolving_an_unknown_conflict_is_rejected():
             core.resolve_project_conflict(local["project_id"], "cf-does-not-exist")
 
 
-def test_ui_offers_per_conflict_and_bulk_decisions():
-    """界面：每条冲突都能单独决定，并提供批量动作。"""
-    from streamlit.testing.v1 import AppTest
-
-    with project_env():
-        local = _local_project()
-        blob = _peer_export(glossary_target="协作者译名", tm_target="协作者 A 译文")
-        core.import_project_memory(blob, name="生态学专著")
-
-        at = _project_detail(local["project_id"], tab="knowledge")
-        assert not at.exception, [e.value for e in at.exception]
-
-        labels = [b.label for b in at.button]
-        assert "采纳导入版本" in labels and "保留本地版本" in labels, labels
-        assert "全部保留本地" in labels and "全部采纳导入" in labels, labels
-        page = "\n".join(str(m.value) for m in at.markdown)
-        assert "待处理的导入冲突" in page
-        assert "本地：" in page and "导入：" in page, "必须并列显示两个版本"
-
-        take = next(b for b in at.button if b.label == "采纳导入版本")
-        take.click()
-        at.run()
-        assert not at.exception, [e.value for e in at.exception]
-        assert len(core.list_project_conflicts(local["project_id"])) == 1, \
-            "只应处理被点击的那一条"
-
-
 # ================= 读取不得写盘 =================
 
 
-def test_reading_projects_never_writes_to_disk():
-    """列出项目是纯读取；连"打开新建任务页"也不得在 outputs/ 下创建任何东西。
-
-    曾经的实现：`list_projects()` 会顺手创建默认项目，于是任何只读访问
-    （界面渲染、脚本、eval、测试）都会污染存储。这里把它固定成不变量。
-    """
-    with project_env() as tmp:
-        assert core.list_projects() == []
-        assert core.system_project_view()["project_id"] == core.system_project_id()
-        assert any(item["project_id"] == core.system_project_id()
-                   for item in core.list_active_project_options())
-        assert core.project_memory_view()["project_id"] == core.system_project_id()
-        assert not (tmp / "projects").exists(), "只读调用不得创建目录"
-
-        from streamlit.testing.v1 import AppTest
-
-        # 渲染"项目"页
-        projects_page = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
-        projects_page.session_state["app_view"] = "projects"
-        projects_page.run()
-        assert not projects_page.exception, [e.value for e in projects_page.exception]
-        assert not (tmp / "projects").exists(), "渲染项目页不得创建目录"
-        # 空存储时也必须把系统工作区「未分类」呈现出来（它是真实容器）。
-        assert core.SYSTEM_PROJECT_NAME in "\n".join(
-            str(m.value) for m in projects_page.markdown)
-
-        # 渲染"新建任务"第 1 步（这里是原先的泄漏点）
-        job = core.new_job_state("picker.docx")
-        core.save_job_state("picker", job)
-        new_task = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
-        new_task.session_state["app_view"] = "new"
-        new_task.session_state["task_step"] = 1
-        new_task.session_state["task_files"] = [{"name": "picker.docx",
-                                                "bytes": b"content"}]
-        new_task.run()
-        assert not new_task.exception, [e.value for e in new_task.exception]
-        assert not (tmp / "projects").exists(), \
-            "渲染新建任务页不得创建项目目录"
-        # 新建任务页只读地显示项目上下文（未选择 → 未分类任务），不自己造
-        # 第二个选择器，因此也没有"读一次就落盘"的副作用。
-        page = "\n".join(str(m.value) for m in new_task.markdown)
-        assert "项目上下文" in page
-        assert "未分类任务" in page
-        assert not any(s.label == "所属项目" for s in new_task.selectbox)
-
-        # 真正发生变更时才会落盘
-        core.ensure_default_project()
-        assert (tmp / "projects").is_dir()

@@ -1,16 +1,24 @@
 # Changelog
 
+本文件记录 Folith / 译页的用户可见变更。历史条目中的 FolioThread、TransPraxis / 译践 是此前产品名；`v0.4.0` 已正式发布。
+
+## [Unreleased]
+
+### 移除旧 Streamlit 界面与 pywebview 桌面壳
+
+- 删除 `app.py`、`gui.py`、`folith/ui/`（仅保留 Qt 共用的 `theme_tokens`）、`start.sh` / `start.command` / `start.bat`，以及旧桌面壳的构建、探针与发布脚本和对应 CI 任务。
+- `folith` / `foliothread` 命令改为启动 Qt 客户端；运行依赖去掉 Streamlit、Starlette，加入 PySide6；`pywebview` 可选依赖移除。
+- 源码检出的根目录改由 `core.py` + `qt_client.py` 识别。
+
+## [0.6.0] - 2026-10-18
+
 ### 译文 DOCX 保留原图
 
 - PDF / DOCX 来源的译文 DOCX 自动保留正文图片，按对应完整段落顺序插入；封面、独立图片段及重复图片保留，大图按比例缩小到页内。
 - 复用 EPUB 来源关联，支持段落拆分、合并、排除和恢复；无法可靠关联时停止导出。交付包与快照附带 DOCX 图片范围报告。
 - 文档重新分页；图片内文字及 PDF 图注保留原文。表格、文本框、矢量绘图等边界见 `docs/epub-export.md`，双语 DOCX 不变。
 
-本文件记录 Folith / 译页的用户可见变更。历史条目中的 FolioThread、TransPraxis / 译践 是此前产品名；`v0.4.0` 已正式发布。
-
-## [Unreleased]
-
-### 0.6 预览：项目、模型连接与扫描流（2026-10-16 至 10-17，`integration/0.6-projects-theme-scan`，未发布）
+### 项目、模型连接与扫描流（2026-10-16 至 10-17）
 
 **不兼容变更**
 

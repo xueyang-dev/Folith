@@ -14,8 +14,6 @@ These tests pin the contract introduced by the OCR/RTL repair phase:
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
 import pytest
 
@@ -439,26 +437,6 @@ def test_extraction_report_records_the_real_ocr_configuration(
 # --------------------------------------------------------------------------
 # UI selector
 # --------------------------------------------------------------------------
-def test_new_task_shows_explicit_ocr_language_selector_for_pdf(tmp_path, monkeypatch):
-    from streamlit.testing.v1 import AppTest
-
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
-    at = AppTest.from_file(str(app_path), default_timeout=60)
-    at.session_state["app_view"] = "new"
-    at.session_state["workspace_mode"] = False
-    at.session_state["task_step"] = 1
-    at.session_state["ocr_language"] = "ara"
-    at.session_state["task_files"] = [{"name": "scan.pdf", "bytes": b"%PDF-1.4"}]
-    at.run()
-    assert not at.exception, at.exception
-    keys = {widget.key for widget in at.selectbox}
-    assert "ocr_language" in keys
-    assert "ocr_quality" in keys
-    selector = next(widget for widget in at.selectbox if widget.key == "ocr_language")
-    assert selector.value == "ara"
-    # The selector is a visible, modifiable configuration, not a detected value.
-    assert selector.proto.options
 
 
 def test_performance_artifact_records_the_real_ocr_configuration(

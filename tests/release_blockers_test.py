@@ -126,21 +126,6 @@ def test_snapshot_can_retry_after_interrupted_temporary_directory(tmp_path):
         assert (snapshots.snapshot_root(tmp_path) / f'v{version}' / 'translation.txt').read_bytes() == b'final'
 
 
-def test_native_window_close_terminates_owned_service(monkeypatch):
-    import gui
-    from unittest.mock import Mock
-    process = Mock()
-    process.poll.return_value = None
-    monkeypatch.setattr(gui, '_check_streamlit', lambda: True)
-    monkeypatch.setattr(gui, 'pick_port', lambda value: value)
-    monkeypatch.setattr(gui, 'wait_ready', lambda url: True)
-    monkeypatch.setattr(gui, 'open_native_window', lambda url: True)
-    monkeypatch.setattr(gui.subprocess, 'Popen', lambda args: process)
-    assert gui.main([]) == 0
-    process.terminate.assert_called_once()
-    process.wait.assert_called_once_with(timeout=5)
-
-
 def test_direct_translation_stage_owns_lock_against_manual_edits(monkeypatch):
     import threading
     state = core.new_job_state('direct.txt')

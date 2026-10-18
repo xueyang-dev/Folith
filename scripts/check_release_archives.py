@@ -6,9 +6,9 @@ import tarfile
 import zipfile
 
 REQUIRED = (
-    'app.py', 'core.py', 'gui.py',
+    'core.py',
     'folith/resources/en_common.txt',
-    'folith/ui/i18n.py', 'folith/ui/themes.py', 'folith/ui/preferences.py',
+    'folith/qt/app.py', 'folith/ui/theme_tokens.py',
     *(f'folith/resources/locales/{locale}.json' for locale in ('zh-CN', 'en', 'es', 'ru', 'ar')),
     *(f'folith/resources/locales/qt-{locale}.json' for locale in ('zh-CN', 'en', 'es', 'ru', 'ar')),
     'folith/resources/brand/folith-favicon.svg',

@@ -2,13 +2,11 @@
 import io
 import json
 import unicodedata
-from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 import pytest
 from docx import Document
-from streamlit.testing.v1 import AppTest
 
 import core
 from folith.segmentation import segment_paragraphs
@@ -126,16 +124,3 @@ def test_pdf_arabic_with_latin_prefix_reaches_right_margin():
         assert max(span["bbox"][2] for span in spans) > doc[0].rect.width * 0.85
 
 
-def test_new_task_keeps_custom_target_language(tmp_path, monkeypatch):
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=40)
-    for key, value in {"app_view": "new", "workspace_mode": False,
-                       "task_step": 1, "target_lang": "हिन्दी"}.items():
-        at.session_state[key] = value
-    at.run()
-    assert not at.exception, at.exception
-    selector = next(item for item in at.selectbox if item.key == "target_lang")
-    assert selector.value == "हिन्दी"
-    assert selector.proto.accept_new_options
-    at.run()
-    assert at.session_state["target_lang"] == "हिन्दी"

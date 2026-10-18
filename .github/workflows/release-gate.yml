@@ -37,7 +37,7 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install ".[test]" PySide6==6.11.2
       - name: Compile and import critical modules
         run: |
-          python -m py_compile app.py core.py folith/academic_writer.py \
+          python -m py_compile core.py folith/academic_writer.py \
             folith/compliance.py folith/thesis_constraints.py
           python - <<'PY'
           import folith.academic_writer
@@ -88,87 +88,22 @@ jobs:
           "$RUNNER_TEMP/folith/bin/python" -m pip install dist/*.whl
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/folith/bin/python" - <<'PY'
+          import importlib.util
           from pathlib import Path
-          import app
           import core
-          import gui
           import folith
+          import folith.qt.app
 
-          assert Path(gui.ROOT, "app.py").is_file()
-          assert Path(gui.ROOT, "folith", "resources", "en_common.txt").is_file()
-          assert Path(gui.ROOT, "folith", "resources", "brand", "folith-favicon.svg").is_file()
-          assert Path(gui.ROOT, "folith", "resources", "brand", "folith-mark.svg").is_file()
-          assert Path(gui.ROOT, "folith", "resources", "brand", "folith-lockup.png").is_file()
-          assert Path(gui.ROOT, "folith", "resources", "brand", "folith-mark.png").is_file()
+          root = Path(folith.__file__).resolve().parent
+          assert "site-packages" in str(root), root
+          for rel in ("resources/en_common.txt", "resources/brand/folith-favicon.svg",
+                      "resources/brand/folith-mark.svg", "resources/brand/folith-lockup.png",
+                      "resources/brand/folith-mark.png", "resources/locales/qt-zh-CN.json"):
+              assert (root / rel).is_file(), rel
+          assert importlib.util.find_spec("streamlit") is None, "streamlit should not be installed"
           print("installed imports and resources: OK")
           PY
           "$RUNNER_TEMP/folith/bin/folith" --help
-          "$RUNNER_TEMP/folith/bin/python" "$GITHUB_WORKSPACE/scripts/release_smoke.py"
-
-  desktop-macos:
-    name: macOS desktop build and release checks
-    runs-on: macos-15
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip
-          # pikepdf source builds need external qpdf headers. Prefer a published
-          # wheel (including an older compatible release) for this test extra.
-          python -m pip install --only-binary=pikepdf ".[test]"
-          python -m pip install -r requirements-desktop.txt
-          python -m pip install -r requirements-desktop-build.txt
-      - name: Install the OCR engine used to stage the bundled payload
-        run: brew install tesseract
-      - name: Build the desktop bundle
-        run: FOLITH_BUILD_PYTHON="$(command -v python)" bash scripts/build_desktop.sh
-      - name: Desktop gate (frozen app, handshake, lifecycle, diagnostics)
-        env:
-          FOLITH_D0_FROZEN_GUI: "1"
-          FOLITH_DESKTOP_FROZEN_APP: ${{ github.workspace }}/dist/desktop/Folith.app/Contents/MacOS/Folith
-        run: |
-          python -m pytest tests/desktop_handshake_test.py tests/desktop_frozen_test.py             tests/desktop_single_instance_test.py tests/desktop_exit_flow_test.py             tests/desktop_diagnostics_test.py tests/desktop_legacy_import_test.py             tests/desktop_tool_discovery_test.py tests/desktop_app_identity_test.py             tests/desktop_file_actions_test.py tests/desktop_dmg_test.py             tests/desktop_release_plumbing_test.py tests/desktop_release_checks_test.py             tests/desktop_release_notes_test.py tests/gui_launcher_test.py -q
-      - name: Build the DMG
-        run: bash scripts/build_dmg.sh
-      - name: Install browser automation for the desktop sweep
-        run: |
-          npm install --prefix "$RUNNER_TEMP/folith-browser" --no-audit --no-fund playwright-core@1.64.0
-          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-          echo "FOLIO_PLAYWRIGHT_CORE=$RUNNER_TEMP/folith-browser/node_modules/playwright-core" >> "$GITHUB_ENV"
-          echo "FOLIO_CHROME=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" >> "$GITHUB_ENV"
-      - name: End-to-end reproducibility sweep
-        env:
-          FOLITH_DESKTOP_FROZEN_APP: ${{ github.workspace }}/dist/desktop/Folith.app/Contents/MacOS/Folith
-        run: python scripts/desktop_e2e_sweep.py --skip-slow
-      - name: Upload failed desktop sweep diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: folith-desktop-sweep-diagnostics
-          path: build/desktop/e2e-sweep/
-          include-hidden-files: true
-          if-no-files-found: ignore
-      - name: Release checks and manifest
-        run: |
-          python scripts/release_checks.py --mount --out build/desktop/release-manifest.json
-          python scripts/release_notes.py
-      - name: Verify the release notes match the manifest
-        run: python scripts/release_notes.py --check
-      - name: Upload desktop artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: folith-macos-desktop
-          path: |
-            dist/desktop/*.dmg
-            build/desktop/release-manifest.json
-            build/desktop/dmg_record.json
-            build/desktop/e2e-sweep/sweep.json
-          if-no-files-found: error
 
   qt-macos:
     # The Qt candidate is built in one interpreter environment: the same venv

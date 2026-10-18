@@ -223,31 +223,6 @@ def test_frontend_equivalence_through_the_public_adapters():
     assert qt_kwargs == streamlit_kwargs
 
 
-def test_streamlit_adapter_passes_every_contract_field():
-    """The Streamlit mapping must not silently stop supplying a contract field.
-
-    ``app.py`` is a Streamlit script and cannot be imported here, so the mapping
-    is inspected statically: every contract keyword must be named in the layer
-    builder ``_settings_sources`` (Phase 4) or its predecessor.
-    """
-    import ast
-
-    source = (Path(__file__).resolve().parent.parent / "app.py").read_text("utf-8")
-    tree = ast.parse(source)
-    supplied = set()
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.FunctionDef)
-                and node.name in {"_settings_sources", "_job_config_values",
-                                  "_pipeline_kwargs"}):
-            for inner in ast.walk(node):
-                if isinstance(inner, ast.Dict):
-                    supplied |= {
-                        key.value for key in inner.keys
-                        if isinstance(key, ast.Constant) and isinstance(key.value, str)}
-    missing = contract_kwarg_keys() - supplied
-    assert not missing, f"app.py._settings_sources omits contract fields: {sorted(missing)}"
-
-
 # ---------------------------------------------------------------------------
 # Test D — resume vs new job
 # ---------------------------------------------------------------------------
@@ -401,19 +376,6 @@ def test_qt_import_rejects_formats_the_core_cannot_ingest(tmp_path):
             adapter.read_source_file(target)
         assert ".pdf" in str(excinfo.value)
         assert ".docx" in str(excinfo.value)
-
-
-def test_streamlit_admission_matches_the_shared_authority():
-    """The Streamlit uploader must advertise exactly the shared suffix set."""
-    import re
-
-    source = (Path(__file__).resolve().parent.parent / "app.py").read_text("utf-8")
-    match = re.search(
-        r"uploaded_files = st\.file_uploader\(.*?type=\[([^\]]*)\]",
-        source, re.S)
-    assert match, "could not find the Streamlit source uploader"
-    advertised = re.findall(r'"([^"]+)"', match.group(1))
-    assert tuple(f".{item}" for item in advertised) == SOURCE_SUFFIXES
 
 
 def test_core_ingests_exactly_the_advertised_formats():

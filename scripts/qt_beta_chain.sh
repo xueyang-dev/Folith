@@ -50,7 +50,7 @@ run venv/bin/python scripts/qt_acceptance_kit.py --check
 run venv/bin/python scripts/qt_docs_audit.py --json build/qt-desktop/docs-audit.json
 run venv/bin/python scripts/qt_duplicate_defs.py
 run venv/bin/python scripts/run_regression.py \
-  -k qt_acceptance_kit,qt_delivery_content,qt_client_style,red_team_acceptance,qt_extraction_error,qt_client_adapter,qt_client_window,qt_release_plumbing,qt_spike \
+  -k qt_acceptance_kit,qt_delivery_content,qt_client_style,red_team_acceptance,qt_extraction_error,qt_client_adapter,qt_client_window,qt_release_plumbing \
   --tsv "$OUT/regression.tsv"
 fi
 DMG=$(ls dist/qt-desktop/*.dmg | head -1)

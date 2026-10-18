@@ -46,7 +46,6 @@ TEST_FILES = (
     "tests/qt_client_adapter_test.py",
     "tests/qt_client_window_test.py",
     "tests/qt_release_plumbing_test.py",
-    "tests/qt_spike_test.py",
 )
 
 

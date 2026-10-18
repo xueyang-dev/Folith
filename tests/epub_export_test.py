@@ -3,7 +3,6 @@ import io
 import json
 from copy import deepcopy
 from pathlib import PurePosixPath
-from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_STORED, ZipFile
 
@@ -364,62 +363,6 @@ def test_image_only_plate_in_text_pdf_is_preserved():
     assert report["image_count"] == 2
     assert content(data).count("<img ") == 2
     assert any("第 2 页" in warning and "原样保留" in warning for warning in report["warnings"])
-
-
-def test_wizard_epub_selection_updates_summary():
-    from streamlit.testing.v1 import AppTest
-    at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=30)
-    at.run()
-    at.session_state["task_files"] = [{"name": "source.docx", "bytes": b"source"}]
-    at.session_state["task_step"] = 3
-    at.run()
-    next(checkbox for checkbox in at.checkbox if checkbox.key == "deliver_epub").check()
-    at.run()
-    assert not at.exception, at.exception
-    assert at.session_state["output_config"]["deliver_epub"] is True
-    assert any("将生成 4 个文件" in item.value and "EPUB ×1" in item.value for item in at.markdown)
-
-
-def test_existing_task_can_enable_and_download_epub(tmp_path, monkeypatch):
-    from streamlit.testing.v1 import AppTest
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    source = docx_source()
-    state = translated_state("delivery-ui.docx", source)
-    state["report_enabled"] = False
-    state["delivery_config"] = {key: False for key in core.default_delivery_config()}
-    core.save_source("epubui", source)
-    core.save_job_state("epubui", state)
-    at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=30)
-    at.run()
-    at.session_state["active_job_id"] = "epubui"
-    at.session_state["app_view"] = "workspace"
-    at.session_state["workspace_mode"] = True
-    at.session_state["workspace_section"] = "delivery"
-    at.run()
-    assert not at.exception, at.exception
-    assert not any(checkbox.key == "delivery_epub_epubui" for checkbox in at.checkbox)
-    assert any(popover.proto.popover.label == "调整交付内容" for popover in at.get("popover"))
-    assert all(any(checkbox.key == f"delivery_content_epubui_{key}" for checkbox in at.checkbox)
-               for key in ("deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf", "deliver_epub"))
-    next(checkbox for checkbox in at.checkbox if checkbox.key == "delivery_content_epubui_deliver_epub").check()
-    next(button for button in at.button if button.label == "应用").click()
-    at.run()
-    assert not at.exception, at.exception
-    assert not at.error
-    assert core.load_job_state("epubui")["delivery_config"]["deliver_epub"] is True
-    assert any("译文电子书 EPUB" in item.value and "translation.epub" in item.value for item in at.markdown)
-    assert any("1 张原图" in item.value for item in at.caption)
-    assert not any(expander.label == "图文范围说明" for expander in at.expander)
-    assert any(button.key == "dl_prim_epubui_translation_epub" for button in at.download_button)
-    assert any("交付内容：译文电子书 · EPUB" in item.value for item in at.caption)
-    # Format changes take effect on apply, and can be reversed in the same
-    # settings entry without leaving a stale standalone EPUB checkbox behind.
-    next(checkbox for checkbox in at.checkbox if checkbox.key == "delivery_content_epubui_deliver_epub").uncheck()
-    next(button for button in at.button if button.label == "应用").click()
-    at.run()
-    assert not at.exception, at.exception
-    assert core.load_job_state("epubui")["delivery_config"]["deliver_epub"] is False
-    assert not any(button.key == "dl_prim_epubui_translation_epub" for button in at.download_button)
 
 
 @pytest.mark.parametrize("filename", ["cover.pdf", "cover.docx"])

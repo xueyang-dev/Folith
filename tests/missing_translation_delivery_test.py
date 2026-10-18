@@ -1,7 +1,6 @@
 """Missing translations remain visible and exportable without weakening parsing."""
 import json
 from io import BytesIO
-from pathlib import Path
 
 from docx import Document
 
@@ -112,85 +111,3 @@ def test_existing_missing_source_gate_rows_export_with_empty_cells(tmp_path, mon
     assert approved["latest_delivery_snapshot_version"] == 1
 
 
-def test_delivery_page_missing_notice_allows_snapshot_and_downloads(tmp_path, monkeypatch):
-    from streamlit.testing.v1 import AppTest
-
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    job_id = "missingdeliveryui"
-    state = core.new_job_state("report.pdf")
-    state.update(
-        p1_done=True, p2_done=True, report_enabled=False,
-        delivery_config=core.normalize_delivery_config({"deliver_plain_docx": True,
-                                                        "deliver_bilingual_docx": True}),
-        paras=["kati", "A real sentence."],
-        pairs=[{"source": "kati", "target": "", "target_provenance": "source_review_required"},
-               {"source": "A real sentence.", "target": "一句完整的话。"}],
-        findings=[{"type": "source_quality_gate", "category": "source_quality",
-                   "segment_index": 0, "severity": "blocking", "reason": "原文待核对"}],
-    )
-    core.save_job_state(job_id, state)
-    at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"),
-                           default_timeout=30)
-    at.run()
-    at.session_state["active_job_id"] = job_id
-    at.session_state["app_view"] = "workspace"
-    at.session_state["workspace_mode"] = True
-    at.session_state["workspace_section"] = "delivery"
-    at.run()
-    assert not at.exception, at.exception
-    assert len([item for item in at.warning if "尚无译文" in item.value]) == 1
-    assert not at.error
-    freeze = next(button for button in at.button
-                  if button.key == f"workspace_delivery_final_{job_id}")
-    assert not freeze.disabled
-    freeze.click().run()
-    assert not at.exception, at.exception
-    saved = core.load_job_state(job_id)
-    assert saved["latest_delivery_snapshot_version"] == 1
-    bundle = core.delivery_snapshot_assets(job_id, 1)
-    table = Document(BytesIO(bundle["bilingual.docx"])).tables[0]
-    assert table.rows[1].cells[1].text == ""
-    assert table.rows[2].cells[1].text == "一句完整的话。"
-    at.session_state["workspace_section"] = "translation"
-    at.run()
-    assert not at.exception, at.exception
-    editor = next(item for item in at.text_area
-                  if item.key == f"translation_editor_{assets.segment_id(job_id, 0)}")
-    assert editor.value == ""
-
-
-def test_blocked_delivery_uses_nonempty_count_and_a_compact_error(tmp_path, monkeypatch):
-    """Missing cells remain exportable only when the actual target gate passes."""
-    from streamlit.testing.v1 import AppTest
-
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    job_id = "blockeddeliveryui"
-    state = core.new_job_state("report.docx")
-    state.update(
-        p1_done=True, p2_done=True, report_enabled=False,
-        paras=["First paragraph", "Second paragraph", "Third paragraph"],
-        pairs=[{"source": "First paragraph", "target": ""},
-               {"source": "Second paragraph", "target": '["raw model response"]'},
-               {"source": "Third paragraph", "target": "第三段译文。"}],
-    )
-    core.save_job_state(job_id, state)
-    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"),
-                           default_timeout=30).run()
-    at.session_state["active_job_id"] = job_id
-    at.session_state["app_view"] = "workspace"
-    at.session_state["workspace_mode"] = True
-    at.session_state["workspace_section"] = "delivery"
-    at.run()
-    assert not at.exception, at.exception
-    notices = "\n".join(item.value for item in at.warning)
-    assert "当前暂不可导出" in notices
-    assert "可以继续导出" not in notices
-    page = "\n".join(item.value for item in at.markdown)
-    assert "2 / 3 段已翻译" in page
-    assert "3 / 3 段已翻译" not in page
-    assert "个阻塞问题（审校）" in page
-    assert any("交付文件暂不可生成" in item.value for item in at.error)
-    assert not any("Translation Target Invariant" in item.value for item in at.error)
-    assert not at.download_button
-    assert not any(button.key == f"workspace_delivery_final_{job_id}"
-                   and not button.disabled for button in at.button)

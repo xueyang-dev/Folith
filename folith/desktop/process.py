@@ -14,7 +14,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 _POSIX_LSOF_CANDIDATES = ("/usr/sbin/lsof", "/usr/bin/lsof", "/bin/lsof")
@@ -249,28 +248,3 @@ def _windows_listeners_on_port(port: int) -> set[int] | None:  # pragma: no cove
         if parts[4].isdigit():
             pids.add(int(parts[4]))
     return pids
-
-
-def python_launch_argv() -> list[str]:
-    """Command prefix used to start the internal service mode.
-
-    ``FOLITH_DESKTOP_EXECUTABLE`` is a build/verification hook: it lets the D0
-    harness drive a packaged artifact through the exact same launcher code path
-    instead of the source interpreter.
-    """
-    override = os.environ.get("FOLITH_DESKTOP_EXECUTABLE")
-    if override:
-        return [override]
-    if getattr(sys, "frozen", False):
-        # PyInstaller sets sys.executable to the application entry point.
-        return [sys.executable]
-    return [sys.executable, str(_source_entry())]
-
-
-def _source_entry() -> Path:
-    from .paths import repo_root
-
-    root = repo_root()
-    if root is None:  # pragma: no cover - defensive
-        return Path(sys.argv[0]).resolve()
-    return root / "gui.py"

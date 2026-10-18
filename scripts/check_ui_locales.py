@@ -42,7 +42,7 @@ def check(*, references_output=None):
             if re.search(r'<\s*/?\s*(script|iframe|img|style)\b', value, re.I):
                 errors.append(f'{locale}: unexpected HTML in plain UI text: {key}')
     references = {}
-    for path in [ROOT / 'app.py', *(ROOT / 'folith/ui').rglob('*.py')]:
+    for path in (ROOT / 'folith/ui').rglob('*.py'):
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or not node.args:
                 continue

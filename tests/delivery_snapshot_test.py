@@ -186,40 +186,6 @@ def test_blocking_requires_explicit_risk_acceptance_and_snapshot_records_it():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def test_incomplete_requested_report_blocks_backend_and_workspace_delivery():
-    from streamlit.testing.v1 import AppTest
-
-    tmp = Path(tempfile.mkdtemp(prefix="delivery-report-gate-"))
-    old_dir = core.OUTPUT_DIR
-    core.OUTPUT_DIR = tmp
-    try:
-        job_id = "snapshotreportgate"
-        state = _job(job_id)
-        state.update(report_enabled=True, p3_done=True, p3_md="# 未完成报告",
-                     report_status="incomplete")
-        core.save_job_state(job_id, state)
-        _, ok, errors = core.approve_delivery(job_id, note="不应成功")
-        assert not ok and any("实践报告" in error for error in errors)
-        assert core.list_delivery_snapshots(job_id) == []
-
-        at = AppTest.from_file(
-            str(Path(__file__).resolve().parent.parent / "app.py"),
-            default_timeout=30)
-        at.run()
-        at.session_state["active_job_id"] = job_id
-        at.session_state["app_view"] = "workspace"
-        at.session_state["workspace_mode"] = True
-        at.session_state["workspace_section"] = "delivery"
-        at.run()
-        assert not at.exception, at.exception
-        assert not any(item.label.startswith("创建交付版本") and not item.disabled
-                       for item in at.button)
-        assert core.load_job_state(job_id)["delivery_status"] != "final"
-    finally:
-        core.OUTPUT_DIR = old_dir
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 def test_configured_delivery_builds_every_selected_format_and_nothing_else():
     tmp = Path(tempfile.mkdtemp(prefix="delivery-configured-assets-"))
     old_dir = core.OUTPUT_DIR
@@ -314,83 +280,9 @@ def test_configured_delivery_builds_every_selected_format_and_nothing_else():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def test_workspace_delivery_lists_exact_configured_assets():
-    from streamlit.testing.v1 import AppTest
-
-    tmp = Path(tempfile.mkdtemp(prefix="delivery-configured-ui-"))
-    old_dir = core.OUTPUT_DIR
-    core.OUTPUT_DIR = tmp
-    try:
-        job_id = "snapshotconfiguredui"
-        state = _job(job_id)
-        state["delivery_config"] = {
-            key: key == "deliver_jsonl" for key in core.DELIVERY_CONFIG_DEFAULTS
-        }
-        core.save_job_state(job_id, state)
-        at = AppTest.from_file(
-            str(Path(__file__).resolve().parent.parent / "app.py"),
-            default_timeout=30)
-        at.run()
-        at.session_state["active_job_id"] = job_id
-        at.session_state["app_view"] = "workspace"
-        at.session_state["workspace_mode"] = True
-        at.session_state["workspace_section"] = "delivery"
-        at.run()
-        assert not at.exception, at.exception
-        assert [button.label for button in at.download_button] == [
-            "下载", "下载"]
-        assert any("结构化双语数据" in item.value for item in at.markdown)
-        assert any("delivery_manifest.json" in item.value for item in at.markdown)
-        assert not any("TBX 术语库" in item.value for item in at.markdown)
-    finally:
-        core.OUTPUT_DIR = old_dir
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 def test_snapshot_storage_is_local_output_data_not_package_input():
     root = Path(__file__).resolve().parent.parent
     assert "outputs/" in (root / ".gitignore").read_text(encoding="utf-8")
     assert snapshots.SNAPSHOT_DIR == "delivery_snapshots"
 
 
-def test_frozen_snapshot_is_visible_in_workspace_and_history():
-    from streamlit.testing.v1 import AppTest
-
-    tmp = Path(tempfile.mkdtemp(prefix="delivery-snapshot-ui-"))
-    old_dir = core.OUTPUT_DIR
-    core.OUTPUT_DIR = tmp
-    try:
-        job_id = "snapshotsui00001"
-        state = core.new_job_state("ui-fixture.docx")
-        state.update(
-            p1_done=True, p2_done=True, stage="DONE", paras=["Source text"],
-            pairs=[{"source": "Source text", "target": "译文", "reviewed": True}],
-            report_enabled=False, delivery_status="draft")
-        core.save_source(job_id, b"ui source bytes")
-        core.save_job_state(job_id, state)
-        _, ok, errors = core.approve_delivery(job_id, note="UI smoke", actor="reviewer")
-        assert ok, errors
-
-        at = AppTest.from_file(
-            str(Path(__file__).resolve().parent.parent / "app.py"),
-            default_timeout=30)
-        at.run()
-        at.session_state["active_job_id"] = job_id
-        at.session_state["app_view"] = "workspace"
-        at.session_state["workspace_mode"] = True
-        at.session_state["workspace_section"] = "delivery"
-        at.run()
-        assert not at.exception, at.exception
-        assert any("交付版本 v1 已创建" in item.value for item in at.markdown)
-        assert any(button.label == "下载 v1 归档"
-                   for button in at.download_button)
-
-        at.session_state["app_view"] = "history"
-        at.session_state["workspace_mode"] = False
-        at.run()
-        assert not at.exception, at.exception
-        assert any(button.label == "下载最终交付版本 v1"
-                   for button in at.download_button)
-    finally:
-        core.OUTPUT_DIR = old_dir
-        shutil.rmtree(tmp, ignore_errors=True)

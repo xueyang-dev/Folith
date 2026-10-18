@@ -5,7 +5,6 @@ keep acting on files the delivery gates already produced.
 """
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,16 +97,6 @@ def test_snapshot_asset_path_matches_the_snapshot_layout(tmp_path):
     source = Path(core.__file__).read_text(encoding="utf-8")
     assert "def delivery_snapshot_asset_path" in source
     assert "_snapshots.asset_path(job_dir(job_id), version, name)" in source
-
-
-def test_delivery_page_offers_the_actions_only_for_snapshot_files():
-    source = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert "_render_delivery_file_actions" in source
-    assert "core.delivery_snapshot_asset_path" in source
-    # gated on the file actually existing in the current snapshot
-    assert "if not path.is_file():" in source
-    assert 'key=f"reveal_prim_{job_id}_{sanitized}"' in source
-    assert 'key=f"open_prim_{job_id}_{sanitized}"' in source
 
 
 def test_file_action_helper_does_not_import_pywebview():

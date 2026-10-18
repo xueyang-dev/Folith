@@ -69,6 +69,7 @@ LEGACY_LINE_ALLOWLIST = {
     "docs/desktop-d1/d1-13-diagnostics-adversarial-bundle.json": ("FolioThread"),
     "docs/desktop-d1/d1-14-unsafe-import-evidence.json": ("FolioThread"),
     "docs/desktop-handover.md": ("FOLIOTHREAD", "FolioThread"),
+    "scripts/qt_release_checks.py": ("兼容别名 `foliothread`",),
     "README.md": (
         "foliothread-0.4.0",
         "foliothread-0.5.0",
@@ -207,14 +208,8 @@ def test_public_brand_constants_are_canonical():
     assert brand.TAGLINE == "Agentic Translation Workspace"
     assert brand.TAGLINE_ZH == "智能体翻译工作台"
 
-    app = (ROOT / "app.py").read_text(encoding="utf-8")
-    gui = (ROOT / "gui.py").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert '_BRAND_LOGO = _BRAND_DIR / "folith-lockup-transparent.png"' in app
-    assert '_BRAND_FAVICON = _BRAND_DIR / "folith-mark.png"' in app
-    assert "译页 智能体翻译工作台" in app
-    assert "brand.APP_TITLE_ZH" in gui
     assert 'description = "Folith·译页 — Agentic Translation Workspace"' in pyproject
     assert "Folith·译页" in readme
     assert "Agentic Translation Workspace" in readme

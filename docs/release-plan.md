@@ -25,7 +25,7 @@
 - 外观（跟随系统 / 日间 / 夜间）与主题色分开设置；新手指南、设置窗口、运行状态组与通知层等 0.6 预览改动见 CHANGELOG。
 - 学术模式（实践报告 / 案例 / QA）**默认关闭**，手动开启或读取既有学术任务时可用；已有任务按其保存的策略恢复。
 - 保留原版式 PDF、DOCX、EPUB 和语言资产导出；原版式 PDF 仅适用于 PDF 来源，不宣称 DOCX 原格式写回。东阿拉伯数字在目标语言不使用时转为目标语言数字。
-- 旧 Streamlit 启动器（`folith` / `foliothread` 命令、`start.*`）再保留一个版本，不再扩展；Qt 源码入口 `python -m folith.qt`，需另装 PySide6。DMG 是 Qt Beta 入口，不能把 Pip 安装说明写成 Qt 安装说明。
+- 旧 Streamlit 界面、`start.*` 启动脚本与 pywebview 桌面壳已于 2026-10-18 从源码移除；`folith` / `foliothread` 命令改为启动 Qt 客户端（PySide6 成为运行依赖），从 0.6.0 之后的版本生效。Qt 源码入口 `python -m folith.qt`。
 - 名称为 Folith·译页，不再讨论改名。
 
 ## 本轮不增加

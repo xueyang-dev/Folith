@@ -11,12 +11,10 @@ These tests are the frontend-neutral contract for the application layer:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -601,47 +599,3 @@ def _expected_strip_labels(status: str):
     return expected
 
 
-@pytest.mark.parametrize("status", sorted(ALL_RUNTIME_STATUSES - {"idle", "completed"}))
-def test_streamlit_strip_renders_exactly_the_policy_actions(status):
-    """The web strip may choose layout and wording — not legality.
-
-    This is the regression that the pre-Phase-3 code failed: the strip's own
-    status switch offered `cancel` for some running states and hid it for
-    others, and never exposed `pause` for `waiting_external`.
-    """
-    rendered = _render_streamlit_strip(status)
-    assert [item["label"] for item in rendered.buttons] == _expected_strip_labels(status)
-    assert rendered.buttons[-1]["key"] == "runtime_details_job-1"
-
-
-@pytest.mark.parametrize("status", ["idle", "completed"])
-def test_streamlit_strip_renders_nothing_for_resting_states(status):
-    rendered = _render_streamlit_strip(status)
-    assert rendered.buttons == []
-
-
-def test_streamlit_runtime_actions_go_through_the_application_commands():
-    """No web surface may re-implement the runtime action calls (Phase 3 gate)."""
-    forbidden = (
-        "core.resume_job(", "core.start_job_worker(", "core.request_job_cancel(",
-        "core.request_job_pause(", "core.retry_job_step(", "core.continue_job(",
-    )
-    for relative in ("app.py", "folith/ui/workspace/performance_view.py",
-                     "folith/ui/workspace/runtime.py"):
-        source = (ROOT / relative).read_text("utf-8")
-        for needle in forbidden:
-            assert needle not in source, f"{relative} calls {needle} directly"
-
-
-def test_the_streamlit_task_loop_starts_through_the_shared_command():
-    import ast
-
-    source = (ROOT / "app.py").read_text("utf-8")
-    assert "core.start_job_worker(" not in source
-    assert "core.resume_job(" not in source
-    tree = ast.parse(source)
-    resume = next(node for node in tree.body
-                  if isinstance(node, ast.FunctionDef) and node.name == "_resume_job")
-    calls = {ast.unparse(node.func) for node in ast.walk(resume)
-             if isinstance(node, ast.Call)}
-    assert "_application_commands.start_job" in calls, calls

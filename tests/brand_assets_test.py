@@ -164,58 +164,6 @@ def test_brand_standard_reference_is_preserved():
     assert _png_size(BRAND_STANDARD) == (1448, 1086)
 
 
-def test_app_tokens_match_brand_palette():
-    """app.py 的 :root 品牌 token 必须等于品牌源文件的取色。"""
-    app = (ROOT / "app.py").read_text(encoding="utf-8")
-    if ":root {" not in app:
-        app = (ROOT / "folith" / "ui" / "styles.py").read_text(encoding="utf-8")
-    block = app.split(":root {", 1)[1].split("}", 1)[0]
-
-    def token(name: str) -> str:
-        match = re.search(rf"--{name}:\s*(#[0-9A-Fa-f]{{6}})", block)
-        assert match, f"app.py 设计系统缺少 --{name}"
-        return match.group(1).lower()
-
-    assert token("tp-logo-blue") == PALETTE["cobalt"]
-    assert token("tp-primary") == UI_PRIMARY
-    assert token("tp-navy") == PALETTE["navy"]
-    assert token("tp-azure") == PALETTE["azure"]
-    assert token("tp-cyan") == PALETTE["cyan"]
-    # hover / active 必须是同一色的更深阶，不能引入第二种蓝
-    assert token("tp-primary-hover") < UI_PRIMARY, "hover 应比主色更深"
-    assert token("tp-primary-active") < token("tp-primary-hover"), \
-        "active 应比 hover 更深"
-
-
-def test_streamlit_theme_matches_primary():
-    gui = (ROOT / "gui.py").read_text(encoding="utf-8")
-    assert f'"--theme.primaryColor", "{UI_PRIMARY}"' in gui, \
-        "Streamlit 主题主色必须与设计系统主色一致"
-
-    app = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert 'page_icon=_BRAND_FAVICON' in app, "页面图标必须用品牌图标资产"
-
-
-def test_sidebar_uses_formal_lockup():
-    """侧栏与页面图标使用用户提供的正式素材，避免回退到派生图或旧裁切图。"""
-    app = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert '"folith-lockup-transparent.png"' in app, "侧栏应使用正式原图去白底的 PNG"
-    assert '"folith-mark.png"' in app, "页面图标应使用正式图标素材"
-    assert '译页 智能体翻译工作台' in app, \
-        "品牌位的替代文本要与新定位一致"
-
-
-def test_legacy_source_crops_are_retained_but_not_current_entries():
-    """旧裁切图供历史/兼容读取，当前 UI 不得继续引用它们。"""
-    for name in ("foliothread-source-lockup.png", "foliothread-source-icon.png"):
-        assert (BRAND / name).is_file(), f"兼容资源缺失：{name}"
-    app = (ROOT / "app.py").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    for legacy in ("foliothread-source-lockup.png", "foliothread-source-icon.png"):
-        assert legacy not in app and legacy not in readme, \
-            f"当前入口不应继续引用旧品牌裁切图：{legacy}"
-
-
 def test_readme_references_existing_logo():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "folith/resources/brand/folith-lockup.png" in readme, \

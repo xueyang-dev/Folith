@@ -13,7 +13,6 @@ from __future__ import annotations
 import ast
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -378,7 +377,6 @@ _STREAMLIT_HELPERS = ("_settings_sources",)
 
 def _streamlit_settings_sources(globals_map: Dict[str, Any], session: Dict[str, Any]):
     """Exec app.py's real layer builder with equivalent Streamlit inputs."""
-    import types
     from contextlib import nullcontext  # noqa: F401
 
     source = (ROOT / "app.py").read_text("utf-8")
@@ -434,73 +432,8 @@ def _streamlit_globals() -> Dict[str, Any]:
     }
 
 
-def test_qt_and_streamlit_equivalent_inputs_resolve_identically():
-    from folith.qt import adapter
-
-    state = {"glossary": [{"source": "术语", "target": "term"}]}
-    with settings_env(PROFILE):
-        config = adapter.EngineConfig(
-            provider="OpenAI", model="gpt-5.1", api_key="sk",
-            base_url="https://api.openai.com/v1", target_lang="English",
-            reasoning_effort="medium", auto_term=True, enable_review=True,
-            use_tm=True, enable_understanding=True, enable_source_cleanup=None,
-            enable_report=True, enable_annotate=True,
-            translation_theory="目的论 (Skopos Theory)",
-            style_rules="保持学术书面语。", segmentation_mode="sentence",
-            translation_concurrency=4, reviewer_mode="separate",
-            reviewer_provider="OpenAI", reviewer_model="gpt-5.1",
-            reviewer_api_key="rk", reviewer_base_url="")
-        qt_sources = adapter.settings_sources(config, state)
-
-        streamlit_globals = _streamlit_globals()
-        streamlit_globals["_state"] = state
-        st_sources = _streamlit_streamlit_sources(streamlit_globals)
-
-        qt = resolve_effective_settings(qt_sources)
-        web = resolve_effective_settings(st_sources)
-
-        # The desktop surface does not expose research/literature settings yet
-        # (a documented Phase 1 divergence); every field both surfaces *can*
-        # express must resolve identically.
-        qt_values = qt.to_job_config().to_dict()
-        web_values = web.to_job_config().to_dict()
-        assert {k for k in qt_values if qt_values[k] != web_values[k]} == {
-            "research_settings", "literature_sources"}
-
-        # Feed the same values through the desktop layer and the whole contract
-        # matches byte for byte — one resolution path, not two.
-        qt_sources_complete = SettingsSources(
-            explicit={**dict(qt_sources.explicit),
-                      "research_settings": {"target_words": 4200},
-                      "literature_sources": ["refs.bib"]},
-            user_defaults=qt_sources.user_defaults,
-            provider_profile=qt_sources.provider_profile,
-            job_state=qt_sources.job_state)
-        qt_complete = resolve_effective_settings(qt_sources_complete)
-        assert qt_complete.to_job_config().to_dict() == web_values
-        assert qt_complete.to_job_config().fingerprint() == \
-            web.to_job_config().fingerprint()
-        # ...and both layers were actually used, not just an empty path.
-        for source in (qt, web):
-            assert source.winner("provider") in {"explicit", "provider_profile"}
-            assert source.winner("batch_size") in {"user_defaults", "default"}
-            assert source.winner("user_glossary") == "job_state"
-
-
 def _streamlit_streamlit_sources(globals_map: Dict[str, Any]):
     return _streamlit_settings_sources(globals_map, {})
-
-
-def test_streamlit_builder_emits_named_layers():
-    globals_map = _streamlit_globals()
-    globals_map["_state"] = {}
-    sources = _streamlit_settings_sources(globals_map, {})
-    assert isinstance(sources, SettingsSources)
-    assert sources.explicit.get("provider") == "OpenAI"
-    assert sources.user_defaults.get("batch_size") == 4
-    assert sources.user_defaults.get("enable_understanding") is True
-    assert "provider" in sources.provider_profile or sources.provider_profile == {}
-    assert sources.job_state == {}
 
 
 def test_qt_builder_emits_named_layers():
@@ -569,16 +502,3 @@ print(json.dumps({
 '''
 
 
-def test_settings_resolution_and_locale_work_headlessly():
-    script = _HEADLESS.replace("__ROOT__", repr(str(ROOT)))
-    completed = subprocess.run([sys.executable, "-c", script], cwd=str(ROOT),
-                               capture_output=True, text=True, timeout=300)
-    assert completed.returncode == 0, completed.stderr
-    payload = json.loads(completed.stdout.strip().splitlines()[-1])
-    assert payload["api_key_source"] == "provider_profile"
-    assert payload["api_key_redacted"] == "***"
-    assert payload["batch_size"] == 6
-    assert payload["target_lang"] == "English"
-    assert payload["catalog_headless"] is True
-    assert payload["locale"] == "en"
-    assert payload["frontends_loaded"] == []

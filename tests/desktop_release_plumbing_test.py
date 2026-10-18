@@ -47,20 +47,6 @@ def test_cli_writes_the_overridden_record(tmp_path):
     assert payload["app_version"] == "9.9.9" and payload["build_id"] == "release-9.9.9"
 
 
-def test_build_script_forwards_the_overrides_and_the_record_path():
-    script = (ROOT / "scripts" / "build_desktop.sh").read_text(encoding="utf-8")
-    assert "FOLITH_APP_VERSION" in script and "FOLITH_BUILD_ID" in script
-    assert "FOLITH_OUT_DIR" in script and "FOLITH_DIST_DIR" in script
-    # the record that is shipped must be the one this build wrote
-    assert 'FOLITH_BUILD_INFO="$BUILD_INFO"' in script
-
-
-def test_spec_reads_the_build_record_from_the_build_output():
-    spec = (ROOT / "packaging" / "folith-desktop.spec").read_text(encoding="utf-8")
-    assert 'os.environ.get(\n    "FOLITH_BUILD_INFO"' in spec or "FOLITH_BUILD_INFO" in spec
-    assert "desktop_build_info.json" in spec
-
-
 def test_no_migration_machinery_is_built_for_upgrades():
     """Roadmap §3.2: no multi-version migration framework before formats change."""
     source = (ROOT / "folith" / "desktop" / "paths.py").read_text(encoding="utf-8")

@@ -30,9 +30,8 @@ def test_persisted_project_and_memory_identifiers_are_unchanged():
 
 def test_console_aliases_and_legacy_constants_remain_available():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'folith = "gui:main"' in pyproject
-    assert 'foliothread = "gui:main"' in pyproject
-    assert 'folith = "gui:main"' in pyproject
+    assert 'folith = "folith.qt.app:main"' in pyproject
+    assert 'foliothread = "folith.qt.app:main"' in pyproject
     assert brand.LEGACY_BRAND == "FolioThread"
     assert brand.LEGACY_PACKAGE == "foliothread"
 

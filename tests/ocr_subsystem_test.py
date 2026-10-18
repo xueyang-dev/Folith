@@ -1,7 +1,6 @@
 """Engine boundary, evidence, lazy lifecycle and durable intake regressions."""
 import io
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -278,27 +277,6 @@ def test_scanned_preview_reads_exact_engine_cache_and_pdf_boxes(tmp_path, fake_p
     cache = core.job_dir(job_id) / "ocr_cache" / "manifest.json"
     cache.touch()
     assert pdf_preview.get_cached_segment_location(job_id, 0, "مرحبا Ali 123، السطر الثاني ١٢٣.") == (None, [])
-
-
-def test_paddle_engine_control_and_missing_state_leave_app_usable(tmp_path, monkeypatch):
-    from streamlit.testing.v1 import AppTest
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setitem(sys.modules, "paddleocr", None)
-    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=60)
-    at.session_state["app_view"] = "new"
-    at.session_state["workspace_mode"] = False
-    at.session_state["task_step"] = 1
-    at.session_state["ocr_language"] = "ara"
-    at.session_state["ocr_backend"] = "paddle"
-    at.session_state["task_files"] = [{"name": "scan.pdf", "bytes": b"%PDF-1.4"}]
-    at.run()
-    assert not at.exception
-    selector = next(widget for widget in at.selectbox if widget.key == "ocr_backend")
-    assert selector.value == "paddle"
-    assert any("未安装" in message.value for message in at.warning)
-    selector.select("tesseract").run()
-    assert not at.exception
-    assert next(widget for widget in at.selectbox if widget.key == "ocr_backend").value == "tesseract"
 
 
 def test_paddle_runs_shared_segmentation_translation_export_and_resume(tmp_path, fake_paddle, monkeypatch):

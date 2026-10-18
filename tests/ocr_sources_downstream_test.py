@@ -9,12 +9,10 @@ uses the deterministic offline provider double from ``tests/offline_provider.py`
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import fitz
 import pytest
-from streamlit.testing.v1 import AppTest
 
 import core
 from folith import ocr_online
@@ -172,33 +170,3 @@ def test_rescan_with_a_different_ocr_source_resets_source_derived_state(
     assert rescanned["pipeline_config"]["ocr_online"]["model"] == "other-model"
 
 
-def test_task_ui_offers_three_sources_and_their_settings(tmp_path, monkeypatch):
-    """UI wiring only: the page is rendered, no OCR request is issued."""
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr(core, "_find_tesseract", lambda: "/bin/tesseract")
-    at = AppTest.from_file(str(APP_PATH), default_timeout=60)
-    at.session_state["app_view"] = "new"
-    at.session_state["workspace_mode"] = False
-    at.session_state["task_step"] = 1
-    at.session_state["ocr_language"] = "ara"
-    at.session_state["task_files"] = [{"name": "scan.pdf", "bytes": b"%PDF-1.4"}]
-    at.run()
-    assert not at.exception
-    source = next(widget for widget in at.selectbox if widget.key == "ocr_backend")
-    assert list(source.options) == ["Tesseract", "PaddleOCR", "线上 OCR API", "自动（仅本地）"]
-
-    # Selecting Paddle exposes the model set selector.
-    source.select("paddle").run()
-    assert not at.exception
-    assert any(widget.key == "ocr_paddle_model" for widget in at.selectbox)
-    assert any("实验性" in message.value or "模型" in message.value
-               for message in list(at.caption) + list(at.warning))
-
-    # Selecting the online source exposes its connection settings, and the
-    # configuration status is readable without a billable request.
-    source = next(widget for widget in at.selectbox if widget.key == "ocr_backend")
-    source.select("online").run()
-    assert not at.exception
-    assert any(widget.key == "ocr_online_credential_source" for widget in at.selectbox)
-    assert any(widget.key == "ocr_online_model" for widget in at.text_input)
-    assert any("线上 OCR" in message.value for message in list(at.warning) + list(at.caption))

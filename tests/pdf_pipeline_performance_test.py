@@ -279,32 +279,6 @@ def test_ocr_checkpoint_prevents_duplicate_page_work(tmp_path, monkeypatch):
     assert second[2]["completed_pages"] == 3
 
 
-def test_runtime_nested_progress_has_no_fake_eta():
-    llm = core._runtime_stage_info(
-        "【阶段一】LLM 原文纠错与断行整理（批次 9/84；处理中 #10 #11 #12 #13）…"
-    )
-    ocr = core._runtime_stage_info(
-        "【阶段一】扫描 PDF OCR（42/318 页；workers=2；device=cpu）…"
-    )
-    assert llm["stage_id"] == "llm_cleanup"
-    assert llm["stage_progress"] == {
-        "unit": "批次", "completed": 9, "total": 84,
-        "in_flight": [10, 11, 12, 13],
-    }
-    assert ocr["stage_id"] == "ocr"
-    assert ocr["stage_progress"]["completed"] == 42
-    assert "eta" not in llm["stage_progress"]
-
-    from app import _runtime_pipeline_label
-
-    label, completed, total = _runtime_pipeline_label({
-        "runtime": llm,
-        "stage_progress": llm["stage_progress"],
-    })
-    assert label == "原文处理 · 当前阶段 9 / 84 批次 · 处理中 #10 #11 #12 #13"
-    assert (completed, total) == (9, 84)
-
-
 def test_runtime_nested_progress_supports_sentence_unit_building():
     info = core._runtime_stage_info("【阶段一】按句构建翻译单元（3/8 句）…")
 

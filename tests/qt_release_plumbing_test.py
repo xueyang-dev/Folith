@@ -77,46 +77,6 @@ def test_bundled_distributions_reports_full_versions(tmp_path):
     assert found == {"streamlit": "1.64.0", "httpx2": "2.13.0"}
 
 
-def test_notes_are_stale_checked_against_the_current_artifact(tmp_path, monkeypatch):
-    manifest = {
-        "app": {"app_version": "9.9.9", "build_id": "git:abc1234",
-                "built_at": "2026-01-01T00:00:00+00:00",
-                "packaging_backend": "pyinstaller", "worktree_dirty": True,
-                "target_platform": "macos", "target_arch": "arm64"},
-        "runtime": {"python_version": "3.11.3", "pyside6_version": "6.11.2",
-                    "qt_version": "6.11.2"},
-        "support": {"minimum_system_version": "15.7.5",
-                    "minimum_system_version_source": "measured",
-                    "measured_bundle_max_minos": "15.7.5",
-                    "measured_native_files": 449,
-                    "verified_on": "macOS-27.0.1-arm64"},
-        "ocr": {"engine": "tesseract", "bundled_languages": ["ara", "chi_sim", "eng"],
-                "baseline": ["eng", "chi_sim", "ara"], "paddle_bundled": False,
-                "libreoffice_bundled": False},
-        "must_not_contain": {"entries": ["streamlit", "webview", "pywebview"],
-                             "found": []},
-        "distribution": {"signed": False, "notarized": False,
-                         "scope": "invited private beta"},
-        "external_library_references": [],
-    }
-    dmg = {"artifact": "/tmp/Folith-Qt-9.9.9-macos-arm64.dmg",
-           "sha256": "deadbeef", "bytes": 166223431}
-    notes = release.render_notes(manifest, dmg)
-    assert "9.9.9" in notes and "deadbeef" in notes
-    assert "15.7.5" in notes and "不声称支持" in notes
-    assert "均为 `minos 15.0`" not in notes
-    assert "streamlit" in notes
-    # The notes name the entry they describe, and that `folith` is not it.
-    assert "## 入口" in notes and "qt_client.py" in notes
-    assert "`folith`" in notes and "**不是**本客户端" in notes
-    # Migrated surfaces must not be listed as missing from the client.
-    assert "未迁移到 Qt" not in notes and "学术专业模式" in notes
-    # The rendering is deterministic, so a stale file is detectable.
-    assert release.render_notes(manifest, dmg) == notes
-    manifest["app"]["app_version"] = "9.9.10"
-    assert release.render_notes(manifest, dmg) != notes
-
-
 def test_live_manifest_matches_the_built_bundle_when_present():
     """If the candidate exists on disk, its manifest must describe it."""
     app = ROOT / "dist" / "qt-desktop" / "Folith.app"

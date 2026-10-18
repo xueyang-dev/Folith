@@ -63,7 +63,6 @@
 | 人工验收包 | [manual-acceptance.md](manual-acceptance.md)（详细步骤）｜[acceptance-quickstart.md](acceptance-quickstart.md)（**一页速览**，含回传模板）——两份的候选身份都由 `scripts/qt_acceptance_kit.py --write` 生成并进链校验 |
 | **§6 覆盖矩阵** | [acceptance-matrix.md](acceptance-matrix.md)（逐条：状态 / 证据 / 验证方式） |
 | **验收包（发给测试者）** | `dist/qt-beta-handoff/`（DMG + 生成式 `README-先读我.md` + 五份文档 + `manifest.json`）；`venv/bin/python scripts/qt_acceptance_bundle.py --write/--check`。**重建候选后必须重跑 --write** |
-| 旧壳基线（保留对照） | `dist/desktop/`、`venv/bin/python gui.py --legacy` |
 | 用户数据目录 | `~/Library/Application Support/Folith/data`（与旧壳同一位置，升级可见旧任务） |
 | 日志目录 | `~/Library/Logs/Folith`（`qt-client.log`） |
 
@@ -79,7 +78,7 @@ venv/bin/python scripts/qt_artifact_check.py --out build/qt-desktop/artifact-che
 venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py \
     tests/qt_extraction_error_test.py tests/qt_client_style_test.py \
     tests/qt_client_adapter_test.py tests/qt_client_window_test.py \
-    tests/qt_release_plumbing_test.py tests/qt_spike_test.py -q       # 195 项
+    tests/qt_release_plumbing_test.py -q       # 191 项
 
 # 完整验证链（20 步：构建 → 门禁 → 文档一致性 → 用例 → 端到端探针）
 bash scripts/qt_beta_chain.sh tmp/qt-beta/chain

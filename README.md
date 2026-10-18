@@ -107,7 +107,7 @@ python -m folith.qt
 python -m pip install foliothread
 ```
 
-代码模块名为 `folith`，发行包名沿用 `foliothread`。Pip 安装的 `folith` 命令启动的是旧的 Streamlit 界面（保留一个版本，之后移除），不是上面的桌面客户端。
+代码模块名为 `folith`，发行包名沿用 `foliothread`。PyPI 上的 0.6.0 中，`folith` 命令仍启动旧的 Streamlit 界面；旧界面已从源码中移除，下一个版本起 `folith` 命令直接启动桌面客户端。
 
 ---
 

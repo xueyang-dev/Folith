@@ -6,7 +6,6 @@ and a bare "Python"/"Streamlit" name.
 """
 from __future__ import annotations
 
-import json
 import plistlib
 import subprocess
 import sys
@@ -24,21 +23,6 @@ ICNS = ROOT / "build" / "desktop" / "Folith.icns"
 BRAND_ICON = ROOT / "folith" / "resources" / "brand" / "folith-mark-hires.png"
 TILE_ICON = ROOT / "folith" / "resources" / "brand" / "folith-app-icon.png"
 LEGACY_ICON = ROOT / "folith" / "resources" / "brand" / "foliothread-app-icon.png"
-
-
-def test_spec_wires_the_app_icon_and_identity_fields():
-    spec = (ROOT / "packaging" / "folith-desktop.spec").read_text(encoding="utf-8")
-    assert "Folith.icns" in spec, "the bundle must use the built app icon"
-    assert '"CFBundleIdentifier": "dev.folith.desktop"' in spec
-    assert '"CFBundleShortVersionString": APP_VERSION' in spec
-    assert '"LSMinimumSystemVersion"' in spec
-    assert '"NSAllowsLocalNetworking"' in spec
-
-
-def test_build_script_builds_the_icon():
-    script = (ROOT / "scripts" / "build_desktop.sh").read_text(encoding="utf-8")
-    assert "build_app_icon.py" in script
-    assert "Folith.icns" in script
 
 
 def test_brand_artwork_is_tracked_and_usable():
@@ -112,7 +96,3 @@ def test_built_bundle_carries_its_own_identity():
         "the PyInstaller placeholder icon should be gone"
 
 
-def test_window_title_is_the_product_name():
-    """`app.py` must keep setting the product title (the native window follows it)."""
-    source = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert "page_title=_brand.APP_TITLE_ZH" in source

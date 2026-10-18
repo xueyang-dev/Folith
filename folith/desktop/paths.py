@@ -196,7 +196,7 @@ def repo_root() -> Path | None:
         return None
     here = Path(__file__).resolve()
     for candidate in here.parents:
-        if (candidate / "gui.py").exists() and (candidate / "app.py").exists():
+        if (candidate / "core.py").exists() and (candidate / "qt_client.py").exists():
             return candidate
     return None
 

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import stat
 import sys
 from pathlib import Path
 
@@ -22,21 +20,6 @@ sys.path.insert(0, str(ROOT))
 SCRIPT = ROOT / "scripts" / "build_dmg.sh"
 RECORD = ROOT / "build" / "desktop" / "dmg_record.json"
 DMG_DIR = ROOT / "dist" / "desktop"
-
-
-def test_build_script_declares_the_dmg_layout():
-    source = SCRIPT.read_text(encoding="utf-8")
-    assert SCRIPT.exists() and os.access(SCRIPT, os.X_OK)
-    assert "ln -s /Applications" in source, "the drag target is the point of the DMG"
-    assert "hdiutil create" in source and "-format UDZO" in source
-    assert "hdiutil verify" in source, "the image checksum must be verified"
-    assert "Folith-${VERSION}-macos-${ARCH}.dmg" in source
-
-
-def test_build_script_is_not_silently_unsigned_aware():
-    source = SCRIPT.read_text(encoding="utf-8")
-    assert '"signed": False' in source, "record the signing state honestly"
-    assert "D3" in source, "note where signing / notarisation belongs"
 
 
 @pytest.mark.skipif(not RECORD.exists(), reason="no DMG has been built here")

@@ -10,7 +10,7 @@
 > | D3 公开分发 | 签名、公证、真实下载验证仍待处理，属另行授权范围 |
 > | D4 产品演进 | Windows、Intel Mac 未排期，不宣称支持；凭据库、更新器（现仅手动检查更新）、完整项目转移等未立项 |
 >
-> 现行产品方向：**Qt 是唯一的主客户端**；旧 Streamlit 界面（`folith` 命令、`gui.py`）只保留一个版本作对照，不再扩展；旧的 Streamlit + pywebview 桌面壳已退役（[0.5.0 记录](desktop-d3/release-notes-0.5.0.md)只作历史）。§10 的「近期不迁移 Tauri / Electron」结论仍然有效，只是前端已是 Qt。
+> 现行产品方向：**Qt 是唯一的主客户端**；旧 Streamlit 界面（`gui.py`、`app.py`、`folith/ui/`）与 pywebview 桌面壳已于 2026-10-18 从源码移除，`folith` 命令改为启动 Qt 客户端；下文关于 Streamlit 服务进程的分析只作历史（[0.5.0 记录](desktop-d3/release-notes-0.5.0.md)只作历史）。§10 的「近期不迁移 Tauri / Electron」结论仍然有效，只是前端已是 Qt。
 >
 > 0.6 之后的下一步：(1) 用干净提交构建 0.6 候选，完成 7 条强制人工验收；(2) 解决 Qt 退出测试的原生崩溃与发布预检发现的本机绝对路径；(3) 签名与公证；(4) 之后才考虑 Windows 或 Intel 构建，且必须各有实机验收。
 

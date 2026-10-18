@@ -1,13 +1,10 @@
 """UI cost and background segment-operation regressions, without provider calls."""
 import json
 import threading
-from pathlib import Path
 
 import pytest
-from streamlit.testing.v1 import AppTest
 
 import core
-from folith import task_overview, translation_planner, workspace_view
 from folith.storage import job_repository
 
 
@@ -46,50 +43,6 @@ def test_snapshot_preserves_explicit_empty_translation_and_new_structure(job_env
     assert all(pair["target"] == "" for pair in pairs[1:3])
     identities = [pair["segment_uid"] for pair in pairs]
     assert len(identities) == len(set(identities))
-
-
-def test_workspace_reads_summaries_and_shares_row_projections(job_env, monkeypatch):
-    job_id = "hotpath-workspace"
-    state = _state()
-    state["pairs"][0]["target"] = "TODO"
-    core.save_job_state(job_id, state)
-    counts = {"planner": 0, "projection": 0}
-    original_planner = translation_planner.plan_findings
-    original_projection = workspace_view.project_workspace_state
-
-    def planner(*args, **kwargs):
-        counts["planner"] += 1
-        return original_planner(*args, **kwargs)
-
-    def projection(*args, **kwargs):
-        counts["projection"] += 1
-        return original_projection(*args, **kwargs)
-
-    def full_scan():
-        pytest.fail("Opening one task must not load all task states")
-
-    monkeypatch.setattr(core, "list_jobs", full_scan)
-    monkeypatch.setattr(translation_planner, "plan_findings", planner)
-    monkeypatch.setattr(task_overview, "plan_findings", planner)
-    monkeypatch.setattr(workspace_view, "project_workspace_state", projection)
-    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"))
-    at.session_state["app_view"] = "workspace"
-    at.session_state["workspace_mode"] = True
-    at.session_state["active_job_id"] = job_id
-    at.session_state["workspace_section"] = "translation"
-    at.run(timeout=15)
-    counts.update(planner=0, projection=0)
-    at.run(timeout=15)
-    assert not at.exception
-    assert len([widget for widget in at.text_area
-                if str(widget.key).startswith("translation_editor_")]) == 40
-    assert counts["planner"] == 1
-    assert counts["projection"] <= 4
-    counts.update(planner=0, projection=0)
-    at.button(key=f"workspace_issues_{job_id}").click().run(timeout=15)
-    assert not at.exception
-    assert at.button(key=f"issues_close_{job_id}")
-    assert counts["planner"] == 1
 
 
 def test_runtime_tail_filters_before_limiting_and_preserves_order(job_env, monkeypatch):
@@ -215,48 +168,3 @@ def test_segment_worker_cancel_does_not_claim_success(job_env, monkeypatch):
     assert core.load_runtime_state(job_id)["segment_operation_result"] != "completed"
 
 
-def test_retranslation_ui_can_switch_tasks_and_remounts_completed_result(job_env, monkeypatch):
-    for job_id in ("ui-segment-action", "ui-other-task"):
-        core.save_job_state(job_id, _state())
-    entered, release = threading.Event(), threading.Event()
-
-    def retranslate(job_id, indexes, **kwargs):
-        entered.set()
-        assert release.wait(5)
-        state = core.load_job_state(job_id)
-        state["pairs"][0]["target"] = "新的后台译文"
-        core.save_job_state(job_id, state)
-        return state, indexes
-
-    monkeypatch.setattr(core, "retranslate_segments", retranslate)
-    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"))
-    at.session_state["app_view"] = "workspace"
-    at.session_state["workspace_mode"] = True
-    at.session_state["active_job_id"] = "ui-segment-action"
-    at.session_state["workspace_section"] = "translation"
-    at.session_state["provider_choice"] = "DeepSeek"
-    at.session_state["api_key_DeepSeek"] = "test-key"
-    at.run(timeout=15)
-    at.button(key="cat_action_retranslate_inline_ui-segment-action_0").click()
-    try:
-        at.run(timeout=15)
-        assert entered.wait(1)
-        assert not at.exception
-        assert any("任务正在后台处理" in item.value for item in at.info)
-        assert not any(str(item.key).startswith("translation_editor_") for item in at.text_area)
-        at.session_state["active_job_id"] = "ui-other-task"
-        at.query_params["task"] = "ui-other-task"
-        at.run(timeout=15)
-        assert not at.exception
-        assert any(str(item.key).startswith("translation_editor_") for item in at.text_area)
-    finally:
-        worker = core._RUNTIME_WORKERS.get("ui-segment-action")
-        release.set()
-        if worker:
-            worker.join(3)
-    at.session_state["active_job_id"] = "ui-segment-action"
-    at.query_params["task"] = "ui-segment-action"
-    at.run(timeout=15)
-    assert not at.exception
-    assert any(item.value == "新的后台译文" for item in at.text_area)
-    assert any("已用当前配置重新翻译" in item.value for item in at.success)

@@ -11,7 +11,6 @@ import re
 import sys
 from pathlib import Path
 
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -41,18 +40,6 @@ def test_shared_ocr_cache_lives_outside_job_assets(tmp_path, monkeypatch):
     assert cache.parent.name == core.OCR_PROFILE_CACHE_DIRNAME
     # A job directory is `<output>/<job_id>`: the cache must never look like one.
     assert cache.parent.name != cache.parent.parent.name
-
-
-def test_no_destructive_call_targets_task_assets():
-    offenders = []
-    for path in _product_sources():
-        relative = str(path.relative_to(ROOT))
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not DESTRUCTIVE.search(line):
-                continue
-            if any(asset in line for asset in TASK_ASSETS) and relative not in ALLOWED:
-                offenders.append(f"{relative}:{number}: {line.strip()[:120]}")
-    assert not offenders, "destructive call sites touching task assets: " + "; ".join(offenders)
 
 
 def test_cache_clearing_preserves_all_task_assets(tmp_path, monkeypatch):

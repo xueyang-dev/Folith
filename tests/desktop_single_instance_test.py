@@ -8,10 +8,8 @@ lock when the first one exits.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -123,42 +121,6 @@ def test_wait_for_previous_service_exit(tmp_paths):
     assert single_instance.wait_for_service_exit(0, timeout=0.1) is True
 
 
-def test_startup_refuses_while_a_previous_service_is_alive(tmp_paths, capsys, monkeypatch):
-    """A leftover service must block startup instead of racing on the data dir."""
-    import gui
-
-    import subprocess
-
-    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-    try:
-        # Simulate a crashed launcher: the OS lock is free, but its record still
-        # names a service that has not finished exiting.
-        stale = single_instance.AppInstanceLock(tmp_paths)
-        assert stale.acquire()
-        stale.release()
-        tmp_paths.instance_record.write_text(
-            _record(tmp_paths, launcher_pid=999_999, service_pid=sleeper.pid).to_json() + "\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setattr(single_instance, "wait_for_service_exit",
-                            lambda pid, timeout=25.0: False)
-        started = time.monotonic()
-        code = gui.run_desktop(_desktop_args())
-        elapsed = time.monotonic() - started
-        captured = capsys.readouterr().out
-        assert elapsed < 30, f"refused startup must not block (took {elapsed:.1f}s)"
-        assert code == 11, captured
-        assert "仍未退出" in captured
-        assert desktop_process.pid_alive(sleeper.pid)
-        # The lock must not be left held by a refused startup.
-        fresh = single_instance.AppInstanceLock(tmp_paths)
-        assert fresh.acquire() is True
-        fresh.release()
-    finally:
-        sleeper.terminate()
-        sleeper.wait(timeout=10)
-
-
 # --- real two-launch experiment -------------------------------------------
 
 
@@ -170,48 +132,3 @@ def _desktop_args(ready_timeout: float = 90.0) -> argparse.Namespace:
     )
 
 
-def test_second_launch_raises_instead_of_starting_another_service(tmp_paths, capsys):
-    import gui
-
-    outcome: dict = {}
-
-    def first_launch() -> None:
-        outcome["code"] = gui.run_desktop(_desktop_args())
-
-    thread = threading.Thread(target=first_launch, daemon=True)
-    thread.start()
-
-    record = None
-    deadline = time.monotonic() + 120
-    lock = single_instance.AppInstanceLock(tmp_paths)
-    while time.monotonic() < deadline and record is None:
-        record = lock.record()
-        time.sleep(0.3)
-    assert record is not None, "the first instance never published its record"
-    assert desktop_process.pid_alive(record.service_pid)
-
-    # Second launch in this same process: must refuse, must not spawn a service.
-    second_code = gui.run_desktop(_desktop_args())
-    captured = capsys.readouterr().out
-    assert second_code == 10, captured
-    assert "已经在运行" in captured
-    assert record.instance_id in captured
-    assert "窗口唤起：" in captured
-
-    # The first instance is untouched and still the only service.
-    assert desktop_process.pid_alive(record.service_pid)
-    assert lock.acquire() is False, "the first instance must still hold the lock"
-
-    # Shut the first instance down; the lock must be released with it.
-    desktop_process.terminate_process(record.service_pid, timeout=10)
-    thread.join(timeout=120)
-    assert outcome.get("code") in (0, 9), outcome
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if not tmp_paths.instance_record.exists():
-            break
-        time.sleep(0.3)
-    assert not tmp_paths.instance_record.exists(), "the record must be removed on exit"
-    fresh = single_instance.AppInstanceLock(tmp_paths)
-    assert fresh.acquire() is True
-    fresh.release()

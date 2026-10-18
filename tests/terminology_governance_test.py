@@ -430,65 +430,6 @@ def _numbered(user_prompt):
     return segs
 
 
-def test_apptest_term_review_panel():
-    from streamlit.testing.v1 import AppTest
-    tmp = Path(tempfile.mkdtemp(prefix="folith-apptest-"))
-    old_dir = core.OUTPUT_DIR
-    core.OUTPUT_DIR = tmp
-    try:
-        jid = "qt000000000000001"
-        state = core.new_job_state("quality.docx")
-        state.update(
-            p1_done=True, p2_done=False, quality_mode=True, profile_done=True,
-            paras=["The Skopos theory 是核心概念。",
-                   "The fidelity principle 也很重要。"],
-            auto_terms={"Skopos theory": "目的论"},
-            glossary=[{
-                "id": "t-abc123", "source": "Skopos theory", "target": "目的论",
-                "proposed_target": "目的论", "preferred": "目的论", "forbidden": [],
-                "behavior": "translate", "status": "candidate", "domain": "翻译学",
-                "scope": "document", "note": "", "confidence": 0.5,
-                "occurrences": [0],
-                "evidence": [{"evidence_type": "model_knowledge", "source_name": "",
-                              "note": "自动抽取", "quote": "", "url": "",
-                              "confidence": 0.5}],
-            }],
-            stage="TERMS_PREPARED", delivery_status="draft",
-        )
-        core.save_job_state(jid, state)
-
-        at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"),
-                               default_timeout=30)
-        at.run()
-        assert not at.exception, f"应用启动异常：{at.exception}"
-        assert any(widget.label == "目标语言" for widget in at.selectbox), \
-            "旧版 Streamlit 也必须渲染目标语言选择框"
-        assert at.session_state["app_view"] == "new" \
-            and not at.session_state["workspace_mode"], \
-            "打开应用时不应自动进入未完成任务"
-        next(b for b in at.sidebar.button if b.label == "历史任务").click()
-        at.run()
-        assert any("quality.docx" in m.value for m in at.markdown), \
-            "未完成任务应保留在历史任务列表"
-        assert any("tp-history-copy" in m.value for m in at.markdown), \
-            "历史任务名称与进度应使用可读的任务信息容器"
-        # 历史卡片打开的是**任务**：文案不得写成「打开项目」，那是另一个实体。
-        next(b for b in at.button if b.label == "打开任务").click()
-        at.run()
-        # 打开任务先落 Overview（确定性落点），再进入术语工作区。
-        at.session_state["workspace_section"] = "terms"
-        at.run()
-        assert not at.exception, f"术语工作区渲染异常：{at.exception}"
-        assert any("<h2>术语</h2>" in m.value for m in at.markdown)
-        labels = [b.label for b in at.button]
-        assert "冻结并继续翻译" in labels, labels
-        assert any("provisional" in m.value or "术语" in m.value for m in at.markdown)
-        print("  ✓ AppTest：术语工作区显示 + 冻结入口可见")
-    finally:
-        core.OUTPUT_DIR = old_dir
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 def _entry(source, target, **kw):
     base = {"source": source, "target": target, "behavior": "translate",
             "status": "provisional"}
@@ -1214,7 +1155,6 @@ if __name__ == "__main__":
     test_find_occurrences_all_segments()
     test_extract_auto_terms_v2()
     test_review_state_persist_and_restore()
-    test_apptest_term_review_panel()
     test_select_glossary_for_segments()
     test_glossary_qa_all_occurrences()
     test_conflict_detection()

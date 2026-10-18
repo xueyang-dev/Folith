@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 
 import json
-import os
 import subprocess
 import sys
 import time
@@ -330,39 +329,6 @@ def test_force_exit_is_offered_when_the_bounded_wait_is_exceeded(tmp_path):
 
 
 # --- wiring: the close/quit path must register the exit flow ---------------
-
-
-def test_open_native_window_registers_the_closing_handler(monkeypatch):
-    """Cmd+Q/Dock quit and the close button both arrive via events.closing.
-
-    pywebview's macOS AppDelegate implements `applicationShouldTerminate_` and
-    forwards it to `BrowserView.should_close` -> `window.events.closing`
-    (cocoa.py:66/1310), so registering the handler here covers both paths.
-    """
-    import types
-
-    registered: list = []
-
-    class _Events:
-        def __init__(self):
-            self.closing = _FakeEvent(registered)
-
-    class _Window:
-        def __init__(self, *args, **kwargs):
-            self.events = _Events()
-
-    fake = types.ModuleType("webview")
-    fake.settings = {"ALLOW_DOWNLOADS": False}
-    fake.create_window = lambda *a, **k: _Window()
-    fake.start = lambda *a, **k: None
-    monkeypatch.setitem(sys.modules, "webview", fake)
-
-    import gui
-
-    handler = lambda window=None: True
-    assert gui.open_native_window("http://127.0.0.1:1", on_closing=handler) is True
-    assert registered == [handler]
-    assert fake.settings["ALLOW_DOWNLOADS"] is True
 
 
 class _FakeEvent:

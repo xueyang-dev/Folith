@@ -21,16 +21,15 @@ Repository = "https://github.com/xueyang-dev/Folith"
 Issues = "https://github.com/xueyang-dev/Folith/issues"
 
 [project.optional-dependencies]
-desktop = ["pywebview>=5.0"]
 test = ["pytest>=8,<9", "pikepdf>=10"]
 
 [project.scripts]
-folith = "gui:main"
+folith = "folith.qt.app:main"
 # Published package and command kept as a compatibility alias for existing installs.
-foliothread = "gui:main"
+foliothread = "folith.qt.app:main"
 
 [tool.setuptools]
-py-modules = ["app", "core", "gui"]
+py-modules = ["core"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
