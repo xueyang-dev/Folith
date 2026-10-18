@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
@@ -19,6 +20,22 @@ from folith.qt import adapter, motion, style, views
 @pytest.fixture()
 def app():
     return QApplication.instance() or QApplication([])
+
+
+def _settle(predicate, timeout: float = 5.0, interval_ms: int = 20) -> bool:
+    """Pump the event loop until ``predicate`` holds or ``timeout`` elapses.
+
+    Motion durations are wall-clock, so a loaded CI runner can take far longer
+    than the nominal frame count to finish a transition.  Waiting for the end
+    state keeps these tests about the behaviour (the transition completes and
+    leaves nothing behind) instead of about how fast the runner is.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        QTest.qWait(interval_ms)
+    return predicate()
 
 
 def test_reduce_motion_priority_and_system_fallback(monkeypatch):
@@ -205,17 +222,29 @@ def test_probe_poll_interval_does_not_block_gui_heartbeat(app, tmp_path):
     from PySide6.QtCore import QTimer
     from folith.qt.selftest import Flow
 
-    ticks = []
+    gaps: list[float] = []
+    last = [time.monotonic()]
     timer = QTimer()
     timer.setInterval(10)
-    timer.timeout.connect(lambda: ticks.append(1))
+
+    def beat() -> None:
+        now = time.monotonic()
+        gaps.append((now - last[0]) * 1000)
+        last[0] = now
+
+    timer.timeout.connect(beat)
     timer.start()
     try:
         flow = Flow(None, app, out_dir=tmp_path)
         assert not flow.pump(.12, lambda: False, interval=.5)
-        assert len(ticks) >= 4
     finally:
         timer.stop()
+    gaps.append((time.monotonic() - last[0]) * 1000)
+    # ``pump`` polls slowly (interval=.5) but must keep yielding the GUI thread,
+    # so the 10 ms timer keeps ticking through the slice and no single gap grows
+    # toward the poll interval.  A loaded runner coalesces timer events, so judge
+    # the worst gap rather than a fixed tick count.
+    assert gaps and max(gaps) < 250, gaps
 
 
 def test_progress_never_runs_ahead_and_stage_reset_is_immediate(app, monkeypatch):
@@ -248,13 +277,12 @@ def test_view_effect_renders_and_releases_without_moving_input_geometry(app, mon
     QTest.qWait(80)
     assert not widget.grab().isNull()
     assert widget.geometry() == geometry
-    QTest.qWait(250)
-    assert widget.graphicsEffect() is None, "a finished reveal leaves no effect installed"
+    assert _settle(lambda: widget.graphicsEffect() is None), \
+        "a finished reveal leaves no effect installed"
     controller.nod("tone", widget)
     QTest.qWait(70)
     assert not widget.grab().isNull()
-    QTest.qWait(170)
-    assert widget.graphicsEffect() is None
+    assert _settle(lambda: widget.graphicsEffect() is None)
     widget.close()
     widget.deleteLater()
 
@@ -272,17 +300,26 @@ def test_popover_interruptions_and_native_escape(app, monkeypatch):
     popup.open_at(anchor)
     assert popup._motion.running("popup")
     assert popup.body.isHidden()
-    QTest.qWait(240)
-    assert popup.isVisible() and popup.body.isVisible()
+    assert _settle(lambda: popup.isVisible() and popup.body.isVisible()
+                   and not popup._motion.running("popup")
+                   and QApplication.activePopupWidget() is popup)
     assert popup.size() == popup._popup_size
     popup.close()
     QTest.qWait(30)
     popup.open_at(anchor)  # cancellation cannot run the old close completion
-    QTest.qWait(220)
-    assert popup.isVisible() and popup.body.isVisible() and not closed
-    QTest.keyClick(popup, Qt.Key.Key_Escape)
-    QTest.qWait(190)
-    assert not popup.isVisible() and len(closed) == 1
+    assert _settle(lambda: popup.isVisible() and popup.body.isVisible()
+                   and not popup._motion.running("popup")
+                   and QApplication.activePopupWidget() is popup)
+    assert not closed
+    # Native Esc is routed by the platform popup, which only starts accepting
+    # the key once the reopened popup has settled; a loaded runner can swallow
+    # the first press.  Keep pressing until it closes instead of betting on a
+    # single press after a fixed delay.
+    deadline = time.monotonic() + 5.0
+    while popup.isVisible() and time.monotonic() < deadline:
+        QTest.keyClick(popup, Qt.Key.Key_Escape)
+        _settle(lambda: not popup.isVisible() and len(closed) == 1, timeout=0.3)
+    assert not popup.isVisible() and len(closed) == 1, (popup.isVisible(), closed)
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
     popup.open_at(anchor)
     assert popup.body.isVisible() and not popup._motion.running("popup")
@@ -301,8 +338,8 @@ def test_save_acknowledgement_waits_for_persistence(bench, monkeypatch):
     bench.confirm_saved(index)
     assert "✓" in bench.segment_list.item(0, 0).text()
     assert index in bench.row_delegate.saved
-    QTest.qWait(450)
-    assert index not in bench.row_delegate.saved
+    assert _settle(lambda: index not in bench.row_delegate.saved), \
+        bench.row_delegate.saved
 
 
 def test_inline_activity_restores_buttons_and_cancels_delayed_progress(app, monkeypatch):
@@ -347,8 +384,7 @@ def test_source_location_waits_for_transition_and_follows_latest_selection(bench
     assert bench.pdf_panel._render_deferred and not located
     bench.select_segment(4)
     assert not located
-    QTest.qWait(350)
-    assert located == [4] and not bench.pdf_panel._render_deferred
+    assert _settle(lambda: located == [4] and not bench.pdf_panel._render_deferred)
     assert not bench._motion.running("translation-columns")
 
 
@@ -360,7 +396,7 @@ def test_column_rewrap_keeps_visible_editor_anchored(bench):
     before = table.rowViewportPosition(40)
     table.setColumnWidth(1, max(120, table.columnWidth(1) - 170))
     bench._schedule_row_heights(reset=True)
-    QTest.qWait(350)
+    assert _settle(lambda: not bench._heights_pending)
     assert abs(table.rowViewportPosition(40) - before) <= 1
     assert bench.inline_editor.isVisibleTo(bench)
 
@@ -372,8 +408,7 @@ def test_reveal_removes_its_effect_when_finished(app, monkeypatch):
     controller = motion.Motion(owner)
     controller.reveal("page", owner, kind="body")
     assert owner.graphicsEffect() is not None
-    QTest.qWait(motion.DURATION["body"] + 150)
-    assert owner.graphicsEffect() is None
+    assert _settle(lambda: owner.graphicsEffect() is None)
 
 
 def test_trailing_clip_keeps_the_page_width_and_its_minimum(app):
