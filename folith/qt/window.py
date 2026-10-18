@@ -251,9 +251,19 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self._poll)
         self.timer.start()
         self.workbench.tabs.currentChanged.connect(
-            lambda _index: QTimer.singleShot(400, self._offer_tips))
+            lambda _index: self._later(400, self._offer_tips))
         # 窗口出现之后再判断是否首次使用（欢迎窗口要以主窗口为父、居中在它上面）。
-        QTimer.singleShot(500, self.maybe_start_onboarding)
+        self._later(500, self.maybe_start_onboarding)
+
+    def _later(self, delay_ms: int, callback) -> None:
+        """Own delayed UI work so deleting the window cancels its timers."""
+        if self._closing_accepted:
+            return
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(callback)
+        timer.timeout.connect(timer.deleteLater)
+        timer.start(delay_ms)
 
     # ================= wiring =================
     def _wire(self) -> None:
@@ -911,7 +921,7 @@ class MainWindow(QMainWindow):
         self._refresh_home_async()
         if returning:
             # 卡片要等任务库排好版才有位置：下一轮事件循环再飞回去。
-            QTimer.singleShot(0, lambda: self._fly_back(returning, origin))
+            self._later(0, lambda: self._fly_back(returning, origin))
 
     def _refresh_home_async(self) -> None:
         self._home_generation = getattr(self, "_home_generation", 0) + 1
@@ -1666,7 +1676,7 @@ class MainWindow(QMainWindow):
                              refresh_delivery=force or terminal_change)
         self._sync_menu_state()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
-        QTimer.singleShot(600, lambda: self._offer_tips(runtime))
+        self._later(600, lambda: self._offer_tips(runtime))
 
     def _segment_rows(self, job_id: str, state: dict) -> list:
         """段落行：任务状态与草稿文件都没变时复用上一次的结果。

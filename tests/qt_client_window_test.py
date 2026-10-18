@@ -212,6 +212,31 @@ def _pump(app, seconds: float, predicate=None) -> bool:
     return bool(predicate()) if predicate is not None else True
 
 
+def test_destroyed_window_drops_delayed_tips(client, monkeypatch):
+    from PySide6.QtTest import QTest
+    from folith.qt.window import MainWindow
+
+    original = client["window"]
+    second = MainWindow(original.config, original.paths, None)
+    second.show()
+    client["app"].processEvents()
+    calls = []
+    monkeypatch.setattr(second, "_offer_tips", lambda *args: calls.append("tips"))
+    try:
+        job_id = _seed_job_for_keyboard(client["adapter"], client["core"],
+                                        client["tmp"], "delayed-tips.docx", ["Text."])
+        second.open_job(job_id)
+    finally:
+        second.timer.stop()
+        second._closing_accepted = True
+        second.close()
+        client["app"].removeEventFilter(second)
+        second.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QTest.qWait(700)
+    assert calls == [], "delayed UI work must be cancelled with its window"
+
+
 def test_idle_window_exits_without_a_prompt(client):
     """MAC-01 class: an empty home page must quit normally, not be refused."""
     window = client["window"]
@@ -1385,6 +1410,7 @@ def test_home_can_move_a_task_to_another_project(client, monkeypatch):
     assert _pump(app, 15, lambda: adapter.load_state(job_id)["project_id"] == project_id)
 
     assert adapter.load_state(job_id)["project_id"] == project_id
+    assert _pump(app, 15, lambda: bool(notices)), "wait for the queued UI completion"
     assert any("移动" in text for text in notices), notices
     # The list now shows it under that project.
     window.refresh_home()

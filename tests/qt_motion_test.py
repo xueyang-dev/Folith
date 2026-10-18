@@ -56,7 +56,7 @@ def test_animation_is_interruptible_and_latest_completion_wins(app, monkeypatch)
     values, completions = [], []
     controller.animate("panel", 0, 1, values.append,
                        finished=lambda: completions.append("old"))
-    QTest.qWait(80)
+    controller._active["panel"].setCurrentTime(80)
     assert 0 < values[-1] < 1
     for i in range(20):
         controller.animate("panel", values[-1], float(i % 2), values.append,
@@ -238,7 +238,7 @@ def test_progress_never_runs_ahead_and_stage_reset_is_immediate(app, monkeypatch
     track.set_stage("translation")
     track.setValue(20)
     track.setValue(70)
-    QTest.qWait(80)
+    track._motion._active["value"].setCurrentTime(80)
     assert 20 < track._display_value < track.value() == 70
     track.setValue(75)  # rapid updates settle rather than queue
     assert track._display_value == 75
