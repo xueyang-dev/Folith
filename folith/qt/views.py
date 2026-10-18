@@ -5454,19 +5454,20 @@ class WorkbenchView(QWidget):
         self._sync_operation_panel()
         # 段号已经在操作栏标题里（"第 N 段"），这一行只说位置与状态。
         parts = [f"{position + 1}/{len(self._rows)}" if position >= 0 else "—",
-                 row.status]
+                 i18n.tr_dynamic(row.status)]
         if row.human_edited and row.status != "人工修改":
-            parts.append("人工修改")
+            parts.append(i18n.tr('人工修改'))
         if row.has_draft:
-            parts.append("⚠ 草稿基于旧译文，提交会覆盖较新的文本"
-                         if row.stale_draft else "有未提交草稿")
+            parts.append(i18n.tr('⚠ 草稿基于旧译文，提交会覆盖较新的文本')
+                         if row.stale_draft else i18n.tr('有未提交草稿'))
         self.segment_status.set_status(" · ".join(parts), _segment_status_tone(row))
-        self.fact_state.setText(row.status)
-        self.fact_review.setText("已审校" if row.reviewed else "未审校")
+        self.fact_state.setText(i18n.tr_dynamic(row.status))
+        self.fact_review.setText(i18n.tr('已审校') if row.reviewed else i18n.tr('未审校'))
         pairs_now = self._state.get("pairs") or []
         from_tm = 0 <= row.index < len(pairs_now) and bool(pairs_now[row.index].get("from_tm"))
-        self.fact_source.setText("人工修改" if row.human_edited
-                                 else ("翻译记忆（已匹配并复用）" if from_tm else "机器翻译"))
+        self.fact_source.setText(i18n.tr('人工修改') if row.human_edited
+                                 else (i18n.tr('翻译记忆（已匹配并复用）') if from_tm
+                                       else i18n.tr('机器翻译')))
         if from_tm and not row.human_edited:
             self.segment_status.setText(self.segment_status.text() + " · "
                                         + i18n.tr('来自翻译记忆'))
@@ -5475,7 +5476,7 @@ class WorkbenchView(QWidget):
             if record.get("segment_index") == row.index:
                 reason = str(record.get("reason") or "")
                 break
-        self.fact_excluded.setText("已排除" if row.excluded else "未排除")
+        self.fact_excluded.setText(i18n.tr('已排除') if row.excluded else i18n.tr('未排除'))
         if reason:
             self.fact_excluded.setText(i18n.tr('已排除（{v0}）', v0=reason))
         pair = None

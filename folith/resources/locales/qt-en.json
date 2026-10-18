@@ -1968,5 +1968,11 @@
   "这些页的原文缺失，译稿不完整，不能交付。补读时只读失败的页，其余页沿用已识别的结果。": "The source text of these pages is missing, so the translation is incomplete and cannot be delivered. Re-reading only reads the failed pages; the rest keep their recognised text.",
   "补读失败页": "Re-read failed pages",
   "第 {v0} 页：{v1}": "Page {v0}: {v1}",
-  "这是交付完整性检查：译文本身不能直接交付。改好译文或重译本段后会自动放行导出。": "This is a delivery integrity check: the translation can't be delivered as it is. Fix the translation or retranslate this segment and export is unblocked automatically."
+  "这是交付完整性检查：译文本身不能直接交付。改好译文或重译本段后会自动放行导出。": "This is a delivery integrity check: the translation can't be delivered as it is. Fix the translation or retranslate this segment and export is unblocked automatically.",
+  "未审校": "Not reviewed",
+  "未排除": "Not excluded",
+  "有未提交草稿": "Uncommitted draft",
+  "⚠ 草稿基于旧译文，提交会覆盖较新的文本": "⚠ Draft is based on an older translation; committing it will overwrite newer text",
+  "翻译记忆（已匹配并复用）": "Translation memory (matched and reused)",
+  "机器翻译": "Machine translation"
 }

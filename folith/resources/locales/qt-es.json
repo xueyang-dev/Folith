@@ -1969,5 +1969,11 @@
   "这些页的原文缺失，译稿不完整，不能交付。补读时只读失败的页，其余页沿用已识别的结果。": "Falta el texto original de estas páginas, así que la traducción está incompleta y no se puede entregar. Al releer solo se leen las páginas fallidas; el resto conserva el texto ya reconocido.",
   "补读失败页": "Releer páginas fallidas",
   "第 {v0} 页：{v1}": "Página {v0}: {v1}",
-  "这是交付完整性检查：译文本身不能直接交付。改好译文或重译本段后会自动放行导出。": "Es una comprobación de integridad de entrega: la traducción no puede entregarse tal cual. Corrige la traducción o vuelve a traducir este segmento y la exportación se desbloqueará automáticamente."
+  "这是交付完整性检查：译文本身不能直接交付。改好译文或重译本段后会自动放行导出。": "Es una comprobación de integridad de entrega: la traducción no puede entregarse tal cual. Corrige la traducción o vuelve a traducir este segmento y la exportación se desbloqueará automáticamente.",
+  "未审校": "Sin revisar",
+  "未排除": "No excluido",
+  "有未提交草稿": "Borrador sin confirmar",
+  "⚠ 草稿基于旧译文，提交会覆盖较新的文本": "⚠ El borrador se basa en una traducción anterior; confirmarlo sobrescribirá un texto más reciente",
+  "翻译记忆（已匹配并复用）": "Memoria de traducción (coincidencia reutilizada)",
+  "机器翻译": "Traducción automática"
 }

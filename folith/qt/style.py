@@ -927,6 +927,22 @@ QComboBox {{
     min-height: {box('md', pad_y=sp['xs'])}px;
 }}
 QComboBox:hover {{ border-color: {t['border-strong']}; }}
+/* 数字框（原页页码）：不写这一条就露出原生白底控件，深色主题下数字也看不见。
+   上下箭头的原生子控件同理不可主题化，用到的地方都关掉箭头（见 pdf_panel）。 */
+QAbstractSpinBox {{
+    background: {t['bg-surface']};
+    color: {t['text-primary']};
+    border: 1px solid {t['border-subtle']};
+    border-radius: {r['md']}px;
+    padding: {sp['xs']}px {sp['sm']}px;
+    min-height: {box('md', pad_y=sp['xs'])}px;
+    selection-background-color: {t['accent-soft']};
+    selection-color: {t['text-primary']};
+}}
+QAbstractSpinBox:hover {{ border-color: {t['border-strong']}; }}
+QAbstractSpinBox:focus {{ border-color: {t['accent']}; }}
+QAbstractSpinBox:disabled {{ background: {t['bg-surface-sunken']}; color: {t['text-muted']}; }}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox:focus {{ border-color: {t['accent']}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{

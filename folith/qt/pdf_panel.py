@@ -80,6 +80,10 @@ class PdfPanel(QWidget):
         self.close_button.clicked.connect(self.closeRequested.emit)
         self.page_spin = QSpinBox()
         self.page_spin.setMinimum(1)
+        # 翻页交给两侧的 ‹ ›；原生上下箭头没法跟主题走，关掉。
+        self.page_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.page_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_spin.setAccessibleName(i18n.tr('页码'))
         self.total_label = QLabel("/ —")
         self.zoom_box = style_module.ComboBox()
         for dpi, label in ZOOMS:

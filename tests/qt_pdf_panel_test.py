@@ -201,3 +201,34 @@ def test_changing_job_invalidates_old_render_even_while_deferred(qapp, pdf_job, 
     panel._rendered(generation, b"old job image")
     assert not shown and panel._source.isNull()
     panel.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ["dark", "light", "paper"])
+def test_page_spin_box_follows_the_theme(qapp, pdf_job, theme):
+    """页码框以前没有 QSS：深色主题下露出原生白底，页码数字看不见。"""
+    from PySide6.QtWidgets import QAbstractSpinBox
+
+    from folith.qt import style, theme as theme_module
+    from folith.qt.pdf_panel import PdfPanel
+
+    panel = PdfPanel()
+    panel.setStyleSheet(style.build_qss(theme))
+    panel.load(pdf_job)
+    panel.next_button.click()
+    panel.resize(600, 400)
+    panel.show()
+    qapp.processEvents()
+    spin = panel.page_spin
+    assert spin.buttonSymbols() == QAbstractSpinBox.ButtonSymbols.NoButtons
+    image = spin.grab().toImage()
+    surface = style.qcolor(theme_module.tokens(theme)["bg-surface"])
+    # 内部底色是主题的 surface 色（取左侧留白处，避开边框与数字）。
+    fill = image.pixelColor(image.width() // 6, image.height() // 2)
+    assert abs(fill.lightness() - surface.lightness()) < 12, (theme, fill.name(), surface.name())
+    # 页码数字确实画出来了：框里有和底色明显不同的像素。
+    text = style.qcolor(theme_module.tokens(theme)["text-primary"])
+    contrast = max(abs(image.pixelColor(x, y).lightness() - fill.lightness())
+                   for x in range(image.width() // 4, image.width() * 3 // 4)
+                   for y in range(image.height() // 4, image.height() * 3 // 4))
+    assert contrast > abs(text.lightness() - surface.lightness()) // 2, (theme, contrast)
+    panel.close()
