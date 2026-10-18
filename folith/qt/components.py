@@ -2120,23 +2120,25 @@ class Popover(QFrame):
         self.close_button.setAccessibleName(title)
         self.close_button.setToolTip(QKeySequence("Esc").toString())
         self.close_button.clicked.connect(self.close)
-        head_text = QVBoxLayout()
-        head_text.setContentsMargins(0, 0, 0, 0)
-        head_text.setSpacing(0)
-        head_text.addWidget(self.title_label)
-        head_text.addWidget(self.subtitle_label)
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.addLayout(head_text, 1)
-        head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
         layout = QVBoxLayout(self.body)
         layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                   theme_module.SPACE["md"], theme_module.SPACE["md"])
         layout.setSpacing(theme_module.SPACE["sm"])
         if header:
+            head_text = QVBoxLayout()
+            head_text.setContentsMargins(0, 0, 0, 0)
+            head_text.setSpacing(0)
+            head_text.addWidget(self.title_label)
+            head_text.addWidget(self.subtitle_label)
+            head = QHBoxLayout()
+            head.setContentsMargins(0, 0, 0, 0)
+            head.addLayout(head_text, 1)
+            head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
             layout.addLayout(head)
         else:
             # 小卡（侧栏连接浮窗）：内容自己说清楚是什么，点外面或 Esc 关闭，不要 ×。
+            # 标题控件直接挂到已经有父对象的 body 上：不建无人认领的头部布局，避免
+            # 布局与其子控件一起被 GC 时析构顺序不定（第二个窗口里会 SIGSEGV）。
             for widget in (self.title_label, self.subtitle_label, self.close_button):
                 widget.setParent(self.body)
                 widget.hide()
