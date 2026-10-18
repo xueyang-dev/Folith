@@ -34,6 +34,9 @@ backoff. The previous destination remains intact until replacement succeeds.
   failures are retried; a false-stall state can recover without losing cancel
   or pause intent. Terminal states and replacement worker ownership are never
   overwritten. Fatal workflow errors still stop heartbeat renewal.
+- A thread already waiting at its pause checkpoint reasserts `paused` after a
+  false-stall recovery; it retains the Continue action rather than remaining
+  stuck at `pausing` while waiting for the user to continue.
 - Technical logs record one failure per episode and the subsequent recovery.
   Exception type, OS error codes and traceback locations are recorded without
   copying exception messages that might contain credentials.

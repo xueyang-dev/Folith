@@ -282,6 +282,15 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
     while load_runtime_state(job_id).get("pause_requested"):
         if _runtime_cancel_requested(job_id):
             raise RuntimeError("任务已请求取消")
+        with _RUNTIME_LOCK:
+            current = load_runtime_state(job_id)
+            if current.get("pause_requested") and not current.get("cancel_requested") \
+                    and current.get("status") in {"stalled", "pausing"}:
+                # This thread has already reached the pause boundary. Restore
+                # its actual state if a stale observer/heartbeat changed the
+                # label; otherwise the UI loses its Continue action forever.
+                update_runtime_state(job_id, status="paused", phase="paused",
+                                     phase_label=paused_message or "任务已暂停，可继续处理")
         time.sleep(0.25)
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")

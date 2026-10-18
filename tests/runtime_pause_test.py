@@ -1,5 +1,6 @@
 import threading
 import time
+import pytest
 import core
 
 
@@ -41,6 +42,30 @@ def test_pause_does_not_claim_success_without_worker(monkeypatch):
     monkeypatch.setattr(core, "is_job_worker_alive", lambda job: False)
     assert not core.request_job_pause("job")
     assert not core.continue_job("job")
+
+
+@pytest.mark.parametrize("recovered_status", ["stalled", "pausing"])
+def test_paused_checkpoint_reasserts_pause_after_false_stall(monkeypatch, recovered_status):
+    runtime = {"status": "running", "phase": "translation", "pause_requested": True}
+    monkeypatch.setattr(core, "load_runtime_state", lambda job: dict(runtime))
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda job: True)
+    monkeypatch.setattr(core, "update_runtime_state", lambda job, **changes: runtime.update(changes))
+    ticks = []
+    def sleep(_delay):
+        ticks.append(1)
+        if len(ticks) == 1:
+            # A polling client marked the waiting thread stalled; heartbeat
+            # recovery can subsequently publish pausing from the pause intent.
+            runtime["status"] = recovered_status
+        else:
+            assert runtime["status"] == "paused"
+            assert "continue" in core.runtime_actions_for_status(runtime["status"])
+            assert core.continue_job("job")
+    monkeypatch.setattr(core.time, "sleep", sleep)
+    core._runtime_pause_checkpoint("job")
+    assert len(ticks) == 2
+    assert runtime["status"] == "running"
+    assert not runtime["pause_requested"]
 
 
 def test_annotate_stage_cooperative_pause(monkeypatch, tmp_path):
