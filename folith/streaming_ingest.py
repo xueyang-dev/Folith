@@ -100,6 +100,8 @@ class ScanStream:
         # 文字先接在末尾（已定稿并翻译的前文不受影响），段落自带页码，译完后按页序重排。
         self._late = {int(k): dict(v) for k, v in (late_pages or {}).items()}
         self._late_pending = set(self._late)
+        #: 暂停→继续之后才把第一遍的失败页登记进补读队列（见 ``clear_halt``）。
+        self._retry_failed = False
         self.pages_retried = 0  # 重试过才读成的页（模型曾中途失败）
         self.finished = False
         self.error: Optional[BaseException] = None
@@ -140,9 +142,21 @@ class ScanStream:
             page_event_sink=self._page_events.append,
             skip_failed_pages=True, reuse_across_models=True)
 
-    def _note_result(self, result) -> None:
+    def _queue_late(self, failed: PageFailed) -> None:
+        """把失败页登记到补读队列（读完全书后再读一遍）。"""
+        self._late.setdefault(failed.page_index, {
+            "page": failed.page_index + 1, "code": failed.code,
+            "http_status": failed.http_status, "reason": failed.describe()})
+        self._late_pending.add(failed.page_index)
+
+    def _note_result(self, result, *, late: bool = False) -> None:
         """按页序统计连续超时；够数就让识别线程停住等主线程处理。"""
         if isinstance(result, PageFailed):
+            # 暂停→继续之后（``_retry_failed``）才补读失败页。第一遍里在停住之前
+            # 已经派出、暂停后才返回的页也会在这里登记：它们在 ``clear_halt`` 收集
+            # 失败清单时还没落库，否则会被永久跳过（换模型后仍留在失败清单里）。
+            if self._retry_failed and not late:
+                self._queue_late(result)
             self.timeout_streak = self.timeout_streak + 1 if result.timeout_like else 0
             if self.timeout_streak >= self.timeout_streak_limit:
                 self._halted.set()
@@ -162,11 +176,9 @@ class ScanStream:
         """主线程已暂停并继续（用户可能已换模型）：重新计数，识别继续。"""
         with self._cond:
             # 这次连续失败的页读完全书后补读一遍（换了模型多半能读成）。
-            for failed in self._assembler.failed_pages.values():
-                self._late.setdefault(failed.page_index, {
-                    "page": failed.page_index + 1, "code": failed.code,
-                    "http_status": failed.http_status, "reason": failed.describe()})
-                self._late_pending.add(failed.page_index)
+            self._retry_failed = True
+            for failed in list(self._assembler.failed_pages.values()):
+                self._queue_late(failed)
         self.timeout_streak = 0
         self._halted.clear()
 
@@ -202,7 +214,7 @@ class ScanStream:
                         with self._cond:
                             self._assembler.add_page(envelope, result, late=True)
                             self._late_pending.discard(envelope.page_index)
-                            self._note_result(result)
+                            self._note_result(result, late=True)
                             self.pages_retried += 0 if isinstance(result, PageFailed) else 1
                             self._cond.notify_all()
                 finally:
