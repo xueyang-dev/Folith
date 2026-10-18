@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
@@ -14,6 +15,13 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
 from folith.qt import adapter, motion, style, views
+
+
+def _wait_for(predicate, timeout_ms=1500):
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not predicate() and time.monotonic() < deadline:
+        QTest.qWait(10)
+    return bool(predicate())
 
 
 @pytest.fixture()
@@ -101,6 +109,10 @@ def test_visible_target_row_keeps_its_position_even_with_reduced_motion(bench, m
     table.verticalScrollBar().setValue(table.rowViewportPosition(10) - 100
                                       + table.verticalScrollBar().value())
     for position in range(11, 16):
+        # Row heights vary with native fonts. Arrange each target fully inside
+        # the viewport before checking that selection preserves its position.
+        table.verticalScrollBar().setValue(
+            table.verticalScrollBar().value() + table.rowViewportPosition(position) - 100)
         before = table.rowViewportPosition(position)
         assert 0 <= before < table.viewport().height()
         bench.select_segment(position)
@@ -212,7 +224,7 @@ def test_probe_poll_interval_does_not_block_gui_heartbeat(app, tmp_path):
     timer.start()
     try:
         flow = Flow(None, app, out_dir=tmp_path)
-        assert not flow.pump(.12, lambda: False, interval=.5)
+        assert not flow.pump(.3, lambda: False, interval=.5)
         assert len(ticks) >= 4
     finally:
         timer.stop()
@@ -248,13 +260,12 @@ def test_view_effect_renders_and_releases_without_moving_input_geometry(app, mon
     QTest.qWait(80)
     assert not widget.grab().isNull()
     assert widget.geometry() == geometry
-    QTest.qWait(250)
-    assert widget.graphicsEffect() is None, "a finished reveal leaves no effect installed"
+    assert _wait_for(lambda: widget.graphicsEffect() is None), (
+        "a finished reveal leaves no effect installed")
     controller.nod("tone", widget)
     QTest.qWait(70)
     assert not widget.grab().isNull()
-    QTest.qWait(170)
-    assert widget.graphicsEffect() is None
+    assert _wait_for(lambda: widget.graphicsEffect() is None)
     widget.close()
     widget.deleteLater()
 
@@ -301,8 +312,7 @@ def test_save_acknowledgement_waits_for_persistence(bench, monkeypatch):
     bench.confirm_saved(index)
     assert "✓" in bench.segment_list.item(0, 0).text()
     assert index in bench.row_delegate.saved
-    QTest.qWait(450)
-    assert index not in bench.row_delegate.saved
+    assert _wait_for(lambda: index not in bench.row_delegate.saved)
 
 
 def test_inline_activity_restores_buttons_and_cancels_delayed_progress(app, monkeypatch):

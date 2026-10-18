@@ -51,6 +51,8 @@ LEGACY_ALLOWLIST_FILES = {
 # Current docs and source files may mention a legacy token only when the whole line is
 # an explicit package, path, environment variable, schema, or published-repo reference.
 LEGACY_LINE_ALLOWLIST = {
+    "scripts/stage_tesseract_payload.py": ("FOLIOTHREAD_",),
+    "docs/qt-beta/release-notes.md": ("兼容别名 `foliothread`",),
     "docs/performance-real-tasks-2026-10-08/evidence.json": ('"technical_log":',),
     # Technical identifiers and evidence paths, not brand prose: environment
     # variable names, the legacy asset fallbacks, the project schema id and the

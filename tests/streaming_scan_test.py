@@ -691,6 +691,40 @@ def test_recovered_page_returns_to_its_place_without_touching_existing_translati
 
 # ---- 暂停后换了视觉模型：没读的页改用新连接 ----
 
+def test_resume_repairs_failure_returned_by_an_inflight_request(monkeypatch):
+    from folith.document_ir import PageEnvelope
+    from folith.document_understanding import PageFailed
+    from folith.streaming_ingest import ScanStream
+
+    resumed = threading.Event()
+    repaired = []
+    iterate = ScanStream._iterate
+
+    def pages(self, indices):
+        if indices is not None:
+            repaired.extend(indices)
+            yield from iterate(self, indices)
+            return
+        for index in range(4):
+            envelope = PageEnvelope("book", f"p{index + 1}", index, 200, 300)
+            if index == 3:
+                assert resumed.wait(5), "resume before the in-flight result returns"
+            yield envelope, PageFailed(index, envelope.page_id, "service_error", 524, "timeout")
+
+    monkeypatch.setattr(ScanStream, "_iterate", pages)
+    stream = ScanStream("a.pdf", scanned_pdf(4), ScriptedVisionProvider())
+    try:
+        assert _wait(lambda: stream.streak_tripped)
+        stream.clear_halt()
+        resumed.set()
+        snapshot = _drain(stream)
+        assert snapshot["finished"] and snapshot["failed_pages"] == []
+        assert repaired == [0, 1, 2, 3]
+    finally:
+        resumed.set()
+        stream.close()
+
+
 def test_resume_after_a_halt_reads_the_remaining_pages_with_the_new_provider(tmp_path):
     from folith.streaming_ingest import ScanStream
     old = ScriptedVisionProvider({i: _page_error("service_error", 524) for i in range(2, 40)})

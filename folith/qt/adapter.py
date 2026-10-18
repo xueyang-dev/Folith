@@ -22,7 +22,7 @@ import time
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
 
 from folith.desktop import diagnostics as desktop_diagnostics
@@ -3808,8 +3808,11 @@ def delivery_file_name(source_name: str, asset_name: str) -> str:
     都一样；直接用它们，几个任务存进同一个文件夹就全是同名文件。原文件名去掉扩展名
     和文件系统不接受的字符；没有原文件名时退回产物名本身。
     """
-    asset = Path(str(asset_name or "")).name
-    stem = _UNSAFE_NAME.sub("_", Path(str(source_name or "")).stem).strip(" ._")
+    # Project names may originate on either OS. Parse both separators without
+    # treating a colon in a document label as a Windows drive prefix.
+    asset = PurePosixPath(str(asset_name or "").replace("\\", "/")).name
+    source = PurePosixPath(str(source_name or "").replace("\\", "/"))
+    stem = _UNSAFE_NAME.sub("_", source.stem).strip(" ._")
     if not stem or not asset:
         return asset
     return f"{stem}_{asset}"

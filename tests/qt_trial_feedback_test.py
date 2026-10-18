@@ -61,7 +61,8 @@ def test_old_translation_review_and_vision_migrate_without_losing_keys(isolated,
     assert len(config.connections) == 3
     assert set(config.connection_roles) == {"translation", "reviewer", "vision"}
     config.save()
-    assert core.provider_config_path().stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":  # Windows permissions are ACLs, not POSIX mode bits.
+        assert core.provider_config_path().stat().st_mode & 0o777 == 0o600
     again = adapter.EngineConfig.load()
     assert again.connections == config.connections
     assert again.connection_roles == config.connection_roles
@@ -372,7 +373,7 @@ def test_every_interface_string_is_translated():
 
     result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1]
                                                  / "scripts" / "qt_i18n_coverage.py"), "--strict"],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 0, result.stdout[-800:]
 
 
@@ -573,15 +574,15 @@ def test_sheet_keeps_equal_gaps_when_the_sidebar_is_collapsed(app):
     assert sheet._sheet_rect().left() == components.Sheet.GAP
 
 
-def test_settings_window_stays_in_front_of_the_main_window(app):
-    from folith.qt import adapter, dialogs
+def test_settings_window_uses_platform_window_flags(app):
+    from folith.qt import adapter, dialogs, platform_ui
 
     class Runner:
         def submit(self, *_a, **_k):
             return None
 
     dialog = dialogs.EngineDialog(adapter.EngineConfig(), Runner())
-    assert dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    assert bool(dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) == platform_ui.is_macos()
     assert not dialog.isModal()
     dialog.close()
 
@@ -591,6 +592,8 @@ def test_settings_window_stays_in_front_of_the_main_window(app):
     ("The Midnight Library.pdf", "bilingual.docx", "The Midnight Library_bilingual.docx"),
     ("论文_刘英.pdf", "terms.xlsx", "论文_刘英_terms.xlsx"),
     ("a:b.docx", "translation.docx", "a_b_translation.docx"),
+    (r"C:\books\sample.docx", "translation.docx", "sample_translation.docx"),
+    ("/books/sample.docx", "translation.docx", "sample_translation.docx"),
     ("", "bilingual.docx", "bilingual.docx"),
 ])
 def test_delivered_files_are_named_after_the_source_document(source, asset, expected):

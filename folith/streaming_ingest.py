@@ -100,6 +100,7 @@ class ScanStream:
         # 文字先接在末尾（已定稿并翻译的前文不受影响），段落自带页码，译完后按页序重排。
         self._late = {int(k): dict(v) for k, v in (late_pages or {}).items()}
         self._late_pending = set(self._late)
+        self._resumed = False
         self.pages_retried = 0  # 重试过才读成的页（模型曾中途失败）
         self.finished = False
         self.error: Optional[BaseException] = None
@@ -161,14 +162,15 @@ class ScanStream:
     def clear_halt(self) -> None:
         """主线程已暂停并继续（用户可能已换模型）：重新计数，识别继续。"""
         with self._cond:
+            self._resumed = True
             # 这次连续失败的页读完全书后补读一遍（换了模型多半能读成）。
             for failed in self._assembler.failed_pages.values():
                 self._late.setdefault(failed.page_index, {
                     "page": failed.page_index + 1, "code": failed.code,
                     "http_status": failed.http_status, "reason": failed.describe()})
                 self._late_pending.add(failed.page_index)
-        self.timeout_streak = 0
-        self._halted.clear()
+            self.timeout_streak = 0
+            self._halted.clear()
 
     def failed_pages_info(self) -> List[dict]:
         """读失败、等待重试的页（页码从 1 起）。"""
@@ -186,6 +188,14 @@ class ScanStream:
             for envelope, result in self._pages:
                 with self._cond:
                     self._assembler.add_page(envelope, result)
+                    # Requests already in flight at resume can still fail on the
+                    # old connection. Include those results in the same one-off
+                    # repair pass as the failures collected by clear_halt().
+                    if self._resumed and isinstance(result, PageFailed):
+                        self._late.setdefault(result.page_index, {
+                            "page": result.page_index + 1, "code": result.code,
+                            "http_status": result.http_status, "reason": result.describe()})
+                        self._late_pending.add(result.page_index)
                     self._note_result(result)
                     self.pages_done += 1
                     if self._assembler.diagnostics and int(
