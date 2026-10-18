@@ -8,3 +8,5 @@
 # Versions are pinned so a D0/D2/D3 build record can be reproduced (roadmap §3.5).
 pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.8
+# Icon composition in scripts/build_app_icon.py (including macOS builds).
+pillow==12.3.0
