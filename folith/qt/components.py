@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayou
                                QPushButton, QSizePolicy, QSplitter, QSplitterHandle, QToolButton,
                                QVBoxLayout, QWidget)
 
-from . import i18n
+from . import platform_ui, i18n
 from . import icons
 from . import motion
 from . import style as style_module
@@ -521,14 +521,14 @@ class SearchBar(QLineEdit):
         self.setClearButtonEnabled(True)
         self.addAction(icons.icon("search", 16, "text-muted"),
                        QLineEdit.ActionPosition.LeadingPosition)
-        self.hint = QLabel("⌘ K" if sys.platform == "darwin" else "Ctrl K", self)
+        self.hint = QLabel(platform_ui.shortcut_text("search"), self)
         self.hint.setObjectName("keyHint")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.hint.adjustSize()
         self.textChanged.connect(self._sync_hint)
         # Qt 的 "Ctrl" 在 macOS 上就是 ⌘。
-        self._shortcut = QShortcut(QKeySequence("Ctrl+K"), shortcut_scope or self)
+        self._shortcut = QShortcut(platform_ui.shortcut("search"), shortcut_scope or self)
         self._shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._shortcut.activated.connect(self.focus_and_select)
         self._sync_hint()

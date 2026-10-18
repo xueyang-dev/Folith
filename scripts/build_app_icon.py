@@ -43,6 +43,11 @@ def available() -> bool:
     return bool(shutil.which("sips") and shutil.which("iconutil"))
 
 
+# Windows executable icon frames (multi-resolution .ico).  256 is the largest
+# size the ICO container carries; Windows downsamples it for smaller views.
+ICO_FRAMES = (16, 24, 32, 48, 64, 128, 256)
+
+
 def square_master(source: Path, destination: Path, *, margin: float = DEFAULT_MARGIN) -> dict:
     """Compose the P9 white tile without recolouring the brand artwork.
 
@@ -131,15 +136,54 @@ def build(source: Path, destination: Path, *, margin: float = DEFAULT_MARGIN,
     }
 
 
+def build_ico(source: Path, destination: Path, *, margin: float = DEFAULT_MARGIN,
+              png_out: Path | None = None) -> dict:
+    """Compose the same white tile and emit a multi-resolution Windows ``.ico``.
+
+    The composition is the shared :func:`square_master` (Pillow only, so this
+    runs on Windows/Linux too); only macOS's ``sips``/``iconutil`` packaging is
+    platform-specific, and it is not used here.  The artifact carries the same
+    brand tile as the ``.icns`` so Dock and taskbar agree.
+    """
+    from PIL import Image
+
+    if not source.is_file():
+        raise SystemExit(f"icon source not found: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        master = Path(tmp) / "master.png"
+        normalised = square_master(source, master, margin=margin)
+        if png_out is not None:
+            png_out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(master, png_out)
+        image = Image.open(master).convert("RGBA")
+        image.save(destination, format="ICO", sizes=[(size, size) for size in ICO_FRAMES])
+    return {
+        "source": str(source),
+        "ico": str(destination),
+        "bytes": destination.stat().st_size,
+        "sizes": list(ICO_FRAMES),
+        "normalised": normalised,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="build the macOS app icon")
     parser.add_argument("--source", default=str(DEFAULT_SOURCE))
     parser.add_argument("--out", default=str(ROOT / "build" / "desktop" / "Folith.icns"))
+    parser.add_argument("--ico-out", default=None,
+                        help="also/only build a Windows multi-resolution .ico here")
     parser.add_argument("--png-out", help="also save the composed 1024px PNG for Qt / design review")
     parser.add_argument("--margin", type=float, default=DEFAULT_MARGIN,
                         help="transparent margin around the white tile (default: 100/1024)")
     args = parser.parse_args(argv)
-    record = build(Path(args.source), Path(args.out), margin=args.margin,
+    source = Path(args.source)
+    if args.ico_out:
+        record = build_ico(source, Path(args.ico_out), margin=args.margin,
+                           png_out=Path(args.png_out) if args.png_out else None)
+        print(json.dumps(record, ensure_ascii=False, indent=2))
+        return 0
+    record = build(source, Path(args.out), margin=args.margin,
                    png_out=Path(args.png_out) if args.png_out else None)
     print(json.dumps(record, ensure_ascii=False, indent=2))
     return 0

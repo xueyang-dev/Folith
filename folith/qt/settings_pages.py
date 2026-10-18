@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import connection_status
-from . import i18n
+from . import i18n, platform_ui
 from . import icons
 from . import prompts
 from . import style as style_module
@@ -63,12 +63,12 @@ class StoragePage(QWidget):
 
         where, where_body = _panel(
             i18n.tr('数据位置'),
-            i18n.tr('任务、术语、翻译记忆都保存在这台 Mac 上；API 密钥只在本机，不会上传。'))
+            i18n.tr('任务、术语、翻译记忆都保存在这台{v0}上；API 密钥只在本机，不会上传。', v0=platform_ui.device_name()))
         self.path_label = QLabel("")
         self.path_label.setObjectName("monoValue")
         self.path_label.setWordWrap(True)
         self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.reveal_button = QPushButton(i18n.tr('在 Finder 中显示'))
+        self.reveal_button = QPushButton(i18n.tr('在{v0}中显示', v0=platform_ui.file_manager_name()))
         self.reveal_button.setIcon(icons.icon("folder", 16))
         self.reveal_button.setIconSize(QSize(16, 16))
         self.reveal_button.clicked.connect(
@@ -255,7 +255,7 @@ class AboutPage(QWidget):
         self.email_link = _link("xydev@outlook.sa", icon="mail")
         self.email_link.clicked.connect(lambda: _open_url("mailto:xydev@outlook.sa"))
         self.issue_link = _link(i18n.tr('在 GitHub 上提交'))
-        self.issue_link.setToolTip(i18n.tr('只预填版本号与 macOS 版本，不带任何文档内容或密钥。'))
+        self.issue_link.setToolTip(i18n.tr('只预填版本号与{v0}版本，不带任何文档内容或密钥。', v0=platform_ui.system_name()))
         self.issue_link.clicked.connect(lambda: _open_url(support.issue_url(self._view)))
 
         self.update_button = QPushButton(i18n.tr('检查更新'))
@@ -311,11 +311,11 @@ class AboutPage(QWidget):
 # =============================================================================
 #: 工作台里不在菜单上的快捷键（编辑框、检查与修复、网格）。
 LOCAL_SHORTCUTS = (
-    ("Ctrl+Return", "保存当前段并进入下一个未确认的段"),
-    ("Ctrl+Alt+P", "展开 / 收起 PDF 原页"),
-    ("Esc", "编辑框：把焦点还给段落网格；检查与修复：收起面板"),
-    ("Up", "段落网格：上一段"),
-    ("Down", "段落网格：下一段"),
+    ("save_next", "保存当前段并进入下一个未确认的段"),
+    ("source", "展开 / 收起 PDF 原页"),
+    ("escape", "编辑框：把焦点还给段落网格；检查与修复：收起面板"),
+    ("previous_segment", "段落网格：上一段"),
+    ("next_segment", "段落网格：下一段"),
 )
 
 
@@ -342,7 +342,7 @@ class ShortcutsDialog(QDialog):
         self.resize(520, 460)
         rows = [(menu, action, keys) for menu, action, keys in menu_shortcuts(menu_bar)]
         rows += [(i18n.tr('工作台'), i18n.tr(text),
-                  QKeySequence(keys).toString(QKeySequence.SequenceFormat.NativeText))
+                  platform_ui.shortcut_text(keys))
                  for keys, text in LOCAL_SHORTCUTS]
         self.table = QTableWidget(len(rows), 3, self)
         self.table.setHorizontalHeaderLabels([i18n.tr('位置'), i18n.tr('操作'), i18n.tr('快捷键')])

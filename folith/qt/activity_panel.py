@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import i18n
+from . import i18n, platform_ui
 from . import icons
 from . import style as style_module
 
@@ -67,7 +67,7 @@ class ActivityPanel(QWidget):
         self.empty.setProperty("role", "muted")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
-        self.log_button = QPushButton(i18n.tr('在 Finder 中显示完整日志'))
+        self.log_button = QPushButton(i18n.tr('在{v0}中显示完整日志', v0=platform_ui.file_manager_name()))
         self.log_button.setIcon(icons.icon("folder", 16, "text-secondary"))
         self.log_button.setIconSize(QSize(16, 16))
         self.log_button.clicked.connect(self.revealLogRequested.emit)

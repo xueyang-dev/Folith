@@ -2104,8 +2104,11 @@ def test_macos_menu_roles_and_standard_shortcuts(client):
 
     assert shortcut("import") == "Ctrl+O"
     assert shortcut("submit") == "Ctrl+S"
-    assert shortcut("close") == "Ctrl+W"
-    assert shortcut("settings") == "Ctrl+,"
+    from folith.qt import platform_ui
+    assert actions["close"].shortcut() == QKeySequence(QKeySequence.StandardKey.Close)
+    assert actions["settings"].shortcut() == platform_ui.shortcut("settings")
+    assert platform_ui.shortcut_text("save") in window.workbench.submit_button.toolTip()
+    assert platform_ui.shortcut_text("save_next") in window.workbench.save_next_button.toolTip()
     assert shortcut("start") == "Ctrl+R"
     assert shortcut("reload") == "Ctrl+Shift+R"
 

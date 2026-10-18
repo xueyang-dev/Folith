@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
 
-from . import i18n
+from . import i18n, platform_ui
 from . import adapter
 from . import bootstrap
 from . import components
@@ -147,7 +147,7 @@ class EngineDialog(QDialog):
         self.setWindowFlag(Qt.WindowType.Window, True)
         # 设置窗口始终在主窗口前面：点了主窗口它也不会被压到后面、找不回来。
         # 应用切到后台时它跟着藏起来（macwindow.hide_when_app_inactive），不会盖住别的应用。
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, platform_ui.is_macos())
         self.setModal(False)
         self.setWindowTitle(i18n.tr('设置'))
         self.setMinimumWidth(640)
@@ -1203,7 +1203,7 @@ class DiagnosticsDialog(QDialog):
 
         self.export_button = QPushButton(i18n.tr('保存诊断包…'))
         self.export_button.setIcon(icons.icon("save", 16))
-        self.reveal_button = QPushButton(i18n.tr('在 Finder 中显示数据目录'))
+        self.reveal_button = QPushButton(i18n.tr('在{v0}中显示数据目录', v0=platform_ui.file_manager_name()))
         self.reveal_button.setIcon(icons.icon("folder", 16))
         self.copy_button = QPushButton(i18n.tr('复制到剪贴板'))
         self.copy_button.setIcon(icons.icon("copy", 16))

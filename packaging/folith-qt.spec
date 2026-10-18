@@ -15,6 +15,7 @@ which is deliberately kept as the old baseline:
 """
 import json
 import os
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -38,6 +39,50 @@ if BUILD_INFO.exists():
 # The declared support boundary, measured before bundling (never guessed).
 MIN_OS = os.environ.get("FOLITH_QT_MIN_OS", "15.7.5")
 
+# --------------------------------------------------------- Windows identity
+# The macOS BUNDLE() section (icon + Info.plist) is a no-op on Windows, so a
+# Windows .exe needs its own icon and version resource or Explorer/Task Manager
+# show PyInstaller's placeholder and "unknown" version.  Both are optional:
+# when their inputs are absent the build still succeeds, just without identity.
+
+def _version_tuple(value: str) -> tuple:
+    parts = []
+    for token in str(value).split("."):
+        digits = "".join(ch for ch in token if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 4:
+        parts.append(0)
+    return tuple(parts[:4])
+
+
+_WIN_ICON = OUT_DIR / "Folith.ico"
+_WIN_ICON_ARG = str(_WIN_ICON) if _WIN_ICON.is_file() else None
+
+_WIN_VERSION = None
+if sys.platform == "win32":
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo, StringFileInfo, StringStruct, StringTable,
+        VarFileInfo, VarStruct, VSVersionInfo,
+    )
+
+    _ver = _version_tuple(APP_VERSION)
+    _WIN_VERSION = VSVersionInfo(
+        ffi=FixedFileInfo(
+            filevers=_ver, prodvers=_ver, mask=0x3F, flags=0x0,
+            OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+        kids=[
+            StringFileInfo([StringTable("080404B0", [
+                StringStruct("CompanyName", "Folith"),
+                StringStruct("FileDescription", "Folith · 译页"),
+                StringStruct("FileVersion", APP_VERSION),
+                StringStruct("InternalName", "Folith"),
+                StringStruct("OriginalFilename", "Folith.exe"),
+                StringStruct("ProductName", "Folith"),
+                StringStruct("ProductVersion", APP_VERSION),
+            ])]),
+            VarFileInfo([VarStruct("Translation", [0x0804, 0x04B0])]),
+        ])
+
 # ---------------------------------------------------------------- data files
 datas = []
 binaries = []
@@ -47,14 +92,26 @@ if BUILD_INFO.exists():
 datas += collect_data_files("folith", includes=["resources/**"])
 
 # ------------------------------------------------------ bundled OCR payload
-# Beta baseline eng/chi_sim/ara, staged by scripts/stage_tesseract_payload.py.
+# eng/chi_sim/ara plus the engine, staged by scripts/stage_tesseract_payload.py
+# into one platform-neutral layout:
+#   bin/             the engine (on Windows also its sibling DLL closure)
+#   lib/             the macOS .dylib closure (absent on Windows)
+#   share/tessdata/  the language packs and the output-mode configs
 TESSERACT_DIR = OUT_DIR / "tesseract"
 if TESSERACT_DIR.is_dir():
-    binaries.append((str(TESSERACT_DIR / "bin" / "tesseract"), "tesseract/bin"))
-    for _lib in sorted((TESSERACT_DIR / "lib").glob("*.dylib")):
-        binaries.append((str(_lib), "tesseract/lib"))
-    datas.append((str(TESSERACT_DIR / "share" / "tessdata"),
-                  "tesseract/share/tessdata"))
+    _payload_bin = TESSERACT_DIR / "bin"
+    if _payload_bin.is_dir():
+        for _entry in sorted(_payload_bin.iterdir()):
+            if _entry.is_file():
+                binaries.append((str(_entry), "tesseract/bin"))
+    _payload_lib = TESSERACT_DIR / "lib"
+    if _payload_lib.is_dir():
+        for _entry in sorted(_payload_lib.iterdir()):
+            if _entry.is_file():
+                binaries.append((str(_entry), "tesseract/lib"))
+    _payload_tessdata = TESSERACT_DIR / "share" / "tessdata"
+    if _payload_tessdata.is_dir():
+        datas.append((str(_payload_tessdata), "tesseract/share/tessdata"))
     for _name in ("tesseract_payload.json", "tessdata_provenance.json"):
         _manifest = TESSERACT_DIR / _name
         if _manifest.exists():
@@ -137,6 +194,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=_WIN_ICON_ARG,
+    version=_WIN_VERSION,
 )
 
 coll = COLLECT(

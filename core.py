@@ -7307,6 +7307,9 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
 def _runtime_pid_alive(pid):
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if os.name == "nt":
+        from folith.desktop.process import pid_alive
+        return pid_alive(pid)
     try:
         os.kill(pid, 0)
     except OSError:

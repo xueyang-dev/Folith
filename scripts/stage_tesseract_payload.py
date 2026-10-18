@@ -6,10 +6,11 @@ the app, with a fixed data version and a licence record, so a machine without
 Homebrew/PATH tooling can still run OCR.  Roadmap §15: declare resources
 explicitly and measure what they cost.
 
-What it stages (into ``build/desktop/tesseract``):
+What it stages (into ``build/desktop/tesseract`` or ``build/qt-windows/tesseract``):
 
-    bin/tesseract              the engine binary
-    lib/*.dylib                its non-system dependency closure
+    bin/tesseract[.exe]        the engine binary
+    lib/*.dylib                macOS only: its non-system dependency closure
+    bin/*.dll                  Windows only: the engine's sibling DLL closure
     share/tessdata/*.traineddata   eng / chi_sim / ara
     share/tessdata/configs, tessconfigs, pdf.ttf
     tesseract_payload.json     version, sizes, sha256 and licence record
@@ -17,6 +18,14 @@ What it stages (into ``build/desktop/tesseract``):
 The `configs/` directory is mandatory: Tesseract's `tsv` output mode is a config
 file, and D0 proved that a language-only tessdata directory makes OCR fail with a
 misleading "no confidence text" error.
+
+Platform notes:
+
+* macOS resolves the non-system dependency closure with ``otool -L``.
+* Windows: the UB Mannheim build keeps every dependency (libtesseract,
+  libleptonica, ICU, the image codecs) beside ``tesseract.exe`` and Windows loads
+  a process's DLLs from its own directory, so the sibling ``*.dll`` set *is* the
+  closure; the engine is copied together with them.
 """
 from __future__ import annotations
 
@@ -56,9 +65,47 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _resolve(command: str) -> Path | None:
-    found = shutil.which(command)
-    return Path(found).resolve() if found else None
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _engine_name() -> str:
+    """Engine file name inside the payload (Windows keeps the ``.exe`` suffix)."""
+    return "tesseract.exe" if _is_windows() else "tesseract"
+
+
+def _resolve_engine(explicit: str | None) -> Path | None:
+    """Locate the Tesseract engine to stage.
+
+    A scoop shim (``...\\scoop\\shims\\tesseract.exe``) is a forwarder, not the
+    engine: copying it would ship a launcher whose sibling DLLs are the shim's,
+    not the engine's.  Such a path is rejected rather than staged silently.
+    """
+    if explicit:
+        path = Path(explicit).expanduser()
+        if not path.is_file():
+            raise SystemExit(f"--tesseract not found: {path}")
+        return path.resolve()
+    env_cmd = os.environ.get("FOLIOTHREAD_TESSERACT_CMD", "").strip()
+    if env_cmd and Path(env_cmd).is_file():
+        return Path(env_cmd).resolve()
+    if _is_windows():
+        for folder in (r"C:\Program Files\Tesseract-OCR",
+                       r"C:\Program Files (x86)\Tesseract-OCR"):
+            candidate = Path(folder) / "tesseract.exe"
+            if candidate.is_file():
+                return candidate
+    found = shutil.which("tesseract")
+    if not found:
+        return None
+    path = Path(found).resolve()
+    _parts = [part.lower() for part in path.parts]
+    if _is_windows() and "shims" in _parts and "scoop" in _parts:
+        raise SystemExit(
+            "tesseract resolves to a scoop shim, which is a forwarder, not the "
+            "engine; pass --tesseract <real tesseract.exe> or set "
+            "FOLIOTHREAD_TESSERACT_CMD")
+    return path
 
 
 def _deps(path: Path) -> list[Path]:
@@ -91,28 +138,53 @@ def _closure(binary: Path) -> list[Path]:
     return [path for path in seen.values() if path != binary]
 
 
+def _libs(binary: Path) -> list[Path]:
+    """The engine's dependency closure, by platform (see the module docstring)."""
+    if _is_windows():
+        return sorted((path for path in binary.parent.glob("*.dll") if path.is_file()),
+                      key=lambda path: path.name.lower())
+    return _closure(binary)
+
+
+def _aux_source(binary: Path) -> Path | None:
+    """Directory holding ``configs/`` / ``tessconfigs/`` / ``pdf.ttf``."""
+    for candidate in (binary.parent / "tessdata",
+                      binary.parent / "share" / "tessdata",
+                      Path("/opt/homebrew/share/tessdata")):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def stage(destination: Path, *, tesseract: str | None = None,
           force: bool = False) -> dict:
     if destination.exists():
         if not force:
             raise SystemExit(f"{destination} already exists; pass --force to rebuild")
         shutil.rmtree(destination)
-    binary = Path(tesseract).resolve() if tesseract else _resolve("tesseract")
+    binary = _resolve_engine(tesseract)
     if binary is None or not binary.exists():
         raise SystemExit("tesseract not found; pass --tesseract or install it")
 
     (destination / "bin").mkdir(parents=True)
-    (destination / "lib").mkdir(parents=True)
     tessdata = destination / "share" / "tessdata"
     tessdata.mkdir(parents=True)
 
-    shutil.copy2(binary, destination / "bin" / "tesseract")
-    os.chmod(destination / "bin" / "tesseract", 0o755)
-    libs = _closure(binary)
-    for lib in libs:
-        shutil.copy2(lib, destination / "lib" / lib.name)
+    engine = destination / "bin" / _engine_name()
+    shutil.copy2(binary, engine)
+    if not _is_windows():
+        os.chmod(engine, 0o755)
+    libs = _libs(binary)
+    if _is_windows():
+        for lib in libs:
+            shutil.copy2(lib, destination / "bin" / lib.name)
+    else:
+        (destination / "lib").mkdir(parents=True)
+        for lib in libs:
+            shutil.copy2(lib, destination / "lib" / lib.name)
 
     version = subprocess.run([str(binary), "--version"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace",
                              check=False).stdout.splitlines()
     files: dict[str, dict] = {}
 
@@ -129,16 +201,17 @@ def stage(destination: Path, *, tesseract: str | None = None,
         return Path(source).name
 
     def record(path: Path, *, role: str, source: str) -> None:
-        files[str(path.relative_to(destination))] = {
+        files[path.relative_to(destination).as_posix()] = {
             "role": role,
             "source": _origin(source),
             "bytes": path.stat().st_size,
             "sha256": _sha256(path),
         }
 
-    record(destination / "bin" / "tesseract", role="engine", source=str(binary))
+    record(engine, role="engine", source=str(binary))
     for lib in libs:
-        record(destination / "lib" / lib.name, role="library", source=str(lib))
+        lib_dir = "bin" if _is_windows() else "lib"
+        record(destination / lib_dir / lib.name, role="library", source=str(lib))
 
     for language in LANGUAGES:
         source = TESSDATA_SOURCES[language]
@@ -149,7 +222,11 @@ def stage(destination: Path, *, tesseract: str | None = None,
         record(target, role="language-data", source=str(source))
     # Output-mode configs travel with the engine: `tsv` is a config file, and
     # D0 proved a language-only tessdata directory makes OCR fail misleadingly.
-    home_tessdata = Path("/opt/homebrew/share/tessdata")
+    home_tessdata = _aux_source(binary)
+    if home_tessdata is None:
+        raise SystemExit(
+            f"missing tesseract configs/tessconfigs next to {binary}; pass "
+            "--tesseract pointing at a full install")
     for name in AUX_FILES:
         source = home_tessdata / name
         if source.exists():

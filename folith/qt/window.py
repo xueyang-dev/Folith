@@ -24,7 +24,7 @@ import weakref
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
 )
@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from folith.desktop import paths as desktop_paths
 from folith.desktop import single_instance
 
-from . import i18n
+from . import i18n, platform_ui
 from . import adapter
 from . import bootstrap
 from . import dialogs
@@ -362,26 +362,26 @@ class MainWindow(QMainWindow):
             lambda *_args: self._mark_dirty_status(i18n.tr('草稿已保存')))
 
     def _build_menus(self) -> None:
+        self.menuBar().setNativeMenuBar(platform_ui.is_macos())
         file_menu = self.menuBar().addMenu(i18n.tr('文件'))
 
         import_action = QAction(i18n.tr('导入文档'), self)
-        import_action.setShortcut(QKeySequence.StandardKey.Open)
+        import_action.setShortcut(platform_ui.shortcut("open"))
         import_action.triggered.connect(self.choose_import)
 
         home_action = QAction(i18n.tr('任务列表'), self)
-        home_action.setShortcut(QKeySequence("Ctrl+Shift+H"))
+        home_action.setShortcut(platform_ui.shortcut("home"))
         home_action.triggered.connect(self.show_home)
 
-        settings_action = QAction(i18n.tr('设置…'), self)
-        settings_action.setShortcut(QKeySequence("Ctrl+,"))
+        settings_action = QAction(platform_ui.settings_label(), self)
+        settings_action.setShortcut(platform_ui.shortcut("settings"))
         # macOS 约定：设置属于应用菜单（Folith → 设置…），由菜单角色决定归属。
         settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
         settings_action.triggered.connect(self.open_settings)
 
         close_action = QAction(i18n.tr('关闭窗口'), self)
-        # 显式写 Ctrl+W：`StandardKey.Close` 在本平台解析成 Ctrl+F4，而 macOS
-        # 用户期望的是 ⌘W（Qt 会把 Ctrl 映射成 ⌘）。
-        close_action.setShortcut(QKeySequence("Ctrl+W"))
+        # Qt chooses the native Close binding for this platform.
+        close_action.setShortcut(platform_ui.shortcut("close"))
         close_action.triggered.connect(self.close)
 
         about_action = QAction(i18n.tr('关于 Folith'), self)
@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
         legacy_action.triggered.connect(self.import_legacy)
 
         quit_action = QAction(i18n.tr('退出 Folith'), self)
-        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        quit_action.setShortcut(platform_ui.shortcut("quit"))
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.triggered.connect(self.close)
 
@@ -413,16 +413,15 @@ class MainWindow(QMainWindow):
 
         task_menu = self.menuBar().addMenu(i18n.tr('任务'))
         named: dict = {}
-        for key, label, slot, shortcut in (
-            ("start", i18n.tr('开始 / 继续翻译'), self.start_or_resume, "Ctrl+R"),
-            ("pause", i18n.tr('暂停'), self.pause_job, ""),
-            ("cancel", i18n.tr('取消任务'), self.cancel_job, ""),
+        for key, label, slot in (
+            ("start", i18n.tr('开始 / 继续翻译'), self.start_or_resume),
+            ("pause", i18n.tr('暂停'), self.pause_job),
+            ("cancel", i18n.tr('取消任务'), self.cancel_job),
             ("reload", i18n.tr('重新载入'),
-             lambda: self.refresh_workbench(force=True), "Ctrl+Shift+R"),
+             lambda: self.refresh_workbench(force=True)),
         ):
             action = QAction(label, self)
-            if shortcut:
-                action.setShortcut(QKeySequence(shortcut))
+            action.setShortcut(platform_ui.shortcut(key))
             action.triggered.connect(slot)
             task_menu.addAction(action)
             named[key] = action
@@ -430,7 +429,7 @@ class MainWindow(QMainWindow):
         cancel_action, reload_action = named["cancel"], named["reload"]
         task_menu.addSeparator()
         edit_action = QAction(i18n.tr('保存并提交当前段落'), self)
-        edit_action.setShortcut(QKeySequence.StandardKey.Save)
+        edit_action.setShortcut(platform_ui.shortcut("save"))
         edit_action.triggered.connect(self.workbench._submit)
         task_menu.addAction(edit_action)
         deliver_action = QAction(i18n.tr('冻结并保存交付…'), self)
@@ -513,25 +512,7 @@ class MainWindow(QMainWindow):
         ``NoTitleBarBackgroundHint`` 让标题栏本身透明；红绿灯与窗口标题仍由系统画、
         仍可拖动。内容只往下让出安全区的高度（``_sync_safe_area``），外壳的底色铺满。
         """
-        if sys.platform != "darwin" or QApplication.platformName() != "cocoa":
-            return
-        import warnings
-
-        expanded = getattr(Qt.WindowType, "ExpandedClientAreaHint", None)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            if expanded is None:
-                expanded = Qt.WindowType.MaximizeUsingFullscreenGeometryHint
-            self.setWindowFlag(expanded, True)
-            self.setWindowFlag(Qt.WindowType.NoTitleBarBackgroundHint, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
-        handle = self.windowHandle()
-        if handle is None:
-            self.winId()
-            handle = self.windowHandle()
-        if handle is not None:
-            handle.safeAreaMarginsChanged.connect(lambda *_: self._sync_safe_area())
-        self._sync_safe_area()
+        platform_ui.configure_title_bar(self, self._sync_safe_area)
 
     def _sync_safe_area(self) -> None:
         handle = self.windowHandle()
@@ -1961,9 +1942,16 @@ class MainWindow(QMainWindow):
             self._failure(i18n.tr('无法提交'), message, detail, job_id=job_id)
             self._save_next_edit()
 
-        # The window's cached state is enough for the adapter's pre-checks; the
-        # core re-reads the authoritative state itself when it saves.
+        # The window's cached state is only a hint for the adapter's pre-checks.
+        # It can lag the disk by up to one poll interval: a run can finish and the
+        # user edit a segment before the next 1 s poll refreshes the cache, and a
+        # stale hint then makes the adapter's "translation not produced yet"
+        # pre-check reject a perfectly valid edit.  Drop the hint whenever it no
+        # longer matches the state on disk; the worker reads the authoritative
+        # state itself, and the core re-reads it again when it saves.
         hint = self._cached_state if job_id == self._current_job_id else None
+        if hint is not None and adapter.state_signature(job_id) != self._cached_signature:
+            hint = None
         self.runner.submit(adapter.submit_edit, job_id, index, text, state=hint,
                            on_done=done, on_error=failed, label="submit-edit")
 
@@ -2927,7 +2915,7 @@ class MainWindow(QMainWindow):
 
     def reveal_path(self, path: str) -> None:
         result = adapter.reveal_in_finder(path)
-        self._notice(result.get("detail") or i18n.tr('已在 Finder 中显示。'), task=False)
+        self._notice(result.get("detail") or i18n.tr('已在{v0}中显示。', v0=platform_ui.file_manager_name()), task=False)
 
     def open_path(self, path: str) -> None:
         result = adapter.open_with_default_app(path)

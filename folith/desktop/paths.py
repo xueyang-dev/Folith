@@ -226,10 +226,14 @@ def resource_path(*parts: str) -> Path:
     return candidate
 
 
+def tesseract_binary_name() -> str:
+    return "tesseract.exe" if os.name == "nt" else "tesseract"
+
+
 def tesseract_payload_root() -> Path | None:
     """Bundled OCR payload root, when the build shipped one (roadmap §3.4)."""
     root = resource_path("tesseract")
-    if (root / "bin" / "tesseract").is_file():
+    if (root / "bin" / tesseract_binary_name()).is_file():
         return root
     return None
 
@@ -244,7 +248,7 @@ def apply_bundled_tool_env(env: dict[str, str] | None = None) -> dict[str, str]:
     target = os.environ if env is None else env
     payload = tesseract_payload_root()
     if payload is not None:
-        target["FOLIOTHREAD_TESSERACT_CMD"] = str(payload / "bin" / "tesseract")
+        target["FOLIOTHREAD_TESSERACT_CMD"] = str(payload / "bin" / tesseract_binary_name())
         target["TESSDATA_PREFIX"] = str(payload / "share" / "tessdata")
     return target
 
