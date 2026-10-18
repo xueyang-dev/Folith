@@ -52,6 +52,9 @@ LEGACY_ALLOWLIST_FILES = {
 # an explicit package, path, environment variable, schema, or published-repo reference.
 LEGACY_LINE_ALLOWLIST = {
     "docs/performance-real-tasks-2026-10-08/evidence.json": ('"technical_log":',),
+    # Generated beta release notes name the retained `foliothread` compatibility
+    # command (the same alias allowlisted in README.md), not brand prose.
+    "docs/qt-beta/release-notes.md": ("兼容别名 `foliothread`",),
     # Technical identifiers and evidence paths, not brand prose: environment
     # variable names, the legacy asset fallbacks, the project schema id and the
     # absolute paths recorded in verification evidence.
