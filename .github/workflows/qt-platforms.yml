@@ -36,3 +36,4 @@ jobs:
           tests/qt_segment_assist_test.py tests/desktop_file_actions_test.py
           tests/performance_trace_test.py tests/runtime_state_test.py
           tests/runtime_heartbeat_recovery_test.py tests/workflow_recovery_test.py
+          tests/windows_atomic_file_test.py

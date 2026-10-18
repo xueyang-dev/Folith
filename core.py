@@ -60,6 +60,7 @@ from folith import persistence_profiler as _persistence_profiler
 from folith import critical_path as _critical_path
 from folith.storage import job_repository as _job_repo
 from folith.storage import state_journal as _state_journal
+from folith.storage import atomic_file as _atomic_file
 from folith import translation_target as _translation_target
 from folith import finalization as _finalization
 from folith import rendered_qa as _rendered_qa
@@ -7291,7 +7292,7 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         try:
             tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2),
                            encoding="utf-8")
-            tmp.replace(runtime_state_path(job_id))
+            _atomic_file.replace_file(tmp, runtime_state_path(job_id))
         except OSError as exc:
             _workflow_errors.raise_if_fatal(exc, job_id)
             raise

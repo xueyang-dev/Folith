@@ -9,6 +9,18 @@ exception could also end that thread without a diagnostic in the task log.
 The available evidence did not establish which first stopped the original
 heartbeat; the fix covers these failure paths and the resulting false stalls.
 
+Local retesting then captured `WinError 5` during replacement of both
+`runtime_state.json` and `state.json` while the client polled them. On Windows,
+ordinary Python file readers can temporarily prevent replacement of an open
+file. This reproduced a concrete way for heartbeat writes to fail and also
+caused a cancelled task's resumed pipeline to fail during checkpoint saving.
+Runtime state, authoritative task state and the derived summary now use the
+same bounded replacement retry for Windows error codes 5, 32 and 33. Only
+the completed temporary file's replacement is retried; state construction and
+model calls are not repeated. Other failures propagate immediately, and a
+persistent sharing/access failure still propagates after at most 310 ms of
+backoff. The previous destination remains intact until replacement succeeds.
+
 ## Resulting behavior
 
 - A live local task thread is stronger evidence of execution than an expired
@@ -38,6 +50,11 @@ temporary and repeated heartbeat errors, transient unreadable state, preservatio
 of cancel/pause intent, terminal-state protection, replacement-worker protection,
 and a real waiting pipeline with heartbeat updates disabled. Qt tests cover the
 two rejected-retry explanations and the runtime action contract.
+
+`tests/windows_atomic_file_test.py` checks bounded retries, preservation of old
+and temporary files on failure, immediate propagation of disk-full/POSIX errors,
+and an actual open Windows reader: plain replacement fails while the reader is
+held, then the shared replacement function succeeds when that reader closes.
 
 An existing process-lock test now starts the base interpreter on Windows: the
 venv executable can be a redirector whose termination leaves the actual lock
