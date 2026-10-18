@@ -8,3 +8,6 @@
 # Versions are pinned so a D0/D2/D3 build record can be reproduced (roadmap §3.5).
 pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.8
+# scripts/build_app_icon.py composites the white app-icon tile with Pillow before
+# macOS sips/iconutil turn it into Folith.icns.
+Pillow>=10
