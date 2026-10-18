@@ -74,7 +74,9 @@ def test_kit_shortcuts_match_the_registered_actions():
                         "reload")
         }
         assert resolved == {
-            "import": "Ctrl+O", "submit": "Ctrl+S", "close": "Ctrl+W",
+            "import": "Ctrl+O", "submit": "Ctrl+S",
+            "close": QKeySequence(QKeySequence.StandardKey.Close).toString(
+                QKeySequence.SequenceFormat.PortableText),
             "settings": "Ctrl+,", "start": "Ctrl+R", "reload": "Ctrl+Shift+R",
         }, resolved
         kit = KIT.read_text(encoding="utf-8")

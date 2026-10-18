@@ -5,6 +5,7 @@ keep acting on files the delivery gates already produced.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,10 @@ def test_command_per_platform(delivered):
     elif sys.platform.startswith("linux"):
         assert file_actions.command_for(file_actions.REVEAL, delivered) == \
             ["xdg-open", str(delivered.parent)]
+    elif os.name == "nt":
+        assert file_actions.command_for(file_actions.REVEAL, delivered) == \
+            ["explorer", f"/select,{delivered}"]
+        assert file_actions.command_for(file_actions.OPEN, delivered) is None
     else:  # pragma: no cover - other platforms
         assert file_actions.command_for(file_actions.OPEN, delivered) is None
 
@@ -61,14 +66,19 @@ def test_successful_action_records_the_command(delivered, monkeypatch):
     elif sys.platform.startswith("linux"):
         assert calls == [["xdg-open", str(delivered.parent)]]
     else:
-        pytest.skip("native reveal command is only implemented for macOS and Linux")
+        assert calls == [["explorer", f"/select,{delivered}"]]
     assert result.describe() == "已在文件管理器中显示：translation.docx"
     assert result.as_dict()["action"] == file_actions.REVEAL
 
 
 def test_failed_command_surfaces_the_reason(delivered, monkeypatch):
-    monkeypatch.setattr(file_actions.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(
-        returncode=2, stdout="", stderr="boom"))
+    if os.name == "nt":
+        def fail_open(target):
+            raise OSError("boom")
+        monkeypatch.setattr(file_actions.os, "startfile", fail_open)
+    else:
+        monkeypatch.setattr(file_actions.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(
+            returncode=2, stdout="", stderr="boom"))
     result = file_actions.open_with_default_app(delivered)
     assert result.ok is False
     assert "boom" in result.describe()

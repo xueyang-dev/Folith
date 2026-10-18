@@ -258,7 +258,11 @@ def test_process_owned_worker_lock_blocks_launch_and_releases_on_exit(tmp_path, 
     job = 'process-lock'
     core.update_runtime_state(job, status='failed')
     lock_path = tmp_path / job / '.worker.lock'
-    child = subprocess.Popen([sys.executable, '-c',
+    # Windows venv python.exe can be a redirector: terminating it leaves its
+    # actual interpreter child alive (and still owning the lock). This test
+    # needs to terminate the lock owner itself, not its launcher.
+    executable = getattr(sys, '_base_executable', sys.executable) if __import__('os').name == 'nt' else sys.executable
+    child = subprocess.Popen([executable, '-c',
         "from pathlib import Path; from folith.job_lock import acquire; "
         "import sys; lock = acquire(Path(sys.argv[1])); "
         "print('locked', flush=True); sys.stdin.read()", str(lock_path)],

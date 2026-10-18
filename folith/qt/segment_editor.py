@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from functools import lru_cache
 
-from . import i18n
+from . import i18n, platform_ui
 from . import style as style_module
 from . import theme as theme_module
 
@@ -70,8 +70,8 @@ class _TargetEdit(QPlainTextEdit):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and (
-                event.modifiers() & (Qt.KeyboardModifier.ControlModifier
-                                     | Qt.KeyboardModifier.MetaModifier)):
+                event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+                == Qt.KeyboardModifier.ControlModifier):
             self.commitAndNext.emit()
             event.accept()
             return
@@ -98,7 +98,7 @@ class InlineSegmentEditor(QWidget):
 
         self.state_label = QLabel("")
         self.state_label.setObjectName("inlineState")
-        self.hint_label = QLabel(i18n.tr('⌘S 保存 · ⌘↩ 保存并进入下一段'))
+        self.hint_label = QLabel(i18n.tr('{v0} 保存 · {v1} 保存并进入下一段', v0=platform_ui.shortcut_text("save"), v1=platform_ui.shortcut_text("save_next")))
         self.hint_label.setObjectName("hint")
 
         self.footer = QWidget()

@@ -16,7 +16,6 @@ import hashlib
 import json
 import os
 import platform
-import resource
 import sys
 import threading
 import time
@@ -24,6 +23,50 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+
+
+try:
+    import resource  # POSIX only; absent on Windows.
+except ImportError:  # pragma: no cover - platform dependent
+    resource = None  # type: ignore[assignment]
+
+
+def _windows_rss_mb() -> float:
+    """Working-set size on Windows, since ``resource`` does not exist there."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = _ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(_ProcessMemoryCounters), wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+        ok = psapi.GetProcessMemoryInfo(
+            kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
+        if not ok:
+            return 0.0
+        return round(counters.WorkingSetSize / (1024 * 1024), 2)
+    except Exception:
+        return 0.0
 
 
 class TraceLevel(str, Enum):
@@ -264,6 +307,8 @@ class ResourceSampler:
         return sample
 
     def _fallback_rss(self) -> float:
+        if resource is None:
+            return _windows_rss_mb()
         try:
             usage = resource.getrusage(resource.RUSAGE_SELF)
             rss = usage.ru_maxrss

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import i18n
+from . import i18n, platform_ui
 from . import icons
 from . import style as style_module
 from . import theme as theme_module
@@ -214,7 +214,7 @@ class TermChip(QFrame):
         self.insert_button = QToolButton()
         self.insert_button.setObjectName("termInsert")
         self.insert_button.setText("↵")
-        self.insert_button.setToolTip(i18n.tr('插入「{v0}」到译文光标处（⌥点击术语也可以）', v0=target))
+        self.insert_button.setToolTip(i18n.tr('插入「{v0}」到译文光标处（{v1}点击术语也可以）', v0=target, v1=platform_ui.modifier_text(Qt.KeyboardModifier.AltModifier)))
         self.insert_button.setAccessibleName(i18n.tr('插入译名'))
         self.insert_button.setEnabled(bool(target) and target != "—")
         self.insert_button.clicked.connect(lambda: self.insertRequested.emit(target))

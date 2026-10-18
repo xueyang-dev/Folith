@@ -150,9 +150,10 @@ def test_engine_config_round_trip(adapter_env):
     assert saved.api_key == "stub-key"
     assert saved.base_url == "http://127.0.0.1:9/v1"
 
-    # The credential file is not world-readable.
-    mode = core.provider_config_path().stat().st_mode & 0o777
-    assert mode & 0o077 == 0, oct(mode)
+    # POSIX permission bits do not represent Windows ACLs.
+    if os.name != "nt":
+        mode = core.provider_config_path().stat().st_mode & 0o777
+        assert mode & 0o077 == 0, oct(mode)
 
     # A custom relay must never silently fall back to api.openai.com.
     bad = adapter.EngineConfig(provider="自定义中转站", model="m", api_key="k",
@@ -449,7 +450,7 @@ def test_project_glossary_and_tm_are_passed_to_the_core(adapter_env):
 
 
 def test_save_failure_is_reported_not_faked(adapter_env):
-    """A read-only destination must fail loudly, never look like success."""
+    """An unusable destination must fail loudly on every platform."""
     adapter = adapter_env["adapter"]
     core = adapter_env["core"]
     tmp = adapter_env["tmp"]
@@ -471,13 +472,11 @@ def test_save_failure_is_reported_not_faked(adapter_env):
     assert "translation.docx" in bundle
 
     locked = tmp / "locked"
-    locked.mkdir()
-    locked.chmod(0o500)
-    try:
-        with pytest.raises((adapter.AdapterError, OSError, PermissionError)):
-            adapter.export_current_assets(job_id, locked / "sub", config)
-    finally:
-        locked.chmod(0o700)
+    # chmod on a Windows directory does not remove write access. A file in
+    # place of the destination directory exercises a real failure on both OSes.
+    locked.write_text("not a directory", encoding="utf-8")
+    with pytest.raises((adapter.AdapterError, OSError, PermissionError)):
+        adapter.export_current_assets(job_id, locked / "sub", config)
 
 
 def test_unicode_and_rtl_edit_survives_commit_and_export(adapter_env):

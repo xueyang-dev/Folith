@@ -19,6 +19,34 @@ from pathlib import Path
 _POSIX_LSOF_CANDIDATES = ("/usr/sbin/lsof", "/usr/bin/lsof", "/bin/lsof")
 
 
+def _console_encoding() -> str:
+    """Preferred encoding for text printed by native console tools.
+
+    ``netstat`` on a localized Windows console emits OEM-code-page bytes (e.g.
+    GBK), which is not UTF-8. Decoding them as UTF-8 raises inside subprocess's
+    reader thread and leaves ``stdout`` as ``None``.
+    """
+    if os.name != "nt":
+        return "utf-8"
+    try:
+        import ctypes
+
+        return f"cp{int(ctypes.windll.kernel32.GetOEMCP())}"
+    except Exception:  # pragma: no cover - defensive
+        return "utf-8"
+
+
+def _decode_console_output(data: bytes | None) -> str:
+    if not data:
+        return ""
+    for encoding in (_console_encoding(), "utf-8", "mbcs"):
+        try:
+            return data.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def pid_alive(pid: int) -> bool:
     """True when ``pid`` is a live, non-zombie process."""
     if pid <= 0:
@@ -229,7 +257,7 @@ def _windows_listeners_on_port(port: int) -> set[int] | None:  # pragma: no cove
     try:
         result = subprocess.run(
             [netstat, "-ano", "-p", "tcp"],
-            capture_output=True, text=True, timeout=15, check=False,
+            capture_output=True, timeout=15, check=False,
         )
     except Exception:
         return None
@@ -237,7 +265,7 @@ def _windows_listeners_on_port(port: int) -> set[int] | None:  # pragma: no cove
         return None
     suffix = f":{port}"
     pids: set[int] = set()
-    for line in result.stdout.splitlines():
+    for line in _decode_console_output(result.stdout).splitlines():
         parts = line.split()
         if len(parts) < 5 or parts[0].upper() != "TCP":
             continue

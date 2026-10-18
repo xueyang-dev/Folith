@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayou
                                QPushButton, QSizePolicy, QSplitter, QSplitterHandle, QToolButton,
                                QVBoxLayout, QWidget)
 
-from . import i18n
+from . import platform_ui, i18n
 from . import icons
 from . import motion
 from . import style as style_module
@@ -521,14 +521,14 @@ class SearchBar(QLineEdit):
         self.setClearButtonEnabled(True)
         self.addAction(icons.icon("search", 16, "text-muted"),
                        QLineEdit.ActionPosition.LeadingPosition)
-        self.hint = QLabel("⌘ K" if sys.platform == "darwin" else "Ctrl K", self)
+        self.hint = QLabel(platform_ui.shortcut_text("search"), self)
         self.hint.setObjectName("keyHint")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.hint.adjustSize()
         self.textChanged.connect(self._sync_hint)
         # Qt 的 "Ctrl" 在 macOS 上就是 ⌘。
-        self._shortcut = QShortcut(QKeySequence("Ctrl+K"), shortcut_scope or self)
+        self._shortcut = QShortcut(platform_ui.shortcut("search"), shortcut_scope or self)
         self._shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._shortcut.activated.connect(self.focus_and_select)
         self._sync_hint()
@@ -2108,32 +2108,32 @@ class Popover(QFrame):
         self._neck = (0.0, 0.0)
         self.body = QWidget(self)
         self.body.resize(size)
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self.body)
         self.title_label.setObjectName("sectionTitle")
-        self.subtitle_label = QLabel("")
+        self.subtitle_label = QLabel("", self.body)
         self.subtitle_label.setObjectName("hint")
         self.subtitle_label.setVisible(False)
-        self.close_button = QToolButton()
+        self.close_button = QToolButton(self.body)
         self.close_button.setObjectName("roundButton")
         self.close_button.setIcon(icons.icon("x", 14, "text-secondary"))
         self.close_button.setIconSize(QSize(14, 14))
         self.close_button.setAccessibleName(title)
         self.close_button.setToolTip(QKeySequence("Esc").toString())
         self.close_button.clicked.connect(self.close)
-        head_text = QVBoxLayout()
-        head_text.setContentsMargins(0, 0, 0, 0)
-        head_text.setSpacing(0)
-        head_text.addWidget(self.title_label)
-        head_text.addWidget(self.subtitle_label)
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.addLayout(head_text, 1)
-        head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
         layout = QVBoxLayout(self.body)
         layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                   theme_module.SPACE["md"], theme_module.SPACE["md"])
         layout.setSpacing(theme_module.SPACE["sm"])
         if header:
+            head_text = QVBoxLayout()
+            head_text.setContentsMargins(0, 0, 0, 0)
+            head_text.setSpacing(0)
+            head_text.addWidget(self.title_label)
+            head_text.addWidget(self.subtitle_label)
+            head = QHBoxLayout()
+            head.setContentsMargins(0, 0, 0, 0)
+            head.addLayout(head_text, 1)
+            head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
             layout.addLayout(head)
         else:
             # 小卡（侧栏连接浮窗）：内容自己说清楚是什么，点外面或 Esc 关闭，不要 ×。
@@ -2323,6 +2323,10 @@ class Popover(QFrame):
             self.close()
 
         self._animate_geometry(self.geometry(), self._anchor_rect, "popover-close", finish)
+        # Rapid input can finish synchronously. Qt suppresses a nested close()
+        # inside this closeEvent, so accept the original event in that case.
+        if self._accept_close:
+            event.accept()
 
     def _set_tether(self, anchor: QWidget | None) -> None:
         previous, self._tether = self._tether, anchor

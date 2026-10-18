@@ -308,6 +308,8 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
     if summary.get("recovery_attention") and status not in _active_statuses():
         count += 1
         tone = tone or "warning"
+    actions = tuple(core.runtime_actions_for_job(job_id, status))
+    primary = core.primary_runtime_action_for_status(status)
     return JobSummary(
         job_id=job_id,
         filename=str(summary.get("filename") or ""),
@@ -320,8 +322,8 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
         segment_count=int(summary.get("segment_count") or 0),
         updated_at=updated,
         active=status in _active_statuses(),
-        available_actions=tuple(core.runtime_actions_for_status(status)),
-        primary_action=core.primary_runtime_action_for_status(status),
+        available_actions=actions,
+        primary_action=primary if primary in actions else None,
         snapshot_version=snapshot_version,
         diverged=diverged,
         error=str(error or ""),
@@ -439,10 +441,10 @@ def actions_for_status(status: str) -> Tuple[str, ...]:
 
 
 def job_has_live_worker(job_id: str) -> bool:
-    """True when a worker holds this task's lifetime lock right now."""
+    """True when local execution or a live foreign owner prevents a restart."""
     core = _core()
     try:
-        return bool(core.is_job_worker_alive(job_id))
+        return bool(core._job_execution_alive(job_id))
     except Exception:  # noqa: BLE001 - liveness probe must never raise to a UI
         return False
 

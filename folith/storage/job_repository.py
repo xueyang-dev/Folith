@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from folith import profiler
 from folith.storage import state_journal
+from folith.storage.atomic_file import replace_file
 
 # Cache mapping (job_id, mtime_ns, file_size, journal_mtime_ns, journal_size)
 # -> normalized state dict.  The journal is part of the signature because a
@@ -317,7 +318,7 @@ def save_job_state_atomic(
             _write_bytes(tmp, encoded)
             sink.written(len(encoded))
         with _pprof.phase("atomic_replace"):
-            tmp.replace(dest)
+            replace_file(tmp, dest)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -390,7 +391,7 @@ def save_job_summary(
         try:
             _write_bytes(tmp, encoded)
             sink.written(len(encoded))
-            tmp.replace(d / "summary.json")
+            replace_file(tmp, d / "summary.json")
         finally:
             tmp.unlink(missing_ok=True)
 

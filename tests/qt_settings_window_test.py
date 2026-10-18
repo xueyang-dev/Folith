@@ -69,6 +69,9 @@ def _config(**extra):
 
 def test_settings_is_a_non_modal_window_with_six_titled_pages(app):
     dialog = dialogs.EngineDialog(_config(), _SyncRunner())
+    from PySide6.QtCore import Qt
+    from folith.qt import platform_ui
+    assert bool(dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) == platform_ui.is_macos()
     assert not dialog.isModal()
     assert [key for key, _icon, _label in dialog.PAGES] == [
         "general", "models", "vision", "defaults", "storage", "about"]
@@ -216,7 +219,8 @@ def test_export_leaves_out_keys_and_locks(isolated, tmp_path):
 # ----------------------------------------------------------------- 关于 -------
 
 def test_issue_link_carries_only_version_and_system():
-    url = support.issue_url({"version": "0.6.0", "build": "git:abc1234", "macos": "15.7.5",
+    url = support.issue_url({"version": "0.6.0", "build": "git:abc1234",
+                             "system_name": "macOS", "system_version": "15.7.5",
                              "frozen": True})
     assert url.startswith(support.ISSUES_URL + "?")
     assert "0.6.0" in url and "15.7.5" in url

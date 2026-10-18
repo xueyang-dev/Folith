@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import components
-from . import i18n
+from . import i18n, platform_ui
 from . import icons
 from . import style as style_module
 from . import theme as theme_module
@@ -140,7 +140,7 @@ class WelcomeDialog(QDialog):
             side_layout.addWidget(item)
             self.step_labels.append(item)
         side_layout.addStretch(1)
-        privacy = QLabel(i18n.tr('所有文档和密钥都只保存在这台 Mac 上。'))
+        privacy = QLabel(i18n.tr('所有文档和密钥都只保存在这台{v0}上。', v0=platform_ui.device_name()))
         privacy.setObjectName("hint")
         privacy.setWordWrap(True)
         side_layout.addWidget(privacy)

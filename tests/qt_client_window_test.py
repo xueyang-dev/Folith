@@ -212,6 +212,31 @@ def _pump(app, seconds: float, predicate=None) -> bool:
     return bool(predicate()) if predicate is not None else True
 
 
+def test_destroyed_window_drops_delayed_tips(client, monkeypatch):
+    from PySide6.QtTest import QTest
+    from folith.qt.window import MainWindow
+
+    original = client["window"]
+    second = MainWindow(original.config, original.paths, None)
+    second.show()
+    client["app"].processEvents()
+    calls = []
+    monkeypatch.setattr(second, "_offer_tips", lambda *args: calls.append("tips"))
+    try:
+        job_id = _seed_job_for_keyboard(client["adapter"], client["core"],
+                                        client["tmp"], "delayed-tips.docx", ["Text."])
+        second.open_job(job_id)
+    finally:
+        second.timer.stop()
+        second._closing_accepted = True
+        second.close()
+        client["app"].removeEventFilter(second)
+        second.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QTest.qWait(700)
+    assert calls == [], "delayed UI work must be cancelled with its window"
+
+
 def test_idle_window_exits_without_a_prompt(client):
     """MAC-01 class: an empty home page must quit normally, not be refused."""
     window = client["window"]
@@ -1385,6 +1410,7 @@ def test_home_can_move_a_task_to_another_project(client, monkeypatch):
     assert _pump(app, 15, lambda: adapter.load_state(job_id)["project_id"] == project_id)
 
     assert adapter.load_state(job_id)["project_id"] == project_id
+    assert _pump(app, 15, lambda: bool(notices)), "wait for the queued UI completion"
     assert any("移动" in text for text in notices), notices
     # The list now shows it under that project.
     window.refresh_home()
@@ -1773,6 +1799,21 @@ def test_action_buttons_follow_the_core_runtime_contract(client):
         assert views.RUNTIME_STATUS_TONES[label] == "warn"
 
 
+@pytest.mark.parametrize("alive,expected", [
+    (True, "后台任务仍在运行，请等待当前步骤结束或取消任务后再重试。"),
+    (False, "当前没有可重试的失败步骤。"),
+])
+def test_rejected_retry_explains_live_worker(client, monkeypatch, alive, expected):
+    window, adapter = client["window"], client["adapter"]
+    window._current_job_id = "retry-explanation"
+    monkeypatch.setattr(adapter, "retry_job", lambda job: False)
+    monkeypatch.setattr(adapter, "job_is_alive", lambda job: alive)
+    notices = []
+    monkeypatch.setattr(window, "_notice", lambda message, **kwargs: notices.append(message))
+    window.retry_job()
+    assert notices == [expected]
+
+
 def test_blocking_count_only_counts_unresolved_findings(client):
     """步骤条上「必须处理 N」必须只数**未解决**的阻断项。
 
@@ -2104,8 +2145,11 @@ def test_macos_menu_roles_and_standard_shortcuts(client):
 
     assert shortcut("import") == "Ctrl+O"
     assert shortcut("submit") == "Ctrl+S"
-    assert shortcut("close") == "Ctrl+W"
-    assert shortcut("settings") == "Ctrl+,"
+    from folith.qt import platform_ui
+    assert actions["close"].shortcut() == QKeySequence(QKeySequence.StandardKey.Close)
+    assert actions["settings"].shortcut() == platform_ui.shortcut("settings")
+    assert platform_ui.shortcut_text("save") in window.workbench.submit_button.toolTip()
+    assert platform_ui.shortcut_text("save_next") in window.workbench.save_next_button.toolTip()
     assert shortcut("start") == "Ctrl+R"
     assert shortcut("reload") == "Ctrl+Shift+R"
 

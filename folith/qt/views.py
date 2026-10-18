@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
 
-from . import i18n
+from . import i18n, platform_ui
 from . import adapter
 from . import components
 from . import motion
@@ -2798,10 +2798,10 @@ class WorkbenchView(QWidget):
         style_module.set_button(self.copy_source_button, "plain")
         self.copy_source_button.clicked.connect(self._copy_source_to_target)
         self.save_next_button = QPushButton(i18n.tr('保存并下一段'))
-        self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一个未确认的段（⌘↩）'))
+        self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一个未确认的段（{v0}）', v0=platform_ui.shortcut_text("save_next")))
         self.save_next_button.clicked.connect(self.save_and_next)
         self.submit_button = QPushButton(i18n.tr('保存'))
-        self.submit_button.setToolTip(i18n.tr('保存并提交这一段（⌘S）'))
+        self.submit_button.setToolTip(i18n.tr('保存并提交这一段（{v0}）', v0=platform_ui.shortcut_text("save")))
         style_module.set_button(self.submit_button, "primary")
         self.submit_button.clicked.connect(self._submit)
         self.retranslate_button = _icon_button(QPushButton(i18n.tr('重译本段')), "sparkles", "text-secondary")
@@ -3108,7 +3108,7 @@ class WorkbenchView(QWidget):
         # 「段落事实」只是把顶上那行状态再说一遍：来源并进状态行，这一节不再单独占位。
         inspector_layout.addWidget(self.segment_extra_section, 1)
         self.review_hint.setVisible(False)
-        self.multi_hint = QLabel(i18n.tr('按住 ⇧ 或 ⌘ 点选可以多选；批量操作会作用于所有选中的段落。'))
+        self.multi_hint = QLabel(i18n.tr('按住 {v0} 或 {v1} 点选可以多选；批量操作会作用于所有选中的段落。', v0=platform_ui.modifier_text(Qt.KeyboardModifier.ShiftModifier), v1=platform_ui.modifier_text(Qt.KeyboardModifier.ControlModifier)))
         self.multi_hint.setObjectName("hint")
         self.multi_hint.setWordWrap(True)
         self.multi_hint.setVisible(False)
@@ -3259,7 +3259,7 @@ class WorkbenchView(QWidget):
         self.open_asset_button.setIcon(icons.icon("external-link", 16))
         self.open_asset_button.setIconSize(QSize(16, 16))
         self.open_asset_button.clicked.connect(self._open_asset)
-        self.reveal_asset_button = QPushButton(i18n.tr('在 Finder 中显示'))
+        self.reveal_asset_button = QPushButton(i18n.tr('在{v0}中显示', v0=platform_ui.file_manager_name()))
         self.reveal_asset_button.setIcon(icons.icon("folder", 16))
         self.reveal_asset_button.setIconSize(QSize(16, 16))
         self.reveal_asset_button.clicked.connect(self._reveal_asset)
@@ -3291,7 +3291,7 @@ class WorkbenchView(QWidget):
 
         asset_footer = QHBoxLayout()
         asset_footer.setSpacing(theme_module.SPACE["sm"])
-        self.asset_hint = QLabel(i18n.tr('双击文件可在 Finder 中显示'))
+        self.asset_hint = QLabel(i18n.tr('双击文件可在{v0}中显示', v0=platform_ui.file_manager_name()))
         self.asset_hint.setObjectName("hint")
         asset_footer.addWidget(self.asset_hint)
         asset_footer.addStretch(1)
@@ -3544,7 +3544,7 @@ class WorkbenchView(QWidget):
         self._pdf_follow.timeout.connect(self._follow_source)
         self.translation_split.splitterMoved.connect(self._remember_source_width)
         source_shortcut = QAction(i18n.tr('原页'), self)
-        source_shortcut.setShortcut(QKeySequence("Ctrl+Alt+P"))
+        source_shortcut.setShortcut(platform_ui.shortcut("source"))
         source_shortcut.triggered.connect(lambda: self.set_source_open(not self.source_open()))
         self.addAction(source_shortcut)
         # 检查与修复：从顶栏的盾牌图标下面展开的「凸」字下拉卡片（与运行记录同一种），
@@ -3621,7 +3621,7 @@ class WorkbenchView(QWidget):
 
         # ⌘↩：编辑框里由编辑框自己接住（保存并进入下一段）；焦点在表格时是"下一段"。
         next_shortcut = QAction(i18n.tr('下一段'), self)
-        next_shortcut.setShortcut(QKeySequence("Ctrl+Return"))
+        next_shortcut.setShortcut(platform_ui.shortcut("save_next"))
         next_shortcut.triggered.connect(self._commit_and_next)
         self.addAction(next_shortcut)
 

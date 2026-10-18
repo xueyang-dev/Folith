@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import platform
 import re
 import shutil
 import urllib.parse
@@ -20,7 +19,7 @@ from pathlib import Path
 
 from folith.desktop import paths as desktop_paths
 
-from . import adapter
+from . import adapter, platform_ui
 
 PROJECT_URL = "https://github.com/xueyang-dev/Folith"
 AUTHOR_URL = "https://github.com/xueyang-dev"
@@ -148,7 +147,7 @@ def export_all_data(destination: str | os.PathLike[str]) -> dict:
         archive.writestr("Folith-data/README.txt", (
             "Folith 数据备份。\n"
             "不包含 API 密钥（provider_config.json）；在新机器上恢复后，需要在设置里重新填写模型连接。\n"
-            "恢复：退出 Folith，把 Folith-data 里的内容放回 ~/Library/Application Support/Folith/data。\n"))
+            f"恢复：退出 Folith，把 Folith-data 里的内容放回 {data_dir()}。\n"))
     partial.replace(target)
     return {"path": str(target), "files": files, "bytes": target.stat().st_size}
 
@@ -159,7 +158,8 @@ def about_view() -> dict:
     return {"version": identity.get("app_version") or "",
             "build": identity.get("build_id") or "",
             "frozen": bool(identity.get("frozen")),
-            "macos": platform.mac_ver()[0] or platform.platform()}
+            "system_name": platform_ui.system_name(),
+            "system_version": platform_ui.system_version()}
 
 
 def issue_url(view: dict | None = None) -> str:
@@ -168,7 +168,7 @@ def issue_url(view: dict | None = None) -> str:
     body = ("**发生了什么 / What happened**\n\n\n"
             "**怎样复现 / Steps to reproduce**\n\n\n"
             "---\n"
-            f"Folith {view['version']} ({view['build']}) · macOS {view['macos']}\n")
+            f"Folith {view['version']} ({view['build']}) · {view['system_name']} {view['system_version']}\n")
     return ISSUES_URL + "?" + urllib.parse.urlencode({"body": body})
 
 

@@ -15,6 +15,7 @@ import traceback
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from shiboken6 import isValid
 
 
 class _TaskSignals(QObject):
@@ -82,9 +83,16 @@ class TaskRunner(QObject):
         """``on_progress``：``fn`` 收到一个 ``on_progress(done, total)`` 关键字参数，
         在工作线程里调用；回调在 GUI 线程上执行。"""
         task = Task(fn, *args, label=label, **kwargs)
+        # Free-function slots may already be queued when the QObject owner is
+        # destroyed. Do not let those callbacks touch its deleted widgets.
         if on_progress is not None:
             task.kwargs["on_progress"] = task.signals.progress.emit
-            task.signals.progress.connect(on_progress)
+
+            def _progress(done: int, total: int) -> None:
+                if isValid(self):
+                    on_progress(done, total)
+
+            task.signals.progress.connect(_progress)
         self._running.append(task)
 
         def _finish() -> None:
@@ -93,7 +101,7 @@ class TaskRunner(QObject):
 
         def _done(value: Any) -> None:
             _finish()
-            if on_done is not None:
+            if on_done is not None and isValid(self):
                 on_done(value)
 
         def _failed(message: str, detail: str) -> None:
@@ -104,7 +112,7 @@ class TaskRunner(QObject):
                                    "traceback": detail})
             if len(self._failures) > 50:
                 del self._failures[:-50]
-            if on_error is not None:
+            if on_error is not None and isValid(self):
                 on_error(message, detail)
 
         task.signals.done.connect(_done)

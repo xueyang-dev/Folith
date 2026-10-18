@@ -94,8 +94,8 @@ class TesseractBackend(OCRBackend):
         if not root and Path(self.command).is_file():
             try:
                 result = subprocess.run([self.command, "--list-langs"], capture_output=True,
-                                        text=True, timeout=10)
-                match = re.search(r'in "([^"]+)"', result.stdout + result.stderr)
+                                        text=True, encoding="utf-8", errors="replace", timeout=10)
+                match = re.search(r'in "([^"]+)"', (result.stdout or "") + (result.stderr or ""))
                 root = match.group(1) if match else ""
             except (OSError, subprocess.TimeoutExpired):
                 root = ""

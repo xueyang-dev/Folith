@@ -1,0 +1,40 @@
+name: Shared Qt platform checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qt-platforms:
+    name: Shared Qt (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install shared application and test dependencies
+        run: python -m pip install ".[test]" PySide6==6.11.2
+      - name: Check shared views and platform boundary
+        run: >-
+          python -m pytest -q
+          tests/qt_platform_ui_test.py tests/qt_i18n_test.py
+          tests/qt_settings_window_test.py tests/qt_inline_editor_test.py
+          tests/qt_segment_assist_test.py tests/desktop_file_actions_test.py
+          tests/performance_trace_test.py tests/runtime_state_test.py
+          tests/runtime_heartbeat_recovery_test.py tests/workflow_recovery_test.py
+          tests/windows_atomic_file_test.py tests/runtime_pause_test.py
+          tests/qt_worker_lifetime_test.py
