@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases"><img src="https://img.shields.io/badge/next-0.6%20(WIP)-orange.svg" alt="Next: 0.6 (in progress)"></a>
+  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/release-v0.6.0%20beta-orange.svg" alt="Release: v0.6.0 beta"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
 </p>
@@ -115,10 +115,9 @@
 - 扫描页主流程使用视觉模型理解原文，本机 Tesseract 提供原文位置坐标。Paddle 实验环境、模型和训练产物已清理，项目不再提供 `paddle` 安装依赖组；[历史微调报告](docs/paddle-arabic-finetuning.md)仅供参考。
 - 视觉连接：扫描页交给 OpenAI 兼容的视觉模型阅读，可在设置的「模型」页为「视觉」选一条已保存的连接（可与翻译共用或另配）；只在任务实际含扫描页时才校验该连接。若本机没有 Tesseract，设置里会停用本机 OCR 并给出安装链接；已选用本机 OCR 的任务会改由视觉模型处理，并在运行记录中说明。接口协议与历史实测见[三路 OCR 来源](docs/ocr-sources.md)与[实测记录](docs/ocr-sources-verification.md)，其中独立的线上 OCR 来源与 Paddle 选项属于历史设计。
 
-### 0.6 Qt 受邀 Beta（暂定 0.6.0，筹备中）
+### 0.6.0 Qt 受邀 Beta（已发布）
 
-桌面端是 **macOS Apple Silicon / macOS 15.7.5+** 的 Qt DMG；0.6 尚未发布。现有 DMG 来自 0.5.0 时期的构建，版本号仍为 0.5.0，不含上述 0.6 的改动；0.6 候选将从干净提交重新构建，版本号以届时为准。
-中文为主界面，其他语言为实验功能。源码开发入口：
+[v0.6.0 预发布](https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0) 提供 **macOS Apple Silicon / macOS 15.7.5+** 的 Qt DMG（`Folith-Qt-0.6.0-macos-arm64.dmg`），从干净提交 `9774dc8` 构建；未签名、未公证，首次打开请在「应用程序」里右键 → 打开。中文为主界面，其他语言为实验功能。源码开发入口：
 
 ```bash
 python -m pip install -e .
@@ -126,18 +125,17 @@ python -m pip install PySide6
 python -m folith.qt
 ```
 
-Qt 是唯一的主客户端。Pip 的 `folith` 命令仍启动保留一个版本的旧 Streamlit 界面。0.6 的范围、发布顺序与已知阻断项见
+Qt 是唯一的主客户端。Pip 的 `folith` 命令仍启动保留一个版本的旧 Streamlit 界面。0.6 的范围与仍待完成的人工验收项见
 [发布计划](docs/release-plan.md)和[人工验收清单](docs/qt-beta/manual-acceptance.md)。
 
 ### 方式 1：通过 Pip 安装发布包（推荐）
 
 ```bash
-# 当前公开发布版 v0.4.0：从 Releases 下载后安装
-python -m pip install foliothread-0.4.0-py3-none-any.whl
-foliothread  # v0.4.0 compatibility command
+# v0.6.0：从 Releases 下载 wheel 后安装
+python -m pip install foliothread-0.6.0-py3-none-any.whl
+folith       # 旧 Streamlit 界面（保留一个版本）
 
-# 0.6 尚未发布；请从源码构建（见下方方式 2）。
-# 旧 Streamlit 界面保留一个版本，Qt 客户端见下方方式 3。
+# Qt 桌面客户端见下方方式 3。
 ```
 
 ### 方式 2：从源码运行与开发
@@ -168,9 +166,9 @@ folith
 
 `folith` 命令与 `start.*` 脚本启动的是旧 Streamlit 启动器（`gui.py`），0.5.0 起保留一个版本；Pip 安装说明不适用于 Qt 桌面客户端。
 
-### 方式 3：macOS 桌面客户端（Qt，0.6 受邀 Beta 筹备中）
+### 方式 3：macOS 桌面客户端（Qt，0.6.0 受邀 Beta）
 
-桌面入口是 Qt Widgets 原生客户端，以 `Folith-Qt-<版本>-macos-arm64.dmg` 分发（目前仅有版本号仍为 0.5.0 的旧构建）：未签名、未公证，仅限受邀测试；最低 macOS 15.7.5，仅 Apple Silicon。支持 PDF / DOCX / EPUB / TXT / Markdown 导入，覆盖准备 → 翻译 → 审校 → 交付；语言资产放在各项目的「术语库」与翻译记忆里，学术专业模式默认关闭、需手动开启。支持范围与已知限制以 [Qt 桌面端发布说明](docs/qt-beta/release-notes.md) 为准。
+桌面入口是 Qt Widgets 原生客户端，以 `Folith-Qt-<版本>-macos-arm64.dmg` 分发（当前为 [v0.6.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0)）：未签名、未公证，仅限受邀测试；最低 macOS 15.7.5，仅 Apple Silicon。支持 PDF / DOCX / EPUB / TXT / Markdown 导入，覆盖准备 → 翻译 → 审校 → 交付；语言资产放在各项目的「术语库」与翻译记忆里，学术专业模式默认关闭、需手动开启。支持范围与已知限制以 [Qt 桌面端发布说明](docs/qt-beta/release-notes.md) 为准。
 
 ```bash
 # 从源码运行同一客户端（需另装 PySide6）
@@ -200,8 +198,8 @@ Folith 采用模块化模型接入架构，在系统设置中支持开箱即用�
 ## 🗺️ 路线图 (Roadmap)
 
 - [x] **v0.4.0**：统一 Folith 品牌体系、交互界面重构、语言资产与术语中心、交付门禁系统与草稿实时容灾
-- [ ] **0.6（暂定 0.6.0）**：Qt 原生工作台成为唯一主客户端（含 0.5.0 候选的独立 `folith` 包、EPUB / TXT / Markdown 导入与性能恢复改进）；扫描页以视觉模型为主路径、OCR 只做定位；项目内的语言资产；多模型连接；外观跟随系统。发布前仍有阻断项，见[发布计划](docs/release-plan.md)
-- [ ] **后续版本**：DOCX 原格式保真写回（基于 XML 模板的原位段落替换，保留原始排版、样式与内嵌图表）、TM V2 引擎（多语料库检索与模糊匹配）、文档跨版本差分更新与增量翻译同步。版本号待 0.6 发布后再定
+- [x] **v0.6.0（受邀 Beta）**：Qt 原生工作台成为唯一主客户端（含 0.5.0 候选的独立 `folith` 包、EPUB / TXT / Markdown 导入与性能恢复改进）；扫描页以视觉模型为主路径、OCR 只做定位；项目内的语言资产；多模型连接；外观跟随系统；跨段审校；译文 DOCX 保留原文图片。签名、公证与剩余人工验收见[发布计划](docs/release-plan.md)
+- [ ] **后续版本**：DOCX 原格式保真写回（基于 XML 模板的原位段落替换，保留原始排版、样式与内嵌图表）、TM V2 引擎（多语料库检索与模糊匹配）、文档跨版本差分更新与增量翻译同步。版本号待定
 
 ---
 
