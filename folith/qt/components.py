@@ -2108,32 +2108,32 @@ class Popover(QFrame):
         self._neck = (0.0, 0.0)
         self.body = QWidget(self)
         self.body.resize(size)
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self.body)
         self.title_label.setObjectName("sectionTitle")
-        self.subtitle_label = QLabel("")
+        self.subtitle_label = QLabel("", self.body)
         self.subtitle_label.setObjectName("hint")
         self.subtitle_label.setVisible(False)
-        self.close_button = QToolButton()
+        self.close_button = QToolButton(self.body)
         self.close_button.setObjectName("roundButton")
         self.close_button.setIcon(icons.icon("x", 14, "text-secondary"))
         self.close_button.setIconSize(QSize(14, 14))
         self.close_button.setAccessibleName(title)
         self.close_button.setToolTip(QKeySequence("Esc").toString())
         self.close_button.clicked.connect(self.close)
-        head_text = QVBoxLayout()
-        head_text.setContentsMargins(0, 0, 0, 0)
-        head_text.setSpacing(0)
-        head_text.addWidget(self.title_label)
-        head_text.addWidget(self.subtitle_label)
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.addLayout(head_text, 1)
-        head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
         layout = QVBoxLayout(self.body)
         layout.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                   theme_module.SPACE["md"], theme_module.SPACE["md"])
         layout.setSpacing(theme_module.SPACE["sm"])
         if header:
+            head_text = QVBoxLayout()
+            head_text.setContentsMargins(0, 0, 0, 0)
+            head_text.setSpacing(0)
+            head_text.addWidget(self.title_label)
+            head_text.addWidget(self.subtitle_label)
+            head = QHBoxLayout()
+            head.setContentsMargins(0, 0, 0, 0)
+            head.addLayout(head_text, 1)
+            head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
             layout.addLayout(head)
         else:
             # 小卡（侧栏连接浮窗）：内容自己说清楚是什么，点外面或 Esc 关闭，不要 ×。
@@ -2323,6 +2323,10 @@ class Popover(QFrame):
             self.close()
 
         self._animate_geometry(self.geometry(), self._anchor_rect, "popover-close", finish)
+        # Rapid input can finish synchronously. Qt suppresses a nested close()
+        # inside this closeEvent, so accept the original event in that case.
+        if self._accept_close:
+            event.accept()
 
     def _set_tether(self, anchor: QWidget | None) -> None:
         previous, self._tether = self._tether, anchor

@@ -283,17 +283,16 @@ def test_popover_interruptions_and_native_escape(app, monkeypatch):
     popup.open_at(anchor)
     assert popup._motion.running("popup")
     assert popup.body.isHidden()
-    QTest.qWait(240)
-    assert popup.isVisible() and popup.body.isVisible()
+    assert _wait_for(lambda: popup.isVisible() and popup.body.isVisible())
     assert popup.size() == popup._popup_size
     popup.close()
     QTest.qWait(30)
     popup.open_at(anchor)  # cancellation cannot run the old close completion
-    QTest.qWait(220)
-    assert popup.isVisible() and popup.body.isVisible() and not closed
+    assert _wait_for(lambda: popup.isVisible() and popup.body.isVisible())
+    assert not closed
     QTest.keyClick(popup, Qt.Key.Key_Escape)
-    QTest.qWait(190)
-    assert not popup.isVisible() and len(closed) == 1
+    assert _wait_for(lambda: not popup.isVisible())
+    assert len(closed) == 1
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
     popup.open_at(anchor)
     assert popup.body.isVisible() and not popup._motion.running("popup")
