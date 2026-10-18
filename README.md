@@ -11,6 +11,7 @@
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/release-v0.6.0-blue.svg" alt="Release v0.6.0"></a>
   <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <a href="https://pypi.org/project/foliothread/"><img src="https://img.shields.io/pypi/v/foliothread.svg" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
 </p>
@@ -103,7 +104,7 @@ python -m folith.qt
 ### Python 包
 
 ```bash
-python -m pip install foliothread-0.6.0-py3-none-any.whl   # 从 Release 下载
+python -m pip install foliothread
 ```
 
 代码模块名为 `folith`，发行包名沿用 `foliothread`。Pip 安装的 `folith` 命令启动的是旧的 Streamlit 界面（保留一个版本，之后移除），不是上面的桌面客户端。

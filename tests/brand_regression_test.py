@@ -73,6 +73,8 @@ LEGACY_LINE_ALLOWLIST = {
         "foliothread-0.4.0",
         "foliothread-0.5.0",
         "foliothread-0.6.0",
+        "pypi.org/project/foliothread/",
+        "pip install foliothread",
         "`foliothread`",
         "foliothread  # v0.4.0 compatibility command",
         "FOLIOTHREAD_",
@@ -106,6 +108,8 @@ LEGACY_LINE_ALLOWLIST = {
         "foliothread-0.4.0",
         "foliothread-0.5.0",
         "foliothread-0.6.0",
+        "pypi.org/project/foliothread/",
+        "pip install foliothread",
         "`foliothread`",
         "`transpraxis` 命令",
     ),
@@ -124,7 +128,9 @@ LEGACY_LINE_ALLOWLIST = {
     "scripts/check_release_archives.py": ('"transpraxis/"',),
     "scripts/release_smoke.py": ("foliothread-0.4.0",
         "foliothread-0.5.0",
-        "foliothread-0.6.0", '"foliothread"', 'find_spec("transpraxis")'),
+        "foliothread-0.6.0",
+        "pypi.org/project/foliothread/",
+        "pip install foliothread", '"foliothread"', 'find_spec("transpraxis")'),
     # Perf modules only use the retained `FOLIOTHREAD_*` environment-variable
     # prefix (see docs/architecture-boundaries.md §5); they contain no legacy
     # brand in prose or identifiers.
