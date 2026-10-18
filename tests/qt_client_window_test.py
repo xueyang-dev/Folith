@@ -4060,6 +4060,51 @@ def test_save_acknowledges_latest_queued_text_only(client, monkeypatch):
     assert confirmed == [index] and index not in window.workbench._pending_saved
 
 
+def test_edit_survives_a_stale_window_state_cache(client, monkeypatch):
+    """The window's cached state can lag the disk: a snapshot taken before the
+    pipeline wrote any translations has source paragraphs and no pairs.  Fed to
+    the adapter as a pre-check hint, that stale snapshot reads as "this segment
+    has no translation yet" and rejects a valid edit (the frozen OCR selftest hit
+    exactly this on a loaded runner).  The hint must be dropped when the cache is
+    behind the file."""
+    window, adapter, core = client["window"], client["adapter"], client["core"]
+    app = client["app"]
+    job_id = _seed_job_for_keyboard(adapter, core, client["tmp"], "stale.docx",
+                                    ["甲。", "乙。"])
+    window.open_job(job_id)
+    app.processEvents()
+    index = window.workbench.current_index()
+    window.workbench.select_segment(index)
+    window.workbench.set_editor_text_for_test("人工改过的译文")
+    window.workbench.flush_draft()
+    window._cached_state = {"paras": ["甲。", "乙。"], "pairs": []}
+    window._cached_signature = "stale"
+
+    failures = []
+    monkeypatch.setattr(window, "_failure",
+                        lambda *args, **kwargs: failures.append(args[:2]))
+    monkeypatch.setattr(window, "refresh_workbench", lambda **kw: None)
+    monkeypatch.setattr(window, "_offer_repetitions", lambda *args, **kwargs: None)
+
+    def sync_submit(fn, *args, on_done=None, on_error=None, label="", **kwargs):
+        try:
+            result = fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - mirror the worker's on_error
+            if on_error is not None:
+                on_error(str(exc), "")
+            return
+        if on_done is not None:
+            on_done(result)
+
+    monkeypatch.setattr(window.runner, "submit", sync_submit)
+    window.submit_edit(index)
+    window.flush_edits_now()
+
+    assert not failures, failures
+    saved = adapter.load_state(job_id)["pairs"][index]
+    assert saved.get("human_edited") is True and saved.get("target") == "人工改过的译文"
+
+
 def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     """P4 审校第 5 条：侧栏开合时页面按终态宽度排一次版、从侧栏下滑出，
     不在每一帧改变页面宽度（那会让任务库卡片与段落网格逐帧重排）。"""

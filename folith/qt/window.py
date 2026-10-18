@@ -1961,9 +1961,16 @@ class MainWindow(QMainWindow):
             self._failure(i18n.tr('无法提交'), message, detail, job_id=job_id)
             self._save_next_edit()
 
-        # The window's cached state is enough for the adapter's pre-checks; the
-        # core re-reads the authoritative state itself when it saves.
-        hint = self._cached_state if job_id == self._current_job_id else None
+        # The window's cached state is enough for the adapter's pre-checks, but
+        # only while it is current.  A snapshot taken before the pipeline wrote
+        # any translations still has paragraphs and no pairs, which the adapter
+        # reads as "this segment has no translation yet" and rejects a valid
+        # edit.  When the cache is behind the disk, let the adapter read the
+        # authoritative state itself instead of trusting the stale hint.
+        hint = None
+        if job_id == self._current_job_id \
+                and adapter.state_signature(job_id) == self._cached_signature:
+            hint = self._cached_state
         self.runner.submit(adapter.submit_edit, job_id, index, text, state=hint,
                            on_done=done, on_error=failed, label="submit-edit")
 
