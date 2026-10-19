@@ -40,7 +40,7 @@ app._run_quick_profile_with_progress / app pipeline arguments
             _iter_tesseract_tsv_rows -> _parse_tesseract_tsv
             logical word_num order; geometric RTL fallback; paragraph join
           OCRPageCache: atomic page files + start/end manifest
-          optional adaptive DPI retry; progress + profiler stages
+          fixed 220 DPI baseline; progress + profiler stages
           repeated edge text/page number filtering -> _ocr_text_to_paragraphs
   -> source_paras + extraction_report saved before cleanup
   -> source_cleanup.cleanup_source_paragraphs (checkpointed deterministic/LLM)

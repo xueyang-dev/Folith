@@ -143,9 +143,8 @@ device——**CUDA 存在不等于 GPU 启用**。本机 `core.ocr_backend_repor
 MinerU 未接入：没有 benchmark 证明它更优且不重复 Folith 自己的 layout /
 source-cleanup 层，因此不替换默认 ingestion。
 
-另有实验性的自适应分辨率路径（`FOLIOTHREAD_OCR_ADAPTIVE_DPI`，**默认关闭**）：
-先按低 DPI 跑一轮，只对质量信号不达标的页用高 DPI 重跑。基线仍是 220 DPI，
-不会永久降低所有页的分辨率；每次选择都写进性能元数据。
+扫描页 OCR 使用固定 220 DPI 基线；此前的实验性自适应分辨率（`FOLIOTHREAD_OCR_ADAPTIVE_DPI`）
+已在 0.7 移除，其可达路径窄（仅显式本机引擎）、无实测收益，且首轮会降 DPI 至 150。
 
 ## 结构化性能统计
 
