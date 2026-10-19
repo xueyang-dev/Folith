@@ -1808,7 +1808,7 @@ class MainWindow(QMainWindow):
 
     def pause_job(self) -> None:
         if self._current_job_id and adapter.pause_job(self._current_job_id):
-            self._notice(i18n.tr('已请求暂停；当前操作结束后暂停。'))
+            self._notice(i18n.tr('已请求暂停；当前操作结束后暂停。关闭或退出应用后仍可继续。'))
             self.refresh_workbench(force=True)
         else:
             self._notice(i18n.tr('任务当前不可暂停。'), error=True)
@@ -3198,6 +3198,15 @@ class MainWindow(QMainWindow):
             return True
         return False
 
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized() \
+                and not getattr(self, "_minimize_hint_shown", False) \
+                and not _automation() and self._current_job_id \
+                and adapter.job_is_alive(self._current_job_id):
+            self._minimize_hint_shown = True
+            self._notice(i18n.tr('任务在后台继续运行；最小化不会停止或暂停它。'), task=False)
+        super().changeEvent(event)
+
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         if self._closing_accepted:
             self._release_instance()
@@ -3259,7 +3268,7 @@ class MainWindow(QMainWindow):
             lines = []
             if active:
                 lines.append(i18n.tr(
-                    '{v0} 个任务仍在运行，退出前会按产品语义取消它们，并等待 worker 释放写入锁。',
+                    '{v0} 个任务仍在运行。退出会先停止它们并释放写入锁；已完成的进度会保留，重新打开任务即可继续。',
                     v0=len(active)))
             if drafts:
                 lines.append(i18n.tr(
