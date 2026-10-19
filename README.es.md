@@ -44,6 +44,20 @@ La base terminológica y la memoria de traducción se guardan por proyecto. Los 
   <img src="docs/assets/qt-02-projects.png" alt="Base terminológica de proyecto de Folith" width="1000">
 </p>
 
+### Ajustes: conexiones de modelo
+Las conexiones se añaden en Ajustes → Modelo; ahí también eliges cuál se usa para traducción, revisión y visión.
+
+<p align="center">
+  <img src="docs/assets/qt-07-settings.png" alt="Ajustes de Folith: conexiones de modelo" width="800">
+</p>
+
+### Preparar una tarea
+Tras importar, la página de preparación permite elegir idioma de origen y de destino y el modo de traducción. Cada tarjeta de modo muestra, antes de empezar, las llamadas, los tokens y el tiempo estimados.
+
+<p align="center">
+  <img src="docs/assets/qt-06-prepare.png" alt="Página de preparación de Folith" width="1000">
+</p>
+
 ### Banco de traducción
 Original y traducción lado a lado, segmento a segmento; la barra de pasos superior muestra Preparar → Traducción → Revisión → Entrega. El panel derecho ofrece acciones para el segmento actual: revisar, comentar, retraducir según tus indicaciones, hacer una pregunta, añadir a la base terminológica, anotar.
 
@@ -78,7 +92,9 @@ Descarga `Folith-Qt-0.6.0-macos-arm64.dmg` de la [versión v0.6.0](https://githu
 - Requisitos: macOS 15.7.5 o posterior, Apple Silicon.
 - Esta compilación no está firmada ni notarizada. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
 - Tesseract (inglés, chino simplificado y árabe) viene incluido, así que no hay que instalar nada más.
+- Verificación (opcional): tras descargar, ejecuta `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg`; el resultado debe ser `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8` (el mismo resumen que muestra la página de Releases). Confirma que el archivo está íntegro y sin modificar; no es una firma.
 - Al abrirla, añade una conexión de modelo en Ajustes (véase «Inicio rápido»).
+- Verifica la descarga (opcional): la página de la versión indica el sha256 del DMG, que debe ser `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8`. Compáralo con `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg` en Terminal.
 
 ### Windows
 
@@ -103,7 +119,7 @@ El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith
 
 ## ⚡ Inicio rápido
 
-1. **Añade una conexión de modelo**: abre Ajustes, en Modelo elige un proveedor, introduce la clave de API y el nombre del modelo, pulsa Probar conexión y guarda.
+1. **Añade una conexión de modelo**: abre Ajustes → Modelo, pulsa Añadir conexión, elige un proveedor, introduce la clave de API y el nombre del modelo y pulsa Probar y guardar; la conexión solo se guarda si la prueba tiene éxito.
 2. **Importa un documento**: en la biblioteca de tareas pulsa Importar documento… y elige un archivo PDF / DOCX / EPUB / TXT / Markdown.
 3. **Elige un modo**: en la página de preparación, Rápido, Estándar o Exhaustivo. Cada tarjeta muestra el número estimado de llamadas, los tokens de entrada y el tiempo para este documento.
 4. **Traduce y revisa**: pulsa Iniciar traducción. Al terminar, revisa segmento a segmento en el banco y atiende los elementos de Revisar y corregir, a la derecha.
@@ -137,13 +153,43 @@ Aquí «agéntico» significa concretamente: un rol de revisor independiente, re
 
 ---
 
+## 🌍 Idiomas, formatos y escala
+
+**Idiomas de destino (12)**: chino simplificado, chino tradicional, inglés, japonés, coreano, alemán, francés, español, ruso, portugués, italiano, árabe.
+
+**Idiomas de origen (17)**: inglés, chino simplificado, chino tradicional, japonés, coreano, alemán, francés, español, italiano, portugués, ruso, turco, árabe, urdu, persa, uigur, hebreo. El idioma de origen también ayuda a localizar las líneas de las páginas escaneadas (el Tesseract incluido solo trae datos de inglés, chino simplificado y árabe).
+
+| | Formatos |
+| :--- | :--- |
+| **Importación** | PDF, DOCX, EPUB (sin DRM), TXT, Markdown; hasta 512 MB por archivo |
+| **Entrega** | DOCX solo con traducción, DOCX bilingüe, EPUB (tareas de PDF / DOCX), PDF con el diseño original (solo tareas de PDF), el manifiesto `delivery_manifest.json` |
+| **Recursos lingüísticos** | Glosario y memoria de traducción: XLSX, TBX, TMX; JSONL |
+
+**Tamaño del documento**: no hay mediciones publicadas ni se promete tiempo o coste para ningún número de páginas. Para cada documento, la página de preparación estima llamadas, tokens de entrada y tiempo en los tres modos; guíate por esa estimación.
+
+---
+
 ## ⚙️ Modelos y proveedores
 
 - **Ajustes preconfigurados**: OpenAI, Gemini, DeepSeek, OpenRouter, SiliconFlow, Moonshot / Kimi, Zhipu / GLM, Qwen / DashScope, OpenCode Go.
 - **Pasarelas propias**: cualquier pasarela compatible con la API de OpenAI o servidor de modelos local (vLLM / Ollama).
 - **Varias conexiones**: traducción, revisión y visión pueden usar cada una una conexión guardada distinta; la de visión solo se valida si la tarea contiene páginas escaneadas.
-- **Catálogo de modelos**: los proveedores compatibles con OpenAI y Gemini pueden obtener la lista de modelos disponibles; que un modelo funcione de verdad lo decide Probar conexión.
+- **Catálogo de modelos**: los proveedores compatibles con OpenAI y Gemini pueden obtener la lista de modelos disponibles; que un modelo funcione de verdad lo decide Probar y guardar.
 - **Esfuerzo de razonamiento**: admite modelos de razonamiento (como DeepSeek-R1 y la serie o de OpenAI); el razonamiento se puede ajustar o desactivar.
+
+---
+
+## 📄 Formatos, idiomas y tamaño
+
+| | Compatible |
+| :--- | :--- |
+| **Importación** | PDF (incluidos escaneos) / DOCX / EPUB (sin DRM) / TXT / Markdown |
+| **Archivos de entrega** | DOCX solo con traducción, DOCX bilingüe, EPUB (desde PDF o DOCX), PDF (el PDF con el diseño original solo para orígenes PDF), glosario, TMX, TBX, JSONL, `delivery_manifest.json` |
+| **Idioma de origen** | Detección automática, o uno de 17: inglés, chino simplificado, chino tradicional, japonés, coreano, alemán, francés, español, italiano, portugués, ruso, turco, árabe, urdu, persa, uigur, hebreo |
+| **Idioma de destino** | 12: chino simplificado, chino tradicional, inglés, japonés, coreano, alemán, francés, español, ruso, portugués, italiano, árabe |
+| **Tamaño de archivo** | Hasta 512 MB por archivo; divide los documentos mayores antes de importar |
+
+No se publican pruebas de velocidad ni de escala: la calidad y el tiempo dependen del documento y del modelo elegido. La estimación de la página de preparación es la mejor guía antes de empezar; para tu par de idiomas, prueba primero un capítulo corto.
 
 ---
 
@@ -185,7 +231,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 **¿macOS bloquea el primer arranque?** La aplicación no está firmada ni notarizada. En Aplicaciones, haz clic derecho en Folith, elige Abrir y vuelve a pulsar Abrir en el cuadro de diálogo. Solo hace falta una vez. No desactives Gatekeeper globalmente.
 
-**¿Falla Probar conexión?** Revisa la clave de API, el nombre del modelo y la dirección. Si hay un proxy del sistema o una VPN activa, puede devolver errores como 502; prueba a desactivarla o a excluir el dominio del proveedor. Con una pasarela propia, asegúrate de que sea compatible con la API de OpenAI.
+**¿Falla Probar y guardar?** Revisa la clave de API, el nombre del modelo y la dirección. Si hay un proxy del sistema o una VPN activa, puede devolver errores como 502; prueba a desactivarla o a excluir el dominio del proveedor. Con una pasarela propia, asegúrate de que sea compatible con la API de OpenAI.
 
 **¿Una página escaneada se reconoció mal?** El reconocimiento lo hace el modelo de visión y puede equivocarse. Compara con la página original en el banco; puedes pasar a un modelo de visión más potente configurando una conexión de visión aparte en Ajustes y volver a escanear.
 
@@ -219,6 +265,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 - [OCR y lectura con visión](docs/ocr-subsystem.md)
 - [Arquitectura y límites de capacidad](docs/architecture-boundaries.md)
 - [Registro de cambios](CHANGELOG.md)
+- [Cómo contribuir](CONTRIBUTING.md) (en chino)
 
 ---
 

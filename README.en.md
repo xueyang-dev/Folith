@@ -44,6 +44,20 @@ The termbase and translation memory are kept per project. Confirmed terms are us
   <img src="docs/assets/qt-02-projects.png" alt="Folith project termbase" width="1000">
 </p>
 
+### Settings: model connections
+Add connections under Settings → Model, and pick which one is used for translation, review and vision.
+
+<p align="center">
+  <img src="docs/assets/qt-07-settings.png" alt="Folith settings: model connections" width="800">
+</p>
+
+### Preparing a task
+After import, the prepare page lets you pick source and target language and a translation mode. Each mode card shows its estimated calls, tokens and time before you start.
+
+<p align="center">
+  <img src="docs/assets/qt-06-prepare.png" alt="Folith prepare page" width="1000">
+</p>
+
 ### Translation workbench
 Source and translation side by side, segment by segment; the step bar at the top shows Prepare → Translation → Review → Delivery. The right-hand panel offers actions for the current segment: review, comment, re-translate on instruction, ask a question, add to the termbase, annotate.
 
@@ -78,7 +92,9 @@ Download `Folith-Qt-0.6.0-macos-arm64.dmg` from the [v0.6.0 release](https://git
 - Requirements: macOS 15.7.5 or later, Apple Silicon.
 - This build is unsigned and not notarized. The first time, right-click Folith in Applications → Open, and allow it once. **Do not** turn Gatekeeper off globally.
 - Tesseract (English, Simplified Chinese, Arabic) is bundled, so there is nothing else to install.
+- Verify (optional): after downloading, run `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg`; the result should be `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8` (the same digest the Release page shows). This confirms the file is intact and unmodified; it is not a signature.
 - After launching, add a model connection in Settings (see Quick start below).
+- Verify the download (optional): the release page lists the DMG's sha256, which should be `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8`. Compare with `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg` in Terminal.
 
 ### Windows
 
@@ -103,7 +119,7 @@ The package `foliothread` exists on PyPI (the code module is `folith`), but it i
 
 ## ⚡ Quick start
 
-1. **Add a model connection**: open Settings, choose a provider under Model, enter the API key and model name, press Test connection, then save.
+1. **Add a model connection**: open Settings → Model, press Add connection, choose a provider, enter the API key and model name, then press Test and save; the connection is saved only after the test passes.
 2. **Import a document**: in the task library press Import document…, and pick a PDF / DOCX / EPUB / TXT / Markdown file.
 3. **Pick a mode**: on the prepare page choose Fast, Standard or Thorough. Each card shows the estimated number of calls, input tokens and time for this document.
 4. **Translate and review**: press Start translation. When it finishes, review segment by segment in the workbench and handle the items listed under Check & fix on the right.
@@ -137,13 +153,43 @@ The package `foliothread` exists on PyPI (the code module is `folith`), but it i
 
 ---
 
+## 🌍 Languages, formats and scale
+
+**Target languages (12)**: Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Russian, Portuguese, Italian, Arabic.
+
+**Source languages (17)**: English, Simplified Chinese, Traditional Chinese, Japanese, Korean, German, French, Spanish, Italian, Portuguese, Russian, Turkish, Arabic, Urdu, Persian, Uyghur, Hebrew. The source language also guides line positioning on scanned pages (the bundled Tesseract only ships English, Simplified Chinese and Arabic language data).
+
+| | Formats |
+| :--- | :--- |
+| **Import** | PDF, DOCX, EPUB (no DRM), TXT, Markdown; up to 512 MB per file |
+| **Delivery** | Translation-only DOCX, bilingual DOCX, EPUB (for PDF / DOCX tasks), original-layout PDF (PDF-sourced tasks only), the `delivery_manifest.json` manifest |
+| **Language assets** | Glossary and translation memory: XLSX, TBX, TMX; JSONL |
+
+**Document size**: there are no published benchmarks, and no promise about time or cost at any page count. For each document the prepare page estimates calls, input tokens and time for the three modes; rely on that.
+
+---
+
 ## ⚙️ Models and providers
 
 - **Built-in presets**: OpenAI, Gemini, DeepSeek, OpenRouter, SiliconFlow, Moonshot / Kimi, Zhipu / GLM, Qwen / DashScope, OpenCode Go.
 - **Custom gateways**: any OpenAI-compatible gateway or local model server (vLLM / Ollama).
 - **Several connections**: translation, review and vision can each use a different saved connection; the vision connection is only validated when a task contains scanned pages.
-- **Model catalog**: OpenAI-compatible providers and Gemini can fetch the list of available models; whether a model actually works is decided by Test connection.
+- **Model catalog**: OpenAI-compatible providers and Gemini can fetch the list of available models; whether a model actually works is decided by Test and save.
 - **Reasoning effort**: supports reasoning models (such as DeepSeek-R1 and OpenAI o-series); thinking can be tuned or turned off.
+
+---
+
+## 📄 Formats, languages and size
+
+| | Supported |
+| :--- | :--- |
+| **Import** | PDF (including scans) / DOCX / EPUB (no DRM) / TXT / Markdown |
+| **Delivery files** | Translation-only DOCX, bilingual DOCX, EPUB (from PDF or DOCX sources), PDF (the layout-preserving PDF applies to PDF sources only), glossary, TMX, TBX, JSONL, `delivery_manifest.json` |
+| **Source language** | Auto-detect, or pick one of 17: English, Simplified Chinese, Traditional Chinese, Japanese, Korean, German, French, Spanish, Italian, Portuguese, Russian, Turkish, Arabic, Urdu, Persian, Uyghur, Hebrew |
+| **Target language** | 12: Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Russian, Portuguese, Italian, Arabic |
+| **File size** | Up to 512 MB per file; split larger documents before importing |
+
+No speed or scale benchmarks are published: quality and time depend on the document and the model you choose. The estimate on the prepare page is the most reliable guide before you start; for a given language pair, try a short sample chapter first.
 
 ---
 
@@ -185,7 +231,7 @@ The interface is Simplified Chinese by default. English, Español, Русски�
 
 **macOS blocks the first launch?** The app is unsigned and not notarized. In Applications, right-click Folith, choose Open, then click Open in the dialog. This is needed only once. Do not turn Gatekeeper off globally.
 
-**Test connection fails?** Check the API key, model name and endpoint. If a system proxy or VPN is on, it may return errors such as 502; try turning it off or exempting the provider's domain. For a custom gateway, make sure it is OpenAI-API compatible.
+**Test and save fails?** Check the API key, model name and endpoint. If a system proxy or VPN is on, it may return errors such as 502; try turning it off or exempting the provider's domain. For a custom gateway, make sure it is OpenAI-API compatible.
 
 **A scanned page was recognized wrongly?** Recognition is done by the vision model and can be wrong. Compare with the original page in the workbench; you can switch to a stronger vision model by configuring a separate vision connection in Settings, then rescan.
 
@@ -219,6 +265,7 @@ The interface is Simplified Chinese by default. English, Español, Русски�
 - [OCR and vision reading](docs/ocr-subsystem.md)
 - [Architecture and capability boundaries](docs/architecture-boundaries.md)
 - [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md) (Chinese)
 
 ---
 
