@@ -72,6 +72,9 @@ LEGACY_LINE_ALLOWLIST = {
     "docs/desktop-d1/d1-14-unsafe-import-evidence.json": ("FolioThread"),
     "docs/desktop-handover.md": ("FOLIOTHREAD", "FolioThread"),
     "scripts/qt_release_checks.py": ("兼容别名 `foliothread`",),
+    "README.en.md": ("`foliothread`",),
+    "README.ru.md": ("`foliothread`",),
+    "README.es.md": ("`foliothread`",),
     "README.md": (
         "foliothread-0.4.0",
         "foliothread-0.5.0",

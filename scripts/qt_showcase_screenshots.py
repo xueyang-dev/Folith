@@ -165,6 +165,19 @@ def seed(core, data_dir: Path) -> dict:
                  "target_provenance": "reviewed"} for i, (s, t) in enumerate(SECOND)]
     job("showcase-fin", "Model Risk Governance Standard.docx", fin, fin_rows, review_upto=3)
 
+    prep_name = "Quarterly Product Whitepaper.docx"
+    prep_bytes = make_docx(fixtures / prep_name, SOURCE, "Quarterly Product Whitepaper")
+    prep = core.new_job_state(prep_name)
+    prep.update({
+        "target_lang": "简体中文", "project_id": fin["project_id"],
+        "provider": "DeepSeek", "model": "deepseek-v4-flash",
+        "delivery_config": core.default_delivery_config(),
+    })
+    core.save_job_state("showcase-prep", prep)
+    core.save_source("showcase-prep", prep_bytes)
+    core.update_runtime_state("showcase-prep", status="ready", phase="ready",
+                              phase_label="待开始", last_event="ready")
+
     book["glossary"] = glossary
     core.save_project(book)
     tm = core.load_tm(project_id=book["project_id"]) if hasattr(core, "load_tm") else {}
@@ -255,6 +268,17 @@ def main() -> int:
         pump(1.5)
         window.workbench.show_page("deliver")
         shot("qt-05-delivery-ready")
+        window.open_job("showcase-prep")
+        pump(1.5)
+        window.workbench.show_page("translate")
+        shot("qt-06-prepare")
+        window.open_settings("models")
+        dialog = window._settings_window
+        dialog.resize(900, 420)
+        pump(1.2)
+        image = dialog.grab()
+        image.save(str(out / f"qt-07-settings{suffix}.png"))
+        print("saved", out / f"qt-07-settings{suffix}.png", image.width(), image.height())
         window.close()
         pump(0.5)
     finally:
