@@ -93,8 +93,10 @@ class TesseractBackend(OCRBackend):
         root = os.environ.get("TESSDATA_PREFIX", "")
         if not root and Path(self.command).is_file():
             try:
+                from folith.desktop.process import hidden_console_kwargs
                 result = subprocess.run([self.command, "--list-langs"], capture_output=True,
-                                        text=True, encoding="utf-8", errors="replace", timeout=10)
+                                        text=True, encoding="utf-8", errors="replace", timeout=10,
+                                        **hidden_console_kwargs())
                 match = re.search(r'in "([^"]+)"', (result.stdout or "") + (result.stderr or ""))
                 root = match.group(1) if match else ""
             except (OSError, subprocess.TimeoutExpired):

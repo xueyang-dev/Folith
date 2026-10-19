@@ -19,6 +19,19 @@ from pathlib import Path
 _POSIX_LSOF_CANDIDATES = ("/usr/sbin/lsof", "/usr/bin/lsof", "/bin/lsof")
 
 
+def hidden_console_kwargs() -> dict:
+    """Keep native helper processes from opening a console window on Windows.
+
+    A frozen GUI build has no console of its own, so every console-subsystem
+    child (Tesseract, LibreOffice, git, ...) would otherwise allocate a new
+    terminal window.  ``CREATE_NO_WINDOW`` is Windows-only and has no effect on
+    POSIX, where the empty mapping keeps the call sites unchanged.
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+
+
 def _console_encoding() -> str:
     """Preferred encoding for text printed by native console tools.
 
@@ -94,6 +107,7 @@ def _is_zombie(pid: int) -> bool:
         result = subprocess.run(
             [ps, "-o", "stat=", "-p", str(pid)],
             capture_output=True, text=True, timeout=5, check=False,
+            **hidden_console_kwargs(),
         )
     except Exception:  # pragma: no cover - defensive
         return False
@@ -112,6 +126,7 @@ def parent_pid(pid: int) -> int | None:
         result = subprocess.run(
             [ps, "-o", "ppid=", "-p", str(pid)],
             capture_output=True, text=True, timeout=5, check=False,
+            **hidden_console_kwargs(),
         )
     except Exception:
         return None
@@ -161,6 +176,7 @@ def pids_listening_on_port(port: int) -> set[int] | None:
         result = subprocess.run(
             [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
             capture_output=True, text=True, timeout=10, check=False,
+            **hidden_console_kwargs(),
         )
     except Exception:
         return None
@@ -258,6 +274,7 @@ def _windows_listeners_on_port(port: int) -> set[int] | None:  # pragma: no cove
         result = subprocess.run(
             [netstat, "-ano", "-p", "tcp"],
             capture_output=True, timeout=15, check=False,
+            **hidden_console_kwargs(),
         )
     except Exception:
         return None

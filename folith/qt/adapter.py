@@ -4116,9 +4116,11 @@ def _git_dirty() -> str:
     try:
         import subprocess
 
+        from folith.desktop.process import hidden_console_kwargs
         result = subprocess.run(
             ["git", "-C", str(root), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=5, check=False)
+            capture_output=True, text=True, timeout=5, check=False,
+            **hidden_console_kwargs())
         if result.returncode != 0:
             return "unknown"
         return "true" if result.stdout.strip() else "false"

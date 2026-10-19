@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from folith import ocr_language as _ocr_language
+from folith.desktop.process import hidden_console_kwargs as _hidden_console_kwargs
 OCR_CONFIDENCE_THRESHOLD_DEFAULT = 88.0
 
 def _ocr_join_lines(left, right, direction="ltr"):
@@ -190,6 +191,7 @@ def _ocr_page_with_tesseract(command, png_bytes, language, direction=None, psm=N
             [command, tmp_path, "stdout", "-l", language, "--psm",
              str(resolved_psm), "tsv"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+            **_hidden_console_kwargs(),
         )
         if proc.returncode != 0:
             detail = (proc.stderr or "").strip().splitlines()

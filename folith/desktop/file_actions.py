@@ -16,6 +16,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .process import hidden_console_kwargs
+
 REVEAL = "reveal"
 OPEN = "open"
 
@@ -74,7 +76,8 @@ def _run(action: str, path: str | Path) -> FileAction:
         if argv is None:  # Windows "open"
             os.startfile(str(resolved))  # type: ignore[attr-defined]  # noqa: S606
             return FileAction(action=action, path=str(resolved), ok=True)
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=20, check=False)
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=20,
+                                check=False, **hidden_console_kwargs())
     except Exception as exc:  # noqa: BLE001 - a failed file action must not crash the UI
         return FileAction(action=action, path=str(resolved), ok=False, argv=argv or [],
                           detail=f"{type(exc).__name__}: {exc}")

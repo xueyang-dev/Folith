@@ -175,9 +175,11 @@ def build_id() -> str:
         try:
             import subprocess
 
+            from .process import hidden_console_kwargs
             result = subprocess.run(
                 ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
                 capture_output=True, text=True, timeout=5, check=False,
+                **hidden_console_kwargs(),
             )
             if result.returncode == 0 and result.stdout.strip():
                 return f"git:{result.stdout.strip()}"
