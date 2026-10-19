@@ -373,9 +373,9 @@ def _segment_status_tone(row) -> str:
     if getattr(row, "stale_draft", False):
         return "attention"
     status = str(getattr(row, "status", "") or "")
-    if getattr(row, "excluded", False) or status in ("待翻译", "已排除"):
+    if getattr(row, "excluded", False) or status in (i18n.tr("待翻译"), i18n.tr("已排除")):
         return "idle"
-    if status == "已审校":
+    if status == i18n.tr("已审校"):
         return "done"
     return "active"
 
@@ -2861,8 +2861,8 @@ class WorkbenchView(QWidget):
         facts.setHorizontalSpacing(theme_module.SPACE["lg"])
         facts.setVerticalSpacing(theme_module.SPACE["xs"])
         for row_index, (name, value) in enumerate((
-                ("状态", self.fact_state), ("审校", self.fact_review),
-                ("来源", self.fact_source), ("相关术语", self.fact_terms))):
+                (i18n.tr("状态"), self.fact_state), (i18n.tr("审校"), self.fact_review),
+                (i18n.tr("来源"), self.fact_source), (i18n.tr("相关术语"), self.fact_terms))):
             facts.addWidget(style_module.field_label(name), row_index, 0,
                             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
             facts.addWidget(value, row_index, 1)
@@ -3235,23 +3235,26 @@ class WorkbenchView(QWidget):
         # 按用途分组；没有冻结交付、没有排除段落时给明确的空状态，而不是一块空白列表。
         # 交付状态：圆点 + 同色文字（可以冻结 = 进行中，还有问题 = 需处理，已冻结 = 完成）。
         self.delivery_label = components.StatusLabel(i18n.tr('交付状态：—'), "idle", wrap=True)
-        self.deliver_button = QPushButton(i18n.tr('审校完成后冻结交付'))
+        # 交付动作的按钮用 ElideButton：外语界面里这些措辞会长出一倍
+        # （"Экспортировать копию текущего перевода…"），普通 QPushButton 放不下时
+        # 会把字裁掉一半。
+        self.deliver_button = style_module.ElideButton(i18n.tr('审校完成后冻结交付'))
         style_module.set_button(self.deliver_button, "primary")
         self.deliver_button.clicked.connect(self.deliverRequested.emit)
         # 交付说明：写进交付快照的批准记录（以前固定写"桌面端人工确认"）。
         self.delivery_note = QLineEdit()
         self.delivery_note.setPlaceholderText(i18n.tr('交付说明（可选，例如：已完成人工审校）'))
-        self.risk_button = QPushButton(i18n.tr('接受风险并交付…'))
+        self.risk_button = style_module.ElideButton(i18n.tr('接受风险并交付…'))
         style_module.set_button(self.risk_button, "danger")
         self.risk_button.setToolTip(
             i18n.tr('仍有必须处理的问题时，写下说明并确认后继续交付；问题不会被删除'))
         self.risk_button.clicked.connect(self.deliverWithRiskRequested.emit)
         self.risk_button.setVisible(False)
-        self.export_button = QPushButton(i18n.tr('导出当前译文副本…'))
+        self.export_button = style_module.ElideButton(i18n.tr('导出当前译文副本…'))
         self.export_button.setIcon(icons.icon("download", 16))
         self.export_button.setIconSize(QSize(16, 16))
         self.export_button.clicked.connect(self.exportRequested.emit)
-        self.save_snapshot_button = QPushButton(i18n.tr('保存冻结交付文件…'))
+        self.save_snapshot_button = style_module.ElideButton(i18n.tr('保存冻结交付文件…'))
         self.save_snapshot_button.setIcon(icons.icon("save", 16))
         self.save_snapshot_button.setIconSize(QSize(16, 16))
         self.save_snapshot_button.clicked.connect(self._save_snapshot)
@@ -3298,13 +3301,13 @@ class WorkbenchView(QWidget):
         asset_footer.addWidget(self.open_asset_button)
         asset_footer.addWidget(self.reveal_asset_button)
 
-        delivery_actions = QHBoxLayout()
-        delivery_actions.setSpacing(8)
+        # 四个动作按钮放一行：中文放得下，外语放不下就折行（每个按钮保留自己的
+        # 宽度，不铺满），按钮文字不会被裁掉半句。
+        delivery_actions = components.FlowRow(spacing=8, fill=False)
         delivery_actions.addWidget(self.deliver_button)
         delivery_actions.addWidget(self.risk_button)
         delivery_actions.addWidget(self.export_button)
         delivery_actions.addWidget(self.save_snapshot_button)
-        delivery_actions.addStretch(1)
 
         delivery_card = Card()
         delivery_layout = QVBoxLayout(delivery_card)
@@ -3333,9 +3336,8 @@ class WorkbenchView(QWidget):
             i18n.tr('不用重新翻译：从已完成的译文生成，交付会更新为新版本，原有文件保持不变。'))
         self.supplement_hint.setObjectName("hint")
         self.supplement_hint.setWordWrap(True)
-        self.supplement_grid = QGridLayout()
-        self.supplement_grid.setHorizontalSpacing(theme_module.SPACE["sm"])
-        self.supplement_grid.setVerticalSpacing(theme_module.SPACE["sm"])
+        # 补生成的按钮同样会折行：俄语/西语的格式名比中文长得多，固定三列会被裁。
+        self.supplement_grid = components.FlowRow(spacing=theme_module.SPACE["sm"], fill=False)
         supplement_layout.addWidget(supplement_title)
         supplement_layout.addWidget(self.supplement_hint)
         supplement_layout.addLayout(self.supplement_grid)
@@ -3700,6 +3702,13 @@ class WorkbenchView(QWidget):
         self._render_stage()
 
     # ================= 阶段与页面导航 =================
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        # QSS 的字号要等控件被 polish 过才生效，按钮的最小宽度这时才定下来：
+        # 长语言（俄语）里操作台的宽度下限必须重新取一次，否则右栏会被挤窄、
+        # 按钮被裁掉半句。
+        self._sync_inspector_min()
+
     def show_page(self, page_id: str) -> None:
         """切到某一页（页面 id 见 `_pages`）。步骤条、跳转链接与测试都走这一个入口。
 
@@ -3724,6 +3733,8 @@ class WorkbenchView(QWidget):
         page = self._pages.get(page_id)
         if page is not None:
             self.tabs.setCurrentWidget(page)
+        # 页面切换后按钮的可见性变了，操作台的宽度下限跟着变。
+        self._sync_inspector_min()
 
     #: 运行状态行里一条操作结果停留多久（秒）：普通告知很快让位给运行状态，
     #: 错误多留一会儿；完整内容一直在运行记录里。
@@ -5234,15 +5245,15 @@ class WorkbenchView(QWidget):
         for index, item in enumerate(items):
             fmt = str(item.get("format") or "")
             title = i18n.tr(str(item.get("title") or item["key"]))
-            button = QPushButton(i18n.tr('生成{v0}', v0=title)
-                                 + (f"（{fmt}）" if fmt else ""))
+            button = style_module.ElideButton(i18n.tr('生成{v0}', v0=title)
+                                             + (f"（{fmt}）" if fmt else ""))
             button.setIcon(icons.icon(_FORMAT_ICONS.get(fmt.upper(), "file-text"), 16))
             button.setIconSize(QSize(16, 16))
             button.setToolTip(i18n.tr(str(item.get("detail") or "")))
             button.clicked.connect(
                 lambda _checked=False, k=item["key"]: self.supplementRequested.emit(k))
             self.supplement_buttons[item["key"]] = button
-            self.supplement_grid.addWidget(button, index // 3, index % 3)
+            self.supplement_grid.addWidget(button)
         self.supplement_card.setVisible(bool(items))
 
     def _fill_delivery_assets(self, latest: dict | None, *, snapshot: dict | None = None) -> None:
@@ -5455,18 +5466,19 @@ class WorkbenchView(QWidget):
         # 段号已经在操作栏标题里（"第 N 段"），这一行只说位置与状态。
         parts = [f"{position + 1}/{len(self._rows)}" if position >= 0 else "—",
                  row.status]
-        if row.human_edited and row.status != "人工修改":
-            parts.append("人工修改")
+        if row.human_edited and row.status != i18n.tr("人工修改"):
+            parts.append(i18n.tr("人工修改"))
         if row.has_draft:
-            parts.append("⚠ 草稿基于旧译文，提交会覆盖较新的文本"
-                         if row.stale_draft else "有未提交草稿")
+            parts.append(i18n.tr("⚠ 草稿基于旧译文，提交会覆盖较新的文本")
+                         if row.stale_draft else i18n.tr("有未提交草稿"))
         self.segment_status.set_status(" · ".join(parts), _segment_status_tone(row))
         self.fact_state.setText(row.status)
-        self.fact_review.setText("已审校" if row.reviewed else "未审校")
+        self.fact_review.setText(i18n.tr("已审校") if row.reviewed else i18n.tr("未审校"))
         pairs_now = self._state.get("pairs") or []
         from_tm = 0 <= row.index < len(pairs_now) and bool(pairs_now[row.index].get("from_tm"))
-        self.fact_source.setText("人工修改" if row.human_edited
-                                 else ("翻译记忆（已匹配并复用）" if from_tm else "机器翻译"))
+        self.fact_source.setText(i18n.tr("人工修改") if row.human_edited
+                                 else (i18n.tr("翻译记忆（已匹配并复用）") if from_tm
+                                       else i18n.tr("机器翻译")))
         if from_tm and not row.human_edited:
             self.segment_status.setText(self.segment_status.text() + " · "
                                         + i18n.tr('来自翻译记忆'))
@@ -5475,7 +5487,7 @@ class WorkbenchView(QWidget):
             if record.get("segment_index") == row.index:
                 reason = str(record.get("reason") or "")
                 break
-        self.fact_excluded.setText("已排除" if row.excluded else "未排除")
+        self.fact_excluded.setText(i18n.tr("已排除") if row.excluded else i18n.tr("未排除"))
         if reason:
             self.fact_excluded.setText(i18n.tr('已排除（{v0}）', v0=reason))
         pair = None

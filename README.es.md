@@ -34,49 +34,49 @@ Traducir un pasaje es fácil. Lo difícil es usar las mismas palabras en el cap�
 Las tareas se agrupan por proyecto. Cada tarjeta muestra una miniatura de la primera página original, el número de segmentos, los idiomas y la etapa actual. Puedes filtrar por estado, buscar en todo el texto y reanudar una tarea interrumpida con un clic.
 
 <p align="center">
-  <img src="docs/assets/qt-01-tasks.png" alt="Biblioteca de tareas de Folith" width="1000">
+  <img src="docs/assets/qt-01-tasks.es.png" alt="Biblioteca de tareas de Folith" width="1000">
 </p>
 
 ### Proyectos: base terminológica y memoria de traducción
 La base terminológica y la memoria de traducción se guardan por proyecto. Los términos confirmados se usan automáticamente en las tareas nuevas; los pares de oraciones que superan la revisión entran en la memoria del proyecto y no se mezclan con proyectos ajenos. Se admite importar y exportar XLSX / TBX / TMX.
 
 <p align="center">
-  <img src="docs/assets/qt-02-projects.png" alt="Base terminológica de proyecto de Folith" width="1000">
+  <img src="docs/assets/qt-02-projects.es.png" alt="Base terminológica de proyecto de Folith" width="1000">
 </p>
 
 ### Ajustes: conexiones de modelo
 Las conexiones se añaden en Ajustes → Modelo; ahí también eliges cuál se usa para traducción, revisión y visión.
 
 <p align="center">
-  <img src="docs/assets/qt-07-settings.png" alt="Ajustes de Folith: conexiones de modelo" width="800">
+  <img src="docs/assets/qt-07-settings.es.png" alt="Ajustes de Folith: conexiones de modelo" width="800">
 </p>
 
 ### Preparar una tarea
 Tras importar, la página de preparación permite elegir idioma de origen y de destino y el modo de traducción. Cada tarjeta de modo muestra, antes de empezar, las llamadas, los tokens y el tiempo estimados.
 
 <p align="center">
-  <img src="docs/assets/qt-06-prepare.png" alt="Página de preparación de Folith" width="1000">
+  <img src="docs/assets/qt-06-prepare.es.png" alt="Página de preparación de Folith" width="1000">
 </p>
 
 ### Banco de traducción
 Original y traducción lado a lado, segmento a segmento; la barra de pasos superior muestra Preparar → Traducción → Revisión → Entrega. El panel derecho ofrece acciones para el segmento actual: revisar, comentar, retraducir según tus indicaciones, hacer una pregunta, añadir a la base terminológica, anotar.
 
 <p align="center">
-  <img src="docs/assets/qt-03-workbench.png" alt="Banco de traducción de Folith" width="1000">
+  <img src="docs/assets/qt-03-workbench.es.png" alt="Banco de traducción de Folith" width="1000">
 </p>
 
 ### Puerta de entrega
 Mientras queden segmentos sin revisar o problemas bloqueantes, la entrega se detiene y se explica el motivo. Aun así puedes exportar una copia de trabajo de la traducción actual.
 
 <p align="center">
-  <img src="docs/assets/qt-04-delivery-gate.png" alt="Puerta de entrega de Folith" width="1000">
+  <img src="docs/assets/qt-04-delivery-gate.es.png" alt="Puerta de entrega de Folith" width="1000">
 </p>
 
 ### Entrega congelada
 Tras la revisión, el resultado se congela en una versión de entrega inmutable con su manifiesto. Después se pueden generar PDF, EPUB, TMX, TBX y JSONL a partir de la traducción terminada, sin volver a traducir.
 
 <p align="center">
-  <img src="docs/assets/qt-05-delivery-ready.png" alt="Entrega congelada de Folith" width="1000">
+  <img src="docs/assets/qt-05-delivery-ready.es.png" alt="Entrega congelada de Folith" width="1000">
 </p>
 
 > Las capturas las genera `scripts/qt_showcase_screenshots.py` con documentos de demostración sintéticos; no contienen archivos reales de usuarios.
