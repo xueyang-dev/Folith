@@ -35,9 +35,16 @@ sys.path.insert(0, str(ROOT))
 #: 界面语言 → 截图文件名后缀。中文是基准语言，文件名一个字都不改。
 LANG_SUFFIX = {"zh-CN": "", "en": ".en", "ru": ".ru", "es": ".es"}
 
-#: 窗口尺寸（逻辑像素）。中文那批截图是 1440x900，已经定稿，不再动；英/西/俄
-#: 的文案更长，版面的最小宽度分别是 1474 / 1546 / 1623，窗口太窄就会把按钮
-#: 和卡片文字挤掉，所以三门语言统一用最宽的那个（1623x900），谁都不特殊。
+#: 演示项目的固定 ID：色点颜色由 ID 派生（``components.project_dot_token``），
+#: 随机 ID 会让每次生成的截图颜色不同。书稿=蓝点（accent），合规=褐点（warning）。
+DEMO_PROJECT_IDS = (
+    "f0170000-0000-4000-8000-000000000005",
+    "f0170000-0000-4000-8000-000000000002",
+)
+
+#: 窗口尺寸（逻辑像素）。中文界面 1440x900 就够（版面的最小宽度比它小）；英/西/俄
+#: 的文案更长，版面的最小宽度分别是 1474 / 1546 / 1623，窗口太窄就会把按钮和
+#: 卡片文字挤掉，所以三门外语统一用最宽的那个（1623x900），谁都不特殊。
 WINDOW_SIZE = (1440, 900)
 WINDOW_SIZE_LOCALIZED = (1623, 900)
 
@@ -351,6 +358,17 @@ DEMOS: dict[str, Demo] = {
 }
 
 
+#: 记住核心原本的项目 ID 生成器，截图脚本用完就还回去。
+_ORIGINAL_NEW_PROJECT_ID: list = []
+
+
+def _remember_project_id_generator() -> None:
+    from folith import project as project_module
+
+    if not _ORIGINAL_NEW_PROJECT_ID:
+        _ORIGINAL_NEW_PROJECT_ID.append(project_module.new_project_id)
+
+
 def make_docx(path: Path, paragraphs: list[str], title: str) -> bytes:
     from docx import Document
 
@@ -371,6 +389,34 @@ def _direction(demo: Demo) -> dict:
     if not demo.explicit_direction:
         return {}
     return {"source_lang": demo.source_lang, "target_lang": demo.target_lang}
+
+
+def _fixed_project_ids() -> None:
+    """让演示项目用固定 ID（见 :data:`DEMO_PROJECT_IDS`）。
+
+    项目色点的颜色由项目 ID 派生（``components.project_dot_token``），随机 ID
+    会让每次生成的截图颜色都不一样。固定 ID 之后截图可复现。
+    """
+    from folith import project as project_module
+
+    counter = {"n": 0}
+    original = project_module.new_project_id
+
+    def _next() -> str:
+        index = counter["n"]
+        counter["n"] += 1
+        if index < len(DEMO_PROJECT_IDS):
+            return DEMO_PROJECT_IDS[index]
+        return original()
+
+    project_module.new_project_id = _next
+
+
+def _restore_project_ids() -> None:
+    """把项目 ID 的生成器还回去（截图脚本不该改全局行为）。"""
+    from folith import project as project_module
+
+    project_module.new_project_id = _ORIGINAL_NEW_PROJECT_ID[0]
 
 
 def _stamp_project(data_dir: Path, project_id: str, updated_at: str) -> None:
@@ -415,11 +461,14 @@ def seed(core, data_dir: Path, demo: Demo) -> dict:
     fixtures.mkdir(parents=True, exist_ok=True)
     (data_dir / ".onboarded").touch()
     stamps = _job_stamps()
+    _remember_project_id_generator()
+    _fixed_project_ids()
 
     book = core.create_project(demo.projects[0][0], description=demo.projects[0][1],
                                **_direction(demo))
     fin = core.create_project(demo.projects[1][0], description=demo.projects[1][1],
                               **_direction(demo))
+    _restore_project_ids()
     glossary = [{
         "id": f"term-{i:02d}", "source": s, "target": t, "preferred": t,
         "status": "locked", "domain": demo.domain, "scope": demo.scope,

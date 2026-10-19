@@ -1630,6 +1630,20 @@ class ElideButton(QPushButton):
     def text(self) -> str:  # noqa: D401 - Qt 命名
         return self._full_text
 
+    def sizeHint(self):  # noqa: N802 - Qt 命名
+        """按**完整文字**算宽度：省略只影响画出来的那一行。
+
+        QPushButton 的 sizeHint 来自当前文字，而 :meth:`_apply_elide` 把文字换成省略后
+        的短版——放进由 sizeHint 决定宽度的布局（交付页那排操作按钮）就成了循环：宽度
+        变小 → 文字再被省略一次 → sizeHint 再变小，按钮最后塌成最小宽度。
+        """
+        hint = super().sizeHint()
+        metrics = self.fontMetrics()
+        shown = QPushButton.text(self)
+        extra = (metrics.horizontalAdvance(self._full_text)
+                 - metrics.horizontalAdvance(shown))
+        return QSize(hint.width() + max(0, extra), hint.height())
+
     def minimumSizeHint(self):  # noqa: N802 - Qt 命名
         hint = super().minimumSizeHint()
         return QSize(min(hint.width(), self.iconSize().width() + 48), hint.height())
@@ -1639,10 +1653,12 @@ class ElideButton(QPushButton):
         self._apply_elide()
 
     def _apply_elide(self) -> None:
-        icon = self.iconSize().width() + 8 if not self.icon().isNull() else 0
-        room = self.width() - icon - 40
         metrics = self.fontMetrics()
         shown = self._full_text
+        # 按钮自己占的地方（图标 + 内边距）从可用宽度里扣掉：sizeHint 与整段文字
+        # 宽度的差就是这些。写死一个常数会让明明放得下的文字也被省略。
+        chrome = max(0, self.sizeHint().width() - metrics.horizontalAdvance(self._full_text))
+        room = self.width() - chrome
         if self.width() > 0 and metrics.horizontalAdvance(shown) > room:
             shown = metrics.elidedText(shown, Qt.TextElideMode.ElideRight, max(room, 20))
         # 「&」在按钮文字里是助记符标记（"Terms & memory" 会显示成 "Terms _memory"）：转义。
@@ -2103,6 +2119,43 @@ class EmptyState(QFrame):
         column.addStretch(1)
         self.set_action(action, action_kind)
         self.setVisible(bool(title))
+        self._hint_sync_pending = False
+        # 同步用**自己的定时器**，不用 QTimer.singleShot：singleShot 挂的是 Python
+        # 回调，控件先被删掉的话，回调仍会落到已经销毁的 C++ 对象上（段错误）。
+        self._hint_timer = QTimer(self)
+        self._hint_timer.setSingleShot(True)
+        self._hint_timer.setInterval(0)
+        self._hint_timer.timeout.connect(self._sync_hint_height)
+        self.hint_label.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt 命名
+        if watched is self.hint_label and event.type() == QEvent.Type.Resize:
+            # QLabel 要等自己处理完 Resize 才更新富文本排版，所以同步放到下一轮事件循环，
+            # 否则量到的是上一个宽度的行数。
+            if not self._hint_sync_pending:
+                self._hint_sync_pending = True
+                self._hint_timer.start()
+        return super().eventFilter(watched, event)
+
+    def _sync_hint_height(self) -> None:
+        """说明文字折行后的高度要算进最小高度，否则最后一行被切掉半行。
+
+        QLabel 折行时的高度由 ``heightForWidth`` 决定，布局分配的却是**最小**高度
+        （一行），外语文案折成三行时多出来的两行就被切掉。宽度定下来之后把实际
+        需要的高度写回最小高度，控件就不会被压扁。
+
+        量之前先把最小高度放开：QLabel 的富文本排版按"上一次量到的宽度"缓存着，
+        抱着旧的最小高度去量，量到的还是旧宽度的行数。
+        """
+        self._hint_sync_pending = False
+        label = self.hint_label
+        width = label.width()
+        if width <= 0:
+            return
+        label.setMinimumHeight(0)
+        needed = label.heightForWidth(width)
+        if needed > 0:
+            label.setMinimumHeight(needed)
 
     def set_action(self, text: str, kind: str = "secondary") -> None:
         """空状态的唯一动作（空字符串 = 没有动作）。"""
