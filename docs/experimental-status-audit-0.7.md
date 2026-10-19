@@ -12,7 +12,7 @@
 | Issue | 主题 | 判定 | 依据 |
 | --- | --- | --- | --- |
 | #19 | reviewer-overlap 边界 | 已满足（文档+测试+默认锁定） | `core.py:4398`、`docs/reviewer-overlap-pipeline.md:31-54` |
-| #20 | 风险选择性 review 策略 | 已满足（文档+测试），仅订正一处脚本路径引用 | `folith/review_gate.py:32-39,113`、`docs/review-efficiency-pass.md:299-317` |
+| #20 | 风险选择性 review 策略 | **未收敛**：`risk_selective` 会跳过非 TM 的干净批；需保留决定 | `folith/review_gate.py:119-136`、`tests/review_gate_test.py:253-272`、`docs/review-efficiency-pass.md:56` |
 | #21 | Dynamic Context v2 审计 | 已满足（ADR+冻结测试+无 UI 暴露） | `docs/dynamic-context-v2-adr.md:3`、`tests/context_mode_freeze_test.py` |
 | #22 | Paddle 微调历史核查 | 已满足（横幅+依赖组已移除），补一处内联标记 | `docs/paddle-arabic-finetuning.md:3-4`、`pyproject.toml` 无 `paddle` extra |
 | #23 | 并发文档口径统一 | 需订正文档（本次已改） | `core.py:2563`、`job_config.py:80-83`、`task_setup.py:62-83` |
@@ -41,23 +41,30 @@
 
 ## #20 — 风险选择性 review 策略
 
-**结论**：确定层门禁只允许「确定性可证安全」的跳过，其余一律审校；跳过**永不**被读成通过。
+**结论（修正）**：`risk_selective` **不是**「只跳过可证安全批次」。任何没有确定性风险信号的
+批次——包括全新的非 TM 译文——都会被记为 `skipped_low_risk`
+（reason = `clean_deterministic`），不送审。`all_from_tm` 只是唯一「按构造无假阴性」的
+子集，不是唯一的跳过子集。因此 #20 尚不能宣称收敛，需要一份明确的保留决定，承认已测出的
+漏检风险。
 
 证据：
 
-* 模式与默认值：`folith/review_gate.py:32-35`
-  `REVIEW_MODE_ALWAYS` / `REVIEW_MODE_RISK_SELECTIVE`，`DEFAULT_REVIEW_MODE = "always"`；
-  未知模式回退到 `always`（`review_gate.py:113` 起 `should_run_independent_review`）。
-* 唯一可安全跳过的子集是「全部来自已审校 TM」：`review_gate.py:119,169-178,197`
-  （`all_from_tm`）。
-* 跳过不被当成通过：跳过记为 `skipped_low_risk`（`review_gate.py:39`），不进入 TM、
-  不标记 reviewed；就绪统计把跳过段单列
-  （`folith/translation_evidence.py` 的 `skipped_segment_ids`）。
-* 文档化的解析与可接受跳过范围：`docs/review-efficiency-pass.md:59,299-317,347-353`
-  （生产默认保持 `always`；`all_from_tm` 是唯一无假阴性的跳过；`review_mode` 随就绪结果一起暴露）。
-* 回归锁定：`tests/review_gate_test.py` 覆盖干净批跳过、7 类信号强制审校、
-  TM 仅在 selective 模式跳过、未知模式回退 `always`、跳过不是 reviewed / TM-eligible、
-  恢复时不重复审阅或重复跳过、就绪单列跳过段。
+* 门禁返回干净跳过：`folith/review_gate.py:113-136`
+  ——锁定 TM 特例后，遍历风险规则，全部未命中即返回 `(False, "clean_deterministic")`；
+  `all_from_tm` 在 `review_gate.py:169` 计算，只是 `:119-123` 的提前返回。
+* 集成测试明确验证非 TM 干净批被跳过：`tests/review_gate_test.py:253-272`
+  ——4 个新译文批次全部 `skipped_low_risk`，`review_calls == 0`。
+* 已测出的漏检风险：`docs/review-efficiency-pass.md:56` 记录「selective review,
+  deterministic gate only」在真实语料中 **would miss every serious finding**；
+  §K（`:299-317`）说明 `all_from_tm` 是唯一按构造无假阴性的跳过。
+* 跳过 provenance 仍然可靠：跳过记为 `skipped_low_risk`（`review_gate.py:20-26,39`），
+  不标记 reviewed、不进入 TM；`tests/review_gate_test.py:263-266` 断言这一点。
+* 模式解析已文档化：`review_gate.py:54-77`（显式 > `pipeline_config` > `state`），
+  未知值回退 `always`，生产默认 `always`（`:35`）。
+
+**判定**：保留 `always` 为默认这一项已满足；但选择性模式的实验性跳过仍然存在且存在已测
+漏检风险。本审计**不**将 #20 标为已收敛。若要关闭 #20，必须在 issue 中明确记录
+「保留该实验、接受已测漏检风险」的决定与可接受跳过范围；否则保持 open。
 
 **订正**：issue 正文引用了 `tests/review_defect_recall.py`，仓库里不存在该测试文件；
 注入缺陷的确定性 vs 语义回收率由保证脚本 `scripts/review_defect_recall.py` 提供
@@ -146,6 +153,7 @@
 
 ## 未纳入本次改动（需实现或需外部验证）
 
-* **#18** 自适应 OCR DPI keep-or-drop：需要代码可达性调查与决策，另开。
+* **#20**：选择性模式会跳过非 TM 的干净批，存在已测漏检风险；需明确保留决定，保持 open。
+* **#18** 自适应 OCR DPI keep-or-drop：结论为 DROP，已在独立 PR 中移除。
 * **#15 / #16 / #17**：需要语料重跑、真实模型/Word/EPUB、独立语言人工签核或
   非 macOS 平台验收，本环境无法诚实满足，保持 open。
