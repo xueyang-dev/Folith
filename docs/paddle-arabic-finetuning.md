@@ -108,6 +108,9 @@ CER 从 13.43% 变为 10.45%，西文 `123` 恢复，英文姓名字符完整，
 
 ## 模型位置与使用
 
+> 本节及以下命令为历史记录：`benchmark/paddle-models/alam-al-din-finetuned/` 等本地产物
+> 已随实验清理而**不可用**，`paddle` 安装依赖组已移除，Folith 也不再提供 PaddleOCR 手动选择。
+
 自包含模型目录为 `benchmark/paddle-models/alam-al-din-finetuned/`，内含新的 Arabic
 推理权重/图/YAML、原有检测器和原有英文识别器的独立副本，外加 `model-card.json`。
 原始权重与默认 Tesseract 选择保持原状。训练 checkpoint 在

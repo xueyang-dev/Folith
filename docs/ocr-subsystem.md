@@ -135,6 +135,9 @@ and Python 3.14 are outside this pinned runtime's support. Wheel availability
 is evidence of installability, not a claim of native testing on all platforms.
 See `benchmark/paddle-wheel-compatibility.json` for the retrieved wheel names.
 
+> **2026-10-19：** 下文的 PaddleOCR / Automatic 手动选择为历史记录。当前产品路径是
+> Tesseract 与 Qt 客户端的「视觉」连接，Paddle 引擎已不再在设置中提供。
+
 In the existing PDF OCR settings choose Tesseract, PaddleOCR or Automatic.
 Tesseract remains the default. Automatic prefers Tesseract; it selects Paddle
 only if Tesseract's executable is missing, and records that fallback. It does
