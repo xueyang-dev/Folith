@@ -157,6 +157,10 @@ excludes = [
     "PySide6.QtPositioning", "PySide6.QtNfc", "PySide6.QtSpatialAudio",
     "pytest", "unittest", "pydoc_data", "test", "tests",
     "paddle", "paddleocr", "paddlex",
+    # PyMuPDF 2.x imports pymupdf.layout and loads its ONNX model on import.
+    # Folith only uses the core PDF APIs, and the model resources are not
+    # bundled, so drop the optional layout analyzer instead.
+    "pymupdf.layout", "pymupdf4llm",
 ]
 
 block_cipher = None

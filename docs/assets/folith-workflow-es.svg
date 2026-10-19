@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 380" width="1000" height="380" role="img" aria-label="Flujo de trabajo de Folith" font-family="Helvetica Neue, Arial, sans-serif">
+<rect width="1000" height="380" rx="14" fill="#f6f7f9"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker></defs>
+<rect x="24" y="28" width="212" height="214" rx="12" fill="#fff" stroke="#d5d9e0"/>
+<circle cx="52" cy="62" r="15" fill="#2f6fed"/><text x="52" y="68" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">1</text>
+<text x="76" y="68" font-size="21" font-weight="700" fill="#1f2937">Preparar</text>
+<text x="40" y="104" font-size="12.5" fill="#374151"><tspan x="40" dy="0">• Extraer segmentos, sin</tspan><tspan x="52" dy="16">encabezados</tspan></text>
+<text x="40" y="148" font-size="12.5" fill="#374151"><tspan x="40" dy="0">• Escaneos leídos por el</tspan><tspan x="52" dy="16">modelo de visión</tspan></text>
+<text x="40" y="192" font-size="12.5" fill="#374151"><tspan x="40" dy="0">• Perfil · candidatos a</tspan><tspan x="52" dy="16">término</tspan></text>
+<line x1="238" y1="135" x2="262" y2="135" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<rect x="264" y="28" width="212" height="214" rx="12" fill="#fff" stroke="#d5d9e0"/>
+<circle cx="292" cy="62" r="15" fill="#2f6fed"/><text x="292" y="68" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">2</text>
+<text x="316" y="68" font-size="21" font-weight="700" fill="#1f2937">Traducir</text>
+<text x="280" y="104" font-size="12.5" fill="#374151"><tspan x="280" dy="0">• Modos Rápido / Estándar /</tspan><tspan x="292" dy="16">Exhaustivo</tspan></text>
+<text x="280" y="148" font-size="12.5" fill="#374151"><tspan x="280" dy="0">• Lotes con contexto y</tspan><tspan x="292" dy="16">términos fijos</tspan></text>
+<text x="280" y="192" font-size="12.5" fill="#374151"><tspan x="280" dy="0">• Progreso guardado,</tspan><tspan x="292" dy="16">reanudable</tspan></text>
+<line x1="478" y1="135" x2="502" y2="135" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<rect x="504" y="28" width="212" height="214" rx="12" fill="#fff" stroke="#d5d9e0"/>
+<circle cx="532" cy="62" r="15" fill="#2f6fed"/><text x="532" y="68" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">3</text>
+<text x="556" y="68" font-size="21" font-weight="700" fill="#1f2937">Revisar</text>
+<text x="520" y="104" font-size="12.5" fill="#374151"><tspan x="520" dy="0">• Un revisor aparte comprueba</tspan><tspan x="532" dy="16">cada segmento</tspan></text>
+<text x="520" y="148" font-size="12.5" fill="#374151"><tspan x="520" dy="0">• Compara traducciones</tspan><tspan x="532" dy="16">vecinas</tspan></text>
+<text x="520" y="192" font-size="12.5" fill="#374151"><tspan x="520" dy="0">• Solo los problemas</tspan><tspan x="532" dy="16">bloqueantes detienen</tspan></text>
+<line x1="718" y1="135" x2="742" y2="135" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<rect x="744" y="28" width="212" height="214" rx="12" fill="#fff" stroke="#d5d9e0"/>
+<circle cx="772" cy="62" r="15" fill="#2f6fed"/><text x="772" y="68" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">4</text>
+<text x="796" y="68" font-size="21" font-weight="700" fill="#1f2937">Entregar</text>
+<text x="760" y="104" font-size="12.5" fill="#374151"><tspan x="760" dy="0">• La puerta verifica la</tspan><tspan x="772" dy="16">integridad</tspan></text>
+<text x="760" y="148" font-size="12.5" fill="#374151"><tspan x="760" dy="0">• Versión inmutable congelada</tspan></text>
+<text x="760" y="192" font-size="12.5" fill="#374151"><tspan x="760" dy="0">• Traducción · bilingüe ·</tspan><tspan x="772" dy="16">términos · manifiesto</tspan></text>
+<path d="M 640 244 C 640 276, 520 276, 520 246" fill="none" stroke="#6b7280" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)"/>
+<text x="580" y="284" text-anchor="middle" font-size="12" fill="#4b5563">Edición manual → nueva revisión</text>
+<rect x="24" y="304" width="952" height="52" rx="10" fill="#e8f0fe" stroke="#b6cdf8"/>
+<text x="500" y="336" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Recursos del proyecto: base terminológica + memoria (por proyecto; los pares revisados vuelven)</text>
+</svg>

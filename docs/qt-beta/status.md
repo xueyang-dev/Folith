@@ -78,7 +78,7 @@ venv/bin/python scripts/qt_artifact_check.py --out build/qt-desktop/artifact-che
 venv/bin/python -m pytest tests/qt_acceptance_kit_test.py tests/qt_delivery_content_test.py \
     tests/qt_extraction_error_test.py tests/qt_client_style_test.py \
     tests/qt_client_adapter_test.py tests/qt_client_window_test.py \
-    tests/qt_release_plumbing_test.py -q       # 191 项
+    tests/qt_release_plumbing_test.py -q       # 194 项
 
 # 完整验证链（20 步：构建 → 门禁 → 文档一致性 → 用例 → 端到端探针）
 bash scripts/qt_beta_chain.sh tmp/qt-beta/chain
