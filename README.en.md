@@ -120,6 +120,11 @@ The package `foliothread` exists on PyPI (the code module is `folith`), but it i
 | **Review** | A separate reviewer model checks each segment against the source and can see neighbouring translations; edit by hand, re-translate on instruction, ask about a segment; edited segments are reviewed again |
 | **Deliver** | The gate verifies completeness and blocking issues; freeze an immutable version; export translation, bilingual copy, terms, memory and manifest |
 
+
+<p align="center">
+  <img src="docs/assets/folith-workflow-en.svg" alt="Folith workflow: Prepare → Translate → Review → Deliver" width="1000">
+</p>
+
 - **📚 Long-document import**: PDF / DOCX / EPUB (no DRM) / TXT / Markdown.
 - **🧠 Whole-book context**: a document profile and term extraction come first, so pronouns, abbreviations and terms line up across pages.
 - **💎 Project-level language assets**: locked terms are injected into every request; translation memory reuses reviewed sentence pairs per project, cutting repeated calls.

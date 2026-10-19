@@ -120,6 +120,11 @@ El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith
 | **Revisar** | Un modelo revisor distinto comprueba cada segmento frente al original y ve las traducciones vecinas; edición manual, retraducción según indicaciones, preguntas sobre un segmento; los segmentos editados se vuelven a revisar |
 | **Entregar** | La puerta verifica la integridad y los problemas bloqueantes; se congela una versión inmutable; se exportan traducción, copia bilingüe, términos, memoria y manifiesto |
 
+
+<p align="center">
+  <img src="docs/assets/folith-workflow-es.svg" alt="Flujo de Folith: preparar → traducir → revisar → entregar" width="1000">
+</p>
+
 - **📚 Importación de documentos largos**: PDF / DOCX / EPUB (sin DRM) / TXT / Markdown.
 - **🧠 Contexto de todo el libro**: antes de traducir se hace un perfil del documento y una extracción de términos, de modo que pronombres, abreviaturas y términos concuerden entre páginas.
 - **💎 Recursos lingüísticos por proyecto**: los términos bloqueados se inyectan en cada solicitud; la memoria de traducción reutiliza pares de oraciones revisados dentro del proyecto y reduce llamadas repetidas.
