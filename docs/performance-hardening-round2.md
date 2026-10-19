@@ -189,6 +189,12 @@ wall 比 **1.163×**，TCP 连接 **−97.9%**。
 
 译文真值在各级都一致，但**连续性上下文会变**（并发批次预读的 `previous_target` 不同）。**`DEFAULT_TRANSLATION_CONCURRENCY` 保持 1。**
 
+> **2026-10-19 口径订正**：这里的 1 是 **core 回退值**（调用方未提供并发时），不是产品默认。
+> 前后端共享契约默认是 `folith/application/job_config.py:80-83` 的
+> `DEFAULT_TRANSLATION_CONCURRENCY = 4`；新建任务预设为 快速 6 / 标准 4 / 学术增强 4
+> （`folith/application/task_setup.py:62-83`）。预设采用更高并发是对上述
+> `previous_target` 分歧的**已知取舍**。审计见 `docs/experimental-status-audit-0.7.md`。
+
 **审校重叠投影**：
 
 | concurrency | generation | review | 串行合计 | 投影流水线 | 可隐藏比例 |

@@ -1,0 +1,151 @@
+# 0.7 实验/冻结/历史项状态审计（#19–#23）
+
+日期：2026-10-19。基线：`main` @ `815133c`。
+范围：仅审计并订正文档，不改动运行时行为、默认值或数据格式。
+
+本文件把 milestone 1（0.7）中五个「收敛/冻结/历史」类 issue 逐条对照代码与测试，
+给出可复核的证据（`文件:行号`）和本次订正。任何一条如果证据不足，明确标为未满足，
+不代为宣称完成。
+
+## 结论一览
+
+| Issue | 主题 | 判定 | 依据 |
+| --- | --- | --- | --- |
+| #19 | reviewer-overlap 边界 | 已满足（文档+测试+默认锁定） | `core.py:4398`、`docs/reviewer-overlap-pipeline.md:31-54` |
+| #20 | 风险选择性 review 策略 | 已满足（文档+测试），仅订正一处脚本路径引用 | `folith/review_gate.py:32-39,113`、`docs/review-efficiency-pass.md:299-317` |
+| #21 | Dynamic Context v2 审计 | 已满足（ADR+冻结测试+无 UI 暴露） | `docs/dynamic-context-v2-adr.md:3`、`tests/context_mode_freeze_test.py` |
+| #22 | Paddle 微调历史核查 | 已满足（横幅+依赖组已移除），补一处内联标记 | `docs/paddle-arabic-finetuning.md:3-4`、`pyproject.toml` 无 `paddle` extra |
+| #23 | 并发文档口径统一 | 需订正文档（本次已改） | `core.py:2563`、`job_config.py:80-83`、`task_setup.py:62-83` |
+
+---
+
+## #19 — reviewer-overlap 边界
+
+**边界结论**：审校重叠**不是**一个纯粹的吞吐开关，它是「使用 provisional generated 语境
+的新语义模式」，因此只允许 opt-in，生产默认关闭。
+
+证据：
+
+* 默认关闭：`core.py:4398` `DEFAULT_REVIEW_OVERLAP = False`；策略默认 `generated`
+  （`core.py:4400`）。
+* opt-in 表面（显式参数 / `pipeline_config` / 环境变量，三级解析，缺省 False）：
+  `core.review_overlap_enabled()`（`core.py:4403-4422`）。
+* 语义等价性已证伪、Strategy A 与 B 的准确边界、生产决定与默认值锁定：
+  `docs/reviewer-overlap-pipeline.md:20-54`；逐批证据
+  `docs/reviewer-overlap-semantics.md`、`docs/reviewer-overlap-semantics-evidence.md`。
+* 回归锁定：`tests/reviewer_overlap_semantic_equivalence_test.py`
+  （含生产默认禁用断言，`docs/reviewer-overlap-pipeline.md:42` 具名引用）。
+
+验收对照：opt-in 表面显式且默认关闭 → 满足；语义契约与有界漂移已文档化 → 满足；
+默认值与 A/B 边界有回归锁定 → 满足。**无残留项。**
+
+## #20 — 风险选择性 review 策略
+
+**结论**：确定层门禁只允许「确定性可证安全」的跳过，其余一律审校；跳过**永不**被读成通过。
+
+证据：
+
+* 模式与默认值：`folith/review_gate.py:32-35`
+  `REVIEW_MODE_ALWAYS` / `REVIEW_MODE_RISK_SELECTIVE`，`DEFAULT_REVIEW_MODE = "always"`；
+  未知模式回退到 `always`（`review_gate.py:113` 起 `should_run_independent_review`）。
+* 唯一可安全跳过的子集是「全部来自已审校 TM」：`review_gate.py:119,169-178,197`
+  （`all_from_tm`）。
+* 跳过不被当成通过：跳过记为 `skipped_low_risk`（`review_gate.py:39`），不进入 TM、
+  不标记 reviewed；就绪统计把跳过段单列
+  （`folith/translation_evidence.py` 的 `skipped_segment_ids`）。
+* 文档化的解析与可接受跳过范围：`docs/review-efficiency-pass.md:59,299-317,347-353`
+  （生产默认保持 `always`；`all_from_tm` 是唯一无假阴性的跳过；`review_mode` 随就绪结果一起暴露）。
+* 回归锁定：`tests/review_gate_test.py` 覆盖干净批跳过、7 类信号强制审校、
+  TM 仅在 selective 模式跳过、未知模式回退 `always`、跳过不是 reviewed / TM-eligible、
+  恢复时不重复审阅或重复跳过、就绪单列跳过段。
+
+**订正**：issue 正文引用了 `tests/review_defect_recall.py`，仓库里不存在该测试文件；
+注入缺陷的确定性 vs 语义回收率由保证脚本 `scripts/review_defect_recall.py` 提供
+（`docs/review-efficiency-pass.md:14,47`）。本审计记录该路径引用错误，脚本本身存在。
+
+## #21 — Dynamic Context v2 审计
+
+**结论**：已冻结，`fixed` 为生产且唯一默认，`dynamic_v2` 只能被显式精确值触达，无 UI 暴露，
+实验资产保留。
+
+证据：
+
+* ADR 状态 Accepted — FROZEN：`docs/dynamic-context-v2-adr.md:3`；生产决定
+  `context_mode = "fixed"` 与 fail-safe 语义：同文件 `16-30`；完整证据
+  `docs/dynamic-context-v2-report.md`、`docs/dynamic-context-v2-interface.md`、
+  `docs/dynamic-context-v2-evidence/`。
+* 解析器：`folith/dynamic_context.py:1610 resolve_context_mode()`（`argument > state > 生产默认`，
+  只有精确 `"dynamic_v2"` 可达实验）；实验常量 `dynamic_context.py:55`。
+* 冻结回归：`tests/context_mode_freeze_test.py` 覆盖生产默认与实验状态显式、
+  未知/畸形模式 fail-safe 到 `fixed`、`fixed` 不调用动态选择器、
+  `fixed` 下有无实验代码提示词逐字节一致、`fixed` 不写实验状态键、
+  恢复保留已记录模式、实验资产保留。
+* 无 UI 暴露：`folith/application`、`folith/qt` 中无 `dynamic_v2` 引用（全仓 grep 为空）。
+
+**无残留项**；无需订正文档（现有 ADR/report 未含过期待办措辞）。
+
+## #22 — Paddle 阿拉伯语微调历史核查
+
+**结论**：微调实验已结束，依赖组、本地环境、模型与实验产物均已清理；历史结论保留为记录，
+本地产物标注为不可用。
+
+证据：
+
+* 结束横幅：`docs/paddle-arabic-finetuning.md:3-4`（实验已停止、产物已删除、
+  `paddle` 安装依赖组已移除）；`docs/ocr-subsystem.md:3-4`、`docs/ocr-sources.md:3` 同口径。
+* 依赖组已移除：`pyproject.toml` 中不存在 `paddle` extra（grep 为空）；
+  `docs/ocr-subsystem.md:125-127` 明确 `pip install '.[paddle]'` 不再可用。
+* `FOLITH_OCR_MODEL_DIR` 保留的公开用途仅指向**官方**模型资源位置
+  （`docs/ocr-subsystem.md:159-160`），非本书微调。
+* 本地产物路径（`benchmark/paddle-models/alam-al-din-finetuned/`）在
+  `docs/paddle-arabic-finetuning.md:111-119` 仍以「自包含模型目录」语气出现。
+
+**订正**：在 `docs/paddle-arabic-finetuning.md` 该模型目录段与 OCR 引擎选择段补齐内联
+「本地产物已不可用 / Paddle 手动选择已不再是当前产品路径」标记，使读者即使不读文件头
+横幅也能得到正确结论。
+
+## #23 — 同步并发文档口径统一
+
+**结论**：历史实验结论（吞吐提升与连续性上下文代价）对当前实现**仍然成立**，但文档把
+「核心回退值 = 1」误写成「系统默认并发 = 1」。需要区分三层数值，并说明预设对连续性代价
+的取舍是已知且有意为之的。
+
+三层数值（均可复核）：
+
+| 层 | 位置 | 值 | 含义 |
+| --- | --- | ---: | --- |
+| core 回退值 | `core.py:2563` | 1 | 调用方**未提供**并发时的串行、连续性精确路径 |
+| 应用共享契约默认 | `folith/application/job_config.py:80-83` | 4 | 两个前端共用的默认，契约总是显式下发该值 |
+| 策略预设 | `folith/application/task_setup.py:62-83` | 快速 6 / 标准 4 / 学术增强 4 | 新建任务的模板值，高级设置可覆盖 |
+
+历史测量（并发=1 基线）：
+
+* 并发 2/3 提速 1.50× / 1.53×，译文真值一致，但 3/15、5/15 个批次看到的
+  `previous_target`（连续性上下文）与串行不同：`docs/translation-throughput.md:11-14`；
+  复现脚本 `scripts/translation_concurrency_benchmark.py`
+  （`docs/performance-hardening-round2.md:424-425`）。
+* `docs/performance-hardening-round2.md:184-190` 同结论，并写「`DEFAULT_TRANSLATION_CONCURRENCY`
+  保持 1」——该句是**回退值**，不是预设值。
+* 预设改用更高并发是后续的显式产品决定（P7 模式梯度）：
+  `docs/qt-beta/acceptance-feedback-2026-10-14.md:777`（快速 = 均衡批次 + 并发 6 + 关闭每批知识反馈）。
+
+**订正**：在 `docs/translation-throughput.md` 与 `docs/performance-hardening-round2.md`
+的并发结论处加统一口径说明，区分「回退值 1 / 契约默认 4 / 预设 6-4-4」，并明确预设对
+连续性上下文的影响是已知取舍。
+
+---
+
+## 本次订正的文档
+
+1. 本文件。
+2. `docs/translation-throughput.md`：并发结论加三层数值与预设取舍说明。
+3. `docs/performance-hardening-round2.md`：`DEFAULT_TRANSLATION_CONCURRENCY 保持 1` 处
+   加同口径脚注。
+4. `docs/paddle-arabic-finetuning.md`：本地模型目录与引擎选择段加「已不可用」内联标记。
+5. `docs/ocr-subsystem.md`：Paddle 手动选择说明段加「已不再是当前产品路径」内联标记。
+
+## 未纳入本次改动（需实现或需外部验证）
+
+* **#18** 自适应 OCR DPI keep-or-drop：需要代码可达性调查与决策，另开。
+* **#15 / #16 / #17**：需要语料重跑、真实模型/Word/EPUB、独立语言人工签核或
+  非 macOS 平台验收，本环境无法诚实满足，保持 open。
