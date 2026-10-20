@@ -205,14 +205,18 @@ def main() -> int:
     A("## G. Performance results\n")
     A("| config | render s/page | tesseract s/page | tesseract cpu s/page | peak child RSS | pages/s (render+ocr) |")
     A("|---|---|---|---|---|---|")
-    peak_rss = max((r.get("child_maxrss_bytes") or 0) for r in std_runs) if std_runs else 0
+    rss_values = [r.get("child_maxrss_bytes") for r in std_runs
+                  if isinstance(r.get("child_maxrss_bytes"), int)]
+    peak_rss = max(rss_values) if rss_values else None
     for cfg, s in cfg_sum.items():
         total = (s["tsv_s"]["mean"] or 0) + (s["render_s"]["mean"] or 0)
         A(f"| {cfg} | {fmt(s['render_s']['mean'],2)} | {fmt(s['tsv_s']['mean'],2)} | "
           f"n/a | n/a | {fmt(1/total if total else None,2)} |")
     A("")
+    peak_rss_text = (f"{peak_rss/1e6:.0f} MB" if peak_rss is not None
+                     else "unavailable on this platform")
     A(f"GPU: **N/A** (Tesseract CPU only). Peak child RSS observed across the matrix: "
-      f"{peak_rss/1e6:.0f} MB. CPU utilization was not sampled per run.\n")
+      f"{peak_rss_text}. CPU utilization was not sampled per run.\n")
 
     A("## H. Failure examples\n")
     A("1. **Quote-parser corruption (P1, pipeline bug).** "

@@ -234,7 +234,7 @@ def test_default_scanned_runtime_uses_current_vision_connection_without_repair(t
     assert state['extraction_report']['semantic_source']=='vlm'
     assert state['source_cleanup']['reason']=='vlm_semantics_no_ocr_repair'
     assert state['p2_done'] and state['pairs'][0]['source_spans'][0]['page_id']=='p1'
-    assert 'fixture-secret' not in core.job_state_path('default-vlm').read_text()
+    assert 'fixture-secret' not in core.job_state_path('default-vlm').read_text(encoding="utf-8")
 
 
 def test_new_default_preserves_legacy_selection_and_native_no_credentials(monkeypatch):

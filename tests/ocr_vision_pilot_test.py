@@ -49,8 +49,19 @@ def test_fresh_reference_pages_were_not_used_for_training_or_selection():
     missing = [str(path.relative_to(ROOT)) for path in required if not path.is_file()]
     if missing:
         pytest.skip("optional local OCR benchmark data is missing: " + ", ".join(missing))
-    fresh = json.loads((ROOT / "benchmark/ocr-vision-pilot/fresh-references.json").read_text())
-    training = json.loads((ROOT / "benchmark/paddle-finetune/dataset-manifest.json").read_text())
+    fresh = json.loads((ROOT / "benchmark/ocr-vision-pilot/fresh-references.json").read_text(encoding="utf-8"))
+    training = json.loads((ROOT / "benchmark/paddle-finetune/dataset-manifest.json").read_text(encoding="utf-8"))
     old_pages = {int(page) for page in training["page_splits"]}
     assert not {p["page_index"] for p in fresh["pages"]} & old_pages
     assert all(not p["training_used"] and not p["checkpoint_selection_used"] for p in fresh["pages"])
+
+
+def test_missing_resource_metrics_are_reported_as_unavailable():
+    from benchmark import bench_lib
+
+    metrics = bench_lib._resource_metrics(None, None)
+    assert metrics["resource_metrics"] == "unavailable"
+    assert metrics["resource_metrics_reason"]
+    assert metrics["cpu_user_s"] is None
+    assert metrics["cpu_sys_s"] is None
+    assert metrics["child_maxrss_bytes"] is None

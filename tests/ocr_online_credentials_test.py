@@ -26,8 +26,9 @@ def test_ocr_connection_file_is_separate_and_private(tmp_path, monkeypatch):
     assert path == core.ocr_online_config_path()
     assert path != core.provider_config_path()
     assert path.parent == core.provider_config_path().parent
-    mode = stat.S_IMODE(os.stat(path).st_mode)
-    assert mode == 0o600, oct(mode)
+    if os.name == "posix":
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        assert mode == 0o600, oct(mode)
     profile = core.load_ocr_online_config()
     assert profile["provider"] == "OpenCode Go"
     assert profile["model"] == "vision-A"

@@ -19,12 +19,17 @@ import hashlib
 import json
 import os
 import re
-import resource
 import subprocess
+import sys
 import time
 import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+try:
+    import resource
+except ImportError:  # Windows has no getrusage; report the gap instead of guessing.
+    resource = None
 
 ROOT = Path(__file__).resolve().parent
 PDF_PATH = os.environ.get("FOLITH_BENCHMARK_PDF", str(ROOT / "input.pdf"))
@@ -254,6 +259,27 @@ def render_page(doc, index: int, dpi: int, clip=None) -> Tuple[bytes, float, flo
     return png, elapsed, float(pix.width), float(pix.height)
 
 
+def _resource_metrics(before, after) -> Dict[str, Any]:
+    if before is None or after is None:
+        return {
+            "cpu_user_s": None,
+            "cpu_sys_s": None,
+            "child_maxrss_bytes": None,
+            "resource_metrics": "unavailable",
+            "resource_metrics_reason": "resource.getrusage is unavailable on this platform",
+        }
+    maxrss = int(after.ru_maxrss)
+    if sys.platform != "darwin":
+        maxrss *= 1024  # Linux reports KiB; macOS reports bytes.
+    return {
+        "cpu_user_s": after.ru_utime - before.ru_utime,
+        "cpu_sys_s": after.ru_stime - before.ru_stime,
+        "child_maxrss_bytes": maxrss,
+        "resource_metrics": "available",
+        "resource_metrics_reason": None,
+    }
+
+
 def run_tesseract(png_bytes: bytes, *, model: str = "std", psm: int = 3,
                   output: str = "tsv", timeout: int = 300) -> Dict[str, Any]:
     """Run Tesseract exactly as production does (``-l ara --psm N tsv``)."""
@@ -263,7 +289,8 @@ def run_tesseract(png_bytes: bytes, *, model: str = "std", psm: int = 3,
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp.write(png_bytes)
         tmp_path = tmp.name
-    usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    usage_before = (resource.getrusage(resource.RUSAGE_CHILDREN)
+                    if resource is not None else None)
     started = time.perf_counter()
     try:
         proc = subprocess.run(
@@ -271,15 +298,14 @@ def run_tesseract(png_bytes: bytes, *, model: str = "std", psm: int = 3,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, env=env)
         elapsed = time.perf_counter() - started
-        usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+        usage_after = (resource.getrusage(resource.RUSAGE_CHILDREN)
+                       if resource is not None else None)
         return {
             "returncode": proc.returncode,
             "stdout": proc.stdout,
             "stderr": (proc.stderr or "")[-400:],
             "elapsed_s": elapsed,
-            "cpu_user_s": usage_after.ru_utime - usage_before.ru_utime,
-            "cpu_sys_s": usage_after.ru_stime - usage_before.ru_stime,
-            "child_maxrss_bytes": int(usage_after.ru_maxrss),
+            **_resource_metrics(usage_before, usage_after),
         }
     finally:
         Path(tmp_path).unlink(missing_ok=True)

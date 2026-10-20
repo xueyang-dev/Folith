@@ -24,12 +24,12 @@ def test_run_snapshot_excludes_secrets_and_prompt_text(tmp_path):
         "style_rules": "private rules", "translator": {"provider": "DeepSeek", "model": "model",
                                                          "api_key": "secret"}}, resume=True)
     run.finish("cancelled")
-    events = [json.loads(line) for line in run.requests_path.read_text().splitlines()]
+    events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
     assert events[0]["resume"]
     assert events[0]["configuration"]["batch_size"] == 4
     assert events[-1]["status"] == "cancelled"
-    assert "secret" not in run.requests_path.read_text()
-    assert "private rules" not in run.requests_path.read_text()
+    assert "secret" not in run.requests_path.read_text(encoding="utf-8")
+    assert "private rules" not in run.requests_path.read_text(encoding="utf-8")
 
 
 def test_annotation_boundaries_expose_ordered_commit_wait(tmp_path, monkeypatch):
@@ -50,7 +50,7 @@ def test_annotation_boundaries_expose_ordered_commit_wait(tmp_path, monkeypatch)
         core.annotate_stage(state, "boundaries", [], "DeepSeek", "mock", "model", "简体中文")
     finally:
         trace.finish_run("boundaries")
-    events = [json.loads(line) for line in run.requests_path.read_text().splitlines()]
+    events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
     batch = {e["phase"]: e["monotonic"] for e in events if e["event"] == "batch_timing" and e["batch_id"] == 2}
     assert batch["queued"] <= batch["worker_started"] <= batch["result_ready"] < batch["commit_started"] <= batch["commit_finished"]
     assert batch["commit_started"] - batch["result_ready"] > 0.01
@@ -63,7 +63,7 @@ def test_delivery_export_has_separate_run_and_keeps_bytes(tmp_path, monkeypatch)
     assert core.build_delivery_assets("export", {"filename": "doc.txt"}) == {"translation.txt": b"same bytes"}
     streams = list((tmp_path / "export" / ".performance" / "runs").glob("*/requests.jsonl"))
     assert len(streams) == 1
-    events = [json.loads(line) for line in streams[0].read_text().splitlines()]
+    events = [json.loads(line) for line in streams[0].read_text(encoding="utf-8").splitlines()]
     assert events[-1]["status"] == "completed"
     assert events[-2]["phase"] == "delivery_assets_complete"
 
@@ -100,7 +100,7 @@ def test_translation_failure_persists_closed_stages_without_hiding_error(tmp_pat
     with pytest.raises(WorkflowStopped, match="controlled provider rejection"):
         core.translate_stage(state, "failed-boundary", [], "DeepSeek", "mock", "model", "简体中文", "",
                              enable_review=False, use_tm=False, profiler=profiler)
-    result = json.loads((tmp_path / "performance.json").read_text())
+    result = json.loads((tmp_path / "performance.json").read_text(encoding="utf-8"))
     assert result["stages"]["translation_generation"]["status"] == "failed"
     assert result["stages"]["translation_generation"]["finished_monotonic"] is not None
     assert result["stages"]["knowledge_feedback"]["interval_union_s"] is None
@@ -127,7 +127,7 @@ def test_pipeline_does_not_claim_completion_before_final_save(tmp_path, monkeypa
         run = trace.get_active_run("final-save")
         assert run.finished_at is None
         trace.finish_run("final-save", status="failed")
-        events = [json.loads(line) for line in run.requests_path.read_text().splitlines()]
+        events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
         assert not any(e.get("phase") == "automatic_pipeline_complete" for e in events)
         assert events[-1]["status"] == "failed"
     finally:

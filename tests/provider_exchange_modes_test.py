@@ -137,7 +137,8 @@ def test_provider_config_roundtrip():
         saved = core.load_provider_config()
         assert saved["base_url"] == "https://relay.example.com/v1"
         assert saved["reasoning_effort"] == "medium"
-        assert (core.provider_config_path().stat().st_mode & 0o077) == 0
+        if sys.platform != "win32":
+            assert (core.provider_config_path().stat().st_mode & 0o077) == 0
 
         core.save_provider_config(
             "自定义中转站", "relay-model", "relay-key",

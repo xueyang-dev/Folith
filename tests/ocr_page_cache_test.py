@@ -46,6 +46,7 @@ def fake_ocr(monkeypatch):
             calls.append({"png": png_bytes, "index": index})
             text = text_for(index) if text_for else f"page body {index}"
             return _blocks(text, confidence), None
+        monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
         monkeypatch.setattr(core, "_find_tesseract", lambda: "fake-tesseract")
         monkeypatch.setattr(core, "_tesseract_languages", lambda _cmd: ["eng"])
         monkeypatch.setattr(core, "_ocr_backend_version", lambda *_a, **_k: "5.0.0")

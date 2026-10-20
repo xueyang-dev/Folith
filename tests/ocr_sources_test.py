@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import types
 
 import fitz
 import pytest
@@ -196,7 +197,12 @@ def _install_model_registry(monkeypatch, *options):
     monkeypatch.setattr(ocr_paddle.importlib.metadata, "version",
                         lambda name: ocr_paddle.PADDLE_VERSIONS[name])
     monkeypatch.setattr(ocr_paddle.platform, "machine", lambda: "arm64")
-    monkeypatch.setattr(ocr_paddle.sys, "platform", "darwin")
+    # Keep the host's multiprocessing module untouched: replacing the real
+    # ``sys.platform`` globally breaks spawn on Windows.
+    host_sys = ocr_paddle.sys
+    monkeypatch.setattr(ocr_paddle, "sys", types.SimpleNamespace(
+        platform="darwin", version_info=host_sys.version_info,
+        modules=host_sys.modules))
 
 
 def test_task_level_paddle_model_reaches_the_worker(monkeypatch, tmp_path):

@@ -138,7 +138,7 @@ def test_paddle_intake_does_not_require_tesseract_and_loads_once(tmp_path, fake_
     assert second[0] == first[0]
     assert second[2]["ocr_cached_pages"] == 3
     assert len(calls) == 3 and len(loads) == 1
-    record = json.loads(next((tmp_path / "ocr_cache" / "pages").glob("*.json")).read_text())["record"]
+    record = json.loads(next((tmp_path / "ocr_cache" / "pages").glob("*.json")).read_text(encoding="utf-8"))["record"]
     assert record["engine"]["model_version"] == "fixture-v1"
     assert record["blocks"][0]["bbox_pdf"]
     assert record["raw_text"]
@@ -198,9 +198,9 @@ def test_engine_cache_identity_is_distinct():
 
 def test_real_tesseract_goldens_preserve_text_boundaries_and_confidence():
     root = Path(__file__).resolve().parents[1]
-    expected = json.loads((root / "tests/fixtures/ocr_tesseract_preservation.json").read_text())
+    expected = json.loads((root / "tests/fixtures/ocr_tesseract_preservation.json").read_text(encoding="utf-8"))
     for index, records in expected.items():
-        payload = (root / f"tests/fixtures/ocr_tesseract_page_{int(index):04d}.tsv").read_text()
+        payload = (root / f"tests/fixtures/ocr_tesseract_page_{int(index):04d}.tsv").read_text(encoding="utf-8")
         blocks = core._parse_tesseract_tsv(payload, direction="rtl")
         assert [{k: x.get(k) for k in ["text", "top", "bottom"]} for x in blocks] == [
             {k: x.get(k) for k in ["text", "top", "bottom"]} for x in records]
@@ -297,7 +297,7 @@ def test_paddle_runs_shared_segmentation_translation_export_and_resume(tmp_path,
     assert state["extraction_report"]["ocr"]["model_version"] == "fixture-v1"
     assert state["pipeline_config"]["ocr_backend"] == "paddle"
     assert core.build_delivery_assets(job_id, state)["translation.docx"].startswith(b"PK")
-    performance = json.loads((core.job_dir(job_id) / "performance.json").read_text())
+    performance = json.loads((core.job_dir(job_id) / "performance.json").read_text(encoding="utf-8"))
     recorded = performance["stages"]["ocr"]
     assert recorded["status"] == "completed" and recorded["finished_at"]
     assert recorded["metadata"]["actual_engine"] == "paddleocr"
