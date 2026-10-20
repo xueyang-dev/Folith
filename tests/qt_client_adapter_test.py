@@ -679,10 +679,20 @@ def test_model_disconnect_is_comprehensible_and_retryable(adapter_env):
     runtime = _wait_for_idle(core, job_id, timeout=180)
     assert runtime.get("status") in ("failed", "stalled", "interrupted",
                                      "idle_incomplete"), runtime
-    message = str((runtime.get("error") or {}).get("message")
-                  if isinstance(runtime.get("error"), dict)
-                  else runtime.get("error") or "")
-    assert message, "a failure must carry a reason"
+    # The runtime file is replaced atomically by the worker. A read can land
+    # before the failing worker has published its reason, so re-read instead of
+    # asserting on the first terminal-looking snapshot.
+    deadline = time.monotonic() + 15
+    message = ""
+    while True:
+        runtime = core.get_job_runtime_status(job_id, adapter.load_state(job_id))
+        message = str((runtime.get("error") or {}).get("message")
+                      if isinstance(runtime.get("error"), dict)
+                      else runtime.get("error") or "")
+        if message or time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+    assert message, f"a failure must carry a reason: {runtime}"
     state = adapter.load_state(job_id)
     assert not state.get("p2_done")
 
