@@ -7,6 +7,28 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from . import delivery, translation_evidence
 
 
+_SKIP_REASON_COPY = {
+    "already_reviewed_tm": "复用已审校翻译记忆",
+    "clean_deterministic": "无确定性风险信号",
+    "unknown": "未记录跳过原因",
+}
+
+
+def skip_reason_label(reason: Any) -> str:
+    """Explain why a segment was skipped without turning the skip into a pass."""
+    text = str(reason or "").strip()
+    return _SKIP_REASON_COPY.get(text, text or "按策略跳过")
+
+
+def _skip_reason_breakdown(reason_counts: Mapping[str, Any]) -> str:
+    parts = [
+        f"{skip_reason_label(reason)} {count} 段"
+        for reason, count in sorted((reason_counts or {}).items())
+        if isinstance(count, int) and count > 0
+    ]
+    return "；".join(parts)
+
+
 READINESS_COPY = {
     "not_run": ("尚未审校", "当前译文尚未开始独立审校", "warning"),
     "missing": ("还有内容待处理", "完成待审段落或处理必须解决的问题后即可继续", "warning"),
@@ -15,6 +37,34 @@ READINESS_COPY = {
     "current": ("当前译文已完成审校", "所有需要独立审校的段落都与当前译文一致", "success"),
     "not_required": ("当前任务未启用独立审校", "此任务沿用原有交付流程", "neutral"),
 }
+
+
+def _coverage_copy(readiness: Mapping[str, Any]) -> tuple[str, str, str]:
+    status = str(readiness.get("status") or "not_run")
+    label, detail, tone = READINESS_COPY.get(status, READINESS_COPY["not_run"])
+    if status != "current":
+        return label, detail, tone
+    coverage = str(readiness.get("coverage_status") or "")
+    skipped = int(readiness.get("skipped_count") or 0)
+    reviewed = int(readiness.get("reviewed_count") or 0)
+    total = len(readiness.get("expected_segment_ids") or [])
+    breakdown = _skip_reason_breakdown(readiness.get("skipped_reason_counts") or {})
+    if coverage == "skipped":
+        return (
+            f"{skipped} 段未执行本轮独立语义审校（按策略跳过）",
+            (f"按策略跳过：{breakdown}。这些段落没有独立审校结论，"
+             "不等于审校通过；现有交付门禁保持不变。"),
+            "warning",
+        )
+    if coverage == "partial" and skipped:
+        return (
+            "部分译文未执行独立语义审校",
+            (f"{reviewed} / {total} 段已完成独立审校，"
+             f"{skipped} 段未执行本轮独立语义审校（按策略跳过：{breakdown}）。"),
+            "warning",
+        )
+    return label, detail, tone
+
 
 FINDING_STATUS_COPY = {
     "open": "待处理",
@@ -174,20 +224,28 @@ def _historical_event(state: Mapping[str, Any], segment_id: int, *,
 def _review_task_item(
     state: Mapping[str, Any], kind: str, segment_id: int, *,
     index: "translation_evidence.ReviewIndex | None" = None,
+    skip_reason: str = "",
 ) -> Dict[str, Any]:
     pair = _pair(state, segment_id)
     event = _historical_event(state, segment_id, index=index)
-    copy = {
-        "failed": ("审校未完成", "上次独立审校调用失败", "retry", 0),
-        "stale": ("需要重新审校", stale_reason_label(event.get("stale_reason")),
-                  "rereview", 1),
-        "missing": ("尚未审校", "当前译文尚未完成独立审校", "review", 3),
-    }
-    status_label, summary, action, priority = copy[kind]
+    if kind == "skipped":
+        status_label = "未执行独立审校"
+        summary = (f"按策略跳过：{skip_reason_label(skip_reason)}。"
+                   "没有独立语义审校结果，不等于审校通过。")
+        action, priority = "review", 2
+    else:
+        copy = {
+            "failed": ("审校未完成", "上次独立审校调用失败", "retry", 0),
+            "stale": ("需要重新审校", stale_reason_label(event.get("stale_reason")),
+                      "rereview", 1),
+            "missing": ("尚未审校", "当前译文尚未完成独立审校", "review", 3),
+        }
+        status_label, summary, action, priority = copy[kind]
     return {
         "id": f"{kind}:segment:{segment_id}",
         "kind": kind,
-        "filter_group": "rereview" if kind in {"failed", "stale"} else "pending",
+        "filter_group": ("skipped" if kind == "skipped" else
+                         "rereview" if kind in {"failed", "stale"} else "pending"),
         "priority": priority,
         "segment_id": segment_id,
         "segment_index": segment_id,
@@ -197,12 +255,13 @@ def _review_task_item(
         "core_finding": False,
         "requires_human_confirmation": False,
         "decidable": False,
-        "severity": "blocking" if kind in {"failed", "stale"} else "actionable",
+        "severity": ("informational" if kind == "skipped" else
+                     "blocking" if kind in {"failed", "stale"} else "actionable"),
         "severity_label": status_label,
         "status": kind,
         "status_label": status_label,
-        "category": "review_freshness",
-        "category_label": "独立审校",
+        "category": "review_coverage" if kind == "skipped" else "review_freshness",
+        "category_label": "审校覆盖" if kind == "skipped" else "独立审校",
         "title": f"第 {segment_id + 1} 段 · {status_label}",
         "summary": summary,
         "reason": summary,
@@ -211,7 +270,9 @@ def _review_task_item(
         "source_span": "",
         "target_span": "",
         "explanation": summary,
-        "recommendation": "重新运行此段审校，生成与当前译文一致的新结果。",
+        "recommendation": ("如需覆盖本段，请重新运行独立审校。"
+                           if kind == "skipped"
+                           else "重新运行此段审校，生成与当前译文一致的新结果。"),
         "suggested_target": "",
         "legacy_diagnostic": False,
         "proper_noun_candidate": False,
@@ -223,7 +284,9 @@ def _review_task_item(
         "review_evidence": [],
         "review_event_id": event.get("review_event_id"),
         "entry_id": "",
-        "technical_reason": str(event.get("stale_reason") or event.get("error") or ""),
+        "technical_reason": (skip_reason if kind == "skipped"
+                             else str(event.get("stale_reason")
+                                      or event.get("error") or "")),
         "identity_stability": "synthetic",
         "action": action,
     }
@@ -242,6 +305,13 @@ def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List
         )
         for segment_id in readiness.get(key) or []
     ]
+    skipped_reasons = readiness.get("skipped_segment_reasons") or {}
+    items.extend(
+        _review_task_item(
+            state, "skipped", segment_id, index=index,
+            skip_reason=str(skipped_reasons.get(str(segment_id)) or ""))
+        for segment_id in readiness.get("skipped_segment_ids") or []
+    )
     current_findings = [
         finding for finding in delivery.review_queue_findings(dict(state))
         if _current_finding(state, finding, index=index)
@@ -281,6 +351,14 @@ def _primary_action(
 
 
 def _delivery_copy(readiness: Mapping[str, Any], counts: Mapping[str, int]) -> Dict[str, Any]:
+    skipped = int(readiness.get("skipped_count") or 0)
+    if readiness.get("ready") and skipped:
+        return {
+            "title": "可以准备交付（审校覆盖不完整）",
+            "detail": (f"{skipped} 段未执行本轮独立语义审校（按策略跳过）。"
+                       "现有交付门禁允许继续准备交付。"),
+            "tone": "warning",
+        }
     if readiness.get("ready"):
         return {"title": "翻译审校已完成", "detail": "当前译文的审校状态允许继续准备交付",
                 "tone": "success"}
@@ -315,6 +393,10 @@ def _nav_copy(readiness: Mapping[str, Any], counts: Mapping[str, int]) -> Dict[s
         return {"label": f"{missing} 待审", "tone": "pending", "title": "还有段落尚未审校"}
     if readiness.get("status") == "not_required":
         return {"label": "不适用", "tone": "neutral", "title": "当前任务未启用独立审校"}
+    skipped = int(readiness.get("skipped_count") or 0)
+    if skipped:
+        return {"label": f"{skipped} 段跳过", "tone": "pending",
+                "title": "部分段落未执行本轮独立语义审校"}
     if counts.get("actionable"):
         return {"label": f"{counts['actionable']} 建议", "tone": "pending",
                 "title": "有建议检查项，不影响交付"}
@@ -359,14 +441,14 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
     }
     filter_counts = {
         name: sum(item.get("filter_group") == name for item in items)
-        for name in ("pending", "rereview", "suggested", "reference")
+        for name in ("pending", "rereview", "skipped", "suggested", "reference")
     }
     filter_counts["all"] = len(items)
-    status = str(readiness.get("status") or "not_run")
-    label, detail, tone = READINESS_COPY.get(status, READINESS_COPY["not_run"])
+    label, detail, tone = _coverage_copy(readiness)
     progress = {
         "total": len(readiness.get("expected_segment_ids") or []),
         "current": len(readiness.get("current_segment_ids") or []),
+        "skipped": len(readiness.get("skipped_segment_ids") or []),
         "stale": len(readiness.get("stale_segment_ids") or []),
         "missing": len(readiness.get("missing_segment_ids") or []),
         "failed": len(readiness.get("failed_segment_ids") or []),

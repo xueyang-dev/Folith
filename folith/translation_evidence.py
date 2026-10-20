@@ -376,6 +376,12 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
         # reviewed, and are reported separately from reviewed segments so no
         # consumer can present a skip as a pass.
         "skipped_segment_ids": [],
+        "skipped_segment_reasons": {},
+        "skipped_reason_counts": {},
+        "reviewed_count": 0,
+        "skipped_count": 0,
+        "coverage_complete": False,
+        "coverage_status": "not_required",
         "review_mode": str(state.get("review_mode") or "always"),
         "blocking_finding_ids": [],
         "decision_errors": [],
@@ -388,6 +394,8 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
     index = review_index(state)
     stale_ids, missing_ids, failed_ids, current_ids = [], [], [], []
     skipped_ids: List[int] = []
+    skipped_reasons: Dict[str, str] = {}
+    skipped_reason_counts: Dict[str, int] = {}
     current_events: Dict[int, Dict[str, Any]] = {}
     for segment_id in expected:
         event = index.current.get(segment_id)
@@ -400,7 +408,10 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
             failed_ids.append(segment_id)
         elif _SKIPPED_LOW_RISK in (
                 event.get("decision"), receipt.get("status")):
+            reason = str(event.get("skip_reason") or "unknown").strip() or "unknown"
             skipped_ids.append(segment_id)
+            skipped_reasons[str(segment_id)] = reason
+            skipped_reason_counts[reason] = skipped_reason_counts.get(reason, 0) + 1
         else:
             current_ids.append(segment_id)
 
@@ -455,12 +466,28 @@ def translation_review_readiness(state: Mapping[str, Any]) -> Dict[str, Any]:
             blocking_ids.append(finding_id)
             decision_errors.append({"finding_id": finding_id, "status": "stale"})
 
+    reviewed_count = len(current_ids)
+    skipped_count = len(skipped_ids)
+    if failed_ids or stale_ids:
+        coverage_status = "incomplete"
+    elif skipped_count and not current_ids and not missing_ids:
+        coverage_status = "skipped"
+    elif skipped_count or missing_ids:
+        coverage_status = "partial" if (current_ids or skipped_count) else "incomplete"
+    else:
+        coverage_status = "complete"
     base.update({
         "current_segment_ids": current_ids,
         "stale_segment_ids": stale_ids,
         "missing_segment_ids": missing_ids,
         "failed_segment_ids": failed_ids,
         "skipped_segment_ids": skipped_ids,
+        "skipped_segment_reasons": skipped_reasons,
+        "skipped_reason_counts": skipped_reason_counts,
+        "reviewed_count": reviewed_count,
+        "skipped_count": skipped_count,
+        "coverage_complete": coverage_status == "complete",
+        "coverage_status": coverage_status,
         "blocking_finding_ids": blocking_ids,
         "decision_errors": decision_errors,
     })

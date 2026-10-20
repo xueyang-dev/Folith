@@ -22,13 +22,14 @@ from .style import Card
 
 #: 筛选分段（与旧界面一致）：值 → 标签。
 FILTERS = (("all", "全部"), ("pending", "待处理"), ("rereview", "需重审"),
-           ("suggested", "有建议"), ("reference", "仅供参考"))
+           ("skipped", "已跳过"), ("suggested", "有建议"),
+           ("reference", "仅供参考"))
 
 _SEVERITY_TONE = {"blocking": "danger", "actionable": "warn",
                   "informational": "info"}
 
 #: 队列项里「需要重新审校」的几种合成项。
-_REVIEW_TASK_KINDS = {"failed", "stale", "missing"}
+_REVIEW_TASK_KINDS = {"failed", "stale", "missing", "skipped"}
 
 
 def _escape(text: object) -> str:
@@ -234,7 +235,11 @@ class ReviewPanel(QWidget):
         hint = i18n.tr_dynamic(str(readiness.get("detail") or ""))
         # 审校已完成：没有要做的事，就不给按钮。
         self.empty_state.set_text(title, hint)
-        done = status == "current" or (bool(readiness.get("ready")) and status != "not_required")
+        coverage_complete = readiness.get("coverage_complete")
+        if coverage_complete is None:
+            coverage_complete = status == "current" and not readiness.get("skipped_count")
+        done = status == "not_required" or (
+            bool(readiness.get("ready")) and bool(coverage_complete))
         self.empty_state.set_action("" if done else i18n.tr('审校全部段落'))
         self.empty_state.setEnabled(not self._busy)
 
@@ -360,7 +365,7 @@ class ReviewPanel(QWidget):
         if task:
             self.review_button.setText(i18n.tr({
                 "failed": "重试审校本段", "stale": "重新审校本段",
-                "missing": "审校本段"}[kind]))
+                "missing": "审校本段", "skipped": "审校本段"}[kind]))
             self.edit_button.setVisible(has_segment)
         enabled = not self._busy
         self.apply_button.setEnabled(enabled and suggestion)
@@ -377,6 +382,10 @@ class ReviewPanel(QWidget):
             self.hint.setText(i18n.tr(
                 '这段在 OCR 清洗前后都疑似残片。请先回看 PDF 原页确认它确实是正文；'
                 '核对前不会把它发给翻译或审校模型。'))
+        elif kind == "skipped":
+            self.hint.setText(i18n.tr(
+                '这段按策略跳过，没有独立语义审校结论；跳过不等于审校通过。'
+                '如需覆盖本段，可单独运行审校。'))
         elif item.get("invariant"):
             self.hint.setText(i18n.tr(
                 '这是交付完整性检查：译文本身不能直接交付。改好译文或重译本段后会自动放行导出。'))

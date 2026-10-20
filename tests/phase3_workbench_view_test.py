@@ -79,7 +79,7 @@ def test_clean_current_is_human_readable_and_read_only():
 
     assert view["readiness"]["label"] == "当前译文已完成审校"
     assert view["progress"] == {
-        "total": 1, "current": 1, "stale": 0, "missing": 0,
+        "total": 1, "current": 1, "skipped": 0, "stale": 0, "missing": 0,
         "failed": 0, "blocking": 0, "actionable": 0, "informational": 0,
     }
     assert view["primary_action"]["kind"] == "delivery"

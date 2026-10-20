@@ -132,10 +132,18 @@ def task_ai_ready(view: Mapping[str, Any]) -> bool:
 
 def delivery_review_gate_copy(
     review_required: bool, translation_gate_pass: bool, pending_detail: str = "",
+    readiness: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, str]:
     """Keep delivery review copy truthful for both review policies."""
     if not review_required:
         return {"status": "不适用", "detail": "当前任务未启用独立审校（翻译审校不适用）"}
+    skipped = int((readiness or {}).get("skipped_count") or 0)
+    if translation_gate_pass and skipped:
+        return {
+            "status": "部分完成",
+            "detail": (f"{skipped} 段未执行本轮独立语义审校（按策略跳过）；"
+                       "现有交付门禁允许继续准备交付"),
+        }
     if translation_gate_pass:
         return {"status": "已完成", "detail": "当前译文的独立审校已完成，可以继续准备交付"}
     return {"status": "需要处理", "detail": f"翻译审校：{pending_detail or '当前译文的审校尚未完成'}"}
@@ -166,6 +174,7 @@ def project_workspace_state(
     stale_ids = set(readiness.get("stale_segment_ids") or [])
     failed_ids = set(readiness.get("failed_segment_ids") or [])
     missing_ids = set(readiness.get("missing_segment_ids") or [])
+    skipped_ids = set(readiness.get("skipped_segment_ids") or [])
     findings_by_segment = {}
     for item in review["queue_items"]:
         if item.get("kind") == "finding":
@@ -181,6 +190,8 @@ def project_workspace_state(
             label = "需要重新审校"
         elif index in missing_ids:
             label = "待审校"
+        elif index in skipped_ids:
+            label = "按策略跳过"
         else:
             findings = findings_by_segment.get(index, ())
             if any(item.get("severity") == "blocking" for item in findings):
@@ -218,6 +229,10 @@ def project_workspace_state(
         "review": review,
         "review_readiness": readiness,
         "review_coverage": len(current_ids),
+        "review_reviewed": len(current_ids),
+        "review_skipped": len(skipped_ids),
+        "review_coverage_complete": bool(readiness.get("coverage_complete")),
+        "review_coverage_status": readiness.get("coverage_status"),
         "stale_segments": len(stale_ids),
         "failed_segments": len(failed_ids),
         "missing_review_segments": len(missing_ids),
@@ -256,6 +271,17 @@ def history_copy(state: Mapping[str, Any], *, delivery_state: Optional[str] = No
                 "action": "更新报告"}
     if not view["review_required"]:
         return {"status": "已翻译", "detail": "当前译文有效，可以准备交付", "action": "查看交付"}
+    if view["review_skipped"]:
+        skipped = view["review_skipped"]
+        reviewed = view["review_reviewed"]
+        expected = view["review_readiness"].get("expected_segment_ids") or []
+        detail = (f"{reviewed} / {len(expected)} 段已完成独立审校，"
+                  f"{skipped} 段未执行本轮独立语义审校（按策略跳过）"
+                  if reviewed else
+                  f"{skipped} 段未执行本轮独立语义审校（按策略跳过）")
+        if delivery_state in {"可以准备交付", "可以正式交付"}:
+            return {"status": "可以交付", "detail": detail, "action": "查看交付"}
+        return {"status": "部分审校", "detail": detail, "action": "查看审校"}
     if delivery_state in {"可以准备交付", "可以正式交付"}:
         return {"status": "可以交付", "detail": "译文已完成审校", "action": "查看交付"}
     return {"status": "已翻译", "detail": "当前译文已完成审校", "action": "查看交付"}

@@ -266,7 +266,10 @@ def build_delivery_manifest(
     skipped_assets: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """生成交付清单（统计与任务状态一致）。"""
+    from .translation_evidence import translation_review_readiness
+
     stats = state.get("review_stats") or {}
+    readiness = translation_review_readiness(state)
     fg = state.get("glossary_frozen") or {}
     unresolved = _delivery.unresolved_findings(state)
     translator = model_roles.public_role_config(
@@ -301,6 +304,15 @@ def build_delivery_manifest(
         "blocking": stats.get("blocking", 0),
         "actionable": stats.get("actionable", 0),
         "informational": stats.get("informational", 0),
+        "review_coverage": {
+            "status": readiness.get("coverage_status"),
+            "complete": bool(readiness.get("coverage_complete")),
+            "ready": bool(readiness.get("ready")),
+            "expected": len(readiness.get("expected_segment_ids") or []),
+            "reviewed": int(readiness.get("reviewed_count") or 0),
+            "skipped": int(readiness.get("skipped_count") or 0),
+            "skipped_reasons": dict(readiness.get("skipped_reason_counts") or {}),
+        },
         "unresolved_findings": [
             {
                 "finding_id": _delivery.finding_id(f),
@@ -336,6 +348,27 @@ def validate_manifest(manifest: Dict[str, Any], state: Dict[str, Any]) -> List[s
         problems.append("actionable 统计与任务状态不一致")
     if manifest.get("informational") != stats.get("informational", 0):
         problems.append("informational 统计与任务状态不一致")
+    coverage = manifest.get("review_coverage")
+    if isinstance(coverage, dict):
+        from .translation_evidence import translation_review_readiness
+
+        readiness = translation_review_readiness(state)
+        if coverage.get("reviewed") != int(readiness.get("reviewed_count") or 0):
+            problems.append("review_coverage.reviewed 与任务状态不一致")
+        if coverage.get("skipped") != int(readiness.get("skipped_count") or 0):
+            problems.append("review_coverage.skipped 与任务状态不一致")
+        if coverage.get("expected") != len(
+                readiness.get("expected_segment_ids") or []):
+            problems.append("review_coverage.expected 与任务状态不一致")
+        if coverage.get("status") != readiness.get("coverage_status"):
+            problems.append("review_coverage.status 与任务状态不一致")
+        if coverage.get("complete") != bool(readiness.get("coverage_complete")):
+            problems.append("review_coverage.complete 与任务状态不一致")
+        if coverage.get("ready") != bool(readiness.get("ready")):
+            problems.append("review_coverage.ready 与任务状态不一致")
+        if coverage.get("skipped_reasons") != dict(
+                readiness.get("skipped_reason_counts") or {}):
+            problems.append("review_coverage.skipped_reasons 与任务状态不一致")
     if manifest.get("delivery_status") not in _delivery.DELIVERY_STATUSES:
         problems.append(f"非法 delivery_status：{manifest.get('delivery_status')}")
     unresolved = _delivery.unresolved_findings(state)

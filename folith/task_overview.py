@@ -415,6 +415,9 @@ def derive_task_overview_state(task: Any, *, facts: Any = None) -> Dict[str, Any
     review_required = bool(readiness.get("required"))
     review_status = _text(readiness.get("status")) or "not_run"
     review_ready = bool(readiness.get("ready"))
+    review_skipped = _int(readiness.get("skipped_count"))
+    review_reviewed = _int(readiness.get("reviewed_count"))
+    review_coverage_complete = bool(readiness.get("coverage_complete"))
 
     segments = _segment_counts(state)
     translation_complete = bool(segments["complete"])
@@ -650,7 +653,7 @@ def derive_task_overview_state(task: Any, *, facts: Any = None) -> Dict[str, Any
 
     if not review_required:
         review_state = SKIPPED
-    elif review_ready:
+    elif review_ready and review_coverage_complete:
         review_state = COMPLETED
     elif review_status == "failed" or blocked_review:
         review_state = BLOCKED
@@ -658,6 +661,19 @@ def derive_task_overview_state(task: Any, *, facts: Any = None) -> Dict[str, Any
         review_state = CURRENT
     else:
         review_state = PENDING
+
+    if review_state == SKIPPED:
+        review_detail = "当前任务未启用独立审校"
+    elif review_state == COMPLETED:
+        review_detail = "所有段落已有最新审校结果"
+    elif review_state == BLOCKED:
+        review_detail = "部分段落的独立审校未成功"
+    elif review_ready and review_skipped:
+        review_detail = f"{review_skipped} 段未执行本轮独立语义审校（按策略跳过）"
+    elif review_state == PENDING:
+        review_detail = "等待译文完成"
+    else:
+        review_detail = "还有内容需要审校"
 
     if lifecycle in {DELIVERY_READY, DELIVERED}:
         prep_state = COMPLETED
@@ -686,12 +702,7 @@ def derive_task_overview_state(task: Any, *, facts: Any = None) -> Dict[str, Any
         _stage(STAGE_TRANSLATION, "翻译", translation_state,
                f"{translated} / {total} 段已翻译" if total else "等待原文",
                "translation"),
-        _stage(STAGE_REVIEW, "独立审校", review_state,
-               "当前任务未启用独立审校" if review_state == SKIPPED else
-               "所有段落已有最新审校结果" if review_state == COMPLETED else
-               "部分段落的独立审校未成功" if review_state == BLOCKED else
-               "等待译文完成" if review_state == PENDING else "还有内容需要审校",
-               "review"),
+        _stage(STAGE_REVIEW, "独立审校", review_state, review_detail, "review"),
         _stage(STAGE_DELIVERY_PREP, "交付准备", prep_state,
                "交付前置条件已满足" if prep_state == COMPLETED else
                "交付门禁未通过" if prep_state == BLOCKED else
@@ -721,6 +732,9 @@ def derive_task_overview_state(task: Any, *, facts: Any = None) -> Dict[str, Any
         fact_parts.append(
             f'{len(readiness.get("current_segment_ids") or []):,} / '
             f'{len(readiness.get("expected_segment_ids") or []):,} 段已有最新审校结果')
+        if review_skipped:
+            fact_parts.append(
+                f"{review_skipped:,} 段未执行本轮独立语义审校（按策略跳过）")
     facts_line = " · ".join(fact_parts)
 
     return {
@@ -747,6 +761,10 @@ def derive_task_overview_state(task: Any, *, facts: Any = None) -> Dict[str, Any
             "ready": review_ready,
             "current": len(readiness.get("current_segment_ids") or []),
             "expected": len(readiness.get("expected_segment_ids") or []),
+            "reviewed": review_reviewed,
+            "skipped": review_skipped,
+            "coverage_complete": review_coverage_complete,
+            "coverage_status": _text(readiness.get("coverage_status")),
             "blocking": _int(queue_counts.get("blocking")),
         },
         "report_enabled": report_enabled,

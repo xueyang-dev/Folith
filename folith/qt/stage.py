@@ -87,6 +87,10 @@ def _review_step(translated: bool, review: Mapping) -> tuple[dict, bool]:
         return _step(REVIEW, ATTENTION, i18n.tr("必须处理 {v0}", v0=blocking)), False
     if missing:
         return _step(REVIEW, CURRENT, i18n.tr("{v0} 段待审", v0=missing)), False
+    skipped = _count(progress.get("skipped"))
+    if readiness.get("ready") and skipped:
+        return _step(REVIEW, CURRENT,
+                     i18n.tr("{v0} 段按策略跳过", v0=skipped)), True
     if readiness.get("ready"):
         return _step(REVIEW, DONE), True
     # 审校还没有跑过：数据里没有"缺哪几段"，只能如实说还没审。

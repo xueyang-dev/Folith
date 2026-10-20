@@ -340,6 +340,12 @@ def test_readiness_reports_skipped_segments_separately(tmp_path):
     assert readiness["current_segment_ids"] == []
     assert readiness["missing_segment_ids"] == []
     assert readiness["ready"] is True
+    assert readiness["reviewed_count"] == 0
+    assert readiness["skipped_count"] == len(SEGMENTS)
+    assert readiness["coverage_complete"] is False
+    assert readiness["coverage_status"] == "skipped"
+    assert readiness["skipped_reason_counts"] == {
+        "clean_deterministic": len(SEGMENTS)}
 
 
 def test_readiness_in_always_mode_still_requires_every_segment(tmp_path):
@@ -349,6 +355,10 @@ def test_readiness_in_always_mode_still_requires_every_segment(tmp_path):
     assert readiness["skipped_segment_ids"] == []
     assert sorted(readiness["current_segment_ids"]) == list(range(len(SEGMENTS)))
     assert readiness["ready"] is True
+    assert readiness["reviewed_count"] == len(SEGMENTS)
+    assert readiness["skipped_count"] == 0
+    assert readiness["coverage_complete"] is True
+    assert readiness["coverage_status"] == "complete"
 
 
 def _seed_tm() -> Dict[str, Any]:

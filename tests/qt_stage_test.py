@@ -31,11 +31,12 @@ def chinese():
 
 def _review(**progress) -> dict:
     """最小的审校投影：只放 stage_view 会读的字段。"""
-    base = {"failed": 0, "stale": 0, "missing": 0, "blocking": 0}
+    base = {"failed": 0, "stale": 0, "missing": 0, "blocking": 0, "skipped": 0}
     base.update(progress)
-    ready = not any(base.values())
+    ready = not any(base[key] for key in ("failed", "stale", "missing", "blocking"))
     return {"readiness": {"required": True, "ready": ready,
-                          "status": "current" if ready else "failed"},
+                          "status": "current" if ready else "failed",
+                          "skipped_count": base["skipped"]},
             "progress": base,
             "primary_action": {"kind": "delivery", "label": "前往交付"}}
 
@@ -137,6 +138,20 @@ def test_review_hints_cover_stale_blocking_and_missing():
     assert hint(stale=2)["hint"] == "2 段需重审" and hint(stale=2)["state"] == stage.ATTENTION
     assert hint(blocking=1)["hint"] == "必须处理 1"
     assert hint(missing=5)["hint"] == "5 段待审" and hint(missing=5)["state"] == stage.CURRENT
+
+
+def test_skipped_segments_are_visible_without_blocking_delivery():
+    review = _review(skipped=4)
+    review["readiness"].update(coverage_complete=False, coverage_status="partial")
+    view = stage.stage_view(started=True, runtime={"status": "completed"},
+                            state={"p2_done": True, "pairs": [{}] * 10},
+                            review=review,
+                            delivery={"can_deliver": True})
+    steps = _steps(view)
+    assert steps["review"]["state"] == stage.CURRENT
+    assert steps["review"]["hint"] == "4 段按策略跳过"
+    assert steps["deliver"]["state"] == stage.CURRENT
+    assert steps["deliver"]["hint"] == "可以交付"
 
 
 def test_blocking_findings_still_count_when_independent_review_is_off():

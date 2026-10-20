@@ -224,6 +224,29 @@ def test_panel_review_task_items_offer_a_rereview(panel):
     assert seen == [[0]]
 
 
+def test_panel_shows_skipped_coverage_as_reviewable_not_completed(panel):
+    label = "1 段未执行本轮独立语义审校（按策略跳过）"
+    panel.apply({
+        "queue_items": [_item(
+            id="skipped:segment:0", kind="skipped", filter_group="skipped",
+            finding_id="", decidable=False, severity="informational",
+            severity_label="未执行独立审校", title="第 1 段 · 未执行独立审校")],
+        "filter_counts": {"all": 1, "skipped": 1},
+        "readiness": {
+            "status": "current", "ready": True,
+            "coverage_complete": False, "coverage_status": "skipped",
+            "skipped_count": 1, "label": label,
+            "detail": "按策略跳过：无确定性风险信号 1 段。",
+        },
+    })
+
+    assert panel.headline.text() == label
+    assert panel.list.count() == 1
+    assert panel.review_button.isVisibleTo(panel)
+    assert not panel.confirm_button.isVisibleTo(panel)
+    assert "跳过不等于审校通过" in panel.hint.text()
+
+
 def test_filter_keeps_the_selection_and_shows_an_empty_hint(panel):
     panel.apply(_view(_item()))
     assert panel.list.count() == 1

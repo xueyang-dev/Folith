@@ -1454,6 +1454,10 @@ def review_readiness(job_id: str, state: dict | None = None) -> dict:
         "missing": len(readiness.get("missing_segment_ids") or []),
         "stale": len(readiness.get("stale_segment_ids") or []),
         "failed": len(readiness.get("failed_segment_ids") or []),
+        "reviewed_count": int(readiness.get("reviewed_count") or 0),
+        "skipped_count": int(readiness.get("skipped_count") or 0),
+        "coverage_complete": bool(readiness.get("coverage_complete")),
+        "coverage_status": readiness.get("coverage_status"),
     }
 
 

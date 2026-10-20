@@ -114,7 +114,16 @@ def _docx_unsupported_parts(document):
 
 def findings_report_md(state):
     """把审查结果渲染成 Markdown 报告（下载/展示用）。"""
+    from folith.translation_evidence import translation_review_readiness
+
     stats = state.get("review_stats") or {}
+    readiness = translation_review_readiness(state)
+    skipped = int(readiness.get("skipped_count") or 0)
+    reason_labels = {
+        "already_reviewed_tm": "复用已审校翻译记忆",
+        "clean_deterministic": "无确定性风险信号",
+        "unknown": "未记录跳过原因",
+    }
     lines = [
         "# 翻译审查报告", "",
         "## 概览",
@@ -122,11 +131,27 @@ def findings_report_md(state):
         f"- 审校批次：{stats.get('batches_reviewed', 0)}",
         f"- 审校失败批次：{stats.get('review_failed', 0)}",
         f"- 翻译记忆复用：{state.get('tm_used_count', 0)} 段",
+        f"- 未执行本轮独立语义审校：{skipped} 段",
+        f"- 审校覆盖状态：{readiness.get('coverage_status')}",
+        f"- 审校覆盖完整：{'是' if readiness.get('coverage_complete') else '否'}",
         f"- blocking：{stats.get('blocking', 0)}",
         f"- actionable：{stats.get('actionable', 0)}",
         f"- informational：{stats.get('informational', 0)}",
-        "", "## 待处理问题",
+        "", "## 审校覆盖",
     ]
+    if skipped:
+        lines.append(f"{skipped} 段未执行本轮独立语义审校（按策略跳过）：")
+        for reason, count in sorted(
+                (readiness.get("skipped_reason_counts") or {}).items()):
+            lines.append(f"- {reason_labels.get(reason, reason)}：{count} 段")
+        lines.append("- 跳过不等于审校通过，也不产生独立审校 Finding。")
+    elif readiness.get("coverage_status") == "not_required":
+        lines.append("当前任务未启用独立审校。")
+    else:
+        lines.append(
+            f"独立审校覆盖 {readiness.get('reviewed_count', 0)} / "
+            f"{len(readiness.get('expected_segment_ids') or [])} 段。")
+    lines.extend(["", "## 待处理问题"])
     findings = state.get("findings") or []
     if not findings:
         lines.append("无。")
