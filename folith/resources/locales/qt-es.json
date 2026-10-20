@@ -1994,5 +1994,7 @@
   "选择数据与输出文件夹": "Elegir carpeta de datos y resultados",
   "数据与输出位置已改为 {v0}，重启 Folith 后生效；现有任务仍保留在原位置。": "La ubicación de datos y resultados se cambió a {v0}. Reinicia Folith para aplicarlo; las tareas existentes permanecen en la ubicación anterior.",
   "已恢复默认数据与输出位置，重启 Folith 后生效。": "Se restauró la ubicación predeterminada de datos y resultados. Reinicia Folith para aplicarlo.",
-  "任务运行时不能更改数据位置。": "No se puede cambiar la ubicación de datos mientras hay una tarea en ejecución."
+  "任务运行时不能更改数据位置。": "No se puede cambiar la ubicación de datos mientras hay una tarea en ejecución.",
+  "{v0} 段按策略跳过": "{v0} segmentos omitidos por la política",
+  "这段按策略跳过，没有独立语义审校结论；跳过不等于审校通过。如需覆盖本段，可单独运行审校。": "Este párrafo se omitió por la política y no tiene una conclusión de revisión semántica independiente. Omitirlo no significa que haya superado la revisión. Para cubrir este párrafo, ejecute la revisión por separado."
 }

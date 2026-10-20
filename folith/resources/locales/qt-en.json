@@ -1993,5 +1993,7 @@
   "选择数据与输出文件夹": "Choose data and output folder",
   "数据与输出位置已改为 {v0}，重启 Folith 后生效；现有任务仍保留在原位置。": "Data and output location changed to {v0}. Restart Folith to apply; existing tasks stay in the old location.",
   "已恢复默认数据与输出位置，重启 Folith 后生效。": "Default data and output location restored. Restart Folith to apply.",
-  "任务运行时不能更改数据位置。": "The data location cannot be changed while a task is running."
+  "任务运行时不能更改数据位置。": "The data location cannot be changed while a task is running.",
+  "{v0} 段按策略跳过": "{v0} segments skipped by policy",
+  "这段按策略跳过，没有独立语义审校结论；跳过不等于审校通过。如需覆盖本段，可单独运行审校。": "This paragraph was skipped by policy and has no independent semantic review result. Skipping does not mean it passed review. To cover this paragraph, run review for it separately."
 }
