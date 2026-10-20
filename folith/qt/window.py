@@ -612,6 +612,22 @@ class MainWindow(QMainWindow):
         geometry = self.settings.value("geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
+        # A geometry saved at another DPI can restore larger than the current
+        # screen (for example 200% on a 2560x1600 panel).  Clamp it so the
+        # window remains reachable instead of hanging off the right/bottom.
+        from PySide6.QtGui import QGuiApplication
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        current = self.geometry()
+        width = min(current.width(), max(320, available.width() - 40))
+        height = min(current.height(), max(240, available.height() - 40))
+        x = min(max(current.x(), available.left()), available.right() - width + 1)
+        y = min(max(current.y(), available.top()), available.bottom() - height + 1)
+        if (x, y, width, height) != (current.x(), current.y(),
+                                     current.width(), current.height()):
+            self.setGeometry(x, y, width, height)
 
     # ================= helpers =================
     def refresh_engine_label(self) -> None:
