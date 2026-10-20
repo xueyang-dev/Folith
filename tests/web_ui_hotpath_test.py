@@ -111,7 +111,8 @@ def test_segment_worker_is_nonblocking_and_owns_snapshot_writes(job_env, monkeyp
             assert captured["base_url"] == "https://relay.example/v1"
         with pytest.raises(RuntimeError, match="后台处理"):
             core.save_translation_edit(job_id, 1, "并发修改")
-        assert "private-test-key" not in core.runtime_state_path(job_id).read_text()
+        assert "private-test-key" not in core.runtime_state_path(job_id).read_text(
+            encoding="utf-8")
     finally:
         worker = core._RUNTIME_WORKERS.get(job_id)
         release.set()

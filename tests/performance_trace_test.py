@@ -67,7 +67,7 @@ def test_profiler_bridge_updates_ocr_completion_and_keeps_native_spans(tmp_path)
         assert run.stages["ocr"]["status"] == "completed"
         assert run.stages["native_stage"]["operations"]["native_operation"]
         trace.finish_run("ocr-bridge")
-        result = json.loads((tmp_path / "performance.json").read_text())
+        result = json.loads((tmp_path / "performance.json").read_text(encoding="utf-8"))
         assert result["stages"]["ocr"]["metadata"]["actual_engine"] == "paddleocr"
         assert result["stages"]["ocr"]["items"]
         assert result["stages"]["ocr"]["page_count"] == 2

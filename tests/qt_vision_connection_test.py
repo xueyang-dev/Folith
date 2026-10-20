@@ -55,7 +55,8 @@ def test_saving_a_dedicated_connection_persists_privately(isolated_output):
         max_tokens=16384, reasoning_mode="provider_default")
     path = core.ocr_online_config_path()
     assert path.exists()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert view["dedicated"] and view["model"] == "vision-model-x"
     assert view["has_key"] is True
     assert "sk-secret-value" not in json.dumps(view), "密钥不能出现在视图里"

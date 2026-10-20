@@ -144,10 +144,10 @@ def test_stage_with_no_items_reports_no_work(tmp_path):
         assert stages["translation_semantic_review"]["lifetime_s"] > 0.0
         assert stages["translation_generation"]["wall_time_s"] == pytest.approx(2.5, abs=0.01)
         assert stages["translation_generation"]["busy_time_s"] == pytest.approx(4.0, abs=0.01)
-        summary = json.loads((run.run_dir / "summary.json").read_text())
+        summary = json.loads((run.run_dir / "summary.json").read_text(encoding="utf-8"))
         row = summary["stages"]["translation_semantic_review"]
         assert row["wall_time_s"] == 0.0 and row["no_work"] is True and row["pct_of_total"] == 0.0
-        md = (run.run_dir / "performance.md").read_text()
+        md = (run.run_dir / "performance.md").read_text(encoding="utf-8")
         line = next(l for l in md.splitlines() if l.startswith("| `translation_semantic_review`"))
         assert "no work" in line and "s |" not in line.split("|")[2]
     finally:
@@ -231,7 +231,8 @@ def test_run_configuration_records_mode(tmp_path):
         run.record_run_configuration({"reasoning_mode": "thinking_disabled",
                                       "auxiliary_reasoning_mode": "provider_default"})
         trace.finish_run("t-cfg")
-        events = [json.loads(l) for l in (run.run_dir / "requests.jsonl").read_text().splitlines()]
+        events = [json.loads(l) for l in (run.run_dir / "requests.jsonl").read_text(
+            encoding="utf-8").splitlines()]
         cfg = next(e for e in events if e["event"] == "run_configuration")["configuration"]
         assert cfg["reasoning_mode"] == "thinking_disabled"
         assert cfg["auxiliary_reasoning_mode"] == "provider_default"

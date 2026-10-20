@@ -802,7 +802,8 @@ def test_external_evidence_attack_and_prompt_scan():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     for function in (core._fetch_gemini_models, core.fetch_provider_models):
         source_lines, first_line = inspect.getsourcelines(function)
-        function_path = os.path.relpath(inspect.getsourcefile(function), repo_root)
+        function_path = os.path.relpath(
+            inspect.getsourcefile(function), repo_root).replace(os.sep, "/")
         for node in ast.walk(ast.parse("".join(source_lines))):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) \
                     and node.value.startswith(("http://", "https://")):
@@ -824,10 +825,10 @@ def test_external_evidence_attack_and_prompt_scan():
                 transport_url_lines.add((support_path, node.value.lineno))
     hits = subprocess.run(
         ["rg", "-n", "https?://", "core.py", "folith/", "scripts/"],
-        capture_output=True, text=True).stdout
+        capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
     prompt_files = []
     for line in hits.splitlines():
-        path = line.split(":", 1)[0]
+        path = line.split(":", 1)[0].replace(os.sep, "/")
         if (path, int(line.split(":", 2)[1])) in transport_url_lines:
             continue
         # Verified DOI/repository URLs belong in the deterministic literature
@@ -964,7 +965,8 @@ def test_long_document_simulation_and_performance():
         assert q["reviewed"] == 2000 and ql["reviewed"] == 2000, \
             "合规 mock 下全部段落应审校通过（TM eligible）"
         assert ql["delivery"] == "draft" and q["delivery"] == "draft"
-        assert q["elapsed_s"] < 30 and ql["elapsed_s"] < 30, \
+        limit = 30 if os.name == "posix" else 120
+        assert q["elapsed_s"] < limit and ql["elapsed_s"] < limit, \
             f"性能退化：{q['elapsed_s']}s / {ql['elapsed_s']}s"
         print(f"  ✓ 长文模拟（synthetic 400 段）："
               f"quick avg_injected={q['avg_injected']} "

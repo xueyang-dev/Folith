@@ -573,7 +573,7 @@ def test_current_real_job_has_20_reliable_cases_or_explicit_insufficiency():
     root = Path(__file__).resolve().parent.parent / "outputs" / "c7fc0af0d6626931"
     if not (root / "academic-evidence.json").is_file():
         pytest.skip("local real-job artifacts are intentionally not versioned")
-    load = lambda name: json.loads((root / name).read_text())
+    load = lambda name: json.loads((root / name).read_text(encoding="utf-8"))
     policy = thesis_constraints.case_policy({"report_stage": "final_report"})
     selected = academic_writer.select_academic_cases(
         load("research-model.json"), load("argument-plan.json"),

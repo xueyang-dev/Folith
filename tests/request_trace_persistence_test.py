@@ -22,7 +22,7 @@ def test_request_stream_reconstructs_overlap_and_failed_call(tmp_path):
         thread.join(timeout=3)
         assert not thread.is_alive()
     summary = run.finish(status="failed")
-    events = [json.loads(line) for line in run.requests_path.read_text().splitlines()]
+    events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
     starts = [e for e in events if e["event"] == "request_started"]
     finishes = [e for e in events if e["event"] == "request_finished"]
     calls = [e for e in events if e["event"] == "model_call"]
@@ -53,9 +53,9 @@ def test_call_failure_closes_request_and_restores_role(tmp_path, monkeypatch):
     assert usage.CURRENT_ROLE.get() == "unknown"
     run.record_retry("translation", "translate_batch", 2, 1.5, "RuntimeError")
     run.finish(status="failed")
-    events = [json.loads(line) for line in run.requests_path.read_text().splitlines()]
+    events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
     assert [e["event"] for e in events] == ["request_started", "model_call", "request_finished", "retry", "run_finished"]
     assert events[1]["status"] == "error"
     assert events[1]["role"] == "semantic_review"
     assert events[2]["job_in_flight"] == 0
-    assert "secret" not in run.requests_path.read_text()
+    assert "secret" not in run.requests_path.read_text(encoding="utf-8")

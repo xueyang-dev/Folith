@@ -159,7 +159,6 @@ def _wait_for_restart(core, job_id: str, timeout: float = 30.0) -> bool:
         state = core.load_job_state(job_id) or {}
         runtime = core.get_job_runtime_status(job_id, state)
         if (runtime.get("status") in core.RUNTIME_ACTIVE_STATUSES
-                or core.is_job_worker_alive(job_id)
                 or state.get("p2_done")):
             return True
         time.sleep(0.05)

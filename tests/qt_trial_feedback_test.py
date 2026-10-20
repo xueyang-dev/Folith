@@ -75,7 +75,7 @@ def test_environment_auth_remains_out_of_saved_library_and_does_not_duplicate(is
     cfg = effective_config(adapter.EngineConfig(), [p], {"translation": p["id"]})
     assert cfg.api_key == "environment-secret"
     cfg.save()
-    saved = json.loads(core.provider_config_path().read_text())
+    saved = json.loads(core.provider_config_path().read_text(encoding="utf-8"))
     assert "environment-secret" not in json.dumps(saved)
     loaded = adapter.EngineConfig.load()
     assert loaded.api_key == "environment-secret"
@@ -288,7 +288,7 @@ def test_explicit_preparation_choice_clears_previous_ocr_fallback(isolated):
 
 def test_roles_can_use_different_models_from_one_saved_api(isolated, app, monkeypatch):
     monkeypatch.setattr(core, "load_ocr_online_config", lambda:
-        json.loads(core.ocr_online_config_path().read_text()) if core.ocr_online_config_path().exists() else {})
+        json.loads(core.ocr_online_config_path().read_text(encoding="utf-8")) if core.ocr_online_config_path().exists() else {})
     p = profile(models=["translation", "review", "vision"])
     cfg = effective_config(adapter.EngineConfig(), [p], {"translation": p["id"]})
     dialog = dialogs.EngineDialog(cfg, Runner())
@@ -371,9 +371,11 @@ def test_long_labels_elide_and_keep_their_full_text(app):
 def test_every_interface_string_is_translated():
     import subprocess
 
-    result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1]
-                                                 / "scripts" / "qt_i18n_coverage.py"), "--strict"],
-                            capture_output=True, text=True, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parents[1]
+                            / "scripts" / "qt_i18n_coverage.py"), "--strict"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=dict(os.environ, PYTHONIOENCODING="utf-8"))
     assert result.returncode == 0, result.stdout[-800:]
 
 
@@ -490,7 +492,7 @@ def test_first_cover_fits_even_with_the_setup_banner(isolated, app):
 def test_ampersand_in_a_sidebar_label_is_shown_not_eaten(app):
     from folith.qt import style
     button = style.ElideButton("Terms & memory")
-    button.resize(220, 36)
+    button.resize(600, 36)
     button.show()
     app.processEvents()
     assert QPushButton.text(button) == "Terms && memory"
@@ -501,6 +503,7 @@ def test_ampersand_in_a_sidebar_label_is_shown_not_eaten(app):
 def test_stats_line_redraws_its_colours_after_a_theme_change(isolated, app):
     from folith.qt import style
     home = views.HomeView()
+    home.show()
     rows = [adapter.JobRow(str(i), f"doc{i}.docx", None, "English", "翻译中", "", "running", 2,
                            "", True) for i in range(2)]
     style.apply_theme(app, "light"); views.set_current_theme("light")

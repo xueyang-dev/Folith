@@ -121,7 +121,7 @@ def test_snapshot_can_retry_after_interrupted_temporary_directory(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(create, range(2)))
     assert sorted(value['snapshot_version'] for value in results) == [1, 2]
-    assert (orphan / 'unfinished.txt').read_text() == 'interrupted'
+    assert (orphan / 'unfinished.txt').read_text(encoding="utf-8") == 'interrupted'
     for version in (1, 2):
         assert (snapshots.snapshot_root(tmp_path) / f'v{version}' / 'translation.txt').read_bytes() == b'final'
 

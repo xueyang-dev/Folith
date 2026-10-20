@@ -366,11 +366,11 @@ def test_frozen_snapshot_binds_truth_case_compliance_qa_and_artifact_hashes(tmp_
     assert manifest["finalization_bindings"]["rendered_pdf_hash"] == "pdf-hash"
     assert manifest["finalization_bindings"]["report_qa_hash"] == "qa"
     frozen = json.loads((core.job_dir(job_id) / "delivery_snapshots" /
-                         "v1" / "snapshot_manifest.json").read_text())
+                         "v1" / "snapshot_manifest.json").read_text(encoding="utf-8"))
     state["case_reviews"]["SC-0015"]["review_status"] = "rejected"
     state["pairs"][0]["target"] = "后续工作版本"
     assert json.loads((core.job_dir(job_id) / "delivery_snapshots" /
-                       "v1" / "snapshot_manifest.json").read_text()) == frozen
+                       "v1" / "snapshot_manifest.json").read_text(encoding="utf-8")) == frozen
 
 
 def test_anonymous_end_to_end_finalization_freezes_the_reviewed_workflow(tmp_path):

@@ -64,7 +64,7 @@ def test_sdk_attempts_join_one_logical_call(tmp_path, monkeypatch, failure):
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
-    events = [json.loads(line) for line in run.requests_path.read_text().splitlines()]
+    events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
     starts = [e for e in events if e["event"] == "http_attempt_started"]
     responses = [e for e in events if e["event"] == "http_response_headers"]
     calls = [e for e in events if e["event"] == "model_call"]
@@ -75,5 +75,5 @@ def test_sdk_attempts_join_one_logical_call(tmp_path, monkeypatch, failure):
     assert calls[0]["prompt_tokens"] == 12
     assert calls[0]["metadata"]["usage_available"]
     assert calls[0]["http_attempts"] == 2
-    assert "private source" not in run.requests_path.read_text()
-    assert "mock-secret" not in run.requests_path.read_text()
+    assert "private source" not in run.requests_path.read_text(encoding="utf-8")
+    assert "mock-secret" not in run.requests_path.read_text(encoding="utf-8")
