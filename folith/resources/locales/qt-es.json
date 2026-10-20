@@ -1988,5 +1988,11 @@
   "电脑": "ordenador",
   "偏好设置…": "Preferencias…",
   "后台任务仍在运行，请等待当前步骤结束或取消任务后再重试。": "La tarea en segundo plano sigue en ejecución. Espera a que termine este paso o cancélala antes de reintentar.",
-  "后台任务仍在运行，正在等待新的运行信号；请等待当前步骤结束或取消任务。": "La tarea en segundo plano sigue en ejecución y espera una nueva señal de actividad. Espera a que termine este paso o cancela la tarea."
+  "后台任务仍在运行，正在等待新的运行信号；请等待当前步骤结束或取消任务。": "La tarea en segundo plano sigue en ejecución y espera una nueva señal de actividad. Espera a que termine este paso o cancela la tarea.",
+  "更改位置…": "Cambiar ubicación…",
+  "恢复默认位置": "Restaurar ubicación predeterminada",
+  "选择数据与输出文件夹": "Elegir carpeta de datos y resultados",
+  "数据与输出位置已改为 {v0}，重启 Folith 后生效；现有任务仍保留在原位置。": "La ubicación de datos y resultados se cambió a {v0}. Reinicia Folith para aplicarlo; las tareas existentes permanecen en la ubicación anterior.",
+  "已恢复默认数据与输出位置，重启 Folith 后生效。": "Se restauró la ubicación predeterminada de datos y resultados. Reinicia Folith para aplicarlo.",
+  "任务运行时不能更改数据位置。": "No se puede cambiar la ubicación de datos mientras hay una tarea en ejecución."
 }

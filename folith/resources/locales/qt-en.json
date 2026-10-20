@@ -1987,5 +1987,11 @@
   "电脑": "computer",
   "偏好设置…": "Preferences…",
   "后台任务仍在运行，请等待当前步骤结束或取消任务后再重试。": "The background task is still running. Wait for this step to finish, or cancel it before retrying.",
-  "后台任务仍在运行，正在等待新的运行信号；请等待当前步骤结束或取消任务。": "The background task is still running and waiting for a new activity signal. Wait for this step to finish or cancel the task."
+  "后台任务仍在运行，正在等待新的运行信号；请等待当前步骤结束或取消任务。": "The background task is still running and waiting for a new activity signal. Wait for this step to finish or cancel the task.",
+  "更改位置…": "Change location…",
+  "恢复默认位置": "Restore default location",
+  "选择数据与输出文件夹": "Choose data and output folder",
+  "数据与输出位置已改为 {v0}，重启 Folith 后生效；现有任务仍保留在原位置。": "Data and output location changed to {v0}. Restart Folith to apply; existing tasks stay in the old location.",
+  "已恢复默认数据与输出位置，重启 Folith 后生效。": "Default data and output location restored. Restart Folith to apply.",
+  "任务运行时不能更改数据位置。": "The data location cannot be changed while a task is running."
 }

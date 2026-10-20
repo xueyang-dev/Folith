@@ -90,9 +90,33 @@ def main(argv: list[str] | None = None) -> int:
     # acceptance list rules out ("输入和导航不得出现秒级无反馈卡死").  A shorter
     # interval lets the event loop regain control far more often.
     sys.setswitchinterval(0.001)
-    paths = bootstrap.prepare_environment(data_dir=args.data_dir,
-                                         log_dir=args.log_dir)
+    saved_override = ""
+    if not args.data_dir:
+        from .storage_location import saved_data_dir
+
+        saved_override = saved_data_dir()
+        if saved_override:
+            args.data_dir = saved_override
+    data_dir_error = ""
+    try:
+        paths = bootstrap.prepare_environment(data_dir=args.data_dir,
+                                             log_dir=args.log_dir)
+    except OSError as exc:
+        if not saved_override:
+            raise
+        # An unplugged drive must not make the client unstartable.  The setting
+        # stays, so reconnecting the drive restores it on the next launch.
+        data_dir_error = (f"configured data dir unavailable: {saved_override} "
+                          f"({exc}); using default")
+        print(f"[data-dir] {data_dir_error}", file=sys.stderr, flush=True)
+        args.data_dir = None
+        # prepare_environment already wrote the unusable path into the env; a
+        # retry without clearing it would read the same path again.
+        os.environ.pop(bootstrap.DATA_DIR_ARG_ENV, None)
+        paths = bootstrap.prepare_environment(log_dir=args.log_dir)
     log = bootstrap.appender()
+    if data_dir_error:
+        log(data_dir_error)
 
     from . import adapter  # imports the core, after the env is pinned
     from . import window as window_module

@@ -74,8 +74,15 @@ class StoragePage(QWidget):
         self.reveal_button.clicked.connect(
             lambda: self.revealRequested.emit(self._view.get("data_dir") or ""))
         where_body.addWidget(self.path_label)
+        self.change_button = QPushButton(i18n.tr('更改位置…'))
+        self.change_button.clicked.connect(self._change_location)
+        self.reset_button = QPushButton(i18n.tr('恢复默认位置'))
+        self.reset_button.clicked.connect(self._reset_location)
+        self.reset_button.setEnabled(False)
         row = QHBoxLayout()
         row.addWidget(self.reveal_button)
+        row.addWidget(self.change_button)
+        row.addWidget(self.reset_button)
         row.addStretch(1)
         where_body.addLayout(row)
         layout.addWidget(where)
@@ -153,9 +160,43 @@ class StoragePage(QWidget):
                 value = i18n.tr('{v0} 个 · {v1}', v0=self._view.get("job_count", 0), v1=value)
             label.setText(value)
         self.clear_button.setEnabled(bool(self._view.get("caches")))
+        from .storage_location import saved_data_dir
+
+        self.reset_button.setEnabled(bool(saved_data_dir()))
 
     def _show(self, text: str, tone: str = "muted") -> None:
         self._set_status(self.status, text, tone)
+
+    def _change_location(self) -> None:
+        from . import bootstrap
+        from .storage_location import set_saved_data_dir
+
+        if bootstrap.automation():
+            return
+        if self.runner is not None and getattr(self.runner, "busy", False):
+            self._show(i18n.tr('任务运行时不能更改数据位置。'), "danger")
+            return
+        current = self._view.get("data_dir") or str(support.data_dir())
+        chosen = QFileDialog.getExistingDirectory(
+            self, i18n.tr('选择数据与输出文件夹'), str(current))
+        if not chosen:
+            return
+        set_saved_data_dir(chosen)
+        self.path_label.setText(chosen)
+        self.reset_button.setEnabled(True)
+        self._show(i18n.tr('数据与输出位置已改为 {v0}，重启 Folith 后生效；'
+                           '现有任务仍保留在原位置。', v0=chosen), "ok")
+
+    def _reset_location(self) -> None:
+        from .storage_location import clear_saved_data_dir
+
+        if self.runner is not None and getattr(self.runner, "busy", False):
+            self._show(i18n.tr('任务运行时不能更改数据位置。'), "danger")
+            return
+        clear_saved_data_dir()
+        self.path_label.setText(str(support.data_dir()))
+        self.reset_button.setEnabled(False)
+        self._show(i18n.tr('已恢复默认数据与输出位置，重启 Folith 后生效。'), "ok")
 
     def _clear(self) -> None:
         size = support.human_size(self._view.get("caches", 0))
