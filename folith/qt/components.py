@@ -618,7 +618,13 @@ class _ProjectTab(QPushButton):
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
         from PySide6.QtGui import QFontMetrics
 
-        name_w = QFontMetrics(self._bold_font()).horizontalAdvance(self.name)
+        # 量宽用**画出来的那只字体**：选中时是半粗体，比常规体宽几个像素，
+        # 按常规体量宽会让标签名被中间省略（「All …ects」）。再给省略号留一点
+        # 余量，长名字被省略时也不会正好卡在边上。
+        name_font = self._bold_font() if self.isChecked() else self.font()
+        metrics = QFontMetrics(name_font)
+        name_w = (metrics.horizontalAdvance(self.name)
+                  + metrics.horizontalAdvance("…"))
         count_w = QFontMetrics(self.font()).horizontalAdvance(str(self.count))
         width = 12 + 8 + 8 + name_w + 8 + count_w + 12
         return QSize(min(self.MAX_WIDTH, width), self.HEIGHT)
@@ -994,11 +1000,16 @@ class FlowRow(QLayout):
 
     操作台（段落检查器）的按钮行用它：长语言（俄语）或窄栏里不再把按钮挤出可见区域，
     最小宽度只是最宽的那一个按钮。多出来的宽度分给横向可扩展的控件，都不可扩展时平分。
+
+    ``fill=False`` 时不铺满：每个控件保持自己的宽度，多出来的空间留在右边。
+    交付页那排操作按钮用它——它们各有各的措辞，铺满会让四个按钮一样宽、读起来像表格。
     """
 
-    def __init__(self, parent: QWidget | None = None, spacing: int | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, spacing: int | None = None,
+                 *, fill: bool = True) -> None:
         super().__init__(parent)
         self._items = []
+        self._fill = bool(fill)
         self.setContentsMargins(0, 0, 0, 0)
         self.setSpacing(theme_module.SPACE["xs"] if spacing is None else spacing)
 
@@ -1071,9 +1082,11 @@ class FlowRow(QLayout):
                 widths = [item.sizeHint().width() for item in items]
                 extra = max(0, inner.width() - sum(widths) - space * (len(items) - 1))
                 grows = [_expands(item) for item in items]
-                if not any(grows):
+                if not self._fill:
+                    grows = [False] * len(items)
+                elif not any(grows):
                     grows = [True] * len(items)
-                share, remainder = divmod(extra, grows.count(True))
+                share, remainder = divmod(extra, grows.count(True)) if grows.count(True) else (0, 0)
                 x = inner.x()
                 for index, item in enumerate(items):
                     width = widths[index]

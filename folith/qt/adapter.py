@@ -753,15 +753,22 @@ class SegmentRow:
 
 
 def _pair_status(pair: dict) -> str:
+    """一段的状态标签（界面文案，走语言包）。
+
+    这些词原来直接写死中文，外语界面里会原样露出中文；现在按当前界面语言给出，
+    语气判断（:func:`views._segment_status_tone`）也用同一份文案比对。
+    """
+    from . import i18n
+
     if pair.get("excluded"):
-        return "已排除"
+        return i18n.tr("已排除")
     if pair.get("human_edited"):
-        return "人工修改"
+        return i18n.tr("人工修改")
     if pair.get("reviewed"):
-        return "已审校"
+        return i18n.tr("已审校")
     if str(pair.get("target") or "").strip():
-        return "待审校"
-    return "待翻译"
+        return i18n.tr("待审校")
+    return i18n.tr("待翻译")
 
 
 def _para_text(item: Any) -> str:
@@ -3661,7 +3668,10 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
                        and not snapshot.get("current") and blocking_count > 0
                        and review_ok)
     if legacy_blocking:
-        review_issues.append(f"必须处理的问题 {len(legacy_blocking)} 个")
+        from . import i18n
+
+        count = len(legacy_blocking)
+        review_issues.append(i18n.tr_n("必须处理的问题 {v0} 个", count, v0=count))
     return {
         "can_accept_risk": can_accept_risk,
         "blocking_count": blocking_count,

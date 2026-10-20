@@ -510,10 +510,6 @@ from folith.engine.runtime_telemetry import (  # noqa: F401  (re-export: core ke
 )
 from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its public surface)
     DEFAULT_OCR_MODE,
-    OCR_ADAPTIVE_HIGH_DPI,
-    OCR_ADAPTIVE_LOW_DPI,
-    OCR_ADAPTIVE_MIN_CONFIDENCE,
-    OCR_ADAPTIVE_MIN_TEXT_DENSITY,
     OCR_CHECKPOINT_VERSION,
     OCR_CONFIDENCE_THRESHOLD_DEFAULT,
     OCR_DPI_BASELINE,
@@ -536,7 +532,6 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     _legacy_select_tesseract_language,
     _ocr_cache_dir,
     _ocr_checkpoint_path,
-    _ocr_env_flag,
     _ocr_pdf_text,
     _ocr_queue_size_default,
     _ocr_runtime_metadata,
@@ -887,50 +882,10 @@ def resolve_paddle_model(model_id):
 
 
 
-def _ocr_page_quality_ok(record, *, min_confidence=None, min_density=None):
-    """Quality signal that decides whether a page needs a higher-DPI retry.
-
-    Deliberately conservative: it only says "not good enough" on evidence the
-    rest of the pipeline already treats as a source-quality problem —
-    replacement characters, very low alphanumeric density, or low OCR
-    confidence.  It never claims a page is perfect, only that re-running it at a
-    higher DPI has a plausible chance of helping.
-    """
-    threshold = (OCR_ADAPTIVE_MIN_CONFIDENCE if min_confidence is None
-                 else float(min_confidence))
-    density_floor = (OCR_ADAPTIVE_MIN_TEXT_DENSITY if min_density is None
-                     else float(min_density))
-    blocks = (record or {}).get("blocks") or []
-    texts = []
-    confidences = []
-    for block in blocks:
-        text = re.sub(r"\s+", " ", str(block.get("text") or "").strip())
-        if not text:
-            continue
-        texts.append(text)
-        try:
-            confidence = float(block.get("confidence"))
-        except (TypeError, ValueError):
-            confidence = None
-        if confidence is not None:
-            confidences.append(confidence)
-    if not texts:
-        return False
-    joined = " ".join(texts)
-    if "\ufffd" in joined or "\u25a1" in joined:
-        return False
-    alnum = sum(1 for char in joined if char.isalnum())
-    if alnum / max(1, len(joined)) < density_floor:
-        return False
-    if confidences and (sum(confidences) / len(confidences)) < threshold:
-        return False
-    return True
-
-
 def _ocr_pdf_text_with_warnings(
     file_bytes, max_pages=None, on_progress=None, *, workers=None, queue_size=None,
     checkpoint_dir=None, cancel_check=None, profiler=None, return_details=False,
-    dpi=None, adaptive_dpi=None, backend=None, profile_cache_dir=None,
+    dpi=None, backend=None, profile_cache_dir=None,
     ocr_language=None, ocr_psm=None, paddle_model=None, online_config=None,
 ):
     """OCR a scanned PDF with the local backend and return ``(text, warnings)``.
@@ -958,9 +913,6 @@ def _ocr_pdf_text_with_warnings(
     cache instead, and the formal run reads that root in addition to its own
     job-scoped cache.  A page is only reused when its full identity matches, so
     a different DPI / backend / version / document still recomputes.
-
-    ``adaptive_dpi`` is an opt-in experiment: a low-DPI first pass, with a
-    higher-DPI rerun only for pages whose quality signal fails.
     """
     warnings = []
     command = _find_tesseract()
@@ -1058,10 +1010,6 @@ def _ocr_pdf_text_with_warnings(
         "explicit_ocr_language": bool(str(ocr_language or "").strip()),
     }
     runtime_metadata = {**runtime_metadata, **language_metadata}
-    adaptive = (_ocr_env_flag("FOLIOTHREAD_OCR_ADAPTIVE_DPI", False)
-                if adaptive_dpi is None else bool(adaptive_dpi))
-    first_dpi = OCR_ADAPTIVE_LOW_DPI if adaptive else base_dpi
-    retry_dpi = max(base_dpi, OCR_ADAPTIVE_HIGH_DPI) if adaptive else base_dpi
     source_hash = hashlib.sha256(file_bytes or b"").hexdigest()
     cache = _OCRPageCache(_ocr_cache_dir(checkpoint_dir))
     # Read-only secondary cache holding the quick-profile representative pages.
@@ -1120,20 +1068,13 @@ def _ocr_pdf_text_with_warnings(
             else:
                 indices = sorted({0, count // 2, count - 1})[:max_pages]
             # Lookup order is best-evidence-first: a page already computed at
-            # the retry DPI beats the first-pass DPI, which beats a legacy
-            # checkpoint (adopted only when its identity matches exactly).
+            # the current DPI beats a legacy checkpoint (adopted only when its
+            # identity matches exactly).
             page_records = {}
             dpi_by_page = {}
-            if adaptive:
-                for loader_dpi in (retry_dpi, first_dpi):
-                    for key, record in _load_cached(loader_dpi).items():
-                        if key not in page_records:
-                            page_records[key] = record
-                            dpi_by_page[key] = loader_dpi
-            else:
-                for key, record in _load_cached(first_dpi).items():
-                    page_records[key] = record
-                    dpi_by_page[key] = first_dpi
+            for key, record in _load_cached(base_dpi).items():
+                page_records[key] = record
+                dpi_by_page[key] = base_dpi
             legacy_pages = _read_legacy_ocr_pages(
                 None if model_version else legacy_path, source_sha256=source_hash, indices=indices,
                 language=language, backend=backend_name, model=backend_model,
@@ -1147,15 +1088,14 @@ def _ocr_pdf_text_with_warnings(
             failed_pages = []
             render_stage = profiler.start_stage(
                 "rasterize", concurrency=1, page_count=len(indices),
-                metadata={"dpi": first_dpi, "baseline_dpi": base_dpi,
-                          "adaptive_dpi": adaptive, "queue_size": queue_size,
+                metadata={"dpi": base_dpi, "baseline_dpi": base_dpi,
+                          "queue_size": queue_size,
                           "cached_pages": cached_pages},
             ) if profiler is not None else None
             ocr_stage = profiler.start_stage(
                 "ocr", concurrency=workers, page_count=len(indices),
                 metadata={**runtime_metadata, "queue_size": queue_size,
-                          "cached_pages": cached_pages, "adaptive_dpi": adaptive,
-                          "first_dpi": first_dpi, "retry_dpi": retry_dpi},
+                          "cached_pages": cached_pages, "dpi": base_dpi},
             ) if profiler is not None else None
             page_lock = threading.RLock()
             queue_lock = threading.RLock()
@@ -1167,20 +1107,17 @@ def _ocr_pdf_text_with_warnings(
             dpi_used_by_page = {}
             page_timings = {}
             page_requests = {}
-            adaptive_retried = []
             # Constant-size run record: written once when the run starts so a
             # crash leaves evidence of what was in flight, then once at the end.
             cache.write_manifest(
                 source_sha256=source_hash, indices=indices, language=language,
                 backend=backend_name, model=backend_model,
-                backend_version=cache_backend_version, dpi=first_dpi, status="running",
+                backend_version=cache_backend_version, dpi=base_dpi, status="running",
                 completed_pages=cached_pages,
                 psm=effective_psm, direction=text_direction_value,
                 ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
                 backend_options=cache_backend_options,
-                extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
-                       "first_dpi": first_dpi, "retry_dpi": retry_dpi,
-                       **language_metadata})
+                extra={"baseline_dpi": base_dpi, **language_metadata})
 
             def check_cancel():
                 if cancel_check and cancel_check():
@@ -1353,20 +1290,7 @@ def _ocr_pdf_text_with_warnings(
                 emit_page_progress()
                 failed_pages.extend(run_pass(
                     [index for index in indices if str(index) not in page_records],
-                    first_dpi))
-                if adaptive and not stop_event.is_set():
-                    retry_indices = [
-                        index for index in indices
-                        if str(index) in page_records
-                        and dpi_by_page.get(str(index), first_dpi) < retry_dpi
-                        and not _ocr_page_quality_ok(page_records[str(index)])
-                    ]
-                    if retry_indices:
-                        adaptive_retried = [index + 1 for index in retry_indices]
-                        warnings.append(
-                            f"自适应 OCR 分辨率：{len(retry_indices)} 页首轮质量信号不达标，"
-                            f"已用 {retry_dpi} DPI 重跑（baseline {base_dpi} DPI）。")
-                        failed_pages.extend(run_pass(retry_indices, retry_dpi))
+                    base_dpi))
             except BaseException:
                 cancelled = True
                 stop_event.set()
@@ -1379,7 +1303,7 @@ def _ocr_pdf_text_with_warnings(
                 cache.write_manifest(
                     source_sha256=source_hash, indices=indices, language=language,
                     backend=backend_name, model=backend_model,
-                    backend_version=cache_backend_version, dpi=first_dpi,
+                    backend_version=cache_backend_version, dpi=base_dpi,
                     status="cancelled" if cancelled else "completed",
                     completed_pages=sum(1 for index in indices
                                         if str(index) in page_records),
@@ -1387,9 +1311,7 @@ def _ocr_pdf_text_with_warnings(
                     psm=effective_psm, direction=text_direction_value,
                     ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
                     backend_options=cache_backend_options,
-                    extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
-                           "first_dpi": first_dpi, "retry_dpi": retry_dpi,
-                           "retried_pages": adaptive_retried,
+                    extra={"baseline_dpi": base_dpi,
                            **language_metadata,
                            "dpi_used_by_page": {
                                key: dpi_used_by_page[key]
@@ -1477,10 +1399,6 @@ def _ocr_pdf_text_with_warnings(
                 "ocr_cache_stats": cache.stats(),
                 "ocr_cache_bytes_written": cache.bytes_written(),
                 "ocr_dpi_baseline": base_dpi,
-                "ocr_dpi_first_pass": first_dpi,
-                "ocr_dpi_retry": retry_dpi,
-                "ocr_adaptive_dpi": adaptive,
-                "ocr_adaptive_retried_pages": adaptive_retried,
                 "ocr_dpi_used_by_page": {key: dpi_by_page[key]
                                          for key in sorted(dpi_by_page)},
                 "ocr_cached_pages": cached_pages,
@@ -1502,7 +1420,7 @@ def _ocr_pdf_text_with_warnings(
                 "page_timings": page_timings,
                 "evidence_version": 1,
                 "raw_evidence_directory": str(cache.pages_dir) if cache.pages_dir else "",
-                "cache_identity": _identity(0, first_dpi).to_dict(),
+                "cache_identity": _identity(0, base_dpi).to_dict(),
                 "page_failures": [{"page_number": n, "error": e} for n, e in failed_pages],
             }
             text = "\n\n".join(chunks)

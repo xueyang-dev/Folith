@@ -1,4 +1,4 @@
-# Folith 桌面端（Qt）— 受邀 Private Beta 发布说明
+# Folith 桌面端（Qt）— 发布说明
 
 本文件由 `scripts/qt_release_checks.py --write-notes` 依据**本次构建**的清单与
 DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败（不做旧文本对比）。
@@ -57,8 +57,8 @@ DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败
 ## 分发状态（如实披露）
 
 - 签名：否；公证：否
-- 适用范围：**受邀 Private Beta**。首次打开需在「应用程序」中右键 → 打开，为本应用明确放行一次；**不要**全局关闭 Gatekeeper。
-- 公开分发（Developer ID / hardened runtime / 签名 / 公证 / staple / 真实下载验收）尚未完成，本候选不得当作公开版本发布。
+- 适用范围：**v0.6.0 正式发布（未签名、未公证）**。首次打开需在「应用程序」中右键 → 打开，为本应用明确放行一次；**不要**全局关闭 Gatekeeper。
+- Developer ID 签名、hardened runtime、公证与 staple 尚未完成，计划在后续版本补齐；7 条强制人工验收（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9）作为发布后验证继续进行，尚未全部闭环。
 
 ## 卸载
 
