@@ -2102,7 +2102,8 @@ class EmptyState(QFrame):
         column.addWidget(self.action_button, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addStretch(1)
         self.set_action(action, action_kind)
-        self.setVisible(bool(title))
+        if parent is not None or not title:
+            self.setVisible(bool(title))
 
     def set_action(self, text: str, kind: str = "secondary") -> None:
         """空状态的唯一动作（空字符串 = 没有动作）。"""

@@ -1056,7 +1056,6 @@ class TaskSetupPanel(QWidget):
         self._build_style_section()
         self._style_recommendation: dict = {}
         section = self.style_section
-        section.setVisible(True)
         inner = section.body_layout
         inner.setSpacing(theme_module.SPACE["md"])
 
