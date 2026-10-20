@@ -23,7 +23,7 @@ os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt  # noqa: E402
+from PySide6.QtCore import QSize, Qt  # noqa: E402
 from PySide6.QtGui import QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -36,28 +36,6 @@ def app():
     instance = QApplication.instance() or QApplication([])
     yield instance
     style.apply_theme(instance, "light")
-
-
-def _close_top_level_widgets(app) -> None:
-    """Drop this test's Qt widgets before the next theme application.
-
-    A full run accumulates Qt top-level widgets from every earlier test; the
-    next `setStyleSheet` then repolishes all of them on Windows and can take
-    tens of minutes. Test-only widgets must not outlive a single test.
-    """
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
-    for widget in list(QApplication.topLevelWidgets()):
-        widget.deleteLater()
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
-
-
-@pytest.fixture(autouse=True)
-def _drop_top_level_widgets(app):
-    _close_top_level_widgets(app)
-    yield
-    _close_top_level_widgets(app)
 
 
 def _centre_rgb(pixmap) -> tuple[int, int, int]:

@@ -18,6 +18,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -74,6 +76,48 @@ def _entries(directory: Path) -> set[str]:
 
 
 _BEFORE = {directory: _entries(directory) for directory in _REAL_DIRS}
+
+_QT = None
+
+
+def _qt_classes():
+    global _QT
+    if _QT is None:
+        try:
+            from PySide6.QtCore import QEvent
+            from PySide6.QtWidgets import QApplication
+        except ImportError:
+            _QT = ()
+        else:
+            _QT = (QEvent, QApplication)
+    return _QT
+
+
+@pytest.fixture(autouse=True)
+def _discard_test_top_level_widgets():
+    """Drop widgets created by a test before the next test applies a theme.
+
+    Qt repolishes every live top-level widget on `setStyleSheet`. Without this,
+    a full run accumulates thousands of hidden windows and later theme changes
+    take tens of minutes on Windows.
+    """
+    yield
+    classes = _qt_classes()
+    if not classes:
+        return
+    QEvent, QApplication = classes
+    app = QApplication.instance()
+    if app is None:
+        return
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    for widget in list(QApplication.topLevelWidgets()):
+        try:
+            widget.deleteLater()
+        except RuntimeError:
+            pass
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
 
 
 def pytest_sessionfinish(session, exitstatus):
