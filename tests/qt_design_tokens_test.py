@@ -73,7 +73,8 @@ def test_python_never_names_an_action_button_by_object_name():
                         r'dangerAction|dangerPrimary|panel(Action|Primary|Danger)|'
                         r'inspector(Tool|Primary|Danger)|rowAction)"')
     hits = [f"{path.name}:{n}" for path in QT_DIR.glob("*.py")
-            for n, line in enumerate(path.read_text().splitlines(), 1) if legacy.search(line)]
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if legacy.search(line)]
     assert not hits, hits
 
 

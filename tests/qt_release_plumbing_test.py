@@ -31,6 +31,7 @@ def test_docs_audit_reads_the_complete_declared_minimum(minimum):
     assert audit._declared_min_os(status) == minimum
 
 
+@pytest.mark.skipif(os.name != "posix", reason="the build script requires a POSIX shell")
 @pytest.mark.parametrize("minos", ["15.7.5", "15.0.0", "26.0.0"])
 def test_build_declares_the_complete_measured_minimum(tmp_path, minos):
     (tmp_path / "native_min_os_inputs.json").write_text(
@@ -246,6 +247,7 @@ def test_artifact_check_falls_back_to_mtime_for_a_dirty_build(tmp_path):
     assert facts["changed"] == ["core.py"] and problems
 
 
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX zombie semantics")
 def test_ax_probe_does_not_mistake_a_zombie_for_a_live_process():
     """AX 扫描探针必须把僵尸进程判成"已死"。
 
