@@ -75,7 +75,7 @@ def test_cross_picture_merge_target_is_emitted_once():
     assert parts.index('完整合并译文') < parts.index('[image]')
 
 
-def test_unreliable_source_association_fails_without_losing_images():
+def test_unmapped_association_fails_and_wrong_source_degrades_to_text():
     source = docx_source()
     state = translated_state('book.docx', source)
     state['segment_structure_history'] = [{'operation': 'merge'}]
@@ -83,9 +83,11 @@ def test_unreliable_source_association_fails_without_losing_images():
         build_translation_docx(state, source)
     state.pop('segment_structure_history')
     state['source_paras'][0] = 'different source'
-    with pytest.raises(RuntimeError, match='来源不一致'):
-        build_translation_docx(state, source)
-
+    payload, report = build_translation_docx(state, source)
+    assert any('纯文字' in warning for warning in report['warnings'])
+    _, parts = flow(payload)
+    assert '译文' in parts
+    assert '[image]' not in parts
 
 def test_cover_repeated_and_tall_images_fit_page():
     doc = Document()

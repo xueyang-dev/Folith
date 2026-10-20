@@ -9497,23 +9497,34 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
                         rendered = _pdfrender.render_original_layout(
                             job_id, state, source, page_cache_dir=cache_dir)
                     except Exception as exc:
-                        raise RuntimeError(
-                            "原排版 PDF 生成失败："
-                            f"{type(exc).__name__}: {exc}") from exc
-                    bundle["original_layout.pdf"] = rendered.data
-                    bundle["original_layout_report.json"] = (
-                        json.dumps({k: v for k, v in rendered.report.items()
-                                    if not str(k).startswith("_")},
-                                   ensure_ascii=False, indent=2) + "\n"
-                    ).encode("utf-8")
+                        # Re-reading failed pages can change the paragraph map;
+                        # keep the rest of the delivery and record the skipped
+                        # asset instead of failing the whole freeze.
+                        skipped_assets["original_layout.pdf"] = (
+                            "original-layout PDF unavailable after the source "
+                            f"mapping changed: {type(exc).__name__}: {exc}")
+                    else:
+                        bundle["original_layout.pdf"] = rendered.data
+                        bundle["original_layout_report.json"] = (
+                            json.dumps({k: v for k, v in rendered.report.items()
+                                        if not str(k).startswith("_")},
+                                       ensure_ascii=False, indent=2) + "\n"
+                        ).encode("utf-8")
             if config["deliver_epub"]:
-                from folith.epub import build_translation_epub
-                epub_bytes, epub_report = build_translation_epub(
-                    state, source, job_id=job_id)
-                bundle["translation.epub"] = epub_bytes
-                bundle["epub_export_report.json"] = (
-                    json.dumps(epub_report, ensure_ascii=False, indent=2) + "\n"
-                ).encode("utf-8")
+                from folith.epub import EpubExportError, build_translation_epub
+                try:
+                    epub_bytes, epub_report = build_translation_epub(
+                        state, source, job_id=job_id)
+                except EpubExportError as exc:
+                    # The source map can change after a failed-page re-read;
+                    # skip the reflow EPUB with a manifest note rather than
+                    # blocking the translated DOCX and the rest of the bundle.
+                    skipped_assets["translation.epub"] = str(exc)
+                else:
+                    bundle["translation.epub"] = epub_bytes
+                    bundle["epub_export_report.json"] = (
+                        json.dumps(epub_report, ensure_ascii=False, indent=2) + "\n"
+                    ).encode("utf-8")
             if config["enable_annotate"]:
                 bundle["annotated_bilingual.docx"] = _bytes(pairs_to_word(
                     pairs, annotations=state.get("annotations"),

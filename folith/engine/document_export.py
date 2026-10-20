@@ -299,7 +299,18 @@ def build_translation_docx(state, source):
             str(exc).replace("EPUB", "译文 DOCX") + " 已改为纯文字重建，不保留图片。"])
         return translations_to_word(pairs, state.get("target_lang")), report
     except EpubExportError as exc:
-        raise RuntimeError(str(exc).replace("EPUB", "译文 DOCX")) from exc
+        message = str(exc)
+        if "来源不一致" not in message:
+            raise RuntimeError(message.replace("EPUB", "译文 DOCX")) from exc
+        # After re-reading failed pages the source paragraph mapping can no
+        # longer be matched to the original file.  Keep the translation
+        # deliverable: rebuild a text-only DOCX and report the missing images
+        # instead of blocking the whole delivery.  A missing association is a
+        # different, structural defect and still fails explicitly.
+        report["warnings"].append(
+            message.replace("EPUB", "译文 DOCX")
+            + " 已改为纯文字重建，不保留图片。")
+        return translations_to_word(pairs, state.get("target_lang")), report
     except Exception as exc:
         raise RuntimeError(f"译文 DOCX 无法读取源文件：{exc}") from exc
 
