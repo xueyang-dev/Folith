@@ -97,6 +97,62 @@ def test_runtime_failure_and_cancel_are_persisted(tmp_path, monkeypatch):
         core.OUTPUT_DIR = old_output
 
 
+def test_exit_stop_publishes_resumable_interrupted(tmp_path, monkeypatch):
+    """Quitting a running task must not lose committed work as a "cancel"."""
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    original = core.run_job_pipeline
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_pipeline(job_id, *args, **kwargs):
+        entered.set()
+        release.wait(3)
+        return core.load_job_state(job_id)
+
+    job_id = "runtimeexit0001"
+    try:
+        monkeypatch.setattr(core, "run_job_pipeline", slow_pipeline)
+        core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+        assert core.start_job_worker(job_id, "fixture.docx", None, _pipeline_kwargs())
+        assert _wait_for(entered.is_set)
+        assert core.request_job_exit(job_id)
+        intent = core.load_runtime_state(job_id)
+        assert intent["exit_requested"] and intent["cancel_requested"]
+        release.set()
+        assert _wait_for(
+            lambda: core.get_job_runtime_status(job_id)["status"] == "interrupted")
+        final = core.load_runtime_state(job_id)
+        assert final["error"] is None
+        assert final["worker"]["owner_pid"] is None
+        assert "resume" in core.runtime_actions_for_status("interrupted")
+    finally:
+        release.set()
+        _wait_for(lambda: not core.is_job_worker_alive(job_id))
+        monkeypatch.setattr(core, "run_job_pipeline", original)
+        core._RUNTIME_WORKERS.clear()
+        core.OUTPUT_DIR = old_output
+
+
+def test_exit_stop_without_worker_marks_interrupted_not_stale(tmp_path):
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        job_id = "runtimeexitdead"
+        core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+        core.update_runtime_state(
+            job_id, status="running",
+            worker={"owner_pid": 99999999, "worker_id": "dead",
+                    "lease_expires_at": "2099-01-01T00:00:00+00:00"})
+        assert core.request_job_exit(job_id)
+        runtime = core.load_runtime_state(job_id)
+        assert runtime["status"] == "interrupted"
+        assert runtime["error"] is None
+        assert runtime["worker"]["owner_pid"] is None
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
 def test_worker_heartbeat_renews_lease_while_pipeline_waits(tmp_path, monkeypatch):
     old_output = core.OUTPUT_DIR
     old_interval = core.RUNTIME_HEARTBEAT_SECONDS

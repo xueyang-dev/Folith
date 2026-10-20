@@ -674,6 +674,11 @@ def cancel_job(job_id: str, *, force: bool = False) -> bool:
     return _commands.cancel_job(job_id, force=force)
 
 
+def stop_job_for_exit(job_id: str) -> bool:
+    """Stop a task as part of quitting; it stays resumable as ``interrupted``."""
+    return _commands.stop_job_for_exit(job_id)
+
+
 def retry_job(job_id: str) -> bool:
     return _commands.retry_job(job_id)
 
@@ -4031,11 +4036,16 @@ def exit_report(job_id: str | None) -> dict:
 
 
 def stop_job_and_wait(job_id: str, *, timeout: float = 45.0) -> dict:
-    """Cancel with the product's semantics, then wait for the lock to be free."""
+    """Stop a task to quit, then wait for its lock to be free.
+
+    Uses the exit stop (resumable ``interrupted``), not a user cancel, so the
+    contract "quitting keeps committed batches and reopening offers resume"
+    holds for both running and paused tasks.
+    """
     data_dir = desktop_paths.resolve_paths().data_dir
     started = time.monotonic()
     if exit_flow.read_runtime_status(data_dir, job_id) in ACTIVE_STATUSES:
-        cancel_job(job_id)
+        stop_job_for_exit(job_id)
     deadline = started + max(0.0, timeout)
     while time.monotonic() < deadline:
         status = exit_flow.read_runtime_status(data_dir, job_id)

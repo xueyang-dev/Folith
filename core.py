@@ -266,6 +266,18 @@ def _runtime_cancel_requested(job_id):
     return bool((load_runtime_state(job_id) or {}).get("cancel_requested"))
 
 
+def _runtime_exit_requested(job_id):
+    """True when the app is quitting and asked this task to stop.
+
+    Distinct from a user cancel: the worker stops and releases its lock, but the
+    task is published as ``interrupted`` (resumable) rather than ``cancelled`` so
+    the contract "quit keeps committed batches, reopen offers resume" is honest.
+    """
+    if not job_id:
+        return False
+    return bool((load_runtime_state(job_id) or {}).get("exit_requested"))
+
+
 def _runtime_pause_checkpoint(job_id, paused_message=None):
     """Pause cooperatively between operations; keep in-memory results and lease.
 
@@ -312,7 +324,8 @@ def request_job_pause(job_id):
 def continue_job(job_id):
     if not is_job_worker_alive(job_id):
         return False
-    update_runtime_state(job_id, pause_requested=False, status="running", phase="running",
+    update_runtime_state(job_id, pause_requested=False, exit_requested=False,
+                         status="running", phase="running",
                          event="正在继续任务", event_name="continue_requested",
                          event_visibility="user", event_category="lifecycle")
     return True
@@ -6958,6 +6971,7 @@ def _runtime_defaults():
         "last_technical_event": "",
         "cancel_requested": False,
         "pause_requested": False,
+        "exit_requested": False,
         "attempt": 0,
         "resume_request_id": None,
         "error": None,
@@ -7920,14 +7934,27 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             )
         result_state = load_job_state(job_id) or state
         if _runtime_cancel_requested(job_id):
-            if not segment_operation:
-                trace.finish_run(job_id=job_id, status="cancelled")
-            update_runtime_state(job_id, status="cancelled", phase="cancelled",
-                                 phase_label="已取消", event="任务已取消",
-                                 event_name="job_cancelled", progress=True,
-                                 event_visibility="user", event_category="lifecycle",
-                                 worker={"owner_pid": None, "worker_id": None,
-                                         "lease_expires_at": None})
+            # An exit stop reuses the cancel boundary but must publish a
+            # resumable ``interrupted`` state, never "the user cancelled".
+            if _runtime_exit_requested(job_id) and not _runtime_business_complete(result_state):
+                if not segment_operation:
+                    trace.finish_run(job_id=job_id, status="interrupted")
+                update_runtime_state(job_id, status="interrupted", phase="interrupted",
+                                     phase_label="已停止以便退出",
+                                     event="任务已停止以便退出；可继续处理。",
+                                     event_name="job_stopped_for_exit", progress=True,
+                                     event_visibility="user", event_category="lifecycle",
+                                     worker={"owner_pid": None, "worker_id": None,
+                                             "lease_expires_at": None})
+            else:
+                if not segment_operation:
+                    trace.finish_run(job_id=job_id, status="cancelled")
+                update_runtime_state(job_id, status="cancelled", phase="cancelled",
+                                     phase_label="已取消", event="任务已取消",
+                                     event_name="job_cancelled", progress=True,
+                                     event_visibility="user", event_category="lifecycle",
+                                     worker={"owner_pid": None, "worker_id": None,
+                                             "lease_expires_at": None})
         elif _runtime_business_complete(result_state):
             if not segment_operation:
                 trace.finish_run(job_id=job_id, status="completed")
@@ -7954,21 +7981,26 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
     # lease 永不过期 → 应用还活着时这个任务会**真的硬卡死**（状态一直停在活跃态，
     # start_job_worker / resume_job 都会拒绝）。这里必须失败闭合。
     except BaseException as exc:  # noqa: BLE001 - worker must publish failure to UI
-        cancelled = bool(load_runtime_state(job_id).get("cancel_requested")) or "请求取消" in str(exc)
+        runtime_after = load_runtime_state(job_id)
+        exit_requested = bool(runtime_after.get("exit_requested"))
+        cancelled = (not exit_requested) and (
+            bool(runtime_after.get("cancel_requested")) or "请求取消" in str(exc))
+        final_status = "interrupted" if exit_requested else (
+            "cancelled" if cancelled else "failed")
         if not segment_operation:
-            trace.finish_run(job_id=job_id, status="cancelled" if cancelled else "failed", failure_reason=str(exc))
-        if not cancelled:
+            trace.finish_run(job_id=job_id, status=final_status, failure_reason=str(exc))
+        if not cancelled and not exit_requested:
             try:
                 _write_runtime_technical_log(job_id, exc)
             except OSError:
                 pass
-        current = load_runtime_state(job_id)
+        current = runtime_after
         provider_status = provider_error_status(exc)
         user_error_message = (
             provider_error_message(exc, "任务执行失败")
             if provider_status["status"] != "unknown"
             else str(exc)[:500] or "任务执行失败")
-        error = None if cancelled else {
+        error = None if (cancelled or exit_requested) else {
             "type": type(exc).__name__,
             "message": user_error_message,
             "stage": current.get("stage_id") or current.get("stage"),
@@ -7978,14 +8010,17 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         }
         try:
             update_runtime_state(
-                job_id, status="cancelled" if cancelled else "failed",
-                phase="cancelled" if cancelled else "failed",
-                phase_label="已取消" if cancelled else "步骤失败",
+                job_id, status=final_status,
+                phase=final_status,
+                phase_label="已停止以便退出" if exit_requested
+                else ("已取消" if cancelled else "步骤失败"),
                 error=error,
-                event="任务已取消" if cancelled else f"步骤失败：{user_error_message[:180]}",
-                event_name="job_cancelled" if cancelled else "job_failed",
+                event="任务已停止以便退出；可继续处理。" if exit_requested
+                else ("任务已取消" if cancelled else f"步骤失败：{user_error_message[:180]}"),
+                event_name="job_stopped_for_exit" if exit_requested
+                else ("job_cancelled" if cancelled else "job_failed"),
                 event_visibility="user",
-                event_category="lifecycle" if cancelled else "error",
+                event_category="lifecycle" if (cancelled or exit_requested) else "error",
                 progress=True, heartbeat=True,
                 worker={"owner_pid": None, "worker_id": None,
                         "lease_expires_at": None})
@@ -8093,6 +8128,7 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 else started_at,
                 operation_started_at=started_at, last_progress_at=started_at,
                 last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False, error=None,
+                exit_requested=False,
                 attempt=attempt, resume_request_id=resume_request_id or "",
                 segment_operation=segment_operation or {}, segment_operation_result="pending",
                 completed_units=completed_units, total_units=total_units,
@@ -8200,6 +8236,41 @@ def request_job_cancel(job_id, *, force=False):
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
         progress=True, heartbeat=True,
+        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+    return True
+
+
+def request_job_exit(job_id):
+    """Stop a task because the app is quitting; keep it resumable.
+
+    The exit flow must never lose committed batches.  This reuses the same
+    cooperative cancel boundary (the worker stops scheduling and releases its
+    write lock) but records ``exit_requested`` so the worker publishes
+    ``interrupted`` — the status that offers "resume" on reopen — instead of
+    ``cancelled``.  ``cancel_requested`` still breaks a paused worker out of its
+    wait loop; the two flags together mean "stop because of exit", not "the user
+    cancelled".
+    """
+    if not job_id:
+        return False
+    alive = is_job_worker_alive(job_id) or _job_execution_alive(job_id)
+    if alive:
+        update_runtime_state(
+            job_id, exit_requested=True, cancel_requested=True,
+            status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
+            event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
+            event_name="exit_requested", event_visibility="user",
+            event_category="lifecycle", progress=True)
+        return True
+    # No live worker owns this task: publish the resumable terminal state
+    # directly instead of leaving a stale active status behind.
+    update_runtime_state(
+        job_id, status="interrupted", phase="interrupted",
+        phase_label="已停止以便退出", cancel_requested=False,
+        exit_requested=True, error=None,
+        event="任务已停止以便退出；可继续处理。",
+        event_name="job_stopped_for_exit", event_visibility="user",
+        event_category="lifecycle", progress=True, heartbeat=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
     return True
 
