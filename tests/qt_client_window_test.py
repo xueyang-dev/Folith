@@ -2526,8 +2526,11 @@ def test_save_and_next_commits_this_segment_and_moves_on(client):
         workbench.current_uid()
     assert workbench.draft_text() == "C."
     # 当前段（s1）不应留下未提交草稿。
-    drafts = core.load_translation_drafts(job_id)
-    assert "s1" not in drafts, drafts
+    # The background save reports the pair before the runner's callback clears
+    # the draft; wait for that final step so the assertion checks settled state.
+    assert _pump(app, 10, lambda: "s1" not in core.load_translation_drafts(job_id)), \
+        core.load_translation_drafts(job_id)
+    assert "s1" not in core.load_translation_drafts(job_id)
 
 
 def test_save_and_next_does_not_wait_for_the_disk_write(client, monkeypatch):
@@ -3666,6 +3669,9 @@ def test_menu_shortcuts_actually_fire_and_are_not_ambiguous(client):
         edited = [pair for pair in state["pairs"] if pair.get("human_edited")]
         assert len(edited) == 1, f"⌘S 必须提交**一个**段落：{[p.get('human_edited') for p in state['pairs']]}"
         assert "shortcut commit" in str(edited[0].get("target")), edited[0].get("target")
+        # The same background save clears the draft after writing the pair.
+        assert _pump(app, 10, lambda: adapter.pending_draft_count(job_id) == 0), \
+            adapter.pending_draft_count(job_id)
         assert adapter.pending_draft_count(job_id) == 0, "提交之后草稿必须清掉"
 
         # ② ⌘⇧R：重新载入不能把网格弄坏
