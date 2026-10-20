@@ -7059,7 +7059,8 @@ def load_runtime_state(job_id):
     if not job_id:
         return _runtime_defaults()
     try:
-        raw = json.loads(runtime_state_path(job_id).read_text(encoding="utf-8"))
+        with _atomic_file.shared_text_reader(runtime_state_path(job_id)) as handle:
+            raw = json.load(handle)
     except (OSError, TypeError, ValueError):
         return _runtime_defaults()
     if not isinstance(raw, dict):
@@ -7307,7 +7308,20 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             _atomic_file.replace_file(tmp, runtime_state_path(job_id))
         except OSError as exc:
             _workflow_errors.raise_if_fatal(exc, job_id)
-            raise
+            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33}:
+                raise
+            # A status checkpoint must not abort an already-paid translation.
+            # The event stream is appended separately, and the next heartbeat
+            # or progress update rewrites the full state.
+            try:
+                _append_runtime_technical_log(
+                    job_id,
+                    f"runtime_state write skipped after retries: "
+                    f"{type(exc).__name__} winerror={getattr(exc, 'winerror', None)}; "
+                    f"will retry on the next update")
+            except OSError:
+                pass
+            return current
         finally:
             tmp.unlink(missing_ok=True)
         with _RUNTIME_PERSIST_LOCK:

@@ -14,7 +14,7 @@ def test_transient_windows_sharing_failure_retries_only_replace(tmp_path, monkey
     source, target = tmp_path / "state.tmp", tmp_path / "state.json"
     source.write_text("new", encoding="utf-8")
     target.write_text("old", encoding="utf-8")
-    original = Path.replace
+    original = atomic_file._replace_once
     calls, sleeps = [], []
     def sharing_failure(path, destination):
         calls.append(path.read_bytes())
@@ -24,7 +24,7 @@ def test_transient_windows_sharing_failure_retries_only_replace(tmp_path, monkey
             raise error
         return original(path, destination)
     monkeypatch.setattr(atomic_file, "_WINDOWS", True)
-    monkeypatch.setattr(Path, "replace", sharing_failure)
+    monkeypatch.setattr(atomic_file, "_replace_once", sharing_failure)
     monkeypatch.setattr(atomic_file.time, "sleep", sleeps.append)
     atomic_file.replace_file(source, target)
     assert calls == [b"new"] * 3
@@ -33,9 +33,9 @@ def test_transient_windows_sharing_failure_retries_only_replace(tmp_path, monkey
 
 
 @pytest.mark.parametrize("windows,code,error_number,attempts", [
-    (True, 5, errno.EACCES, 6),
-    (True, 32, errno.EACCES, 6),
-    (True, 33, errno.EACCES, 6),
+    (True, 5, errno.EACCES, atomic_file._MAX_ATTEMPTS),
+    (True, 32, errno.EACCES, atomic_file._MAX_ATTEMPTS),
+    (True, 33, errno.EACCES, atomic_file._MAX_ATTEMPTS),
     (False, 5, errno.EACCES, 1),
     (True, 112, errno.ENOSPC, 1),
 ])
@@ -51,7 +51,7 @@ def test_permanent_errors_propagate_and_preserve_old_file(tmp_path, monkeypatch,
         calls.append(1)
         raise error
     monkeypatch.setattr(atomic_file, "_WINDOWS", windows)
-    monkeypatch.setattr(Path, "replace", fail)
+    monkeypatch.setattr(atomic_file, "_replace_once", fail)
     monkeypatch.setattr(atomic_file.time, "sleep", lambda _: None)
     with pytest.raises(OSError) as caught:
         atomic_file.replace_file(source, target)
@@ -59,6 +59,18 @@ def test_permanent_errors_propagate_and_preserve_old_file(tmp_path, monkeypatch,
     assert len(calls) == attempts
     assert target.read_bytes() == b"old"
     assert source.read_bytes() == b"new"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Actual Windows sharing semantics")
+def test_shared_reader_does_not_block_replace(tmp_path):
+    source, target = tmp_path / "state.tmp", tmp_path / "state.json"
+    source.write_bytes(b"new")
+    target.write_bytes(b"old")
+    with atomic_file.shared_text_reader(target) as handle:
+        assert handle.read() == "old"
+        atomic_file.replace_file(source, target)
+    assert target.read_bytes() == b"new"
+    assert not source.exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Actual Windows sharing semantics")

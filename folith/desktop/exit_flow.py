@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
+from folith.storage.atomic_file import shared_text_reader
+
 DRAFTS_FILE = "translation_drafts.json"
 RUNTIME_STATE_FILE = "runtime_state.json"
 WORKER_LOCK_FILE = ".worker.lock"
@@ -121,7 +123,8 @@ def read_pending_drafts(data_dir: Path, job_id: str) -> tuple[PendingDraft, ...]
 def read_runtime_status(data_dir: Path, job_id: str) -> str | None:
     path = Path(data_dir) / job_id / RUNTIME_STATE_FILE
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        with shared_text_reader(path) as handle:
+            raw = json.load(handle)
     except (OSError, ValueError):
         return None
     if not isinstance(raw, dict):

@@ -1,4 +1,5 @@
 """Issue #13: live execution, heartbeat faults and retry policy must agree."""
+import errno
 import os
 import threading
 from types import SimpleNamespace
@@ -224,3 +225,25 @@ def test_real_waiting_pipeline_remains_active_without_heartbeat(tmp_path, monkey
         release.set()
         worker.join(5)
     assert not worker.is_alive()
+
+
+def test_sharing_failure_during_runtime_write_does_not_abort_job(job, monkeypatch):
+    def locked(*_args, **_kwargs):
+        error = PermissionError(errno.EACCES, "reader open")
+        error.winerror = 5
+        raise error
+
+    monkeypatch.setattr(core._atomic_file, "replace_file", locked)
+    core.update_runtime_state(job, status="running", event="批次写入检查点")
+    assert core.load_runtime_state(job)["status"] == "running"
+    log = (core.job_dir(job) / "runtime_technical.log").read_text(encoding="utf-8")
+    assert "runtime_state write skipped" in log
+
+
+def test_non_sharing_write_error_still_aborts(job, monkeypatch):
+    def broken(*_args, **_kwargs):
+        raise OSError(errno.EIO, "device error")
+
+    monkeypatch.setattr(core._atomic_file, "replace_file", broken)
+    with pytest.raises(OSError):
+        core.update_runtime_state(job, status="running")
