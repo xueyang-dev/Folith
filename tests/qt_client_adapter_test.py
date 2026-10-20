@@ -131,6 +131,41 @@ def _wait_for_idle(core, job_id: str, timeout: float = 240.0) -> dict:
     raise AssertionError(f"job {job_id} did not settle within {timeout}s")
 
 
+def _wait_for_worker_stopped(core, job_id: str, timeout: float = 60.0) -> bool:
+    """Wait until the cancelled worker has released its execution lock.
+
+    The runtime can report ``cancelled`` before the thread has finished its
+    cleanup.  Resuming in that window is a no-op, so the test must wait for the
+    worker itself, not just the status.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if (not core.is_job_worker_alive(job_id)
+                and not core._job_execution_alive(job_id)):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _wait_for_restart(core, job_id: str, timeout: float = 30.0) -> bool:
+    """Wait for a resumed task to leave the previous terminal status.
+
+    ``_wait_for_idle`` returns as soon as the status is not active, so it would
+    observe the old ``cancelled`` status if the new worker has not written its
+    ``starting`` state yet.  Under a loaded thread pool that race is real.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = core.load_job_state(job_id) or {}
+        runtime = core.get_job_runtime_status(job_id, state)
+        if (runtime.get("status") in core.RUNTIME_ACTIVE_STATUSES
+                or core.is_job_worker_alive(job_id)
+                or state.get("p2_done")):
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def test_engine_config_round_trip(adapter_env):
     adapter = adapter_env["adapter"]
     core = adapter_env["core"]
@@ -714,9 +749,11 @@ def test_cancelled_task_is_recoverable_and_not_marked_complete(adapter_env):
         assert not (state.get("p1_done") and state.get("p2_done")), \
             "a cancelled task must not be reported as complete"
         assert adapter.exit_report(job_id)["worker_lock_held"] is False
+        assert _wait_for_worker_stopped(core, job_id)
 
         # Resume the same task: it must finish on the existing progress.
         adapter.start_job(job_id, "cancel.docx", None, config)
+        assert _wait_for_restart(core, job_id)
         runtime = _wait_for_idle(core, job_id, timeout=300)
         state = adapter.load_state(job_id)
         assert state.get("p1_done") and state.get("p2_done"), (runtime, state)
