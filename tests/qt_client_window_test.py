@@ -4226,3 +4226,33 @@ def test_new_project_shows_up_in_the_setup_project_box(client):
 
     assert box.findData(second["project_id"]) >= 0
     assert box.currentData() == first["project_id"]
+
+
+def test_project_task_menu_delete_confirms_and_refreshes_the_projects_page(client, monkeypatch):
+    """项目页任务行的「删除…」走原有确认框；确认后任务被删、项目页重新读取。"""
+    adapter = client["adapter"]
+    window = client["window"]
+    app = client["app"]
+    from folith.qt import window as window_module
+
+    source = client["tmp"] / "doomed.docx"
+    source.write_bytes(_make_docx(["要删除的任务。"]))
+    job_id = adapter.import_documents([source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    window.manage_projects()
+    app.processEvents()
+
+    asked: list[str] = []
+    monkeypatch.setattr(window, "_confirm", lambda title, *a, **k: asked.append(title) or True)
+    deleted: list[str] = []
+    real_delete = window_module.adapter.delete_job
+    monkeypatch.setattr(window_module.adapter, "delete_job",
+                        lambda item: deleted.append(item) or real_delete(item))
+    reloads: list[int] = []
+    monkeypatch.setattr(window, "refresh_projects", lambda: reloads.append(1))
+
+    window.projects.deleteJobsRequested.emit([job_id])
+    app.processEvents()
+
+    assert asked == ["删除任务"]
+    assert deleted == [job_id]
+    assert reloads, "删除后要刷新项目页"

@@ -2010,5 +2010,6 @@
   "必须处理的问题 {v0} 个#one": "{v0} required issue",
   "在「设置 → 应用」中卸载 Folith 只移除应用本身；任务、术语、翻译记忆和设置都会保留，重新安装后原样可见。": "Uninstalling Folith from Settings → Apps removes only the app; tasks, terms, memory and settings stay and reappear after reinstalling.",
   "如需完全清除：先退出 Folith，再删除下面两处与注册表项。删除前请先导出需要保留的译文与 TMX/TBX，或用上面的「导出全部数据…」做一份备份。": "To remove everything: quit Folith, then delete the two locations below and the registry key. Export any translations and TMX / TBX you want to keep first, or use Export all data… above to make a backup.",
-  "不能把数据放在 Folith 应用文件夹里：升级或替换应用时会被覆盖。请选择应用文件夹以外的位置。": "Folith's data cannot be kept in the Folith application folder: upgrading or replacing the app overwrites it. Choose a location outside the application folder."
+  "不能把数据放在 Folith 应用文件夹里：升级或替换应用时会被覆盖。请选择应用文件夹以外的位置。": "Folith's data cannot be kept in the Folith application folder: upgrading or replacing the app overwrites it. Choose a location outside the application folder.",
+  "移到项目…": "Move to project…"
 }

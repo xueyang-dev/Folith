@@ -280,6 +280,7 @@ class MainWindow(QMainWindow):
         self.projects.reloadRequested.connect(self.refresh_projects)
         self.projects.openJobRequested.connect(self.open_library_job)
         self.projects.moveRequested.connect(self.move_to_project)
+        self.projects.deleteJobsRequested.connect(self.delete_project_jobs)
         self.projects.newFromTaskRequested.connect(
             lambda job_id: self.move_to_project([job_id], mode="new"))
         self.projects.pullRequested.connect(self._pull_unsorted_into)
@@ -1198,6 +1199,13 @@ class MainWindow(QMainWindow):
             self.delete_jobs(ids)
         finally:
             self._deleting_batch = False
+
+    def delete_project_jobs(self, job_ids: list[str]) -> None:
+        """项目页「任务」里的删除：同一个确认框，删完刷新项目页。"""
+        self.delete_jobs(job_ids)
+        if self.stack.currentWidget() is self.projects:
+            self.refresh_projects()
+        self.refresh_pending_badge(force=True)
 
     def delete_jobs(self, job_ids: list[str]) -> None:
         ids = [item for item in job_ids if item]
