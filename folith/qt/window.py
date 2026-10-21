@@ -16,6 +16,7 @@ Exit rules (roadmap §3.3, MAC-01 class of defect):
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
 import sys
@@ -52,6 +53,42 @@ SUSPICIOUS_QUIT_ENV = "FOLITH_EXIT_FORCE_PROMPT"
 HOME_REFRESH_SECONDS = 5
 POLL_MS = 1000
 EDIT_SAVE_IDLE_MS = 400
+
+
+class _PhaseLog:
+    """Per-phase wall-clock timings written to the app log (cheap, always on).
+
+    ``with log.phase("segment_rows"): ...`` and, at the end, :meth:`flush` writes one
+    line per phase plus the total, so a slow run on someone's machine shows where
+    the time went. Phases and totals under ``min_ms`` are not written, which keeps
+    the once-a-second background refresh out of the log.
+    """
+
+    def __init__(self, write, operation: str, subject: str = "", *, min_ms: float = 0.0) -> None:
+        self._write, self._operation, self._subject = write, operation, subject
+        self._min_ms = min_ms
+        self._phases: list[tuple[str, float]] = []
+        self._started = time.perf_counter()
+
+    @contextlib.contextmanager
+    def phase(self, name: str):
+        began = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._phases.append((name, (time.perf_counter() - began) * 1000))
+
+    def flush(self) -> float:
+        total = (time.perf_counter() - self._started) * 1000
+        if total >= self._min_ms:
+            subject = f" job={self._subject}" if self._subject else ""
+            try:
+                for name, ms in self._phases:
+                    self._write(f"timing {self._operation}{subject} {name} {ms:.0f}ms")
+                self._write(f"timing {self._operation}{subject} total {total:.0f}ms")
+            except Exception:  # noqa: BLE001 - a log failure must never break the UI path
+                pass
+        return total
 
 
 class _NullProgress:
@@ -1034,9 +1071,11 @@ class MainWindow(QMainWindow):
 
         def done(results) -> None:
             finished()
+            timing = _PhaseLog(self._log, "import_done")
             created = [item for item in results if item.created]
             failed = [item for item in results if not item.ok]
-            self.refresh_home()
+            with timing.phase("refresh_home"):
+                self.refresh_home()
             if on_result is not None:
                 on_result(results)
             if failed and on_result is None:
@@ -1059,9 +1098,11 @@ class MainWindow(QMainWindow):
                 # （worker 线程排队回主线程），重复载入会把工作台已有的选择与编辑器
                 # 内容再重置一次（实测：编辑器被清空、正文变成空态）。
                 if open_result and self._current_job_id != results[0].job_id:
-                    self.open_job(results[0].job_id)
+                    with timing.phase("open_job"):
+                        self.open_job(results[0].job_id)
                 if decision:
                     self.start_or_resume()
+            timing.flush()
 
         def failed(message: str, detail: str) -> None:
             finished()
@@ -1140,12 +1181,29 @@ class MainWindow(QMainWindow):
             self, pixmap, start, card_rect, opening=False, land=origin is not None,
             on_done=lambda: card.paper.set_ghost(False) if card is not None else None)
 
+    #: Tasks with at least this many segments get the loading overlay: building the
+    #: grid takes long enough on the UI thread for the window to look frozen.
+    LOADING_SEGMENTS = 300
+
+    def _show_loading(self, message: str) -> None:
+        overlay = getattr(self, "_loading_overlay", None)
+        if overlay is None:
+            overlay = self._loading_overlay = components.LoadingOverlay(self.stack)
+        overlay.present(message)
+
+    def _hide_loading(self) -> None:
+        overlay = getattr(self, "_loading_overlay", None)
+        if overlay is not None:
+            overlay.dismiss()
+
     def open_job(self, job_id: str) -> None:
         if not job_id:
             return
+        timing = _PhaseLog(self._log, "open_job", job_id)
         flight = self._card_document(job_id)
         self.workbench.flush_draft()
-        state = adapter.load_state(job_id)
+        with timing.phase("load_state"):
+            state = adapter.load_state(job_id)
         if not state:
             self._failure(i18n.tr('无法打开任务'), i18n.tr('任务 {v0} 的状态文件不可读。', v0=job_id), task=False)
             self.refresh_home()
@@ -1158,8 +1216,13 @@ class MainWindow(QMainWindow):
         # 上一次的终态不该影响新任务的"终态变化"判断（节流键已含任务标识，
         # 这里只是让状态本身不跨任务残留）。
         self._last_runtime_status = ""
-        rows = adapter.segment_rows(job_id, state)
-        snapshots = adapter.delivery_snapshots(job_id)
+        loading = len(state.get("pairs") or state.get("paras") or []) >= self.LOADING_SEGMENTS
+        if loading:
+            self._show_loading(i18n.tr('正在打开任务…'))
+        with timing.phase("segment_rows"):
+            rows = adapter.segment_rows(job_id, state)
+        with timing.phase("delivery_snapshots"):
+            snapshots = adapter.delivery_snapshots(job_id)
         # 大任务（几千段）在这里要在 GUI 线程算交付预检、术语与原页，可达 1–2 秒。
         # 没法在不改核心的前提下挪到后台，至少让用户看到"正在打开"而不是窗口冻结。
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1168,8 +1231,10 @@ class MainWindow(QMainWindow):
         try:
             # 「译前准备」的数据必须先于 load 填进去：load 内部会立刻决定正文区放
             # 准备面板还是段落网格，晚一步就会先闪一下上一个任务的面。
-            self._load_setup(job_id, state)
-            self.workbench.load(job_id, self.config, state, rows, snapshots)
+            with timing.phase("setup_panel"):
+                self._load_setup(job_id, state)
+            with timing.phase("workbench.load"):
+                self.workbench.load(job_id, self.config, state, rows, snapshots)
             self.stack.setCurrentWidget(self.workbench)
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
@@ -1178,10 +1243,13 @@ class MainWindow(QMainWindow):
             # included); a forced refresh here re-read and re-rendered it all a
             # second time (~1.5 s on a book-length task).  An ordinary refresh
             # only syncs the run state and menus while the signature is unchanged.
-            self.refresh_workbench()
+            with timing.phase("refresh_workbench"):
+                self.refresh_workbench()
             self._fly(flight, opening=True, overview=self._overview_document())
         finally:
             QApplication.restoreOverrideCursor()
+            self._hide_loading()
+            timing.flush()
             # 只清打开任务的临时查询值。
             if self.last_notice() == opening:
                 self._last_notice = ""
@@ -1677,10 +1745,24 @@ class MainWindow(QMainWindow):
         job_id = self._current_job_id
         if not job_id:
             return
+        # The once-a-second background refresh is only logged when it is slow.
+        timing = _PhaseLog(self._log, "refresh_workbench", job_id, min_ms=self.SLOW_REFRESH_MS)
+        try:
+            self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded)
+        finally:
+            timing.flush()
+            self._hide_loading()
+
+    #: Refreshes faster than this are not written to the log.
+    SLOW_REFRESH_MS = 150
+
+    def _refresh_workbench(self, job_id: str, timing: _PhaseLog, *, force: bool,
+                           preloaded: bool) -> None:
         signature = adapter.state_signature(job_id)
         changed = preloaded or signature != self._cached_signature
         if (changed or force) and not preloaded:
-            state = adapter.load_state(job_id)
+            with timing.phase("load_state"):
+                state = adapter.load_state(job_id)
             if not state:
                 self._notice(i18n.tr('任务状态不可读，已返回任务列表。'), error=True)
                 self.show_home()
@@ -1691,11 +1773,18 @@ class MainWindow(QMainWindow):
         # 任务一开始，「译前准备」就让位给段落网格：状态变了才重算，且这一句必须
         # 在 apply 之前——apply 会立刻决定正文区放哪一面。
         if changed or force:
-            self._load_setup(job_id, state)
-        rows = self._segment_rows(job_id, state)
-        runtime = adapter.runtime_view(job_id, state)
-        snapshots = adapter.delivery_snapshots(job_id) if (changed or force) \
-            else self.workbench._snapshots
+            with timing.phase("setup_panel"):
+                self._load_setup(job_id, state)
+        with timing.phase("segment_rows"):
+            rows = self._segment_rows(job_id, state)
+        # Leaving "prepare" for a large task builds the whole grid: say so first.
+        if ((changed or force) and len(rows) >= self.LOADING_SEGMENTS
+                and getattr(self.workbench, "_showing_setup", False)):
+            self._show_loading(i18n.tr('正在载入译文…'))
+        with timing.phase("runtime_view"):
+            runtime = adapter.runtime_view(job_id, state)
+        with timing.phase("delivery_snapshots"):
+            snapshots = adapter.delivery_snapshots(job_id) if (changed or force)                 else self.workbench._snapshots
         # The delivery panel is re-validated on an explicit refresh, or when the
         # run reaches a terminal state — not on every background state write.
         status = str(runtime.get("status") or "")
@@ -1703,8 +1792,9 @@ class MainWindow(QMainWindow):
                               "stalled", "idle_incomplete")
         terminal_change = terminal and status != self._last_runtime_status
         self._last_runtime_status = status
-        self.workbench.apply(job_id, state, rows, runtime, snapshots,
-                             refresh_delivery=force or terminal_change)
+        with timing.phase("workbench.apply"):
+            self.workbench.apply(job_id, state, rows, runtime, snapshots,
+                                 refresh_delivery=force or terminal_change)
         self._sync_menu_state()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
         self._later(600, lambda: self._offer_tips(runtime))

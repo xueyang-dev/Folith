@@ -4273,3 +4273,74 @@ def test_choose_import_is_refused_while_an_import_is_running(client, monkeypatch
         window._imports_active = 0
     assert opened == []
     assert "正在导入" in window.last_notice()
+
+
+def _overlay_visible(window) -> bool:
+    overlay = getattr(window, "_loading_overlay", None)
+    return bool(overlay is not None and overlay.isVisible())
+
+
+def test_open_job_shows_a_loading_overlay_before_the_heavy_work_and_removes_it(client, monkeypatch):
+    window, adapter, app = client["window"], client["adapter"], client["app"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "big.docx",
+                                    [f"第 {i} 段。" for i in range(5)])
+    monkeypatch.setattr(type(window), "LOADING_SEGMENTS", 1)
+    seen: list[bool] = []
+    real_rows = window.workbench.load
+
+    def spying_load(*args, **kwargs):
+        seen.append(_overlay_visible(window))
+        return real_rows(*args, **kwargs)
+
+    monkeypatch.setattr(window.workbench, "load", spying_load)
+    window.open_job(job_id)
+    assert seen == [True], "the overlay must be up before the grid is built"
+    assert not _overlay_visible(window)
+    assert window._current_job_id == job_id
+
+
+def test_small_tasks_open_without_an_overlay(client, monkeypatch):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "tiny.docx", ["一段。"])
+    seen: list[bool] = []
+    real_load = window.workbench.load
+    monkeypatch.setattr(window.workbench, "load",
+                        lambda *a, **k: seen.append(_overlay_visible(window)) or real_load(*a, **k))
+    window.open_job(job_id)
+    assert seen == [False]
+
+
+def test_open_job_writes_one_timing_line_per_phase(client):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "timed.docx", ["一段。"])
+    lines: list[str] = []
+    window._log = lines.append
+    window.open_job(job_id)
+    for phase in ("load_state", "segment_rows", "workbench.load", "total"):
+        assert any(line.startswith(f"timing open_job job={job_id} {phase} ") and line.endswith("ms")
+                   for line in lines), (phase, lines)
+
+
+def test_leaving_prepare_for_a_large_task_shows_the_overlay(client, monkeypatch):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "leave.docx", ["一段。", "二段。"])
+    window.open_job(job_id)
+    monkeypatch.setattr(type(window), "LOADING_SEGMENTS", 1)
+    window.workbench._showing_setup = True
+    seen: list[bool] = []
+    real_apply = window.workbench.apply
+    monkeypatch.setattr(window.workbench, "apply",
+                        lambda *a, **k: seen.append(_overlay_visible(window)) or real_apply(*a, **k))
+    window.refresh_workbench(force=True)
+    assert seen == [True]
+    assert not _overlay_visible(window)
+
+
+def test_background_refresh_is_only_logged_when_slow(client):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "quiet.docx", ["一段。"])
+    window.open_job(job_id)
+    lines: list[str] = []
+    window._log = lines.append
+    window.refresh_workbench()
+    assert not [line for line in lines if "refresh_workbench" in line]
