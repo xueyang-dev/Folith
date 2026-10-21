@@ -9,18 +9,21 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
 def test_hidden_console_kwargs_on_windows(monkeypatch):
-    monkeypatch.setattr(desktop_process.os, "name", "nt")
+    # Do not patch os.name itself: pathlib and pytest read it globally, and a
+    # Windows name on POSIX makes Path() return WindowsPath (pytest then crashes
+    # while formatting the report).
+    monkeypatch.setattr(desktop_process, "os", SimpleNamespace(name="nt"))
     assert desktop_process.hidden_console_kwargs() == {
         "creationflags": CREATE_NO_WINDOW}
 
 
 def test_hidden_console_kwargs_on_posix(monkeypatch):
-    monkeypatch.setattr(desktop_process.os, "name", "posix")
+    monkeypatch.setattr(desktop_process, "os", SimpleNamespace(name="posix"))
     assert desktop_process.hidden_console_kwargs() == {}
 
 
 def test_tesseract_page_passes_hidden_console_flag(monkeypatch):
-    monkeypatch.setattr(desktop_process.os, "name", "nt")
+    monkeypatch.setattr(desktop_process, "os", SimpleNamespace(name="nt"))
     captured = {}
 
     def fake_run(args, **kwargs):
