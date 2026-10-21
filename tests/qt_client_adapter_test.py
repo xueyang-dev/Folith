@@ -272,6 +272,9 @@ def test_full_slice_import_translate_edit_review_deliver_reopen(adapter_env):
 
         assert adapter.start_job(job_id, "slice.docx",
                                  source.read_bytes(), config) is True
+        # A freshly queued worker may not have written its active status yet;
+        # without this the first idle read can be mistaken for completion.
+        assert _wait_for_restart(core, job_id), "the worker never became active"
         runtime = _wait_for_idle(core, job_id)
         assert runtime.get("status") == "completed", runtime
 

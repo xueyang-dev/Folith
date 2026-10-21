@@ -444,7 +444,10 @@ def test_running_task_blocks_exit_until_stopped(client):
     app = client["app"]
     tmp = client["tmp"]
 
-    stub = _Stub(tmp)
+    # A slow endpoint keeps the task active while we ask the window to quit.
+    # Without the delay a fast runner can finish all 40 segments before the
+    # close sequence starts, which is the opposite of what this test checks.
+    stub = _Stub(tmp, delay=1.0)
     url = stub.start()
     try:
         window.config = adapter.EngineConfig(
@@ -452,7 +455,6 @@ def test_running_task_blocks_exit_until_stopped(client):
             base_url=url, target_lang="简体中文", enable_review=True,
             enable_report=False, enable_understanding=False,
             enable_source_cleanup=False)
-        # A slow endpoint keeps the task active while we ask the window to quit.
         source = tmp / "slow.docx"
         source.write_bytes(_make_docx([f"第 {index} 段。" for index in range(40)]))
         window.import_paths([str(source)], autostart=False)
