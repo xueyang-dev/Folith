@@ -32,6 +32,10 @@ def test_windows_uninstaller_removes_only_what_it_installed():
     assert r'RMDir /r "$INSTDIR\_internal"' in lines
     assert r'Delete "$INSTDIR\${APP_EXE}"' in lines
     assert r'Delete "$INSTDIR\Uninstall.exe"' in lines
+    # Neither side may replace or remove files under a running Folith.
+    install = nsi.split('Section "Folith" SecMain', 1)[1].split("SectionEnd", 1)[0]
+    assert "Call RequireClosed" in install.split("File /r", 1)[0]
+    assert "Call un.RequireClosed" in nsi.split("Function un.onInit", 1)[1].split("FunctionEnd", 1)[0]
     # The build fails if the bundle grows a top-level entry the uninstaller
     # would not remove, and CI proves the round trip on the real installer.
     build = (ROOT / "scripts" / "build_qt_windows.ps1").read_text(encoding="utf-8")

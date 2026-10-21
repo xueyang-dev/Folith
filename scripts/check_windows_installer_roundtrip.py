@@ -9,7 +9,9 @@ This drives the real installer silently against two folders:
   an upgrade-install and uninstall, those files are intact, the application
   files are gone, and a stale file from the earlier install did not survive
   the upgrade;
-* a fresh folder: uninstall leaves nothing behind.
+* a fresh folder: uninstall leaves nothing behind;
+* while Folith.exe is held as a running process holds it, install and
+  uninstall both stop with exit code 2 and change nothing.
 
 It writes the per-user uninstall registry key and Start Menu shortcuts, so it
 refuses to run on a machine where Folith is already installed.
@@ -72,6 +74,56 @@ def _uninstall(target: Path, timeout: float = 120.0) -> None:
     raise SystemExit(f"uninstall did not finish within {timeout}s")
 
 
+class _HeldLikeRunning:
+    """Hold Folith.exe the way a running process does: no one else may write it.
+
+    Starting the real application here would touch the user's data folder and
+    single-instance lock, so the check reproduces the file lock instead.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.handle = None
+
+    def __enter__(self):
+        import _winapi
+
+        generic_read, share_read, open_existing = 0x80000000, 0x1, 3
+        self.handle = _winapi.CreateFile(
+            str(self.path), generic_read, share_read, 0, open_existing, 0, 0)
+        return self
+
+    def __exit__(self, *exc):
+        import _winapi
+
+        _winapi.CloseHandle(self.handle)
+
+
+def _check_refuses_while_running(installer: Path, target: Path, problems: list[str]) -> dict:
+    """Install and uninstall must stop, not half-replace files, while Folith runs."""
+    facts = {}
+    marker = target / "_internal" / "still-here.txt"
+    marker.write_text("x", encoding="utf-8")
+    with _HeldLikeRunning(target / "Folith.exe"):
+        install = subprocess.run(f'"{installer}" /S /D={target}', timeout=600, check=False)
+        # _?= runs the uninstaller in place and synchronously, so its exit code
+        # is the real one (normally it copies itself to %TEMP% and returns).
+        uninstall = subprocess.run(
+            f'"{target / "Uninstall.exe"}" /S _?={target}', timeout=120, check=False)
+    facts["install_while_running_exit"] = install.returncode
+    facts["uninstall_while_running_exit"] = uninstall.returncode
+    if install.returncode != 2:
+        problems.append(f"install while running exited {install.returncode}, expected 2")
+    if uninstall.returncode != 2:
+        problems.append(f"uninstall while running exited {uninstall.returncode}, expected 2")
+    if not marker.is_file():
+        problems.append("install/uninstall changed files while Folith was running")
+    if not _registered():
+        problems.append("uninstall while running removed the registry key")
+    marker.unlink(missing_ok=True)
+    return facts
+
+
 def run(installer: Path) -> tuple[dict, list[str]]:
     problems: list[str] = []
     facts: dict = {"installer": str(installer)}
@@ -96,6 +148,8 @@ def run(installer: Path) -> tuple[dict, list[str]]:
             problems.append("install did not register the uninstall key")
         if not _shortcut_dir().is_dir():
             problems.append("install did not create the Start Menu folder")
+
+        facts.update(_check_refuses_while_running(installer, shared, problems))
 
         stale = shared / "_internal" / "stale-from-previous-version.dll"
         stale.write_bytes(b"old")
