@@ -468,6 +468,67 @@ def test_running_task_blocks_exit_until_stopped(client):
         stub.stop()
 
 
+def test_exit_prompt_states_the_resume_contract_for_running_tasks(client, monkeypatch):
+    """§24: quitting a running task must promise resumability, not "cancel"."""
+    adapter = client["adapter"]
+    window = client["window"]
+    app = client["app"]
+    tmp = client["tmp"]
+    from folith.qt import window as window_module
+
+    source = tmp / "running.docx"
+    source.write_bytes(_make_docx(["一段。"]))
+    job_id = adapter.import_documents(
+        [source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    window.open_job(job_id)
+    report = {"job_id": job_id, "active_jobs": [job_id], "safe_to_exit": False,
+              "draft_count": 0, "worker_lock_held": True, "task_running": True,
+              "active_status": "running", "draft_segments": [], "action": "incomplete"}
+    monkeypatch.setattr(adapter, "exit_report", lambda job_id=None: dict(report))
+    stopped: list[str] = []
+    monkeypatch.setattr(
+        adapter, "stop_job_and_wait",
+        lambda job, timeout=45.0: (stopped.append(job),
+                                   {"stopped": True, "worker_lock_held": False,
+                                    "status": "interrupted"})[1])
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    monkeypatch.setattr(window_module, "_non_interactive_exit", lambda: False)
+
+    prompts: list[tuple[str, str]] = []
+
+    def confirm(title, message, yes="确定", no="取消", tone="info"):
+        prompts.append((title, message))
+        return True
+
+    monkeypatch.setattr(window, "_confirm", confirm)
+    window.close()
+    assert _pump(app, 120, lambda: window._closing_accepted)
+    quit_prompt = next(p for p in prompts if p[0] == "退出 Folith")
+    assert "释放写入锁" in quit_prompt[1]
+    assert "已完成的进度会保留" in quit_prompt[1]
+    assert stopped == [job_id], "exit must stop through the resumable exit path"
+
+
+def test_minimizing_a_running_task_reassures_it_keeps_running(client, monkeypatch):
+    window = client["window"]
+    adapter = client["adapter"]
+    from folith.qt import window as window_module
+
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    window._current_job_id = "job-minimize"
+    monkeypatch.setattr(window, "isMinimized", lambda: True)
+    monkeypatch.setattr(adapter, "job_is_alive", lambda job_id: True)
+    shown: list[str] = []
+    monkeypatch.setattr(window, "_notice",
+                        lambda text, **kwargs: shown.append(text))
+
+    window.changeEvent(QEvent(QEvent.Type.WindowStateChange))
+    assert shown and "最小化不会停止" in shown[0]
+    shown.clear()
+    window.changeEvent(QEvent(QEvent.Type.WindowStateChange))
+    assert not shown, "the minimize hint must only appear once per session"
+
+
 def test_core_can_never_write_into_the_install_directory(client, tmp_path):
     """Data safety: a relative ``outputs`` must be corrected, not used.
 

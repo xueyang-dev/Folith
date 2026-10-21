@@ -412,6 +412,11 @@ def cancel_job(job_id: str, *, force: bool = False) -> bool:
     return bool(_core().request_job_cancel(str(job_id or ""), force=force))
 
 
+def stop_job_for_exit(job_id: str) -> bool:
+    """Stop a task to quit the app, publishing a resumable ``interrupted`` state."""
+    return bool(_core().request_job_exit(str(job_id or "")))
+
+
 def retry_job(job_id: str) -> bool:
     """Retry the failed pipeline step of a task."""
     return bool(_core().retry_job_step(str(job_id or "")))
@@ -437,4 +442,5 @@ __all__ = [
     "resume_job",
     "retry_job",
     "start_job",
+    "stop_job_for_exit",
 ]

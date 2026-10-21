@@ -1996,5 +1996,17 @@
   "已恢复默认数据与输出位置，重启 Folith 后生效。": "Se restauró la ubicación predeterminada de datos y resultados. Reinicia Folith para aplicarlo.",
   "任务运行时不能更改数据位置。": "No se puede cambiar la ubicación de datos mientras hay una tarea en ejecución.",
   "{v0} 段按策略跳过": "{v0} segmentos omitidos por la política",
-  "这段按策略跳过，没有独立语义审校结论；跳过不等于审校通过。如需覆盖本段，可单独运行审校。": "Este párrafo se omitió por la política y no tiene una conclusión de revisión semántica independiente. Omitirlo no significa que haya superado la revisión. Para cubrir este párrafo, ejecute la revisión por separado."
+  "这段按策略跳过，没有独立语义审校结论；跳过不等于审校通过。如需覆盖本段，可单独运行审校。": "Este párrafo se omitió por la política y no tiene una conclusión de revisión semántica independiente. Omitirlo no significa que haya superado la revisión. Para cubrir este párrafo, ejecute la revisión por separado.",
+  "{v0} 个任务仍在运行。退出会先停止它们并释放写入锁；已完成的进度会保留，重新打开任务即可继续。": "{v0} tarea(s) siguen en curso. Al salir se detendrán y se liberará el bloqueo de escritura; el progreso terminado se conserva y, al reabrir la tarea, se reanuda.",
+  "任务在后台继续运行；最小化不会停止或暂停它。": "La tarea sigue ejecutándose en segundo plano; minimizar no la detiene ni la pausa.",
+  "已请求暂停；当前操作结束后暂停。关闭或退出应用后仍可继续。": "Pausa solicitada; se pausará al terminar la operación actual. Puede reanudarse tras cerrar o salir de la aplicación.",
+  "待翻译": "Sin traducir",
+  "未审校": "Sin revisar",
+  "机器翻译": "Traducción automática",
+  "翻译记忆（已匹配并复用）": "Memoria de traducción (coincide y se reutiliza)",
+  "⚠ 草稿基于旧译文，提交会覆盖较新的文本": "⚠ El borrador parte de una traducción anterior; al enviarlo se sobrescribe el texto más reciente",
+  "有未提交草稿": "Borrador sin enviar",
+  "未排除": "No excluido",
+  "必须处理的问题 {v0} 个": "{v0} problemas obligatorios",
+  "必须处理的问题 {v0} 个#one": "{v0} problema obligatorio"
 }

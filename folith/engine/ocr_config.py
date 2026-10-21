@@ -30,21 +30,8 @@ OCR_CONFIDENCE_THRESHOLD_DEFAULT = 88.0
 OCR_CHECKPOINT_VERSION = 1
 
 
-# Fixed 220 DPI stays the production baseline; adaptive resolution is an
-# opt-in experiment whose result must be compared against this baseline.
+# Fixed 220 DPI stays the production baseline for scanned-page OCR.
 OCR_DPI_BASELINE = 220
-
-
-OCR_ADAPTIVE_LOW_DPI = 150
-
-
-OCR_ADAPTIVE_HIGH_DPI = 300
-
-
-OCR_ADAPTIVE_MIN_CONFIDENCE = 70.0
-
-
-OCR_ADAPTIVE_MIN_TEXT_DENSITY = 0.30
 
 
 _OCR_PAGE_NUMBER_RE = re.compile(

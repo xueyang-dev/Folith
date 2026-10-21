@@ -1,4 +1,4 @@
-"""Page-granular OCR cache, quick-profile reuse and adaptive resolution.
+"""Page-granular OCR cache and quick-profile reuse.
 
 The contracts pinned here are the ones that decide whether a cached OCR page may
 be reused at all:
@@ -7,9 +7,7 @@ be reused at all:
 * the cache identity covers document hash, page index, backend/model/version,
   language, DPI and preprocessing version;
 * resume preserves page order, has no duplicates and never mixes pages;
-* the smart-profile representative pages are reused by the full run;
-* adaptive DPI retries only pages whose quality signal actually failed, and the
-  decision is recorded in the performance metadata.
+* the smart-profile representative pages are reused by the full run.
 """
 from __future__ import annotations
 
@@ -192,55 +190,6 @@ def test_legacy_checkpoint_is_adopted_only_for_the_legacy_identity(tmp_path, fak
     core._ocr_pdf_text_with_warnings(
         pdf, workers=1, queue_size=1, checkpoint_dir=tmp_path, dpi=300)
     assert len(calls) == 3
-
-
-def test_quality_signal_flags_low_confidence_and_replacement_chars():
-    assert core._ocr_page_quality_ok(
-        {"blocks": _blocks("A perfectly readable sentence.", 95.0)}) is True
-    assert core._ocr_page_quality_ok(
-        {"blocks": _blocks("blurry text", 40.0)}) is False
-    assert core._ocr_page_quality_ok(
-        {"blocks": _blocks("br\u00f6ken \ufffd glyphs here", 95.0)}) is False
-    assert core._ocr_page_quality_ok({"blocks": []}) is False
-
-
-def test_adaptive_dpi_retries_only_pages_that_failed_quality(tmp_path, fake_ocr, monkeypatch):
-    calls, _ = fake_ocr
-    pdf = _pdf_bytes(4)
-    # Page 2 is the only one the quality gate rejects.
-    monkeypatch.setattr(
-        core, "_ocr_page_quality_ok",
-        lambda record, **_kw: int(record.get("page_number") or 0) != 2)
-
-    result = core._ocr_pdf_text_with_warnings(
-        pdf, workers=1, queue_size=1, checkpoint_dir=tmp_path,
-        adaptive_dpi=True, return_details=True)
-    details = result[2]
-    assert details["ocr_adaptive_dpi"] is True
-    assert details["ocr_adaptive_retried_pages"] == [2]
-    assert details["ocr_dpi_used_by_page"]["1"] == core.OCR_ADAPTIVE_HIGH_DPI
-    assert details["ocr_dpi_used_by_page"]["0"] == core.OCR_ADAPTIVE_LOW_DPI
-    # 4 pages on the first pass + 1 retry
-    assert len(calls) == 5
-    assert any("自适应 OCR 分辨率" in warning for warning in result[1])
-
-
-def test_adaptive_cache_round_trip_is_stable(tmp_path, fake_ocr, monkeypatch):
-    calls, _ = fake_ocr
-    pdf = _pdf_bytes(4)
-    monkeypatch.setattr(
-        core, "_ocr_page_quality_ok",
-        lambda record, **_kw: int(record.get("page_number") or 0) != 2)
-    first = core._ocr_pdf_text_with_warnings(
-        pdf, workers=1, queue_size=1, checkpoint_dir=tmp_path,
-        adaptive_dpi=True, return_details=True)
-    calls.clear()
-    second = core._ocr_pdf_text_with_warnings(
-        pdf, workers=1, queue_size=1, checkpoint_dir=tmp_path,
-        adaptive_dpi=True, return_details=True)
-    assert calls == []  # nothing recomputed, including the high-DPI page
-    assert second[0] == first[0]
-    assert second[2]["ocr_dpi_used_by_page"] == first[2]["ocr_dpi_used_by_page"]
 
 
 def test_cache_module_identity_covers_every_dimension():

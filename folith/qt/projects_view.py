@@ -104,6 +104,19 @@ class _Reflow(QWidget):
         self._arrange(event.size().width())
 
 
+def _status_chip_width(*labels: str) -> int:
+    """状态芯片的宽度：外语里 «Ожидает проверки» 比 «Подтверждено» 长，两个都要量。
+
+    固定列宽（早先的 84px）在俄语/西语下会把芯片里的字截掉，所以列宽按芯片量。
+    """
+    chip = style_module.Chip("", "ok")
+    width = 0
+    for label in labels:
+        chip.setText(label)
+        width = max(width, chip.sizeHint().width())
+    return width
+
+
 def _cell(text: object) -> QTableWidgetItem:
     item = QTableWidgetItem(str(text or ""))
     item.setTextAlignment(LEADING)
@@ -761,9 +774,7 @@ class ProjectsView(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.term_table.setColumnWidth(3, 84)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.term_table.setColumnWidth(4, 132)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.term_table.itemSelectionChanged.connect(self._term_selected)
         box.addWidget(self.term_table, 1)
@@ -949,6 +960,8 @@ class ProjectsView(QWidget):
                     continue
             rows.append(entry)
         keep = self._keep_source
+        # 列宽先定下来：行里的芯片是按列宽摆放的，填完行再改列宽，芯片来不及重排。
+        self._sync_term_columns()
         self._term_rows = rows[:PAGE]
         self._review_items = [e["item"] for e in self._term_rows if e["kind"] == "pending"]
         self._review_rows = {}
@@ -979,6 +992,17 @@ class ProjectsView(QWidget):
         self._keep_source = ""
         self._term_selected()
         self._sync_batch()
+
+    def _sync_term_columns(self) -> None:
+        """状态列按芯片量宽、来源列按内容量宽：固定像素在长语言下会截断。
+
+        俄语里 «Подтверждено»、«Добавлено при проверке» 都比早先的 84/132px 长，
+        固定列宽会让它们被省略号截掉。状态列还要留出单元格内边距
+        （QSS 的 item padding 8+8）和芯片宿主自己的右边距（6），芯片才放得下。
+        """
+        width = _status_chip_width(i18n.tr('已确认'), i18n.tr('待审核')) + 24
+        if self.term_table.columnWidth(3) != width:
+            self.term_table.setColumnWidth(3, max(84, width))
 
     FIRST_ROWS = 40
     ROW_CHUNK = 60
@@ -1296,7 +1320,7 @@ class ProjectsView(QWidget):
         grid.setContentsMargins(16, 4, 16, 0)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
-        chip_width = style_module.Chip(i18n.tr('已确认')).sizeHint().width() + 4
+        chip_width = _status_chip_width(i18n.tr('已确认'), i18n.tr('待审核')) + 4
         for column, text in enumerate((i18n.tr('原文'), i18n.tr('译名'), i18n.tr('状态'), i18n.tr('出现'))):
             title = _text(text, "time")
             title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)

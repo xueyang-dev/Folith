@@ -68,6 +68,33 @@ def test_paused_checkpoint_reasserts_pause_after_false_stall(monkeypatch, recove
     assert not runtime["pause_requested"]
 
 
+def test_request_job_exit_releases_paused_worker_and_keeps_resumable(monkeypatch):
+    runtime = {"status": "paused", "phase": "paused", "pause_requested": True,
+               "cancel_requested": False, "exit_requested": False}
+    monkeypatch.setattr(core, "load_runtime_state", lambda job: dict(runtime))
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda job: True)
+    monkeypatch.setattr(core, "update_runtime_state",
+                        lambda job, **changes: runtime.update(changes))
+    assert core.request_job_exit("job")
+    assert runtime["exit_requested"] and runtime["cancel_requested"]
+    assert runtime["status"] == "cancelling"
+    with pytest.raises(RuntimeError, match="请求取消"):
+        core._runtime_pause_checkpoint("job")
+
+
+def test_request_job_exit_without_worker_marks_interrupted(monkeypatch):
+    runtime = {"status": "running", "cancel_requested": False, "exit_requested": False}
+    monkeypatch.setattr(core, "load_runtime_state", lambda job: dict(runtime))
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda job: False)
+    monkeypatch.setattr(core, "_job_execution_alive", lambda job: False)
+    monkeypatch.setattr(core, "update_runtime_state",
+                        lambda job, **changes: runtime.update(changes))
+    assert core.request_job_exit("job")
+    assert runtime["status"] == "interrupted"
+    assert runtime["error"] is None
+    assert runtime["worker"]["owner_pid"] is None
+
+
 def test_annotate_stage_cooperative_pause(monkeypatch, tmp_path):
     monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     state = core.new_job_state("annot_pause.docx")

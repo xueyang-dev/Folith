@@ -267,6 +267,18 @@ def _runtime_cancel_requested(job_id):
     return bool((load_runtime_state(job_id) or {}).get("cancel_requested"))
 
 
+def _runtime_exit_requested(job_id):
+    """True when the app is quitting and asked this task to stop.
+
+    Distinct from a user cancel: the worker stops and releases its lock, but the
+    task is published as ``interrupted`` (resumable) rather than ``cancelled`` so
+    the contract "quit keeps committed batches, reopen offers resume" is honest.
+    """
+    if not job_id:
+        return False
+    return bool((load_runtime_state(job_id) or {}).get("exit_requested"))
+
+
 def _runtime_pause_checkpoint(job_id, paused_message=None):
     """Pause cooperatively between operations; keep in-memory results and lease.
 
@@ -313,7 +325,8 @@ def request_job_pause(job_id):
 def continue_job(job_id):
     if not is_job_worker_alive(job_id):
         return False
-    update_runtime_state(job_id, pause_requested=False, status="running", phase="running",
+    update_runtime_state(job_id, pause_requested=False, exit_requested=False,
+                         status="running", phase="running",
                          event="正在继续任务", event_name="continue_requested",
                          event_visibility="user", event_category="lifecycle")
     return True
@@ -499,10 +512,6 @@ from folith.engine.runtime_telemetry import (  # noqa: F401  (re-export: core ke
 )
 from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its public surface)
     DEFAULT_OCR_MODE,
-    OCR_ADAPTIVE_HIGH_DPI,
-    OCR_ADAPTIVE_LOW_DPI,
-    OCR_ADAPTIVE_MIN_CONFIDENCE,
-    OCR_ADAPTIVE_MIN_TEXT_DENSITY,
     OCR_CHECKPOINT_VERSION,
     OCR_CONFIDENCE_THRESHOLD_DEFAULT,
     OCR_DPI_BASELINE,
@@ -525,7 +534,6 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     _legacy_select_tesseract_language,
     _ocr_cache_dir,
     _ocr_checkpoint_path,
-    _ocr_env_flag,
     _ocr_pdf_text,
     _ocr_queue_size_default,
     _ocr_runtime_metadata,
@@ -877,50 +885,10 @@ def resolve_paddle_model(model_id):
 
 
 
-def _ocr_page_quality_ok(record, *, min_confidence=None, min_density=None):
-    """Quality signal that decides whether a page needs a higher-DPI retry.
-
-    Deliberately conservative: it only says "not good enough" on evidence the
-    rest of the pipeline already treats as a source-quality problem —
-    replacement characters, very low alphanumeric density, or low OCR
-    confidence.  It never claims a page is perfect, only that re-running it at a
-    higher DPI has a plausible chance of helping.
-    """
-    threshold = (OCR_ADAPTIVE_MIN_CONFIDENCE if min_confidence is None
-                 else float(min_confidence))
-    density_floor = (OCR_ADAPTIVE_MIN_TEXT_DENSITY if min_density is None
-                     else float(min_density))
-    blocks = (record or {}).get("blocks") or []
-    texts = []
-    confidences = []
-    for block in blocks:
-        text = re.sub(r"\s+", " ", str(block.get("text") or "").strip())
-        if not text:
-            continue
-        texts.append(text)
-        try:
-            confidence = float(block.get("confidence"))
-        except (TypeError, ValueError):
-            confidence = None
-        if confidence is not None:
-            confidences.append(confidence)
-    if not texts:
-        return False
-    joined = " ".join(texts)
-    if "\ufffd" in joined or "\u25a1" in joined:
-        return False
-    alnum = sum(1 for char in joined if char.isalnum())
-    if alnum / max(1, len(joined)) < density_floor:
-        return False
-    if confidences and (sum(confidences) / len(confidences)) < threshold:
-        return False
-    return True
-
-
 def _ocr_pdf_text_with_warnings(
     file_bytes, max_pages=None, on_progress=None, *, workers=None, queue_size=None,
     checkpoint_dir=None, cancel_check=None, profiler=None, return_details=False,
-    dpi=None, adaptive_dpi=None, backend=None, profile_cache_dir=None,
+    dpi=None, backend=None, profile_cache_dir=None,
     ocr_language=None, ocr_psm=None, paddle_model=None, online_config=None,
 ):
     """OCR a scanned PDF with the local backend and return ``(text, warnings)``.
@@ -948,9 +916,6 @@ def _ocr_pdf_text_with_warnings(
     cache instead, and the formal run reads that root in addition to its own
     job-scoped cache.  A page is only reused when its full identity matches, so
     a different DPI / backend / version / document still recomputes.
-
-    ``adaptive_dpi`` is an opt-in experiment: a low-DPI first pass, with a
-    higher-DPI rerun only for pages whose quality signal fails.
     """
     warnings = []
     command = _find_tesseract()
@@ -1048,10 +1013,6 @@ def _ocr_pdf_text_with_warnings(
         "explicit_ocr_language": bool(str(ocr_language or "").strip()),
     }
     runtime_metadata = {**runtime_metadata, **language_metadata}
-    adaptive = (_ocr_env_flag("FOLIOTHREAD_OCR_ADAPTIVE_DPI", False)
-                if adaptive_dpi is None else bool(adaptive_dpi))
-    first_dpi = OCR_ADAPTIVE_LOW_DPI if adaptive else base_dpi
-    retry_dpi = max(base_dpi, OCR_ADAPTIVE_HIGH_DPI) if adaptive else base_dpi
     source_hash = hashlib.sha256(file_bytes or b"").hexdigest()
     cache = _OCRPageCache(_ocr_cache_dir(checkpoint_dir))
     # Read-only secondary cache holding the quick-profile representative pages.
@@ -1110,20 +1071,13 @@ def _ocr_pdf_text_with_warnings(
             else:
                 indices = sorted({0, count // 2, count - 1})[:max_pages]
             # Lookup order is best-evidence-first: a page already computed at
-            # the retry DPI beats the first-pass DPI, which beats a legacy
-            # checkpoint (adopted only when its identity matches exactly).
+            # the current DPI beats a legacy checkpoint (adopted only when its
+            # identity matches exactly).
             page_records = {}
             dpi_by_page = {}
-            if adaptive:
-                for loader_dpi in (retry_dpi, first_dpi):
-                    for key, record in _load_cached(loader_dpi).items():
-                        if key not in page_records:
-                            page_records[key] = record
-                            dpi_by_page[key] = loader_dpi
-            else:
-                for key, record in _load_cached(first_dpi).items():
-                    page_records[key] = record
-                    dpi_by_page[key] = first_dpi
+            for key, record in _load_cached(base_dpi).items():
+                page_records[key] = record
+                dpi_by_page[key] = base_dpi
             legacy_pages = _read_legacy_ocr_pages(
                 None if model_version else legacy_path, source_sha256=source_hash, indices=indices,
                 language=language, backend=backend_name, model=backend_model,
@@ -1137,15 +1091,14 @@ def _ocr_pdf_text_with_warnings(
             failed_pages = []
             render_stage = profiler.start_stage(
                 "rasterize", concurrency=1, page_count=len(indices),
-                metadata={"dpi": first_dpi, "baseline_dpi": base_dpi,
-                          "adaptive_dpi": adaptive, "queue_size": queue_size,
+                metadata={"dpi": base_dpi, "baseline_dpi": base_dpi,
+                          "queue_size": queue_size,
                           "cached_pages": cached_pages},
             ) if profiler is not None else None
             ocr_stage = profiler.start_stage(
                 "ocr", concurrency=workers, page_count=len(indices),
                 metadata={**runtime_metadata, "queue_size": queue_size,
-                          "cached_pages": cached_pages, "adaptive_dpi": adaptive,
-                          "first_dpi": first_dpi, "retry_dpi": retry_dpi},
+                          "cached_pages": cached_pages, "dpi": base_dpi},
             ) if profiler is not None else None
             page_lock = threading.RLock()
             queue_lock = threading.RLock()
@@ -1157,20 +1110,17 @@ def _ocr_pdf_text_with_warnings(
             dpi_used_by_page = {}
             page_timings = {}
             page_requests = {}
-            adaptive_retried = []
             # Constant-size run record: written once when the run starts so a
             # crash leaves evidence of what was in flight, then once at the end.
             cache.write_manifest(
                 source_sha256=source_hash, indices=indices, language=language,
                 backend=backend_name, model=backend_model,
-                backend_version=cache_backend_version, dpi=first_dpi, status="running",
+                backend_version=cache_backend_version, dpi=base_dpi, status="running",
                 completed_pages=cached_pages,
                 psm=effective_psm, direction=text_direction_value,
                 ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
                 backend_options=cache_backend_options,
-                extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
-                       "first_dpi": first_dpi, "retry_dpi": retry_dpi,
-                       **language_metadata})
+                extra={"baseline_dpi": base_dpi, **language_metadata})
 
             def check_cancel():
                 if cancel_check and cancel_check():
@@ -1343,20 +1293,7 @@ def _ocr_pdf_text_with_warnings(
                 emit_page_progress()
                 failed_pages.extend(run_pass(
                     [index for index in indices if str(index) not in page_records],
-                    first_dpi))
-                if adaptive and not stop_event.is_set():
-                    retry_indices = [
-                        index for index in indices
-                        if str(index) in page_records
-                        and dpi_by_page.get(str(index), first_dpi) < retry_dpi
-                        and not _ocr_page_quality_ok(page_records[str(index)])
-                    ]
-                    if retry_indices:
-                        adaptive_retried = [index + 1 for index in retry_indices]
-                        warnings.append(
-                            f"自适应 OCR 分辨率：{len(retry_indices)} 页首轮质量信号不达标，"
-                            f"已用 {retry_dpi} DPI 重跑（baseline {base_dpi} DPI）。")
-                        failed_pages.extend(run_pass(retry_indices, retry_dpi))
+                    base_dpi))
             except BaseException:
                 cancelled = True
                 stop_event.set()
@@ -1369,7 +1306,7 @@ def _ocr_pdf_text_with_warnings(
                 cache.write_manifest(
                     source_sha256=source_hash, indices=indices, language=language,
                     backend=backend_name, model=backend_model,
-                    backend_version=cache_backend_version, dpi=first_dpi,
+                    backend_version=cache_backend_version, dpi=base_dpi,
                     status="cancelled" if cancelled else "completed",
                     completed_pages=sum(1 for index in indices
                                         if str(index) in page_records),
@@ -1377,9 +1314,7 @@ def _ocr_pdf_text_with_warnings(
                     psm=effective_psm, direction=text_direction_value,
                     ocr_config_version=_ocr_language.OCR_CONFIG_VERSION,
                     backend_options=cache_backend_options,
-                    extra={"adaptive_dpi": adaptive, "baseline_dpi": base_dpi,
-                           "first_dpi": first_dpi, "retry_dpi": retry_dpi,
-                           "retried_pages": adaptive_retried,
+                    extra={"baseline_dpi": base_dpi,
                            **language_metadata,
                            "dpi_used_by_page": {
                                key: dpi_used_by_page[key]
@@ -1467,10 +1402,6 @@ def _ocr_pdf_text_with_warnings(
                 "ocr_cache_stats": cache.stats(),
                 "ocr_cache_bytes_written": cache.bytes_written(),
                 "ocr_dpi_baseline": base_dpi,
-                "ocr_dpi_first_pass": first_dpi,
-                "ocr_dpi_retry": retry_dpi,
-                "ocr_adaptive_dpi": adaptive,
-                "ocr_adaptive_retried_pages": adaptive_retried,
                 "ocr_dpi_used_by_page": {key: dpi_by_page[key]
                                          for key in sorted(dpi_by_page)},
                 "ocr_cached_pages": cached_pages,
@@ -1492,7 +1423,7 @@ def _ocr_pdf_text_with_warnings(
                 "page_timings": page_timings,
                 "evidence_version": 1,
                 "raw_evidence_directory": str(cache.pages_dir) if cache.pages_dir else "",
-                "cache_identity": _identity(0, first_dpi).to_dict(),
+                "cache_identity": _identity(0, base_dpi).to_dict(),
                 "page_failures": [{"page_number": n, "error": e} for n, e in failed_pages],
             }
             text = "\n\n".join(chunks)
@@ -7043,6 +6974,7 @@ def _runtime_defaults():
         "last_technical_event": "",
         "cancel_requested": False,
         "pause_requested": False,
+        "exit_requested": False,
         "attempt": 0,
         "resume_request_id": None,
         "error": None,
@@ -8019,14 +7951,27 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             )
         result_state = load_job_state(job_id) or state
         if _runtime_cancel_requested(job_id):
-            if not segment_operation:
-                trace.finish_run(job_id=job_id, status="cancelled")
-            update_runtime_state(job_id, status="cancelled", phase="cancelled",
-                                 phase_label="已取消", event="任务已取消",
-                                 event_name="job_cancelled", progress=True,
-                                 event_visibility="user", event_category="lifecycle",
-                                 worker={"owner_pid": None, "worker_id": None,
-                                         "lease_expires_at": None})
+            # An exit stop reuses the cancel boundary but must publish a
+            # resumable ``interrupted`` state, never "the user cancelled".
+            if _runtime_exit_requested(job_id) and not _runtime_business_complete(result_state):
+                if not segment_operation:
+                    trace.finish_run(job_id=job_id, status="interrupted")
+                update_runtime_state(job_id, status="interrupted", phase="interrupted",
+                                     phase_label="已停止以便退出",
+                                     event="任务已停止以便退出；可继续处理。",
+                                     event_name="job_stopped_for_exit", progress=True,
+                                     event_visibility="user", event_category="lifecycle",
+                                     worker={"owner_pid": None, "worker_id": None,
+                                             "lease_expires_at": None})
+            else:
+                if not segment_operation:
+                    trace.finish_run(job_id=job_id, status="cancelled")
+                update_runtime_state(job_id, status="cancelled", phase="cancelled",
+                                     phase_label="已取消", event="任务已取消",
+                                     event_name="job_cancelled", progress=True,
+                                     event_visibility="user", event_category="lifecycle",
+                                     worker={"owner_pid": None, "worker_id": None,
+                                             "lease_expires_at": None})
         elif _runtime_business_complete(result_state):
             if not segment_operation:
                 trace.finish_run(job_id=job_id, status="completed")
@@ -8053,21 +7998,26 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
     # lease 永不过期 → 应用还活着时这个任务会**真的硬卡死**（状态一直停在活跃态，
     # start_job_worker / resume_job 都会拒绝）。这里必须失败闭合。
     except BaseException as exc:  # noqa: BLE001 - worker must publish failure to UI
-        cancelled = bool(load_runtime_state(job_id).get("cancel_requested")) or "请求取消" in str(exc)
+        runtime_after = load_runtime_state(job_id)
+        exit_requested = bool(runtime_after.get("exit_requested"))
+        cancelled = (not exit_requested) and (
+            bool(runtime_after.get("cancel_requested")) or "请求取消" in str(exc))
+        final_status = "interrupted" if exit_requested else (
+            "cancelled" if cancelled else "failed")
         if not segment_operation:
-            trace.finish_run(job_id=job_id, status="cancelled" if cancelled else "failed", failure_reason=str(exc))
-        if not cancelled:
+            trace.finish_run(job_id=job_id, status=final_status, failure_reason=str(exc))
+        if not cancelled and not exit_requested:
             try:
                 _write_runtime_technical_log(job_id, exc)
             except OSError:
                 pass
-        current = load_runtime_state(job_id)
+        current = runtime_after
         provider_status = provider_error_status(exc)
         user_error_message = (
             provider_error_message(exc, "任务执行失败")
             if provider_status["status"] != "unknown"
             else str(exc)[:500] or "任务执行失败")
-        error = None if cancelled else {
+        error = None if (cancelled or exit_requested) else {
             "type": type(exc).__name__,
             "message": user_error_message,
             "stage": current.get("stage_id") or current.get("stage"),
@@ -8077,14 +8027,17 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         }
         try:
             update_runtime_state(
-                job_id, status="cancelled" if cancelled else "failed",
-                phase="cancelled" if cancelled else "failed",
-                phase_label="已取消" if cancelled else "步骤失败",
+                job_id, status=final_status,
+                phase=final_status,
+                phase_label="已停止以便退出" if exit_requested
+                else ("已取消" if cancelled else "步骤失败"),
                 error=error,
-                event="任务已取消" if cancelled else f"步骤失败：{user_error_message[:180]}",
-                event_name="job_cancelled" if cancelled else "job_failed",
+                event="任务已停止以便退出；可继续处理。" if exit_requested
+                else ("任务已取消" if cancelled else f"步骤失败：{user_error_message[:180]}"),
+                event_name="job_stopped_for_exit" if exit_requested
+                else ("job_cancelled" if cancelled else "job_failed"),
                 event_visibility="user",
-                event_category="lifecycle" if cancelled else "error",
+                event_category="lifecycle" if (cancelled or exit_requested) else "error",
                 progress=True, heartbeat=True,
                 worker={"owner_pid": None, "worker_id": None,
                         "lease_expires_at": None})
@@ -8192,6 +8145,7 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 else started_at,
                 operation_started_at=started_at, last_progress_at=started_at,
                 last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False, error=None,
+                exit_requested=False,
                 attempt=attempt, resume_request_id=resume_request_id or "",
                 segment_operation=segment_operation or {}, segment_operation_result="pending",
                 completed_units=completed_units, total_units=total_units,
@@ -8299,6 +8253,41 @@ def request_job_cancel(job_id, *, force=False):
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
         progress=True, heartbeat=True,
+        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+    return True
+
+
+def request_job_exit(job_id):
+    """Stop a task because the app is quitting; keep it resumable.
+
+    The exit flow must never lose committed batches.  This reuses the same
+    cooperative cancel boundary (the worker stops scheduling and releases its
+    write lock) but records ``exit_requested`` so the worker publishes
+    ``interrupted`` — the status that offers "resume" on reopen — instead of
+    ``cancelled``.  ``cancel_requested`` still breaks a paused worker out of its
+    wait loop; the two flags together mean "stop because of exit", not "the user
+    cancelled".
+    """
+    if not job_id:
+        return False
+    alive = is_job_worker_alive(job_id) or _job_execution_alive(job_id)
+    if alive:
+        update_runtime_state(
+            job_id, exit_requested=True, cancel_requested=True,
+            status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
+            event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
+            event_name="exit_requested", event_visibility="user",
+            event_category="lifecycle", progress=True)
+        return True
+    # No live worker owns this task: publish the resumable terminal state
+    # directly instead of leaving a stale active status behind.
+    update_runtime_state(
+        job_id, status="interrupted", phase="interrupted",
+        phase_label="已停止以便退出", cancel_requested=False,
+        exit_requested=True, error=None,
+        event="任务已停止以便退出；可继续处理。",
+        event_name="job_stopped_for_exit", event_visibility="user",
+        event_category="lifecycle", progress=True, heartbeat=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
     return True
 

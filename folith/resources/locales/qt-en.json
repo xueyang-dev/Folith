@@ -1945,7 +1945,7 @@
   "收起只出现过 1 次的": "Hide terms seen only once",
   "显示只出现过 1 次的 {v0} 条": "Show {v0} seen only once",
   "术语都和项目现有译名不一致：不覆盖，在术语库里标为「待审核」由你决定": "All terms differ from the project's existing translations: not overwritten, marked “Pending review” in the glossary for you to decide",
-  "来源": "Source",
+  "来源": "Origin",
   "没有符合条件的术语。": "No terms match.",
   "确认": "Confirm",
   "确认 {v0} 条": "Confirm {v0}",
@@ -1995,5 +1995,17 @@
   "已恢复默认数据与输出位置，重启 Folith 后生效。": "Default data and output location restored. Restart Folith to apply.",
   "任务运行时不能更改数据位置。": "The data location cannot be changed while a task is running.",
   "{v0} 段按策略跳过": "{v0} segments skipped by policy",
-  "这段按策略跳过，没有独立语义审校结论；跳过不等于审校通过。如需覆盖本段，可单独运行审校。": "This paragraph was skipped by policy and has no independent semantic review result. Skipping does not mean it passed review. To cover this paragraph, run review for it separately."
+  "这段按策略跳过，没有独立语义审校结论；跳过不等于审校通过。如需覆盖本段，可单独运行审校。": "This paragraph was skipped by policy and has no independent semantic review result. Skipping does not mean it passed review. To cover this paragraph, run review for it separately.",
+  "{v0} 个任务仍在运行。退出会先停止它们并释放写入锁；已完成的进度会保留，重新打开任务即可继续。": "{v0} task(s) are still running. Quitting stops them and releases the write lock first; finished progress is kept, and reopening the task resumes it.",
+  "任务在后台继续运行；最小化不会停止或暂停它。": "The task keeps running in the background; minimizing does not stop or pause it.",
+  "已请求暂停；当前操作结束后暂停。关闭或退出应用后仍可继续。": "Pause requested; pausing after the current operation finishes. You can still resume after closing or quitting the app.",
+  "待翻译": "Not translated",
+  "未审校": "Not reviewed",
+  "机器翻译": "Machine translation",
+  "翻译记忆（已匹配并复用）": "Translation memory (matched and reused)",
+  "⚠ 草稿基于旧译文，提交会覆盖较新的文本": "⚠ The draft is based on an older translation; submitting it overwrites the newer text",
+  "有未提交草稿": "Unsubmitted draft",
+  "未排除": "Not excluded",
+  "必须处理的问题 {v0} 个": "{v0} required issues",
+  "必须处理的问题 {v0} 个#one": "{v0} required issue"
 }

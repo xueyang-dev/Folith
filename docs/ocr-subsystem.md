@@ -40,7 +40,7 @@ app._run_quick_profile_with_progress / app pipeline arguments
             _iter_tesseract_tsv_rows -> _parse_tesseract_tsv
             logical word_num order; geometric RTL fallback; paragraph join
           OCRPageCache: atomic page files + start/end manifest
-          optional adaptive DPI retry; progress + profiler stages
+          fixed 220 DPI baseline; progress + profiler stages
           repeated edge text/page number filtering -> _ocr_text_to_paragraphs
   -> source_paras + extraction_report saved before cleanup
   -> source_cleanup.cleanup_source_paragraphs (checkpointed deterministic/LLM)
@@ -134,6 +134,9 @@ for macOS arm64 (11+), Windows amd64, and Linux x86_64. Intel macOS, ARM Linux,
 and Python 3.14 are outside this pinned runtime's support. Wheel availability
 is evidence of installability, not a claim of native testing on all platforms.
 See `benchmark/paddle-wheel-compatibility.json` for the retrieved wheel names.
+
+> **2026-10-19：** 下文的 PaddleOCR / Automatic 手动选择为历史记录。当前产品路径是
+> Tesseract 与 Qt 客户端的「视觉」连接，Paddle 引擎已不再在设置中提供。
 
 In the existing PDF OCR settings choose Tesseract, PaddleOCR or Automatic.
 Tesseract remains the default. Automatic prefers Tesseract; it selects Paddle
