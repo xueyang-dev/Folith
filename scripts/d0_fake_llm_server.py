@@ -278,8 +278,12 @@ def main(argv: list[str] | None = None) -> int:
     port = server.server_address[1]
     info = {"port": port, "url": f"http://127.0.0.1:{port}/v1"}
     if args.ready_file:
-        with open(args.ready_file, "w", encoding="utf-8") as handle:
-            json.dump(info, handle)
+        # Readers poll for the file to exist and then parse it; write it
+        # complete under a temporary name first so they never see it empty.
+        ready = Path(args.ready_file)
+        partial = ready.with_name(ready.name + ".partial")
+        partial.write_text(json.dumps(info), encoding="utf-8")
+        partial.replace(ready)
     print(json.dumps(info), flush=True)
     try:
         server.serve_forever()
