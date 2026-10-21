@@ -89,7 +89,7 @@ After review, the result is frozen into an immutable delivery version with a man
 
 Download `Folith-Qt-0.7.0-macos-arm64.dmg` from the [v0.7.0 release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) and drag it into Applications.
 
-- Requirements: macOS 15 (Apple Silicon only). The measured minimum build version is listed in the release notes.
+- Requirements: macOS 15.7.5 or later, Apple Silicon.
 - This build is unsigned and not notarized. The first time, right-click Folith in Applications → Open, and allow it once. **Do not** turn Gatekeeper off globally.
 - Tesseract (English, Simplified Chinese, Arabic) is bundled, so there is nothing else to install.
 - Verify (optional): the Release page publishes `SHA256SUMS.txt`. Compare it with `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` in Terminal. This confirms the file is intact and unmodified; it is not a signature.
@@ -216,7 +216,7 @@ Folith itself is free and open source. The model calls made while translating ar
 
 ## ⚠️ Known limitations
 
-- The DMG supports Apple Silicon and macOS 15 or later only; it is unsigned and not notarized.
+- The DMG supports Apple Silicon and macOS 15.7.5 or later only; it is unsigned and not notarized.
 - The Windows build supports x64 Windows 10/11; it was validated on Windows 11 x64 only and is unsigned. ARM64 Windows, other Windows versions and a separate clean VM were not tested for this release.
 - Windows manual acceptance items (native file panels, Chinese input method, sleep / wake, a real model service) are still manual; the automated frozen flow, OCR and install/uninstall checks are recorded in the release notes.
 - EPUB files with DRM are not supported.

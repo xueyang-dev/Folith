@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/release-v0.7.0-blue.svg" alt="Release v0.7.0"></a>
-  <img src="https://img.shields.io/badge/macOS-15%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15+ Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -89,7 +89,7 @@
 
 Скачайте `Folith-Qt-0.7.0-macos-arm64.dmg` со страницы [релиза v0.7.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) и перетащите в «Программы».
 
-- Требования: macOS 15 или новее, Apple Silicon. Измеренная минимальная версия указана в примечаниях к выпуску.
+- Требования: macOS 15.7.5 или новее, Apple Silicon.
 - Сборка не подписана и не нотаризована. При первом запуске щёлкните Folith в «Программах» правой кнопкой → «Открыть» и разрешите запуск один раз. **Не отключайте** Gatekeeper глобально.
 - Tesseract (английский, упрощённый китайский, арабский) уже включён в пакет, ничего ставить отдельно не нужно.
 - Проверка (по желанию): на странице релиза опубликован `SHA256SUMS.txt`. Сравните с выводом `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` в Терминале. Это подтверждает целостность файла, но не заменяет подпись.
@@ -216,7 +216,7 @@ python -m folith.qt
 
 ## ⚠️ Известные ограничения
 
-- DMG работает только на Apple Silicon и macOS 15 или новее; не подписан и не нотаризован.
+- DMG работает только на Apple Silicon и macOS 15.7.5 или новее; не подписан и не нотаризован.
 - Сборка для Windows поддерживает Windows 10/11 x64; проверена только на Windows 11 x64 и не подписана. Windows ARM64, другие версии Windows и отдельная чистая виртуальная машина не проверялись.
 - Ручная приёмка Windows (системные панели файлов, китайская раскладка ввода, сон / пробуждение, реальный сервис модели) остаётся ручной; автоматический замороженный сценарий, OCR и проверки установки / удаления записаны в примечаниях к выпуску.
 - EPUB с DRM не поддерживается.

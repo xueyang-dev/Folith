@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/release-v0.7.0-blue.svg" alt="Release v0.7.0"></a>
-  <img src="https://img.shields.io/badge/macOS-15%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15+ Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -89,7 +89,7 @@ Tras la revisión, el resultado se congela en una versión de entrega inmutable 
 
 Descarga `Folith-Qt-0.7.0-macos-arm64.dmg` de la [versión v0.7.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) y arrástralo a Aplicaciones.
 
-- Requisitos: macOS 15 o posterior, Apple Silicon. La versión mínima medida aparece en las notas de la versión.
+- Requisitos: macOS 15.7.5 o posterior, Apple Silicon.
 - Esta compilación no está firmada ni notarizada. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
 - Tesseract (inglés, chino simplificado y árabe) viene incluido, así que no hay que instalar nada más.
 - Verificación (opcional): la página de la versión publica `SHA256SUMS.txt`. Compáralo con `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` en Terminal. Confirma que el archivo está íntegro y sin modificar; no es una firma.
@@ -216,7 +216,7 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## ⚠️ Limitaciones conocidas
 
-- El DMG solo admite Apple Silicon y macOS 15 o posterior; no está firmado ni notarizado.
+- El DMG solo admite Apple Silicon y macOS 15.7.5 o posterior; no está firmado ni notarizado.
 - La compilación de Windows admite Windows 10/11 x64; solo se validó en Windows 11 x64 y no está firmada. No se probaron Windows ARM64, otras versiones ni una máquina virtual limpia independiente.
 - La aceptación manual en Windows (paneles de archivos nativos, método de entrada chino, suspensión / reactivación y un servicio de modelo real) sigue siendo manual; el flujo automático congelado, el OCR y las pruebas de instalación / desinstalación se registran en las notas de la versión.
 - No se admiten EPUB con DRM.
