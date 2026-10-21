@@ -4229,7 +4229,7 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
                 if _runtime_cancel_requested(job_id):
                     raise RuntimeError("任务已请求取消")
             if on_caption and bi % 10 == 0:
-                on_caption(f"🎨 自动标注第 {offset + 1}-{offset + len(slice_pairs)} 段"
+                on_caption(f"自动标注第 {offset + 1}-{offset + len(slice_pairs)} 段"
                            f"（共 {len(pairs)} 段，批次 {bi + 1}/{len(batches)}）...")
             _batch_timing(job_id, "annotation", bi + 1, "commit_started")
             if items is None:
@@ -4324,7 +4324,7 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
         )
     if on_caption:
         total = sum(len(v) for v in cleaned.values())
-        on_caption(f"{'⚠️ 自动标注部分完成' if failed_batches else '✅ 自动标注完成'}："
+        on_caption(f"{'自动标注部分完成' if failed_batches else '自动标注完成'}："
                    f"{total} 处（失败批次 {failed_batches}/{len(batches)}；可继续处理补跑失败批次）")
     return state
 
@@ -5343,7 +5343,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             active_batches.add(bi)
         if on_caption:
             active_str = " ".join(f"#{i + 1}" for i in sorted(active_batches))
-            on_caption(f"🌍 正在翻译第 {offset + 1}-{offset + len(batch)} 段（并发批次 {active_str}，共 {len(paras)} 段）...")
+            on_caption(f"正在翻译第 {offset + 1}-{offset + len(batch)} 段（并发批次 {active_str}，共 {len(paras)} 段）...")
         _translation_runtime("context_build", f"正在构建第 {bi + 1} 批翻译上下文")
 
         try:
@@ -5536,7 +5536,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                             _save_translation_failure()
                         raise
                     if on_caption:
-                        on_caption(f"⚠️ 批次 {bi + 1} 翻译返回格式异常，降级为逐段翻译...")
+                        on_caption(f"批次 {bi + 1} 翻译返回格式异常，降级为逐段翻译...")
                     targets = []
                     try:
                         for t in texts:
@@ -5605,7 +5605,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             review_evidence_to_record = []
             if fixable and len(fixable) <= 8:
                 if on_caption:
-                    on_caption(f"🔧 批次 {bi + 1} 发现 {len(fixable)} 个确定性问题，正在自动修复...")
+                    on_caption(f"批次 {bi + 1} 发现 {len(fixable)} 个确定性问题，正在自动修复...")
                 try:
                     repair_local_indexes = [
                         index for index in range(len(batch_pairs))
@@ -12155,10 +12155,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             if w not in warnings:
                 warnings.append(w)
         if on_caption and profile:
-            on_caption(f"✅ 文档画像完成：领域「{profile.get('domain') or '未知'}」"
+            on_caption(f"文档画像完成：领域「{profile.get('domain') or '未知'}」"
                        f"· 文本类型「{profile.get('genre') or '未知'}」")
         elif on_caption:
-            on_caption("⚠️ 文档画像失败，已跳过（可在 UI 中人工填写）。")
+            on_caption("文档画像失败，已跳过（可在 UI 中人工填写）。")
         save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
@@ -12172,7 +12172,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         if on_status:
             on_status("【阶段1.3】全文语义理解（语义单元摘要 + 全文概要）...")
         if on_caption:
-            on_caption("🧭 正在建立全文概要与当前单元摘要...")
+            on_caption("正在建立全文概要与当前单元摘要...")
         understanding_call = auxiliary_call
         units, digests, synopsis, understanding_warnings = \
             _context.build_document_understanding(
@@ -12198,9 +12198,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         _context.write_understanding_artifacts(
             job_dir(job_id), units, digests, synopsis)
         if on_caption:
-            status = synopsis.get("status") or "unavailable"
-            on_caption(f"{'⚠️ 全文理解降级' if state['understanding_status'] == 'degraded' else '✅ 全文理解完成'}："
-                       f"{len(digests)} 个语义单元 · 概要状态 {status}")
+            # 概要状态（model / deterministic_fallback 之类）是内部取值，不进运行记录。
+            on_caption(f"{'全文理解降级' if state['understanding_status'] == 'degraded' else '全文理解完成'}："
+                       f"{len(digests)} 个语义单元")
         save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
@@ -12213,7 +12213,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         if on_status:
             on_status("【阶段1.5】正在 AI 智能抽取全文核心术语...")
         if on_caption:
-            on_caption("🤖 正在从全文分布式样本中提取专业术语...")
+            on_caption("正在从全文分布式样本中提取专业术语...")
         from folith.terminology import extract_auto_terms_v2
         entries, extract_warnings = extract_auto_terms_v2(
             state["paras"], target_lang, auxiliary_config["provider"],
@@ -12225,7 +12225,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state["auto_terms"] = {e["source"]: e["target"] for e in entries}
         if entries:
             if on_caption:
-                on_caption(f"✅ 成功提取 {len(entries)} 个候选术语（全部出现位置已记录）")
+                on_caption(f"成功提取 {len(entries)} 个候选术语（全部出现位置已记录）")
         else:
             msg = "术语抽取失败（限流或返回格式异常），已跳过该步骤；可稍后点击“继续处理”重试。"
             if msg not in warnings and msg not in extract_warnings:

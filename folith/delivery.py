@@ -631,14 +631,14 @@ def _retranslate_segments_locked(
                              f"重新翻译段 {idx}", actor)
             fixed.append(idx)
             if on_caption:
-                on_caption(f"✅ 段 {idx} 已重译（{len(src)} -> {len(tgt)} 字符）")
+                on_caption(f"段 {idx} 已重译（{len(src)} -> {len(tgt)} 字符）")
         except Exception as e:
             if workflow_errors.fatal_reason(e):
                 stopped = e
                 break
             failures.append({"segment_index": idx, "error": str(e)})
             if on_caption:
-                on_caption(f"⚠️ 段 {idx} 重译失败：{str(e)[:120]}")
+                on_caption(f"段 {idx} 重译失败：{str(e)[:120]}")
 
     if fixed:
         from . import knowledge
@@ -674,7 +674,7 @@ def _retranslate_segments_locked(
                 f"第 {item['segment_index'] + 1} 段 {item['error'][:160]}"
                 for item in failures))
     if failures and on_caption:
-        on_caption(f"⚠️ {len(failures)} 段未能重译，其余已更新")
+        on_caption(f"{len(failures)} 段未能重译，其余已更新")
     return state, fixed
 @wraps(_retranslate_segments_locked)
 def retranslate_segments(*args, **kwargs):
