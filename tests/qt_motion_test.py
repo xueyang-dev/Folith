@@ -356,7 +356,13 @@ def test_source_location_waits_for_transition_and_follows_latest_selection(bench
     assert bench.pdf_panel._render_deferred and not located
     bench.select_segment(4)
     assert not located
-    QTest.qWait(350)
+    # The reveal is driven by the animation clock.  A fixed 350 ms is enough on
+    # a developer machine but not on a loaded CI runner; wait for the transition
+    # to finish while still asserting it did not happen synchronously.
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and (
+            located != [4] or bench.pdf_panel._render_deferred):
+        QTest.qWait(50)
     assert located == [4] and not bench.pdf_panel._render_deferred
     assert not bench._motion.running("translation-columns")
 
