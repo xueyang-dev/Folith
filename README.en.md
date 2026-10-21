@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/release-v0.6.0-blue.svg" alt="Release v0.6.0"></a>
+  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/release-v0.7.0-blue.svg" alt="Release v0.7.0"></a>
   <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
@@ -87,18 +87,24 @@ After review, the result is frozen into an immutable delivery version with a man
 
 ### macOS desktop client (recommended)
 
-Download `Folith-Qt-0.6.0-macos-arm64.dmg` from the [v0.6.0 release](https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0) and drag it into Applications.
+Download `Folith-Qt-0.7.0-macos-arm64.dmg` from the [v0.7.0 release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) and drag it into Applications.
 
-- Requirements: macOS 15.7.5 or later, Apple Silicon.
+- Requirements: macOS 15 (Apple Silicon only). The measured minimum build version is listed in the release notes.
 - This build is unsigned and not notarized. The first time, right-click Folith in Applications → Open, and allow it once. **Do not** turn Gatekeeper off globally.
 - Tesseract (English, Simplified Chinese, Arabic) is bundled, so there is nothing else to install.
-- Verify (optional): after downloading, run `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg`; the result should be `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8` (the same digest the Release page shows). This confirms the file is intact and unmodified; it is not a signature.
+- Verify (optional): the Release page publishes `SHA256SUMS.txt`. Compare it with `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` in Terminal. This confirms the file is intact and unmodified; it is not a signature.
 - After launching, add a model connection in Settings (see Quick start below).
-- Verify the download (optional): the release page lists the DMG's sha256, which should be `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8`. Compare with `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg` in Terminal.
 
-### Windows
+### Windows x64 desktop client
 
-The shared Qt interface has been adapted for Windows, but **there is no Windows installer yet and Windows has not been accepted**. You can only run from source, untested; not recommended for real work.
+Download one of these from the [v0.7.0 release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0):
+
+- **Installer (recommended):** `Folith-Setup-0.7.0-windows-x64.exe`. Run it, choose a folder, and launch Folith from the Start menu. Uninstalling removes the app only; tasks, terms, memory and settings stay in `%LOCALAPPDATA%\Folith`.
+- **Portable:** `Folith-Qt-0.7.0-windows-x64.zip`. Right-click → Extract All, keep the extracted `Folith` folder together, and run `Folith\Folith.exe`. Do not run it from inside the ZIP preview.
+
+Requirements: Windows 10 or Windows 11, x64. The release was tested on Windows 11 x64. No Python, Git or developer tools are needed. Tesseract (English, Simplified Chinese, Arabic) is bundled; PaddleOCR and LibreOffice are not.
+
+The Windows build is unsigned. SmartScreen may warn on first launch: choose **More info → Run anyway** after checking the publisher and the SHA-256 checksum. Do not disable Windows security globally.
 
 ### Run from source (developers)
 
@@ -113,7 +119,7 @@ Requires Python 3.10+; PySide6 is part of the dependencies. Optionally install [
 
 ### Python package (for developers)
 
-The package `foliothread` exists on PyPI (the code module is `folith`), but it is **not the recommended way to get the app**. The 0.6.0 package on PyPI still contains the legacy Streamlit UI: the `folith` command starts that old interface, not the desktop client. The old UI has been removed from the source; from the next release the `folith` command will start the desktop client directly. Until then, use the DMG above or run from source.
+The package `foliothread` exists on PyPI (the code module is `folith`), but it is **not the recommended way to get the app**. PyPI still carries the 0.6.0 package with the legacy Streamlit UI; it is not updated by this GitHub release, and `folith` there does not start the desktop client. Use the DMG / Windows assets above or run from source.
 
 ---
 
@@ -210,8 +216,9 @@ Folith itself is free and open source. The model calls made while translating ar
 
 ## ⚠️ Known limitations
 
-- The DMG supports Apple Silicon and macOS 15.7.5 or later only; it is unsigned and not notarized.
-- Windows is source-run only: no installer, not accepted.
+- The DMG supports Apple Silicon and macOS 15 or later only; it is unsigned and not notarized.
+- The Windows build supports x64 Windows 10/11; it was validated on Windows 11 x64 only and is unsigned. ARM64 Windows, other Windows versions and a separate clean VM were not tested for this release.
+- Windows manual acceptance items (native file panels, Chinese input method, sleep / wake, a real model service) are still manual; the automated frozen flow, OCR and install/uninstall checks are recorded in the release notes.
 - EPUB files with DRM are not supported.
 - Images inside tables and text boxes are not kept in the translated DOCX; the bilingual DOCX contains no images.
 - Output is not written back into the original DOCX layout; new files are generated.
@@ -250,7 +257,8 @@ The interface is Simplified Chinese by default. English, Español, Русски�
 
 - [x] **v0.4.0**: unified branding, language assets and terminology hub, delivery gate, live draft recovery
 - [x] **v0.6.0**: the native Qt desktop client becomes the main entry; EPUB / TXT / Markdown import; vision model as the primary reader of scanned pages; per-project terms and translation memory; multiple model connections; cross-segment review; translated DOCX keeps source images; appearance follows the system
-- [ ] **Next**: signing and notarization; Windows installer and acceptance; DOCX write-back preserving original layout and styles; fuzzy translation-memory matching; incremental translation across document versions
+- [x] **v0.7.0**: first Windows x64 desktop release (installer + portable ZIP); truthful review coverage that never counts skipped segments as reviewed; Windows path, encoding, console-window and window-restore fixes; resumable interrupted tasks
+- [ ] **Next**: code signing and notarization; Windows acceptance on more system versions and a clean VM; DOCX write-back preserving original layout and styles; fuzzy translation-memory matching; incremental translation across document versions
 
 ---
 

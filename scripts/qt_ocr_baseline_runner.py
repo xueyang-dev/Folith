@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -89,6 +90,27 @@ def source_text(data_dir: Path, job_id: str) -> str:
     return "\n".join(str(item) for item in state.get("paras") or [])
 
 
+def app_environment(stripped_path: str, **extra: str) -> dict[str, str]:
+    """Environment for the frozen app, with the system OCR toolchain removed.
+
+    Replacing the whole environment (HOME/PATH/TMPDIR only) is a POSIX habit:
+    on Windows it drops SystemRoot and TEMP and the process cannot start.  Start
+    from the current environment and overwrite only what this probe controls.
+    """
+    env = dict(os.environ)
+    env["PATH"] = stripped_path
+    home = env.get("HOME") or env.get("USERPROFILE") or ""
+    if home:
+        env["HOME"] = home
+    temp = (env.get("TMPDIR") or env.get("TEMP") or env.get("TMP")
+            or tempfile.gettempdir())
+    env["TMPDIR"] = temp
+    env["TEMP"] = temp
+    env["TMP"] = temp
+    env.update(extra)
+    return env
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Qt bundled OCR baseline")
     parser.add_argument("--out", required=True)
@@ -106,13 +128,18 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     python = args.python or sys.executable
 
-    # Strip Homebrew (and any other user toolchain) from the app's PATH.
+    # Strip Homebrew and every directory that exposes a system Tesseract from
+    # the app's PATH.  The engine may then only come from the payload inside the
+    # frozen app, on macOS and Windows alike.
+    system_path = os.environ.get("PATH") or ""
     stripped = os.pathsep.join(
-        part for part in (os.environ.get("PATH") or "").split(os.pathsep)
-        if part and "homebrew" not in part.lower())
+        part for part in system_path.split(os.pathsep)
+        if part and "homebrew" not in part.lower()
+        and not (Path(part) / "tesseract").is_file()
+        and not (Path(part) / "tesseract.exe").is_file())
     evidence: dict = {
         "app": str(Path(args.frozen_app).expanduser()),
-        "path_without_homebrew": stripped,
+        "path_without_ocr_tools": stripped,
         "homebrew_on_path": "homebrew" in stripped.lower(),
         "cases": {},
     }
@@ -134,19 +161,17 @@ def main(argv: list[str] | None = None) -> int:
             # test ambiguous.
             shutil.rmtree(data_dir, ignore_errors=True)
             result_path = case_dir / "report.json"
-            env = {
-                "HOME": os.environ.get("HOME", ""),
-                "PATH": stripped,
-                "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-                "QT_QPA_PLATFORM": "offscreen",
-                "FOLITH_QT_NONINTERACTIVE": "1",
-                "FOLITH_EXIT_FORCE_PROMPT": "0",
-                "FOLITH_QT_SELFTEST_BASE_URL": url,
-                "FOLITH_QT_SELFTEST_OCR": "1",
-                "FOLITH_QT_SELFTEST_OCR_LANGUAGE": case["ocr_language"],
-                "FOLITH_DESKTOP_DATA_DIR": str(data_dir),
-                "FOLITH_DESKTOP_LOG_DIR": str(case_dir / "logs"),
-            }
+            env = app_environment(
+                stripped,
+                QT_QPA_PLATFORM="offscreen",
+                FOLITH_QT_NONINTERACTIVE="1",
+                FOLITH_EXIT_FORCE_PROMPT="0",
+                FOLITH_QT_SELFTEST_BASE_URL=url,
+                FOLITH_QT_SELFTEST_OCR="1",
+                FOLITH_QT_SELFTEST_OCR_LANGUAGE=case["ocr_language"],
+                FOLITH_DESKTOP_DATA_DIR=str(data_dir),
+                FOLITH_DESKTOP_LOG_DIR=str(case_dir / "logs"),
+            )
             command = [
                 str(Path(args.frozen_app).expanduser()),
                 "--data-dir", str(data_dir),
@@ -243,20 +268,18 @@ def _missing_pack_case(out_dir: Path, args, python: str, url: str,
     data_dir = case_dir / "data"
     shutil.rmtree(data_dir, ignore_errors=True)
     result_path = case_dir / "report.json"
-    env = {
-        "HOME": os.environ.get("HOME", ""),
-        "PATH": stripped,
-        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-        "QT_QPA_PLATFORM": "offscreen",
-        "FOLITH_QT_NONINTERACTIVE": "1",
-        "FOLITH_EXIT_FORCE_PROMPT": "0",
-        "FOLITH_QT_SELFTEST_BASE_URL": url,
-        "FOLITH_QT_SELFTEST_OCR": "1",
+    env = app_environment(
+        stripped,
+        QT_QPA_PLATFORM="offscreen",
+        FOLITH_QT_NONINTERACTIVE="1",
+        FOLITH_EXIT_FORCE_PROMPT="0",
+        FOLITH_QT_SELFTEST_BASE_URL=url,
+        FOLITH_QT_SELFTEST_OCR="1",
         # Deutsch is deliberately not bundled (baseline is eng/chi_sim/ara).
-        "FOLITH_QT_SELFTEST_OCR_LANGUAGE": "Deutsch",
-        "FOLITH_DESKTOP_DATA_DIR": str(data_dir),
-        "FOLITH_DESKTOP_LOG_DIR": str(case_dir / "logs"),
-    }
+        FOLITH_QT_SELFTEST_OCR_LANGUAGE="Deutsch",
+        FOLITH_DESKTOP_DATA_DIR=str(data_dir),
+        FOLITH_DESKTOP_LOG_DIR=str(case_dir / "logs"),
+    )
     run = subprocess.run(
         [str(Path(args.frozen_app).expanduser()),
          "--data-dir", str(data_dir), "--selftest",

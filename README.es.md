@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/release-v0.6.0-blue.svg" alt="Release v0.6.0"></a>
-  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/release-v0.7.0-blue.svg" alt="Release v0.7.0"></a>
+  <img src="https://img.shields.io/badge/macOS-15%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -87,18 +87,24 @@ Tras la revisión, el resultado se congela en una versión de entrega inmutable 
 
 ### Cliente de escritorio para macOS (recomendado)
 
-Descarga `Folith-Qt-0.6.0-macos-arm64.dmg` de la [versión v0.6.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0) y arrástralo a Aplicaciones.
+Descarga `Folith-Qt-0.7.0-macos-arm64.dmg` de la [versión v0.7.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) y arrástralo a Aplicaciones.
 
-- Requisitos: macOS 15.7.5 o posterior, Apple Silicon.
+- Requisitos: macOS 15 o posterior, Apple Silicon. La versión mínima medida aparece en las notas de la versión.
 - Esta compilación no está firmada ni notarizada. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
 - Tesseract (inglés, chino simplificado y árabe) viene incluido, así que no hay que instalar nada más.
-- Verificación (opcional): tras descargar, ejecuta `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg`; el resultado debe ser `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8` (el mismo resumen que muestra la página de Releases). Confirma que el archivo está íntegro y sin modificar; no es una firma.
+- Verificación (opcional): la página de la versión publica `SHA256SUMS.txt`. Compáralo con `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` en Terminal. Confirma que el archivo está íntegro y sin modificar; no es una firma.
 - Al abrirla, añade una conexión de modelo en Ajustes (véase «Inicio rápido»).
-- Verifica la descarga (opcional): la página de la versión indica el sha256 del DMG, que debe ser `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8`. Compáralo con `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg` en Terminal.
 
-### Windows
+### Cliente de escritorio para Windows x64
 
-La interfaz Qt compartida está adaptada a Windows, pero **todavía no hay instalador para Windows ni se ha hecho la aceptación en Windows**. Solo se puede ejecutar desde el código fuente, sin probar; no se recomienda para trabajo real.
+Descarga uno de estos archivos de la [versión v0.7.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0):
+
+- **Instalador (recomendado):** `Folith-Setup-0.7.0-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Desinstalar solo quita la aplicación; las tareas, términos, memoria y ajustes permanecen en `%LOCALAPPDATA%\Folith`.
+- **Portátil:** `Folith-Qt-0.7.0-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
+
+Requisitos: Windows 10 u 11, x64. Esta versión se probó en Windows 11 x64. No hace falta Python, Git ni herramientas de desarrollo. Tesseract (inglés, chino simplificado y árabe) viene incluido; PaddleOCR y LibreOffice no.
+
+La compilación de Windows no está firmada. SmartScreen puede avisar en el primer inicio: tras comprobar el editor y el SHA-256, elige **Más información → Ejecutar de todas formas**. No desactives la seguridad de Windows de forma global.
 
 ### Ejecutar desde el código fuente (desarrolladores)
 
@@ -113,7 +119,7 @@ Requiere Python 3.10+; PySide6 forma parte de las dependencias. Opcionalmente, i
 
 ### Paquete de Python (para desarrolladores)
 
-El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith`), pero **no es la forma recomendada de obtener la aplicación**. La versión 0.6.0 de PyPI todavía contiene la interfaz Streamlit antigua: el comando `folith` inicia esa interfaz, no el cliente de escritorio. La interfaz antigua se ha eliminado del código fuente; a partir de la próxima versión el comando `folith` iniciará directamente el cliente de escritorio. Hasta entonces, usa el DMG o ejecuta desde el código fuente.
+El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith`), pero **no es la forma recomendada de obtener la aplicación**. PyPI sigue con la versión 0.6.0 y la interfaz Streamlit antigua; esta publicación de GitHub no actualiza PyPI y el comando `folith` de allí no inicia el cliente de escritorio. Usa los archivos de macOS / Windows de arriba o ejecuta desde el código fuente.
 
 ---
 
@@ -210,8 +216,9 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## ⚠️ Limitaciones conocidas
 
-- El DMG solo admite Apple Silicon y macOS 15.7.5 o posterior; no está firmado ni notarizado.
-- Windows solo funciona desde el código fuente: sin instalador y sin aceptación.
+- El DMG solo admite Apple Silicon y macOS 15 o posterior; no está firmado ni notarizado.
+- La compilación de Windows admite Windows 10/11 x64; solo se validó en Windows 11 x64 y no está firmada. No se probaron Windows ARM64, otras versiones ni una máquina virtual limpia independiente.
+- La aceptación manual en Windows (paneles de archivos nativos, método de entrada chino, suspensión / reactivación y un servicio de modelo real) sigue siendo manual; el flujo automático congelado, el OCR y las pruebas de instalación / desinstalación se registran en las notas de la versión.
 - No se admiten EPUB con DRM.
 - Las imágenes dentro de tablas y cuadros de texto no se conservan en el DOCX traducido; el DOCX bilingüe no contiene imágenes.
 - No se escribe de vuelta en el diseño del DOCX original; se generan archivos nuevos.
@@ -250,7 +257,8 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 - [x] **v0.4.0**: marca unificada, recursos lingüísticos y centro de terminología, puerta de entrega, recuperación de borradores en vivo
 - [x] **v0.6.0**: el cliente de escritorio nativo Qt pasa a ser la entrada principal; importación de EPUB / TXT / Markdown; el modelo de visión como lector principal de páginas escaneadas; términos y memoria de traducción por proyecto; varias conexiones de modelo; revisión entre segmentos; el DOCX traducido conserva las imágenes del original; la apariencia sigue al sistema
-- [ ] **Próximamente**: firma y notarización; instalador y aceptación para Windows; escritura de vuelta en DOCX conservando diseño y estilos originales; coincidencias aproximadas en la memoria de traducción; traducción incremental entre versiones de un documento
+- [x] **v0.7.0**: primera versión de escritorio para Windows x64 (instalador + ZIP portátil); cobertura de revisión veraz que no cuenta los segmentos omitidos como revisados; correcciones de rutas, codificación, ventanas de consola y restauración de ventanas en Windows; tareas interrumpidas reanudables
+- [ ] **Próximamente**: firma y notarización; aceptación en más versiones de Windows y en una VM limpia; escritura de vuelta en DOCX conservando diseño y estilos originales; coincidencias aproximadas en la memoria de traducción; traducción incremental entre versiones de un documento
 
 ---
 

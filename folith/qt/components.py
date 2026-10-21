@@ -586,7 +586,11 @@ def project_dot_token(project_id: str) -> str:
 class _ProjectTab(QPushButton):
     """一枚项目标签：色点 + 名称 + 任务数（数字是次要色，所以自己画）。"""
 
-    MAX_WIDTH = 220
+    # Windows font metrics are wider than macOS for the same point size: the
+    # Spanish "Todos los proyectos" is 228 px at DemiBold here, so the old 220 px
+    # cap elided the selected tab even with the bold-width size hint.  Keep the
+    # cap about one long label wide rather than exactly fitting one platform.
+    MAX_WIDTH = 320
     HEIGHT = 30
 
     def __init__(self, project_id: str, name: str, count: int, parent=None) -> None:

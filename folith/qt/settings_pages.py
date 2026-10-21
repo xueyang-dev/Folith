@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
@@ -124,17 +126,30 @@ class StoragePage(QWidget):
         usage_body.addWidget(self.status)
         layout.addWidget(usage)
 
-        uninstall, uninstall_body = _panel(
-            i18n.tr('卸载'),
-            i18n.tr('把 Folith.app 拖到废纸篓只移除应用本身；任务、术语、翻译记忆和设置都会保留，'
-                    '重新安装后原样可见。'))
-        steps = QLabel(i18n.tr(
-            '如需完全清除：先退出 Folith，再删除下面三处。删除前请先导出需要保留的译文与 TMX/TBX，'
-            '或用上面的「导出全部数据…」做一份备份。'))
+        if sys.platform == "win32":
+            uninstall, uninstall_body = _panel(
+                i18n.tr('卸载'),
+                i18n.tr('在「设置 → 应用」中卸载 Folith 只移除应用本身；任务、术语、'
+                        '翻译记忆和设置都会保留，重新安装后原样可见。'))
+            cleanup = i18n.tr(
+                '如需完全清除：先退出 Folith，再删除下面两处与注册表项。删除前请先导出需要保留的译文与 TMX/TBX，'
+                '或用上面的「导出全部数据…」做一份备份。')
+            paths_text = ("%LOCALAPPDATA%\\Folith\\data\n%LOCALAPPDATA%\\Folith\\logs\n"
+                          "HKEY_CURRENT_USER\\Software\\Folith\\QtDesktop")
+        else:
+            uninstall, uninstall_body = _panel(
+                i18n.tr('卸载'),
+                i18n.tr('把 Folith.app 拖到废纸篓只移除应用本身；任务、术语、翻译记忆和设置都会保留，'
+                        '重新安装后原样可见。'))
+            cleanup = i18n.tr(
+                '如需完全清除：先退出 Folith，再删除下面三处。删除前请先导出需要保留的译文与 TMX/TBX，'
+                '或用上面的「导出全部数据…」做一份备份。')
+            paths_text = ("~/Library/Application Support/Folith\n~/Library/Logs/Folith\n"
+                          "~/Library/Preferences/com.folith.QtDesktop.plist")
+        steps = QLabel(cleanup)
         steps.setWordWrap(True)
         steps.setObjectName("hint")
-        paths = QLabel("~/Library/Application Support/Folith\n~/Library/Logs/Folith\n"
-                       "~/Library/Preferences/com.folith.QtDesktop.plist")
+        paths = QLabel(paths_text)
         paths.setObjectName("monoValue")
         paths.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         uninstall_body.addWidget(steps)

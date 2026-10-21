@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/release-v0.6.0-blue.svg" alt="Release v0.6.0"></a>
-  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/release-v0.7.0-blue.svg" alt="Release v0.7.0"></a>
+  <img src="https://img.shields.io/badge/macOS-15%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -87,18 +87,24 @@
 
 ### macOS 桌面客户端（推荐）
 
-从 [v0.6.0 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.6.0) 下载 `Folith-Qt-0.6.0-macos-arm64.dmg`，拖进「应用程序」。
+从 [v0.7.0 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) 下载 `Folith-Qt-0.7.0-macos-arm64.dmg`，拖进「应用程序」。
 
-- 系统要求：macOS 15.7.5 或更高，Apple Silicon。
+- 系统要求：macOS 15 或更高，Apple Silicon。实测最低构建版本见发布说明。
 - 当前版本未签名、未公证：第一次打开时，在「应用程序」里右键点 Folith → 打开，放行一次即可。**不要**全局关闭 Gatekeeper。
 - 安装包已内置 Tesseract（英文、简体中文、阿拉伯文），不需要另装任何依赖。
-- 校验（可选）：下载后运行 `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg`，结果应为 `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8`（与 Release 页显示的摘要一致）。这只能确认文件完整、没被替换，不等同于签名。
+- 校验（可选）：Release 页提供 `SHA256SUMS.txt`。在终端运行 `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` 对比即可。这只能确认文件完整、没被替换，不等同于签名。
 - 打开后在「设置」里添加模型连接，见下面的快速上手。
-- 校验下载（可选）：Release 页给出该 DMG 的 sha256，应为 `cbfb8c94ec4021b41920588119d1ff491761b9c421b40fc35f53ed883a791cf8`。在终端运行 `shasum -a 256 Folith-Qt-0.6.0-macos-arm64.dmg` 对比。
 
-### Windows
+### Windows x64 桌面客户端
 
-共享的 Qt 界面已经适配 Windows，但**目前没有 Windows 安装包，也没有完成 Windows 验收**。只能从源码运行，未经测试，不建议用于正式工作。
+从 [v0.7.0 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) 下载：
+
+- **安装版（推荐）**：`Folith-Setup-0.7.0-windows-x64.exe`。运行后选择安装目录，从开始菜单启动。卸载只移除应用；任务、术语、翻译记忆和设置保留在 `%LOCALAPPDATA%\Folith`。
+- **便携版**：`Folith-Qt-0.7.0-windows-x64.zip`。右键「全部解压缩」，保持解压后的 `Folith` 文件夹完整，运行 `Folith\Folith.exe`。不要在压缩包预览里直接运行。
+
+系统要求：Windows 10 或 Windows 11，x64。本次在 Windows 11 x64 上验收。不需要安装 Python、Git 或任何开发工具。已内置 Tesseract（英文、简体中文、阿拉伯文）；不包含 PaddleOCR 或 LibreOffice。
+
+Windows 构建未签名。首次运行可能看到 SmartScreen 提示：核对发布者与 SHA-256 后，选择「更多信息 → 仍要运行」。不要全局关闭 Windows 安全防护。
 
 ### 从源码运行（开发者）
 
@@ -113,7 +119,7 @@ python -m folith.qt
 
 ### Python 包（面向开发者）
 
-PyPI 上有发行包 `foliothread`（代码模块名为 `folith`），但它**不是获取应用的推荐方式**。PyPI 上的 0.6.0 仍然带着旧的 Streamlit 界面，`folith` 命令启动的是旧界面，而不是桌面客户端。旧界面已从源码中移除，下一个版本起 `folith` 命令会直接启动桌面客户端。在此之前，请使用上面的 DMG 或源码运行。
+PyPI 上有发行包 `foliothread`（代码模块名为 `folith`），但它**不是获取应用的推荐方式**。PyPI 上仍是带旧 Streamlit 界面的 0.6.0，本次 GitHub 发布不更新 PyPI，那里的 `folith` 命令也不会启动桌面客户端。请使用上面的 macOS / Windows 产物或源码运行。
 
 ---
 
@@ -210,8 +216,9 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 
 ## ⚠️ 已知限制
 
-- DMG 仅支持 Apple Silicon 和 macOS 15.7.5 或更高；未签名、未公证。
-- Windows 只有源码运行，没有安装包，未经验收。
+- DMG 仅支持 Apple Silicon 和 macOS 15 或更高；未签名、未公证。
+- Windows 构建支持 x64 Windows 10/11；本次只在 Windows 11 x64 上验证，且未签名。未测试 ARM64 Windows、其他 Windows 版本或独立干净虚拟机。
+- Windows 的人工验收项（系统文件面板、中文输入法、睡眠 / 唤醒、真实模型服务）仍需人工完成；自动化冻结流程、OCR 与安装 / 卸载检查记录在发布说明中。
 - 不支持有 DRM 的 EPUB。
 - 表格和文本框里的图片不会保留到译文 DOCX；双语对照 DOCX 不含图片。
 - 不会写回原 DOCX 的版式，导出的是新生成的文件。
@@ -250,7 +257,8 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 
 - [x] **v0.4.0**：统一品牌、语言资产与术语中心、交付门禁、草稿实时容灾
 - [x] **v0.6.0**：Qt 原生桌面客户端成为主入口；EPUB / TXT / Markdown 导入；扫描页以视觉模型为主；项目内的术语与翻译记忆；多条模型连接；跨段审校；译文 DOCX 保留原文图片；外观跟随系统
-- [ ] **下一步**：签名与公证；Windows 安装包与验收；DOCX 原格式写回（保留原始排版与样式）；翻译记忆模糊匹配；文档跨版本增量翻译
+- [x] **v0.7.0**：Windows x64 桌面客户端首次发布（安装版 + 便携版）；审校覆盖如实统计，跳过不再算作通过；Windows 路径、编码、子进程控制台与窗口恢复修复；中断任务可续跑
+- [ ] **下一步**：代码签名与公证；在更多 Windows 版本和干净虚拟机上验收；DOCX 原格式写回（保留原始排版与样式）；翻译记忆模糊匹配；文档跨版本增量翻译
 
 ---
 

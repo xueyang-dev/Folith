@@ -193,7 +193,7 @@ def build_manifest(app: Path, out_dir: Path) -> dict:
         "distribution": {
             "signed": False,
             "notarized": False,
-            "scope": "public release v0.6.0 (unsigned, not notarized)",
+            "scope": "public release v0.7.0 (unsigned, not notarized)",
         },
     }
 
@@ -292,7 +292,8 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         f"- 本轮实际验收系统：`{support.get('verified_on', '')}`",
         f"- 本候选原生依赖闭包要求 macOS {support.get('minimum_system_version', '')}；"
         "未在更低版本上验收，不声称支持更低版本。",
-        "- Intel Mac / Windows：本轮不在范围，未验收即不宣称支持。",
+        "- Intel Mac：本轮不在范围，未验收即不宣称支持。"
+        "Windows x64 使用同一提交单独构建（便携 ZIP 与 NSIS 安装器），不在 DMG 内。",
         "",
         "## 随包能力与外部依赖",
         "",
@@ -320,7 +321,7 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "",
         f"- 签名：{'是' if dist.get('signed') else '否'}；公证："
         f"{'是' if dist.get('notarized') else '否'}",
-        "- 适用范围：**v0.6.0 正式发布（未签名、未公证）**。首次打开需在「应用程序」中右键 → 打开，"
+        "- 适用范围：**v0.7.0 macOS DMG（未签名、未公证）**。首次打开需在「应用程序」中右键 → 打开，"
         "为本应用明确放行一次；**不要**全局关闭 Gatekeeper。",
         "- Developer ID 签名、hardened runtime、公证与 staple 尚未完成，计划在后续版本补齐；"
         "7 条强制人工验收（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9）作为发布后验证继续进行，尚未全部闭环。",

@@ -1,5 +1,9 @@
 # Folith 桌面端（Qt）— 发布说明
 
+> 历史说明：下方正文是 v0.6.0 的 macOS 候选记录。v0.7.0 的正式发布说明以
+> GitHub Release 页面为准（Windows x64 与 macOS 产物、SHA-256、支持范围与已知限制）。
+> 发布构建仍会用 `scripts/qt_release_checks.py --write-notes` 生成与当次产物一致的版本。
+
 本文件由 `scripts/qt_release_checks.py --write-notes` 依据**本次构建**的清单与
 DMG 记录生成；`--check-notes` 会在说明与当前产物不一致时失败（不做旧文本对比）。
 

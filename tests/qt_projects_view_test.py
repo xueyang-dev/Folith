@@ -6,6 +6,9 @@ import os
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# This module drives menus and dialogs; without automation a confirmation sheet
+# waits for input and the test never returns on a headless runner.
+os.environ.setdefault("FOLITH_QT_NONINTERACTIVE", "1")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
