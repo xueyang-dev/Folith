@@ -1341,6 +1341,9 @@ class MainWindow(QMainWindow):
         # 侧栏的「最近项目」与任务库的项目筛选都读项目列表。
         self.refresh_home()
         self.refresh_engine_label()
+        # 准备页的「归入项目」下拉框只在启动时读过一次：新建的项目要在这里补进去。
+        if self._setup_choices_loaded:
+            self.workbench.set_setup_projects(adapter.project_options())
 
     def _nav_tasks(self) -> None:
         """侧栏「任务库」：已经在任务库就只同步点亮状态，不重复刷新。"""

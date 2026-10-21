@@ -4204,3 +4204,25 @@ def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     assert not window.sidebar_clip.isVisible()
     assert window.stack.width() == window.stack_clip.width(), "the page follows the window again"
     assert window.stack.graphicsEffect() is None, "no effect is left installed on the page"
+
+
+def test_new_project_shows_up_in_the_setup_project_box(client):
+    """项目页新建项目后，准备页「归入项目」下拉框里要立刻能看到，并保留当前选择。"""
+    adapter = client["adapter"]
+    window = client["window"]
+    app = client["app"]
+
+    first = adapter.create_project("先建的项目")
+    window.workbench.set_setup_choices(adapter.setup_choices())
+    window._setup_choices_loaded = True
+    box = window.workbench.setup_panel.project_box
+    box.setCurrentIndex(box.findData(first["project_id"]))
+    assert box.findData(first["project_id"]) >= 0
+
+    second = adapter.create_project("后建的项目")
+    assert box.findData(second["project_id"]) < 0
+    window.projects.projectsChanged.emit()
+    app.processEvents()
+
+    assert box.findData(second["project_id"]) >= 0
+    assert box.currentData() == first["project_id"]

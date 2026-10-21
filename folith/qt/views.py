@@ -4743,6 +4743,10 @@ class WorkbenchView(QWidget):
         """填准备面板的目录（``adapter.setup_choices``）；进程内只需一次。"""
         self.setup_panel.set_choices(choices or {})
 
+    def set_setup_projects(self, projects: list[dict]) -> None:
+        """项目变化后只刷新准备面板的「归入项目」下拉框（保留当前选中）。"""
+        self.setup_panel.set_projects(projects)
+
     def add_setup_project(self, project_id: str, name: str) -> None:
         """把新建的项目填进准备面板的选择器并选中（见 ``TaskSetupPanel.add_project``）。"""
         self.setup_panel.add_project(project_id, name)
