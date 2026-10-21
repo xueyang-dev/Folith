@@ -238,11 +238,11 @@ class BatchAcceptDialog(QDialog):
         cancel.clicked.connect(self.reject)
         self.ok_button = QPushButton(i18n.tr('确认 {v0} 条', v0=len(add)))
         style_module.mark_primary(self.ok_button)
-        self.ok_button.setVisible(bool(add))
         self.ok_button.clicked.connect(self.accept)
         buttons.addWidget(cancel)
         buttons.addWidget(self.ok_button)
         layout.addLayout(buttons)
+        self.ok_button.setVisible(bool(add))      # 放进布局（有了父窗口）之后再决定显隐
 
 
 class MoveToProjectSheet(QDialog):
@@ -375,8 +375,8 @@ class MoveToProjectSheet(QDialog):
             rows.append(row)
         if rows:
             extra.addWidget(_group(*rows))
-        self.extra_box.setVisible(bool(rows))
         layout.addWidget(self.extra_box)
+        self.extra_box.setVisible(bool(rows))
 
         # ---- 按钮 ----------------------------------------------------------------
         footer = QHBoxLayout()

@@ -208,7 +208,7 @@ class TermChip(QFrame):
         arrow.setObjectName("termArrow")
         preferred = QLabel(target or "—")
         preferred.setObjectName("termTarget")
-        self.count_label = QLabel(i18n.tr('本文 {v0} 处', v0=count) if count else "")
+        self.count_label = QLabel(i18n.tr('本文 {v0} 处', v0=count) if count else "", self)
         self.count_label.setObjectName("termCount")
         self.count_label.setVisible(bool(count))
         self.insert_button = QToolButton()

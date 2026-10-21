@@ -128,6 +128,84 @@ def _discard_test_top_level_widgets():
     app.processEvents()
 
 
+_STRAY_WINDOWS: list[str] = []
+_STRAY_FILTER = None
+_NON_STRAY_TYPES = ("Popup", "ToolTip", "Dialog", "Tool", "Sheet", "SplashScreen")
+
+
+def _product_frames() -> list[str]:
+    import traceback
+
+    tests_dir = str(ROOT / "tests")
+    product_dir = str(ROOT / "folith")
+    frames = []
+    for frame in traceback.extract_stack():
+        name = os.path.abspath(frame.filename)
+        if name.startswith(product_dir) and not name.startswith(tests_dir):
+            frames.append(f"{os.path.relpath(name, ROOT)}:{frame.lineno} {frame.name}")
+    return frames
+
+
+def _install_stray_window_filter():
+    """Fail a Qt test when product code shows a parentless plain widget.
+
+    A widget shown before it has a parent becomes a top-level window for a
+    moment (a flash on Windows) and is hidden again once it joins a layout.
+    """
+    global _STRAY_FILTER
+    if _STRAY_FILTER is not None:
+        return
+    classes = _qt_classes()
+    if not classes:
+        return
+    QEvent, QApplication = classes
+    from PySide6.QtCore import QObject, Qt
+    from PySide6.QtWidgets import QDialog, QMainWindow, QMenu, QWidget
+
+    allowed = tuple(getattr(Qt.WindowType, name) for name in _NON_STRAY_TYPES)
+
+    class _StrayWindowFilter(QObject):
+        def eventFilter(self, watched, event):  # noqa: N802 - Qt naming
+            if event.type() == QEvent.Type.Show and isinstance(watched, QWidget):
+                try:
+                    stray = (watched.parentWidget() is None and watched.isWindow()
+                             and not isinstance(watched, (QDialog, QMainWindow, QMenu))
+                             and (watched.windowType() & Qt.WindowType.WindowType_Mask)
+                             not in allowed)
+                except RuntimeError:
+                    stray = False
+                if stray:
+                    frames = _product_frames()
+                    if frames:
+                        _STRAY_WINDOWS.append(
+                            f"{type(watched).__name__} shown without a parent "
+                            f"(objectName={watched.objectName()!r}) at {frames[-1]}")
+            return False
+
+    app = QApplication.instance() or QApplication([])
+    _STRAY_FILTER = _StrayWindowFilter(app)
+    app.installEventFilter(_STRAY_FILTER)
+
+
+def _qt_test(item) -> bool:
+    return item.path.name.startswith("qt_") and _qt_classes() != ()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item):
+    if not _qt_test(item):
+        return (yield)
+    _STRAY_WINDOWS.clear()
+    _install_stray_window_filter()
+    result = yield
+    if _STRAY_WINDOWS:
+        found = "\n  ".join(dict.fromkeys(_STRAY_WINDOWS))
+        _STRAY_WINDOWS.clear()
+        pytest.fail("product code showed parentless widgets as top-level windows:\n  " + found,
+                    pytrace=False)
+    return result
+
+
 def pytest_sessionfinish(session, exitstatus):
     leaked = {
         directory: sorted(_entries(directory) - before)

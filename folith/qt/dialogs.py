@@ -510,7 +510,7 @@ class EngineDialog(QDialog):
         self.cleanup_box = components.Switch()
         self.cleanup_box.setAccessibleName(i18n.tr('PDF 原文先做模型纠错'))
         self.cleanup_box.setChecked(self.config.enable_source_cleanup)
-        self.report_box = style_module.CheckBox(i18n.tr('完成后生成实践报告'))
+        self.report_box = style_module.CheckBox(i18n.tr('完成后生成实践报告'), page)
         self.report_box.setChecked(self.config.enable_report)
         self.academic_box.toggled.connect(self._academic_toggled)
         self.report_box.setVisible(self.academic_box.isChecked())

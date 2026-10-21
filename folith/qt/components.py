@@ -2612,13 +2612,14 @@ class OptionCard(QPushButton):
         column.setSpacing(theme_module.SPACE["xxs"])
         head = QHBoxLayout()
         head.setSpacing(theme_module.SPACE["xs"] + 2)
-        self.icon_label = QLabel()
+        # 子控件一开始就带父窗口：没有父窗口时 setVisible(True) 会让它闪成顶层小窗。
+        self.icon_label = QLabel(self)
         self.icon_label.setVisible(bool(icon))
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self)
         self.title_label.setObjectName("optionTitle")
         head.addWidget(self.icon_label)
         head.addWidget(self.title_label, 1)
-        self.detail_label = QLabel(detail)
+        self.detail_label = QLabel(detail, self)
         self.detail_label.setObjectName("optionDetail")
         self.detail_label.setTextFormat(Qt.TextFormat.RichText)
         # 长语言（俄、阿）里细节行会比卡片宽：折行，而不是把整页撑出横向滚动。

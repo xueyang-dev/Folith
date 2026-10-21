@@ -1748,7 +1748,9 @@ class NoticeStrip(QFrame):
         row.addWidget(self._label, 1)
         row.addWidget(self._action, 0, Qt.AlignmentFlag.AlignTop)
         self.set_tone(self._tone)
-        self.setVisible(bool(text))
+        # 没有父窗口时 setVisible(True) 会闪出顶层小窗；有文字的条放进布局后自然可见。
+        if parent is not None or not text:
+            self.setVisible(bool(text))
 
     def set_tone(self, tone: str) -> None:
         self._tone = tone if tone in self.TONES else "info"
