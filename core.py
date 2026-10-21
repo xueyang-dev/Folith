@@ -6991,8 +6991,7 @@ def load_runtime_state(job_id):
     if not job_id:
         return _runtime_defaults()
     try:
-        with _atomic_file.shared_text_reader(runtime_state_path(job_id)) as handle:
-            raw = json.load(handle)
+        raw = json.loads(_atomic_file.read_shared_text(runtime_state_path(job_id)))
     except (OSError, TypeError, ValueError):
         return _runtime_defaults()
     if not isinstance(raw, dict):

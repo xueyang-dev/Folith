@@ -267,3 +267,65 @@ def test_shortcut_list_comes_from_the_real_menus(app):
     dialog = ShortcutsDialog(bar)
     assert dialog.table.rowCount() == len(rows) + len(dialog.rows) - len(rows)
     assert any(text == "展开 / 收起 PDF 原页" for _m, text, _k in dialog.rows)
+
+
+def test_application_dir_is_the_folder_upgrades_rewrite(tmp_path):
+    from folith.qt import storage_location
+
+    assert storage_location.application_dir(frozen=False) is None
+    windows_exe = tmp_path / "Programs" / "Folith" / "Folith.exe"
+    assert storage_location.application_dir(str(windows_exe), frozen=True) == \
+        windows_exe.parent.resolve()
+    mac_exe = tmp_path / "Applications" / "Folith.app" / "Contents" / "MacOS" / "Folith"
+    assert storage_location.application_dir(str(mac_exe), frozen=True) == \
+        (tmp_path / "Applications" / "Folith.app").resolve()
+
+
+def test_data_folder_inside_the_application_folder_is_detected(tmp_path):
+    from folith.qt import storage_location
+
+    app_dir = (tmp_path / "Folith").resolve()
+    assert storage_location.inside_application_dir(app_dir, app_dir)
+    assert storage_location.inside_application_dir(app_dir / "data", app_dir)
+    assert not storage_location.inside_application_dir(tmp_path / "Folith data", app_dir)
+    assert not storage_location.inside_application_dir(tmp_path, app_dir)
+
+
+def test_changing_location_refuses_the_application_folder(app, isolated, tmp_path, monkeypatch):
+    from folith.qt import bootstrap, settings_pages, storage_location
+
+    app_dir = (tmp_path / "Programs" / "Folith").resolve()
+    chosen = app_dir / "data"
+    chosen.mkdir(parents=True)
+    saved = []
+    monkeypatch.setattr(bootstrap, "automation", lambda: False)
+    monkeypatch.setattr(storage_location, "application_dir", lambda *a, **k: app_dir)
+    monkeypatch.setattr(storage_location, "set_saved_data_dir", saved.append)
+    monkeypatch.setattr(settings_pages.QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(chosen)))
+    page = settings_pages.StoragePage(_SyncRunner())
+    page._change_location()
+    assert saved == []
+    assert "应用文件夹" in page.status.text()
+
+    outside = tmp_path / "Folith data"
+    outside.mkdir()
+    monkeypatch.setattr(settings_pages.QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(outside)))
+    page._change_location()
+    assert saved == [str(outside)]
+
+
+def test_cleanup_list_names_the_data_folder_in_use(isolated, tmp_path):
+    from folith.desktop import paths as desktop_paths
+    from folith.qt import settings_pages
+
+    moved = tmp_path / "elsewhere" / "Folith data"
+    logs = tmp_path / "logs"
+    lines = settings_pages.cleanup_paths_text(str(moved), str(logs)).splitlines()
+    assert lines[:2] == [str(moved), str(logs)]
+    assert len(lines) == 3
+    default = settings_pages.cleanup_paths_text(
+        str(desktop_paths.default_data_dir()), str(logs)).splitlines()[0]
+    expected = desktop_paths.default_data_dir()
+    assert default == str(expected if sys.platform == "win32" else expected.parent)

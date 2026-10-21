@@ -8,11 +8,15 @@
 ; This is a per-user install: no administrator elevation is requested, and the
 ; default folder is %LOCALAPPDATA%\Programs\Folith.  That keeps installation and
 ; removal possible for an ordinary user account.  User data lives in
-; %LOCALAPPDATA%\Folith, not in the install folder, so uninstalling deliberately
-; leaves tasks, terms, memory and settings alone.
+; %LOCALAPPDATA%\Folith (or a folder the user chose), not in the install folder,
+; so uninstalling deliberately leaves tasks, terms, memory and settings alone.
+; Uninstall removes only the files this installer wrote, never the folder
+; recursively.  Installing and uninstalling refuse while Folith is running.
 ;
-; Build with:  windows\06-build-installer.cmd
-;          or:  makensis -DAPP_VERSION=0.5.0 packaging\folith-windows.nsi
+; Build with:  scripts\build_qt_windows.ps1  (passes APP_VERSION, BASE, OUT_FILE)
+;          or:  makensis -DAPP_VERSION=0.7.0 packaging\folith-windows.nsi
+;
+; scripts\check_windows_installer_roundtrip.py exercises the built installer.
 ;
 ; Keep this file saved as UTF-8 *with BOM*.  NSIS 3 decodes a BOM-less script
 ; using the system ANSI code page, so the Chinese product name (译页) would be
@@ -24,7 +28,7 @@ Unicode true
 !include "FileFunc.nsh"
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.5.0"
+  !error "pass -DAPP_VERSION=<version> (scripts\build_qt_windows.ps1 reads it from pyproject.toml)"
 !endif
 
 !define APP_NAME "Folith"
@@ -39,7 +43,7 @@ Unicode true
 !define BUNDLE_DIR "${BASE}\dist\qt-windows\Folith"
 !define ICON_FILE "${BASE}\build\qt-windows\Folith.ico"
 !ifndef OUT_FILE
-  !define OUT_FILE "${BASE}\dist\installer\Folith-Setup-${APP_VERSION}-x64.exe"
+  !define OUT_FILE "${BASE}\dist\installer\Folith-Setup-${APP_VERSION}-windows-x64.exe"
 !endif
 
 Name "${APP_NAME_CN}"
@@ -74,8 +78,54 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "${APP_PUBLISHER}"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 
+; A running Folith.exe cannot be opened for writing, so a failed open means the
+; application is still running (or something else holds the file).  Replacing
+; or removing files under a running app fails halfway, so stop first.  Silent
+; runs give up with exit code 2 instead of waiting for a click.
+!define RUNNING_TEXT "Folith 正在运行。请先退出 Folith，再点「重试」。$\r$\nFolith is running. Quit Folith, then click Retry."
+
+Function RequireClosed
+  IfFileExists "$INSTDIR\${APP_EXE}" 0 done
+  retry:
+    ClearErrors
+    FileOpen $0 "$INSTDIR\${APP_EXE}" a
+    IfErrors running
+    FileClose $0
+    Goto done
+  running:
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${RUNNING_TEXT}" /SD IDCANCEL IDRETRY retry
+    SetErrorLevel 2
+    Quit
+  done:
+FunctionEnd
+
+Function un.RequireClosed
+  IfFileExists "$INSTDIR\${APP_EXE}" 0 done
+  retry:
+    ClearErrors
+    FileOpen $0 "$INSTDIR\${APP_EXE}" a
+    IfErrors running
+    FileClose $0
+    Goto done
+  running:
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${RUNNING_TEXT}" /SD IDCANCEL IDRETRY retry
+    SetErrorLevel 2
+    Quit
+  done:
+FunctionEnd
+
+Function un.onInit
+  Call un.RequireClosed
+FunctionEnd
+
 Section "Folith" SecMain
   SetShellVarContext current
+  Call RequireClosed
+  ; Upgrading over an earlier version: drop the previous runtime folder so
+  ; files the new build no longer ships do not linger next to it.  Only done
+  ; when this folder already holds Folith; a foreign _internal is left alone.
+  IfFileExists "$INSTDIR\${APP_EXE}" 0 +2
+    RMDir /r "$INSTDIR\_internal"
   SetOutPath "$INSTDIR"
   File /r "${BUNDLE_DIR}\*.*"
 
@@ -110,5 +160,12 @@ Section "Uninstall"
 
   DeleteRegKey HKCU "${UNINST_KEY}"
 
-  RMDir /r "$INSTDIR"
+  ; Remove only what the installer put here.  The install folder is user
+  ; chosen and may also hold other files (or a data folder someone pointed
+  ; Folith at), so never delete it recursively.  The PyInstaller bundle has
+  ; exactly these two top-level entries; build_qt_windows.ps1 enforces that.
+  Delete "$INSTDIR\${APP_EXE}"
+  RMDir /r "$INSTDIR\_internal"
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR"
 SectionEnd

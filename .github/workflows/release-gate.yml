@@ -258,19 +258,19 @@ jobs:
           python scripts/qt_desktop_probe.py `
             --data-dir "$env:RUNNER_TEMP/qt-probe/data" `
             --out "$env:RUNNER_TEMP/qt-probe/report.json" --fixture both `
-            --frozen-app "$GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
+            --frozen-app "$env:GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
       - name: Frozen bundled OCR baseline (eng/chi_sim/ara, no system Tesseract on PATH)
         shell: powershell
         run: |
           python scripts/qt_ocr_baseline_runner.py `
             --out "$env:RUNNER_TEMP/qt-ocr" `
-            --frozen-app "$GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
+            --frozen-app "$env:GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
       - name: New source formats in the frozen main flow
         shell: powershell
         run: |
           foreach ($format in @("epub", "txt", "md")) {
             python scripts/qt_desktop_probe.py --fixture $format `
-              --frozen-app "$GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe" `
+              --frozen-app "$env:GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe" `
               --data-dir "$env:RUNNER_TEMP/qt-$format/data" `
               --out "$env:RUNNER_TEMP/qt-$format/report.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -282,9 +282,22 @@ jobs:
           if (-not $installer) { throw "the NSIS installer was not produced" }
           python scripts/check_windows_artifact.py --installer $installer.FullName `
             --out build/qt-windows/windows-artifact-check.json
-      - name: Write SHA-256 checksums
+      - name: Installer round trip (install, upgrade, uninstall keeps user files)
+        shell: powershell
         run: |
-          python scripts/write_release_checksums.py dist/installer/*.zip dist/installer/*.exe --out dist/SHA256SUMS.txt
+          $installer = Get-ChildItem dist/installer/*.exe | Select-Object -First 1
+          python scripts/check_windows_installer_roundtrip.py --installer $installer.FullName `
+            --out build/qt-windows/windows-installer-roundtrip.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Write SHA-256 checksums
+        shell: powershell
+        # PowerShell does not expand wildcards for native commands; list the
+        # release files here and pass real paths.
+        run: |
+          $assets = @(Get-ChildItem dist/installer/*.zip, dist/installer/*.exe | ForEach-Object { $_.FullName })
+          if ($assets.Count -ne 2) { throw "expected the portable ZIP and the installer, found: $assets" }
+          python scripts/write_release_checksums.py @assets --out dist/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload the Windows candidate
         uses: actions/upload-artifact@v4
         with:
@@ -296,6 +309,7 @@ jobs:
             build/qt-windows/desktop_build_info.json
             build/qt-windows/windows-package.json
             build/qt-windows/windows-artifact-check.json
+            build/qt-windows/windows-installer-roundtrip.json
             build/qt-windows/tesseract/tesseract_payload.json
             build/qt-windows/tesseract/tessdata_provenance.json
             ${{ runner.temp }}/qt-probe/

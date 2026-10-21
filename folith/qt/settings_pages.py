@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence
@@ -47,6 +48,29 @@ def _link(text: str, icon: str = "external-link") -> QPushButton:
 
 
 # =============================================================================
+def cleanup_paths_text(data_dir: str | None = None, log_dir: str | None = None) -> str:
+    """The places to delete for a complete removal, as listed under 卸载.
+
+    The default data folder is listed by its application folder on macOS
+    (``Application Support/Folith``, as before).  A data folder the user moved
+    elsewhere is listed as it is, so the list never names a folder that does
+    not hold the user's data.
+    """
+    from folith.desktop import paths as desktop_paths
+
+    default_data = desktop_paths.default_data_dir()
+    data = Path(data_dir) if data_dir else default_data
+    logs = Path(log_dir) if log_dir else desktop_paths.default_log_dir()
+    is_default = data.resolve() == default_data.resolve()
+    if sys.platform == "win32":
+        settings = "HKEY_CURRENT_USER\\Software\\Folith\\QtDesktop"
+    else:
+        if is_default:
+            data = default_data.parent
+        settings = "~/Library/Preferences/com.folith.QtDesktop.plist"
+    return "\n".join((str(data), str(logs), settings))
+
+
 class StoragePage(QWidget):
     """存储：数据目录的位置与占用、清理缓存、导出全部数据、卸载说明。"""
 
@@ -134,8 +158,6 @@ class StoragePage(QWidget):
             cleanup = i18n.tr(
                 '如需完全清除：先退出 Folith，再删除下面两处与注册表项。删除前请先导出需要保留的译文与 TMX/TBX，'
                 '或用上面的「导出全部数据…」做一份备份。')
-            paths_text = ("%LOCALAPPDATA%\\Folith\\data\n%LOCALAPPDATA%\\Folith\\logs\n"
-                          "HKEY_CURRENT_USER\\Software\\Folith\\QtDesktop")
         else:
             uninstall, uninstall_body = _panel(
                 i18n.tr('卸载'),
@@ -144,16 +166,17 @@ class StoragePage(QWidget):
             cleanup = i18n.tr(
                 '如需完全清除：先退出 Folith，再删除下面三处。删除前请先导出需要保留的译文与 TMX/TBX，'
                 '或用上面的「导出全部数据…」做一份备份。')
-            paths_text = ("~/Library/Application Support/Folith\n~/Library/Logs/Folith\n"
-                          "~/Library/Preferences/com.folith.QtDesktop.plist")
         steps = QLabel(cleanup)
         steps.setWordWrap(True)
         steps.setObjectName("hint")
-        paths = QLabel(paths_text)
+        # Refilled from the folders actually in use (apply): the data folder may
+        # have been moved, and fixed default paths would then point elsewhere.
+        paths = QLabel(cleanup_paths_text())
         paths.setObjectName("monoValue")
         paths.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         uninstall_body.addWidget(steps)
         uninstall_body.addWidget(paths)
+        self.cleanup_paths = paths
         layout.addWidget(uninstall)
         layout.addStretch(1)
 
@@ -169,6 +192,8 @@ class StoragePage(QWidget):
     def apply(self, view: dict) -> None:
         self._view = dict(view or {})
         self.path_label.setText(self._view.get("data_dir") or "")
+        self.cleanup_paths.setText(cleanup_paths_text(
+            self._view.get("data_dir"), self._view.get("log_dir")))
         for key, label in self.usage_values.items():
             value = support.human_size(self._view.get(key, 0))
             if key == "jobs":
@@ -184,7 +209,7 @@ class StoragePage(QWidget):
 
     def _change_location(self) -> None:
         from . import bootstrap
-        from .storage_location import set_saved_data_dir
+        from .storage_location import inside_application_dir, set_saved_data_dir
 
         if bootstrap.automation():
             return
@@ -195,6 +220,11 @@ class StoragePage(QWidget):
         chosen = QFileDialog.getExistingDirectory(
             self, i18n.tr('选择数据与输出文件夹'), str(current))
         if not chosen:
+            return
+        if inside_application_dir(chosen):
+            # Upgrading or replacing the application rewrites its own folder.
+            self._show(i18n.tr('不能把数据放在 Folith 应用文件夹里：升级或替换应用时会被覆盖。'
+                               '请选择应用文件夹以外的位置。'), "danger")
             return
         set_saved_data_dir(chosen)
         self.path_label.setText(chosen)
