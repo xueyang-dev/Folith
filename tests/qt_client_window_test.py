@@ -4151,8 +4151,14 @@ def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, mo
     monkeypatch.setattr(window_module, "_automation", lambda: False)
     monkeypatch.setattr(window, "_failure", lambda *args, **kwargs: None)
     window.import_paths(["held.docx"], autostart=False)
-    QTest.qWait(3200)
-    dialog = window._import_activity._dialog
+    # The dialog is due after 3 s; a busy CI runner can fire that timer late,
+    # so wait for it to appear rather than sampling once at a fixed delay.
+    activity = window._import_activity
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not (
+            activity._dialog is not None and activity._dialog.isVisible()):
+        QTest.qWait(50)
+    dialog = activity._dialog
     assert dialog is not None and dialog.isVisible()
     assert dialog.windowModality() == Qt.WindowModality.NonModal
     assert QApplication.activeModalWidget() is None
