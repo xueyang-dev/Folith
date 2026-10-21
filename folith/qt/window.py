@@ -968,6 +968,10 @@ class MainWindow(QMainWindow):
         :meth:`import_paths` 直接给路径。未配置模型只做**非模态**提示，
         因为"能不能导入"与"能不能翻译"是两件事——模态警告会挡住导入。
         """
+        if self._imports_active:
+            # 导入期间界面会短暂卡顿，用户容易以为没点上而重复导入：入口统一在这里拦住。
+            self._notice(i18n.tr('正在导入，请等这一批完成后再导入。'))
+            return
         if _automation():
             self._notice(i18n.tr('导入文档：自动化运行不打开系统面板，请用 import_paths 直接提供路径。'))
             return

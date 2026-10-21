@@ -4256,3 +4256,20 @@ def test_project_task_menu_delete_confirms_and_refreshes_the_projects_page(clien
     assert asked == ["删除任务"]
     assert deleted == [job_id]
     assert reloads, "删除后要刷新项目页"
+
+
+def test_choose_import_is_refused_while_an_import_is_running(client, monkeypatch):
+    """导入进行中界面会卡一下；再点导入入口只给提示，不再弹文件面板、不重复导入。"""
+    window = client["window"]
+    from folith.qt import window as window_module
+
+    opened: list[int] = []
+    monkeypatch.setattr(window_module.QFileDialog, "getOpenFileNames",
+                        lambda *a, **k: opened.append(1) or ([], ""))
+    window._imports_active = 1
+    try:
+        window.choose_import()
+    finally:
+        window._imports_active = 0
+    assert opened == []
+    assert "正在导入" in window.last_notice()
