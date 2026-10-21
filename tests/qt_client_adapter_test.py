@@ -676,23 +676,23 @@ def test_model_disconnect_is_comprehensible_and_retryable(adapter_env):
     source.write_bytes(_make_docx(["第一段。", "第二段。"]))
     job_id = adapter.import_documents([source], broken)[0].job_id
     adapter.start_job(job_id, "offline.docx", source.read_bytes(), broken)
-    runtime = _wait_for_idle(core, job_id, timeout=180)
-    assert runtime.get("status") in ("failed", "stalled", "interrupted",
-                                     "idle_incomplete"), runtime
-    # The runtime file is replaced atomically by the worker. A read can land
-    # before the failing worker has published its reason, so re-read instead of
-    # asserting on the first terminal-looking snapshot.
-    deadline = time.monotonic() + 15
+    # A retry can briefly publish a terminal status before the final failure,
+    # and the durable file is replaced atomically.  Wait for the terminal state
+    # that actually carries the reason instead of sampling once.
+    deadline = time.monotonic() + 180
+    runtime: dict = {}
     message = ""
-    while True:
+    while time.monotonic() < deadline:
         runtime = core.get_job_runtime_status(job_id, adapter.load_state(job_id))
         message = str((runtime.get("error") or {}).get("message")
                       if isinstance(runtime.get("error"), dict)
                       else runtime.get("error") or "")
-        if message or time.monotonic() >= deadline:
+        if message and runtime.get("status") not in core.RUNTIME_ACTIVE_STATUSES:
             break
         time.sleep(0.2)
     assert message, f"a failure must carry a reason: {runtime}"
+    assert runtime.get("status") in ("failed", "stalled", "interrupted",
+                                     "idle_incomplete"), runtime
     state = adapter.load_state(job_id)
     assert not state.get("p2_done")
 
@@ -750,7 +750,15 @@ def test_cancelled_task_is_recoverable_and_not_marked_complete(adapter_env):
         job_id = adapter.import_documents([source], config)[0].job_id
         adapter.start_job(job_id, "cancel.docx", source.read_bytes(), config)
         assert _wait_for_alive(core, job_id), "the worker never started"
-
+        # Cancel after the worker has actually entered an external call, not
+        # while it is still queued: otherwise a very fast run can finish before
+        # the cancellation is observed, which is not the property under test.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            runtime = core.get_job_runtime_status(job_id, adapter.load_state(job_id))
+            if runtime.get("status") in {"running", "waiting_external"}:
+                break
+            time.sleep(0.05)
         adapter.cancel_job(job_id)
         runtime = _wait_for_idle(core, job_id, timeout=180)
         state = adapter.load_state(job_id)

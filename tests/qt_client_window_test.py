@@ -71,7 +71,16 @@ class _Stub:
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             if ready.exists():
-                self.url = json.loads(ready.read_text(encoding="utf-8"))["url"]
+                try:
+                    payload = json.loads(ready.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    # The server may have created the file but not finished
+                    # writing the JSON yet; retry instead of failing the run.
+                    payload = None
+                if not payload or not payload.get("url"):
+                    time.sleep(0.1)
+                    continue
+                self.url = payload["url"]
                 # The ready file is written once the socket is listening, but a
                 # client that connects before `serve_forever()` starts (or after
                 # the process died) sees ECONNREFUSED, which the product can only

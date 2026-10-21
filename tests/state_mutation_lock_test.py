@@ -108,12 +108,18 @@ def test_without_the_transaction_lock_the_same_race_loses_an_update():
     with state_env():
         _job_with_pairs()
         barrier = threading.Barrier(2)
+        # Serialise the *write* only.  Both threads have already loaded the same
+        # version, so the second write still overwrites the first; this avoids
+        # a concurrent ReplaceFileW sharing violation (WinError 1176) while
+        # keeping the lost-update control deterministic on every runner.
+        save_lock = threading.Lock()
 
         def raw_edit(index, target):
             state = core.load_job_state("job-a")
             barrier.wait(timeout=5)          # both threads hold the same version
-            state["pairs"][index]["target"] = target
-            job_repository.save_job_state_atomic("job-a", state)
+            with save_lock:
+                state["pairs"][index]["target"] = target
+                job_repository.save_job_state_atomic("job-a", state)
 
         threads = [threading.Thread(target=raw_edit, args=(0, "NEW-0")),
                    threading.Thread(target=raw_edit, args=(1, "NEW-1"))]
