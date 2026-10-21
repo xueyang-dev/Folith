@@ -1317,11 +1317,12 @@ def repolish(widget: QWidget) -> None:
     换主题时 Qt 已经整体重套过样式，这里键里的主题名变了也会再套一次。
     """
     names = [bytes(name).decode(errors="replace") for name in widget.dynamicPropertyNames()]
-    # Qt 样式表引擎自己的属性（_q_styleSheetWidgetFont 等）的 repr 带对象地址、每次都不同：不算。
+    # Qt 样式表引擎自己的属性（_q_styleSheetWidgetFont 等）的 repr 带对象地址、每次都不同：不算；
+    # PySide 给被事件过滤器看过的对象挂的 _PySideInvalidatePtr 读不出值，也不算。
     try:
         key = (widget.objectName(), widget.styleSheet(), current_theme(),
                tuple((name, repr(widget.property(name))) for name in names
-                     if not name.startswith("_q_")))
+                     if not name.startswith(("_q_", "_PySide"))))
     except (RuntimeError, TypeError):
         key = None  # 有读不出来的属性：不知道变没变，照常重套
     if key is not None and getattr(widget, "_folith_polish_key", None) == key:
