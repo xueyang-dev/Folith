@@ -199,7 +199,7 @@ def test_article_guard_keeps_existing_sentence_protections_intact():
         "Next sentence.",
         "A Short Heading",
     ]
-    assert metadata["rules_version"] == segmentation.RULES_VERSION == 6
+    assert metadata["rules_version"] == segmentation.RULES_VERSION == 7
 
 
 def test_quote_aware_segmentation_preserves_dialogue_sentences():
@@ -241,3 +241,153 @@ def test_company_name_abbreviations_do_not_end_a_sentence():
         "Smith & Co. Ltd. is here.", "Next one.",
         "He went to Canongate Books Ltd.", "Then he left.",
     ]
+
+
+# --- B6: 段边界空白可复原 + lossless 声明可证伪 ---------------------------
+# 切分会丢掉单元之间的空白；Folith 仍保留 source_paras，所以这里改成
+# “记录 + 可证伪”，而不是重构存储。
+
+
+def test_boundary_whitespace_is_recorded_and_reconstructs_the_paragraph():
+    segments, metadata = segmentation.segment_paragraphs(
+        ["First sentence. Second sentence."])
+
+    assert segments == ["First sentence.", "Second sentence."]
+    row = metadata["paragraph_ranges"][0]
+    assert row["separators"] == [" "]
+    assert segmentation.reconstruct_source_paragraph(
+        segments[row["start"]:row["end"]], row["separators"]
+    ) == "First sentence. Second sentence."
+
+
+def test_boundary_without_space_stays_atomic_and_keeps_its_text():
+    # Folith 的切分器要求句末终止符之后有空白（`_dot_is_boundary` 对
+    # “.” 紧跟字母一律返回 False），所以“无空格的边界”根本不会产生切分：
+    # 段保持原子、文本原样保留、也没有分隔符需要记录。
+    segments, metadata = segmentation.segment_paragraphs(
+        ["First sentence.Second sentence."])
+
+    assert segments == ["First sentence.Second sentence."]
+    row = metadata["paragraph_ranges"][0]
+    assert row["separators"] == []
+    assert row["gate"]["whitespace_exact"] is True
+    assert segmentation.reconstruct_source_paragraph(
+        segments[row["start"]:row["end"]], row["separators"]
+    ) == "First sentence.Second sentence."
+
+
+def test_double_space_and_newline_boundaries_are_kept_verbatim():
+    _segments, metadata = segmentation.segment_paragraphs(
+        ["First sentence.  Second sentence."])
+    assert metadata["paragraph_ranges"][0]["separators"] == ["  "]
+
+    _segments, metadata = segmentation.segment_paragraphs(
+        ["First sentence.\nSecond sentence."])
+    assert metadata["paragraph_ranges"][0]["separators"] == ["\n"]
+
+
+def test_normalised_text_records_no_separator_instead_of_guessing():
+    # 段内空白被 `_normalise_spaces` 改写后，段文本不再逐字出现在原段落里，
+    # 边界空白无法定位：此时只标记 `separators_recorded = False`，
+    # 不猜、不报错。
+    segments, metadata = segmentation.segment_paragraphs(
+        ["First  sentence. Second sentence."])
+
+    assert segments == ["First sentence.", "Second sentence."]
+    row = metadata["paragraph_ranges"][0]
+    assert row["separators"] == []
+    assert row["gate"]["separators_recorded"] is False
+    assert row["gate"]["whitespace_exact"] is False
+    assert row["gate"]["characters_exact"] is True
+
+
+def test_gate_reports_whitespace_loss_instead_of_claiming_lossless():
+    _segments, metadata = segmentation.segment_paragraphs(
+        ["First sentence. Second sentence.", "Atomic paragraph."])
+
+    split_row = metadata["paragraph_ranges"][0]
+    atomic_row = metadata["paragraph_ranges"][1]
+    assert split_row["gate"]["characters_exact"] is True
+    assert split_row["gate"]["whitespace_exact"] is False
+    assert atomic_row["gate"]["characters_exact"] is True
+    assert atomic_row["gate"]["whitespace_exact"] is True
+
+
+def test_legacy_migration_records_boundary_separators():
+    state = {
+        "segmentation": {"mode": "paragraph"},
+        "source_paragraphs": ["First sentence. Second sentence."],
+        "paras": ["First sentence. Second sentence."],
+        "pairs": [{"source": "First sentence. Second sentence.",
+                   "target": "第一句。第二句。"}],
+        "p2_done": True,
+    }
+
+    migrated, _report = segmentation.migrate_legacy_state(state)
+
+    row = migrated["segmentation"]["paragraph_ranges"][0]
+    assert row["separators"] == [" "]
+    assert row["gate"]["separators_recorded"] is True
+
+
+def test_source_paragraph_round_trip_through_segments():
+    source = "First sentence. Second sentence."
+    segments, metadata = segmentation.segment_paragraphs([source])
+
+    row = metadata["paragraph_ranges"][0]
+    rebuilt = segmentation.reconstruct_source_paragraph(
+        segments[row["start"]:row["end"]], row["separators"])
+
+    assert rebuilt == source
+
+
+def test_removing_a_segment_inside_a_paragraph_invalidates_the_separators():
+    # 段被从段落内部移除后，新的相邻关系（例如段0↔段2）在原文里从未存在过：
+    # 旧的 separators 描述的是另一组边界，必须作废而不是错位沿用。
+    from folith.engine import segments as segments_engine
+
+    units, metadata = segmentation.segment_paragraphs(
+        ["First sentence. Second sentence. Third sentence."])
+    row = metadata["paragraph_ranges"][0]
+    assert row["separators"] == [" ", " "]
+
+    state = {
+        "paras": list(units),
+        "pairs": [{"source": unit, "target": unit} for unit in units],
+        "segmentation": {"paragraph_ranges": [dict(row)]},
+    }
+    segments_engine._drop_segment_at(state, 1)
+
+    updated = state["segmentation"]["paragraph_ranges"][0]
+    assert updated["separators"] == []
+    assert updated["gate"]["separators_recorded"] is False
+
+
+def test_removing_the_first_or_last_segment_keeps_the_remaining_boundaries():
+    from folith.engine import segments as segments_engine
+
+    units, metadata = segmentation.segment_paragraphs(
+        ["First sentence. Second sentence. Third sentence."])
+    row = metadata["paragraph_ranges"][0]
+
+    first = {
+        "paras": list(units),
+        "pairs": [{"source": unit, "target": unit} for unit in units],
+        "segmentation": {"paragraph_ranges": [dict(row)]},
+    }
+    segments_engine._drop_segment_at(first, 0)
+    first_row = first["segmentation"]["paragraph_ranges"][0]
+    assert first_row["separators"] == [" "]
+    assert first_row["gate"]["separators_recorded"] is True
+    assert len(first_row["separators"]) == first_row["end"] - first_row["start"] - 1
+
+    last = {
+        "paras": list(units),
+        "pairs": [{"source": unit, "target": unit} for unit in units],
+        "segmentation": {"paragraph_ranges": [dict(row)]},
+    }
+    segments_engine._drop_segment_at(last, 2)
+    last_row = last["segmentation"]["paragraph_ranges"][0]
+    assert last_row["separators"] == [" "]
+    assert last_row["gate"]["separators_recorded"] is True
+    assert len(last_row["separators"]) == last_row["end"] - last_row["start"] - 1

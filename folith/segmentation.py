@@ -18,7 +18,7 @@ import re
 from typing import Any, Dict, List, Sequence, Tuple
 
 
-RULES_VERSION = 6
+RULES_VERSION = 7
 MIGRATION_VERSION = 1
 DEFAULT_MODE = "sentence"
 SUPPORTED_MODES = ("sentence", "paragraph")
@@ -246,9 +246,62 @@ def _lowercase_attribution_follows(text: str, end: int) -> bool:
     return text[index].islower()
 
 
-def _coverage_key(value: str) -> str:
-    """Normalize only layout whitespace for lossless segmentation checks."""
+def _layout_coverage_key(value: str) -> str:
+    """Strip all whitespace on both sides.
+
+    The gate therefore certifies that no non-whitespace character was lost —
+    it does **not** certify that whitespace was preserved.  Whitespace
+    fidelity is reported separately by ``whitespace_exact`` and
+    ``separators_recorded``.
+    """
     return re.sub(r"\s+", "", str(value or ""))
+
+
+def _locate_parts(paragraph: str, parts: List[str]) -> Tuple[List[str], bool]:
+    """Return the exact whitespace between consecutive parts, plus an exactness flag.
+
+    ``parts`` are substrings of the *normalised* paragraph, so they may not
+    appear verbatim in the raw paragraph (when ``_normalise_spaces`` rewrote
+    the text).  In that case the original whitespace is already gone: return
+    no separators rather than a guess.
+    """
+    text = str(paragraph or "")
+    seps: List[str] = []
+    cursor = 0
+    for index, part in enumerate(parts[:-1]):
+        needle = str(part or "")
+        found = text.find(needle, cursor)
+        if found < 0:
+            return [], False
+        end = found + len(needle)
+        nxt = text.find(str(parts[index + 1] or ""), end)
+        if nxt < 0:
+            return [], False
+        seps.append(text[end:nxt])
+        cursor = nxt
+    return seps, True
+
+
+def reconstruct_source_paragraph(parts: List[str], separators: List[str]) -> str:
+    """Rebuild the split paragraph from its units using recorded separators.
+
+    ``separators`` holds one entry per boundary, so a faithful rebuild needs
+    ``len(separators) == len(parts) - 1``.  When the separators were not
+    recorded (the normalised text no longer appears verbatim in the source)
+    the units are joined with a single space, which is the same lossy fallback
+    the callers used before the separators were recorded.
+    """
+    if not parts:
+        return ""
+    if not separators or len(separators) != len(parts) - 1:
+        return " ".join(str(part or "") for part in parts)
+    chunks = [str(parts[0] or "")]
+    for index, separator in enumerate(separators):
+        if index + 1 >= len(parts):
+            break
+        chunks.append(str(separator or ""))
+        chunks.append(str(parts[index + 1] or ""))
+    return "".join(chunks)
 
 
 def _gate_sentence_parts(raw: str, parts: List[str]) -> Tuple[List[str], Dict[str, Any]]:
@@ -266,7 +319,7 @@ def _gate_sentence_parts(raw: str, parts: List[str]) -> Tuple[List[str], Dict[st
         return candidates or ([text] if text else []), {
             "status": "passed", "reason": "no_boundary_or_atomic_unit",
         }
-    if _coverage_key("".join(candidates)) != _coverage_key(text):
+    if _layout_coverage_key("".join(candidates)) != _layout_coverage_key(text):
         return [text], {
             "status": "blocked", "reason": "lossless_coverage_failed",
         }
@@ -364,12 +417,25 @@ def segment_paragraphs(
             start = len(segments)
             raw_parts = _split_sentences(paragraph)
             parts, gate = _gate_sentence_parts(paragraph, raw_parts)
+            separators, exact = _locate_parts(paragraph, parts)
+            gate = {
+                **gate,
+                # `characters_exact` / `whitespace_exact` describe the **source
+                # paragraph** the units were cut from, not the units' own
+                # leading/trailing whitespace: the paragraph itself is already
+                # stripped (leading/trailing blanks live in `source_paras`),
+                # so "whitespace fidelity" here means *between* the units.
+                "characters_exact": True,
+                "whitespace_exact": "".join(parts) == paragraph,
+                "separators_recorded": exact,
+            }
             segments.extend(parts)
             ranges.append({
                 "paragraph_index": paragraph_index,
                 "start": start,
                 "end": len(segments),
                 "gate": gate,
+                "separators": separators,
             })
 
     split_paragraphs = sum(
@@ -523,6 +589,7 @@ def migrate_legacy_state(state: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[st
                     child.pop(key, None)
                 child["target_provenance"] = "legacy_sentence_migration"
             new_pairs.append(child)
+        separators, exact = _locate_parts(source, source_parts)
         new_ranges.append({
             "paragraph_index": paragraph_index,
             "start": range_start,
@@ -534,7 +601,11 @@ def migrate_legacy_state(state: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[st
                 "reason": next((item.get("reason") for item in blocked
                                 if item.get("paragraph_index") == paragraph_index),
                                "lossless_sentence_split"),
+                "characters_exact": True,
+                "whitespace_exact": "".join(source_parts) == source,
+                "separators_recorded": exact,
             },
+            "separators": separators,
         })
 
     state["paras"] = new_paras
@@ -569,4 +640,5 @@ def migrate_legacy_state(state: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[st
 
 
 __all__ = ["DEFAULT_MODE", "MIGRATION_VERSION", "RULES_VERSION", "SUPPORTED_MODES",
-           "migrate_legacy_state", "resolve_mode", "segment_paragraphs"]
+           "migrate_legacy_state", "reconstruct_source_paragraph", "resolve_mode",
+           "segment_paragraphs"]

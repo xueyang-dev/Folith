@@ -1932,7 +1932,21 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
             if output_index < len(cleaned_paragraphs):
                 cleaned_p = str(cleaned_paragraphs[output_index] or "")
             if not cleaned_p:
-                cleaned_p = " ".join(str(paragraphs[si] or "") for si in segments_by_paragraph.get(output_index, []))
+                segment_indexes = segments_by_paragraph.get(output_index, [])
+                row = next((item for item in paragraph_ranges
+                            if isinstance(item, dict)
+                            and item.get("paragraph_index") == output_index), None)
+                separators = (row or {}).get("separators")
+                if separators:
+                    # Exact reconstruction from the recorded boundary
+                    # separators; the old " ".join() guess silently rewrote
+                    # the paragraph whenever the original spacing differed.
+                    cleaned_p = _segmentation.reconstruct_source_paragraph(
+                        [str(paragraphs[si] or "") for si in segment_indexes],
+                        list(separators))
+                else:
+                    cleaned_p = " ".join(
+                        str(paragraphs[si] or "") for si in segment_indexes)
 
             if _source_quality.is_integrated_numeric_fragment(raw_text, cleaned_p):
                 excused = True
