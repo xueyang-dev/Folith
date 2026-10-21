@@ -182,8 +182,11 @@ def _check_bundle(record: dict) -> tuple[dict, list[str]]:
     if any(path.name.lower() in {"provider_config.json", "outputs", "exports"}
            for path in BUNDLE.rglob("*")):
         problems.append("user data / provider config leaked into the bundle")
-    if any(path.is_dir() and path.name == "tests" for path in BUNDLE.rglob("*")):
-        problems.append("tests directory shipped in the bundle")
+    # Third-party wheels may ship their own test modules (e.g. pyarrow/tests);
+    # only the application's own test suite must never be in the artifact.
+    for relative in ("tests", "_internal/tests"):
+        if (BUNDLE / relative).is_dir():
+            problems.append(f"application test directory shipped: {relative}")
 
     payload_path = OUT_DIR / "tesseract" / "tesseract_payload.json"
     engine = BUNDLE / "_internal" / "tesseract" / "bin" / "tesseract.exe"

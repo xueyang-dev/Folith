@@ -99,6 +99,11 @@ def app_environment(stripped_path: str, **extra: str) -> dict[str, str]:
     """
     env = dict(os.environ)
     env["PATH"] = stripped_path
+    # The frozen windowed build otherwise decodes/encodes stdio with the system
+    # ANSI code page (GBK here); Arabic/Chinese diagnostics then raise an
+    # encoding error in a worker and PyInstaller shows a blocking error dialog.
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     home = env.get("HOME") or env.get("USERPROFILE") or ""
     if home:
         env["HOME"] = home
@@ -180,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
             ]
             started = time.monotonic()
             run = subprocess.run(command, env=env, capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace",
                                  timeout=900, cwd=str(out_dir))
             case_evidence: dict = {
                 "kind": case["kind"],
@@ -284,7 +290,8 @@ def _missing_pack_case(out_dir: Path, args, python: str, url: str,
         [str(Path(args.frozen_app).expanduser()),
          "--data-dir", str(data_dir), "--selftest",
          "--selftest-source", str(fixture), "--result", str(result_path)],
-        env=env, capture_output=True, text=True, timeout=900, cwd=str(out_dir))
+        env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=900, cwd=str(out_dir))
     report: dict = {}
     if result_path.is_file():
         try:

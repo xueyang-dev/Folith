@@ -110,7 +110,7 @@ $Zip = Join-Path $InstallerDir "Folith-Qt-$Version-windows-x64.zip"
 if (Test-Path -LiteralPath $Zip) { Remove-Item -LiteralPath $Zip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $DistDir,
+    $BundleDir,
     $Zip,
     [System.IO.Compression.CompressionLevel]::Optimal,
     $true)

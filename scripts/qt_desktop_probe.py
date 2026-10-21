@@ -124,7 +124,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.screenshot:
                 command += ["--selftest-screenshot", str(Path(args.screenshot).resolve())]
             result = subprocess.run(command, env=env, cwd=out_dir,
-                                    timeout=args.timeout, capture_output=True, text=True)
+                                    timeout=args.timeout, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace")
             report = json.loads(Path(args.out).read_text()) if Path(args.out).is_file() else {}
             print(json.dumps({"ok": report.get("ok"), "exit_code": result.returncode,
                               "stderr_tail": result.stderr[-1000:]}, ensure_ascii=False))

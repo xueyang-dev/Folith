@@ -604,4 +604,9 @@ def write_report(report: dict, path: str | None) -> None:
     text = json.dumps(report, ensure_ascii=False, indent=2, default=str)
     if path:
         Path(path).write_text(text + "\n", encoding="utf-8")
-    print(text, flush=True)
+    # The console copy is diagnostic only.  A frozen Windows GUI has a GBK
+    # stdio stream; printing Arabic report fields would raise UnicodeEncodeError
+    # after the report was written and leave a PyInstaller error dialog blocking
+    # process exit.  The file keeps the real Unicode text; the console gets
+    # ASCII escapes that every code page can encode.
+    print(json.dumps(report, ensure_ascii=True, indent=2, default=str), flush=True)
