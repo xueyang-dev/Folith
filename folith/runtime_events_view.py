@@ -52,8 +52,11 @@ _PROGRESS_SUFFIXES = ("...", "…", "……")
 
 def strip_emoji(text: Any) -> str:
     """Drop pictographs and the internal "概要状态 model" suffix old logs still carry."""
-    text = re.sub(r"\s*[·•]\s*概要状态\s*\S+", "", _EMOJI.sub("", str(text or "")))
-    return re.sub(r"\s{2,}", " ", text).strip()
+    original = str(text or "")
+    cleaned = re.sub(r"\s*[·•]\s*概要状态\s*\S+", "", _EMOJI.sub("", original))
+    if cleaned == original:
+        return original            # nothing to remove: keep the message byte for byte
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 def message_status(name: str, message: str) -> str:
