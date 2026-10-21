@@ -69,8 +69,15 @@ def test_runtime_failure_and_cancel_are_persisted(tmp_path, monkeypatch):
         monkeypatch.setattr(core, "run_job_pipeline", fail_pipeline)
         failed_id = "runtimefailed01"
         core.start_job_worker(failed_id, "fixture.docx", None, _pipeline_kwargs())
-        assert _wait_for(lambda: core.get_job_runtime_status(failed_id)["status"] == "failed")
+        # The terminal status and its error payload are separate fields in one
+        # atomic write; wait for the payload rather than assuming the first
+        # "failed" read already contains it (the store is replaced asynchronously).
+        assert _wait_for(
+            lambda: (core.load_runtime_state(failed_id).get("error") or {}).get("type")
+            == "TimeoutError",
+            timeout=5.0)
         failed = core.load_runtime_state(failed_id)
+        assert failed["status"] == "failed"
         assert failed["error"]["type"] == "TimeoutError"
         assert failed["error"]["operation"] == "pipeline"
         assert core.runtime_technical_log_path(failed_id).is_file()
@@ -89,8 +96,11 @@ def test_runtime_failure_and_cancel_are_persisted(tmp_path, monkeypatch):
         assert _wait_for(entered.is_set)
         assert core.request_job_cancel(cancelled_id)
         release.set()
-        assert _wait_for(lambda: core.get_job_runtime_status(cancelled_id)["status"] == "cancelled")
-        assert core.load_runtime_state(cancelled_id)["cancel_requested"]
+        assert _wait_for(
+            lambda: (lambda runtime: runtime["status"] == "cancelled"
+                     and bool(runtime.get("cancel_requested")))(
+                         core.load_runtime_state(cancelled_id)),
+            timeout=5.0)
     finally:
         monkeypatch.setattr(core, "run_job_pipeline", original)
         core._RUNTIME_WORKERS.clear()

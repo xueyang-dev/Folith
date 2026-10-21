@@ -227,6 +227,7 @@ def test_real_waiting_pipeline_remains_active_without_heartbeat(tmp_path, monkey
     assert not worker.is_alive()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows sharing-violation semantics")
 def test_sharing_failure_during_runtime_write_does_not_abort_job(job, monkeypatch):
     def locked(*_args, **_kwargs):
         error = PermissionError(errno.EACCES, "reader open")

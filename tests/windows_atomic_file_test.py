@@ -14,7 +14,6 @@ def test_transient_windows_sharing_failure_retries_only_replace(tmp_path, monkey
     source, target = tmp_path / "state.tmp", tmp_path / "state.json"
     source.write_text("new", encoding="utf-8")
     target.write_text("old", encoding="utf-8")
-    original = atomic_file._replace_once
     calls, sleeps = [], []
     def sharing_failure(path, destination):
         calls.append(path.read_bytes())
@@ -22,7 +21,9 @@ def test_transient_windows_sharing_failure_retries_only_replace(tmp_path, monkey
             error = PermissionError(errno.EACCES, "reader open")
             error.winerror = 5
             raise error
-        return original(path, destination)
+        # Simulate the successful Windows call without calling the
+        # ctypes-only ReplaceFileW path, which does not exist on POSIX.
+        os.replace(path, destination)
     monkeypatch.setattr(atomic_file, "_WINDOWS", True)
     monkeypatch.setattr(atomic_file, "_replace_once", sharing_failure)
     monkeypatch.setattr(atomic_file.time, "sleep", sleeps.append)
