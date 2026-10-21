@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -196,7 +197,7 @@ def build_pdf_arabic_scanned(path: Path) -> dict:
         staging_page.insert_htmlbox(
             fitz.Rect(40, 60, 555, 480),
             f'<div style="font-family: f; font-size: 20px; direction: rtl;">{body}</div>',
-            css=f'@font-face {{font-family: f; src: url("{font_path}");}}',
+            css=f'@font-face {{font-family: f; src: url("{font_path.as_posix()}");}}',
         )
         pixmap = staging_page.get_pixmap(
             matrix=fitz.Matrix(300 / 72, 300 / 72), alpha=False
@@ -218,12 +219,17 @@ def build_pdf_arabic_scanned(path: Path) -> dict:
 
 
 def _arabic_font() -> Path | None:
+    windir = Path(os.environ.get("WINDIR") or r"C:\Windows")
     candidates = [
         Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
         Path("/System/Library/Fonts/Supplemental/Tahoma.ttf"),
         Path("/System/Library/Fonts/Supplemental/Times New Roman.ttf"),
         Path("/Library/Fonts/Arial Unicode.ttf"),
         Path("/System/Library/Fonts/GeezaPro.ttc"),
+        windir / "Fonts" / "tahoma.ttf",
+        windir / "Fonts" / "arial.ttf",
+        windir / "Fonts" / "segoeui.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -253,7 +259,7 @@ def build_pdf_chinese_scanned(path: Path) -> dict:
         staging_page.insert_htmlbox(
             fitz.Rect(40, 60, 555, 480),
             f'<div style="font-family: f; font-size: 20px;">{body}</div>',
-            css=f'@font-face {{font-family: f; src: url("{font_path}");}}',
+            css=f'@font-face {{font-family: f; src: url("{font_path.as_posix()}");}}',
         )
         pixmap = staging_page.get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72), alpha=False)
         image_bytes = pixmap.tobytes("jpeg", jpg_quality=92)
@@ -275,12 +281,18 @@ def build_pdf_chinese_scanned(path: Path) -> dict:
 def _chinese_font() -> Path | None:
     # MuPDF's HTML engine cannot load .ttc collections ("substitute font creation
     # is not implemented yet"), so prefer single-face fonts that contain CJK.
+    windir = Path(os.environ.get("WINDIR") or r"C:\Windows")
     candidates = [
         Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
         Path("/Library/Fonts/Arial Unicode.ttf"),
         Path("/System/Library/Fonts/Supplemental/Songti.ttc"),
         Path("/System/Library/Fonts/Hiragino Sans GB.ttc"),
         Path("/System/Library/Fonts/PingFang.ttc"),
+        # Windows: SimHei and DengXian are single-face CJK fonts (TTF), unlike
+        # the Microsoft YaHei / SimSun collections (.ttc) MuPDF cannot load.
+        windir / "Fonts" / "simhei.ttf",
+        windir / "Fonts" / "Deng.ttf",
+        windir / "Fonts" / "simsunb.ttf",
     ]
     for candidate in candidates:
         if candidate.exists():
