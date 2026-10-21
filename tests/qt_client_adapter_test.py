@@ -125,7 +125,15 @@ def _wait_for_idle(core, job_id: str, timeout: float = 240.0) -> dict:
     while time.monotonic() < deadline:
         state = core.load_job_state(job_id) or {}
         runtime = core.get_job_runtime_status(job_id, state)
-        if runtime.get("status") not in core.RUNTIME_ACTIVE_STATUSES:
+        status = runtime.get("status")
+        if status not in core.RUNTIME_ACTIVE_STATUSES:
+            # A transient read of the atomically replaced runtime file can
+            # return idle defaults while the worker is still running.  Do not
+            # mistake that for settlement.
+            if status in {"idle", "idle_incomplete"} \
+                    and core.is_job_worker_alive(job_id):
+                time.sleep(0.3)
+                continue
             return runtime
         time.sleep(0.3)
     raise AssertionError(f"job {job_id} did not settle within {timeout}s")
