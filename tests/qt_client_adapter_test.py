@@ -706,6 +706,9 @@ def test_model_disconnect_is_comprehensible_and_retryable(adapter_env):
                                      "idle_incomplete"), runtime
     state = adapter.load_state(job_id)
     assert not state.get("p2_done")
+    # The worker publishes the failure before it releases its execution lock;
+    # a retry inside that window is refused as "still running".
+    assert _wait_for_worker_stopped(core, job_id), "the failed worker never stopped"
 
     # Retry with a working endpoint: the same task must be able to finish.
     stub = StubEndpoint(tmp)
