@@ -99,7 +99,7 @@
 
 从 [v0.7.0 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) 下载：
 
-- **安装版（推荐）**：`Folith-Setup-0.7.0-windows-x64.exe`。运行后选择安装目录，从开始菜单启动。卸载只移除应用；任务、术语、翻译记忆和设置保留在 `%LOCALAPPDATA%\Folith`。
+- **安装版（推荐）**：`Folith-Setup-0.7.0-windows-x64.exe`。运行后选择安装目录，从开始菜单启动。只安装到当前用户，不需要管理员权限。卸载只移除应用；任务、术语、翻译记忆和设置保留在 `%LOCALAPPDATA%\Folith`。
 - **便携版**：`Folith-Qt-0.7.0-windows-x64.zip`。右键「全部解压缩」，保持解压后的 `Folith` 文件夹完整，运行 `Folith\Folith.exe`。不要在压缩包预览里直接运行。
 
 系统要求：Windows 10 或 Windows 11，x64。本次在 Windows 11 x64 上验收。不需要安装 Python、Git 或任何开发工具。已内置 Tesseract（英文、简体中文、阿拉伯文）；不包含 PaddleOCR 或 LibreOffice。

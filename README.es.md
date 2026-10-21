@@ -99,7 +99,7 @@ Descarga `Folith-Qt-0.7.0-macos-arm64.dmg` de la [versión v0.7.0](https://githu
 
 Descarga uno de estos archivos de la [versión v0.7.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0):
 
-- **Instalador (recomendado):** `Folith-Setup-0.7.0-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Desinstalar solo quita la aplicación; las tareas, términos, memoria y ajustes permanecen en `%LOCALAPPDATA%\Folith`.
+- **Instalador (recomendado):** `Folith-Setup-0.7.0-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Se instala solo para el usuario actual y no requiere permisos de administrador. Desinstalar solo quita la aplicación; las tareas, términos, memoria y ajustes permanecen en `%LOCALAPPDATA%\Folith`.
 - **Portátil:** `Folith-Qt-0.7.0-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
 
 Requisitos: Windows 10 u 11, x64. Esta versión se probó en Windows 11 x64. No hace falta Python, Git ni herramientas de desarrollo. Tesseract (inglés, chino simplificado y árabe) viene incluido; PaddleOCR y LibreOffice no.

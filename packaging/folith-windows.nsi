@@ -1,13 +1,15 @@
 ﻿; Folith Windows installer (NSIS 3).
 ;
-; Packages the PyInstaller one-folder bundle (dist\qt-windows\Folith) produced by
-; windows\05-build-preview.cmd.  The application itself is self-contained (Qt +
-; Tesseract + eng/chi_sim/ara), so this only lays the folder down, makes a Start
-; Menu shortcut, and registers an uninstaller.
+; Packages the PyInstaller one-folder bundle (dist\qt-windows\Folith).  The
+; application itself is self-contained (Qt + Tesseract + eng/chi_sim/ara), so
+; this only lays the folder down, makes a Start Menu shortcut, and registers an
+; uninstaller.
 ;
-; User data lives in the per-user data directory (FOLITH_DESKTOP_DATA_DIR), not
-; in the install folder, so uninstalling deliberately leaves tasks and settings
-; alone.
+; This is a per-user install: no administrator elevation is requested, and the
+; default folder is %LOCALAPPDATA%\Programs\Folith.  That keeps installation and
+; removal possible for an ordinary user account.  User data lives in
+; %LOCALAPPDATA%\Folith, not in the install folder, so uninstalling deliberately
+; leaves tasks, terms, memory and settings alone.
 ;
 ; Build with:  windows\06-build-installer.cmd
 ;          or:  makensis -DAPP_VERSION=0.5.0 packaging\folith-windows.nsi
@@ -42,9 +44,9 @@ Unicode true
 
 Name "${APP_NAME_CN}"
 OutFile "${OUT_FILE}"
-InstallDir "$PROGRAMFILES64\${APP_NAME}"
-InstallDirRegKey HKLM "${UNINST_KEY}" "InstallLocation"
-RequestExecutionLevel admin
+InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
+InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation"
+RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
 VIProductVersion "${APP_VERSION}.0"
@@ -73,7 +75,7 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "${APP_PUBLISHER}"
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Folith" SecMain
-  SetShellVarContext all
+  SetShellVarContext current
   SetOutPath "$INSTDIR"
   File /r "${BUNDLE_DIR}\*.*"
 
@@ -84,29 +86,29 @@ Section "Folith" SecMain
     "$INSTDIR\${APP_EXE}" 0
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk" "$INSTDIR\Uninstall.exe"
 
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${APP_NAME_CN}"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "${APP_PUBLISHER}"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${APP_EXE}"
-  WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
-  WriteRegStr HKLM "${UNINST_KEY}" "QuietUninstallString" \
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APP_NAME_CN}"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${APP_PUBLISHER}"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${APP_EXE}"
+  WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
+  WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" \
     "$\"$INSTDIR\Uninstall.exe$\" /S"
-  WriteRegStr HKLM "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
-  WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
+  WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
 
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
-  WriteRegDWORD HKLM "${UNINST_KEY}" "EstimatedSize" "$0"
+  WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
 SectionEnd
 
 Section "Uninstall"
-  SetShellVarContext all
+  SetShellVarContext current
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME_CN}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
 
-  DeleteRegKey HKLM "${UNINST_KEY}"
+  DeleteRegKey HKCU "${UNINST_KEY}"
 
   RMDir /r "$INSTDIR"
 SectionEnd
