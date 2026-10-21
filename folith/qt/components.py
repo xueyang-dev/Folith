@@ -1915,6 +1915,54 @@ PROGRESS_TONES = {
 }
 
 
+class LoadingOverlay(QWidget):
+    """Covers a page while the UI thread does heavy work (opening a large task).
+
+    It is painted once, synchronously, before the work starts. It is static on
+    purpose: the work runs on the UI thread, so nothing could animate anyway, and
+    continuous animation was removed app-wide after it made the window flicker.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("loadingOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.hide()
+        column = QVBoxLayout(self)
+        column.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        column.setSpacing(theme_module.SPACE["sm"])
+        self._icon = icons.IconLabel("clock", 22, "accent")
+        self._label = QLabel("")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._track = ProgressTrack()
+        self._track.setRange(0, 0)
+        self._track.setFixedWidth(220)
+        column.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignHCenter)
+        column.addWidget(self._label, 0, Qt.AlignmentFlag.AlignHCenter)
+        column.addWidget(self._track, 0, Qt.AlignmentFlag.AlignHCenter)
+
+    def present(self, message: str) -> None:
+        """Show over the whole parent and paint now (do not wait for the event loop)."""
+        self._label.setText(message)
+        self._track.setAccessibleName(message)
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        self.setGeometry(parent.rect())
+        self.raise_()
+        self.show()
+        self.repaint()      # no processEvents: a queued poll timer must not re-enter the open
+
+    def dismiss(self) -> None:
+        self.hide()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt naming
+        painter = QPainter(self)
+        colour = theme_module.qcolor(_tokens()["bg-surface"])
+        colour.setAlpha(240)
+        painter.fillRect(self.rect(), colour)
+
+
 class ProgressTrack(QWidget):
     """A native-looking progress bar (macOS NSProgressIndicator, bar style).
 
@@ -2612,13 +2660,14 @@ class OptionCard(QPushButton):
         column.setSpacing(theme_module.SPACE["xxs"])
         head = QHBoxLayout()
         head.setSpacing(theme_module.SPACE["xs"] + 2)
-        self.icon_label = QLabel()
+        # 子控件一开始就带父窗口：没有父窗口时 setVisible(True) 会让它闪成顶层小窗。
+        self.icon_label = QLabel(self)
         self.icon_label.setVisible(bool(icon))
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self)
         self.title_label.setObjectName("optionTitle")
         head.addWidget(self.icon_label)
         head.addWidget(self.title_label, 1)
-        self.detail_label = QLabel(detail)
+        self.detail_label = QLabel(detail, self)
         self.detail_label.setObjectName("optionDetail")
         self.detail_label.setTextFormat(Qt.TextFormat.RichText)
         # 长语言（俄、阿）里细节行会比卡片宽：折行，而不是把整页撑出横向滚动。

@@ -4151,8 +4151,14 @@ def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, mo
     monkeypatch.setattr(window_module, "_automation", lambda: False)
     monkeypatch.setattr(window, "_failure", lambda *args, **kwargs: None)
     window.import_paths(["held.docx"], autostart=False)
-    QTest.qWait(3200)
-    dialog = window._import_activity._dialog
+    # The dialog is due after 3 s; a busy CI runner can fire that timer late,
+    # so wait for it to appear rather than sampling once at a fixed delay.
+    activity = window._import_activity
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not (
+            activity._dialog is not None and activity._dialog.isVisible()):
+        QTest.qWait(50)
+    dialog = activity._dialog
     assert dialog is not None and dialog.isVisible()
     assert dialog.windowModality() == Qt.WindowModality.NonModal
     assert QApplication.activeModalWidget() is None
@@ -4204,3 +4210,143 @@ def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     assert not window.sidebar_clip.isVisible()
     assert window.stack.width() == window.stack_clip.width(), "the page follows the window again"
     assert window.stack.graphicsEffect() is None, "no effect is left installed on the page"
+
+
+def test_new_project_shows_up_in_the_setup_project_box(client):
+    """项目页新建项目后，准备页「归入项目」下拉框里要立刻能看到，并保留当前选择。"""
+    adapter = client["adapter"]
+    window = client["window"]
+    app = client["app"]
+
+    first = adapter.create_project("先建的项目")
+    window.workbench.set_setup_choices(adapter.setup_choices())
+    window._setup_choices_loaded = True
+    box = window.workbench.setup_panel.project_box
+    box.setCurrentIndex(box.findData(first["project_id"]))
+    assert box.findData(first["project_id"]) >= 0
+
+    second = adapter.create_project("后建的项目")
+    assert box.findData(second["project_id"]) < 0
+    window.projects.projectsChanged.emit()
+    app.processEvents()
+
+    assert box.findData(second["project_id"]) >= 0
+    assert box.currentData() == first["project_id"]
+
+
+def test_project_task_menu_delete_confirms_and_refreshes_the_projects_page(client, monkeypatch):
+    """项目页任务行的「删除…」走原有确认框；确认后任务被删、项目页重新读取。"""
+    adapter = client["adapter"]
+    window = client["window"]
+    app = client["app"]
+    from folith.qt import window as window_module
+
+    source = client["tmp"] / "doomed.docx"
+    source.write_bytes(_make_docx(["要删除的任务。"]))
+    job_id = adapter.import_documents([source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    window.manage_projects()
+    app.processEvents()
+
+    asked: list[str] = []
+    monkeypatch.setattr(window, "_confirm", lambda title, *a, **k: asked.append(title) or True)
+    deleted: list[str] = []
+    real_delete = window_module.adapter.delete_job
+    monkeypatch.setattr(window_module.adapter, "delete_job",
+                        lambda item: deleted.append(item) or real_delete(item))
+    reloads: list[int] = []
+    monkeypatch.setattr(window, "refresh_projects", lambda: reloads.append(1))
+
+    window.projects.deleteJobsRequested.emit([job_id])
+    app.processEvents()
+
+    assert asked == ["删除任务"]
+    assert deleted == [job_id]
+    assert reloads, "删除后要刷新项目页"
+
+
+def test_choose_import_is_refused_while_an_import_is_running(client, monkeypatch):
+    """导入进行中界面会卡一下；再点导入入口只给提示，不再弹文件面板、不重复导入。"""
+    window = client["window"]
+    from folith.qt import window as window_module
+
+    opened: list[int] = []
+    monkeypatch.setattr(window_module.QFileDialog, "getOpenFileNames",
+                        lambda *a, **k: opened.append(1) or ([], ""))
+    window._imports_active = 1
+    try:
+        window.choose_import()
+    finally:
+        window._imports_active = 0
+    assert opened == []
+    assert "正在导入" in window.last_notice()
+
+
+def _overlay_visible(window) -> bool:
+    overlay = getattr(window, "_loading_overlay", None)
+    return bool(overlay is not None and overlay.isVisible())
+
+
+def test_open_job_shows_a_loading_overlay_before_the_heavy_work_and_removes_it(client, monkeypatch):
+    window, adapter, app = client["window"], client["adapter"], client["app"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "big.docx",
+                                    [f"第 {i} 段。" for i in range(5)])
+    monkeypatch.setattr(type(window), "LOADING_SEGMENTS", 1)
+    seen: list[bool] = []
+    real_rows = window.workbench.load
+
+    def spying_load(*args, **kwargs):
+        seen.append(_overlay_visible(window))
+        return real_rows(*args, **kwargs)
+
+    monkeypatch.setattr(window.workbench, "load", spying_load)
+    window.open_job(job_id)
+    assert seen == [True], "the overlay must be up before the grid is built"
+    assert not _overlay_visible(window)
+    assert window._current_job_id == job_id
+
+
+def test_small_tasks_open_without_an_overlay(client, monkeypatch):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "tiny.docx", ["一段。"])
+    seen: list[bool] = []
+    real_load = window.workbench.load
+    monkeypatch.setattr(window.workbench, "load",
+                        lambda *a, **k: seen.append(_overlay_visible(window)) or real_load(*a, **k))
+    window.open_job(job_id)
+    assert seen == [False]
+
+
+def test_open_job_writes_one_timing_line_per_phase(client):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "timed.docx", ["一段。"])
+    lines: list[str] = []
+    window._log = lines.append
+    window.open_job(job_id)
+    for phase in ("load_state", "segment_rows", "workbench.load", "total"):
+        assert any(line.startswith(f"timing open_job job={job_id} {phase} ") and line.endswith("ms")
+                   for line in lines), (phase, lines)
+
+
+def test_leaving_prepare_for_a_large_task_shows_the_overlay(client, monkeypatch):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "leave.docx", ["一段。", "二段。"])
+    window.open_job(job_id)
+    monkeypatch.setattr(type(window), "LOADING_SEGMENTS", 1)
+    window.workbench._showing_setup = True
+    seen: list[bool] = []
+    real_apply = window.workbench.apply
+    monkeypatch.setattr(window.workbench, "apply",
+                        lambda *a, **k: seen.append(_overlay_visible(window)) or real_apply(*a, **k))
+    window.refresh_workbench(force=True)
+    assert seen == [True]
+    assert not _overlay_visible(window)
+
+
+def test_background_refresh_is_only_logged_when_slow(client):
+    window, adapter = client["window"], client["adapter"]
+    job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "quiet.docx", ["一段。"])
+    window.open_job(job_id)
+    lines: list[str] = []
+    window._log = lines.append
+    window.refresh_workbench()
+    assert not [line for line in lines if "refresh_workbench" in line]

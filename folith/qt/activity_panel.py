@@ -20,8 +20,9 @@ from . import i18n, platform_ui
 from . import icons
 from . import style as style_module
 
-_MARK = {"completed": "✓", "running": "…", "failed": "✕"}
-_TONE = {"completed": "text-secondary", "running": "accent", "failed": "danger"}
+_MARK = {"completed": "✓", "running": "…", "failed": "✕", "warning": "!"}
+_TONE = {"completed": "text-secondary", "running": "accent", "failed": "danger",
+         "warning": "warning"}
 #: 离底部这么近（px）仍算"在底部"，新记录进来继续跟随。
 PIN_TOLERANCE = 40
 #: 离底部超过这么远（px）才浮出"回到最新"。

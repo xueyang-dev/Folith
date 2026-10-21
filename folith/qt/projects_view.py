@@ -16,7 +16,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QWidgetAction,
+    QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from folith import language_assets as assets
@@ -220,6 +220,8 @@ class ProjectsView(QWidget):
     reloadRequested = Signal()
     openJobRequested = Signal(str, int)
     moveRequested = Signal(list)
+    #: 项目详情「任务」里的「删除…」：窗口弹确认框、删除后刷新项目页
+    deleteJobsRequested = Signal(list)
     #: 「用这个任务新建项目…」：直接打开「新建项目」那一页
     newFromTaskRequested = Signal(str)
     #: 清空这个项目的翻译记忆（确认框由窗口弹）
@@ -673,11 +675,45 @@ class ProjectsView(QWidget):
             style_module.set_button(open_button, "plain", small=True)
             open_button.clicked.connect(lambda _c=False, j=task["job_id"]: self.openJobRequested.emit(j, -1))
             row.addWidget(open_button)
-            box.addLayout(row)
+            more_button = QToolButton()
+            more_button.setObjectName("taskRowMore")
+            more_button.setText("…")
+            more_button.setToolTip(i18n.tr('更多操作'))
+            more_button.setAccessibleName(i18n.tr('更多操作'))
+            more_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            more_button.clicked.connect(
+                lambda _c=False, j=task["job_id"], b=more_button: self._show_task_menu(
+                    j, b.mapToGlobal(b.rect().bottomLeft())))
+            row.addWidget(more_button)
+            holder = QWidget()
+            holder.setLayout(row)
+            row.setContentsMargins(0, 0, 0, 0)
+            holder.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            holder.customContextMenuRequested.connect(
+                lambda pos, j=task["job_id"], w=holder: self._show_task_menu(j, w.mapToGlobal(pos)))
+            box.addWidget(holder)
         if len(tasks) > 8:
             box.addWidget(_text(i18n.tr('还有 {v0} 个，在任务库中查看', v0=len(tasks) - 8), "time"))
         box.addStretch(1)
         return card
+
+    def task_menu(self, job_id: str) -> QMenu:
+        """任务行的「…」菜单：打开 / 移到项目… / 删除…（复用窗口里原有的实现与确认框）。"""
+        menu = QMenu(self)
+        menu.addAction(i18n.tr('打开')).triggered.connect(
+            lambda _c=False: self.openJobRequested.emit(job_id, -1))
+        menu.addAction(i18n.tr('移到项目…')).triggered.connect(
+            lambda _c=False: self.moveRequested.emit([job_id]))
+        menu.addSeparator()
+        menu.addAction(i18n.tr('删除…')).triggered.connect(
+            lambda _c=False: self.deleteJobsRequested.emit([job_id]))
+        return menu
+
+    def _show_task_menu(self, job_id: str, global_pos) -> None:
+        self._menu = self.task_menu(job_id)
+        if bootstrap.automation():
+            return
+        self._menu.exec(global_pos)
 
     def _log_card(self) -> QWidget:
         card = style_module.Card()

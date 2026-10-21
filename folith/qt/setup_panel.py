@@ -1483,18 +1483,7 @@ class TaskSetupPanel(QWidget):
 
             for lang in self._choices.get("source_languages") or []:
                 self.source_box.addItem(_source_languages.display_name(lang), str(lang))
-            self.project_box.clear()
-            # 「未分类」（系统工作区）必须排第一：`_set_combo_data` 找不到条目时会落到
-            # 第 0 项，而第 0 项若不是未分类，一个项目已归档的任务就会被**静默改归**到
-            # 磁盘顺序上的第一个项目。未分类经共享命令归一成 `None`（"没有长期归属"），
-            # 所以这个落点是安全的。
-            for project in sorted(self._choices.get("projects") or [],
-                                  key=lambda item: not item.get("is_system")):
-                # ⚠️ 项目名是**用户数据**，绝不能进 i18n：一个叫「标准」的项目会被
-                # 静默改写成 "Standard"。只有兜底占位符是界面文案。
-                self.project_box.addItem(
-                    str(project.get("name") or i18n.tr('未命名项目')),
-                    project.get("project_id"))
+            self.set_projects(self._choices.get("projects") or [])
             self.ocr_language_box.clear()
             for label, value in self._choices.get("ocr_languages") or []:
                 # 语言自称：见方法文档的例外说明。
@@ -1526,6 +1515,31 @@ class TaskSetupPanel(QWidget):
             self._build_delivery_boxes()
         finally:
             self._loading = False
+
+    def set_projects(self, projects: list[dict]) -> None:
+        """只刷新「归入项目」下拉框，并保留当前选中的项目（项目页新建/改名/归档/删除之后）。
+
+        不动面板的其他选择：重建整个面板会抹掉用户在策略/交付上刚做的调整。
+        """
+        keep = self.project_box.currentData()
+        was_loading = self._loading
+        self._loading = True
+        try:
+            self.project_box.clear()
+            # 「未分类」（系统工作区）必须排第一：`_set_combo_data` 找不到条目时会落到
+            # 第 0 项，而第 0 项若不是未分类，一个项目已归档的任务就会被**静默改归**到
+            # 磁盘顺序上的第一个项目。未分类经共享命令归一成 `None`（"没有长期归属"），
+            # 所以这个落点是安全的。
+            for project in sorted(projects or [], key=lambda item: not item.get("is_system")):
+                # ⚠️ 项目名是**用户数据**，绝不能进 i18n：一个叫「标准」的项目会被
+                # 静默改写成 "Standard"。只有兜底占位符是界面文案。
+                self.project_box.addItem(
+                    str(project.get("name") or i18n.tr('未命名项目')),
+                    project.get("project_id"))
+            index = self.project_box.findData(keep) if keep is not None else -1
+            self.project_box.setCurrentIndex(max(index, 0))
+        finally:
+            self._loading = was_loading
 
     def add_project(self, project_id: str, name: str) -> bool:
         """把刚新建的项目加入选择器并选中它（window 建完之后调回来）。

@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # waits for input and the test never returns on a headless runner.
 os.environ.setdefault("FOLITH_QT_NONINTERACTIVE", "1")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
 
 from folith.qt import style  # noqa: E402
 from tests.project_language_fixture import build  # noqa: E402
@@ -559,3 +559,35 @@ def test_switching_back_to_a_seen_project_shows_it_before_the_background_read(en
     view.select(ids["device"])
     assert view.title.text() == "设备说明书项目"      # 立刻显示上次的内容
     assert requested and requested[-1][0] == ids["device"]   # 同时请求后台刷新
+
+
+def test_task_rows_have_a_menu_with_open_move_and_delete(env, app):  # noqa: F811
+    from tests.project_language_fixture import add_job
+
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    add_job(core, "menu-task", "menu.docx", project_id=ids["device"])
+    from folith.qt.projects_view import ProjectsView
+
+    view = ProjectsView()
+    view.resize(1200, 760)
+    view.show()
+    view.apply_overview(adapter.projects_overview())
+    _load(view, adapter, ids["device"])
+    app.processEvents()
+    seen: dict[str, list] = {"open": [], "move": [], "delete": []}
+    view.openJobRequested.connect(lambda job, _i: seen["open"].append(job))
+    view.moveRequested.connect(lambda jobs: seen["move"].append(jobs))
+    view.deleteJobsRequested.connect(lambda jobs: seen["delete"].append(jobs))
+
+    buttons = view.findChildren(QToolButton, "taskRowMore")
+    assert buttons, "每个任务行都应有「…」按钮"
+    jobs = [t["job_id"] for t in view._detail["tasks"]]
+    assert len(buttons) == len(jobs)
+
+    menu = view.task_menu(jobs[0])
+    labels = [a.text() for a in menu.actions() if not a.isSeparator()]
+    assert labels == ["打开", "移到项目…", "删除…"]
+    for action in [a for a in menu.actions() if not a.isSeparator()]:
+        action.trigger()
+    assert seen == {"open": [jobs[0]], "move": [[jobs[0]]], "delete": [[jobs[0]]]}
