@@ -106,7 +106,9 @@ def _discard_test_top_level_widgets():
     # On Linux, deleting top-level widgets from every test teardown can crash
     # the Qt event loop (SIGBUS in sendPostedEvents) while a test still holds a
     # wrapper for a preview widget; Linux runs are short enough without it.
-    if os.name != "nt":
+    # macOS keeps the cleanup: the isolated Qt regression relies on leaked
+    # windows being gone before the next animation test.
+    if sys.platform.startswith("linux"):
         return
     classes = _qt_classes()
     if not classes:
