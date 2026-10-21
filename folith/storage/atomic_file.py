@@ -108,3 +108,55 @@ def shared_text_reader(path, encoding: str = "utf-8"):
         raise
     with os.fdopen(descriptor, "r", encoding=encoding) as stream:
         yield stream
+
+
+# ``ReplaceFileW`` is not atomic for a reader that opens the destination while
+# the swap is in progress: the open fails with a sharing violation, or with
+# "file not found" for a moment.  Treating that as "no state" made a running
+# task read as idle for one poll.  Readers retry those transient failures.
+_READ_RETRY_DELAYS = (0.005, 0.01, 0.02, 0.04, 0.08)
+_READ_RETRY_BUDGET_SECONDS = 1.0
+_READ_SEEN_LIMIT = 4096
+_read_seen: set[str] = set()
+
+
+def read_shared_text(path, encoding: str = "utf-8") -> str:
+    """Read a file that a concurrent ``replace_file`` may be swapping.
+
+    On Windows, sharing violations are retried briefly.  A missing file is
+    retried only when this process has read it before, so a file that was
+    never written still fails at once.  On POSIX ``rename`` is atomic for
+    readers and this is a plain read.
+    """
+    if not _WINDOWS:
+        with open(path, "r", encoding=encoding) as stream:
+            return stream.read()
+    key = os.path.normcase(os.path.abspath(path))
+    deadline = time.monotonic() + _READ_RETRY_BUDGET_SECONDS
+    failures = 0
+    while True:
+        try:
+            with shared_text_reader(path, encoding) as stream:
+                text = stream.read()
+        except FileNotFoundError as error:
+            if key not in _read_seen:
+                raise
+            last_error = error
+        except OSError as error:
+            if getattr(error, "winerror", None) not in _RETRYABLE_WINERRORS:
+                raise
+            last_error = error
+        else:
+            if len(_read_seen) >= _READ_SEEN_LIMIT:
+                _read_seen.clear()
+            _read_seen.add(key)
+            return text
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if isinstance(last_error, FileNotFoundError):
+                # Really gone (e.g. the task was deleted): stop waiting for it.
+                _read_seen.discard(key)
+            raise last_error
+        delay = _READ_RETRY_DELAYS[min(failures, len(_READ_RETRY_DELAYS) - 1)]
+        failures += 1
+        time.sleep(min(delay, remaining))

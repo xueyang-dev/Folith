@@ -66,6 +66,10 @@ def command_for(action: str, path: Path) -> list[str] | None:
     return ["xdg-open", str(path)]
 
 
+def _ignores_exit_status(argv: list[str]) -> bool:
+    return bool(argv) and Path(argv[0]).stem.lower() == "explorer"
+
+
 def _run(action: str, path: str | Path) -> FileAction:
     resolved = _resolve(path)
     if resolved is None:
@@ -81,7 +85,9 @@ def _run(action: str, path: str | Path) -> FileAction:
     except Exception as exc:  # noqa: BLE001 - a failed file action must not crash the UI
         return FileAction(action=action, path=str(resolved), ok=False, argv=argv or [],
                           detail=f"{type(exc).__name__}: {exc}")
-    if result.returncode != 0:
+    # explorer.exe exits with 1 even after it has opened the folder and
+    # selected the file, so its status carries no failure information.
+    if result.returncode != 0 and not _ignores_exit_status(argv):
         detail = (result.stderr or result.stdout or "").strip()[:200]
         return FileAction(action=action, path=str(resolved), ok=False, argv=argv or [],
                           detail=detail or f"命令返回 {result.returncode}")

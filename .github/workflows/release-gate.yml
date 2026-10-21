@@ -282,6 +282,13 @@ jobs:
           if (-not $installer) { throw "the NSIS installer was not produced" }
           python scripts/check_windows_artifact.py --installer $installer.FullName `
             --out build/qt-windows/windows-artifact-check.json
+      - name: Installer round trip (install, upgrade, uninstall keeps user files)
+        shell: powershell
+        run: |
+          $installer = Get-ChildItem dist/installer/*.exe | Select-Object -First 1
+          python scripts/check_windows_installer_roundtrip.py --installer $installer.FullName `
+            --out build/qt-windows/windows-installer-roundtrip.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Write SHA-256 checksums
         run: |
           python scripts/write_release_checksums.py dist/installer/*.zip dist/installer/*.exe --out dist/SHA256SUMS.txt
@@ -296,6 +303,7 @@ jobs:
             build/qt-windows/desktop_build_info.json
             build/qt-windows/windows-package.json
             build/qt-windows/windows-artifact-check.json
+            build/qt-windows/windows-installer-roundtrip.json
             build/qt-windows/tesseract/tesseract_payload.json
             build/qt-windows/tesseract/tessdata_provenance.json
             ${{ runner.temp }}/qt-probe/

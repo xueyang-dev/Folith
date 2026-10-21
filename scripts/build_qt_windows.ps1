@@ -104,6 +104,14 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 $Exe = Join-Path $BundleDir "Folith.exe"
 if (-not (Test-Path -LiteralPath $Exe)) { throw "the frozen executable is missing: $Exe" }
+# The uninstaller removes exactly these entries (never the whole folder), so a
+# new top-level file would be left behind after uninstalling.
+$TopLevel = @(Get-ChildItem -LiteralPath $BundleDir -Force | ForEach-Object { $_.Name })
+$Expected = @("Folith.exe", "_internal")
+if ($TopLevel.Count -ne $Expected.Count -or
+        @($TopLevel | Where-Object { $Expected -notcontains $_ }).Count -ne 0) {
+    throw "unexpected bundle top level ($($TopLevel -join ', ')); update the NSIS uninstall section"
+}
 
 Write-Host "=== portable ZIP ==="
 $Zip = Join-Path $InstallerDir "Folith-Qt-$Version-windows-x64.zip"
@@ -119,6 +127,18 @@ if (-not (Test-Path -LiteralPath $Zip)) { throw "creating the portable ZIP faile
 Write-Host "=== installer (NSIS) ==="
 $Installer = Join-Path $InstallerDir "Folith-Setup-$Version-windows-x64.exe"
 $Makensis = Get-Command makensis -ErrorAction SilentlyContinue
+if (-not $Makensis) {
+    # A fresh NSIS install (e.g. choco in an earlier CI step) is not on this
+    # session's PATH yet; look in its standard install folders.
+    foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+        if (-not $base) { continue }
+        $candidate = Join-Path $base "NSIS\makensis.exe"
+        if (Test-Path -LiteralPath $candidate) {
+            $Makensis = Get-Command $candidate
+            break
+        }
+    }
+}
 if ($PortableOnly) {
     Write-Host "installer skipped (-PortableOnly)"
 } elseif (-not $Makensis) {

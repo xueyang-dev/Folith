@@ -84,6 +84,22 @@ def test_failed_command_surfaces_the_reason(delivered, monkeypatch):
     assert "boom" in result.describe()
 
 
+@pytest.mark.parametrize("command,ok", [("explorer", True), ("open", False)])
+def test_explorer_exit_status_is_not_a_failure(delivered, monkeypatch, command, ok):
+    # explorer.exe returns 1 after successfully selecting the file; other
+    # launchers' non-zero status is still a real failure.
+    argv = [command, f"/select,{delivered}"]
+    monkeypatch.setattr(file_actions, "command_for", lambda action, path: argv)
+    monkeypatch.setattr(file_actions.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(
+        returncode=1, stdout="", stderr=""))
+    result = file_actions.reveal_in_file_manager(delivered)
+    assert result.ok is ok
+    if ok:
+        assert result.describe() == "已在文件管理器中显示：translation.docx"
+    else:
+        assert "命令返回 1" in result.describe()
+
+
 def test_exceptions_never_escape(delivered, monkeypatch):
     def explode(argv, **kwargs):
         raise OSError("no launcher")

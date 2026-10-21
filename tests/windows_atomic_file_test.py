@@ -99,3 +99,116 @@ def test_real_windows_reader_releases_file_during_replace(tmp_path):
         thread.join(1)
     assert target.read_bytes() == b"new"
     assert not source.exists()
+
+
+def _fake_reader(outcomes):
+    """A ``shared_text_reader`` stand-in that fails or yields per call."""
+    from contextlib import contextmanager
+    import io
+
+    @contextmanager
+    def reader(path, encoding="utf-8"):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        yield io.StringIO(outcome)
+    return reader
+
+
+def _winerror(code, cls=PermissionError):
+    error = cls(errno.EACCES, "injected")
+    error.winerror = code
+    return error
+
+
+@pytest.fixture
+def windows_reader(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(atomic_file, "_WINDOWS", True)
+    monkeypatch.setattr(atomic_file, "_read_seen", set())
+    monkeypatch.setattr(atomic_file.time, "sleep", sleeps.append)
+    return sleeps
+
+
+def test_shared_read_retries_sharing_violations(tmp_path, monkeypatch, windows_reader):
+    outcomes = [_winerror(32), _winerror(5), '{"status": "running"}']
+    monkeypatch.setattr(atomic_file, "shared_text_reader", _fake_reader(outcomes))
+    assert atomic_file.read_shared_text(tmp_path / "s.json") == '{"status": "running"}'
+    assert windows_reader == [0.005, 0.01]
+
+
+def test_shared_read_never_written_file_fails_without_waiting(tmp_path, monkeypatch,
+                                                              windows_reader):
+    outcomes = [FileNotFoundError(errno.ENOENT, "missing")]
+    monkeypatch.setattr(atomic_file, "shared_text_reader", _fake_reader(outcomes))
+    with pytest.raises(FileNotFoundError):
+        atomic_file.read_shared_text(tmp_path / "s.json")
+    assert windows_reader == []
+
+
+def test_shared_read_retries_missing_file_mid_replace(tmp_path, monkeypatch, windows_reader):
+    path = tmp_path / "s.json"
+    outcomes = ["old", FileNotFoundError(errno.ENOENT, "swapping"), "new"]
+    monkeypatch.setattr(atomic_file, "shared_text_reader", _fake_reader(outcomes))
+    assert atomic_file.read_shared_text(path) == "old"
+    assert atomic_file.read_shared_text(path) == "new"
+    assert windows_reader == [0.005]
+
+
+def test_shared_read_deleted_file_stops_waiting(tmp_path, monkeypatch, windows_reader):
+    path = tmp_path / "s.json"
+    clock = iter(range(0, 1000))
+    monkeypatch.setattr(atomic_file.time, "monotonic", lambda: next(clock) * 0.3)
+    gone = FileNotFoundError(errno.ENOENT, "deleted")
+    outcomes = ["old"] + [gone] * 10
+    monkeypatch.setattr(atomic_file, "shared_text_reader", _fake_reader(outcomes))
+    atomic_file.read_shared_text(path)
+    with pytest.raises(FileNotFoundError):
+        atomic_file.read_shared_text(path)
+    waited = len(windows_reader)
+    assert waited >= 1
+    # Once given up on, the next read of the deleted file fails at once.
+    with pytest.raises(FileNotFoundError):
+        atomic_file.read_shared_text(path)
+    assert len(windows_reader) == waited
+
+
+def test_shared_read_other_errors_propagate(tmp_path, monkeypatch, windows_reader):
+    error = _winerror(112, OSError)
+    monkeypatch.setattr(atomic_file, "shared_text_reader", _fake_reader([error]))
+    with pytest.raises(OSError) as caught:
+        atomic_file.read_shared_text(tmp_path / "s.json")
+    assert caught.value is error
+    assert windows_reader == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Actual Windows ReplaceFileW semantics")
+def test_real_windows_reader_never_sees_a_gap_during_replace(tmp_path):
+    target = tmp_path / "runtime_state.json"
+    target.write_text("0", encoding="utf-8")
+    stop = threading.Event()
+
+    def writer():
+        index = 0
+        while not stop.is_set():
+            source = tmp_path / f"runtime_state.json.{index}.tmp"
+            source.write_text(str(index), encoding="utf-8")
+            atomic_file.replace_file(source, target)
+            index += 1
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    failures, reads = [], 0
+    deadline = time.monotonic() + 2.0
+    try:
+        while time.monotonic() < deadline:
+            try:
+                int(atomic_file.read_shared_text(target))
+            except Exception as error:  # noqa: BLE001 - counted below
+                failures.append(repr(error))
+            reads += 1
+    finally:
+        stop.set()
+        thread.join(5)
+    assert reads > 100
+    assert failures == []

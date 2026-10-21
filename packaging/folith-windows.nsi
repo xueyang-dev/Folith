@@ -76,6 +76,11 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "${APP_PUBLISHER}"
 
 Section "Folith" SecMain
   SetShellVarContext current
+  ; Upgrading over an earlier version: drop the previous runtime folder so
+  ; files the new build no longer ships do not linger next to it.  Only done
+  ; when this folder already holds Folith; a foreign _internal is left alone.
+  IfFileExists "$INSTDIR\${APP_EXE}" 0 +2
+    RMDir /r "$INSTDIR\_internal"
   SetOutPath "$INSTDIR"
   File /r "${BUNDLE_DIR}\*.*"
 
@@ -110,5 +115,12 @@ Section "Uninstall"
 
   DeleteRegKey HKCU "${UNINST_KEY}"
 
-  RMDir /r "$INSTDIR"
+  ; Remove only what the installer put here.  The install folder is user
+  ; chosen and may also hold other files (or a data folder someone pointed
+  ; Folith at), so never delete it recursively.  The PyInstaller bundle has
+  ; exactly these two top-level entries; build_qt_windows.ps1 enforces that.
+  Delete "$INSTDIR\${APP_EXE}"
+  RMDir /r "$INSTDIR\_internal"
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR"
 SectionEnd
