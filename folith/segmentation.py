@@ -257,6 +257,19 @@ def _layout_coverage_key(value: str) -> str:
     return re.sub(r"\s+", "", str(value or ""))
 
 
+def _characters_exact(parts: List[str], paragraph: str) -> bool:
+    """Whether the emitted units keep every non-whitespace character.
+
+    This is **measured**, not asserted: the gate normally guarantees it (it
+    falls back to the whole paragraph when a candidate split would lose
+    characters), but the fact is recomputed from the emitted units so that it
+    can turn ``False`` if that guarantee is ever broken.  A blocked gate does
+    *not* imply character loss — the blocked paragraph is kept atomic.
+    """
+    return _layout_coverage_key("".join(str(part or "") for part in parts)) \
+        == _layout_coverage_key(paragraph)
+
+
 def _locate_parts(paragraph: str, parts: List[str]) -> Tuple[List[str], bool]:
     """Return the exact whitespace between consecutive parts, plus an exactness flag.
 
@@ -420,12 +433,17 @@ def segment_paragraphs(
             separators, exact = _locate_parts(paragraph, parts)
             gate = {
                 **gate,
-                # `characters_exact` / `whitespace_exact` describe the **source
-                # paragraph** the units were cut from, not the units' own
-                # leading/trailing whitespace: the paragraph itself is already
-                # stripped (leading/trailing blanks live in `source_paras`),
-                # so "whitespace fidelity" here means *between* the units.
-                "characters_exact": True,
+                # Three checkable facts about the source paragraph the units
+                # were cut from.  All three are **measured**, never asserted:
+                # `characters_exact` = every non-whitespace character survived
+                # (a blocked gate keeps the paragraph atomic, so it is still
+                # True there — the "we refused to split" fact is carried by
+                # `status`/`reason`); `whitespace_exact` = the units joined
+                # reproduce the paragraph byte for byte; `separators_recorded`
+                # = the exact boundary blanks could be located.  The
+                # paragraph itself is already stripped, so leading/trailing
+                # blanks are out of scope here (they live in `source_paras`).
+                "characters_exact": _characters_exact(parts, paragraph),
                 "whitespace_exact": "".join(parts) == paragraph,
                 "separators_recorded": exact,
             }
@@ -601,7 +619,7 @@ def migrate_legacy_state(state: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[st
                 "reason": next((item.get("reason") for item in blocked
                                 if item.get("paragraph_index") == paragraph_index),
                                "lossless_sentence_split"),
-                "characters_exact": True,
+                "characters_exact": _characters_exact(source_parts, source),
                 "whitespace_exact": "".join(source_parts) == source,
                 "separators_recorded": exact,
             },

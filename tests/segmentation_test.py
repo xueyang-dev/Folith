@@ -391,3 +391,30 @@ def test_removing_the_first_or_last_segment_keeps_the_remaining_boundaries():
     assert last_row["separators"] == [" "]
     assert last_row["gate"]["separators_recorded"] is True
     assert len(last_row["separators"]) == last_row["end"] - last_row["start"] - 1
+
+
+def test_characters_exact_is_measured_and_not_a_literal():
+    # 三个“可证伪事实”里的第一个必须是**实测**值：把非空白字符丢掉时它必须变 False，
+    # 否则它只是又一个永真断言。
+    assert segmentation._characters_exact(["First sentence."], "First sentence.") is True
+    assert segmentation._characters_exact(["First sentence."], "First sentnce.") is False
+    assert segmentation._characters_exact(["First sentence."], "First sentence. Second.") is False
+
+
+def test_blocked_paragraph_keeps_its_characters_and_stays_atomic():
+    # blocked ≠ 字符丢失：门禁失败时整段回退为原子段（字符一个没少），
+    # “拒绝切分”这件事由 status/reason 承载。
+    parts, gate = segmentation._gate_sentence_parts(
+        "A valid sentence. Continuation.", ["A valid sentence.", "Continuation"]
+    )
+    assert gate["status"] == "blocked"
+    assert gate["reason"] == "lossless_coverage_failed"
+    assert parts == ["A valid sentence. Continuation."]
+
+    # 记录下来的字段必须等于**实测值**，而不是字面量 True。
+    paragraph = "A valid sentence. Continuation."
+    units, metadata = segmentation.segment_paragraphs([paragraph])
+    row = metadata["paragraph_ranges"][0]
+    assert row["gate"]["characters_exact"] == segmentation._characters_exact(
+        units[row["start"]:row["end"]], paragraph)
+    assert row["gate"]["characters_exact"] is True
