@@ -290,8 +290,14 @@ jobs:
             --out build/qt-windows/windows-installer-roundtrip.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Write SHA-256 checksums
+        shell: powershell
+        # PowerShell does not expand wildcards for native commands; list the
+        # release files here and pass real paths.
         run: |
-          python scripts/write_release_checksums.py dist/installer/*.zip dist/installer/*.exe --out dist/SHA256SUMS.txt
+          $assets = @(Get-ChildItem dist/installer/*.zip, dist/installer/*.exe | ForEach-Object { $_.FullName })
+          if ($assets.Count -ne 2) { throw "expected the portable ZIP and the installer, found: $assets" }
+          python scripts/write_release_checksums.py @assets --out dist/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload the Windows candidate
         uses: actions/upload-artifact@v4
         with:
