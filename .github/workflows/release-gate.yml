@@ -258,19 +258,19 @@ jobs:
           python scripts/qt_desktop_probe.py `
             --data-dir "$env:RUNNER_TEMP/qt-probe/data" `
             --out "$env:RUNNER_TEMP/qt-probe/report.json" --fixture both `
-            --frozen-app "$GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
+            --frozen-app "$env:GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
       - name: Frozen bundled OCR baseline (eng/chi_sim/ara, no system Tesseract on PATH)
         shell: powershell
         run: |
           python scripts/qt_ocr_baseline_runner.py `
             --out "$env:RUNNER_TEMP/qt-ocr" `
-            --frozen-app "$GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
+            --frozen-app "$env:GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe"
       - name: New source formats in the frozen main flow
         shell: powershell
         run: |
           foreach ($format in @("epub", "txt", "md")) {
             python scripts/qt_desktop_probe.py --fixture $format `
-              --frozen-app "$GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe" `
+              --frozen-app "$env:GITHUB_WORKSPACE/dist/qt-windows/Folith/Folith.exe" `
               --data-dir "$env:RUNNER_TEMP/qt-$format/data" `
               --out "$env:RUNNER_TEMP/qt-$format/report.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
