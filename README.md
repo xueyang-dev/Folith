@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/release-v0.7.0-blue.svg" alt="Release v0.7.0"></a>
+  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1"><img src="https://img.shields.io/badge/release-v0.7.1-blue.svg" alt="Release v0.7.1"></a>
   <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
@@ -87,20 +87,20 @@
 
 ### macOS 桌面客户端（推荐）
 
-从 [v0.7.0 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) 下载 `Folith-Qt-0.7.0-macos-arm64.dmg`，拖进「应用程序」。
+从 [v0.7.1 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1) 下载 `Folith-Qt-0.7.1-macos-arm64.dmg`，拖进「应用程序」。
 
 - 系统要求：macOS 15.7.5 或更高，Apple Silicon。
 - 当前版本未签名、未公证：第一次打开时，在「应用程序」里右键点 Folith → 打开，放行一次即可。**不要**全局关闭 Gatekeeper。
 - 安装包已内置 Tesseract（英文、简体中文、阿拉伯文），不需要另装任何依赖。
-- 校验（可选）：Release 页提供 `SHA256SUMS.txt`。在终端运行 `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` 对比即可。这只能确认文件完整、没被替换，不等同于签名。
+- 校验（可选）：Release 页提供 `SHA256SUMS.txt`。在终端运行 `shasum -a 256 Folith-Qt-0.7.1-macos-arm64.dmg` 对比即可。这只能确认文件完整、没被替换，不等同于签名。
 - 打开后在「设置」里添加模型连接，见下面的快速上手。
 
 ### Windows x64 桌面客户端
 
-从 [v0.7.0 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) 下载：
+从 [v0.7.1 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1) 下载：
 
-- **安装版（推荐）**：`Folith-Setup-0.7.0-windows-x64.exe`。运行后选择安装目录，从开始菜单启动。只安装到当前用户，不需要管理员权限。卸载只移除应用；任务、术语、翻译记忆和设置保留在 `%LOCALAPPDATA%\Folith`。
-- **便携版**：`Folith-Qt-0.7.0-windows-x64.zip`。右键「全部解压缩」，保持解压后的 `Folith` 文件夹完整，运行 `Folith\Folith.exe`。不要在压缩包预览里直接运行。
+- **安装版（推荐）**：`Folith-Setup-0.7.1-windows-x64.exe`。运行后选择安装目录，从开始菜单启动。只安装到当前用户，不需要管理员权限。卸载只移除应用；任务、术语、翻译记忆和设置保留在 `%LOCALAPPDATA%\Folith`。
+- **便携版**：`Folith-Qt-0.7.1-windows-x64.zip`。右键「全部解压缩」，保持解压后的 `Folith` 文件夹完整，运行 `Folith\Folith.exe`。不要在压缩包预览里直接运行。
 
 系统要求：Windows 10 或 Windows 11，x64。本次在 Windows 11 x64 上验收。不需要安装 Python、Git 或任何开发工具。已内置 Tesseract（英文、简体中文、阿拉伯文）；不包含 PaddleOCR 或 LibreOffice。
 
@@ -257,7 +257,7 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 
 - [x] **v0.4.0**：统一品牌、语言资产与术语中心、交付门禁、草稿实时容灾
 - [x] **v0.6.0**：Qt 原生桌面客户端成为主入口；EPUB / TXT / Markdown 导入；扫描页以视觉模型为主；项目内的术语与翻译记忆；多条模型连接；跨段审校；译文 DOCX 保留原文图片；外观跟随系统
-- [x] **v0.7.0**：Windows x64 桌面客户端首次发布（安装版 + 便携版）；审校覆盖如实统计，跳过不再算作通过；Windows 路径、编码、子进程控制台与窗口恢复修复；中断任务可续跑
+- [x] **v0.7.1**：Windows x64 桌面客户端首次发布（安装版 + 便携版）；审校覆盖如实统计，跳过不再算作通过；Windows 路径、编码、子进程控制台与窗口恢复修复；中断任务可续跑；工作台轮询不再整表重绘、打开大任务先给加载反馈再分片填充；知识反馈移出串行提交关键路径；并发档位实测与提示文案订正；名称冲突可在抽屉与审校页一次选定统一写法。0.7.0 从未单独发布，其内容并入本版
 - [ ] **下一步**：代码签名与公证；在更多 Windows 版本和干净虚拟机上验收；DOCX 原格式写回（保留原始排版与样式）；翻译记忆模糊匹配；文档跨版本增量翻译
 
 ---
