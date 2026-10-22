@@ -175,6 +175,8 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[
         "severity": severity,
         "severity_label": context.get("severity_label"),
         "finding_type": context.get("finding_type"),
+        "entity_source": (str(finding.get("source") or "")
+                          if finding.get("type") == "entity_conflict" else ""),
         "status": str(finding.get("status") or (
             "resolved" if finding.get("resolved") else "open")),
         "status_label": FINDING_STATUS_COPY.get(str(finding.get("status") or "open"),

@@ -156,21 +156,52 @@ def test_panel_for_a_clean_task_says_there_is_nothing_to_do(qapp):
 
 def test_panel_flow_for_a_conflicting_name(qapp, job):
     from folith.qt.followup_panel import FollowupPanel
+    from folith.qt.name_conflict import CUSTOM, KEEP, VARIANT
 
     panel = FollowupPanel()
-    previews, repairs = [], []
+    previews, repairs, accepts = [], [], []
     panel.previewRequested.connect(lambda s, t: previews.append((s, t)))
     panel.repairRequested.connect(lambda s, t, p: repairs.append((s, t, p)))
+    panel.acceptRequested.connect(accepts.append)
     panel.apply(adapter.followup_view(job))
+    conflict = panel.conflict
     assert not panel.entity_card.isHidden() and panel.empty.isHidden()
-    assert "莉迪" in panel.entity_variants.text()
-    assert not panel.repair_button.isEnabled(), "没有预览就不能确认"
-    panel.target_edit.setText("莉迪亚")
+    # 每种观察到的译法一个选项，外加「其他」与「保持原样」。
+    options = conflict.options()
+    assert [o["kind"] for o in options] == [VARIANT, VARIANT, CUSTOM, KEEP]
+    assert {o["target"] for o in options if o["kind"] == VARIANT} == {"莉迪亚", "莉迪娅"}
+    texts = [button.text() for button in conflict.group.buttons()]
+    assert "统一为「莉迪亚」（改 1 段）" in texts and "统一为「莉迪娅」（改 1 段）" in texts
+    # 默认选中当前定名的译法，并为它请求预览；没有预览就不能确认。
+    assert conflict.selected_option()["target"] == "莉迪亚"
     assert previews[-1] == ("Lydia", "莉迪亚")
-    panel.set_preview(adapter.entity_repair_preview(job, "Lydia", "莉迪亚"))
-    assert panel.repair_button.isEnabled()
-    panel.repair_button.click()
-    assert repairs and repairs[0][0] == "Lydia" and len(repairs[0][2]) == 1
+    assert not conflict.confirm_button.isEnabled()
+    conflict.select(VARIANT, "莉迪娅")
+    assert previews[-1] == ("Lydia", "莉迪娅")
+    panel.set_preview(adapter.entity_repair_preview(job, "Lydia", "莉迪娅"), "Lydia", "莉迪娅")
+    assert conflict.confirm_button.isEnabled()
+    conflict.confirm_button.click()
+    assert repairs and repairs[0][:2] == ("Lydia", "莉迪娅") and len(repairs[0][2]) == 1
+    assert not accepts
+    # 「其他」：自己输入译名。
+    conflict.select(CUSTOM, "莉迪雅")
+    assert previews[-1] == ("Lydia", "莉迪雅")
+    # 「保持原样」走原来的「各自符合语境」路径，不需要预览。
+    conflict.select(KEEP)
+    assert conflict.confirm_button.isEnabled()
+    conflict.confirm_button.click()
+    assert accepts == ["Lydia"] and len(repairs) == 1
+
+
+def test_a_stale_preview_for_another_target_is_ignored(qapp, job):
+    from folith.qt.followup_panel import FollowupPanel
+
+    panel = FollowupPanel()
+    panel.apply(adapter.followup_view(job))
+    panel.conflict.select("variant", "莉迪亚")
+    panel.set_preview([{"index": 1, "source": "s", "before": "a", "after": "b"}],
+                      "Lydia", "别的译名")
+    assert not panel.conflict.confirm_button.isEnabled()
 
 
 def test_panel_disables_actions_while_the_task_runs(qapp, job):
@@ -181,7 +212,9 @@ def test_panel_disables_actions_while_the_task_runs(qapp, job):
     view["busy"] = True
     panel.apply(view)
     panel.set_preview([{"index": 1, "source": "s", "before": "a", "after": "b"}])
-    assert not panel.repair_button.isEnabled() and not panel.accept_button.isEnabled()
+    assert not panel.conflict.confirm_button.isEnabled()
+    panel.conflict.select("keep")
+    assert not panel.conflict.confirm_button.isEnabled()
 
 
 def test_panel_offers_the_right_annotation_retry_label(qapp):
@@ -458,11 +491,13 @@ def test_entity_evidence_links_locate_the_segment(qapp, job):
 
     panel = FollowupPanel()
     panel.apply(adapter.followup_view(job))
-    text = panel.entity_variants.text()
+    from PySide6.QtWidgets import QLabel
+
+    text = " ".join(label.text() for label in panel.conflict.findChildren(QLabel))
     assert "seg:0" in text and "seg:1" in text
     located = []
     panel.locateRequested.connect(located.append)
-    panel.entity_variants.linkActivated.emit("seg:1")
+    panel.conflict._link("seg:1")
     assert located == [1]
 
 
@@ -474,10 +509,9 @@ def test_first_show_entity_preview_waits_until_drawer_settles(qapp, job):
     previews = []
     panel.previewRequested.connect(lambda s, t: previews.append((s, t)))
     panel.apply(adapter.followup_view(job))
-    panel.target_edit.setText("莉迪亚")
     panel.show()
     qapp.processEvents()
-    assert not previews and panel._preview_pending
+    assert not previews and panel.conflict._preview_pending
     panel.set_preview_deferred(False)
     assert previews == [("Lydia", "莉迪亚")]
     panel.close()

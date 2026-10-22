@@ -1933,7 +1933,21 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
             if output_index < len(cleaned_paragraphs):
                 cleaned_p = str(cleaned_paragraphs[output_index] or "")
             if not cleaned_p:
-                cleaned_p = " ".join(str(paragraphs[si] or "") for si in segments_by_paragraph.get(output_index, []))
+                segment_indexes = segments_by_paragraph.get(output_index, [])
+                row = next((item for item in paragraph_ranges
+                            if isinstance(item, dict)
+                            and item.get("paragraph_index") == output_index), None)
+                separators = (row or {}).get("separators")
+                if separators:
+                    # Exact reconstruction from the recorded boundary
+                    # separators; the old " ".join() guess silently rewrote
+                    # the paragraph whenever the original spacing differed.
+                    cleaned_p = _segmentation.reconstruct_source_paragraph(
+                        [str(paragraphs[si] or "") for si in segment_indexes],
+                        list(separators))
+                else:
+                    cleaned_p = " ".join(
+                        str(paragraphs[si] or "") for si in segment_indexes)
 
             if _source_quality.is_integrated_numeric_fragment(raw_text, cleaned_p):
                 excused = True
@@ -12289,9 +12303,12 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             cancel_check=lambda: _runtime_cancel_requested(job_id))
         state["document_profile"] = profile
         state["profile_done"] = True
+        state["profile_warnings"] = list(profile_warnings)
         for w in profile_warnings:
             if w not in warnings:
                 warnings.append(w)
+            if on_caption:
+                on_caption(w)
         if on_caption and profile:
             on_caption(f"文档画像完成：领域「{profile.get('domain') or '未知'}」"
                        f"· 文本类型「{profile.get('genre') or '未知'}」")

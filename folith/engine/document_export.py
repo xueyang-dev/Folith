@@ -76,10 +76,13 @@ def _docx_unsupported_parts(document):
                     footers += 1
                     footer_sample = footer_sample or text
         add("header", "页眉", headers,
-            f"页眉有 {headers} 段文字（重复页眉是扫描件最常见的问题来源）",
+            f"页眉有 {headers} 段文字（重复页眉是扫描件最常见的问题来源）；"
+            "页眉不进入翻译单元，译文不保留页眉",
             header_sample)
         add("footer", "页脚", footers,
-            f"页脚有 {footers} 段文字（通常含页码）", footer_sample)
+            f"页脚有 {footers} 段文字（通常含页码）；"
+            "页脚不进入翻译单元，译文不保留页脚",
+            footer_sample)
 
         boxes = body.findall(f".//{_c._W_NS}txbxContent")
         box_sample = next(
