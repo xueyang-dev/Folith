@@ -2014,6 +2014,8 @@
   "移到项目…": "Move to project…",
   "正在导入，请等这一批完成后再导入。": "An import is in progress. Wait for it to finish before importing more.",
   "正在载入译文…": "Loading the translation…",
+  "将把全部 {v0} 段（原文与译文）发送给审校模型，预计至少消耗约 {v1} 个 token。这是仅按文本长度在本地估算的下限，实际用量取决于模型与提示词。\n\n确定继续吗？": "All {v0} segments (source and target) will be sent to the review model, using at least about {v1} tokens. This is a lower bound estimated locally from text length; actual usage depends on the model and prompts.\n\nContinue?",
+  "开始审校": "Start review",
   "统一为「{v0}」（改 {v1} 段）": "Use \"{v0}\" everywhere ({v1} segments to change)",
   "其他：": "Other:",
   "保持原样（各自符合语境）": "Keep as is (each fits its context)",

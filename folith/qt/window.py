@@ -2681,6 +2681,14 @@ class MainWindow(QMainWindow):
         if not indexes:
             self._notice(i18n.tr('还没有可审校的段落。'), error=True)
             return
+        estimate = adapter.review_cost_estimate(state, indexes)
+        if not self._confirm(
+                i18n.tr('审校全部段落'),
+                i18n.tr('将把全部 {v0} 段（原文与译文）发送给审校模型，预计至少消耗约 {v1} 个 token。'
+                        '这是仅按文本长度在本地估算的下限，实际用量取决于模型与提示词。\n\n确定继续吗？',
+                        v0=estimate["segments"], v1=f"{estimate['tokens']:,}"),
+                yes=i18n.tr('开始审校'), no=i18n.tr('取消')):
+            return
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校全部 {v0} 段…', v0=len(indexes)),
                             adapter.review_segments, self._current_job_id,
                             indexes, self.config,
