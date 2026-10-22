@@ -69,9 +69,9 @@ $ git ls-remote --tags origin v0.7.0
 * **复用 0.7.0 版本号**：把待发布内容并入 0.7.0 一并发布。最省事，但 CHANGELOG 里
   `[0.7.0] - 2026-10-21` 的日期与内容都要改。
 
-### 2. 发布门禁里还有一个真实的竞态
+### 2. 发布门禁里有两个不稳定来源
 
-`pytest (Python 3.11)` 在 PR #51 上的失败不是这个 PR 引入的，而是产品里的一个窄窗口：
+第一个是**真实竞态**。`pytest (Python 3.11)` 在 PR #51 上的失败不是这个 PR 引入的，而是产品里的一个窄窗口：
 
 ```
 test_full_slice_import_translate_edit_review_deliver_reopen
@@ -80,9 +80,20 @@ test_full_slice_import_translate_edit_review_deliver_reopen
 ```
 
 任务已经报 `completed`，但 worker 尚未释放 `.worker.lock`；此时用户保存编辑会被拒绝。
-本地重复跑同一用例 3/3 通过（每次 16–20 s），CI 高负载下偶发。这是发布门禁的**不稳定来源**，
-建议单独立 issue 修 worker 收尾顺序（状态落 `completed` 之后、释放锁之前不应再拒绝外部保存），
-而不是在门禁上加重试。
+本地重复跑同一用例 3/3 通过（每次 16–20 s），CI 高负载下偶发。已建 issue #72，建议修 worker
+收尾顺序（状态落 `completed` 之后、释放锁之前不应再拒绝外部保存），而不是在门禁上加重试。
+
+第二个是**测试自身依赖调度时序**。`Shared Qt (windows-latest)` 在 docs-only 的 PR #71 上失败：
+
+```
+tests/runtime_state_test.py::test_worker_heartbeat_renews_lease_while_pipeline_waits
+AssertionError: assert '2026-10-22T12:10:31+00:00' != '2026-10-22T12:10:31+00:00'
+```
+
+用例把心跳间隔设成 0.1 s 后 `time.sleep(1.1)`，假设这段时间内心跳线程一定跑过一次。负载高的
+runner 上线程被饿住，`last_heartbeat_at` 仍是同一秒，断言就失败。这不是产品缺陷（租约几秒才过期），
+而是用例把"固定睡多久"当成"条件已成立"。建议改成有界轮询等待条件成立、超时才失败——那样
+断言不变、只是不再假设调度器守时；不要改成"允许多等 2 秒"之类的放宽比较。
 
 ## GitHub Release 正文草稿
 
