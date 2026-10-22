@@ -130,7 +130,7 @@ LEGACY_LINE_ALLOWLIST = {
     "scripts/make_scenario_fixtures.py": (
         "foliothread-agentic-native-blueprint.md",
     ),
-    ".github/workflows/release-gate.yml": ('"transpraxis/"',),
+    ".github/workflows/release-validation.yml": ('"transpraxis/"',),
     "scripts/check_release_archives.py": ('"transpraxis/"',),
     "scripts/release_smoke.py": ("foliothread-0.4.0",
         "foliothread-0.5.0",
