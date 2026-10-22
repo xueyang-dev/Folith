@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/release-v0.7.0-blue.svg" alt="Release v0.7.0"></a>
+  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1"><img src="https://img.shields.io/badge/release-v0.7.1-blue.svg" alt="Release v0.7.1"></a>
   <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
@@ -87,20 +87,20 @@ Tras la revisión, el resultado se congela en una versión de entrega inmutable 
 
 ### Cliente de escritorio para macOS (recomendado)
 
-Descarga `Folith-Qt-0.7.0-macos-arm64.dmg` de la [versión v0.7.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0) y arrástralo a Aplicaciones.
+Descarga `Folith-Qt-0.7.1-macos-arm64.dmg` de la [versión v0.7.1](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1) y arrástralo a Aplicaciones.
 
 - Requisitos: macOS 15.7.5 o posterior, Apple Silicon.
 - Esta compilación no está firmada ni notarizada. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
 - Tesseract (inglés, chino simplificado y árabe) viene incluido, así que no hay que instalar nada más.
-- Verificación (opcional): la página de la versión publica `SHA256SUMS.txt`. Compáralo con `shasum -a 256 Folith-Qt-0.7.0-macos-arm64.dmg` en Terminal. Confirma que el archivo está íntegro y sin modificar; no es una firma.
+- Verificación (opcional): la página de la versión publica `SHA256SUMS.txt`. Compáralo con `shasum -a 256 Folith-Qt-0.7.1-macos-arm64.dmg` en Terminal. Confirma que el archivo está íntegro y sin modificar; no es una firma.
 - Al abrirla, añade una conexión de modelo en Ajustes (véase «Inicio rápido»).
 
 ### Cliente de escritorio para Windows x64
 
-Descarga uno de estos archivos de la [versión v0.7.0](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0):
+Descarga uno de estos archivos de la [versión v0.7.1](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1):
 
-- **Instalador (recomendado):** `Folith-Setup-0.7.0-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Se instala solo para el usuario actual y no requiere permisos de administrador. Desinstalar solo quita la aplicación; las tareas, términos, memoria y ajustes permanecen en `%LOCALAPPDATA%\Folith`.
-- **Portátil:** `Folith-Qt-0.7.0-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
+- **Instalador (recomendado):** `Folith-Setup-0.7.1-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Se instala solo para el usuario actual y no requiere permisos de administrador. Desinstalar solo quita la aplicación; las tareas, términos, memoria y ajustes permanecen en `%LOCALAPPDATA%\Folith`.
+- **Portátil:** `Folith-Qt-0.7.1-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
 
 Requisitos: Windows 10 u 11, x64. Esta versión se probó en Windows 11 x64. No hace falta Python, Git ni herramientas de desarrollo. Tesseract (inglés, chino simplificado y árabe) viene incluido; PaddleOCR y LibreOffice no.
 
@@ -257,7 +257,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 - [x] **v0.4.0**: marca unificada, recursos lingüísticos y centro de terminología, puerta de entrega, recuperación de borradores en vivo
 - [x] **v0.6.0**: el cliente de escritorio nativo Qt pasa a ser la entrada principal; importación de EPUB / TXT / Markdown; el modelo de visión como lector principal de páginas escaneadas; términos y memoria de traducción por proyecto; varias conexiones de modelo; revisión entre segmentos; el DOCX traducido conserva las imágenes del original; la apariencia sigue al sistema
-- [x] **v0.7.0**: primera versión de escritorio para Windows x64 (instalador + ZIP portátil); cobertura de revisión veraz que no cuenta los segmentos omitidos como revisados; correcciones de rutas, codificación, ventanas de consola y restauración de ventanas en Windows; tareas interrumpidas reanudables
+- [x] **v0.7.1**: primera versión de escritorio para Windows x64 (instalador + ZIP portátil); cobertura de revisión veraz que no cuenta los segmentos omitidos como revisados; correcciones de rutas, codificación, ventanas de consola y restauración de ventanas en Windows; tareas interrumpidas reanudables; el sondeo del banco de trabajo ya no repinta toda la rejilla y las tareas grandes muestran aviso de carga antes de rellenar por partes; los comentarios de conocimiento salen de la ruta de confirmación en serie; niveles de concurrencia medidos y textos de ayuda corregidos; los conflictos de nombres se resuelven con una sola elección en el panel lateral y en la página de revisión. La 0.7.0 nunca se publicó por separado; su contenido va en esta versión
 - [ ] **Próximamente**: firma y notarización; aceptación en más versiones de Windows y en una VM limpia; escritura de vuelta en DOCX conservando diseño y estilos originales; coincidencias aproximadas en la memoria de traducción; traducción incremental entre versiones de un documento
 
 ---

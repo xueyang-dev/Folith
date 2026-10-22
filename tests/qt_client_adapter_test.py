@@ -784,8 +784,12 @@ def test_cancelled_task_is_recoverable_and_not_marked_complete(adapter_env):
         assert runtime.get("status") == "cancelled", runtime
         assert not (state.get("p1_done") and state.get("p2_done")), \
             "a cancelled task must not be reported as complete"
-        assert adapter.exit_report(job_id)["worker_lock_held"] is False
+        # ``_wait_for_worker_stopped``'s own docstring says the runtime can
+        # report ``cancelled`` before the thread has finished cleanup, so the
+        # exit report has to be read after that wait, not before it.  Checking
+        # first made this fail on slow runners with "assert True is False".
         assert _wait_for_worker_stopped(core, job_id)
+        assert adapter.exit_report(job_id)["worker_lock_held"] is False
 
         # Resume the same task: it must finish on the existing progress.
         adapter.start_job(job_id, "cancel.docx", None, config)
