@@ -47,9 +47,10 @@ The quiet-window maximum heartbeat gap was 46.9 ms; the driver's full-flow
 maximum was 489.0 ms during import. This generated-fixture result does not
 replace real-document API acceptance or bundled OCR validation.
 
-Main subsequently merged #84's snapshot-load-count performance gate. The merge
-retains that gate and this branch's checkpoint, reconciliation and snapshot-read
-budgets. Using the repository's pytest fixtures, all 18 red-team cases passed
-in 22.40 seconds. A direct script invocation lacks the established always-review
+Main subsequently merged #84; the concurrent stability integration retains
+this branch's checkpoint, reconciliation and snapshot-read budgets, plus the
+quantitative benchmark and negative-experiment documentation from #84. The
+intermediate combined gate passed all 18 red-team cases in 22.40 seconds using
+the repository's pytest fixtures; the final merged gate is checked separately. A direct script invocation lacks the established always-review
 fixture and fails three legacy review/TM expectations; it is not counted as a
 passing run. No product review policy was changed to make those assertions pass.

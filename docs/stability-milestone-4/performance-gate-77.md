@@ -36,3 +36,11 @@ See `performance-work-budget.json`. The two negative experiments are expected
 failures, not ordinary passing pytest cases. This is macOS/offline evidence.
 Three Linux Python versions and repeated CI runs remain separate checks; Windows
 native acceptance is deferred per the user's instruction.
+
+Quantitative cross-revision comparison is a separate tool, not this gate:
+`scripts/benchmark_long_document.py` runs the same synthetic document with
+repeats on an idle host and reports the median plus the marginal ratio
+`t(2000)/(2×t(1000))`, with a baseline recorded per platform. Why wall clock
+could not serve as the per-PR criterion in the first place — including the
+measurement that the same revision scores 1.44 on Windows x64 and 3.20 on Linux
+— is recorded in `performance-gate.md`.
