@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core
 from folith import assets, delivery, document_profile, models, state_migration, terminology
+from folith.storage import job_repository as _job_repo
 
 
 def _make_docx(texts):
@@ -893,26 +894,33 @@ def _synthetic_segments(n=400):
 
 # 这条用例原来用绝对墙钟阈值（posix 30 s / Windows 120 s）。它度量的是 runner
 # 有多空闲，不是代码有多慢：同一修订在一台 runner 上 47 s、另一台 72–98 s，
-# `main` 本地 70.66 s / 76.73 s 也会被判成"性能退化"。绝对秒数不可能同时满足
-# "在空机器上抓回归"和"在忙 runner 上不误报"。
+# `main` 本地 70.66 s / 76.73 s 也会被判成"性能退化"。
 #
-# 现在 pytest 里只保留**与机器无关的粗筛**：先跑一份形状相同、规模为十分之一的
-# 标定文档，紧接着跑被测文档，两者同机、同进程、同负载。
+# 只把秒数换成同机标定的"每段成本比"同样不行，实测把两条路都否掉了：
 #
-#     R = 被测耗时 / (10 × 标定耗时)
+#     R = t(2 000 段) / (10 × t(200 段))
 #
-# 机器快慢在分子分母里抵消，R 只反映"每段成本有没有随文档长度涨"。阈值取 2.0：
-# 本机同代码连续测量 R 落在 1.05–1.58（含 main 与修复分支），这已经是共享 runner
-# 能分辨的极限——再紧就会把噪声判成回归。因此它只拦"每段成本翻倍以上"这一档，
-# 也就是 O(n²) 写盘复活、整表重扫之类。
+# 同一份代码在 Windows x64 上是 1.44，在 Linux CI runner 上是 3.20。这不是噪声，
+# 是结构差异：这条流程每一批都要把整份 state.json 重写一遍（2 000 段时约 3.2 MB），
+# 每段成本本来就随文档长度上升；而"写一个字节"相对"其余每批固定工作"的占比在两个
+# 平台上完全不同（NTFS 与 ext4/tmpfs、本地盘与 CI 临时盘）。于是任何单一阈值都会
+# 在一个平台上误报、另一个平台上失灵——和原来的绝对阈值是同一个毛病，只换了量纲。
 #
-# 数量级的判定不在这里做：`scripts/benchmark_long_document.py` 在同一台空机器上
-# 跑固定负载并与记录基线对比，那才是真正的性能门禁。判定依据与实测见
-# `docs/stability-milestone-4/performance-gate.md`。
-_CALIBRATION_PARAGRAPHS = 40  # 200 段，被测文档的十分之一
+# 所以计时在这里只承担一件事：兜住"真的卡死"。性能判定拆成两层，都与机器快慢无关：
+#
+#   1. 结构判据（本用例断言）：2 000 段流程里 `load_job_state` 的调用次数必须是
+#      常数，不能随批次数增长。实测 clean 代码 quick 0 次 / quality 3 次；注入
+#      "每次保存都重新加载整份快照"这一历史缺陷形状后是数百次，耗时从 26.1 s
+#      涨到 50.1 s。两个量级之间取 16：既不误报，也能抓住回归，且跨平台、跨
+#      Python 版本、跨机器完全一致——它数的是调用次数，不是秒数。
+#   2. 定量判据（`scripts/benchmark_long_document.py`）：同一台空机器、多次取中位数、
+#      跨修订对比。墙钟的绝对与相对结论只能在那里给，且按平台各记一份基线。
+#
+# 判定依据与全部实测见 `docs/stability-milestone-4/performance-gate.md`。
 _TARGET_PARAGRAPHS = 400      # 2 000 段
-_SEGMENT_SCALE = 10
-_MAX_RELATIVE_COST = 2.0
+# 整份快照加载次数上限。clean 实测 0–3 次，注入回归数百次；取的是"常数量级"，
+# 不是"每批一次"——后者等于把 O(n²) 读盘这件事本身写进门禁。
+_MAX_SNAPSHOT_LOADS = 16
 # 只用来兜"卡死"，不承担性能判定——绝对秒数仍然由机器和负载支配。
 _HANG_GUARD_S = 1800
 
@@ -937,16 +945,23 @@ def _synthetic_layout(paragraphs):
 
 
 def _run_synthetic_document(jid, paragraphs, mode, glossary, kwargs):
-    """跑一次离线流水线，返回 ``(state, 耗时秒)``。
+    """跑一次离线流水线，返回 ``(state, 耗时秒, 整份快照加载次数)``。
 
     TM 在每次运行前清空：标定跑和被测跑必须从同样的记忆状态起步，否则被测
     跑会用上一次运行攒下的命中把自己"跑快"，把回归盖掉；对被测跑而言这与
     改动前（每个 mode 只跑一次、开局 TM 为空）等价。
+
+    第三项是结构计数，与机器快慢无关：`load_job_state` 每调用一次，存储层的
+    签名缓存就记一次命中或未命中（`folith.storage.job_repository`）。运行前
+    重置计数器，于是这个数字只反映这一次运行里整份快照被加载了几次——无论命中
+    与否，因为缓存未命中要整份解析、命中也要整份深拷贝，两者都随文档长度变贵。
     """
     docx_bytes, doc_profile = _synthetic_layout(paragraphs)
     tm_path = core.tm_path()
     if tm_path.is_file():
         tm_path.unlink()
+    _job_repo.invalidate_cache()
+    _job_repo.reset_cache_stats()
     core.call_llm = _compliant_translation_llm(glossary)
     t0 = time.perf_counter()
     if mode == "quality":
@@ -959,7 +974,9 @@ def _run_synthetic_document(jid, paragraphs, mode, glossary, kwargs):
     # 批次数断言按每批 4 句计：显式按句数组批。
     state = core.run_job_pipeline(jid, "long.docx", docx_bytes, mode=mode,
                                   batch_size=core.BATCH_SIZE, **kwargs)
-    return state, time.perf_counter() - t0
+    cache = _job_repo.get_cache_stats()
+    loads = cache["cache_hits"] + cache["cache_misses"]
+    return state, time.perf_counter() - t0, loads
 
 
 def _document_stats(state, elapsed):
@@ -996,21 +1013,16 @@ def test_long_document_simulation_and_performance():
                       target_lang="简体中文", auto_term=False, enable_report=False,
                       translation_theory="目的论 (Skopos Theory)",
                       user_glossary=glossary)
-        stats, costs = {}, {}
-        for mode, jid, cal_jid in (
-                ("quick", "lg000000000000001", "lgc00000000000011"),
-                ("quality", "lg000000000000002", "lgc00000000000012")):
-            cal_state, cal_s = _run_synthetic_document(
-                cal_jid, _CALIBRATION_PARAGRAPHS, mode, glossary, kwargs)
-            assert cal_state["pairs"], "标定文档没有产出段落，无法给出相对预算"
-            state, elapsed = _run_synthetic_document(
+        stats = {}
+        for mode, jid in (("quick", "lg000000000000001"),
+                          ("quality", "lg000000000000002")):
+            state, elapsed, loads = _run_synthetic_document(
                 jid, _TARGET_PARAGRAPHS, mode, glossary, kwargs)
             assert elapsed < _HANG_GUARD_S, \
                 f"{mode} 长文流程疑似卡死：{elapsed:.1f}s"
-            stats[mode] = _document_stats(state, elapsed)
-            stats[mode]["calibration_s"] = round(cal_s, 2)
-            # 每段成本之比：机器快慢在分子分母里抵消。
-            costs[mode] = elapsed / (cal_s * _SEGMENT_SCALE)
+            row = _document_stats(state, elapsed)
+            row["snapshot_loads"] = loads
+            stats[mode] = row
         q, ql = stats["quick"], stats["quality"]
         assert q["segments"] == 2000 and ql["segments"] == 2000
         assert q["batches"] == 500
@@ -1024,19 +1036,30 @@ def test_long_document_simulation_and_performance():
         assert q["reviewed"] == 2000 and ql["reviewed"] == 2000, \
             "合规 mock 下全部段落应审校通过（TM eligible）"
         assert ql["delivery"] == "draft" and q["delivery"] == "draft"
-        for mode, ratio in costs.items():
-            assert ratio <= _MAX_RELATIVE_COST, (
-                f"{mode} 长文的每段成本相对标定跑上涨到 {ratio:.2f}×"
-                f"（粗筛上限 {_MAX_RELATIVE_COST}×）：2 000 段 {stats[mode]['elapsed_s']}s "
-                f"vs 标定 200 段 {stats[mode]['calibration_s']}s。"
-                f"这表示成本随文档长度增长，而不是机器慢——"
-                f"用 scripts/benchmark_long_document.py 在空机器上定位。")
+        # 结构判据：整份快照的加载次数必须是常数，不能随批次数增长。缓存未命中要
+        # 整份解析、命中也要整份深拷贝，两者都随文档长度变贵，所以"每批多加载一次"
+        # 就是 O(n²)——正是 #77 报告里那条分支的缺陷形状。数调用次数与机器快慢、
+        # 平台、Python 版本都无关，这是它取代墙钟比值的原因。
+        for mode, row in stats.items():
+            assert row["snapshot_loads"] <= _MAX_SNAPSHOT_LOADS, (
+                f"{mode} 长文流程加载了整份任务状态 {row['snapshot_loads']} 次"
+                f"（上限 {_MAX_SNAPSHOT_LOADS} 次；clean 实测 quick 0 / quality 3，"
+                f"注入该缺陷形状后数百次、耗时 26.1 s → 50.1 s）。"
+                f"按 {row['batches']} 批计算，每批多加载一次就要多解析/多拷贝一份"
+                f"约 3 MB 的快照。")
         print(f"  ✓ 长文模拟（synthetic 400 段）："
               f"quick avg_injected={q['avg_injected']} "
               f"quality avg_injected={ql['avg_injected']}")
         print(f"  ✓ 长文模拟（synthetic 400 段）：quick={q} quality={ql}")
-        print(f"  ✓ 相对性能粗筛（每段成本比，上限 {_MAX_RELATIVE_COST}）："
-              + " ".join(f"{m}={r:.2f}×" for m, r in costs.items()))
+        print(f"  ✓ 整份快照加载次数（上限 {_MAX_SNAPSHOT_LOADS}）："
+              + " ".join(f"{m}={stats[m]['snapshot_loads']}"
+                         for m in stats))
+        # 只报告，不断言：墙钟在共享机器上分辨不出 15–30% 的差异，同一份代码在
+        # Windows 与 Linux 上的每段成本比还相差一倍以上。定量对比见
+        # scripts/benchmark_long_document.py 与
+        # docs/stability-milestone-4/performance-gate.md。
+        print(f"  · 长文耗时（仅供基准对照，不作判定）："
+              f"quick={q['elapsed_s']}s quality={ql['elapsed_s']}s")
     finally:
         core.OUTPUT_DIR = old
         core.call_llm = old_llm

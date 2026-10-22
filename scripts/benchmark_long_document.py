@@ -2,8 +2,15 @@
 
 Why this exists: `tests/red_team_acceptance_test.py` used to fail the release
 gate on an absolute wall-clock limit, which measured how idle the runner was.
-It now only screens coarsely.  The quantitative gate is this script, run on an
-idle machine, twice on the two revisions being compared.
+Wall clock turned out to be unusable as a per-PR criterion for a second reason
+too: the per-segment cost ratio of the very same revision measures 1.44 on
+Windows x64 and 3.20 on Linux, because this flow rewrites the whole
+`state.json` (about 3.2 MB at 2 000 segments) on every batch and a byte written
+costs a different fraction of a batch on each platform.  So the pytest case now
+asserts something machine-independent instead — that the whole snapshot is
+parsed a constant number of times, not once per batch — and leaves every
+quantitative statement to this script, run on an idle machine, twice on the two
+revisions being compared.
 
 It deliberately reuses the test module's synthetic document so the workload is
 byte-identical to the one the pytest gate exercises; a different document here
@@ -23,11 +30,16 @@ and the ten-times ratio
 
     ten_times = t(2 000) / (10 × t(200))
 
-`half_scale` is the number to compare across revisions: it is dimensionless and
-approximately machine-independent, so a change in it between two revisions on
-the same host is a change in the code.  It does not catch a uniform slowdown
-(everything slower by the same factor) — that needs different hardware or an
-absolute baseline, both of which are out of scope for a shared CI runner.
+`half_scale` is the number to compare across revisions: it is dimensionless, so
+a change between two revisions measured on the same host is a change in the
+code rather than in the hardware.  It is **not** comparable across platforms —
+the same revision measures 1.25 on Windows x64 and 1.01 on Linux, because the
+fixed overhead of a short run differs (see
+`docs/stability-milestone-4/performance-gate.md`).  Record a baseline per
+platform.
+
+It does not catch a uniform slowdown (everything slower by the same factor) —
+that needs a recorded absolute baseline on fixed hardware.
 """
 from __future__ import annotations
 
