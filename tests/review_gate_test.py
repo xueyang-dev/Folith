@@ -226,8 +226,12 @@ def test_already_reviewed_tm_content_is_never_re_reviewed():
         False, "already_reviewed_tm")
 
 
-def test_unknown_review_mode_falls_back_to_always():
-    assert _gate.resolve_review_mode("nonsense") == _gate.REVIEW_MODE_ALWAYS
+def test_unknown_review_mode_falls_back_to_default_risk_selective():
+    assert _gate.DEFAULT_REVIEW_MODE == _gate.REVIEW_MODE_RISK_SELECTIVE
+    assert _gate.resolve_review_mode() == _gate.REVIEW_MODE_RISK_SELECTIVE
+    assert _gate.resolve_review_mode("nonsense") == _gate.REVIEW_MODE_RISK_SELECTIVE
+    # A task that recorded ``always`` keeps it.
+    assert _gate.resolve_review_mode(None, None, {"review_mode": "always"}) ==         _gate.REVIEW_MODE_ALWAYS
     assert _gate.resolve_review_mode(None, {"review_mode": "risk_selective"}) == \
         _gate.REVIEW_MODE_RISK_SELECTIVE
     assert _gate.resolve_review_mode(None, None, {"review_mode": "risk_selective"}) == \
@@ -248,6 +252,29 @@ def test_always_mode_reviews_every_batch(tmp_path):
     assert state["review_stats"]["batches_reviewed"] == 4
     assert state["review_stats"].get("batches_skipped_low_risk", 0) == 0
     assert all(p["review_status"] == "reviewed_clean" for p in state["pairs"])
+
+
+def test_new_task_without_explicit_mode_defaults_to_selective(tmp_path):
+    provider = ScriptedProvider(targets=dict(zip(SEGMENTS, TARGETS)))
+    core.OUTPUT_DIR = tmp_path
+    state = core.new_job_state("gate.txt")
+    state["paras"] = list(SEGMENTS)
+    state["target_lang"] = "简体中文"
+    state["pairs"] = []
+    state["style_rules"] = ""
+    original = core.call_llm
+    core.call_llm = provider
+    try:
+        core.translate_stage(
+            state, "default-mode-job", [], "Benchmark", "key", "model",
+            "简体中文", "", enable_review=True, use_tm=True, batch_size=2,
+            max_batch_chars=100000, translation_concurrency=1)
+    finally:
+        core.call_llm = original
+    assert state["review_mode"] == _gate.REVIEW_MODE_RISK_SELECTIVE
+    assert provider.review_calls == 0
+    assert all(p["review_status"] == _gate.SKIPPED_LOW_RISK for p in state["pairs"])
+    assert all(p["reviewed"] is False for p in state["pairs"])
 
 
 def test_selective_mode_skips_clean_batches_with_explicit_provenance(tmp_path):

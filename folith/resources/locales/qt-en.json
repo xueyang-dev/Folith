@@ -2013,5 +2013,7 @@
   "不能把数据放在 Folith 应用文件夹里：升级或替换应用时会被覆盖。请选择应用文件夹以外的位置。": "Folith's data cannot be kept in the Folith application folder: upgrading or replacing the app overwrites it. Choose a location outside the application folder.",
   "移到项目…": "Move to project…",
   "正在导入，请等这一批完成后再导入。": "An import is in progress. Wait for it to finish before importing more.",
-  "正在载入译文…": "Loading the translation…"
+  "正在载入译文…": "Loading the translation…",
+  "将把全部 {v0} 段（原文与译文）发送给审校模型，预计至少消耗约 {v1} 个 token。这是仅按文本长度在本地估算的下限，实际用量取决于模型与提示词。\n\n确定继续吗？": "All {v0} segments (source and target) will be sent to the review model, using at least about {v1} tokens. This is a lower bound estimated locally from text length; actual usage depends on the model and prompts.\n\nContinue?",
+  "开始审校": "Start review"
 }

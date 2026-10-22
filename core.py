@@ -4735,9 +4735,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         state["context_budget_tokens"] = effective_context_budget
         state["context_ablations"] = list(effective_context_ablations)
         state["context_offline"] = effective_context_offline
-    # Review policy: ``always`` (the production default, unchanged) or
-    # ``risk_selective`` (deterministic pre-review gating).  Unrecognised values
-    # fall back to ``always``, so configuration can never silently weaken review.
+    # Review policy: ``risk_selective`` (the default for new tasks:
+    # deterministic pre-review gating) or ``always``.  A mode already recorded
+    # on the task state or pipeline_config is kept; unrecognised values fall
+    # back to the default.
     effective_review_mode = _review_gate.resolve_review_mode(
         review_mode, state.get("pipeline_config"), state)
     state["review_mode"] = effective_review_mode

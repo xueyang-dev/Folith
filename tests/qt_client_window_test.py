@@ -3905,6 +3905,27 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
     assert saved == [(4, job_a)], saved
 
 
+def test_review_all_confirms_with_estimate_and_cancel_sends_nothing(client, monkeypatch):
+    window, app = client["window"], client["app"]
+    job_a, _job_b = _two_jobs(client)
+    held = _HeldRunner()
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    asked: list[str] = []
+    answer = {"value": False}
+    monkeypatch.setattr(window, "_confirm",
+                        lambda title, message, *a, **k: asked.append(message) or answer["value"])
+    window.open_job(job_a)
+    app.processEvents()
+
+    window.review_all()
+    assert len(asked) == 1 and "全部 3 段" in asked[0] and "token" in asked[0]
+    assert held.calls == []          # cancel sends nothing
+
+    answer["value"] = True
+    window.review_all()
+    assert [call["label"] for call in held.calls] == ["审校"]
+
+
 def test_workbench_operation_runs_in_the_header_not_a_wait_dialog(client, monkeypatch):
     """审校、交付这类一次性操作在工作台顶栏的运行状态组里显示，不再弹「请稍候」框。"""
     window, app = client["window"], client["app"]
