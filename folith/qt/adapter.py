@@ -704,12 +704,8 @@ def load_state(job_id: str) -> dict:
 
 def state_signature(job_id: str) -> str:
     """Cheap revision marker so the UI reloads only on real changes."""
-    path = core.job_state_path(job_id)
-    try:
-        stat = path.stat()
-    except OSError:
-        return "missing"
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    signature = core._job_repo.state_signature(job_id)
+    return ":".join(str(value) for value in signature[1:]) if signature else "missing"
 
 
 def drafts_signature(job_id: str) -> str:

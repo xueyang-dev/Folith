@@ -816,3 +816,127 @@ def test_pre_loop_state_changes_survive_a_crash(temp_job_env: Path, monkeypatch)
     assert len(recovered["pairs"]) == 8
     assert [f["finding_id"] for f in recovered["findings"]
             if f.get("type") == "source_quality_gate"] == ["sq1"]
+
+
+def test_suffix_reader_retries_a_partial_line_and_stops_at_corruption(temp_job_env):
+    job_id = "suffix-reader"
+    live = _base_state()
+    records = []
+    for batch in range(3):
+        record = _journal_batch(live, [_candidate(batch)], batch=batch)
+        record["seq"] = batch + 1
+        records.append((json.dumps(record) + "\n").encode())
+    path = journal.journal_path(job_id)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(records[0] + records[1][:50])
+    state = _base_state()
+    first = journal.replay_from(job_id, state)
+    assert first["applied"] == 1
+    assert first["byte_offset"] == len(records[0])
+    with path.open("ab") as stream:
+        stream.write(records[1][50:])
+    second = journal.replay_from(job_id, state, first["byte_offset"])
+    assert second["applied"] == 1
+    assert second["byte_offset"] == len(records[0]) + len(records[1])
+    with path.open("ab") as stream:
+        stream.write(b"not json\n" + records[2])
+    stopped = journal.replay_from(job_id, state, second["byte_offset"])
+    assert stopped["applied"] == 0
+    assert stopped["byte_offset"] == second["byte_offset"]
+    assert len(state["pairs"]) == 2
+
+
+def test_suffix_replay_equals_full_replay_with_candidate_updates(temp_job_env):
+    job_id = "suffix-equivalence"
+    live, stepped = _base_state(), _base_state()
+    offset = 0
+    for batch in range(20):
+        record = _journal_batch(
+            live, [_candidate(batch)], batch=batch,
+            update=(0, {"observed_target": f"修订{batch}"}) if batch else None)
+        record["seq"] = batch + 1
+        journal.append_mutation(job_id, record)
+        report = journal.replay_from(job_id, stepped, offset)
+        assert report["applied"] == 1 and not report["gap"]
+        offset = report["byte_offset"]
+        full = _base_state()
+        journal.replay(job_id, full)
+        assert stepped == full
+
+
+def test_cached_append_reads_only_the_suffix_without_reloading_snapshot(
+        temp_job_env, monkeypatch):
+    job_id = "cached-suffix"
+    _crash_run(job_id, _paragraphs(8))
+    records = journal.read_mutations(job_id)
+    _rewrite_journal(job_id, records[:1])
+    repo.invalidate_cache()
+    first = core.load_job_state(job_id)
+    first_size = journal.size(job_id)
+    reads = repo.get_cache_stats()["disk_reads"]
+    real_reader = journal.read_mutations_from
+    offsets = []
+
+    def track_offset(_job_id, offset=0, *args, **kwargs):
+        offsets.append(offset)
+        return real_reader(_job_id, offset, *args, **kwargs)
+
+    monkeypatch.setattr(journal, "read_mutations_from", track_offset)
+    journal.append_mutation(job_id, records[1])
+    second = core.load_job_state(job_id)
+    assert len(first["pairs"]) == 2  # Caller isolation survives an incremental load.
+    assert len(second["pairs"]) == 4
+    assert offsets == [first_size]
+    assert repo.get_cache_stats()["disk_reads"] == reads
+    cold = repo.load_job_state_cached(job_id, force_reload=True)
+    assert second == cold
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_replaced_or_truncated_journal_does_not_reuse_a_byte_offset(
+        temp_job_env, replace):
+    job_id = "journal-replaced"
+    _crash_run(job_id, _paragraphs(8))
+    records = journal.read_mutations(job_id)
+    _rewrite_journal(job_id, records[:2])
+    repo.invalidate_cache()
+    assert len(core.load_job_state(job_id)["pairs"]) == 4
+    path = journal.journal_path(job_id)
+    if replace:
+        replacement = path.with_suffix(".replacement")
+        # A replacement at least as large as the old journal still requires a
+        # cold read: size alone cannot establish that it retained the prefix.
+        record = copy.deepcopy(records[0])
+        record["pairs"][0]["target"] = "新文件里的译文" * 300
+        replacement.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        replacement.replace(path)
+    else:
+        _rewrite_journal(job_id, records[:1])
+    loaded = core.load_job_state(job_id)
+    cold = repo.load_job_state_cached(job_id, force_reload=True)
+    assert loaded == cold
+    assert len(loaded["pairs"]) == 2
+
+
+def test_card_progress_follows_durable_commits_without_full_summary_rebuild(
+        temp_job_env, monkeypatch):
+    real_update = repo.update_job_summary_progress
+    real_build = repo.build_job_summary
+    builds = []
+    seen = []
+
+    def count_build(job_id, state):
+        builds.append(job_id)
+        return real_build(job_id, state)
+
+    def observe(job_id, state, translated_count, **kwargs):
+        real_update(job_id, state, translated_count, **kwargs)
+        summary = repo.load_job_summary(job_id)
+        seen.append((summary["progress_percent"], summary["segment_count"],
+                     len(core.load_job_state(job_id)["pairs"])))
+
+    monkeypatch.setattr(repo, "update_job_summary_progress", observe)
+    monkeypatch.setattr(repo, "build_job_summary", count_build)
+    _run("card-progress", _paragraphs(8))
+    assert seen == [(25, 8, 2), (50, 8, 4), (75, 8, 6), (100, 8, 8)]
+    assert len(builds) == 3  # Seed, pre-loop baseline, loop-exit snapshot only.

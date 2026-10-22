@@ -65,12 +65,46 @@ persistence cadence, TM promotion, recovery, pause and exit. The Qt set covers
 adapter contracts, motion and task defaults. See `storage-regression.tsv`,
 `qt-regression.tsv` and `evidence.json` for the results. No full-suite claim is made.
 
-The next dependency is #52. A journal-only append on this branch loads one pair
+At the start of this work, #52 was still reproducible. A journal-only append loaded one pair
 through the repository but leaves `adapter.state_signature` unchanged and the
 task-card percentage unset. Current fetched `origin/main` is still `8ff81dc`;
 the repair described in the issue is not present there. Locate/integrate that
 repair, or implement it with incremental-read and live-workbench regressions.
-Then assess the stale-snapshot risks recorded in #53 and the relevant #54 cost.
+That baseline observation is superseded by the implementation below.
+
+## Live progress implementation (#52)
+
+The Qt revision marker now shares the repository's snapshot + journal signature.
+The reader retains the successful byte offset alongside its isolated cached
+state. Appends read only the suffix; changed snapshots, replaced journals and
+truncation force a cold load. Partial trailing lines remain pending and corrupt
+lines are never skipped. Cache invalidation and incremental reads share a lock
+because worker callbacks and the GUI poll can access them concurrently.
+
+After a durable batch append, the commit path updates only the summary's segment
+count, translated percentage and progress label. A running translated count avoids
+recounting all historical pairs per batch. Full attention/findings/entity summaries
+remain snapshot-time work. Draft replacement now uses the existing Windows-aware
+atomic replacement helper.
+
+Regression: 280 cases passed across 10 files, including 99 real Qt window tests;
+three Windows-only contention tests were skipped on macOS. New tests cover an actual
+window poll showing a journal-only translation without reopening or changing the
+snapshot, suffix/full replay equality, changed candidates, partial/corrupt tails,
+journal replacement/truncation, per-batch card progress and draft sharing-error retries.
+The complete summary is built only for the seed/baseline/final snapshots in the
+progress regression. See `issue-52-regression.tsv`.
+
+On the same 4,823 real source paragraphs with offline translations, 804 records were
+appended and read in 26 refreshes. The snapshot was read once. Suffix reads consumed
+18,478,715 bytes total, exactly the journal's size; no earlier prefix was reread.
+The final loaded state equalled a forced cold load, and all live pairs were recovered.
+The last refresh took about 179 ms on this machine. This is repository timing,
+not a native UI responsiveness claim. See `issue-52-incremental.json`.
+
+Next: assess the stale-snapshot risks recorded in #53, then the relevant #54 UI cost.
+Windows native acceptance and packaged regression on the resulting integration
+branch remain outstanding.
 
 The milestone remains open: the real long-document pause/OS-interrupt/resume/
 export workflow, Windows installer/upgrade/running-install/uninstall/user-file

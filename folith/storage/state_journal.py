@@ -218,43 +218,47 @@ def size(job_id: str, output_dir: Optional[Path] = None) -> int:
         return 0
 
 
-def _iter_lines(path: Path):
-    """Yield complete lines; a trailing partial line is silently dropped."""
+def read_mutations_from(job_id: str, offset: int = 0, after_seq: int = 0,
+                        output_dir: Optional[Path] = None, *,
+                        end_offset: Optional[int] = None) -> Tuple[List[Dict[str, Any]], int]:
+    """Read a suffix, returning records and the next complete-line byte offset.
+
+    A partial tail or malformed record leaves the offset before that line, so
+    a later read cannot skip it. ``end_offset`` bounds a read to the file size
+    observed by the caller, even if the worker appends while it is reading.
+    """
+    records = []
+    position = offset
     try:
-        raw = path.read_bytes()
+        with journal_path(job_id, output_dir=output_dir).open("rb") as stream:
+            stream.seek(offset)
+            end = os.fstat(stream.fileno()).st_size if end_offset is None else end_offset
+            while position < end:
+                line = stream.readline(end - position)
+                if not line.endswith(b"\n"):
+                    break
+                if not line.strip():
+                    position = stream.tell()
+                    continue
+                try:
+                    record = json.loads(line)
+                except (ValueError, UnicodeDecodeError):
+                    break
+                seq = record.get("seq") if isinstance(record, dict) else None
+                if not isinstance(seq, int) or isinstance(seq, bool):
+                    break
+                if seq > after_seq:
+                    records.append(record)
+                position = stream.tell()
     except OSError:
-        return
-    if not raw:
-        return
-    chunks = raw.split(b"\n")
-    # ``split`` leaves the text after the final newline as the last element.  A
-    # non-empty final element means the writer was interrupted mid-line.
-    for chunk in chunks[:-1]:
-        if not chunk.strip():
-            continue
-        try:
-            yield json.loads(chunk.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            # A malformed line makes everything after it untrustworthy.  Stop
-            # rather than skip: the caller recomputes from where the state got
-            # to, which is always safe, whereas skipping could apply a mutation
-            # out of order.
-            return
+        pass
+    return records, position
 
 
 def read_mutations(job_id: str, after_seq: int = 0,
                    output_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Return every readable record with ``seq`` greater than ``after_seq``."""
-    out: List[Dict[str, Any]] = []
-    for record in _iter_lines(journal_path(job_id, output_dir=output_dir)):
-        if not isinstance(record, dict):
-            break
-        seq = record.get("seq")
-        if not isinstance(seq, int) or isinstance(seq, bool):
-            break
-        if seq > after_seq:
-            out.append(record)
-    return out
+    return read_mutations_from(job_id, after_seq=after_seq, output_dir=output_dir)[0]
 
 
 def _tail_seq(path: Path) -> Optional[int]:
@@ -543,6 +547,22 @@ def replay(job_id: str, state: Dict[str, Any],
         return {"applied": 0, "cursor": start, "gap": False, "dropped": 0}
 
     records = read_mutations(job_id, after_seq=start, output_dir=output_dir)
+    return _replay_records(state, records)
+
+
+def replay_from(job_id: str, state: Dict[str, Any], offset: int = 0,
+                output_dir: Optional[Path] = None, *,
+                end_offset: Optional[int] = None) -> Dict[str, Any]:
+    """Apply only the journal suffix after an earlier successful read."""
+    records, next_offset = read_mutations_from(
+        job_id, offset, cursor(state), output_dir, end_offset=end_offset)
+    report = _replay_records(state, records)
+    report["byte_offset"] = offset if report["gap"] else next_offset
+    return report
+
+
+def _replay_records(state: Dict[str, Any], records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    start = cursor(state)
     applied = 0
     current = start
     gap = False

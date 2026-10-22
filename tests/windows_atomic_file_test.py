@@ -33,6 +33,29 @@ def test_transient_windows_sharing_failure_retries_only_replace(tmp_path, monkey
     assert target.read_text(encoding="utf-8") == "new"
 
 
+def test_draft_save_uses_the_retrying_replace(tmp_path, monkeypatch):
+    import core
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    core.save_translation_drafts("draft-job", {"s1": {"text": "old"}})
+    writes = []
+
+    def replace_after_reader_releases(source, destination):
+        writes.append(source.read_bytes())
+        if len(writes) < 3:
+            error = PermissionError(errno.EACCES, "draft reader open")
+            error.winerror = 32
+            raise error
+        os.replace(source, destination)
+
+    monkeypatch.setattr(atomic_file, "_WINDOWS", True)
+    monkeypatch.setattr(atomic_file, "_replace_once", replace_after_reader_releases)
+    monkeypatch.setattr(atomic_file.time, "sleep", lambda _: None)
+    core.save_translation_drafts("draft-job", {"s1": {"text": "new"}})
+    assert len(writes) == 3 and writes[0] == writes[1] == writes[2]
+    assert core.load_translation_drafts("draft-job")["s1"]["text"] == "new"
+    assert not list((tmp_path / "draft-job").glob("*.tmp"))
+
+
 @pytest.mark.parametrize("windows,code,error_number,attempts", [
     (True, 5, errno.EACCES, atomic_file._MAX_ATTEMPTS),
     (True, 32, errno.EACCES, atomic_file._MAX_ATTEMPTS),

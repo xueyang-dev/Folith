@@ -13,6 +13,7 @@ from folith import translation_evidence as _translation_evidence
 from folith.engine.locks import _serialized_job_mutation
 from folith.engine.source_quality import _source_quality_dispositions
 from folith.engine._link import core as _c
+from folith.storage.atomic_file import replace_file
 
 
 def _reconcile_translation_failures(state):
@@ -103,8 +104,11 @@ def save_translation_drafts(job_id, drafts):
         "drafts": items,
     }
     tmp = d / (_c.TRANSLATION_DRAFTS_FILE + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        replace_file(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def clear_translation_drafts(job_id):

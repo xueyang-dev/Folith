@@ -4993,7 +4993,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         nonlocal truncated_indexes, _pending_snapshot_batches, _cadence
         nonlocal _journal_seq, _journal_bytes_written, _journal_enabled
         nonlocal _journal_retire_pending
+        nonlocal _translated_pair_count
         pairs.extend(batch_pairs)
+        _translated_pair_count += sum(bool(str(pair.get("target") or "").strip())
+                                      for pair in batch_pairs)
         changed_indexes = list(range(offset, offset + len(batch_pairs)))
         if changed_indexes:
             # Measured separately from the save itself: recording the truth
@@ -5029,6 +5032,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 _journal_bytes_written += _written
                 _journal_stats["records"] += 1
                 _journal_stats["bytes"] += _written
+                try:
+                    _job_repo.update_job_summary_progress(
+                        job_id, state, _translated_pair_count)
+                except OSError:
+                    # The journal is durable; a derived card refresh must not
+                    # discard that commit. The next batch/snapshot refreshes it.
+                    pass
         # Only a *missing* record while the journal is on is a problem.  With the
         # journal off there is nothing to describe, and the bounded cadence is
         # the durability mechanism -- exactly as before this round.
@@ -6466,6 +6476,9 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     # One baseline snapshot per run closes that hole; it is not per-batch.
     if _journal_enabled and start_batch < len(batches):
         _flush_state_snapshot("journal_baseline")
+
+    _translated_pair_count = sum(bool(str(pair.get("target") or "").strip())
+                                 for pair in pairs)
 
     try:
         if overlap_active and (len(batches) - start_batch) > 1:

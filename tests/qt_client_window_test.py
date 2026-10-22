@@ -357,6 +357,33 @@ def test_import_then_editor_keeps_text_across_background_refresh(client, monkeyp
     assert workbench.target_edit.toPlainText() == "正在输入、尚未提交的内容"
 
 
+def test_workbench_poll_reloads_a_journal_only_translation(client):
+    from folith.storage import state_journal as journal
+
+    core, adapter = client["core"], client["adapter"]
+    window, app = client["window"], client["app"]
+    job_id = "journal-live-ui"
+    state = core.new_job_state("journal.txt")
+    state.update(paras=["First paragraph.", "Second paragraph."], p1_done=True)
+    core.save_job_state(job_id, state)
+    window.open_job(job_id)
+    before = adapter.state_signature(job_id)
+    snapshot = core.job_state_path(job_id).read_bytes()
+    assert window.workbench._rows[0].target == ""
+
+    journal.append_mutation(job_id, {
+        "schema": journal.JOURNAL_SCHEMA_VERSION,
+        "mutation": journal.MUTATION_TRANSLATION_BATCH,
+        "seq": 1, "offset": 0,
+        "pairs": [{"source": "First paragraph.", "target": "第一段译文。"}],
+    })
+    assert adapter.state_signature(job_id) != before
+    window._poll_workbench()
+    assert _pump(app, 10, lambda: window.workbench._rows[0].target == "第一段译文。")
+    assert core.job_state_path(job_id).read_bytes() == snapshot
+    assert window._current_job_id == job_id
+
+
 def test_full_translation_run_through_the_window(client):
     """One real run end to end, including progress polling and completion."""
     adapter = client["adapter"]
