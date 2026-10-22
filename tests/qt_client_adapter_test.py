@@ -2387,6 +2387,7 @@ def test_a_stale_summary_cache_cannot_dictate_the_row_fields(adapter_env,
 
 
 def test_review_cost_estimate_is_local_and_counts_source_plus_target():
+    from folith.qt import adapter
     state = {"pairs": [{"source": "abcdefgh", "target": "中文译文"},
                        {"source": "", "target": ""}]}
     estimate = adapter.review_cost_estimate(state, [0, 1, 5])

@@ -226,6 +226,7 @@ def test_already_reviewed_tm_content_is_never_re_reviewed():
         False, "already_reviewed_tm")
 
 
+@pytest.mark.default_review_mode
 def test_unknown_review_mode_falls_back_to_default_risk_selective():
     assert _gate.DEFAULT_REVIEW_MODE == _gate.REVIEW_MODE_RISK_SELECTIVE
     assert _gate.resolve_review_mode() == _gate.REVIEW_MODE_RISK_SELECTIVE
@@ -254,6 +255,7 @@ def test_always_mode_reviews_every_batch(tmp_path):
     assert all(p["review_status"] == "reviewed_clean" for p in state["pairs"])
 
 
+@pytest.mark.default_review_mode
 def test_new_task_without_explicit_mode_defaults_to_selective(tmp_path):
     provider = ScriptedProvider(targets=dict(zip(SEGMENTS, TARGETS)))
     core.OUTPUT_DIR = tmp_path
