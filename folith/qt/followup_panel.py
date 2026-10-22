@@ -16,11 +16,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-    QScrollArea, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
+    QScrollArea, QToolButton, QVBoxLayout, QWidget,
 )
 
 from . import adapter
+from .name_conflict import NameConflictWidget
 from . import i18n
 from . import icons
 from . import style as style_module
@@ -258,28 +259,13 @@ class FollowupPanel(QWidget):
         self.entity_hint = self.entity_card.summary
         self.entity_box = style_module.ComboBox()
         self.entity_box.currentIndexChanged.connect(self._entity_changed)
-        self.entity_variants = label(rich=True)
-        self.entity_variants.setObjectName("issueEvidence")
-        self.entity_variants.linkActivated.connect(self._evidence_link)
-        self.target_edit = QLineEdit()
-        self.target_edit.setPlaceholderText(i18n.tr('统一使用的译名'))
-        self.target_edit.textChanged.connect(self._target_changed)
-        self.preview_hint = label()
-        self.preview_hint.setObjectName("issueSummary")
-        self.preview_view = QTextBrowser()
-        self.preview_view.setObjectName("repairPreview")
-        self.preview_view.setFixedHeight(90)
-        for widget in (self.entity_box, self.entity_variants, self.target_edit,
-                       self.preview_hint, self.preview_view):
-            self.entity_card.body.addWidget(widget)
-        self.repair_button = _tool(i18n.tr('统一为这个译名'), primary=True)
-        self.repair_button.clicked.connect(self._emit_repair)
-        self.accept_button = _tool(i18n.tr('各自符合语境'))
-        self.accept_button.setToolTip(i18n.tr('确认这些译法在各自的段落里都是对的，不再提示。'))
-        self.accept_button.clicked.connect(self._emit_accept)
-        self.entity_card.add_action(self.repair_button)
-        self.entity_card.add_action(self.accept_button)
-        self.entity_card.finish_actions()
+        self.conflict = NameConflictWidget()
+        self.conflict.previewRequested.connect(self.previewRequested.emit)
+        self.conflict.repairRequested.connect(self.repairRequested.emit)
+        self.conflict.acceptRequested.connect(self.acceptRequested.emit)
+        self.conflict.locateRequested.connect(self.locateRequested.emit)
+        self.entity_card.body.addWidget(self.entity_box)
+        self.entity_card.body.addWidget(self.conflict)
 
         # ---- 疑似原文碎片 --------------------------------------------------------
         self.fragments_card = IssueCard("warning")
@@ -656,78 +642,15 @@ class FollowupPanel(QWidget):
         self.entity_card.set_title(
             i18n.tr('译名不一致 · {v0}', v0=source) if count <= 1
             else i18n.tr('译名不一致 · {v0} 个名字', v0=count))
-        self.entity_variants.setText(_variant_evidence(item))
-        self.target_edit.blockSignals(True)
-        self.target_edit.setText(str(item.get("preferred_target") or ""))
-        self.target_edit.blockSignals(False)
-        self.set_preview([])
-        self._target_changed()
-
-    def _evidence_link(self, href: str) -> None:
-        if href.startswith("seg:"):
-            try:
-                self.locateRequested.emit(int(href[4:]))
-            except ValueError:
-                pass
-
-    def _target_changed(self, *_args) -> None:
-        self.set_preview([])
-        if getattr(self, "_defer_preview", False) or (self.window().isVisible() and not self.isVisible()):
-            # (only when shown in a window but on a hidden page)
-            # The preview scans the whole document (~0.2 s on a book); the panel
-            # is rebuilt on every state change, mostly while nobody looks at it.
-            self._preview_pending = True
-            return
-        self._preview_pending = False
-        target = self.target_edit.text().strip()
-        if target and self._current_source():
-            self.previewRequested.emit(self._current_source(), target)
+        self.conflict.set_entity(item, busy=self._busy)
 
     def set_preview_deferred(self, deferred: bool) -> None:
         """Keep the first-show entity scan out of the drawer's opening frames."""
-        self._defer_preview = deferred
-        if not deferred and getattr(self, "_preview_pending", False) and self.isVisible():
-            self._target_changed()
+        self.conflict.set_preview_deferred(deferred)
 
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().showEvent(event)
-        if getattr(self, "_preview_pending", False):
-            self._target_changed()
-
-    def set_preview(self, preview: list[dict]) -> None:
-        self._preview = list(preview or [])
-        tokens = theme_module.tokens(style_module.current_theme())
-        rows = []
-        for change in self._preview:
-            rows.append(
-                f"<p><b>{_escape(i18n.tr('第 {v0} 段', v0=int(change.get('index', 0)) + 1))}</b>"
-                f"<br><span style='color:{tokens['danger']}'>− {_escape(change.get('before'))}</span>"
-                f"<br><span style='color:{tokens['success']}'>+ {_escape(change.get('after'))}</span></p>")
-        self.preview_view.setHtml("".join(rows))
-        has_target = bool(self.target_edit.text().strip())
-        self.preview_hint.setText(
-            i18n.tr('将修改 {v0} 段；确认后记录人工译名，并使受影响段落的审校和标注失效。',
-                    v0=len(self._preview)) if has_target and self._preview else "")
-        self.preview_hint.setVisible(bool(self.preview_hint.text()))
-        self.preview_view.setVisible(bool(self._preview))
-        if self._preview:
-            # 预览框按内容高度（最多 180），不留一大块空白。
-            document = self.preview_view.document()
-            document.setTextWidth(max(120, self.preview_view.viewport().width()))
-            self.preview_view.setFixedHeight(
-                max(48, min(180, int(document.size().height())
-                                  + 2 * self.preview_view.frameWidth() + 6)))
-        self.repair_button.setEnabled(bool(self._preview) and not self._busy)
-        self.accept_button.setEnabled(bool(self._current_source()) and not self._busy)
-
-    def _emit_repair(self) -> None:
-        if self._preview:
-            self.repairRequested.emit(self._current_source(),
-                                      self.target_edit.text().strip(), list(self._preview))
-
-    def _emit_accept(self) -> None:
-        if self._current_source():
-            self.acceptRequested.emit(self._current_source())
+    def set_preview(self, preview: list[dict], source: str | None = None,
+                    target: str | None = None) -> None:
+        self.conflict.set_preview(preview, source, target)
 
 
 def _failure_detail(item: dict) -> str:
@@ -737,25 +660,3 @@ def _failure_detail(item: dict) -> str:
         if mark in reason:
             return reason.split(mark, 1)[1]
     return reason
-
-
-def _variant_evidence(item: dict) -> str:
-    """每种译法出现在哪几段：「埃拉 — 第 347、3713 段」，段号可点（定位过去）。"""
-    by_variant: dict[str, list[int]] = {}
-    for row in item.get("occurrences") or []:
-        for value in row.get("variants") or []:
-            key = str(value).strip()
-            by_variant.setdefault(key, [])
-            if int(row.get("index", -1)) not in by_variant[key]:
-                by_variant[key].append(int(row.get("index", -1)))
-    if not by_variant:
-        return _escape(i18n.tr('当前译法：{v0}', v0=" / ".join(
-            str(v) for v in item.get("observed_targets") or [])))
-    lines = []
-    for value, indexes in sorted(by_variant.items(), key=lambda pair: -len(pair[1])):
-        links = "、".join(f"<a href='seg:{index}'>{index + 1}</a>" for index in indexes[:8]
-                         if index >= 0)
-        more = i18n.tr(' 等 {v0} 处', v0=len(indexes)) if len(indexes) > 8 else ""
-        where = _escape(i18n.tr('第 {v0} 段', v0="\x00")).replace("\x00", links)
-        lines.append(f"<b>{_escape(value)}</b>　{where}{_escape(more)}")
-    return "<br>".join(lines)
