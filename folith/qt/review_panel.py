@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from . import i18n
 from . import icons
 from . import style as style_module
+from .name_conflict import NameConflictWidget
 from .style import Card
 
 #: 筛选分段（与旧界面一致）：值 → 标签。
@@ -48,6 +49,9 @@ class ReviewPanel(QWidget):
     confirmSourceRequested = Signal(int, str)       # segment index, note
     reviewAllRequested = Signal()
     styleRuleRequested = Signal(dict, str)          # item, note（保存为项目风格规则）
+    entityPreviewRequested = Signal(str, str)       # source, target
+    entityRepairRequested = Signal(str, str, list)  # source, target, preview
+    entityAcceptRequested = Signal(str)             # source
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -160,6 +164,14 @@ class ReviewPanel(QWidget):
             action_row.addWidget(widget)
         action_row.addStretch(1)
 
+        # 名字译法不一：同一个部件（与「检查与修复」抽屉共用），代替逐段的动作行。
+        self.conflict = NameConflictWidget()
+        self.conflict.previewRequested.connect(self.entityPreviewRequested.emit)
+        self.conflict.repairRequested.connect(self.entityRepairRequested.emit)
+        self.conflict.acceptRequested.connect(self.entityAcceptRequested.emit)
+        self.conflict.locateRequested.connect(self.editRequested.emit)
+        self.conflict.setVisible(False)
+
         title_row = QHBoxLayout()
         title_row.addWidget(self.item_title, 1)
         title_row.addWidget(self.item_chip, 0, Qt.AlignmentFlag.AlignTop)
@@ -170,6 +182,7 @@ class ReviewPanel(QWidget):
         detail_layout.setSpacing(10)
         detail_layout.addLayout(title_row)
         detail_layout.addWidget(self.item_body, 1)
+        detail_layout.addWidget(self.conflict)
         detail_layout.addWidget(self.source_confirm_box)
         detail_layout.addWidget(self.source_note_edit)
         detail_layout.addWidget(self.note_edit)
@@ -292,6 +305,12 @@ class ReviewPanel(QWidget):
     def _is_source_item(self, item: dict) -> bool:
         return item.get("finding_type") == "source_quality_gate"
 
+    def _entity_for(self, item: dict) -> dict:
+        """名字译法不一的发现项对应的实体（抽屉里的同一份数据）；找不到就是空。"""
+        source = str(item.get("entity_source") or "")
+        return next((entity for entity in self._view.get("entities") or []
+                     if entity.get("source") == source), {}) if source else {}
+
     def _render_detail(self) -> None:
         item = self.selected_item()
         has = bool(item)
@@ -303,6 +322,7 @@ class ReviewPanel(QWidget):
             self._set_actions(source=False, task=False, decision=False,
                               suggestion=False, edit=False)
             self.hint.setText("")
+            self.conflict.setVisible(False)
             return
         self.item_title.setText(str(item.get("title") or ""))
         self.item_chip.setText(i18n.tr_dynamic(str(item.get("severity_label") or "")))
@@ -326,6 +346,10 @@ class ReviewPanel(QWidget):
                 parts.append(f"<p style=\"margin-bottom:0\"><b>{_escape(i18n.tr(label))}：</b></p>"
                              f"<p{block} style=\"margin-top:2px\">{_escape(value)}</p>")
         self.item_body.setHtml("".join(parts))
+        entity = self._entity_for(item)
+        if entity:
+            self.conflict.set_entity(entity, busy=self._busy)
+        self.conflict.setVisible(bool(entity))
         self._sync_buttons()
 
     def _set_actions(self, *, source: bool, task: bool, decision: bool,
@@ -346,6 +370,12 @@ class ReviewPanel(QWidget):
     def _sync_buttons(self, *_args) -> None:
         item = self.selected_item()
         if not item:
+            return
+        if self._entity_for(item):
+            self._set_actions(source=False, task=False, decision=False,
+                              suggestion=False, edit=False)
+            self.style_rule_button.setVisible(False)
+            self.hint.setText("")
             return
         kind = str(item.get("kind") or "")
         index = item.get("segment_index")

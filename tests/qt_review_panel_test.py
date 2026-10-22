@@ -255,3 +255,89 @@ def test_filter_keeps_the_selection_and_shows_an_empty_hint(panel):
     assert panel.empty_label.isVisibleTo(panel)
     panel._set_filter("all")
     assert panel.list.count() == 1
+
+
+# ---- 名字译法不一：审校页与抽屉共用的选项部件 ----------------------------------
+
+def _entity():
+    return {"source": "Lycidas", "preferred_target": "利西达斯",
+            "observed_targets": ["Lycidas", "利西达斯"],
+            "occurrences": [
+                {"index": 173, "variants": ["利西达斯"]},
+                {"index": 792, "variants": ["Lycidas"]},
+                {"index": 795, "variants": ["Lycidas"]}]}
+
+
+def _entity_view():
+    view = _view(_item(id="finding:e", finding_id="e", finding_type="entity_conflict",
+                       entity_source="Lycidas", severity="actionable",
+                       severity_label="建议处理", filter_group="suggested",
+                       segment_index=173, title="第 174 段 · Lycidas"))
+    view["entities"] = [_entity()]
+    return view
+
+
+def test_review_page_shows_the_shared_widget_instead_of_the_segment_actions(panel):
+    panel.apply(_entity_view())
+    assert panel.conflict.isVisibleTo(panel)
+    for button in (panel.confirm_button, panel.preserve_button, panel.edit_button,
+                   panel.retranslate_button, panel.apply_button):
+        assert not button.isVisibleTo(panel)
+    options = panel.conflict.options()
+    assert [(o["kind"], o["target"]) for o in options] == [
+        ("variant", "Lycidas"), ("variant", "利西达斯"), ("custom", ""), ("keep", "")]
+    assert panel.conflict.selected_option()["target"] == "利西达斯", "默认选当前定名"
+
+
+def test_review_page_confirm_paths_use_the_existing_signals(panel):
+    panel.apply(_entity_view())
+    seen = {"preview": [], "repair": [], "accept": []}
+    panel.entityPreviewRequested.connect(lambda s, t: seen["preview"].append((s, t)))
+    panel.entityRepairRequested.connect(lambda s, t, p: seen["repair"].append((s, t, p)))
+    panel.entityAcceptRequested.connect(seen["accept"].append)
+    panel.conflict.select("variant", "Lycidas")
+    assert seen["preview"][-1] == ("Lycidas", "Lycidas")
+    change = [{"index": 173, "source": "s", "before": "利西达斯", "after": "Lycidas"}]
+    panel.conflict.set_preview(change, "Lycidas", "Lycidas")
+    panel.conflict.confirm_button.click()
+    assert seen["repair"] == [("Lycidas", "Lycidas", change)]
+    panel.conflict.select("keep")
+    panel.conflict.confirm_button.click()
+    assert seen["accept"] == ["Lycidas"]
+
+
+def test_review_page_segment_links_jump_to_the_segment(panel):
+    panel.apply(_entity_view())
+    seen = []
+    panel.editRequested.connect(seen.append)
+    panel.conflict._link("seg:792")
+    assert seen == [792]
+
+
+def test_review_item_without_a_known_entity_keeps_the_segment_actions(panel):
+    view = _entity_view()
+    view["entities"] = []
+    panel.apply(view)
+    assert not panel.conflict.isVisibleTo(panel)
+    assert panel.edit_button.isVisibleTo(panel)
+
+
+def test_review_queue_carries_the_entities_for_conflict_findings(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    state = core.new_job_state("names.docx")
+    state.update(
+        p1_done=True, p2_done=True, paras=["Lydia a.", "Lydia b."],
+        pairs=[{"source": "Lydia a.", "target": "莉迪亚来了。"},
+               {"source": "Lydia b.", "target": "莉迪娅来了。"}])
+    registry = core._entity_registry.EntityRegistry()
+    registry.observe("Lydia", "莉迪亚", segment_id=0, entity_type="person")
+    registry.observe("Lydia", "莉迪娅", segment_id=1, entity_type="person")
+    state["entity_registry"] = registry.to_list()
+    state["findings"] = [{"type": "entity_conflict", "severity": "actionable",
+                          "source": "Lydia", "segment_index": 0, "segment_id": 0,
+                          "reason": "实体「Lydia」的当前译名需要确认"}]
+    core.save_job_state("entityreview0000001", state)
+    view = adapter.review_queue("entityreview0000001")
+    items = [item for item in view["queue_items"] if item.get("entity_source")]
+    assert [item["entity_source"] for item in items] == ["Lydia"]
+    assert [entity["source"] for entity in view["entities"]] == ["Lydia"]
