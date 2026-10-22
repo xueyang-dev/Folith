@@ -5,7 +5,10 @@ name defined here.  Anything still owned by ``core`` is read late-bound through
 ``_c`` so that tests (and callers) that patch ``core.X`` keep working.
 """
 
+import copy
 import os
+import threading
+from collections import OrderedDict
 from datetime import datetime
 from datetime import timezone
 from folith import document_ir as _document_ir
@@ -280,9 +283,28 @@ def segment_source_paragraphs(paragraphs, *, state=None, mode=None,
         paragraphs, mode=resolved_mode, source_lang=language)
 
 
+#: Last few audits keyed by the exact source text.  The audit is a pure
+#: function of the paragraphs, and the workbench asks for it several times per
+#: refresh while only the translations change (#75).
+_AUDIT_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+_AUDIT_CACHE_MAX = 4
+_AUDIT_CACHE_LOCK = threading.Lock()
+
+
 def audit_source_quality(paragraphs):
     """Deterministically quarantine OCR fragments before translation."""
-    return _source_quality.audit_source_segments(paragraphs)
+    key = tuple(str(item) if item is not None else None for item in paragraphs or [])
+    with _AUDIT_CACHE_LOCK:
+        cached = _AUDIT_CACHE.get(key)
+        if cached is not None:
+            _AUDIT_CACHE.move_to_end(key)
+            return copy.deepcopy(cached)
+    report = _source_quality.audit_source_segments(paragraphs)
+    with _AUDIT_CACHE_LOCK:
+        _AUDIT_CACHE[key] = copy.deepcopy(report)
+        while len(_AUDIT_CACHE) > _AUDIT_CACHE_MAX:
+            _AUDIT_CACHE.popitem(last=False)
+    return report
 
 
 def _source_quality_gate_enabled(state):
@@ -403,6 +425,9 @@ def _segment_source_quality_evidence(state, index, paragraphs=None, *, grounding
 
     The IR block is preferred because it is the verified extraction unit; the
     cleaned paragraph is the fallback for sources without document IR.
+    ``grounding`` holds the document-wide block index and body bounds: a caller
+    classifying many segments passes them once instead of rescanning each time
+    (#75: about a second per workbench refresh on a 5000-block PDF).
     """
     paragraphs = (paragraphs if paragraphs is not None
                   else (state or {}).get("paras") or [])

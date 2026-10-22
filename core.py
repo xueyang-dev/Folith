@@ -1909,15 +1909,18 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
         if isinstance(flag, dict) and isinstance(flag.get("segment_index"), int)
     }
     raw_report = audit_source_quality(raw_paragraphs)
+    outputs_by_raw = {}
+    for output_index, source_indices in enumerate(output_inputs):
+        if isinstance(source_indices, list):
+            for source_index in dict.fromkeys(
+                    item for item in source_indices if isinstance(item, int)):
+                outputs_by_raw.setdefault(source_index, []).append(output_index)
     lineage_flags = []
     for raw_flag in raw_report.get("flags") or []:
         raw_index = raw_flag.get("segment_index")
         if not isinstance(raw_index, int):
             continue
-        output_indices = [
-            output_index for output_index, source_indices in enumerate(output_inputs)
-            if isinstance(source_indices, list) and raw_index in source_indices
-        ]
+        output_indices = outputs_by_raw.get(raw_index, [])
         affected = [
             segment_index
             for output_index in output_indices
@@ -1933,7 +1936,21 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
             if output_index < len(cleaned_paragraphs):
                 cleaned_p = str(cleaned_paragraphs[output_index] or "")
             if not cleaned_p:
-                cleaned_p = " ".join(str(paragraphs[si] or "") for si in segments_by_paragraph.get(output_index, []))
+                segment_indexes = segments_by_paragraph.get(output_index, [])
+                row = next((item for item in paragraph_ranges
+                            if isinstance(item, dict)
+                            and item.get("paragraph_index") == output_index), None)
+                separators = (row or {}).get("separators")
+                if separators:
+                    # Exact reconstruction from the recorded boundary
+                    # separators; the old " ".join() guess silently rewrote
+                    # the paragraph whenever the original spacing differed.
+                    cleaned_p = _segmentation.reconstruct_source_paragraph(
+                        [str(paragraphs[si] or "") for si in segment_indexes],
+                        list(separators))
+                else:
+                    cleaned_p = " ".join(
+                        str(paragraphs[si] or "") for si in segment_indexes)
 
             if _source_quality.is_integrated_numeric_fragment(raw_text, cleaned_p):
                 excused = True
@@ -4845,7 +4862,12 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     # snapshot's cursor, which keeps them monotonic across the rotations that
     # follow each snapshot.
     _journal_enabled = state_journal_enabled()
+    # A record replay could not apply stays in the file with a seq above the
+    # cursor; continuing from the cursor would reuse that seq, and the next
+    # replay would interleave the stale record with this run's (#74).
     _journal_seq = _state_journal.cursor(state)
+    if state_journal_enabled():
+        _journal_seq = max(_journal_seq, _state_journal.max_seq(job_id))
     _journal_retire_pending = False
     _journal_bytes_written = _state_journal.size(job_id) if _journal_enabled else 0
     _journal_stats = {"records": 0, "bytes": 0, "unusable": 0, "budget_bytes": 0}
@@ -9468,6 +9490,10 @@ def load_report_template(job_id):
     directory = job_dir(job_id)
     docx_path = directory / "report-template.docx"
     contract_path = directory / "template-contract.json"
+    # Most tasks have no template; the workbench asks on every refresh, and
+    # loading the state is a full copy of it (#75).
+    if not docx_path.is_file():
+        return None
     state = load_job_state(job_id)
     contract = None
     if contract_path.is_file():
@@ -9479,7 +9505,7 @@ def load_report_template(job_id):
     if contract is None and state:
         contract = state.get("report_template_contract") or \
             (state.get("research_settings") or {}).get("report_template_contract")
-    if not contract or not docx_path.is_file():
+    if not contract:
         return None
     raw = docx_path.read_bytes()
     return {

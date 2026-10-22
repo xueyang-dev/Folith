@@ -527,24 +527,28 @@ def replay(job_id: str, state: Dict[str, Any],
     Returns a small report so callers and tests can see what happened without
     parsing the journal themselves::
 
-        {"applied": int, "cursor": int, "gap": bool, "dropped": int}
+        {"applied": int, "cursor": int, "gap": bool, "salvaged": int,
+         "dropped": int}
 
-    ``gap`` means a record could not be applied (schema drift, unknown mutation,
-    or an offset past the end of the snapshot's pairs).  Replay stops there and
-    leaves the state exactly as far as it legitimately got; the pipeline then
-    recomputes from that point.  A gap is always safe -- it costs work, never
-    correctness -- so it is reported rather than raised.
+    ``gap`` means a record could not be applied in full (schema drift, unknown
+    mutation, a side-list base that does not line up, or an offset past the end
+    of the snapshot's pairs).  From that record on, replay only salvages each
+    record's committed pairs (see :func:`_salvage_pairs`); a record that cannot
+    even be salvaged is dropped and the pipeline recomputes it.  A gap is
+    reported rather than raised.
 
     This function must never call a model and must never write the snapshot.
     """
     start = cursor(state)
     if not isinstance(state, dict):
-        return {"applied": 0, "cursor": start, "gap": False, "dropped": 0}
+        return {"applied": 0, "cursor": start, "gap": False, "salvaged": 0,
+                "dropped": 0}
     # The tail scan is only a fast path for "nothing to replay".  When it
     # cannot tell, read the journal in full: skipping would lose records.
     newest = _tail_seq(journal_path(job_id, output_dir=output_dir))
     if newest is not None and newest <= start:
-        return {"applied": 0, "cursor": start, "gap": False, "dropped": 0}
+        return {"applied": 0, "cursor": start, "gap": False, "salvaged": 0,
+                "dropped": 0}
 
     records = read_mutations(job_id, after_seq=start, output_dir=output_dir)
     return _replay_records(state, records)
@@ -564,9 +568,15 @@ def replay_from(job_id: str, state: Dict[str, Any], offset: int = 0,
 def _replay_records(state: Dict[str, Any], records: List[Dict[str, Any]]) -> Dict[str, Any]:
     start = cursor(state)
     applied = 0
+    salvaged = 0
     current = start
     gap = False
     for record in records:
+        if gap:
+            if _salvage_pairs(state, record):
+                salvaged += 1
+                current = max(current, int(record["seq"]))
+            continue
         if record.get("schema") not in READABLE_SCHEMA_VERSIONS:
             gap = True
             break
@@ -578,7 +588,10 @@ def _replay_records(state: Dict[str, Any], records: List[Dict[str, Any]]) -> Dic
             applier(state, record)
         except JournalGap:
             gap = True
-            break
+            if _salvage_pairs(state, record):
+                salvaged += 1
+                current = max(current, int(record["seq"]))
+            continue
         current = int(record["seq"])
         applied += 1
     set_cursor(state, current)
@@ -586,8 +599,45 @@ def _replay_records(state: Dict[str, Any], records: List[Dict[str, Any]]) -> Dic
         "applied": applied,
         "cursor": current,
         "gap": gap,
-        "dropped": len(records) - applied,
+        "salvaged": salvaged,
+        "dropped": len(records) - applied - salvaged,
     }
+
+
+def _salvage_pairs(state: Dict[str, Any], record: Dict[str, Any]) -> bool:
+    """After a gap, keep a record's committed translations and nothing else.
+
+    A gap usually means a side list (findings, knowledge events...) does not
+    line up with the snapshot -- for example a journal written by 0.7.0, whose
+    first record extends findings the snapshot never had (#56).  Stopping there
+    threw away every committed batch and a resume re-translated the document
+    from the start (#74).  The pairs are absolute values at absolute offsets, so
+    writing them alone is safe; the side lists are left as the snapshot has
+    them.  The review evidence behind a pair is one of those side lists, so a
+    salvaged pair is never trusted as reviewed: it comes back as a translation
+    that still needs review.  The
+    cursor then moves past the salvaged records so they are never re-applied
+    and the next run's sequence numbers cannot collide with them.
+    """
+    if record.get("schema") not in READABLE_SCHEMA_VERSIONS \
+            or record.get("mutation") != MUTATION_TRANSLATION_BATCH:
+        return False
+    offset = record.get("offset")
+    batch_pairs = record.get("pairs")
+    pairs = state.get("pairs")
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0 \
+            or not isinstance(batch_pairs, list) or not isinstance(pairs, list) \
+            or offset > len(pairs):
+        return False
+    for index, pair in enumerate(batch_pairs):
+        if isinstance(pair, dict) and pair.get("reviewed"):
+            pair = {**pair, "reviewed": False, "review_status": "not_reviewed"}
+        position = offset + index
+        if position < len(pairs):
+            pairs[position] = pair
+        else:
+            pairs.append(pair)
+    return True
 
 
 # ---------------------------------------------------------------------------

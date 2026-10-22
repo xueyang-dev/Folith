@@ -15,13 +15,16 @@ from PySide6.QtWidgets import (
     QTextBrowser, QVBoxLayout, QWidget,
 )
 
+from . import adapter
 from . import i18n
 from . import icons
 from . import style as style_module
+from .name_conflict import NameConflictWidget
 from .style import Card
 
-#: 筛选分段（与旧界面一致）：值 → 标签。
-FILTERS = (("all", "全部"), ("pending", "待处理"), ("rereview", "需重审"),
+#: 筛选分段（与旧界面一致）：值 → 标签。「需决定」是默认页签：待处理、需重审和
+#: 名字译法不一；其余建议与「仅供参考」留在各自的页签里。
+FILTERS = (("actionable", "需决定"), ("all", "全部"), ("pending", "待处理"), ("rereview", "需重审"),
            ("skipped", "已跳过"), ("suggested", "有建议"),
            ("reference", "仅供参考"))
 
@@ -48,6 +51,9 @@ class ReviewPanel(QWidget):
     confirmSourceRequested = Signal(int, str)       # segment index, note
     reviewAllRequested = Signal()
     styleRuleRequested = Signal(dict, str)          # item, note（保存为项目风格规则）
+    entityPreviewRequested = Signal(str, str)       # source, target
+    entityRepairRequested = Signal(str, str, list)  # source, target, preview
+    entityAcceptRequested = Signal(str)             # source
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -55,7 +61,8 @@ class ReviewPanel(QWidget):
         self._items: list[dict] = []
         self._visible: list[dict] = []
         self._selected_id = ""
-        self._filter = "all"
+        self._filter = "actionable"
+        self._user_filter = False       # 用户点过页签后，不再替他换回默认页签
         self._busy = False
 
         def button(text: str, icon_name: str, token: str = "text-secondary",
@@ -160,6 +167,14 @@ class ReviewPanel(QWidget):
             action_row.addWidget(widget)
         action_row.addStretch(1)
 
+        # 名字译法不一：同一个部件（与「检查与修复」抽屉共用），代替逐段的动作行。
+        self.conflict = NameConflictWidget()
+        self.conflict.previewRequested.connect(self.entityPreviewRequested.emit)
+        self.conflict.repairRequested.connect(self.entityRepairRequested.emit)
+        self.conflict.acceptRequested.connect(self.entityAcceptRequested.emit)
+        self.conflict.locateRequested.connect(self.editRequested.emit)
+        self.conflict.setVisible(False)
+
         title_row = QHBoxLayout()
         title_row.addWidget(self.item_title, 1)
         title_row.addWidget(self.item_chip, 0, Qt.AlignmentFlag.AlignTop)
@@ -170,6 +185,7 @@ class ReviewPanel(QWidget):
         detail_layout.setSpacing(10)
         detail_layout.addLayout(title_row)
         detail_layout.addWidget(self.item_body, 1)
+        detail_layout.addWidget(self.conflict)
         detail_layout.addWidget(self.source_confirm_box)
         detail_layout.addWidget(self.source_note_edit)
         detail_layout.addWidget(self.note_edit)
@@ -215,7 +231,12 @@ class ReviewPanel(QWidget):
         readiness = self._view.get("readiness") or {}
         self.headline.setText(i18n.tr_dynamic(str(readiness.get("label") or "")))
         self.detail.setText(i18n.tr_dynamic(str(readiness.get("detail") or "")))
-        counts = self._view.get("filter_counts") or {}
+        counts = dict(self._view.get("filter_counts") or {})
+        counts["actionable"] = sum(adapter.is_actionable_review_item(item)
+                                   for item in self._items)
+        if not self._user_filter:
+            # 默认页签没有项时退回「全部」，不给一页空白。
+            self._filter = "actionable" if counts["actionable"] else "all"
         self.filter_control.set_options([
             (value, f"{i18n.tr(label)} {counts.get(value, 0)}")
             for value, label in FILTERS])
@@ -245,19 +266,22 @@ class ReviewPanel(QWidget):
 
     def _set_filter(self, value: str) -> None:
         self._filter = value or "all"
+        self._user_filter = True
         self._rebuild_list()
 
     def _rebuild_list(self) -> None:
         wanted = self._selected_id
         self._visible = [
             item for item in self._items
-            if self._filter == "all" or item.get("filter_group") == self._filter]
+            if self._filter == "all" or (
+                adapter.is_actionable_review_item(item) if self._filter == "actionable"
+                else item.get("filter_group") == self._filter)]
         self._visible.sort(key=lambda item: (item.get("priority", 9),
                                              item.get("segment_index") or 0))
         self.list.blockSignals(True)
         self.list.clear()
         for item in self._visible:
-            title = str(item.get("title") or "")
+            title = self._item_title(item)
             label = i18n.tr_dynamic(str(item.get("severity_label") or ""))
             summary = str(item.get("summary") or "")[:60]
             # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
@@ -292,6 +316,22 @@ class ReviewPanel(QWidget):
     def _is_source_item(self, item: dict) -> bool:
         return item.get("finding_type") == "source_quality_gate"
 
+    @staticmethod
+    def _item_title(item: dict) -> str:
+        """名字译法不一按名字列一行，不写第一处出现的段号。"""
+        source = str(item.get("entity_source") or "")
+        if not source:
+            return str(item.get("title") or "")
+        count = len(item.get("segment_indexes") or [])
+        title = i18n.tr('译名不一致 · {v0}', v0=source)
+        return title + (i18n.tr('（{v0} 处）', v0=count) if count > 1 else "")
+
+    def _entity_for(self, item: dict) -> dict:
+        """名字译法不一的发现项对应的实体（抽屉里的同一份数据）；找不到就是空。"""
+        source = str(item.get("entity_source") or "")
+        return next((entity for entity in self._view.get("entities") or []
+                     if entity.get("source") == source), {}) if source else {}
+
     def _render_detail(self) -> None:
         item = self.selected_item()
         has = bool(item)
@@ -303,8 +343,9 @@ class ReviewPanel(QWidget):
             self._set_actions(source=False, task=False, decision=False,
                               suggestion=False, edit=False)
             self.hint.setText("")
+            self.conflict.setVisible(False)
             return
-        self.item_title.setText(str(item.get("title") or ""))
+        self.item_title.setText(self._item_title(item))
         self.item_chip.setText(i18n.tr_dynamic(str(item.get("severity_label") or "")))
         self.item_chip.set_tone(_SEVERITY_TONE.get(str(item.get("severity")), "info"))
         parts = []
@@ -326,6 +367,10 @@ class ReviewPanel(QWidget):
                 parts.append(f"<p style=\"margin-bottom:0\"><b>{_escape(i18n.tr(label))}：</b></p>"
                              f"<p{block} style=\"margin-top:2px\">{_escape(value)}</p>")
         self.item_body.setHtml("".join(parts))
+        entity = self._entity_for(item)
+        if entity:
+            self.conflict.set_entity(entity, busy=self._busy)
+        self.conflict.setVisible(bool(entity))
         self._sync_buttons()
 
     def _set_actions(self, *, source: bool, task: bool, decision: bool,
@@ -346,6 +391,12 @@ class ReviewPanel(QWidget):
     def _sync_buttons(self, *_args) -> None:
         item = self.selected_item()
         if not item:
+            return
+        if self._entity_for(item):
+            self._set_actions(source=False, task=False, decision=False,
+                              suggestion=False, edit=False)
+            self.style_rule_button.setVisible(False)
+            self.hint.setText("")
             return
         kind = str(item.get("kind") or "")
         index = item.get("segment_index")
@@ -433,8 +484,14 @@ class ReviewPanel(QWidget):
 
     # 测试辅助
     def select_item_id(self, item_id: str) -> bool:
-        for row, item in enumerate(self._visible):
-            if item.get("id") == item_id:
-                self.list.setCurrentRow(row)
-                return True
+        for attempt in range(2):
+            for row, item in enumerate(self._visible):
+                if item.get("id") == item_id:
+                    self.list.setCurrentRow(row)
+                    return True
+            # 目标不在当前页签里（例如从别处跳到一条仅供参考的项）：切到「全部」再找。
+            if attempt or not any(item.get("id") == item_id for item in self._items):
+                break
+            self.filter_control.set_value("all")
+            self._set_filter("all")
         return False

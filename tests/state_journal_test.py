@@ -764,8 +764,13 @@ def test_unfaithful_candidate_change_falls_back_to_a_snapshot():
         state, baseline, {}, batch=0, offset=0, segment_ids=[], pairs=[]) is None
 
 
-def test_gap_does_not_leave_a_partially_applied_record(temp_job_env: Path):
-    """A record whose bases do not line up writes none of its pairs (#56 part 2)."""
+def test_gap_salvages_pairs_but_no_side_list(temp_job_env: Path):
+    """A record whose bases do not line up keeps its pairs and nothing else.
+
+    #56 part 2 made such a record write nothing, which on a 0.7.0 journal threw
+    away every committed batch and made a resume re-translate the document
+    (#74).  The side lists stay as the snapshot has them.
+    """
     job_id = "candidate-gap"
     state = _base_state()
     first = _journal_batch(state, [_candidate(1)], batch=0)
@@ -773,12 +778,59 @@ def test_gap_does_not_leave_a_partially_applied_record(temp_job_env: Path):
     second = _journal_batch(state, [_candidate(2)], batch=1)
     second["seq"] = 2
     second["extend"] = {"findings": {"base": 234, "items": [{"x": 1}]}}
+    second["pairs"][0]["reviewed"] = True
+    second["pairs"][0]["review_status"] = "reviewed"
+    third = _journal_batch(state, [_candidate(3)], batch=2)
+    third["seq"] = 3
     journal.journal_path(job_id).parent.mkdir(parents=True, exist_ok=True)
-    _rewrite_journal(job_id, [first, second])
+    _rewrite_journal(job_id, [first, second, third])
     replayed = _base_state()
     report = journal.replay(job_id, replayed)
     assert report["gap"] and report["applied"] == 1
-    assert len(replayed["pairs"]) == 1
+    assert report["salvaged"] == 2 and report["dropped"] == 0
+    assert report["cursor"] == 3
+    assert [pair["target"] for pair in replayed["pairs"]] == ["t0", "t1", "t2"]
+    # Its review evidence was not restored, so the pair is not trusted as reviewed.
+    assert replayed["pairs"][1]["reviewed"] is False
+    assert replayed["pairs"][1]["review_status"] == "not_reviewed"
+    assert replayed["findings"] == []
+    assert [item["source"] for item in replayed["knowledge_candidates"]] == ["Term 1"]
+
+
+def test_resume_after_unreplayable_journal_continues_past_committed_batches(
+        temp_job_env: Path):
+    """A 0.7.0-style journal must not make a resume start from batch 1 (#74)."""
+    job_id = "resume-after-gap"
+    paragraphs = _paragraphs(8)
+    _crash_run(job_id, paragraphs, batch_size=2)
+    records = journal.read_mutations(job_id)
+    assert len(records) == 4
+    # What 0.7.0 wrote: the first record extends findings the snapshot lacks.
+    records[0].setdefault("extend", {})["findings"] = {"base": 234, "items": []}
+    _rewrite_journal(job_id, records[:3])
+    repo.invalidate_cache()
+    resumed = core.load_job_state(job_id)
+    assert len(resumed["pairs"]) == 6
+    translated = []
+    real_batch = core.translate_batch
+
+    def counting_batch(segments, *args, **kwargs):
+        translated.extend(segments)
+        return real_batch(segments, *args, **kwargs)
+
+    real_llm = core.call_llm
+    core.call_llm = _fake_llm
+    core.translate_batch = counting_batch
+    try:
+        _translate(resumed, job_id, batch_size=2)
+    finally:
+        core.call_llm = real_llm
+        core.translate_batch = real_batch
+    assert translated == paragraphs[6:], "only the uncommitted batch is translated"
+    seqs = [record["seq"] for record in journal.read_mutations(job_id)]
+    assert len(seqs) == len(set(seqs)), "a resumed run must not reuse a seq"
+    repo.invalidate_cache()
+    assert len(core.load_job_state(job_id)["pairs"]) == 8
 
 
 def test_pre_loop_state_changes_survive_a_crash(temp_job_env: Path, monkeypatch):

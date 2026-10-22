@@ -2014,5 +2014,10 @@
   "不能把数据放在 Folith 应用文件夹里：升级或替换应用时会被覆盖。请选择应用文件夹以外的位置。": "Los datos no pueden guardarse en la carpeta de la aplicación Folith: al actualizar o reemplazar la aplicación se sobrescriben. Elige una ubicación fuera de la carpeta de la aplicación.",
   "移到项目…": "Mover a proyecto…",
   "正在导入，请等这一批完成后再导入。": "Hay una importación en curso. Espera a que termine antes de importar más.",
-  "正在载入译文…": "Cargando la traducción…"
+  "正在载入译文…": "Cargando la traducción…",
+  "统一为「{v0}」（改 {v1} 段）": "Unificar como «{v0}» ({v1} segmentos a cambiar)",
+  "其他：": "Otro:",
+  "保持原样（各自符合语境）": "Dejar como está (cada uno encaja en su contexto)",
+  "需决定": "Por decidir",
+  "（{v0} 处）": " ({v0} lugares)"
 }

@@ -311,6 +311,11 @@ def _shift_paragraph_ranges(paragraph_ranges, removed_index):
     段落区间是「清洗后段落 → 翻译单元」的位置契约；少了一段之后，后面每一段都
     要前移一位，包含它的区间则收窄一格。留着旧区间会让原文血缘审计把门禁结论
     落到错误的段落上。
+
+    边界分隔符（``separators``）跟着区间一起搬，但只有在新旧边界一致时才
+    成立：段被从段落**内部**移除时，新的相邻关系（例如段0↔段2）在原文里
+    从未存在过，此时必须作废而不是错位沿用；去掉首段/末段时，剩下的恰好是
+    原边界的一个子集，可以安全保留。
     """
     shifted = []
     for row in paragraph_ranges or []:
@@ -320,11 +325,29 @@ def _shift_paragraph_ranges(paragraph_ranges, removed_index):
         if not (isinstance(start, int) and isinstance(end, int)):
             shifted.append(dict(row))
             continue
+        count = end - start
+        separators = row.get("separators")
+        updated = None
+        if isinstance(separators, list) and separators and count > 1:
+            if start < removed_index < end - 1:
+                # 段被从段落内部移除时，原文里已不存在段0↔段2 的新边界：
+                # 旧的 separators 描述的是另一组边界，必须作废而不是错位沿用。
+                # 注意末段（removed_index == end - 1）不属于内部移除：删掉末段
+                # 只是少了一个边界，前面的边界仍然成立。
+                updated = {**row, "separators": [],
+                           "gate": {**(row.get("gate") or {}),
+                                    "separators_recorded": False}}
+            elif removed_index == start:
+                # 去掉首段：剩下的边界是原边界的后一段，仍然成立。
+                updated = {**row, "separators": list(separators[1:])}
+            elif removed_index == end - 1:
+                # 去掉末段：留下的是前面的边界，仍然成立。
+                updated = {**row, "separators": list(separators[:-1])}
         if start > removed_index:
             start -= 1
         if end > removed_index:
             end -= 1
-        shifted.append({**row, "start": start, "end": max(start, end)})
+        shifted.append({**(updated or row), "start": start, "end": max(start, end)})
     return shifted
 
 
