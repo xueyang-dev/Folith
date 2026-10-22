@@ -129,21 +129,33 @@ $Installer = Join-Path $InstallerDir "Folith-Setup-$Version-windows-x64.exe"
 $Makensis = Get-Command makensis -ErrorAction SilentlyContinue
 if (-not $Makensis) {
     # A fresh NSIS install (e.g. choco in an earlier CI step) is not on this
-    # session's PATH yet; look in its standard install folders.
+    # session's PATH yet.  Newer Chocolatey NSIS packages deploy through
+    # nsis.install, so check the usual folder and then fall back to a shallow
+    # recursive search under the Chocolatey library.
+    $candidates = @()
     foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
-        if (-not $base) { continue }
-        $candidate = Join-Path $base "NSIS\makensis.exe"
+        if ($base) { $candidates += (Join-Path $base "NSIS\makensis.exe") }
+    }
+    $candidates += (Join-Path $env:ProgramData "chocolatey\lib\nsis\tools\makensis.exe")
+    foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate) {
             $Makensis = Get-Command $candidate
             break
         }
     }
 }
+if (-not $Makensis -and $env:ProgramData) {
+    $found = Get-ChildItem -LiteralPath (Join-Path $env:ProgramData "chocolatey\lib") `
+        -Filter makensis.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($found) { $Makensis = Get-Command $found.FullName }
+}
 if ($PortableOnly) {
     Write-Host "installer skipped (-PortableOnly)"
 } elseif (-not $Makensis) {
     throw "makensis was not found; install NSIS or pass -PortableOnly explicitly"
 } else {
+    Write-Host "using makensis $($Makensis.Source)"
     if (Test-Path -LiteralPath $Installer) { Remove-Item -LiteralPath $Installer -Force }
     & $Makensis.Source -V2 "-DAPP_VERSION=$Version" "-DBASE=$Root" "-DOUT_FILE=$Installer" `
         (Join-Path $Root "packaging\folith-windows.nsi")

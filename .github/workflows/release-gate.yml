@@ -248,6 +248,19 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-desktop-build.txt PySide6==6.11.2 "pytest>=8,<9"
       - name: Install the OCR engine and the installer compiler
         run: choco install tesseract nsis --no-progress -y
+      - name: Locate the installer compiler
+        shell: pwsh
+        run: |
+          $mk = Get-Command makensis -ErrorAction SilentlyContinue
+          if (-not $mk) {
+            $mk = Get-ChildItem "$env:ProgramData\chocolatey\lib" -Filter makensis.exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $mk) {
+            Get-ChildItem "C:\Program Files (x86)\NSIS", "$env:ProgramData\chocolatey\lib\nsis" -Recurse -ErrorAction SilentlyContinue | Out-String
+            throw "makensis not found after installing NSIS"
+          }
+          Split-Path $mk.Source -Parent | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $mk.Source /VERSION
       - name: Build the Windows x64 bundle, portable ZIP and installer
         shell: powershell
         run: |
