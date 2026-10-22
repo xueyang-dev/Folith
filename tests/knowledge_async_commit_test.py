@@ -104,14 +104,51 @@ def _shape(candidates):
 
 
 def test_commit_path_no_longer_waits_on_the_knowledge_call(job_env, monkeypatch):
-    delay = 0.3
-    started = time.perf_counter()
-    result = _run("async-timing", Provider(knowledge_delay=delay), monkeypatch)
-    wall = time.perf_counter() - started
-    serial_floor = delay * len(PARAGRAPHS)          # old behaviour: one per commit
-    assert wall < serial_floor * 0.7, (wall, serial_floor)
+    # Block actual knowledge requests until every translation commit is durable.
+    # Total wall time also includes snapshot I/O and runner scheduling, so it
+    # cannot tell whether a commit waited on the auxiliary provider (#68).
+    release = threading.Event()
+    knowledge_started = threading.Event()
+    timed_out = threading.Event()
+    provider = Provider()
+    committed = []
+    original_timing = core._batch_timing
+
+    def gated_provider(*args, **kwargs):
+        system_prompt = args[3] if len(args) > 3 else kwargs.get("system_prompt", "")
+        if KNOWLEDGE_MARKER in (system_prompt or ""):
+            knowledge_started.set()
+            if not release.wait(timeout=10):
+                # Let a serial implementation unwind and fail this test rather
+                # than leaving a provider thread blocked after the assertion.
+                timed_out.set()
+                release.set()
+        return provider(*args, **kwargs)
+
+    def observe_commit(job_id, stage, batch_id, phase, **metadata):
+        original_timing(job_id, stage, batch_id, phase, **metadata)
+        if stage != "translation" or phase != "commit_finished":
+            return
+        assert metadata["status"] == "completed"
+        assert knowledge_started.wait(timeout=5), "knowledge extraction never started"
+        assert provider.knowledge_calls == 0, "knowledge finished before all commits"
+        committed.append(batch_id)
+        if len(committed) == len(PARAGRAPHS):
+            persisted = core.load_job_state(job_id)
+            assert [pair["target"] for pair in persisted["pairs"]] == [
+                _translate(source) for source in PARAGRAPHS]
+            release.set()
+
+    monkeypatch.setattr(core, "_batch_timing", observe_commit)
+    try:
+        result = _run("async-timing", gated_provider, monkeypatch)
+    finally:
+        release.set()
+    assert not timed_out.is_set(), "commits waited for the blocked knowledge request"
+    assert committed == list(range(1, len(PARAGRAPHS) + 1))
     assert len(result["pairs"]) == len(PARAGRAPHS)
-    print(f"\nwall {wall:.2f}s vs serial floor {serial_floor:.2f}s")
+    assert provider.knowledge_calls == len(PARAGRAPHS)
+    assert result["knowledge_feedback_policy"]["pending"] == []
 
 
 def test_results_match_the_serial_fold(job_env, monkeypatch):
