@@ -1564,7 +1564,15 @@ def review_queue(job_id: str, state: dict | None = None) -> dict:
     from folith import workbench_view as _workbench_view
 
     state = state if state is not None else load_state(job_id)
-    return _workbench_view.review_workbench_view(source_review_projection(state))
+    view = _workbench_view.review_workbench_view(source_review_projection(state))
+    # 名字译法不一的发现项在审校页上按「名字」处理（选一个统一 / 保持原样），
+    # 选项数据与「检查与修复」抽屉同源。
+    if any(item.get("entity_source") for item in view.get("queue_items") or []):
+        try:
+            view["entities"] = [dict(item) for item in core.entity_consistency_queue(state)]
+        except Exception:  # noqa: BLE001 - 登记损坏时退回逐段处置
+            view["entities"] = []
+    return view
 
 
 def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,

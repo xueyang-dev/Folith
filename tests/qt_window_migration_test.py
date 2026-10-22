@@ -187,7 +187,8 @@ def test_followup_entity_unification_from_the_window(client):
     _save(core, "wmnames00000001", state)
     window = _open(client, "wmnames00000001")
     window.preview_entity_repair("Lydia", "莉迪亚")
-    preview = window.workbench.followup_panel._preview
+    # 预览存在抽屉里的共用部件上（审校页也有一个，各取自己请求过的那份）。
+    preview = window.workbench.followup_panel.conflict._preview
     assert [row["index"] for row in preview] == [1]
     window.apply_entity_repair("Lydia", "莉迪亚", preview)
     _pump(client["app"], 1.0)

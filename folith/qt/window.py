@@ -2404,10 +2404,10 @@ class MainWindow(QMainWindow):
             preview = adapter.entity_repair_preview(
                 job_id, source, target, state=self.workbench._state)
         except adapter.AdapterError as exc:
-            self.workbench.followup_panel.set_preview([])
+            self.workbench.set_entity_preview(source, target, [])
             self._notice(str(exc), error=True)
             return
-        self.workbench.followup_panel.set_preview(preview)
+        self.workbench.set_entity_preview(source, target, preview)
 
     def apply_entity_repair(self, source: str, target: str, preview: list) -> None:
         job_id = self._current_job_id

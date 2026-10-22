@@ -57,8 +57,12 @@ def extract_observations(
     call_llm: Optional[Callable] = None,
     segment_ids: Optional[Sequence[int]] = None,
     cache: Optional[Any] = None,
+    stats: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """Extract terms/entities whose translation choices may matter later.
+
+    ``stats``, when given, receives ``cache_hit`` so a caller running several
+    extractions concurrently need not infer it from the shared cache counters.
 
     ``cache`` (a ``folith.knowledge_cache.KnowledgeObservationCache``) reuses an
     identical, already-paid extraction.  The identity is the rendered request
@@ -100,6 +104,8 @@ def extract_observations(
             route=effective_request_route(provider, model, role="auxiliary"))
         cached = cache.get(cache_key)
         if cached is not None:
+            if stats is not None:
+                stats["cache_hit"] = True
             return [dict(item) for item in cached], None
     try:
         parsed = _parse_array(_call(
@@ -262,29 +268,44 @@ def _make_candidate(
     }
 
 
-def observe_batch(
+class BatchExtraction:
+    """The provider half of ``observe_batch``: a pure function of the batch.
+
+    It reads no project state, so it can run off the commit path; the
+    deterministic merge (``merge_extraction``) is applied later, in batch order.
+    """
+
+    def __init__(self, valid_sources=(), valid_targets=(), valid_segment_ids=(),
+                 observations=(), warning=None, invalid_count=0,
+                 cache_hit=False, aborted=False):
+        self.valid_sources = list(valid_sources)
+        self.valid_targets = list(valid_targets)
+        self.valid_segment_ids = list(valid_segment_ids)
+        self.observations = list(observations)
+        self.warning = warning
+        self.invalid_count = invalid_count
+        self.cache_hit = cache_hit
+        # True when no provider call was made and the merge is a no-op that
+        # only reports ``warning``.
+        self.aborted = aborted
+
+
+def extract_batch(
     sources: Sequence[str],
     targets: Sequence[str],
-    paragraphs: Sequence[str],
-    pairs_before_batch: Sequence[Dict[str, Any]],
-    glossary: Sequence[Dict[str, Any]],
-    batch_offset: int,
     provider: str,
     api_key: str,
     model: str,
-    existing_candidates: Optional[Sequence[Dict[str, Any]]] = None,
     call_llm: Optional[Callable] = None,
     segment_ids: Optional[Sequence[int]] = None,
-    observation_provenance: str = "generated_continuity",
+    batch_offset: int = 0,
     cache: Optional[Any] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
-    """Return updated candidate queue, auditable events, and a non-fatal warning."""
+) -> BatchExtraction:
     segment_ids = list(segment_ids) if segment_ids is not None \
         else [batch_offset + index for index in range(len(sources))]
     if len(segment_ids) != len(sources) or len(targets) != len(sources):
-        existing = [dict(item) for item in (existing_candidates or [])
-                    if isinstance(item, dict)]
-        return existing, [], "知识反馈 source、target、segment_ids 长度不一致"
+        return BatchExtraction(
+            warning="知识反馈 source、target、segment_ids 长度不一致", aborted=True)
     valid = []
     invalid_count = 0
     for source, target, segment_id in zip(sources, targets, segment_ids):
@@ -294,19 +315,42 @@ def observe_batch(
         else:
             invalid_count += 1
     if not valid:
-        existing = [dict(item) for item in (existing_candidates or [])
-                    if isinstance(item, dict)]
-        warning = "知识反馈跳过：批次没有通过 Translation Target Invariant 的译文"
-        return existing, [], warning
+        return BatchExtraction(
+            warning="知识反馈跳过：批次没有通过 Translation Target Invariant 的译文",
+            aborted=True)
     valid_sources = [item[0] for item in valid]
     valid_targets = [item[1] for item in valid]
     valid_segment_ids = [item[2] for item in valid]
+    call_stats: Dict[str, Any] = {}
     observations, warning = extract_observations(
         valid_sources, valid_targets, provider, api_key, model, call_llm=call_llm,
-        segment_ids=valid_segment_ids, cache=cache)
+        segment_ids=valid_segment_ids, cache=cache, stats=call_stats)
     if invalid_count:
         invalid_warning = f"知识反馈跳过 {invalid_count} 个不合格译文段"
         warning = f"{warning}；{invalid_warning}" if warning else invalid_warning
+    return BatchExtraction(
+        valid_sources, valid_targets, valid_segment_ids, observations, warning,
+        invalid_count, bool(call_stats.get("cache_hit")))
+
+
+def merge_extraction(
+    extraction: BatchExtraction,
+    paragraphs: Sequence[str],
+    pairs_before_batch: Sequence[Dict[str, Any]],
+    glossary: Sequence[Dict[str, Any]],
+    existing_candidates: Optional[Sequence[Dict[str, Any]]] = None,
+    observation_provenance: str = "generated_continuity",
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+    """Deterministic half of ``observe_batch``: fold one extraction into the queue."""
+    if extraction.aborted:
+        existing = [dict(item) for item in (existing_candidates or [])
+                    if isinstance(item, dict)]
+        return existing, [], extraction.warning
+    valid_sources = extraction.valid_sources
+    valid_targets = extraction.valid_targets
+    valid_segment_ids = extraction.valid_segment_ids
+    observations = extraction.observations
+    warning = extraction.warning
     candidates = [dict(item) for item in (existing_candidates or [])
                   if isinstance(item, dict)]
     by_source = {_candidate_key(item): item for item in candidates if _candidate_key(item)}
@@ -393,6 +437,34 @@ def observe_batch(
             "confidence": candidate.get("confidence", 0.35),
         })
     return candidates, events, warning
+
+
+
+
+def observe_batch(
+    sources: Sequence[str],
+    targets: Sequence[str],
+    paragraphs: Sequence[str],
+    pairs_before_batch: Sequence[Dict[str, Any]],
+    glossary: Sequence[Dict[str, Any]],
+    batch_offset: int,
+    provider: str,
+    api_key: str,
+    model: str,
+    existing_candidates: Optional[Sequence[Dict[str, Any]]] = None,
+    call_llm: Optional[Callable] = None,
+    segment_ids: Optional[Sequence[int]] = None,
+    observation_provenance: str = "generated_continuity",
+    cache: Optional[Any] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+    """Return updated candidate queue, auditable events, and a non-fatal warning."""
+    extraction = extract_batch(
+        sources, targets, provider, api_key, model, call_llm=call_llm,
+        segment_ids=segment_ids, batch_offset=batch_offset, cache=cache)
+    return merge_extraction(
+        extraction, paragraphs, pairs_before_batch, glossary,
+        existing_candidates=existing_candidates,
+        observation_provenance=observation_provenance)
 
 
 def provisional_hints(

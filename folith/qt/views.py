@@ -60,6 +60,8 @@ RUNNING_STATUSES = frozenset({"running", "pausing", "cancelling", "resume_reques
 # on a 400-segment job.  It must not run on every background poll tick, so it is
 # throttled; explicit actions and terminal state changes still force it.
 DELIVERY_REFRESH_SECONDS = 5.0
+#: Same state object as the last validation: only a slow safety re-check.
+DELIVERY_IDLE_REFRESH_SECONDS = 60.0
 # Even a forced refresh is rate-limited this much, so bursts collapse.
 DELIVERY_FORCE_FLOOR_SECONDS = 1.0
 
@@ -2461,6 +2463,8 @@ class WorkbenchView(QWidget):
         # 绝大多数行没有变化：只重画变了的行，否则 4800 段的任务每秒要白画 5 万次。
         self._painted: dict[int, adapter.SegmentRow] = {}
         self._painted_look: tuple = ()
+        self._delivery_state: dict | None = None  # state object the preview was built from
+        self._grid_source: tuple | None = None  # (rows, state, job_id, look) last rendered
         self._state: dict = {}
         # 译前准备视图（adapter.task_setup_view）。``None`` 表示"没有准备面"，
         # 此时一律按"已开始"处理，旧的调用路径（测试、恢复）不受影响。
@@ -2766,6 +2770,13 @@ class WorkbenchView(QWidget):
         self._height_timer = QTimer(self)
         self._height_timer.setInterval(0)
         self._height_timer.timeout.connect(self._apply_row_height_chunk)
+        self._paint_timer = QTimer(self)
+        self._paint_timer.setInterval(1)
+        self._paint_timer.timeout.connect(self._paint_segment_chunk)
+        self._paint_pending = iter(())
+        self._repainted: list[int] = []
+        self._paint_schedules_heights = True
+        self.segment_list.verticalScrollBar().valueChanged.connect(self._paint_visible_segments)
         self._height_resize = QTimer(self)
         self._height_resize.setSingleShot(True)
         self._height_resize.setInterval(120)
@@ -3458,6 +3469,9 @@ class WorkbenchView(QWidget):
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
         self.review_panel.applySuggestionRequested.connect(self.suggestionApplyRequested.emit)
         self.review_panel.confirmSourceRequested.connect(self.sourceConfirmRequested.emit)
+        self.review_panel.entityPreviewRequested.connect(self.entityPreviewRequested.emit)
+        self.review_panel.entityRepairRequested.connect(self.entityRepairRequested.emit)
+        self.review_panel.entityAcceptRequested.connect(self.entityAcceptRequested.emit)
         self.review_panel.reviewAllRequested.connect(self.reviewAllRequested.emit)
         self.review_panel.reviewRequested.connect(self.reviewSelectedRequested.emit)
         self.review_panel.retranslateRequested.connect(self.retranslateRequested.emit)
@@ -3679,12 +3693,24 @@ class WorkbenchView(QWidget):
         self._state = state
         self._last_runtime = runtime or {}
         self._snapshots = snapshots or []
-        self._all_rows = [self._with_pending_save(row) for row in rows]
-        if job_id != getattr(self, "_notes_job", None) or not self._notes_loaded_at_state(state):
-            self._notes = adapter.segment_notes(job_id) if job_id else {}
-            self._notes_job = job_id
-            self._notes_state = id(state)
-        self._render_segments()
+        # The window hands back the very same state and row objects while neither
+        # the task state nor the drafts file changed (its 1 s poll).  The grid is
+        # a pure function of those, so it must not be rebuilt, compared row by
+        # row or re-measured: on a book that kept the GUI thread busy for good.
+        grid_key = (current_theme(), i18n.language(), tuple(sorted(self._pending_saved.items())))
+        grid_unchanged = (
+            self._grid_source is not None and self._grid_source[0] is rows
+            and self._grid_source[1] is state and self._grid_source[2] == job_id
+            and self._grid_source[3] == grid_key)
+        if not grid_unchanged:
+            self._all_rows = [self._with_pending_save(row) for row in rows]
+            if job_id != getattr(self, "_notes_job", None) \
+                    or not self._notes_loaded_at_state(state):
+                self._notes = adapter.segment_notes(job_id) if job_id else {}
+                self._notes_job = job_id
+                self._notes_state = id(state)
+            self._render_segments()
+            self._grid_source = (rows, state, job_id, grid_key)
         self._render_excluded()
         # 交付预检先于运行区：头部状态芯片要用它给出的任务状态标签。
         self._render_delivery(force=refresh_delivery)
@@ -4527,6 +4553,11 @@ class WorkbenchView(QWidget):
         self._sync_check_button()
         self._sync_more_pages()
 
+    def set_entity_preview(self, source: str, target: str, preview: list) -> None:
+        """名字统一的改动预览：抽屉与审校页各有一个部件，各取自己请求过的那份。"""
+        self.followup_panel.set_preview(preview, source, target)
+        self.review_panel.conflict.set_preview(preview, source, target)
+
     def _locate_segment_from_followup(self, index: int) -> None:
         """「检查与修复」里点一个失败批次：回到翻译页并选中那一段（清掉会挡住它的筛选）。"""
         self.show_page("translate")
@@ -4825,14 +4856,9 @@ class WorkbenchView(QWidget):
             self._active_position = -1
             self.row_delegate.active_row = -1
             self.segment_list.setRowCount(len(self._rows))
-            for position, row in enumerate(self._rows):
-                self.segment_list.setItem(position, 0, QTableWidgetItem(""))
-                self.segment_list.setItem(position, 1, QTableWidgetItem(""))
-                self.segment_list.setItem(position, 2, QTableWidgetItem(""))
             # 重建之后必须立刻把内容画上去：否则要等到下一次后台刷新才显示文字，
             # 中间会看到一片空白行（打开任务或段落数变化时最明显）。
-            for position, row in enumerate(self._rows):
-                self._paint_row(position, row)
+            self._queue_segment_paint(schedule_heights=False)
             self.segment_list.blockSignals(False)
             target = self._position_of_loaded_segment()
             if target is None:
@@ -4848,8 +4874,7 @@ class WorkbenchView(QWidget):
             self._schedule_row_heights()
             self._refresh_term_focus()
             return
-        for position, row in enumerate(self._rows):
-            self._paint_row(position, row)
+        self._queue_segment_paint()
         if self._rows and self._current_index < 0:
             # Returning from the library can reuse exactly the same row count
             # and selection. Qt then emits no selection signal after load().
@@ -4859,8 +4884,57 @@ class WorkbenchView(QWidget):
         self._place_inline_editor()
         self._sync_drafts_banner()
         self._sync_word_count()
-        self._schedule_row_heights()
         self._refresh_term_focus()
+
+    def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
+        """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
+
+        ``schedule_heights`` 为 False 时只画不排行高（调用方随后会整表排一次）。
+        同一个行集合、同一组列宽下，只有内容变了的行才可能换行高；这些行在画完
+        之后一起排队，不用整表重算。
+        """
+        # Keep the final model dimensions stable for Qt accessibility. Only cell
+        # contents are filled in batches; selection always uses the full row set.
+        self._paint_timer.stop()
+        self._repainted = []
+        self._paint_schedules_heights = schedule_heights
+        if len(self._rows) < 300:
+            for position, row in enumerate(self._rows):
+                if self._paint_row(position, row):
+                    self._repainted.append(position)
+            self._paint_pending = iter(())
+            self._flush_painted_heights()
+            return
+        self._paint_visible_segments()
+        self._paint_pending = iter(range(len(self._rows)))
+        self._paint_timer.start()
+
+    def _paint_visible_segments(self, *_args) -> None:
+        table = self.segment_list
+        first = max(0, table.rowAt(0))
+        last = table.rowAt(table.viewport().height() - 1)
+        last = first + 40 if last < 0 else last + 1
+        for position in range(first, min(len(self._rows), last)):
+            if self._paint_row(position, self._rows[position]):
+                self._repainted.append(position)
+        self._flush_painted_heights()
+
+    def _paint_segment_chunk(self) -> None:
+        started = time.perf_counter()
+        while time.perf_counter() - started < 0.004:
+            position = next(self._paint_pending, None)
+            if position is None:
+                self._paint_timer.stop()
+                self._flush_painted_heights()
+                return
+            if self._paint_row(position, self._rows[position]):
+                self._repainted.append(position)
+
+    def _flush_painted_heights(self) -> None:
+        if not self._paint_schedules_heights or not self._repainted:
+            return
+        positions, self._repainted = self._repainted, []
+        self._schedule_row_heights(positions=positions)
 
     def _sync_word_count(self) -> None:
         """整份文档的字数与进度（按原文计）。状态没换就不重算。"""
@@ -4940,21 +5014,27 @@ class WorkbenchView(QWidget):
     def _discard_all_drafts(self) -> None:
         self.discardAllDraftsRequested.emit()
 
-    def _paint_row(self, position: int, row: adapter.SegmentRow) -> None:
+    def _paint_row(self, position: int, row: adapter.SegmentRow) -> bool:
+        """Paint one row; True when it was (re)painted, False when the cache hit."""
         look = (current_theme(), i18n.language())
         if look != self._painted_look:
             # 主题或语言变了：颜色与提示都要重画，缓存整体作废。
             self._painted.clear()
             self._painted_look = look
         if self._painted.get(position) == row:
-            return
+            return False
         tokens = theme_module.tokens(current_theme())
         tone = _segment_tone(row)
         number = self.segment_list.item(position, 0)
         source = self.segment_list.item(position, 1)
         target = self.segment_list.item(position, 2)
         if number is None or source is None or target is None:
-            return
+            for column in range(3):
+                if self.segment_list.item(position, column) is None:
+                    self.segment_list.setItem(position, column, QTableWidgetItem(""))
+            number = self.segment_list.item(position, 0)
+            source = self.segment_list.item(position, 1)
+            target = self.segment_list.item(position, 2)
         self._painted[position] = dataclasses.replace(row)
         if row.segment_uid in self._notes:
             # 批注变了也要重画：缓存按行数据比较，批注不在行数据里。
@@ -4986,6 +5066,7 @@ class WorkbenchView(QWidget):
             if item is not None:
                 item.setData(Qt.ItemDataRole.UserRole, row.index)
                 item.setData(Qt.ItemDataRole.UserRole + 1, row.segment_uid)
+        return True
 
     def _render_runtime(self) -> None:
         runtime = self._last_runtime or {}
@@ -5171,8 +5252,12 @@ class WorkbenchView(QWidget):
         key = (self.job_id, len(self._snapshots),
                str(self._state.get("delivery_status") or ""))
         unchanged = self._delivery_rendered and key == self._delivery_key
-        if unchanged and not force and (
-                now - self._delivery_preview_at) < DELIVERY_REFRESH_SECONDS:
+        # Validating every pair is the expensive part (~0.2 s on a book): while the
+        # state object is the one already validated only a slow safety re-check
+        # (files changed outside the state) is worth the GUI thread's time.
+        same_state = self._delivery_state is self._state
+        interval = DELIVERY_IDLE_REFRESH_SECONDS if same_state else DELIVERY_REFRESH_SECONDS
+        if unchanged and not force and (now - self._delivery_preview_at) < interval:
             return
         if unchanged and (now - self._delivery_preview_at) < DELIVERY_FORCE_FLOOR_SECONDS:
             return
@@ -5182,6 +5267,7 @@ class WorkbenchView(QWidget):
         self._delivery_rendered = True
         self._delivery_preview_at = now
         self._delivery_key = key
+        self._delivery_state = self._state
         status = i18n.tr_dynamic(preview.get("status_label")) or "—"
         issues = preview.get("issues") or []
         detail = (i18n.tr("；还需处理：{v0}",
@@ -5668,13 +5754,22 @@ class WorkbenchView(QWidget):
             self._height_cache[key] = cached
         return cached
 
-    def _schedule_row_heights(self, *, reset: bool = False) -> None:
+    def _schedule_row_heights(self, *, reset: bool = False,
+                              positions: list[int] | None = None) -> None:
         """排队重算行高：先算眼前这一屏，再分批（每批 200 行）算其余的。
 
         一次算完 3 856 行要约 0.3 s，放在主线程一口气做会卡；分批做，每批几毫秒。
         """
         if reset:
             self._height_cache.clear()
+        if positions is not None:
+            # Only these rows changed: queue them ahead of any pass in progress.
+            queued = set(positions)
+            self._heights_pending = positions + [
+                p for p in self._heights_pending if p not in queued]
+            if not self._height_timer.isActive():
+                self._height_timer.start()
+            return
         table = self.segment_list
         count = table.rowCount()
         first = max(0, table.rowAt(0))
@@ -5876,8 +5971,8 @@ class WorkbenchView(QWidget):
 
     def selected_indexes(self) -> list[int]:
         """Segment indexes currently selected in the grid, in grid order."""
-        positions = sorted({item.row() for item in
-                            self.segment_list.selectedItems()})
+        positions = sorted(index.row() for index in
+                           self.segment_list.selectionModel().selectedRows())
         return [self._rows[position].index for position in positions
                 if 0 <= position < len(self._rows)]
 
@@ -6131,6 +6226,7 @@ class WorkbenchView(QWidget):
         wanted = set(indexes)
         for position, row in enumerate(self._rows):
             if row.index in wanted:
+                self._paint_row(position, row)
                 for column in range(len(self.COLUMNS)):
                     item = self.segment_list.item(position, column)
                     if item is not None:

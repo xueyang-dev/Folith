@@ -4337,6 +4337,40 @@ def test_small_tasks_open_without_an_overlay(client, monkeypatch):
     assert seen == [False]
 
 
+def test_large_grid_paints_in_batches_and_drops_old_work_on_switch(client):
+    window, adapter, app = client['window'], client['adapter'], client['app']
+    job_id = _seed_job_for_keyboard(adapter, client['core'], client['tmp'], 'batched.docx',
+                                    [f'Paragraph {i}.' for i in range(600)])
+    window.open_job(job_id)
+    view = window.workbench
+    assert view.segment_list.rowCount() == len(view._rows)
+    assert view.segment_list.item(0, 1).text() == view._rows[0].source
+    assert view._paint_timer.isActive()
+    assert view.segment_list.item(599, 1) is None
+    assert view.select_segment(599)
+    assert view.current_index() == 599
+    assert view.segment_list.item(599, 1).text() == view._rows[599].source
+    view.select_segments([0, 599])
+    assert view.selected_indexes() == [0, 599]
+    view.segment_list.selectAll()
+    assert view.selected_indexes() == list(range(600))
+    view.segment_list.clearSelection()
+    ticks = []
+    QTimer.singleShot(0, lambda: ticks.append('responsive'))
+    assert _pump(app, 5, lambda: bool(ticks) and not view._paint_timer.isActive())
+    assert view.segment_list.item(599, 1).text() == view._rows[599].source
+
+    # Refresh/switch while population is pending must not paint the previous
+    # document's cells or index beyond the new model's dimensions.
+    view._queue_segment_paint()
+    small = _seed_job_for_keyboard(adapter, client['core'], client['tmp'], 'switched.docx', ['New task.'])
+    window.open_job(small)
+    app.processEvents()
+    assert not view._paint_timer.isActive()
+    assert view.segment_list.rowCount() == 1
+    assert view.segment_list.item(0, 1).text() == 'New task.'
+
+
 def test_open_job_writes_one_timing_line_per_phase(client):
     window, adapter = client["window"], client["adapter"]
     job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "timed.docx", ["一段。"])

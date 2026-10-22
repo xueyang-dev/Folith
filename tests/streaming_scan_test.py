@@ -731,7 +731,8 @@ def test_resume_after_a_halt_reads_the_remaining_pages_with_the_new_provider(tmp
     new = ScriptedVisionProvider(identity={"provider": "relay", "model": "other-model"})
     stream = ScanStream("a.pdf", scanned_pdf(14), old, checkpoint_dir=tmp_path, workers=1)
     assert _wait(lambda: stream.streak_tripped, timeout=20)
-    assert stream.timeout_streak == 3 and not stream.finished
+    # 熔断时已在途的页（最多两倍并发）读完后仍会计入连续失败，所以只能卡区间。
+    assert 3 <= stream.timeout_streak <= 3 + 2 and not stream.finished
     stream.swap_provider(new, "relay · other-model")
     assert stream.provider_label == "relay · other-model"
     stream.clear_halt()
