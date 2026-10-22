@@ -1,0 +1,98 @@
+{
+  "base_commit": "367f4b257ad8b352829d1eec1a120d2ef6493aff",
+  "scope": "Generated offline fixture, 2000 segments, unchanged correctness assertions. Operation budget is not a latency or throughput guarantee. Controlled slow-host sleeps and regression injections; no Windows run.",
+  "runs": {
+    "normal": {
+      "quick": {
+        "segments": 2000,
+        "batches": 500,
+        "avg_injected": 0.4,
+        "max_injected": 2,
+        "glossary_size": 5,
+        "reviewed": 2000,
+        "blocking": 0,
+        "actionable": 0,
+        "conflicts": 0,
+        "delivery": "draft",
+        "elapsed_s": 9.46,
+        "process_cpu_s": 9.24,
+        "work": {
+          "full_saves": 209,
+          "snapshot_reads": 0,
+          "reconciled_pair_slots": 410000
+        }
+      },
+      "quality": {
+        "segments": 2000,
+        "batches": 502,
+        "avg_injected": 0.6,
+        "max_injected": 3,
+        "glossary_size": 5,
+        "reviewed": 2000,
+        "blocking": 0,
+        "actionable": 0,
+        "conflicts": 0,
+        "delivery": "draft",
+        "elapsed_s": 10.39,
+        "process_cpu_s": 10.06,
+        "work": {
+          "full_saves": 213,
+          "snapshot_reads": 3,
+          "reconciled_pair_slots": 410000
+        }
+      }
+    },
+    "slow_host": {
+      "quick": {
+        "segments": 2000,
+        "batches": 500,
+        "avg_injected": 0.4,
+        "max_injected": 2,
+        "glossary_size": 5,
+        "reviewed": 2000,
+        "blocking": 0,
+        "actionable": 0,
+        "conflicts": 0,
+        "delivery": "draft",
+        "elapsed_s": 45.9,
+        "process_cpu_s": 10.65,
+        "work": {
+          "full_saves": 209,
+          "snapshot_reads": 0,
+          "reconciled_pair_slots": 410000
+        }
+      },
+      "quality": {
+        "segments": 2000,
+        "batches": 502,
+        "avg_injected": 0.6,
+        "max_injected": 3,
+        "glossary_size": 5,
+        "reviewed": 2000,
+        "blocking": 0,
+        "actionable": 0,
+        "conflicts": 0,
+        "delivery": "draft",
+        "elapsed_s": 47.2,
+        "process_cpu_s": 11.32,
+        "work": {
+          "full_saves": 213,
+          "snapshot_reads": 3,
+          "reconciled_pair_slots": 410000
+        }
+      }
+    },
+    "extra_scans": {
+      "expected_failure": true,
+      "reason": "full-document reconciliation budget exceeded",
+      "quick_reconciled_pair_slots": 1230000,
+      "budget": 464000
+    },
+    "old_snapshot_revision": {
+      "expected_failure": true,
+      "reason": "owned snapshots reparsed repeatedly",
+      "quick_snapshot_reads": 208,
+      "budget": 8
+    }
+  }
+}

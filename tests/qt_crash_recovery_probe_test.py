@@ -5,7 +5,28 @@ import pytest
 
 from folith.storage import state_journal as journal
 from scripts.qt_crash_recovery_probe import (
-    _assert_committed_prefix_preserved, _durable_state)
+    _assert_committed_prefix_preserved, _durable_state, _resume_finished)
+
+
+@pytest.mark.parametrize("status", ["running", "waiting_external", "paused", "queued"])
+def test_resume_wait_does_not_read_the_book_while_worker_is_active(status):
+    from types import SimpleNamespace
+    def full_read(_job):
+        pytest.fail("active progress polling must not load/copy the full book")
+    adapter = SimpleNamespace(
+        core=SimpleNamespace(load_runtime_state=lambda _: {"status": status},
+                             RUNTIME_ACTIVE_STATUSES={status}), load_state=full_read)
+    assert not _resume_finished(adapter, "book")
+
+
+@pytest.mark.parametrize("done", [False, True])
+def test_resume_wait_checks_committed_completion_after_worker_stops(done):
+    from types import SimpleNamespace
+    adapter = SimpleNamespace(
+        core=SimpleNamespace(load_runtime_state=lambda _: {"status": "completed"},
+                             RUNTIME_ACTIVE_STATUSES={"running"}),
+        load_state=lambda _: {"p2_done": done})
+    assert _resume_finished(adapter, "book") is done
 
 
 def _record(seq, offset):
