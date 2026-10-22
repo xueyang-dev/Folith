@@ -1,0 +1,10 @@
+exit_code	kind	file	seconds	result
+0	pytest	checkpoint_event_append_test.py	0	6 passed
+0	pytest	desktop_diagnostics_test.py	1	11 passed, 1 skipped
+0	pytest	desktop_exit_flow_test.py	8	19 passed
+0	pytest	persistence_phase_a_test.py	1	17 passed
+0	pytest	runtime_pause_test.py	1	8 passed
+0	pytest	source_cleanup_checkpoint_test.py	1	4 passed
+0	pytest	state_journal_test.py	2	26 passed
+0	pytest	tm_promotion_persistence_test.py	1	12 passed
+0	pytest	workflow_recovery_test.py	1	15 passed

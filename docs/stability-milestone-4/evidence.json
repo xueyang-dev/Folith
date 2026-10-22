@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-22",
+  "base": "8ff81dc",
+  "journal_fix": "30ade6d (PR #60)",
+  "pdf_probe_fix": "baba7f7",
+  "old_task": {
+    "segments": 4823,
+    "records": 156,
+    "journal_bytes": 31650808,
+    "committed_pairs_in_records": 912,
+    "seq_contiguous": true,
+    "offsets_contiguous": true,
+    "replay": {
+      "applied": 1,
+      "cursor": 1,
+      "gap": true,
+      "dropped": 155
+    },
+    "first_rejected_seq": 2,
+    "reason": "extend.findings expects base 234, found 0",
+    "original_files_modified": false
+  },
+  "long_document": {
+    "segments": 4823,
+    "batches": 804,
+    "replay": {
+      "applied": 804,
+      "cursor": 804,
+      "gap": false,
+      "dropped": 0
+    },
+    "all_pairs_equal": true,
+    "resume_model_calls": 0,
+    "docx_paragraphs": 4824,
+    "limits": "actual source paragraphs, offline model; simulated snapshot failure, not OS kill or native UI acceptance"
+  },
+  "frozen_probe": {
+    "ok": true,
+    "duration_s": 18.5,
+    "pdf_sources": [
+      {
+        "job_id": "7775e657e0c00365",
+        "pages": 1,
+        "png_bytes": 17709,
+        "segment_page": 0,
+        "highlight_rects": 1
+      }
+    ],
+    "exit": {
+      "closing_accepted": true,
+      "failures": []
+    },
+    "reopen": {
+      "target": "本句陈述了第2项观测事实，并说明其与整体过程的关系。",
+      "human_edited": true,
+      "snapshots": 1
+    }
+  },
+  "build": {
+    "app_version": "0.7.0",
+    "build_id": "git:baba7f7",
+    "frozen": true,
+    "python": "3.11.3",
+    "platform": "darwin"
+  },
+  "build_scope": {
+    "arch": "arm64",
+    "ocr_bundled": false,
+    "qt_platform": "offscreen",
+    "windows_tested": false,
+    "native_cocoa_acceptance": false
+  },
+  "issue_52_check": {
+    "ui_signature_changed_after_journal_append": false,
+    "loaded_pairs": 1,
+    "card_percent_before": null,
+    "card_percent_after": null
+  }
+}
