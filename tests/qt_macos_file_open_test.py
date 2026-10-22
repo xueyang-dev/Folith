@@ -166,10 +166,10 @@ def client(tmp_path, monkeypatch, qt_app):
     monkeypatch.setattr(core, "OUTPUT_DIR", data_dir, raising=False)
 
     from folith.desktop import paths as desktop_paths
-    from folith.qt import adapter, i18n as i18n_module
+    from folith.qt import adapter, i18n as i18n_module, preferences
 
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr(window_module, "QSettings", lambda *_args: settings)
+    monkeypatch.setattr(preferences, "settings", lambda: settings)
     i18n_module.set_language("zh-CN")
 
     paths = desktop_paths.resolve_paths()

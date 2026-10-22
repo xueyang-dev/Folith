@@ -329,3 +329,68 @@ maximum 20-ms heartbeat gap during opening 236.7 ms. Thirty seconds idle used
 returned index 4822. See `native-async-open-4823.json`. This is a dirty-worktree
 source check, not a frozen or Windows acceptance. Existing offline-target
 completeness blockers remain; no running translation or export pass is implied.
+
+## Probe reproducibility (#62 follow-up)
+
+The PDF source check was already in the shared flow (`folith/qt/selftest.py`,
+`_check_pdf_source`) and both CI jobs run it (`--fixture both` for the macOS DMG
+and the Windows x64 bundle). Re-running it locally exposed a different defect in
+the *check itself*: the probe used the machine's own `QSettings`.
+
+A stored `task/enable_report=1` (ordinary use leaves one behind) was copied into
+the task as its delivery configuration, so the flow ran the report stage. The
+report could not freeze, delivery was refused with "实践报告尚未完成或未通过校验",
+and the probe reported `ok=false` — a failure with no relation to the build.
+Before the fix: `settings_isolation` absent, `run.runtime_status=idle_incomplete`,
+one failure entry, 17 minutes to the flow timeout. `QSettings.setDefaultFormat`
+and `setPath` cannot fix this: the `QSettings(organization, application)`
+constructor always uses the platform's native store.
+
+Every client preference now goes through `folith/qt/preferences.py`, which uses
+`FOLITH_QT_SETTINGS_DIR` when it is set. `scripts/qt_desktop_probe.py` sets it to
+`<out>/settings` before the window is built, and passes it to the frozen
+executable through the inherited environment, so source and packaged runs share
+one redirect. The flow records it as `report["settings_isolation"]`.
+
+Verification on this branch (macOS arm64, Qt offscreen, source tree,
+`--fixture pdf`):
+
+- Before: `ok=false`, failure "冻结交付失败 / 实践报告尚未完成或未通过校验", flow timeout.
+- After: `ok=true` in 56 s; `report["pdf_sources"] = [{pages: 1, png_bytes: 17709,
+  segment_page: 0, highlight_rects: 1}]`; `settings_isolation` points at the
+  run's own directory. This is the assertion set #62 asks for: the task reports a
+  PDF source, page 0 renders to a non-empty PNG, and segment 0 resolves to a page
+  with a highlight rectangle.
+- `tests/qt_settings_isolation_test.py` covers the redirect itself (normal launch
+  keeps the platform store; a redirected run writes and reads its own ini file).
+
+Not covered here: a macOS PyInstaller build at this head, the Windows bundle, and
+Cocoa window behaviour. The frozen run recorded above (17,709-byte PNG, one
+highlight) was built at `baba7f7`, before the live-progress changes; the packaged
+re-run remains a CI/Windows acceptance step.
+
+## Regression run on the integration head
+
+Per-file processes, macOS arm64, Qt offscreen, after the changes above (282
+passed, 3 skipped):
+
+| file | result |
+| --- | --- |
+| job_storage_test.py | 11 passed |
+| persistence_phase_a_test.py | 17 passed |
+| qt_client_adapter_test.py | 59 passed |
+| qt_client_window_test.py | 99 passed |
+| qt_segment_structure_test.py | 18 passed |
+| state_journal_test.py | 32 passed |
+| state_mutation_lock_test.py | 19 passed |
+| tm_promotion_persistence_test.py | 12 passed |
+| translation_save_flow_ui_test.py | 1 passed |
+| windows_atomic_file_test.py | 12 passed, 3 skipped |
+| qt_settings_isolation_test.py | 2 passed |
+
+The #52 behaviours are covered by `test_workbench_poll_reloads_a_journal_only_translation`,
+`test_cached_append_reads_only_the_suffix_without_reloading_snapshot`,
+`test_suffix_replay_equals_full_replay_with_candidate_updates` and
+`test_card_progress_follows_durable_commits_without_full_summary_rebuild`.
+This is a regression run, not the milestone's long-document acceptance: no
+OS-level kill, no native UI timing claim, and no Windows run.

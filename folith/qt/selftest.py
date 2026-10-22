@@ -356,6 +356,10 @@ class Flow:
     def run(self, adapter, core, fixtures: list[Path]) -> dict:
         report = self.report
         report["data_dir"] = str(adapter.desktop_paths.resolve_paths().data_dir)
+        # Which preferences the run actually used: "user" means the machine's
+        # own QSettings, so the task defaults were not the probe's.
+        report["settings_isolation"] = (
+            os.environ.get("FOLITH_QT_SETTINGS_DIR") or "user")
         report["fixtures"] = [str(item) for item in fixtures]
         self.start_heartbeat()
         try:

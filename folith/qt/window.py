@@ -24,7 +24,7 @@ import time
 import weakref
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRectF, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from shiboken6 import isValid
 from PySide6.QtWidgets import (
@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 from folith.desktop import paths as desktop_paths
 from folith.desktop import single_instance
 
-from . import i18n, platform_ui
+from . import i18n, platform_ui, preferences
 from . import adapter
 from . import bootstrap
 from . import dialogs
@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
         # 这里若再写一次 `from . import bootstrap`，整个 __init__ 里的
         # bootstrap 都会变成局部变量，从而在本行抛 UnboundLocalError。）
         self._log = bootstrap.appender()
-        self.settings = QSettings("Folith", "QtDesktop")
+        self.settings = preferences.settings()
         # 界面语言：环境变量优先（脚本化验收与多语言截图要用），其次是设置里保存的值。
         # 必须在建菜单/建视图**之前**确定，否则第一屏还是上一门语言。
         i18n.set_language(
@@ -3625,6 +3625,12 @@ class FolithApplication(QApplication):
             # 事件已消费：返回 True，避免 Qt 再走默认处理（默认处理会忽略它）。
             return True
         return super().event(event)
+
+
+#: A probe run must not read or write the developer's real preferences.  Set to
+#: a directory by `scripts/qt_desktop_probe.py` (source and frozen runs alike);
+#: unset in normal use, where the platform's own preferences are correct.
+SETTINGS_DIR_ENV = preferences.SETTINGS_DIR_ENV
 
 
 def build_application(argv: list[str] | None = None) -> QApplication:

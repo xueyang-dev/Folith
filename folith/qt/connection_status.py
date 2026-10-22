@@ -16,9 +16,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from PySide6.QtCore import QSettings
-
-from . import adapter
+from . import adapter, preferences
 
 ROLES = ("translation", "reviewer", "vision")
 ROLE_LABELS = {"translation": "翻译模型", "reviewer": "审校模型", "vision": "视觉模型"}
@@ -30,7 +28,7 @@ _KEY = "connections/{role}"
 
 
 def _settings():
-    return QSettings("Folith", "QtDesktop")
+    return preferences.settings()
 
 
 def _digest(*parts: object) -> str:

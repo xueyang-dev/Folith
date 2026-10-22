@@ -44,6 +44,7 @@ from folith.application.settings import (  # noqa: E402
     resolve_effective_settings,
 )
 from folith.qt import adapter  # noqa: E402
+from folith.qt import preferences  # noqa: E402
 from folith.qt import window as window_module  # noqa: E402
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
@@ -58,10 +59,10 @@ def qt_app():
 def isolated_settings(tmp_path: Path, monkeypatch):
     """Give the window an INI settings store instead of the user's real plist.
 
-    ``QSettings("Folith", "QtDesktop")`` resolves to the native (macOS plist)
-    store no matter what ``setDefaultFormat`` says, so the window's ``QSettings``
-    symbol is replaced with a factory that opens an explicit INI file.  The
-    round-trip is still real Qt settings; only the store is a throwaway.
+    Every reader goes through ``folith.qt.preferences``; its ``settings`` entry
+    point is replaced with a factory that opens an explicit INI file, which is
+    the same redirect a probe uses.  The round-trip is still real Qt settings;
+    only the store is a throwaway.
     """
     ini = tmp_path / "qt-client-settings.ini"
     real = QSettings
@@ -69,7 +70,7 @@ def isolated_settings(tmp_path: Path, monkeypatch):
     def factory(*args, **kwargs):
         return real(str(ini), real.Format.IniFormat)
 
-    monkeypatch.setattr(window_module, "QSettings", factory)
+    monkeypatch.setattr(preferences, "settings", factory)
     yield ini
 
 
@@ -86,15 +87,15 @@ def _settings_host(config):
 
         def __init__(this):
             this.config = config
-            # Uses the window module's symbol, so the isolated factory applies.
-            this.settings = window_module.QSettings("Folith", "QtDesktop")
+            # Uses the redirected entry point, so the isolated factory applies.
+            this.settings = preferences.settings()
             this.stored_task_defaults = {}
 
     return Host()
 
 
 def _all_settings_pairs():
-    settings = window_module.QSettings("Folith", "QtDesktop")
+    settings = preferences.settings()
     return ([(key, settings.value(key)) for key in settings.allKeys()],
             settings.fileName())
 
@@ -167,7 +168,7 @@ def test_no_credential_is_written_to_the_settings_store(qt_app, tmp_path, monkey
 def test_an_empty_stored_string_is_not_a_default(qt_app, tmp_path, monkeypatch):
     """An empty OCR language means "auto", not "a default the user chose"."""
     with isolated_settings(tmp_path, monkeypatch):
-        settings = window_module.QSettings("Folith", "QtDesktop")
+        settings = preferences.settings()
         settings.setValue("task/ocr_language", "")
         settings.sync()
 

@@ -108,6 +108,13 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["FOLITH_DESKTOP_DATA_DIR"] = str(data_dir)
     os.environ["FOLITH_DESKTOP_LOG_DIR"] = str(out_dir / "logs")
     os.environ["FOLITH_OUTPUT_DIR"] = str(data_dir)
+    # A probe is evidence about this build, not about the machine it runs on.
+    # The window reads its stored task defaults (report stage, review, OCR mode)
+    # when it creates a task, so a developer's own preferences would change what
+    # the flow runs.  Both the source window and the frozen executable read this
+    # variable, so one setting covers both paths.
+    settings_dir = out_dir / "settings"
+    os.environ["FOLITH_QT_SETTINGS_DIR"] = str(settings_dir)
 
     if args.frozen_app:
         if not args.out:
@@ -152,10 +159,9 @@ def main(argv: list[str] | None = None) -> int:
 
     paths = adapter.desktop_paths.resolve_paths()
     # Source probes must not inherit or change the operator's saved task/format
-    # preferences. Other native lifecycle probes use the same private INI scope.
-    from PySide6.QtCore import QSettings
-    settings_path = str(out_dir / "probe-settings.ini")
-    window_module.QSettings = lambda *_: QSettings(settings_path, QSettings.Format.IniFormat)
+    # preferences. ``FOLITH_QT_SETTINGS_DIR`` (set above) redirects every reader
+    # through ``folith.qt.preferences``, so no per-module patch is needed here and
+    # the same redirect applies to the frozen executable.
     main_window = window_module.MainWindow(config, paths, None)
     window_module.install_quit_filter(app, main_window)
     main_window.show()

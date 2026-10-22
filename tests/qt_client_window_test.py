@@ -154,16 +154,13 @@ def client(tmp_path, monkeypatch, qt_app):
 
     # 界面语言是**用户设置**：开发者本机存过 en/ru 时，这一整套中文断言会全挂。
     # 用例环境固定成基准语言，测完再还原（不污染用户设置）。
-    from PySide6.QtCore import QSettings
-
     from folith.qt import i18n as i18n_module
+    from folith.qt import preferences
 
-    # Use the real persistence API against a private file; these tests must
-    # not change the developer's native task/delivery preferences.
-    settings_file = str(tmp_path / "client-settings.ini")
-    monkeypatch.setattr(window_module, "QSettings",
-                        lambda *args: QSettings(settings_file, QSettings.Format.IniFormat))
-    settings = window_module.QSettings("Folith", "QtDesktop")
+    # Every preference reader goes to one private file (the same redirect a probe
+    # uses), so these tests must not change the developer's native preferences.
+    monkeypatch.setenv(preferences.SETTINGS_DIR_ENV, str(tmp_path / "settings"))
+    settings = preferences.settings()
     saved_language = settings.value("appearance/language")
     settings.remove("appearance/language")
     settings.sync()
@@ -1338,7 +1335,7 @@ def test_settings_dialog_keeps_untouched_preferences(client, monkeypatch):
     from folith.qt import i18n, window as window_module
 
     window = client["window"]
-    # `MainWindow` 用的是真实的 QSettings("Folith","QtDesktop")：写完必须还原，
+    # 偏好写在这套用例私有的 INI 里（见 `client` 夹具）；写完仍必须还原，
     # 否则"语言=en"会污染**同进程后续用例**（后续窗口按 en 渲染，中文断言全挂）。
     saved_theme = window.settings.value(window.THEME_KEY)
     saved_language = window.settings.value(window.LANGUAGE_KEY)
@@ -1347,8 +1344,8 @@ def test_settings_dialog_keeps_untouched_preferences(client, monkeypatch):
     window.settings.setValue(window.LANGUAGE_KEY, "en")
 
     try:
-        # 调用也要在 try 里：它一旦抛错，真实 QSettings 里的 dark/en 就没人还原，
-        # 会污染同进程后续用例（以及本机上真实应用的偏好）。
+        # 调用也要在 try 里：它一旦抛错，私有 INI 里的 dark/en 就没人还原，
+        # 会污染同进程后续用例。
         window.open_settings()
         dialog = window._settings_window
         assert dialog.theme_preference == "dark"
