@@ -1930,6 +1930,35 @@ def test_plain_text_response_is_accepted_as_a_single_translation(adapter_env,
         server.shutdown()
 
 
+@pytest.mark.parametrize("broken_renderer", [False, True])
+def test_selftest_pdf_source_detects_missing_bundled_renderer(
+        adapter_env, tmp_path, monkeypatch, broken_renderer):
+    """A missing optional renderer must fail the release probe, not hide its button."""
+    from types import SimpleNamespace
+    from folith import pdf_preview
+    from folith.qt import selftest
+
+    adapter = adapter_env["adapter"]
+    source = tmp_path / "selftest.pdf"
+    text = "Text layer page one."
+    selftest.make_text_pdf(source, [text])
+    job_id = adapter.import_documents([source], adapter.EngineConfig())[0].job_id
+    # Exercise the real PDF adapters against known source text. The complete
+    # probe separately verifies the actual workbench and pipeline extraction.
+    window = SimpleNamespace(workbench=SimpleNamespace(
+        view_source_button=SimpleNamespace(isHidden=lambda: False)))
+    flow = selftest.Flow(window, None, out_dir=tmp_path)
+    state = {"filename": source.name, "paras": [text]}
+    if broken_renderer:
+        monkeypatch.setattr(pdf_preview, "fitz", None)
+        with pytest.raises(AssertionError, match="PDF source is unavailable"):
+            flow._check_pdf_source(adapter, job_id, state)
+    else:
+        facts = flow._check_pdf_source(adapter, job_id, state)
+        assert facts["pages"] == 1
+        assert facts["highlight_rects"] > 0
+
+
 def test_ocr_mode_actually_controls_extraction(adapter_env, tmp_path):
     """「何时识别」设置必须真的生效：off 不做 OCR，force 对文本层也做 OCR。
 

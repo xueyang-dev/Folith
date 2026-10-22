@@ -303,6 +303,40 @@ class Flow:
         )
 
     # -- the flow ----------------------------------------------------------
+    def _job_settled(self, adapter, core, job_id: str) -> bool:
+        runtime = core.load_runtime_state(job_id) or {}
+        status = runtime.get("status")
+        if status in ("failed", "stalled", "interrupted", "cancelled"):
+            return True
+        if status in core.RUNTIME_ACTIVE_STATUSES:
+            return False
+        return bool((adapter.load_state(job_id) or {}).get("p2_done"))
+
+    def _check_pdf_source(self, adapter, job_id: str, state: dict) -> dict:
+        """Exercise the bundled renderer and the workbench's real source action."""
+        from PySide6.QtGui import QImage
+
+        if not adapter.pdf_available(job_id):
+            raise AssertionError("PDF source is unavailable (check bundled PyMuPDF)")
+        if self.window.workbench.view_source_button.isHidden():
+            raise AssertionError("PDF source action is hidden in the workbench")
+        pages = adapter.pdf_page_count(job_id)
+        if pages < 1:
+            raise AssertionError("PDF source has no readable pages")
+        png = adapter.pdf_page_png(job_id, 0)
+        if not png or QImage.fromData(png, "PNG").isNull():
+            raise AssertionError("PDF page 0 did not render to a valid PNG")
+        location = adapter.segment_pdf_location(job_id, 0, state=state)
+        page = location.get("page")
+        if page is None or not 0 <= page < pages:
+            raise AssertionError("PDF segment 0 did not resolve to a source page")
+        # The text-layer fixture must retain real highlight geometry. Online
+        # OCR may legitimately locate a page without line coordinates.
+        if state.get("filename") == "selftest.pdf" and not location.get("rects"):
+            raise AssertionError("Text PDF segment 0 has no source highlight")
+        return {"job_id": job_id, "pages": pages, "png_bytes": len(png),
+                "segment_page": page, "highlight_rects": len(location.get("rects") or [])}
+
     def run(self, adapter, core, fixtures: list[Path]) -> dict:
         report = self.report
         report["data_dir"] = str(adapter.desktop_paths.resolve_paths().data_dir)
@@ -360,16 +394,7 @@ class Flow:
                 # state (57 ms on a 400-segment job) every 20 ms in the GUI
                 # thread would itself show up as unresponsiveness and hide the
                 # UI's real cost.  The full state is read once, after settling.
-                runtime = core.load_runtime_state(job_id) or {}
-                status = runtime.get("status")
-                # A task that fails must be reported promptly: waiting for the
-                # full timeout on a failure would look like a hang, and it hid
-                # the missing-language-pack case behind a 900 s wait.
-                if status in ("failed", "stalled", "interrupted", "cancelled"):
-                    return True
-                if status in core.RUNTIME_ACTIVE_STATUSES:
-                    return False
-                return bool((adapter.load_state(job_id) or {}).get("p2_done"))
+                return self._job_settled(adapter, core, job_id)
 
             done = self.pump(self.timeout, settled)
             state = adapter.load_state(job_id)
@@ -397,6 +422,29 @@ class Flow:
                 # Surface the concrete reason instead of a bare "not finished":
                 # a blocked extraction and a slow model must be distinguishable.
                 raise AssertionError(f"任务未完成：{report['run']}")
+
+            # `both`, used by the frozen macOS/Windows probes, imports DOCX
+            # first. Run its PDF too: checking only the primary task would
+            # silently skip the bundled PDF source path again.
+            report["pdf_sources"] = []
+            for pdf_id in job_ids:
+                pdf_state = adapter.load_state(pdf_id)
+                if Path(str(pdf_state.get("filename") or "")).suffix.lower() != ".pdf":
+                    continue
+                self.phase = "pdf_source"
+                self.window.open_job(pdf_id)
+                if not pdf_state.get("p2_done"):
+                    self.window.start_or_resume()
+                    self.pump(self.timeout, lambda: self._job_settled(adapter, core, pdf_id))
+                    pdf_state = adapter.load_state(pdf_id)
+                    if not pdf_state.get("p2_done"):
+                        raise AssertionError(f"PDF fixture did not finish: {core.load_runtime_state(pdf_id)}")
+                    # Refresh the workbench with the extracted source anchors.
+                    self.window.open_job(pdf_id)
+                facts = self._check_pdf_source(adapter, pdf_id, pdf_state)
+                report["pdf_sources"].append(facts)
+                self.step("pdf_source_verified", **facts)
+            self.window.open_job(job_id)
 
             self.phase = "edit"
             rows = adapter.segment_rows(job_id, state)
