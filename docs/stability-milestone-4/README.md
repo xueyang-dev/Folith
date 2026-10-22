@@ -352,6 +352,11 @@ Every client preference now goes through `folith/qt/preferences.py`, which uses
 executable through the inherited environment, so source and packaged runs share
 one redirect. The flow records it as `report["settings_isolation"]`.
 
+The probes previously patched `window_module.QSettings` per module. Once the
+window stopped importing `QSettings` that patch became a no-op that wrote the
+operator's real preferences instead, so it is removed rather than kept as a
+second mechanism next to the environment variable.
+
 Verification on this branch (macOS arm64, Qt offscreen, source tree,
 `--fixture pdf`):
 
@@ -361,6 +366,9 @@ Verification on this branch (macOS arm64, Qt offscreen, source tree,
   run's own directory. This is the assertion set #62 asks for: the task reports a
   PDF source, page 0 renders to a non-empty PNG, and segment 0 resolves to a page
   with a highlight rectangle.
+- Re-run after rebasing onto `4b59f10` (the async-open change): `ok=true` in 29 s,
+  same `pdf_sources` (`pages: 1`, `png_bytes: 17709`, `segment_page: 0`,
+  `highlight_rects: 1`), `run.runtime_status=completed`, no failure entries.
 - `tests/qt_settings_isolation_test.py` covers the redirect itself (normal launch
   keeps the platform store; a redirected run writes and reads its own ini file).
 
@@ -371,22 +379,37 @@ re-run remains a CI/Windows acceptance step.
 
 ## Regression run on the integration head
 
-Per-file processes, macOS arm64, Qt offscreen, after the changes above (282
-passed, 3 skipped):
+Per-file processes, macOS arm64, Qt offscreen, after rebasing these changes onto
+`4b59f10` (the async-open and Windows-report work): 383 passed, 4 skipped.
 
 | file | result |
 | --- | --- |
 | job_storage_test.py | 11 passed |
 | persistence_phase_a_test.py | 17 passed |
 | qt_client_adapter_test.py | 59 passed |
-| qt_client_window_test.py | 99 passed |
+| qt_client_window_test.py | 107 passed |
 | qt_segment_structure_test.py | 18 passed |
 | state_journal_test.py | 32 passed |
 | state_mutation_lock_test.py | 19 passed |
 | tm_promotion_persistence_test.py | 12 passed |
 | translation_save_flow_ui_test.py | 1 passed |
-| windows_atomic_file_test.py | 12 passed, 3 skipped |
+| windows_atomic_file_test.py | 15 passed, 4 skipped |
 | qt_settings_isolation_test.py | 2 passed |
+
+The preference redirection touches every window fixture, so these were re-run
+too (90 passed):
+
+| file | result |
+| --- | --- |
+| qt_settings_window_test.py | 17 passed |
+| qt_onboarding_test.py | 7 passed |
+| qt_task_defaults_test.py | 13 passed |
+| qt_theme_follow_system_test.py | 6 passed |
+| qt_macos_file_open_test.py | 14 passed |
+| qt_shell_previews_test.py | 16 passed |
+| qt_design_review_p0_test.py | 5 passed |
+| qt_crash_recovery_probe_test.py | 8 passed |
+| qt_workbench_poll_test.py | 4 passed |
 
 The #52 behaviours are covered by `test_workbench_poll_reloads_a_journal_only_translation`,
 `test_cached_append_reads_only_the_suffix_without_reloading_snapshot`,
