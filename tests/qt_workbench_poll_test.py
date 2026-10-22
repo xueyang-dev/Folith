@@ -157,3 +157,84 @@ def test_new_commit_does_not_drop_heights_from_an_unfinished_paint_pass(client, 
     assert first in bench._heights_pending
     assert _pump(client['app'], 10, lambda: not bench._paint_timer.isActive())
     assert bench.segment_row_text(second, 2) == '另一项更新。' * 20
+
+
+def test_poll_projects_review_off_thread_and_only_applies_widgets_on_gui(client, monkeypatch):
+    import threading
+    window, adapter, core, app = client['window'], client['adapter'], client['core'], client['app']
+    job = _book_job(client)
+    open_job_and_wait(window, job)
+    window.timer.stop()
+    gui, calls, applied = threading.get_ident(), [], []
+    original, apply = adapter.review_queue, window.workbench.review_panel.apply
+
+    def project(*args):
+        calls.append(threading.get_ident())
+        return original(*args)
+
+    def render(view):
+        applied.append(threading.get_ident())
+        return apply(view)
+
+    monkeypatch.setattr(adapter, 'review_queue', project)
+    monkeypatch.setattr(window.workbench.review_panel, 'apply', render)
+    state = core.load_job_state(job)
+    state['pairs'][450]['target'] = '后台提交的译文'
+    core.save_job_state(job, state)
+    window._poll_workbench()
+    assert _pump(app, 5, lambda: not window._state_load_in_flight)
+    assert calls and all(thread != gui for thread in calls)
+    assert applied == [gui]
+    assert window._cached_state['pairs'][450]['target'] == '后台提交的译文'
+
+
+def test_slow_poll_review_cannot_replace_a_newer_explicit_refresh(client, monkeypatch):
+    import threading
+    window, adapter, core, app = client['window'], client['adapter'], client['core'], client['app']
+    job = _book_job(client)
+    open_job_and_wait(window, job)
+    window.timer.stop()
+    entered, release = threading.Event(), threading.Event()
+    gui, original = threading.get_ident(), adapter.review_queue
+
+    def project(*args):
+        if threading.get_ident() != gui:
+            entered.set()
+            assert release.wait(10)
+        return original(*args)
+
+    monkeypatch.setattr(adapter, 'review_queue', project)
+    state = core.load_job_state(job)
+    state['pairs'][450]['target'] = '旧的后台结果'
+    core.save_job_state(job, state)
+    try:
+        window._poll_workbench()
+        assert _pump(app, 5, entered.is_set)
+        newer = core.load_job_state(job)
+        newer['pairs'][450]['target'] = '刚保存的新编辑'
+        core.save_job_state(job, newer)
+        window.refresh_workbench(force=True)
+        fresh = window._cached_state
+        release.set()
+        assert _pump(app, 5, lambda: not window._state_load_in_flight)
+        assert window._cached_state is fresh
+        assert fresh['pairs'][450]['target'] == '刚保存的新编辑'
+    finally:
+        release.set()
+
+
+def test_review_projection_failure_does_not_hide_new_committed_pairs(client, monkeypatch):
+    window, adapter, core, app = client['window'], client['adapter'], client['core'], client['app']
+    job = _book_job(client)
+    open_job_and_wait(window, job)
+    window.timer.stop()
+    def failed(*args):
+        raise ValueError('unreadable review projection')
+    monkeypatch.setattr(adapter, 'review_queue', failed)
+    state = core.load_job_state(job)
+    state['pairs'][450]['target'] = '仍然显示已提交的译文'
+    core.save_job_state(job, state)
+    window._poll_workbench()
+    assert _pump(app, 5, lambda: not window._state_load_in_flight)
+    assert window._cached_state['pairs'][450]['target'] == '仍然显示已提交的译文'
+    assert window.workbench.review_panel._view == {}
