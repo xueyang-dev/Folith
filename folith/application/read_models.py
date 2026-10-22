@@ -356,6 +356,8 @@ def list_jobs(*, output_dir: Optional[Path] = None) -> List[JobSummary]:
     for entry in entries:
         if not entry.is_dir():
             continue
+        if not ((entry / "state.json").is_file() or (entry / "summary.json").is_file()):
+            continue  # metadata directories (including .locks) are not tasks
         candidates.append(entry)
         job_id = entry.name
         summary = _cached_summary(job_id, entry) or _rebuilt_summary(job_id)

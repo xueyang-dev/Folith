@@ -8949,9 +8949,9 @@ def _check_snapshot_revision(job_id, state):
     """Reject a snapshot another transaction has already superseded."""
     current = _job_repo.snapshot_revision(job_id)
     if current is None:
-        if "snapshot_revision" in state:
-            raise RuntimeError("任务状态不可用，请重新打开任务列表。")
-        return 0
+        # Preserve the existing directory-loss recovery contract: when there
+        # is no persisted snapshot, the caller's state can recreate it.
+        return int(state.get("snapshot_revision") or 0)
     if int(state.get("snapshot_revision") or 0) != current:
         raise RuntimeError("任务状态已更新，请重新读取后重试。")
     return current
@@ -8970,8 +8970,6 @@ def save_job_state(job_id, state):
     # between the ownership check and the atomic snapshot replacement.
     execution_lock = None
     if _runtime_job_id() != job_id:
-        if "snapshot_revision" in state and not job_dir(job_id).is_dir():
-            raise RuntimeError("任务已被删除，请重新打开任务列表。")
         runtime = load_runtime_state(job_id)
         if runtime.get("segment_operation") and runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
             raise RuntimeError("所选段落正在后台处理，请等待完成后保存；草稿可以保留。")
@@ -10902,7 +10900,9 @@ def generate_mti_report(bilingual_pairs, termbase_dict, theory, provider, api_ke
         research_settings=research_settings, literature_sources=literature_sources,
         on_status=on_status,
     )
-    save_compliance_record(job_id, load_job_state(job_id) or state)
+    # Keep the pipeline's owned state current. Saving a separately loaded copy
+    # here used to let the caller's next full save discard compliance records.
+    save_compliance_record(job_id, state)
     return report_md
 
 

@@ -228,13 +228,15 @@ def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optiona
     state transaction or worker lifetime lock across check and replacement.
     """
     path = get_job_state_path(job_id, output_dir=output_dir)
-    signature = state_signature(job_id, output_dir=output_dir)
-    if signature is None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
         return None
+    signature = (str(job_id), stat.st_mtime_ns, stat.st_size)
     with _STATE_CACHE_LOCK:
         for key, state in _STATE_CACHE.items():
             metadata = _STATE_REPLAY.get(key)
-            if key[:3] == signature[:3] and metadata and metadata[0] == str(path.absolute()):
+            if key[:3] == signature and metadata and metadata[0] == str(path.absolute()):
                 return int(state.get("snapshot_revision") or 0)
     with profiler.span("snapshot_revision_read", job_id=job_id):
         raw = json.loads(path.read_text(encoding="utf-8"))

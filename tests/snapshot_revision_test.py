@@ -143,10 +143,13 @@ def test_legacy_snapshot_without_revision_loads_and_saves(isolated_jobs):
     assert json.loads(path.read_text())["snapshot_revision"] == 1
 
 
-def test_saving_a_deleted_loaded_task_does_not_recreate_it():
+def test_directory_loss_recovery_keeps_the_snapshot_generation():
     state = _seed()
     path = core.job_dir("revision")
     shutil.rmtree(path)
-    with pytest.raises(RuntimeError, match="任务已被删除"):
-        core.save_job_state("revision", state)
-    assert not path.exists()
+    previous = state["snapshot_revision"]
+    core.save_job_state("revision", state)
+    assert path.exists()
+    restored = core.load_job_state("revision")
+    assert restored["snapshot_revision"] == previous + 1
+    assert restored["pairs"] == state["pairs"]

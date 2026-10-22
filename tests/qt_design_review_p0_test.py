@@ -63,6 +63,11 @@ def qt_app():
 def translated(tmp_path, monkeypatch, qt_app):
     from folith.desktop import paths as desktop_paths
     from folith.qt import window as window_module
+    from PySide6.QtCore import QSettings
+
+    settings_file = str(tmp_path / "client-settings.ini")
+    monkeypatch.setattr(window_module, "QSettings",
+                        lambda *_: QSettings(settings_file, QSettings.Format.IniFormat))
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
