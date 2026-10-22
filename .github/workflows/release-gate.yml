@@ -252,15 +252,27 @@ jobs:
         shell: pwsh
         run: |
           $mk = Get-Command makensis -ErrorAction SilentlyContinue
+          $roots = @("${env:ProgramFiles(x86)}\NSIS", "$env:ProgramFiles\NSIS",
+                     "$env:ProgramData\chocolatey\lib")
           if (-not $mk) {
-            $mk = Get-ChildItem "$env:ProgramData\chocolatey\lib" -Filter makensis.exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            foreach ($root in $roots) {
+              $candidate = Join-Path $root "makensis.exe"
+              if (Test-Path -LiteralPath $candidate) {
+                $mk = Get-Item -LiteralPath $candidate
+                break
+              }
+            }
           }
           if (-not $mk) {
-            Get-ChildItem "C:\Program Files (x86)\NSIS", "$env:ProgramData\chocolatey\lib\nsis" -Recurse -ErrorAction SilentlyContinue | Out-String
+            $mk = Get-ChildItem $roots -Filter makensis.exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $mk) {
+            Get-ChildItem $roots -Recurse -ErrorAction SilentlyContinue | Out-String
             throw "makensis not found after installing NSIS"
           }
-          Split-Path $mk.Source -Parent | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          & $mk.Source /VERSION
+          $mkPath = if ($mk.Source) { $mk.Source } else { $mk.FullName }
+          Split-Path $mkPath -Parent | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $mkPath /VERSION
       - name: Build the Windows x64 bundle, portable ZIP and installer
         shell: powershell
         run: |
