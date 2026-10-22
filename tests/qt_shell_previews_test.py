@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 os.environ["FOLITH_EXIT_FORCE_PROMPT"] = "0"
@@ -223,11 +225,11 @@ def window(tmp_path, monkeypatch, app):
     from PySide6.QtCore import QSettings
 
     from folith.desktop import paths as desktop_paths
-    from folith.qt import adapter, i18n, window as window_module
+    from folith.qt import adapter, i18n, preferences, window as window_module
 
     settings_file = str(tmp_path / "settings.ini")
-    monkeypatch.setattr(window_module, "QSettings",
-                        lambda *args: QSettings(settings_file, QSettings.Format.IniFormat))
+    monkeypatch.setattr(preferences, "settings",
+                        lambda: QSettings(settings_file, QSettings.Format.IniFormat))
     i18n.set_language("zh-CN")
     config = adapter.EngineConfig(provider="自定义中转站", model="stub-model",
                                   api_key="stub-key", target_lang="简体中文")
@@ -282,7 +284,7 @@ def test_sidebar_hides_in_the_workbench_and_returns_after(window, app):
     source = tmp / "note.txt"
     source.write_text("Hello.\n\nWorld.", encoding="utf-8")
     job_id = adapter.import_documents([source], config)[0].job_id
-    main.open_job(job_id)
+    open_job_and_wait(main, job_id)
     app.processEvents()
     assert main.stack.currentWidget() is main.workbench
     assert not main.sidebar.isVisible()

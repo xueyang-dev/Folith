@@ -20,7 +20,7 @@ from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import core  # noqa: E402
-from folith.qt import adapter, connection_status, dialogs, support  # noqa: E402
+from folith.qt import adapter, connection_status, dialogs, preferences, support  # noqa: E402
 
 
 class _SyncRunner:
@@ -53,7 +53,9 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "OUTPUT_DIR", data)
     monkeypatch.setenv("FOLITH_DESKTOP_DATA_DIR", str(data))
     store = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr(connection_status, "QSettings", lambda *args: store)
+    # Every preference reader goes through folith.qt.preferences; redirect that
+    # one entry point so the connection status never touches the real store.
+    monkeypatch.setattr(preferences, "settings", lambda: store)
     monkeypatch.setattr(adapter.core, "load_ocr_online_config", lambda *a, **k: {})
     return data, store
 

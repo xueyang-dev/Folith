@@ -704,12 +704,8 @@ def load_state(job_id: str) -> dict:
 
 def state_signature(job_id: str) -> str:
     """Cheap revision marker so the UI reloads only on real changes."""
-    path = core.job_state_path(job_id)
-    try:
-        stat = path.stat()
-    except OSError:
-        return "missing"
-    return f"{stat.st_mtime_ns}:{stat.st_size}"
+    signature = core._job_repo.state_signature(job_id)
+    return ":".join(str(value) for value in signature[1:]) if signature else "missing"
 
 
 def drafts_signature(job_id: str) -> str:
@@ -2974,7 +2970,7 @@ def export_report(job_id: str, kind: str, path: str) -> str:
             raise AdapterError("还没有报告稿件可以导出。")
         data = text.encode("utf-8")
     elif kind == "docx":
-        data = core.report_docx_bytes(job_id, state)
+        data = core.report_docx_bytes(job_id)
         if not data:
             raise AdapterError("还没有报告稿件可以导出。")
     else:
@@ -3984,7 +3980,7 @@ def export_plan(job_id: str, destination: str | os.PathLike[str],
     if not state.get("p2_done"):
         raise AdapterError("这个任务还没有可导出的译文。")
     bundle = core.build_delivery_assets(
-        job_id, state,
+        job_id,
         target_lang=str(state.get("target_lang") or ""),
         provider=config.provider if config else "",
         model=config.model if config else "")
@@ -4015,7 +4011,7 @@ def export_current_assets(job_id: str, destination: str | os.PathLike[str],
     if not state.get("p2_done"):
         raise AdapterError("这个任务还没有可导出的译文。")
     bundle = core.build_delivery_assets(
-        job_id, state,
+        job_id,
         target_lang=str(state.get("target_lang") or ""),
         provider=config.provider if config else "",
         model=config.model if config else "")
@@ -4903,8 +4899,9 @@ _source_size_cache: dict[tuple[str, int], dict] = {}
 def source_size(job_id: str) -> dict:
     """原文的段落数与字符数，给模式预估用（只读文字层，不 OCR、不调模型）。
 
-    任务开始前状态里还没有段落，所以从原文件读；结果按文件大小缓存。PDF 的扫描页
-    没有文字层时按页数估，``approximate`` 为 True。读不出来时返回空，界面不显示预估。
+    任务开始前状态里还没有段落，所以从原文件读；结果按文件大小缓存。PDF 只数文本块，
+    不为预估运行版面重建；扫描页按页数估。PDF 的 ``approximate`` 为 True。
+    读不出来时返回空，界面不显示预估。
     """
     try:
         data = core.load_source(job_id)
@@ -4917,21 +4914,34 @@ def source_size(job_id: str) -> dict:
         return dict(_source_size_cache[key])
     state = load_state(job_id)
     filename = str(state.get("filename") or "")
+    pdf = filename.lower().endswith(".pdf")
+    pages = 0
     try:
-        paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
-            filename, data, ocr_mode="off", ocr_max_pages=0)
+        if pdf:
+            import fitz
+
+            # The full ingestion path rebuilds layout and footnote geometry.
+            # Even on a worker, its native calls can hold the GIL and stall Qt.
+            # A cost estimate needs only text counts, without embedded images.
+            with fitz.open(stream=data, filetype="pdf") as document:
+                pages = document.page_count
+                flags = fitz.TEXTFLAGS_BLOCKS & ~fitz.TEXT_PRESERVE_IMAGES
+                paragraphs = []
+                for page in document:
+                    paragraphs.extend(block[4] for block in page.get_text("blocks", flags=flags)
+                                      if block[6] == 0)
+                    # Native extraction holds the GIL. Let GUI callbacks run
+                    # between pages instead of reacquiring it for the whole book.
+                    time.sleep(0.001)
+        else:
+            paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+                filename, data, ocr_mode="off", ocr_max_pages=0)
     except Exception:  # noqa: BLE001 - 读不出就不预估，不阻塞准备页
         paragraphs = []
     paragraphs = [str(item) for item in paragraphs if str(item).strip()]
     chars = sum(len(item) for item in paragraphs)
-    approximate = False
-    if filename.lower().endswith(".pdf"):
-        try:
-            from folith import pdf_preview
-
-            pages = int(pdf_preview.get_pdf_page_count(job_id))
-        except Exception:  # noqa: BLE001
-            pages = 0
+    approximate = pdf
+    if pdf:
         if pages and chars < pages * 200:  # 大部分是扫描页
             chars = pages * _EST_CHARS_PER_SCANNED_PAGE
             paragraphs = paragraphs or [""] * (pages * 8)

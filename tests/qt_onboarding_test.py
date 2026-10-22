@@ -16,7 +16,7 @@ from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget  # noqa: E402
 
 import core  # noqa: E402
-from folith.qt import adapter, connection_status, dialogs, onboarding  # noqa: E402
+from folith.qt import adapter, connection_status, dialogs, onboarding, preferences  # noqa: E402
 
 
 class _SyncRunner:
@@ -43,7 +43,7 @@ def settings(tmp_path, monkeypatch):
     data.mkdir()
     monkeypatch.setattr(core, "OUTPUT_DIR", data)
     store = QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr(connection_status, "QSettings", lambda *args: store)
+    monkeypatch.setattr(preferences, "settings", lambda: store)
     monkeypatch.setattr(adapter.core, "load_ocr_online_config", lambda *a, **k: {})
     return store
 
@@ -147,10 +147,8 @@ def test_window_help_menu_and_onboarding_entry(app, tmp_path, monkeypatch):
     from folith.qt import window as window_module
 
     store_file = str(tmp_path / "w.ini")
-    monkeypatch.setattr(window_module, "QSettings",
-                        lambda *a: QSettings(store_file, QSettings.Format.IniFormat))
-    monkeypatch.setattr(connection_status, "QSettings",
-                        lambda *a: QSettings(store_file, QSettings.Format.IniFormat))
+    monkeypatch.setattr(preferences, "settings",
+                        lambda: QSettings(store_file, QSettings.Format.IniFormat))
     window = window_module.MainWindow(adapter.EngineConfig(), desktop_paths.resolve_paths(), None)
     try:
         assert {"guide", "tips", "shortcuts", "github", "issue"} <= set(window.menu_actions)

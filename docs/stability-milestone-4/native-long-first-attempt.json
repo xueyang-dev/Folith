@@ -1,0 +1,35 @@
+{
+  "ok": false,
+  "qt_platform": "cocoa",
+  "duration_s": 681.5,
+  "lifecycle": {
+    "paused_pairs": 20,
+    "stable_while_paused": true,
+    "workbench_caught_up": true,
+    "card_percent": 0,
+    "minimized": true,
+    "progressed_while_minimized": true,
+    "qt_platform": "cocoa"
+  },
+  "durable_after_kill": {
+    "pairs": 40,
+    "replay": {
+      "applied": 10,
+      "cursor": 10,
+      "gap": false,
+      "dropped": 0
+    },
+    "segments": 4823
+  },
+  "committed_pairs_equal_after_reopen": true,
+  "committed_fields_preserved_after_resume": true,
+  "committed_batches_not_regenerated": true,
+  "after_resume": {
+    "p1_done": true,
+    "p2_done": true,
+    "pairs": 4823,
+    "reviewed": 3775
+  },
+  "export": "blocked by 814 deterministic completeness findings induced by offline stub; 234 empty targets are actionable notices",
+  "diagnostic_interruption": "A SIGINT intended to end the slow diagnostic was caught inside a Qt callback; it did not stop the process. The run subsequently completed translation and failed export. This is not a clean acceptance run."
+}

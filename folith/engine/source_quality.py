@@ -388,7 +388,7 @@ def _block_bbox(block):
     return None
 
 
-def _body_text_bbox(state, by_id=None):
+def _body_text_bbox(state, *, block_index=None):
     """Robust body text column of the grounded paragraph blocks.
 
     Percentiles rather than a bounding union: publisher stamps and rotated
@@ -396,9 +396,9 @@ def _body_text_bbox(state, by_id=None):
     must not widen the column until the margin counts as "inside" it.
     """
     boxes = []
-    if by_id is None:
-        by_id = _grounded_block_index(state)
-    for block in by_id.values():
+    if block_index is None:
+        block_index = _grounded_block_index(state)
+    for block in block_index.values():
         if str(block.get("type") or "") != "paragraph":
             continue
         box = _block_bbox(block)
@@ -420,14 +420,13 @@ def _body_text_bbox(state, by_id=None):
     ]
 
 
-def _segment_source_quality_evidence(state, index, paragraphs=None, *,
-                                     by_id=None, body_bbox=None):
+def _segment_source_quality_evidence(state, index, paragraphs=None, *, grounding=None):
     """Resolve the grounded container that decides one flagged segment.
 
     The IR block is preferred because it is the verified extraction unit; the
     cleaned paragraph is the fallback for sources without document IR.
-    ``by_id`` and ``body_bbox`` are document-wide: a caller classifying many
-    segments passes them once instead of rescanning every block per segment
+    ``grounding`` holds the document-wide block index and body bounds: a caller
+    classifying many segments passes them once instead of rescanning each time
     (#75: about a second per workbench refresh on a 5000-block PDF).
     """
     paragraphs = (paragraphs if paragraphs is not None
@@ -453,10 +452,11 @@ def _segment_source_quality_evidence(state, index, paragraphs=None, *,
         if 0 <= index < len(persisted) and isinstance(persisted[index], list):
             spans = persisted[index]
 
-    if by_id is None:
+    if grounding is None:
         by_id = _grounded_block_index(state)
-    if body_bbox is None:
-        body_bbox = _body_text_bbox(state, by_id)
+        body_bbox = _body_text_bbox(state, block_index=by_id)
+    else:
+        by_id, body_bbox = grounding
     block = None
     for span in spans:
         if not isinstance(span, dict):
@@ -478,16 +478,22 @@ def _segment_source_quality_evidence(state, index, paragraphs=None, *,
 def _source_quality_dispositions(state, report, paragraphs=None):
     """Classify every current source-quality flag into a deterministic outcome."""
     outcomes = {}
+    flags = (report or {}).get("flags") or []
+    if not flags:
+        return outcomes
+    # The geometry is invariant within one audit. Rebuilding the whole IR
+    # index and sorting all paragraph boxes for each flag was quadratic on
+    # book-length PDFs, including every delivery/review projection in the UI.
     by_id = _grounded_block_index(state)
-    body_bbox = _body_text_bbox(state, by_id)
-    for flag in (report or {}).get("flags") or []:
+    grounding = (by_id, _body_text_bbox(state, block_index=by_id))
+    for flag in flags:
         if not isinstance(flag, dict):
             continue
         index = flag.get("segment_index")
         if isinstance(index, bool) or not isinstance(index, int):
             continue
         evidence = _segment_source_quality_evidence(
-            state, index, paragraphs, by_id=by_id, body_bbox=body_bbox)
+            state, index, paragraphs, grounding=grounding)
         outcomes[index] = _source_quality.classify_quarantined_segment(
             text=flag.get("text") or evidence["text"],
             block_type=evidence["block_type"],

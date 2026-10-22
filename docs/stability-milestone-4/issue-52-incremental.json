@@ -1,0 +1,14 @@
+{
+  "segments": 4823,
+  "records": 804,
+  "refreshes": 26,
+  "snapshot_reads": 1,
+  "journal_bytes": 18478715,
+  "suffix_bytes_read": 18478715,
+  "max_refresh_ms": 180.2,
+  "last_refresh_ms": 178.65,
+  "full_and_incremental_states_equal": true,
+  "all_live_pairs_recovered": true,
+  "model": "offline stub",
+  "ui": "repository-level probe; Qt polling verified separately"
+}

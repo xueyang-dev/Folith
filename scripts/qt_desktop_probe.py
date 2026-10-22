@@ -15,7 +15,7 @@ and a clean machine (roadmap §8).
 Usage:
     QT_QPA_PLATFORM=offscreen venv/bin/python scripts/qt_desktop_probe.py \
         --data-dir /tmp/qt-probe/data --fixture docx --out /tmp/qt-probe/report.json
-    # real window (cocoa) evidence, with a screenshot:
+    # real native window evidence, with a screenshot:
     venv/bin/python scripts/qt_desktop_probe.py --window --screenshot /tmp/qt.png ...
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=None, help="write the JSON report here")
     parser.add_argument("--fixture", default="docx", choices=("docx", "pdf", "both", "epub", "txt", "md"))
     parser.add_argument("--window", action="store_true",
-                        help="use the real platform plugin (cocoa) instead of offscreen")
+                        help="use the native platform plugin instead of offscreen")
     parser.add_argument("--screenshot", default=None)
     parser.add_argument("--stub-delay", type=float, default=0.0)
     parser.add_argument("--keep-data", action="store_true")
@@ -108,6 +108,13 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["FOLITH_DESKTOP_DATA_DIR"] = str(data_dir)
     os.environ["FOLITH_DESKTOP_LOG_DIR"] = str(out_dir / "logs")
     os.environ["FOLITH_OUTPUT_DIR"] = str(data_dir)
+    # A probe is evidence about this build, not about the machine it runs on.
+    # The window reads its stored task defaults (report stage, review, OCR mode)
+    # when it creates a task, so a developer's own preferences would change what
+    # the flow runs.  Both the source window and the frozen executable read this
+    # variable, so one setting covers both paths.
+    settings_dir = out_dir / "settings"
+    os.environ["FOLITH_QT_SETTINGS_DIR"] = str(settings_dir)
 
     if args.frozen_app:
         if not args.out:
@@ -151,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
     config.save()
 
     paths = adapter.desktop_paths.resolve_paths()
+    # Source probes must not inherit or change the operator's saved task/format
+    # preferences. ``FOLITH_QT_SETTINGS_DIR`` (set above) redirects every reader
+    # through ``folith.qt.preferences``, so no per-module patch is needed here and
+    # the same redirect applies to the frozen executable.
     main_window = window_module.MainWindow(config, paths, None)
     window_module.install_quit_filter(app, main_window)
     main_window.show()
@@ -160,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                          timeout=args.timeout, screenshot=args.screenshot)
     report = flow.run(adapter, adapter.core, fixtures)
     report["stub_url"] = url
-    report["platform"] = os.environ.get("QT_QPA_PLATFORM", "cocoa")
+    report["platform"] = app.platformName()
     report["app_version"] = adapter.app_identity().get("app_version")
     report["build_id"] = adapter.app_identity().get("build_id")
     report["frozen"] = adapter.app_identity().get("frozen")

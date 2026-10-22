@@ -123,3 +123,6 @@ video/
 # evidence are tracked; the materialised sample PDFs are not (24 MB, rebuilt by
 # prepare_samples.py from the recorded repo paths and public URLs).
 benchmark/routing/samples/
+
+# Local scratch for probe/regression runs (TMPDIR, reports, settings).
+.tmp/

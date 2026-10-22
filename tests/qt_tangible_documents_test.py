@@ -82,6 +82,40 @@ def test_cover_glass_darkens_more_on_light_covers(app):
     assert 0.45 <= dark < light <= 0.72, "white pages need a stronger scrim than dark covers"
 
 
+@pytest.mark.parametrize("opening", [True, False])
+@pytest.mark.parametrize("deleted", [True, False])
+def test_flight_completion_survives_destination_destruction(app, monkeypatch, opening, deleted):
+    """Returning home can rebuild cards before the flight has landed."""
+    from types import SimpleNamespace
+    from shiboken6 import delete
+    from folith.qt.window import MainWindow
+
+    host = QWidget()
+    paper = components.CoverArt(host)
+    host.show()
+    pixmap = QPixmap(40, 50)
+    pixmap.fill(QColor("white"))
+    rect = QRectF(20, 20, 40, 50)
+    completed = []
+    monkeypatch.setattr(motion, "reduced", lambda: False)
+    monkeypatch.setattr(components, "DocumentFlight",
+                        lambda *a, **kw: completed.append(kw["on_done"]))
+    view = SimpleNamespace(isVisible=lambda: True,
+                           _card_document=lambda job: (pixmap, rect),
+                           home=SimpleNamespace(_cards={"job": SimpleNamespace(paper=paper)}))
+    if opening:
+        MainWindow._fly(view, (pixmap, rect), opening=True, overview=(paper, rect))
+    else:
+        MainWindow._fly_back(view, "job", rect)
+    assert paper._ghost
+    if deleted:
+        delete(paper)
+    completed[0]()
+    if not deleted:
+        assert not paper._ghost
+    host.close()
+
+
 def test_task_tile_is_the_cover_itself(app):
     from folith.qt import adapter, views
 

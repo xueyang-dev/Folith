@@ -3644,7 +3644,7 @@ class WorkbenchView(QWidget):
     # ================= 数据 =================
     def load(self, job_id: str, config: adapter.EngineConfig,
              state: dict, rows: list[adapter.SegmentRow],
-             snapshots: list[dict]) -> None:
+             snapshots: list[dict], *, prepared: dict | None = None) -> None:
         """Attach a job.  Only call this when switching jobs."""
         for saved_index in self.row_delegate.saved:
             self._motion.stop(f"saved:{saved_index}")
@@ -3682,17 +3682,19 @@ class WorkbenchView(QWidget):
         # 让"换了任务就一定会重画"成为显然的事实。
         self._delivery_rendered = False
         self._delivery_key = ()
-        self.apply(job_id, state, rows, self._last_runtime, snapshots,
-                   refresh_delivery=True)
+        self.apply(job_id, state, rows, (prepared or {}).get("runtime", self._last_runtime), snapshots,
+                   refresh_delivery=True, prepared=prepared)
 
     def apply(self, job_id: str, state: dict, rows: list[adapter.SegmentRow],
               runtime: dict, snapshots: list[dict],
-              *, refresh_delivery: bool = False) -> None:
+              *, refresh_delivery: bool = False, prepared: dict | None = None) -> None:
         """Refresh everything that is *not* the text the user is typing."""
         self.job_id = job_id
         self._state = state
         self._last_runtime = runtime or {}
         self._snapshots = snapshots or []
+        self._prepared_review = (state, prepared["review"]) if prepared and "review" in prepared else None
+        self._prepared_delivery = (state, prepared["delivery"]) if prepared and "delivery" in prepared else None
         # The window hands back the very same state and row objects while neither
         # the task state nor the drafts file changed (its 1 s poll).  The grid is
         # a pure function of those, so it must not be rebuilt, compared row by
@@ -4653,7 +4655,10 @@ class WorkbenchView(QWidget):
             return
         self._review_key = key
         try:
-            view = adapter.review_queue(self.job_id, self._state)
+            prepared = getattr(self, "_prepared_review", None)
+            self._prepared_review = None
+            view = (prepared[1] if prepared is not None and prepared[0] is self._state
+                    else adapter.review_queue(self.job_id, self._state))
         except Exception:  # noqa: BLE001 - 审校页坏了不能拖垮翻译页
             view = {}
         self._review_items = list(view.get("queue_items") or [])
@@ -4896,6 +4901,7 @@ class WorkbenchView(QWidget):
         # Keep the final model dimensions stable for Qt accessibility. Only cell
         # contents are filled in batches; selection always uses the full row set.
         self._paint_timer.stop()
+        self._flush_painted_heights()
         self._repainted = []
         self._paint_schedules_heights = schedule_heights
         if len(self._rows) < 300:
@@ -4929,6 +4935,9 @@ class WorkbenchView(QWidget):
                 return
             if self._paint_row(position, self._rows[position]):
                 self._repainted.append(position)
+        # A new commit can replace the pending paint pass before it finishes.
+        # Preserve height changes from each completed slice, not only its tail.
+        self._flush_painted_heights()
 
     def _flush_painted_heights(self) -> None:
         if not self._paint_schedules_heights or not self._repainted:
@@ -5249,6 +5258,8 @@ class WorkbenchView(QWidget):
         资产清单（真实缺陷：A 声明了 PDF、B 没声明，切换后面板仍列着 `translation.pdf`）。
         """
         now = time.monotonic()
+        prepared = getattr(self, "_prepared_delivery", None)
+        self._prepared_delivery = None
         key = (self.job_id, len(self._snapshots),
                str(self._state.get("delivery_status") or ""))
         unchanged = self._delivery_rendered and key == self._delivery_key
@@ -5261,8 +5272,9 @@ class WorkbenchView(QWidget):
             return
         if unchanged and (now - self._delivery_preview_at) < DELIVERY_FORCE_FLOOR_SECONDS:
             return
-        preview = adapter.delivery_preview(self.job_id, self.config, state=self._state) \
-            if self.job_id else {}
+        preview = (prepared[1] if prepared is not None and prepared[0] is self._state
+                   else adapter.delivery_preview(self.job_id, self.config, state=self._state)
+                   if self.job_id else {})
         self._delivery_preview = preview
         self._delivery_rendered = True
         self._delivery_preview_at = now

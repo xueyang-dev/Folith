@@ -656,6 +656,8 @@ def test_e2e_pipeline():
         assert state["has_blocking"] is False
         assert state["p3_done"] and len(re.findall(
             r"^## ", state["p3_md"], re.MULTILINE)) == 4
+        assert state.get("compliance_record"), "the pipeline must retain its compliance save"
+        assert core.load_job_state(jid)["compliance_record"] == state["compliance_record"]
         # 审校通过的段落应已写入翻译记忆
         tm = core.load_tm()
         assert len(tm) == 2 and all(v["reviewed"] for v in tm.values())

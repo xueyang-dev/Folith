@@ -1,0 +1,11 @@
+exit_code	kind	file	seconds	result
+0	pytest	job_storage_test.py	1	11 passed
+0	pytest	persistence_phase_a_test.py	1	17 passed
+0	pytest	qt_client_adapter_test.py	30	59 passed
+0	pytest	qt_client_window_test.py	166	99 passed
+0	pytest	qt_segment_structure_test.py	2	18 passed
+0	pytest	state_journal_test.py	2	32 passed
+0	pytest	state_mutation_lock_test.py	3	19 passed
+0	pytest	tm_promotion_persistence_test.py	1	12 passed
+0	pytest	translation_save_flow_ui_test.py	1	1 passed
+0	pytest	windows_atomic_file_test.py	1	12 passed, 3 skipped

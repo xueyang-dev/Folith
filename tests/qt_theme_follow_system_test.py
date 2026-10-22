@@ -82,11 +82,11 @@ def client(tmp_path, monkeypatch, qt_app):
     monkeypatch.setattr(core, "OUTPUT_DIR", data_dir, raising=False)
 
     from folith.desktop import paths as desktop_paths
-    from folith.qt import adapter, i18n, style, window as window_module
+    from folith.qt import adapter, i18n, preferences, style, window as window_module
 
     settings_file = str(tmp_path / "settings.ini")
-    monkeypatch.setattr(window_module, "QSettings",
-                        lambda *args: QSettings(settings_file, QSettings.Format.IniFormat))
+    monkeypatch.setattr(preferences, "settings",
+                        lambda: QSettings(settings_file, QSettings.Format.IniFormat))
     i18n.set_language("zh-CN")
     hints = FakeHints("light")
     monkeypatch.setattr(style, "style_hints", lambda: hints)

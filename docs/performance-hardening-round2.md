@@ -390,6 +390,11 @@ TM 不受 `state.json` 权威契约约束，可独立评估 SQLite/WAL + 按目�
 
 ## 去留审计（KEEP / REVERT / EXPERIMENTAL）
 
+以下保留当轮实验结论。Section-aware 波次规划实验不等于当前产品的普通翻译并发；
+当前回退值 1、共享默认 4、预设 6/4/4 及最新五档测量见
+[2026-10-22 并发审计](stability-milestone-4/concurrency-audit.md)。
+表中的“未实施/默认关”不应当作后续版本的产品开关状态。
+
 | 改动 | 结论 | 理由 |
 | --- | --- | --- |
 | LLM client registry | **KEEP** | 48→1 次构造、48→1 条 TCP、p95 123.8→35.9ms；4 线程恰好 4 客户端。收益随网络 RTT 增大，localhost 反而低估。复杂度小（单模块、密钥安全身份、显式 `close_all_clients()`、env 逃生舱） |

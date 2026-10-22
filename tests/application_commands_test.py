@@ -11,6 +11,7 @@ These tests are the frontend-neutral contract for the application layer:
 from __future__ import annotations
 
 import json
+import faulthandler
 import shutil
 import subprocess
 import sys
@@ -386,7 +387,8 @@ def test_mutating_commands_use_the_task_transaction_lock(monkeypatch):
         assert core.load_job_state("job-locked")["ok"] == 1
 
 
-def test_import_document_is_transactional_under_concurrency():
+@pytest.mark.parametrize("_attempt", range(10))
+def test_import_document_is_transactional_under_concurrency(_attempt):
     with app_env():
         document = b"same-document"
         barrier = threading.Barrier(2)
@@ -400,10 +402,16 @@ def test_import_document_is_transactional_under_concurrency():
                 errors.append(exc)
 
         threads = [threading.Thread(target=run) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(20)
+        # Capture both owners before a store-lock timeout unwinds their stacks.
+        # A normal import finishes well before this diagnostic deadline.
+        faulthandler.dump_traceback_later(5)
+        try:
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(20)
+        finally:
+            faulthandler.cancel_dump_traceback_later()
 
         assert not errors, errors
         assert len({item.job_id for item in results}) == 1

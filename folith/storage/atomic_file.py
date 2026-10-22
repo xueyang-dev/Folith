@@ -70,6 +70,7 @@ def replace_file(source: Path, destination: Path) -> None:
     while True:
         try:
             _replace_once(source, destination)
+            _remember_file(destination)
             return
         except OSError as error:
             if getattr(error, "winerror", None) not in _RETRYABLE_WINERRORS:
@@ -120,24 +121,22 @@ _READ_SEEN_LIMIT = 4096
 _read_seen: set[str] = set()
 
 
-def read_shared_text(path, encoding: str = "utf-8") -> str:
-    """Read a file that a concurrent ``replace_file`` may be swapping.
+def _remember_file(path) -> None:
+    if len(_read_seen) >= _READ_SEEN_LIMIT:
+        _read_seen.clear()
+    _read_seen.add(os.path.normcase(os.path.abspath(path)))
 
-    On Windows, sharing violations are retried briefly.  A missing file is
-    retried only when this process has read it before, so a file that was
-    never written still fails at once.  On POSIX ``rename`` is atomic for
-    readers and this is a plain read.
-    """
+
+def _retry_windows_read(path, operation):
+    """Retry access to a known file during a Windows replacement gap."""
     if not _WINDOWS:
-        with open(path, "r", encoding=encoding) as stream:
-            return stream.read()
+        return operation()
     key = os.path.normcase(os.path.abspath(path))
     deadline = time.monotonic() + _READ_RETRY_BUDGET_SECONDS
     failures = 0
     while True:
         try:
-            with shared_text_reader(path, encoding) as stream:
-                text = stream.read()
+            result = operation()
         except FileNotFoundError as error:
             if key not in _read_seen:
                 raise
@@ -147,10 +146,8 @@ def read_shared_text(path, encoding: str = "utf-8") -> str:
                 raise
             last_error = error
         else:
-            if len(_read_seen) >= _READ_SEEN_LIMIT:
-                _read_seen.clear()
-            _read_seen.add(key)
-            return text
+            _remember_file(path)
+            return result
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             if isinstance(last_error, FileNotFoundError):
@@ -160,3 +157,20 @@ def read_shared_text(path, encoding: str = "utf-8") -> str:
         delay = _READ_RETRY_DELAYS[min(failures, len(_READ_RETRY_DELAYS) - 1)]
         failures += 1
         time.sleep(min(delay, remaining))
+
+
+def read_shared_text(path, encoding: str = "utf-8") -> str:
+    """Read through temporary Windows sharing/replacement failures.
+
+    Missing files are retried only after a successful read, stat or replacement
+    in this process. Never-created files still fail immediately.
+    """
+    def read():
+        with shared_text_reader(path, encoding) as stream:
+            return stream.read()
+    return _retry_windows_read(path, read)
+
+
+def stat_shared(path):
+    """Keep a replacement gap from being reported as a missing task."""
+    return _retry_windows_read(path, Path(path).stat)

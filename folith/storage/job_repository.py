@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from folith import profiler
 from folith.storage import state_journal
-from folith.storage.atomic_file import replace_file
+from folith.storage.atomic_file import read_shared_text, replace_file, stat_shared
 
 # Cache mapping (job_id, mtime_ns, file_size, journal_mtime_ns, journal_size)
 # -> normalized state dict.  The journal is part of the signature because a
@@ -32,6 +32,14 @@ from folith.storage.atomic_file import replace_file
 # invisible to every reader until the next snapshot.
 _STATE_CACHE: collections.OrderedDict[Tuple[str, int, int, int, int], Dict[str, Any]] = collections.OrderedDict()
 _STATE_CACHE_MAX_ENTRIES = 256
+# The normalized state and its replay position have the same lifetime. A file
+# identity change or a new snapshot requires a cold load, never a suffix read.
+_STATE_REPLAY = {}
+_STATE_CACHE_LOCK = threading.RLock()
+# Last locally written revision, tied to the actual file that was replaced.
+# Repeated pipeline saves need no full JSON parse; another writer's atomic
+# replacement changes the signature and forces the authoritative read.
+_SNAPSHOT_REVISIONS = collections.OrderedDict()
 
 # Directories already created in this process, keyed by (output_dir, job_id).
 # `mkdir(parents=True, exist_ok=True)` is still a syscall on every save; on a
@@ -71,15 +79,26 @@ def reset_cache_stats() -> None:
 
 def invalidate_cache(job_id: Optional[str] = None) -> None:
     """Clear cached state snapshots for a specific job or all jobs."""
+    with _STATE_CACHE_LOCK:
+        _invalidate_cache(job_id)
+
+
+def _invalidate_cache(job_id: Optional[str] = None) -> None:
     if job_id is None:
         _STATE_CACHE.clear()
+        _STATE_REPLAY.clear()
+        _SNAPSHOT_REVISIONS.clear()
         with _DIR_READY_LOCK:
             _DIR_READY.clear()
         return
     job_str = str(job_id)
+    for path in list(_SNAPSHOT_REVISIONS):
+        if Path(path).parent.name == job_str:
+            del _SNAPSHOT_REVISIONS[path]
     keys_to_remove = [k for k in _STATE_CACHE if k[0] == job_str]
     for k in keys_to_remove:
         _STATE_CACHE.pop(k, None)
+        _STATE_REPLAY.pop(k, None)
 
 
 def _ensure_job_dir(output_dir: Path, job_id: str) -> Path:
@@ -197,7 +216,7 @@ def state_signature(
     job has no state file.  Two stats, no read.
     """
     try:
-        stat = get_job_state_path(job_id, output_dir=output_dir).stat()
+        stat = stat_shared(get_job_state_path(job_id, output_dir=output_dir))
     except OSError:
         return None
     try:
@@ -207,6 +226,36 @@ def state_signature(
         journal_signature = (0, 0)
     return (str(job_id), stat.st_mtime_ns, stat.st_size,
             journal_signature[0], journal_signature[1])
+
+
+def _snapshot_file_signature(stat):
+    return (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+
+
+def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optional[int]:
+    """Return the persisted snapshot generation; legacy snapshots are generation 0.
+
+    A cached state with the same snapshot signature already carries this value.
+    Only a cold check needs to parse the snapshot. The caller holds the existing
+    state transaction or worker lifetime lock across check and replacement.
+    """
+    path = get_job_state_path(job_id, output_dir=output_dir)
+    try:
+        stat = stat_shared(path)
+    except FileNotFoundError:
+        return None
+    signature = (str(job_id), stat.st_mtime_ns, stat.st_size)
+    with _STATE_CACHE_LOCK:
+        written = _SNAPSHOT_REVISIONS.get(str(path.absolute()))
+        if written is not None and written[0] == _snapshot_file_signature(stat):
+            return written[1]
+        for key, state in _STATE_CACHE.items():
+            metadata = _STATE_REPLAY.get(key)
+            if key[:3] == signature and metadata and metadata[0] == str(path.absolute()):
+                return int(state.get("snapshot_revision") or 0)
+    with profiler.span("snapshot_revision_read", job_id=job_id):
+        raw = json.loads(read_shared_text(path))
+    return int(raw.get("snapshot_revision") or 0)
 
 
 def load_job_state_cached(
@@ -219,6 +268,13 @@ def load_job_state_cached(
     Returns a deepcopy of the normalized state to guarantee caller mutations
     cannot corrupt the cached internal representation.
     """
+    # The GUI poll and worker callbacks can load/invalidate concurrently. Keep
+    # the state and its byte offset paired throughout an incremental load.
+    with _STATE_CACHE_LOCK:
+        return _load_job_state_cached(job_id, output_dir, force_reload)
+
+
+def _load_job_state_cached(job_id, output_dir, force_reload):
     p = get_job_state_path(job_id, output_dir=output_dir)
     signature = state_signature(job_id, output_dir=output_dir)
     if signature is None:
@@ -232,28 +288,48 @@ def load_job_state_cached(
         return _isolated_copy(_STATE_CACHE[signature])
 
     _STATS["cache_misses"] += 1
-    _STATS["disk_reads"] += 1
     profiler.count("load_job_state_cache_miss")
-    profiler.count("load_job_state_disk_read")
 
     with profiler.span("load_job_state_disk", job_id=job_id):
-        try:
-            raw = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-
         import core
         from folith import delivery as _delivery
         from folith import state_migration as _state_migration
         from folith import translation_evidence as _translation_evidence
 
-        state = _delivery.normalize_state_findings(_state_migration.migrate_state(raw))
+        try:
+            jstat = state_journal.journal_path(job_id, output_dir=output_dir).stat()
+            identity = (jstat.st_dev, jstat.st_ino)
+        except OSError:
+            identity = None
+        path = str(p.absolute())
+        state, offset = None, 0
+        if not force_reload:
+            for previous, metadata in _STATE_REPLAY.items():
+                previous_path, previous_identity, previous_offset = metadata
+                if (previous[:3] == signature[:3] and previous_path == path
+                        and previous[4] <= signature[4]
+                        and previous_offset <= signature[4]
+                        and (previous_identity == identity or previous[4] == 0)):
+                    state = _isolated_copy(_STATE_CACHE[previous])
+                    offset = previous_offset
+                    break
+        if state is None:
+            _STATS["disk_reads"] += 1
+            profiler.count("load_job_state_disk_read")
+            try:
+                raw = json.loads(read_shared_text(p))
+            except Exception:
+                return None
+            state = _delivery.normalize_state_findings(_state_migration.migrate_state(raw))
+            state.setdefault("snapshot_revision", 0)
         # The journal holds every translation batch committed after this
         # snapshot.  Replaying it here -- before the reconcile steps, which
         # compare against the current pairs -- is what makes a crash cost
         # replay instead of re-translation.  It is pure I/O and never calls a
-        # model; with nothing to replay it is a single tail read.
-        state_journal.replay(job_id, state, output_dir=output_dir)
+        # model. Cached loads resume at the last complete line instead of
+        # parsing the book's full journal again for every new batch.
+        report = state_journal.replay_from(
+            job_id, state, offset, output_dir=output_dir, end_offset=signature[4])
         _translation_evidence.reconcile_runtime_review_truth(state)
         state = core._reconcile_final_delivery_snapshot(job_id, state)
 
@@ -262,9 +338,13 @@ def load_job_state_cached(
         # and each holds a full copy of the state.
         for stale in [k for k in _STATE_CACHE if k[0] == signature[0]]:
             del _STATE_CACHE[stale]
+            _STATE_REPLAY.pop(stale, None)
         if len(_STATE_CACHE) >= _STATE_CACHE_MAX_ENTRIES:
-            _STATE_CACHE.popitem(last=False)
+            evicted, _ = _STATE_CACHE.popitem(last=False)
+            _STATE_REPLAY.pop(evicted, None)
         _STATE_CACHE[signature] = state
+        if not report["gap"]:
+            _STATE_REPLAY[signature] = (path, identity, report["byte_offset"])
 
         return _isolated_copy(state)
 
@@ -318,13 +398,22 @@ def save_job_state_atomic(
             _write_bytes(tmp, encoded)
             sink.written(len(encoded))
         with _pprof.phase("atomic_replace"):
+            # Capture the temporary file's identity before replacement. A
+            # post-replace stat could accidentally identify a newer writer's
+            # file as ours when this low-level API is called without a lock.
+            written_signature = _snapshot_file_signature(tmp.stat())
             replace_file(tmp, dest)
     finally:
         tmp.unlink(missing_ok=True)
 
     # Invalidate cache for this job_id so next read picks up the new file stat
     with _pprof.phase("cache_invalidation"):
-        invalidate_cache(job_id)
+        with _STATE_CACHE_LOCK:
+            invalidate_cache(job_id)
+            _SNAPSHOT_REVISIONS[str(dest.absolute())] = (
+                written_signature, int(state.get("snapshot_revision") or 0))
+            if len(_SNAPSHOT_REVISIONS) > _STATE_CACHE_MAX_ENTRIES:
+                _SNAPSHOT_REVISIONS.popitem(last=False)
 
     # Derived read-model: save summary.json during this write path
     try:
@@ -380,9 +469,34 @@ def save_job_summary(
     """Atomically write summary.json for a job during a mutation path."""
     from folith import persistence_profiler as _pprof
 
-    d = _ensure_job_dir(_get_output_dir(output_dir), job_id)
     with _pprof.phase("summary_build"):
         summary = build_job_summary(job_id, state)
+    _write_job_summary(job_id, summary, output_dir)
+
+
+def update_job_summary_progress(job_id: str, state: Dict[str, Any],
+                                translated_count: int,
+                                output_dir: Optional[Path] = None) -> None:
+    """Refresh only the volatile card fields after a durable batch append.
+
+    The commit path already knows the translated count; rebuilding the full
+    attention/findings/entity summary or recounting all pairs per batch would
+    make this small read model quadratic too.
+    """
+    import core
+    summary = load_job_summary(job_id, output_dir)
+    if summary is None:
+        summary = build_job_summary(job_id, state)
+    total = max(len(state.get("paras") or []), len(state.get("pairs") or []))
+    summary.update(segment_count=total,
+                   progress_percent=min(100, round(100 * translated_count / total)) if total else None,
+                   progress_label=core.progress_label(state))
+    _write_job_summary(job_id, summary, output_dir)
+
+
+def _write_job_summary(job_id, summary, output_dir):
+    from folith import persistence_profiler as _pprof
+    d = _ensure_job_dir(_get_output_dir(output_dir), job_id)
     with _pprof.phase("summary_serialization") as sink:
         encoded = json.dumps(summary, **_COMPACT_JSON).encode("utf-8")
         sink.serialized(len(encoded))

@@ -618,7 +618,7 @@ def test_save_waits_out_a_finishing_worker_instead_of_refusing():
         timer = _hold_worker_lock(job_id, 0.4)
         started = time.monotonic()
         try:
-            core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+            core.save_job_state(job_id, core.load_job_state(job_id))
         finally:
             timer.join(5)
         elapsed = time.monotonic() - started
@@ -647,3 +647,24 @@ def test_save_is_still_refused_immediately_while_the_run_is_active():
         assert "任务正在后台处理" in str(refused.value)
         # No settle loop for an active run: it fails on the ownership check.
         assert elapsed < 0.5, f"an active run made the save wait {elapsed:.3f}s"
+
+
+def test_nested_store_lock_survives_locked_file_resolution_failure(tmp_path, monkeypatch):
+    # Windows can refuse resolving an already-open lock file. The outer lock's
+    # resolved key must still match a nested save's key; falling back to the raw
+    # spelling (e.g. a short temp path or one containing '..') deadlocks itself.
+    (tmp_path / "nested").mkdir()
+    target = tmp_path / "nested" / ".." / "task.state.lock"
+    real_resolve = Path.resolve
+
+    def resolve(path, *args, **kwargs):
+        if path == target and target.exists():
+            raise PermissionError("cannot resolve the open lock file")
+        return real_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    with store_lock.mutation_lock(target, timeout=0.1):
+        assert store_lock.held_by_this_thread(target)
+        with store_lock.mutation_lock(target, timeout=0.1):
+            assert store_lock.held_by_this_thread(target)
+    assert not store_lock.held_by_this_thread(target)

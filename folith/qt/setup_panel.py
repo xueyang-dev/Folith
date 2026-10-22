@@ -1019,7 +1019,7 @@ class TaskSetupPanel(QWidget):
         self.concurrency_box.setMinimumWidth(76)
         advanced.addWidget(_setting_row(
             i18n.tr('并发请求数'), self.concurrency_box,
-            i18n.tr('同时向模型发出的批次请求数；并发越高越快，但跨批上下文衔接会变弱，边界处措辞可能不同')))
+            i18n.tr('同时请求的批次数；提高并发可能加速，也可能影响上下文衔接。重视连续性可选 1。')))
 
         self.batch_seg = style_module.SegmentedControl([])
         self.batch_seg.changed.connect(lambda _v: self._sync_batch_hint())

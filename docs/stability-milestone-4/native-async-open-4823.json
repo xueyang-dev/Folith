@@ -1,0 +1,23 @@
+{
+  "platform": "cocoa",
+  "frozen": false,
+  "segments": 4823,
+  "pairs": 4823,
+  "open_dispatch_s": 0.011578166973777115,
+  "open_applied_s": 0.9331201249733567,
+  "all_cells_and_heights_s": 2.282737582921982,
+  "open_max_20ms_timer_gap_ms": 236.66554200462997,
+  "idle_wall_s": 30.0001262499718,
+  "idle_cpu_s": 1.3126669999999998,
+  "idle_cpu_percent_one_core": 4.375538252947298,
+  "idle_max_20ms_timer_gap_ms": 37.90866700001061,
+  "last_segment_selection": [
+    4822
+  ],
+  "scope": "Source native open/idle only, completed real PDF with offline short targets and existing completeness blockers; no export or live translation acceptance.",
+  "implementation": {
+    "base_commit": "0a8735e8ed56080ac5fb1a16952f04453a38a7f7",
+    "worktree_dirty": true,
+    "changes": "asynchronous open, prepared projections, bounded grid painting"
+  }
+}

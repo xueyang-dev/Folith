@@ -5022,7 +5022,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         nonlocal truncated_indexes, _pending_snapshot_batches, _cadence
         nonlocal _journal_seq, _journal_bytes_written, _journal_enabled
         nonlocal _journal_retire_pending
+        nonlocal _translated_pair_count
         pairs.extend(batch_pairs)
+        _translated_pair_count += sum(bool(str(pair.get("target") or "").strip())
+                                      for pair in batch_pairs)
         changed_indexes = list(range(offset, offset + len(batch_pairs)))
         if changed_indexes:
             # Measured separately from the save itself: recording the truth
@@ -5058,6 +5061,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 _journal_bytes_written += _written
                 _journal_stats["records"] += 1
                 _journal_stats["bytes"] += _written
+                try:
+                    _job_repo.update_job_summary_progress(
+                        job_id, state, _translated_pair_count)
+                except OSError:
+                    # The journal is durable; a derived card refresh must not
+                    # discard that commit. The next batch/snapshot refreshes it.
+                    pass
         # Only a *missing* record while the journal is on is a problem.  With the
         # journal off there is nothing to describe, and the bounded cadence is
         # the durability mechanism -- exactly as before this round.
@@ -6598,6 +6608,9 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     # One baseline snapshot per run closes that hole; it is not per-batch.
     if _journal_enabled and start_batch < len(batches):
         _flush_state_snapshot("journal_baseline")
+
+    _translated_pair_count = sum(bool(str(pair.get("target") or "").strip())
+                                 for pair in pairs)
 
     try:
         _resume_knowledge_pending()
@@ -8529,6 +8542,8 @@ def generate_report_qa(job_id, state=None, *, save_file=False):
     """Build the concise QA report and bind it to current artifact hashes."""
     from folith import academic_evidence, academic_writer
     state = state or load_job_state(job_id) or {}
+    if save_file:
+        _check_snapshot_revision(job_id, state)
     report_record = load_academic_artifact(job_id, "report") or {}
     render_record = load_academic_artifact(job_id, "libreoffice_render") or {}
     final_docx = load_academic_artifact(job_id, "final_docx_validation") or {}
@@ -8585,6 +8600,7 @@ def save_compliance_record(job_id, state=None):
     """Persist the current compliance and language-constraint artifacts."""
     from folith import academic_evidence, academic_writer, compliance
     state = state or load_job_state(job_id) or {}
+    _check_snapshot_revision(job_id, state)
     result = compliance_profile_view(job_id, state)
     academic = state.get("academic_state") or {}
     records = academic.get("artifacts") or {}
@@ -8887,6 +8903,7 @@ def run_libreoffice_render_qa(job_id, state=None):
     state = state or load_job_state(job_id)
     if state is None:
         raise ValueError(f"找不到任务 {job_id}")
+    _check_snapshot_revision(job_id, state)
     docx = report_docx_bytes(job_id, state)
     document_kind = "report"
     if docx is None:
@@ -9070,6 +9087,18 @@ def load_job_state(job_id):
     return _job_repo.load_job_state_cached(job_id)
 
 
+def _check_snapshot_revision(job_id, state):
+    """Reject a snapshot another transaction has already superseded."""
+    current = _job_repo.snapshot_revision(job_id)
+    if current is None:
+        # Preserve the existing directory-loss recovery contract: when there
+        # is no persisted snapshot, the caller's state can recreate it.
+        return int(state.get("snapshot_revision") or 0)
+    if int(state.get("snapshot_revision") or 0) != current:
+        raise RuntimeError("任务状态已更新，请重新读取后重试。")
+    return current
+
+
 # A worker writes its terminal runtime status before it closes ``.worker.lock``.
 # A save that lands in that gap used to be refused even though nothing was
 # running any more — the intermittent "任务正在后台处理" failure that shows up
@@ -9098,6 +9127,7 @@ def _acquire_save_worker_lock(job_id, runtime):
     return None
 
 
+@_serialized_job_mutation
 def save_job_state(job_id, state):
     """原子写入（先写临时文件再替换），避免中断写坏 state.json，并同步派生 summary.json。
 
@@ -9117,11 +9147,19 @@ def save_job_state(job_id, state):
         if execution_lock is None:
             raise RuntimeError("任务正在后台处理，请等待完成后保存；草稿可以保留。")
     try:
+        revision = _check_snapshot_revision(job_id, state)
         _reconcile_translation_failures(state)
+        had_revision = "snapshot_revision" in state
+        state["snapshot_revision"] = revision + 1
         try:
             _job_repo.save_job_state_atomic(job_id, state)
-        except OSError as exc:
-            _workflow_errors.raise_if_fatal(exc, job_id)
+        except BaseException as exc:
+            if had_revision:
+                state["snapshot_revision"] = revision
+            else:
+                state.pop("snapshot_revision", None)
+            if isinstance(exc, OSError):
+                _workflow_errors.raise_if_fatal(exc, job_id)
             raise
         try:
             _state_journal.rotate_if_applied(job_id, state)
@@ -9522,6 +9560,7 @@ def report_docx_bytes(job_id, state=None, frozen_assets=None):
     if frozen_assets and frozen_assets.get("stage3_report.docx"):
         return frozen_assets["stage3_report.docx"]
     state = state or load_job_state(job_id) or {}
+    _check_snapshot_revision(job_id, state)
     report = state.get("p3_md")
     if not report:
         return None
@@ -9616,10 +9655,13 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     _record_delivery_validation_findings(state, validation)
     if validation["blocking"]:
         save_job_state(job_id, state)
-        reasons = "；".join(
-            issue.get("message", "目标文本未通过交付检查")
-            for issue in validation.get("issues") or []
-        )
+        blockers = [issue.get("message", "目标文本未通过交付检查")
+                    for issue in validation.get("issues") or []
+                    if issue.get("severity") == "blocking"]
+        blockers.extend(finding.get("summary") or finding.get("reason")
+                        or "目标文本未通过交付检查"
+                        for finding in validation.get("blocking_findings") or [])
+        reasons = "；".join(dict.fromkeys(blockers))
         raise RuntimeError(
             "交付被 Translation Target Invariant 阻止"
             + (f"：{reasons}" if reasons else "")
@@ -9813,8 +9855,10 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
 
 
 
+@_serialized_job_mutation
 def build_delivery_assets(job_id, state=None, target_lang="", provider="", model=""):
     state = state or load_job_state(job_id) or {}
+    _check_snapshot_revision(job_id, state)
     with _delivery_timing(job_id, state, "delivery_assets"):
         return _delivery_asset_bundle(
             job_id, state, target_lang or state.get("target_lang") or "",
@@ -11033,7 +11077,9 @@ def generate_mti_report(bilingual_pairs, termbase_dict, theory, provider, api_ke
         research_settings=research_settings, literature_sources=literature_sources,
         on_status=on_status,
     )
-    save_compliance_record(job_id, load_job_state(job_id) or state)
+    # Keep the pipeline's owned state current. Saving a separately loaded copy
+    # here used to let the caller's next full save discard compliance records.
+    save_compliance_record(job_id, state)
     return report_md
 
 

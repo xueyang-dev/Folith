@@ -1,0 +1,4 @@
+exit_code	kind	file	seconds	result
+0	pytest	qt_client_adapter_test.py	32	59 passed
+0	pytest	qt_motion_test.py	10	24 passed
+0	pytest	qt_task_defaults_test.py	1	13 passed

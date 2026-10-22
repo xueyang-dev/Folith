@@ -97,13 +97,49 @@ if ($NoOcr) {
 }
 
 Write-Host "=== PyInstaller ==="
-& $Python -m PyInstaller --noconfirm `
-    --distpath $DistDir --workpath (Join-Path $OutDir "work") `
-    (Join-Path $Root "packaging\folith-qt.spec")
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+# Dependency analysis also searches PATH. Unrelated applications (e.g. Poppler)
+# can provide an incompatible icuuc.dll under the same name as Windows ICU.
+# Keep the interpreter and Windows directories; wheel DLLs and staged OCR DLLs
+# are discovered from their package/payload locations, not the caller's PATH.
+$BuildPath = @((Split-Path -Parent $Python),
+    (Join-Path $env:SystemRoot "System32"), $env:SystemRoot) -join ";"
+$CallerPath = $env:PATH
+try {
+    $env:PATH = $BuildPath
+    Write-Host "PyInstaller PATH: $BuildPath"
+    & $Python -m PyInstaller --clean --noconfirm `
+        --distpath $DistDir --workpath (Join-Path $OutDir "work") `
+        (Join-Path $Root "packaging\folith-qt.spec")
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+} finally {
+    $env:PATH = $CallerPath
+}
 
 $Exe = Join-Path $BundleDir "Folith.exe"
 if (-not (Test-Path -LiteralPath $Exe)) { throw "the frozen executable is missing: $Exe" }
+# Exercise QtCore and the actual windows plugin before producing distributables.
+$SmokeResult = Join-Path $OutDir "frozen-smoke.json"
+if (Test-Path -LiteralPath $SmokeResult) { Remove-Item -LiteralPath $SmokeResult -Force }
+$CallerQtPlatform = $env:QT_QPA_PLATFORM
+try {
+    $env:QT_QPA_PLATFORM = "windows"
+    $SmokeData = Join-Path $OutDir "smoke-data"
+    $SmokeProcess = Start-Process -FilePath $Exe -ArgumentList @(
+        "--smoke", "--data-dir", "`"$SmokeData`"", "--result", "`"$SmokeResult`"") -PassThru
+    if (-not $SmokeProcess.WaitForExit(60000)) {
+        $SmokeProcess.Kill()
+        throw "the frozen Windows startup smoke timed out (check for a startup error dialog)"
+    }
+    if ($SmokeProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $SmokeResult)) {
+        throw "the frozen Windows startup smoke failed"
+    }
+} finally {
+    $env:QT_QPA_PLATFORM = $CallerQtPlatform
+}
+$Smoke = Get-Content -LiteralPath $SmokeResult -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not $Smoke.ok -or $Smoke.platform -ne "windows") {
+    throw "the frozen smoke did not pass on the native windows platform"
+}
 # The uninstaller removes exactly these entries (never the whole folder), so a
 # new top-level file would be left behind after uninstalling.
 $TopLevel = @(Get-ChildItem -LiteralPath $BundleDir -Force | ForEach-Object { $_.Name })

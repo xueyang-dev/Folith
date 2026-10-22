@@ -1061,7 +1061,7 @@
   "参考已保存的历史译文": "Usar traducciones guardadas anteriormente",
   "只在本机 OCR 时生效；视觉理解固定按 150 DPI 送图，这一项无效。": "Solo se aplica al OCR local. La comprensión visual usa imágenes de 150 DPI e ignora este ajuste.",
   "只影响没有可用文本层的页面（扫描件）；文本层 PDF 与 DOCX 不走这一步。": "Solo afecta a páginas sin una capa de texto utilizable, como los escaneos. Los PDF con texto y los archivos DOCX omiten este paso.",
-  "同时向模型发出的批次请求数；并发越高越快，但跨批上下文衔接会变弱，边界处措辞可能不同": "Solicitudes por lotes enviadas al modelo a la vez; más es más rápido, pero el contexto entre lotes se debilita y la redacción en los límites puede variar",
+  "同时请求的批次数；提高并发可能加速，也可能影响上下文衔接。重视连续性可选 1。": "Número de solicitudes de lotes simultáneas. Una mayor concurrencia puede acelerar el proceso, pero afectar a la continuidad. Elige 1 si la continuidad es prioritaria.",
   "含文档画像": "Incluye perfil del documento",
   "完成初译后进行额外检查": "Realizar comprobaciones adicionales tras la traducción inicial",
   "审定并锁定术语": "Aprobar y bloquear términos",

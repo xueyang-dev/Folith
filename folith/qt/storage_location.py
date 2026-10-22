@@ -11,8 +11,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
-ORGANIZATION = "Folith"
-APPLICATION = "QtDesktop"
+from . import preferences
+
+ORGANIZATION = preferences.ORGANIZATION
+APPLICATION = preferences.APPLICATION
 LOCATION_KEY = "storage/data_dir"
 
 
@@ -47,7 +49,7 @@ def inside_application_dir(path: str | Path, app_dir: Path | None = None) -> boo
 
 
 def _settings() -> QSettings:
-    return QSettings(ORGANIZATION, APPLICATION)
+    return preferences.settings()
 
 
 def saved_data_dir() -> str:

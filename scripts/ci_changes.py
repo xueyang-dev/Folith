@@ -67,7 +67,7 @@ RISK_PATH = re.compile(
 RISK_TESTS = (
     "state_", "journal", "persistence", "storage", "migration", "recovery",
     "resume", "runtime_", "lock", "atomic", "concurrency", "scheduler",
-    "worker", "checkpoint", "snapshot", "task_overview_state",
+    "worker", "checkpoint", "snapshot", "task_overview_state", "knowledge_async",
 )
 
 DOC_TEST_MARKERS = re.compile(r'"docs"|docs/|README|release-notes')

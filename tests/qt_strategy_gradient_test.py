@@ -238,6 +238,45 @@ def test_source_size_reads_the_text_layer_without_a_model(tmp_path, data_dir):
     assert size["approximate"] is False
 
 
+def test_pdf_size_estimate_skips_layout_ingestion(tmp_path, data_dir, monkeypatch):
+    import fitz
+
+    document = fitz.open()
+    page = document.new_page()
+    text = "This paragraph estimates translation work without rebuilding layout. " * 6
+    page.insert_textbox(fitz.Rect(40, 40, 550, 500), text)
+    source = tmp_path / "estimate.pdf"
+    source.write_bytes(document.tobytes())
+    document.close()
+    config = adapter.EngineConfig(target_lang="简体中文")
+    job = adapter.import_documents([str(source)], config)[0]
+    assert job.ok
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("PDF size estimates must not invoke full document ingestion")
+
+    monkeypatch.setattr(core, "extract_document_paragraphs_with_report", forbidden)
+    size = adapter.source_size(job.job_id)
+    assert size["chars"] > 300
+    assert size["segments"] == 1
+    assert size["approximate"] is True
+
+
+def test_scanned_pdf_size_keeps_the_page_estimate(tmp_path, data_dir):
+    import fitz
+
+    document = fitz.open()
+    document.new_page()
+    document.new_page()
+    source = tmp_path / "scanned.pdf"
+    source.write_bytes(document.tobytes())
+    document.close()
+    job = adapter.import_documents([str(source)], adapter.EngineConfig())[0]
+    assert job.ok
+    assert adapter.source_size(job.job_id) == {
+        "segments": 16, "chars": 3600, "approximate": True}
+
+
 def test_the_mode_cards_show_each_modes_cost(tmp_path, data_dir):
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication

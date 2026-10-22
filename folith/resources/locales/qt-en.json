@@ -1061,7 +1061,7 @@
   "参考已保存的历史译文": "Use previously saved translations",
   "只在本机 OCR 时生效；视觉理解固定按 150 DPI 送图，这一项无效。": "Applies only to local OCR. Visual understanding uses 150 DPI images and ignores this setting.",
   "只影响没有可用文本层的页面（扫描件）；文本层 PDF 与 DOCX 不走这一步。": "Only affects pages without a usable text layer, such as scans. Text-layer PDFs and DOCX files skip this step.",
-  "同时向模型发出的批次请求数；并发越高越快，但跨批上下文衔接会变弱，边界处措辞可能不同": "Batch requests sent to the model at once; higher is faster, but cross-batch context gets weaker, so wording at boundaries may differ",
+  "同时请求的批次数；提高并发可能加速，也可能影响上下文衔接。重视连续性可选 1。": "Number of simultaneous batch requests. More concurrency may be faster but can affect continuity. Choose 1 when continuity matters.",
   "含文档画像": "Includes document profile",
   "完成初译后进行额外检查": "Run extra checks after the initial translation",
   "审定并锁定术语": "Approve and lock terms",

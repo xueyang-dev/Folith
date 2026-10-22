@@ -24,8 +24,9 @@ import time
 import weakref
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRectF, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
+from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
 )
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
 from folith.desktop import paths as desktop_paths
 from folith.desktop import single_instance
 
-from . import i18n, platform_ui
+from . import i18n, platform_ui, preferences
 from . import adapter
 from . import bootstrap
 from . import dialogs
@@ -185,7 +186,7 @@ class MainWindow(QMainWindow):
         # 这里若再写一次 `from . import bootstrap`，整个 __init__ 里的
         # bootstrap 都会变成局部变量，从而在本行抛 UnboundLocalError。）
         self._log = bootstrap.appender()
-        self.settings = QSettings("Folith", "QtDesktop")
+        self.settings = preferences.settings()
         # 界面语言：环境变量优先（脚本化验收与多语言截图要用），其次是设置里保存的值。
         # 必须在建菜单/建视图**之前**确定，否则第一屏还是上一门语言。
         i18n.set_language(
@@ -241,6 +242,8 @@ class MainWindow(QMainWindow):
         self._last_notice = ""
 
         self._current_job_id = ""
+        self._open_request = None
+        self._opening_job_id = ""
         self._rows_cache: tuple | None = None  # (job_id+drafts 签名, state 对象, rows)
         self._cached_state: dict = {}
         self._cached_signature = ""
@@ -729,12 +732,13 @@ class MainWindow(QMainWindow):
         actions = getattr(self, "menu_actions", None)
         if not actions:
             return
-        on_workbench = self.stack.currentWidget() is self.workbench
+        opening = bool(self._opening_job_id)
+        on_workbench = self.stack.currentWidget() is self.workbench and not opening
         workbench = self.workbench
         states = {
             "import": True,
             # 「任务列表」在任务、项目、术语页都有地方可去；已经在列表上时置灰。
-            "home": self.stack.currentWidget() is not self.home,
+            "home": opening or self.stack.currentWidget() is not self.home,
             "settings": True,
             "close": True,
             "about": True,
@@ -954,11 +958,11 @@ class MainWindow(QMainWindow):
         self.refresh_projects()
 
     def open_library_job(self, job_id: str, index: int) -> None:
-        self.open_job(job_id)
-        if index >= 0 and self.stack.currentWidget() is self.workbench:
-            self.workbench.show_segment_for_edit(index)
+        self.open_job(job_id, after_open=(
+            lambda: self.workbench.show_segment_for_edit(index)) if index >= 0 else None)
 
     def show_home(self) -> None:
+        self._cancel_open_job()
         self.workbench.flush_draft()
         returning = self._current_job_id if self.stack.currentWidget() is self.workbench else ""
         overview = self._overview_document() if returning else None
@@ -1099,8 +1103,9 @@ class MainWindow(QMainWindow):
                 # 内容再重置一次（实测：编辑器被清空、正文变成空态）。
                 if open_result and self._current_job_id != results[0].job_id:
                     with timing.phase("open_job"):
-                        self.open_job(results[0].job_id)
-                if decision:
+                        self.open_job(results[0].job_id,
+                                      after_open=self.start_or_resume if decision else None)
+                elif decision:
                     self.start_or_resume()
             timing.flush()
 
@@ -1163,7 +1168,7 @@ class MainWindow(QMainWindow):
             paper = overview[0]
             paper.set_ghost(True)
             components.DocumentFlight(self, pixmap, start, end, opening=True, land=True,
-                                      on_done=lambda: paper.set_ghost(False))
+                                      on_done=lambda: paper.set_ghost(False) if isValid(paper) else None)
             return
         components.DocumentFlight(self, pixmap, start, end, opening=opening)
 
@@ -1175,11 +1180,12 @@ class MainWindow(QMainWindow):
         start = origin if origin is not None else self._content_rect(
             card_rect.width() / max(1.0, card_rect.height()))
         card = self.home._cards.get(job_id)
-        if card is not None:
-            card.paper.set_ghost(True)
+        paper = card.paper if card is not None else None
+        if paper is not None:
+            paper.set_ghost(True)
         components.DocumentFlight(
             self, pixmap, start, card_rect, opening=False, land=origin is not None,
-            on_done=lambda: card.paper.set_ghost(False) if card is not None else None)
+            on_done=lambda: paper.set_ghost(False) if paper is not None and isValid(paper) else None)
 
     #: Tasks with at least this many segments get the loading overlay: building the
     #: grid takes long enough on the UI thread for the window to look frozen.
@@ -1196,35 +1202,97 @@ class MainWindow(QMainWindow):
         if overlay is not None:
             overlay.dismiss()
 
-    def open_job(self, job_id: str) -> None:
+    def _cancel_open_job(self) -> None:
+        self._open_request = None
+        self._opening_job_id = ""
+        self.workbench.setEnabled(True)
+        self._sync_menu_state()
+        self._hide_loading()
+
+    def open_job(self, job_id: str, *, after_open=None) -> None:
+        """Read a task off-thread, then apply only the latest navigation request."""
         if not job_id:
             return
-        timing = _PhaseLog(self._log, "open_job", job_id)
         flight = self._card_document(job_id)
         self.workbench.flush_draft()
-        with timing.phase("load_state"):
-            state = adapter.load_state(job_id)
-        if not state:
-            self._failure(i18n.tr('无法打开任务'), i18n.tr('任务 {v0} 的状态文件不可读。', v0=job_id), task=False)
-            self.refresh_home()
-            return
+        request = object()
+        self._open_request = request
+        self._opening_job_id = job_id
+        self.workbench.setEnabled(False)
+        self._sync_menu_state()
+        self._show_loading(i18n.tr('正在打开任务…'))
+        timing = _PhaseLog(self._log, "open_job", job_id)
+        config = dataclasses.replace(self.config)
+
+        def read(*, on_progress):
+            signature = adapter.state_signature(job_id)
+            with timing.phase("load_state"):
+                state = adapter.load_state(job_id)
+            on_progress(1, 5)
+            if not state:
+                return None
+            drafts_signature = adapter.drafts_signature(job_id)
+            with timing.phase("segment_rows"):
+                rows = adapter.segment_rows(job_id, state)
+            on_progress(2, 5)
+            with timing.phase("delivery_snapshots"):
+                snapshots = adapter.delivery_snapshots(job_id)
+            on_progress(3, 5)
+            with timing.phase("delivery_preview"):
+                preview = adapter.delivery_preview(job_id, config, state=state)
+            on_progress(4, 5)
+            with timing.phase("review_queue"):
+                review = adapter.review_queue(job_id, state)
+            on_progress(5, 5)
+            runtime = adapter.runtime_view(job_id, state)
+            return state, signature, rows, snapshots, {
+                "delivery": preview, "review": review, "runtime": runtime,
+                "drafts_signature": drafts_signature}
+
+        def done(payload):
+            if self._open_request is not request or self._closing_accepted:
+                return
+            self._open_request = None
+            self._opening_job_id = ""
+            self.workbench.setEnabled(True)
+            self._sync_menu_state()
+            if payload is None:
+                self._hide_loading()
+                self._failure(i18n.tr('无法打开任务'),
+                              i18n.tr('任务 {v0} 的状态文件不可读。', v0=job_id), task=False)
+                self.refresh_home()
+                timing.flush()
+                return
+            self._apply_open_job(job_id, payload, flight, timing)
+            if after_open is not None:
+                after_open()
+
+        def failed(message, detail):
+            if self._open_request is not request or self._closing_accepted:
+                return
+            self._cancel_open_job()
+            timing.flush()
+            self._failure(i18n.tr('无法打开任务'), message, detail, task=False)
+
+        def progress(completed, total):
+            if self._open_request is request and not self._closing_accepted:
+                self._loading_overlay.set_progress(completed, total)
+
+        self.runner.submit(read, on_done=done, on_error=failed,
+                           on_progress=progress, label="open-job")
+
+    def _apply_open_job(self, job_id, payload, flight, timing) -> None:
+        state, signature, rows, snapshots, prepared = payload
         if job_id != self._current_job_id:
             self.workbench.setup_panel.reset_style_profile()
         self._current_job_id = job_id
         self._cached_state = state
-        self._cached_signature = adapter.state_signature(job_id)
+        self._cached_signature = signature
+        self._rows_cache = ((job_id, prepared["drafts_signature"]), state, rows)
         # 上一次的终态不该影响新任务的"终态变化"判断（节流键已含任务标识，
         # 这里只是让状态本身不跨任务残留）。
         self._last_runtime_status = ""
-        loading = len(state.get("pairs") or state.get("paras") or []) >= self.LOADING_SEGMENTS
-        if loading:
-            self._show_loading(i18n.tr('正在打开任务…'))
-        with timing.phase("segment_rows"):
-            rows = adapter.segment_rows(job_id, state)
-        with timing.phase("delivery_snapshots"):
-            snapshots = adapter.delivery_snapshots(job_id)
-        # 大任务（几千段）在这里要在 GUI 线程算交付预检、术语与原页，可达 1–2 秒。
-        # 没法在不改核心的前提下挪到后台，至少让用户看到"正在打开"而不是窗口冻结。
+        # Only widget updates remain here; file reads and projections are ready.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         opening = i18n.tr('正在打开任务…')
         self._last_notice = opening
@@ -1234,7 +1302,8 @@ class MainWindow(QMainWindow):
             with timing.phase("setup_panel"):
                 self._load_setup(job_id, state)
             with timing.phase("workbench.load"):
-                self.workbench.load(job_id, self.config, state, rows, snapshots)
+                self.workbench.load(job_id, self.config, state, rows, snapshots,
+                                    prepared=prepared)
             self.stack.setCurrentWidget(self.workbench)
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
@@ -1244,7 +1313,7 @@ class MainWindow(QMainWindow):
             # second time (~1.5 s on a book-length task).  An ordinary refresh
             # only syncs the run state and menus while the signature is unchanged.
             with timing.phase("refresh_workbench"):
-                self.refresh_workbench()
+                self._poll_workbench()
             self._fly(flight, opening=True, overview=self._overview_document())
         finally:
             QApplication.restoreOverrideCursor()
@@ -1409,6 +1478,7 @@ class MainWindow(QMainWindow):
 
     def manage_projects(self) -> None:
         """「项目」：切到项目页（侧栏保持在左侧）。"""
+        self._cancel_open_job()
         self.workbench.flush_draft()
         self._current_job_id = ""
         self.stack.setCurrentWidget(self.projects)
@@ -1548,6 +1618,8 @@ class MainWindow(QMainWindow):
 
     # ================= workbench =================
     def _poll(self) -> None:
+        if self._opening_job_id:
+            return
         if self.stack.currentWidget() is self.workbench:
             self._poll_workbench()
         else:
@@ -1721,34 +1793,53 @@ class MainWindow(QMainWindow):
         if signature == self._cached_signature:
             self.refresh_workbench()
             return
+        cached_at_start = self._cached_signature
         self._state_load_in_flight = True
 
-        def done(state) -> None:
+        def read():
+            state = adapter.load_state(job_id)
+            try:
+                review = adapter.review_queue(job_id, state) if state else {}
+            except Exception:  # noqa: BLE001 - match the panel's projection boundary
+                review = {}  # a failed review projection must not hide committed pairs
+            return state, {"review": review}
+
+        def done(payload) -> None:
             self._state_load_in_flight = False
-            if job_id != self._current_job_id:
+            if (job_id != self._current_job_id or self._opening_job_id
+                    or self._closing_accepted):
                 return
+            # An explicit refresh/edit can finish while this background read is
+            # still preparing its review queue. Keep that newer GUI snapshot.
+            if self._cached_signature not in (cached_at_start, signature):
+                return
+            state, prepared = payload
             if not state or self._cached_signature == signature:
                 # Unreadable (refresh reports it) or already refreshed meanwhile.
                 self.refresh_workbench()
                 return
             self._cached_state = state
             self._cached_signature = signature
-            self.refresh_workbench(preloaded=True)
+            self.refresh_workbench(preloaded=True, prepared=prepared)
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
 
-        self.runner.submit(adapter.load_state, job_id, on_done=done, on_error=failed,
+        self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-state")
 
-    def refresh_workbench(self, *, force: bool = False, preloaded: bool = False) -> None:
+    def refresh_workbench(self, *, force: bool = False, preloaded: bool = False,
+                          prepared: dict | None = None) -> None:
+        if self._opening_job_id:
+            return
         job_id = self._current_job_id
         if not job_id:
             return
         # The once-a-second background refresh is only logged when it is slow.
         timing = _PhaseLog(self._log, "refresh_workbench", job_id, min_ms=self.SLOW_REFRESH_MS)
         try:
-            self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded)
+            self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded,
+                                    prepared=prepared)
         finally:
             timing.flush()
             self._hide_loading()
@@ -1757,7 +1848,7 @@ class MainWindow(QMainWindow):
     SLOW_REFRESH_MS = 150
 
     def _refresh_workbench(self, job_id: str, timing: _PhaseLog, *, force: bool,
-                           preloaded: bool) -> None:
+                           preloaded: bool, prepared: dict | None = None) -> None:
         signature = adapter.state_signature(job_id)
         changed = preloaded or signature != self._cached_signature
         if (changed or force) and not preloaded:
@@ -1794,7 +1885,7 @@ class MainWindow(QMainWindow):
         self._last_runtime_status = status
         with timing.phase("workbench.apply"):
             self.workbench.apply(job_id, state, rows, runtime, snapshots,
-                                 refresh_delivery=force or terminal_change)
+                                 refresh_delivery=force or terminal_change, prepared=prepared)
         self._sync_menu_state()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
         self._later(600, lambda: self._offer_tips(runtime))
@@ -3357,6 +3448,7 @@ class MainWindow(QMainWindow):
             event.accept()
 
     def _release_instance(self) -> None:
+        self._cancel_open_job()
         self.timer.stop()
         try:
             self.settings.setValue("geometry", self.saveGeometry())
@@ -3558,6 +3650,12 @@ class FolithApplication(QApplication):
             # 事件已消费：返回 True，避免 Qt 再走默认处理（默认处理会忽略它）。
             return True
         return super().event(event)
+
+
+#: A probe run must not read or write the developer's real preferences.  Set to
+#: a directory by `scripts/qt_desktop_probe.py` (source and frozen runs alike);
+#: unset in normal use, where the platform's own preferences are correct.
+SETTINGS_DIR_ENV = preferences.SETTINGS_DIR_ENV
 
 
 def build_application(argv: list[str] | None = None) -> QApplication:

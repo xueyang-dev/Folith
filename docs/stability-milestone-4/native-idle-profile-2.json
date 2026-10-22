@@ -1,0 +1,11 @@
+{
+  "platform": "cocoa",
+  "segments": 40,
+  "open_s": 1.9302058749599382,
+  "sample_wall_s": 30.00857970805373,
+  "cpu_s": 0.7919429999999998,
+  "cpu_percent_one_core": 2.6390552558788962,
+  "beats": 1488,
+  "max_event_gap_s": 0.12088620895519853,
+  "scope": "native Cocoa source client, same isolated partial task; open plus 30-second idle event loop under cProfile. Rows include committed pairs only, not all source segments."
+}

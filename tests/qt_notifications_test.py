@@ -1,6 +1,8 @@
 """P6: notification routing, readable errors, timeout and cheap card facts."""
 from __future__ import annotations
 
+from folith.qt.selftest import open_job_and_wait
+
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -31,7 +33,7 @@ def _job(core, name):
 def test_task_error_is_nonmodal_persistent_and_readable(window, app, monkeypatch):
     main, core = window['window'], window['core']
     _job(core, 'one')
-    main.open_job('one')
+    open_job_and_wait(main, 'one')
     main.workbench.focus_editor()
     focus = app.focusWidget()
     monkeypatch.setattr('folith.qt.prompts.NoticeDialog.notify',
@@ -59,7 +61,7 @@ def test_background_result_belongs_to_original_task(window, app):
     main, core = window['window'], window['core']
     for name in ('one', 'two'):
         _job(core, name)
-    main.open_job('two')
+    open_job_and_wait(main, 'two')
     previous = main.workbench.status_label.fullText()
     main._failure('保存失败', 'one failed', job_id='one')
     assert main.workbench.status_label.fullText() == previous
@@ -104,7 +106,7 @@ def test_summary_count_matches_drawer_without_loading_state_for_listing(window, 
                  extraction_report={'warnings': ['文档画像失败（Connection error）']},
                  source_quality_gate={'flags': [{'segment_index': 0}]})
     core.save_job_state('one', state)
-    main.open_job('one')
+    open_job_and_wait(main, 'one')
     count = main.workbench.followup_panel.issue_count()
     tone = main.workbench.followup_panel.worst_tone()
     assert count == 5 and tone == 'danger'
@@ -140,7 +142,7 @@ def test_card_uses_same_retry_and_stall_clock_as_workbench(app):
 def test_log_write_failure_keeps_the_error_available(window, monkeypatch):
     main, core = window['window'], window['core']
     _job(core, 'one')
-    main.open_job('one')
+    open_job_and_wait(main, 'one')
     def disk_full(*_a, **_k):
         raise OSError('disk full')
     monkeypatch.setattr(adapter, 'record_notice', disk_full)
@@ -168,7 +170,7 @@ def test_task_notices_expire_back_to_the_run_status(window, app, monkeypatch):
     于是「已提交人工修改…」或一次小失败会永久占住运行状态行（并把进度条染红）。"""
     main, core = window['window'], window['core']
     _job(core, 'done-task')
-    main.open_job('done-task')
+    open_job_and_wait(main, 'done-task')
     bench = main.workbench
     before = bench.run_status.line.text()
     clock = [1000.0]
