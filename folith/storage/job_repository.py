@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from folith import profiler
 from folith.storage import state_journal
-from folith.storage.atomic_file import read_shared_text, replace_file
+from folith.storage.atomic_file import read_shared_text, replace_file, stat_shared
 
 # Cache mapping (job_id, mtime_ns, file_size, journal_mtime_ns, journal_size)
 # -> normalized state dict.  The journal is part of the signature because a
@@ -208,7 +208,7 @@ def state_signature(
     job has no state file.  Two stats, no read.
     """
     try:
-        stat = get_job_state_path(job_id, output_dir=output_dir).stat()
+        stat = stat_shared(get_job_state_path(job_id, output_dir=output_dir))
     except OSError:
         return None
     try:
@@ -229,7 +229,7 @@ def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optiona
     """
     path = get_job_state_path(job_id, output_dir=output_dir)
     try:
-        stat = path.stat()
+        stat = stat_shared(path)
     except FileNotFoundError:
         return None
     signature = (str(job_id), stat.st_mtime_ns, stat.st_size)

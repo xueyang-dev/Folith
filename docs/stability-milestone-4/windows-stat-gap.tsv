@@ -1,0 +1,7 @@
+exit_code	kind	file	seconds	result
+0	pytest	job_storage_test.py	2	11 passed
+0	pytest	runtime_heartbeat_recovery_test.py	2	25 passed, 1 skipped
+0	pytest	runtime_state_test.py	4	18 passed
+0	pytest	snapshot_revision_test.py	3	12 passed
+0	pytest	state_journal_test.py	5	32 passed
+0	pytest	windows_atomic_file_test.py	2	15 passed, 4 skipped

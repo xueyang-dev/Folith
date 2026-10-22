@@ -227,6 +227,38 @@ def test_snapshot_load_retries_instead_of_returning_empty_state(tmp_path, monkey
     repo.invalidate_cache()
 
 
+@pytest.mark.parametrize("code,error_class", [(32, PermissionError), (2, FileNotFoundError)])
+def test_snapshot_signature_retries_replacement_gap(tmp_path, monkeypatch, windows_reader,
+                                                  code, error_class):
+    import core
+    import json
+    from folith.storage import job_repository as repo
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    repo.invalidate_cache()
+    state = core.new_job_state("signature.docx")
+    state["pairs"] = [{"source": "source", "target": "target"}]
+    path = repo.get_job_state_path("signature-read")
+    path.parent.mkdir(parents=True)
+    payload = json.dumps(state)
+    path.write_text(payload, encoding="utf-8")
+    # Successful stat establishes that the task exists before the swap.
+    assert repo.state_signature("signature-read") is not None
+    original_stat = Path.stat
+    failures = [_winerror(code, error_class)]
+
+    def racing_stat(self, *a, **kw):
+        if self == path and failures:
+            raise failures.pop()
+        return original_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", racing_stat)
+    monkeypatch.setattr(atomic_file, "shared_text_reader", _fake_reader([payload]))
+    assert core.load_job_state("signature-read")["pairs"] == state["pairs"]
+    assert windows_reader == [0.005]
+    repo.invalidate_cache()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Actual Windows ReplaceFileW semantics")
 def test_real_windows_reader_never_sees_a_gap_during_replace(tmp_path):
     target = tmp_path / "runtime_state.json"

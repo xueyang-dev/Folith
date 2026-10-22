@@ -208,3 +208,22 @@ window acceptance scope. The earlier full local audit had 8 failures in 5 of
 242 files (3,579 passes); the directory-loss, owned-state, metadata-directory and
 QSettings fixture repairs passed their targeted reruns, but that is not a full
 suite pass. No release or milestone completion is claimed.
+
+### Windows CI exposed the remaining snapshot-signature gap
+
+At `bcb0260`, Shared Qt Windows CI failed the newly added real concurrent snapshot
+replacement/load regression: the loader returned `None`. The text-reader change
+alone left the snapshot `stat()` path outside the retry boundary. Snapshot
+signatures and revision checks now share bounded Windows file-access retries.
+Successful stat/read/replacement records that the file exists; an unknown missing
+file still fails immediately, while an existing file temporarily absent during
+replacement is retried. No previous snapshot is substituted for a failed load.
+Two fault-injection cases cover sharing failure and transient absence during the
+signature lookup. Six relevant files passed 113 cases on macOS, with five
+Windows/runtime cases skipped; real Windows CI verification remains required.
+See `windows-stat-gap.tsv`.
+
+The preceding integrated window/core run passed 134 cases, including all 99
+window cases, with four optional OCR cases skipped. See
+`windows-report-integration.tsv`. Its 542-second window-test duration is recorded
+as observed; this is correctness evidence, not a responsiveness benchmark.
