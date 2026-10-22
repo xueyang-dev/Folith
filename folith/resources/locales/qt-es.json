@@ -2017,5 +2017,7 @@
   "正在载入译文…": "Cargando la traducción…",
   "统一为「{v0}」（改 {v1} 段）": "Unificar como «{v0}» ({v1} segmentos a cambiar)",
   "其他：": "Otro:",
-  "保持原样（各自符合语境）": "Dejar como está (cada uno encaja en su contexto)"
+  "保持原样（各自符合语境）": "Dejar como está (cada uno encaja en su contexto)",
+  "需决定": "Por decidir",
+  "（{v0} 处）": " ({v0} lugares)"
 }
