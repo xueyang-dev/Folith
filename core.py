@@ -2239,7 +2239,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             session_id = str(uuid.uuid4())
             _LLM_CTX.opencode_session = session_id
         request["extra_headers"] = {
-            "User-Agent": "Folith/0.7.0",
+            "User-Agent": "Folith/0.7.1",
             "x-opencode-session": str(session_id),
         }
     try:
