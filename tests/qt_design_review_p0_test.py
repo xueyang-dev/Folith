@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import core  # noqa: E402
@@ -96,7 +98,7 @@ def translated(tmp_path, monkeypatch, qt_app):
                           for i, (s, t) in enumerate(zip(SOURCES, TARGETS))]
         state["p1_done"] = state["p2_done"] = True
         core.save_job_state(job_id, state)
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         window.refresh_workbench(force=True)
         _pump(qt_app, 0.3)
         yield window.workbench

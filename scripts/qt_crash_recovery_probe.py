@@ -38,6 +38,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
 ACTIVE = {"resume_requested", "queued", "starting", "running",
           "waiting_external", "cancelling", "pausing", "paused"}
 
@@ -206,7 +208,7 @@ def run_child(args) -> int:
     else:
         raise SystemExit("child: import did not complete")
     job_id = adapter.list_jobs()[0].job_id
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     window.start_or_resume()
     (Path(args.log_dir) / "child-job.txt").write_text(job_id, encoding="utf-8")
     # Keep the process alive while the parent watches for durable progress.
@@ -453,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
             f"unexpected status after a crash: {runtime.get('status')}"
 
         opened_at = time.monotonic()
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         report["open_job_call_s"] = round(time.monotonic() - opened_at, 4)
         app.processEvents()
         report["recovery_entry"] = {

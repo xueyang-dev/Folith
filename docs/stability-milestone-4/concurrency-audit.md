@@ -45,8 +45,8 @@ sensitivity evidence, not a clean release performance pass. The controlled 30-ms
 provider is much faster than the original reported real-provider latency.
 Commit-wait still exceeds preparation at the parallel levels, and 6 does not
 beat 4: neither monotonic scaling nor the complete #55 performance gate is
-claimed. A serialized, higher-latency comparison is still required, followed by
-Windows/macOS native-load measurements.
+claimed. The separate higher-latency comparison below does not replace this
+cohort. Windows/macOS native-load measurements remain required.
 
 At each parallel level, 800 of 801 batches saw a different `previous_target`
 context from serial, compared by source batch rather than thread completion
@@ -74,3 +74,31 @@ plus an empty target and verifies that the real blocker is reported.
 The related setup, localization, snapshot and export run passed 88 cases in five
 files. See `concurrency-copy-export-regression.tsv`. Full current-head regression
 and both-platform acceptance remain required.
+
+## Second 801-batch measurement (250 ms offline calls)
+
+The same command with `--latency 0.25` started from clean `0a8735e`, after the
+native build/profiling experiments ended, and completed all five levels. Each
+level again produced 3,204 pairs with equal source order/target digests, 801
+translation and 801 knowledge calls, all 801 observations merged, no pending
+knowledge extraction and no blocking findings. Every batch had timing points.
+
+| Concurrency | Wall seconds | Speedup vs 1 | CPU % of one core | Prepare median s | Commit-wait median s | Commit median s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 476.782 | 1.000 | 13.26 | 0.2635 | 0.0000 | 0.3326 |
+| 2 | 132.976 | 3.585 | 36.39 | 0.3311 | 0.0002 | 0.0455 |
+| 3 | 83.117 | 5.736 | 50.21 | 0.3063 | 0.0001 | 0.0040 |
+| 4 | 62.450 | 7.635 | 62.77 | 0.3048 | 0.0059 | 0.0020 |
+| 6 | 52.611 | 9.062 | 71.91 | 0.2584 | 0.5035 | 0.0454 |
+
+These are controlled scheduler measurements, not predicted provider speedups.
+Serial/parallel execution and knowledge overlap differ, so speedup can exceed
+the selected translation concurrency. Summed concurrent waits do not represent
+a single wall-clock critical path. At 6, commit-wait remains larger than prepare;
+the auxiliary worker pool caps at 4 and ordered feedback applies backpressure.
+No complete #55 performance pass is claimed. Quick preset normally disables
+feedback, whereas this comparison deliberately enables it at every level.
+
+As in the first cohort, 800/801 continuity contexts differ at each parallel
+level. Fixed stub targets provide no translation-quality equivalence evidence.
+Aggregate data: [concurrency-801-batches-250ms.json](concurrency-801-batches-250ms.json).

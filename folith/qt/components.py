@@ -1916,11 +1916,10 @@ PROGRESS_TONES = {
 
 
 class LoadingOverlay(QWidget):
-    """Covers a page while the UI thread does heavy work (opening a large task).
+    """Covers a page during background loading, with actual phase progress.
 
-    It is painted once, synchronously, before the work starts. It is static on
-    purpose: the work runs on the UI thread, so nothing could animate anyway, and
-    continuous animation was removed app-wide after it made the window flicker.
+    Paint immediately before dispatch, then update as read phases finish. Avoid
+    a continuous shimmer: it caused window flicker in earlier native trials.
     """
 
     def __init__(self, parent: QWidget) -> None:
@@ -1945,6 +1944,7 @@ class LoadingOverlay(QWidget):
         """Show over the whole parent and paint now (do not wait for the event loop)."""
         self._label.setText(message)
         self._track.setAccessibleName(message)
+        self._track.setRange(0, 0)
         parent = self.parentWidget()
         if parent is None:
             return
@@ -1955,6 +1955,10 @@ class LoadingOverlay(QWidget):
 
     def dismiss(self) -> None:
         self.hide()
+
+    def set_progress(self, completed: int, total: int) -> None:
+        self._track.setRange(0, total)
+        self._track.setValue(completed)
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt naming
         painter = QPainter(self)

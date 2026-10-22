@@ -242,6 +242,8 @@ class MainWindow(QMainWindow):
         self._last_notice = ""
 
         self._current_job_id = ""
+        self._open_request = None
+        self._opening_job_id = ""
         self._rows_cache: tuple | None = None  # (job_id+drafts 签名, state 对象, rows)
         self._cached_state: dict = {}
         self._cached_signature = ""
@@ -730,12 +732,13 @@ class MainWindow(QMainWindow):
         actions = getattr(self, "menu_actions", None)
         if not actions:
             return
-        on_workbench = self.stack.currentWidget() is self.workbench
+        opening = bool(self._opening_job_id)
+        on_workbench = self.stack.currentWidget() is self.workbench and not opening
         workbench = self.workbench
         states = {
             "import": True,
             # 「任务列表」在任务、项目、术语页都有地方可去；已经在列表上时置灰。
-            "home": self.stack.currentWidget() is not self.home,
+            "home": opening or self.stack.currentWidget() is not self.home,
             "settings": True,
             "close": True,
             "about": True,
@@ -955,11 +958,11 @@ class MainWindow(QMainWindow):
         self.refresh_projects()
 
     def open_library_job(self, job_id: str, index: int) -> None:
-        self.open_job(job_id)
-        if index >= 0 and self.stack.currentWidget() is self.workbench:
-            self.workbench.show_segment_for_edit(index)
+        self.open_job(job_id, after_open=(
+            lambda: self.workbench.show_segment_for_edit(index)) if index >= 0 else None)
 
     def show_home(self) -> None:
+        self._cancel_open_job()
         self.workbench.flush_draft()
         returning = self._current_job_id if self.stack.currentWidget() is self.workbench else ""
         overview = self._overview_document() if returning else None
@@ -1100,8 +1103,9 @@ class MainWindow(QMainWindow):
                 # 内容再重置一次（实测：编辑器被清空、正文变成空态）。
                 if open_result and self._current_job_id != results[0].job_id:
                     with timing.phase("open_job"):
-                        self.open_job(results[0].job_id)
-                if decision:
+                        self.open_job(results[0].job_id,
+                                      after_open=self.start_or_resume if decision else None)
+                elif decision:
                     self.start_or_resume()
             timing.flush()
 
@@ -1198,35 +1202,97 @@ class MainWindow(QMainWindow):
         if overlay is not None:
             overlay.dismiss()
 
-    def open_job(self, job_id: str) -> None:
+    def _cancel_open_job(self) -> None:
+        self._open_request = None
+        self._opening_job_id = ""
+        self.workbench.setEnabled(True)
+        self._sync_menu_state()
+        self._hide_loading()
+
+    def open_job(self, job_id: str, *, after_open=None) -> None:
+        """Read a task off-thread, then apply only the latest navigation request."""
         if not job_id:
             return
-        timing = _PhaseLog(self._log, "open_job", job_id)
         flight = self._card_document(job_id)
         self.workbench.flush_draft()
-        with timing.phase("load_state"):
-            state = adapter.load_state(job_id)
-        if not state:
-            self._failure(i18n.tr('无法打开任务'), i18n.tr('任务 {v0} 的状态文件不可读。', v0=job_id), task=False)
-            self.refresh_home()
-            return
+        request = object()
+        self._open_request = request
+        self._opening_job_id = job_id
+        self.workbench.setEnabled(False)
+        self._sync_menu_state()
+        self._show_loading(i18n.tr('正在打开任务…'))
+        timing = _PhaseLog(self._log, "open_job", job_id)
+        config = dataclasses.replace(self.config)
+
+        def read(*, on_progress):
+            signature = adapter.state_signature(job_id)
+            with timing.phase("load_state"):
+                state = adapter.load_state(job_id)
+            on_progress(1, 5)
+            if not state:
+                return None
+            drafts_signature = adapter.drafts_signature(job_id)
+            with timing.phase("segment_rows"):
+                rows = adapter.segment_rows(job_id, state)
+            on_progress(2, 5)
+            with timing.phase("delivery_snapshots"):
+                snapshots = adapter.delivery_snapshots(job_id)
+            on_progress(3, 5)
+            with timing.phase("delivery_preview"):
+                preview = adapter.delivery_preview(job_id, config, state=state)
+            on_progress(4, 5)
+            with timing.phase("review_queue"):
+                review = adapter.review_queue(job_id, state)
+            on_progress(5, 5)
+            runtime = adapter.runtime_view(job_id, state)
+            return state, signature, rows, snapshots, {
+                "delivery": preview, "review": review, "runtime": runtime,
+                "drafts_signature": drafts_signature}
+
+        def done(payload):
+            if self._open_request is not request or self._closing_accepted:
+                return
+            self._open_request = None
+            self._opening_job_id = ""
+            self.workbench.setEnabled(True)
+            self._sync_menu_state()
+            if payload is None:
+                self._hide_loading()
+                self._failure(i18n.tr('无法打开任务'),
+                              i18n.tr('任务 {v0} 的状态文件不可读。', v0=job_id), task=False)
+                self.refresh_home()
+                timing.flush()
+                return
+            self._apply_open_job(job_id, payload, flight, timing)
+            if after_open is not None:
+                after_open()
+
+        def failed(message, detail):
+            if self._open_request is not request or self._closing_accepted:
+                return
+            self._cancel_open_job()
+            timing.flush()
+            self._failure(i18n.tr('无法打开任务'), message, detail, task=False)
+
+        def progress(completed, total):
+            if self._open_request is request and not self._closing_accepted:
+                self._loading_overlay.set_progress(completed, total)
+
+        self.runner.submit(read, on_done=done, on_error=failed,
+                           on_progress=progress, label="open-job")
+
+    def _apply_open_job(self, job_id, payload, flight, timing) -> None:
+        state, signature, rows, snapshots, prepared = payload
         if job_id != self._current_job_id:
             self.workbench.setup_panel.reset_style_profile()
         self._current_job_id = job_id
         self._cached_state = state
-        self._cached_signature = adapter.state_signature(job_id)
+        self._cached_signature = signature
+        self._rows_cache = ((job_id, prepared["drafts_signature"]), state, rows)
         # 上一次的终态不该影响新任务的"终态变化"判断（节流键已含任务标识，
         # 这里只是让状态本身不跨任务残留）。
         self._last_runtime_status = ""
-        loading = len(state.get("pairs") or state.get("paras") or []) >= self.LOADING_SEGMENTS
-        if loading:
-            self._show_loading(i18n.tr('正在打开任务…'))
-        with timing.phase("segment_rows"):
-            rows = adapter.segment_rows(job_id, state)
-        with timing.phase("delivery_snapshots"):
-            snapshots = adapter.delivery_snapshots(job_id)
-        # 大任务（几千段）在这里要在 GUI 线程算交付预检、术语与原页，可达 1–2 秒。
-        # 没法在不改核心的前提下挪到后台，至少让用户看到"正在打开"而不是窗口冻结。
+        # Only widget updates remain here; file reads and projections are ready.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         opening = i18n.tr('正在打开任务…')
         self._last_notice = opening
@@ -1236,7 +1302,8 @@ class MainWindow(QMainWindow):
             with timing.phase("setup_panel"):
                 self._load_setup(job_id, state)
             with timing.phase("workbench.load"):
-                self.workbench.load(job_id, self.config, state, rows, snapshots)
+                self.workbench.load(job_id, self.config, state, rows, snapshots,
+                                    prepared=prepared)
             self.stack.setCurrentWidget(self.workbench)
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
@@ -1246,7 +1313,7 @@ class MainWindow(QMainWindow):
             # second time (~1.5 s on a book-length task).  An ordinary refresh
             # only syncs the run state and menus while the signature is unchanged.
             with timing.phase("refresh_workbench"):
-                self.refresh_workbench()
+                self._poll_workbench()
             self._fly(flight, opening=True, overview=self._overview_document())
         finally:
             QApplication.restoreOverrideCursor()
@@ -1411,6 +1478,7 @@ class MainWindow(QMainWindow):
 
     def manage_projects(self) -> None:
         """「项目」：切到项目页（侧栏保持在左侧）。"""
+        self._cancel_open_job()
         self.workbench.flush_draft()
         self._current_job_id = ""
         self.stack.setCurrentWidget(self.projects)
@@ -1550,6 +1618,8 @@ class MainWindow(QMainWindow):
 
     # ================= workbench =================
     def _poll(self) -> None:
+        if self._opening_job_id:
+            return
         if self.stack.currentWidget() is self.workbench:
             self._poll_workbench()
         else:
@@ -1744,6 +1814,8 @@ class MainWindow(QMainWindow):
                            label="poll-state")
 
     def refresh_workbench(self, *, force: bool = False, preloaded: bool = False) -> None:
+        if self._opening_job_id:
+            return
         job_id = self._current_job_id
         if not job_id:
             return
@@ -3351,6 +3423,7 @@ class MainWindow(QMainWindow):
             event.accept()
 
     def _release_instance(self) -> None:
+        self._cancel_open_job()
         self.timer.stop()
         try:
             self.settings.setValue("geometry", self.saveGeometry())

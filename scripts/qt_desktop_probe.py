@@ -151,6 +151,11 @@ def main(argv: list[str] | None = None) -> int:
     config.save()
 
     paths = adapter.desktop_paths.resolve_paths()
+    # Source probes must not inherit or change the operator's saved task/format
+    # preferences. Other native lifecycle probes use the same private INI scope.
+    from PySide6.QtCore import QSettings
+    settings_path = str(out_dir / "probe-settings.ini")
+    window_module.QSettings = lambda *_: QSettings(settings_path, QSettings.Format.IniFormat)
     main_window = window_module.MainWindow(config, paths, None)
     window_module.install_quit_filter(app, main_window)
     main_window.show()

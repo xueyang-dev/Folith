@@ -34,6 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
 LONG_TEXT = ("这是一段用于验证长文本编辑的中文段落，涉及术语 MT 与 CAT，"
              "并包含 English words, العربية, and 数字 12345。") * 220  # ≈ 10k chars
 
@@ -258,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             failures_before = len(window.failures)
             for job_id in job_dirs:
                 started = time.monotonic()
-                window.open_job(job_id)
+                open_job_and_wait(window, job_id)
                 app.processEvents()
                 state = adapter.load_state(job_id)
                 rows = adapter.segment_rows(job_id, state)
@@ -340,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
             adapter.core.save_job_state(job_id, state)
 
             started = time.monotonic()
-            window.open_job(job_id)
+            open_job_and_wait(window, job_id)
             report["open_job_s"] = round(time.monotonic() - started, 3)
             report["segments"] = window.workbench.visible_segment_count()
 
@@ -403,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"import failed; window failures: {window.failures!r}"
             job_id = adapter.list_jobs()[0].job_id
             report["job_id"] = job_id
-            window.open_job(job_id)
+            open_job_and_wait(window, job_id)
             window.start_or_resume()
             assert pump(60, lambda: adapter.core.is_job_worker_alive(job_id)), \
                 f"worker never started; window failures: {window.failures!r}"
@@ -495,7 +497,7 @@ def main(argv: list[str] | None = None) -> int:
                                                ("view", "closed", "window_hidden", "exit_after")})
                 raise SystemExit(_emit(report, args))
 
-            window.open_job(job_id)
+            open_job_and_wait(window, job_id)
             window.start_or_resume()
             assert pump(60, lambda: adapter.core.is_job_worker_alive(job_id)), \
                 f"worker never started; window failures: {window.failures!r}"
@@ -548,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
             report["job_ids"] = job_ids
             observed = []
             for job_id in job_ids:
-                window.open_job(job_id)
+                open_job_and_wait(window, job_id)
                 window.start_or_resume()
                 # 第二个任务在第一个仍在跑时启动：可能先排队（queued），
                 # 所以等的是"已经开始处理"而不是"worker 已存活"。
@@ -577,7 +579,7 @@ def main(argv: list[str] | None = None) -> int:
                 window.close()
                 return _emit(report, args)
             # 取消第一个（界面路径），第二个必须继续。
-            window.open_job(job_ids[0])
+            open_job_and_wait(window, job_ids[0])
             window.cancel_job()
             assert pump(120, lambda: not adapter.core.is_job_worker_alive(job_ids[0]))
             # 状态在运行视图里（state 里没有 status 字段）。
@@ -623,24 +625,24 @@ def main(argv: list[str] | None = None) -> int:
             report["job_ids"] = job_ids
 
             if args.scenario == "task-switch":
-                window.open_job(job_ids[0])
+                open_job_and_wait(window, job_ids[0])
                 window.start_or_resume()
                 assert pump(60, lambda: adapter.core.is_job_worker_alive(job_ids[0]))
                 # A second task is started while the first one runs, then the
                 # window switches back and forth: neither may be disturbed.
-                window.open_job(job_ids[1])
+                open_job_and_wait(window, job_ids[1])
                 window.start_or_resume()
                 assert pump(60, lambda: adapter.core.is_job_worker_alive(job_ids[1]))
                 both_active = [job for job in job_ids
                                if adapter.core.is_job_worker_alive(job)]
                 # "任务切换"响应：在一个任务仍在跑时切换到另一个任务。
                 started = time.monotonic()
-                window.open_job(job_ids[0])
+                open_job_and_wait(window, job_ids[0])
                 app.processEvents()
                 report["open_job_while_running_ms"] = round(
                     (time.monotonic() - started) * 1000, 1)
                 pump(1.0)
-                window.open_job(job_ids[1])
+                open_job_and_wait(window, job_ids[1])
                 pump(1.0)
                 window.show_home()
                 pump(1.0)
@@ -695,7 +697,7 @@ def main(argv: list[str] | None = None) -> int:
                 # task in "cancelling" must never be reported as completed, and
                 # its lock must still be released before the app goes away.
                 for job in job_ids:
-                    window.open_job(job)
+                    open_job_and_wait(window, job)
                     window.start_or_resume()
                     assert pump(60, lambda job=job:
                                 adapter.core.is_job_worker_alive(job)), \
@@ -709,7 +711,7 @@ def main(argv: list[str] | None = None) -> int:
                 report["status_after_cancel_request"] = {
                     job: adapter.core.load_runtime_state(job).get("status")
                     for job in job_ids}
-                window.open_job(job_ids[0])
+                open_job_and_wait(window, job_ids[0])
                 window.close()
                 closed = pump(args.timeout, lambda: window._closing_accepted)
                 final = {job: adapter.exit_report(job) for job in job_ids}
@@ -738,7 +740,7 @@ def main(argv: list[str] | None = None) -> int:
 
             # two-tasks-exit
             for job in job_ids:
-                window.open_job(job)
+                open_job_and_wait(window, job)
                 window.start_or_resume()
                 assert pump(60, lambda job=job:
                             adapter.core.is_job_worker_alive(job)), job
@@ -747,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
             report["exit_report_before"] = {
                 job: adapter.exit_report(job).get("safe_to_exit")
                 for job in job_ids}
-            window.open_job(job_ids[0])
+            open_job_and_wait(window, job_ids[0])
             window.close()
             closed = pump(args.timeout, lambda: window._closing_accepted)
             report["closed"] = closed

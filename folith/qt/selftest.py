@@ -30,6 +30,22 @@ LONG_PARAGRAPHS = (
 TYPED = "人工修改：这是桌面端写入的译文。"
 
 
+def open_job_and_wait(window, job_id: str, *, timeout: float = 120.0) -> None:
+    """Automation waits for the real asynchronous navigation to finish."""
+    from PySide6.QtWidgets import QApplication
+
+    failures_before = len(window.failures)
+    window.open_job(job_id)
+    app = QApplication.instance()
+    deadline = time.monotonic() + timeout
+    while getattr(window, "_opening_job_id", "") and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(.01)
+    if (window._current_job_id != job_id or getattr(window, "_opening_job_id", "")
+            or len(window.failures) != failures_before):
+        raise AssertionError(f"task did not open: {job_id}; failures={window.failures}")
+
+
 def make_docx(path: Path, paragraphs: list[str]) -> None:
     from docx import Document
 
@@ -361,7 +377,7 @@ class Flow:
             job_ids = [row.job_id for row in adapter.list_jobs()]
             report["job_ids"] = job_ids
             job_id = job_ids[0]
-            self.window.open_job(job_id)
+            open_job_and_wait(self.window, job_id)
             self.step("opened", job_id=job_id)
 
             self.phase = "run"
@@ -432,7 +448,7 @@ class Flow:
                 if Path(str(pdf_state.get("filename") or "")).suffix.lower() != ".pdf":
                     continue
                 self.phase = "pdf_source"
-                self.window.open_job(pdf_id)
+                open_job_and_wait(self.window, pdf_id)
                 if not pdf_state.get("p2_done"):
                     self.window.start_or_resume()
                     self.pump(self.timeout, lambda: self._job_settled(adapter, core, pdf_id))
@@ -440,11 +456,11 @@ class Flow:
                     if not pdf_state.get("p2_done"):
                         raise AssertionError(f"PDF fixture did not finish: {core.load_runtime_state(pdf_id)}")
                     # Refresh the workbench with the extracted source anchors.
-                    self.window.open_job(pdf_id)
+                    open_job_and_wait(self.window, pdf_id)
                 facts = self._check_pdf_source(adapter, pdf_id, pdf_state)
                 report["pdf_sources"].append(facts)
                 self.step("pdf_source_verified", **facts)
-            self.window.open_job(job_id)
+            open_job_and_wait(self.window, job_id)
 
             self.phase = "edit"
             rows = adapter.segment_rows(job_id, state)
@@ -529,7 +545,9 @@ class Flow:
             # delivery_status=draft for a delivery that did succeed.
             # Snapshot files are cheap to list; the final state needs a full
             # parse, so it is polled coarsely.
-            self.pump(self.timeout, lambda: bool(adapter.delivery_snapshots(job_id)))
+            completed = self.pump(self.timeout, lambda: not self.window.runner.busy)
+            if not completed or not adapter.delivery_snapshots(job_id):
+                raise AssertionError(f"交付未生成快照: {self.window.failures}")
             self.pump(max(120.0, self.timeout / 4),
                       lambda: adapter.load_state(job_id).get("delivery_status")
                       == "final", interval=0.5)

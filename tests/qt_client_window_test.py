@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
 # Waits here are wall-clock: they are generous on purpose so a slow disk or a
 # concurrent multi-GB build cannot turn an infrastructure stall into a product
 # failure.  A genuine hang still fails, just later.
@@ -234,7 +236,7 @@ def test_destroyed_window_drops_delayed_tips(client, monkeypatch):
     try:
         job_id = _seed_job_for_keyboard(client["adapter"], client["core"],
                                         client["tmp"], "delayed-tips.docx", ["Text."])
-        second.open_job(job_id)
+        open_job_and_wait(second, job_id)
     finally:
         second.timer.stop()
         second._closing_accepted = True
@@ -279,7 +281,7 @@ def test_import_then_editor_keeps_text_across_background_refresh(client, monkeyp
         f"data_dir={core.OUTPUT_DIR}"
     assert _pump(app, 120, lambda: not window.runner.busy)
     job_id = adapter.list_jobs()[0].job_id
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
 
     # A job with committed pairs, produced through the core (not by hand).
     state = adapter.load_state(job_id)
@@ -366,7 +368,7 @@ def test_workbench_poll_reloads_a_journal_only_translation(client):
     state = core.new_job_state("journal.txt")
     state.update(paras=["First paragraph.", "Second paragraph."], p1_done=True)
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     before = adapter.state_signature(job_id)
     snapshot = core.job_state_path(job_id).read_bytes()
     assert window.workbench._rows[0].target == ""
@@ -410,7 +412,7 @@ def test_full_translation_run_through_the_window(client):
             f"data_dir={client['data_dir']!r} failures={window.failures!r}")
         assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         window.start_or_resume()
 
         def done() -> bool:
@@ -488,7 +490,7 @@ def test_running_task_blocks_exit_until_stopped(client):
         assert _pump(app, 120, lambda: len(adapter.list_jobs()) == 1)
         assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         window.start_or_resume()
         assert _pump(app, 60, lambda: adapter.core.is_job_worker_alive(job_id))
 
@@ -518,7 +520,7 @@ def test_exit_prompt_states_the_resume_contract_for_running_tasks(client, monkey
     source.write_bytes(_make_docx(["一段。"]))
     job_id = adapter.import_documents(
         [source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     report = {"job_id": job_id, "active_jobs": [job_id], "safe_to_exit": False,
               "draft_count": 0, "worker_lock_held": True, "task_running": True,
               "active_status": "running", "draft_segments": [], "action": "incomplete"}
@@ -617,7 +619,7 @@ def test_pause_and_continue_through_the_window(client):
             f"core_output_dir={core.OUTPUT_DIR!r} failures={window.failures!r}")
         assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         window.start_or_resume()
         assert _pump(app, 60, lambda: core.is_job_worker_alive(job_id))
 
@@ -668,7 +670,7 @@ def test_delivery_asset_open_and_reveal_target_the_frozen_file(client, monkeypat
     state["p2_done"] = True
     state["translation_core_review_required"] = False
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
 
     opened: list[str] = []
     revealed: list[str] = []
@@ -725,7 +727,7 @@ def test_mixed_and_rtl_segments_get_the_right_editor_direction(client):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
 
     workbench = window.workbench
     workbench.select_segment(0)
@@ -782,7 +784,7 @@ def test_cancelling_the_native_panels_writes_nothing(client, monkeypatch):
     state["p2_done"] = True
     state["translation_core_review_required"] = False
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     window.deliver()
     assert _pump(app, 120, lambda: bool(adapter.delivery_snapshots(job_id)))
     assert _pump(app, 60, lambda: adapter.load_state(job_id).get(
@@ -900,7 +902,7 @@ def test_command_q_runs_the_same_exit_rule(client):
         state["p1_done"] = True
         state["p2_done"] = True
         core.save_job_state(job_id, state)
-        second.open_job(job_id)
+        open_job_and_wait(second, job_id)
         second.workbench.select_segment(0)
         app.processEvents()
         second.workbench.set_editor_text_for_test("Cmd+Q 之前输入的草稿")
@@ -953,7 +955,7 @@ def test_segment_count_change_while_typing_keeps_the_edit(client):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
     workbench.select_segment(0)
     app.processEvents()
@@ -1023,7 +1025,7 @@ def test_typing_while_a_real_task_runs_is_kept_and_persisted(client):
             f"core_output_dir={core.OUTPUT_DIR!r} failures={window.failures!r}")
         assert _pump(app, 120, lambda: not window.runner.busy)
         job_id = adapter.list_jobs()[0].job_id
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         window.start_or_resume()
         assert _pump(app, 60, lambda: core.is_job_worker_alive(job_id))
 
@@ -1098,7 +1100,7 @@ def test_declared_delivery_formats_are_the_ones_produced(client):
         assert stored.get("deliver_bilingual_docx") is False
         assert stored.get("deliver_terms_xlsx") is False
 
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         window.start_or_resume()
         assert _pump(app, 600, lambda: (
             core.get_job_runtime_status(job_id, adapter.load_state(job_id))
@@ -1177,7 +1179,7 @@ def test_selected_segments_can_be_reviewed(client):
         state["p1_done"] = True
         state["p2_done"] = True
         core.save_job_state(job_id, state)
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         workbench = window.workbench
         assert workbench.visible_segment_count() == 3
 
@@ -1274,7 +1276,7 @@ def test_unsafe_exit_offers_force_quit_and_says_what_it_guarantees(client, monke
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
 
     # The stop sequence never settles: the worker keeps its lock.
     monkeypatch.setattr(adapter, "stop_job_and_wait",
@@ -1448,7 +1450,7 @@ def test_inspector_shows_attached_terms_without_crashing(client):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
 
     workbench = window.workbench
     assert workbench.select_segment(0) is True
@@ -1581,7 +1583,7 @@ def test_workbench_excludes_a_segment_and_restores_it_from_the_delivery_tab(clie
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
     assert workbench.visible_segment_count() == 3
 
@@ -1646,7 +1648,7 @@ def test_retranslate_one_segment_from_the_workbench(client):
         state["p1_done"] = True
         state["p2_done"] = True
         core.save_job_state(job_id, state)
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         workbench = window.workbench
         assert workbench.select_segment(0) is True
         app.processEvents()
@@ -1686,7 +1688,7 @@ def test_grid_shows_text_immediately_after_a_rebuild(client):
     state["p2_done"] = True
     core.save_job_state(job_id, state)
 
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
     # 不 pump 事件循环：打开任务这一刻就必须已经有内容。
     assert workbench.visible_segment_count() == 3
@@ -1735,7 +1737,7 @@ def test_status_filter_actually_filters(client):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
 
     assert workbench.visible_segment_count() == 3
@@ -1944,7 +1946,7 @@ def test_blocking_count_only_counts_unresolved_findings(client):
          "reason": "提示", "resolved": False},
     ]
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     app.processEvents()
     workbench = window.workbench
 
@@ -2060,7 +2062,7 @@ def test_workbench_warns_about_a_draft_based_on_older_text(client):
     state["pairs"][0]["target"] = "机器译文 v2。"
     core.save_job_state(job_id, state)
 
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
     assert workbench.select_segment(0) is True
     app.processEvents()
@@ -2110,7 +2112,7 @@ def test_retranslate_refreshes_the_editor_with_the_new_text(client):
         state["p1_done"] = True
         state["p2_done"] = True
         core.save_job_state(job_id, state)
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         workbench = window.workbench
         assert workbench.select_segment(0) is True
         app.processEvents()
@@ -2156,7 +2158,7 @@ def test_retranslate_keeps_uncommitted_editor_text(client):
         state["p1_done"] = True
         state["p2_done"] = True
         core.save_job_state(job_id, state)
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         workbench = window.workbench
         assert workbench.select_segment(0) is True
         app.processEvents()
@@ -2209,7 +2211,7 @@ def test_task_menu_actions_follow_the_current_page(client):
     state["p2_done"] = True
     core.save_job_state(job_id, state)
 
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     app.processEvents()
     assert actions["home"].isEnabled() is True
     assert actions["reload"].isEnabled() is True
@@ -2450,7 +2452,7 @@ def test_window_asks_before_overwriting_saved_delivery_files(client, monkeypatch
                                             target_lang="简体中文")
     if isinstance(version, dict):
         version = version.get("snapshot_version")
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     app.processEvents()
 
     dest = tmp / "保存 目标"
@@ -2548,7 +2550,7 @@ def test_excluding_an_earlier_segment_keeps_the_editor_on_the_same_segment(clien
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
 
     # 选中第三段（uid s2），确认编辑器与状态指向它。
@@ -2606,7 +2608,7 @@ def test_save_and_next_commits_this_segment_and_moves_on(client):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
 
     assert workbench.select_segment(1) is True
@@ -2659,7 +2661,7 @@ def test_save_and_next_does_not_wait_for_the_disk_write(client, monkeypatch):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
 
     # Hold the background writer until the test lets it go.
@@ -2727,7 +2729,7 @@ def test_copy_source_to_target_fills_the_editor_as_an_uncommitted_draft(client):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
 
     assert workbench.select_segment(0) is True
@@ -2822,7 +2824,7 @@ def test_home_shows_a_damaged_task_and_explains_it(client):
     # 让用户以为内容没了。
     window.failures.clear()
     window.open_job(broken_id)
-    app.processEvents()
+    assert _pump(app, 5, lambda: not window._opening_job_id)
     assert window.failures, "打开损坏任务必须给出可理解的失败"
     failure = window.failures[-1]
     assert failure["title"] == "无法打开任务"
@@ -2891,7 +2893,7 @@ def test_delivery_button_is_disabled_and_explains_when_review_is_not_ready(clien
     state["p2_done"] = True
     state["translation_core_review_required"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     window.refresh_workbench(force=True)
     app.processEvents()
     workbench = window.workbench
@@ -2933,7 +2935,7 @@ def test_editor_is_structurally_ready_for_a_real_ime(client):
     state["p1_done"] = True
     state["p2_done"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     workbench = window.workbench
     assert workbench.select_segment(0) is True
     app.processEvents()
@@ -3175,7 +3177,7 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
                 titles.append(item.text())
         return titles
 
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     window.refresh_workbench(force=True)
     app.processEvents()
     names_a = assets()
@@ -3190,7 +3192,7 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
                                       str(window.workbench._state.get(
                                           "delivery_status") or ""))
     window.workbench._delivery_preview_at = _time.monotonic()
-    window.open_job(job_b)
+    open_job_and_wait(window, job_b)
     window.refresh_workbench(force=True)
     app.processEvents()
     names_b = assets()
@@ -3243,7 +3245,7 @@ def test_switching_jobs_clears_the_search_but_keeps_the_status_filter(client):
     job_a = make_job("search-a", ["甲段。", "乙段。"], reviewed=True)
     job_b = make_job("search-b", ["丙段。", "丁段。"], reviewed=False)
 
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     workbench = window.workbench
     assert workbench.visible_segment_count() == 2
     workbench.set_search("甲")                     # 只在 A 里匹配
@@ -3253,7 +3255,7 @@ def test_switching_jobs_clears_the_search_but_keeps_the_status_filter(client):
     app.processEvents()
     assert workbench.visible_segment_count() == 1
 
-    window.open_job(job_b)
+    open_job_and_wait(window, job_b)
     app.processEvents()
     # 搜索被清空 → 不会再"看起来是空的"
     assert workbench.search_edit.text() == "", workbench.search_edit.text()
@@ -3342,7 +3344,7 @@ def test_review_step_reflects_the_gate_not_only_the_flags(client):
     state["p2_done"] = True
     state["translation_core_review_required"] = True
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     window.refresh_workbench(force=True)
     app.processEvents()
     workbench = window.workbench
@@ -3405,7 +3407,7 @@ def test_blocking_chip_and_filter_agree_on_the_same_rule(client):
          "status": "open", "resolved": False, "message": "建议"},
     ]
     core.save_job_state(job_id, state)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     window.refresh_workbench(force=True)
     app.processEvents()
     workbench = window.workbench
@@ -3459,7 +3461,7 @@ def test_opening_a_job_does_not_clear_then_rebuild_the_grid(client):
 
     table.setRowCount = spy                      # type: ignore[assignment]
     try:
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         app.processEvents()
     finally:
         table.setRowCount = original             # type: ignore[assignment]
@@ -3510,7 +3512,7 @@ def test_excluded_list_is_not_rebuilt_on_every_poll(client):
          "target": "B.", "reason": "重复", "restorable": True}]
     core.save_job_state(job_id, state)
 
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     window.refresh_workbench(force=True)
     app.processEvents()
     excluded = window.workbench.excluded_list
@@ -3626,7 +3628,7 @@ def test_keyboard_typing_reaches_the_editor_and_the_draft_is_kept(client):
     tmp = client["tmp"]
 
     job_id = _seed_job_for_keyboard(adapter, core, tmp, "keyboard-typing.docx", ["甲。", "乙。"])
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     _pump(app, 2, lambda: window.workbench.visible_segment_count() == 2)
 
     edit = window.workbench.target_edit
@@ -3669,7 +3671,7 @@ def test_resize_and_fullscreen_round_trip_keep_the_workbench_usable(client):
 
     job_id = _seed_job_for_keyboard(
         adapter, core, tmp, "window-state.docx", ["甲。", "乙。", "丙。"])
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     _pump(app, 2, lambda: window.workbench.visible_segment_count() == 3)
     workbench = window.workbench
     rows_before = workbench.visible_segment_count()
@@ -3746,7 +3748,7 @@ def test_menu_shortcuts_actually_fire_and_are_not_ambiguous(client):
     tmp = client["tmp"]
 
     job_id = _seed_job_for_keyboard(adapter, core, tmp, "shortcuts.docx", ["甲。", "乙。"])
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     _pump(app, 2, lambda: window.workbench.visible_segment_count() == 2)
     rows_before = window.workbench.visible_segment_count()
 
@@ -3873,12 +3875,16 @@ def test_exit_closes_an_open_settings_window(client, monkeypatch):
 
 
 class _HeldRunner:
-    """替换 ``window.runner.submit``：只记下回调，不执行，由用例决定何时放行。"""
+    """Hold operation callbacks; navigation still runs through the real pool."""
 
-    def __init__(self) -> None:
+    def __init__(self, navigation_submit) -> None:
         self.calls: list[dict] = []
+        self.navigation_submit = navigation_submit
 
     def submit(self, fn, *args, on_done=None, on_error=None, label="", **kwargs):
+        if label == "open-job":
+            return self.navigation_submit(fn, *args, on_done=on_done, on_error=on_error,
+                                          label=label, **kwargs)
         self.calls.append({"fn": fn, "args": args, "kwargs": kwargs,
                            "on_done": on_done, "on_error": on_error, "label": label})
 
@@ -3894,7 +3900,7 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
     """FND-1：任务 A 冻结交付时切到 B；完成回调不得对 B 弹"保存"，也不得写出 B 的文件。"""
     window, adapter, app = client["window"], client["adapter"], client["app"]
     job_a, job_b = _two_jobs(client)
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(adapter, "delivery_preview",
                         lambda *_a, **_k: {"can_deliver": True, "status_label": "可交付"})
@@ -3909,13 +3915,13 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
     monkeypatch.setattr(window, "_notice",
                         lambda message, **_k: notices.append(str(message)))
 
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     window.deliver()
     assert [call["label"] for call in held.calls] == ["冻结交付"], held.calls
     prompts.clear()
 
-    window.open_job(job_b)  # 用户点了「在后台运行」并打开了另一个任务
+    open_job_and_wait(window, job_b)  # 用户点了「在后台运行」并打开了另一个任务
     app.processEvents()
     held.calls[0]["on_done"]({"version": 3, "assets": []})
 
@@ -3924,7 +3930,7 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
     assert any("另一个任务" in text for text in notices), notices
 
     # 仍停留在 A：照旧询问，并且把 A 的任务号明确传下去。
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     window.deliver()
     prompts.clear()
@@ -3936,13 +3942,13 @@ def test_workbench_operation_runs_in_the_header_not_a_wait_dialog(client, monkey
     """审校、交付这类一次性操作在工作台顶栏的运行状态组里显示，不再弹「请稍候」框。"""
     window, app = client["window"], client["app"]
     job_a, job_b = _two_jobs(client)
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window, "_busy", lambda *_: pytest.fail("no wait dialog in the workbench"))
     notices: list[str] = []
     monkeypatch.setattr(window, "_notice", lambda message, **_k: notices.append(str(message)))
 
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     bench = window.workbench
     window.review_all()
@@ -3965,11 +3971,11 @@ def test_workbench_operation_runs_in_the_header_not_a_wait_dialog(client, monkey
     assert notices and "上一个操作还在进行" in notices[-1]
 
     # 切到别的任务：那里没有这个操作；切回来它还在。
-    window.open_job(job_b)
+    open_job_and_wait(window, job_b)
     app.processEvents()
     assert not bench.operation_active(job_b)
     assert "审校" not in bench.run_status.line.text()
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     assert bench.run_status.line.text() == "正在审校 · 已完成 2/3 段"
 
@@ -3982,12 +3988,12 @@ def test_workbench_operation_runs_in_the_header_not_a_wait_dialog(client, monkey
 def test_save_snapshot_writes_the_requested_task_not_the_current_one(client, monkeypatch):
     window, adapter, app = client["window"], client["adapter"], client["app"]
     job_a, job_b = _two_jobs(client)
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window, "_choose_directory", lambda _title: str(client["tmp"]))
     monkeypatch.setattr(window, "_confirm_overwrite", lambda *_a, **_k: False)
 
-    window.open_job(job_b)
+    open_job_and_wait(window, job_b)
     app.processEvents()
     window.save_snapshot(2, job_a)
 
@@ -4004,17 +4010,17 @@ def test_style_profile_result_is_dropped_after_switching_task(client, monkeypatc
     """FND-2：A 的智能画像结果不得显示在 B 的（共用）准备面板上。"""
     window, app = client["window"], client["app"]
     job_a, job_b = _two_jobs(client)
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window, "_notice", lambda *_a, **_k: None)
     panel = window.workbench.setup_panel
 
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     window.run_style_profile()
     assert not panel.style_profile_button.isEnabled()
 
-    window.open_job(job_b)
+    open_job_and_wait(window, job_b)
     app.processEvents()
     assert panel.style_profile_button.isEnabled(), "切换任务应清掉上一任务的忙碌状态"
     assert not panel.style_status.isVisible() and not panel.style_status.text()
@@ -4026,7 +4032,7 @@ def test_style_profile_result_is_dropped_after_switching_task(client, monkeypatc
     assert not panel.style_accept_button.isVisible()
 
     # 仍在 A 时结果照常展示。
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     window.run_style_profile()
     held.calls[-1]["on_done"]({"recommendation": {"recommended_style": "academic",
@@ -4038,12 +4044,12 @@ def test_retranslate_notice_names_the_segment_that_was_retranslated(client, monk
     """FND-4：等待框隐藏后切到别的段，提示仍应说"发起重译的那一段"。"""
     window, app = client["window"], client["app"]
     job_a, _job_b = _two_jobs(client)
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     notices: list[str] = []
     monkeypatch.setattr(window, "_notice", lambda message, **_k: notices.append(str(message)))
 
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     window.retranslate_segment(2)  # 第 3 段
     assert held.calls, "重译应已提交到后台"
@@ -4075,7 +4081,7 @@ def test_opening_a_task_computes_the_delivery_preview_once(client, monkeypatch):
         return real(job_id, *args, **kwargs)
 
     monkeypatch.setattr(adapter, "delivery_preview", counting)
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     assert calls.count(job_a) == 1, calls
 
@@ -4086,7 +4092,7 @@ def test_idle_poll_repaints_nothing_but_real_changes_still_show(client, monkeypa
     from folith.qt import views as views_module
 
     job_a, _job_b = _two_jobs(client)
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
     bench = window.workbench
 
@@ -4123,8 +4129,8 @@ def test_idle_poll_repaints_nothing_but_real_changes_still_show(client, monkeypa
 def test_start_is_inline_defers_io_and_restores_buttons_on_failure(client, monkeypatch):
     window, adapter = client["window"], client["adapter"]
     job_a, job_b = _two_jobs(client)
-    window.open_job(job_a)
-    held = _HeldRunner()
+    open_job_and_wait(window, job_a)
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window, "_busy", lambda *_: pytest.fail("start must stay inline"))
     load_source = adapter.core.load_source
@@ -4140,7 +4146,7 @@ def test_start_is_inline_defers_io_and_restores_buttons_on_failure(client, monke
     buttons = (window.workbench.start_button, window.workbench.setup_panel.start_button)
     assert all(not b.isEnabled() for b in buttons)
     monkeypatch.setattr(adapter.core, "load_source", load_source)
-    window.open_job(job_b)
+    open_job_and_wait(window, job_b)
     window.start_or_resume()  # shared buttons cannot have overlapping restorations
     assert len(held.calls) == 1
     assert notices[-1] == "另一个任务正在启动，请等它启动后再开始这个任务。"
@@ -4154,7 +4160,7 @@ def test_start_is_inline_defers_io_and_restores_buttons_on_failure(client, monke
 
 def test_import_is_inline_and_failure_restores_entry_point(client, monkeypatch):
     window = client["window"]
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window, "_busy", lambda *_: pytest.fail("import must stay inline"))
     failures = []
@@ -4173,7 +4179,7 @@ def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, mo
     from PySide6.QtCore import Qt
 
     window = client["window"]
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window_module, "_automation", lambda: False)
     monkeypatch.setattr(window, "_failure", lambda *args, **kwargs: None)
@@ -4196,8 +4202,8 @@ def test_long_import_progress_is_nonmodal_and_respects_reduced_motion(client, mo
 def test_save_acknowledges_latest_queued_text_only(client, monkeypatch):
     window = client["window"]
     job_a, _ = _two_jobs(client)
-    window.open_job(job_a)
-    held = _HeldRunner()
+    open_job_and_wait(window, job_a)
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     monkeypatch.setattr(window, "refresh_workbench", lambda **kw: None)
     monkeypatch.setattr(window, "_offer_repetitions", lambda *a, **kw: None)
@@ -4226,7 +4232,7 @@ def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
     window._motion._last.clear()  # not a "rapid repeat" of the first navigation
     widths = []
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     while window._motion.running("sidebar"):
         widths.append(window.stack.width())
         app.processEvents()
@@ -4326,21 +4332,24 @@ def test_open_job_shows_a_loading_overlay_before_the_heavy_work_and_removes_it(c
         return real_rows(*args, **kwargs)
 
     monkeypatch.setattr(window.workbench, "load", spying_load)
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     assert seen == [True], "the overlay must be up before the grid is built"
     assert not _overlay_visible(window)
     assert window._current_job_id == job_id
 
 
-def test_small_tasks_open_without_an_overlay(client, monkeypatch):
+def test_small_tasks_also_show_read_feedback_then_clear_the_overlay(client, monkeypatch):
     window, adapter = client["window"], client["adapter"]
     job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "tiny.docx", ["一段。"])
     seen: list[bool] = []
     real_load = window.workbench.load
     monkeypatch.setattr(window.workbench, "load",
                         lambda *a, **k: seen.append(_overlay_visible(window)) or real_load(*a, **k))
-    window.open_job(job_id)
-    assert seen == [False]
+    open_job_and_wait(window, job_id)
+    # Segment count is not a bound on disk/read latency. All asynchronous opens
+    # report loading until their result is applied, including short documents.
+    assert seen == [True]
+    assert not _overlay_visible(window)
 
 
 def test_open_job_writes_one_timing_line_per_phase(client):
@@ -4348,7 +4357,7 @@ def test_open_job_writes_one_timing_line_per_phase(client):
     job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "timed.docx", ["一段。"])
     lines: list[str] = []
     window._log = lines.append
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     for phase in ("load_state", "segment_rows", "workbench.load", "total"):
         assert any(line.startswith(f"timing open_job job={job_id} {phase} ") and line.endswith("ms")
                    for line in lines), (phase, lines)
@@ -4357,7 +4366,7 @@ def test_open_job_writes_one_timing_line_per_phase(client):
 def test_leaving_prepare_for_a_large_task_shows_the_overlay(client, monkeypatch):
     window, adapter = client["window"], client["adapter"]
     job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "leave.docx", ["一段。", "二段。"])
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     monkeypatch.setattr(type(window), "LOADING_SEGMENTS", 1)
     window.workbench._showing_setup = True
     seen: list[bool] = []
@@ -4372,8 +4381,180 @@ def test_leaving_prepare_for_a_large_task_shows_the_overlay(client, monkeypatch)
 def test_background_refresh_is_only_logged_when_slow(client):
     window, adapter = client["window"], client["adapter"]
     job_id = _seed_job_for_keyboard(adapter, client["core"], client["tmp"], "quiet.docx", ["一段。"])
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     lines: list[str] = []
     window._log = lines.append
     window.refresh_workbench()
     assert not [line for line in lines if "refresh_workbench" in line]
+
+
+def test_open_job_reads_and_projects_off_the_gui_thread(client, monkeypatch):
+    import threading
+    window, adapter = client['window'], client['adapter']
+    job, _ = _two_jobs(client)
+    gui = threading.get_ident()
+    calls = []
+    for name in ('load_state', 'segment_rows', 'delivery_snapshots', 'delivery_preview', 'review_queue'):
+        original = getattr(adapter, name)
+        def record(*args, _name=name, _original=original, **kwargs):
+            calls.append((_name, threading.get_ident()))
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(adapter, name, record)
+    open_job_and_wait(window, job)
+    assert {name for name, _ in calls} == {
+        'load_state', 'segment_rows', 'delivery_snapshots', 'delivery_preview', 'review_queue'}
+    assert all(thread != gui for _, thread in calls), calls
+    assert not window._loading_overlay.isVisible()
+
+
+def test_open_job_keeps_events_live_and_drops_result_after_returning_home(client, monkeypatch):
+    import threading
+    window, adapter, app = client['window'], client['adapter'], client['app']
+    job, _ = _two_jobs(client)
+    entered, release = threading.Event(), threading.Event()
+    original = adapter.load_state
+    def blocked(job_id):
+        entered.set()
+        assert release.wait(10)
+        return original(job_id)
+    monkeypatch.setattr(adapter, 'load_state', blocked)
+    finished = []
+    try:
+        window.open_job(job, after_open=lambda: finished.append(job))
+        assert _pump(app, 5, entered.is_set)
+        assert window._loading_overlay.isVisible()
+        ticks = []
+        QTimer.singleShot(0, lambda: ticks.append(True))
+        assert _pump(app, 1, lambda: bool(ticks))
+        window.show_home()
+        release.set()
+        assert _pump(app, 10, lambda: not window.runner.busy)
+        assert window.stack.currentWidget() is window.home
+        assert not window._current_job_id and finished == []
+        assert not window._loading_overlay.isVisible()
+    finally:
+        release.set()
+
+
+def test_latest_open_request_wins_when_an_earlier_read_finishes_late(client, monkeypatch):
+    import threading
+    window, adapter, app = client['window'], client['adapter'], client['app']
+    first, second = _two_jobs(client)
+    entered, release = threading.Event(), threading.Event()
+    original = adapter.load_state
+    def blocked(job_id):
+        if job_id == first:
+            entered.set()
+            assert release.wait(10)
+        return original(job_id)
+    monkeypatch.setattr(adapter, 'load_state', blocked)
+    completed = []
+    try:
+        window.open_job(first, after_open=lambda: completed.append(first))
+        assert _pump(app, 5, entered.is_set)
+        window.open_job(second, after_open=lambda: completed.append(second))
+        assert _pump(app, 10, lambda: window._current_job_id == second and not window._opening_job_id)
+        release.set()
+        assert _pump(app, 10, lambda: not window.runner.busy)
+        assert window._current_job_id == second
+        assert completed == [second]
+        assert not window._loading_overlay.isVisible()
+    finally:
+        release.set()
+
+
+def test_loading_progress_advances_on_completed_read_phases(client, monkeypatch):
+    import threading
+    window, adapter, app = client['window'], client['adapter'], client['app']
+    job, _ = _two_jobs(client)
+    entered, release = threading.Event(), threading.Event()
+    original = adapter.segment_rows
+
+    def blocked(*args):
+        entered.set()
+        assert release.wait(10)
+        return original(*args)
+
+    monkeypatch.setattr(adapter, 'segment_rows', blocked)
+    try:
+        window.open_job(job)
+        assert _pump(app, 5, lambda: entered.is_set() and
+                     window._loading_overlay._track.value() == 1)
+        assert window._loading_overlay._track.maximum() == 5
+        release.set()
+        assert _pump(app, 10, lambda: not window._opening_job_id)
+        assert window.workbench.job_id == job
+        assert not window._loading_overlay.isVisible()
+    finally:
+        release.set()
+
+
+def test_failed_async_open_clears_loading_and_keeps_previous_task(client, monkeypatch):
+    window, adapter, app = client['window'], client['adapter'], client['app']
+    first, second = _two_jobs(client)
+    open_job_and_wait(window, first)
+    def fail(job_id):
+        raise OSError('snapshot unreadable')
+    monkeypatch.setattr(adapter, 'load_state', fail)
+    window.open_job(second)
+    assert _pump(app, 5, lambda: not window._opening_job_id)
+    assert window._current_job_id == first
+    assert not window._loading_overlay.isVisible()
+    assert 'snapshot unreadable' in str(window.failures)
+    assert window.workbench.isEnabled()
+
+
+def test_loading_another_task_disables_old_editor_and_task_shortcuts(client, monkeypatch):
+    import threading
+    window, adapter, app = client['window'], client['adapter'], client['app']
+    first, second = _two_jobs(client)
+    open_job_and_wait(window, first)
+    entered, release = threading.Event(), threading.Event()
+    original = adapter.load_state
+
+    def blocked(job_id):
+        entered.set()
+        assert release.wait(10)
+        return original(job_id)
+
+    monkeypatch.setattr(adapter, 'load_state', blocked)
+    try:
+        window.open_job(second)
+        assert _pump(app, 5, entered.is_set)
+        assert not window.workbench.isEnabled()
+        for key in ('start', 'pause', 'cancel', 'reload', 'submit', 'deliver'):
+            assert not window.menu_actions[key].isEnabled(), key
+        assert window.menu_actions['home'].isEnabled()
+        window.show_home()
+        release.set()
+        assert _pump(app, 10, lambda: not window.runner.busy)
+        assert window.workbench.isEnabled()
+        assert window.stack.currentWidget() is window.home
+    finally:
+        release.set()
+
+
+def test_closing_during_async_open_drops_the_completion_callback(client, monkeypatch):
+    import threading
+    window, adapter, app = client['window'], client['adapter'], client['app']
+    job, _ = _two_jobs(client)
+    entered, release = threading.Event(), threading.Event()
+    original = adapter.load_state
+    def blocked(job_id):
+        entered.set()
+        assert release.wait(10)
+        return original(job_id)
+    monkeypatch.setattr(adapter, 'load_state', blocked)
+    completed = []
+    try:
+        window.open_job(job, after_open=lambda: completed.append(job))
+        assert _pump(app, 5, entered.is_set)
+        window.close()
+        release.set()
+        assert _pump(app, 10, lambda: not window.runner.busy)
+        assert window._closing_accepted
+        assert not window.isVisible()
+        assert not window._opening_job_id
+        assert completed == []
+    finally:
+        release.set()

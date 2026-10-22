@@ -32,6 +32,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
 #: 界面语言 → 截图文件名后缀。中文是基准语言，文件名一个字都不改。
 LANG_SUFFIX = {"zh-CN": "", "en": ".en", "ru": ".ru", "es": ".es"}
 
@@ -644,18 +646,18 @@ def main() -> int:
         pump(1.5)
         window.projects._tab_changed("terms")
         shot("qt-02-projects")
-        window.open_job("showcase-book")
+        open_job_and_wait(window, "showcase-book")
         pump(1.5)
         window.workbench.show_page("translate")
         shot("qt-03-workbench")
         window.workbench.show_page("translate")
         window.workbench.show_page("deliver")
         shot("qt-04-delivery-gate")
-        window.open_job("showcase-fin")
+        open_job_and_wait(window, "showcase-fin")
         pump(1.5)
         window.workbench.show_page("deliver")
         shot("qt-05-delivery-ready")
-        window.open_job("showcase-prep")
+        open_job_and_wait(window, "showcase-prep")
         pump(1.5)
         window.workbench.show_page("translate")
         shot("qt-06-prepare")

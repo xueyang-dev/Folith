@@ -1,0 +1,26 @@
+{
+  "build_id": "git:0a8735e",
+  "frozen": true,
+  "build_worktree_dirty": false,
+  "ocr_bundled": false,
+  "startup_smoke_platform": "cocoa",
+  "startup_smoke_ok": true,
+  "flow_window_requested": true,
+  "flow_ok": true,
+  "flow_duration_s": 21.5,
+  "pdf_sources": [
+    {
+      "job_id": "b85680b31b300cad",
+      "pages": 1,
+      "png_bytes": 17709,
+      "segment_page": 0,
+      "highlight_rects": 1
+    }
+  ],
+  "limits": [
+    "Small generated DOCX/PDF fixtures; not native long-document acceptance",
+    "Separate smoke process directly reports Cocoa; Flow does not yet include a platform field",
+    "No optional OCR payload in this local build",
+    "Qt window screenshot does not certify OS titlebar or native file dialogs"
+  ]
+}

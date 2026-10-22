@@ -14,6 +14,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
+
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 os.environ["FOLITH_EXIT_FORCE_PROMPT"] = "0"
@@ -43,7 +45,7 @@ def _plain_state(core, name="doc.docx", **extra):
 
 def _open(client, job_id):
     window = client["window"]
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     _pump(client["app"], 1.0)
     return window
 

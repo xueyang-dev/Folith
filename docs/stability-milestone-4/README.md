@@ -272,3 +272,60 @@ responsiveness. See `native-idle-profile-1.json` and `native-idle-profile-2.json
 The source-quality and actual non-translatable-review regressions passed 24
 cases, including a geometry-operation bound and comparison with individual
 per-segment evidence. A fresh running native workload remains required.
+
+## Current local frozen macOS check
+
+A clean `0a8735e` arm64 bundle built successfully with `--no-ocr`. Its actual
+executable reported `platform=cocoa`, `frozen=true`, `ok=true` in the startup
+smoke. The same executable passed the `both --window` generated DOCX/PDF flow
+in 21.5 seconds, including PDF PNG decoding/location/highlight and the ordinary
+edit/review/delivery/re-read path. The Flow report itself does not include a Qt
+platform field; native Cocoa is directly recorded by the separate smoke.
+No OCR, OS titlebar, native file dialog or frozen long-document claim is made.
+See `frozen-native-0a8735e.json`.
+
+The second 801-batch sweep completed at clean `0a8735e` with 250-ms controlled
+model calls, after native profiling/build runs ended. All five levels retained
+3,204 pairs, matching output/order and 801 merged knowledge observations, with
+zero blocking findings or pending knowledge extractions. Wall times for
+1/2/3/4/6 were 476.78/132.98/83.12/62.45/52.61 seconds. At 6, median commit-wait
+(0.503 seconds) still exceeded preparation (0.258 seconds); the complete #55
+performance gate is not claimed. See `concurrency-audit.md` and
+`concurrency-801-batches-250ms.json`. Both cohorts remain part of the audit.
+
+## Asynchronous task opening and large grid rendering (#44)
+
+Task snapshot reads, segment projection, delivery/review projection and runtime
+projection now run in the existing TaskRunner. The GUI reports actual completed
+read phases and applies only the latest navigation result. Returning home,
+closing, a failed read, and switching tasks drop obsolete completions. The old
+workbench and its task menu actions stay disabled during the read. Import
+start-after-open and library segment navigation await the actual new task.
+
+The grid retains its complete accessible model dimensions while painting
+visible rows first and remaining cells in 4-ms slices. Selection includes rows
+whose cells are pending; switching tasks replaces the pending paint queue.
+Height updates are retained after each slice and before a new commit replaces
+an unfinished queue. This reuses the grid approach from PR #51 without importing
+its unrelated document-profile changes.
+
+Six affected Qt test files initially produced 149 passes and two failures in
+old synchronous-loading test expectations. The damaged-task test now awaits the
+failure instead of asserting successful navigation; the short-task test expects
+feedback during a background read. Both passed separately, and the new actual
+phase-progress test passed (152 distinct cases verified across the runs).
+The 120-paragraph crash/lifecycle/export probe also completed with `ok=true`.
+The generated DOCX/PDF source flow with private preferences also passed the
+ordinary edit/review/delivery/exit/re-read path. An earlier source-probe attempt
+inherited this machine's saved report preference, hit the real missing-human-QA
+gate, and was terminated while its old harness waited for a snapshot. That
+attempt is not a pass. The source probe now uses a private INI and fails promptly
+when the delivery worker finishes without a snapshot; no QA fact is fabricated.
+
+A source native Cocoa window opened a copy of the completed real 4,823-pair PDF
+task: dispatch 0.0116 s, applied workbench 0.933 s, all cells/heights 2.283 s,
+maximum 20-ms heartbeat gap during opening 236.7 ms. Thirty seconds idle used
+4.38% of one core; maximum idle gap was 37.9 ms. Selecting the final segment
+returned index 4822. See `native-async-open-4823.json`. This is a dirty-worktree
+source check, not a frozen or Windows acceptance. Existing offline-target
+completeness blockers remain; no running translation or export pass is implied.

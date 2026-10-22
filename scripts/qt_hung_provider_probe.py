@@ -28,6 +28,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
 #: 停止流程的上界（与 `_stop_and_close` 里的 45s 一致），再加一点余量。
 STOP_BUDGET_SECONDS = 45.0
 EXIT_DEADLINE_SECONDS = STOP_BUDGET_SECONDS + 45.0
@@ -91,7 +93,7 @@ def run(out_dir: Path, *, hang_seconds: float = 600.0) -> dict:
             app.processEvents()
             time.sleep(0.05)
         job_id = adapter.list_jobs()[0].job_id
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         window.start_or_resume()
 
         # 等到请求真的进入"等模型"状态
@@ -113,7 +115,7 @@ def run(out_dir: Path, *, hang_seconds: float = 600.0) -> dict:
         # 1) 界面仍可用
         started = time.monotonic()
         window.show_home()
-        window.open_job(job_id)
+        open_job_and_wait(window, job_id)
         app.processEvents()
         facts["switch_ms_while_hung"] = round((time.monotonic() - started) * 1000, 1)
         if facts["switch_ms_while_hung"] > 500:
