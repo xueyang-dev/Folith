@@ -154,8 +154,9 @@ def test_tm_writes_track_snapshots_not_batches(temp_job_env: Path, monkeypatch):
     _, counts = _run_counted("tm-cadence", _paragraphs(60), batch_size=2)
 
     # 30 batches; cadence = min(8, ceil(30/10)) = 3, plus the loop-exit flush.
-    assert counts["state"] == 11
-    assert counts["tm"] == counts["state"], "TM and state must flush together"
+    assert counts["state"] == 12   # + journal baseline snapshot
+    assert counts["tm"] == counts["state"] - 1, (
+        "TM and state flush together (the baseline snapshot has no promotions)")
     assert counts["tm"] < 30, "promotions are still being written per batch"
 
 
@@ -170,7 +171,7 @@ def test_tm_writes_collapse_to_the_loop_exit_snapshot(temp_job_env: Path,
     monkeypatch.setenv("FOLIOTHREAD_STATE_SNAPSHOT_INTERVAL_S", NO_TIME_TRIGGER)
     _, counts = _run_counted("tm-journal-window", _paragraphs(60), batch_size=2)
 
-    assert counts["state"] == 1, "only the loop-exit snapshot"
+    assert counts["state"] == 2, "journal baseline + loop-exit snapshot"
     assert counts["tm"] == 1, "TM still flushes with state, never separately"
     assert len(core.load_tm(None)) == 60
 
@@ -181,7 +182,7 @@ def test_tm_writes_collapse_at_5000_scale_in_shape(temp_job_env: Path, monkeypat
     monkeypatch.setenv("FOLIOTHREAD_STATE_SNAPSHOT_EVERY", "6")
     _, counts = _run_counted("tm-shape", _paragraphs(240), batch_size=4)
     # 60 batches; cadence = min(8, ceil(60/10)) = 6 -> 10 cadence flushes + exit.
-    assert counts["tm"] == counts["state"] == 11
+    assert counts["tm"] == counts["state"] - 1 == 11
     assert counts["tm"] <= 60 // 6 + 1
 
 

@@ -144,19 +144,24 @@ def profile_document(
     controller = _get_request_controller(provider, model)
 
     last_err = "模型未返回内容"
+    request_text = sample_text
     for _attempt in range(3):
         try:
             controller.acquire(cancel_check)
-            res = call_llm(provider, api_key, model, sys_prompt, sample_text, temperature=0.1)
+            res = call_llm(provider, api_key, model, sys_prompt, request_text, temperature=0.1)
             controller.note_success()
             raw = _parse_profile_json(res)
             if raw is None:
-                raise ValueError("返回内容不是合法 JSON 对象")
+                last_err = "返回内容不是合法 JSON 对象"
+                request_text = sample_text + "\n\n上次输出不是合法 JSON 对象。请重新分析样本，只输出完整 JSON 对象，不要解释。"
+                continue
             profile = models.normalize_document_profile(raw)
             problems = models.validate_document_profile(profile)
             if problems and not profile.get("domain"):
                 # 关键字段缺失视为画像失败（不静默伪造）
-                raise ValueError("画像缺少关键字段：" + "；".join(problems))
+                last_err = "画像缺少关键字段：" + "；".join(problems)
+                request_text = sample_text + "\n\n上次画像校验失败：" + last_err + "。请根据样本重新输出完整 JSON 对象。"
+                continue
             for p in problems:
                 warnings.append(f"文档画像提示：{p}")
             return profile, warnings

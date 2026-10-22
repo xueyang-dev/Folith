@@ -135,6 +135,9 @@ def _crash_run(job_id: str, paragraphs, *, batch_size=2, llm=None):
     real_llm = core.call_llm
 
     def exploding_save(_job_id, _state):
+        if not _state.get("pairs"):
+            # The one baseline snapshot taken before the first batch commits.
+            return real_save(_job_id, _state)
         raise OSError("simulated crash: snapshot write failed")
 
     core.save_job_state = exploding_save
@@ -593,7 +596,7 @@ def test_snapshot_count_is_decoupled_from_segment_count(
     """
     monkeypatch.setenv("FOLIOTHREAD_STATE_SNAPSHOT_EVERY", "1")
     dense = _run("count-dense", _paragraphs(60), batch_size=2)
-    assert dense["state_journal"]["snapshots"] == 31, "one per batch + exit"
+    assert dense["state_journal"]["snapshots"] == 32, "baseline + one per batch + exit"
 
     monkeypatch.delenv("FOLIOTHREAD_STATE_SNAPSHOT_EVERY")
     journal.reset_dir_cache()
@@ -601,8 +604,9 @@ def test_snapshot_count_is_decoupled_from_segment_count(
     with_journal = _run("count-journal", _paragraphs(60), batch_size=2)
     bigger = _run("count-journal-big", _paragraphs(600), batch_size=2)
 
-    assert with_journal["state_journal"]["snapshots"] == 1
-    assert bigger["state_journal"]["snapshots"] == 1, (
+    # One baseline snapshot before the first batch, one at loop exit.
+    assert with_journal["state_journal"]["snapshots"] == 2
+    assert bigger["state_journal"]["snapshots"] == 2, (
         "ten times the document, the same number of full snapshots")
 
 
@@ -647,3 +651,168 @@ def test_fallback_snapshot_failure_preserves_previously_committed_journal(temp_j
         assert len(core.load_job_state(job_id)['pairs']) == 1
     finally:
         core._workflow_errors.reset(job_id)
+
+
+# --------------------------------------------------------------------------
+# knowledge-candidate delta (issue #56)
+# --------------------------------------------------------------------------
+def _candidate(n: int) -> dict:
+    return {"source": f"Term {n}", "observed_target": f"术语{n}",
+            "occurrences": [n], "observed_segments": [n],
+            "status": "emergent_candidate", "provenance": "generated_continuity",
+            "scope": "document", "kind": "term", "confidence": 0.35,
+            "first_observed_segment": n}
+
+
+def _journal_batch(state: dict, new_candidates, *, batch: int, update=None):
+    """Mutate ``state`` like one commit and return its journal record."""
+    baseline = core.journal_baseline(state)
+    offset = len(state["pairs"])
+    pairs = [{"source": f"s{offset}", "target": f"t{offset}"}]
+    state["pairs"].extend(pairs)
+    if update:
+        index, fields = update
+        state["knowledge_candidates"][index].update(fields)
+    state["knowledge_candidates"] = (
+        list(state["knowledge_candidates"]) + list(new_candidates))
+    state["translation_continuity"] = list(state["knowledge_candidates"])
+    record = core.build_batch_journal_record(
+        state, baseline, {}, batch=batch, offset=offset,
+        segment_ids=[offset], pairs=pairs)
+    assert record is not None
+    return record
+
+
+def _base_state() -> dict:
+    state = {key: [] for key in core._JOURNAL_EXTEND_KEYS}
+    state.update(pairs=[], knowledge_candidates=[], translation_continuity=[])
+    return state
+
+
+def test_candidate_journal_record_size_stays_bounded():
+    """Per-batch record size must not follow the candidate count (#56)."""
+    state = _base_state()
+    sizes = []
+    for batch in range(400):
+        record = _journal_batch(state, [_candidate(batch)], batch=batch)
+        record["seq"] = batch + 1
+        assert "translation_continuity" not in (record.get("set") or {})
+        assert "knowledge_candidates" not in (record.get("set") or {})
+        sizes.append(len(json.dumps(record, ensure_ascii=False)))
+    assert len(state["knowledge_candidates"]) == 400
+    assert max(sizes) < 2 * sizes[0] + 200, (
+        f"record size grew from {sizes[0]} to {max(sizes)} bytes")
+    assert sum(sizes) < 400 * (sizes[0] + 200), "total journal growth is not linear"
+
+
+def test_incremental_replay_equals_full_replay(temp_job_env: Path):
+    """Replaying records one at a time lands on the same state as replaying all."""
+    job_id = "candidate-incremental"
+    live = _base_state()
+    records = []
+    for batch in range(12):
+        update = (0, {"occurrences": [0, batch], "observed_target": f"改{batch}"}) \
+            if batch and batch % 3 == 0 else None
+        record = _journal_batch(live, [_candidate(batch + 1)], batch=batch,
+                                update=update)
+        record["seq"] = batch + 1
+        records.append(record)
+    journal.journal_path(job_id).parent.mkdir(parents=True, exist_ok=True)
+    _rewrite_journal(job_id, records)
+
+    full = _base_state()
+    report = journal.replay(job_id, full)
+    assert report["applied"] == 12 and not report["gap"]
+    assert full["knowledge_candidates"] == live["knowledge_candidates"]
+    assert full["translation_continuity"] == live["knowledge_candidates"]
+    assert full["pairs"] == live["pairs"]
+
+    stepped = _base_state()
+    for upto in range(1, 13):
+        _rewrite_journal(job_id, records[:upto])
+        journal.replay(job_id, stepped)
+    assert stepped == full
+
+
+def test_old_full_list_records_still_replay(temp_job_env: Path):
+    """Journals written before the delta format (schema 1) keep working."""
+    job_id = "candidate-legacy"
+    items = [_candidate(1), _candidate(2)]
+    record = {
+        "schema": 1, "mutation": journal.MUTATION_TRANSLATION_BATCH,
+        "mutation_id": "x", "ts": "t", "batch": 0, "offset": 0,
+        "segment_ids": [0], "pairs": [{"source": "a", "target": "b"}],
+        "set": {"knowledge_candidates": items,
+                "translation_continuity": list(items)},
+        "seq": 1,
+    }
+    journal.journal_path(job_id).parent.mkdir(parents=True, exist_ok=True)
+    _rewrite_journal(job_id, [record])
+    state = _base_state()
+    assert journal.replay(job_id, state)["applied"] == 1
+    assert state["knowledge_candidates"] == items
+    assert state["translation_continuity"] == items
+
+
+def test_unfaithful_candidate_change_falls_back_to_a_snapshot():
+    """A shrunken queue cannot be described as a delta."""
+    state = _base_state()
+    state["knowledge_candidates"] = [_candidate(1), _candidate(2)]
+    baseline = core.journal_baseline(state)
+    state["knowledge_candidates"] = state["knowledge_candidates"][:1]
+    assert core.build_batch_journal_record(
+        state, baseline, {}, batch=0, offset=0, segment_ids=[], pairs=[]) is None
+
+
+def test_gap_does_not_leave_a_partially_applied_record(temp_job_env: Path):
+    """A record whose bases do not line up writes none of its pairs (#56 part 2)."""
+    job_id = "candidate-gap"
+    state = _base_state()
+    first = _journal_batch(state, [_candidate(1)], batch=0)
+    first["seq"] = 1
+    second = _journal_batch(state, [_candidate(2)], batch=1)
+    second["seq"] = 2
+    second["extend"] = {"findings": {"base": 234, "items": [{"x": 1}]}}
+    journal.journal_path(job_id).parent.mkdir(parents=True, exist_ok=True)
+    _rewrite_journal(job_id, [first, second])
+    replayed = _base_state()
+    report = journal.replay(job_id, replayed)
+    assert report["gap"] and report["applied"] == 1
+    assert len(replayed["pairs"]) == 1
+
+
+def test_pre_loop_state_changes_survive_a_crash(temp_job_env: Path, monkeypatch):
+    """Findings added before batch 0 must be in the snapshot the journal extends.
+
+    Regression for #56 part 2: the source-quality findings are appended before
+    the first batch, so without a baseline snapshot record 2 carried an
+    ``extend.findings`` base the snapshot did not have, and replay stopped after
+    one batch.
+    """
+    job_id = "pre-loop-findings"
+    paragraphs = _paragraphs(8)
+    state = _seed(job_id, paragraphs)
+    # The gate quarantines segment 1 and appends a finding before batch 0.
+    monkeypatch.setattr(core, "_audit_source_quality_for_state",
+                        lambda _state, **_kw: {"flags": [{"segment_index": 1}]})
+    monkeypatch.setattr(core, "_source_quality_finding", lambda flag: {
+        "finding_id": "sq1", "type": "source_quality_gate",
+        "segment_index": flag["segment_index"]})
+    real_save = core.save_job_state
+
+    def exploding_save(_job_id, _state):
+        if not _state.get("pairs"):
+            return real_save(_job_id, _state)
+        raise OSError("simulated crash: snapshot write failed")
+
+    core.save_job_state = exploding_save
+    try:
+        with pytest.raises(Exception):
+            _translate(state, job_id, batch_size=2)
+    finally:
+        core.save_job_state = real_save
+    repo.invalidate_cache()
+    recovered = core.load_job_state(job_id)
+    assert len(recovered["pairs"]) == 8
+    assert [f["finding_id"] for f in recovered["findings"]
+            if f.get("type") == "source_quality_gate"] == ["sq1"]
