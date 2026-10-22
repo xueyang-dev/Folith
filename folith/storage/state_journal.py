@@ -49,6 +49,11 @@ record is a fixed, named shape -- not a diff:
     Named append-only lists: the items this batch appended, together with the
     list length they were appended to.  The length is checked on replay, so
     applying a record twice fails loudly instead of duplicating items.
+``candidates``
+    The knowledge-candidate queue as ``{"base", "update", "append"}``: only the
+    new candidates and the changed fields of existing ones.  The queue is large
+    and grows with the document, so rewriting it per batch made the journal
+    quadratic.  ``translation_continuity`` mirrors it and is derived on replay.
 ``patch``
     In-place updates to items that earlier records already carried, keyed by
     the item's own identity (``review_event_id`` / ``finding_id`` /
@@ -74,7 +79,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from folith import critical_path as _critical_path
 
-JOURNAL_SCHEMA_VERSION = 1
+#: Version 2 adds the ``candidates`` delta.  A reader that only knows version 1
+#: stops at the first version-2 record (a reported gap) instead of silently
+#: ignoring the key, so downgrading costs recomputation, never correctness.
+JOURNAL_SCHEMA_VERSION = 2
+READABLE_SCHEMA_VERSIONS = (1, 2)
 
 JOURNAL_FILE = "state_journal.jsonl"
 
@@ -328,6 +337,30 @@ def set_cursor(state: Dict[str, Any], seq: int) -> None:
 # ---------------------------------------------------------------------------
 # applying
 # ---------------------------------------------------------------------------
+def _check_bases(state: Dict[str, Any], record: Dict[str, Any]) -> None:
+    """Refuse a record that does not line up *before* writing any of it.
+
+    Without this a record whose ``extend`` base mismatches would still leave its
+    pairs in the state, so a gap would surface as pairs the cursor does not
+    account for.
+    """
+    for key, entry in (record.get("extend") or {}).items():
+        if not isinstance(entry, dict) or not isinstance(entry.get("items"), list):
+            raise JournalGap(f"extend.{key} is not an append entry")
+        target = state.get(key)
+        have = len(target) if isinstance(target, list) else 0
+        base = entry.get("base")
+        if not isinstance(base, int) or isinstance(base, bool) or have != base:
+            raise JournalGap(f"extend.{key} expects base {base!r}, found {have}")
+    if "candidates" in record:
+        entry = record["candidates"]
+        target = state.get("knowledge_candidates")
+        have = len(target) if isinstance(target, list) else 0
+        base = entry.get("base") if isinstance(entry, dict) else None
+        if not isinstance(base, int) or isinstance(base, bool) or have != base:
+            raise JournalGap(f"candidates expects base {base!r}, found {have}")
+
+
 def _apply_translation_batch(state: Dict[str, Any], record: Dict[str, Any]) -> None:
     """Apply one committed batch, writing absolute values only.
 
@@ -337,6 +370,7 @@ def _apply_translation_batch(state: Dict[str, Any], record: Dict[str, Any]) -> N
     offset = record.get("offset")
     if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
         raise JournalGap("record has no usable offset")
+    _check_bases(state, record)
     pairs = state.get("pairs")
     if not isinstance(pairs, list):
         pairs = state["pairs"] = []
@@ -353,6 +387,9 @@ def _apply_translation_batch(state: Dict[str, Any], record: Dict[str, Any]) -> N
 
     for key, value in (record.get("set") or {}).items():
         state[key] = value
+    if "knowledge_candidates" in (record.get("set") or {}) \
+            and "translation_continuity" not in record["set"]:
+        state["translation_continuity"] = list(state["knowledge_candidates"])
 
     for key, entry in (record.get("extend") or {}).items():
         if not isinstance(entry, dict) or not isinstance(entry.get("items"), list):
@@ -370,7 +407,67 @@ def _apply_translation_batch(state: Dict[str, Any], record: Dict[str, Any]) -> N
                 f"extend.{key} expects base {base!r}, found {len(target)}")
         target.extend(entry["items"])
 
+    if "candidates" in record:
+        _apply_candidates(state, record["candidates"])
+
     _apply_patches(state, record.get("patch") or {})
+
+
+def candidate_delta(before: Any, after: Any) -> Any:
+    """Describe ``before -> after`` as a ``candidates`` entry.
+
+    Returns ``None`` when nothing changed, the entry otherwise, and ``False``
+    when the change is not an append plus in-place field updates (the queue
+    shrank or was reordered, an item is not a dict, a field disappeared); the
+    caller then takes a snapshot instead of journaling something unfaithful.
+    """
+    if after is None and before is None:
+        return None
+    if not isinstance(after, list) or not isinstance(before, list):
+        return False
+    if len(after) < len(before):
+        return False
+    update = []
+    for index, (old, new) in enumerate(zip(before, after)):
+        if old == new:
+            continue
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            return False
+        if any(key not in new for key in old):
+            return False
+        fields = {key: value for key, value in new.items()
+                  if key not in old or old[key] != value}
+        update.append({"index": index, "fields": fields})
+    append = after[len(before):]
+    if not update and not append:
+        return None
+    entry: Dict[str, Any] = {"base": len(before)}
+    if update:
+        entry["update"] = update
+    if append:
+        entry["append"] = append
+    return entry
+
+
+def _apply_candidates(state: Dict[str, Any], entry: Any) -> None:
+    if not isinstance(entry, dict):
+        raise JournalGap("candidates is not a delta entry")
+    target = state.get("knowledge_candidates")
+    if not isinstance(target, list):
+        target = state["knowledge_candidates"] = []
+    base = entry.get("base")
+    if not isinstance(base, int) or isinstance(base, bool) or len(target) != base:
+        raise JournalGap(
+            f"candidates expects base {base!r}, found {len(target)}")
+    for item in entry.get("update") or []:
+        index = item.get("index") if isinstance(item, dict) else None
+        if not isinstance(index, int) or isinstance(index, bool) \
+                or not 0 <= index < base or not isinstance(target[index], dict):
+            raise JournalGap("candidates update addresses a missing item")
+        target[index].update(item.get("fields") or {})
+    target.extend(entry.get("append") or [])
+    # Same list contents as the live pipeline keeps (see the commit path).
+    state["translation_continuity"] = list(target)
 
 
 def _apply_patches(state: Dict[str, Any], patch: Dict[str, Any]) -> None:
@@ -450,7 +547,7 @@ def replay(job_id: str, state: Dict[str, Any],
     current = start
     gap = False
     for record in records:
-        if record.get("schema") != JOURNAL_SCHEMA_VERSION:
+        if record.get("schema") not in READABLE_SCHEMA_VERSIONS:
             gap = True
             break
         applier = _APPLIERS.get(record.get("mutation"))

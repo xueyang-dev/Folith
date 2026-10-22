@@ -2677,14 +2677,17 @@ def state_snapshot_crash_window(batch_size=None, total_batches=None):
 #              batch).  Compared against a pre-batch snapshot of just these keys.
 #   extend  -- append-only lists.  The pre-append length travels with the items
 #              so a double application is detected instead of duplicating.
+#   candidates -- the knowledge-candidate queue, as ``{base, update, append}``.
+#              It only grows or has fields refined in place, and it is large, so
+#              it is journaled as a delta.  ``translation_continuity`` is a copy
+#              of it and is derived on replay, never written.
 #   patch   -- in-place updates to items earlier records already carried, keyed
 #              by the item's own identity.  Produced by the mutator itself.
 _JOURNAL_SET_KEYS = (
     "translation_truth", "dependency_impact", "academic_state", "final_qa",
     "p3_done", "p3_md", "p3_sections", "delivery_status",
     "delivery_approved_by_human", "delivery_approval", "stage",
-    "review_stats", "knowledge_candidates", "translation_continuity",
-    "entity_registry", "knowledge_feedback_policy",
+    "review_stats", "entity_registry", "knowledge_feedback_policy",
     "knowledge_feedback_failures", "has_blocking",
 )
 _JOURNAL_EXTEND_KEYS = (
@@ -2709,6 +2712,7 @@ def journal_baseline(state):
         "set": {key: copy.deepcopy(state[key])
                 for key in _JOURNAL_SET_KEYS if key in state},
         "len": {key: len(state.get(key) or []) for key in _JOURNAL_EXTEND_KEYS},
+        "candidates": copy.deepcopy(state.get("knowledge_candidates")),
     }
 
 
@@ -2756,6 +2760,12 @@ def build_batch_journal_record(state, baseline, patches, *, batch, offset,
             extend_values[key] = {"base": start, "items": items[start:]}
     if extend_values:
         record["extend"] = extend_values
+    candidates = _state_journal.candidate_delta(
+        baseline.get("candidates"), state.get("knowledge_candidates"))
+    if candidates is False:
+        return None
+    if candidates:
+        record["candidates"] = candidates
     patch_values = {key: value for key, value in patches.items()
                     if value and key != "incomplete"}
     if patch_values:
@@ -6551,6 +6561,15 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         and effective_concurrency <= 1
     )
     state["batch_plan"]["review_overlap_enabled"] = bool(overlap_active)
+
+    # The journal describes each batch against the state as it is *now*, but
+    # replay applies it to the last snapshot on disk.  Everything this function
+    # changed before the first batch (source-quality findings, the quality gate,
+    # review stats, truncated pairs) is in neither, so the first record's
+    # ``extend.base`` would not match and replay would stop after one batch.
+    # One baseline snapshot per run closes that hole; it is not per-batch.
+    if _journal_enabled and start_batch < len(batches):
+        _flush_state_snapshot("journal_baseline")
 
     try:
         _resume_knowledge_pending()

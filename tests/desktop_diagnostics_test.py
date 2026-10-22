@@ -210,7 +210,7 @@ def test_fresh_install_diagnostics_is_honest(tmp_path, monkeypatch):
     assert schema["job_state"] == "unversioned"
     # Declared versions are still known (they come from the constants) ...
     assert schema["runtime"]["declared"] == "2"
-    assert schema["journal"]["declared"] == 1
+    assert schema["journal"]["declared"] == 2
     assert schema["translation_drafts"]["declared"] == 1
     # ... while nothing is claimed about data that does not exist yet.
     assert schema["runtime"]["observed"] is None

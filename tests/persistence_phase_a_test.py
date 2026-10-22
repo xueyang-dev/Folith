@@ -226,7 +226,7 @@ def test_snapshot_count_follows_the_cadence(temp_job_env: Path, monkeypatch):
 
     observed = {}
     real_save = core.save_job_state
-    for every, expected in ((1, 30), (8, 10)):
+    for every, expected in ((1, 31), (8, 11)):  # +1: journal baseline snapshot
         monkeypatch.setenv("FOLIOTHREAD_STATE_SNAPSHOT_EVERY", str(every))
         monkeypatch.setenv("FOLIOTHREAD_STATE_SNAPSHOT_INTERVAL_S", "3600")
         job_id = f"cadence-{every}"
