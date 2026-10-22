@@ -873,9 +873,10 @@ def test_external_evidence_attack_and_prompt_scan():
 # ================= 长文模拟 + 性能 =================
 
 def _synthetic_segments(n=400):
+    half = n // 2
     segs = []
     for i in range(n):
-        if i < 200:
+        if i < half:
             body = (f"The bank approved the loan for Skopos theory research in "
                     f"segment {i}. See https://example.com/ref{i} and [12]. "
                     f"MT tools assist translators. The quick brown fox jumps over "
@@ -890,12 +891,99 @@ def _synthetic_segments(n=400):
     return segs
 
 
+# 这条用例原来用绝对墙钟阈值（posix 30 s / Windows 120 s）。它度量的是 runner
+# 有多空闲，不是代码有多慢：同一修订在一台 runner 上 47 s、另一台 72–98 s，
+# `main` 本地 70.66 s / 76.73 s 也会被判成"性能退化"。绝对秒数不可能同时满足
+# "在空机器上抓回归"和"在忙 runner 上不误报"。
+#
+# 现在 pytest 里只保留**与机器无关的粗筛**：先跑一份形状相同、规模为十分之一的
+# 标定文档，紧接着跑被测文档，两者同机、同进程、同负载。
+#
+#     R = 被测耗时 / (10 × 标定耗时)
+#
+# 机器快慢在分子分母里抵消，R 只反映"每段成本有没有随文档长度涨"。阈值取 2.0：
+# 本机同代码连续测量 R 落在 1.05–1.58（含 main 与修复分支），这已经是共享 runner
+# 能分辨的极限——再紧就会把噪声判成回归。因此它只拦"每段成本翻倍以上"这一档，
+# 也就是 O(n²) 写盘复活、整表重扫之类。
+#
+# 数量级的判定不在这里做：`scripts/benchmark_long_document.py` 在同一台空机器上
+# 跑固定负载并与记录基线对比，那才是真正的性能门禁。判定依据与实测见
+# `docs/stability-milestone-4/performance-gate.md`。
+_CALIBRATION_PARAGRAPHS = 40  # 200 段，被测文档的十分之一
+_TARGET_PARAGRAPHS = 400      # 2 000 段
+_SEGMENT_SCALE = 10
+_MAX_RELATIVE_COST = 2.0
+# 只用来兜"卡死"，不承担性能判定——绝对秒数仍然由机器和负载支配。
+_HANG_GUARD_S = 1800
+
+
+def _synthetic_layout(paragraphs):
+    """合成文档、它的 document profile，以及该规模下应有的段数。
+
+    金融半段每段 4 句、地理半段每段 6 句，所以段数与段落数并不相等；profile
+    边界沿用段落下标，与改动前 400 段时的 199 / 399 完全一致。
+    """
+    half = paragraphs // 2
+    profile = models.normalize_document_profile({
+        "domain": "测试", "confidence": 0.8,
+        "sections": [
+            {"section_id": "finance", "start_segment": 0, "end_segment": half - 1,
+             "topic": "金融", "domain": "金融", "style": "说明"},
+            {"section_id": "river", "start_segment": half,
+             "end_segment": paragraphs - 1,
+             "topic": "地理", "domain": "地理", "style": "叙事"},
+        ]})
+    return _make_docx(_synthetic_segments(paragraphs)), profile
+
+
+def _run_synthetic_document(jid, paragraphs, mode, glossary, kwargs):
+    """跑一次离线流水线，返回 ``(state, 耗时秒)``。
+
+    TM 在每次运行前清空：标定跑和被测跑必须从同样的记忆状态起步，否则被测
+    跑会用上一次运行攒下的命中把自己"跑快"，把回归盖掉；对被测跑而言这与
+    改动前（每个 mode 只跑一次、开局 TM 为空）等价。
+    """
+    docx_bytes, doc_profile = _synthetic_layout(paragraphs)
+    tm_path = core.tm_path()
+    if tm_path.is_file():
+        tm_path.unlink()
+    core.call_llm = _compliant_translation_llm(glossary)
+    t0 = time.perf_counter()
+    if mode == "quality":
+        core.save_job_state(jid, core.new_job_state("long.docx"))
+        core.freeze_glossary(jid, entries=glossary, frozen_by="rt")
+        st0 = core.load_job_state(jid)
+        st0["document_profile"] = doc_profile
+        st0["profile_done"] = True
+        core.save_job_state(jid, st0)
+    # 批次数断言按每批 4 句计：显式按句数组批。
+    state = core.run_job_pipeline(jid, "long.docx", docx_bytes, mode=mode,
+                                  batch_size=core.BATCH_SIZE, **kwargs)
+    return state, time.perf_counter() - t0
+
+
+def _document_stats(state, elapsed):
+    log = state.get("glossary_injection_log") or []
+    sizes = [len(x["entry_ids"]) for x in log]
+    return {
+        "segments": len(state["pairs"]),
+        "batches": len(log),
+        "avg_injected": round(sum(sizes) / len(sizes), 2) if sizes else 0,
+        "max_injected": max(sizes) if sizes else 0,
+        "glossary_size": len(state["glossary"]),
+        "reviewed": sum(1 for p in state["pairs"] if p["reviewed"]),
+        "blocking": state.get("review_stats", {}).get("blocking", 0),
+        "actionable": state.get("review_stats", {}).get("actionable", 0),
+        "conflicts": sum(1 for f in state["findings"] if f.get("conflict")),
+        "delivery": state.get("delivery_status"),
+        "elapsed_s": round(elapsed, 2),
+    }
+
+
 def test_long_document_simulation_and_performance():
     tmp, old = _tmp_output_dir()
     old_llm = core.call_llm
     try:
-        segs = _synthetic_segments(400)
-        docx_bytes = _make_docx(segs)
         glossary = [
             _entry("bank", "银行", status="locked", scope="section:finance"),
             _entry("bank", "河岸", status="locked", scope="section:river"),
@@ -904,54 +992,25 @@ def test_long_document_simulation_and_performance():
             _entry("provisional term", "建议术语", status="provisional",
                    scope="global"),
         ]
-        doc_profile = models.normalize_document_profile({
-            "domain": "测试", "confidence": 0.8,
-            "sections": [
-                {"section_id": "finance", "start_segment": 0, "end_segment": 199,
-                 "topic": "金融", "domain": "金融", "style": "说明"},
-                {"section_id": "river", "start_segment": 200, "end_segment": 399,
-                 "topic": "地理", "domain": "地理", "style": "叙事"},
-            ]})
         kwargs = dict(provider="DeepSeek", api_key="k", model="deepseek-chat",
                       target_lang="简体中文", auto_term=False, enable_report=False,
                       translation_theory="目的论 (Skopos Theory)",
                       user_glossary=glossary)
-        stats = {}
-        for mode, jid in (("quick", "lg000000000000001"),
-                          ("quality", "lg000000000000002")):
-            core.call_llm = _compliant_translation_llm(glossary)
-            t0 = time.perf_counter()
-            if mode == "quality":
-                # 隔离 TM：quality 任务不得复用 quick 任务的记忆（分别度量注入）
-                tm_path = core.tm_path()
-                if tm_path.is_file():
-                    tm_path.unlink()
-                core.save_job_state(jid, core.new_job_state("long.docx"))
-                core.freeze_glossary(jid, entries=glossary, frozen_by="rt")
-                st0 = core.load_job_state(jid)
-                st0["document_profile"] = doc_profile
-                st0["profile_done"] = True
-                core.save_job_state(jid, st0)
-            # 批次数断言按每批 4 句计：显式按句数组批。
-            state = core.run_job_pipeline(jid, "long.docx", docx_bytes, mode=mode,
-                                          batch_size=core.BATCH_SIZE, **kwargs)
-            elapsed = time.perf_counter() - t0
-            log = state.get("glossary_injection_log") or []
-            sizes = [len(x["entry_ids"]) for x in log]
-            reviewed = sum(1 for p in state["pairs"] if p["reviewed"])
-            stats[mode] = {
-                "segments": len(state["pairs"]),
-                "batches": len(log),
-                "avg_injected": round(sum(sizes) / len(sizes), 2) if sizes else 0,
-                "max_injected": max(sizes) if sizes else 0,
-                "glossary_size": len(state["glossary"]),
-                "reviewed": reviewed,
-                "blocking": state.get("review_stats", {}).get("blocking", 0),
-                "actionable": state.get("review_stats", {}).get("actionable", 0),
-                "conflicts": sum(1 for f in state["findings"] if f.get("conflict")),
-                "delivery": state.get("delivery_status"),
-                "elapsed_s": round(elapsed, 2),
-            }
+        stats, costs = {}, {}
+        for mode, jid, cal_jid in (
+                ("quick", "lg000000000000001", "lgc00000000000011"),
+                ("quality", "lg000000000000002", "lgc00000000000012")):
+            cal_state, cal_s = _run_synthetic_document(
+                cal_jid, _CALIBRATION_PARAGRAPHS, mode, glossary, kwargs)
+            assert cal_state["pairs"], "标定文档没有产出段落，无法给出相对预算"
+            state, elapsed = _run_synthetic_document(
+                jid, _TARGET_PARAGRAPHS, mode, glossary, kwargs)
+            assert elapsed < _HANG_GUARD_S, \
+                f"{mode} 长文流程疑似卡死：{elapsed:.1f}s"
+            stats[mode] = _document_stats(state, elapsed)
+            stats[mode]["calibration_s"] = round(cal_s, 2)
+            # 每段成本之比：机器快慢在分子分母里抵消。
+            costs[mode] = elapsed / (cal_s * _SEGMENT_SCALE)
         q, ql = stats["quick"], stats["quality"]
         assert q["segments"] == 2000 and ql["segments"] == 2000
         assert q["batches"] == 500
@@ -965,13 +1024,19 @@ def test_long_document_simulation_and_performance():
         assert q["reviewed"] == 2000 and ql["reviewed"] == 2000, \
             "合规 mock 下全部段落应审校通过（TM eligible）"
         assert ql["delivery"] == "draft" and q["delivery"] == "draft"
-        limit = 30 if os.name == "posix" else 120
-        assert q["elapsed_s"] < limit and ql["elapsed_s"] < limit, \
-            f"性能退化：{q['elapsed_s']}s / {ql['elapsed_s']}s"
+        for mode, ratio in costs.items():
+            assert ratio <= _MAX_RELATIVE_COST, (
+                f"{mode} 长文的每段成本相对标定跑上涨到 {ratio:.2f}×"
+                f"（粗筛上限 {_MAX_RELATIVE_COST}×）：2 000 段 {stats[mode]['elapsed_s']}s "
+                f"vs 标定 200 段 {stats[mode]['calibration_s']}s。"
+                f"这表示成本随文档长度增长，而不是机器慢——"
+                f"用 scripts/benchmark_long_document.py 在空机器上定位。")
         print(f"  ✓ 长文模拟（synthetic 400 段）："
               f"quick avg_injected={q['avg_injected']} "
               f"quality avg_injected={ql['avg_injected']}")
         print(f"  ✓ 长文模拟（synthetic 400 段）：quick={q} quality={ql}")
+        print(f"  ✓ 相对性能粗筛（每段成本比，上限 {_MAX_RELATIVE_COST}）："
+              + " ".join(f"{m}={r:.2f}×" for m, r in costs.items()))
     finally:
         core.OUTPUT_DIR = old
         core.call_llm = old_llm
