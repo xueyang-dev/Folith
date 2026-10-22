@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "release-gate.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "release-validation.yml"
 
 
 def _workflow_text() -> str:

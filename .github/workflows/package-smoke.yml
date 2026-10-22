@@ -1,0 +1,52 @@
+name: Package smoke
+
+# Reusable: sdist/wheel build, archive inspection and a clean-venv install.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: build and wheel smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build frontend
+        run: python -m pip install --upgrade pip build
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Inspect release archives
+        run: |
+          python scripts/check_release_archives.py dist
+          python scripts/release_preflight.py --dist dist
+      - name: Install wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/folith"
+          "$RUNNER_TEMP/folith/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/folith/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/folith/bin/python" - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          import core
+          import folith
+          import folith.qt.app
+
+          root = Path(folith.__file__).resolve().parent
+          assert "site-packages" in str(root), root
+          for rel in ("resources/en_common.txt", "resources/brand/folith-favicon.svg",
+                      "resources/brand/folith-mark.svg", "resources/brand/folith-lockup.png",
+                      "resources/brand/folith-mark.png", "resources/locales/qt-zh-CN.json"):
+              assert (root / rel).is_file(), rel
+          assert importlib.util.find_spec("streamlit") is None, "streamlit should not be installed"
+          print("installed imports and resources: OK")
+          PY
+          "$RUNNER_TEMP/folith/bin/folith" --help

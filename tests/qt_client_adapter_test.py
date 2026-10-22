@@ -277,6 +277,11 @@ def test_full_slice_import_translate_edit_review_deliver_reopen(adapter_env):
         ]))
         imported = adapter.import_documents([source], config)
         job_id = imported[0].job_id
+        # New tasks default to risk_selective, which skips clean batches; this
+        # flow checks the full independent review, so the task records ``always``.
+        recorded = core.load_job_state(job_id)
+        recorded["review_mode"] = "always"
+        core.save_job_state(job_id, recorded)
 
         assert adapter.start_job(job_id, "slice.docx",
                                  source.read_bytes(), config) is True
@@ -2412,3 +2417,11 @@ def test_a_stale_summary_cache_cannot_dictate_the_row_fields(adapter_env,
     assert row.filename == "真名.pdf", row.filename
     assert row.segment_count == 5, row.segment_count
     assert row.target_lang == "简体中文", row.target_lang
+
+
+def test_review_cost_estimate_is_local_and_counts_source_plus_target():
+    from folith.qt import adapter
+    state = {"pairs": [{"source": "abcdefgh", "target": "中文译文"},
+                       {"source": "", "target": ""}]}
+    estimate = adapter.review_cost_estimate(state, [0, 1, 5])
+    assert estimate == {"segments": 2, "tokens": 2 + 4}

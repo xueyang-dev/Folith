@@ -2015,6 +2015,8 @@
   "移到项目…": "Mover a proyecto…",
   "正在导入，请等这一批完成后再导入。": "Hay una importación en curso. Espera a que termine antes de importar más.",
   "正在载入译文…": "Cargando la traducción…",
+  "将把全部 {v0} 段（原文与译文）发送给审校模型，预计至少消耗约 {v1} 个 token。这是仅按文本长度在本地估算的下限，实际用量取决于模型与提示词。\n\n确定继续吗？": "Se enviarán los {v0} segmentos (original y traducción) al modelo de revisión, con un consumo de al menos unos {v1} tokens. Es un mínimo estimado localmente según la longitud del texto; el consumo real depende del modelo y de los prompts.\n\n¿Continuar?",
+  "开始审校": "Iniciar revisión",
   "统一为「{v0}」（改 {v1} 段）": "Unificar como «{v0}» ({v1} segmentos a cambiar)",
   "其他：": "Otro:",
   "保持原样（各自符合语境）": "Dejar como está (cada uno encaja en su contexto)",

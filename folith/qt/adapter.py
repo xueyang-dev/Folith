@@ -1167,6 +1167,34 @@ def review_segments(job_id: str, indexes: Sequence[int], config: EngineConfig,
     return {"state": state, "result": result}
 
 
+def _rough_tokens(text: str) -> int:
+    """Local token guess: ~1 token per CJK character, ~1 per 4 other characters."""
+    cjk = sum(1 for ch in text
+              if "⺀" <= ch <= "鿿" or "가" <= ch <= "힯"
+              or "＀" <= ch <= "￯")
+    return cjk + (len(text) - cjk + 3) // 4
+
+
+def review_cost_estimate(state: dict, indexes: Sequence[int]) -> dict:
+    """Rough size of a manual review of ``indexes``; computed locally, no model call.
+
+    The reviewer reads source + target of every segment, so the estimate is the
+    token count of both; it excludes the (fixed) instruction prompt and the
+    reply, so treat it as a lower bound.
+    """
+    pairs = state.get("pairs") or []
+    segments = 0
+    tokens = 0
+    for index in indexes:
+        if not 0 <= int(index) < len(pairs):
+            continue
+        pair = pairs[int(index)] or {}
+        segments += 1
+        tokens += _rough_tokens(str(pair.get("source") or "")) \
+            + _rough_tokens(str(pair.get("target") or ""))
+    return {"segments": segments, "tokens": tokens}
+
+
 def findings(job_id: str, state: dict | None = None) -> list[dict]:
     state = state if state is not None else load_state(job_id)
     return list(state.get("findings") or [])

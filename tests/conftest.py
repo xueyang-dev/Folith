@@ -93,6 +93,28 @@ def _qt_classes():
     return _QT
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "default_review_mode: run with the real DEFAULT_REVIEW_MODE (risk_selective)")
+
+
+@pytest.fixture(autouse=True)
+def _legacy_always_review_mode(request, monkeypatch):
+    """Pin the review default to ``always`` for pipeline tests.
+
+    New tasks default to ``risk_selective``, which skips independent review of
+    clean batches.  Most pipeline tests assert the reviewed/TM-eligible path and
+    were written against ``always``; they keep that behaviour here.  Tests that
+    exercise the real default opt out with ``@pytest.mark.default_review_mode``.
+    """
+    if request.node.get_closest_marker("default_review_mode"):
+        return
+    from folith import review_gate
+    monkeypatch.setattr(review_gate, "DEFAULT_REVIEW_MODE",
+                        review_gate.REVIEW_MODE_ALWAYS)
+
+
 @pytest.fixture(autouse=True)
 def _discard_test_top_level_widgets():
     """Drop widgets created by a test before the next test applies a theme.

@@ -38,6 +38,21 @@ SKIPPED_ROLES = {
 }
 JOINABLE_ROLES = {"body", "quote", "bibliography"}
 
+#: 脚注多证据判定（见 :func:`_footnote_evidence`）。旧的 0.78 单阈值保留为快速路径；
+#: 真实报告里脚注字号常是正文的 0.8 倍左右，落在阈值外。
+FOOTNOTE_FAST_SIZE_RATIO = 0.78
+FOOTNOTE_SIZE_RATIO = 0.9
+FOOTNOTE_REGION_MIN = 0.6
+FOOTNOTE_LEAD_RE = re.compile(r"^\s*(\d{1,3}|[*†‡§])(?=\s|\D)")
+#: 分隔线：很短的水平线（宽度不超过页宽一半、近乎零高度），位于脚注块之上。
+FOOTNOTE_RULE_MAX_WIDTH = 0.5
+FOOTNOTE_RULE_MAX_HEIGHT = 2.0
+FOOTNOTE_RULE_REACH_EM = 2.0
+FOOTNOTE_GAP_EM = 1.0
+#: 夹层记录：B 路径只愿意跨过这样的页底小字号记录。
+BRIDGE_SIZE_RATIO = 0.95
+BRIDGE_MAX_RECORDS = 3
+
 #: PyMuPDF span flags 的 bold 位（bit 4）。``_font_metrics`` 把它按 ``max()`` 聚合，
 #: 所以**一个**加粗 span 就能把整行/整块点亮——单看这一位不足以断言"这块是标题"。
 FONT_FLAG_BOLD = 16
@@ -411,6 +426,7 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
             page_dict = page.get_text("dict")
             page_body_size, baselines = _page_body_metrics(page_dict)
             ocr_overlay = _page_is_ocr_overlay(page_dict)
+            rules = _page_rules(page, width)
             line_heights = [
                 float(line["bbox"][3]) - float(line["bbox"][1])
                 for raw in page_dict.get("blocks") or [] if int(raw.get("type") or 0) == 0
@@ -473,6 +489,7 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
                 line_records = []
                 all_spans = []
                 pending_lines = []
+                superscripts: List[str] = []
                 for line_number, line in enumerate(raw.get("lines") or []):
                     spans = [
                         span
@@ -489,6 +506,7 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
                         found = _marker_evidence(span, page_body_size, baselines)
                         if found:
                             evidence[index] = found
+                            superscripts.append(found["text"])
                     clean_text, marks = _strip_markers(spans, evidence)
                     for item in marks:
                         item["page_number"] = page_number + 1
@@ -552,6 +570,9 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
                         "text": text,
                         "lines": line_records,
                         "marks": [],
+                        # 与文档级准入无关的原始角标证据，供脚注判定核对编号。
+                        "superscript_markers": superscripts,
+                        "rule_above": _rule_above(block_box, rules, page_body_size),
                         "ocr_overlay": ocr_overlay,
                         "page_line_height": page_line_height,
                         "page_text_x1": page_text_x1,
@@ -844,6 +865,66 @@ def _bold_heading_evidence(
     )
 
 
+def _page_rules(page: Any, width: float) -> List[Tuple[float, float, float]]:
+    """本页的短水平线 ``(x0, x1, y)``；脚注分隔线的几何证据。"""
+    rules: List[Tuple[float, float, float]] = []
+    try:
+        drawings = page.get_drawings()
+    except Exception:  # noqa: BLE001 - 线条只是附加证据
+        return rules
+    for item in drawings:
+        rect = item.get("rect")
+        if rect is None:
+            continue
+        w, h = float(rect.width), float(rect.height)
+        if h <= FOOTNOTE_RULE_MAX_HEIGHT and 10.0 <= w <= width * FOOTNOTE_RULE_MAX_WIDTH:
+            rules.append((float(rect.x0), float(rect.x1), float(rect.y0 + rect.y1) / 2))
+    return rules
+
+
+def _rule_above(box: Dict[str, float], rules: Sequence[Tuple[float, float, float]],
+                body_size: float) -> bool:
+    reach = body_size * FOOTNOTE_RULE_REACH_EM
+    return any(
+        box["y0"] - reach <= y <= box["y0"] + 1.0
+        and x0 - body_size <= box["x0"] <= x1 + body_size
+        for x0, x1, y in rules
+    )
+
+
+def _footnote_evidence(block: Dict[str, Any], body_size: float,
+                       markers: Dict[int, set], previous_y1: Optional[float]) -> bool:
+    """页底候选块是否为脚注：字号 + 任一证据，或 标记 + 分隔线。"""
+    font_size = float(block.get("font_size") or body_size)
+    page = int(block.get("page_number") or 0)
+    lead = FOOTNOTE_LEAD_RE.match(block.get("text") or "")
+    known = (markers.get(page, set()) | markers.get(page - 1, set()))
+    marker = bool(lead and lead.group(1) in known)
+    rule = bool(block.get("rule_above"))
+    gap = (previous_y1 is not None
+           and float(block["y0"]) - previous_y1 > body_size * FOOTNOTE_GAP_EM)
+    small = font_size <= body_size * FOOTNOTE_SIZE_RATIO
+    return (small and (marker or rule or gap)) or (marker and rule)
+
+
+def _is_bottom_footnote(block, by_page, body_size, markers, page_height) -> bool:
+    """页底区域内、本页最后一个正文主体块之后的块，按多证据判脚注。"""
+    if not page_height or block["y0"] <= page_height * FOOTNOTE_REGION_MIN:
+        return False
+    peers = by_page.get(int(block.get("page_number") or 0), [])
+    previous_y1: Optional[float] = None
+    for other in peers:
+        if other is block:
+            continue
+        if other["y0"] > block["y0"]:
+            if (float(other.get("font_size") or 0) > body_size * FOOTNOTE_SIZE_RATIO
+                    and len(other.get("text") or "") > 40):
+                return False
+        elif previous_y1 is None or other["y1"] > previous_y1:
+            previous_y1 = other["y1"]
+    return _footnote_evidence(block, body_size, markers, previous_y1)
+
+
 def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Assign deterministic roles using typography, position and image relation."""
     out = [dict(block) for block in blocks or []]
@@ -873,6 +954,13 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for block in out:
         if block.get("block_type") == "image" and not _is_full_page_image(block):
             image_by_page[int(block.get("page_number") or 0)].append(block)
+    markers: Dict[int, set] = defaultdict(set)
+    for block in text_blocks:
+        markers[int(block.get("page_number") or 0)].update(
+            block.get("superscript_markers") or [])
+    by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for block in text_blocks:
+        by_page[int(block.get("page_number") or 0)].append(block)
     page_number = len(page_counts)
     repeat_threshold = max(2, math.ceil(page_number * 0.2)) if page_number > 1 else 99
     for block in out:
@@ -906,7 +994,8 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             )
         ):
             role = "caption"
-        elif font_size <= body_size * 0.78 and block["y0"] > page_height * 0.68:
+        elif (font_size <= body_size * FOOTNOTE_FAST_SIZE_RATIO
+              and block["y0"] > page_height * 0.68):
             role = "footnote"
         elif BIBLIOGRAPHY_CUE_RE.match(text) and len(text) <= 700:
             role = "bibliography"
@@ -920,6 +1009,8 @@ def classify_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                  or block["y1"] > page_height * 0.88)
         ):
             role = "header" if block["y0"] < page_height * 0.2 else "footer"
+        elif _is_bottom_footnote(block, by_page, body_size, markers, page_height):
+            role = "footnote"
         elif (
             (
                 font_size >= body_size * 1.18
@@ -1095,6 +1186,48 @@ def _overlay_continues(previous: Dict[str, Any], current: Dict[str, Any]) -> boo
     return not (right and prev_x1 < right - line_height * OVERLAY_SHORT_LINE)
 
 
+def _open_paragraph_behind(
+    records: Sequence[Dict[str, Any]], current: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """页底夹层记录之后的续接目标：被它们隔开的、尚未写完的正文段。
+
+    只在换页时启用，且夹层必须是句末收尾的页底小字号记录（漏判的脚注 / 页脚
+    之类）；标题不是目标。夹层记录留在原处，也就排在合并后的段落之后。
+    """
+    last = records[-1]
+    if (
+        last["page_numbers"][-1] == current["page_numbers"][0]
+        or not _is_sentence_terminal(last["text"])
+    ):
+        return None
+    index = len(records) - 1
+    while index >= 0 and len(records) - 1 - index < BRIDGE_MAX_RECORDS:
+        record = records[index]
+        body = float(record.get("body_font_size") or 0)
+        height = float(record.get("page_height") or 0)
+        small = (
+            body > 0 and record["font_size"] <= body * BRIDGE_SIZE_RATIO
+            and height > 0 and record["last_y1"] > height * FOOTNOTE_REGION_MIN
+            and record["page_numbers"][-1] == last["page_numbers"][-1]
+        )
+        if not small:
+            break
+        index -= 1
+    else:
+        return None
+    if index < 0 or index == len(records) - 1:
+        return None
+    target = records[index]
+    if (
+        target["role"] not in JOINABLE_ROLES
+        or target.get("ocr_overlay")
+        or target["page_numbers"][-1] != last["page_numbers"][-1]
+        or _is_sentence_terminal(target["text"])
+    ):
+        return None
+    return target
+
+
 def reconstruct_paragraph_records(
     blocks: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -1133,6 +1266,7 @@ def reconstruct_paragraph_records(
                 "reading_order": current_order,
                 "column_x0": column_x0,
                 "font_size": float(block.get("font_size") or 0),
+                "body_font_size": float(block.get("body_font_size") or 0),
                 "marks": [dict(item) for item in (group.get("marks") or [])],
             }
             overlay = bool(group.get("ocr_overlay"))
@@ -1168,6 +1302,9 @@ def reconstruct_paragraph_records(
                 continue
             if records:
                 previous = records[-1]
+                bridged = _open_paragraph_behind(records, current)
+                if bridged is not None:
+                    previous = bridged
                 same_role = (
                     previous["role"] in JOINABLE_ROLES
                     and role in JOINABLE_ROLES

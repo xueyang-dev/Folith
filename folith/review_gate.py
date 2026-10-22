@@ -12,12 +12,13 @@ pipeline has already computed before review and answers yes/no.
 Two policies exist:
 
 ``always``
-    Every reviewable batch is independently reviewed.  This is the production
-    default and the behaviour every existing caller keeps.
+    Every reviewable batch is independently reviewed.  Still selectable, and
+    kept by any task whose recorded ``review_mode`` is ``always``.
 
 ``risk_selective``
-    A batch with no deterministic risk signal is recorded as
-    ``skipped_low_risk`` instead of being sent to the reviewer.  Skipping never
+    The default for new tasks.  A batch with no deterministic risk signal is
+    recorded as ``skipped_low_risk`` instead of being sent to the reviewer.
+    Skipping never
     changes deterministic QA, terminology checks, structural validation,
     persistence, or the findings already produced locally, and it never marks a
     segment reviewed, approved or TM-eligible.
@@ -32,7 +33,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 REVIEW_MODE_ALWAYS = "always"
 REVIEW_MODE_RISK_SELECTIVE = "risk_selective"
 REVIEW_MODES = (REVIEW_MODE_ALWAYS, REVIEW_MODE_RISK_SELECTIVE)
-DEFAULT_REVIEW_MODE = REVIEW_MODE_ALWAYS
+DEFAULT_REVIEW_MODE = REVIEW_MODE_RISK_SELECTIVE
 
 #: ``review_status`` / event decision for a batch that was not independently
 #: reviewed because deterministic gating proved it low risk.
@@ -60,8 +61,8 @@ def resolve_review_mode(
 
     ``explicit`` (an API argument) beats ``pipeline_config["review_mode"]``
     which beats ``state["review_mode"]``.  Anything unrecognised falls back to
-    the production default ``always``, so a typo can never silently weaken
-    review.
+    the default ``risk_selective``.  A task that already recorded a mode keeps
+    it, because the recorded ``state`` value is consulted before the default.
     """
     candidates = [explicit]
     if isinstance(pipeline_config, Mapping):
