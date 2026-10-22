@@ -30,6 +30,6 @@
     "pairs": 4823,
     "reviewed": 3775
   },
-  "export": "blocked by target invariant; missing/quarantined targets retained",
+  "export": "blocked by 814 deterministic completeness findings induced by offline stub; 234 empty targets are actionable notices",
   "diagnostic_interruption": "A SIGINT intended to end the slow diagnostic was caught inside a Qt callback; it did not stop the process. The run subsequently completed translation and failed export. This is not a clean acceptance run."
 }

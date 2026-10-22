@@ -9595,10 +9595,13 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     _record_delivery_validation_findings(state, validation)
     if validation["blocking"]:
         save_job_state(job_id, state)
-        reasons = "；".join(
-            issue.get("message", "目标文本未通过交付检查")
-            for issue in validation.get("issues") or []
-        )
+        blockers = [issue.get("message", "目标文本未通过交付检查")
+                    for issue in validation.get("issues") or []
+                    if issue.get("severity") == "blocking"]
+        blockers.extend(finding.get("summary") or finding.get("reason")
+                        or "目标文本未通过交付检查"
+                        for finding in validation.get("blocking_findings") or [])
+        reasons = "；".join(dict.fromkeys(blockers))
         raise RuntimeError(
             "交付被 Translation Target Invariant 阻止"
             + (f"：{reasons}" if reasons else "")

@@ -196,6 +196,7 @@ def _run_once(tmp_dir: Path, job_id: str, segments: list[str], concurrency: int,
     profiler = PipelineProfiler(run_id=f"concurrency-{concurrency}")
     try:
         begin = time.perf_counter()
+        begin_cpu = time.process_time()
         result = core.translate_stage(
             state, job_id, glossary=[], provider="DeepSeek", api_key="k",
             model="m", target_lang="简体中文", style_rules="",
@@ -205,6 +206,7 @@ def _run_once(tmp_dir: Path, job_id: str, segments: list[str], concurrency: int,
             use_translation_cache=False, use_knowledge_cache=False,
             document_profile=state["document_profile"], profiler=profiler)
         wall = time.perf_counter() - begin
+        cpu = time.process_time() - begin_cpu
     finally:
         _context.compile_context_packet = original_compile
         core.call_llm = original_llm
@@ -219,6 +221,8 @@ def _run_once(tmp_dir: Path, job_id: str, segments: list[str], concurrency: int,
     return {
         "concurrency": concurrency,
         "wall_time_s": round(wall, 4),
+        "process_cpu_s": round(cpu, 4),
+        "process_cpu_percent_one_core": round(100 * cpu / wall, 2),
         "request_count": len(calls),
         "requests_by_role": {role: sum(call["role"] == role for call in calls)
                              for role in ("translation", "knowledge", "review")},
@@ -288,6 +292,12 @@ def main() -> int:
                         help="also run the independent review stage (enables TM "
                              "promotion) so the review/overlap projection is real")
     args = parser.parse_args()
+    implementation = {
+        "commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        "worktree_dirty": bool(subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()),
+    }
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -345,12 +355,7 @@ def main() -> int:
     } if args.review else {}
 
     report = {
-        "implementation": {
-            "commit": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-            "worktree_dirty": bool(subprocess.check_output(
-                ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()),
-        },
+        "implementation": implementation,
         "configuration_defaults": {
             "core_fallback": core.DEFAULT_TRANSLATION_CONCURRENCY,
             "shared_task_default": job_config.DEFAULT_TRANSLATION_CONCURRENCY,

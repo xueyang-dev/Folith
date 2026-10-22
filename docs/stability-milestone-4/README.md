@@ -238,7 +238,9 @@ An isolated copy of the original 207-page PDF produced 4,823 source segments and
 continuation and force-kill/reopen preserved 40 committed pairs (10 records,
 complete replay). Resume finished 4,823 pairs without changing committed fields
 or regenerating committed batches. Working export failed the existing target
-invariant on missing/quarantined targets; the gate was not disabled. During
+invariant on 814 deterministic completeness findings induced by the offline
+stub. Its 234 empty targets were actionable notices, not the blocker. The gate
+was not disabled. During
 profiling, a diagnostic SIGINT was caught by a Qt callback and did not stop the
 process. The attempt is therefore not counted as clean lifecycle acceptance.
 Only sanitized aggregate evidence is tracked in `native-long-first-attempt.json`;

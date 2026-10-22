@@ -1,5 +1,6 @@
 """Missing translations remain visible and exportable without weakening parsing."""
 import json
+import pytest
 from io import BytesIO
 
 from docx import Document
@@ -77,6 +78,24 @@ def test_empty_model_target_remains_invalid_but_delivery_is_a_notice():
     })["missing_segment_ids"]
     bad = {"source": "A chapter title", "target": '["raw model response"]'}
     assert translation_target.validate_translation_pairs([bad], allow_empty=True)["blocking"]
+
+
+def test_export_error_reports_completeness_blocker_instead_of_empty_target_notice(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    source = "This paragraph describes the transmission of a manuscript across several provinces. " * 5
+    state = core.new_job_state("report.txt")
+    state.update(p1_done=True, p2_done=True, target_lang="简体中文",
+                 paras=[source, "A title"],
+                 pairs=[{"source": source, "target": "短译"},
+                        {"source": "A title", "target": ""}])
+    core.save_job_state("blocked-export", state)
+    with pytest.raises(RuntimeError) as caught:
+        core.build_delivery_assets("blocked-export")
+    assert "译文疑似遗漏或被截断" in str(caught.value)
+    assert "该段尚无译文" not in str(caught.value)
+    persisted = core.load_job_state("blocked-export")
+    assert persisted["pairs"] == state["pairs"]
+    assert persisted["delivery_validation"]["blocking"]
 
 
 def test_existing_missing_source_gate_rows_export_with_empty_cells(tmp_path, monkeypatch):
