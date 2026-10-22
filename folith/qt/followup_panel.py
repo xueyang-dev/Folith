@@ -167,7 +167,6 @@ class FollowupPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._view: dict = {}
-        self._preview: list[dict] = []
         self._busy = False
         self._rescan_seeded = False
         self._fragments: list[int] = []
