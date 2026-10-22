@@ -141,10 +141,14 @@ def lock_timeout(value: float | None = None) -> float:
 
 
 def _key(path: Path) -> str:
+    # Resolve the directory, not the lock file: on Windows the open/locked
+    # file may no longer resolve as it did before acquisition (notably for
+    # short temp paths). A different key makes a nested save wait on itself.
     try:
-        return str(path.resolve())
-    except OSError:  # pragma: no cover - defensive
-        return str(path)
+        canonical = path.parent.resolve() / path.name
+    except OSError:  # pragma: no cover - directory unavailable
+        canonical = path.absolute()
+    return os.path.normcase(str(canonical))
 
 
 def _acquire_or_timeout(path: Path, timeout: float, purpose: str):
