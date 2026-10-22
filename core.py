@@ -9093,6 +9093,34 @@ def _check_snapshot_revision(job_id, state):
     return current
 
 
+# A worker writes its terminal runtime status before it closes ``.worker.lock``.
+# A save that lands in that gap used to be refused even though nothing was
+# running any more — the intermittent "任务正在后台处理" failure that shows up
+# on slow machines.  When the run is already terminal, wait this long for the
+# teardown to finish; a genuinely active run is still refused immediately.
+WORKER_LOCK_SETTLE_SECONDS = 2.0
+
+
+def _acquire_save_worker_lock(job_id, runtime):
+    """Take ``.worker.lock`` for an external save, waiting out a teardown.
+
+    Returns the lock stream, or ``None`` when the job really is busy.
+    """
+    path = job_dir(job_id) / ".worker.lock"
+    lock = _job_lock.acquire(path, blocking=False)
+    if lock is not None:
+        return lock
+    if str(runtime.get("status") or "") in RUNTIME_ACTIVE_STATUSES:
+        return None
+    deadline = time.monotonic() + WORKER_LOCK_SETTLE_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
+        lock = _job_lock.acquire(path, blocking=False)
+        if lock is not None:
+            return lock
+    return None
+
+
 @_serialized_job_mutation
 def save_job_state(job_id, state):
     """原子写入（先写临时文件再替换），避免中断写坏 state.json，并同步派生 summary.json。
@@ -9109,7 +9137,7 @@ def save_job_state(job_id, state):
         runtime = load_runtime_state(job_id)
         if runtime.get("segment_operation") and runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
             raise RuntimeError("所选段落正在后台处理，请等待完成后保存；草稿可以保留。")
-        execution_lock = _job_lock.acquire(job_dir(job_id) / ".worker.lock", blocking=False)
+        execution_lock = _acquire_save_worker_lock(job_id, runtime)
         if execution_lock is None:
             raise RuntimeError("任务正在后台处理，请等待完成后保存；草稿可以保留。")
     try:

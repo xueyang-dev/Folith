@@ -588,3 +588,62 @@ def test_state_lock_never_recreates_a_deleted_task_directory():
         # The lock file itself lives outside the task directory.
         assert core.job_state_lock_path("job-gone").parent.name == ".locks"
         assert core.job_state_lock_path("job-gone").parent != core.job_dir("job-gone")
+
+
+def _hold_worker_lock(job_id, hold_seconds):
+    """Simulate a worker that has written its final status but not yet closed
+    ``.worker.lock``: take the lock now, release it from another thread."""
+    path = core.job_dir(job_id) / ".worker.lock"
+    lock = core._job_lock.acquire(path, blocking=False)
+    assert lock is not None, "the test could not take the worker lock"
+    timer = threading.Timer(hold_seconds, lock.close)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def test_save_waits_out_a_finishing_worker_instead_of_refusing():
+    """#72: a completed run that is still closing its lock must not block a save.
+
+    The worker writes the terminal runtime status before it closes
+    ``.worker.lock``.  A save in that gap used to fail with
+    "任务正在后台处理" even though nothing was running, which is what made
+    ``qt_client_adapter_test`` fail intermittently on slow CI runners.
+    """
+    with state_env():
+        job_id = "job-settling"
+        core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+        core.update_runtime_state(job_id, status="completed")
+
+        timer = _hold_worker_lock(job_id, 0.4)
+        started = time.monotonic()
+        try:
+            core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+        finally:
+            timer.join(5)
+        elapsed = time.monotonic() - started
+
+        # It waited for the teardown (rather than failing) but stayed bounded.
+        assert elapsed >= 0.2, f"the save did not wait for the lock: {elapsed:.3f}s"
+        assert elapsed < core.WORKER_LOCK_SETTLE_SECONDS + 1.0
+
+
+def test_save_is_still_refused_immediately_while_the_run_is_active():
+    """The bounded wait must not soften the guard for a run that is really busy."""
+    with state_env():
+        job_id = "job-active"
+        core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+        core.update_runtime_state(job_id, status="running")
+
+        timer = _hold_worker_lock(job_id, 1.0)
+        started = time.monotonic()
+        try:
+            with pytest.raises(RuntimeError) as refused:
+                core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+            elapsed = time.monotonic() - started
+        finally:
+            timer.join(5)
+
+        assert "任务正在后台处理" in str(refused.value)
+        # No settle loop for an active run: it fails on the ownership check.
+        assert elapsed < 0.5, f"an active run made the save wait {elapsed:.3f}s"
