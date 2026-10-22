@@ -64,12 +64,15 @@ def qt_app():
 @pytest.fixture()
 def translated(tmp_path, monkeypatch, qt_app):
     from folith.desktop import paths as desktop_paths
-    from folith.qt import window as window_module
+    from folith.qt import preferences, window as window_module
     from PySide6.QtCore import QSettings
 
+    # Every preference reader goes through folith.qt.preferences; the window no
+    # longer holds a QSettings symbol of its own, so the redirect names the
+    # entry point instead of a module attribute.
     settings_file = str(tmp_path / "client-settings.ini")
-    monkeypatch.setattr(window_module, "QSettings",
-                        lambda *_: QSettings(settings_file, QSettings.Format.IniFormat))
+    monkeypatch.setattr(preferences, "settings",
+                        lambda: QSettings(settings_file, QSettings.Format.IniFormat))
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
