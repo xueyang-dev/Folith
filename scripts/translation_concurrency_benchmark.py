@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Concurrency benchmark for the translation stage — evidence, not a policy change.
 
-The product default stays ``translation_concurrency=1``.  This script exists to
-produce the evidence needed before that could ever change:
+The low-level fallback is 1; the shared task default is 4 and presets use 6/4/4.
+This script measures those settings without changing product policy:
 
-* wall-clock throughput at concurrency 1 / 2 / 3 with a deterministic fake LLM
+* wall-clock throughput at concurrency 1 / 2 / 3 / 4 / 6 with a deterministic fake LLM
   and a fixed per-request latency (no API spend);
 * whether the **continuity context** a batch sees (``previous_target``) is
   identical across concurrency levels — the real risk of naive parallelism;
@@ -28,9 +28,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import statistics
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -38,11 +41,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import core  # noqa: E402
+from folith.application import job_config, task_setup  # noqa: E402
 from folith import context as _context  # noqa: E402
 from folith import section_scheduler as _sched  # noqa: E402
 from folith.performance import PipelineProfiler  # noqa: E402
 
 REVIEW_SYSTEM_MARKER = "独立的翻译审校专家"
+KNOWLEDGE_SYSTEM_MARKER = "翻译流知识抽取器"
+TRANSLATION_MARKER = "【待翻译段落（按序号返回等长数组）】"
 TRANSLATION_STAGES = (
     "translation_generation",
     "translation_deterministic_qa",
@@ -71,21 +77,59 @@ def _build_segments(count: int, sections: int) -> list[str]:
 
 
 def _fake_llm_factory(latency: float, calls: list):
+    lock = threading.Lock()
+
     def llm(_provider, _api_key, _model, system_prompt, user_prompt, **_kwargs):
-        calls.append(time.monotonic())
-        if latency:
-            time.sleep(latency)
-        if REVIEW_SYSTEM_MARKER in (system_prompt or ""):
-            return json.dumps({"findings": [], "evidence_requests": []},
-                              ensure_ascii=False)
-        lines = [line.strip() for line in user_prompt.splitlines()
-                 if line.strip() and line[0].isdigit()]
-        results = []
-        for line in lines:
-            ordinal = line.split(".", 1)[0].strip()
-            results.append(f"第{ordinal}段记录了手稿在同年冬季之前经由北方各省的档案南运。")
-        return json.dumps(results, ensure_ascii=False)
+        system = system_prompt or ""
+        role = ("knowledge" if KNOWLEDGE_SYSTEM_MARKER in system else
+                "review" if REVIEW_SYSTEM_MARKER in system else "translation")
+        call = {"role": role, "started": time.monotonic()}
+        with lock:
+            calls.append(call)
+        try:
+            if latency:
+                time.sleep(latency)
+            if role == "review":
+                return json.dumps({"findings": [], "evidence_requests": []})
+            if role == "knowledge":
+                ids = re.findall(r"segment_id:\s*(\d+)\n原文：", user_prompt)
+                return json.dumps([
+                    {"segment_id": int(index), "source_expression": "manuscript",
+                     "observed_target": "手稿", "kind": "term"} for index in ids],
+                    ensure_ascii=False)
+            tail = user_prompt.split(TRANSLATION_MARKER, 1)[-1]
+            sources = re.findall(r"(?m)^\d+\.\s+(.*)$", tail)
+            results = []
+            for source in sources:
+                match = re.match(r"Section (\d+) paragraph (\d+):", source)
+                if match is None:
+                    raise ValueError(f"unexpected benchmark source: {source[:80]}")
+                section, paragraph = match.groups()
+                results.append(f"第{section}节第{paragraph}段：档案记录描述了手稿在北方各省之间的流传。")
+            return json.dumps(results, ensure_ascii=False)
+        finally:
+            call["finished"] = time.monotonic()
     return llm
+
+
+def _timing_summary(events):
+    batches = {}
+    for event in events:
+        if event["stage"] == "translation":
+            batches.setdefault(event["batch_id"], {})[event["phase"]] = event["at"]
+    result = {}
+    for label, start, end in (
+            ("prepare", "worker_started", "result_ready"),
+            ("commit_wait", "result_ready", "commit_started"),
+            ("commit", "commit_started", "commit_finished")):
+        values = sorted(max(0.0, row[end] - row[start]) for row in batches.values()
+                        if start in row and end in row)
+        if values:
+            result[label] = {"count": len(values), "sum_s": round(sum(values), 6),
+                             "median_s": round(statistics.median(values), 6),
+                             "p95_s": round(values[int((len(values) - 1) * .95)], 6),
+                             "max_s": round(values[-1], 6)}
+    return result
 
 
 def _stage_split(snapshot: dict) -> dict:
@@ -122,20 +166,33 @@ def _run_once(tmp_dir: Path, job_id: str, segments: list[str], concurrency: int,
     calls: list = []
     contexts: list = []
     original_compile = _context.compile_context_packet
+    original_llm = core.call_llm
+    original_timing = core._batch_timing
+    events = []
+    lock = threading.Lock()
+
+    def record_timing(job, stage, batch_id, phase, **metadata):
+        with lock:
+            events.append({"stage": stage, "batch_id": batch_id, "phase": phase,
+                           "at": time.monotonic(), **metadata})
+        original_timing(job, stage, batch_id, phase, **metadata)
 
     def recording_compile(*args, **kwargs):
         packet = original_compile(*args, **kwargs)
-        contexts.append({
+        entry = {
             "current_batch": list(kwargs.get("current_batch") or []),
             "previous_target": [
                 (item.get("target") if isinstance(item, dict) else str(item))
                 for item in (kwargs.get("previous_target") or [])
             ],
-        })
+        }
+        with lock:
+            contexts.append(entry)
         return packet
 
     _context.compile_context_packet = recording_compile
     core.call_llm = _fake_llm_factory(latency, calls)
+    core._batch_timing = record_timing
     profiler = PipelineProfiler(run_id=f"concurrency-{concurrency}")
     try:
         begin = time.perf_counter()
@@ -144,22 +201,39 @@ def _run_once(tmp_dir: Path, job_id: str, segments: list[str], concurrency: int,
             model="m", target_lang="简体中文", style_rules="",
             enable_review=enable_review, use_tm=enable_review, batch_size=4,
             translation_concurrency=concurrency,
+            knowledge_feedback_interval=1,
+            use_translation_cache=False, use_knowledge_cache=False,
             document_profile=state["document_profile"], profiler=profiler)
         wall = time.perf_counter() - begin
     finally:
         _context.compile_context_packet = original_compile
+        core.call_llm = original_llm
+        core._batch_timing = original_timing
 
     pairs = result.get("pairs") or []
+    timings = _timing_summary(events)
+    planned = result["batch_plan"]["batch_count"]
+    if any(timings.get(name, {}).get("count") != planned
+           for name in ("prepare", "commit_wait", "commit")):
+        raise AssertionError("batch timing does not cover the complete run")
     return {
         "concurrency": concurrency,
         "wall_time_s": round(wall, 4),
         "request_count": len(calls),
+        "requests_by_role": {role: sum(call["role"] == role for call in calls)
+                             for role in ("translation", "knowledge", "review")},
         "segment_count": len(pairs),
         "source_order_digest": _digest(p["source"] for p in pairs),
         "target_digest": _digest(p["target"] for p in pairs),
         "contexts": contexts,
         "batch_plan": result.get("batch_plan"),
         "stage_split": _stage_split(profiler.snapshot()),
+        "batch_timing": events,
+        "batch_timing_summary": timings,
+        "knowledge_pending": len((result.get("knowledge_feedback_policy") or {}).get("pending") or []),
+        "knowledge_observed_batches": len((result.get("knowledge_feedback_policy") or {}).get("observed_batches") or []),
+        "blocking_findings": sum(f.get("severity") == "blocking" and not f.get("resolved")
+                                 for f in result.get("findings") or []),
     }
 
 
@@ -191,11 +265,13 @@ def _context_divergence(baseline: list, other: list) -> dict:
     """How many batches saw a different continuity context."""
     diverged = 0
     missing = 0
-    for index, base in enumerate(baseline):
-        if index >= len(other):
+    by_batch = {tuple(item["current_batch"]): item for item in other}
+    for base in baseline:
+        candidate = by_batch.get(tuple(base["current_batch"]))
+        if candidate is None:
             missing += 1
             continue
-        if base.get("previous_target") != other[index].get("previous_target"):
+        if base.get("previous_target") != candidate.get("previous_target"):
             diverged += 1
     return {"diverged_batches": diverged, "missing_batches": missing,
             "total_batches": len(baseline)}
@@ -207,7 +283,7 @@ def main() -> int:
     parser.add_argument("--segments", type=int, default=120)
     parser.add_argument("--sections", type=int, default=6)
     parser.add_argument("--latency", type=float, default=0.05)
-    parser.add_argument("--concurrency", default="1,2,3")
+    parser.add_argument("--concurrency", default="1,2,3,4,6")
     parser.add_argument("--review", action="store_true",
                         help="also run the independent review stage (enables TM "
                              "promotion) so the review/overlap projection is real")
@@ -222,10 +298,19 @@ def main() -> int:
     runs = {}
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
+        # Avoid charging lazy imports/initialization only to concurrency 1.
+        warmup_segments = segments[:8]
+        _run_once(tmp_dir, "warmup", warmup_segments, 1, 0.0, section_ids,
+                  enable_review=args.review)
         for concurrency in levels:
             runs[concurrency] = _run_once(
                 tmp_dir, f"concurrency-{concurrency}", segments, concurrency,
                 args.latency, section_ids, enable_review=args.review)
+            raw = runs[concurrency].pop("batch_timing")
+            with (out_dir / f"concurrency-{concurrency}-batch-timing.jsonl").open("w", encoding="utf-8") as stream:
+                for event in raw:
+                    stream.write(json.dumps(event) + "\n")
+            print(f"concurrency={concurrency}: {runs[concurrency]['wall_time_s']}s", flush=True)
 
     baseline = runs[levels[0]]
     comparison = {}
@@ -260,12 +345,28 @@ def main() -> int:
     } if args.review else {}
 
     report = {
+        "implementation": {
+            "commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+            "worktree_dirty": bool(subprocess.check_output(
+                ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()),
+        },
+        "configuration_defaults": {
+            "core_fallback": core.DEFAULT_TRANSLATION_CONCURRENCY,
+            "shared_task_default": job_config.DEFAULT_TRANSLATION_CONCURRENCY,
+            "presets": {name: values["translation_concurrency"]
+                        for name, values in task_setup.STRATEGY_PRESETS.items()},
+        },
         "fixture": {
             "segments": len(segments),
             "sections": args.sections,
             "fake_llm_latency_s": args.latency,
             "batch_size": 4,
             "review_enabled": args.review,
+            "knowledge_feedback_interval": 1,
+            "translation_cache_enabled": False,
+            "knowledge_cache_enabled": False,
+            "warmup_segments": len(warmup_segments),
         },
         "runs": {
             str(concurrency): {
@@ -279,9 +380,9 @@ def main() -> int:
         "wall_time_spread_s": round(
             statistics.pstdev([run["wall_time_s"] for run in runs.values()]), 6),
         "conclusion": (
-            "Default concurrency stays at 1: the target digest is compared per "
-            "level, and any continuity divergence is reported rather than "
-            "assumed harmless."),
+            "Core fallback is 1, shared task default is 4, and presets use 6/4/4. "
+            "Controlled translations are compared at each level; continuity "
+            "divergence is reported and does not prove quality equivalence."),
     }
     (out_dir / "benchmark.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
