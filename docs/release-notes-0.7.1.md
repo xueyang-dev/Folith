@@ -20,9 +20,14 @@
 | 并发口径 | 补测 1/2/3/4/6/8，三层数值对齐，提示文案改写 | #23 / #70 |
 | Windows 运行时 | `runtime_state.json` 并发读取不再误判、Explorer 退出码、卸载器只删自己的文件 | #37 |
 | Windows VM 实测 | 游离窗口、准备页项目列表、项目任务行菜单、运行记录措辞、导入守卫 | #50 |
+| 分段空白与导出契约 | 切分记录原始空白、`characters_exact` 实测、DOCX 页眉页脚往返 | #53 / #57 |
+| 名称冲突 | 抽屉与审校页共用「统一为…/其他/保持原样」选择控件 | #63 / #66 |
 
-> `CHANGELOG.md` 的 `[Unreleased]` 段假定 #51（#44 分片填充）与 #70（#23 并发口径）都会合入。
-> 若任一被推迟，对应条目要一起撤下——否则变更日志会描述尚未进入 `main` 的行为。
+> #53 原属 `v0.8.0 · Document Fidelity & CAT Workflow`，#63 原先没有里程碑；两者都已随 #57 / #66
+> 进入 `main`，因此会随 0.7.1 一起发布。这需要同步更新 v0.8.0 的计划，否则同一件事会被记两次。
+
+> `CHANGELOG.md` 的 `[Unreleased]` 段假定 #70（#23 并发口径）会合入——#51 与 #71 已分别在
+> `cbb6978`、`aeb8563` 之后进入 `main`。若 #70 被推迟，对应条目要一起撤下。
 
 ## 验收矩阵
 
@@ -69,7 +74,7 @@ $ git ls-remote --tags origin v0.7.0
 * **复用 0.7.0 版本号**：把待发布内容并入 0.7.0 一并发布。最省事，但 CHANGELOG 里
   `[0.7.0] - 2026-10-21` 的日期与内容都要改。
 
-### 2. 发布门禁里有两个不稳定来源
+### 2. 发布门禁里有三个不稳定来源（第三个已在 main 修掉）
 
 第一个是**真实竞态**。`pytest (Python 3.11)` 在 PR #51 上的失败不是这个 PR 引入的，而是产品里的一个窄窗口：
 
@@ -94,6 +99,19 @@ AssertionError: assert '2026-10-22T12:10:31+00:00' != '2026-10-22T12:10:31+00:00
 runner 上线程被饿住，`last_heartbeat_at` 仍是同一秒，断言就失败。这不是产品缺陷（租约几秒才过期），
 而是用例把"固定睡多久"当成"条件已成立"。建议改成有界轮询等待条件成立、超时才失败——那样
 断言不变、只是不再假设调度器守时；不要改成"允许多等 2 秒"之类的放宽比较。已建 issue #73。
+
+第三个是**CI 找不到已装好的 NSIS**，它拦下的正是 docs-only 的 PR #71：
+
+```
+Locate the installer compiler
+  → throw "makensis not found after installing NSIS"
+```
+
+但日志里 `C:\Program Files (x86)\NSIS\makensis.exe` 是存在的（4 KB 启动器 + 468 KB 主程序），
+`choco install nsis` 只是没把它放进本次会话的 `PATH`，而原脚本的回退搜索**只搜 chocolatey 库**，
+从不看标准安装目录。这一项已在 `main` 上由 #66 修掉（`fc477b1`：显式搜索
+`Program Files (x86)\NSIS` 与 `Program Files\NSIS`，并区分 `Get-Item` 的 `FullName` 与 `Get-Command`
+的 `Source`）。**修复方式是补搜索路径，不是重试**——同类失败再次出现时按这个方法处理。
 
 ## GitHub Release 正文草稿
 
