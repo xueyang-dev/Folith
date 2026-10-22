@@ -178,6 +178,16 @@ jobs:
             build/qt-desktop/desktop_build_info.json
             build/qt-desktop/native_min_os_bundle.json
             docs/qt-beta/release-notes.md
+            # The probe reports are the evidence for what the packaged app
+            # actually did (PDF source page, highlights, per-format runs).
+            # Only failures used to be archived, so a passing candidate shipped
+            # without any record to audit.  Mirrors the Windows upload.
+            ${{ runner.temp }}/qt-probe/
+            ${{ runner.temp }}/qt-ocr/
+            ${{ runner.temp }}/qt-epub/
+            ${{ runner.temp }}/qt-txt/
+            ${{ runner.temp }}/qt-md/
+            ${{ runner.temp }}/qt-dmg/
           if-no-files-found: error
       - name: Upload failed Qt probe diagnostics
         if: failure()
