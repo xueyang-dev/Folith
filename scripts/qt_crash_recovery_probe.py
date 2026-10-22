@@ -106,6 +106,33 @@ class Stub:
             self._handle.close()
 
 
+def _resume_finished(adapter, job_id):
+    # Poll only the small runtime record while the worker is active. Replaying
+    # and copying a full book every 50 ms makes the driver itself stall Qt.
+    runtime = adapter.core.load_runtime_state(job_id) or {}
+    if runtime.get("status") in adapter.core.RUNTIME_ACTIVE_STATUSES:
+        return False
+    return bool((adapter.load_state(job_id) or {}).get("p2_done"))
+
+
+def _quiet_window(app, window, heartbeat, seconds=3.0):
+    """Measure real window work without a full-state driver predicate."""
+    first_gap = len(heartbeat.gaps)
+    started, cpu = time.monotonic(), time.process_time()
+    before = len(window.workbench._state.get("pairs") or [])
+    while time.monotonic() - started < seconds:
+        app.processEvents()
+        time.sleep(0.01)
+    wall, used = time.monotonic() - started, time.process_time() - cpu
+    gaps = heartbeat.gaps[first_gap:] + [time.monotonic() - heartbeat.last]
+    return {"wall_s": round(wall, 4), "process_cpu_s": round(used, 4),
+            "process_cpu_percent_one_core": round(100 * used / wall, 2),
+            "max_gap_ms": round(1000 * max(gaps, default=0), 2),
+            "visible_pairs_before": before,
+            "visible_pairs_after": len(window.workbench._state.get("pairs") or []),
+            "scope": "driver only pumps Qt; CPU includes the real core worker"}
+
+
 def _prepare_env(data_dir: Path, log_dir: Path, *, native: bool = False) -> None:
     if native:
         os.environ.pop("QT_QPA_PLATFORM", None)
@@ -473,14 +500,8 @@ def main(argv: list[str] | None = None) -> int:
 
         # Resume through the same entry point a user would use.
         window.start_or_resume()
-
-        def finished() -> bool:
-            current = adapter.load_state(job_id)
-            rt = adapter.core.get_job_runtime_status(job_id, current)
-            return (rt.get("status") not in adapter.core.RUNTIME_ACTIVE_STATUSES
-                    and bool(current.get("p2_done")))
-
-        report["resumed"] = pump(args.timeout, finished)
+        report["quiet_running_window"] = _quiet_window(app, window, heartbeat)
+        report["resumed"] = pump(args.timeout, lambda: _resume_finished(adapter, job_id))
         state = adapter.load_state(job_id)
         report["added_pair_fields_after_resume"] = _assert_committed_prefix_preserved(
             expected_pairs, state.get("pairs") or [])

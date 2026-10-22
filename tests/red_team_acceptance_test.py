@@ -893,6 +893,26 @@ def _synthetic_segments(n=400):
 def test_long_document_simulation_and_performance():
     tmp, old = _tmp_output_dir()
     old_llm = core.call_llm
+    repo, evidence = core._job_repo, core._translation_evidence
+    old_save, old_read = repo.save_job_state_atomic, repo.read_shared_text
+    old_reconcile = evidence.reconcile_runtime_review_truth
+    work = {}
+
+    def save(*args, **kwargs):
+        work["full_saves"] += 1
+        return old_save(*args, **kwargs)
+
+    def read(path):
+        if Path(path).name == "state.json":
+            work["snapshot_reads"] += 1
+        return old_read(path)
+
+    def reconcile(state):
+        work["reconciled_pair_slots"] += len(state.get("pairs") or [])
+        return old_reconcile(state)
+
+    repo.save_job_state_atomic, repo.read_shared_text = save, read
+    evidence.reconcile_runtime_review_truth = reconcile
     try:
         segs = _synthetic_segments(400)
         docx_bytes = _make_docx(segs)
@@ -919,8 +939,10 @@ def test_long_document_simulation_and_performance():
         stats = {}
         for mode, jid in (("quick", "lg000000000000001"),
                           ("quality", "lg000000000000002")):
+            work.update(full_saves=0, snapshot_reads=0, reconciled_pair_slots=0)
             core.call_llm = _compliant_translation_llm(glossary)
             t0 = time.perf_counter()
+            cpu0 = time.process_time()
             if mode == "quality":
                 # 隔离 TM：quality 任务不得复用 quick 任务的记忆（分别度量注入）
                 tm_path = core.tm_path()
@@ -951,6 +973,8 @@ def test_long_document_simulation_and_performance():
                 "conflicts": sum(1 for f in state["findings"] if f.get("conflict")),
                 "delivery": state.get("delivery_status"),
                 "elapsed_s": round(elapsed, 2),
+                "process_cpu_s": round(time.process_time() - cpu0, 2),
+                "work": dict(work),
             }
         q, ql = stats["quick"], stats["quality"]
         assert q["segments"] == 2000 and ql["segments"] == 2000
@@ -965,9 +989,21 @@ def test_long_document_simulation_and_performance():
         assert q["reviewed"] == 2000 and ql["reviewed"] == 2000, \
             "合规 mock 下全部段落应审校通过（TM eligible）"
         assert ql["delivery"] == "draft" and q["delivery"] == "draft"
-        limit = 30 if os.name == "posix" else 120
-        assert q["elapsed_s"] < limit and ql["elapsed_s"] < limit, \
-            f"性能退化：{q['elapsed_s']}s / {ql['elapsed_s']}s"
+        # Bound measured expensive work, not runner speed (#77). The 2,000
+        # segments have 200 review groups of ten; allow 32 additional full
+        # checkpoints for setup/translation/finalization. A snapshot/reconcile
+        # per translation batch exceeds this budget. Owned snapshot revisions
+        # must not reparse the book at each save (the real earlier regression).
+        # Wall and CPU time remain evidence, not a universal latency promise.
+        for mode, measured in stats.items():
+            n = measured["segments"]
+            full_passes = n // 10 + 32
+            cost = measured["work"]
+            assert cost["full_saves"] <= full_passes, (mode, cost)
+            assert cost["reconciled_pair_slots"] <= n * full_passes, \
+                f"full-document reconciliation budget exceeded: {mode}: {cost}"
+            assert cost["snapshot_reads"] <= 8, \
+                f"owned snapshots reparsed repeatedly: {mode}: {cost}"
         print(f"  ✓ 长文模拟（synthetic 400 段）："
               f"quick avg_injected={q['avg_injected']} "
               f"quality avg_injected={ql['avg_injected']}")
@@ -975,6 +1011,8 @@ def test_long_document_simulation_and_performance():
     finally:
         core.OUTPUT_DIR = old
         core.call_llm = old_llm
+        repo.save_job_state_atomic, repo.read_shared_text = old_save, old_read
+        evidence.reconcile_runtime_review_truth = old_reconcile
         shutil.rmtree(tmp, ignore_errors=True)
 
 
