@@ -48,8 +48,8 @@
 
 ### 1. `v0.7.0` 没有标签，也没有 GitHub Release
 
-`CHANGELOG.md` 有 `## [0.7.0] - 2026-10-21`，五个语言的 README 都链到
-`https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0`，但：
+`CHANGELOG.md` 有 `## [0.7.0] - 2026-10-21`，4 个 README（`README.md` / `.en` / `.es` / `.ru`）
+都链到 `https://github.com/xueyang-dev/Folith/releases/tag/v0.7.0`，但：
 
 ```
 $ gh release list --repo xueyang-dev/Folith
