@@ -2018,5 +2018,7 @@
   "开始审校": "Start review",
   "统一为「{v0}」（改 {v1} 段）": "Use \"{v0}\" everywhere ({v1} segments to change)",
   "其他：": "Other:",
-  "保持原样（各自符合语境）": "Keep as is (each fits its context)"
+  "保持原样（各自符合语境）": "Keep as is (each fits its context)",
+  "需决定": "To decide",
+  "（{v0} 处）": " ({v0} places)"
 }

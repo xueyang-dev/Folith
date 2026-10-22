@@ -341,3 +341,100 @@ def test_review_queue_carries_the_entities_for_conflict_findings(tmp_path, monke
     items = [item for item in view["queue_items"] if item.get("entity_source")]
     assert [item["entity_source"] for item in items] == ["Lydia"]
     assert [entity["source"] for entity in view["entities"]] == ["Lydia"]
+
+
+# ---- 默认只列需要决定的项；名字译法不一一个名字一行 ------------------------------
+
+def _mixed_view():
+    view = _view(
+        _item(id="finding:p", finding_id="p", title="第 1 段 · p"),
+        _item(id="finding:s", finding_id="s", filter_group="suggested",
+              severity="actionable", title="第 2 段 · s", segment_index=1),
+        _item(id="finding:r", finding_id="r", filter_group="reference",
+              severity="informational", title="第 3 段 · r", segment_index=2),
+        _item(id="stale:segment:4", kind="stale", filter_group="rereview",
+              title="第 5 段 · 需要重新审校", segment_index=4),
+        _item(id="finding:e", finding_id="e", finding_type="entity_conflict",
+              entity_source="Lycidas", filter_group="suggested", severity="actionable",
+              segment_index=173, segment_indexes=[173, 792], title="第 174 段 · Lycidas"))
+    view["filter_counts"] = {"all": 5, "pending": 1, "rereview": 1, "suggested": 2,
+                             "reference": 1, "skipped": 0}
+    view["entities"] = [_entity()]
+    return view
+
+
+def _visible_ids(panel):
+    return [item["id"] for item in panel._visible]
+
+
+def test_default_view_lists_only_items_that_need_a_decision(panel):
+    panel.apply(_mixed_view())
+    assert panel._filter == "actionable"
+    assert set(_visible_ids(panel)) == {"finding:p", "stale:segment:4", "finding:e"}
+    assert "finding:r" not in _visible_ids(panel), "仅供参考默认收起"
+    assert "finding:s" not in _visible_ids(panel)
+
+
+def test_tab_counts_for_the_existing_filters_are_unchanged(panel):
+    panel.apply(_mixed_view())
+    counts = panel._view["filter_counts"]
+    assert counts["all"] == 5 and counts["reference"] == 1 and counts["suggested"] == 2
+
+
+def test_all_and_reference_tabs_still_show_everything_they_did(panel):
+    panel.apply(_mixed_view())
+    panel._set_filter("reference")
+    assert _visible_ids(panel) == ["finding:r"]
+    panel._set_filter("all")
+    assert len(panel._visible) == 5
+
+
+def test_default_falls_back_to_all_when_nothing_needs_a_decision(panel):
+    view = _view(_item(id="finding:r", finding_id="r", filter_group="reference",
+                       severity="informational"))
+    view["filter_counts"] = {"all": 1, "reference": 1}
+    panel.apply(view)
+    assert panel._filter == "all" and _visible_ids(panel) == ["finding:r"]
+
+
+def test_a_users_tab_choice_survives_a_refresh(panel):
+    panel.apply(_mixed_view())
+    panel._set_filter("reference")
+    panel.apply(_mixed_view())
+    assert panel._filter == "reference"
+
+
+def test_jumping_to_a_hidden_item_switches_to_all(panel):
+    panel.apply(_mixed_view())
+    assert panel.select_item_id("finding:r")
+    assert panel._filter == "all" and panel.selected_item()["id"] == "finding:r"
+
+
+def test_entity_rows_are_titled_by_name(panel):
+    panel.apply(_mixed_view())
+    panel.select_item_id("finding:e")
+    assert panel.item_title.text() == "译名不一致 · Lycidas（2 处）"
+
+
+def test_review_queue_has_one_row_per_conflicting_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    state = core.new_job_state("names.docx")
+    state.update(
+        p1_done=True, p2_done=True, paras=["Lydia a.", "Lydia b.", "Lydia c."],
+        pairs=[{"source": "Lydia a.", "target": "莉迪亚来了。"},
+               {"source": "Lydia b.", "target": "莉迪娅来了。"},
+               {"source": "Lydia c.", "target": "莉迪娅走了。"}])
+    registry = core._entity_registry.EntityRegistry()
+    registry.observe("Lydia", "莉迪亚", segment_id=0, entity_type="person")
+    registry.observe("Lydia", "莉迪娅", segment_id=1, entity_type="person")
+    state["entity_registry"] = registry.to_list()
+    state["findings"] = [
+        {"type": "entity_conflict", "severity": "actionable", "source": "Lydia",
+         "segment_index": index, "segment_id": index, "reason": f"实体「Lydia」第 {index} 处"}
+        for index in (0, 1, 2)]
+    core.save_job_state("entitygroup00000001", state)
+    view = adapter.review_queue("entitygroup00000001")
+    rows = [item for item in view["queue_items"] if item.get("entity_source")]
+    assert len(rows) == 1 and rows[0]["segment_indexes"] == [0, 1, 2]
+    assert view["filter_counts"]["all"] == len(view["queue_items"])
+    assert view["filter_counts"]["suggested"] == 1

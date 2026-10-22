@@ -1559,6 +1559,39 @@ def source_review_projection(state: dict) -> dict:
     return projected
 
 
+#: 审校页默认只列「需要人决定 / 挡住交付」的项：待处理、需重审，以及名字译法不一；
+#: 「仅供参考」与其余建议收在各自的筛选页签后面。
+ACTIONABLE_FILTER_GROUPS = ("pending", "rereview")
+
+
+def is_actionable_review_item(item: dict) -> bool:
+    return item.get("filter_group") in ACTIONABLE_FILTER_GROUPS or bool(item.get("entity_source"))
+
+
+def _group_entity_conflicts(view: dict) -> None:
+    """名字译法不一：一个名字一行（同一个名字的多条发现项并成一条），并重算筛选计数。"""
+    seen: dict[str, dict] = {}
+    items = []
+    for item in view.get("queue_items") or []:
+        source = str(item.get("entity_source") or "")
+        if not source:
+            items.append(item)
+            continue
+        first = seen.get(source)
+        if first is None:
+            seen[source] = item = dict(item, segment_indexes=[])
+            items.append(item)
+            first = item
+        index = item.get("segment_index")
+        if isinstance(index, int) and index not in first["segment_indexes"]:
+            first["segment_indexes"].append(index)
+    view["queue_items"] = items
+    counts = {name: sum(item.get("filter_group") == name for item in items)
+              for name in ("pending", "rereview", "skipped", "suggested", "reference")}
+    counts["all"] = len(items)
+    view["filter_counts"] = counts
+
+
 def review_queue(job_id: str, state: dict | None = None) -> dict:
     """审校页的整个视图模型：就绪状态、筛选计数、队列项。"""
     from folith import workbench_view as _workbench_view
@@ -1568,6 +1601,7 @@ def review_queue(job_id: str, state: dict | None = None) -> dict:
     # 名字译法不一的发现项在审校页上按「名字」处理（选一个统一 / 保持原样），
     # 选项数据与「检查与修复」抽屉同源。
     if any(item.get("entity_source") for item in view.get("queue_items") or []):
+        _group_entity_conflicts(view)
         try:
             view["entities"] = [dict(item) for item in core.entity_consistency_queue(state)]
         except Exception:  # noqa: BLE001 - 登记损坏时退回逐段处置
