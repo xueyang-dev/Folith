@@ -11,8 +11,9 @@ this does not change a failed or missing result into a pass.
 | Windows interactive installer Retry/Cancel, healthy post-upgrade UI, cross-version upgrade | **DEFERRED — WINDOWS**. Silent refusal and same-version reinstall have narrower scope. |
 | Windows native long-load CPU, heartbeat and 1/2/3/4/6 timings | **DEFERRED — WINDOWS**. Keep separate from macOS/offline measurements. |
 | PR #66 and #67 blockers | Resolved: both PRs merged and all their checks succeeded. |
-| #77 performance regression / load-sensitive 30-second gate | Continue on macOS: inspect the current integrated implementation and retain a meaningful regression criterion. |
-| Running 4,823-segment native workload | Recovery retained committed fields and completed all segments at 4b59f10. Export remained blocked by offline-target completeness; driver full-state polling contaminated heartbeat timing. Separate driver and product costs before claiming responsiveness. |
+| #77 performance regression / load-sensitive 30-second gate | Implemented bounded persistence/reconciliation work gate; controlled slow-host pass and injected-regression failures verified. Two full Linux Python 3.10/3.11/3.12 CI runs passed at 92c73c8. |
+| Real long-document native workload | Current importer produces 4,629 segments. Offline recovery retained committed fields; checked export correctly rejected short stub targets. Real saved API authorized; four-paragraph preflight and checked export passed. Full real-API acceptance pending. |
+| Native waiting CPU / running review projection | Isolated waiting window: 1.90% of one core, max heartbeat gap 63.42 ms. Review projection moved off the GUI thread; 232 relevant Qt cases passed. Whole-flow responsiveness still unverified; see macos-native-20261023.md. |
 | macOS frozen/native current integration | Recheck after substantive local changes. Earlier 4b59f10 Cocoa frozen startup and generated DOCX/PDF flow passed; no current-integration or real-document export claim follows. |
 
 Do not close milestone 4 on the strength of the Windows deferral. Ordinary

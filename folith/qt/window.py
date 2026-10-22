@@ -1793,27 +1793,43 @@ class MainWindow(QMainWindow):
         if signature == self._cached_signature:
             self.refresh_workbench()
             return
+        cached_at_start = self._cached_signature
         self._state_load_in_flight = True
 
-        def done(state) -> None:
+        def read():
+            state = adapter.load_state(job_id)
+            try:
+                review = adapter.review_queue(job_id, state) if state else {}
+            except Exception:  # noqa: BLE001 - match the panel's projection boundary
+                review = {}  # a failed review projection must not hide committed pairs
+            return state, {"review": review}
+
+        def done(payload) -> None:
             self._state_load_in_flight = False
-            if job_id != self._current_job_id:
+            if (job_id != self._current_job_id or self._opening_job_id
+                    or self._closing_accepted):
                 return
+            # An explicit refresh/edit can finish while this background read is
+            # still preparing its review queue. Keep that newer GUI snapshot.
+            if self._cached_signature not in (cached_at_start, signature):
+                return
+            state, prepared = payload
             if not state or self._cached_signature == signature:
                 # Unreadable (refresh reports it) or already refreshed meanwhile.
                 self.refresh_workbench()
                 return
             self._cached_state = state
             self._cached_signature = signature
-            self.refresh_workbench(preloaded=True)
+            self.refresh_workbench(preloaded=True, prepared=prepared)
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
 
-        self.runner.submit(adapter.load_state, job_id, on_done=done, on_error=failed,
+        self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-state")
 
-    def refresh_workbench(self, *, force: bool = False, preloaded: bool = False) -> None:
+    def refresh_workbench(self, *, force: bool = False, preloaded: bool = False,
+                          prepared: dict | None = None) -> None:
         if self._opening_job_id:
             return
         job_id = self._current_job_id
@@ -1822,7 +1838,8 @@ class MainWindow(QMainWindow):
         # The once-a-second background refresh is only logged when it is slow.
         timing = _PhaseLog(self._log, "refresh_workbench", job_id, min_ms=self.SLOW_REFRESH_MS)
         try:
-            self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded)
+            self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded,
+                                    prepared=prepared)
         finally:
             timing.flush()
             self._hide_loading()
@@ -1831,7 +1848,7 @@ class MainWindow(QMainWindow):
     SLOW_REFRESH_MS = 150
 
     def _refresh_workbench(self, job_id: str, timing: _PhaseLog, *, force: bool,
-                           preloaded: bool) -> None:
+                           preloaded: bool, prepared: dict | None = None) -> None:
         signature = adapter.state_signature(job_id)
         changed = preloaded or signature != self._cached_signature
         if (changed or force) and not preloaded:
@@ -1868,7 +1885,7 @@ class MainWindow(QMainWindow):
         self._last_runtime_status = status
         with timing.phase("workbench.apply"):
             self.workbench.apply(job_id, state, rows, runtime, snapshots,
-                                 refresh_delivery=force or terminal_change)
+                                 refresh_delivery=force or terminal_change, prepared=prepared)
         self._sync_menu_state()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
         self._later(600, lambda: self._offer_tips(runtime))

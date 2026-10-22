@@ -22,10 +22,15 @@ and saves an untouched ``after-kill`` copy before recovery. Committed pair
 fields must survive, committed batches must not be regenerated, and every
 non-empty target must occur in the working DOCX in source order. Source content
 and logs stay in the local evidence directory. QSettings are isolated too.
+
+Only an explicit ``--connection-data-dir <existing Folith data directory>``
+uses its saved real API connections. It reads that configuration without
+copying credentials into the evidence directory; the default uses a local stub.
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import shutil
@@ -61,9 +66,9 @@ class UiHeartbeat:
         self.gaps.append(now - self.last)
         self.last = now
 
-    def snapshot(self):
-        gaps = sorted(self.gaps + [time.monotonic() - self.last])
-        return {"timer_interval_ms": 50, "ticks": len(self.gaps),
+    def snapshot(self, *, start=0):
+        gaps = sorted(self.gaps[start:] + [time.monotonic() - self.last])
+        return {"timer_interval_ms": 50, "ticks": len(gaps) - 1,
                 "max_gap_ms": round(1000 * gaps[-1], 2),
                 "p95_gap_ms": round(1000 * gaps[int(.95 * (len(gaps) - 1))], 2)}
 
@@ -150,6 +155,25 @@ def _prepare_env(data_dir: Path, log_dir: Path, *, native: bool = False) -> None
     os.environ["FOLITH_QT_SETTINGS_DIR"] = str(log_dir / "settings")
 
 
+def _engine_config(adapter, connection_data_dir=None, stub_url=""):
+    """Read an explicitly selected saved connection without saving credentials."""
+    if connection_data_dir:
+        previous = adapter.core.OUTPUT_DIR
+        try:
+            adapter.core.OUTPUT_DIR = Path(connection_data_dir).expanduser().resolve()
+            config = adapter.EngineConfig.load()
+        finally:
+            adapter.core.OUTPUT_DIR = previous
+        if config.connection_problem():
+            raise ValueError("The saved model connection is incomplete")
+    else:
+        config = adapter.EngineConfig(
+            provider="自定义中转站", model="stub-model", api_key="stub-key",
+            base_url=stub_url, target_lang="简体中文")
+    return dataclasses.replace(config, enable_review=True, enable_report=False,
+                               enable_understanding=False, enable_source_cleanup=False)
+
+
 def _private_window(w, adapter, config, log_dir):
     """The probe must not read or overwrite the operator's task preferences.
 
@@ -222,11 +246,8 @@ def run_child(args) -> int:
 
     app = w.build_application([])
     heartbeat = UiHeartbeat(app)
-    config = adapter.EngineConfig(
-        provider="自定义中转站", model="stub-model", api_key="stub-key",
-        base_url=os.environ["FOLITH_QT_CRASH_STUB_URL"], target_lang="简体中文",
-        enable_review=True, enable_report=False, enable_understanding=False,
-        enable_source_cleanup=False)
+    config = _engine_config(adapter, args.connection_data_dir,
+                            os.environ.get("FOLITH_QT_CRASH_STUB_URL", ""))
     window = _private_window(w, adapter, config, log_dir)
     window.show()
     fixture = Path(args.fixture).expanduser()
@@ -247,16 +268,19 @@ def run_child(args) -> int:
     # Keep the process alive while the parent watches for durable progress.
     lifecycle_done = not args.exercise_lifecycle
     next_check = 0.0
+    # A real provider may spend several minutes finishing in-flight requests.
+    # This is a probe coordination budget, not a product timeout change.
+    control_budget = min(args.timeout, 600.0) if args.connection_data_dir else 60.0
     while True:
         app.processEvents()
         if not lifecycle_done and time.monotonic() >= next_check:
             next_check = time.monotonic() + 0.2
-            current = adapter.load_state(job_id)
+            current = window.workbench._state
             if len(current.get("pairs") or []) >= args.min_committed_pairs:
                 worker = adapter.core._RUNTIME_WORKERS.get(job_id)
                 assert worker is not None and worker.is_alive()
                 window.pause_job()
-                assert _pump(app, 60, lambda: (
+                assert _pump(app, control_budget, lambda: (
                     adapter.core.load_runtime_state(job_id) or {}).get("status") == "paused")
                 paused = _paused_state_after_inflight_commits(app, adapter, job_id)
                 pairs = paused.get("pairs") or []
@@ -275,8 +299,8 @@ def run_child(args) -> int:
                 assert _pump(app, 5, window.isMinimized)
                 window.continue_job()
                 assert adapter.core._RUNTIME_WORKERS.get(job_id) is worker
-                assert _pump(app, 60, lambda: len(
-                    adapter.load_state(job_id).get("pairs") or []) > len(pairs))
+                assert _pump(app, control_budget, lambda: len(
+                    window.workbench._state.get("pairs") or []) > len(pairs))
                 lifecycle = {"paused_pairs": len(pairs), "stable_while_paused": True,
                              "workbench_caught_up": True, "card_percent": card.progress_percent,
                              "minimized": window.isMinimized(),
@@ -302,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--window", action="store_true", help="use the native Qt platform")
     parser.add_argument("--stub-delay", type=float, default=0.6)
+    parser.add_argument("--connection-data-dir", default=None,
+                        help="explicitly use real saved API connections from this Folith data directory")
     parser.add_argument("--min-committed-pairs", type=int, default=1)
     parser.add_argument("--exercise-lifecycle", action="store_true",
                         help="pause, verify live progress, continue while minimized, then kill")
@@ -331,9 +357,18 @@ def main(argv: list[str] | None = None) -> int:
             {"at": round(time.time() - report["started_at"], 2),
              "step": name, **extra})
 
-    stub = Stub(out_dir, delay=args.stub_delay)
-    url = stub.start()
-    report["stub_url"] = url
+    stub = None
+    from folith.qt import adapter
+    if args.connection_data_dir:
+        config = _engine_config(adapter, args.connection_data_dir)
+        url = ""
+        report["connection"] = {"kind": "saved", "provider": config.provider,
+                                "model": config.model}
+    else:
+        stub = Stub(out_dir, delay=args.stub_delay)
+        url = stub.start()
+        config = _engine_config(adapter, stub_url=url)
+        report["stub_url"] = url
     fixture = Path(args.fixture).expanduser() if args.fixture else out_dir / "crash.docx"
     if not fixture.exists():
         from folith.qt import selftest
@@ -350,6 +385,9 @@ def main(argv: list[str] | None = None) -> int:
         child_command.append("--window")
     if args.exercise_lifecycle:
         child_command.append("--exercise-lifecycle")
+    if args.connection_data_dir:
+        child_command.extend(["--connection-data-dir",
+                              str(Path(args.connection_data_dir).expanduser().resolve())])
     child = subprocess.Popen(child_command,
         env=env, stdout=(log_dir / "child.log").open("ab"),
         stderr=subprocess.STDOUT)
@@ -447,11 +485,6 @@ def main(argv: list[str] | None = None) -> int:
 
         app = w.build_application([])
         heartbeat = UiHeartbeat(app)
-        config = adapter.EngineConfig(
-            provider="自定义中转站", model="stub-model", api_key="stub-key",
-            base_url=url, target_lang="简体中文", enable_review=True,
-            enable_report=False, enable_understanding=False,
-            enable_source_cleanup=False)
         window = _private_window(w, adapter, config, log_dir)
         window.show()
         app.processEvents()
@@ -499,9 +532,12 @@ def main(argv: list[str] | None = None) -> int:
         step("recovery-entry", **report["recovery_entry"])
 
         # Resume through the same entry point a user would use.
+        resume_gap_start = len(heartbeat.gaps)
         window.start_or_resume()
         report["quiet_running_window"] = _quiet_window(app, window, heartbeat)
         report["resumed"] = pump(args.timeout, lambda: _resume_finished(adapter, job_id))
+        # Capture before the driver's full-state comparisons and direct export.
+        report["ui_heartbeat_during_resume"] = heartbeat.snapshot(start=resume_gap_start)
         state = adapter.load_state(job_id)
         report["added_pair_fields_after_resume"] = _assert_committed_prefix_preserved(
             expected_pairs, state.get("pairs") or [])
@@ -566,7 +602,8 @@ def main(argv: list[str] | None = None) -> int:
         if heartbeat is not None:
             report["ui_heartbeat"] = heartbeat.snapshot()
             heartbeat.timer.stop()
-        stub.stop()
+        if stub is not None:
+            stub.stop()
         if child.poll() is None:
             child.kill()
         report.setdefault("ok", False)
@@ -574,6 +611,10 @@ def main(argv: list[str] | None = None) -> int:
         report["duration_s"] = round(report["finished_at"] - report["started_at"], 1)
 
     text = json.dumps(report, ensure_ascii=False, indent=2, default=str)
+    for secret in {config.api_key, config.reviewer_api_key,
+                   *(str(c.get("api_key") or "") for c in config.connections)}:
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
     if args.out:
         Path(args.out).write_text(text + "\n", encoding="utf-8")
     print(text, flush=True)

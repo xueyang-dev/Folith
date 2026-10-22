@@ -5,7 +5,41 @@ import pytest
 
 from folith.storage import state_journal as journal
 from scripts.qt_crash_recovery_probe import (
-    _assert_committed_prefix_preserved, _durable_state, _resume_finished)
+    _assert_committed_prefix_preserved, _durable_state, _resume_finished, _engine_config)
+
+
+def test_saved_connection_is_read_without_changing_data_target_or_credentials(tmp_path, monkeypatch):
+    from folith.qt import adapter
+    saved, private = tmp_path / 'saved', tmp_path / 'private'
+    saved.mkdir()
+    path = saved / 'provider_config.json'
+    path.write_text(json.dumps({'provider': '自定义中转站', 'model': 'configured-model',
+                               'api_key': 'configured-test-key',
+                               'base_url': 'https://example.test/v1'}), encoding='utf-8')
+    before = path.read_bytes()
+    monkeypatch.setattr(adapter.core, 'OUTPUT_DIR', private)
+    config = _engine_config(adapter, saved)
+    assert config.model == 'configured-model' and config.api_key == 'configured-test-key'
+    assert config.enable_review and not config.enable_report
+    assert adapter.core.OUTPUT_DIR == private
+    assert path.read_bytes() == before
+    assert not (private / 'provider_config.json').exists()
+
+
+def test_missing_saved_connection_never_silently_uses_the_stub(tmp_path, monkeypatch):
+    from folith.qt import adapter
+    private = tmp_path / 'private'
+    monkeypatch.setattr(adapter.core, 'OUTPUT_DIR', private)
+    with pytest.raises(ValueError, match='incomplete'):
+        _engine_config(adapter, tmp_path / 'missing')
+    assert adapter.core.OUTPUT_DIR == private
+
+
+def test_default_probe_connection_remains_the_explicit_local_stub():
+    from folith.qt import adapter
+    config = _engine_config(adapter, stub_url='http://127.0.0.1:12345/v1')
+    assert config.base_url == 'http://127.0.0.1:12345/v1'
+    assert config.model == 'stub-model' and config.api_key == 'stub-key'
 
 
 @pytest.mark.parametrize("status", ["running", "waiting_external", "paused", "queued"])
