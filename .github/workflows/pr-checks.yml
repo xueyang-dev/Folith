@@ -87,7 +87,7 @@ jobs:
       - name: Check complete UI catalogs
         run: python scripts/check_ui_locales.py
       - name: Run the complete regression
-        run: python scripts/run_regression.py -j 4 --tsv pr-regression.tsv
+        run: python scripts/run_regression.py -j 4 --split qt_client_window_test.py=4 --split qt_theme_follow_system_test.py=2 --tsv pr-regression.tsv
       - name: Upload regression diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

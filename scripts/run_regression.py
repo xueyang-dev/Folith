@@ -89,7 +89,8 @@ def _classify(path: Path) -> str:
     return PYTEST_STYLE
 
 
-def _command(path: Path, kind: str, scratch: Path) -> list[str]:
+def _command(path: Path, kind: str, scratch: Path,
+             nodes: list[str] | None = None) -> list[str]:
     """构造单文件命令。scratch 必须是一个**尚不存在**的路径。
 
     `--basetemp` 指向不存在的路径时 pytest 只做一次 mkdir，不会触发 shim 的
@@ -97,9 +98,31 @@ def _command(path: Path, kind: str, scratch: Path) -> list[str]:
     """
     if kind == SCRIPT_STYLE:
         return [sys.executable, str(path)]
-    return [sys.executable, "-m", "pytest", str(path),
+    targets = nodes if nodes else [str(path)]
+    return [sys.executable, "-m", "pytest", *targets,
             "-q", "--no-header", "-p", "no:cacheprovider",
             "--basetemp", str(scratch / "pytest-base")]
+
+
+def _split_nodes(path: Path, parts: int) -> list[list[str]]:
+    """把一个文件的用例按收集顺序切成 parts 段连续的块（每块一个独立进程）。
+
+    连续切分保留文件内的相对顺序；每块仍然是全新进程 + 私有 scratch/HOME，
+    隔离只会更细，不会更粗。收集失败时返回空列表，调用方退回整文件运行。
+    """
+    proc = subprocess.run([sys.executable, "-m", "pytest", str(path), "--collect-only",
+                           "-q", "-p", "no:cacheprovider"], cwd=ROOT,
+                          capture_output=True, text=True)
+    nodes = [line.strip() for line in proc.stdout.splitlines() if "::" in line]
+    if proc.returncode != 0 or len(nodes) < parts:
+        return []
+    size, extra = divmod(len(nodes), parts)
+    chunks, start = [], 0
+    for i in range(parts):
+        end = start + size + (1 if i < extra else 0)
+        chunks.append(nodes[start:end])
+        start = end
+    return chunks
 
 
 def _result_line(kind: str, code: int, output: str) -> str:
@@ -107,6 +130,13 @@ def _result_line(kind: str, code: int, output: str) -> str:
         return f"exit={code}"
     matches = re.findall(r"\d+ (?:passed|failed|error|skipped|xfailed)", output)
     return ", ".join(matches) if matches else f"exit={code}"
+
+
+def _log_stem(name: str) -> str:
+    """`foo_test.py[2/3]` -> `foo_test-2of3`（日志文件名里不能有 `/`）。"""
+    base, _, part = name.partition("[")
+    stem = Path(base).stem
+    return f"{stem}-{part.rstrip(']').replace('/', 'of')}" if part else stem
 
 
 def main() -> int:
@@ -117,6 +147,9 @@ def main() -> int:
                         help="把逐文件结果写成 TSV")
     parser.add_argument("--jobs", "-j", type=int, default=1,
                         help="同时运行的测试文件进程数（仅 Linux；默认 1 = 串行）")
+    parser.add_argument("--split", action="append", default=[], metavar="FILE=N",
+                        help="把一个特别慢的 pytest 文件按收集顺序切成 N 个独立进程"
+                             "（需要 --jobs > 1），可重复")
     args = parser.parse_args()
 
     files = sorted(TESTS.glob("*_test.py"))
@@ -133,6 +166,13 @@ def main() -> int:
               "隔离，并行会让 Qt 测试互相污染。改用 --jobs 1。", file=sys.stderr)
         return 2
     isolate_home = jobs > 1
+    splits: dict[str, int] = {}
+    for item in args.split:
+        name, _, count = item.partition("=")
+        splits[name] = int(count)
+    if splits and jobs == 1:
+        print("--split 只在 --jobs > 1 时生效", file=sys.stderr)
+        return 2
 
     rows: list[tuple[int, str, str, int, str]] = []
     failures: list[str] = []
@@ -140,9 +180,11 @@ def main() -> int:
     # 每个文件一个私有 scratch：basetemp 与 TMPDIR 都指向它，保证从不撞已存在路径。
     scratch_root = Path(tempfile.mkdtemp(prefix="folio-regression-")).resolve()
 
-    def run_one(path: Path) -> tuple[int, str, str, int, str, str]:
+    def run_one(path: Path, nodes: list[str] | None = None,
+                label: str = "") -> tuple[int, str, str, int, str, str]:
         kind = _classify(path)
-        scratch = scratch_root / path.stem
+        name = path.name + label
+        scratch = scratch_root / (path.stem + label.replace("/", "of"))
         scratch.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, TMPDIR=str(scratch))
         if isolate_home:
@@ -153,11 +195,11 @@ def main() -> int:
                        XDG_DATA_HOME=str(home / ".local/share"),
                        XDG_CACHE_HOME=str(home / ".cache"))
         begin = time.time()
-        proc = subprocess.run(_command(path, kind, scratch), cwd=ROOT,
+        proc = subprocess.run(_command(path, kind, scratch, nodes), cwd=ROOT,
                               capture_output=True, text=True, env=env)
         elapsed = int(time.time() - begin)
         output = (proc.stdout or "") + (proc.stderr or "")
-        return (proc.returncode, kind, path.name, elapsed,
+        return (proc.returncode, kind, name, elapsed,
                 _result_line(kind, proc.returncode, output), output)
 
     def record(result: tuple[int, str, str, int, str, str]) -> None:
@@ -166,7 +208,7 @@ def main() -> int:
         if code != 0:
             failures.append(name)
             LOGS.mkdir(parents=True, exist_ok=True)
-            (LOGS / f"{Path(name).stem}.log").write_text(output, encoding="utf-8")
+            (LOGS / f"{_log_stem(name)}.log").write_text(output, encoding="utf-8")
         mark = "ok  " if code == 0 else "FAIL"
         print(f"[{mark}] {kind:<6} {name:<48} {elapsed:>4}s  {line}", flush=True)
 
@@ -179,11 +221,20 @@ def main() -> int:
             exclusive = [f for f in files if f.name in EXCLUSIVE]
             # 大文件先跑（近似"最长任务优先"），避免慢文件最后才开始拖长总时间。
             pooled.sort(key=lambda f: f.stat().st_size, reverse=True)
-            print(f"并行 {jobs} 个进程：{len(pooled)} 个文件；之后串行 {len(exclusive)} "
-                  "个独占文件", flush=True)
+            units: list[tuple[Path, list[str] | None, str]] = []
+            for f in pooled:
+                chunks = _split_nodes(f, splits[f.name]) if splits.get(f.name, 1) > 1 else []
+                if chunks:
+                    units += [(f, c, f"[{i}/{len(chunks)}]") for i, c in enumerate(chunks, 1)]
+                else:
+                    if f.name in splits:
+                        print(f"{f.name}: 无法切分，整文件运行", flush=True)
+                    units.append((f, None, ""))
+            print(f"并行 {jobs} 个进程：{len(pooled)} 个文件（{len(units)} 个进程单元）；"
+                  f"之后串行 {len(exclusive)} 个独占文件", flush=True)
             with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
                 for future in concurrent.futures.as_completed(
-                        [pool.submit(run_one, f) for f in pooled]):
+                        [pool.submit(run_one, *u) for u in units]):
                     record(future.result())
             for path in exclusive:
                 record(run_one(path))
@@ -214,7 +265,7 @@ def main() -> int:
     if failures and os.environ.get("GITHUB_ACTIONS"):
         # 在 CI 日志里直接展开失败文件的末尾输出，不必先下载 artifact。
         for name in sorted(failures):
-            tail = (LOGS / f"{Path(name).stem}.log").read_text(encoding="utf-8")
+            tail = (LOGS / f"{_log_stem(name)}.log").read_text(encoding="utf-8")
             print(f"::group::FAIL {name}（日志末尾 80 行）")
             print("\n".join(tail.splitlines()[-80:]))
             print("::endgroup::")

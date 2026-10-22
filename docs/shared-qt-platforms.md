@@ -52,7 +52,7 @@ that macOS dispatch remains isolated, and that templates preserve user text
 containing strings such as `Mac`, `Finder` and shortcut glyphs. Native Windows
 RSS and PID inspection are exercised on the host.
 
-`.github/workflows/qt-platforms.yml` runs the shared checks on Windows and macOS
+`.github/workflows/shared-qt.yml` (called from PR Fast Checks and Main Full Regression) runs the shared checks on Windows and macOS
 with the offscreen backend. Offscreen/mocked checks do not validate real Cocoa
 title bars, native file panels, taskbar integration or a rebuilt installer.
 Those require native acceptance on each operating system.
