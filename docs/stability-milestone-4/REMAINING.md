@@ -14,7 +14,7 @@ this does not change a failed or missing result into a pass.
 | #77 performance regression / load-sensitive 30-second gate | Implemented bounded persistence/reconciliation work gate; controlled slow-host pass and injected-regression failures verified. Two full Linux Python 3.10/3.11/3.12 CI runs passed at 92c73c8. |
 | Real long-document native workload | Current importer produces 4,629 segments. Offline recovery retained committed fields; checked export correctly rejected short stub targets. Real saved API authorized; four-paragraph preflight and checked export passed. Full real-API acceptance pending. |
 | Native waiting CPU / running review projection | Isolated waiting window: 1.90% of one core, max heartbeat gap 63.42 ms. Review projection moved off the GUI thread; 232 relevant Qt cases passed. Whole-flow responsiveness still unverified; see macos-native-20261023.md. |
-| macOS frozen/native current integration | Recheck after substantive local changes. Earlier 4b59f10 Cocoa frozen startup and generated DOCX/PDF flow passed; no current-integration or real-document export claim follows. |
+| macOS frozen/native current integration | 2b5f8f4 Cocoa frozen startup and generated DOCX/PDF flow passed (19.2 s), including PDF rendering/highlight, human edit, checked final delivery and reopening. Build excludes OCR. Real-document API export remains separate. |
 
 Do not close milestone 4 on the strength of the Windows deferral. Ordinary
 GitHub CI may run; waiting for a Windows machine is not a prerequisite for the

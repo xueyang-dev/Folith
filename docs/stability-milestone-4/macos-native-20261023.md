@@ -36,3 +36,20 @@ The real full-document run and current frozen build are separate acceptance
 items. The preflight and local-server smoke do not establish their completion.
 Raw documents, targets, credentials and logs remain local; only these aggregate
 measurements are included here. Windows native acceptance remains deferred.
+
+## Frozen candidate and main integration
+
+The macOS bundle built at `2b5f8f4` (`--no-ocr`) passed native Cocoa startup.
+The frozen DOCX/PDF flow passed in 19.2 seconds: PDF page 0 rendered a 17,709-byte
+PNG, one source segment resolved to one highlight rectangle, a human edit
+survived reopening, and all seven checked final-delivery assets were saved.
+The quiet-window maximum heartbeat gap was 46.9 ms; the driver's full-flow
+maximum was 489.0 ms during import. This generated-fixture result does not
+replace real-document API acceptance or bundled OCR validation.
+
+Main subsequently merged #84's snapshot-load-count performance gate. The merge
+retains that gate and this branch's checkpoint, reconciliation and snapshot-read
+budgets. Using the repository's pytest fixtures, all 18 red-team cases passed
+in 22.40 seconds. A direct script invocation lacks the established always-review
+fixture and fails three legacy review/TM expectations; it is not counted as a
+passing run. No product review policy was changed to make those assertions pass.
