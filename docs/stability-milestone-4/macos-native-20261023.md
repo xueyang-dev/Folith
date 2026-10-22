@@ -54,3 +54,17 @@ intermediate combined gate passed all 18 red-team cases in 22.40 seconds using
 the repository's pytest fixtures; the final merged gate is checked separately. A direct script invocation lacks the established always-review
 fixture and fails three legacy review/TM expectations; it is not counted as a
 passing run. No product review policy was changed to make those assertions pass.
+
+The final concurrent-merge red-team gate passed all 18 cases in 29.74 seconds.
+The imported standalone benchmark had two reachable integration errors: its
+helper had been removed, and quick/quality generated identical job IDs. The
+benchmark now owns its runner, uses distinct IDs, explicitly matches the gate's
+always-review fixture, and checks segment/review counts. Its complete one-repeat
+smoke passed quick and quality at 200/1,000/2,000 segments each. Timing during
+other active acceptance work is not used as a performance baseline.
+
+A separate native real-PDF import/open profile still observed a 3,305 ms maximum
+heartbeat gap (profiling enabled; much of the time is inside native event
+processing and file operations). This is unresolved responsiveness evidence,
+not a pass. The small frozen-fixture and waiting-only measurements above cannot
+be substituted for real-book import/open acceptance.
