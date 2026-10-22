@@ -116,13 +116,19 @@ def _prepare_env(data_dir: Path, log_dir: Path, *, native: bool = False) -> None
     os.environ["FOLITH_DESKTOP_DATA_DIR"] = str(data_dir)
     os.environ["FOLITH_DESKTOP_LOG_DIR"] = str(log_dir)
     os.environ["FOLITH_OUTPUT_DIR"] = str(data_dir)
+    # The stored task defaults belong to whoever owns this machine; a leftover
+    # task/enable_report would put the task into the report stage and change what
+    # the recovery run proves.  The child inherits this directory, so both
+    # windows in a recovery run share one private preference file.
+    os.environ["FOLITH_QT_SETTINGS_DIR"] = str(log_dir / "settings")
 
 
 def _private_window(w, adapter, config, log_dir):
-    """The probe must not read or overwrite the operator's task preferences."""
-    from PySide6.QtCore import QSettings
-    settings = str(log_dir / "probe-settings.ini")
-    w.QSettings = lambda *_: QSettings(settings, QSettings.Format.IniFormat)
+    """The probe must not read or overwrite the operator's task preferences.
+
+    ``FOLITH_QT_SETTINGS_DIR`` (set in ``_prepare_env``) already redirects every
+    preference reader, so the window is built normally here.
+    """
     return w.MainWindow(config, adapter.desktop_paths.resolve_paths(), None)
 
 
