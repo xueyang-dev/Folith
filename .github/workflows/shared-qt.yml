@@ -1,10 +1,15 @@
 name: Shared Qt platform checks
 
+# Reusable: the shared views and the platform boundary on real Windows and macOS
+# runners. Called by PR Fast Checks (both systems) and Main Full Regression
+# (macOS only: the Windows full regression already runs these files).
 on:
-  pull_request:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      os-list:
+        description: JSON list of runner images
+        type: string
+        default: '["windows-latest", "macos-15"]'
 
 permissions:
   contents: read
@@ -13,10 +18,11 @@ jobs:
   qt-platforms:
     name: Shared Qt (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-15]
+        os: ${{ fromJSON(inputs.os-list) }}
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONUTF8: "1"

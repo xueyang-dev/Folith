@@ -1,0 +1,116 @@
+name: Main Full Regression
+
+# Tier 2. Everything a merge to main must keep green, on every push to main and
+# as part of Release Validation (workflow_call): the complete regression on
+# Python 3.10/3.11/3.12 (Linux, parallel with per-file process isolation), the
+# complete Windows regression (serial: Windows QSettings live in the registry and
+# cannot be isolated per process), the shared Qt checks on macOS and the package
+# smoke. Nothing here is cancelled by a newer push.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-test-env
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile and import critical modules
+        run: |
+          python -m py_compile core.py folith/academic_writer.py \
+            folith/compliance.py folith/thesis_constraints.py
+          python -c "import folith.academic_writer, folith.compliance, folith.thesis_constraints"
+      - name: Check complete UI catalogs
+        run: python scripts/check_ui_locales.py
+      - name: Run the complete regression
+        run: python scripts/run_regression.py -j 4 --tsv release-regression.tsv
+      - name: Upload regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-python-${{ matrix.python-version }}
+          path: |
+            .regression-logs/
+            release-regression.tsv
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  windows:
+    name: pytest (Windows, Python 3.11)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[test]" PySide6==6.11.2
+      - name: Install the OCR engine and ripgrep used by the test suite
+        run: choco install tesseract ripgrep --no-progress -y
+      - name: Run the complete Windows regression
+        run: python scripts/run_regression.py --tsv release-regression-windows.tsv
+      - name: Upload regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-windows
+          path: |
+            .regression-logs/
+            release-regression-windows.tsv
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  shared-qt-macos:
+    uses: ./.github/workflows/shared-qt.yml
+    with:
+      os-list: '["macos-15"]'
+
+  package:
+    uses: ./.github/workflows/package-smoke.yml
+
+  gate:
+    name: Main Full Regression
+    needs: [linux, windows, shared-qt-macos, package]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["RESULTS"])
+          for k, v in needs.items():
+              print(f"{k:16} {v['result']}")
+          bad = {k: v["result"] for k, v in needs.items() if v["result"] != "success"}
+          if bad:
+              print(f"::error::not green: {bad}")
+              sys.exit(1)
+          PY

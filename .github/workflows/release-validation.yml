@@ -1,111 +1,73 @@
-name: Release gate
+name: Release Validation
 
+# Tier 3. A release candidate is valid only when this workflow is green: Main
+# Full Regression (called, not skipped), the macOS candidate (bundle, frozen main
+# flow, bundled OCR, DMG, release manifest/notes, macOS Qt regression, DMG
+# install probe) and the Windows x64 candidate (bundle, frozen flow, OCR,
+# installer, install/upgrade/uninstall round trip, checksums).
+#
+# Runs on version tags, pushes to release/** branches, nightly on main, by hand,
+# and on pull requests that target a release/** branch, change packaging inputs
+# (see scripts/ci_changes.py) or carry the "ci:release" label. It never publishes
+# a GitHub Release.
 on:
   push:
-    branches:
-      - main
+    tags: ["v*"]
+    branches: ["release/**"]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    - cron: "17 2 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Only pull request runs share a group (per PR) and are cancelled by a newer
+# push; tag, branch, scheduled and manual runs each get their own group.
+concurrency:
+  group: release-validation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  tests:
-    name: pytest (Python ${{ matrix.python-version }})
+  select:
+    name: decide whether to validate
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-      - name: Install test tools
-        # QtGui/offscreen still links EGL, GL, keyboard, font and D-Bus runtimes.
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes ripgrep libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
-      - name: Install test dependencies
-        # 6.12.0 crashes during Qt test teardown and its macOS bindings require
-        # macOS 26; use the runtime verified for the macOS 15 release candidate.
-        run: python -m pip install --upgrade pip && python -m pip install ".[test]" PySide6==6.11.2
-      - name: Compile and import critical modules
-        run: |
-          python -m py_compile core.py folith/academic_writer.py \
-            folith/compliance.py folith/thesis_constraints.py
-          python - <<'PY'
-          import folith.academic_writer
-          import folith.compliance
-          import folith.thesis_constraints
-
-          print("critical module compile/import: OK")
-          PY
-      - name: Check complete UI catalogs
-        run: python scripts/check_ui_locales.py
-      - name: Run tests
+          fetch-depth: 0
+      - id: decide
         env:
-          QT_QPA_PLATFORM: offscreen
-        run: python scripts/run_regression.py --tsv release-regression.tsv
-      - name: Upload regression diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: regression-python-${{ matrix.python-version }}
-          path: |
-            .regression-logs/
-            release-regression.tsv
-          include-hidden-files: true
-          if-no-files-found: ignore
-
-  package:
-    name: build and wheel smoke
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install build frontend
-        run: python -m pip install --upgrade pip build
-      - name: Build sdist and wheel
-        run: python -m build
-      - name: Inspect release archives
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          python scripts/check_release_archives.py dist
-          python scripts/release_preflight.py --dist dist
-      - name: Install wheel in a clean environment
-        run: |
-          python -m venv "$RUNNER_TEMP/folith"
-          "$RUNNER_TEMP/folith/bin/python" -m pip install --upgrade pip
-          "$RUNNER_TEMP/folith/bin/python" -m pip install dist/*.whl
-          cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/folith/bin/python" - <<'PY'
-          import importlib.util
-          from pathlib import Path
-          import core
-          import folith
-          import folith.qt.app
+          if [ "$EVENT" != "pull_request" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          packaging=$(python3 scripts/ci_changes.py "$BASE_SHA" "$HEAD_SHA" | sed -n 's/^packaging=//p')
+          case "$BASE_REF" in release/*) target=true ;; *) target=false ;; esac
+          label=$(python3 -c 'import json,os; print(str("ci:release" in json.loads(os.environ["LABELS"] or "[]")).lower())')
+          echo "release target=$target packaging=$packaging label=$label"
+          if [ "$target" = true ] || [ "$packaging" = true ] || [ "$label" = true ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          root = Path(folith.__file__).resolve().parent
-          assert "site-packages" in str(root), root
-          for rel in ("resources/en_common.txt", "resources/brand/folith-favicon.svg",
-                      "resources/brand/folith-mark.svg", "resources/brand/folith-lockup.png",
-                      "resources/brand/folith-mark.png", "resources/locales/qt-zh-CN.json"):
-              assert (root / rel).is_file(), rel
-          assert importlib.util.find_spec("streamlit") is None, "streamlit should not be installed"
-          print("installed imports and resources: OK")
-          PY
-          "$RUNNER_TEMP/folith/bin/folith" --help
+  full-regression:
+    needs: select
+    if: needs.select.outputs.run == 'true'
+    uses: ./.github/workflows/full-regression.yml
 
   qt-macos:
+    needs: select
+    if: needs.select.outputs.run == 'true'
     # The Qt candidate is built in one interpreter environment: the same venv
     # that runs the tests, builds the app, the DMG, the manifest and the notes.
     # The retired shell's chain installed dependencies with setup-python and then
@@ -113,6 +75,7 @@ jobs:
     # it uses and installs the real desktop dependency set.
     name: macOS Qt candidate (build, frozen flow, DMG, release checks)
     runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -120,6 +83,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
       - name: Create the build interpreter and install dependencies
         run: |
           python -m venv venv
@@ -192,44 +156,11 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
-  tests-windows:
-    name: pytest (Windows, Python 3.11)
-    runs-on: windows-latest
-    timeout-minutes: 90
-    env:
-      QT_QPA_PLATFORM: offscreen
-      PYTHONUTF8: "1"
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install ".[test]" PySide6==6.11.2
-      - name: Install the OCR engine and ripgrep used by the test suite
-        run: choco install tesseract ripgrep --no-progress -y
-      - name: Run the complete Windows regression
-        run: python scripts/run_regression.py --tsv release-regression-windows.tsv
-      - name: Upload regression diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: regression-windows
-          path: |
-            .regression-logs/
-            release-regression-windows.tsv
-          include-hidden-files: true
-          if-no-files-found: ignore
-
   qt-windows:
+    needs: select
+    if: needs.select.outputs.run == 'true'
     name: Windows x64 Qt candidate (build, frozen flow, installer, release checks)
     runs-on: windows-latest
-    needs: tests-windows
     timeout-minutes: 90
     env:
       PYTHONUTF8: "1"
@@ -355,3 +286,31 @@ jobs:
             .regression-logs/
           include-hidden-files: true
           if-no-files-found: ignore
+
+  gate:
+    name: Release Validation
+    needs: [select, full-regression, qt-macos, qt-windows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every release check to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          SELECTED: ${{ needs.select.outputs.run }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["RESULTS"])
+          for k, v in needs.items():
+              print(f"{k:16} {v['result']}")
+          if needs["select"]["result"] != "success":
+              sys.exit("::error::could not decide whether to validate")
+          if os.environ["SELECTED"] != "true":
+              print("not a release candidate: validation not requested for this pull request")
+              sys.exit(0)
+          bad = {k: v["result"] for k, v in needs.items() if v["result"] != "success"}
+          if bad:
+              print(f"::error::not green: {bad}")
+              sys.exit(1)
+          PY

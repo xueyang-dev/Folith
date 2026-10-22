@@ -1,0 +1,168 @@
+name: PR Fast Checks
+
+# Tier 1. Every pull request gets one always-reported status, "PR Fast Checks",
+# which is the check to require in the main ruleset. Documentation-only PRs run
+# the tests that read docs/ and READMEs; code PRs run the complete Linux
+# regression (parallel, one isolated process per file), the shared Qt checks on
+# Windows and macOS, and the package smoke; persistence / recovery / migration /
+# locking / concurrency changes add the Windows risk regression. The full Python
+# matrix, the Windows full regression and the release builds run in Main Full
+# Regression and Release Validation.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to the same PR cancels that PR's older run. main, release branches,
+# tags and other PRs never share this group.
+concurrency:
+  group: pr-fast-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      risk: ${{ steps.classify.outputs.risk }}
+      risk_tests: ${{ steps.classify.outputs.risk_tests }}
+      docs_tests: ${{ steps.classify.outputs.docs_tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: classify
+        run: >-
+          python3 scripts/ci_changes.py
+          ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}
+      - name: Compile every Python file on the oldest supported Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: python -m compileall -q core.py qt_client.py folith scripts tests
+
+  docs:
+    name: documentation tests
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-test-env
+      - name: Tests that read docs/ and READMEs
+        run: python scripts/run_regression.py -j 4 -k "${{ needs.changes.outputs.docs_tests }}" --tsv docs-regression.tsv
+      - name: Upload regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-docs
+          path: |
+            .regression-logs/
+            docs-regression.tsv
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  linux:
+    name: pytest (Linux, Python 3.11, full)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-test-env
+      - name: Compile and import critical modules
+        run: |
+          python -m py_compile core.py folith/academic_writer.py \
+            folith/compliance.py folith/thesis_constraints.py
+          python -c "import folith.academic_writer, folith.compliance, folith.thesis_constraints"
+      - name: Check complete UI catalogs
+        run: python scripts/check_ui_locales.py
+      - name: Run the complete regression
+        run: python scripts/run_regression.py -j 4 --tsv pr-regression.tsv
+      - name: Upload regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-linux
+          path: |
+            .regression-logs/
+            pr-regression.tsv
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  shared-qt:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: ./.github/workflows/shared-qt.yml
+
+  windows-risk:
+    name: pytest (Windows, persistence/recovery/concurrency)
+    needs: changes
+    if: needs.changes.outputs.risk == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install ".[test]" PySide6==6.11.2
+      - name: Run the risk regression
+        run: python scripts/run_regression.py -k "${{ needs.changes.outputs.risk_tests }}" --tsv risk-regression-windows.tsv
+      - name: Upload regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-windows-risk
+          path: |
+            .regression-logs/
+            risk-regression-windows.tsv
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  package:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    uses: ./.github/workflows/package-smoke.yml
+
+  gate:
+    # The one status to require. It always runs and reports, so a docs-only PR is
+    # never left with a Skipped or Pending required check, and a cancelled or
+    # failed job anywhere above turns it red.
+    name: PR Fast Checks
+    needs: [changes, docs, linux, shared-qt, windows-risk, package]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["RESULTS"])
+          bad = {k: v["result"] for k, v in needs.items()
+                 if v["result"] not in ("success", "skipped")}
+          if needs["changes"]["result"] != "success":
+              bad["changes"] = needs["changes"]["result"]
+          for k, v in needs.items():
+              print(f"{k:14} {v['result']}")
+          if bad:
+              print(f"::error::not green: {bad}")
+              sys.exit(1)
+          PY
