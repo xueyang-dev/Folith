@@ -4356,7 +4356,7 @@ def test_large_grid_paints_in_batches_and_drops_old_work_on_switch(client):
     window, adapter, app = client['window'], client['adapter'], client['app']
     job_id = _seed_job_for_keyboard(adapter, client['core'], client['tmp'], 'batched.docx',
                                     [f'Paragraph {i}.' for i in range(600)])
-    window.open_job(job_id)
+    open_job_and_wait(window, job_id)
     view = window.workbench
     assert view.segment_list.rowCount() == len(view._rows)
     assert view.segment_list.item(0, 1).text() == view._rows[0].source
@@ -4379,7 +4379,7 @@ def test_large_grid_paints_in_batches_and_drops_old_work_on_switch(client):
     # document's cells or index beyond the new model's dimensions.
     view._queue_segment_paint()
     small = _seed_job_for_keyboard(adapter, client['core'], client['tmp'], 'switched.docx', ['New task.'])
-    window.open_job(small)
+    open_job_and_wait(window, small)
     app.processEvents()
     assert not view._paint_timer.isActive()
     assert view.segment_list.rowCount() == 1
