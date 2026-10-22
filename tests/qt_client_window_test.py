@@ -1194,9 +1194,17 @@ def test_selected_segments_can_be_reviewed(client):
         assert workbench.selected_indexes() == [0, 1]
 
         window.review_selected([0, 1])
-        assert _pump(app, 180, lambda: all(
-            item.get("reviewed") for item in
-            (adapter.load_state(job_id).get("pairs") or [])[:2]))
+
+        def _both_reviewed():
+            # ``all()`` over a missing or empty ``pairs`` list is True, so the
+            # old predicate declared the review finished before the state had
+            # even been written and the next line raised KeyError on slow
+            # runners.  Requiring the rows keeps the wait meaningful.
+            current = adapter.load_state(job_id).get("pairs") or []
+            return len(current) >= 2 and all(item.get("reviewed")
+                                            for item in current[:2])
+
+        assert _pump(app, 180, _both_reviewed)
         pairs = adapter.load_state(job_id)["pairs"]
         assert pairs[0]["reviewed"] is True and pairs[1]["reviewed"] is True
         assert pairs[2]["reviewed"] is False, \

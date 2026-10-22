@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Concurrency benchmark for the translation stage — evidence, not a policy change.
 
-The low-level fallback is 1; the shared task default is 4 and presets use 6/4/4.
-This script measures those settings without changing product policy:
+This script produces the measurements behind ``docs/translation-throughput.md``.
+It is *not* the place where a default is decided: the core's own fallback is 1,
+the shared contract sends 4, and the three workflow presets send 6 / 4 / 4.  What
+this script can settle is which of those levels were actually measured, and
+whether raising the level changes what a batch sees.  It reports:
 
-* wall-clock throughput at concurrency 1 / 2 / 3 / 4 / 6 with a deterministic fake LLM
-  and a fixed per-request latency (no API spend);
+* wall-clock throughput at the requested concurrency levels with a deterministic
+  fake LLM and a fixed per-request latency (no API spend);
 * whether the **continuity context** a batch sees (``previous_target``) is
   identical across concurrency levels — the real risk of naive parallelism;
 * whether the produced translations stay identical (segment count, order,
@@ -16,11 +19,28 @@ This script measures those settings without changing product policy:
 * the section-aware wave plan for the same fixture, so the alternative
   scheduling design can be compared on paper.
 
+Two measurement notes that matter when reading the numbers:
+
+* **Span is not cost.**  ``translate_stage`` opens a stage handle once and closes
+  it at the end, so a stage's ``wall_time_s`` is the *span* of the whole run and
+  every stage reports roughly the same value.  The occupied time is
+  ``interval_union_s`` (union of item intervals) — that is what the overlap
+  projection uses.  Reporting the span as "stage cost" is what previously made
+  every stage look identical.
+* **The fake LLM caps the apparent speedup.**  With a fixed per-request latency
+  and a fake provider, everything the pipeline does besides waiting (prompt
+  assembly, journal/state writes, TM commits) is serialised on the calling
+  thread, so throughput plateaus well below the concurrency level.  The plateau
+  bounds the *harness*, not a real provider.  Use this script to prove semantic
+  equivalence and to detect regressions between revisions, not to promise a
+  real-world speedup factor.
+
 Run:
 
     python3 scripts/translation_concurrency_benchmark.py \
         --out tmp/translation-concurrency-benchmark \
-        --segments 120 --sections 6 --latency 0.05 --review
+        --segments 120 --sections 6 --latency 0.05 --review \
+        --concurrency 1,2,3,4,6,8 --repeat 3
 """
 from __future__ import annotations
 
@@ -133,7 +153,15 @@ def _timing_summary(events):
 
 
 def _stage_split(snapshot: dict) -> dict:
-    """Per-stage wall time plus the max single-batch cost of the review stage.
+    """Per-stage cost, using occupied time rather than the stage's span.
+
+    ``wall_time_s`` on a stage record is the span from the first ``start_stage``
+    to ``finish``; because ``translate_stage`` keeps every stage open for the
+    whole run, that value is the run length for every stage and tells us nothing
+    about where the time went.  ``interval_union_s`` is the union of the stage's
+    item intervals — the time the stage actually occupied — and
+    ``active_wall_time_s`` is the plain sum of item durations (which exceeds the
+    union when items overlap, i.e. under concurrency).
 
     ``review_last_batch_s`` is the number that matters for overlap: in a
     pipelined design the reviewer of the final batch cannot be hidden behind any
@@ -144,8 +172,12 @@ def _stage_split(snapshot: dict) -> dict:
     for name in TRANSLATION_STAGES:
         record = stages.get(name) or {}
         per_item = (record.get("per_item") or {}).get("wall_time_s") or {}
+        union = record.get("interval_union_s")
+        active = record.get("active_wall_time_s")
         split[name] = {
-            "wall_time_s": round(float(record.get("wall_time_s") or 0.0), 4),
+            "span_s": round(float(record.get("wall_time_s") or 0.0), 4),
+            "occupied_s": round(float(union if union is not None else 0.0), 4),
+            "item_sum_s": round(float(active if active is not None else 0.0), 4),
             "batch_count": int(record.get("completed_batch_count") or 0),
             "max_batch_s": round(float(per_item.get("max") or 0.0), 6),
         }
@@ -247,9 +279,13 @@ def _overlap_projection(split: dict) -> dict:
     Serial model: generation then review, per batch, so the review cost is fully
     exposed.  Pipelined model: review of batch *i* runs while batch *i+1* is
     being generated, so only the last batch's review is irreducible.
+
+    Both sides are occupied time (``interval_union_s``), never the stage span —
+    with the span, ``generation`` and ``review`` are both the run length and the
+    projection degenerates to an arbitrary constant.
     """
-    generation = float((split.get("translation_generation") or {}).get("wall_time_s") or 0.0)
-    review = float((split.get("translation_semantic_review") or {}).get("wall_time_s") or 0.0)
+    generation = float((split.get("translation_generation") or {}).get("occupied_s") or 0.0)
+    review = float((split.get("translation_semantic_review") or {}).get("occupied_s") or 0.0)
     review_tail = float((split.get("translation_semantic_review") or {}).get("max_batch_s") or 0.0)
     projected = generation + review_tail
     serial = generation + review
@@ -281,6 +317,41 @@ def _context_divergence(baseline: list, other: list) -> dict:
             "total_batches": len(baseline)}
 
 
+def _conclusion(runs: dict, comparison: dict) -> dict:
+    """What this run established, stated as measurements — never as policy.
+
+    The previous version returned a fixed sentence about the default staying at
+    1, which read as a decision the script had reached.  It had not: the levels
+    it was asked to run are an input, and the plateau it observes is a property
+    of the fake provider plus serialised bookkeeping.
+    """
+    levels = sorted(runs)
+    fastest = min(levels, key=lambda level: runs[level]["wall_time_s"])
+    fastest_wall = float(runs[fastest]["wall_time_s"])
+    total_batches = (next(iter(comparison.values()))["continuity"]["total_batches"]
+                     if comparison else 0)
+    return {
+        "fastest_level": fastest,
+        "fastest_wall_time_s": round(fastest_wall, 4),
+        "speedup_vs_baseline": {level: item["speedup_vs_baseline"]
+                                for level, item in comparison.items()},
+        "saturation_level_within_10_percent": next(
+            level for level in levels
+            if float(runs[level]["wall_time_s"]) <= fastest_wall * 1.10),
+        "target_digest_identical_across_levels": all(
+            item["target_digest_matches"] for item in comparison.values()),
+        "continuity_diverged_batches": {
+            level: item["continuity"]["diverged_batches"]
+            for level, item in comparison.items()},
+        "continuity_total_batches": total_batches,
+        "scope": (
+            "Digest equality only shows this fixture's fake provider ignores the "
+            "continuity context; it does not show a real provider's wording is "
+            "unaffected. The wall-clock plateau is a harness bound (fake latency "
+            "plus serialised bookkeeping), not a provider-latency bound."),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="tmp/translation-concurrency-benchmark")
@@ -288,6 +359,10 @@ def main() -> int:
     parser.add_argument("--sections", type=int, default=6)
     parser.add_argument("--latency", type=float, default=0.05)
     parser.add_argument("--concurrency", default="1,2,3,4,6")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="run every level N times and report the median "
+                             "sample, so one slow filesystem burst cannot be "
+                             "mistaken for a concurrency effect")
     parser.add_argument("--review", action="store_true",
                         help="also run the independent review stage (enables TM "
                              "promotion) so the review/overlap projection is real")
@@ -302,6 +377,7 @@ def main() -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     levels = [int(value) for value in str(args.concurrency).split(",") if value.strip()]
+    repeats = max(1, int(args.repeat or 1))
     segments = _build_segments(args.segments, args.sections)
     section_ids = [f"section-{index}" for index in range(args.sections)]
 
@@ -313,9 +389,22 @@ def main() -> int:
         _run_once(tmp_dir, "warmup", warmup_segments, 1, 0.0, section_ids,
                   enable_review=args.review)
         for concurrency in levels:
-            runs[concurrency] = _run_once(
-                tmp_dir, f"concurrency-{concurrency}", segments, concurrency,
-                args.latency, section_ids, enable_review=args.review)
+            samples = [
+                _run_once(tmp_dir, f"concurrency-{concurrency}-r{attempt}",
+                          segments, concurrency, args.latency, section_ids,
+                          enable_review=args.review)
+                for attempt in range(repeats)
+            ]
+            walls = [float(sample["wall_time_s"]) for sample in samples]
+            median = statistics.median(walls)
+            # Report one real sample rather than a stitched-together average, so
+            # the stage split always belongs to the wall time next to it.
+            chosen = dict(min(samples, key=lambda item: abs(item["wall_time_s"] - median)))
+            chosen["wall_time_samples_s"] = [round(value, 4) for value in walls]
+            chosen["wall_time_spread_s"] = round(max(walls) - min(walls), 4)
+            chosen["target_digest_stable_across_repeats"] = (
+                len({sample["target_digest"] for sample in samples}) == 1)
+            runs[concurrency] = chosen
             raw = runs[concurrency].pop("batch_timing")
             with (out_dir / f"concurrency-{concurrency}-batch-timing.jsonl").open("w", encoding="utf-8") as stream:
                 for event in raw:
@@ -372,6 +461,7 @@ def main() -> int:
             "translation_cache_enabled": False,
             "knowledge_cache_enabled": False,
             "warmup_segments": len(warmup_segments),
+            "repeats": repeats,
         },
         "runs": {
             str(concurrency): {
@@ -384,10 +474,7 @@ def main() -> int:
         "section_aware_plan": schedule.to_dict(),
         "wall_time_spread_s": round(
             statistics.pstdev([run["wall_time_s"] for run in runs.values()]), 6),
-        "conclusion": (
-            "Core fallback is 1, shared task default is 4, and presets use 6/4/4. "
-            "Controlled translations are compared at each level; continuity "
-            "divergence is reported and does not prove quality equivalence."),
+        "conclusion": _conclusion(runs, comparison),
     }
     (out_dir / "benchmark.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

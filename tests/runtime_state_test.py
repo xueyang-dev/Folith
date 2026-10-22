@@ -184,9 +184,14 @@ def test_worker_heartbeat_renews_lease_while_pipeline_waits(tmp_path, monkeypatc
         assert _wait_for(entered.is_set)
         runtime = core.load_runtime_state(job_id)
         initial_lease = runtime["worker"]["lease_expires_at"]
-        time.sleep(1.1)
+        # Sleeping for a fixed 1.1 s assumes the heartbeat thread ran inside
+        # that window.  On a loaded runner it does not, and both formatted
+        # timestamps land in the same second.  Wait for the renewal instead;
+        # the assertions below are unchanged.
+        assert _wait_for(
+            lambda: core.load_runtime_state(job_id)["last_heartbeat_at"]
+            != runtime["last_heartbeat_at"], timeout=5.0)
         renewed = core.load_runtime_state(job_id)
-        assert renewed["last_heartbeat_at"] != runtime["last_heartbeat_at"]
         assert renewed["worker"]["lease_expires_at"] != initial_lease
     finally:
         release.set()
