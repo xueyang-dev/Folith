@@ -2509,6 +2509,11 @@ def check_translation_batch(sources, targets, glossary, target_lang,
 BATCH_SIZE = 4
 MAX_BATCH_CHARS = 1600
 TRANSLATION_MAX_BATCH_CHARS = 2400
+
+#: 调用方**未提供**并发值时的回退：串行，跨批连续性上下文精确。
+#: 这不是产品默认值——共享契约总是显式下发 ``job_config`` 的 4，三个预设下发
+#: 快速 6 / 标准 4 / 精细 4。不要把本值当成"系统并发"改小或改大：改它会改变
+#: 未声明并发的调用方的连续性语义，属于行为改动（#23）。
 DEFAULT_TRANSLATION_CONCURRENCY = 1
 
 # ================= 权威快照节奏（translation hot path）=================
