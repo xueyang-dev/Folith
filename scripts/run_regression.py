@@ -73,6 +73,7 @@ EXCLUSIVE = frozenset({
     "pdf_pipeline_performance_test.py",
     "performance_boundaries_test.py",
     "performance_trace_test.py",
+    "red_team_acceptance_test.py",
     "web_ui_hotpath_test.py",
 })
 
@@ -220,7 +221,8 @@ def main() -> int:
             pooled = [f for f in files if f.name not in EXCLUSIVE]
             exclusive = [f for f in files if f.name in EXCLUSIVE]
             # 大文件先跑（近似"最长任务优先"），避免慢文件最后才开始拖长总时间。
-            pooled.sort(key=lambda f: f.stat().st_size, reverse=True)
+            # 显式切分的文件是已知最慢的，排最前；其余大文件先跑（近似"最长任务优先"）。
+            pooled.sort(key=lambda f: (f.name not in splits, -f.stat().st_size))
             units: list[tuple[Path, list[str] | None, str]] = []
             for f in pooled:
                 chunks = _split_nodes(f, splits[f.name]) if splits.get(f.name, 1) > 1 else []
