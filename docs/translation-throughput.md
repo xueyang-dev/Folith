@@ -20,7 +20,7 @@
 >   **本轮未改动 `state.json` 的单一权威真值契约，只量化**（见报告「Persistence」）。
 >
 > **2026-10-19 口径订正**：本文件所说的"默认并发仍是 1"指
-> `core.DEFAULT_TRANSLATION_CONCURRENCY`（`core.py:2563`）——调用方**未提供**并发时的
+> `core.DEFAULT_TRANSLATION_CONCURRENCY`（`core.py:2503`）——调用方**未提供**并发时的
 > 串行、连续性精确回退值。它**不等于**产品默认：两个前端共用的契约默认是
 > `folith/application/job_config.py:80-83` 的 `DEFAULT_TRANSLATION_CONCURRENCY = 4`，
 > 新建任务策略预设则分别使用 快速 6 / 标准 4 / 学术增强 4
