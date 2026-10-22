@@ -59,3 +59,4 @@ Those require native acceptance on each operating system.
 
 The live-worker/stalled-state defect in GitHub issue #13 is addressed by the
 follow-up documented in [Heartbeat recovery](issue-13-heartbeat-recovery.md).
+
