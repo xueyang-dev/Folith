@@ -1,0 +1,10 @@
+{
+  "segments": 4823,
+  "ir_blocks": 5652,
+  "flags": 336,
+  "previous_s": 4.339839500025846,
+  "updated_s": 0.01861112506594509,
+  "all_dispositions_equal": true,
+  "reference_commit": "c8f95ac",
+  "updated_worktree_dirty": true
+}

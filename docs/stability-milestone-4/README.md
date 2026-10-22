@@ -227,3 +227,46 @@ The preceding integrated window/core run passed 134 cases, including all 99
 window cases, with four optional OCR cases skipped. See
 `windows-report-integration.tsv`. Its 542-second window-test duration is recorded
 as observed; this is correctness evidence, not a responsiveness benchmark.
+
+## Native PDF workload and a measured source-audit hotspot (#44/#54)
+
+The current milestone also includes performance, import/open feedback and the
+1/2/3/4/6 concurrency audit (#23). Those gates remain part of completion.
+
+An isolated copy of the original 207-page PDF produced 4,823 source segments and
+1,206 four-segment batches in the actual Cocoa source client. Pause, minimized
+continuation and force-kill/reopen preserved 40 committed pairs (10 records,
+complete replay). Resume finished 4,823 pairs without changing committed fields
+or regenerating committed batches. Working export failed the existing target
+invariant on missing/quarantined targets; the gate was not disabled. During
+profiling, a diagnostic SIGINT was caught by a Qt callback and did not stop the
+process. The attempt is therefore not counted as clean lifecycle acceptance.
+Only sanitized aggregate evidence is tracked in `native-long-first-attempt.json`;
+original document text, logs and tasks remain local.
+
+While it ran, resource samples were near one full core and ordinary workbench
+apply calls took 9–11 seconds. A separate native profile of its untouched
+post-kill copy identified repeated source-quality geometry work: every flagged
+segment rebuilt the IR block index and sorted the entire document's paragraph
+boxes to determine the same body bounds. That cost reached review/delivery
+projections on each changed-state refresh; the idle same-state poll was already
+cheap. This is a measured additional hotspot, not a claim that the upstream
+unchanged-grid fix was incorrect.
+
+Source dispositions now build the index/body bounds once per audit and pass
+that read-only geometry to each segment. No source text, target, gate rule,
+confirmation or disposition is changed and there is no persistent geometry
+cache. Against all 336 flags in the actual 4,823-segment / 5,652-block task, the
+previous and updated disposition dictionaries compare equal. An unprofiled
+comparison took 4.340 seconds before and 0.0186 seconds after on this machine.
+See `source-geometry-real-comparison.json`.
+
+The same native cProfile experiment went from 40.46 seconds to 1.93 seconds for
+opening that partial task. Its 30-second steady idle phase used 2.42% and 2.64%
+of one core respectively; maximum 20-ms heartbeat gaps were 109 and 121 ms.
+Profiling overhead affects opening timings, and only 40 committed rows were
+visible, so these numbers do not prove 4,000-row rendering or live-refresh
+responsiveness. See `native-idle-profile-1.json` and `native-idle-profile-2.json`.
+The source-quality and actual non-translatable-review regressions passed 24
+cases, including a geometry-operation bound and comparison with individual
+per-segment evidence. A fresh running native workload remains required.

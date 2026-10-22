@@ -1,0 +1,4 @@
+exit_code	kind	file	seconds	result
+0	pytest	non_translatable_review_contract_test.py	3	7 passed
+0	pytest	source_quality_geometry_cost_test.py	0	2 passed
+0	pytest	source_quality_test.py	2	15 passed

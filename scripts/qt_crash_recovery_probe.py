@@ -42,6 +42,30 @@ ACTIVE = {"resume_requested", "queued", "starting", "running",
           "waiting_external", "cancelling", "pausing", "paused"}
 
 
+class UiHeartbeat:
+    """Measure event-loop gaps; this is evidence, not an input-latency claim."""
+
+    def __init__(self, app):
+        from PySide6.QtCore import QTimer
+        self.gaps = []
+        self.last = time.monotonic()
+        self.timer = QTimer(app)
+        self.timer.setInterval(50)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start()
+
+    def _tick(self):
+        now = time.monotonic()
+        self.gaps.append(now - self.last)
+        self.last = now
+
+    def snapshot(self):
+        gaps = sorted(self.gaps + [time.monotonic() - self.last])
+        return {"timer_interval_ms": 50, "ticks": len(self.gaps),
+                "max_gap_ms": round(1000 * gaps[-1], 2),
+                "p95_gap_ms": round(1000 * gaps[int(.95 * (len(gaps) - 1))], 2)}
+
+
 class Stub:
     def __init__(self, out_dir: Path, delay: float = 0.6) -> None:
         self.out_dir = out_dir
@@ -162,6 +186,7 @@ def run_child(args) -> int:
     from folith.qt import adapter, selftest, window as w
 
     app = w.build_application([])
+    heartbeat = UiHeartbeat(app)
     config = adapter.EngineConfig(
         provider="自定义中转站", model="stub-model", api_key="stub-key",
         base_url=os.environ["FOLITH_QT_CRASH_STUB_URL"], target_lang="简体中文",
@@ -193,6 +218,8 @@ def run_child(args) -> int:
             next_check = time.monotonic() + 0.2
             current = adapter.load_state(job_id)
             if len(current.get("pairs") or []) >= args.min_committed_pairs:
+                worker = adapter.core._RUNTIME_WORKERS.get(job_id)
+                assert worker is not None and worker.is_alive()
                 window.pause_job()
                 assert _pump(app, 60, lambda: (
                     adapter.core.load_runtime_state(job_id) or {}).get("status") == "paused")
@@ -212,12 +239,15 @@ def run_child(args) -> int:
                 window.showMinimized()
                 assert _pump(app, 5, window.isMinimized)
                 window.continue_job()
+                assert adapter.core._RUNTIME_WORKERS.get(job_id) is worker
                 assert _pump(app, 60, lambda: len(
                     adapter.load_state(job_id).get("pairs") or []) > len(pairs))
                 lifecycle = {"paused_pairs": len(pairs), "stable_while_paused": True,
                              "workbench_caught_up": True, "card_percent": card.progress_percent,
                              "minimized": window.isMinimized(),
                              "progressed_while_minimized": True,
+                             "same_worker_after_continue": True,
+                             "ui_heartbeat": heartbeat.snapshot(),
                              "qt_platform": app.platformName()}
                 assert lifecycle["minimized"]
                 (log_dir / "lifecycle.json").write_text(json.dumps(lifecycle), encoding="utf-8")
@@ -259,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             (log_dir / name).exists() for name in ("child-job.txt", "lifecycle.json")):
         parser.error("use a fresh evidence directory; previous results will not be overwritten")
     report: dict = {"started_at": time.time(), "steps": []}
+    heartbeat = None
 
     def step(name: str, **extra) -> None:
         report["steps"].append(
@@ -380,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         from folith.qt import adapter, window as w
 
         app = w.build_application([])
+        heartbeat = UiHeartbeat(app)
         config = adapter.EngineConfig(
             provider="自定义中转站", model="stub-model", api_key="stub-key",
             base_url=url, target_lang="简体中文", enable_review=True,
@@ -420,7 +452,9 @@ def main(argv: list[str] | None = None) -> int:
                                          "idle_incomplete", "failed"), \
             f"unexpected status after a crash: {runtime.get('status')}"
 
+        opened_at = time.monotonic()
         window.open_job(job_id)
+        report["open_job_call_s"] = round(time.monotonic() - opened_at, 4)
         app.processEvents()
         report["recovery_entry"] = {
             "retry_visible": window.workbench.retry_button.isVisible(),
@@ -500,6 +534,9 @@ def main(argv: list[str] | None = None) -> int:
         report["error"] = f"{type(exc).__name__}: {exc}"
         report["traceback"] = traceback.format_exc()
     finally:
+        if heartbeat is not None:
+            report["ui_heartbeat"] = heartbeat.snapshot()
+            heartbeat.timer.stop()
         stub.stop()
         if child.poll() is None:
             child.kill()
