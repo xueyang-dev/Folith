@@ -618,7 +618,7 @@ def test_save_waits_out_a_finishing_worker_instead_of_refusing():
         timer = _hold_worker_lock(job_id, 0.4)
         started = time.monotonic()
         try:
-            core.save_job_state(job_id, core.new_job_state("fixture.docx"))
+            core.save_job_state(job_id, core.load_job_state(job_id))
         finally:
             timer.join(5)
         elapsed = time.monotonic() - started

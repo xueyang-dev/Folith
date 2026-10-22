@@ -153,3 +153,34 @@ def test_directory_loss_recovery_keeps_the_snapshot_generation():
     restored = core.load_job_state("revision")
     assert restored["snapshot_revision"] == previous + 1
     assert restored["pairs"] == state["pairs"]
+
+
+def test_repeated_local_saves_do_not_reparse_the_snapshot(monkeypatch):
+    state = _seed()
+    original = repo.read_shared_text
+    reads = []
+
+    def read(path):
+        if path.name == "state.json":
+            reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(repo, "read_shared_text", read)
+    for value in ("A", "B", "C"):
+        state["theory"] = value
+        core.save_job_state("revision", state)
+    assert not reads
+    assert json.loads(core.job_state_path("revision").read_text())["theory"] == "C"
+
+
+def test_external_atomic_replace_invalidates_the_written_revision():
+    state = _seed()
+    path = core.job_state_path("revision")
+    replacement = path.with_suffix(".replacement")
+    newer = dict(state, snapshot_revision=state["snapshot_revision"] + 1,
+                 theory="external writer")
+    replacement.write_text(json.dumps(newer), encoding="utf-8")
+    replacement.replace(path)
+    with pytest.raises(RuntimeError, match="任务状态已更新"):
+        core.save_job_state("revision", state)
+    assert json.loads(path.read_text())["theory"] == "external writer"

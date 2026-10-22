@@ -36,6 +36,10 @@ _STATE_CACHE_MAX_ENTRIES = 256
 # identity change or a new snapshot requires a cold load, never a suffix read.
 _STATE_REPLAY = {}
 _STATE_CACHE_LOCK = threading.RLock()
+# Last locally written revision, tied to the actual file that was replaced.
+# Repeated pipeline saves need no full JSON parse; another writer's atomic
+# replacement changes the signature and forces the authoritative read.
+_SNAPSHOT_REVISIONS = collections.OrderedDict()
 
 # Directories already created in this process, keyed by (output_dir, job_id).
 # `mkdir(parents=True, exist_ok=True)` is still a syscall on every save; on a
@@ -83,10 +87,14 @@ def _invalidate_cache(job_id: Optional[str] = None) -> None:
     if job_id is None:
         _STATE_CACHE.clear()
         _STATE_REPLAY.clear()
+        _SNAPSHOT_REVISIONS.clear()
         with _DIR_READY_LOCK:
             _DIR_READY.clear()
         return
     job_str = str(job_id)
+    for path in list(_SNAPSHOT_REVISIONS):
+        if Path(path).parent.name == job_str:
+            del _SNAPSHOT_REVISIONS[path]
     keys_to_remove = [k for k in _STATE_CACHE if k[0] == job_str]
     for k in keys_to_remove:
         _STATE_CACHE.pop(k, None)
@@ -220,6 +228,10 @@ def state_signature(
             journal_signature[0], journal_signature[1])
 
 
+def _snapshot_file_signature(stat):
+    return (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+
+
 def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optional[int]:
     """Return the persisted snapshot generation; legacy snapshots are generation 0.
 
@@ -234,6 +246,9 @@ def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optiona
         return None
     signature = (str(job_id), stat.st_mtime_ns, stat.st_size)
     with _STATE_CACHE_LOCK:
+        written = _SNAPSHOT_REVISIONS.get(str(path.absolute()))
+        if written is not None and written[0] == _snapshot_file_signature(stat):
+            return written[1]
         for key, state in _STATE_CACHE.items():
             metadata = _STATE_REPLAY.get(key)
             if key[:3] == signature and metadata and metadata[0] == str(path.absolute()):
@@ -383,13 +398,22 @@ def save_job_state_atomic(
             _write_bytes(tmp, encoded)
             sink.written(len(encoded))
         with _pprof.phase("atomic_replace"):
+            # Capture the temporary file's identity before replacement. A
+            # post-replace stat could accidentally identify a newer writer's
+            # file as ours when this low-level API is called without a lock.
+            written_signature = _snapshot_file_signature(tmp.stat())
             replace_file(tmp, dest)
     finally:
         tmp.unlink(missing_ok=True)
 
     # Invalidate cache for this job_id so next read picks up the new file stat
     with _pprof.phase("cache_invalidation"):
-        invalidate_cache(job_id)
+        with _STATE_CACHE_LOCK:
+            invalidate_cache(job_id)
+            _SNAPSHOT_REVISIONS[str(dest.absolute())] = (
+                written_signature, int(state.get("snapshot_revision") or 0))
+            if len(_SNAPSHOT_REVISIONS) > _STATE_CACHE_MAX_ENTRIES:
+                _SNAPSHOT_REVISIONS.popitem(last=False)
 
     # Derived read-model: save summary.json during this write path
     try:
