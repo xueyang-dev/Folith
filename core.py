@@ -12,6 +12,7 @@ import inspect
 from functools import wraps
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import os
 import queue
 import re
@@ -2676,14 +2677,17 @@ def state_snapshot_crash_window(batch_size=None, total_batches=None):
 #              batch).  Compared against a pre-batch snapshot of just these keys.
 #   extend  -- append-only lists.  The pre-append length travels with the items
 #              so a double application is detected instead of duplicating.
+#   candidates -- the knowledge-candidate queue, as ``{base, update, append}``.
+#              It only grows or has fields refined in place, and it is large, so
+#              it is journaled as a delta.  ``translation_continuity`` is a copy
+#              of it and is derived on replay, never written.
 #   patch   -- in-place updates to items earlier records already carried, keyed
 #              by the item's own identity.  Produced by the mutator itself.
 _JOURNAL_SET_KEYS = (
     "translation_truth", "dependency_impact", "academic_state", "final_qa",
     "p3_done", "p3_md", "p3_sections", "delivery_status",
     "delivery_approved_by_human", "delivery_approval", "stage",
-    "review_stats", "knowledge_candidates", "translation_continuity",
-    "entity_registry", "knowledge_feedback_policy",
+    "review_stats", "entity_registry", "knowledge_feedback_policy",
     "knowledge_feedback_failures", "has_blocking",
 )
 _JOURNAL_EXTEND_KEYS = (
@@ -2708,6 +2712,7 @@ def journal_baseline(state):
         "set": {key: copy.deepcopy(state[key])
                 for key in _JOURNAL_SET_KEYS if key in state},
         "len": {key: len(state.get(key) or []) for key in _JOURNAL_EXTEND_KEYS},
+        "candidates": copy.deepcopy(state.get("knowledge_candidates")),
     }
 
 
@@ -2755,6 +2760,12 @@ def build_batch_journal_record(state, baseline, patches, *, batch, offset,
             extend_values[key] = {"base": start, "items": items[start:]}
     if extend_values:
         record["extend"] = extend_values
+    candidates = _state_journal.candidate_delta(
+        baseline.get("candidates"), state.get("knowledge_candidates"))
+    if candidates is False:
+        return None
+    if candidates:
+        record["candidates"] = candidates
     patch_values = {key: value for key, value in patches.items()
                     if value and key != "incomplete"}
     if patch_values:
@@ -5131,6 +5142,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     # 快速 switches per-batch feedback off (``knowledge_feedback=False``).  Strict
     # terminology governance still requires it, so it wins over the switch.
     knowledge_feedback_off = not knowledge_feedback and not force_knowledge_feedback
+    # Extractions that were submitted but not merged when a previous run was
+    # interrupted; they are re-derived from the committed pairs below.
+    _resumed_knowledge_pending = [
+        dict(item) for item in
+        ((state.get("knowledge_feedback_policy") or {}).get("pending") or [])
+        if isinstance(item, dict)
+    ]
     state["knowledge_feedback_policy"] = {
         "interval": feedback_interval,
         "force_every_batch": force_knowledge_feedback,
@@ -5142,6 +5160,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         "signal_batches": [],
         "cache_hits": 0,
         "cache_misses": 0,
+        "pending": [],
     }
     registry = _entity_registry.EntityRegistry(state.get("entity_registry") or [])
 
@@ -5991,6 +6010,173 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             with commit_lock:
                 active_batches.discard(bi)
 
+    # Knowledge extraction only feeds hints to *later* batches, so its provider
+    # round trip runs on a small pool and is folded in, in batch order, at a
+    # later commit (or at the end of the stage).  Only the deterministic merge
+    # runs on the serial commit path.  ``policy["pending"]`` records what has
+    # been submitted but not merged, in the same state mutation that applies the
+    # merge, so an interrupted run re-derives exactly those extractions.
+    _knowledge_pool = ThreadPoolExecutor(
+        max_workers=max(1, min(effective_concurrency, 4)),
+        thread_name_prefix="ft-know")
+    _knowledge_max_pending = max(2, _knowledge_pool._max_workers * 2)
+    _knowledge_pending = []
+    _knowledge_dirty = [False]
+    # With one translation lane the next batch is translated only after this
+    # commit, so merging here keeps its hints fresh (the sequential contract the
+    # overlap strategies are measured against).  With several lanes the next
+    # batches are already in flight, so nothing is lost by merging later.
+    _knowledge_async = effective_concurrency > 1
+
+    def _knowledge_extract_job(bi, sources, targets, segment_ids):
+        _LLM_CTX.batch_id = bi + 1
+        if inherited_base_url is not None:
+            _LLM_CTX.base_url = inherited_base_url
+        if inherited_reasoning is not None:
+            _LLM_CTX.reasoning_effort = inherited_reasoning
+        if inherited_modes is not None:
+            _LLM_CTX.reasoning_modes = inherited_modes
+        if inherited_job_id is not None:
+            _RUNTIME_CTX.job_id = inherited_job_id
+        return _knowledge.extract_batch(
+            sources, targets, auxiliary_config["provider"],
+            auxiliary_config["api_key"], auxiliary_config["model"],
+            call_llm=auxiliary_call, segment_ids=segment_ids,
+            cache=_knowledge_cache)
+
+    def _submit_knowledge(bi, offset, segment_ids, provenance, sources, targets,
+                          paragraphs, pair_context, reason="resumed"):
+        _knowledge_pending.append({
+            "batch": bi, "offset": offset, "reason": reason, "segment_ids": list(segment_ids),
+            "provenance": provenance, "sources": list(sources),
+            "paragraphs": paragraphs, "pairs": pair_context,
+            "future": _knowledge_pool.submit(
+                _knowledge_extract_job, bi, list(sources), list(targets),
+                list(segment_ids)),
+        })
+        state["knowledge_feedback_policy"].setdefault("pending", []).append({
+            "batch": bi, "offset": offset, "segment_ids": list(segment_ids),
+            "provenance": provenance,
+        })
+
+    def _await_knowledge(entry):
+        future = entry["future"]
+        while True:
+            try:
+                return future.result(timeout=0.5)
+            except FutureTimeoutError:
+                if _runtime_cancel_requested(job_id):
+                    raise RuntimeError("任务已请求取消")
+
+    def _drain_knowledge(final=False):
+        """Merge finished extractions in batch order; wait only under back-pressure."""
+        candidates = state.get("knowledge_candidates") or []
+        events, warnings = [], []
+        policy = state["knowledge_feedback_policy"]
+        while _knowledge_pending:
+            head = _knowledge_pending[0]
+            if not (final or head["future"].done()
+                    or len(_knowledge_pending) > _knowledge_max_pending):
+                break
+            extraction = _await_knowledge(head)
+            _knowledge_pending.pop(0)
+            candidates, batch_events, warning = _knowledge.merge_extraction(
+                extraction, head["paragraphs"], head["pairs"], glossary,
+                existing_candidates=candidates,
+                observation_provenance=head["provenance"])
+            for event in batch_events:
+                event["batch"] = head["batch"]
+            events.extend(batch_events)
+            if warning:
+                warnings.append((head["batch"], head["offset"], warning))
+            policy["pending"] = [
+                item for item in policy.get("pending") or []
+                if item.get("batch") != head["batch"]]
+            if not extraction.aborted:
+                _critical_path.count("knowledge_observe_batch_calls")
+            if extraction.cache_hit:
+                _critical_path.count("knowledge_feedback_cache_hit")
+                policy["cache_hits"] = policy.get("cache_hits", 0) + 1
+                phase_name = "knowledge_feedback_cache_hit"
+            else:
+                policy["cache_misses"] = policy.get("cache_misses", 0) + 1
+                phase_name = "knowledge_feedback_done"
+            safe_append_event({
+                "batch": head["batch"], "offset": head["offset"],
+                "phase": phase_name, "candidate_count": len(candidates),
+                "reason": head.get("reason"),
+            })
+        return candidates, events, warnings
+
+    def _apply_knowledge_results(knowledge_candidates, knowledge_events,
+                                 knowledge_warnings):
+        for event in knowledge_events:
+            offset = offsets[event.get("batch", 0)]
+            state.setdefault("knowledge_events", []).append(event)
+            if event.get("type") == "entity_observation":
+                registry.observe(
+                    event.get("source"), event.get("observed_target"),
+                    entity_type=_entity_registry.entity_type_from_kind(
+                        event.get("kind")),
+                    segment_id=event.get("segment_id"),
+                    provenance=event.get("provenance") or "generated_observation",
+                    confidence=0.7 if event.get("provenance") == "reviewed" else 0.35,
+                )
+            if event.get("type") == "target_conflict":
+                segment_id = event.get("segment_id", offset)
+                findings_all.append({
+                    "segment_id": segment_id, "segment_index": segment_id,
+                    "severity": "actionable",
+                    "type": "knowledge_conflict",
+                    "category": "terminology_consistency",
+                    "summary": "观察到的译法与锁定术语不一致",
+                    "source_span": event.get("source"),
+                    "target_span": event.get("observed_target"),
+                    "explanation": "翻译流中观察到的译法与项目锁定术语的首选译名不同，可能造成术语漂移。",
+                    "recommendation": "核对当前语境是否构成合理例外；若不是，请统一为锁定术语的首选译名。",
+                    "confidence": None, "detector": "Knowledge QA",
+                    "diagnostic_version": 1,
+                    "reason": event.get("reason") or "翻译流观察译法与锁定术语不一致",
+                    "source": event.get("source"),
+                    "observed_target": event.get("observed_target"),
+                    "preferred_target": event.get("preferred_target"),
+                })
+        state["knowledge_candidates"] = knowledge_candidates
+        state["translation_continuity"] = list(knowledge_candidates)
+        state["entity_registry"] = registry.to_list()
+        for warn_bi, warn_offset, knowledge_warning in knowledge_warnings:
+            state["knowledge_feedback_failures"] = \
+                state.get("knowledge_feedback_failures", 0) + 1
+            state.setdefault("knowledge_events", []).append({
+                "type": "extract_failed", "batch": warn_bi, "offset": warn_offset,
+                "reason": knowledge_warning,
+            })
+
+    def _resume_knowledge_pending():
+        for item in _resumed_knowledge_pending:
+            ids = [i for i in item.get("segment_ids") or [] if isinstance(i, int)]
+            if not ids or max(ids) >= len(pairs):
+                continue  # the batch was truncated for re-translation
+            _submit_knowledge(
+                int(item.get("batch", 0)), int(item.get("offset", 0)), ids,
+                item.get("provenance") or "generated_continuity",
+                [pairs[i]["source"] for i in ids],
+                [pairs[i]["target"] for i in ids],
+                _knowledge_source_context(), _knowledge_pair_context())
+
+    def _knowledge_source_context():
+        return ["" if index in blocked_source_indexes else source
+                for index, source in enumerate(paras)]
+
+    def _knowledge_pair_context():
+        return [
+            {**pair, "source": "", "target": "", "initial_target": "",
+             "accepted_target": ""}
+            if index in blocked_source_indexes and isinstance(pair, dict)
+            else pair
+            for index, pair in enumerate(pairs)
+        ]
+
     def _commit_batch(bundle):
         bi = bundle["bi"]
         _LLM_CTX.batch_id = bi + 1
@@ -6195,6 +6381,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _knowledge_known_forms.update(
                 str(alias or "").casefold()
                 for alias in _record.get("aliases") or [])
+        # A name queued in a still-unmerged extraction is already being
+        # observed; do not pay for it again while that call is in flight.
+        for _pending in _knowledge_pending:
+            for _source in _pending["sources"]:
+                _knowledge_known_forms.update(
+                    form.casefold()
+                    for form in _knowledge.named_source_forms(_source))
         _knowledge_known_forms.discard("")
         if knowledge_feedback_off:
             knowledge_due, knowledge_reason = False, "disabled_by_strategy"
@@ -6207,123 +6400,44 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 accepted_count=len(accepted_for_knowledge),
                 force_every_batch=force_knowledge_feedback,
             )
-        knowledge_cache_hit = False
         if knowledge_due:
             _policy = state["knowledge_feedback_policy"]
             _policy["observed_batches"].append(bi)
             if knowledge_reason == "new_named_entity":
                 _policy["signal_batches"].append(bi)
             knowledge_segment_ids = [offset + j for j in accepted_for_knowledge]
-            knowledge_source_context = [
-                "" if index in blocked_source_indexes else source
-                for index, source in enumerate(paras)
-            ]
-            knowledge_pair_context = []
-            for index, pair in enumerate(pairs):
-                if index in blocked_source_indexes and isinstance(pair, dict):
-                    knowledge_pair_context.append({
-                        **pair, "source": "", "target": "",
-                        "initial_target": "", "accepted_target": "",
-                    })
-                else:
-                    knowledge_pair_context.append(pair)
-            # The only provider call on the commit path; timed apart so a slow
-            # auxiliary model is never mistaken for commit CPU.  A cache hit
-            # skips the remote call and still runs the full merge below.
-            _knowledge_hits_before = _knowledge_cache.hits
+            # The provider call runs off the commit path (see
+            # ``_submit_knowledge``); only submission and the in-order merge of
+            # finished extractions are timed here, so this phase now measures
+            # how long commit actually waited on the auxiliary model.
             with _critical_path.phase("commit_knowledge_llm") as _kb_sink:
-                knowledge_candidates, knowledge_events, knowledge_warning = \
-                    _knowledge.observe_batch(
-                        [batch_sources[j] for j in accepted_for_knowledge],
-                        [batch_pairs[j]["target"] for j in accepted_for_knowledge],
-                        knowledge_source_context, knowledge_pair_context,
-                        glossary, offset, auxiliary_config["provider"],
-                        auxiliary_config["api_key"], auxiliary_config["model"],
-                        existing_candidates=state.get("knowledge_candidates") or [],
-                        call_llm=auxiliary_call, segment_ids=knowledge_segment_ids,
-                        observation_provenance=(
-                            "reviewed" if review_succeeded else "generated_continuity"
-                        ),
-                        cache=_knowledge_cache)
-                knowledge_cache_hit = (
-                    _knowledge_cache.hits > _knowledge_hits_before)
-                if knowledge_cache_hit:
-                    _critical_path.count("knowledge_feedback_cache_hit")
+                _submit_knowledge(
+                    bi, offset, knowledge_segment_ids,
+                    "reviewed" if review_succeeded else "generated_continuity",
+                    [batch_sources[j] for j in accepted_for_knowledge],
+                    [batch_pairs[j]["target"] for j in accepted_for_knowledge],
+                    _knowledge_source_context(), _knowledge_pair_context(),
+                    reason=knowledge_reason)
                 _kb_sink.traversed(len(knowledge_segment_ids))
                 _kb_sink.received(sum(len(batch_sources[j])
                                       for j in accepted_for_knowledge))
-                _critical_path.count("knowledge_observe_batch_calls")
         else:
             state["knowledge_feedback_policy"]["skipped_batches"].append(bi)
             reasons = state["knowledge_feedback_policy"].setdefault(
                 "skip_reasons", {})
             reasons[knowledge_reason] = reasons.get(knowledge_reason, 0) + 1
-            knowledge_candidates, knowledge_events, knowledge_warning = \
-                state.get("knowledge_candidates") or [], [], None
-        for event in knowledge_events:
-            event["batch"] = bi
-            state.setdefault("knowledge_events", []).append(event)
-            if event.get("type") == "entity_observation":
-                registry.observe(
-                    event.get("source"), event.get("observed_target"),
-                    entity_type=_entity_registry.entity_type_from_kind(
-                        event.get("kind")),
-                    segment_id=event.get("segment_id"),
-                    provenance=event.get("provenance") or "generated_observation",
-                    confidence=0.7 if event.get("provenance") == "reviewed" else 0.35,
-                )
-            if event.get("type") == "target_conflict":
-                segment_id = event.get("segment_id", offset)
-                findings_all.append({
-                    "segment_id": segment_id, "segment_index": segment_id,
-                    "severity": "actionable",
-                    "type": "knowledge_conflict",
-                    "category": "terminology_consistency",
-                    "summary": "观察到的译法与锁定术语不一致",
-                    "source_span": event.get("source"),
-                    "target_span": event.get("observed_target"),
-                    "explanation": "翻译流中观察到的译法与项目锁定术语的首选译名不同，可能造成术语漂移。",
-                    "recommendation": "核对当前语境是否构成合理例外；若不是，请统一为锁定术语的首选译名。",
-                    "confidence": None, "detector": "Knowledge QA",
-                    "diagnostic_version": 1,
-                    "reason": event.get("reason") or "翻译流观察译法与锁定术语不一致",
-                    "source": event.get("source"),
-                    "observed_target": event.get("observed_target"),
-                    "preferred_target": event.get("preferred_target"),
-                })
-        state["knowledge_candidates"] = knowledge_candidates
-        state["translation_continuity"] = list(knowledge_candidates)
-        state["entity_registry"] = registry.to_list()
-        if knowledge_warning:
-            state["knowledge_feedback_failures"] = \
-                state.get("knowledge_feedback_failures", 0) + 1
-            state.setdefault("knowledge_events", []).append({
-                "type": "extract_failed", "batch": bi, "offset": offset,
-                "reason": knowledge_warning,
-            })
+        with _critical_path.phase("commit_knowledge_llm"):
+            knowledge_candidates, knowledge_events, knowledge_warnings = \
+                _drain_knowledge(final=not _knowledge_async)
+        _apply_knowledge_results(
+            knowledge_candidates, knowledge_events, knowledge_warnings)
         # Provenance distinguishes three outcomes: a live model call, a replay
         # of an identical already-paid request, and a batch the policy skipped.
-        # None of them is ever recorded as one of the others.
+        # None of them is ever recorded as one of the others.  The first two
+        # are recorded when their extraction is merged (``_drain_knowledge``).
         if not knowledge_due:
             safe_append_event({
                 "batch": bi, "offset": offset, "phase": "knowledge_feedback_skipped",
-                "reason": knowledge_reason,
-            })
-        elif knowledge_cache_hit:
-            _policy = state["knowledge_feedback_policy"]
-            _policy["cache_hits"] = _policy.get("cache_hits", 0) + 1
-            safe_append_event({
-                "batch": bi, "offset": offset,
-                "phase": "knowledge_feedback_cache_hit",
-                "candidate_count": len(knowledge_candidates),
-                "reason": knowledge_reason,
-            })
-        else:
-            _policy = state["knowledge_feedback_policy"]
-            _policy["cache_misses"] = _policy.get("cache_misses", 0) + 1
-            safe_append_event({
-                "batch": bi, "offset": offset, "phase": "knowledge_feedback_done",
-                "candidate_count": len(knowledge_candidates),
                 "reason": knowledge_reason,
             })
         _knowledge_finished = time.perf_counter()
@@ -6448,7 +6562,17 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     )
     state["batch_plan"]["review_overlap_enabled"] = bool(overlap_active)
 
+    # The journal describes each batch against the state as it is *now*, but
+    # replay applies it to the last snapshot on disk.  Everything this function
+    # changed before the first batch (source-quality findings, the quality gate,
+    # review stats, truncated pairs) is in neither, so the first record's
+    # ``extend.base`` would not match and replay would stop after one batch.
+    # One baseline snapshot per run closes that hole; it is not per-batch.
+    if _journal_enabled and start_batch < len(batches):
+        _flush_state_snapshot("journal_baseline")
+
     try:
+        _resume_knowledge_pending()
         if overlap_active and (len(batches) - start_batch) > 1:
             in_flight_cap = review_overlap_max_in_flight(
                 max_review_in_flight, state.get("pipeline_config")
@@ -6643,7 +6767,15 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                     bundle = futures[bi].result()
                     _commit_batch_with_timing(bundle)
                     del futures[bi]
+        # Every submitted extraction is merged before the stage ends, so the
+        # final batch is observed and nothing is left pending.
+        if _knowledge_pending:
+            _apply_knowledge_results(*_drain_knowledge(final=True))
+            _knowledge_dirty[0] = True
     finally:
+        # Abandon extractions still in flight on cancel/failure: they stay in
+        # ``policy["pending"]`` and are re-derived on resume.
+        _knowledge_pool.shutdown(wait=False, cancel_futures=True)
         # The ft-trans pool (if any) has joined its workers by now.
         _release_dead_pool_clients()
         # Mandatory immediate snapshot on leaving the loop: normal completion,
@@ -6653,6 +6785,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         # accumulated *after* the cadence decision, so a final cadence flush can
         # leave them pending with `_pending_snapshot_batches` already back to 0.
         if _pending_snapshot_batches or _pending_tm_entries \
+                or _knowledge_dirty[0] \
                 or (_journal_enabled
                     and _journal_seq > _state_journal.cursor(state)):
             _flush_state_snapshot("loop_exit")
