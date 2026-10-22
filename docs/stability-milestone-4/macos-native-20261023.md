@@ -68,3 +68,26 @@ heartbeat gap (profiling enabled; much of the time is inside native event
 processing and file operations). This is unresolved responsiveness evidence,
 not a pass. The small frozen-fixture and waiting-only measurements above cannot
 be substituted for real-book import/open acceptance.
+
+## Follow-up: preparation estimate was re-running PDF ingestion
+
+Worker-level profiling identified the remaining import/open interference as
+`adapter.source_size`, used for the preparation page's cost estimate. For the
+207-page real PDF it called full document ingestion, including repeated layout
+and footnote extraction (9.25 seconds under worker profiling). Native sampling
+showed the GUI waiting for the GIL while that worker parsed PDF text.
+
+PDF estimates now count text blocks without embedded image extraction, layout
+reconstruction, OCR or model calls. They remain explicitly approximate; the
+existing scanned-page fallback is retained. The worker yields between pages.
+This changes only preparation estimates, not translation ingestion or exports.
+The final unprofiled native import/open run recorded a 964.64 ms maximum and
+56.86 ms p95 heartbeat gap. The earlier 3.3-second result above is the diagnostic
+before this fix; it is not the final result. The residual first-layout cost and
+the original Windows VM acceptance remain distinct limits.
+
+All 40 strategy, polling and recovery-probe cases passed in 18.96 seconds,
+including a text PDF that rejects calls into full ingestion and a scanned PDF
+that retains its page-based estimate. The real-API recovery run started at
+2b5f8f4 and stays on that implementation; this later estimate-only fix does not
+retroactively change its build identity.
