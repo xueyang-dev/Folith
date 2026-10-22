@@ -26,6 +26,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
+from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
 )
@@ -1163,7 +1164,7 @@ class MainWindow(QMainWindow):
             paper = overview[0]
             paper.set_ghost(True)
             components.DocumentFlight(self, pixmap, start, end, opening=True, land=True,
-                                      on_done=lambda: paper.set_ghost(False))
+                                      on_done=lambda: paper.set_ghost(False) if isValid(paper) else None)
             return
         components.DocumentFlight(self, pixmap, start, end, opening=opening)
 
@@ -1175,11 +1176,12 @@ class MainWindow(QMainWindow):
         start = origin if origin is not None else self._content_rect(
             card_rect.width() / max(1.0, card_rect.height()))
         card = self.home._cards.get(job_id)
-        if card is not None:
-            card.paper.set_ghost(True)
+        paper = card.paper if card is not None else None
+        if paper is not None:
+            paper.set_ghost(True)
         components.DocumentFlight(
             self, pixmap, start, card_rect, opening=False, land=origin is not None,
-            on_done=lambda: card.paper.set_ghost(False) if card is not None else None)
+            on_done=lambda: paper.set_ghost(False) if paper is not None and isValid(paper) else None)
 
     #: Tasks with at least this many segments get the loading overlay: building the
     #: grid takes long enough on the UI thread for the window to look frozen.

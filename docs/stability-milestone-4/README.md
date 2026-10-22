@@ -1,11 +1,13 @@
 # v0.7.1 stability work — 2026-10-22
 
 Scope: [milestone 4](https://github.com/xueyang-dev/Folith/milestone/4).
-This is the first implementation and verification slice, not release acceptance.
-Work is isolated on `codex/stability-data-integrity`, based on main `8ff81dc`
-plus the existing [PR #60](https://github.com/xueyang-dev/Folith/pull/60)
-commit `30ade6d`. The original checkout and its unrelated local edits were preserved.
-No PR was merged and no issue was closed.
+This records implementation and verification work, not release acceptance.
+Work is isolated on `codex/stability-data-integrity`, initially based on main
+`8ff81dc` plus [PR #60](https://github.com/xueyang-dev/Folith/pull/60).
+Main `ab54d10` was subsequently integrated, including upstream PRs #58, #59
+and #60 (polling, asynchronous knowledge feedback and journaling).
+The original checkout and its unrelated local edits were preserved.
+This agent has not merged a PR or closed an issue.
 
 ## Journal verification (#56)
 
@@ -125,7 +127,7 @@ worker or state transaction; their ordinary current-state writes remain valid.
 
 The new test file covers the actual failed-export overwrite, all four artifact
 entrypoints, concurrent full saves, failed replacement/retry, legacy loading,
-deleted-task protection and three Qt export interleavings. All 12 cases pass.
+directory-loss recovery and three Qt export interleavings. All 12 cases pass.
 A related 12-file run passed 300 cases before the final three Qt interleaving cases
 were added; the final snapshot test file was rerun separately. Full integration
 regression is still required. No new issue is opened: the verified follow-up is
@@ -141,3 +143,68 @@ export workflow, Windows installer/upgrade/running-install/uninstall/user-file
 protection (#40/#41), the next Windows bundle and CI (#42/#9), and cross-platform
 status/lifecycle regression (#13/#24/#38) still require their stated acceptance.
 Closed issues are not treated as proof that a new release passes those checks.
+
+## Windows report received and follow-up repairs
+
+The user supplied `REPORT.md` for Windows 11 x64 / Python 3.11.16 / PySide6
+6.11.2 at `1ea7b388d6e7e1370cbc748dcdcde488b2477bfb`. Only the report was
+transferred to this machine; its relative JSON/log/screenshot attachments were
+not independently inspected here. The report correctly concludes FAIL overall.
+
+The reported clean-PATH comparison passed the actual frozen and installed
+DOCX/PDF flows, EPUB/TXT/MD, bundled English/Chinese/Arabic OCR, native installed
+startup, running-process silent install/uninstall refusal and preservation of
+unrelated files. The initial ordinary-PATH build failed before Qt startup:
+PyInstaller collected Poppler's incompatible `icuuc.dll`. A successful manual
+clean-PATH build did not repair the build script.
+
+The Windows build now limits PATH to the selected interpreter
+and Windows directories during PyInstaller analysis, restores the caller's PATH
+in `finally`, and clears PyInstaller's analysis cache. Staged OCR and wheel DLL
+locations remain explicit inputs. Before ZIP/NSIS packaging it starts the actual
+frozen executable with the native Windows Qt plugin, requires a successful smoke
+JSON, and terminates a stalled smoke after 60 seconds. The startup check does not
+replace the full frozen workflow or installer acceptance. This script change
+requires actual Windows revalidation with the original polluted PATH.
+
+Both document-flight callbacks now check that their landing widget's C++ object
+is still alive. Four regressions delete or retain the destination during opening
+and returning flights, and verify completion remains safe and restores a live
+cover. The desktop source probe records `app.platformName()` rather than guessing
+Cocoa when the environment variable is absent. The crash probe uses `Popen.kill()`
+and waits for durable translations before termination; its added lifecycle mode
+checks pause, live workbench/card progress and continued work while minimized.
+A 120-paragraph offscreen smoke preserved all committed fields and exported all
+120 target strings in source order. Native/frozen long-document acceptance is
+still separate.
+
+The report's intermittent retranslation test returned an empty state during a
+load. Ordinary snapshot reads swallowed all read errors, bypassing the existing
+Windows shared-reader retries. Snapshot loading and revision reads now use that
+existing reader. Fault injection confirms a temporary sharing violation is
+retried and the pairs remain readable. This repairs a concrete empty-state
+mechanism; it does not prove the reported intermittent failure has no other
+cause. The real Windows retranslation test and concurrent snapshot reads must
+be rerun.
+
+Seven focused files passed 88 cases; four actual-Windows contention cases were
+skipped on macOS. See `windows-report-fixes.tsv`. Earlier merged-core focused
+checks passed 59 cases (knowledge feedback, recovery probe, polling, snapshot
+revisions and journaling).
+
+The Windows report also records a native source-client 3,681-segment EPUB run:
+28 committed pairs survived a real TerminateProcess and recovery finished all
+3,681. Final and working exports were blocked by 172 deterministic integrity
+findings induced by the offline stub. This is evidence of recovery, not a passed
+export gate, translation quality or frozen long-document acceptance. Do not
+clear findings or weaken the target invariant to obtain an export. A suitable
+controlled fixture/endpoint must produce valid targets through normal product
+paths before exported text can be checked.
+
+Still unverified: fixes on real Windows; a passing full regression run at the
+integrated head; frozen/installed long-document recovery and successful export;
+interactive installer Retry/Cancel; cross-version upgrade; and the full native
+window acceptance scope. The earlier full local audit had 8 failures in 5 of
+242 files (3,579 passes); the directory-loss, owned-state, metadata-directory and
+QSettings fixture repairs passed their targeted reruns, but that is not a full
+suite pass. No release or milestone completion is claimed.

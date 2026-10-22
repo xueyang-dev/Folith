@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from folith import profiler
 from folith.storage import state_journal
-from folith.storage.atomic_file import replace_file
+from folith.storage.atomic_file import read_shared_text, replace_file
 
 # Cache mapping (job_id, mtime_ns, file_size, journal_mtime_ns, journal_size)
 # -> normalized state dict.  The journal is part of the signature because a
@@ -239,7 +239,7 @@ def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optiona
             if key[:3] == signature and metadata and metadata[0] == str(path.absolute()):
                 return int(state.get("snapshot_revision") or 0)
     with profiler.span("snapshot_revision_read", job_id=job_id):
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(read_shared_text(path))
     return int(raw.get("snapshot_revision") or 0)
 
 
@@ -302,7 +302,7 @@ def _load_job_state_cached(job_id, output_dir, force_reload):
             _STATS["disk_reads"] += 1
             profiler.count("load_job_state_disk_read")
             try:
-                raw = json.loads(p.read_text(encoding="utf-8"))
+                raw = json.loads(read_shared_text(p))
             except Exception:
                 return None
             state = _delivery.normalize_state_findings(_state_migration.migrate_state(raw))

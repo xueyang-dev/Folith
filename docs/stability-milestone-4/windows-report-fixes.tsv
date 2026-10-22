@@ -1,0 +1,8 @@
+exit_code	kind	file	seconds	result
+0	pytest	desktop_ci_definition_test.py	0	2 passed
+0	pytest	job_storage_test.py	4	11 passed
+0	pytest	qt_crash_recovery_probe_test.py	1	8 passed
+0	pytest	qt_tangible_documents_test.py	6	10 passed
+0	pytest	snapshot_revision_test.py	4	12 passed
+0	pytest	state_journal_test.py	9	32 passed
+0	pytest	windows_atomic_file_test.py	4	13 passed, 4 skipped

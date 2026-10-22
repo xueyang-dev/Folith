@@ -205,6 +205,28 @@ def test_shared_read_other_errors_propagate(tmp_path, monkeypatch, windows_reade
     assert windows_reader == []
 
 
+def test_snapshot_load_retries_instead_of_returning_empty_state(tmp_path, monkeypatch,
+                                                              windows_reader):
+    import core
+    import json
+    from folith.storage import job_repository as repo
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    repo.invalidate_cache()
+    state = core.new_job_state("retry.docx")
+    state["pairs"] = [{"source": "source", "target": "target"}]
+    payload = json.dumps(state)
+    path = repo.get_job_state_path("sharing-read")
+    path.parent.mkdir(parents=True)
+    path.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(atomic_file, "shared_text_reader",
+                        _fake_reader([_winerror(32), payload]))
+    loaded = core.load_job_state("sharing-read")
+    assert loaded["pairs"] == state["pairs"]
+    assert windows_reader == [0.005]
+    repo.invalidate_cache()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Actual Windows ReplaceFileW semantics")
 def test_real_windows_reader_never_sees_a_gap_during_replace(tmp_path):
     target = tmp_path / "runtime_state.json"
@@ -234,4 +256,47 @@ def test_real_windows_reader_never_sees_a_gap_during_replace(tmp_path):
         stop.set()
         thread.join(5)
     assert reads > 100
+    assert failures == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Actual Windows snapshot replacement semantics")
+def test_real_windows_snapshot_load_during_replacement(tmp_path, monkeypatch):
+    import core
+    from folith.storage import job_repository as repo
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    repo.invalidate_cache()
+    state = core.new_job_state("concurrent.docx")
+    state["pairs"] = [{"source": "source", "target": "target 0"}]
+    repo.save_job_state_atomic("snapshot-read", state)
+    stop = threading.Event()
+    failures = []
+
+    def writer():
+        try:
+            index = 0
+            while not stop.is_set():
+                state["pairs"][0]["target"] = f"target {index}"
+                repo.save_job_state_atomic("snapshot-read", state)
+                index += 1
+        except Exception as error:
+            failures.append(repr(error))
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    reads = 0
+    deadline = time.monotonic() + 2
+    try:
+        while time.monotonic() < deadline:
+            loaded = repo.load_job_state_cached("snapshot-read", force_reload=True)
+            assert loaded and len(loaded["pairs"]) == 1
+            assert loaded["pairs"][0]["source"] == "source"
+            assert loaded["pairs"][0]["target"].startswith("target ")
+            reads += 1
+    finally:
+        stop.set()
+        thread.join(10)
+        repo.invalidate_cache()
+    assert not thread.is_alive()
+    assert reads > 10
     assert failures == []

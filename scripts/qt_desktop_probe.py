@@ -15,7 +15,7 @@ and a clean machine (roadmap §8).
 Usage:
     QT_QPA_PLATFORM=offscreen venv/bin/python scripts/qt_desktop_probe.py \
         --data-dir /tmp/qt-probe/data --fixture docx --out /tmp/qt-probe/report.json
-    # real window (cocoa) evidence, with a screenshot:
+    # real native window evidence, with a screenshot:
     venv/bin/python scripts/qt_desktop_probe.py --window --screenshot /tmp/qt.png ...
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=None, help="write the JSON report here")
     parser.add_argument("--fixture", default="docx", choices=("docx", "pdf", "both", "epub", "txt", "md"))
     parser.add_argument("--window", action="store_true",
-                        help="use the real platform plugin (cocoa) instead of offscreen")
+                        help="use the native platform plugin instead of offscreen")
     parser.add_argument("--screenshot", default=None)
     parser.add_argument("--stub-delay", type=float, default=0.0)
     parser.add_argument("--keep-data", action="store_true")
@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
                          timeout=args.timeout, screenshot=args.screenshot)
     report = flow.run(adapter, adapter.core, fixtures)
     report["stub_url"] = url
-    report["platform"] = os.environ.get("QT_QPA_PLATFORM", "cocoa")
+    report["platform"] = app.platformName()
     report["app_version"] = adapter.app_identity().get("app_version")
     report["build_id"] = adapter.app_identity().get("build_id")
     report["frozen"] = adapter.app_identity().get("frozen")

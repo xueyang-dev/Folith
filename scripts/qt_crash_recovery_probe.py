@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Qt crash recovery: SIGKILL the client mid-task, reopen, resume, finish.
+"""Qt recovery: hard-kill after durable progress, reopen, resume and export.
 
 Roadmap §6.C: "强制结束后既有检查点可恢复" and §6.A.4: the task must show a
 credible recovery entry point.  This is done at the *process* level — the client
-is killed with SIGKILL while a real task is in flight (no chance to clean up),
+is killed with SIGKILL/TerminateProcess while a real task is in flight,
 then a fresh window is opened on the same data directory.
 
 Two phases in one script:
@@ -14,13 +14,21 @@ Two phases in one script:
 Usage:
     QT_QPA_PLATFORM=offscreen venv/bin/python scripts/qt_crash_recovery_probe.py \
         --data-dir /tmp/qt-crash/data --out /tmp/qt-crash/report.json
+
+For a native long-document run, add ``--window --exercise-lifecycle
+--export-working --fixture <document>``. The driver verifies live workbench and
+card progress, pauses through in-flight commits, continues while minimized,
+and saves an untouched ``after-kill`` copy before recovery. Committed pair
+fields must survive, committed batches must not be regenerated, and every
+non-empty target must occur in the working DOCX in source order. Source content
+and logs stay in the local evidence directory. QSettings are isolated too.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -72,8 +80,11 @@ class Stub:
             self._handle.close()
 
 
-def _prepare_env(data_dir: Path, log_dir: Path) -> None:
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+def _prepare_env(data_dir: Path, log_dir: Path, *, native: bool = False) -> None:
+    if native:
+        os.environ.pop("QT_QPA_PLATFORM", None)
+    else:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
     os.environ["FOLITH_EXIT_FORCE_PROMPT"] = "0"
     os.environ["FOLITH_DESKTOP_DATA_DIR"] = str(data_dir)
@@ -81,10 +92,73 @@ def _prepare_env(data_dir: Path, log_dir: Path) -> None:
     os.environ["FOLITH_OUTPUT_DIR"] = str(data_dir)
 
 
+def _private_window(w, adapter, config, log_dir):
+    """The probe must not read or overwrite the operator's task preferences."""
+    from PySide6.QtCore import QSettings
+    settings = str(log_dir / "probe-settings.ini")
+    w.QSettings = lambda *_: QSettings(settings, QSettings.Format.IniFormat)
+    return w.MainWindow(config, adapter.desktop_paths.resolve_paths(), None)
+
+
+def _pump(app, seconds, predicate):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return bool(predicate())
+
+
+def _durable_state(data_dir, job_id):
+    """Read a stable durability prefix without changing any task files."""
+    from folith.storage import state_journal as journal
+    state = json.loads((data_dir / job_id / "state.json").read_text(encoding="utf-8"))
+    start = journal.cursor(state)
+    records = journal.read_mutations(job_id, after_seq=start, output_dir=data_dir)
+    if records:
+        sequences = [record["seq"] for record in records]
+        if sequences != list(range(start + 1, sequences[-1] + 1)):
+            raise AssertionError("journal sequence is not a complete ordered suffix")
+    report = journal.replay(job_id, state, output_dir=data_dir)
+    if report["gap"] or journal.cursor(state) < journal.max_seq(job_id, output_dir=data_dir):
+        raise AssertionError(f"journal replay did not reach its durable tail: {report}")
+    return state, report
+
+
+def _assert_committed_prefix_preserved(expected, current):
+    """All committed fields survive; resume may add derived source references."""
+    assert len(current) >= len(expected), "resume lost committed pairs"
+    added_fields = set()
+    for old, new in zip(expected, current):
+        for key, value in old.items():
+            assert key in new and new[key] == value, f"resume changed committed field {key}"
+        added_fields.update(new.keys() - old.keys())
+    return sorted(added_fields)
+
+
+def _paused_state_after_inflight_commits(app, adapter, job_id):
+    """Already received batches may still commit after the pause request."""
+    state = adapter.load_state(job_id)
+    quiet_since = time.monotonic()
+    deadline = quiet_since + 60
+    while time.monotonic() < deadline:
+        app.processEvents()
+        latest = adapter.load_state(job_id)
+        if latest.get("pairs") != state.get("pairs"):
+            state = latest
+            quiet_since = time.monotonic()
+        if time.monotonic() - quiet_since >= 1.5:
+            return latest
+        time.sleep(0.1)
+    raise AssertionError("committed pairs did not settle while paused")
+
+
 def run_child(args) -> int:
     """Import a document, start the task, and keep the window alive."""
     data_dir = Path(args.data_dir).expanduser().resolve()
-    _prepare_env(data_dir, Path(args.log_dir).expanduser().resolve())
+    log_dir = Path(args.log_dir).expanduser().resolve()
+    _prepare_env(data_dir, log_dir, native=args.window)
     from folith.qt import adapter, selftest, window as w
 
     app = w.build_application([])
@@ -93,7 +167,7 @@ def run_child(args) -> int:
         base_url=os.environ["FOLITH_QT_CRASH_STUB_URL"], target_lang="简体中文",
         enable_review=True, enable_report=False, enable_understanding=False,
         enable_source_cleanup=False)
-    window = w.MainWindow(config, adapter.desktop_paths.resolve_paths(), None)
+    window = _private_window(w, adapter, config, log_dir)
     window.show()
     fixture = Path(args.fixture).expanduser()
     window.import_paths([str(fixture)], autostart=False)
@@ -110,9 +184,44 @@ def run_child(args) -> int:
     window.open_job(job_id)
     window.start_or_resume()
     (Path(args.log_dir) / "child-job.txt").write_text(job_id, encoding="utf-8")
-    # Keep the process alive while the parent watches for mid-flight progress.
+    # Keep the process alive while the parent watches for durable progress.
+    lifecycle_done = not args.exercise_lifecycle
+    next_check = 0.0
     while True:
         app.processEvents()
+        if not lifecycle_done and time.monotonic() >= next_check:
+            next_check = time.monotonic() + 0.2
+            current = adapter.load_state(job_id)
+            if len(current.get("pairs") or []) >= args.min_committed_pairs:
+                window.pause_job()
+                assert _pump(app, 60, lambda: (
+                    adapter.core.load_runtime_state(job_id) or {}).get("status") == "paused")
+                paused = _paused_state_after_inflight_commits(app, adapter, job_id)
+                pairs = paused.get("pairs") or []
+                # The normal poll, not an unconditional reopen, must catch up.
+                assert _pump(app, 15, lambda: window.workbench._state.get("pairs") == pairs)
+                card = next(row for row in adapter.list_jobs() if row.job_id == job_id)
+                translated = sum(bool(str(pair.get("target") or "").strip()) for pair in pairs)
+                total = max(len(paused.get("paras") or []), len(pairs))
+                assert card.progress_percent == round(100 * translated / total)
+                assert not paused.get("p2_done"), "task completed before the lifecycle checkpoint"
+                window.grab().save(str(log_dir / "paused-window.png"))
+                until = time.monotonic() + 1.0
+                _pump(app, 1.1, lambda: time.monotonic() >= until)
+                assert adapter.load_state(job_id).get("pairs") == pairs
+                window.showMinimized()
+                assert _pump(app, 5, window.isMinimized)
+                window.continue_job()
+                assert _pump(app, 60, lambda: len(
+                    adapter.load_state(job_id).get("pairs") or []) > len(pairs))
+                lifecycle = {"paused_pairs": len(pairs), "stable_while_paused": True,
+                             "workbench_caught_up": True, "card_percent": card.progress_percent,
+                             "minimized": window.isMinimized(),
+                             "progressed_while_minimized": True,
+                             "qt_platform": app.platformName()}
+                assert lifecycle["minimized"]
+                (log_dir / "lifecycle.json").write_text(json.dumps(lifecycle), encoding="utf-8")
+                lifecycle_done = True
         time.sleep(0.02)
     return 0
 
@@ -126,6 +235,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--phase", default="verify", choices=("run", "verify"))
     parser.add_argument("--paragraphs", type=int, default=60)
     parser.add_argument("--timeout", type=float, default=600.0)
+    parser.add_argument("--window", action="store_true", help="use the native Qt platform")
+    parser.add_argument("--stub-delay", type=float, default=0.6)
+    parser.add_argument("--min-committed-pairs", type=int, default=1)
+    parser.add_argument("--exercise-lifecycle", action="store_true",
+                        help="pause, verify live progress, continue while minimized, then kill")
+    parser.add_argument("--export-working", action="store_true",
+                        help="export working assets instead of freezing a final delivery")
     args = parser.parse_args(argv)
 
     data_dir = Path(args.data_dir).expanduser().resolve()
@@ -133,9 +249,15 @@ def main(argv: list[str] | None = None) -> int:
     log_dir.mkdir(parents=True, exist_ok=True)
     if args.phase == "run":
         return run_child(args)
+    if data_dir.exists() and any(data_dir.iterdir()):
+        parser.error("use an empty data directory; existing tasks will not be changed")
+    _prepare_env(data_dir, log_dir, native=args.window)
 
     out_dir = Path(args.out).parent if args.out else data_dir.parent
     out_dir.mkdir(parents=True, exist_ok=True)
+    if (out_dir / "after-kill").exists() or any(
+            (log_dir / name).exists() for name in ("child-job.txt", "lifecycle.json")):
+        parser.error("use a fresh evidence directory; previous results will not be overwritten")
     report: dict = {"started_at": time.time(), "steps": []}
 
     def step(name: str, **extra) -> None:
@@ -143,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
             {"at": round(time.time() - report["started_at"], 2),
              "step": name, **extra})
 
-    stub = Stub(out_dir)
+    stub = Stub(out_dir, delay=args.stub_delay)
     url = stub.start()
     report["stub_url"] = url
     fixture = Path(args.fixture).expanduser() if args.fixture else out_dir / "crash.docx"
@@ -154,16 +276,20 @@ def main(argv: list[str] | None = None) -> int:
 
     env = dict(os.environ)
     env["FOLITH_QT_CRASH_STUB_URL"] = url
-    child = subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()),
+    child_command = [sys.executable, str(Path(__file__).resolve()),
          "--phase", "run", "--data-dir", str(data_dir), "--log-dir", str(log_dir),
-         "--fixture", str(fixture), "--paragraphs", str(args.paragraphs)],
+         "--fixture", str(fixture), "--paragraphs", str(args.paragraphs),
+         "--min-committed-pairs", str(args.min_committed_pairs)]
+    if args.window:
+        child_command.append("--window")
+    if args.exercise_lifecycle:
+        child_command.append("--exercise-lifecycle")
+    child = subprocess.Popen(child_command,
         env=env, stdout=(log_dir / "child.log").open("ab"),
         stderr=subprocess.STDOUT)
     report["child_pid"] = child.pid
     try:
         job_file = log_dir / "child-job.txt"
-        job_file.unlink(missing_ok=True)
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline and not job_file.exists():
             if child.poll() is not None:
@@ -198,8 +324,27 @@ def main(argv: list[str] | None = None) -> int:
         else:
             raise AssertionError(
                 f"the task never became active: {runtime.get('status')!r}")
-        # Give it a moment of real work (batches are small, so keep this short).
-        time.sleep(1.5)
+        # An active worker alone is insufficient: force-kill recovery must
+        # preserve actual committed results, not just restart an empty task.
+        deadline = time.monotonic() + args.timeout
+        while time.monotonic() < deadline:
+            if child.poll() is not None:
+                raise AssertionError("child exited before durable progress: " +
+                                     (log_dir / "child.log").read_text(errors="replace")[-1000:])
+            try:
+                observed, _ = _durable_state(data_dir, job_id)
+            except (OSError, ValueError, AssertionError):
+                observed = {}
+            lifecycle_ready = not args.exercise_lifecycle or (log_dir / "lifecycle.json").is_file()
+            if len(observed.get("pairs") or []) >= args.min_committed_pairs and lifecycle_ready:
+                break
+            if observed.get("p2_done"):
+                raise AssertionError("task completed before the requested kill checkpoint")
+            time.sleep(0.2)
+        else:
+            raise AssertionError("no durable translation checkpoint before timeout")
+        if args.exercise_lifecycle:
+            report["lifecycle"] = json.loads((log_dir / "lifecycle.json").read_text())
         runtime = read_runtime()
         report["before_kill"] = {
             "status": runtime.get("status"),
@@ -208,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
             "stage_progress": runtime.get("stage_progress"),
             "phase": runtime.get("phase"),
             "still_active": runtime.get("status") in ACTIVE,
+            "observed_committed_pairs": len(observed["pairs"]),
         }
         step("mid-flight", **report["before_kill"])
         if runtime.get("status") not in ACTIVE:
@@ -216,13 +362,21 @@ def main(argv: list[str] | None = None) -> int:
                 f"(status={runtime.get('status')!r})")
 
         # Hard kill: no cleanup, no chance to flush anything.
-        os.kill(child.pid, signal.SIGKILL)
+        child.kill()  # SIGKILL on POSIX, TerminateProcess on Windows.
         child.wait(timeout=30)
         report["child_exit"] = child.returncode
         step("killed", exit_code=child.returncode)
+        shutil.copytree(data_dir, out_dir / "after-kill")
+        expected, replay = _durable_state(data_dir, job_id)
+        expected_pairs = expected.get("pairs") or []
+        assert len(expected_pairs) >= args.min_committed_pairs
+        report["durable_after_kill"] = {"pairs": len(expected_pairs), "replay": replay,
+                                        "segments": len(expected.get("paras") or [])}
+        events_path = data_dir / job_id / "events.jsonl"
+        events_offset = events_path.stat().st_size if events_path.exists() else 0
 
         # Reopen on the same data directory with a fresh window.
-        _prepare_env(data_dir, log_dir)
+        _prepare_env(data_dir, log_dir, native=args.window)
         from folith.qt import adapter, window as w
 
         app = w.build_application([])
@@ -231,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
             base_url=url, target_lang="简体中文", enable_review=True,
             enable_report=False, enable_understanding=False,
             enable_source_cleanup=False)
-        window = w.MainWindow(config, adapter.desktop_paths.resolve_paths(), None)
+        window = _private_window(w, adapter, config, log_dir)
         window.show()
         app.processEvents()
 
@@ -247,6 +401,9 @@ def main(argv: list[str] | None = None) -> int:
 
         window.refresh_home()
         state = adapter.load_state(job_id)
+        assert state.get("pairs") == expected_pairs, "reopen changed committed pairs"
+        report["committed_pairs_equal_after_reopen"] = True
+        report["qt_platform"] = app.platformName()
         runtime = adapter.runtime_view(job_id, state)
         report["after_reopen"] = {
             "status": runtime.get("status"),
@@ -283,6 +440,19 @@ def main(argv: list[str] | None = None) -> int:
 
         report["resumed"] = pump(args.timeout, finished)
         state = adapter.load_state(job_id)
+        report["added_pair_fields_after_resume"] = _assert_committed_prefix_preserved(
+            expected_pairs, state.get("pairs") or [])
+        report["committed_fields_preserved_after_resume"] = True
+        assert len(state.get("pairs") or []) == len(state.get("paras") or []), \
+            "completed task does not contain every source segment"
+        with events_path.open("rb") as stream:
+            stream.seek(events_offset)
+            new_events = [json.loads(line) for line in stream if line.strip()]
+        generation_offsets = [event["offset"] for event in new_events
+                              if event.get("phase") == "generation_started"]
+        assert all(offset >= len(expected_pairs) for offset in generation_offsets), \
+            "resume regenerated an already committed batch"
+        report["committed_batches_not_regenerated"] = True
         report["after_resume"] = {
             "p1_done": bool(state.get("p1_done")),
             "p2_done": bool(state.get("p2_done")),
@@ -293,16 +463,36 @@ def main(argv: list[str] | None = None) -> int:
         step("resumed", **report["after_resume"])
 
         # And the recovered task can be delivered.
-        window.deliver()
-        pump(180, lambda: bool(adapter.delivery_snapshots(job_id)))
-        report["delivery"] = {
-            "snapshots": [item.get("snapshot_version")
-                          for item in adapter.delivery_snapshots(job_id)],
-        }
+        if args.export_working:
+            written = adapter.export_current_assets(job_id, out_dir / "exported")
+            assert written and all(path.is_file() and path.stat().st_size for path in written)
+            from docx import Document
+            docx_name = adapter.delivery_file_name(state.get("filename"), "translation.docx")
+            docx = next(path for path in written if path.name == docx_name)
+            text = "\n".join(paragraph.text for paragraph in Document(docx).paragraphs)
+            position = 0
+            targets = [str(pair.get("target") or "") for pair in state.get("pairs") or []]
+            for target in targets:
+                if not target:
+                    continue
+                found = text.find(target, position)
+                assert found >= 0, "exported DOCX omitted or reordered a committed target"
+                position = found + len(target)
+            report["exported_targets_in_source_order"] = sum(bool(target) for target in targets)
+            report["delivery"] = {"kind": "working export", "files": [p.name for p in written]}
+        else:
+            window.deliver()
+            pump(180, lambda: bool(adapter.delivery_snapshots(job_id)))
+            report["delivery"] = {
+                "kind": "final snapshot",
+                "snapshots": [item.get("snapshot_version")
+                              for item in adapter.delivery_snapshots(job_id)],
+            }
         step("delivered", **report["delivery"])
         report["ok"] = bool(report["resumed"]
                             and report["after_resume"]["p2_done"]
-                            and report["delivery"]["snapshots"])
+                            and (report["delivery"].get("files")
+                                 or report["delivery"].get("snapshots")))
     except BaseException as exc:  # noqa: BLE001 - the report is the evidence
         import traceback
 
