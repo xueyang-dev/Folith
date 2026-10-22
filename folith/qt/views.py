@@ -3469,6 +3469,9 @@ class WorkbenchView(QWidget):
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
         self.review_panel.applySuggestionRequested.connect(self.suggestionApplyRequested.emit)
         self.review_panel.confirmSourceRequested.connect(self.sourceConfirmRequested.emit)
+        self.review_panel.entityPreviewRequested.connect(self.entityPreviewRequested.emit)
+        self.review_panel.entityRepairRequested.connect(self.entityRepairRequested.emit)
+        self.review_panel.entityAcceptRequested.connect(self.entityAcceptRequested.emit)
         self.review_panel.reviewAllRequested.connect(self.reviewAllRequested.emit)
         self.review_panel.reviewRequested.connect(self.reviewSelectedRequested.emit)
         self.review_panel.retranslateRequested.connect(self.retranslateRequested.emit)
@@ -4549,6 +4552,11 @@ class WorkbenchView(QWidget):
         self.check_button.set_count(count, self.followup_panel.worst_tone() or "warning")
         self._sync_check_button()
         self._sync_more_pages()
+
+    def set_entity_preview(self, source: str, target: str, preview: list) -> None:
+        """名字统一的改动预览：抽屉与审校页各有一个部件，各取自己请求过的那份。"""
+        self.followup_panel.set_preview(preview, source, target)
+        self.review_panel.conflict.set_preview(preview, source, target)
 
     def _locate_segment_from_followup(self, index: int) -> None:
         """「检查与修复」里点一个失败批次：回到翻译页并选中那一段（清掉会挡住它的筛选）。"""
