@@ -2770,6 +2770,13 @@ class WorkbenchView(QWidget):
         self._height_timer = QTimer(self)
         self._height_timer.setInterval(0)
         self._height_timer.timeout.connect(self._apply_row_height_chunk)
+        self._paint_timer = QTimer(self)
+        self._paint_timer.setInterval(1)
+        self._paint_timer.timeout.connect(self._paint_segment_chunk)
+        self._paint_pending = iter(())
+        self._repainted: list[int] = []
+        self._paint_schedules_heights = True
+        self.segment_list.verticalScrollBar().valueChanged.connect(self._paint_visible_segments)
         self._height_resize = QTimer(self)
         self._height_resize.setSingleShot(True)
         self._height_resize.setInterval(120)
@@ -4841,14 +4848,9 @@ class WorkbenchView(QWidget):
             self._active_position = -1
             self.row_delegate.active_row = -1
             self.segment_list.setRowCount(len(self._rows))
-            for position, row in enumerate(self._rows):
-                self.segment_list.setItem(position, 0, QTableWidgetItem(""))
-                self.segment_list.setItem(position, 1, QTableWidgetItem(""))
-                self.segment_list.setItem(position, 2, QTableWidgetItem(""))
             # 重建之后必须立刻把内容画上去：否则要等到下一次后台刷新才显示文字，
             # 中间会看到一片空白行（打开任务或段落数变化时最明显）。
-            for position, row in enumerate(self._rows):
-                self._paint_row(position, row)
+            self._queue_segment_paint(schedule_heights=False)
             self.segment_list.blockSignals(False)
             target = self._position_of_loaded_segment()
             if target is None:
@@ -4864,8 +4866,7 @@ class WorkbenchView(QWidget):
             self._schedule_row_heights()
             self._refresh_term_focus()
             return
-        repainted = [position for position, row in enumerate(self._rows)
-                     if self._paint_row(position, row)]
+        self._queue_segment_paint()
         if self._rows and self._current_index < 0:
             # Returning from the library can reuse exactly the same row count
             # and selection. Qt then emits no selection signal after load().
@@ -4875,11 +4876,57 @@ class WorkbenchView(QWidget):
         self._place_inline_editor()
         self._sync_drafts_banner()
         self._sync_word_count()
-        # Same row set, same column widths: only the rows whose content changed
-        # can have a different height (a width change re-queues all of them).
-        if repainted:
-            self._schedule_row_heights(positions=repainted)
         self._refresh_term_focus()
+
+    def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
+        """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
+
+        ``schedule_heights`` 为 False 时只画不排行高（调用方随后会整表排一次）。
+        同一个行集合、同一组列宽下，只有内容变了的行才可能换行高；这些行在画完
+        之后一起排队，不用整表重算。
+        """
+        # Keep the final model dimensions stable for Qt accessibility. Only cell
+        # contents are filled in batches; selection always uses the full row set.
+        self._paint_timer.stop()
+        self._repainted = []
+        self._paint_schedules_heights = schedule_heights
+        if len(self._rows) < 300:
+            for position, row in enumerate(self._rows):
+                if self._paint_row(position, row):
+                    self._repainted.append(position)
+            self._paint_pending = iter(())
+            self._flush_painted_heights()
+            return
+        self._paint_visible_segments()
+        self._paint_pending = iter(range(len(self._rows)))
+        self._paint_timer.start()
+
+    def _paint_visible_segments(self, *_args) -> None:
+        table = self.segment_list
+        first = max(0, table.rowAt(0))
+        last = table.rowAt(table.viewport().height() - 1)
+        last = first + 40 if last < 0 else last + 1
+        for position in range(first, min(len(self._rows), last)):
+            if self._paint_row(position, self._rows[position]):
+                self._repainted.append(position)
+        self._flush_painted_heights()
+
+    def _paint_segment_chunk(self) -> None:
+        started = time.perf_counter()
+        while time.perf_counter() - started < 0.004:
+            position = next(self._paint_pending, None)
+            if position is None:
+                self._paint_timer.stop()
+                self._flush_painted_heights()
+                return
+            if self._paint_row(position, self._rows[position]):
+                self._repainted.append(position)
+
+    def _flush_painted_heights(self) -> None:
+        if not self._paint_schedules_heights or not self._repainted:
+            return
+        positions, self._repainted = self._repainted, []
+        self._schedule_row_heights(positions=positions)
 
     def _sync_word_count(self) -> None:
         """整份文档的字数与进度（按原文计）。状态没换就不重算。"""
@@ -4974,7 +5021,12 @@ class WorkbenchView(QWidget):
         source = self.segment_list.item(position, 1)
         target = self.segment_list.item(position, 2)
         if number is None or source is None or target is None:
-            return False
+            for column in range(3):
+                if self.segment_list.item(position, column) is None:
+                    self.segment_list.setItem(position, column, QTableWidgetItem(""))
+            number = self.segment_list.item(position, 0)
+            source = self.segment_list.item(position, 1)
+            target = self.segment_list.item(position, 2)
         self._painted[position] = dataclasses.replace(row)
         if row.segment_uid in self._notes:
             # 批注变了也要重画：缓存按行数据比较，批注不在行数据里。
@@ -5911,8 +5963,8 @@ class WorkbenchView(QWidget):
 
     def selected_indexes(self) -> list[int]:
         """Segment indexes currently selected in the grid, in grid order."""
-        positions = sorted({item.row() for item in
-                            self.segment_list.selectedItems()})
+        positions = sorted(index.row() for index in
+                           self.segment_list.selectionModel().selectedRows())
         return [self._rows[position].index for position in positions
                 if 0 <= position < len(self._rows)]
 
@@ -6166,6 +6218,7 @@ class WorkbenchView(QWidget):
         wanted = set(indexes)
         for position, row in enumerate(self._rows):
             if row.index in wanted:
+                self._paint_row(position, row)
                 for column in range(len(self.COLUMNS)):
                     item = self.segment_list.item(position, column)
                     if item is not None:

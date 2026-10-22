@@ -12284,9 +12284,12 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             cancel_check=lambda: _runtime_cancel_requested(job_id))
         state["document_profile"] = profile
         state["profile_done"] = True
+        state["profile_warnings"] = list(profile_warnings)
         for w in profile_warnings:
             if w not in warnings:
                 warnings.append(w)
+            if on_caption:
+                on_caption(w)
         if on_caption and profile:
             on_caption(f"文档画像完成：领域「{profile.get('domain') or '未知'}」"
                        f"· 文本类型「{profile.get('genre') or '未知'}」")
