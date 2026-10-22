@@ -1909,15 +1909,18 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
         if isinstance(flag, dict) and isinstance(flag.get("segment_index"), int)
     }
     raw_report = audit_source_quality(raw_paragraphs)
+    outputs_by_raw = {}
+    for output_index, source_indices in enumerate(output_inputs):
+        if isinstance(source_indices, list):
+            for source_index in dict.fromkeys(
+                    item for item in source_indices if isinstance(item, int)):
+                outputs_by_raw.setdefault(source_index, []).append(output_index)
     lineage_flags = []
     for raw_flag in raw_report.get("flags") or []:
         raw_index = raw_flag.get("segment_index")
         if not isinstance(raw_index, int):
             continue
-        output_indices = [
-            output_index for output_index, source_indices in enumerate(output_inputs)
-            if isinstance(source_indices, list) and raw_index in source_indices
-        ]
+        output_indices = outputs_by_raw.get(raw_index, [])
         affected = [
             segment_index
             for output_index in output_indices
@@ -4859,7 +4862,12 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     # snapshot's cursor, which keeps them monotonic across the rotations that
     # follow each snapshot.
     _journal_enabled = state_journal_enabled()
+    # A record replay could not apply stays in the file with a seq above the
+    # cursor; continuing from the cursor would reuse that seq, and the next
+    # replay would interleave the stale record with this run's (#74).
     _journal_seq = _state_journal.cursor(state)
+    if state_journal_enabled():
+        _journal_seq = max(_journal_seq, _state_journal.max_seq(job_id))
     _journal_retire_pending = False
     _journal_bytes_written = _state_journal.size(job_id) if _journal_enabled else 0
     _journal_stats = {"records": 0, "bytes": 0, "unusable": 0, "budget_bytes": 0}
@@ -9056,6 +9064,34 @@ def load_job_state(job_id):
     return _job_repo.load_job_state_cached(job_id)
 
 
+# A worker writes its terminal runtime status before it closes ``.worker.lock``.
+# A save that lands in that gap used to be refused even though nothing was
+# running any more — the intermittent "任务正在后台处理" failure that shows up
+# on slow machines.  When the run is already terminal, wait this long for the
+# teardown to finish; a genuinely active run is still refused immediately.
+WORKER_LOCK_SETTLE_SECONDS = 2.0
+
+
+def _acquire_save_worker_lock(job_id, runtime):
+    """Take ``.worker.lock`` for an external save, waiting out a teardown.
+
+    Returns the lock stream, or ``None`` when the job really is busy.
+    """
+    path = job_dir(job_id) / ".worker.lock"
+    lock = _job_lock.acquire(path, blocking=False)
+    if lock is not None:
+        return lock
+    if str(runtime.get("status") or "") in RUNTIME_ACTIVE_STATUSES:
+        return None
+    deadline = time.monotonic() + WORKER_LOCK_SETTLE_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
+        lock = _job_lock.acquire(path, blocking=False)
+        if lock is not None:
+            return lock
+    return None
+
+
 def save_job_state(job_id, state):
     """原子写入（先写临时文件再替换），避免中断写坏 state.json，并同步派生 summary.json。
 
@@ -9071,7 +9107,7 @@ def save_job_state(job_id, state):
         runtime = load_runtime_state(job_id)
         if runtime.get("segment_operation") and runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
             raise RuntimeError("所选段落正在后台处理，请等待完成后保存；草稿可以保留。")
-        execution_lock = _job_lock.acquire(job_dir(job_id) / ".worker.lock", blocking=False)
+        execution_lock = _acquire_save_worker_lock(job_id, runtime)
         if execution_lock is None:
             raise RuntimeError("任务正在后台处理，请等待完成后保存；草稿可以保留。")
     try:
@@ -9444,6 +9480,10 @@ def load_report_template(job_id):
     directory = job_dir(job_id)
     docx_path = directory / "report-template.docx"
     contract_path = directory / "template-contract.json"
+    # Most tasks have no template; the workbench asks on every refresh, and
+    # loading the state is a full copy of it (#75).
+    if not docx_path.is_file():
+        return None
     state = load_job_state(job_id)
     contract = None
     if contract_path.is_file():
@@ -9455,7 +9495,7 @@ def load_report_template(job_id):
     if contract is None and state:
         contract = state.get("report_template_contract") or \
             (state.get("research_settings") or {}).get("report_template_contract")
-    if not contract or not docx_path.is_file():
+    if not contract:
         return None
     raw = docx_path.read_bytes()
     return {
