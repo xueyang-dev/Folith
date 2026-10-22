@@ -220,6 +220,27 @@ def state_signature(
             journal_signature[0], journal_signature[1])
 
 
+def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optional[int]:
+    """Return the persisted snapshot generation; legacy snapshots are generation 0.
+
+    A cached state with the same snapshot signature already carries this value.
+    Only a cold check needs to parse the snapshot. The caller holds the existing
+    state transaction or worker lifetime lock across check and replacement.
+    """
+    path = get_job_state_path(job_id, output_dir=output_dir)
+    signature = state_signature(job_id, output_dir=output_dir)
+    if signature is None:
+        return None
+    with _STATE_CACHE_LOCK:
+        for key, state in _STATE_CACHE.items():
+            metadata = _STATE_REPLAY.get(key)
+            if key[:3] == signature[:3] and metadata and metadata[0] == str(path.absolute()):
+                return int(state.get("snapshot_revision") or 0)
+    with profiler.span("snapshot_revision_read", job_id=job_id):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    return int(raw.get("snapshot_revision") or 0)
+
+
 def load_job_state_cached(
     job_id: str,
     output_dir: Optional[Path] = None,
@@ -283,6 +304,7 @@ def _load_job_state_cached(job_id, output_dir, force_reload):
             except Exception:
                 return None
             state = _delivery.normalize_state_findings(_state_migration.migrate_state(raw))
+            state.setdefault("snapshot_revision", 0)
         # The journal holds every translation batch committed after this
         # snapshot.  Replaying it here -- before the reconcile steps, which
         # compare against the current pairs -- is what makes a crash cost

@@ -8400,6 +8400,8 @@ def generate_report_qa(job_id, state=None, *, save_file=False):
     """Build the concise QA report and bind it to current artifact hashes."""
     from folith import academic_evidence, academic_writer
     state = state or load_job_state(job_id) or {}
+    if save_file:
+        _check_snapshot_revision(job_id, state)
     report_record = load_academic_artifact(job_id, "report") or {}
     render_record = load_academic_artifact(job_id, "libreoffice_render") or {}
     final_docx = load_academic_artifact(job_id, "final_docx_validation") or {}
@@ -8456,6 +8458,7 @@ def save_compliance_record(job_id, state=None):
     """Persist the current compliance and language-constraint artifacts."""
     from folith import academic_evidence, academic_writer, compliance
     state = state or load_job_state(job_id) or {}
+    _check_snapshot_revision(job_id, state)
     result = compliance_profile_view(job_id, state)
     academic = state.get("academic_state") or {}
     records = academic.get("artifacts") or {}
@@ -8758,6 +8761,7 @@ def run_libreoffice_render_qa(job_id, state=None):
     state = state or load_job_state(job_id)
     if state is None:
         raise ValueError(f"找不到任务 {job_id}")
+    _check_snapshot_revision(job_id, state)
     docx = report_docx_bytes(job_id, state)
     document_kind = "report"
     if docx is None:
@@ -8941,6 +8945,19 @@ def load_job_state(job_id):
     return _job_repo.load_job_state_cached(job_id)
 
 
+def _check_snapshot_revision(job_id, state):
+    """Reject a snapshot another transaction has already superseded."""
+    current = _job_repo.snapshot_revision(job_id)
+    if current is None:
+        if "snapshot_revision" in state:
+            raise RuntimeError("任务状态不可用，请重新打开任务列表。")
+        return 0
+    if int(state.get("snapshot_revision") or 0) != current:
+        raise RuntimeError("任务状态已更新，请重新读取后重试。")
+    return current
+
+
+@_serialized_job_mutation
 def save_job_state(job_id, state):
     """原子写入（先写临时文件再替换），避免中断写坏 state.json，并同步派生 summary.json。
 
@@ -8953,6 +8970,8 @@ def save_job_state(job_id, state):
     # between the ownership check and the atomic snapshot replacement.
     execution_lock = None
     if _runtime_job_id() != job_id:
+        if "snapshot_revision" in state and not job_dir(job_id).is_dir():
+            raise RuntimeError("任务已被删除，请重新打开任务列表。")
         runtime = load_runtime_state(job_id)
         if runtime.get("segment_operation") and runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
             raise RuntimeError("所选段落正在后台处理，请等待完成后保存；草稿可以保留。")
@@ -8960,11 +8979,19 @@ def save_job_state(job_id, state):
         if execution_lock is None:
             raise RuntimeError("任务正在后台处理，请等待完成后保存；草稿可以保留。")
     try:
+        revision = _check_snapshot_revision(job_id, state)
         _reconcile_translation_failures(state)
+        had_revision = "snapshot_revision" in state
+        state["snapshot_revision"] = revision + 1
         try:
             _job_repo.save_job_state_atomic(job_id, state)
-        except OSError as exc:
-            _workflow_errors.raise_if_fatal(exc, job_id)
+        except BaseException as exc:
+            if had_revision:
+                state["snapshot_revision"] = revision
+            else:
+                state.pop("snapshot_revision", None)
+            if isinstance(exc, OSError):
+                _workflow_errors.raise_if_fatal(exc, job_id)
             raise
         try:
             _state_journal.rotate_if_applied(job_id, state)
@@ -9361,6 +9388,7 @@ def report_docx_bytes(job_id, state=None, frozen_assets=None):
     if frozen_assets and frozen_assets.get("stage3_report.docx"):
         return frozen_assets["stage3_report.docx"]
     state = state or load_job_state(job_id) or {}
+    _check_snapshot_revision(job_id, state)
     report = state.get("p3_md")
     if not report:
         return None
@@ -9652,8 +9680,10 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
 
 
 
+@_serialized_job_mutation
 def build_delivery_assets(job_id, state=None, target_lang="", provider="", model=""):
     state = state or load_job_state(job_id) or {}
+    _check_snapshot_revision(job_id, state)
     with _delivery_timing(job_id, state, "delivery_assets"):
         return _delivery_asset_bundle(
             job_id, state, target_lang or state.get("target_lang") or "",

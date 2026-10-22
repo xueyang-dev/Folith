@@ -729,6 +729,7 @@ def test_template_renderer_is_blocked_until_generated_and_uses_template(tmp_path
         core.save_job_state(job_id, state)
         contract = core.save_report_template(
             job_id, "mti.docx", _mti_template_bytes())
+        state = core.load_job_state(job_id)
         outline = _mti_outline(contract, [f"TD-{i:04d}" for i in range(1, 7)])
         artifact = academic_writer.build_report_artifact(
             _mti_markdown(), _mti_written(), outline,

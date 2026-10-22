@@ -66,10 +66,9 @@ adapter contracts, motion and task defaults. See `storage-regression.tsv`,
 `qt-regression.tsv` and `evidence.json` for the results. No full-suite claim is made.
 
 At the start of this work, #52 was still reproducible. A journal-only append loaded one pair
-through the repository but leaves `adapter.state_signature` unchanged and the
-task-card percentage unset. Current fetched `origin/main` is still `8ff81dc`;
-the repair described in the issue is not present there. Locate/integrate that
-repair, or implement it with incremental-read and live-workbench regressions.
+through the repository but left `adapter.state_signature` unchanged and the
+task-card percentage unset. Fetched `origin/main` was `8ff81dc`;
+the repair described in the issue was not present there.
 That baseline observation is superseded by the implementation below.
 
 ## Live progress implementation (#52)
@@ -102,7 +101,38 @@ The final loaded state equalled a forced cold load, and all live pairs were reco
 The last refresh took about 179 ms on this machine. This is repository timing,
 not a native UI responsiveness claim. See `issue-52-incremental.json`.
 
-Next: assess the stale-snapshot risks recorded in #53, then the relevant #54 UI cost.
+## Stale snapshot assessment and protection (#53 follow-up)
+
+The overwrite risk is confirmed through the existing delivery API: load a task
+whose target is a rejected JSON wrapper, commit a valid human correction, then
+call `build_delivery_assets` with the earlier state. Before the fix, export failed
+its target invariant yet saved the old full state and restored the rejected target.
+The same pre-load window exists in Qt report/current-asset export entrypoints.
+
+Snapshots now carry an integer `snapshot_revision`. Saves check it and advance it
+under the existing task transaction lock, while pipeline workers keep their
+existing lifetime-lock ownership. A stale save fails with a reload instruction.
+Legacy snapshots start at revision 0 without a migration command. Failed writes
+restore the caller's revision so a legitimate retry remains possible. The revision
+is storage bookkeeping and is excluded from immutable delivery content identity.
+
+Report DOCX, render-QA, saved report-QA and compliance operations reject a stale
+explicit state before writing artifacts. Delivery generation is serialized too.
+Qt export entrypoints ask the core to read fresh state inside that transaction,
+rather than carrying a pre-lock snapshot into a write-capable operation. Existing
+scan checkpoints and human-review promotion already execute inside their owning
+worker or state transaction; their ordinary current-state writes remain valid.
+
+The new test file covers the actual failed-export overwrite, all four artifact
+entrypoints, concurrent full saves, failed replacement/retry, legacy loading,
+deleted-task protection and three Qt export interleavings. All 12 cases pass.
+A related 12-file run passed 300 cases before the final three Qt interleaving cases
+were added; the final snapshot test file was rerun separately. Full integration
+regression is still required. No new issue is opened: the verified follow-up is
+tracked in integration PR #68 and this milestone log, separately from #53's DOCX
+whitespace work in PR #57.
+
+Next: integrate and verify the existing #54 UI-cost fix (PR #58).
 Windows native acceptance and packaged regression on the resulting integration
 branch remain outstanding.
 

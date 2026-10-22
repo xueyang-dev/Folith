@@ -2900,7 +2900,7 @@ def export_report(job_id: str, kind: str, path: str) -> str:
             raise AdapterError("还没有报告稿件可以导出。")
         data = text.encode("utf-8")
     elif kind == "docx":
-        data = core.report_docx_bytes(job_id, state)
+        data = core.report_docx_bytes(job_id)
         if not data:
             raise AdapterError("还没有报告稿件可以导出。")
     else:
@@ -3910,7 +3910,7 @@ def export_plan(job_id: str, destination: str | os.PathLike[str],
     if not state.get("p2_done"):
         raise AdapterError("这个任务还没有可导出的译文。")
     bundle = core.build_delivery_assets(
-        job_id, state,
+        job_id,
         target_lang=str(state.get("target_lang") or ""),
         provider=config.provider if config else "",
         model=config.model if config else "")
@@ -3941,7 +3941,7 @@ def export_current_assets(job_id: str, destination: str | os.PathLike[str],
     if not state.get("p2_done"):
         raise AdapterError("这个任务还没有可导出的译文。")
     bundle = core.build_delivery_assets(
-        job_id, state,
+        job_id,
         target_lang=str(state.get("target_lang") or ""),
         provider=config.provider if config else "",
         model=config.model if config else "")

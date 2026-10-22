@@ -60,7 +60,7 @@ def state_identity(state: Dict[str, Any]) -> str:
     # records a visual/Word check.
     for key in ("_source_bin", "delivery_snapshots",
                 "latest_delivery_snapshot_version", "final_qa",
-                "dependency_impact"):
+                "dependency_impact", "snapshot_revision"):
         value.pop(key, None)
     academic = value.get("academic_state")
     if isinstance(academic, dict):
