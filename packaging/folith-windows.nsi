@@ -14,7 +14,7 @@
 ; recursively.  Installing and uninstalling refuse while Folith is running.
 ;
 ; Build with:  scripts\build_qt_windows.ps1  (passes APP_VERSION, BASE, OUT_FILE)
-;          or:  makensis -DAPP_VERSION=0.7.0 packaging\folith-windows.nsi
+;          or:  makensis -DAPP_VERSION=0.7.1 packaging\folith-windows.nsi
 ;
 ; scripts\check_windows_installer_roundtrip.py exercises the built installer.
 ;
