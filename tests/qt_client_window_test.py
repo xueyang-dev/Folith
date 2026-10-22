@@ -3946,13 +3946,13 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
 def test_review_all_confirms_with_estimate_and_cancel_sends_nothing(client, monkeypatch):
     window, app = client["window"], client["app"]
     job_a, _job_b = _two_jobs(client)
-    held = _HeldRunner()
+    held = _HeldRunner(window.runner.submit)
     monkeypatch.setattr(window.runner, "submit", held.submit)
     asked: list[str] = []
     answer = {"value": False}
     monkeypatch.setattr(window, "_confirm",
                         lambda title, message, *a, **k: asked.append(message) or answer["value"])
-    window.open_job(job_a)
+    open_job_and_wait(window, job_a)
     app.processEvents()
 
     window.review_all()
