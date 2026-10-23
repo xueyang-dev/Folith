@@ -20,6 +20,7 @@ import contextlib
 import dataclasses
 import os
 import sys
+import threading
 import time
 import weakref
 from pathlib import Path
@@ -90,6 +91,35 @@ class _PhaseLog:
             except Exception:  # noqa: BLE001 - a log failure must never break the UI path
                 pass
         return total
+
+
+class _DeliveryPreviewCache:
+    """Worker-owned delivery-preview cache.
+
+    The preview walks the whole document, so it is refreshed on its own
+    slower cadence.  The window must not expose mutable cache fields to the
+    worker thread; this object owns them and serialises access.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._job_id = ""
+        self._model: dict = {}
+        self._at = 0.0
+
+    def refresh(self, job_id: str, config, state: dict) -> dict | None:
+        with self._lock:
+            if job_id != self._job_id:
+                self._job_id = job_id
+                self._model = {}
+                self._at = 0.0
+            now = time.monotonic()
+            if now - self._at < views_module.DELIVERY_REFRESH_SECONDS:
+                return None
+            model = adapter.delivery_preview(job_id, config, state=state)
+            self._model = model
+            self._at = now
+            return model
 
 
 class _NullProgress:
@@ -247,6 +277,13 @@ class MainWindow(QMainWindow):
         self._rows_cache: tuple | None = None  # (job_id+drafts 签名, state 对象, rows)
         self._cached_state: dict = {}
         self._cached_signature = ""
+        #: The delivery gate is the most expensive projection (it walks the
+        #: whole document), so it is refreshed on its own, slower cadence --
+        #: on the worker thread, never on the GUI thread.
+        self._delivery_cache = _DeliveryPreviewCache()
+        #: ``(state, models)`` the last poll computed on the worker thread; only
+        #: valid while ``state`` is still the cached state object.
+        self._cached_models: tuple | None = None
         #: 「译前准备」的目录（`adapter.setup_choices`）在一个进程里只需读一次。
         self._setup_choices_loaded = False
         #: 本次运行里已经自动做过智能画像的任务（进入「准备」时自动做一次，不重复收费）。
@@ -1626,7 +1663,7 @@ class MainWindow(QMainWindow):
             self._home_counter += 1
             if self._home_counter >= HOME_REFRESH_SECONDS:
                 self._home_counter = 0
-                self.refresh_home()
+                self._refresh_home_async()
                 self.refresh_pending_badge()
 
     @staticmethod
@@ -1796,13 +1833,20 @@ class MainWindow(QMainWindow):
         cached_at_start = self._cached_signature
         self._state_load_in_flight = True
 
+        count_occurrences = self.workbench.terms_open()
+
         def read():
             state = adapter.load_state(job_id)
-            try:
-                review = adapter.review_queue(job_id, state) if state else {}
-            except Exception:  # noqa: BLE001 - match the panel's projection boundary
-                review = {}  # a failed review projection must not hide committed pairs
-            return state, {"review": review}
+            if not state:
+                return state, None
+            models = adapter.workbench_models(
+                job_id, state, count_occurrences=count_occurrences)
+            # The delivery preview walks the whole document, the most expensive
+            # projection: it refreshes on its own cadence and the other polls
+            # keep the last result (the panel only repaints on change).
+            models["delivery"] = self._delivery_cache.refresh(
+                job_id, self.config, state)
+            return state, models
 
         def done(payload) -> None:
             self._state_load_in_flight = False
@@ -1813,14 +1857,15 @@ class MainWindow(QMainWindow):
             # still preparing its review queue. Keep that newer GUI snapshot.
             if self._cached_signature not in (cached_at_start, signature):
                 return
-            state, prepared = payload
+            state, models = payload
             if not state or self._cached_signature == signature:
                 # Unreadable (refresh reports it) or already refreshed meanwhile.
                 self.refresh_workbench()
                 return
             self._cached_state = state
             self._cached_signature = signature
-            self.refresh_workbench(preloaded=True, prepared=prepared)
+            self._cached_models = (state, models)
+            self.refresh_workbench(preloaded=True, models=models)
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
@@ -1829,7 +1874,8 @@ class MainWindow(QMainWindow):
                            label="poll-state")
 
     def refresh_workbench(self, *, force: bool = False, preloaded: bool = False,
-                          prepared: dict | None = None) -> None:
+                          prepared: dict | None = None,
+                          models: dict | None = None) -> None:
         if self._opening_job_id:
             return
         job_id = self._current_job_id
@@ -1839,7 +1885,7 @@ class MainWindow(QMainWindow):
         timing = _PhaseLog(self._log, "refresh_workbench", job_id, min_ms=self.SLOW_REFRESH_MS)
         try:
             self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded,
-                                    prepared=prepared)
+                                    prepared=prepared, models=models)
         finally:
             timing.flush()
             self._hide_loading()
@@ -1848,7 +1894,8 @@ class MainWindow(QMainWindow):
     SLOW_REFRESH_MS = 150
 
     def _refresh_workbench(self, job_id: str, timing: _PhaseLog, *, force: bool,
-                           preloaded: bool, prepared: dict | None = None) -> None:
+                           preloaded: bool, prepared: dict | None = None,
+                           models: dict | None = None) -> None:
         signature = adapter.state_signature(job_id)
         changed = preloaded or signature != self._cached_signature
         if (changed or force) and not preloaded:
@@ -1866,16 +1913,33 @@ class MainWindow(QMainWindow):
         if changed or force:
             with timing.phase("setup_panel"):
                 self._load_setup(job_id, state)
+        if models is None:
+            cached = self._cached_models
+            if (not changed and not force and cached is not None
+                    and cached[0] is state):
+                # The state did not change: the models the last poll computed
+                # are still valid, so the worker thread keeps owning those
+                # whole-document projections.
+                models = cached[1]
+        else:
+            models = dict(models)
         with timing.phase("segment_rows"):
-            rows = self._segment_rows(job_id, state)
+            rows = models.get("rows") if models is not None else None
+            if rows is None:
+                rows = self._segment_rows(job_id, state)
         # Leaving "prepare" for a large task builds the whole grid: say so first.
         if ((changed or force) and len(rows) >= self.LOADING_SEGMENTS
                 and getattr(self.workbench, "_showing_setup", False)):
             self._show_loading(i18n.tr('正在载入译文…'))
         with timing.phase("runtime_view"):
-            runtime = adapter.runtime_view(job_id, state)
+            runtime = models.get("runtime") if models is not None else None
+            if runtime is None:
+                runtime = adapter.runtime_view(job_id, state)
         with timing.phase("delivery_snapshots"):
-            snapshots = adapter.delivery_snapshots(job_id) if (changed or force)                 else self.workbench._snapshots
+            snapshots = models.get("snapshots") if models is not None else None
+            if snapshots is None:
+                snapshots = adapter.delivery_snapshots(job_id) if (changed or force) \
+                    else self.workbench._snapshots
         # The delivery panel is re-validated on an explicit refresh, or when the
         # run reaches a terminal state — not on every background state write.
         status = str(runtime.get("status") or "")
@@ -1885,7 +1949,8 @@ class MainWindow(QMainWindow):
         self._last_runtime_status = status
         with timing.phase("workbench.apply"):
             self.workbench.apply(job_id, state, rows, runtime, snapshots,
-                                 refresh_delivery=force or terminal_change, prepared=prepared)
+                                 refresh_delivery=force or terminal_change, prepared=prepared,
+                                 models=models)
         self._sync_menu_state()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
         self._later(600, lambda: self._offer_tips(runtime))
