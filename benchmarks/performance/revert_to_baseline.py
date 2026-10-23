@@ -1,8 +1,8 @@
 """Rebuild a pre-optimisation copy of the source tree.
 
-The working copy has no version control, so "before" has to be reconstructed.
-This script copies the tree and reverses the optimisation edits, which makes
-an honest before/after comparison (and answers "did this test already fail?")
+This script copies the tree and reverses the optimisation edits without
+requiring Git history on the machine running the benchmark. This makes an
+honest before/after comparison (and answers "did this test already fail?")
 possible.
 
 Run: ``python -m benchmarks.performance.revert_to_baseline <target-dir>``
@@ -31,10 +31,9 @@ def patch(path: str, current: str, original: str) -> None:
     PATCHES.append((path, current, original))
 
 
-# Generated from the final C1-C6 text: each hunk below replaces the optimised
-# text with the code that was on ``main`` before the C1-C6 port, so a reverted
-# tree is byte-for-byte (line endings aside) the pre-port product code.
-patch("core.py", r'''        with commit_lock:
+# Generated against the pre-port main at b8f82049. Each hunk restores
+# the unoptimised product code, including the cache-freshness integration fix.
+patch('core.py', r'''        with commit_lock:
             if saved:
                 runtime_batches_saved[0] += 1
             # 批次进度是展示状态，不是业务真值：合并写（见
@@ -53,7 +52,7 @@ patch("core.py", r'''        with commit_lock:
                 phase=operation_id, phase_label=label, progress=True,
 ''')
 
-patch("core.py", r'''
+patch('core.py', r'''
 
 def _append_runtime_event(job_id, event, *, stage=None, operation=None, metadata=None,
                           visibility=None, category=None, sync=True, event_name=None):
@@ -82,7 +81,7 @@ def _append_runtime_event(job_id, event, *, stage=None, operation=None, metadata
         "timestamp": _utc_now_iso(),
 ''')
 
-patch("core.py", r'''        with path.open("a", encoding="utf-8") as stream:
+patch('core.py', r'''        with path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
             stream.flush()
             if sync:
@@ -112,7 +111,7 @@ patch("core.py", r'''        with path.open("a", encoding="utf-8") as stream:
     return record
 ''')
 
-patch("core.py", r'''
+patch('core.py', r'''
 
 
 # ================= 运行时状态合并（批次进度的写放大治理）=================
@@ -417,7 +416,7 @@ def _runtime_telemetry_request_started(job_id):
     if coalescer is not None:
 ''')
 
-patch("core.py", r'''
+patch('core.py', r'''
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
@@ -442,7 +441,7 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     now = _utc_now_iso()
 ''')
 
-patch("core.py", r'''                        current["events"] = current["events"][-24:]
+patch('core.py', r'''                        current["events"] = current["events"][-24:]
                 else:
                     current["last_technical_event"] = message
                 if not duplicate and not event_logged:
@@ -458,7 +457,7 @@ patch("core.py", r'''                        current["events"] = current["events
                         {"event": event_name, "message": message,
 ''')
 
-patch("core.py", r'''    if stage_info["stage"] != "pipeline":
+patch('core.py', r'''    if stage_info["stage"] != "pipeline":
         changes.update({key: stage_info[key] for key in (
             "stage", "stage_id", "operation", "operation_id", "operation_label")})
     # 字幕是展示状态：合并写，落盘时仍然由 ``update_runtime_state`` 执行
@@ -478,7 +477,7 @@ patch("core.py", r'''    if stage_info["stage"] != "pipeline":
 
 ''')
 
-patch("core.py", r'''                on_caption=lambda text: _runtime_caption_callback(job_id, text),
+patch('core.py', r'''                on_caption=lambda text: _runtime_caption_callback(job_id, text),
             )
         result_state = load_job_state(job_id) or state
         # 终态之前先把合并中的批次进度写掉并关闭这条通道：否则一次迟到的状态写
@@ -496,7 +495,7 @@ patch("core.py", r'''                on_caption=lambda text: _runtime_caption_ca
             # resumable ``interrupted`` state, never "the user cancelled".
 ''')
 
-patch("core.py", r'''    # lease 永不过期 → 应用还活着时这个任务会**真的硬卡死**（状态一直停在活跃态，
+patch('core.py', r'''    # lease 永不过期 → 应用还活着时这个任务会**真的硬卡死**（状态一直停在活跃态，
     # start_job_worker / resume_job 都会拒绝）。这里必须失败闭合。
     except BaseException as exc:  # noqa: BLE001 - worker must publish failure to UI
         # 失败也是终态：先落盘并关闭合并中的状态通道，再读取/写终态。
@@ -513,7 +512,7 @@ patch("core.py", r'''    # lease 永不过期 → 应用还活着时这个任务
         cancelled = (not exit_requested) and (
 ''')
 
-patch("core.py", r'''        try:
+patch('core.py', r'''        try:
             flush_runtime_telemetry(job_id)
             reset_runtime_telemetry(job_id)
             flush_runtime_status(job_id)
@@ -529,161 +528,7 @@ patch("core.py", r'''        try:
                 update_runtime_state(
 ''')
 
-patch("folith/snapshots.py", r'''import tempfile
-from .job_lock import exclusive
-import zipfile
-from collections import OrderedDict
-from copy import deepcopy
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
-
-
-SNAPSHOT_DIR = "delivery_snapshots"
-''', r'''import tempfile
-from .job_lock import exclusive
-import zipfile
-from copy import deepcopy
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
-
-
-SNAPSHOT_DIR = "delivery_snapshots"
-''')
-
-patch("folith/snapshots.py", r'''
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-#: Frozen delivery assets are immutable, but their integrity is re-checked on
-#: every task-list refresh (the frozen-delivery status is part of every task's
-#: label).  Hashing the same megabytes again and again cost more than reading
-#: them, so the digest is remembered per (path, mtime, size).
-_ASSET_HASH_CACHE: "OrderedDict[Tuple[str, int, int], str]" = OrderedDict()
-_ASSET_HASH_CACHE_MAX = 64
-
-
-def _sha256_cached(path: Path, data: bytes) -> str:
-    """The SHA-256 of a file, remembered while the file stays unchanged."""
-    try:
-        stat = path.stat()
-    except OSError:
-        return _sha256(data)
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    cached = _ASSET_HASH_CACHE.get(key)
-    if cached is not None:
-        return cached
-    digest = _sha256(data)
-    if len(_ASSET_HASH_CACHE) >= _ASSET_HASH_CACHE_MAX:
-        _ASSET_HASH_CACHE.popitem(last=False)
-    _ASSET_HASH_CACHE[key] = digest
-    return digest
-
-
-def translation_truth_hash(state: Mapping[str, Any]) -> str:
-''', r'''
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def translation_truth_hash(state: Mapping[str, Any]) -> str:
-''')
-
-patch("folith/snapshots.py", r'''
-def state_identity(state: Dict[str, Any]) -> str:
-    """Hash the approved translation state without snapshot bookkeeping."""
-    # The keys below are the only ones that are dropped from the hash, so the
-    # copy only has to be shallow.  A full ``deepcopy`` of a book-length state
-    # cost ~100 ms and was paid on every task-list refresh (the frozen
-    # delivery status is part of every task's label).
-    # QA confirmations, impact explanations and artifact bookkeeping are
-    # review metadata, not the frozen document bytes.  They must not make an
-    # otherwise identical frozen snapshot appear divergent after a reviewer
-    # records a visual/Word check.
-    value = {key: item for key, item in (state or {}).items()
-             if key not in ("_source_bin", "delivery_snapshots",
-                            "latest_delivery_snapshot_version", "final_qa",
-                            "dependency_impact", "snapshot_revision")}
-    academic = value.get("academic_state")
-    if isinstance(academic, dict):
-        value["academic_state"] = {key: item for key, item in academic.items()
-                                   if key != "artifact_status"}
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
-                         separators=(",", ":"))
-    return _sha256(payload.encode("utf-8"))
-''', r'''
-def state_identity(state: Dict[str, Any]) -> str:
-    """Hash the approved translation state without snapshot bookkeeping."""
-    value = deepcopy(state)
-    # QA confirmations, impact explanations and artifact bookkeeping are
-    # review metadata, not the frozen document bytes.  They must not make an
-    # otherwise identical frozen snapshot appear divergent after a reviewer
-    # records a visual/Word check.
-    for key in ("_source_bin", "delivery_snapshots",
-                "latest_delivery_snapshot_version", "final_qa",
-                "dependency_impact", "snapshot_revision"):
-        value.pop(key, None)
-    academic = value.get("academic_state")
-    if isinstance(academic, dict):
-        academic.pop("artifact_status", None)
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
-                         separators=(",", ":"))
-    return _sha256(payload.encode("utf-8"))
-''')
-
-patch("folith/snapshots.py", r'''    except OSError:
-        return None
-    expected = manifest.get("artifact_hashes", {}).get(name)
-    # Export/read-back must re-hash the bytes it just read.  The status cache
-    # is only for the task-list integrity probe; using it here would accept a
-    # same-size rewrite with a restored mtime.
-    return data if expected == _sha256(data) else None
-
-
-def asset_intact(job_root: Path, version: int, name: str,
-                 manifest: Optional[Mapping[str, Any]] = None) -> bool:
-    """Is the frozen asset still byte-identical to what the manifest records?
-
-    The digest is remembered per (path, mtime, size), so an unchanged asset is
-    neither read nor hashed again on every task-list refresh.
-    """
-    if manifest is None:
-        manifest = next((item for item in list_snapshots(job_root)
-                         if item.get("snapshot_version") == int(version)), None)
-    if manifest is None:
-        return False
-    expected = (manifest.get("artifact_hashes") or {}).get(name)
-    if not expected:
-        return False
-    path = snapshot_root(job_root) / f"v{int(version)}" / name
-    try:
-        stat = path.stat()
-    except OSError:
-        return False
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    cached = _ASSET_HASH_CACHE.get(key)
-    if cached is not None:
-        return cached == expected
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return False
-    return _sha256_cached(path, data) == expected
-
-
-def archive(job_root: Path, version: int) -> Optional[bytes]:
-''', r'''    except OSError:
-        return None
-    expected = manifest.get("artifact_hashes", {}).get(name)
-    return data if expected == _sha256(data) else None
-
-
-def archive(job_root: Path, version: int) -> Optional[bytes]:
-''')
-
-patch("folith/engine/delivery_state.py", r'''    state = state if state is not None else _c.load_job_state(job_id)
+patch('folith/engine/delivery_state.py', r'''    state = state if state is not None else _c.load_job_state(job_id)
     current_identity = _snapshots.state_identity(state or {})
     matches = current_identity == latest.get("translation_state_identity")
     integrity = delivery_snapshot_assets_intact(job_id, latest["snapshot_version"])
@@ -700,7 +545,7 @@ patch("folith/engine/delivery_state.py", r'''    state = state if state is not N
         "current": bool(matches and integrity and state
 ''')
 
-patch("folith/engine/delivery_state.py", r'''    }
+patch('folith/engine/delivery_state.py', r'''    }
     _LIGHT_STATUS_CACHE[str(job_root)] = (key, status)
     return dict(status)
 
@@ -734,7 +579,7 @@ def delivery_snapshot_assets(job_id, version):
 def delivery_snapshot_assets(job_id, version):
 ''')
 
-patch("folith/qt/adapter.py", r'''
+patch('folith/qt/adapter.py', r'''
     return _events.activity_rows(
         core.read_runtime_events(job_id, limit, visibility="user"))
 
@@ -789,7 +634,7 @@ def source_path(job_id: str) -> Path | None:
 def source_path(job_id: str) -> Path | None:
 ''')
 
-patch("folith/qt/views.py", r'''        self._dirty = False
+patch('folith/qt/views.py', r'''        self._dirty = False
         self._last_runtime: dict = {}
         self._snapshots: list[dict] = []
         #: The derived, read-only projections that arrive with the state (they
@@ -808,7 +653,7 @@ patch("folith/qt/views.py", r'''        self._dirty = False
         self._delivery_preview_at = 0.0
 ''')
 
-patch("folith/qt/views.py", r'''
+patch('folith/qt/views.py', r'''
     def apply(self, job_id: str, state: dict, rows: list[adapter.SegmentRow],
               runtime: dict, snapshots: list[dict],
               *, refresh_delivery: bool = False, prepared: dict | None = None,
@@ -847,7 +692,7 @@ patch("folith/qt/views.py", r'''
         # The window hands back the very same state and row objects while neither
 ''')
 
-patch("folith/qt/views.py", r'''        if key == self._followup_key:
+patch('folith/qt/views.py', r'''        if key == self._followup_key:
             return
         self._followup_key = key
         view = self._models.get("followup")
@@ -871,7 +716,7 @@ patch("folith/qt/views.py", r'''        if key == self._followup_key:
         count = self.followup_panel.issue_count()
 ''')
 
-patch("folith/qt/views.py", r'''        signature = f"{self.job_id}|{adapter.activity_signature(self.job_id)}"
+patch('folith/qt/views.py', r'''        signature = f"{self.job_id}|{adapter.activity_signature(self.job_id)}"
         if signature == self.activity_panel.signature():
             return
         rows = self._models.get("activity")
@@ -895,7 +740,7 @@ patch("folith/qt/views.py", r'''        signature = f"{self.job_id}|{adapter.act
     def _render_terms(self, *, force: bool = False) -> None:
 ''')
 
-patch("folith/qt/views.py", r'''        on_page = force or self.terms_open()
+patch('folith/qt/views.py', r'''        on_page = force or self.terms_open()
         if on_page:
             self._terms_key = key
         view = self._models.get("terms")
@@ -921,7 +766,7 @@ patch("folith/qt/views.py", r'''        on_page = force or self.terms_open()
 
 ''')
 
-patch("folith/qt/views.py", r'''            prepared = getattr(self, "_prepared_review", None)
+patch('folith/qt/views.py', r'''            prepared = getattr(self, "_prepared_review", None)
             self._prepared_review = None
             view = (prepared[1] if prepared is not None and prepared[0] is self._state
                     else self._models.get("review"))
@@ -939,7 +784,7 @@ patch("folith/qt/views.py", r'''            prepared = getattr(self, "_prepared_
         self._review_items = list(view.get("queue_items") or [])
 ''')
 
-patch("folith/qt/views.py", r'''    def _render_segments(self) -> None:
+patch('folith/qt/views.py', r'''    def _render_segments(self) -> None:
         """按可见集合更新网格；重建时按稳定段身份恢复选中，不触碰编辑器。"""
         self._sync_segment_placeholder()
         previous_rows = self._rows
@@ -989,7 +834,7 @@ patch("folith/qt/views.py", r'''    def _render_segments(self) -> None:
             self._queue_segment_paint(schedule_heights=False)
 ''')
 
-patch("folith/qt/views.py", r'''        key = (self.job_id, id(self._state), len(self._all_rows))
+patch('folith/qt/views.py', r'''        key = (self.job_id, id(self._state), len(self._all_rows))
         if key != self._word_count_key:
             self._word_count_key = key
             count = self._models.get("word_count")
@@ -1008,7 +853,7 @@ patch("folith/qt/views.py", r'''        key = (self.job_id, id(self._state), len
             self.word_total_label.setText("")
 ''')
 
-patch("folith/qt/views.py", r'''        key = (self.job_id, len(self._snapshots),
+patch('folith/qt/views.py', r'''        key = (self.job_id, len(self._snapshots),
                str(self._state.get("delivery_status") or ""))
         unchanged = self._delivery_rendered and key == self._delivery_key
         same_job = bool(self._delivery_rendered and self._delivery_key
@@ -1067,7 +912,7 @@ patch("folith/qt/views.py", r'''        key = (self.job_id, len(self._snapshots)
         self._delivery_preview_at = now
 ''')
 
-patch("folith/qt/window.py", r'''import dataclasses
+patch('folith/qt/window.py', r'''import dataclasses
 import os
 import sys
 import threading
@@ -1082,7 +927,7 @@ import weakref
 from pathlib import Path
 ''')
 
-patch("folith/qt/window.py", r'''            except Exception:  # noqa: BLE001 - a log failure must never break the UI path
+patch('folith/qt/window.py', r'''            except Exception:  # noqa: BLE001 - a log failure must never break the UI path
                 pass
         return total
 
@@ -1101,6 +946,11 @@ class _DeliveryPreviewCache:
         self._model: dict = {}
         self._at = 0.0
 
+    def due(self, job_id: str) -> bool:
+        with self._lock:
+            return (job_id != self._job_id or not self._at
+                    or time.monotonic() - self._at >= views_module.DELIVERY_REFRESH_SECONDS)
+
     def refresh(self, job_id: str, config, state: dict) -> dict | None:
         with self._lock:
             if job_id != self._job_id:
@@ -1108,7 +958,7 @@ class _DeliveryPreviewCache:
                 self._model = {}
                 self._at = 0.0
             now = time.monotonic()
-            if now - self._at < views_module.DELIVERY_REFRESH_SECONDS:
+            if self._at and now - self._at < views_module.DELIVERY_REFRESH_SECONDS:
                 return None
             model = adapter.delivery_preview(job_id, config, state=state)
             self._model = model
@@ -1125,7 +975,7 @@ class _NullProgress:
 class _NullProgress:
 ''')
 
-patch("folith/qt/window.py", r'''        self._rows_cache: tuple | None = None  # (job_id+drafts 签名, state 对象, rows)
+patch('folith/qt/window.py', r'''        self._rows_cache: tuple | None = None  # (job_id+drafts 签名, state 对象, rows)
         self._cached_state: dict = {}
         self._cached_signature = ""
         #: The delivery gate is the most expensive projection (it walks the
@@ -1135,6 +985,7 @@ patch("folith/qt/window.py", r'''        self._rows_cache: tuple | None = None  
         #: ``(state, models)`` the last poll computed on the worker thread; only
         #: valid while ``state`` is still the cached state object.
         self._cached_models: tuple | None = None
+        self._cached_models_key: tuple | None = None
         #: 「译前准备」的目录（`adapter.setup_choices`）在一个进程里只需读一次。
         self._setup_choices_loaded = False
         #: 本次运行里已经自动做过智能画像的任务（进入「准备」时自动做一次，不重复收费）。
@@ -1146,7 +997,7 @@ patch("folith/qt/window.py", r'''        self._rows_cache: tuple | None = None  
         #: 本次运行里已经自动做过智能画像的任务（进入「准备」时自动做一次，不重复收费）。
 ''')
 
-patch("folith/qt/window.py", r'''            self._home_counter += 1
+patch('folith/qt/window.py', r'''            self._home_counter += 1
             if self._home_counter >= HOME_REFRESH_SECONDS:
                 self._home_counter = 0
                 self._refresh_home_async()
@@ -1162,13 +1013,50 @@ patch("folith/qt/window.py", r'''            self._home_counter += 1
     @staticmethod
 ''')
 
-patch("folith/qt/window.py", r'''        cached_at_start = self._cached_signature
+patch('folith/qt/window.py', r'''        self._auto_profiled.add(job_id)
+        self.run_style_profile(automatic=True)
+
+    def _workbench_models_key(self, job_id: str, signature: str) -> tuple:
+        """Inputs that can change independently of the translation snapshot."""
+        try:
+            stat = adapter.core.runtime_state_path(job_id).stat()
+            runtime_signature = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            runtime_signature = None
+        return (job_id, signature, runtime_signature, adapter.drafts_signature(job_id),
+                adapter.activity_signature(job_id), self.workbench.terms_open())
+
+    def _poll_workbench(self) -> None:
+        """Timer path: read a changed state off the GUI thread, then refresh.
+
+''', r'''        self._auto_profiled.add(job_id)
+        self.run_style_profile(automatic=True)
+
+    def _poll_workbench(self) -> None:
+        """Timer path: read a changed state off the GUI thread, then refresh.
+
+''')
+
+patch('folith/qt/window.py', r'''        if not job_id or self._state_load_in_flight:
+            return
+        signature = adapter.state_signature(job_id)
+        models_key = self._workbench_models_key(job_id, signature)
+        cached_state = self._cached_state
+        if (signature == self._cached_signature
+                and models_key == self._cached_models_key
+                and self._cached_models is not None
+                and self._cached_models[0] is cached_state
+                and not self._delivery_cache.due(job_id)):
+            self.refresh_workbench()
+            return
+        cached_at_start = self._cached_signature
         self._state_load_in_flight = True
 
         count_occurrences = self.workbench.terms_open()
 
         def read():
-            state = adapter.load_state(job_id)
+            state = (cached_state if signature == cached_at_start
+                     else adapter.load_state(job_id))
             if not state:
                 return state, None
             models = adapter.workbench_models(
@@ -1182,7 +1070,13 @@ patch("folith/qt/window.py", r'''        cached_at_start = self._cached_signatur
 
         def done(payload) -> None:
             self._state_load_in_flight = False
-''', r'''        cached_at_start = self._cached_signature
+''', r'''        if not job_id or self._state_load_in_flight:
+            return
+        signature = adapter.state_signature(job_id)
+        if signature == self._cached_signature:
+            self.refresh_workbench()
+            return
+        cached_at_start = self._cached_signature
         self._state_load_in_flight = True
 
         def read():
@@ -1197,17 +1091,22 @@ patch("folith/qt/window.py", r'''        cached_at_start = self._cached_signatur
             self._state_load_in_flight = False
 ''')
 
-patch("folith/qt/window.py", r'''            # still preparing its review queue. Keep that newer GUI snapshot.
+patch('folith/qt/window.py', r'''            # still preparing its review queue. Keep that newer GUI snapshot.
             if self._cached_signature not in (cached_at_start, signature):
                 return
             state, models = payload
-            if not state or self._cached_signature == signature:
+            if (not state or (cached_at_start != signature
+                              and self._cached_signature == signature)):
                 # Unreadable (refresh reports it) or already refreshed meanwhile.
                 self.refresh_workbench()
                 return
+            if (cached_at_start == signature
+                    and self._cached_state is not cached_state):
+                return  # An explicit refresh replaced the state during this poll.
             self._cached_state = state
             self._cached_signature = signature
             self._cached_models = (state, models)
+            self._cached_models_key = models_key
             self.refresh_workbench(preloaded=True, models=models)
 
         def failed(_message: str, _detail: str) -> None:
@@ -1228,7 +1127,7 @@ patch("folith/qt/window.py", r'''            # still preparing its review queue.
             self._state_load_in_flight = False
 ''')
 
-patch("folith/qt/window.py", r'''                           label="poll-state")
+patch('folith/qt/window.py', r'''                           label="poll-state")
 
     def refresh_workbench(self, *, force: bool = False, preloaded: bool = False,
                           prepared: dict | None = None,
@@ -1245,7 +1144,7 @@ patch("folith/qt/window.py", r'''                           label="poll-state")
         job_id = self._current_job_id
 ''')
 
-patch("folith/qt/window.py", r'''        timing = _PhaseLog(self._log, "refresh_workbench", job_id, min_ms=self.SLOW_REFRESH_MS)
+patch('folith/qt/window.py', r'''        timing = _PhaseLog(self._log, "refresh_workbench", job_id, min_ms=self.SLOW_REFRESH_MS)
         try:
             self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded,
                                     prepared=prepared, models=models)
@@ -1261,7 +1160,7 @@ patch("folith/qt/window.py", r'''        timing = _PhaseLog(self._log, "refresh_
             self._hide_loading()
 ''')
 
-patch("folith/qt/window.py", r'''    SLOW_REFRESH_MS = 150
+patch('folith/qt/window.py', r'''    SLOW_REFRESH_MS = 150
 
     def _refresh_workbench(self, job_id: str, timing: _PhaseLog, *, force: bool,
                            preloaded: bool, prepared: dict | None = None,
@@ -1278,13 +1177,14 @@ patch("folith/qt/window.py", r'''    SLOW_REFRESH_MS = 150
         if (changed or force) and not preloaded:
 ''')
 
-patch("folith/qt/window.py", r'''        if changed or force:
+patch('folith/qt/window.py', r'''        if changed or force:
             with timing.phase("setup_panel"):
                 self._load_setup(job_id, state)
         if models is None:
             cached = self._cached_models
             if (not changed and not force and cached is not None
-                    and cached[0] is state):
+                    and cached[0] is state
+                    and self._cached_models_key == self._workbench_models_key(job_id, signature)):
                 # The state did not change: the models the last poll computed
                 # are still valid, so the worker thread keeps owning those
                 # whole-document projections.
@@ -1329,7 +1229,7 @@ patch("folith/qt/window.py", r'''        if changed or force:
         status = str(runtime.get("status") or "")
 ''')
 
-patch("folith/qt/window.py", r'''        self._last_runtime_status = status
+patch('folith/qt/window.py', r'''        self._last_runtime_status = status
         with timing.phase("workbench.apply"):
             self.workbench.apply(job_id, state, rows, runtime, snapshots,
                                  refresh_delivery=force or terminal_change, prepared=prepared,
@@ -1346,6 +1246,159 @@ patch("folith/qt/window.py", r'''        self._last_runtime_status = status
         self._later(600, lambda: self._offer_tips(runtime))
 ''')
 
+patch('folith/snapshots.py', r'''import tempfile
+from .job_lock import exclusive
+import zipfile
+from collections import OrderedDict
+from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+
+SNAPSHOT_DIR = "delivery_snapshots"
+''', r'''import tempfile
+from .job_lock import exclusive
+import zipfile
+from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Mapping, Optional
+
+
+SNAPSHOT_DIR = "delivery_snapshots"
+''')
+
+patch('folith/snapshots.py', r'''
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+#: Frozen delivery assets are immutable, but their integrity is re-checked on
+#: every task-list refresh (the frozen-delivery status is part of every task's
+#: label).  Hashing the same megabytes again and again cost more than reading
+#: them, so the digest is remembered per (path, mtime, size).
+_ASSET_HASH_CACHE: "OrderedDict[Tuple[str, int, int], str]" = OrderedDict()
+_ASSET_HASH_CACHE_MAX = 64
+
+
+def _sha256_cached(path: Path, data: bytes) -> str:
+    """The SHA-256 of a file, remembered while the file stays unchanged."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return _sha256(data)
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    cached = _ASSET_HASH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    digest = _sha256(data)
+    if len(_ASSET_HASH_CACHE) >= _ASSET_HASH_CACHE_MAX:
+        _ASSET_HASH_CACHE.popitem(last=False)
+    _ASSET_HASH_CACHE[key] = digest
+    return digest
+
+
+def translation_truth_hash(state: Mapping[str, Any]) -> str:
+''', r'''
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def translation_truth_hash(state: Mapping[str, Any]) -> str:
+''')
+
+patch('folith/snapshots.py', r'''
+def state_identity(state: Dict[str, Any]) -> str:
+    """Hash the approved translation state without snapshot bookkeeping."""
+    # The keys below are the only ones that are dropped from the hash, so the
+    # copy only has to be shallow.  A full ``deepcopy`` of a book-length state
+    # cost ~100 ms and was paid on every task-list refresh (the frozen
+    # delivery status is part of every task's label).
+    # QA confirmations, impact explanations and artifact bookkeeping are
+    # review metadata, not the frozen document bytes.  They must not make an
+    # otherwise identical frozen snapshot appear divergent after a reviewer
+    # records a visual/Word check.
+    value = {key: item for key, item in (state or {}).items()
+             if key not in ("_source_bin", "delivery_snapshots",
+                            "latest_delivery_snapshot_version", "final_qa",
+                            "dependency_impact", "snapshot_revision")}
+    academic = value.get("academic_state")
+    if isinstance(academic, dict):
+        value["academic_state"] = {key: item for key, item in academic.items()
+                                   if key != "artifact_status"}
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"))
+    return _sha256(payload.encode("utf-8"))
+''', r'''
+def state_identity(state: Dict[str, Any]) -> str:
+    """Hash the approved translation state without snapshot bookkeeping."""
+    value = deepcopy(state)
+    # QA confirmations, impact explanations and artifact bookkeeping are
+    # review metadata, not the frozen document bytes.  They must not make an
+    # otherwise identical frozen snapshot appear divergent after a reviewer
+    # records a visual/Word check.
+    for key in ("_source_bin", "delivery_snapshots",
+                "latest_delivery_snapshot_version", "final_qa",
+                "dependency_impact", "snapshot_revision"):
+        value.pop(key, None)
+    academic = value.get("academic_state")
+    if isinstance(academic, dict):
+        academic.pop("artifact_status", None)
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"))
+    return _sha256(payload.encode("utf-8"))
+''')
+
+patch('folith/snapshots.py', r'''    except OSError:
+        return None
+    expected = manifest.get("artifact_hashes", {}).get(name)
+    # Export/read-back must re-hash the bytes it just read.  The status cache
+    # is only for the task-list integrity probe; using it here would accept a
+    # same-size rewrite with a restored mtime.
+    return data if expected == _sha256(data) else None
+
+
+def asset_intact(job_root: Path, version: int, name: str,
+                 manifest: Optional[Mapping[str, Any]] = None) -> bool:
+    """Is the frozen asset still byte-identical to what the manifest records?
+
+    The digest is remembered per (path, mtime, size), so an unchanged asset is
+    neither read nor hashed again on every task-list refresh.
+    """
+    if manifest is None:
+        manifest = next((item for item in list_snapshots(job_root)
+                         if item.get("snapshot_version") == int(version)), None)
+    if manifest is None:
+        return False
+    expected = (manifest.get("artifact_hashes") or {}).get(name)
+    if not expected:
+        return False
+    path = snapshot_root(job_root) / f"v{int(version)}" / name
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    cached = _ASSET_HASH_CACHE.get(key)
+    if cached is not None:
+        return cached == expected
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    return _sha256_cached(path, data) == expected
+
+
+def archive(job_root: Path, version: int) -> Optional[bytes]:
+''', r'''    except OSError:
+        return None
+    expected = manifest.get("artifact_hashes", {}).get(name)
+    return data if expected == _sha256(data) else None
+
+
+def archive(job_root: Path, version: int) -> Optional[bytes]:
+''')
 
 def main(argv: list[str]) -> int:
     if not argv:

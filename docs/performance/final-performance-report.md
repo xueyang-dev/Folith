@@ -1,5 +1,13 @@
 # Final performance report - Folith desktop client
 
+**Port integration (2026-10-23).** The measurements below remain the recorded
+pre-port source-tree pair; they were not rerun after integration. The port now
+invalidates background projections when runtime, draft, activity or term-panel
+inputs change, and rechecks delivery on its cadence even without a translation
+commit. Two regressions reproduced the stale-cache cases before this fix; the
+focused suites pass 60 cases afterward. The baseline builder was regenerated
+and verified: 38/38 edits restore the product files to pre-port main `b8f82049`.
+
 **Revision 2 (2026-10-23).** This revision replaces the earlier before/after
 pair. The first reconstruction reversed C1-C4 but not C5/C6, so its "before"
 tree already contained two optimisations. The numbers below come from a tree

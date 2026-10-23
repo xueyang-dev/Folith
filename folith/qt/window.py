@@ -107,6 +107,11 @@ class _DeliveryPreviewCache:
         self._model: dict = {}
         self._at = 0.0
 
+    def due(self, job_id: str) -> bool:
+        with self._lock:
+            return (job_id != self._job_id or not self._at
+                    or time.monotonic() - self._at >= views_module.DELIVERY_REFRESH_SECONDS)
+
     def refresh(self, job_id: str, config, state: dict) -> dict | None:
         with self._lock:
             if job_id != self._job_id:
@@ -114,7 +119,7 @@ class _DeliveryPreviewCache:
                 self._model = {}
                 self._at = 0.0
             now = time.monotonic()
-            if now - self._at < views_module.DELIVERY_REFRESH_SECONDS:
+            if self._at and now - self._at < views_module.DELIVERY_REFRESH_SECONDS:
                 return None
             model = adapter.delivery_preview(job_id, config, state=state)
             self._model = model
@@ -284,6 +289,7 @@ class MainWindow(QMainWindow):
         #: ``(state, models)`` the last poll computed on the worker thread; only
         #: valid while ``state`` is still the cached state object.
         self._cached_models: tuple | None = None
+        self._cached_models_key: tuple | None = None
         #: 「译前准备」的目录（`adapter.setup_choices`）在一个进程里只需读一次。
         self._setup_choices_loaded = False
         #: 本次运行里已经自动做过智能画像的任务（进入「准备」时自动做一次，不重复收费）。
@@ -1815,6 +1821,16 @@ class MainWindow(QMainWindow):
         self._auto_profiled.add(job_id)
         self.run_style_profile(automatic=True)
 
+    def _workbench_models_key(self, job_id: str, signature: str) -> tuple:
+        """Inputs that can change independently of the translation snapshot."""
+        try:
+            stat = adapter.core.runtime_state_path(job_id).stat()
+            runtime_signature = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            runtime_signature = None
+        return (job_id, signature, runtime_signature, adapter.drafts_signature(job_id),
+                adapter.activity_signature(job_id), self.workbench.terms_open())
+
     def _poll_workbench(self) -> None:
         """Timer path: read a changed state off the GUI thread, then refresh.
 
@@ -1827,7 +1843,13 @@ class MainWindow(QMainWindow):
         if not job_id or self._state_load_in_flight:
             return
         signature = adapter.state_signature(job_id)
-        if signature == self._cached_signature:
+        models_key = self._workbench_models_key(job_id, signature)
+        cached_state = self._cached_state
+        if (signature == self._cached_signature
+                and models_key == self._cached_models_key
+                and self._cached_models is not None
+                and self._cached_models[0] is cached_state
+                and not self._delivery_cache.due(job_id)):
             self.refresh_workbench()
             return
         cached_at_start = self._cached_signature
@@ -1836,7 +1858,8 @@ class MainWindow(QMainWindow):
         count_occurrences = self.workbench.terms_open()
 
         def read():
-            state = adapter.load_state(job_id)
+            state = (cached_state if signature == cached_at_start
+                     else adapter.load_state(job_id))
             if not state:
                 return state, None
             models = adapter.workbench_models(
@@ -1858,13 +1881,18 @@ class MainWindow(QMainWindow):
             if self._cached_signature not in (cached_at_start, signature):
                 return
             state, models = payload
-            if not state or self._cached_signature == signature:
+            if (not state or (cached_at_start != signature
+                              and self._cached_signature == signature)):
                 # Unreadable (refresh reports it) or already refreshed meanwhile.
                 self.refresh_workbench()
                 return
+            if (cached_at_start == signature
+                    and self._cached_state is not cached_state):
+                return  # An explicit refresh replaced the state during this poll.
             self._cached_state = state
             self._cached_signature = signature
             self._cached_models = (state, models)
+            self._cached_models_key = models_key
             self.refresh_workbench(preloaded=True, models=models)
 
         def failed(_message: str, _detail: str) -> None:
@@ -1916,7 +1944,8 @@ class MainWindow(QMainWindow):
         if models is None:
             cached = self._cached_models
             if (not changed and not force and cached is not None
-                    and cached[0] is state):
+                    and cached[0] is state
+                    and self._cached_models_key == self._workbench_models_key(job_id, signature)):
                 # The state did not change: the models the last poll computed
                 # are still valid, so the worker thread keeps owning those
                 # whole-document projections.

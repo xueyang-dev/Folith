@@ -178,3 +178,62 @@ def test_same_job_delivery_key_change_keeps_panel_until_fresh(client):
     workbench._render_delivery()
 
     assert "OLD PREVIEW" in workbench.delivery_label.text()
+
+
+def _warm_poll_models(client):
+    window = client["window"]
+    window.timer.stop()
+    job_id = _seed(client)
+    open_job_and_wait(window, job_id)
+    state = client["adapter"].load_state(job_id)
+    state["warnings"].append("Refresh projection cache")
+    client["core"].save_job_state(job_id, state)
+    _poll_and_wait(client)
+    assert window._cached_models is not None
+    return job_id
+
+
+def _poll_and_wait(client):
+    window = client["window"]
+    window._poll_workbench()
+    deadline = time.monotonic() + 15
+    while window._state_load_in_flight and time.monotonic() < deadline:
+        client["app"].processEvents()
+        time.sleep(0.01)
+    assert not window._state_load_in_flight
+
+
+def test_runtime_changes_refresh_without_a_translation_commit(client, monkeypatch):
+    job_id = _warm_poll_models(client)
+    adapter = client["adapter"]
+    signature = adapter.state_signature(job_id)
+    original = adapter.runtime_view
+
+    def fresh_runtime(*args, **kwargs):
+        return {**original(*args, **kwargs), "headline": "New runtime activity"}
+
+    monkeypatch.setattr(adapter, "runtime_view", fresh_runtime)
+    client["core"].update_runtime_state(job_id, status="paused")
+    assert adapter.state_signature(job_id) == signature
+    _poll_and_wait(client)
+    assert client["window"].workbench._last_runtime["headline"] == "New runtime activity"
+
+
+def test_idle_delivery_preview_refreshes_on_its_worker_cadence(client, monkeypatch):
+    job_id = _warm_poll_models(client)
+    adapter = client["adapter"]
+    window = client["window"]
+    signature = adapter.state_signature(job_id)
+    original = adapter.delivery_preview
+    calls = []
+
+    def fresh_delivery(*args, **kwargs):
+        calls.append(True)
+        return {**original(*args, **kwargs), "status_label": "Rechecked delivery"}
+
+    monkeypatch.setattr(adapter, "delivery_preview", fresh_delivery)
+    window._delivery_cache._at = 0.0
+    _poll_and_wait(client)
+    assert adapter.state_signature(job_id) == signature
+    assert calls, "an idle task must still recheck its delivery assets"
+    assert window.workbench._delivery_preview["status_label"] == "Rechecked delivery"
