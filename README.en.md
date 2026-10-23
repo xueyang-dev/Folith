@@ -102,7 +102,7 @@ Download one of these from the [v0.7.1 release](https://github.com/xueyang-dev/F
 - **Installer (recommended):** `Folith-Setup-0.7.1-windows-x64.exe`. Run it, choose a folder, and launch Folith from the Start menu. It installs for the current user only and does not require administrator rights. Uninstalling removes the app only; tasks, terms, memory and settings stay in `%LOCALAPPDATA%\Folith`.
 - **Portable:** `Folith-Qt-0.7.1-windows-x64.zip`. Right-click → Extract All, keep the extracted `Folith` folder together, and run `Folith\Folith.exe`. Do not run it from inside the ZIP preview.
 
-Requirements: Windows 10 or Windows 11, x64. The release was tested on Windows 11 x64. No Python, Git or developer tools are needed. Tesseract (English, Simplified Chinese, Arabic) is bundled; PaddleOCR and LibreOffice are not.
+Validated scope: Windows 11 x64. Windows 10 x64 is an unverified compatibility target. No Python, Git or developer tools are needed. Tesseract (English, Simplified Chinese, Arabic) is bundled; PaddleOCR and LibreOffice are not.
 
 The Windows build is unsigned. SmartScreen may warn on first launch: choose **More info → Run anyway** after checking the publisher and the SHA-256 checksum. Do not disable Windows security globally.
 
@@ -217,7 +217,7 @@ Folith itself is free and open source. The model calls made while translating ar
 ## ⚠️ Known limitations
 
 - The DMG supports Apple Silicon and macOS 15.7.5 or later only; it is unsigned and not notarized.
-- The Windows build supports x64 Windows 10/11; it was validated on Windows 11 x64 only and is unsigned. ARM64 Windows, other Windows versions and a separate clean VM were not tested for this release.
+- This release is validated on Windows 11 x64 and is unsigned; Windows 10 x64 compatibility is unverified. ARM64 Windows, other Windows versions and a separate clean VM were not tested for this release.
 - Windows manual acceptance items (native file panels, Chinese input method, sleep / wake, a real model service) are still manual; the automated frozen flow, OCR and install/uninstall checks are recorded in the release notes.
 - EPUB files with DRM are not supported.
 - Images inside tables and text boxes are not kept in the translated DOCX; the bilingual DOCX contains no images.
@@ -257,7 +257,7 @@ The interface is Simplified Chinese by default. English, Español, Русски�
 
 - [x] **v0.4.0**: unified branding, language assets and terminology hub, delivery gate, live draft recovery
 - [x] **v0.6.0**: the native Qt desktop client becomes the main entry; EPUB / TXT / Markdown import; vision model as the primary reader of scanned pages; per-project terms and translation memory; multiple model connections; cross-segment review; translated DOCX keeps source images; appearance follows the system
-- [x] **v0.7.1**: first Windows x64 desktop release (installer + portable ZIP); truthful review coverage that never counts skipped segments as reviewed; Windows path, encoding, console-window and window-restore fixes; resumable interrupted tasks; workbench polling no longer repaints the whole grid and large tasks show loading feedback before a chunked fill; knowledge feedback off the serial commit path; measured concurrency tiers with corrected tooltips; name conflicts resolved with one choice in the drawer and the review page. 0.7.0 was never published on its own; its content ships here
+- [x] **v0.7.1**: Windows x64 desktop stability update (installer + portable ZIP); truthful review coverage that never counts skipped segments as reviewed; Windows path, encoding, console-window and window-restore fixes; resumable interrupted tasks; workbench polling no longer repaints the whole grid and large tasks show loading feedback before a chunked fill; knowledge feedback off the serial commit path; measured concurrency tiers with corrected tooltips; name conflicts resolved with one choice in the drawer and the review page. 0.7.0 was published on 2026-10-22; this is a follow-up fix release
 - [ ] **Next**: code signing and notarization; Windows acceptance on more system versions and a clean VM; DOCX write-back preserving original layout and styles; fuzzy translation-memory matching; incremental translation across document versions
 
 ---

@@ -1,0 +1,195 @@
+{
+  "date": "2026-10-23",
+  "code_commit": "2c5fb1d00108e4a43950120547dc16cb3032f06e",
+  "native_os": "Windows 11 x64 build 26200",
+  "frozen_both_ok": true,
+  "bundled_ocr_ok": true,
+  "artifact_check_ok": true,
+  "sha256": {
+    "portable_zip": "39b1d1873f86926af0a9e0e0e496ff26a88def2e37f33152060f3c9d3aac3802",
+    "installer": "80ac353ea343ff6c8860b6a017e800c7a4bc609a8fc1745f3c75487deb68977b"
+  },
+  "real_model_task_working_export": {
+    "scope": "real-model existing 3283-segment task copy; checked working export; no provider calls",
+    "segments": 3283,
+    "pairs": 3283,
+    "ok": true,
+    "nonempty_targets": 3283,
+    "ordered_targets_verified": true,
+    "source_and_target_digest_unchanged": true,
+    "files": [
+      {
+        "kind": ".json",
+        "bytes": 125
+      },
+      {
+        "kind": ".docx",
+        "bytes": 146062
+      },
+      {
+        "kind": ".json",
+        "bytes": 123
+      },
+      {
+        "kind": ".docx",
+        "bytes": 271837
+      },
+      {
+        "kind": ".epub",
+        "bytes": 106671
+      },
+      {
+        "kind": ".json",
+        "bytes": 590
+      },
+      {
+        "kind": ".json",
+        "bytes": 31144
+      }
+    ]
+  },
+  "manual_ime_sleep": {
+    "operator_confirmed": true,
+    "chinese_draft_preserved": true,
+    "same_process_responding_after_wake": true,
+    "power_events": [
+      {
+        "utc": "2026-10-23T04:43:05.4679741Z",
+        "id": 507,
+        "provider": "Microsoft-Windows-Kernel-Power"
+      },
+      {
+        "utc": "2026-10-23T04:43:00.6977961Z",
+        "id": 506,
+        "provider": "Microsoft-Windows-Kernel-Power"
+      },
+      {
+        "utc": "2026-10-23T04:42:52.2462024Z",
+        "id": 507,
+        "provider": "Microsoft-Windows-Kernel-Power"
+      },
+      {
+        "utc": "2026-10-23T04:42:51.3283877Z",
+        "id": 506,
+        "provider": "Microsoft-Windows-Kernel-Power"
+      }
+    ],
+    "sleep_mode": "Modern Standby",
+    "native_chinese_spaced_path_dialog_import": true
+  },
+  "pending": [],
+  "not_tested": [
+    "Windows 10",
+    "Windows ARM64",
+    "independent clean Windows desktop VM",
+    "original performance VM",
+    "S3 sleep",
+    "hibernation"
+  ],
+  "manual_uninstaller_retry_cancel": {
+    "operator_confirmed": true,
+    "user_file_preserved": true,
+    "app_preserved": true,
+    "registered": true,
+    "ok": true
+  },
+  "final_installer_roundtrip": {
+    "ok": true,
+    "problems": [],
+    "install_while_running_exit": 2,
+    "uninstall_while_running_exit": 2,
+    "stale_file_removed_by_upgrade": true,
+    "user_files_kept": true,
+    "fresh_folder_removed": true
+  },
+  "frozen_real_model_working_export": {
+    "ok": true,
+    "frozen_code_commit": "2c5fb1d00108e4a43950120547dc16cb3032f06e",
+    "ui_action": "native delivery page export current translation copy through Windows directory panel",
+    "segments": 3283,
+    "nonempty_targets": 3283,
+    "all_targets_in_docx_source_order": true,
+    "source_target_snapshot_digest_unchanged": true,
+    "files": [
+      {
+        "kind": ".docx",
+        "bytes": 271837
+      },
+      {
+        "kind": ".json",
+        "bytes": 31144
+      },
+      {
+        "kind": ".json",
+        "bytes": 123
+      },
+      {
+        "kind": ".json",
+        "bytes": 590
+      },
+      {
+        "kind": ".json",
+        "bytes": 125
+      },
+      {
+        "kind": ".docx",
+        "bytes": 146062
+      },
+      {
+        "kind": ".epub",
+        "bytes": 106670
+      }
+    ]
+  },
+  "release_ci": {
+    "url": "https://github.com/xueyang-dev/Folith/actions/runs/39902584068",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "decide whether to validate",
+        "conclusion": "success"
+      },
+      {
+        "name": "Windows x64 Qt candidate (build, frozen flow, installer, release checks)",
+        "conclusion": "success"
+      },
+      {
+        "name": "macOS Qt candidate (build, frozen flow, DMG, release checks)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Python 3.12)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Python 3.10)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / package / build and wheel smoke",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Python 3.11)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / shared-qt-macos / Shared Qt (macos-15)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Windows, Python 3.11)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / Main Full Regression",
+        "conclusion": "success"
+      },
+      {
+        "name": "Release Validation",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "release_url": "https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1"
+}

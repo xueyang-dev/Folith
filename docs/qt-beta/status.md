@@ -1,7 +1,7 @@
 # Folith Qt 桌面端 — Beta 状态
 
-> 更新：v0.7.1 已于 2026-10-22 发布（Windows x64 首个公开桌面版与 macOS DMG）。
-> 原定的 v0.7.0 从未创建 tag 或 Release，其内容已并入 v0.7.1。
+> 更新：v0.7.0 已于 2026-10-22 发布，包含 Windows x64 与 macOS 产物。
+> v0.7.1 的本轮原生验收见 [发布说明](../release-notes-0.7.1.md)；当前可下载版本以 GitHub Release 为准。
 > 本文件下方仍是 0.6 发布前的历史状态记录，正式支持范围与校验值见 GitHub Release。
 
 单一进度清单（复用 `docs/qt-spike/evidence-log.md` 作为证据日志，不重复造第二份证据表）。
