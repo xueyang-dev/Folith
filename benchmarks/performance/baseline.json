@@ -4,7 +4,7 @@
   "python": "3.11.16",
   "platform": "win32",
   "provenance": {
-    "tree": "C:\\Users\\eliot\\AppData\\Local\\Temp\\folith-revert-check3",
+    "tree": "<tmp>/folith-revert-check3",
     "tree_builder": "python -m benchmarks.performance.revert_to_baseline <target>",
     "reverted": "27/27 edits",
     "run": "--baseline (idempotent on the reverted tree)"

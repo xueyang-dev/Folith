@@ -235,7 +235,7 @@ rebuild.
 
 ### 5.1 Provenance and commands
 
-The baseline tree is `C:\Users\eliot\AppData\Local\Temp\folith-revert-check3`,
+The baseline tree is `<tmp>/folith-revert-check3`,
 built with:
 
 ```powershell
