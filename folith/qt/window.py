@@ -112,6 +112,13 @@ class _DeliveryPreviewCache:
             return (job_id != self._job_id or not self._at
                     or time.monotonic() - self._at >= views_module.DELIVERY_REFRESH_SECONDS)
 
+    def prime(self, job_id: str, model: dict) -> None:
+        """Reuse the preview already computed by the asynchronous open path."""
+        with self._lock:
+            self._job_id = job_id
+            self._model = model
+            self._at = time.monotonic()
+
     def refresh(self, job_id: str, config, state: dict) -> dict | None:
         with self._lock:
             if job_id != self._job_id:
@@ -1347,6 +1354,11 @@ class MainWindow(QMainWindow):
             with timing.phase("workbench.load"):
                 self.workbench.load(job_id, self.config, state, rows, snapshots,
                                     prepared=prepared)
+            self._cached_models = (state, {
+                "rows": rows, "runtime": prepared["runtime"], "snapshots": snapshots,
+                "review": prepared["review"], "delivery": prepared["delivery"]})
+            self._cached_models_key = self._workbench_models_key(job_id, signature)
+            self._delivery_cache.prime(job_id, prepared["delivery"])
             self.stack.setCurrentWidget(self.workbench)
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))

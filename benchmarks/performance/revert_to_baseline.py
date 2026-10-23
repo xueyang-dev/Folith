@@ -951,6 +951,13 @@ class _DeliveryPreviewCache:
             return (job_id != self._job_id or not self._at
                     or time.monotonic() - self._at >= views_module.DELIVERY_REFRESH_SECONDS)
 
+    def prime(self, job_id: str, model: dict) -> None:
+        """Reuse the preview already computed by the asynchronous open path."""
+        with self._lock:
+            self._job_id = job_id
+            self._model = model
+            self._at = time.monotonic()
+
     def refresh(self, job_id: str, config, state: dict) -> dict | None:
         with self._lock:
             if job_id != self._job_id:
@@ -995,6 +1002,25 @@ patch('folith/qt/window.py', r'''        self._rows_cache: tuple | None = None  
         #: 「译前准备」的目录（`adapter.setup_choices`）在一个进程里只需读一次。
         self._setup_choices_loaded = False
         #: 本次运行里已经自动做过智能画像的任务（进入「准备」时自动做一次，不重复收费）。
+''')
+
+patch('folith/qt/window.py', r'''            with timing.phase("workbench.load"):
+                self.workbench.load(job_id, self.config, state, rows, snapshots,
+                                    prepared=prepared)
+            self._cached_models = (state, {
+                "rows": rows, "runtime": prepared["runtime"], "snapshots": snapshots,
+                "review": prepared["review"], "delivery": prepared["delivery"]})
+            self._cached_models_key = self._workbench_models_key(job_id, signature)
+            self._delivery_cache.prime(job_id, prepared["delivery"])
+            self.stack.setCurrentWidget(self.workbench)
+            self._log(f"open job {job_id}")
+            self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
+''', r'''            with timing.phase("workbench.load"):
+                self.workbench.load(job_id, self.config, state, rows, snapshots,
+                                    prepared=prepared)
+            self.stack.setCurrentWidget(self.workbench)
+            self._log(f"open job {job_id}")
+            self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
 ''')
 
 patch('folith/qt/window.py', r'''            self._home_counter += 1
