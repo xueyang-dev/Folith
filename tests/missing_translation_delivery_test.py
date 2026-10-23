@@ -98,6 +98,33 @@ def test_export_error_reports_completeness_blocker_instead_of_empty_target_notic
     assert persisted["delivery_validation"]["blocking"]
 
 
+def test_complete_credit_with_shared_surname_initials_can_be_exported(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    source = ("Alice M. and Robert J. Smith Collection of English and American "
+              "Literature, The Metropolitan Public Library.")
+    target = "爱丽丝·M·与罗伯特·J·史密斯英美文学收藏馆，大都会公共图书馆。"
+    assert len(target) < len(source) * .35
+    assert core._count_sentences(source) == 1
+    state = core.new_job_state("credits.txt")
+    state.update(p1_done=True, p2_done=True, report_enabled=False,
+                 paras=[source], pairs=[{"source": source, "target": target}],
+                 delivery_config=core.normalize_delivery_config({"deliver_plain_docx": True}))
+    core.save_job_state("credit", state)
+    bundle = core.build_delivery_assets("credit")
+    text = "\n".join(p.text for p in Document(BytesIO(bundle["translation.docx"])).paragraphs)
+    assert target in text
+    assert core.load_job_state("credit")["pairs"] == state["pairs"]
+
+
+def test_name_initials_do_not_exempt_real_truncation_or_lettered_sentences():
+    source = ("Alice M. and Robert J. Smith Collection of English and American Literature. "
+              "The collection contains several hundred manuscripts and their complete history. "
+              "The library preserves every document and makes the catalogue available to readers.")
+    assert core._count_sentences(source) == 3
+    assert core.is_incomplete_translation(source, "史密斯文学收藏馆。")
+    assert core._count_sentences("We selected Plan A. We tested it. They accepted the result.") == 3
+
+
 def test_existing_missing_source_gate_rows_export_with_empty_cells(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     state = core.new_job_state("report.pdf")
