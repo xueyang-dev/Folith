@@ -1,0 +1,781 @@
+{
+  "date": "2026-10-23",
+  "build": {
+    "app_version": "0.7.1",
+    "build_id": "git:2603643",
+    "built_at": "2026-10-22T23:38:40+00:00",
+    "commit": "2603643230300999a34fd9cd8ace6dadf66095a4",
+    "os_version": "Windows-10-10.0.26200-SP0",
+    "packaging_backend": "pyinstaller",
+    "pyinstaller_version": "6.22.3",
+    "pyside6_version": "6.11.2",
+    "python_version": "3.11.16",
+    "qt_version": "6.11.2",
+    "shell": "qt",
+    "target_arch": "AMD64",
+    "target_platform": "windows",
+    "worktree_dirty": false
+  },
+  "native_qt_platform": "windows",
+  "scope": "Windows 11 x64 hardware; no Windows 10 or original VM acceptance claim",
+  "frozen_flows": {
+    "both": {
+      "ok": true,
+      "duration_s": 22.0,
+      "identity": {
+        "app_version": "0.7.1",
+        "build_id": "git:2603643",
+        "frozen": true,
+        "python": "3.11.16",
+        "platform": "win32"
+      },
+      "pdf_sources": [
+        {
+          "job_id": "55cd400f1e2bbdce",
+          "pages": 1,
+          "png_bytes": 17709,
+          "segment_page": 0,
+          "highlight_rects": 1
+        }
+      ],
+      "review": {
+        "reviewed": 3,
+        "total": 3,
+        "settled": true,
+        "pending_after_retries": [],
+        "open_blocking": []
+      },
+      "delivery": {
+        "snapshots": [
+          1
+        ],
+        "assets": [
+          "bilingual.docx",
+          "delivery_manifest.json",
+          "docx_export_report.json",
+          "segment_evidence.jsonl",
+          "source_cleanup.json",
+          "terms.xlsx",
+          "translation.docx"
+        ],
+        "delivery_status": "final",
+        "current": true
+      }
+    },
+    "epub": {
+      "ok": true,
+      "duration_s": 20.9,
+      "identity": {
+        "app_version": "0.7.1",
+        "build_id": "git:2603643",
+        "frozen": true,
+        "python": "3.11.16",
+        "platform": "win32"
+      },
+      "pdf_sources": [],
+      "review": {
+        "reviewed": 3,
+        "total": 3,
+        "settled": true,
+        "pending_after_retries": [],
+        "open_blocking": []
+      },
+      "delivery": {
+        "snapshots": [
+          1
+        ],
+        "assets": [
+          "bilingual.docx",
+          "delivery_manifest.json",
+          "docx_export_report.json",
+          "segment_evidence.jsonl",
+          "source_cleanup.json",
+          "terms.xlsx",
+          "translation.docx"
+        ],
+        "delivery_status": "final",
+        "current": true
+      }
+    },
+    "txt": {
+      "ok": true,
+      "duration_s": 20.9,
+      "identity": {
+        "app_version": "0.7.1",
+        "build_id": "git:2603643",
+        "frozen": true,
+        "python": "3.11.16",
+        "platform": "win32"
+      },
+      "pdf_sources": [],
+      "review": {
+        "reviewed": 3,
+        "total": 3,
+        "settled": true,
+        "pending_after_retries": [],
+        "open_blocking": []
+      },
+      "delivery": {
+        "snapshots": [
+          1
+        ],
+        "assets": [
+          "bilingual.docx",
+          "delivery_manifest.json",
+          "docx_export_report.json",
+          "segment_evidence.jsonl",
+          "source_cleanup.json",
+          "terms.xlsx",
+          "translation.docx"
+        ],
+        "delivery_status": "final",
+        "current": true
+      }
+    },
+    "md": {
+      "ok": true,
+      "duration_s": 20.7,
+      "identity": {
+        "app_version": "0.7.1",
+        "build_id": "git:2603643",
+        "frozen": true,
+        "python": "3.11.16",
+        "platform": "win32"
+      },
+      "pdf_sources": [],
+      "review": {
+        "reviewed": 4,
+        "total": 4,
+        "settled": true,
+        "pending_after_retries": [],
+        "open_blocking": []
+      },
+      "delivery": {
+        "snapshots": [
+          1
+        ],
+        "assets": [
+          "bilingual.docx",
+          "delivery_manifest.json",
+          "docx_export_report.json",
+          "segment_evidence.jsonl",
+          "source_cleanup.json",
+          "terms.xlsx",
+          "translation.docx"
+        ],
+        "delivery_status": "final",
+        "current": true
+      }
+    }
+  },
+  "ocr": {
+    "ok": true,
+    "cases": {
+      "pdf_scanned": {
+        "exit_code": 0,
+        "seconds": 25.5,
+        "expected_found": true,
+        "ocr_backend": "tesseract",
+        "ocr_language_engine_code": "eng",
+        "segments": 3
+      },
+      "pdf_chinese_scanned": {
+        "exit_code": 0,
+        "seconds": 23.1,
+        "expected_found": true,
+        "ocr_backend": "tesseract",
+        "ocr_language_engine_code": "chi_sim",
+        "segments": 3
+      },
+      "pdf_arabic_scanned": {
+        "exit_code": 0,
+        "seconds": 23.5,
+        "expected_found": true,
+        "ocr_backend": "tesseract",
+        "ocr_language_engine_code": "ara",
+        "segments": 3
+      }
+    }
+  },
+  "frozen_recovery": {
+    "ok": true,
+    "scope": "post-run validation of retained original artifacts; no new translation run",
+    "fixture": "4000 generated Chinese paragraphs; deterministic localhost provider",
+    "killed_exit": 1,
+    "committed_pairs_at_kill": 28,
+    "replay_after_kill": {
+      "applied": 7,
+      "cursor": 7,
+      "gap": false,
+      "salvaged": 0,
+      "dropped": 0
+    },
+    "replay_after_resume": {
+      "applied": 0,
+      "cursor": 1000,
+      "gap": false,
+      "salvaged": 0,
+      "dropped": 0
+    },
+    "recovered_pairs": 4000,
+    "committed_text_fields_preserved": true,
+    "canonical_uids_added": 28,
+    "existing_canonical_uids_changed": 0,
+    "minimum_regenerated_offset": 28,
+    "committed_batches_not_regenerated": true,
+    "reviewed": 4000,
+    "final_delivery": {
+      "snapshots": [
+        1
+      ],
+      "assets": [
+        "bilingual.docx",
+        "delivery_manifest.json",
+        "docx_export_report.json",
+        "segment_evidence.jsonl",
+        "source_cleanup.json",
+        "terms.xlsx",
+        "translation.docx"
+      ],
+      "delivery_status": "final",
+      "current": true
+    },
+    "all_4000_export_targets_in_source_order": true,
+    "identity": {
+      "app_version": "0.7.1",
+      "build_id": "git:2603643",
+      "frozen": true,
+      "python": "3.11.16",
+      "platform": "win32"
+    },
+    "original_driver_assertion": "incorrectly required a previously absent segment_uid to stay absent; corrected validator allows canonical UID addition",
+    "duration_s": 508.05
+  },
+  "source_native_recovery": {
+    "ok": true,
+    "duration_s": 191.3,
+    "lifecycle": {
+      "paused_pairs": 44,
+      "stable_while_paused": true,
+      "workbench_caught_up": true,
+      "card_percent": 1,
+      "minimized": true,
+      "progressed_while_minimized": true,
+      "same_worker_after_continue": true,
+      "ui_heartbeat": {
+        "timer_interval_ms": 50,
+        "ticks": 134,
+        "max_gap_ms": 1625.0,
+        "p95_gap_ms": 140.0
+      },
+      "qt_platform": "windows"
+    },
+    "durable_after_kill": {
+      "pairs": 88,
+      "replay": {
+        "applied": 22,
+        "cursor": 22,
+        "gap": false,
+        "salvaged": 0,
+        "dropped": 0
+      },
+      "segments": 4000
+    },
+    "committed_pairs_equal_after_reopen": true,
+    "committed_fields_preserved_after_resume": true,
+    "committed_batches_not_regenerated": true,
+    "after_resume": {
+      "p1_done": true,
+      "p2_done": true,
+      "pairs": 4000,
+      "reviewed": 0
+    },
+    "ui_heartbeat_during_resume": {
+      "timer_interval_ms": 50,
+      "ticks": 1382,
+      "max_gap_ms": 828.0,
+      "p95_gap_ms": 359.0
+    },
+    "quiet_running_window": {
+      "wall_s": 3.0,
+      "process_cpu_s": 2.4375,
+      "process_cpu_percent_one_core": 81.25,
+      "max_gap_ms": 250.0,
+      "visible_pairs_before": 88,
+      "visible_pairs_after": 112,
+      "scope": "driver only pumps Qt; CPU includes the real core worker"
+    }
+  },
+  "native_real_epub": {
+    "commit": "2603643230300999a34fd9cd8ace6dadf66095a4",
+    "scope": "source native window on a private copy; no model calls",
+    "steps": [
+      {
+        "step": "open",
+        "dispatch_s": 0.031,
+        "wall_s": 1.656,
+        "process_cpu_s": 1.625,
+        "cpu_percent_one_core": 98.13,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 9,
+          "max_gap_ms": 672.0,
+          "p95_gap_ms": 312.0
+        }
+      },
+      {
+        "step": "finish_grid",
+        "dispatch_s": 0.0,
+        "wall_s": 0.844,
+        "process_cpu_s": 0.7031,
+        "cpu_percent_one_core": 83.31,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 14,
+          "max_gap_ms": 78.0,
+          "p95_gap_ms": 78.0
+        }
+      },
+      {
+        "step": "select_last",
+        "dispatch_s": 0.016,
+        "wall_s": 0.266,
+        "process_cpu_s": 0.1406,
+        "cpu_percent_one_core": 52.87,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 4,
+          "max_gap_ms": 63.0,
+          "p95_gap_ms": 62.0
+        }
+      },
+      {
+        "step": "delivery_preflight",
+        "dispatch_s": 0.282,
+        "wall_s": 0.282,
+        "process_cpu_s": 0.2969,
+        "cpu_percent_one_core": 105.27,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 1,
+          "max_gap_ms": 282.0,
+          "p95_gap_ms": 0.0
+        }
+      },
+      {
+        "step": "home_0",
+        "dispatch_s": 0.062,
+        "wall_s": 0.265,
+        "process_cpu_s": 0.1406,
+        "cpu_percent_one_core": 53.07,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 3,
+          "max_gap_ms": 109.0,
+          "p95_gap_ms": 63.0
+        }
+      },
+      {
+        "step": "reopen_0",
+        "dispatch_s": 0.031,
+        "wall_s": 1.109,
+        "process_cpu_s": 1.1406,
+        "cpu_percent_one_core": 102.85,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 3,
+          "max_gap_ms": 578.0,
+          "p95_gap_ms": 453.0
+        }
+      },
+      {
+        "step": "home_1",
+        "dispatch_s": 0.062,
+        "wall_s": 0.266,
+        "process_cpu_s": 0.2344,
+        "cpu_percent_one_core": 88.11,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 3,
+          "max_gap_ms": 109.0,
+          "p95_gap_ms": 63.0
+        }
+      },
+      {
+        "step": "reopen_1",
+        "dispatch_s": 0.031,
+        "wall_s": 0.953,
+        "process_cpu_s": 0.9688,
+        "cpu_percent_one_core": 101.65,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 3,
+          "max_gap_ms": 594.0,
+          "p95_gap_ms": 312.0
+        }
+      },
+      {
+        "step": "idle",
+        "dispatch_s": 0.0,
+        "wall_s": 15.0,
+        "process_cpu_s": 0.4531,
+        "cpu_percent_one_core": 3.02,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 240,
+          "max_gap_ms": 78.0,
+          "p95_gap_ms": 78.0
+        }
+      },
+      {
+        "step": "import_real_source",
+        "dispatch_s": 0.0,
+        "wall_s": 2.141,
+        "process_cpu_s": 2.125,
+        "cpu_percent_one_core": 99.25,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 11,
+          "max_gap_ms": 657.0,
+          "p95_gap_ms": 500.0
+        }
+      },
+      {
+        "step": "reimport_same_source",
+        "dispatch_s": 0.0,
+        "wall_s": 0.75,
+        "process_cpu_s": 0.7656,
+        "cpu_percent_one_core": 102.08,
+        "heartbeat": {
+          "timer_interval_ms": 50,
+          "ticks": 7,
+          "max_gap_ms": 250.0,
+          "p95_gap_ms": 141.0
+        }
+      }
+    ],
+    "platform": "windows",
+    "segments": 3283,
+    "pairs": 3283,
+    "reimport_created_no_duplicates": true,
+    "ok": true
+  },
+  "installer_roundtrip": {
+    "ok": true,
+    "problems": [],
+    "install_while_running_exit": 2,
+    "uninstall_while_running_exit": 2,
+    "stale_file_removed_by_upgrade": true,
+    "user_files_kept": true,
+    "fresh_folder_removed": true
+  },
+  "cross_version": {
+    "ok": true,
+    "upgrade_while_old_running_exit": 2,
+    "old_flow_exit": 0,
+    "new_uninstall_while_running_exit": 2,
+    "stale_removed": true,
+    "new_flow_ok": true,
+    "user_file_preserved": true,
+    "duration_s": 109.21
+  },
+  "artifact_check": {
+    "ok": true,
+    "problems": []
+  },
+  "regression": {
+    "windows_atomic_journal_locks_settings_polling_recovery": 100,
+    "adapter": 60,
+    "focused_window": 5,
+    "isolated_keyboard_navigation": 1,
+    "total_completed": 166,
+    "combined_window_adapter_run": "interrupted after 108 pass markers; not counted as a completed suite"
+  },
+  "native_controls": {
+    "native_file_dialog_open_cancel": true,
+    "unicode_path_import_via_dialog": false,
+    "ime": false,
+    "sleep_wake": false,
+    "interactive_installer_retry_cancel": false
+  },
+  "artifacts": [
+    {
+      "name": "Folith-Qt-0.7.1-windows-x64.zip",
+      "bytes": 248277515,
+      "sha256": "2ae978a7f72c15ad58df3a1ddebd64516d1702ad0a670e89064c6caae28e3310"
+    },
+    {
+      "name": "Folith-Setup-0.7.1-windows-x64.exe",
+      "bytes": 155153322,
+      "sha256": "def2cf514aeaa3fe77352034349410c3b7fd8151c4022b6b8d71f618fd6a4bdb"
+    }
+  ],
+  "limits": [
+    "Generated deterministic translation tests do not validate real-model quality or real-book final export.",
+    "Native EPUB measurements use a copy of the real 3283-segment task, without model calls.",
+    "Source 4000-segment lifecycle ran during packaging: its timing is not an isolated performance baseline.",
+    "The original frozen driver wrongly rejected addition of previously absent canonical segment UIDs. Retained artifacts passed an independent corrected validator; no product state was modified.",
+    "Original 0.7.0 uninstaller does not provide the new safeguard; the final cross-version run checks new installer against old running app and new uninstaller against new running app.",
+    "Windows Computer Use did not expose the interactive uninstaller window; Retry/Cancel was not exercised."
+  ],
+  "concurrency": {
+    "implementation": {
+      "commit": "2603643230300999a34fd9cd8ace6dadf66095a4",
+      "worktree_dirty": false
+    },
+    "fixture": {
+      "segments": 3204,
+      "sections": 6,
+      "fake_llm_latency_s": 0.03,
+      "batch_size": 4,
+      "review_enabled": false,
+      "knowledge_feedback_interval": 1,
+      "translation_cache_enabled": false,
+      "knowledge_cache_enabled": false,
+      "warmup_segments": 8,
+      "repeats": 1
+    },
+    "configuration_defaults": {
+      "core_fallback": 1,
+      "shared_task_default": 4,
+      "presets": {
+        "快速": 6,
+        "标准": 4,
+        "学术增强": 4
+      }
+    },
+    "runs": {
+      "1": {
+        "wall_time_s": 124.2812,
+        "segment_count": 3204,
+        "source_order_digest": "3c030a91494a2805",
+        "target_digest": "2250228cdf1c4718",
+        "batch_timing_summary": {
+          "prepare": {
+            "count": 801,
+            "sum_s": 29.674,
+            "median_s": 0.032,
+            "p95_s": 0.047,
+            "max_s": 0.219
+          },
+          "commit_wait": {
+            "count": 801,
+            "sum_s": 0.016,
+            "median_s": 0.0,
+            "p95_s": 0.0,
+            "max_s": 0.016
+          },
+          "commit": {
+            "count": 801,
+            "sum_s": 93.09,
+            "median_s": 0.11,
+            "p95_s": 0.141,
+            "max_s": 0.781
+          }
+        },
+        "knowledge_pending": 0,
+        "knowledge_observed_batches": 801,
+        "blocking_findings": 0
+      },
+      "2": {
+        "wall_time_s": 70.6681,
+        "segment_count": 3204,
+        "source_order_digest": "3c030a91494a2805",
+        "target_digest": "2250228cdf1c4718",
+        "batch_timing_summary": {
+          "prepare": {
+            "count": 801,
+            "sum_s": 121.004,
+            "median_s": 0.156,
+            "p95_s": 0.204,
+            "max_s": 0.344
+          },
+          "commit_wait": {
+            "count": 801,
+            "sum_s": 108.037,
+            "median_s": 0.156,
+            "p95_s": 0.297,
+            "max_s": 0.89
+          },
+          "commit": {
+            "count": 801,
+            "sum_s": 69.406,
+            "median_s": 0.016,
+            "p95_s": 0.313,
+            "max_s": 1.016
+          }
+        },
+        "knowledge_pending": 0,
+        "knowledge_observed_batches": 801,
+        "blocking_findings": 0
+      },
+      "3": {
+        "wall_time_s": 67.1766,
+        "segment_count": 3204,
+        "source_order_digest": "3c030a91494a2805",
+        "target_digest": "2250228cdf1c4718",
+        "batch_timing_summary": {
+          "prepare": {
+            "count": 801,
+            "sum_s": 122.073,
+            "median_s": 0.156,
+            "p95_s": 0.218,
+            "max_s": 0.281
+          },
+          "commit_wait": {
+            "count": 801,
+            "sum_s": 255.598,
+            "median_s": 0.328,
+            "p95_s": 0.485,
+            "max_s": 1.125
+          },
+          "commit": {
+            "count": 801,
+            "sum_s": 65.698,
+            "median_s": 0.016,
+            "p95_s": 0.297,
+            "max_s": 0.891
+          }
+        },
+        "knowledge_pending": 0,
+        "knowledge_observed_batches": 801,
+        "blocking_findings": 0
+      },
+      "4": {
+        "wall_time_s": 63.6584,
+        "segment_count": 3204,
+        "source_order_digest": "3c030a91494a2805",
+        "target_digest": "2250228cdf1c4718",
+        "batch_timing_summary": {
+          "prepare": {
+            "count": 801,
+            "sum_s": 119.379,
+            "median_s": 0.156,
+            "p95_s": 0.203,
+            "max_s": 0.281
+          },
+          "commit_wait": {
+            "count": 801,
+            "sum_s": 377.259,
+            "median_s": 0.469,
+            "p95_s": 0.609,
+            "max_s": 1.25
+          },
+          "commit": {
+            "count": 801,
+            "sum_s": 62.36,
+            "median_s": 0.016,
+            "p95_s": 0.297,
+            "max_s": 0.938
+          }
+        },
+        "knowledge_pending": 0,
+        "knowledge_observed_batches": 801,
+        "blocking_findings": 0
+      },
+      "6": {
+        "wall_time_s": 61.7103,
+        "segment_count": 3204,
+        "source_order_digest": "3c030a91494a2805",
+        "target_digest": "2250228cdf1c4718",
+        "batch_timing_summary": {
+          "prepare": {
+            "count": 801,
+            "sum_s": 118.751,
+            "median_s": 0.156,
+            "p95_s": 0.203,
+            "max_s": 0.5
+          },
+          "commit_wait": {
+            "count": 801,
+            "sum_s": 602.323,
+            "median_s": 0.75,
+            "p95_s": 0.891,
+            "max_s": 1.547
+          },
+          "commit": {
+            "count": 801,
+            "sum_s": 60.451,
+            "median_s": 0.016,
+            "p95_s": 0.297,
+            "max_s": 0.657
+          }
+        },
+        "knowledge_pending": 0,
+        "knowledge_observed_batches": 801,
+        "blocking_findings": 0
+      }
+    },
+    "comparison_vs_baseline": {
+      "2": {
+        "wall_time_s": 70.6681,
+        "speedup_vs_baseline": 1.759,
+        "target_digest_matches": true,
+        "source_order_digest_matches": true,
+        "segment_count_matches": true,
+        "continuity": {
+          "diverged_batches": 800,
+          "missing_batches": 0,
+          "total_batches": 801
+        }
+      },
+      "3": {
+        "wall_time_s": 67.1766,
+        "speedup_vs_baseline": 1.85,
+        "target_digest_matches": true,
+        "source_order_digest_matches": true,
+        "segment_count_matches": true,
+        "continuity": {
+          "diverged_batches": 800,
+          "missing_batches": 0,
+          "total_batches": 801
+        }
+      },
+      "4": {
+        "wall_time_s": 63.6584,
+        "speedup_vs_baseline": 1.952,
+        "target_digest_matches": true,
+        "source_order_digest_matches": true,
+        "segment_count_matches": true,
+        "continuity": {
+          "diverged_batches": 800,
+          "missing_batches": 0,
+          "total_batches": 801
+        }
+      },
+      "6": {
+        "wall_time_s": 61.7103,
+        "speedup_vs_baseline": 2.014,
+        "target_digest_matches": true,
+        "source_order_digest_matches": true,
+        "segment_count_matches": true,
+        "continuity": {
+          "diverged_batches": 800,
+          "missing_batches": 0,
+          "total_batches": 801
+        }
+      }
+    },
+    "conclusion": {
+      "fastest_level": 6,
+      "fastest_wall_time_s": 61.7103,
+      "speedup_vs_baseline": {
+        "2": 1.759,
+        "3": 1.85,
+        "4": 1.952,
+        "6": 2.014
+      },
+      "saturation_level_within_10_percent": 3,
+      "target_digest_identical_across_levels": true,
+      "continuity_diverged_batches": {
+        "2": 800,
+        "3": 800,
+        "4": 800,
+        "6": 800
+      },
+      "continuity_total_batches": 801,
+      "scope": "Digest equality only shows this fixture's fake provider ignores the continuity context; it does not show a real provider's wording is unaffected. The wall-clock plateau is a harness bound (fake latency plus serialised bookkeeping), not a provider-latency bound."
+    },
+    "full_report": "windows-concurrency-3204-20261023.json"
+  }
+}
