@@ -77,10 +77,7 @@
     "sleep_mode": "Modern Standby",
     "native_chinese_spaced_path_dialog_import": true
   },
-  "pending": [
-    "full release CI",
-    "release publication"
-  ],
+  "pending": [],
   "not_tested": [
     "Windows 10",
     "Windows ARM64",
@@ -143,5 +140,56 @@
         "bytes": 106670
       }
     ]
-  }
+  },
+  "release_ci": {
+    "url": "https://github.com/xueyang-dev/Folith/actions/runs/39902584068",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "decide whether to validate",
+        "conclusion": "success"
+      },
+      {
+        "name": "Windows x64 Qt candidate (build, frozen flow, installer, release checks)",
+        "conclusion": "success"
+      },
+      {
+        "name": "macOS Qt candidate (build, frozen flow, DMG, release checks)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Python 3.12)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Python 3.10)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / package / build and wheel smoke",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Python 3.11)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / shared-qt-macos / Shared Qt (macos-15)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / pytest (Windows, Python 3.11)",
+        "conclusion": "success"
+      },
+      {
+        "name": "full-regression / Main Full Regression",
+        "conclusion": "success"
+      },
+      {
+        "name": "Release Validation",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "release_url": "https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1"
 }
