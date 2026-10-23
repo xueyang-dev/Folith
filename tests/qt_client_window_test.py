@@ -4618,3 +4618,61 @@ def test_closing_during_async_open_drops_the_completion_callback(client, monkeyp
         assert completed == []
     finally:
         release.set()
+
+
+def test_periodic_home_poll_uses_async_refresh(client, monkeypatch):
+    window = client["window"]
+    window.stack.setCurrentWidget(window.home)
+    calls = []
+    monkeypatch.setattr(window, "_refresh_home_async",
+                        lambda: calls.append("async"))
+    monkeypatch.setattr(window, "refresh_home",
+                        lambda: calls.append("sync"))
+    monkeypatch.setattr(window, "refresh_pending_badge", lambda: None)
+    window._home_counter = 10 ** 9
+    window._poll()
+    assert calls == ["async"]
+
+
+def test_async_home_refresh_discards_a_stale_generation(client, monkeypatch):
+    window = client["window"]
+    pending = []
+    rows = []
+    monkeypatch.setattr(
+        window.runner, "submit",
+        lambda read, on_done, on_error, label: pending.append(on_done))
+    monkeypatch.setattr(window.home, "set_rows", lambda value: rows.append(value))
+    window._home_generation = 0
+    window._refresh_home_async()
+    window._refresh_home_async()
+    assert len(pending) == 2
+    pending[0]((["stale"], []))
+    assert rows == []
+    pending[1]((["fresh"], []))
+    assert rows == [["fresh"]]
+
+
+def test_a_stale_delivery_button_still_revalidates_before_freezing(client, monkeypatch):
+    """The panel may keep an old preview for a few seconds; the click must re-check."""
+    adapter = client["adapter"]
+    window = client["window"]
+
+    window._current_job_id = "stale-delivery-job"
+    window.workbench.deliver_button.setEnabled(True)
+    busy_calls = []
+    monkeypatch.setattr(
+        adapter, "delivery_preview",
+        lambda *_a, **_k: {
+            "can_deliver": False,
+            "status_label": "审校未完成",
+            "issues": ["审校已失效"],
+            "snapshot": {},
+        })
+    monkeypatch.setattr(window, "_run_with_busy",
+                        lambda *args, **kwargs: busy_calls.append((args, kwargs)))
+
+    window.deliver()
+
+    assert busy_calls == [], "a stale enabled button must not reach the delivery gate"
+    assert window.failures, "the user must be told why delivery was refused"
+    assert "暂不能" in window.failures[-1]["title"]

@@ -257,3 +257,41 @@ def test_word_count_bar_and_dialog(bench):
     dialog = WordCountDialog(view._word_count, view._all_rows[:2], view)
     assert dialog.table.item(0, 0).text().startswith("全部")
     assert dialog.selection_label is not None
+
+
+def test_appending_segments_reuses_existing_table_items(bench):
+    view, app = bench
+    import dataclasses
+
+    existing = view.segment_list.item(0, 1)
+    rows = list(view._all_rows)
+    rows.append(dataclasses.replace(rows[-1], index=len(rows), segment_uid="s-extra",
+                                    source="Appended sentence.", target="追加译文"))
+    view._state.setdefault("pairs", []).append(
+        {"source": "Appended sentence.", "target": "追加译文", "segment_uid": "s-extra"})
+    view._all_rows = rows
+    view._render_segments()
+    app.processEvents()
+    assert view.segment_list.rowCount() == 4
+    assert view.segment_list.item(0, 1) is existing
+    assert view.segment_list.item(3, 1).text() == "Appended sentence."
+    assert view.segment_list.item(3, 2).text() == "追加译文"
+
+
+def test_changed_prefix_rebuilds_rows_instead_of_reusing_stale_cells(bench):
+    view, app = bench
+    import dataclasses
+
+    rows = list(view._all_rows)
+    rows[0] = dataclasses.replace(rows[0], segment_uid="s-changed",
+                                  source="Changed source.", target="Changed target")
+    rows.append(dataclasses.replace(rows[-1], index=len(rows), segment_uid="s-extra",
+                                    source="Appended sentence.", target="追加译文"))
+    view._state.setdefault("pairs", []).append(
+        {"source": "Appended sentence.", "target": "追加译文", "segment_uid": "s-extra"})
+    view._all_rows = rows
+    view._render_segments()
+    app.processEvents()
+    assert view.segment_list.rowCount() == 4
+    assert view.segment_list.item(0, 1).text() == "Changed source."
+    assert view.segment_list.item(0, 2).text() == "Changed target"

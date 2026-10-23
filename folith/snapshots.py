@@ -8,10 +8,11 @@ import re
 import tempfile
 from .job_lock import exclusive
 import zipfile
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 SNAPSHOT_DIR = "delivery_snapshots"
@@ -25,6 +26,31 @@ def _now_iso() -> str:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+#: Frozen delivery assets are immutable, but their integrity is re-checked on
+#: every task-list refresh (the frozen-delivery status is part of every task's
+#: label).  Hashing the same megabytes again and again cost more than reading
+#: them, so the digest is remembered per (path, mtime, size).
+_ASSET_HASH_CACHE: "OrderedDict[Tuple[str, int, int], str]" = OrderedDict()
+_ASSET_HASH_CACHE_MAX = 64
+
+
+def _sha256_cached(path: Path, data: bytes) -> str:
+    """The SHA-256 of a file, remembered while the file stays unchanged."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return _sha256(data)
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    cached = _ASSET_HASH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    digest = _sha256(data)
+    if len(_ASSET_HASH_CACHE) >= _ASSET_HASH_CACHE_MAX:
+        _ASSET_HASH_CACHE.popitem(last=False)
+    _ASSET_HASH_CACHE[key] = digest
+    return digest
 
 
 def translation_truth_hash(state: Mapping[str, Any]) -> str:
@@ -53,18 +79,22 @@ def _artifact_payload(job_root: Path, record: Mapping[str, Any]) -> Dict[str, An
 
 def state_identity(state: Dict[str, Any]) -> str:
     """Hash the approved translation state without snapshot bookkeeping."""
-    value = deepcopy(state)
+    # The keys below are the only ones that are dropped from the hash, so the
+    # copy only has to be shallow.  A full ``deepcopy`` of a book-length state
+    # cost ~100 ms and was paid on every task-list refresh (the frozen
+    # delivery status is part of every task's label).
     # QA confirmations, impact explanations and artifact bookkeeping are
     # review metadata, not the frozen document bytes.  They must not make an
     # otherwise identical frozen snapshot appear divergent after a reviewer
     # records a visual/Word check.
-    for key in ("_source_bin", "delivery_snapshots",
-                "latest_delivery_snapshot_version", "final_qa",
-                "dependency_impact", "snapshot_revision"):
-        value.pop(key, None)
+    value = {key: item for key, item in (state or {}).items()
+             if key not in ("_source_bin", "delivery_snapshots",
+                            "latest_delivery_snapshot_version", "final_qa",
+                            "dependency_impact", "snapshot_revision")}
     academic = value.get("academic_state")
     if isinstance(academic, dict):
-        academic.pop("artifact_status", None)
+        value["academic_state"] = {key: item for key, item in academic.items()
+                                   if key != "artifact_status"}
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":"))
     return _sha256(payload.encode("utf-8"))
@@ -220,7 +250,41 @@ def load_asset(job_root: Path, version: int, name: str) -> Optional[bytes]:
     except OSError:
         return None
     expected = manifest.get("artifact_hashes", {}).get(name)
+    # Export/read-back must re-hash the bytes it just read.  The status cache
+    # is only for the task-list integrity probe; using it here would accept a
+    # same-size rewrite with a restored mtime.
     return data if expected == _sha256(data) else None
+
+
+def asset_intact(job_root: Path, version: int, name: str,
+                 manifest: Optional[Mapping[str, Any]] = None) -> bool:
+    """Is the frozen asset still byte-identical to what the manifest records?
+
+    The digest is remembered per (path, mtime, size), so an unchanged asset is
+    neither read nor hashed again on every task-list refresh.
+    """
+    if manifest is None:
+        manifest = next((item for item in list_snapshots(job_root)
+                         if item.get("snapshot_version") == int(version)), None)
+    if manifest is None:
+        return False
+    expected = (manifest.get("artifact_hashes") or {}).get(name)
+    if not expected:
+        return False
+    path = snapshot_root(job_root) / f"v{int(version)}" / name
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    cached = _ASSET_HASH_CACHE.get(key)
+    if cached is not None:
+        return cached == expected
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    return _sha256_cached(path, data) == expected
 
 
 def archive(job_root: Path, version: int) -> Optional[bytes]:

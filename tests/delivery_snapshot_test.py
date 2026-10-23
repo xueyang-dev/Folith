@@ -1,6 +1,7 @@
 """Immutable final-delivery snapshot regressions."""
 import hashlib
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -286,3 +287,33 @@ def test_snapshot_storage_is_local_output_data_not_package_input():
     assert snapshots.SNAPSHOT_DIR == "delivery_snapshots"
 
 
+def test_load_asset_rehashes_after_same_size_rewrite_with_restored_mtime():
+    """Export must not trust the status cache's (path, mtime, size) key."""
+    tmp = Path(tempfile.mkdtemp(prefix="delivery-snapshot-tamper-"))
+    old_dir = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp
+    try:
+        job_id = "snapshottamper0001"
+        _job(job_id)
+        _, ok, errors = core.approve_delivery(job_id, note="tamper", actor="reviewer")
+        assert ok, errors
+        manifest = core.list_delivery_snapshots(job_id)[0]
+        name = manifest["assets"][0]["name"]
+        root = Path(core.job_dir(job_id))
+        path = snapshots.asset_path(root, 1, name)
+        original = path.read_bytes()
+        stat = path.stat()
+        snapshots._ASSET_HASH_CACHE.clear()
+        assert snapshots.load_asset(root, 1, name) == original
+
+        changed = bytearray(original)
+        changed[0] ^= 0xFF
+        path.write_bytes(changed)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert path.stat().st_size == stat.st_size
+        assert path.stat().st_mtime_ns == stat.st_mtime_ns
+
+        assert snapshots.load_asset(root, 1, name) is None
+    finally:
+        core.OUTPUT_DIR = old_dir
+        shutil.rmtree(tmp, ignore_errors=True)

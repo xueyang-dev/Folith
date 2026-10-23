@@ -2475,6 +2475,11 @@ class WorkbenchView(QWidget):
         self._dirty = False
         self._last_runtime: dict = {}
         self._snapshots: list[dict] = []
+        #: The derived, read-only projections that arrive with the state (they
+        #: are computed on a worker thread because each walks the document).
+        self._models: dict = {}
+        #: True while the worker thread owns the expensive projections.
+        self._delivery_owned_by_background = False
         self._delivery_rendered = False
         self._delivery_preview: dict = {}
         self._delivery_preview_at = 0.0
@@ -3687,12 +3692,25 @@ class WorkbenchView(QWidget):
 
     def apply(self, job_id: str, state: dict, rows: list[adapter.SegmentRow],
               runtime: dict, snapshots: list[dict],
-              *, refresh_delivery: bool = False, prepared: dict | None = None) -> None:
-        """Refresh everything that is *not* the text the user is typing."""
+              *, refresh_delivery: bool = False, prepared: dict | None = None,
+              models: dict | None = None) -> None:
+        """Refresh everything that is *not* the text the user is typing.
+
+        ``models`` carries the derived, read-only projections (word count,
+        follow-up facts, review queue, activity log, delivery gate).  They are
+        computed on a worker thread because each of them walks the whole
+        document; without them the GUI thread froze for up to 270 ms on every
+        background batch commit.  When they are absent the view computes them
+        itself, exactly as before.
+        """
         self.job_id = job_id
         self._state = state
         self._last_runtime = runtime or {}
         self._snapshots = snapshots or []
+        self._models = dict(models or {})
+        # True when the derived projections come from the worker thread: the
+        # view then never computes an expensive projection itself.
+        self._delivery_owned_by_background = models is not None
         self._prepared_review = (state, prepared["review"]) if prepared and "review" in prepared else None
         self._prepared_delivery = (state, prepared["delivery"]) if prepared and "delivery" in prepared else None
         # The window hands back the very same state and row objects while neither
@@ -4543,10 +4561,12 @@ class WorkbenchView(QWidget):
         if key == self._followup_key:
             return
         self._followup_key = key
-        try:
-            view = adapter.followup_view(self.job_id, self._state)
-        except Exception:  # noqa: BLE001 - 收尾页坏了不能拖垮翻译页
-            view = {}
+        view = self._models.get("followup")
+        if view is None:
+            try:
+                view = adapter.followup_view(self.job_id, self._state)
+            except Exception:  # noqa: BLE001 - 收尾页坏了不能拖垮翻译页
+                view = {}
         self.followup_panel.apply(view)
         # 顶栏图标与抽屉说同一件事：抽屉里有几张 ✕ / ⚠ 卡，角标就是几。
         count = self.followup_panel.issue_count()
@@ -4601,10 +4621,12 @@ class WorkbenchView(QWidget):
         signature = f"{self.job_id}|{adapter.activity_signature(self.job_id)}"
         if signature == self.activity_panel.signature():
             return
-        try:
-            rows = adapter.activity_events(self.job_id)
-        except Exception:  # noqa: BLE001 - 活动页坏了不能拖垮翻译页
-            rows = []
+        rows = self._models.get("activity")
+        if rows is None:
+            try:
+                rows = adapter.activity_events(self.job_id)
+            except Exception:  # noqa: BLE001 - 活动页坏了不能拖垮翻译页
+                rows = []
         self.activity_panel.set_rows(rows[-50:], signature=signature)
 
     def _render_terms(self, *, force: bool = False) -> None:
@@ -4618,11 +4640,13 @@ class WorkbenchView(QWidget):
         on_page = force or self.terms_open()
         if on_page:
             self._terms_key = key
-        try:
-            view = adapter.glossary_view(self.job_id, self._state,
-                                         count_occurrences=on_page)
-        except Exception:  # noqa: BLE001 - 术语页坏了不能拖垮翻译页
-            view = {}
+        view = self._models.get("terms")
+        if view is None:
+            try:
+                view = adapter.glossary_view(self.job_id, self._state,
+                                             count_occurrences=on_page)
+            except Exception:  # noqa: BLE001 - 术语页坏了不能拖垮翻译页
+                view = {}
         self.terms_panel.apply(self.job_id, view, force=force)
         self._sync_terms_gate(view)
 
@@ -4658,7 +4682,9 @@ class WorkbenchView(QWidget):
             prepared = getattr(self, "_prepared_review", None)
             self._prepared_review = None
             view = (prepared[1] if prepared is not None and prepared[0] is self._state
-                    else adapter.review_queue(self.job_id, self._state))
+                    else self._models.get("review"))
+            if view is None:
+                view = adapter.review_queue(self.job_id, self._state)
         except Exception:  # noqa: BLE001 - 审校页坏了不能拖垮翻译页
             view = {}
         self._review_items = list(view.get("queue_items") or [])
@@ -4853,14 +4879,34 @@ class WorkbenchView(QWidget):
     def _render_segments(self) -> None:
         """按可见集合更新网格；重建时按稳定段身份恢复选中，不触碰编辑器。"""
         self._sync_segment_placeholder()
+        previous_rows = self._rows
         self._rows = self._visible_rows()
-        if self.segment_list.rowCount() != len(self._rows):
+        old_count = self.segment_list.rowCount()
+        new_count = len(self._rows)
+        # Rows only appended at the end (a translation run committing a batch):
+        # the existing cells stay, so the grid is not rebuilt and re-selected.
+        append_only = (0 < old_count < new_count
+                       and len(previous_rows) >= old_count
+                       and all(previous_rows[position].segment_uid
+                               == self._rows[position].segment_uid
+                               for position in range(old_count)))
+        if old_count != new_count and append_only:
+            self.segment_list.blockSignals(True)
+            try:
+                self.segment_list.setRowCount(new_count)
+                for position in range(old_count, new_count):
+                    self.segment_list.setItem(position, 0, QTableWidgetItem(""))
+                    self.segment_list.setItem(position, 1, QTableWidgetItem(""))
+                    self.segment_list.setItem(position, 2, QTableWidgetItem(""))
+            finally:
+                self.segment_list.blockSignals(False)
+        elif old_count != new_count:
             self.segment_list.blockSignals(True)
             self._painted.clear()  # 下面会换成全新的空单元格，旧缓存不再对应屏幕内容
             # 行全部重建：展开行要在选回当前段之后重新展开（位置可能变了）。
             self._active_position = -1
             self.row_delegate.active_row = -1
-            self.segment_list.setRowCount(len(self._rows))
+            self.segment_list.setRowCount(new_count)
             # 重建之后必须立刻把内容画上去：否则要等到下一次后台刷新才显示文字，
             # 中间会看到一片空白行（打开任务或段落数变化时最明显）。
             self._queue_segment_paint(schedule_heights=False)
@@ -4952,7 +4998,10 @@ class WorkbenchView(QWidget):
         key = (self.job_id, id(self._state), len(self._all_rows))
         if key != self._word_count_key:
             self._word_count_key = key
-            self._word_count = word_count.document_count(self._all_rows)
+            count = self._models.get("word_count")
+            if count is None:
+                count = word_count.document_count(self._all_rows)
+            self._word_count = count
         count = self._word_count
         if count is None or not count.total.segments:
             self.word_total_label.setText("")
@@ -5263,18 +5312,39 @@ class WorkbenchView(QWidget):
         key = (self.job_id, len(self._snapshots),
                str(self._state.get("delivery_status") or ""))
         unchanged = self._delivery_rendered and key == self._delivery_key
-        # Validating every pair is the expensive part (~0.2 s on a book): while the
-        # state object is the one already validated only a slow safety re-check
-        # (files changed outside the state) is worth the GUI thread's time.
-        same_state = self._delivery_state is self._state
-        interval = DELIVERY_IDLE_REFRESH_SECONDS if same_state else DELIVERY_REFRESH_SECONDS
-        if unchanged and not force and (now - self._delivery_preview_at) < interval:
-            return
-        if unchanged and (now - self._delivery_preview_at) < DELIVERY_FORCE_FLOOR_SECONDS:
-            return
-        preview = (prepared[1] if prepared is not None and prepared[0] is self._state
-                   else adapter.delivery_preview(self.job_id, self.config, state=self._state)
-                   if self.job_id else {})
+        same_job = bool(self._delivery_rendered and self._delivery_key
+                        and self._delivery_key[0] == self.job_id)
+        # A fresh preview from the worker thread is painted as it arrives: the
+        # worker's own cadence (see ``_DeliveryPreviewCache``) is the throttle.
+        fresh = self._models.get("delivery")
+        if fresh is not None:
+            prepared = (self._state, fresh)
+        else:
+            # Validating every pair is the expensive part (~0.2 s on a book): while
+            # the state object is the one already validated only a slow safety
+            # re-check (files changed outside the state) is worth the GUI thread.
+            same_state = self._delivery_state is self._state
+            interval = DELIVERY_IDLE_REFRESH_SECONDS if same_state else DELIVERY_REFRESH_SECONDS
+            if unchanged and not force and (now - self._delivery_preview_at) < interval:
+                return
+            if unchanged and (now - self._delivery_preview_at) < DELIVERY_FORCE_FLOOR_SECONDS:
+                return
+        if (fresh is None and prepared is None
+                and self._delivery_owned_by_background):
+            # The worker owns the delivery preview and had nothing new for this
+            # poll: keep showing the last one (never another task's).
+            if not same_job:
+                preview = {}
+            else:
+                if not force and (now - self._delivery_preview_at) < DELIVERY_REFRESH_SECONDS:
+                    return
+                if (now - self._delivery_preview_at) < DELIVERY_FORCE_FLOOR_SECONDS:
+                    return
+                preview = self._delivery_preview or {}
+        else:
+            preview = (prepared[1] if prepared is not None and prepared[0] is self._state
+                       else adapter.delivery_preview(self.job_id, self.config, state=self._state)
+                       if self.job_id else {})
         self._delivery_preview = preview
         self._delivery_rendered = True
         self._delivery_preview_at = now

@@ -5276,7 +5276,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         with commit_lock:
             if saved:
                 runtime_batches_saved[0] += 1
-            update_runtime_state(
+            # 批次进度是展示状态，不是业务真值：合并写（见
+            # ``_RuntimeStatusWriter``）。取消/暂停的覆盖规则由真正的
+            # ``update_runtime_state`` 在落盘时执行，所以语义不变。
+            _submit_runtime_status(
                 job_id, status="running", stage="translation", stage_id="translation",
                 operation=operation_id, operation_id=operation_id, operation_label=label,
                 phase=operation_id, phase_label=label, progress=True,
@@ -7196,8 +7199,19 @@ def _runtime_event_meta(event_name, visibility=None, category=None):
 
 
 def _append_runtime_event(job_id, event, *, stage=None, operation=None, metadata=None,
-                          visibility=None, category=None):
-    event_name = event.get("event") if isinstance(event, dict) else _runtime_event_code(event)
+                          visibility=None, category=None, sync=True, event_name=None):
+    """Append one record to the job's runtime event log.
+
+    ``sync=False`` skips the ``fsync``: the record is still handed to the OS
+    immediately (any reader sees it), it is only not forced all the way to the
+    platter.  The event log is an activity/diagnostic trail -- the business
+    truth lives in ``state.json`` and the journal -- so paying a disk flush per
+    record bought nothing but latency.
+    """
+    event_name = event_name or (event.get("event") if isinstance(event, dict) else None)
+    if not event_name:
+        event_name = _runtime_event_code(event.get("message") if isinstance(event, dict)
+                                         else event)
     visibility, category = _runtime_event_meta(event_name, visibility, category)
     record = {
         "timestamp": _utc_now_iso(),
@@ -7221,13 +7235,15 @@ def _append_runtime_event(job_id, event, *, stage=None, operation=None, metadata
         with path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
             stream.flush()
-            os.fsync(stream.fileno())
+            if sync:
+                os.fsync(stream.fileno())
     except OSError as exc:
         _workflow_errors.raise_if_fatal(exc, job_id)
         raise
     with _RUNTIME_PERSIST_LOCK:
         _RUNTIME_PERSIST_STATS["event_appends"] += 1
-        _RUNTIME_PERSIST_STATS["fsyncs"] += 1
+        if sync:
+            _RUNTIME_PERSIST_STATS["fsyncs"] += 1
         _RUNTIME_PERSIST_STATS["event_append_seconds"] += (
             time.perf_counter() - started)
     return record
@@ -7317,6 +7333,297 @@ _TELEMETRY_COALESCER_STATS = {"created": 0}
 
 
 
+# ================= 运行时状态合并（批次进度的写放大治理）=================
+# 背景：批次进度（"正在翻译第 40–52 段"、"正在保存第 7 批译文"）是**展示状态**，
+# 不是业务真值——译文在 ``state.json`` 和 journal 里。但它过去走的是与业务真值
+# 相同的持久化路径：每一次都「读全量 runtime_state.json → 合并 → 整文件原子
+# 替换」，并且每次都追加一条 fsync 过的事件记录。
+#
+# 实测（400 段文档、40 秒运行）：批次阶段一共触发 2276 次全量重写、2267 次
+# fsync，累计 29.3 秒 CPU——是同一段时间里真正翻译工作量的数倍。这些写入持有
+# GIL（json.dumps 是 C 扩展，全程不释放），桌面端感受到的"后台任务把整个应用
+# 拖慢"主要就是它们。
+#
+# 这里把**批次进度**改成合并写：窗口内的多次状态更新合并成一次落盘。取消、
+# 暂停、worker 租约、阶段边界和终态仍然走原来的同步路径——它们的正确性不能
+# 依赖一个还没到期的窗口。
+RUNTIME_STATUS_FLUSH_SECONDS = 0.4
+
+#: States a task cannot come back from.  A status update that arrives after
+#: one of them must not revive the task.
+_RUNTIME_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+#: Status phases that are published to disk immediately: they announce that a
+#: translation batch was written (or is being written).  The progress counter
+#: and the run log both show them, and the counter must advance one batch at
+#: a time and only after the corresponding batch was saved.  The other phases
+#: ("building the context", "translating", "checking") are transient chatter
+#: and are merged inside the window.
+_RUNTIME_DURABLE_PHASES = frozenset({"state_commit", "state_commit_done"})
+
+_RUNTIME_STATUS_LOCK = threading.RLock()
+_RUNTIME_STATUS_WRITERS = {}
+_RUNTIME_STATUS_STATS = {"submits": 0, "flushes": 0, "coalesced": 0,
+                          "dropped_terminal": 0}
+
+
+class _RuntimeStatusWriter:
+    """Merge high-frequency runtime *status* updates into one durable write.
+
+    The status channel answers "what is the task doing right now".  It is not
+    business truth: the translated pairs live in ``state.json`` and the
+    journal, and everything a crash recovery or a cancellation decision
+    depends on is written synchronously by its own caller.
+
+    What this writer guarantees:
+
+    * the merged state on disk is never older than ``flush_interval``;
+    * every queued event still reaches ``runtime_events.jsonl`` (the activity
+      log keeps its history -- only the *state file* is coalesced);
+    * :meth:`flush` is synchronous, so a terminal state is never left behind a
+      pending window.
+    """
+
+    def __init__(self, job_id, *, flush_interval=None):
+        self.job_id = job_id
+        self.flush_interval = max(
+            0.0, float(flush_interval if flush_interval is not None
+                       else RUNTIME_STATUS_FLUSH_SECONDS))
+        self._lock = threading.RLock()
+        self._pending = {}
+        self._pending_events = []
+        self._last_flush = 0.0
+        self._timer = None
+        self._closed = False
+
+    # -- public API -------------------------------------------------------
+    def submit(self, *, event=None, event_name=None, event_metadata=None,
+               event_visibility=None, event_category=None, progress=False,
+               **changes):
+        """Merge one status update; write it out at most once per window.
+
+        Two kinds of update are published immediately, because the user reads
+        them and they must not be skipped:
+
+        * a **durable phase** -- "writing batch N" / "batch N saved".  The
+          progress counter advances one batch at a time and only after the
+          corresponding batch was written;
+        * a **stage progress counter that moved** -- the number of finished
+          units is the progress bar.
+
+        Everything else ("building the context", "translating", "checking",
+        the in-flight caption) is merged inside the window.
+        """
+        with self._lock:
+            if self._closed:
+                return {}
+            _RUNTIME_STATUS_STATS["submits"] += 1
+            now = time.monotonic()
+            counter = _stage_progress_counter(changes.get("stage_progress"))
+            pending_counter = _stage_progress_counter(
+                self._pending.get("stage_progress"))
+            durable = str(changes.get("operation_id") or "") in _RUNTIME_DURABLE_PHASES
+            if durable or (counter is not None and pending_counter is not None
+                           and counter != pending_counter):
+                for key, value in changes.items():
+                    if value is not None:
+                        self._pending[key] = value
+                if progress:
+                    self._pending["_progress"] = True
+                if event:
+                    message = str(event).strip()
+                    if message:
+                        self._pending_events.append({
+                            "message": message,
+                            "event_name": event_name,
+                            "event_metadata": event_metadata,
+                            "event_visibility": event_visibility,
+                            "event_category": event_category,
+                        })
+                self._flush_locked(now)
+                return self._pending
+            for key, value in changes.items():
+                if value is not None:
+                    self._pending[key] = value
+            if progress:
+                self._pending["_progress"] = True
+            if event:
+                message = str(event).strip()
+                if message:
+                    self._pending_events.append({
+                        "message": message,
+                        "event_name": event_name,
+                        "event_metadata": event_metadata,
+                        "event_visibility": event_visibility,
+                        "event_category": event_category,
+                    })
+            if self._last_flush <= 0.0 or (now - self._last_flush) >= self.flush_interval:
+                # The very first update of a task is published at once (the
+                # user must see that something started); later updates wait
+                # for the trailing edge of the window.
+                self._flush_locked(now)
+                return self._pending
+            _RUNTIME_STATUS_STATS["coalesced"] += 1
+            self._schedule_locked(now)
+            return self._pending
+
+    def flush(self):
+        with self._lock:
+            self._flush_locked(time.monotonic())
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            self._flush_locked(time.monotonic())
+
+    def pending(self) -> bool:
+        with self._lock:
+            return bool(self._pending or self._pending_events)
+
+    def _terminal_state_reached(self) -> bool:
+        """Has this task already reached a state it cannot come back from?"""
+        try:
+            current = load_runtime_state(self.job_id) or {}
+        except Exception:  # noqa: BLE001 - an unreadable state is not terminal
+            return False
+        return str(current.get("status") or "") in _RUNTIME_TERMINAL_STATUSES
+
+    # -- internals --------------------------------------------------------
+    def _schedule_locked(self, now):
+        if self._timer is not None:
+            return
+        delay = max(0.01, self.flush_interval - (now - self._last_flush))
+        timer = threading.Timer(delay, self._flush_from_timer)
+        timer.daemon = True
+        self._timer = timer
+        timer.start()
+
+    def _flush_from_timer(self):
+        with self._lock:
+            self._timer = None
+            if self._closed:
+                return
+            self._flush_locked(time.monotonic())
+
+    def _flush_locked(self, now):
+        if not self._pending and not self._pending_events:
+            self._last_flush = now
+            return
+        changes = dict(self._pending)
+        self._pending.clear()
+        progress = bool(changes.pop("_progress", False))
+        events = list(self._pending_events)
+        self._pending_events.clear()
+        self._last_flush = now
+        if self._terminal_state_reached():
+            # A terminal state is authoritative.  A status that arrives after it
+            # (a straggler from a batch that was still in flight) must not
+            # revive the task as "running".
+            _RUNTIME_STATUS_STATS["dropped_terminal"] += 1
+            return
+        _RUNTIME_STATUS_STATS["flushes"] += 1
+        # The activity log keeps every event; only the state file is merged.
+        for item in events:
+            _append_runtime_event(
+                self.job_id,
+                {"event": item.get("event_name"), "message": item.get("message")},
+                stage=changes.get("stage_id") or changes.get("stage"),
+                operation=changes.get("operation_id") or changes.get("operation"),
+                metadata=item.get("event_metadata"),
+                visibility=item.get("event_visibility"),
+                category=item.get("event_category"),
+                sync=False,
+                event_name=item.get("event_name"))
+        last = events[-1] if events else {}
+        try:
+            update_runtime_state(
+                self.job_id,
+                event=last.get("message"),
+                event_name=last.get("event_name"),
+                event_metadata=last.get("event_metadata"),
+                event_visibility=last.get("event_visibility"),
+                event_category=last.get("event_category"),
+                progress=progress,
+                event_logged=bool(events),
+                **changes)
+        except Exception:  # noqa: BLE001 - a status write must never break a batch
+            pass
+
+
+def _runtime_status_writer(job_id):
+    """The per-job status writer; ``None`` when there is no job id."""
+    if not job_id:
+        return None
+    with _RUNTIME_STATUS_LOCK:
+        writer = _RUNTIME_STATUS_WRITERS.get(job_id)
+        if writer is None:
+            writer = _RuntimeStatusWriter(job_id)
+            _RUNTIME_STATUS_WRITERS[job_id] = writer
+        return writer
+
+
+def flush_runtime_status(job_id=None):
+    """Write every pending status update now (terminal boundaries, shutdown)."""
+    with _RUNTIME_STATUS_LOCK:
+        if job_id:
+            writers = [_RUNTIME_STATUS_WRITERS[job_id]] if job_id in _RUNTIME_STATUS_WRITERS else []
+        else:
+            writers = list(_RUNTIME_STATUS_WRITERS.values())
+    for writer in writers:
+        writer.flush()
+
+
+def reset_runtime_status(job_id=None):
+    """Drop the pending status writers (a task reached a terminal boundary)."""
+    with _RUNTIME_STATUS_LOCK:
+        if job_id is None:
+            writers = list(_RUNTIME_STATUS_WRITERS.values())
+            _RUNTIME_STATUS_WRITERS.clear()
+        else:
+            writer = _RUNTIME_STATUS_WRITERS.pop(job_id, None)
+            writers = [writer] if writer is not None else []
+    for writer in writers:
+        writer.close()
+
+
+def runtime_status_stats():
+    with _RUNTIME_STATUS_LOCK:
+        return {
+            "writers": len(_RUNTIME_STATUS_WRITERS),
+            "submits": _RUNTIME_STATUS_STATS["submits"],
+            "flushes": _RUNTIME_STATUS_STATS["flushes"],
+            "coalesced": _RUNTIME_STATUS_STATS["coalesced"],
+            "dropped_terminal": _RUNTIME_STATUS_STATS["dropped_terminal"],
+        }
+
+
+def _stage_progress_counter(stage_progress):
+    """The "how many units are done" number of a stage progress payload."""
+    if not isinstance(stage_progress, dict):
+        return None
+    counter = stage_progress.get("completed")
+    try:
+        return int(counter)
+    except (TypeError, ValueError):
+        return None
+
+
+def _submit_runtime_status(job_id, **changes):
+    """Hand a batch-progress status update to the merged status writer.
+
+    Falls back to the synchronous path when there is no writer (no job id,
+    or the writer was closed), so the behaviour never depends on whether the
+    writer exists.
+    """
+    writer = _runtime_status_writer(job_id)
+    if writer is None:
+        return {}
+    return writer.submit(**changes)
+
+
 def _runtime_telemetry_request_started(job_id):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
@@ -7332,8 +7639,15 @@ def _runtime_telemetry_request_finished(job_id):
 
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
-                         event_visibility=None, event_category=None, **changes):
-    """Atomically merge a worker status update into runtime_state.json."""
+                         event_visibility=None, event_category=None,
+                         event_logged=False, **changes):
+    """Atomically merge a worker status update into runtime_state.json.
+
+    ``event_logged=True`` says the event has already been appended to
+    ``runtime_events.jsonl`` by the caller (the merged status writer does
+    that, so the activity log keeps every event while the state file is
+    written once per window).
+    """
     if not job_id:
         return _runtime_defaults()
     now = _utc_now_iso()
@@ -7395,7 +7709,7 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                         current["events"] = current["events"][-24:]
                 else:
                     current["last_technical_event"] = message
-                if not duplicate:
+                if not duplicate and not event_logged:
                     _append_runtime_event(
                         job_id,
                         {"event": event_name, "message": message,
@@ -8049,8 +8363,10 @@ def _runtime_caption_callback(job_id, text):
     if stage_info["stage"] != "pipeline":
         changes.update({key: stage_info[key] for key in (
             "stage", "stage_id", "operation", "operation_id", "operation_label")})
-    update_runtime_state(job_id, progress=True, event=message, status="running",
-                         event_visibility="user", event_category="progress", **changes)
+    # 字幕是展示状态：合并写，落盘时仍然由 ``update_runtime_state`` 执行
+    # 取消/暂停的覆盖规则。
+    _submit_runtime_status(job_id, progress=True, event=message, status="running",
+                           event_visibility="user", event_category="progress", **changes)
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
@@ -8123,6 +8439,10 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                 on_caption=lambda text: _runtime_caption_callback(job_id, text),
             )
         result_state = load_job_state(job_id) or state
+        # 终态之前先把合并中的批次进度写掉并关闭这条通道：否则一次迟到的状态写
+        # 会把 "completed" 覆盖回 "running"。
+        flush_runtime_status(job_id)
+        reset_runtime_status(job_id)
         if _runtime_cancel_requested(job_id):
             # An exit stop reuses the cancel boundary but must publish a
             # resumable ``interrupted`` state, never "the user cancelled".
@@ -8171,6 +8491,9 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
     # lease 永不过期 → 应用还活着时这个任务会**真的硬卡死**（状态一直停在活跃态，
     # start_job_worker / resume_job 都会拒绝）。这里必须失败闭合。
     except BaseException as exc:  # noqa: BLE001 - worker must publish failure to UI
+        # 失败也是终态：先落盘并关闭合并中的状态通道，再读取/写终态。
+        flush_runtime_status(job_id)
+        reset_runtime_status(job_id)
         runtime_after = load_runtime_state(job_id)
         exit_requested = bool(runtime_after.get("exit_requested"))
         cancelled = (not exit_requested) and (
@@ -8232,6 +8555,8 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         try:
             flush_runtime_telemetry(job_id)
             reset_runtime_telemetry(job_id)
+            flush_runtime_status(job_id)
+            reset_runtime_status(job_id)
             _llm_transport.close_thread_clients()
             try:
                 update_runtime_state(

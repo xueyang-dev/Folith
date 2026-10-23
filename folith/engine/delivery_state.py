@@ -500,8 +500,7 @@ def delivery_snapshot_status(job_id, state=None):
     state = state if state is not None else _c.load_job_state(job_id)
     current_identity = _snapshots.state_identity(state or {})
     matches = current_identity == latest.get("translation_state_identity")
-    assets = delivery_snapshot_assets(job_id, latest["snapshot_version"])
-    integrity = bool(assets) and all(data is not None for data in assets.values())
+    integrity = delivery_snapshot_assets_intact(job_id, latest["snapshot_version"])
     return {
         "latest": latest,
         "current": bool(matches and integrity and state
@@ -551,6 +550,26 @@ def delivery_snapshot_status_light(job_id):
     }
     _LIGHT_STATUS_CACHE[str(job_root)] = (key, status)
     return dict(status)
+
+
+def delivery_snapshot_assets_intact(job_id, version) -> bool:
+    """Are the frozen assets still exactly the ones the manifest records?
+
+    The assets themselves are not read here: the digests are remembered per
+    (path, mtime, size), so an unchanged snapshot is verified without reading
+    and hashing megabytes on every task-list refresh.
+    """
+    manifest = next((item for item in list_delivery_snapshots(job_id)
+                     if item.get("snapshot_version") == int(version)), None)
+    if manifest is None:
+        return False
+    names = [item.get("name") for item in manifest.get("assets") or []
+             if item.get("name")]
+    if not names:
+        return False
+    root = _c.job_dir(job_id)
+    return all(_snapshots.asset_intact(root, int(version), name, manifest)
+               for name in names)
 
 
 def delivery_snapshot_assets(job_id, version):

@@ -2091,6 +2091,47 @@ def activity_events(job_id: str, limit: int = 200) -> list[dict]:
         core.read_runtime_events(job_id, limit, visibility="user"))
 
 
+def workbench_models(job_id: str, state: dict, *,
+                     count_occurrences: bool = False) -> dict:
+    """The derived, read-only projections the workbench renders.
+
+    Every one of these walks the whole document: the word count, the follow-up
+    facts, the review queue, the delivery gate.  The workbench re-reads them
+    whenever the task state changes -- which, during a translation run, is
+    once per committed batch -- so computing them on the GUI thread turned
+    every background batch commit into a visible freeze (measured: up to
+    270 ms of uninterrupted GUI-thread work per refresh).
+
+    They are pure functions of the task state, so the poll reads them on a
+    worker thread and hands the results to the view.  The view still owns
+    every widget; only the *data* moves off the GUI thread.  A projection that
+    fails is left out, so the view computes it (and handles the failure)
+    itself.
+
+    The delivery gate is deliberately *not* part of this bundle: it is the
+    most expensive projection and is refreshed on its own, slower cadence
+    (see ``MainWindow._poll_workbench``).
+    """
+    from folith import word_count as _word_count
+
+    rows = segment_rows(job_id, state)
+    models: dict = {"rows": rows}
+    for name, build in (
+            ("word_count", lambda: _word_count.document_count(rows)),
+            ("runtime", lambda: runtime_view(job_id, state)),
+            ("snapshots", lambda: delivery_snapshots(job_id)),
+            ("followup", lambda: followup_view(job_id, state)),
+            ("review", lambda: review_queue(job_id, state)),
+            ("terms", lambda: glossary_view(
+                job_id, state, count_occurrences=count_occurrences)),
+            ("activity", lambda: activity_events(job_id))):
+        try:
+            models[name] = build()
+        except Exception:  # noqa: BLE001 - one failed projection must not hide the rest
+            continue
+    return models
+
+
 def source_path(job_id: str) -> Path | None:
     """任务留存的源文件（首页卡片的预览从这里读）；没有就返回 ``None``。"""
     try:
