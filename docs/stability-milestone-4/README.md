@@ -1,5 +1,8 @@
 # v0.7.1 stability work — 2026-10-22
 
+Latest Windows follow-up: [closeout evidence](windows-closeout-20261023.md).
+The sections below retain the historical 2026-10-22 investigation.
+
 Scope: [milestone 4](https://github.com/xueyang-dev/Folith/milestone/4).
 This records implementation and verification work, not release acceptance.
 Work is isolated on `codex/stability-data-integrity`, initially based on main

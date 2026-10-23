@@ -285,9 +285,17 @@ def find_residuals(src, tgt, target_lang):
     return result
 
 
+# A shared surname in a credit ("Alice M. and Robert J. Smith") makes the
+# two isolated periods unambiguously name initials. Keep this narrow: treating
+# every single-letter token as an initial would hide "Plan A. We ...".
+_SHARED_SURNAME_INITIALS = re.compile(
+    r"\b[A-Z][a-z]+\s+[A-Z]\.\s+and\s+[A-Z][a-z]+\s+[A-Z]\.\s+[A-Z][a-z]+\b")
+
+
 def _count_sentences(text):
     """粗粒度句数统计：按终结符切分（引号/括号闭合归并到前一句）。"""
     text = _c._ABBREV_RE.sub(" ", text)
+    text = _SHARED_SURNAME_INITIALS.sub(lambda match: match.group().replace(".", ""), text)
     parts = re.split(r"[.!?…。！？؟]+[”\"'’)\]]*", text)
     return sum(1 for p in parts if p.strip())
 
