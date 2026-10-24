@@ -9,7 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/tag/v0.7.2"><img src="https://img.shields.io/badge/release-v0.7.2-blue.svg" alt="Release v0.7.2"></a>
+  <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=%C3%BAltima%20versi%C3%B3n&color=0052fe" alt="Última versión"></a>
+  <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
   <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
@@ -22,9 +23,23 @@
 
 ---
 
-**Folith · 译页** («páginas traducidas») es un banco de trabajo de escritorio para traducir libros, informes técnicos, monografías académicas y otros documentos largos. Trata un documento como un trabajo completo: primero lee todo el texto y construye un perfil y un glosario; después traduce por lotes con contexto. Un revisor independiente comprueba cada segmento, y los segmentos que editas a mano se vuelven a revisar. Cuando la puerta de entrega se supera, todo se congela en un paquete de entrega trazable.
+**Folith · 译页** («páginas traducidas») es un banco de trabajo de escritorio para traducir libros, informes técnicos, monografías académicas y otros documentos largos. Es de código abierto, prioriza el trabajo local y funciona en Windows y macOS. Trata un documento como un trabajo completo: importas un PDF / DOCX / EPUB / TXT / Markdown (escaneados incluidos), primero lee todo el texto y construye un perfil y un glosario, y después traduce por lotes con contexto. Un revisor independiente comprueba cada segmento y tú decides en cada caso. Cuando la puerta de entrega se supera, todo se congela en un paquete de entrega trazable.
 
-Traducir un pasaje es fácil. Lo difícil es usar las mismas palabras en el capítulo nueve que en el dos, dejar constancia de cada cambio y poder explicar el origen de un archivo entregado. Folith está hecho para eso.
+Traducir un pasaje es fácil. Lo difícil es usar las mismas palabras en el capítulo nueve que en el dos, que tus propias ediciones nunca se sobrescriban, dejar constancia de cada cambio y poder explicar el origen de un archivo entregado. Folith está hecho para eso.
+
+---
+
+## 🎬 Folith en un minuto
+
+<p align="center">
+  <a href="docs/media/folith-intro.mp4"><img src="docs/media/folith-intro-poster.jpg" alt="Vídeo de presentación de Folith·译页 (aprox. un minuto, haz clic para verlo)" width="840"></a>
+</p>
+
+<p align="center">
+  <a href="docs/media/folith-intro.mp4">▶ Ver el vídeo de presentación (MP4, aprox. 1 minuto, 4,3 MB, subtítulos en chino e inglés)</a>
+</p>
+
+Un libro, desde la importación, pasando por la preparación, la traducción y la revisión humana, hasta la entrega, en un minuto. Las imágenes de la interfaz se capturaron fuera de pantalla desde el cliente de Folith con un libro de ejemplo sintético de dominio público (*Los hermanos Karamázov*) y no contienen archivos reales de usuarios; las tomas marcadas como «Illustration» son explicaciones animadas.
 
 ---
 
@@ -59,7 +74,7 @@ Tras importar, la página de preparación permite elegir idioma de origen y de d
 </p>
 
 ### Banco de traducción
-Original y traducción lado a lado, segmento a segmento; la barra de pasos superior muestra Preparar → Traducción → Revisión → Entrega. El panel derecho ofrece acciones para el segmento actual: revisar, comentar, retraducir según tus indicaciones, hacer una pregunta, añadir a la base terminológica, anotar.
+Original y traducción lado a lado, segmento a segmento; la barra de pasos superior muestra Preparar → Traducción → Revisión → Entrega. El panel derecho ofrece acciones para el segmento actual: revisar, comentar, retraducir, retraducir según tus indicaciones, hacer una pregunta, añadir a la base terminológica, anotar. En las tareas de PDF puedes abrir la página original: al seleccionar un segmento, se localiza y resalta en ella.
 
 <p align="center">
   <img src="docs/assets/qt-03-workbench.es.png" alt="Banco de traducción de Folith" width="1000">
@@ -85,26 +100,26 @@ Tras la revisión, el resultado se congela en una versión de entrega inmutable 
 
 ## 🚀 Instalación
 
-### Cliente de escritorio para macOS (recomendado)
+Todos los paquetes de escritorio están en la página de la [última versión](https://github.com/xueyang-dev/Folith/releases/latest); `<versión>` en los nombres de archivo de abajo es el número de esa versión. La misma página publica `SHA256SUMS.txt` para comprobar la descarga. Esto confirma que el archivo está íntegro y no ha sido sustituido; no equivale a una firma.
 
-Descarga `Folith-Qt-0.7.2-macos-arm64.dmg` de la [versión v0.7.2](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.2) y arrástralo a Aplicaciones.
+### Cliente de escritorio para macOS
 
-- Requisitos: macOS 15.7.5 o posterior, Apple Silicon.
-- Esta compilación no está firmada ni notarizada. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
-- Tesseract (inglés, chino simplificado y árabe) viene incluido, así que no hay que instalar nada más.
-- Verificación (opcional): la página de la versión publica `SHA256SUMS.txt`. Compáralo con `shasum -a 256 Folith-Qt-0.7.2-macos-arm64.dmg` en Terminal. Confirma que el archivo está íntegro y sin modificar; no es una firma.
-- Al abrirla, añade una conexión de modelo en Ajustes (véase «Inicio rápido»).
+Descarga `Folith-Qt-<versión>-macos-arm64.dmg`, ábrelo y arrastra Folith a Aplicaciones.
+
+- Requisitos: macOS 15.7.5 o posterior en Apple silicon (serie M). Los Mac con Intel no son compatibles.
+- El paquete no está firmado ni notarizado. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
+- Tesseract (inglés, chino simplificado, árabe) viene incluido, así que no hay que instalar nada más.
+- Verificación (opcional): ejecuta `shasum -a 256 Folith-Qt-<versión>-macos-arm64.dmg` en Terminal y compáralo con `SHA256SUMS.txt`.
+- Tras abrirla, añade una conexión de modelo en Ajustes (ver Inicio rápido más abajo).
 
 ### Cliente de escritorio para Windows x64
 
-Descarga uno de estos archivos de la [versión v0.7.2](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.2):
+- **Instalador (recomendado):** `Folith-Setup-<versión>-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Se instala solo para el usuario actual y no requiere permisos de administrador. Al desinstalar se elimina solo la aplicación; las tareas, términos, memoria y ajustes se conservan en `%LOCALAPPDATA%\Folith`.
+- **Portátil:** `Folith-Qt-<versión>-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
 
-- **Instalador (recomendado):** `Folith-Setup-0.7.2-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Se instala solo para el usuario actual y no requiere permisos de administrador. Desinstalar solo quita la aplicación; las tareas, términos, memoria y ajustes permanecen en `%LOCALAPPDATA%\Folith`.
-- **Portátil:** `Folith-Qt-0.7.2-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
+No hace falta Python, Git ni herramientas de desarrollo. Tesseract (inglés, chino simplificado, árabe) viene incluido; PaddleOCR y LibreOffice no. La plataforma principal es Windows 11 x64; Windows 10 x64 es un objetivo de compatibilidad no verificado y no hay versión para ARM64.
 
-La validación automatizada de CI pasó; la aceptación manual del paquete final en Windows 11 x64 sigue pendiente. Windows 10 x64 es un objetivo de compatibilidad sin verificar. No hace falta Python, Git ni herramientas de desarrollo. Tesseract (inglés, chino simplificado y árabe) viene incluido; PaddleOCR y LibreOffice no.
-
-La compilación de Windows no está firmada. SmartScreen puede avisar en el primer inicio: tras comprobar el editor y el SHA-256, elige **Más información → Ejecutar de todas formas**. No desactives la seguridad de Windows de forma global.
+La compilación para Windows no está firmada. SmartScreen puede mostrar un aviso la primera vez: comprueba la suma SHA-256 y elige **Más información → Ejecutar de todas formas**. No desactives la seguridad de Windows de forma global.
 
 ### Ejecutar desde el código fuente (desarrolladores)
 
@@ -119,7 +134,7 @@ Requiere Python 3.10+; PySide6 forma parte de las dependencias. Opcionalmente, i
 
 ### Paquete de Python (para desarrolladores)
 
-El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith`), pero **no es la forma recomendada de obtener la aplicación**. PyPI sigue con la versión 0.6.0 y la interfaz Streamlit antigua; esta publicación de GitHub no actualiza PyPI y el comando `folith` de allí no inicia el cliente de escritorio. Usa los archivos de macOS / Windows de arriba o ejecuta desde el código fuente.
+El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith`), pero **no es la forma recomendada de obtener la aplicación**. PyPI sigue con la versión 0.6.0 y la interfaz Streamlit antigua; no se actualiza junto con las versiones de GitHub y el comando `folith` de allí no inicia el cliente de escritorio. Usa los paquetes de macOS / Windows de arriba o ejecuta desde el código fuente.
 
 ---
 
@@ -133,13 +148,13 @@ El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith
 
 ---
 
-## ⚡ Características
+## ✨ Características
 
 | Etapa | Qué ocurre |
 | :--- | :--- |
 | **Preparar** | Extrae segmentos y descarta ruido como encabezados y pies; las páginas escaneadas las lee el modelo de visión y Tesseract local solo da la posición de cada línea; genera el perfil del documento y candidatos a término, e incorpora los términos y la memoria del proyecto |
 | **Traducir** | Lotes según el modo (Rápido / Estándar / Exhaustivo), cada uno con contexto circundante y términos bloqueados; el progreso se guarda continuamente y se puede pausar y reanudar |
-| **Revisar** | Un modelo revisor distinto comprueba cada segmento frente al original y ve las traducciones vecinas; edición manual, retraducción según indicaciones, preguntas sobre un segmento; los segmentos editados se vuelven a revisar |
+| **Revisar** | Un modelo revisor distinto comprueba cada segmento frente al original y ve las traducciones vecinas; edición manual, retraducción según indicaciones, preguntas sobre un segmento; las retraducciones y sugerencias de revisión llegan como candidatos que aceptas o descartas; los segmentos editados se vuelven a revisar |
 | **Entregar** | La puerta verifica la integridad y los problemas bloqueantes; se congela una versión inmutable; se exportan traducción, copia bilingüe, términos, memoria y manifiesto |
 
 
@@ -151,7 +166,9 @@ El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith
 - **🧠 Contexto de todo el libro**: antes de traducir se hace un perfil del documento y una extracción de términos, de modo que pronombres, abreviaturas y términos concuerden entre páginas.
 - **💎 Recursos lingüísticos por proyecto**: los términos bloqueados se inyectan en cada solicitud; la memoria de traducción reutiliza pares de oraciones revisados dentro del proyecto y reduce llamadas repetidas.
 - **🔍 Revisión independiente y comprobaciones entre segmentos**: la revisión la hace un modelo aparte, no el traductor evaluándose a sí mismo; los lotes se agrupan por oraciones, así que una oración nunca se parte. Los problemas se clasifican por categoría y gravedad, y solo los bloqueantes detienen la entrega.
-- **🛡️ Responsabilidad humana**: las ediciones manuales se registran fielmente y se revisan de nuevo antes de aceptarse; el estado de la tarea se guarda continuamente, y una tarea interrumpida se reanuda desde el último lote completado.
+- **🛡️ Traducciones protegidas**: las retraducciones y sugerencias de revisión se muestran como candidatos junto al texto actual y las diferencias, y solo lo sustituyen si las aceptas; el reemplazo por lotes omite por defecto las traducciones editadas o confirmadas a mano. Las decisiones de revisión (problema confirmado, corrección confirmada, conservar la traducción actual) se registran por separado de la edición del texto.
+- **🧾 Auditable y reanudable**: las ediciones manuales se registran fielmente y se revisan de nuevo antes de aceptarse; una decisión de revisión entra en la memoria de traducción del proyecto solo después de guardarse; el estado de la tarea se guarda continuamente, y una tarea interrumpida se reanuda desde el último lote completado.
+- **📍 Página original a la vista**: en las tareas de PDF el banco de trabajo puede mostrar la página original; al seleccionar un segmento se localiza y resalta, así que los escaneados se pueden cotejar línea a línea.
 - **📦 Entrega trazable**: DOCX solo con traducción, DOCX bilingüe, EPUB, PDF, glosario, TMX, JSONL y un manifiesto `delivery_manifest.json`; una versión congelada no se puede modificar.
 - **🎓 Modo académico** (desactivado por defecto): exporta el proceso de traducción, la comparación de casos y la reflexión como informe de prácticas, para contextos como la evaluación de másteres de traducción (MTI).
 
@@ -161,17 +178,15 @@ Aquí «agéntico» significa concretamente: un rol de revisor independiente, re
 
 ## 🌍 Idiomas, formatos y escala
 
-**Idiomas de destino (12)**: chino simplificado, chino tradicional, inglés, japonés, coreano, alemán, francés, español, ruso, portugués, italiano, árabe.
-
-**Idiomas de origen (17)**: inglés, chino simplificado, chino tradicional, japonés, coreano, alemán, francés, español, italiano, portugués, ruso, turco, árabe, urdu, persa, uigur, hebreo. El idioma de origen también ayuda a localizar las líneas de las páginas escaneadas (el Tesseract incluido solo trae datos de inglés, chino simplificado y árabe).
-
-| | Formatos |
+| | Compatible |
 | :--- | :--- |
-| **Importación** | PDF, DOCX, EPUB (sin DRM), TXT, Markdown; hasta 512 MB por archivo |
-| **Entrega** | DOCX solo con traducción, DOCX bilingüe, EPUB (tareas de PDF / DOCX), PDF con el diseño original (solo tareas de PDF), el manifiesto `delivery_manifest.json` |
-| **Recursos lingüísticos** | Glosario y memoria de traducción: XLSX, TBX, TMX; JSONL |
+| **Importación** | PDF (incluidos escaneados) / DOCX / EPUB (sin DRM) / TXT / Markdown; hasta 512 MB por archivo, divide los documentos más grandes antes de importarlos |
+| **Archivos de entrega** | DOCX solo con la traducción, DOCX bilingüe, EPUB (de fuentes PDF o DOCX), PDF (el PDF que conserva la maquetación solo se aplica a fuentes PDF), glosario, TMX, TBX, JSONL, el manifiesto `delivery_manifest.json` |
+| **Recursos lingüísticos** | Glosario y memoria de traducción: importación y exportación XLSX, TBX, TMX; JSONL |
+| **Idioma de origen** | Detección automática o uno de 17: English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Italiano, Português, Русский, Türkçe, العربية, اردو, فارسی, ئۇيغۇرچە, עברית |
+| **Idioma de destino** | 12: 简体中文, 繁體中文, English, 日本語, 한국어, Deutsch, Français, Español, Русский, Português, Italiano, العربية |
 
-**Tamaño del documento**: no hay mediciones publicadas ni se promete tiempo o coste para ningún número de páginas. Para cada documento, la página de preparación estima llamadas, tokens de entrada y tiempo en los tres modos; guíate por esa estimación.
+El idioma de origen también guía la ubicación de líneas en las páginas escaneadas (el Tesseract incluido solo trae datos de inglés, chino simplificado y árabe). No se publican mediciones de velocidad ni de escala, ni hay promesas de tiempo o coste para ningún número de páginas: la calidad y el tiempo dependen del documento y del modelo que elijas. Para cada documento, la página de preparación estima llamadas, tokens de entrada y tiempo para los tres modos; guíate por eso y, para un par de idiomas concreto, prueba antes con un capítulo corto.
 
 ---
 
@@ -182,20 +197,6 @@ Aquí «agéntico» significa concretamente: un rol de revisor independiente, re
 - **Varias conexiones**: traducción, revisión y visión pueden usar cada una una conexión guardada distinta; la de visión solo se valida si la tarea contiene páginas escaneadas.
 - **Catálogo de modelos**: los proveedores compatibles con OpenAI y Gemini pueden obtener la lista de modelos disponibles; que un modelo funcione de verdad lo decide Probar y guardar.
 - **Esfuerzo de razonamiento**: admite modelos de razonamiento (como DeepSeek-R1 y la serie o de OpenAI); el razonamiento se puede ajustar o desactivar.
-
----
-
-## 📄 Formatos, idiomas y tamaño
-
-| | Compatible |
-| :--- | :--- |
-| **Importación** | PDF (incluidos escaneos) / DOCX / EPUB (sin DRM) / TXT / Markdown |
-| **Archivos de entrega** | DOCX solo con traducción, DOCX bilingüe, EPUB (desde PDF o DOCX), PDF (el PDF con el diseño original solo para orígenes PDF), glosario, TMX, TBX, JSONL, `delivery_manifest.json` |
-| **Idioma de origen** | Detección automática, o uno de 17: inglés, chino simplificado, chino tradicional, japonés, coreano, alemán, francés, español, italiano, portugués, ruso, turco, árabe, urdu, persa, uigur, hebreo |
-| **Idioma de destino** | 12: chino simplificado, chino tradicional, inglés, japonés, coreano, alemán, francés, español, ruso, portugués, italiano, árabe |
-| **Tamaño de archivo** | Hasta 512 MB por archivo; divide los documentos mayores antes de importar |
-
-No se publican pruebas de velocidad ni de escala: la calidad y el tiempo dependen del documento y del modelo elegido. La estimación de la página de preparación es la mejor guía antes de empezar; para tu par de idiomas, prueba primero un capítulo corto.
 
 ---
 
@@ -216,15 +217,14 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## ⚠️ Limitaciones conocidas
 
-- El DMG solo admite Apple Silicon y macOS 15.7.5 o posterior; no está firmado ni notarizado.
-- El paquete de Windows no está firmado; la aceptación manual de esta versión final en Windows 11 x64 sigue pendiente; la compatibilidad con Windows 10 x64 no está verificada. No se probaron Windows ARM64, otras versiones ni una máquina virtual limpia independiente.
-- La aceptación manual en Windows (paneles de archivos nativos, método de entrada chino, suspensión / reactivación y un servicio de modelo real) sigue siendo manual; el flujo automático congelado, el OCR y las pruebas de instalación / desinstalación se registran en las notas de la versión.
+- El paquete de macOS solo es compatible con Apple silicon y macOS 15.7.5 o posterior; no está firmado ni notarizado.
+- El paquete de Windows no está firmado; no se ha verificado la compatibilidad con Windows 10 x64, Windows en ARM64 ni máquinas virtuales limpias.
+- Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.7.2.md) (en chino) correspondientes.
 - No se admiten EPUB con DRM.
 - Las imágenes dentro de tablas y cuadros de texto no se conservan en el DOCX traducido; el DOCX bilingüe no contiene imágenes.
-- No se escribe de vuelta en el diseño del DOCX original; se generan archivos nuevos.
+- No se reescribe la maquetación del DOCX original; se generan archivos nuevos.
 - Los idiomas de interfaz distintos del chino simplificado son experimentales.
 - Las páginas escaneadas las reconoce el modelo de visión y pueden contener errores; compáralas con la página original.
-- Siete elementos de aceptación manual (aprobación con doble clic en Finder, panel de archivos del sistema, servicio de modelo real, método de entrada chino, salir desde el Dock, suspensión / reactivación, Mac limpio) se siguen verificando tras la publicación; véanse las [notas de la versión](docs/release-notes-0.7.2.md) (en chino).
 
 ---
 
@@ -244,7 +244,10 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 **¿Se interrumpió una tarea?** El progreso se guarda continuamente. Abre la tarea en la biblioteca y pulsa Continuar traducción; se reanuda desde el último lote completado y los lotes que tuvieron éxito no se repiten.
 
-**¿Cómo actualizo, desinstalo o borro mis datos?** Buscar actualizaciones te avisa si hay una versión más reciente; descárgala tú mismo desde la página de Releases. Arrastrar `Folith.app` a la Papelera elimina solo la aplicación; las tareas y los ajustes se conservan. Para borrar todo, cierra la aplicación y elimina `~/Library/Application Support/Folith`, `~/Library/Logs/Folith` y `~/Library/Preferences/com.folith.QtDesktop.plist`. Exporta antes las traducciones y los TMX / TBX que quieras conservar.
+**¿Cómo actualizo, desinstalo o borro mis datos?** Buscar actualizaciones te avisa si hay una versión más reciente; descárgala tú mismo desde la [página de Releases](https://github.com/xueyang-dev/Folith/releases/latest). Exporta antes las traducciones y los TMX / TBX que quieras conservar.
+
+- macOS: arrastrar `Folith.app` a la Papelera elimina solo la aplicación; las tareas y los ajustes se conservan. Para borrar todo, cierra la aplicación y elimina `~/Library/Application Support/Folith`, `~/Library/Logs/Folith` y `~/Library/Preferences/com.folith.QtDesktop.plist`.
+- Windows: desinstalar la versión instalada desde Configuración → Aplicaciones, o borrar la carpeta de la versión portátil, elimina solo la aplicación. Para borrar todo, cierra la aplicación y elimina `%LOCALAPPDATA%\Folith`.
 
 ### Comentarios
 
@@ -255,11 +258,15 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 ## 🗺️ Hoja de ruta
 
-- [x] **v0.4.0**: marca unificada, recursos lingüísticos y centro de terminología, puerta de entrega, recuperación de borradores en vivo
-- [x] **v0.6.0**: el cliente de escritorio nativo Qt pasa a ser la entrada principal; importación de EPUB / TXT / Markdown; el modelo de visión como lector principal de páginas escaneadas; términos y memoria de traducción por proyecto; varias conexiones de modelo; revisión entre segmentos; el DOCX traducido conserva las imágenes del original; la apariencia sigue al sistema
-- [x] **v0.7.1**: actualización de estabilidad para Windows x64 (instalador + ZIP portátil); cobertura de revisión veraz que no cuenta los segmentos omitidos como revisados; correcciones de rutas, codificación, ventanas de consola y restauración de ventanas en Windows; tareas interrumpidas reanudables; el sondeo del banco de trabajo ya no repinta toda la rejilla y las tareas grandes muestran aviso de carga antes de rellenar por partes; los comentarios de conocimiento salen de la ruta de confirmación en serie; niveles de concurrencia medidos y textos de ayuda corregidos; los conflictos de nombres se resuelven con una sola elección en el panel lateral y en la página de revisión. La 0.7.0 se publicó el 2026-10-22; esta versión contiene correcciones posteriores
-- [x] **v0.7.2**: candidatos para proteger traducciones humanas; decisiones de revisión separadas de la edición; memoria actualizada tras guardar; correcciones de perfilado, navegación PDF y temas. CI pasó; la aceptación manual del paquete final sigue pendiente. Véanse las [notas](docs/release-notes-0.7.2.md)
-- [ ] **Próximamente**: firma y notarización; aceptación en más versiones de Windows y en una VM limpia; escritura de vuelta en DOCX conservando diseño y estilos originales; coincidencias aproximadas en la memoria de traducción; traducción incremental entre versiones de un documento
+**Disponible hoy**: un cliente de escritorio nativo en Qt (instalador / portátil para Windows x64, macOS en Apple silicon); importación de PDF (incluidos escaneados) / DOCX / EPUB / TXT / Markdown; el modelo de visión como lector principal de páginas escaneadas; términos y memoria de traducción por proyecto; varias conexiones de modelo; revisión entre segmentos; candidatos que protegen las traducciones humanas; navegación por la página original; puerta de entrega y entregas congeladas. Los cambios de cada versión están en el [registro de cambios](CHANGELOG.md).
+
+**Próximos pasos**:
+
+- [ ] Firma de código y notarización
+- [ ] Aceptación en más versiones de Windows y en una VM limpia
+- [ ] Reescritura en el DOCX original conservando maquetación y estilos
+- [ ] Coincidencias aproximadas en la memoria de traducción
+- [ ] Traducción incremental entre versiones de un documento
 
 ---
 
@@ -267,7 +274,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 (La mayoría de los documentos están en chino.)
 
-- [Notas de la versión de escritorio](docs/release-notes-0.7.2.md)
+- [Notas de la última versión y registro de aceptación](docs/release-notes-0.7.2.md)
 - [Plan de publicación](docs/release-plan.md)
 - [Proyectos y memoria a largo plazo](docs/project-memory.md)
 - [Exportación de la traducción a EPUB / DOCX](docs/epub-export.md)
