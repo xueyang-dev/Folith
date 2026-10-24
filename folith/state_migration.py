@@ -81,6 +81,8 @@ def _default_new_fields() -> Dict[str, Any]:
         # Issue #95：术语变体聚类的人工决策（merge/split/回滚开关）。
         # 证据留在 entity_registry 原地；这里只存归一化键级别的决策。
         "terminology_variant_decisions": {},
+        # Issue #96：概念级术语决策卡（首选译名 + 上下文例外 + keep_variants）。
+        "concept_decisions": {},
         "translation_failures": [],
         "review_evidence": [],
         "translation_core_review_required": False,
@@ -245,6 +247,9 @@ def migrate_state(state: Any) -> Dict[str, Any]:
     out["terminology_variant_decisions"] = \
         terminology_variants.normalize_variant_decisions(
             out.get("terminology_variant_decisions"))
+    from . import concept_cards
+    out["concept_decisions"] = concept_cards.normalize_concept_decisions(
+        out.get("concept_decisions"))
 
     # CAT 默认契约已统一为自然句。旧任务的段落级状态在内存中做一次
     # 可审计、无模型的迁移；只有通过源文覆盖与目标句数门禁的段落才会拆开。
