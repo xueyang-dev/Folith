@@ -1059,9 +1059,18 @@ def undo_translation_segment_structure(job_id, *, actor="user"):
 
 @_serialized_job_mutation
 def restore_translation_edit(job_id, index, actor="user"):
-    """Restore the translation state that existed before the first edit."""
-    from folith import delivery as _delivery
+    """Restore the text that existed before the first edit of this segment.
 
+    Undo is a **new** CURRENT_TRANSLATION change, not a rollback of history:
+
+    * the text goes back, and the change is recorded like any other mutation
+      (``action="translation_restore"``) -- the edit it undoes stays in the log;
+    * ``reviewed`` / ``review_status`` / ``from_tm`` are **not** restored.  The
+      reviewed marker described the text on screen during that review, and the
+      TM entry was discarded when the edit invalidated it.  Bringing either
+      back would claim a verification that never happened for this text, and
+      would hand the translator memory a final entry that was never re-checked.
+    """
     state = _c.load_job_state(job_id)
     if state is None:
         raise ValueError(f"找不到任务 {job_id}")
@@ -1074,15 +1083,20 @@ def restore_translation_edit(job_id, index, actor="user"):
         return state
     restore = restore or {}
     pair["target"] = restore.get("target") or pair.get("initial_target") or ""
-    pair["reviewed"] = bool(restore.get("reviewed"))
-    pair["review_status"] = restore.get("review_status", "not_reviewed")
-    pair["target_provenance"] = restore.get("target_provenance", "generated")
-    pair["from_tm"] = bool(restore.get("from_tm"))
+    pair["reviewed"] = False
+    pair["review_status"] = "not_reviewed"
+    # Provenance describes who wrote the text that is current now, and stays in
+    # the vocabulary the rest of the pipeline understands.
+    restored_from = str(restore.get("target_provenance") or "")
+    pair["target_provenance"] = "human_edit" if restored_from in {
+        "human_edit", "reviewed", "tm_approved"} else "generated"
+    pair["from_tm"] = False
     pair.pop("human_edited", None)
+    pair.pop("adopted_candidate_id", None)
     _c._recount_reviewed_segments(state)
 
     _c._mark_translation_truth_changed(
-        job_id, state, [index], "恢复前版本也改变了 CURRENT_TRANSLATION；相关下游需要重建",
+        job_id, state, [index], "撤销修改也是一次新的译文变更；相关下游需要重新验证",
         actor=actor, action="translation_restore")
     _c.save_job_state(job_id, state)
     return state

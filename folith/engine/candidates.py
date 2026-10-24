@@ -280,7 +280,13 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
         record["overrode_note"] = "采用候选覆盖了" + "、".join(
             _cand.PROTECTION_LABELS.get(mark, mark) for mark in locked)
 
-    pair.pop("_translation_edit_restore", None)
+    # Keep one restore point, like a manual edit does, so an adoption can be
+    # undone as a *new* change instead of being irreversible.  Captured before
+    # the mutation, and ``setdefault`` keeps the earliest one: undo returns to
+    # the text before the first edit of this segment.
+    pair.setdefault("_translation_edit_restore", {
+        key: pair.get(key)
+        for key in ("target", "reviewed", "review_status", "target_provenance", "from_tm")})
     pair["target"] = candidate_target
     # Provenance says what this text is: model output a human chose.  Calling it
     # a human edit would relabel model text as hand-written work.

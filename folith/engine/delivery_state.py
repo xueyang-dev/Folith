@@ -163,12 +163,25 @@ def _invalidate_translation_reviews(
     changed = _translation_evidence.mark_runtime_review_stale(
         state, indexes, reason, dependency_change=True,
         review_event_ids=review_event_ids, patches=patches)
-    if not any(changed.values()):
-        return changed
+    # Translation memory is a *derived* copy of a reviewed pair, so a changed
+    # target invalidates it even when the pair has no runtime review event to
+    # revoke (legacy tasks, reviews recorded before runtime events existed).
+    # Keeping that entry would let the next translation reuse the exact text
+    # the user just replaced.
     tm = _c.load_tm(tm_project_id(state))
-    tm_changed = False
     job_lang = state_target_lang(state)
     pairs = state.get("pairs") or []
+    tm_changed = False
+    for index in indexes:
+        if not 0 <= index < len(pairs):
+            continue
+        source = str(pairs[index].get("source") or "")
+        if _c.tm_discard(tm, source, job_lang):
+            tm_changed = True
+    if tm_changed:
+        _c.save_tm(tm, tm_project_id(state))
+    if not any(changed.values()):
+        return changed
     for index in indexes:
         if not 0 <= index < len(pairs):
             continue
@@ -178,11 +191,6 @@ def _invalidate_translation_reviews(
         pair["from_tm"] = False
         for key in ("accepted_target", "human_accepted", "accepted_by_human"):
             pair.pop(key, None)
-        source = str(pair.get("source") or "")
-        if _c.tm_discard(tm, source, job_lang):
-            tm_changed = True
-    if tm_changed:
-        _c.save_tm(tm, tm_project_id(state))
     _recount_reviewed_segments(state)
     return changed
 
