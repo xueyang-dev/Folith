@@ -2772,6 +2772,11 @@ class WorkbenchView(QWidget):
         self.segment_list.itemSelectionChanged.connect(self._selection_changed)
         self.segment_list.currentCellChanged.connect(
             lambda row, *_rest: self._row_selected(row))
+        # 同一行再点一次：Qt 不为重复的同一格发 currentCellChanged（见
+        # _load_selected_row 的"同一段"分支），于是"再点一下原页跟着回去"完全没有反应
+        # （#83 里"再点同一段也不动"）。cellClicked 每次都会发，补这一条即可。
+        self.segment_list.cellClicked.connect(
+            lambda row, _column: self._row_reclicked(row))
         self._height_cache: dict = {}
         self._heights_pending: list[int] = []
         self._height_timer = QTimer(self)
@@ -5729,6 +5734,17 @@ class WorkbenchView(QWidget):
             if row.segment_uid == self._loaded_uid:
                 return position
         return None
+
+    def _row_reclicked(self, position: int) -> None:
+        """点在同一行上也要重新定位（#83）：选中没变，Qt 不会发 currentCellChanged。
+
+        ``_pdf_follow`` 是 150ms 的单次定时器，重复 ``start()`` 只是把它推后，所以
+        新行选择时这里和 ``_render_segment_detail`` 各 start 一次也不会定位两次。
+        """
+        if position < 0 or position >= len(self._rows):
+            return
+        if self.source_open():
+            self._pdf_follow.start()
 
     def _row_selected(self, position: int) -> None:
         # Restore the target's visible position after the previous editor row

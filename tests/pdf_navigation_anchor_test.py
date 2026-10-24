@@ -231,3 +231,81 @@ def test_an_older_render_cannot_overwrite_a_newer_location(qapp, nav_job, monkey
     assert shown == [], "旧代次的渲染结果必须丢弃"
     assert panel.current_page() == 1, "旧代次不能把页翻回去"
     panel.close_button.click()
+
+
+def test_clicking_the_same_row_again_brings_the_page_back(qapp, nav_job):
+    """#83 的"再点同一段也不动"：Qt 不为重复的同一格发 currentCellChanged。
+
+    所以重新定位必须挂在 cellClicked 上，不能只依赖选择变化。
+    """
+    import time
+
+    bench = _bench(nav_job)
+    bench.view_source_button.click()
+    bench._pdf_follow.setInterval(0)     # 测试里不等那 150ms 的防抖
+    position = 0
+    bench.segment_list.setCurrentCell(position, 1)
+    qapp.processEvents()
+    assert bench.pdf_panel.current_page() == 2, "第 1 段的锚点在第 3 页"
+    bench.pdf_panel.goto(0)              # 用户手动翻走
+    assert bench.pdf_panel.current_page() == 0
+    # 再点同一行：currentCellChanged 不会发，只有 cellClicked。
+    bench.segment_list.cellClicked.emit(position, 1)
+    for _ in range(20):
+        qapp.processEvents()
+        if bench.pdf_panel.current_page() == 2:
+            break
+        time.sleep(0.01)
+    assert bench.pdf_panel.current_page() == 2, "再点同一段要回到它的原页"
+    bench.pdf_panel.close_button.click()
+
+
+def test_an_interrupted_column_transition_does_not_leave_the_render_deferred(qapp, nav_job):
+    """#83 假设 2：过渡被打断后渲染延迟可能永远不解除。
+
+    ``Motion.stop`` 不触发 ``finished``，所以第一次过渡的 settled 不会跑到；但第二次
+    过渡会带自己的 settled，走完必须把 ``set_render_deferred(False)`` 放开。
+    """
+    import time
+
+    bench = _bench(nav_job)
+    bench.view_source_button.click()
+    bench._transition_columns()          # 第一次过渡
+    if bench._motion.running("translation-columns"):
+        assert bench.pdf_panel._render_deferred is True
+    bench._transition_columns()          # 打断它，再起一次
+    for _ in range(400):
+        qapp.processEvents()
+        if not bench._motion.running("translation-columns"):
+            break
+        time.sleep(0.01)
+    assert not bench._motion.running("translation-columns")
+    assert bench.pdf_panel._render_deferred is False, "被打断的过渡也必须解除渲染延迟"
+
+
+def test_a_render_asked_for_during_a_transition_is_flushed_when_it_settles(qapp, nav_job,
+                                                                         monkeypatch):
+    """延迟渲染只推迟、不丢弃：过渡期间请求的那一次，收尾时必须真的画出来。"""
+    import time
+
+    bench = _bench(nav_job)
+    bench.view_source_button.click()
+    panel = bench.pdf_panel
+    panel.show()                             # 渲染只在面板可见时补画
+    qapp.processEvents()
+    shown = []
+    monkeypatch.setattr(panel, "_show_png", lambda png: shown.append(png))
+    panel.set_render_deferred(True)          # 过渡进行中
+    panel.goto(0)                            # 当前页没有第 3 段
+    bench.select_segment(2)                  # 第 3 段在别页：这次定位被推迟
+    assert shown == [], "过渡期间不渲染"
+    assert panel._render_pending is True, "被推迟的那一次要记着"
+    bench._resume_source_render()            # 过渡收尾
+    for _ in range(400):
+        qapp.processEvents()
+        if shown:
+            break
+        time.sleep(0.01)
+    assert len(shown) == 1, "收尾时必须把推迟的渲染补上"
+    assert panel.current_page() == 1 and not panel._render_pending
+    panel.close_button.click()
