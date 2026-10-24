@@ -120,6 +120,34 @@ def test_same_record_members_never_cluster():
     assert tv.build_candidate_clusters(members, {}) == []
 
 
+def test_same_record_pair_not_edge_even_with_other_records():
+    # 混入其他记录时，同一记录内部的变体对也不得单独成簇
+    members = [
+        {"form": "co‑operation", "record_id": "entity-0001",
+         "origin": "entity_registry"},
+        {"form": "co-operation", "record_id": "entity-0001",
+         "origin": "entity_registry"},
+        {"form": "quotations", "record_id": "entity-0002",
+         "origin": "entity_registry"},
+    ]
+    assert tv.build_candidate_clusters(members, {}) == []
+
+
+def test_cross_record_duplicate_form_suggests():
+    # 同一形式既是 A 的 alias 又是 B 的 source：正是重复决策卡信号
+    members = [
+        {"form": "Franz Kafka", "record_id": "entity-0001",
+         "origin": "entity_registry"},
+        {"form": "Franz Kafka", "record_id": "entity-0002",
+         "origin": "entity_registry"},
+    ]
+    clusters = tv.build_candidate_clusters(members, {})
+    assert len(clusters) == 1
+    assert clusters[0]["tier"] == "exact"
+    assert {m["record_id"] for m in clusters[0]["members"]} == \
+        {"entity-0001", "entity-0002"}
+
+
 # ---------------- 人工决策（merge / split / 回滚开关） ----------------
 
 def test_normalize_variant_decisions_roundtrip():
@@ -298,6 +326,8 @@ if __name__ == "__main__":
     test_negative_examples_never_cluster()
     test_cjk_substring_is_not_a_relationship()
     test_same_record_members_never_cluster()
+    test_same_record_pair_not_edge_even_with_other_records()
+    test_cross_record_duplicate_form_suggests()
     test_identical_forms_dedupe_no_cluster()
     test_normalize_variant_decisions_roundtrip()
     test_manual_merge_forces_cluster_with_manual_provenance()

@@ -182,15 +182,14 @@ def build_candidate_clusters(
     `decisions` 是 :func:`normalize_variant_decisions` 形状的结构（原始 dict
     也可以，会先归一化）；``disabled=True`` 时返回空列表。
     """
-    if isinstance(decisions, dict) and decisions.get("version") != 1:
-        decisions = normalize_variant_decisions(decisions)
-    else:
-        decisions = normalize_variant_decisions(decisions)
+    decisions = normalize_variant_decisions(decisions)
     if decisions.get("disabled"):
         return []
 
-    # 去重：完全相同的 surface form 只保留一份（保留最完整的证据字段）。
-    unique: Dict[str, Dict[str, Any]] = {}
+    # 去重：同一条记录内完全相同的 surface form 只保留一份（保留最完整的
+    # 证据字段）。跨记录的相同形式**不去重**——"A 记录的 alias 与 B 记录的
+    # source 是同一个词"正是要建议的重复决策卡信号。
+    unique: Dict[tuple, Dict[str, Any]] = {}
     for raw in members:
         if not isinstance(raw, dict):
             continue
@@ -206,10 +205,11 @@ def build_candidate_clusters(
             }),
             "origin": str(raw.get("origin") or "unknown"),
         }
-        existing = unique.get(form)
+        key = (form, member["record_id"])
+        existing = unique.get(key)
         if existing is None or (existing.get("record_id") is None
                                 and member.get("record_id") is not None):
-            unique[form] = member
+            unique[key] = member
     items = list(unique.values())
     if len(items) < 2:
         return []
@@ -217,19 +217,14 @@ def build_candidate_clusters(
     keys = [_member_key(m) for m in items]
     pkeys = [punct_key(m["form"]) for m in items]
 
-    # 同一 record 的成员之间不建边：registry 记录内部（source + alias）的
-    # 形式差异不是"重复决策卡"，不该成为建议。
-    same_record = keys is not None and all(
-        items[i].get("record_id") is not None
-        and items[i].get("record_id") == items[j].get("record_id")
-        for i in range(len(items)) for j in range(i + 1, len(items))
-    )
-    if same_record:
-        return []
-
     split_pairs = {tuple(pair) for pair in decisions.get("manual_splits") or []}
 
     def _edge(i: int, j: int) -> Optional[str]:
+        # 同一 record 的成员之间不建边：registry 记录内部（source + alias）的
+        # 形式差异不是"重复决策卡"，不该成为建议。
+        if items[i].get("record_id") is not None \
+                and items[i].get("record_id") == items[j].get("record_id"):
+            return None
         pair = tuple(sorted([keys[i], keys[j]]))
         if pair in split_pairs:
             return None
@@ -273,6 +268,9 @@ def build_candidate_clusters(
         for a in range(len(idxs)):
             for b in range(a + 1, len(idxs)):
                 i, j = min(idxs[a], idxs[b]), max(idxs[a], idxs[b])
+                if items[i].get("record_id") is not None \
+                        and items[i].get("record_id") == items[j].get("record_id"):
+                    continue
                 pair = tuple(sorted([keys[i], keys[j]]))
                 if pair in split_pairs:
                     continue
@@ -289,9 +287,8 @@ def build_candidate_clusters(
     for idxs in groups.values():
         if len(idxs) < 2:
             continue
-        forms = {items[i]["form"] for i in idxs}
-        if len(forms) < 2:
-            continue
+        # 去重键是 (form, record_id)：剩下的 ≥2 个成员要么形式不同、
+        # 要么来自不同记录，两者都是有意义的建议信号。
         labels = [edge_labels[(min(i, j), max(i, j))]
                   for i in idxs for j in idxs
                   if i < j and (min(i, j), max(i, j)) in edge_labels]
