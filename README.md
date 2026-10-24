@@ -31,15 +31,9 @@
 
 ## 🎬 一分钟了解 Folith
 
-<p align="center">
-  <a href="docs/media/folith-intro.mp4"><img src="docs/media/folith-intro-poster.jpg" alt="Folith·译页 介绍视频（约 1 分钟，点击播放）" width="840"></a>
-</p>
-
-<p align="center">
-  <a href="
 https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
-">▶ 观看介绍视频（MP4，约 1 分钟，4.3 MB，中英字幕）</a>
-</p>
+
+<sub>备用：[下载 MP4](docs/media/folith-intro.mp4)</sub>
 
 从导入、准备、翻译、人工审校到交付，一分钟走完一本书的流程。视频里的界面画面用合成的公版示例书（《卡拉马佐夫兄弟》）从 Folith 客户端离屏截取，不含真实用户文件；标注「示意」的画面是动画说明。
 
