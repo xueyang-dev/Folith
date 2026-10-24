@@ -279,9 +279,10 @@ def _provider_error_payload(error):
 
     code = ""
     message = ""
+    period = ""
 
     def visit(payload):
-        nonlocal code, message
+        nonlocal code, message, period
         if isinstance(payload, str):
             stripped = payload.strip()
             if stripped.startswith(("{", "[")):
@@ -302,6 +303,14 @@ def _provider_error_payload(error):
             value = payload.get("message") or payload.get("detail")
             if isinstance(value, str) and value.strip():
                 message = value.strip()
+        if not period:
+            metadata = payload.get("metadata")
+            if isinstance(metadata, dict):
+                for key in ("limitName", "limit_name", "period", "resetPeriod"):
+                    value = metadata.get(key)
+                    if isinstance(value, str) and value.strip():
+                        period = value.strip().lower()
+                        break
         for key in ("error", "detail"):
             nested = payload.get(key)
             if isinstance(nested, dict):
@@ -318,6 +327,7 @@ def _provider_error_payload(error):
         "http_status": status_code,
         "code": code,
         "message": message,
+        "period": period,
         "text": error_text,
     }
 
@@ -357,6 +367,29 @@ def provider_error_status(error):
             "status": "invalid_api_key",
             "label": "API Key 无效",
             "message": f"API Key 无效或已过期{status_suffix}，请检查密钥和服务商。",
+            "http_status": http_status,
+            "provider_code": info["code"],
+        }
+
+    # 额度用尽和"限流"是两件事，必须排在 429 前面判断：限流等一会儿会好，按月计量
+    # 的额度不会——重试只是把同一份额度再撞一遍，还把"请稍后重试"这句假话讲给用户
+    # （OpenCode Go 用 ``GoUsageLimitError`` + ``limitName: monthly`` 表达这件事）。
+    if ("usage limit exceeded" in searchable
+            or "gousagelimiterror" in searchable
+            or "insufficient_quota" in searchable
+            or "quota exceeded" in searchable
+            or "额度已用尽" in searchable
+            or ("quota" in searchable
+                and ("exceed" in searchable or "exhaust" in searchable))):
+        period = "本月" if (info.get("period") in {"monthly", "month"}
+                            or "monthly" in searchable or "按月" in searchable) else ""
+        return {
+            "status": "quota_exhausted",
+            "label": "额度已用尽",
+            # 这里不拼 HTTP 状态：调用方常把它再包一层括号，嵌套括号读起来很别扭，
+            # 而"额度用尽"本身就是可操作的信息，429 并不额外说明什么。
+            "message": (f"该连接的{period}用量额度已用尽，等一会儿不会恢复；"
+                        "请更换连接或提升额度。"),
             "http_status": http_status,
             "provider_code": info["code"],
         }
