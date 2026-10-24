@@ -350,6 +350,110 @@ class EntityRegistry:
             })
         return findings
 
+    def candidate_variant_clusters(self, decisions: Any = None) -> List[Dict[str, Any]]:
+        """Issue #95：跨记录的变体候选簇（suggestion-only，只读）。
+
+        证据留原地：成员携带原始 surface form、record id 与 occurrences。
+        同一记录内部（source + alias）的形式差异不会成簇。零模型调用。
+        """
+        from . import terminology_variants
+        return terminology_variants.build_candidate_clusters(
+            terminology_variants.registry_members(self), decisions)
+
+    def merge_variants(self, forms: Sequence[str], *, note: str = "") -> Dict[str, Any]:
+        """人工断言多个 surface form 是同一概念：融合记录并返回可持久化的决策。
+
+        目标记录取 provenance 更高的一条；其余记录的 aliases / occurrences /
+        observations / conflicts 全部并入目标记录（证据不丢），记录本身移除。
+        返回 ``{"merge": [casefold_keys...], "note": ...}`` 供调用方写入
+        ``state["terminology_variant_decisions"]``。
+        """
+        from . import terminology_variants
+        wanted = [str(form or "").strip() for form in forms or []]
+        wanted = [form for form in wanted if form]
+        if len(wanted) < 2:
+            return {}
+        resolved = []
+        for form in wanted:
+            record = self._find(form)
+            if record is None:
+                record = self.observe(form, form, provenance="human_accepted",
+                                      note=note)
+            if record not in resolved:
+                resolved.append(record)
+        if len(resolved) < 2:
+            return {}
+        resolved.sort(key=lambda r: (-_rank(r.get("provenance")),
+                                     -len(r.get("occurrences") or [])))
+        target, absorbed = resolved[0], resolved[1:]
+        for other in absorbed:
+            other_forms = {str(other.get("source_form") or "")}
+            other_forms |= {str(a) for a in other.get("aliases") or []}
+            other_forms.discard("")
+            target["aliases"] = sorted(
+                (set(target.get("aliases") or []) | other_forms)
+                - {str(target.get("source_form") or "")})
+            target["occurrences"] = sorted(
+                set(target.get("occurrences") or []) | set(other.get("occurrences") or []))
+            for observation in other.get("observations") or []:
+                if observation not in target.setdefault("observations", []):
+                    target["observations"].append(observation)
+            target.setdefault("conflicts", []).extend(other.get("conflicts") or [])
+            other_first = other.get("first_seen_segment")
+            if isinstance(other_first, int) and (
+                    target.get("first_seen_segment") is None
+                    or other_first < target["first_seen_segment"]):
+                target["first_seen_segment"] = other_first
+            if note:
+                target["notes"] = _clean(
+                    f"{target.get('notes')} | merge: {note}", 1000)
+        self.records = [r for r in self.records if r not in absorbed]
+        return {
+            "merge": sorted({terminology_variants.casefold_key(form)
+                             for form in wanted}),
+            "note": _clean(note, 240),
+        }
+
+    def split_variants(self, form_a: str, form_b: str, *, note: str = "") -> Dict[str, Any]:
+        """人工断言两个 surface form 是不同概念：返回可持久化的拆分决策。
+
+        若二者当前属于同一条记录（例如此前误合并），移除 alias 关联并为
+        被拆出的形式建立独立记录。既有 observations 无法按出现形式回溯归属，
+        保留在原记录上（限制记录于 docs/issue-95-terminology-variants.md）。
+        """
+        from . import terminology_variants
+        a, b = str(form_a or "").strip(), str(form_b or "").strip()
+        if not a or not b or terminology_variants.casefold_key(a) == \
+                terminology_variants.casefold_key(b):
+            return {}
+        record_a, record_b = self._find(a), self._find(b)
+        if record_a is not None and record_a is record_b:
+            host, split_form = record_a, (a if _key(a) != _key(record_a["source_form"]) else b)
+            host["aliases"] = [alias for alias in host.get("aliases") or []
+                               if _key(alias) != _key(split_form)]
+            self.records.append({
+                "id": _record_id(self.records),
+                "source_form": split_form,
+                "preferred_target": "",
+                "observed_target": "",
+                "entity_type": host.get("entity_type") or "other_proper_noun",
+                "aliases": [],
+                "first_seen_segment": None,
+                "occurrences": [],
+                "scope": host.get("scope") or "document",
+                "provenance": "human_accepted",
+                "status": _status("human_accepted"),
+                "confidence": 0.95,
+                "notes": _clean(f"split from {host.get('source_form')}: {note}", 1000),
+                "observations": [],
+                "conflicts": [],
+            })
+        return {
+            "split": sorted([terminology_variants.casefold_key(a),
+                             terminology_variants.casefold_key(b)]),
+            "note": _clean(note, 240),
+        }
+
     def to_list(self) -> List[Dict[str, Any]]:
         return [dict(record) for record in self.records]
 

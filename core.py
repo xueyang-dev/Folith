@@ -2711,6 +2711,7 @@ _JOURNAL_SET_KEYS = (
     "delivery_approved_by_human", "delivery_approval", "stage",
     "review_stats", "entity_registry", "knowledge_feedback_policy",
     "knowledge_feedback_failures", "has_blocking",
+    "terminology_variant_decisions",
 )
 _JOURNAL_EXTEND_KEYS = (
     "findings", "review_evidence", "repair_overlays", "human_actions",
@@ -10215,6 +10216,8 @@ def _reset_source_dependent_state(state):
         "confirmed_style_rules": [],
         "knowledge_feedback_failures": 0,
         "entity_registry": [],
+        # Issue #95：术语变体聚类的人工决策；证据留在 entity_registry。
+        "terminology_variant_decisions": {},
         "translation_failures": [],
         "review_evidence": [],
         "repair_overlays": [],
