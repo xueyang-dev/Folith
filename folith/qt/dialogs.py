@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
@@ -1271,6 +1272,80 @@ class DiagnosticsDialog(QDialog):
             self._status.setText(i18n.tr('诊断包已写入：{v0}', v0=written))
         else:
             _set_status(self._status, i18n.tr('诊断包已写入：{v0}', v0=written), "ok")
+
+
+class TermEditDialog(QDialog):
+    """工作台术语卡片上的就地编辑：首选译名、禁用译名、状态。
+
+    与术语页共用同一条更新通道（``window.update_glossary_entry`` → 核心生成新的
+    术语版本、标记受影响段落 stale、清 TM 信任），不做第二个编辑器后端。领域与
+    备注不在快速编辑里暴露，但原值原样带过——这条通道会原样写回，不能在这里被
+    清空。任务术语仍然只写回本任务的术语表，不落到项目术语。
+    """
+
+    def __init__(self, entry: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('编辑术语'))
+        self.setMinimumWidth(480)
+        source = str(entry.get("source") or "")
+        self._domain = str(entry.get("domain") or "")
+        self._note = str(entry.get("note") or "")
+        hint = QLabel(i18n.tr('翻译开始后修改术语，受影响的译文和审校结果需要重新确认。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        self.preferred_edit = QLineEdit(str(entry.get("preferred") or ""))
+        self.forbidden_edit = QLineEdit(
+            "、".join(str(item) for item in entry.get("forbidden") or []))
+        self.forbidden_edit.setPlaceholderText(i18n.tr('多个用逗号或分号隔开'))
+        self.status_box = style_module.ComboBox()
+        for value, label in adapter.GLOSSARY_STATUS_LABELS.items():
+            self.status_box.addItem(i18n.tr(label), value)
+        index = self.status_box.findData(str(entry.get("status") or "provisional"))
+        self.status_box.setCurrentIndex(max(index, 0))
+        source_label = QLabel(source)
+        source_label.setObjectName("hint")
+        source_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        form = QFormLayout()
+        form.setHorizontalSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.addRow(i18n.tr('源术语'), source_label)
+        form.addRow(i18n.tr('首选译名'), self.preferred_edit)
+        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
+        form.addRow(i18n.tr('状态'), self.status_box)
+        self.error = QLabel("")
+        self.error.setObjectName("statusError")
+        self.error.setVisible(False)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText(i18n.tr('保存'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addLayout(form)
+        layout.addWidget(self.error)
+        layout.addWidget(buttons)
+        self.preferred_edit.setFocus()
+
+    def _accept(self) -> None:
+        if not self.preferred_edit.text().strip():
+            self.error.setText(i18n.tr('首选译名不能为空。'))
+            self.error.setVisible(True)
+            return
+        self.accept()
+
+    def fields(self) -> dict:
+        """给窗口 ``update_glossary_entry`` 的字段；领域 / 备注带原值，不允许被清空。"""
+        return {
+            "preferred": self.preferred_edit.text().strip(),
+            "status": str(self.status_box.currentData() or "provisional"),
+            "forbidden": [text.strip() for text in
+                          re.split(r"[,，;；、\n]", self.forbidden_edit.text())
+                          if text.strip()],
+            "domain": self._domain,
+            "note": self._note,
+        }
 
 
 class SegmentSourceDialog(QDialog):

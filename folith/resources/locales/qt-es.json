@@ -2056,5 +2056,10 @@
   "人工确认过的译文": "traducción aceptada por una persona",
   "人工改写的译文": "traducción editada por una persona",
   "已审校的译文": "traducción revisada",
-  "输入页码后回车跳到该页": "Escribe un número de página y pulsa Intro para ir allí"
+  "输入页码后回车跳到该页": "Escribe un número de página y pulsa Intro para ir allí",
+  "修改这条术语的首选译名、禁用译名或状态；保存会生成新的术语版本": "Editar la traducción preferida, las variantes prohibidas o el estado de este término; al guardar se crea una nueva versión del glosario",
+  "首选译名不能为空。": "La traducción preferida no puede estar vacía.",
+  "这条术语没有条目标识。": "Este término no tiene identificador.",
+  "找不到这条术语。": "No se encontró este término.",
+  "无法编辑术语": "No se puede editar el término"
 }

@@ -2055,5 +2055,10 @@
   "人工确认过的译文": "human-accepted translation",
   "人工改写的译文": "human-edited translation",
   "已审校的译文": "reviewed translation",
-  "输入页码后回车跳到该页": "Type a page number and press Enter to jump there"
+  "输入页码后回车跳到该页": "Type a page number and press Enter to jump there",
+  "修改这条术语的首选译名、禁用译名或状态；保存会生成新的术语版本": "Edit this term's preferred translation, forbidden renderings or status; saving creates a new glossary version",
+  "首选译名不能为空。": "Preferred translation cannot be empty.",
+  "这条术语没有条目标识。": "This term has no entry id.",
+  "找不到这条术语。": "Term not found.",
+  "无法编辑术语": "Cannot edit term"
 }

@@ -22,6 +22,8 @@ os.environ["FOLITH_EXIT_FORCE_PROMPT"] = "0"
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QDialog  # noqa: E402
+
 from qt_client_window_test import _pump, client, qt_app  # noqa: E402,F401
 from language_assets_workspace_test import _candidate, _job  # noqa: E402
 from stage3_case_review_test import _synthetic_case  # noqa: E402
@@ -195,3 +197,86 @@ def test_followup_entity_unification_from_the_window(client):
     window.apply_entity_repair("Lydia", "莉迪亚", preview)
     _pump(client["app"], 1.0)
     assert adapter.load_state("wmnames00000001")["pairs"][1]["target"] == "莉迪亚离开了。"
+
+
+# ------------------------------------------------- 术语卡片就地编辑（#125） ------
+
+def _term_state(core, *, preferred="你好", forbidden=None, name="wmterm.docx"):
+    state = _plain_state(core, name=name)
+    entries = core.normalize_glossary([
+        {"source": "Hello", "target": preferred, "preferred": preferred,
+         "status": "locked", "behavior": "translate",
+         "forbidden": forbidden or [], "domain": "示例", "note": "测试条目"}])
+    state["glossary"] = entries
+    state["glossary_versions"] = [{
+        "version": 1, "entries": entries, "frozen_at": "2026-10-24T00:00:00+00:00",
+        "frozen_by": "test", "glossary_hash": ""}]
+    state["glossary_frozen"] = state["glossary_versions"][0]
+    return state
+
+
+class _FakeTermEditDialog:
+    """非模态替代：不走 exec() 事件循环，直接给字段（窗口级测试只验信号链）。"""
+
+    def __init__(self, entry, parent=None):
+        self.entry = entry
+
+    def exec(self):
+        return QDialog.DialogCode.Accepted
+
+    def fields(self):
+        return {"preferred": self._preferred, "status": "locked", "forbidden": [],
+                "domain": self.entry.get("domain", ""), "note": self.entry.get("note", "")}
+
+
+def test_workspace_term_edit_flows_through_the_existing_update_pathway(client, monkeypatch):
+    """卡片 ✎ → 现有更新通道：恰好一个新术语版本、条目标识不变、工作台刷新。"""
+    from folith.qt import window as window_module
+
+    core, adapter = client["core"], client["adapter"]
+    _save(core, "wmterm00000001", _term_state(core))
+    window = _open(client, "wmterm00000001")
+    window.workbench.select_segment(0)
+    _pump(client["app"], 0.5)
+    chip = window.workbench.term_list.buttons[0]
+    assert chip.term["source"] == "Hello"
+    entry_id = chip.term["id"]
+    fake = _FakeTermEditDialog
+    fake._preferred = "你好呀"
+    monkeypatch.setattr(window_module.dialogs, "TermEditDialog", fake)
+    chip.edit_button.click()
+    _pump(client["app"], 1.5)
+    state = adapter.load_state("wmterm00000001")
+    entry = next(e for e in state["glossary"] if e["id"] == entry_id)
+    assert entry["preferred"] == "你好呀"
+    assert entry["id"] == entry_id, "内容哈希条目标识不能被改写"
+    assert len(state.get("glossary_versions") or []) == 2, "一次编辑恰好一个新版本"
+    assert (state.get("glossary_frozen") or {}).get("version") == 2
+    # 工作台已刷新：卡片上是最新首选译名（而不是旧值）。
+    updated = next(c for c in window.workbench.term_list.buttons if c.term["id"] == entry_id)
+    assert updated.term["target"] == "你好呀"
+
+
+def test_workspace_term_edit_failure_leaves_state_unchanged(client, monkeypatch):
+    """更新失败（首选译名为空被核心拒绝）：状态原样，版本不涨，界面有可见错误。"""
+    from folith.qt import window as window_module
+
+    core, adapter = client["core"], client["adapter"]
+    _save(core, "wmterm00000002", _term_state(core))
+    window = _open(client, "wmterm00000002")
+    window.workbench.select_segment(0)
+    _pump(client["app"], 0.5)
+    chip = window.workbench.term_list.buttons[0]
+    entry_id = chip.term["id"]
+    fake = _FakeTermEditDialog
+    fake._preferred = "  "
+    monkeypatch.setattr(window_module.dialogs, "TermEditDialog", fake)
+    failures = []
+    monkeypatch.setattr(window, "_failure", lambda title, detail: failures.append((title, detail)))
+    chip.edit_button.click()
+    _pump(client["app"], 1.0)
+    assert failures, "失败必须给出可见错误"
+    state = adapter.load_state("wmterm00000002")
+    entry = next(e for e in state["glossary"] if e["id"] == entry_id)
+    assert entry["preferred"] == "你好"
+    assert len(state.get("glossary_versions") or []) == 1, "失败不能生成新版本"

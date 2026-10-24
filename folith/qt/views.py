@@ -2440,6 +2440,7 @@ class WorkbenchView(QWidget):
     saveSnapshotRequested = Signal(int)
     refreshRequested = Signal()
     termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
+    termEditRequested = Signal(object)      # 就地编辑工作台建议卡片上的术语（术语 dict）
     askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
     suggestRequested = Signal(int, str)     # 按要求重译：段索引, 要求
     analyzeRequested = Signal(int)          # 进一步审视本段
@@ -2959,6 +2960,7 @@ class WorkbenchView(QWidget):
         self.term_list.insertRequested.connect(self._insert_into_target)
         self.term_list.hovered.connect(self._hover_term)
         self.term_list.activated.connect(self.focus_term)
+        self.term_list.editRequested.connect(self.termEditRequested.emit)
         self._hover = None
         self._decision_marks: dict = {}    # 决策痕迹的高亮（叠在术语标注之上）
         self._term_focus = None            # term_highlight.Occurrences

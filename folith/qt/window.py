@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         self.workbench.deliverWithRiskRequested.connect(self.deliver_with_risk)
         self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.termAddRequested.connect(self.add_term_from_selection)
+        self.workbench.termEditRequested.connect(self.edit_term_from_suggestion)
         self.workbench.profileEditRequested.connect(self.edit_document_profile)
         self.workbench.promoteMemoryRequested.connect(self.promote_task_memory)
         self.workbench.styleRuleRequested.connect(self.save_style_rule)
@@ -2868,6 +2869,35 @@ class MainWindow(QMainWindow):
             domain=fields.get("domain", ""), note=fields.get("note", ""),
             forbidden=fields.get("forbidden"),
             failure=i18n.tr('无法保存术语'))
+
+    def edit_term_from_suggestion(self, term: dict) -> None:
+        """工作台术语卡片「✎」：就地编辑，走与术语页同一条更新通道。
+
+        术语卡片上的 dict 只有 ``id`` / ``source`` / ``target`` / ``status`` /
+        ``forbidden``；领域与备注要从任务里取全量条目，快速编辑器不带但也不能
+        让更新通道把它们清空。保存成功由 ``_glossary_action`` 统一刷新工作台与
+        术语页（新术语版本 + stale + TM 重置都在核心侧完成）。
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        entry_id = str(term.get("id") or "")
+        if not entry_id:
+            self._failure(i18n.tr('无法编辑术语'), i18n.tr('这条术语没有条目标识。'))
+            return
+        try:
+            rows = adapter.glossary_view(job_id, count_occurrences=False)["rows"]
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法编辑术语'), str(exc))
+            return
+        entry = next((row for row in rows if str(row.get("id")) == entry_id), None)
+        if entry is None:
+            self._failure(i18n.tr('无法编辑术语'), i18n.tr('找不到这条术语。'))
+            return
+        dialog = dialogs.TermEditDialog(entry, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.update_glossary_entry(entry_id, dialog.fields())
 
     def set_terms_status(self, entry_ids: list, status: str) -> None:
         self._glossary_action(adapter.set_terms_status, entry_ids, status,
