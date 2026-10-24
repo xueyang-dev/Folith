@@ -48,8 +48,8 @@ segments [{segment_index, segment_uid, segment_number, source, current_target,
            review_status, skipped, skip_reason, unreviewed, provenance,
            from_tm, review_event_id, finding_ids, unresolved_finding_ids,
            changes, decisions, adopted_candidate_id}],
-decisions, changes, unresolved_findings,
-skipped_segments, unreviewed_segments, provenance
+decisions, changes, unresolved_findings, resolved_findings,
+dismissed_findings, skipped_segments, unreviewed_segments, provenance
 ```
 
 ### Classification
@@ -63,6 +63,11 @@ skipped_segments, unreviewed_segments, provenance
 | `skipped` | determinism gate recorded `skipped_low_risk`; reported as skipped, never as a pass |
 | `unreviewed` | required review has not happened (no current event) |
 | `unresolved` | open blocking/actionable finding(s) on that segment |
+
+A **registered exception** (a finding a human explicitly dismissed/waived) is
+exported in `dismissed_findings` and in the segment's `findings`, with the
+decision note and actor. It is evidence of a decision, not missing review work,
+and it never makes the target count as modified.
 
 `modified` is computed from an actual before/after text pair, never from the
 existence of a decision. The same-text adoption therefore appears in
@@ -129,7 +134,7 @@ classification; the Markdown is a human handoff rendering of the same data.
 
 | Command | Result |
 | --- | --- |
-| `pytest -q tests/review_export_test.py` | 5 passed |
+| `pytest -q tests/review_export_test.py` | 6 passed |
 | `pytest -q tests/scenario_gate_test.py tests/red_team_acceptance_test.py tests/review_batch_candidate_test.py tests/review_gate_test.py tests/delivery_snapshot_test.py tests/qt_run_facts_test.py` | 77 passed |
 | `python scripts/check_ui_locales.py` | 0 errors |
 
@@ -147,7 +152,9 @@ The new tests build a **real task** (translation → review) and then exercise:
   unchanged targets remain `modified: false`; only a later edit is reported;
 - long English/Chinese text (60 repetitions each) survives untruncated, and
   explicit truncation is flagged;
-- export is byte-for-byte read-only on the task state; JSONL/Markdown formats.
+- export is byte-for-byte read-only on the task state; JSONL/Markdown formats;
+- a dismissed finding (registered exception) is exported with its decision note
+  and does not mark the target modified.
 
 ## Limits (honest)
 

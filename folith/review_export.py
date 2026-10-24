@@ -296,6 +296,7 @@ def build_review_export(
             "provenance": provenance,
             "from_tm": bool(pair.get("from_tm")),
             "review_event_id": review_events.get(index, ""),
+            "findings": [_finding_export(f) for f in _findings_for(state, index)],
             "finding_ids": [item["finding_id"]
                             for item in [_finding_export(f) for f in _findings_for(state, index)]],
             "unresolved_finding_ids": [item["finding_id"] for item in segment_unresolved],
@@ -332,6 +333,14 @@ def build_review_export(
         "delivery_status": str(state.get("delivery_status") or ""),
         "has_blocking": bool(state.get("has_blocking")),
     }
+    resolved = [_finding_export(item) for item in state.get("findings") or []
+                if isinstance(item, Mapping) and item.get("resolved")]
+    dismissed = [item for item in resolved
+                 if str(item.get("status") or "") in {"dismissed", "waived", "ignored"}
+                 or str((item.get("resolution") or {}).get("action") or "")
+                 in {"dismiss", "dismissed", "ignore", "waive"}]
+    summary["resolved_findings"] = len(resolved)
+    summary["dismissed_findings"] = len(dismissed)
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "review_handoff",
@@ -344,6 +353,10 @@ def build_review_export(
         "decisions": decisions,
         "changes": changes,
         "unresolved_findings": unresolved,
+        # Registered exceptions: findings a human explicitly dismissed/waived.
+        # They are evidence of a decision, not silently dropped review work.
+        "resolved_findings": resolved,
+        "dismissed_findings": dismissed,
         "skipped_segments": [
             {"segment_index": row["segment_index"], "segment_uid": row["segment_uid"],
              "reason": row["skip_reason"]}

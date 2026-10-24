@@ -287,3 +287,32 @@ def test_export_is_read_only_and_disable_keeps_records(temp_job_env):
     payload = _export(job_id)
     assert payload["summary"]["decisions"] == 0
     assert payload["schemas"] if False else payload["schema_version"] == 1
+
+
+def test_registered_exception_is_exported_and_does_not_modify_target(temp_job_env):
+    job_id = "handoff-exception"
+    state = core.new_job_state("exception.txt")
+    state["paras"] = [SEGMENTS[0]]
+    state["pairs"] = [{"source": SEGMENTS[0], "target": TARGETS[0],
+                       "reviewed": True, "review_status": "reviewed_clean"}]
+    state["translation_core_review_required"] = False
+    state["findings"] = [{
+        "type": "review", "severity": "informational",
+        "finding_id": "finding-exception-1", "segment_index": 0, "segment_id": 0,
+        "reason": "风格建议：可更书面化", "detected_text": "",
+        "resolved": True, "status": "dismissed",
+        "resolution": {"action": "dismiss", "note": "保留作者风格",
+                       "actor": "reviewer", "timestamp": "2026-10-24T00:00:00Z"},
+    }]
+    core.save_job_state(job_id, state)
+
+    payload = _export(job_id)
+    assert payload["summary"]["dismissed_findings"] == 1
+    assert payload["summary"]["resolved_findings"] == 1
+    exception = payload["dismissed_findings"][0]
+    assert exception["finding_id"] == "finding-exception-1"
+    assert exception["resolution"]["note"] == "保留作者风格"
+    row = payload["segments"][0]
+    assert row["modified"] is False
+    assert row["current_target"] == TARGETS[0]
+    assert [item["finding_id"] for item in row["findings"]] == ["finding-exception-1"]
