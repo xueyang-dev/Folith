@@ -363,7 +363,11 @@ def _globalize_batch_findings(findings, offset):
 # and deterministic (no model call, no prescan).
 # ---------------------------------------------------------------------------
 
-_NUMBER_TOKEN_RE = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*(?![\w.])")
+# ASCII word boundaries on purpose: ``\w`` is Unicode-aware, so "第0段" would
+# look like a digit glued to a word and every CJK-adjacent number would be
+# "missing".  Digits inside ASCII identifiers (``Term0``, ``v2``) are still
+# excluded, and those are preserved-token territory, not numbers.
+_NUMBER_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_.])\d+(?:[.,]\d+)*(?![A-Za-z0-9_.])")
 _UNIT_TOKEN_RE = re.compile(
     r"(?<![\w.])(\d+(?:[.,]\d+)*)\s*(km|kg|cm|mm|mi|ft|lb|oz|mph|kph|"
     r"ms|min|h|s|%|°C|℃)\b", re.IGNORECASE)

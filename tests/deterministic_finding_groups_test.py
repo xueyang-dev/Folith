@@ -67,6 +67,18 @@ def test_number_detection_positive_and_negative():
     assert _by_kind(_findings("Item 3 is ready.", "第 ٣ 项已就绪。"),
                     "number") == []
 
+    # CJK-adjacent digits are ordinary numbers, not word-glued identifiers:
+    # ``\w`` is Unicode-aware, so a naive boundary would hide "第0段" and report
+    # every Chinese sentence with a number as "missing".
+    assert _by_kind(_findings(
+        "Segment number 0 mentions Term0 and Gadget0.",
+        "第0段提到Term0和Gadget0。"), "number") == []
+    assert _by_kind(_findings("第3章有5个例子。", "Chapter 3 has 5 examples."),
+                    "number") == []
+    # Digits inside ASCII identifiers stay preserved-token territory.
+    assert _by_kind(_findings("Use Term0 here.", "第0项使用Term0。"),
+                    "number") == []
+
 
 def test_unit_detection_positive_and_negative():
     kept = _findings("The village is 5 km from here.", "村庄离这里 5 公里。")
