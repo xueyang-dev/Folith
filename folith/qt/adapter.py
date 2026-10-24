@@ -31,6 +31,7 @@ from folith.desktop import file_actions
 from folith.desktop import legacy_import
 from folith.desktop import paths as desktop_paths
 from folith import translation_evidence
+from folith import retrospective as _retrospective
 from folith import source_languages as _source_languages
 # Architecture Phase 1/3: the shared, frontend-neutral application layer.  Qt only
 # translates `EngineConfig` into it and adapts desktop-specific values back out.
@@ -2096,8 +2097,14 @@ def run_facts(state: dict) -> dict:
         failures.append({"batch": as_int(item.get("batch")) + 1, "start": offset,
                          "end": offset + count - 1, "count": count,
                          "reason": str(item.get("reason") or "")[:300]})
+    retrospective = {
+        "enabled": _retrospective.enabled(state),
+        "pending": len(_retrospective.pending_suggestions(state)),
+        "evidence": len(state.get("retrospective_evidence") or []),
+    }
     return {"usage": usage, "reuse": reuse, "understanding": understanding,
-            "failures": failures, "failures_recovered": recovered}
+            "failures": failures, "failures_recovered": recovered,
+            "retrospective": retrospective}
 
 
 def extraction_report_view(state: dict) -> dict:

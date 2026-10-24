@@ -123,8 +123,12 @@ class TaskDetailsPanel(QWidget):
         self.reuse_label = QLabel("")
         self.reuse_label.setObjectName("hint")
         self.reuse_label.setWordWrap(True)
+        self.retrospective_label = QLabel("")
+        self.retrospective_label.setObjectName("hint")
+        self.retrospective_label.setWordWrap(True)
         layout.addWidget(self.usage_summary)
         layout.addWidget(self.reuse_label)
+        layout.addWidget(self.retrospective_label)
         self.usage_card = card
         card.setVisible(False)
         return card
@@ -133,6 +137,20 @@ class TaskDetailsPanel(QWidget):
         facts = facts or {}
         self._apply_understanding(facts.get("understanding") or {})
         self._apply_usage(facts.get("usage") or {}, facts.get("reuse") or {})
+        self._apply_retrospective(facts.get("retrospective") or {})
+
+    def _apply_retrospective(self, view: dict) -> None:
+        view = view or {}
+        pending = int(view.get("pending") or 0)
+        if view.get("enabled") is False:
+            text = i18n.tr('回溯一致性建议已关闭；已收集的证据与已采用的译文保持不变。')
+        elif pending:
+            text = i18n.tr('有 {v0} 条回溯一致性建议待确认（历史段落，需显式采用）。',
+                           v0=pending)
+        else:
+            text = ""
+        self.retrospective_label.setText(text)
+        self.retrospective_label.setVisible(bool(text))
 
     def _apply_understanding(self, view: dict) -> None:
         from .segment_editor import cell_direction
