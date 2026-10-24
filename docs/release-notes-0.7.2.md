@@ -1,7 +1,8 @@
 # Folith 0.7.2 发布说明与验收矩阵
 
-准备日期：2026-10-24。**发布候选，尚未发布。** 最新正式版本仍为
-[v0.7.1](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.1)。
+发布记录：2026-10-24。下载与发布状态见
+[v0.7.2 Release](https://github.com/xueyang-dev/Folith/releases/tag/v0.7.2)。
+源码 tag：`v0.7.2`，发布提交：`0a0ef6503032560b145ea9198203292144ec5ac2`。
 本页记录 v0.7.2 的范围与验收边界，不沿用 0.7.1 的通过结论。
 
 ## 版本变化
@@ -18,7 +19,7 @@
 详细变更见 [CHANGELOG](../CHANGELOG.md)。
 [Milestone 5](https://github.com/xueyang-dev/Folith/milestone/5) 的八个 issue
 #29/#92/#93/#94/#49/#83/#109/#119 均已关闭；PR #120 是该 milestone 的另一个已关闭条目。
-Milestone 关闭记录不能代替最终 0.7.2 包的验收。
+这些条目的关闭记录不能代替最终 0.7.2 包的验收。
 
 ### 范围说明
 
@@ -37,13 +38,13 @@ Milestone 关闭记录不能代替最终 0.7.2 包的验收。
 | #83 Windows 原生窗口 | issue 评论记录等价 49 页任务、真实鼠标完整定位序列；PR #116 修复页码框与重复点击。非 0.7.2 冻结包复验 |
 | #83 macOS 原生窗口 | Apple Silicon、真实 Cocoa 窗口、PySide6 6.11.2；等价 49 页产品导入任务，筛选、重复选择、面板重开和快速连选通过；[证据与驱动](ui-audit/issue-83-macos/README.md)。交互为 QTest 合成事件，非 OS 级点击 |
 | #119 Windows/macOS 外观 | PR #120 已合并；Windows 原生证据在 PR，macOS 真实 Cocoa 与实际 OS 明暗切换通过，未保存编辑保留；[macOS 证据](ui-audit/workbench-theme-119/macos/)。程序驱动设置路径，非人工点选 |
-| origin/main 完整回归 | ba92723 的运行及历史 Windows 失败调查见 [发布验证记录](release-validation-0.7.2.md)；尚不据此宣称候选可发布 |
-| Release Validation | 由 release/0.7.2 推送触发：Linux Python 3.10/3.11/3.12、Windows 全套、双平台候选构建、冻结主流程、OCR、macOS DMG 和 Windows 安装往返；结果见 [发布验证记录](release-validation-0.7.2.md) |
+| origin/main 完整回归 | ba92723 全绿；82a5ae9 的一次失败任务重跑也通过。原失败是锁前初始化写入的真实时序竞争，本版已修复；见 [发布验证记录](release-validation-0.7.2.md) |
+| Release Validation | [候选分支全绿](https://github.com/xueyang-dev/Folith/actions/runs/40112954412)；[tag 发布验证](https://github.com/xueyang-dev/Folith/actions/runs/40120278404) 覆盖 Linux Python 3.10/3.11/3.12、Windows 全套、双平台冻结流程/OCR/打包、DMG 和安装往返。自动验证不能代替人工验收 |
 | 0.7.2 原生硬件与安装升级 | 本轮尚未完成；0.7.1 的 Windows 11 x64 验收仅作操作参考，不能计作本版通过 |
 
 ## 支持范围与已知限制
 
-桌面候选目标为 Windows x64（安装版和便携版）与 macOS arm64 DMG。
+桌面产物目标为 Windows x64（安装版和便携版）与 macOS arm64 DMG。
 macOS 最低系统版本须以本次构建的原生依赖闭包与 manifest 实测为准；Linux CI
 通过不代表提供 Linux 桌面安装包。Windows 10、Windows ARM64、Intel Mac 和独立
 干净机器均未获得本版原生验收结论。
@@ -57,14 +58,13 @@ macOS 最低系统版本须以本次构建的原生依赖闭包与 manifest 实�
   安装升级及系统集成必须在最终候选上复核，不能由 CI 全绿推定完成。
 - 随包 OCR 基线为 Tesseract eng/chi_sim/ara；其他语言需自行添加语言包。
   不随包 PaddleOCR 或 LibreOffice；真实模型连接需自行配置，质量与审校覆盖由任务决定。
-- #130 尚未合并；核心保存顺序已由 #110 修复，但 #130 的 TM 写失败处理行为不同，
-  不能声称整个 PR 已被逐行覆盖。评估见 [发布验证记录](release-validation-0.7.2.md)。
+- #130 已经负责人批准关闭，未合并；核心保存顺序已由 #110 修复。其额外 TM 异常处理未引入本版，评估见 [发布验证记录](release-validation-0.7.2.md)。
 
-## 安装与升级候选
+## 安装与升级
 
-候选产物从对应 Release Validation 运行下载；需先确认运行成功并核对构建身份：
+从上方 v0.7.2 Release 下载：
 `Folith-Setup-0.7.2-windows-x64.exe`、`Folith-Qt-0.7.2-windows-x64.zip` 与
-`Folith-Qt-0.7.2-macos-arm64.dmg`；尚无 v0.7.2 Release 下载页。
+`Folith-Qt-0.7.2-macos-arm64.dmg`。用同一发布页的 `SHA256SUMS.txt` 校验下载文件。
 升级前备份任务、项目资产与设置，并关闭运行中的 Folith。
 
 ## 仍需人工验收
@@ -84,7 +84,8 @@ macOS 最低系统版本须以本次构建的原生依赖闭包与 manifest 实�
 - 两平台：DOCX/PDF 导入→翻译→候选比较/采用/丢弃→审校决定→交付→退出重开；
   过期候选拒绝、批量保护人工译文、长任务中断恢复、真实模型连接与原有任务工作副本导出。
 
-## 发布前批准
+## 发布授权与验收状态
 
-候选验证与人工记录齐备后，由负责人决定合并发布 PR、打并推送 `v0.7.2` tag、
-创建 GitHub Release 并上传匹配产物。PR #130 的关闭、合并或改写也需负责人决定。
+负责人于 2026-10-24 批准按发布准备报告执行：关闭重复 #130、合并 #132、
+推送 `v0.7.2` tag 并创建 GitHub Release。人工验收清单仍待完成，
+授权发布与 CI 成功均不将这些项目改记为通过。
