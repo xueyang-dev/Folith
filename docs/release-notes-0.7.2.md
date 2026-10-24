@@ -38,7 +38,7 @@ Milestone 关闭记录不能代替最终 0.7.2 包的验收。
 | #83 macOS 原生窗口 | Apple Silicon、真实 Cocoa 窗口、PySide6 6.11.2；等价 49 页产品导入任务，筛选、重复选择、面板重开和快速连选通过；[证据与驱动](ui-audit/issue-83-macos/README.md)。交互为 QTest 合成事件，非 OS 级点击 |
 | #119 Windows/macOS 外观 | PR #120 已合并；Windows 原生证据在 PR，macOS 真实 Cocoa 与实际 OS 明暗切换通过，未保存编辑保留；[macOS 证据](ui-audit/workbench-theme-119/macos/)。程序驱动设置路径，非人工点选 |
 | origin/main 完整回归 | ba92723 的运行及历史 Windows 失败调查见 [发布验证记录](release-validation-0.7.2.md)；尚不据此宣称候选可发布 |
-| Release Validation | 待 release/0.7.2 推送触发：Linux Python 3.10/3.11/3.12、Windows 全套、双平台候选构建、冻结主流程、OCR、macOS DMG 和 Windows 安装往返；结果见 [发布验证记录](release-validation-0.7.2.md) |
+| Release Validation | 由 release/0.7.2 推送触发：Linux Python 3.10/3.11/3.12、Windows 全套、双平台候选构建、冻结主流程、OCR、macOS DMG 和 Windows 安装往返；结果见 [发布验证记录](release-validation-0.7.2.md) |
 | 0.7.2 原生硬件与安装升级 | 本轮尚未完成；0.7.1 的 Windows 11 x64 验收仅作操作参考，不能计作本版通过 |
 
 ## 支持范围与已知限制
@@ -62,7 +62,7 @@ macOS 最低系统版本须以本次构建的原生依赖闭包与 manifest 实�
 
 ## 安装与升级候选
 
-待 CI 产物生成后，从对应 Release Validation 运行下载
+候选产物从对应 Release Validation 运行下载；需先确认运行成功并核对构建身份：
 `Folith-Setup-0.7.2-windows-x64.exe`、`Folith-Qt-0.7.2-windows-x64.zip` 与
 `Folith-Qt-0.7.2-macos-arm64.dmg`；尚无 v0.7.2 Release 下载页。
 升级前备份任务、项目资产与设置，并关闭运行中的 Folith。

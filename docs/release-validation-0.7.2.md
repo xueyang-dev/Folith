@@ -10,8 +10,8 @@
   `test_concurrent_project_tm_saves_preserve_both_writers` 失败。
   实际栈为 `folith/job_lock.py:20 stream.flush()` 的 PermissionError，
   并非背景描述的 `msvcrt.locking(..., LK_LOCK)` 十次重试耗尽。
-- 2026-10-24 对该运行只重跑失败任务一次（attempt 2）；结果待补。
-- [ba92723 / #110 合并后的运行](https://github.com/xueyang-dev/Folith/actions/runs/40111562258)：结果待补。
+- 2026-10-24 对该运行只重跑失败任务一次（attempt 2）；结果以该运行 attempt 2 为准。
+- [ba92723 / #110 合并后的运行](https://github.com/xueyang-dev/Folith/actions/runs/40111562258)：最新结论见运行链接。
 
 代码中的首次创建竞争：两个 writer 都可在 `path.stat().st_size == 0` 时决定写入 NUL；
 若一个 writer 已 flush 并锁住第一个字节，另一个的延迟 flush 写入该字节会被 Windows
@@ -36,8 +36,11 @@ Windows 允许锁住 EOF 之外的字节，无需先写入锁文件；依据
 并验证成功晋升不丢已有条目（失败注入分别为 RuntimeError 与 OSError）。
 #130 没有针对它新增的“TM 写失败后吞异常”行为的测试。
 
-#130 当前 Fast Checks 的 Linux 完整回归及 package 失败，Release Validation 的候选任务
-均被跳过；其同名 gate 显示成功不能当作完整发布验收。
+#130 当时 Fast Checks 的 Linux 完整回归及 package 失败均由三份证据 JSON 的本机绝对路径
+触发（旧品牌检查与 release preflight）；已在 main 的 #131 清理，与 TM 顺序修复无关。
+其 Release Validation 候选任务均被跳过，同名 gate 显示成功不能当作完整发布验收。
+将 #130 的三个新增测试单独取出，在本候选的 #110 实现上执行：3 passed（10 deselected）；
+没有引入 #130 的产品代码。
 
 建议：关闭重复 #130；若要补预置条目/human_fixed 测试或改变 TM 异常策略，从当前 main
 单独提交最小补丁并验证。直接合并会带回重复修复；rebase 后只应留下有意保留的差异。
@@ -55,7 +58,15 @@ README 的正式下载仍指向实际已发布的 0.7.1；旧验收、历史 cha
 
 ## Release Validation
 
-待分支推送后填写运行链接、候选提交、各任务结果和产物证据。
+分支已推送；发布准备 PR：[#132](https://github.com/xueyang-dev/Folith/pull/132)。
+[首次候选验证（eaeadc9）](https://github.com/xueyang-dev/Folith/actions/runs/40112852934)
+及 [分支最新运行](https://github.com/xueyang-dev/Folith/actions/workflows/release-validation.yml?query=branch%3Arelease%2F0.7.2)
+记录各任务结论与产物；文档补充会触发后续运行，以最终候选提交对应的全绿运行作为发布门禁，
+不能用较早提交或跳过候选构建的成功 gate 替代。
+
+必须检查 Linux 三版本、Windows 全套、package、shared Qt、macOS/Windows 两个候选任务
+及最终 Release Validation gate。产物 `folith-qt-macos` / `folith-qt-windows` 内含构建身份、
+冻结流程/OCR 报告、DMG/安装往返记录；最终运行结论与链接同步在 PR 描述。
 本记录不宣称人工验收通过。人工清单见 [发布说明](release-notes-0.7.2.md)。
 
 ## 本地验证
