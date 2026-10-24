@@ -31,13 +31,9 @@ Translating one passage is easy. The hard part is using the same wording in chap
 
 ## 🎬 Folith in one minute
 
-<p align="center">
-  <a href="docs/media/folith-intro.mp4"><img src="docs/media/folith-intro-poster.jpg" alt="Folith·译页 intro video (about one minute, click to play)" width="840"></a>
-</p>
+https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
-<p align="center">
-  <a href="docs/media/folith-intro.mp4">▶ Watch the intro video (MP4, about 1 minute, 4.3 MB, Chinese and English captions)</a>
-</p>
+<sub>Fallback: [download the MP4](docs/media/folith-intro.mp4)</sub>
 
 One book, from import through preparation, translation and human review to delivery, in about a minute. The interface footage was captured offscreen from the Folith client using a synthetic public-domain sample book (*The Brothers Karamazov*) and contains no real user files; shots marked "Illustration" are animated explanations.
 

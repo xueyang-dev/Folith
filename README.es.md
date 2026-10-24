@@ -31,13 +31,9 @@ Traducir un pasaje es fácil. Lo difícil es usar las mismas palabras en el cap�
 
 ## 🎬 Folith en un minuto
 
-<p align="center">
-  <a href="docs/media/folith-intro.mp4"><img src="docs/media/folith-intro-poster.jpg" alt="Vídeo de presentación de Folith·译页 (aprox. un minuto, haz clic para verlo)" width="840"></a>
-</p>
+https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
-<p align="center">
-  <a href="docs/media/folith-intro.mp4">▶ Ver el vídeo de presentación (MP4, aprox. 1 minuto, 4,3 MB, subtítulos en chino e inglés)</a>
-</p>
+<sub>Alternativa: [descargar el MP4](docs/media/folith-intro.mp4)</sub>
 
 Un libro, desde la importación, pasando por la preparación, la traducción y la revisión humana, hasta la entrega, en un minuto. Las imágenes de la interfaz se capturaron fuera de pantalla desde el cliente de Folith con un libro de ejemplo sintético de dominio público (*Los hermanos Karamázov*) y no contienen archivos reales de usuarios; las tomas marcadas como «Illustration» son explicaciones animadas.
 
