@@ -1102,6 +1102,63 @@ def stage_batch_replacement(job_id: str, query: str, replacement: str, *,
             "selected": len(drafts)}
 
 
+def preview_term_revision(state: dict, source_term: str, old_target: str,
+                          new_target: str, *,
+                          forbidden: Sequence[str] = ()) -> dict:
+    """术语修订预览（纯函数）：原文锚定、逐段分类，不改任何状态。"""
+    from folith import term_revision as _tr
+
+    return _tr.preview_term_revision(
+        source_term, old_target, new_target, state.get("pairs") or [],
+        forbidden=forbidden)
+
+
+def replace_term_targets(job_id: str, source_term: str, old_target: str,
+                         new_target: str, *, forbidden: Sequence[str] = (),
+                         exclusions: Sequence[int] = (),
+                         selected: Sequence[int] = (),
+                         allow_protected: bool = False) -> dict:
+    """术语批量替换：锁内重算预览并暂存候选，再只采用用户预览选中的段。
+
+    ``exclusions`` 是 UI 决定不参与本次批量的段（不暂存）；``selected`` 是
+    预览里勾选要改的段——只有这些段的候选会被采用，重算后多出来的未预览段
+    立即丢弃（记录可追溯），绝不悄悄写入。人工改写/人工确认的段由批量采用
+    入口默认跳过，逐条报告原因。
+    """
+    staged = core.stage_term_revision(
+        job_id, source_term, old_target, new_target, forbidden=forbidden,
+        exclusions=exclusions)
+    created = [item for item in staged.get("created") or []
+               if str(item.get("candidate_id") or "")]
+    selected_set = {int(index) for index in selected}
+    ids = [str(item.get("candidate_id")) for item in created
+           if item.get("segment_index") in selected_set]
+    unselected = [str(item.get("candidate_id")) for item in created
+                  if item.get("segment_index") not in selected_set]
+    for candidate_id in unselected:
+        try:
+            core.discard_translation_candidate(job_id, candidate_id, actor="user",
+                                               note="预览后未选中该段")
+        except ValueError:  # noqa: BLE001 - 已被并发处理掉的候选不必报错
+            pass
+    if not ids:
+        return {"staged": len(created), "changed": 0, "committed": [],
+                "skipped": [], "discarded_unselected": len(unselected),
+                "rejected": staged.get("rejected") or [],
+                "preview": staged.get("preview") or {}}
+    try:
+        adopted = core.adopt_translation_candidates(job_id, ids,
+                                                    allow_protected=allow_protected)
+    except ValueError as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return {"staged": len(created), "changed": int(adopted.get("changed") or 0),
+            "committed": list(adopted.get("committed") or []),
+            "skipped": list(adopted.get("skipped") or []),
+            "discarded_unselected": len(unselected),
+            "rejected": staged.get("rejected") or [],
+            "preview": staged.get("preview") or {}}
+
+
 def exclude_fragments(job_id: str, indexes: Sequence[int]) -> int:
     """一次排除多个疑似原文碎片（原文与译文都保留，可在交付页恢复）。"""
     done = 0

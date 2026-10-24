@@ -65,6 +65,7 @@ ORIGIN_INSTRUCTED = "instructed_retranslate"
 ORIGIN_REVIEW = "review_suggestion"
 ORIGIN_BATCH = "batch_revision"
 ORIGIN_CONCEPT = "concept_revision"
+ORIGIN_TERM = "term_revision"
 
 ORIGIN_LABELS = {
     ORIGIN_TARGETED: "定点重译",
@@ -72,6 +73,7 @@ ORIGIN_LABELS = {
     ORIGIN_REVIEW: "审校建议",
     ORIGIN_BATCH: "批量修订",
     ORIGIN_CONCEPT: "概念统一",
+    ORIGIN_TERM: "术语修订",
 }
 
 #: Why a candidate cannot be adopted.  The values reach the UI, which turns
@@ -531,10 +533,12 @@ __all__ = [
     "CONFLICT_TARGET_CHANGED",
     "CONFLICT_UID_MISMATCH",
     "ORIGIN_BATCH",
+    "ORIGIN_CONCEPT",
     "ORIGIN_INSTRUCTED",
     "ORIGIN_LABELS",
     "ORIGIN_REVIEW",
     "ORIGIN_TARGETED",
+    "ORIGIN_TERM",
     "PROTECTION_HUMAN_ACCEPTED",
     "PROTECTION_HUMAN_EDIT",
     "PROTECTION_LABELS",

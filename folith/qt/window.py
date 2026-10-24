@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         self.workbench.deliverWithRiskRequested.connect(self.deliver_with_risk)
         self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.termAddRequested.connect(self.add_term_from_selection)
+        self.workbench.termEditRequested.connect(self.edit_term_suggestion)
         self.workbench.profileEditRequested.connect(self.edit_document_profile)
         self.workbench.promoteMemoryRequested.connect(self.promote_task_memory)
         self.workbench.styleRuleRequested.connect(self.save_style_rule)
@@ -2368,6 +2369,105 @@ class MainWindow(QMainWindow):
                             values["replacement"], on_done=done,
                             case_sensitive=values["case_sensitive"],
                             allow_protected=values.get("include_protected", False))
+
+    def edit_term_suggestion(self, term: dict) -> None:
+        """从术语建议卡直接编辑这条术语（issue #125），保存后可选预览受影响译文。
+
+        保存走术语页同一条逐条修订通道（core.update_glossary_entry：生成新
+        术语版本、失效受影响段落、清除 TM 信任）。翻译开始前的草稿改动仍然
+        归术语页管——那时还没有译文，"改了术语再改译文"没有意义。
+        """
+        job_id = self._current_job_id
+        if not job_id or _automation():
+            return
+        state = adapter.load_state(job_id)
+        if not state.get("p2_done"):
+            self._notice(i18n.tr('翻译开始前请在术语页编辑术语；改动会在开始前统一保存。'))
+            return
+        from .dialogs import TermEditDialog
+
+        entry = self._term_entry(term)
+        dialog = TermEditDialog(entry, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        entry_id = str(entry.get("id") or "")
+        source = str(entry.get("source") or "")
+        old_target = str(entry.get("preferred") or entry.get("target") or "")
+        # domain/note 不在快捷编辑里：沿用条目现有值，不改写。
+        ok = self._glossary_action(
+            adapter.update_glossary_entry, entry_id,
+            preferred=values["preferred"], status=values["status"],
+            domain=str(entry.get("domain") or ""), note=str(entry.get("note") or ""),
+            forbidden=values["forbidden"], failure=i18n.tr('无法保存术语'))
+        if not ok:
+            return
+        if values["preview"]:
+            self.preview_term_replacement(source, old_target,
+                                          values["preferred"], values["forbidden"])
+
+    def _term_entry(self, term: dict) -> dict:
+        """术语建议卡通常只带 id/source/target：从术语页视图补齐 domain/note 等字段。"""
+        job_id = self._current_job_id
+        entry = dict(term or {})
+        try:
+            view = adapter.glossary_view(job_id, None, count_occurrences=False)
+        except Exception:  # noqa: BLE001 - 视图拿不到就按卡上的字段编辑
+            return entry
+        entry_id = str(entry.get("id") or "")
+        for row in view.get("rows") or []:
+            if str(row.get("id") or "") == entry_id:
+                entry.update(row)
+                break
+        entry.setdefault("preferred", entry.get("target") or "")
+        return entry
+
+    def preview_term_replacement(self, source: str, old_target: str,
+                                 new_target: str, forbidden: list) -> None:
+        """术语批量替换：逐段预览、勾选，再经候选事务写入选中的段（issue #126/#127）。"""
+        job_id = self._current_job_id
+        if not job_id or _automation():
+            return
+        from .dialogs import TermReplaceDialog
+
+        state = adapter.load_state(job_id)
+        preview = adapter.preview_term_revision(
+            state, source, old_target, new_target, forbidden=forbidden or [])
+        if not preview.get("rows"):
+            self._notice(i18n.tr(
+                '没有可以确定的替换：{v0} 段原文命中，其中 {v1} 段需要人工确认、'
+                '{v2} 段是人工保护的译文。', v0=preview.get("source_occurrences") or 0,
+                v1=len(preview.get("ambiguous") or []),
+                v2=len(preview.get("protected") or [])))
+            return
+        dialog = TermReplaceDialog(preview, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        if not values["selected"]:
+            return
+
+        def done(result) -> None:
+            result = result if isinstance(result, dict) else {}
+            changed = int(result.get("changed") or 0)
+            skipped = list(result.get("skipped") or [])
+            if changed == 0 and not skipped:
+                message = i18n.tr('没有需要替换的段落。')
+            elif skipped:
+                message = i18n.tr('已替换 {v0} 段；{v1} 段没有替换（人工确认/已过期的段落需要逐段处理）。',
+                                  v0=changed, v1=len(skipped))
+            else:
+                message = i18n.tr('已替换 {v0} 段译文；这些段需要重新审校。', v0=changed)
+            self._notice(message, job_id=job_id)
+            if job_id == self._current_job_id:
+                self.refresh_workbench(force=True)
+                self.workbench.reload_current_segment()
+
+        self._run_with_busy(
+            i18n.tr('术语替换'), i18n.tr('正在替换译文…'),
+            adapter.replace_term_targets, job_id, source, old_target, new_target,
+            on_done=done, forbidden=forbidden or [],
+            exclusions=values["exclusions"], selected=values["selected"])
 
     def review_current(self, index: int) -> None:
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校当前段落…'),
