@@ -1,0 +1,13 @@
+{
+  "name": "folith-intro-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "npx --yes hyperframes@0.8.169 check",
+    "dev": "npx --yes hyperframes@0.8.169 preview",
+    "render": "npx --yes hyperframes@0.8.169 render --quality delivery -o renders/folith-intro.mp4"
+  },
+  "devDependencies": {
+    "gsap": "3.12.5"
+  }
+}
