@@ -2906,6 +2906,9 @@ class MainWindow(QMainWindow):
             message = i18n.tr('已确认问题解决。该决定已记录。')
         self._notice(message)
         self.refresh_workbench(force=True)
+        # 连续处理（#98）：只有动作**成功**才前进到下一项；失败时提示留在
+        # 队列里，未处理的发现项不会被跳过。
+        self.workbench.review_panel.consume_advance_hint()
 
     def apply_suggestion(self, item: dict, note: str) -> None:
         """把审校建议暂存为候选；正文和发现项都不动，采用是另一个动作。"""
@@ -2922,6 +2925,8 @@ class MainWindow(QMainWindow):
         self._notice(i18n.tr('已把审校建议暂存为第 {v0} 段的候选；采用后才会写入译文。',
                              v0=index + 1))
         self.refresh_workbench(force=True)
+        # 连续处理（#98）：暂存成功也前进到下一项；失败不动队列。
+        self.workbench.review_panel.consume_advance_hint()
         if job_id == self._current_job_id:
             # 建议是针对某一段的：把它选出来，否则右栏看不到刚生成的候选。
             self.workbench.select_segment(index)
