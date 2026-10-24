@@ -69,6 +69,7 @@ from folith import project as _project
 from folith import translation_memory as _tm_scope
 from folith import retrospective as _retrospective
 from folith import finding_groups as _finding_groups
+from folith import review_export as _review_export
 from folith import translation_cache as _translation_cache
 from folith import knowledge_cache as _knowledge_cache_module
 from folith import usage as _usage
@@ -13376,3 +13377,29 @@ def materialize_deterministic_group_fix(job_id, group_id, *, actor="user",
         "preview": deterministic_finding_group_preview(
             job_id, group_id),
     }
+
+
+# ================= 审校交接导出（#103） =================
+
+
+def review_handoff_export(job_id, fmt="json", *, max_text_chars=None):
+    """只读导出审校决定、正文改动与未解决发现项。
+
+    ``fmt`` 支持 ``json`` / ``jsonl`` / ``markdown`` / ``view``。不新增报告真值，
+    也不改写任务；导出之后删除文件对任务没有任何影响。
+    """
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    fmt = str(fmt or "json").lower()
+    if fmt == "view":
+        return _review_export.build_review_export(
+            state, job_id, max_text_chars=max_text_chars)
+    if fmt in {"md", "markdown"}:
+        return _review_export.export_markdown(state, job_id)
+    if fmt == "jsonl":
+        return _review_export.export_jsonl(state, job_id)
+    if fmt == "json":
+        return _review_export.export_json(
+            state, job_id, max_text_chars=max_text_chars)
+    raise ValueError(f"不支持的审校导出格式：{fmt}")

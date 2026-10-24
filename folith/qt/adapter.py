@@ -1735,6 +1735,14 @@ def _group_entity_conflicts(view: dict) -> None:
     view["filter_counts"] = counts
 
 
+def review_handoff_export(job_id: str, fmt: str = "json") -> str:
+    """导出审校交接材料（JSON / JSONL / Markdown）；只读，不改任务。"""
+    try:
+        return core.review_handoff_export(job_id, fmt)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
 def review_queue(job_id: str, state: dict | None = None) -> dict:
     """审校页的整个视图模型：就绪状态、筛选计数、队列项。"""
     from folith import workbench_view as _workbench_view
