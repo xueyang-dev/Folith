@@ -77,8 +77,9 @@ python eval/metrics/review_evidence.py --no-write # inspect only
 
 ## Results
 
-Run recorded in `eval/review_evidence/results/` (scripted provider, batch size 1,
-target language 简体中文, 3 locked terms):
+Measured on `main` at `62b656a` (the merge of #101; eval harness commit
+`6f2d68f`). Run recorded in `eval/review_evidence/results/` (scripted
+provider, batch size 1, target language 简体中文, 3 locked terms):
 
 | Metric | always | risk_selective |
 | --- | --- | --- |
@@ -93,7 +94,7 @@ target language 简体中文, 3 locked terms):
 | deterministic false-positive findings (control segments) | 0 | 0 |
 | skipped segments | 0 | 9 |
 | skipped-violation (reviewed/approved/TM) | 0 | 0 |
-| local wall time (ms) | 43.4 | 31.1 |
+| local wall time (ms) | 59.2 | 34.2 |
 
 Per domain (selective): literary 2/4, academic 4/4, technical 3/4.
 

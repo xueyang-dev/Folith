@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "kind": "review_evidence_evaluation",
-  "created_at": "2026-10-24T19:43:05+00:00",
+  "created_at": "2026-10-24T20:25:08+00:00",
   "config": {
-    "main_commit": "55a2943fd6c16b7099034b863d9bcd217b9e4f1c",
+    "main_commit": "6f2d68f6f0c71b94945f89bab74584ab48fc6faf",
     "dataset_sha256": "a9ef2c2cd1ac9004d6b7f33a78f0739f21892ca51cef3b3c16b2c77cc8de3a10",
     "annotation_sha256": "b554af132ac3afe22c59d728b9e3d206ba7785c5101b952e96fe2897895fd338",
     "samples": 18,
@@ -423,7 +423,7 @@
         "auxiliary": 0,
         "unknown": 0
       },
-      "wall_ms": 43.354,
+      "wall_ms": 59.166,
       "review_provider_seconds": 0.0,
       "review_stats": {
         "reviewed_segments": 6,
@@ -879,7 +879,7 @@
         "auxiliary": 0,
         "unknown": 0
       },
-      "wall_ms": 31.102,
+      "wall_ms": 34.202,
       "review_provider_seconds": 0.0,
       "review_stats": {
         "reviewed_segments": 0,
@@ -924,5 +924,5 @@
     "risk_selective missed serious errors in these annotation categories: mistranslation, omission. This reproduces the #20 finding that deterministic signals alone cannot see terminology drift, omission, negation and mistranslation; the measured misses are the cost of the skipped batches.",
     "Policy recommendation: keep the modes explicit rather than declaring them equivalent. If the default is risk_selective (#64), the report must not claim full-review recall, and skipped segments must stay visibly skipped (this run verifies reviewed=false, no approval, no TM promotion). A future mode that samples review work cannot be justified by this harness alone."
   ],
-  "harness_wall_ms": 113.856
+  "harness_wall_ms": 134.438
 }
