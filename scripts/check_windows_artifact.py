@@ -9,8 +9,8 @@ facts and fails on absence rather than reporting "missing = pass".
 
 Usage:
     python scripts/check_windows_artifact.py `
-        --zip dist/installer/Folith-Qt-0.7.1-windows-x64.zip `
-        --installer dist/installer/Folith-Setup-0.7.1-windows-x64.exe `
+        --zip dist/installer/Folith-Qt-0.7.2-windows-x64.zip `
+        --installer dist/installer/Folith-Setup-0.7.2-windows-x64.exe `
         --out build/qt-windows/windows-artifact-check.json
 """
 from __future__ import annotations
