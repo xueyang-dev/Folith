@@ -1102,6 +1102,71 @@ def stage_batch_replacement(job_id: str, query: str, replacement: str, *,
             "selected": len(drafts)}
 
 
+# ================= 术语修订（issue #125–#128）=================
+
+def term_revision_preview(job_id: str, entry: dict, *,
+                          exclusions: Sequence[int] | None = None) -> dict:
+    """一条术语条目的修订预览：哪些段可替换、哪些已正确、哪些只能人工看。
+
+    纯计算，零模型调用。``entry`` 带 ``id`` / ``source`` / ``new_preferred`` /
+    ``old_preferred`` / ``forbidden``；``exclusions`` 是 UI 逐段取消勾选的段。
+    引擎在暂存时会在锁内重算同一份预览，这里的过期结果永远不会被照抄。
+
+    返回 ``{"preview": 预览, "pairs": [{"source","target"}…]}``——预览行不携带
+    整段文本，保护段/歧义段要给人看时由对话框按索引来这里取。
+    """
+    from folith import term_revision as _tr
+
+    state = load_state(job_id)
+    pairs = state.get("pairs") or []
+    preview = _tr.preview_term_revision(entry, pairs, exclusions=exclusions or ())
+    return {"preview": preview,
+            "pairs": [{"source": str(pair.get("source") or ""),
+                       "target": str(pair.get("target") or "")}
+                      for pair in pairs if isinstance(pair, dict)]}
+
+
+def stage_term_revision(job_id: str, entry: dict, *,
+                        exclusions: Sequence[int] | None = None,
+                        note: str = "") -> dict:
+    """只暂存术语修订的候选，不写正文（预览、逐项检查用）。"""
+    try:
+        result = core.stage_term_revision(job_id, entry, exclusions=exclusions or (),
+                                          note=str(note or ""))
+    except ValueError as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return {"created": list(result.get("created") or []),
+            "rejected": list(result.get("rejected") or []),
+            "preview": result.get("preview") or {}}
+
+
+def revise_term(job_id: str, entry: dict, *,
+                exclusions: Sequence[int] | None = None,
+                note: str = "") -> dict:
+    """术语修订整批：预览过的可替换段暂存为 ``term_revision`` 候选并采用。
+
+    与 ``replace_in_targets`` 同一个两步事务；人工改写/人工确认过的段落永远
+    不会被批量覆盖（预览里已列为 protected，暂存根本不含它们）。采用完成后
+    引擎在同一事务里重新核对实体一致性（issue #128）。
+    """
+    staged = stage_term_revision(job_id, entry, exclusions=exclusions, note=note)
+    ids = [str(item.get("candidate_id") or "") for item in staged["created"]]
+    ids = [candidate_id for candidate_id in ids if candidate_id]
+    result = {"staged": len(ids), "changed": 0, "committed": [], "skipped": [],
+              "rejected": staged["rejected"], "preview": staged["preview"]}
+    if not ids:
+        return result
+    try:
+        adopted = core.adopt_translation_candidates(job_id, ids,
+                                                    allow_protected=False)
+    except ValueError as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    result.update({"changed": int(adopted.get("changed") or 0),
+                   "committed": list(adopted.get("committed") or []),
+                   "skipped": list(adopted.get("skipped") or [])})
+    return result
+
+
 def exclude_fragments(job_id: str, indexes: Sequence[int]) -> int:
     """一次排除多个疑似原文碎片（原文与译文都保留，可在交付页恢复）。"""
     done = 0

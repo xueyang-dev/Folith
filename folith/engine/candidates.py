@@ -223,6 +223,66 @@ def stage_concept_revision(job_id: str, card: Mapping[str, Any], *,
     return result
 
 
+def stage_term_revision(job_id: str, entry: Mapping[str, Any], *,
+                        exclusions: Sequence[int] = (), note: str = "",
+                        actor: str = "user") -> Dict[str, Any]:
+    """把一次术语修订（issue #126）的逐段修订暂存为候选，一个事务提交。
+
+    与 :func:`stage_concept_revision` 同一个模式：预览在锁内对权威状态**重新
+    计算**——客户端带来的过期预览永远不会被照抄；每个未排除的可替换段成为
+    一条 ``term_revision`` 候选，基线取自当前状态，因此"预览之后段落又被
+    编辑/重译"的情形由 ``commit_candidates`` 的基线门禁判为过期而不是写错段。
+    暂存不改正文；采用是独立的、带版本检查的另一步。
+
+    ``entry`` 需要 ``source``（原文术语）、``new_preferred``（修订后首选译名）、
+    ``old_preferred`` 与 ``forbidden``（要消灭的写法）；``exclusions`` 是 UI
+    逐段排除的 segment 索引。可替换（replaceable）段才产生候选；ambiguous 段
+    只列在返回的预览里供人工看；人工保护段只出现在 ``preview.protected``，
+    绝不进批量。
+    """
+    from folith import term_revision as _tr
+
+    state = _loaded(job_id)
+    pairs = state.get("pairs") or []
+    preview = _tr.preview_term_revision(entry, pairs, exclusions=exclusions)
+    entry = dict(entry) if isinstance(entry, Mapping) else {}
+    entry_id = str(entry.get("id") or "")
+    drafts: List[Dict[str, Any]] = []
+    for row in preview["rows"]:
+        if row.get("excluded"):
+            continue
+        index = row.get("segment_index")
+        if not isinstance(index, int) or not 0 <= index < len(pairs):
+            continue
+        pair = pairs[index]
+        finding_ids = []
+        if entry_id:
+            for finding in state.get("findings") or []:
+                if not isinstance(finding, Mapping):
+                    continue
+                if finding.get("segment_index") != index:
+                    continue
+                if str(finding.get("entry_id") or "") != entry_id:
+                    continue
+                finding_key = str(finding.get("id") or finding.get("finding_id") or "")
+                if finding_key:
+                    finding_ids.append(finding_key)
+        drafts.append({
+            "segment_index": index,
+            "segment_uid": str(row.get("segment_uid") or ""),
+            "source": str(pair.get("source") or ""),
+            "candidate_target": str(row.get("after") or ""),
+            "origin": _cand.ORIGIN_TERM,
+            "instruction": str(note or ""),
+            "finding_ids": finding_ids,
+            "baseline": _cand.pair_signature(pair),
+            "usage": {"unknown": True},
+        })
+    result = commit_candidates(job_id, drafts, actor=actor)
+    result["preview"] = preview
+    return result
+
+
 def _resolve_draft_index(state: Mapping[str, Any], draft: Mapping[str, Any]) -> Optional[int]:
     """Find the segment a draft belongs to: uid first, index+source as fallback."""
     pairs = state.get("pairs") or []
@@ -463,6 +523,7 @@ def adopt_translation_candidates(job_id: str, candidate_ids: Sequence[str], *,
     seen: set = set()
     changed = 0
     dirty = False
+    term_revision_adopted = False
 
     for raw in candidate_ids or []:
         candidate_id = str(raw or "").strip()
@@ -478,6 +539,10 @@ def adopt_translation_candidates(job_id: str, candidate_ids: Sequence[str], *,
                                         actor=actor, note=note,
                                         allow_protected=allow_protected)
         dirty = dirty or item_dirty
+        if result.get("committed") and str(
+                (_cand.by_id(state, candidate_id) or {}).get("origin") or "") \
+                == _cand.ORIGIN_TERM:
+            term_revision_adopted = True
         results.append({"candidate_id": candidate_id,
                         "committed": bool(result.get("committed")),
                         "changed_text": bool(result.get("changed_text")),
@@ -494,6 +559,14 @@ def adopt_translation_candidates(job_id: str, candidate_ids: Sequence[str], *,
             skipped.append({"candidate_id": candidate_id,
                             "conflict": result.get("conflict") or "",
                             "reason": result.get("reason") or ""})
+
+    if term_revision_adopted:
+        # 术语修订统一了译名：同一事务里重新核对实体一致性（issue #128）。
+        # 已不再成立的 entity_conflict 在这里被解决；仍然成立的保持打开。
+        # 只改 findings，不调模型、不碰无关发现。
+        from folith.engine.glossary_ops import _refresh_entity_consistency
+        _refresh_entity_consistency(state, actor=actor)
+        dirty = True
 
     if dirty:
         _c.save_job_state(job_id, state)

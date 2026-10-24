@@ -45,7 +45,7 @@ from . import components, motion
 from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
-from .dialogs import DiagnosticsDialog, EngineDialog
+from .dialogs import DiagnosticsDialog, EngineDialog, TermEditDialog, TermRevisionDialog
 from .project_sheets import BatchAcceptDialog, MoveToProjectSheet
 from .projects_view import NewTermDialog, ProjectsView
 from .views import HomeView, WorkbenchView
@@ -439,6 +439,7 @@ class MainWindow(QMainWindow):
         self.workbench.glossaryEntryAddRequested.connect(self.add_glossary_entry)
         self.workbench.glossaryStatusRequested.connect(self.set_terms_status)
         self.workbench.glossaryEntryDeleteRequested.connect(self.delete_glossary_entry)
+        self.workbench.termEditRequested.connect(self.edit_term_entry)
         self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
@@ -2861,8 +2862,8 @@ class MainWindow(QMainWindow):
                               failure=i18n.tr('无法跳过冻结'),
                               after=self._continue_after_freeze)
 
-    def update_glossary_entry(self, entry_id: str, fields: dict) -> None:
-        self._glossary_action(
+    def update_glossary_entry(self, entry_id: str, fields: dict) -> bool:
+        return self._glossary_action(
             adapter.update_glossary_entry, entry_id,
             preferred=fields.get("preferred", ""), status=fields.get("status", ""),
             domain=fields.get("domain", ""), note=fields.get("note", ""),
@@ -2887,6 +2888,103 @@ class MainWindow(QMainWindow):
             return
         self._glossary_action(adapter.delete_glossary_entry, entry_id,
                               failure=i18n.tr('无法删除术语'))
+
+    # ================= 术语就地编辑与全局修订（issue #125–#127）=================
+    def edit_term_entry(self, term: dict) -> None:
+        """工作台术语卡上的「编辑」：就地修改这条术语，然后提供逐段修订。
+
+        保存走既有的逐条修订通路（新术语版本 + 受影响段落失效 + TM 信任重置），
+        不另开第二套编辑后端。保存成功且首选译名变了（或新增了禁用译名）时，
+        顺手提供修订预览（issue #127）：哪些段要改、逐段勾选后一次批量。
+        """
+        job_id = self._current_job_id
+        if not job_id or _automation():
+            return
+        entry_id = str((term or {}).get("id") or "")
+        if not entry_id:
+            return
+        try:
+            view = adapter.glossary_view(job_id)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法打开术语编辑'), str(exc))
+            return
+        row = next((item for item in view.get("rows") or []
+                    if str(item.get("id") or "") == entry_id), None)
+        if row is None:
+            return
+        dialog = TermEditDialog(row, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        fields = dialog.values()
+        old_preferred = str(row.get("preferred") or "")
+        old_forbidden = {str(item) for item in row.get("forbidden") or []}
+        if not self.update_glossary_entry(entry_id, fields):
+            return
+        new_forbidden = {str(item) for item in fields.get("forbidden") or []}
+        if str(fields.get("preferred") or "") == old_preferred \
+                and new_forbidden <= old_forbidden:
+            return  # 译名与禁用译名都没动：没有要批量修正的东西
+        self._offer_term_revision({
+            "id": entry_id,
+            "source": str(fields.get("source") or row.get("source") or ""),
+            "new_preferred": str(fields.get("preferred") or ""),
+            "old_preferred": old_preferred,
+            "forbidden": sorted(new_forbidden),
+        })
+
+    def _offer_term_revision(self, entry: dict) -> None:
+        """后台算出修订预览，弹出逐段勾选对话框，确认后暂存并采用（issue #126/#127）。
+
+        预览是纯计算（零模型调用），但整本扫描要走后台线程（大文档不在 GUI
+        线程上扫描，沿用 ``_run_with_busy`` 的模式）。
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+
+        def preview_done(result) -> None:
+            view = result if isinstance(result, dict) else {}
+            preview = view.get("preview") or {}
+            replaceable = [row for row in preview.get("rows") or []
+                           if isinstance(row, dict) and not row.get("excluded")]
+            if not preview.get("reason") and not replaceable:
+                self._notice(i18n.tr('没有需要改写的译文：其余段落已是正确译名、'
+                                     '人工保护或需要逐段人工确认。'), job_id=job_id)
+                return
+            dialog = TermRevisionDialog(preview, pairs=view.get("pairs") or [],
+                                        parent=self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return  # 取消：什么都没发生
+            selected = set(dialog.values()["selected"])
+            if not selected:
+                return
+            exclusions = [int(row.get("segment_index")) for row in replaceable
+                          if int(row.get("segment_index")) not in selected]
+            note = i18n.tr('术语修订：{v0} → {v1}',
+                           v0=entry.get("source") or "", v1=entry.get("new_preferred") or "")
+
+            def apply_done(applied) -> None:
+                changed = int((applied or {}).get("changed") or 0)
+                skipped = list((applied or {}).get("skipped") or [])
+                if changed:
+                    message = i18n.tr('已修订 {v0} 段译文；这些段需要重新审校。', v0=changed)
+                    if skipped:
+                        message += i18n.tr('{v0} 段没有改动（段落已变化或被保护，原因见候选列表）。',
+                                           v0=len(skipped))
+                else:
+                    message = i18n.tr('没有可应用的修订（段落可能已变化，请重新预览）。')
+                self._notice(message, job_id=job_id)
+                if job_id == self._current_job_id:
+                    self.refresh_workbench(force=True)
+                    self.workbench.reload_current_segment()
+
+            self._run_with_busy(i18n.tr('术语修订'), i18n.tr('正在暂存并应用术语修订…'),
+                                adapter.revise_term, job_id, entry, on_done=apply_done,
+                                exclusions=exclusions, note=note)
+
+        self._run_with_busy(i18n.tr('术语修订'), i18n.tr('正在计算术语修订预览…'),
+                            adapter.term_revision_preview, job_id, entry,
+                            on_done=preview_done)
 
     # ================= 审校页：人工处置 =================
     def resolve_findings(self, finding_ids: list, action: str, note: str) -> None:

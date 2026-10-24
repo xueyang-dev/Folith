@@ -1508,6 +1508,251 @@ class FindReplaceDialog(QDialog):
                 "include_protected": self.protect_box.isChecked()}
 
 
+class TermEditDialog(QDialog):
+    """就地编辑一条术语（issue #125）：首选译名、状态、禁用译名。
+
+    只收集这三样；保存走窗口层既有的逐条修订通路（``update_glossary_entry``
+    → 新术语版本 + 受影响段落失效 + TM 信任重置），这里不写任何状态。
+    domain / 备注 原样带回——既有通路会把传来的字段整个写入，不带回就会被清空。
+    """
+
+    def __init__(self, row: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from .terms_panel import STATUS_LABELS, STATUS_ORDER
+
+        self._row = dict(row)
+        self.setWindowTitle(i18n.tr('修改术语'))
+        self.setMinimumWidth(420)
+        source = QLabel(str(self._row.get("source") or ""))
+        source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.preferred_edit = QLineEdit(str(self._row.get("preferred") or ""))
+        # 禁用译名：译文里出现就报术语问题；这里改完可以在下一步预览并批量修正。
+        self.forbidden_edit = QLineEdit(
+            "、".join(str(item) for item in self._row.get("forbidden") or []))
+        self.forbidden_edit.setPlaceholderText(i18n.tr('多个用逗号或分号隔开'))
+        self.status_box = style_module.ComboBox()
+        for value in STATUS_ORDER:
+            self.status_box.addItem(i18n.tr(STATUS_LABELS[value]), value)
+        index = self.status_box.findData(str(self._row.get("status") or "provisional"))
+        self.status_box.setCurrentIndex(max(index, 0))
+        form = QFormLayout()
+        form.addRow(i18n.tr('源术语'), source)
+        form.addRow(i18n.tr('首选译名'), self.preferred_edit)
+        form.addRow(i18n.tr('状态'), self.status_box)
+        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
+        hint = QLabel(i18n.tr(
+            '保存会生成新的术语版本；之后可以在修订预览里逐段确认要改写的译文。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok_button.setText(i18n.tr('保存修改'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(hint)
+        layout.addWidget(buttons)
+        self.preferred_edit.textChanged.connect(self._sync)
+        self._sync()
+
+    def _sync(self) -> None:
+        self.ok_button.setEnabled(bool(self.preferred_edit.text().strip()))
+
+    def values(self) -> dict:
+        import re
+
+        return {"source": str(self._row.get("source") or ""),
+                "preferred": self.preferred_edit.text().strip(),
+                "status": str(self.status_box.currentData() or "provisional"),
+                "domain": str(self._row.get("domain") or ""),
+                "note": str(self._row.get("note") or ""),
+                "forbidden": [text.strip() for text in
+                              re.split(r"[,，;；、\n]", self.forbidden_edit.text())
+                              if text.strip()]}
+
+
+class TermRevisionDialog(QDialog):
+    """术语修订预览（issue #127）：这条术语的修正会改哪些译文，逐段勾选。
+
+    只有预览里的可替换段（``rows``）能勾选；人工保护段带保护标签展示、
+    有歧义的段只列出来供人工看——两类都绝不进批量。取消（关闭）不做任何事。
+    """
+
+    #: 预览行渲染上限：更大的文档仍然全部参与统计，只是不逐行画出（滚动列表
+    #: 上万行会卡住界面）；没画出的段不会被勾选，也就不会被暂存。
+    MAX_ROWS = 400
+
+    def __init__(self, preview: dict, *, pairs: Sequence[dict] | None = None,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._preview = preview or {}
+        # 只带 source/target 投影：保护段与歧义段要在列表里给人看，但预览行本身
+        # 不携带整段文本（保持预览可序列化、可重算）。
+        self._pairs = [{"source": str(pair.get("source") or ""),
+                        "target": str(pair.get("target") or "")}
+                       for pair in (pairs or []) if isinstance(pair, dict)]
+        self._filling = False
+        self.setWindowTitle(i18n.tr('修订术语译文'))
+        self.resize(680, 520)
+        self.summary = QLabel("")
+        self.summary.setObjectName("hint")
+        self.summary.setWordWrap(True)
+        self.preview = QListWidget()
+        self.select_all_button = QPushButton(i18n.tr('全选'))
+        self.select_all_button.clicked.connect(lambda: self._set_all_checked(True))
+        self.select_none_button = QPushButton(i18n.tr('全不选'))
+        self.select_none_button.clicked.connect(lambda: self._set_all_checked(False))
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok_button.setText(i18n.tr('应用所选修订'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        actions = QHBoxLayout()
+        actions.setSpacing(theme_module.SPACE["xs"])
+        actions.addWidget(self.select_all_button)
+        actions.addWidget(self.select_none_button)
+        actions.addStretch(1)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.summary)
+        layout.addWidget(self.preview, 1)
+        layout.addLayout(actions)
+        layout.addWidget(buttons)
+        self.preview.itemChanged.connect(self._sync)
+        self._fill()
+        self._sync()
+
+    # ================= 填充 =================
+    def _fill(self) -> None:
+        self._filling = True
+        self.preview.clear()
+        preview = self._preview
+        rows = [row for row in preview.get("rows") or [] if isinstance(row, dict)]
+        new_preferred = str(preview.get("new_preferred") or "")
+        for row in rows[:self.MAX_ROWS]:
+            variants = "、".join(str(v) for v in row.get("variants") or [])
+            head = f"#{row.get('segment_index', 0) + 1}"
+            if variants:
+                head += i18n.tr('　把「{v0}」改为「{v1}」', v0=variants, v1=new_preferred)
+            item = QListWidgetItem(f"{head}\n   {row.get('before') or ''}\n   → {row.get('after') or ''}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked if row.get("excluded")
+                               else Qt.CheckState.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, row.get("segment_index"))
+            self.preview.addItem(item)
+        hidden = len(rows) - min(len(rows), self.MAX_ROWS)
+        if hidden > 0:
+            note = QListWidgetItem(i18n.tr('…另有 {v0} 段未逐行显示，默认不参与本次批量。', v0=hidden))
+            note.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.preview.addItem(note)
+        for item in self._protection_items():
+            self.preview.addItem(item)
+        for item in self._ambiguous_items():
+            self.preview.addItem(item)
+        self._filling = False
+        self._update_summary()
+
+    def _protection_items(self) -> list[QListWidgetItem]:
+        from folith.translation_candidates import PROTECTION_LABELS
+
+        items = []
+        for row in self._preview.get("protected") or []:
+            marks = "、".join(PROTECTION_LABELS.get(str(mark), str(mark))
+                              for mark in row.get("protection") or [])
+            pair = self._pair_text(row.get("segment_index"))
+            item = QListWidgetItem(
+                i18n.tr('#{v0}　人工保护的译文（{v1}）— 不参与批量',
+                        v0=row.get("segment_index", 0) + 1, v1=marks)
+                + f"\n   {pair}")
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self._style_readonly(item)
+            items.append(item)
+        return items
+
+    def _ambiguous_items(self) -> list[QListWidgetItem]:
+        items = []
+        for row in self._preview.get("ambiguous") or []:
+            item = QListWidgetItem(
+                i18n.tr('#{v0}　译文里没有旧译名，也没有新译名 — 需要人工确认，不自动改写',
+                        v0=row.get("segment_index", 0) + 1)
+                + f"\n   {str(row.get('target') or '')}")
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self._style_readonly(item)
+            items.append(item)
+        return items
+
+    @staticmethod
+    def _style_readonly(item: QListWidgetItem) -> None:
+        from PySide6.QtGui import QColor
+
+        item.setForeground(QColor("#9aa0a6"))
+
+    def _pair_text(self, index: int) -> str:
+        index = int(index) if isinstance(index, int) else -1
+        if 0 <= index < len(self._pairs):
+            pair = self._pairs[index]
+            return f"{pair['source']}\n   {pair['target']}"
+        return ""
+
+    def _update_summary(self) -> None:
+        preview = self._preview
+        reason = str(preview.get("reason") or "")
+        replaceable = len(preview.get("rows") or [])
+        total = (replaceable + len(preview.get("protected") or [])
+                 + len(preview.get("ambiguous") or [])
+                 + len(preview.get("already_correct") or []))
+        parts = [i18n.tr('原文出现术语：{v0} 段', v0=total),
+                 i18n.tr('可替换：{v0}', v0=replaceable),
+                 i18n.tr('已选：{v0}', v0=self.selected_count())]
+        if preview.get("already_correct"):
+            parts.append(i18n.tr('已是正确译名：{v0}', v0=len(preview["already_correct"])))
+        if preview.get("ambiguous"):
+            parts.append(i18n.tr('需人工确认：{v0}', v0=len(preview["ambiguous"])))
+        if preview.get("protected"):
+            parts.append(i18n.tr('人工保护：{v0}', v0=len(preview["protected"])))
+        self.summary.setText("  ·  ".join(parts) if not reason else
+                             i18n.tr('没有可执行的修订（{v0}）。', v0=reason))
+        self.ok_button.setEnabled(not reason and self.selected_count() > 0)
+
+    # ================= 选择 =================
+    def _set_all_checked(self, checked: bool) -> None:
+        self._filling = True
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for position in range(self.preview.count()):
+            item = self.preview.item(position)
+            if item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                item.setCheckState(state)
+        self._filling = False
+        self._sync()
+
+    def selected_indexes(self) -> list[int]:
+        """勾选的段落索引（传给暂存入口的 exclusions 的反面）。"""
+        selected = []
+        for position in range(self.preview.count()):
+            item = self.preview.item(position)
+            if (item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+                    and item.checkState() == Qt.CheckState.Checked):
+                index = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(index, int):
+                    selected.append(index)
+        return selected
+
+    def selected_count(self) -> int:
+        return len(self.selected_indexes())
+
+    def _sync(self, *_args) -> None:
+        if self._filling:
+            return
+        self._update_summary()
+
+    def values(self) -> dict:
+        return {"selected": self.selected_indexes()}
+
+
 class DocumentProfileDialog(QDialog):
     """修改文档画像：领域、细分领域、文本类型、读者、语域、风格约束。
 

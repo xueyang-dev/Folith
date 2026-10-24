@@ -830,6 +830,7 @@ from folith.engine.candidates import (  # noqa: F401  (re-export: core keeps its
     discard_translation_candidate,
     pending_candidate_count,
     stage_concept_revision,
+    stage_term_revision,
 )
 
 

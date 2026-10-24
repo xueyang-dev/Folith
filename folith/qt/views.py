@@ -2450,6 +2450,7 @@ class WorkbenchView(QWidget):
     glossaryEntryAddRequested = Signal(dict)
     glossaryStatusRequested = Signal(list, str)   # entry ids, status
     glossaryEntryDeleteRequested = Signal(str)
+    termEditRequested = Signal(object)   # 术语 dict：工作台术语卡上的「编辑」（#125）
 
     COLUMNS = ("段", "原文", "译文")
 
@@ -2933,6 +2934,7 @@ class WorkbenchView(QWidget):
         self.term_list.insertRequested.connect(self._insert_into_target)
         self.term_list.hovered.connect(self._hover_term)
         self.term_list.activated.connect(self.focus_term)
+        self.term_list.editRequested.connect(self.termEditRequested.emit)
         self._hover = None
         self._decision_marks: dict = {}    # 决策痕迹的高亮（叠在术语标注之上）
         self._term_focus = None            # term_highlight.Occurrences

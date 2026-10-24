@@ -195,3 +195,78 @@ def test_followup_entity_unification_from_the_window(client):
     window.apply_entity_repair("Lydia", "莉迪亚", preview)
     _pump(client["app"], 1.0)
     assert adapter.load_state("wmnames00000001")["pairs"][1]["target"] == "莉迪亚离开了。"
+
+
+def test_term_edit_from_workspace_saves_and_offers_batch_revision(client, monkeypatch):
+    """#125/#127：术语卡「编辑」→ 既有逐条修订通路 → 逐段勾选批量修订。"""
+    from PySide6.QtWidgets import QDialog
+
+    from folith.qt import window as window_module
+
+    core, adapter = client["core"], client["adapter"]
+    state = _plain_state(core, name="violet.docx")
+    state["paras"] = ["The Life of Violet begins.", "The Life of Violet ends."]
+    state["pairs"] = [
+        {"source": "The Life of Violet begins.", "target": "紫罗兰的一生开始了。",
+         "segment_uid": "v0"},
+        {"source": "The Life of Violet ends.", "target": "紫罗兰的一生结束了。",
+         "segment_uid": "v1"}]
+    state["glossary"] = core.normalize_glossary([
+        {"source": "The Life of Violet", "target": "紫罗兰的一生",
+         "preferred": "紫罗兰的一生", "status": "locked", "behavior": "translate"}])
+    _save(core, "termedit00000001", state)
+    entry_id = adapter.load_state("termedit00000001")["glossary"][0]["id"]
+    window = _open(client, "termedit00000001")
+
+    saved_fields: list[dict] = []
+
+    class _EditDialog:
+        def __init__(self, row, *_args, **_kwargs) -> None:
+            self.row = row
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def values(self) -> dict:
+            saved_fields.append(dict(self.row))
+            return {"source": str(self.row.get("source") or ""),
+                    "preferred": "薇奥莱特的一生", "status": "locked",
+                    "domain": "", "note": "", "forbidden": []}
+
+    revisions: list[dict] = []
+
+    class _RevisionDialog:
+        def __init__(self, preview, *, pairs=None, parent=None) -> None:
+            self.preview = preview
+            revisions.append({"preview": preview, "pairs": pairs})
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def values(self) -> dict:
+            return {"selected": [row["segment_index"]
+                                 for row in self.preview.get("rows") or []]}
+
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    monkeypatch.setattr(window_module, "_non_interactive_exit", lambda: False)
+    monkeypatch.setattr(window_module, "TermEditDialog", _EditDialog)
+    monkeypatch.setattr(window_module, "TermRevisionDialog", _RevisionDialog)
+    notices: list[str] = []
+    monkeypatch.setattr(window, "_notice",
+                        lambda text, error=False, **kwargs: notices.append(text))
+
+    window.edit_term_entry({"id": entry_id, "source": "The Life of Violet"})
+    assert _pump(client["app"], 30, lambda: any("已修订" in text for text in notices)), \
+        f"批量修订应完成并提示：{notices}"
+
+    # 术语经既有通路落盘：条目标识不变、首选译名更新、生成新术语版本
+    saved = adapter.load_state("termedit00000001")
+    entry = next(e for e in saved["glossary"] if e["id"] == entry_id)
+    assert entry["preferred"] == "薇奥莱特的一生"
+    assert saved["glossary_frozen"]["version"] == 1, "只生成一个新的术语版本"
+    # 修订对话框拿到的是纯预览，勾选的段经候选事务写入
+    assert revisions and revisions[0]["preview"]["new_preferred"] == "薇奥莱特的一生"
+    assert saved["pairs"][0]["target"] == "薇奥莱特的一生开始了。"
+    assert saved["pairs"][1]["target"] == "薇奥莱特的一生结束了。"
+    origins = {r["origin"] for r in saved.get("translation_candidates") or []}
+    assert "term_revision" in origins

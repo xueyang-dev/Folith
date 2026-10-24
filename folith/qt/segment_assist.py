@@ -193,15 +193,17 @@ class AttentionList(QWidget):
 
 
 class TermChip(QFrame):
-    """一条术语：原文 → **首选译名** · 本文 N 处，右边一个「插入」。
+    """一条术语：原文 → **首选译名** · 本文 N 处，右边「编辑」和「插入」。
 
     悬停 = 当前行里这一对亮起来；点击 = 全文定位（网格高亮 + 滚动条标记 + 逐处跳转）；
-    右侧 ↵ 或 ⌥点击 = 把首选译名插入到译文光标处（原先点击的行为）。
+    右侧 ↵ 或 ⌥点击 = 把首选译名插入到译文光标处（原先点击的行为）；
+    ✎ = 就地修改这条术语（首选译名 / 禁用译名 / 状态），走既有的术语逐条修订。
     """
 
     hovered = Signal(object)       # 进入时是术语 dict，离开时是 None
     activated = Signal(object)     # 点击：全文定位
     insertRequested = Signal(str)
+    editRequested = Signal(object)  # 术语 dict：打开编辑器
 
     def __init__(self, term: dict, count: int | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -223,6 +225,12 @@ class TermChip(QFrame):
         self.count_label = QLabel(i18n.tr('本文 {v0} 处', v0=count) if count else "", self)
         self.count_label.setObjectName("termCount")
         self.count_label.setVisible(bool(count))
+        self.edit_button = QToolButton()
+        self.edit_button.setObjectName("termEdit")
+        self.edit_button.setText("✎")
+        self.edit_button.setToolTip(i18n.tr('修改这条术语（首选译名、禁用译名、状态）'))
+        self.edit_button.setAccessibleName(i18n.tr('编辑术语'))
+        self.edit_button.clicked.connect(lambda: self.editRequested.emit(self.term))
         self.insert_button = QToolButton()
         self.insert_button.setObjectName("termInsert")
         self.insert_button.setText("↵")
@@ -240,6 +248,7 @@ class TermChip(QFrame):
         row.addWidget(preferred)
         row.addStretch(1)
         row.addWidget(self.count_label)
+        row.addWidget(self.edit_button)
         row.addWidget(self.insert_button)
         self.setToolTip(i18n.tr('点击：在全文中定位这个术语；悬停：在本段里标出它'))
         self.setAccessibleName(f"{term.get('source')} → {target}")
@@ -279,6 +288,7 @@ class TermList(QWidget):
     insertRequested = Signal(str)
     hovered = Signal(object)        # 术语 dict 或 None
     activated = Signal(object)      # 术语 dict：全文定位
+    editRequested = Signal(object)  # 术语 dict：就地编辑（issue #125）
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -311,6 +321,7 @@ class TermList(QWidget):
             chip.insertRequested.connect(self.insertRequested.emit)
             chip.hovered.connect(self.hovered.emit)
             chip.activated.connect(self.activated.emit)
+            chip.editRequested.connect(self.editRequested.emit)
             self._layout.addWidget(chip)
             self.buttons.append(chip)
             for hit in term.get("forbidden_hits") or []:

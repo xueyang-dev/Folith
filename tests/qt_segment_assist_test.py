@@ -284,3 +284,49 @@ def env_job(tmp_path, monkeypatch):
     state["p1_done"] = state["p2_done"] = True
     core.save_job_state(job_id, state)
     return job_id
+
+
+# ================= 术语卡上的「编辑」（issue #125）=================
+
+def test_term_chip_offers_an_edit_action_and_keeps_existing_interactions():
+    from folith.qt import segment_assist
+
+    term = {"id": "g1", "source": "Midnight Library", "target": "午夜图书馆",
+            "status": "locked", "forbidden": ["子夜图书馆"]}
+    chip = segment_assist.TermChip(term, 3)
+    assert chip.edit_button is not None
+    assert chip.edit_button.accessibleName(), "编辑按钮有无障碍名"
+    emitted = []
+    chip.editRequested.connect(lambda data: emitted.append(data))
+    chip.edit_button.click()
+    assert emitted == [term], "编辑按钮带上术语数据"
+    # 既有交互不受影响：插入与定位
+    inserts, activations = [], []
+    chip.insertRequested.connect(inserts.append)
+    chip.activated.connect(activations.append)
+    chip.insert_button.click()
+    assert inserts == ["午夜图书馆"]
+
+
+def test_term_list_forwards_edit_requests_and_rebuilds_when_preferred_changes():
+    from folith.qt import segment_assist
+
+    term_list = segment_assist.TermList()
+    edited = []
+    term_list.editRequested.connect(edited.append)
+    term_list.set_terms([{"id": "g1", "source": "Nora", "target": "诺拉",
+                          "status": "locked"}])
+    assert len(term_list.buttons) == 1
+    term_list.buttons[0].edit_button.click()
+    assert edited and edited[0]["id"] == "g1"
+
+    # 轮询守卫：同样的术语再来一遍不重建（按钮对象不变）……
+    before = term_list.buttons[0]
+    term_list.set_terms([{"id": "g1", "source": "Nora", "target": "诺拉",
+                          "status": "locked"}])
+    assert term_list.buttons[0] is before
+    # ……但首选译名变了必须重建，编辑之后的新译名要显示出来。
+    term_list.set_terms([{"id": "g1", "source": "Nora", "target": "诺拉·梅里特",
+                          "status": "locked"}])
+    assert term_list.buttons[0] is not before
+    assert term_list.buttons[0].term["target"] == "诺拉·梅里特"
