@@ -823,6 +823,7 @@ from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps
 )
 from folith.engine.candidates import (  # noqa: F401  (re-export: core keeps its public surface)
     adopt_translation_candidate,
+    adopt_translation_candidates,
     candidate_status,
     candidate_view,
     commit_candidates,

@@ -27,6 +27,18 @@ from . import theme as theme_module
 _SEVERITY_LABELS = {"blocking": "必须处理", "actionable": "建议处理",
                     "informational": "提示"}
 
+#: 候选卡片上"当前译文是什么来路"的说明。键与
+#: ``folith.translation_candidates.PROTECTION_*`` 一致；在调用时取词，切换界面
+#: 语言后立刻生效（模块级 tr 会冻结在导入时的语言）。
+def protection_text(marks) -> str:
+    """Human-readable protection summary for a candidate view (empty if none)."""
+    labels = {
+        "human_accepted": i18n.tr('人工确认过的译文'),
+        "human_edit": i18n.tr('人工改写的译文'),
+        "reviewed": i18n.tr('已审校的译文'),
+    }
+    return "、".join(labels.get(str(mark), str(mark)) for mark in marks or [])
+
 
 def _clear(layout) -> None:
     """Remove and discard every widget in ``layout``.
@@ -498,7 +510,8 @@ class CandidateBox(QWidget):
         """
         item = dict(items[0]) if items else {}
         key = repr((item.get("candidate_id"), item.get("status"),
-                    item.get("candidate_target"), item.get("current_target")))
+                    item.get("candidate_target"), item.get("current_target"),
+                    item.get("protection_labels")))
         if not item:
             # 没有候选时按钮不能是活的：点下去只会发出空 id，窗口只能静默忽略。
             self.adopt_button.setEnabled(False)
@@ -515,8 +528,11 @@ class CandidateBox(QWidget):
         self.status.setVisible(False)
         self.setVisible(True)
         origin = str(item.get("origin_label") or "")
+        # 当前译文是人工处理过的：直接写在来源行里，采用前就能看到代价。
+        protection = protection_text(item.get("protection"))
         meta = " · ".join(part for part in (
             origin,
+            protection,
             str(item.get("model") or ""),
             str(item.get("generated_at") or "").replace("T", " ")[:16]) if part)
         self.meta.setText(meta)

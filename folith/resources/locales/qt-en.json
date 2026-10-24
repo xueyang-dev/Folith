@@ -2041,5 +2041,18 @@
   "这个候选已不能采用。": "This candidate can no longer be adopted.",
   "这次不改：驳回这一项或接受它的风险，并记录理由": "No change this time: dismiss the item or accept its risk, and record why",
   "采用候选": "Adopt candidate",
-  "问题是真的，但译文还没改：这一项保持待处理，仍会挡住交付": "The problem is real, but the text has not changed: this item stays open and still blocks delivery"
+  "问题是真的，但译文还没改：这一项保持待处理，仍会挡住交付": "The problem is real, but the text has not changed: this item stays open and still blocks delivery",
+  "其中 {v0} 段是人工处理的译文，默认跳过": "{v0} of them were handled by a human and are skipped by default",
+  "同时替换人工改写/人工确认过的段落（默认跳过）": "Also replace segments a human edited or accepted (skipped by default)",
+  "已把审校建议暂存为第 {v0} 段的候选；采用后才会写入译文。": "Staged the review suggestion as a candidate for segment {v0}; the text changes only when you adopt it.",
+  "已替换 {v0} 段；{v1} 段没有替换（人工确认/已过期的段落需要逐段处理）。": "Replaced {v0} segments; {v1} were left alone (human-handled or stale segments need to be handled one by one).",
+  "把建议译文暂存为候选并显示差异；采用后才会写入译文": "Stage the suggested translation as a candidate and show the diff; the text changes only when you adopt it",
+  "无法暂存建议译文": "Could not stage the suggested translation",
+  "暂存为候选": "Stage as candidate",
+  "没有需要替换的段落。": "Nothing to replace.",
+  "第 {v0} 段的当前译文是{v1}。采用候选会覆盖它，并撤销这层人工标记。\n\n确定采用吗？": "The current translation of segment {v0} is {v1}. Adopting the candidate overwrites it and drops that human marker.\n\nAdopt anyway?",
+  "覆盖人工处理的译文": "Overwrite human-handled translation",
+  "人工确认过的译文": "human-accepted translation",
+  "人工改写的译文": "human-edited translation",
+  "已审校的译文": "reviewed translation"
 }
