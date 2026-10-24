@@ -351,3 +351,151 @@ def _globalize_batch_findings(findings, offset):
          "segment_index": offset + finding["segment_index"]}
         for finding in findings
     ]
+
+
+# ---------------------------------------------------------------------------
+# #101: numeric / unit / tag structure checks
+#
+# These are mechanical signals, not semantic ones: a number that disappears, a
+# unit that changes meaning (km -> m) or a markup tag that no longer exists are
+# objective structural drift.  The findings carry a ``kind`` so the grouping
+# layer can present one traceable group per token type; the checks stay local
+# and deterministic (no model call, no prescan).
+# ---------------------------------------------------------------------------
+
+_NUMBER_TOKEN_RE = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*(?![\w.])")
+_UNIT_TOKEN_RE = re.compile(
+    r"(?<![\w.])(\d+(?:[.,]\d+)*)\s*(km|kg|cm|mm|mi|ft|lb|oz|mph|kph|"
+    r"ms|min|h|s|%|°C|℃)\b", re.IGNORECASE)
+_UNIT_EQUIVALENTS = {
+    "km": {"km", "公里", "千米"}, "kg": {"kg", "公斤", "千克"},
+    "cm": {"cm", "厘米"}, "mm": {"mm", "毫米"}, "m": {"m", "米"},
+    "mi": {"mi", "英里"}, "ft": {"ft", "英尺"}, "lb": {"lb", "磅"},
+    "oz": {"oz", "盎司"}, "mph": {"mph", "英里每小时"},
+    "kph": {"kph", "公里每小时"}, "ms": {"ms", "毫秒"},
+    "min": {"min", "分钟"}, "h": {"h", "小时"}, "s": {"s", "秒"},
+    "%": {"%", "％"}, "°C": {"°C", "℃", "摄氏度"},
+}
+_TAG_TOKEN_RE = re.compile(r"</?[A-Za-z!][^<>]{0,158}>")
+_UNIT_CANONICAL = {
+    "°C": "°C", "℃": "°C", "％": "%",
+}
+
+
+def _multiset(values):
+    counts = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _strip_preserved(text):
+    """Remove identifiers that the preserved-token check already covers."""
+    return _c.PRESERVE_RE.sub(" ", str(text or ""))
+
+
+def check_number_structure(src, tgt, target_lang, segment_index=0):
+    """Report source numbers that no longer occur in the target.
+
+    Numbers inside URLs / citations / placeholders are excluded here: those are
+    reported by the preserved-token check, and duplicating them would make one
+    real problem look like two.  A unit's number is reported by the unit check.
+    """
+    findings = []
+    src_clean = _strip_preserved(src)
+    tgt_clean = _strip_preserved(tgt)
+    unit_spans = [(m.start(), m.end()) for m in _UNIT_TOKEN_RE.finditer(src_clean)]
+
+    def _inside_unit(position):
+        return any(start <= position < end for start, end in unit_spans)
+
+    src_numbers = [(m.group(0), m.start()) for m in _NUMBER_TOKEN_RE.finditer(src_clean)
+                   if not _inside_unit(m.start())]
+    if not src_numbers:
+        return findings
+    target_counts = _multiset(
+        _c._numerals.fold_digits(m.group(0), target_lang)
+        for m in _NUMBER_TOKEN_RE.finditer(tgt_clean))
+    missing = {}
+    for token, _position in src_numbers:
+        folded = _c._numerals.fold_digits(token, target_lang)
+        if target_counts.get(folded, 0) > 0:
+            target_counts[folded] -= 1
+        else:
+            missing[token] = missing.get(token, 0) + 1
+    for token, count in missing.items():
+        findings.append(_deterministic_finding(
+            segment_index, "actionable", "numeric_integrity",
+            f"译文遗漏数字「{token}」",
+            f"原文中的数字「{token}」在当前译文中找不到（出现 {count} 次）。"
+            "数字、页码、金额或引用的改动会直接改变事实含义。",
+            "核对原文数字并在译文中补回；若数字确实应随语境变化，请人工确认后忽略本提示。",
+            source_span=token, target_span="", kind="number",
+            detected_text=token, group_token=token, group_type="number",
+            occurrence=count, reason=f"数字「{token}」在译文中缺失"))
+    return findings
+
+
+def check_unit_structure(src, tgt, target_lang, segment_index=0):
+    """Report units whose number or unit system drifted between source and target."""
+    findings = []
+    src_clean = _strip_preserved(src)
+    tgt_clean = _strip_preserved(tgt)
+    target_lower = tgt_clean.casefold()
+    for match in _UNIT_TOKEN_RE.finditer(src_clean):
+        number, unit = match.group(1), match.group(2)
+        canonical = _UNIT_CANONICAL.get(unit, unit)
+        folded = _c._numerals.fold_digits(number, target_lang)
+        allowed = _UNIT_EQUIVALENTS.get(canonical, {canonical})
+        number_present = any(
+            _c._numerals.fold_digits(other, target_lang) == folded
+            for other in _NUMBER_TOKEN_RE.findall(tgt_clean))
+        unit_present = any(
+            candidate.casefold() in target_lower for candidate in allowed)
+        if number_present and unit_present:
+            continue
+        problems = []
+        if not number_present:
+            problems.append("数字缺失")
+        if not unit_present:
+            problems.append("单位缺失或已改写")
+        findings.append(_deterministic_finding(
+            segment_index, "actionable", "unit_integrity",
+            f"译文数量单位「{number} {canonical}」不完整",
+            f"原文使用「{number} {canonical}」，译文缺少对应数字或单位（"
+            + "、".join(problems) + "）。单位改写会改变量级或含义。",
+            "核对数值与单位后补回或改写；无法从原文唯一确定的，请人工确认。",
+            source_span=f"{number} {canonical}", target_span="",
+            kind="unit", detected_text=f"{number} {canonical}",
+            group_token=f"{canonical}", group_type="unit",
+            expected_number=number, expected_unit=canonical,
+            reason=f"单位「{number} {canonical}」在译文中不完整"))
+    return findings
+
+
+def check_tag_structure(src, tgt, segment_index=0):
+    """Report markup tags lost from the target (structure drift, not semantics)."""
+    findings = []
+    src_tags = _multiset(_TAG_TOKEN_RE.findall(str(src or "")))
+    tgt_tags = _multiset(_TAG_TOKEN_RE.findall(str(tgt or "")))
+    missing = {tag: count - tgt_tags.get(tag, 0)
+               for tag, count in src_tags.items()
+               if count > tgt_tags.get(tag, 0)}
+    for tag, count in missing.items():
+        findings.append(_deterministic_finding(
+            segment_index, "actionable", "format_integrity",
+            f"译文遗漏标记「{tag}」",
+            f"原文中的标记「{tag}」在译文中缺失（{count} 处）。标记丢失会破坏"
+            "排版、链接或富文本结构。",
+            "补回标记并保持其成对关系；不要为了可读性删除结构标记。",
+            source_span=tag, target_span="", kind="tag", detected_text=tag,
+            group_token=tag, group_type="tag", occurrence=count,
+            reason=f"标记「{tag}」在译文中缺失"))
+    return findings
+
+
+def check_token_structure(src, tgt, target_lang, segment_index=0):
+    """All #101 deterministic structure checks for one segment."""
+    return (check_number_structure(src, tgt, target_lang, segment_index)
+            + check_unit_structure(src, tgt, target_lang, segment_index)
+            + check_tag_structure(src, tgt, segment_index))

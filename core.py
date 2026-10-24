@@ -67,6 +67,7 @@ from folith import finalization as _finalization
 from folith import rendered_qa as _rendered_qa
 from folith import project as _project
 from folith import translation_memory as _tm_scope
+from folith import finding_groups as _finding_groups
 from folith import translation_cache as _translation_cache
 from folith import knowledge_cache as _knowledge_cache_module
 from folith import usage as _usage
@@ -619,6 +620,7 @@ from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keep
     _local_name,
     _termbase_df_to_entries,
     check_glossary_compliance,
+    check_token_structure,
     extract_auto_terms,
     extract_preserved_tokens,
     find_residuals,
@@ -2506,14 +2508,21 @@ def check_translation_batch(sources, targets, glossary, target_lang,
                 source_span=residual if residual in src else None,
                 target_span=residual, reason=f"疑似残留源语片段「{residual}」",
                 kind="source_residue", detected_text=residual))
+        # #101: numbers / units / markup tags are mechanical structure checks.
+        # They only add findings; grouping and handling live in finding_groups.
+        findings.extend(check_token_structure(src, tgt, target_lang, i))
         findings.extend(check_glossary_compliance(
             src, tgt, glossary, segment_id=i, section_profile=section_profile,
             entries=normalized_glossary, matcher=glossary_matcher))
-        for f in findings:
-            if "segment_index" not in f:
-                f["segment_index"] = i
-            if "segment_id" not in f or f.get("segment_id") is None:
-                f["segment_id"] = i
+    # Defaults are applied once after the segment loop: the previous placement
+    # was inside it, making every batch O(segments x findings) (with #101's
+    # extra structure findings that showed up as +170 µs/segment on 2 000
+    # segments).  Same result, linear pass.
+    for f in findings:
+        if "segment_index" not in f:
+            f["segment_index"] = f.get("segment_id", 0)
+        if "segment_id" not in f or f.get("segment_id") is None:
+            f["segment_id"] = f.get("segment_index", 0)
     return findings
 
 
@@ -13035,3 +13044,69 @@ def run_job_pipeline(*args, **kwargs):
         _SCAN_STREAMS.reset(token)
         for stream in streams:
             stream.close()
+
+
+# ================= 确定性发现项分组（#101） =================
+
+
+def deterministic_finding_groups(job_id=None, state=None, *, group_type=""):
+    """只读投影：把数字/单位/标记/占位符发现项按 (类型, token) 分组。
+
+    分组不修改 findings、译文、审校状态或交付门禁；关闭开关或未启用时调用方
+    仍能拿到逐条发现项（本函数返回空列表，findings 原样保留）。
+    """
+    current = state if state is not None else (
+        load_job_state(job_id) if job_id else None)
+    current = current or {}
+    if not _finding_groups.enabled(current):
+        return []
+    groups = _finding_groups.group_findings(
+        current.get("findings") or [],
+        exceptions=_finding_groups.normalize_exceptions(
+            current.get(_finding_groups.EXCEPTIONS_KEY)))
+    if group_type:
+        groups = [group for group in groups if group.get("group_type") == group_type]
+    return groups
+
+
+def deterministic_finding_group_preview(job_id, group_id, *, state=None):
+    """某一组的逐条预览（只读）：哪几条未处理、哪几条被排除、当前译文是什么。"""
+    current = state if state is not None else load_job_state(job_id)
+    if current is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    group = next((item for item in deterministic_finding_groups(state=current)
+                  if item.get("group_id") == str(group_id or "")), None)
+    if group is None:
+        raise ValueError("找不到这个确定性发现项分组")
+    return _finding_groups.preview_group(group, current.get("pairs") or [])
+
+
+@_serialized_job_mutation
+def materialize_deterministic_group_fix(job_id, group_id, *, actor="user",
+                                        segment_index=None):
+    """把数字分组的确定性修正物化为候选；不写正文。
+
+    只有"一段里恰好缺一个数字、多一个数字"时才生成候选；其余情形保持人工
+    决定。候选仍要显式采用，基线检查保证段落被编辑后不会写错。
+    """
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    group = next((item for item in deterministic_finding_groups(state=state)
+                  if item.get("group_id") == str(group_id or "")), None)
+    if group is None:
+        raise ValueError("找不到这个确定性发现项分组")
+    draft = _finding_groups.build_number_fix_draft(
+        state, group, segment_index=segment_index)
+    if draft is None:
+        return {"candidate": None, "rejected": [{"reason": "needs_human_judgement"}],
+                "preview": deterministic_finding_group_preview(
+                    job_id, group_id, state=state)}
+    result = commit_candidates(job_id, [draft], actor=actor)
+    created = list(result.get("created") or [])
+    return {
+        "candidate": created[0] if created else None,
+        "rejected": list(result.get("rejected") or []),
+        "preview": deterministic_finding_group_preview(
+            job_id, group_id),
+    }

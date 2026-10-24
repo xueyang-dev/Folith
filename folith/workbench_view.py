@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from . import delivery, translation_evidence
+from . import finding_groups as _finding_groups
 
 
 _SKIP_REASON_COPY = {
@@ -205,6 +206,13 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[
         "entry_id": str(finding.get("entry_id") or ""),
         "technical_reason": str(finding.get("stale_reason") or ""),
         "identity_stability": finding.get("identity_stability") or "legacy",
+        # #101: only number/unit/tag/placeholder findings are grouped; every
+        # other finding keeps exactly its previous shape.
+        **(_finding_groups.annotation(
+            finding,
+            exceptions=_finding_groups.normalize_exceptions(
+                state.get(_finding_groups.EXCEPTIONS_KEY)))
+           if _finding_groups.enabled(state) else {}),
     }
 
 
@@ -458,7 +466,13 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         "actionable": counts["actionable"],
         "informational": counts["informational"],
     }
+    groups = (_finding_groups.group_findings(
+        state.get("findings") or [],
+        exceptions=_finding_groups.normalize_exceptions(
+            state.get(_finding_groups.EXCEPTIONS_KEY)))
+        if _finding_groups.enabled(state) else [])
     return {
+        "finding_groups": _finding_groups.group_summaries(groups),
         "readiness": {**readiness, "label": label, "detail": detail, "tone": tone},
         "progress": progress,
         "queue_items": items,
