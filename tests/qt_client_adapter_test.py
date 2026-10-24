@@ -1229,7 +1229,7 @@ def test_exclude_and_include_a_segment(adapter_env):
 
 
 def test_retranslate_one_segment_through_the_core(adapter_env):
-    """§6.A.5：定点重译只动这一段，并刷新它的审校状态。"""
+    """§6.A.5：定点重译只生成候选；采用才改这一段的正文。"""
     adapter = adapter_env["adapter"]
     core = adapter_env["core"]
     tmp = adapter_env["tmp"]
@@ -1258,14 +1258,22 @@ def test_retranslate_one_segment_through_the_core(adapter_env):
         core.save_job_state(job_id, state)
 
         result = adapter.retranslate_segment(job_id, 0, config)
-        assert result["fixed"] == [0], result
+        assert result["created"] == [0], result
+        assert result["candidates"], "应返回待采用候选"
         # 这条断言是回归保护：定点重译不在管线 worker 里跑，中转地址必须显式
         # 传下去；漏传时这里会抛"未配置有效的 API 地址"（此前是静默不动）。
-        assert result["state"]["pairs"][0]["target"] != "要重译的旧译文。"
         state = adapter.load_state(job_id)
-        assert state["pairs"][0]["target"] != "要重译的旧译文。"
+        assert state["pairs"][0]["target"] == "要重译的旧译文。", \
+            "生成候选不得改稿"
         assert state["pairs"][1]["target"] == "第二段保持不动。", \
             "定点重译不得动到其它段落"
+        candidate = result["candidates"][0]
+        adopted = adapter.adopt_candidate(job_id, candidate["candidate_id"])
+        assert adopted["committed"] is True
+        state = adapter.load_state(job_id)
+        assert state["pairs"][0]["target"] == candidate["candidate_target"]
+        assert state["pairs"][0]["target_provenance"] == "candidate_adopted"
+        assert state["pairs"][1]["target"] == "第二段保持不动。"
 
         # 越界与未配置连接都要给出可理解的拒绝。
         with pytest.raises(adapter.AdapterError):

@@ -4,6 +4,9 @@
 回看原页后确认原文）；Qt 工作台原来只在检查器里只读地列出它们，于是一条
 误报就能永远挡住交付。这个面板把处置放回界面。
 
+"确认问题存在"与"确认已解决"是两件事：前者只记录人的判断，发现项保持待处理、
+仍挡住交付；后者才结束它。两个按钮不能合并成一个含混的动作。
+
 只做展示与发出信号：队列由 :func:`adapter.review_queue` 给出（复用
 ``folith.workbench_view``，不另写一套规则），真正写状态的是窗口层调用的适配器。
 """
@@ -137,11 +140,20 @@ class ReviewPanel(QWidget):
         self.apply_button = button(
             i18n.tr('应用建议译文'), "sparkles", "text-on-accent", "primary")
         self.apply_button.clicked.connect(self._emit_apply)
+        self.open_button = button(i18n.tr('确认问题存在'), "alert")
+        self.open_button.setToolTip(
+            i18n.tr('问题是真的，但译文还没改：这一项保持待处理，仍会挡住交付'))
+        self.open_button.clicked.connect(
+            lambda: self._emit_resolve("confirmed_open"))
         self.confirm_button = button(i18n.tr('确认已解决'), "check", "text-on-accent",
                                      "primary")
+        self.confirm_button.setToolTip(
+            i18n.tr('当前译文已经满足这一项要求（不修改译文）'))
         self.confirm_button.clicked.connect(
             lambda: self._emit_resolve("human_fixed"))
         self.preserve_button = button(i18n.tr('保留当前译文'), "shield-check")
+        self.preserve_button.setToolTip(
+            i18n.tr('这次不改：驳回这一项或接受它的风险，并记录理由'))
         self.preserve_button.clicked.connect(
             lambda: self._emit_resolve("preserved"))
         self.edit_button = button(i18n.tr('修改译文'), "translate")
@@ -160,7 +172,7 @@ class ReviewPanel(QWidget):
         self.hint.setProperty("role", "muted")
 
         action_row = QHBoxLayout()
-        for widget in (self.apply_button, self.confirm_button,
+        for widget in (self.apply_button, self.open_button, self.confirm_button,
                        self.confirm_source_button, self.preserve_button,
                        self.review_button, self.edit_button,
                        self.retranslate_button, self.style_rule_button):
@@ -379,6 +391,7 @@ class ReviewPanel(QWidget):
         self.source_note_edit.setVisible(source)
         self.confirm_source_button.setVisible(source)
         self.apply_button.setVisible(suggestion)
+        self.open_button.setVisible(decision)
         self.confirm_button.setVisible(decision)
         self.preserve_button.setVisible(decision)
         self.review_button.setVisible(task)
@@ -420,6 +433,7 @@ class ReviewPanel(QWidget):
             self.edit_button.setVisible(has_segment)
         enabled = not self._busy
         self.apply_button.setEnabled(enabled and suggestion)
+        self.open_button.setEnabled(enabled and decision)
         self.confirm_button.setEnabled(enabled and decision)
         self.preserve_button.setEnabled(enabled and decision)
         self.review_button.setEnabled(enabled and task and has_segment)

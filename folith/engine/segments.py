@@ -30,7 +30,11 @@ def _reconcile_translation_failures(state):
         if len(affected) != count:
             continue
         if all(pair.get("target", "").strip()
-               and pair.get("target_provenance") in {"generated", "human_edit", "reviewed", "tm_approved"}
+               and pair.get("target_provenance") in {
+                   "generated", "human_edit", "reviewed", "tm_approved",
+                   # Adopted candidates are real current translations: a recovered
+                   # segment must not stay marked as failed.
+                   "candidate_adopted"}
                and offset + local < len(paras)
                and pair.get("source", "").replace('\n', ' ') == str(paras[offset + local]).replace('\n', ' ')
                for local, pair in enumerate(affected)):

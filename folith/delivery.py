@@ -5,7 +5,8 @@
 - draft 资产可下载，但不得显示为最终交付完成；
 - 人工处理记录（finding ID / action / note / timestamp）全部落盘；
 - 只有 blocking 被解决或明确接受风险后才能进入 final；
-- retranslate_segments 抽取自 scripts/fix_segments.py 的能力（不破坏原脚本）。
+- retranslate_segments 抽取自 scripts/fix_segments.py 的能力（不破坏原脚本），
+  但现在只生成**候选**：写入正文必须经过 core.adopt_translation_candidate。
 """
 from __future__ import annotations
 
@@ -13,7 +14,6 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
-from functools import wraps
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import translation_target, workflow_errors
@@ -370,6 +370,32 @@ def add_human_action(state: Dict[str, Any], finding_id_: str, action: str,
     return state
 
 
+def record_finding_confirmation(state: Dict[str, Any], finding_ids: List[str],
+                                note: str = "", actor: str = "user"
+                                ) -> Tuple[Dict[str, Any], List[str]]:
+    """记录"问题是真的、但还没改"的人工决定，**不**把 finding 标成已解决。
+
+    这是"确认有问题"与"确认已解决"分开的地方：确认存在只是把人的判断写进历史，
+    问题仍然待处理，交付门禁也照旧拦着。``mark_findings`` 做不到这一点——它总是
+    顺手把 finding 标成 resolved，那会把"我同意这里有错"记成"这里已经修好了"。
+    """
+    ids = set(finding_ids or [])
+    recorded: List[str] = []
+    for f in state.get("findings") or []:
+        fid = finding_id(f)
+        if fid in ids and not f.get("resolved"):
+            state.setdefault("human_actions", []).append({
+                "finding_id": fid,
+                "action": "confirmed_open",
+                "record_type": "finding_confirmation",
+                "note": note or "确认问题存在，仍待修订",
+                "timestamp": now_iso(),
+                "actor": actor,
+            })
+            recorded.append(fid)
+    return state, recorded
+
+
 def mark_findings(state: Dict[str, Any], finding_ids: List[str], action: str,
                   note: str = "", actor: str = "user") -> Tuple[Dict[str, Any], List[str]]:
     """标记指定 findings 为已处理，并写入人工处理记录。返回 (state, marked_ids)。"""
@@ -530,7 +556,74 @@ def approve_delivery(state: Dict[str, Any], note: str = "", actor: str = "user",
     return state, True, []
 
 
-def _retranslate_segments_locked(
+def _retranslation_request(state: Dict[str, Any], index: int,
+                           target_lang: str) -> Dict[str, Any]:
+    """Capture what one model call needs, before the call leaves the lock.
+
+    The baseline is captured *now*, not after the response: that is what lets a
+    late result be recognised as stale instead of being written over text the
+    user edited while the model was thinking.
+    """
+    from . import translation_candidates as _candidates
+
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    pair = pairs[index]
+    return {
+        "segment_index": index,
+        "segment_uid": str(pair.get("segment_uid") or ""),
+        "source": str(pair.get("source") or ""),
+        "baseline": _candidates.pair_signature(pair),
+        "truth_version": int((state.get("translation_truth") or {}).get("version") or 0),
+        "context_prev": paras[max(0, index - 2):index],
+        "context_next": paras[index + 1:index + 3],
+    }
+
+
+def _generate_candidate_text(request: Dict[str, Any], provider: str, api_key: str,
+                             model: str, target_lang: str, glossary_text: str,
+                             style_rules: str, glossary: List[Dict[str, Any]],
+                             section_profile: Any) -> Dict[str, Any]:
+    """One model call plus the existing integrity pass; returns text and counts.
+
+    Nothing here touches the task state.  The completeness checks and the single
+    repair round still run -- on the *candidate*, so the preview can say "this
+    candidate still has a blocking problem" without rewriting anything.
+    """
+    import core
+
+    source = request["source"]
+    target = core.translate_batch(
+        [source], request["context_prev"], request["context_next"], glossary_text,
+        style_rules, target_lang, provider, api_key, model)[0]
+    target = core.clean_xml_chars(target).replace("\n", " ")
+    findings = core.check_translation_batch(
+        [source], [target], glossary, target_lang, section_profile=section_profile)
+    fixable = [item for item in findings
+               if item.get("severity") in ("blocking", "actionable")]
+    if fixable:
+        repaired = core.repair_batch([source], [target], fixable, glossary_text,
+                                     style_rules, target_lang, provider,
+                                     api_key, model)
+        if repaired and repaired[0].strip() \
+                and not core.is_incomplete_translation(source, repaired[0]):
+            target = core.clean_xml_chars(repaired[0]).replace("\n", " ")
+    remaining = core.check_translation_batch(
+        [source], [target], glossary, target_lang, section_profile=section_profile)
+    return {
+        "candidate_target": target,
+        "checks": {
+            "blocking": sum(1 for item in remaining
+                            if item.get("severity") == "blocking"),
+            "actionable": sum(1 for item in remaining
+                              if item.get("severity") == "actionable"),
+            "informational": sum(1 for item in remaining
+                                 if item.get("severity") == "informational"),
+        },
+    }
+
+
+def retranslate_segments(
     job_id: str,
     indexes: List[int],
     provider: str,
@@ -543,22 +636,37 @@ def _retranslate_segments_locked(
     on_caption=None,
     actor: str = "user",
     base_url: str = "",
+    instruction: str = "",
+    origin: str = "",
+    finding_ids: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], List[int]]:
-    """重新翻译指定段落（抽取自 scripts/fix_segments.py 的能力）。
+    """Generate retranslation **candidates** for the given segments.
 
-    每段：前后文 + 批次翻译 + 完整性把关 + 自动修复一轮；
-    保留并关闭该段旧问题，另存最终复验 findings，重算统计与交付状态。
+    This used to overwrite ``pairs[i]["target"]``, rewrite ``initial_target``,
+    clear the human-acceptance markers and close the old findings -- one model
+    call destroyed work a human had done.  Generation is now separated from
+    commit:
 
-    ``base_url`` 是自定义中转站的地址。管线在 worker 线程里用
-    ``set_llm_base_url`` 设置它；定点重译必须自己带上（否则在别的线程调用时
-    会解析失败），并且失败要能被调用方看见——见下面的 ``failures``。
+    1. read the authoritative state and capture a baseline per segment (no lock);
+    2. call the model and run the integrity checks (no lock -- a network call
+       must never hold the task transaction open);
+    3. persist the results as candidates in one short transaction, together
+       with any rejection (the segment moved, was excluded, disappeared).
+
+    The working translation, the review state, the findings, TM eligibility and
+    the delivery gate are all unchanged by this call.  Only
+    ``core.adopt_translation_candidate`` turns a candidate into text.
+
+    ``base_url`` is accepted for compatibility with the caller that sets the
+    thread-local endpoint; the value itself is already applied there.
     """
     import core
+    from . import translation_candidates as _candidates
 
     state = core.load_job_state(job_id)
     if state is None:
         raise ValueError(f"找不到任务 {job_id}")
-    paras, pairs = state["paras"], state["pairs"]
+    pairs = state.get("pairs") or []
     indexes = sorted({int(i) for i in indexes if 0 <= int(i) < len(pairs)})
     if not indexes:
         return state, []
@@ -569,127 +677,78 @@ def _retranslate_segments_locked(
     still_blocked = [index for index in indexes if index in blocked_source_indexes]
     if still_blocked:
         numbers = "、".join(str(index + 1) for index in still_blocked)
-        raise ValueError(f"第 {numbers} 段原文尚未核对，不能定点重译")
-    was_reviewable_stage = state.get("stage") in ("FINAL", "REVIEW_REQUIRED")
+        raise ValueError(f"第 {numbers} 段原文尚未核对，不能重译")
+
     glossary = core.normalize_glossary(
         glossary if glossary is not None else state.get("glossary") or [])
     glossary_text = core.glossary_block(glossary)
+    requests = [_retranslation_request(state, index, target_lang) for index in indexes]
 
-    fixed: List[int] = []
+    drafts: List[Dict[str, Any]] = []
     failures: List[Dict[str, Any]] = []
     stopped = None
-    for idx in indexes:
-        src = pairs[idx]["source"]
-        ctx_prev = paras[max(0, idx - 2):idx]
-        ctx_next = paras[idx + 1:idx + 3]
+    for request in requests:
+        index = request["segment_index"]
         try:
-            tgt = core.translate_batch([src], ctx_prev, ctx_next, glossary_text,
-                                       style_rules, target_lang, provider, api_key,
-                                       model)[0]
-            tgt = core.clean_xml_chars(tgt).replace("\n", " ")
             section_profile = core._batch_section_profile(
-                state.get("document_profile"), idx, 1)
-            findings = core.check_translation_batch(
-                [src], [tgt], glossary, target_lang,
-                section_profile=section_profile)
-            fixable = [f for f in findings if f["severity"] in ("blocking", "actionable")]
-            if fixable:
-                repaired = core.repair_batch([src], [tgt], fixable, glossary_text,
-                                             style_rules, target_lang, provider,
-                                             api_key, model)
-                if repaired and repaired[0].strip() \
-                        and not core.is_incomplete_translation(src, repaired[0]):
-                    tgt = core.clean_xml_chars(repaired[0]).replace("\n", " ")
-            remaining = core.check_translation_batch(
-                [src], [tgt], glossary, target_lang,
-                section_profile=section_profile)
-            pairs[idx]["target"] = tgt
-            pairs[idx]["initial_target"] = tgt
-            pairs[idx]["from_tm"] = False
-            pairs[idx]["reviewed"] = False  # 重译后需重新审校，不进 TMX final memory
-            pairs[idx]["review_status"] = "not_reviewed"
-            pairs[idx]["target_provenance"] = "generated"
-            for key in ("accepted_target", "human_accepted", "accepted_by_human"):
-                pairs[idx].pop(key, None)
-            for old in state.get("findings", []):
-                if old.get("segment_index") != idx or old.get("resolved") \
-                        or old.get("severity") not in ("blocking", "actionable") \
-                        or old.get("type") == "source_quality_gate":
-                    continue
-                old["resolved"] = True
-                old["resolution"] = {
-                    "action": "retranslated", "note": f"重新翻译段 {idx}",
-                    "timestamp": now_iso(), "actor": actor,
-                }
-                add_human_action(
-                    state, finding_id(old), "retranslated", f"重新翻译段 {idx}",
-                    actor)
-            for finding in remaining:
-                state["findings"].append({
-                    **finding, "segment_index": idx, "segment_id": idx})
-            add_human_action(state, f"segment:{idx}", "retranslated",
-                             f"重新翻译段 {idx}", actor)
-            fixed.append(idx)
+                state.get("document_profile"), index, 1)
+            result = _generate_candidate_text(
+                request, provider, api_key, model, target_lang, glossary_text,
+                style_rules, glossary, section_profile)
+            if not str(result["candidate_target"] or "").strip():
+                raise ValueError("模型没有返回译文")
+            drafts.append({
+                **request,
+                "candidate_target": result["candidate_target"],
+                "checks": result["checks"],
+                "origin": origin or _candidates.ORIGIN_TARGETED,
+                "instruction": instruction,
+                "provider": provider,
+                "model": model,
+                "usage": {"unknown": True},
+                "finding_ids": list(finding_ids or []),
+            })
             if on_caption:
-                on_caption(f"段 {idx} 已重译（{len(src)} -> {len(tgt)} 字符）")
-        except Exception as e:
+                on_caption(
+                    f"段 {index + 1} 已生成候选（{len(request['source'])} -> "
+                    f"{len(result['candidate_target'])} 字符，尚未写入译文）")
+        except Exception as e:  # noqa: BLE001 - one bad segment must not sink the batch
             if workflow_errors.fatal_reason(e):
                 stopped = e
                 break
-            failures.append({"segment_index": idx, "error": str(e)})
+            failures.append({"segment_index": index, "error": str(e)})
             if on_caption:
-                on_caption(f"段 {idx} 重译失败：{str(e)[:120]}")
+                on_caption(f"段 {index + 1} 生成候选失败：{str(e)[:120]}")
 
-    if fixed:
-        from . import knowledge
-        state["knowledge_candidates"] = knowledge.discard_candidates_for_segments(
-            state.get("knowledge_candidates") or [], fixed)
-    stats = state.setdefault("review_stats", {})
-    stats["blocking"] = sum(1 for f in state["findings"]
-                            if f["severity"] == "blocking" and not f.get("resolved"))
-    stats["actionable"] = sum(1 for f in state["findings"]
-                              if f["severity"] == "actionable" and not f.get("resolved"))
-    stats["informational"] = sum(1 for f in state["findings"]
-                                 if f["severity"] == "informational" and not f.get("resolved"))
-    state["has_blocking"] = stats["blocking"] > 0
-    if fixed:
-        # Re-translation changes the canonical working translation.  Let the
-        # core mutation entry record the exact dependency slice and revoke
-        # approval/final QA while preserving immutable snapshots.
-        core._mark_translation_truth_changed(
-            job_id, state, fixed,
-            "定点重译改变 CURRENT_TRANSLATION；只重建受影响案例与学术下游",
-            actor=actor, action="retranslate_segments")
-        if was_reviewable_stage:
-            state["stage"] = "REVIEW_REQUIRED" if state["has_blocking"] else "TRANSLATED"
-    state["delivery_status"] = compute_delivery_status(state)
-    core.save_job_state(job_id, state)
+    created: List[int] = []
+    if drafts:
+        committed = core.commit_candidates(job_id, drafts, actor=actor)
+        for view in committed.get("created") or []:
+            # A candidate that was already stale when it landed is reported, but
+            # it is not "created for this segment" from the caller's point of view.
+            if view.get("status") != _candidates.STATUS_PENDING:
+                if on_caption:
+                    on_caption(
+                        f"段 {int(view.get('segment_index') or 0) + 1} 的候选已过期："
+                        f"{view.get('note') or ''}")
+                continue
+            created.append(int(view.get("segment_index") or 0))
+        for rejected in committed.get("rejected") or []:
+            failures.append({"segment_index": rejected.get("segment_index"),
+                             "error": _candidates.CONFLICT_REASONS.get(
+                                 str(rejected.get("reason") or ""),
+                                 str(rejected.get("reason") or "候选未能保存"))})
+        state = committed.get("state") or core.load_job_state(job_id) or state
+
     if stopped is not None:
         workflow_errors.raise_if_fatal(stopped, job_id)
-    if failures and not fixed:
-        # 一段都没成功时必须报出来：否则调用方只看到 fixed=[]，与"没有需要重译
-        # 的段落"无法区分（自定义中转站没带地址时就是这样静默失败的）。
+    if failures and not created:
+        # A run where nothing was produced must say so: otherwise the caller
+        # sees created == [] and cannot tell it from "nothing to retranslate".
         raise ValueError(
-            "定点重译失败：" + "；".join(
-                f"第 {item['segment_index'] + 1} 段 {item['error'][:160]}"
+            "重译没有生成候选：" + "；".join(
+                f"第 {(item['segment_index'] or 0) + 1} 段 {item['error'][:160]}"
                 for item in failures))
     if failures and on_caption:
-        on_caption(f"{len(failures)} 段未能重译，其余已更新")
-    return state, fixed
-@wraps(_retranslate_segments_locked)
-def retranslate_segments(*args, **kwargs):
-    """Serialized entry point for a targeted re-translation.
-
-    Architecture Phase 2: the whole load → re-translate → save transaction runs
-    under the task's state mutation lock, so a concurrent edit from another
-    surface can neither be lost nor silently overwrite this result.  A call made
-    from the task's own worker is passed straight through (the worker already
-    owns the task through ``.worker.lock``).
-    """
-    import core
-
-    job_id = args[0] if args else kwargs.get("job_id")
-    if core._runtime_job_id() == job_id:
-        return _retranslate_segments_locked(*args, **kwargs)
-    with core.job_state_mutation_lock(job_id):
-        return _retranslate_segments_locked(*args, **kwargs)
+        on_caption(f"{len(failures)} 段没有生成候选，其余已保存为待采用")
+    return core.load_job_state(job_id) or state, created

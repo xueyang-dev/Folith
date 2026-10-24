@@ -156,9 +156,12 @@ def test_suggestion_is_generated_but_not_written(monkeypatch, bench):  # noqa: F
                                   target_lang="简体中文")
     before = adapter.load_state(view.job_id)["pairs"][1]["target"]
     candidate = adapter.suggest_translation(view.job_id, 1, "更口语一点", config)
-    assert candidate == "更口语的译文"
+    assert candidate["candidate_target"] == "更口语的译文"
+    assert candidate["origin"] == "instructed_retranslate"
+    assert candidate["status"] == "pending"
     assert "更口语一点" in seen["rules"]
-    assert adapter.load_state(view.job_id)["pairs"][1]["target"] == before
+    assert adapter.load_state(view.job_id)["pairs"][1]["target"] == before, \
+        "生成候选不写正文"
     with pytest.raises(adapter.AdapterError):
         adapter.suggest_translation(view.job_id, 1, " ", config)
 
@@ -166,14 +169,19 @@ def test_suggestion_is_generated_but_not_written(monkeypatch, bench):  # noqa: F
     _pump(app)
     requested = []
     view.suggestRequested.connect(lambda index, text: requested.append((index, text)))
-    view.suggest_box.input.setText("更口语一点")
-    view.suggest_box.button.click()
+    view.assist_input.setText("更口语一点")
+    view.assist_retranslate.click()
     assert requested == [(1, "更口语一点")]
-    view.set_suggestion(1, candidate)
-    assert view.suggest_box.result.isVisibleTo(view.suggest_box)
-    view.suggest_box.adopt_button.click()
-    assert view.target_edit.toPlainText() == "更口语的译文"
-    assert view.has_unsaved_editor_text()
+    view.show_candidate(1)
+    assert view.candidate_box.isVisibleTo(view)
+    assert view.candidate_box.candidate_text() == "更口语的译文"
+    assert "更口语的" in view.candidate_box.proposal.text(), "差异预览里能看到新增片段"
+    adopted = []
+    view.candidateAdoptRequested.connect(adopted.append)
+    view.candidate_box.adopt_button.click()
+    assert adopted == [candidate["candidate_id"]]
+    assert adapter.load_state(view.job_id)["pairs"][1]["target"] == before, \
+        "点采用只发出请求；写入由窗口经核心事务完成"
 
 
 def test_deep_analysis_is_cached_and_verbatim_only(monkeypatch, bench):  # noqa: F811

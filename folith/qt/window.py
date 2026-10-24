@@ -400,6 +400,8 @@ class MainWindow(QMainWindow):
         self.workbench.reviewAllRequested.connect(self.review_all)
         self.workbench.reviewSelectedRequested.connect(self.review_selected)
         self.workbench.retranslateRequested.connect(self.retranslate_segment)
+        self.workbench.candidateAdoptRequested.connect(self.adopt_candidate)
+        self.workbench.candidateDiscardRequested.connect(self.discard_candidate)
         self.workbench.discardDraftRequested.connect(self.discard_draft)
         self.workbench.excludeRequested.connect(self.exclude_segment)
         self.workbench.includeRequested.connect(self.include_segment)
@@ -2376,20 +2378,69 @@ class MainWindow(QMainWindow):
 
     def _retranslate_done(self, result, index: int | None = None,
                           job_id: str | None = None) -> None:
+        """重译只生成候选：正文没有变化，所以**不**重载编辑器，也不宣称已改稿。"""
         # 序号取"发起重译的那一段"，而不是完成时的选中段：等待框可以隐藏，
         # 用户可能已经切了段甚至切了任务。
         if index is None:
             index = self.workbench.current_index()
-        self._notice(
-            i18n.tr("已重译第 {v0} 段", v0=index + 1)
-            + (i18n.tr("；该段审校状态已刷新")
-               if (result or {}).get("fixed") else ""))
+        created = list((result or {}).get("created") or [])
+        self._notice(i18n.tr("第 {v0} 段已生成候选译文，待你采用",
+                             v0=index + 1) if created
+                     else i18n.tr("第 {v0} 段没有产生候选", v0=index + 1))
         self.refresh_workbench(force=True)
-        # 新译文必须立刻出现在编辑器里：否则用户按"保存并提交"会把刚重译出来的
-        # 文本又覆盖成旧的。编辑器里有未提交内容时该方法会自行跳过（保留用户输入，
-        # 并以"草稿基于旧译文"的警示呈现）。
         if job_id is None or job_id == self._current_job_id:
-            self.workbench.reload_current_segment()
+            self.workbench.show_candidate(index)
+
+    def adopt_candidate(self, candidate_id: str) -> None:
+        """采用候选：核心校验通过才写入正文；失败时把原因原样给用户。"""
+        job_id = self._current_job_id
+        if not job_id or not candidate_id:
+            return
+        index = self.workbench.current_index()
+        # 编辑器里还有没提交的内容时不能直接采用：那会把用户正在写的内容悄悄
+        # 换成候选。自动保存会把输入落成草稿并清掉"未保存"标记，所以这里按
+        # "输入或草稿"判断，而不是只看编辑器脏标记。
+        if self.workbench.has_uncommitted_editor_change():
+            message = i18n.tr('第 {v0} 段还有未提交的修改或草稿：先保存或放弃，再采用候选。',
+                              v0=index + 1)
+            self.workbench.show_candidate(index, message)
+            self._notice(message)
+            return
+        try:
+            result = adapter.adopt_candidate(job_id, candidate_id)
+        except adapter.AdapterError as exc:
+            self.workbench.show_candidate(index, str(exc))
+            self._failure(i18n.tr('无法采用候选'), str(exc))
+            return
+        if not result.get("committed"):
+            reason = str(result.get("reason") or i18n.tr('这个候选已不能采用。'))
+            self.workbench.show_candidate(index, reason)
+            self._notice(reason)
+            self.refresh_workbench(force=True)
+            return
+        same_text = not result.get("changed_text", True)
+        self._notice(i18n.tr('已采用第 {v0} 段的候选（同文采用，正文未变化）',
+                             v0=index + 1) if same_text
+                     else i18n.tr('已采用第 {v0} 段的候选；该段需要重新审校',
+                                  v0=index + 1))
+        self.refresh_workbench(force=True)
+        if job_id == self._current_job_id:
+            self.workbench.reload_current_segment(force=True)
+            self.workbench.show_candidate(index)
+
+    def discard_candidate(self, candidate_id: str) -> None:
+        job_id = self._current_job_id
+        if not job_id or not candidate_id:
+            return
+        index = self.workbench.current_index()
+        try:
+            adapter.discard_candidate(job_id, candidate_id)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法丢弃候选'), str(exc))
+            return
+        self._notice(i18n.tr('已丢弃第 {v0} 段的候选；当前译文没有变化',
+                             v0=index + 1))
+        self.workbench.show_candidate(index)
 
     def discard_draft(self, index: int) -> None:
         """放弃某段的未提交草稿（编辑器回到当前已提交的译文）。"""
@@ -2808,7 +2859,7 @@ class MainWindow(QMainWindow):
 
     # ================= 审校页：人工处置 =================
     def resolve_findings(self, finding_ids: list, action: str, note: str) -> None:
-        """人工确认已解决 / 保留当前译文：写一条人工决定，不改译文。"""
+        """人工确认问题存在 / 确认已解决 / 保留当前译文：只记决定，不改译文。"""
         job_id = self._current_job_id
         if not job_id:
             return
@@ -2817,9 +2868,13 @@ class MainWindow(QMainWindow):
         except adapter.AdapterError as exc:
             self._failure(i18n.tr('无法记录人工决定'), str(exc))
             return
-        self._notice(i18n.tr('已保留当前译文。该决定已记录。')
-                     if action == adapter.RESOLVE_PRESERVED
-                     else i18n.tr('已确认问题解决。该决定已记录。'))
+        if action == adapter.RESOLVE_PRESERVED:
+            message = i18n.tr('已保留当前译文。该决定已记录。')
+        elif action == adapter.RESOLVE_CONFIRMED_OPEN:
+            message = i18n.tr('已确认问题存在；这一项仍需修订，仍会挡住交付。')
+        else:
+            message = i18n.tr('已确认问题解决。该决定已记录。')
+        self._notice(message)
         self.refresh_workbench(force=True)
 
     def apply_suggestion(self, item: dict, note: str) -> None:
@@ -3119,13 +3174,13 @@ class MainWindow(QMainWindow):
         if not job_id or index < 0:
             return
 
-        def done(candidate: str) -> None:
+        def done(_candidate: dict) -> None:
             if self._current_job_id == job_id:
-                self.workbench.set_suggestion(index, candidate)
+                self.workbench.show_candidate(index)
 
         def failed(message: str, _detail: str) -> None:
             if self._current_job_id == job_id:
-                self.workbench.set_suggestion(index, "", i18n.tr_dynamic(message))
+                self.workbench.show_candidate(index, i18n.tr_dynamic(message))
 
         self.runner.submit(adapter.suggest_translation, job_id, index, instruction,
                            self.config, on_done=done, on_error=failed, label="suggest")
