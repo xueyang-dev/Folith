@@ -1,5 +1,8 @@
 """Phase 2 runtime closure: decisions, freshness, promotion, and readiness."""
+import json
 from copy import deepcopy
+
+import pytest
 
 import core
 from folith import models
@@ -341,5 +344,97 @@ def test_v04_state_round_trip_keeps_legacy_human_actor_inference(tmp_path):
             "legacy-user"
         core.save_job_state(job_id, loaded)
         assert core.load_job_state(job_id)["pairs"][0]["target"] == "甲"
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def _seed_tm_file():
+    """Pre-seed the system-project tm.json with one unrelated valid entry."""
+    path = core.tm_path(None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {core.tm_scope_key("简体中文", "Existing source."):
+             core.tm_record("已有译文。", "简体中文")}
+    path.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _promotion_job(tmp_path, job_id):
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    state = core.new_job_state("promotion.docx")
+    state.update(_review_state(), p1_done=True, p2_done=True,
+                 paras=["Source term."], target_lang="简体中文")
+    core.save_job_state(job_id, state)
+    return old_output, state
+
+
+def test_failed_state_save_keeps_tm_untouched_for_decision(tmp_path):
+    old_output, state = _promotion_job(tmp_path, "phase2-failed-save-decide")
+    try:
+        tm_file = _seed_tm_file()
+        before = tm_file.read_bytes()
+        finding_id = state["findings"][0]["finding_id"]
+
+        original_save = core.save_job_state
+
+        def _failing_save(job_id, saved_state):
+            raise OSError("disk full")
+
+        core.save_job_state = _failing_save
+        try:
+            with pytest.raises(OSError):
+                core.decide_translation_review_finding(
+                    "phase2-failed-save-decide", finding_id,
+                    "dismiss", "alice", actor_type="human")
+        finally:
+            core.save_job_state = original_save
+        assert tm_file.read_bytes() == before
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_failed_state_save_keeps_tm_untouched_for_legacy_mark(tmp_path):
+    old_output, state = _promotion_job(tmp_path, "phase2-failed-save-mark")
+    try:
+        tm_file = _seed_tm_file()
+        before = tm_file.read_bytes()
+        finding_id = state["findings"][0]["finding_id"]
+
+        original_save = core.save_job_state
+
+        def _failing_save(job_id, saved_state):
+            raise OSError("disk full")
+
+        core.save_job_state = _failing_save
+        try:
+            with pytest.raises(OSError):
+                core.mark_findings_resolved(
+                    "phase2-failed-save-mark", [finding_id], "human_fixed",
+                    actor="alice")
+        finally:
+            core.save_job_state = original_save
+        assert tm_file.read_bytes() == before
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_successful_save_promotes_pair_into_tm(tmp_path):
+    old_output, state = _promotion_job(tmp_path, "phase2-promotion-lands")
+    try:
+        tm_file = _seed_tm_file()
+        finding_id = state["findings"][0]["finding_id"]
+        decided, _, _record = core.decide_translation_review_finding(
+            "phase2-promotion-lands", finding_id, "dismiss", "alice",
+            actor_type="human")
+        assert decided["pairs"][0]["review_status"] == "reviewed_human"
+
+        tm = core.load_tm(core.tm_project_id(decided))
+        key = core.tm_scope_key(core.state_target_lang(decided), "Source term.")
+        assert tm[key]["target"] == "当前译文。"
+        assert tm[core.tm_scope_key("简体中文", "Existing source.")][
+            "target"] == "已有译文。"
+
+        persisted = json.loads(tm_file.read_text(encoding="utf-8"))
+        assert persisted[key]["target"] == "当前译文。"
     finally:
         core.OUTPUT_DIR = old_output

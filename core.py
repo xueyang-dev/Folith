@@ -10687,21 +10687,28 @@ def _translation_review_finding(state, finding_id):
 
 
 def _promote_human_reviewed_segment(state, segment_id, actor):
-    """Promote one currently clean human-confirmed pair through existing TM truth."""
+    """Mark one currently clean human-confirmed pair; stage its TM promotion.
+
+    Returns the staged promotion ``(source, target, target_lang, project_id)``
+    or ``None``.  The TM write itself is deliberately left to the caller: it
+    must land only after the job state holding the decision is durably saved,
+    otherwise a failed save leaves a promoted target in ``tm.json`` that the
+    task does not record (#109).
+    """
     from folith import delivery as _delivery
     pairs = state.get("pairs") or []
     if not isinstance(segment_id, int) or not 0 <= segment_id < len(pairs):
-        return
+        return None
     if any(_delivery._segment_index(item) == segment_id
            for item in _delivery.unresolved_findings(state)):
-        return
+        return None
     pair = pairs[segment_id]
     deterministic = check_translation_batch(
         [str(pair.get("source") or "")], [str(pair.get("target") or "")],
         state.get("glossary") or [], state.get("target_lang") or "简体中文")
     if any(item.get("severity") in {"blocking", "actionable"}
            for item in deterministic):
-        return
+        return None
     pair["reviewed"] = True
     pair["review_status"] = "reviewed_human"
     pair["accepted_target"] = pair.get("target") or ""
@@ -10709,10 +10716,26 @@ def _promote_human_reviewed_segment(state, segment_id, actor):
     pair["human_accepted"] = True
     pair["accepted_by_human"] = actor
     if state.get("use_tm", True) and _tm_eligible(pair.get("source"), pair.get("target")):
-        tm = load_tm(tm_project_id(state))
-        tm_put(tm, str(pair.get("source") or ""), str(pair.get("target") or ""),
-               state_target_lang(state))
-        save_tm(tm, tm_project_id(state))
+        return (str(pair.get("source") or ""), str(pair.get("target") or ""),
+                state_target_lang(state), tm_project_id(state))
+    return None
+
+
+def _apply_staged_tm_promotions(promotions):
+    """Persist staged TM promotions once the owning state save has succeeded.
+
+    ``tm.json`` 是派生的物化缓存，真值在已审校的 ``state["pairs"]`` 里。只有当
+    携带决定的任务状态已经落盘后，这里才把晋升写进 TM；状态保存失败时根本不
+    碰 TM 文件（#109）。写入本身失败可以容忍：下一次
+    ``reconcile_translation_memory`` 会用 pairs 把条目重建出来。
+    """
+    for source, target, target_lang, project_id in promotions or []:
+        try:
+            tm = load_tm(project_id)
+            tm_put(tm, source, target, target_lang)
+            save_tm(tm, project_id)
+        except OSError:
+            pass
 
 
 @_serialized_job_mutation
@@ -10731,8 +10754,11 @@ def decide_translation_review_finding(
         state, finding["finding_id"], decision, actor, actor_type=actor_type,
         note=note)
     segment_id = updated.get("segment_id")
+    promotions = []
     if decision in {"accept_resolution", "dismiss"}:
-        _promote_human_reviewed_segment(state, segment_id, actor)
+        promotion = _promote_human_reviewed_segment(state, segment_id, actor)
+        if promotion:
+            promotions.append(promotion)
     _recount_reviewed_segments(state)
     queue = _delivery.review_queue_findings(state)
     stats = state.setdefault("review_stats", {})
@@ -10741,6 +10767,7 @@ def decide_translation_review_finding(
     state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
     state["delivery_status"] = _delivery.compute_delivery_status(state)
     save_job_state(job_id, state)
+    _apply_staged_tm_promotions(promotions)
     return state, updated, record
 
 
@@ -11284,6 +11311,7 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
         return None
     legacy_ids = []
     legacy_confirmations = []
+    promotions = []
     mapped = {"human_fixed": "accept_resolution", "preserved": "dismiss",
               "confirmed_open": "request_revision"}
     for selector in finding_ids or []:
@@ -11297,8 +11325,10 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
                     state, finding["finding_id"], mapped[action], actor,
                     actor_type="human", note=note)
             if mapped[action] in {"accept_resolution", "dismiss"}:
-                _promote_human_reviewed_segment(
+                promotion = _promote_human_reviewed_segment(
                     state, updated.get("segment_id"), actor)
+                if promotion:
+                    promotions.append(promotion)
         elif action == "confirmed_open":
             legacy_confirmations.append(selector)
         else:
@@ -11313,6 +11343,7 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
     state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
     state["delivery_status"] = _delivery.compute_delivery_status(state)
     save_job_state(job_id, state)
+    _apply_staged_tm_promotions(promotions)
     return state
 
 
