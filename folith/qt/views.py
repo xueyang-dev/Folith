@@ -4947,6 +4947,16 @@ class WorkbenchView(QWidget):
         self._sync_word_count()
         self._refresh_term_focus()
 
+    def refresh_appearance(self) -> None:
+        """Update item brushes with QSS, without reloading text or moving the editor.
+
+        Visible rows repaint immediately; large tables keep the existing chunked
+        painting path for the rest. Preserve any unfinished initial row layout;
+        otherwise color-only changes do not need row layout.
+        """
+        pending_layout = self._paint_timer.isActive() and self._paint_schedules_heights
+        self._queue_segment_paint(schedule_heights=pending_layout)
+
     def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
         """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
 
@@ -5084,9 +5094,9 @@ class WorkbenchView(QWidget):
 
     def _paint_row(self, position: int, row: adapter.SegmentRow) -> bool:
         """Paint one row; True when it was (re)painted, False when the cache hit."""
-        look = (current_theme(), i18n.language())
+        look = (current_theme(), theme_module.accent(), i18n.language())
         if look != self._painted_look:
-            # 主题或语言变了：颜色与提示都要重画，缓存整体作废。
+            # 主题、强调色或语言变了：颜色与提示都要重画，缓存整体作废。
             self._painted.clear()
             self._painted_look = look
         if self._painted.get(position) == row:
