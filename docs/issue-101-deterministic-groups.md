@@ -196,3 +196,14 @@ now ordinary number context. Added regressions:
 Re-verified after the fix: `tests/deterministic_finding_groups_test.py` (16
 passed including `knowledge_async_commit_test.py`) and the full shared-qt list
 (267 passed, 6 skipped).
+
+## Regression fixture update (review_scheduler_test)
+
+`tests/review_scheduler_test.py` used fake translations that dropped every source
+number (`Paragraph 3: ...` → `这是第 4 段...`). That was invisible before the
+number check existed; with the check it correctly produced actionable findings
+and the scheduling tests' `reviewed_clean` assertions failed. The fixture now
+uses `_faithful_target()` to keep the source numbers (`保留数字 3 ...`), so the
+scheduling tests still test scheduling rather than number loss. This is a fixture
+fidelity fix, not a relaxed assertion. Re-ran the affected families: scheduler
+10 passed; all `reviewed_clean`-related files 151 passed.
