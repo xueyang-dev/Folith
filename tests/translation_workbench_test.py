@@ -107,8 +107,14 @@ def test_manual_edit_invalidates_review_and_preserves_frozen_snapshot(tmp_path):
 
         restored = core.restore_translation_edit(job_id, 0)
         assert restored["pairs"][0]["target"] == "甲"
-        assert restored["pairs"][0]["reviewed"] is True
+        # 撤销恢复的是文本，不是信任：旧 reviewed 标记不能跟着回来（#94）。
+        assert restored["pairs"][0]["reviewed"] is False
+        assert restored["pairs"][0]["review_status"] == "not_reviewed"
+        assert restored["pairs"][0]["from_tm"] is False
         assert "human_edited" not in restored["pairs"][0]
+        assert any(item.get("action") == "translation_restore"
+                   for item in restored.get("human_actions") or []), \
+            "撤销要作为一次新的译文变更留下记录"
         assert core.delivery_snapshot_assets(job_id, 1)["bilingual.jsonl"] == frozen_bytes
     finally:
         core.OUTPUT_DIR = old_output
