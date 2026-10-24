@@ -21,7 +21,7 @@
 | 工作仓库 | `D:/03_Development/Folith/upstream` |
 | commit | `2603643`（`fix(qt): estimate PDF size without rebuilding document layout`） |
 | 分支 | `codex/stability-data-integrity` |
-| 项目版本 | `pyproject.toml` → `0.7.1`（`name = "foliothread"`） |
+| 项目版本 | `pyproject.toml` → `0.7.1`（`name` 仍是旧品牌拼写，改名时未动包名） |
 | 运行环境 | `upstream/.venv/Scripts/python.exe`，Python 3.13.15，pytest 8.4.2（无 pytest-timeout；单测需自行控制用例粒度） |
 | 必须保留的未跟踪内容 | `docs/android-development-plan.md`、`promo/` |
 | 方案参照的远端 | `626e68b2900c103afa5ef779d3fbaebb26f8538c`；本地基线与该提交在下列四条链上的结构一致（本地多出 PDF 尺寸相关提交） |
