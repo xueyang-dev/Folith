@@ -4,11 +4,11 @@
 正式入口。这些位置各自独立，一旦只换了其中一个，品牌就会在界面上悄悄破功。
 本模块把这件事变成可执行的约束：
 
-1. 向量源存在且自洽（viewBox、渐变、没有外部字体依赖的关键字形）；
-2. 位图产物存在，且不比向量源旧（`scripts/render_brand_assets.py --check` 的语义）；
+1. 向量源只有一份，等于标准稿（viewBox、渐变、无外部字体依赖）；
+2. 位图产物存在且尺寸正确，页面图标等于母版的派生（`render_brand_assets.py --check`）；
 3. 设计系统色板 = 品牌源文件里的取色，而不是各表面各写一个蓝；
 4. 界面/README 引用的路径真实存在；
-5. 旧裁切资源仍存在，但不再作为当前产品入口。
+5. 旧几何 / 旧产品名资源已删除。
 
 不做像素比对：那需要浏览器，属于 `scripts/render_brand_assets.py --check` 的职责，
 CI 里不应依赖 Chromium。
@@ -28,8 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BRAND = ROOT / "folith" / "resources" / "brand"
 BRAND_STANDARD = ROOT / "docs" / "assets" / "folith-brand-standard.png"
 MARK = BRAND / "folith-mark.svg"
-MARK_MONO = BRAND / "folith-mark-mono.svg"
-FAVICON = BRAND / "folith-favicon.svg"
+STANDARD_SOURCE = ROOT / "docs" / "logo-exploration" / "folith-mark-final.svg"
 
 # 品牌色板：唯一真源是 logo 源文件，界面 token 必须与之一致。
 PALETTE = {
@@ -41,33 +40,30 @@ PALETTE = {
 #: 日间界面主色：与 logo 钴蓝同色相、降低彩度（2026-10-16 色彩审校）。logo 本身不动。
 UI_PRIMARY = "#2b5fd1"
 
-# 正式品牌素材：由用户提供，界面与 README 直接使用，不由渲染脚本生成。
-OFFICIAL_PNG = (
-    "folith-lockup.png",    # 主横向组合（README 首屏、侧栏品牌位）
-    "folith-mark.png",      # 图标（透明底，页面图标）
-    "folith-app-icon.png",  # App 图标
-    "folith-mark-hires.png",  # 图标高清母版（1254×1254；2026-10-16 几何修正版，见 docs/brand.md）
+# 标准标记（2026-10-16 修正几何）的位图产物与派生物；全部来自同一个向量源。
+BRAND_PNG = (
+    "folith-mark-hires.png",   # 1254×1254 母版，由 folith-mark-final.svg 渲染
+    "folith-mark.png",         # 页面图标，scripts/render_brand_assets.py 从母版派生
+    "folith-app-icon-white.png",  # App 图标，scripts/build_app_icon.py 从母版合成
+    "folith-lockup.png",       # README 首屏（白底），scripts/extract_brand_png.py 派生
+    "folith-lockup-transparent.png",
+    "folith-lockup-transparent-dark.png",
 )
-# 补充变体：由 scripts/render_brand_assets.py 从 SVG 源渲染（kit 未覆盖的版位）。
-DERIVED_PNG = (
-    "folith-logo-dark.png",
-    "folith-logo-stacked.png",
-)
-# 已被正式素材取代的派生文件必须消失——同一版位不允许两个真源。
-RETIRED_PNG = (
-    "folith-logo.png",
-    "folith-logo-zh.png",
-    "folith-favicon.png",
+# 旧几何或旧产品名的文件必须消失——全仓库只允许一个 logo。
+RETIRED_ASSETS = (
+    "folith-mark-mono.svg", "folith-mark-blue.svg", "folith-favicon.svg",
+    "folith-app-icon.png", "folith-logo-dark.png", "folith-logo-stacked.png",
+    "_mono-on-dark.png", "_mono-on-light.png",
+    "folith-logo.png", "folith-logo-zh.png", "folith-favicon.png",
 )
 # 尺寸写死是为了让"有人手工换了一张别的图"立刻失败。
 BRAND_PNG_SIZE = {
     "folith-lockup.png": (1187, 328),
-    "folith-mark.png": (278, 248),
-    "folith-app-icon.png": (273, 257),
+    "folith-lockup-transparent.png": (1187, 328),
+    "folith-lockup-transparent-dark.png": (1187, 328),
+    "folith-mark.png": (256, 256),
     "folith-mark-hires.png": (1254, 1254),
     "folith-app-icon-white.png": (1024, 1024),
-    "folith-logo-dark.png": (1498, 268),
-    "folith-logo-stacked.png": (560, 372),
 }
 
 
@@ -87,74 +83,61 @@ def _read(path: Path) -> str:
 
 def test_mark_source_shape():
     svg = _read(MARK)
-    assert 'viewBox="0 0 274 268"' in svg, "图标画布尺寸变了，位图必须重新生成"
-    assert 'role="img"' in svg and "<title" in svg and "<desc" in svg, \
-        "品牌图标需要无障碍标题与描述"
-    # 两页 + 光标 + 文/A：缺任何一个都不再是 Folith 的图标
-    assert svg.count("<rect") == 3, \
-        "图标应是两页圆角矩形 + 一层前页高光；新增/删除图层需同步更新本断言"
-    assert svg.count("<path") == 1, "图标应只有一个光标路径"
-    assert "文" in svg and ">A<" in svg, "图标必须保留 文 / A 两个字形"
+    assert 'viewBox="0 0 1254 1254"' in svg, "图标画布尺寸变了，位图必须重新生成"
+    assert 'role="img"' in svg and "<title" in svg, "品牌图标需要无障碍标题"
+    assert svg.count("<path") >= 2, "两页加白色字形层"
+    assert svg.count("linearGradient") >= 2, "两页各有一条渐变"
+
+
+def test_single_vector_source_is_the_standard_mark():
+    """向量源只有一份：随包的 folith-mark.svg 逐字节等于 docs 里的标准稿。"""
+    assert MARK.read_bytes() == STANDARD_SOURCE.read_bytes()
+    assert sorted(p.name for p in STANDARD_SOURCE.parent.iterdir()
+                  if p.suffix == ".svg") == ["folith-mark-final.svg"],         "docs/logo-exploration 里不得保留其他 logo 变体"
+
+
+def test_accent_variants_only_change_gradient_stops():
+    """翠绿 / 石板主题色版本与标准稿形状完全相同，只换渐变色标。"""
+    def shape(svg: str) -> list[str]:
+        return re.findall(r' d="([^"]+)"', svg)
+    standard = shape(_read(MARK))
+    for name in ("folith-mark-green.svg", "folith-mark-slate.svg"):
+        assert shape(_read(BRAND / name)) == standard, f"{name} 的几何偏离了标准标记"
 
 
 def test_mark_uses_palette():
-    """图标本体只用渐变三色；深海军蓝属于字标/App 图标底，不在图标里。"""
+    """渐变端点是品牌钴蓝 / 青（标准稿的色标与色板仅差 1 个色阶）。"""
     svg = _read(MARK).lower()
-    for name in ("cobalt", "cyan"):
-        assert PALETTE[name] in svg, f"图标源里找不到品牌色 {name}={PALETTE[name]}"
+    for stop in ("#0044fc", "#01f6fc"):
+        assert stop in svg, f"图标源里找不到渐变端点 {stop}"
 
 
 def test_mark_has_no_remote_font_dependency():
-    """图标要能离线渲染：可以挑字体家族，但不能 @import 远程字体。"""
     svg = _read(MARK)
     assert "@import" not in svg and "url(http" not in svg
 
 
-def test_mono_mark_is_single_color():
-    svg = _read(MARK_MONO)
-    assert "currentColor" in svg, "单色版必须用 currentColor，才能跟随宿主前景色"
-    colors = {c.lower() for c in re.findall(r'#[0-9A-Fa-f]{6}', svg)}
-    # 只允许掩膜里的黑/白，其余一律 currentColor
-    assert colors <= {"#ffffff", "#000000"}, \
-        f"单色版混入了彩色：{sorted(colors - {'#ffffff', '#000000'})}"
-
-
-def test_favicon_matches_mark_palette():
-    svg = _read(FAVICON).lower()
-    assert PALETTE["navy"] in svg, "标签页图标的底色必须是品牌深海军蓝"
-    assert PALETTE["cobalt"] in svg and PALETTE["cyan"] in svg, \
-        "标签页图标必须复用图标的渐变"
-
-
 def test_brand_bitmaps_exist_and_are_real():
-    """正式素材与补充变体都必须存在，且是尺寸正确的真实 PNG。
-
-    刻意不比较 mtime：CI 从 git 检出时所有文件时间戳相同，按时间判"是否过期"
-    会变成随机失败。真正的重生成检查是 `python scripts/render_brand_assets.py
-    --check`（需要 Chromium，不进 CI）。
-    """
-    missing = [n for n in OFFICIAL_PNG if not (BRAND / n).is_file()]
-    assert not missing, f"缺少用户提供的正式品牌素材：{missing}"
-    missing = [n for n in DERIVED_PNG if not (BRAND / n).is_file()]
-    assert not missing, (f"缺少品牌位图 {missing}；"
-                         f"运行 python scripts/render_brand_assets.py")
+    """所有位图存在且尺寸正确。不比较 mtime：CI 检出时间戳相同。"""
+    missing = [n for n in BRAND_PNG if not (BRAND / n).is_file()]
+    assert not missing, f"缺少品牌位图：{missing}"
     for name, (want_w, want_h) in BRAND_PNG_SIZE.items():
         path = BRAND / name
-        assert path.stat().st_size > 4_000, \
-            f"{name} 只有 {path.stat().st_size} 字节，像是占位文件"
-        width, height = _png_size(path)
-        assert (width, height) == (want_w, want_h), \
-            f"{name} 尺寸为 {width}x{height}，期望 {want_w}x{want_h}"
+        assert path.stat().st_size > 4_000,             f"{name} 只有 {path.stat().st_size} 字节，像是占位文件"
+        assert _png_size(path) == (want_w, want_h), f"{name} 尺寸不对"
 
 
-def test_superseded_derived_assets_are_retired():
-    """正式素材取代的派生文件不得留下，渲染脚本也不得再产出它们。"""
-    for name in RETIRED_PNG:
-        assert not (BRAND / name).exists(), \
-            f"{name} 已被正式品牌素材取代，不应再存在（同一版位不能有两个真源）"
-    from scripts.render_brand_assets import OUTPUTS
-    assert set(OUTPUTS) == set(DERIVED_PNG), \
-        f"渲染脚本产物 {sorted(OUTPUTS)} 与期望的补充变体 {sorted(DERIVED_PNG)} 不一致"
+def test_page_icon_is_derived_from_master():
+    from scripts.render_brand_assets import main
+    assert main(["--check"]) == 0
+
+
+def test_retired_and_legacy_assets_are_gone():
+    for name in RETIRED_ASSETS:
+        assert not (BRAND / name).exists(), f"{name} 已退役，不应再存在"
+    assert not list(BRAND.glob("foliothread-*")), "旧产品名素材不得随包保留"
+    assert sorted(p.name for p in BRAND.glob("*.svg")) == [
+        "folith-mark-green.svg", "folith-mark-slate.svg", "folith-mark.svg"]
 
 
 def test_brand_standard_reference_is_preserved():

@@ -11,7 +11,6 @@ REQUIRED = (
     'folith/qt/app.py', 'folith/ui/theme_tokens.py',
     *(f'folith/resources/locales/{locale}.json' for locale in ('zh-CN', 'en', 'es', 'ru', 'ar')),
     *(f'folith/resources/locales/qt-{locale}.json' for locale in ('zh-CN', 'en', 'es', 'ru', 'ar')),
-    'folith/resources/brand/folith-favicon.svg',
     'folith/resources/brand/folith-mark.svg',
     'folith/resources/brand/folith-lockup.png',
     'folith/resources/brand/folith-lockup-transparent.png',

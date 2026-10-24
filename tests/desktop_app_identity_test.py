@@ -21,18 +21,17 @@ BUNDLE = ROOT / "dist" / "desktop" / "Folith.app"
 ICNS = ROOT / "build" / "desktop" / "Folith.icns"
 # P9: the provided high-resolution mark remains the unmodified brand source.
 BRAND_ICON = ROOT / "folith" / "resources" / "brand" / "folith-mark-hires.png"
-TILE_ICON = ROOT / "folith" / "resources" / "brand" / "folith-app-icon.png"
-LEGACY_ICON = ROOT / "folith" / "resources" / "brand" / "foliothread-app-icon.png"
+TILE_ICON = ROOT / "folith" / "resources" / "brand" / "folith-app-icon-white.png"
 
 
 def test_brand_artwork_is_tracked_and_usable():
     """The desktop icon comes from the high-resolution transparent mark."""
     assert BRAND_ICON.is_file(), "the high-resolution brand mark must live in the repository"
-    assert TILE_ICON.is_file() and LEGACY_ICON.is_file(), "other brand assets still ship"
+    assert TILE_ICON.is_file(), "the composed white-tile app icon must ship"
     builder = (ROOT / "scripts" / "build_app_icon.py").read_text(encoding="utf-8")
     default = builder.split("DEFAULT_SOURCE")[1].split("\n")[0]
     assert '"folith-mark-hires.png"' in default, "the decided source must be the hires mark"
-    assert "folith-app-icon.png" not in default and "foliothread-app-icon.png" not in default
+    assert "app-icon" not in default, "the source must be the mark, not a tile"
 
 
 def test_icon_source_is_normalised_to_a_square_canvas(tmp_path):

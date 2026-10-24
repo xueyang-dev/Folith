@@ -21,21 +21,20 @@ LOGO_BY_THEME = {
     "green": "folith/resources/brand/folith-lockup-transparent.png",
 }
 LOGO_FALLBACKS = ("folith/resources/brand/folith-lockup-transparent.png",
-                  "folith/resources/brand/folith-logo-stacked.png")
+                  "folith/resources/brand/folith-mark-hires.png")
 #: 只有图形、不含文字的标记（侧栏 / 页头里和文字并排）。每个主题色一份向量图：
-#: 蓝色就是 ``folith-mark-hires.png`` 的向量原稿（docs/logo-exploration/folith-mark-final.svg，
-#: 两者逐像素一致）；翠绿 / 石板只换后页与前页两条渐变的色标，形状与字形完全相同。
+#: 蓝色就是标准标记 ``folith-mark.svg``（= docs/logo-exploration/folith-mark-final.svg，
+#: 与 ``folith-mark-hires.png`` 逐像素一致）；翠绿 / 石板只换后页与前页两条渐变的色标，形状与字形完全相同。
 #: 按设备像素比直接从 SVG 渲染，换主题色也不会糊、不会缩小（旧做法是把 28px 位图逐像素改色）。
-#: （``folith-mark.svg`` 是更早的另一版画法，不能用在这里。）
 MARK_SVG = {
-    "blue": "folith/resources/brand/folith-mark-blue.svg",
+    "blue": "folith/resources/brand/folith-mark.svg",
     "green": "folith/resources/brand/folith-mark-green.svg",
     "slate": "folith/resources/brand/folith-mark-slate.svg",
 }
 #: SVG viewBox 的宽高比（1254 × 1254，与 hires 位图相同）。
 MARK_ASPECT = 1.0
 MARK_FALLBACKS = ("folith/resources/brand/folith-mark-hires.png",
-                  "folith/resources/brand/foliothread-favicon.png")
+                  "folith/resources/brand/folith-mark.png")
 
 
 #: 各界面语言的字标：名称 + 一句短副标题。阿、俄音译名字（不带「译页」），英、西写 Folith。
