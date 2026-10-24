@@ -42,9 +42,9 @@ jobs:
 
           root = Path(folith.__file__).resolve().parent
           assert "site-packages" in str(root), root
-          for rel in ("resources/en_common.txt", "resources/brand/folith-favicon.svg",
-                      "resources/brand/folith-mark.svg", "resources/brand/folith-lockup.png",
-                      "resources/brand/folith-mark.png", "resources/locales/qt-zh-CN.json"):
+          for rel in ("resources/en_common.txt", "resources/brand/folith-mark.svg",
+                      "resources/brand/folith-lockup.png", "resources/brand/folith-mark.png",
+                      "resources/locales/qt-zh-CN.json"):
               assert (root / rel).is_file(), rel
           assert importlib.util.find_spec("streamlit") is None, "streamlit should not be installed"
           print("installed imports and resources: OK")

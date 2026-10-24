@@ -1,10 +1,9 @@
 # Folith·译页 品牌与视觉基准
 
-本文以用户提供的品牌标准图 `docs/assets/folith-brand-standard.png` 为唯一视觉标准。
-它定义组合字标、英文/中文副标题、icon、App icon、横向小版和深浅单色版。
-
-在此基础上，正式素材单独提供三份（主横向组合、图标、App 图标），由界面与 README
-直接使用，**不由渲染脚本生成**；脚本只补 kit 未覆盖的版位。
+本文以用户提供的品牌标准图 `docs/assets/folith-brand-standard.png` 为文字与版式参考，
+**图标几何以 2026-10-16 修正版为唯一标准**（见文末「图标几何修正」）。仓库里只有这一个
+Folith logo：向量源是 `docs/logo-exploration/folith-mark-final.svg`，其余标记、lockup、
+App 图标都从它派生；旧几何的文件已全部删除，不再保留备份。
 
 ## 0. 正式品牌
 
@@ -26,9 +25,7 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 | 页面上的 **文** 和 **A** | 中文 ↔ 英文的本地化工作 |
 | 覆盖两页的白色指针光标 | Agent 在文档上执行工作 |
 
-本轮不重绘、不换色、不加阴影，也不重新设计图形。产品界面与 README 直接使用
-用户提供的正式素材；向量派生只用于 kit 未覆盖的补充版位。原有 `foliothread-*`
-资源作为历史/兼容素材保留，但不再由当前 UI 或 README 引用。
+不重绘、不换色、不加阴影，也不重新设计图形。需要图标时从下面的资产矩阵里取，**不要**从旧提交或其他地方复制。
 
 ### 品牌标准图
 
@@ -38,24 +35,20 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 
 | 版本 | 文件 | 来源 | 用在哪里 |
 | --- | --- | --- | --- |
-| 品牌标准图 | `docs/assets/folith-brand-standard.png` | 用户提供 | 本规范的完整参考 |
-| 主横向组合 | `folith-lockup.png` | 用户提供 | README 首屏、透明版的原始素材 |
-| 透明横向组合 | `folith-lockup-transparent.png` | 原图逐像素去白底，图标换为 2026-10-16 修正版 | 日间与纸面主题侧栏 |
-| 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 同一原图，仅调整文字颜色；图标同上 | 夜间主题侧栏 |
-| 图标（透明底） | `folith-mark.png` | 用户提供 | 页面图标（浏览器标签页、安装入口） |
-| 图标（透明底，高清母版） | `folith-mark-hires.png` | 2026-10-16 修正版（1254×1254），由 `docs/logo-exploration/folith-mark-final.svg` 渲染 | 白底应用图标的原始母版（`scripts/build_app_icon.py` 保留原色，仅缩放居中） |
-| App 图标（原始深底版） | `folith-app-icon.png` | 用户提供 | 保留的原始素材；Qt 当前应用入口改用下行白底版 |
-| App 图标（P9 白底版） | `folith-app-icon-white.png` | 由高清母版合成 | Qt 应用 / 关于 / 欢迎与桌面 `.icns`；1024px 透明画布、824px 纯白连续曲线底板、品牌标宽约 70% |
-| 深色底横向组合 | `folith-logo-dark.png` | SVG 派生 | 旧补充素材，侧栏不再使用 |
-| 竖向组合 | `folith-logo-stacked.png` | SVG 派生 | 窄栏或正方形版位 |
-| 彩色图标（向量） | `folith-mark.svg` | 向量源 | 派生渲染与单色底稿 |
-| 单色图标（向量） | `folith-mark-mono.svg` | 向量源 | 单色、需跟随 `currentColor` 的场景 |
-| 标签页图标（向量） | `folith-favicon.svg` | 向量源 | 需要矢量缩放时 |
+| 品牌标准图 | `docs/assets/folith-brand-standard.png` | 用户提供 | 本规范的完整参考（文字与版式；其中图标为旧几何，以下文件为准） |
+| **标准向量源** | `docs/logo-exploration/folith-mark-final.svg` | 2026-10-16 修正版 | 唯一真源 |
+| 标准向量（随包） | `folith-mark.svg` | 逐字节等于标准向量源 | 侧栏 / 页头标记（蓝色主题色）、向量复用 |
+| 翠绿 / 石板主题色向量 | `folith-mark-green.svg`、`folith-mark-slate.svg` | 标准向量源仅换两条渐变色标 | 对应主题色的侧栏标记 |
+| 图标高清母版 | `folith-mark-hires.png` | 标准向量源渲染（1254×1254，透明底） | App 图标母版、位图回退 |
+| 页面图标 | `folith-mark.png` | `scripts/render_brand_assets.py` 从母版缩放（256×256） | 浏览器标签页、安装入口 |
+| App 图标 | `folith-app-icon-white.png` | `scripts/build_app_icon.py` 从母版合成 | Qt 应用 / 关于 / 欢迎、Windows `.ico`、macOS `.icns`；1024px 透明画布、824px 纯白连续曲线底板、品牌标宽约 70% |
+| 透明横向组合 | `folith-lockup-transparent.png` | 用户提供的字标 + 标准图标 | 日间与纸面主题侧栏；lockup 母版 |
+| 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 母版仅调整文字颜色（`scripts/extract_brand_png.py`） | 夜间主题侧栏 |
+| 白底横向组合 | `folith-lockup.png` | 母版叠在白底上（`scripts/extract_brand_png.py`） | README 首屏 |
 
-标注「用户提供」的是正式品牌文件，禁止手工替换为不同比例或不同字标的图片，
-也**不要**用渲染脚本覆盖它们；标注「SVG 派生」的位图在改完 SVG 源后重跑脚本即可。
-旧的 `foliothread-source-lockup.png` 与 `foliothread-source-icon.png` 仍随包保留，
-供历史数据或旧文档读取。
+lockup 的字标是用户提供的位图，**不要**重绘或换比例；只允许替换图标部分。
+改动标准向量源后，依次重新渲染母版、重跑上面三个脚本，并运行
+`python -m pytest tests/brand_assets_test.py -q`。
 
 ## 2. 色板
 
@@ -170,24 +163,24 @@ AppKit 用自己的一套中性石墨灰绘制，深蓝黑的内容区因此看�
 
 ## 4. 资源生成与回归
 
-补充变体由脚本生成：只修改 SVG 源，然后重跑并检查。
+派生位图由脚本生成：只修改标准向量源（并重新渲染母版），然后重跑并检查。
 
 ```bash
-$EDITOR folith/resources/brand/folith-mark.svg
-python scripts/render_brand_assets.py
+python scripts/render_brand_assets.py          # folith-mark.png（页面图标）
 python scripts/render_brand_assets.py --check
+python scripts/extract_brand_png.py            # folith-lockup.png、夜间 lockup
+python scripts/build_app_icon.py --png-out folith/resources/brand/folith-app-icon-white.png --out build/qt-desktop/Folith.icns
 python -m pytest tests/brand_assets_test.py -q
 ```
 
-脚本只写自己的产物（`folith-logo-dark.png`、`folith-logo-stacked.png`，外加可选的
-单色预览），**不碰**用户提供的正式素材，也不覆盖旧的 `foliothread-source-*.png`。
-正式素材被替换或删除时，`tests/brand_assets_test.py` 会立刻失败。
+脚本只依赖 Pillow（`extract_brand_png.py` 另需 NumPy），只写自己的产物。
+素材被替换或删除时，`tests/brand_assets_test.py` 会立刻失败。
 
 ## 5. 工作台应用
 
-侧栏、页面图标、启动器和导出署名使用正式品牌素材：侧栏品牌位使用 `folith-lockup.png` 的透明 PNG 派生版，
-页面图标 = `folith-mark.png`；Qt App 图标 = `folith-app-icon-white.png`，由 `scripts/build_app_icon.py` 从高清标记合成；原始深底 App 素材仍保留。组合字标统一为
-`Folith·译页`。README 首屏展示同一份主 lockup。页面仍保持既有侧栏、任务步骤、
+侧栏、页面图标、启动器和导出署名使用同一个标准标记：侧栏品牌位使用透明 lockup（日间 / 夜间各一份）或 `folith-mark*.svg`，
+页面图标 = `folith-mark.png`；Qt App 图标 = `folith-app-icon-white.png`，由 `scripts/build_app_icon.py` 从高清母版合成。组合字标统一为
+`Folith·译页`。README 首屏展示 `folith-lockup.png`。页面仍保持既有侧栏、任务步骤、
 内容面、圆角、间距和颜色，不借 rebrand 之机改动导航或交互流程。
 
 ## 6. 兼容边界
@@ -227,7 +220,4 @@ python -m pytest tests/brand_assets_test.py -q
 - 两页前后穿插的分界线下移，浅色页占可见面积 57%（原图 55%），抵消深色更重的视觉分量。
 - 面积与原图相同，视觉重心居中并上提 1.5%。
 
-过程与对照：`docs/logo-exploration/`（`README.md`、`variants-compare.png`、`symmetric-split-compare.png`、`final-before-after.png`）。矢量源 `docs/logo-exploration/folith-mark-final.svg`，由 `variants.py` 生成；原图的 1:1 矢量复刻为 `folith-mark-replica.svg`。
-
-已替换：`folith-mark-hires.png`、`folith-app-icon-white.png`、`folith-lockup-transparent.png`、`folith-lockup-transparent-dark.png`。**尚未替换**：README 首屏的 `folith-lockup.png`、页面图标 `folith-mark.png`、原始深底 `folith-app-icon.png`，以及 `folith-mark.svg` 等 SVG 派生源，它们仍是旧几何。
-
+矢量源 `docs/logo-exploration/folith-mark-final.svg`，并随包为 `folith/resources/brand/folith-mark.svg`。探索过程中的旧几何复刻、对称变体与对照图已删除，只保留这一份；`docs/logo-exploration/README.md` 记录来源。
