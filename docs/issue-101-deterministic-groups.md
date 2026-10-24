@@ -174,3 +174,25 @@ to commit, zero model calls, and bounded local grouping time.
 - Fixture accuracy is curated; no real book corpus was annotated, so precision
   on natural text is not claimed.
 - No Windows/native run was performed; verification is macOS + offscreen Qt.
+
+## Post-review fix: CJK-adjacent numbers (found by CI on this PR)
+
+The first version of `_NUMBER_TOKEN_RE` used Unicode word boundaries
+(`(?<![\w.])` / `(?![\w.])`). `\w` matches CJK characters, so `第0段` was
+treated as a digit glued to a word and was **not** counted as a target number.
+Every Chinese sentence with a number next to text then looked like it dropped the
+source number: false `actionable` findings, repair churn, and the
+`knowledge_async_commit_test.py` timing/observation contract broke (5 failures on
+macOS and Windows shared-qt).
+
+Fix: ASCII-only boundaries (`(?<![A-Za-z0-9_.])` / `(?![A-Za-z0-9_.])`). Digits
+inside ASCII identifiers (`Term0`, `v2`) remain excluded by design; CJK context is
+now ordinary number context. Added regressions:
+
+- `第0段提到Term0和Gadget0。` → no number finding;
+- `第3章有5个例子。` → `Chapter 3 has 5 examples.` → no number finding;
+- `Term0` stays out of the number check.
+
+Re-verified after the fix: `tests/deterministic_finding_groups_test.py` (16
+passed including `knowledge_async_commit_test.py`) and the full shared-qt list
+(267 passed, 6 skipped).
