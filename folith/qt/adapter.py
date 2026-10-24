@@ -2045,10 +2045,16 @@ def run_facts(state: dict) -> dict:
     reuse = {
         "tm_used": as_int(state.get("tm_used_count")),
         "tm_recovered": as_int(state.get("tm_recovered_count")),
+        "tm_conflicts": as_int(state.get("tm_conflict_count")),
+        "tm_legacy_unused": as_int(state.get("tm_legacy_unused")),
+        "tm_status": str(state.get("tm_status") or ""),
         "cache_hits": as_int(cache.get("hits")),
         "cache_misses": as_int(cache.get("misses")),
     }
-    reuse["available"] = bool(reuse["tm_used"] or reuse["tm_recovered"] or reuse["cache_hits"])
+    reuse["available"] = bool(
+        reuse["tm_used"] or reuse["tm_recovered"] or reuse["tm_conflicts"]
+        or reuse["tm_legacy_unused"] or reuse["tm_status"] == "disabled"
+        or reuse["tm_status"] == "no_target_language" or reuse["cache_hits"])
 
     synopsis = state.get("document_synopsis") if isinstance(state.get("document_synopsis"), dict) else {}
     digests = [item for item in state.get("section_digests") or [] if isinstance(item, dict)]
