@@ -1,6 +1,6 @@
 {
   "platform": "cocoa",
-  "repo": "/Users/xueyang/Dev/FolioThread-m5-main",
+  "repo": "(local worktree, path stripped)",
   "checks": [
     {
       "name": "light: rows use current-theme foregrounds",
@@ -209,5 +209,6 @@
       "path": "/private/tmp/m5-119/out-baseline/native-followsystem-dark.png"
     }
   ],
-  "ok": false
+  "ok": false,
+  "paths_note": "Local absolute paths removed before publishing: they contained the legacy brand name."
 }
