@@ -16,6 +16,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional
 
+import hashlib
+import re
+import unicodedata
+
 from .textual import normalize_language
 
 # ␟ SYMBOL FOR UNIT SEPARATOR：真实文本里不会出现，因此键可以无歧义地拆开。
@@ -101,7 +105,72 @@ def tm_legacy_keys(tm: Optional[Mapping[str, Any]]) -> List[str]:
             if not tm_record_language(key, record)]
 
 
+# ---------------- 上下文指纹（#107：同一句话在不同语境下不是同一条记忆） ----------------
+# 一条精确命中的记忆只证明「原文相同」，不证明「语境相同」。界面上一句
+# "Close" 可以是按钮，也可以是句子里的动词；同一句标题在两章里的译法也可能
+# 不同。因此每条新记忆在写入时同时记下前后原文段落的**归一化指纹**：
+#   * 只存短哈希，不复制原文，tm.json 不会每个条目多出两段文字；
+#   * 旧条目没有这两个字段 = 语境未知，保持原有自动复用行为（向后兼容）；
+#   * 指纹只做排版归一化（NFKC/空白折叠），不做语义近似。
+
+TM_CONTEXT_PREV = "ctx_prev"
+TM_CONTEXT_NEXT = "ctx_next"
+_TM_CONTEXT_DIGEST_SIZE = 6
+_TM_CONTEXT_SPACE_RE = re.compile(r"\s+")
+
+
+def tm_context_fingerprint(text: Optional[str]) -> str:
+    """前后文段落的归一化指纹；空段落返回空串（表示"没有这一侧"）。"""
+    value = unicodedata.normalize("NFKC", str(text or ""))
+    value = _TM_CONTEXT_SPACE_RE.sub(" ", value).strip()
+    if not value:
+        return ""
+    return hashlib.blake2s(
+        value.encode("utf-8"), digest_size=_TM_CONTEXT_DIGEST_SIZE).hexdigest()
+
+
+def tm_context_fields(previous_source: Optional[str],
+                      next_source: Optional[str]) -> Dict[str, str]:
+    """写入记忆时附带的上下文字段（短哈希，可读性不是目的）。"""
+    return {
+        TM_CONTEXT_PREV: tm_context_fingerprint(previous_source),
+        TM_CONTEXT_NEXT: tm_context_fingerprint(next_source),
+    }
+
+
+def tm_context_status(record: Optional[Mapping[str, Any]],
+                      previous_source: Optional[str] = None,
+                      next_source: Optional[str] = None) -> str:
+    """比较记忆记录的上下文与当前上下文，返回 ``match`` / ``conflict`` / ``unknown``。
+
+    * 记录没有任何上下文字段（旧版条目）-> ``unknown``：保持原有自动复用；
+    * 记录有指纹，但当前那一侧缺失（首段/末段）-> 该侧不构成冲突；
+    * 记录与当前两侧都一致 -> ``match``；
+    * 任一侧指纹不一致 -> ``conflict``（调用方必须降级为"建议并确认"）。
+    """
+    if not isinstance(record, Mapping):
+        return "unknown"
+    recorded = {
+        "prev": str(record.get(TM_CONTEXT_PREV) or ""),
+        "next": str(record.get(TM_CONTEXT_NEXT) or ""),
+    }
+    if not recorded["prev"] and not recorded["next"]:
+        return "unknown"
+    current = {
+        "prev": tm_context_fingerprint(previous_source),
+        "next": tm_context_fingerprint(next_source),
+    }
+    for side in ("prev", "next"):
+        if not recorded[side] or not current[side]:
+            continue
+        if recorded[side] != current[side]:
+            return "conflict"
+    return "match"
+
+
 __all__ = [
     "TM_SCOPE_SEP", "tm_scope_key", "tm_unscope_key", "tm_record_language",
     "tm_record", "tm_put", "tm_discard", "tm_legacy_keys",
+    "TM_CONTEXT_PREV", "TM_CONTEXT_NEXT", "tm_context_fingerprint",
+    "tm_context_fields", "tm_context_status",
 ]

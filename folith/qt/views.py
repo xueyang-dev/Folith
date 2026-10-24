@@ -369,6 +369,32 @@ def _stage_line(row) -> str:
     return f" <span style='color:{muted}'>—</span> ".join(spans)
 
 
+def translation_source_label(pair, *, human_edited: bool):
+    """Describe where the current translation came from (#107).
+
+    Returns ``(label, status_note)``.  A context-conflicted TM hit is never
+    described as "matched and reused": it is a suggestion, and the note says
+    whether the suggestion has already passed independent review or is still
+    waiting for confirmation.
+    """
+    pair = pair if isinstance(pair, dict) else {}
+    status = str(pair.get("review_status") or "")
+    tm_conflict = bool(pair.get("tm_context_conflict")) \
+        or status.startswith("reviewed_context_conflict") \
+        or status == "tm_context_conflict"
+    if human_edited:
+        return i18n.tr("人工修改"), ""
+    if tm_conflict:
+        if pair.get("reviewed"):
+            return (i18n.tr("翻译记忆（同原文，上下文不同，已独立审校）"),
+                    i18n.tr('翻译记忆仅作建议，已独立审校'))
+        return (i18n.tr("翻译记忆（同原文，上下文不同，待确认）"),
+                i18n.tr('翻译记忆仅作建议，待确认'))
+    if pair.get("from_tm"):
+        return i18n.tr("翻译记忆（已匹配并复用）"), i18n.tr('来自翻译记忆')
+    return i18n.tr("机器翻译"), ""
+
+
 def _segment_status_tone(row) -> str:
     """一段的状态语气（theme.STATUS_TONES）：已审校 = 完成；草稿基于旧译文 = 需处理；
     待翻译 / 已排除 = 未开始；其余（待审校、人工修改）= 进行中。"""
@@ -5668,11 +5694,16 @@ class WorkbenchView(QWidget):
         self.fact_state.setText(row.status)
         self.fact_review.setText(i18n.tr("已审校") if row.reviewed else i18n.tr("未审校"))
         pairs_now = self._state.get("pairs") or []
-        from_tm = 0 <= row.index < len(pairs_now) and bool(pairs_now[row.index].get("from_tm"))
-        self.fact_source.setText(i18n.tr("人工修改") if row.human_edited
-                                 else (i18n.tr("翻译记忆（已匹配并复用）") if from_tm
-                                       else i18n.tr("机器翻译")))
-        if from_tm and not row.human_edited:
+        pair_now = pairs_now[row.index] if 0 <= row.index < len(pairs_now) else {}
+        from_tm = bool(pair_now.get("from_tm"))
+        # #107：同一句原文在记忆里有、但前后文不同时，译文只是建议，不能
+        # 说成"已匹配并复用"。界面必须把"为什么没复用"说出来。
+        source_label, source_note = translation_source_label(
+            pair_now, human_edited=row.human_edited)
+        self.fact_source.setText(source_label)
+        if source_note:
+            self.segment_status.setText(self.segment_status.text() + " · " + source_note)
+        elif from_tm and not row.human_edited:
             self.segment_status.setText(self.segment_status.text() + " · "
                                         + i18n.tr('来自翻译记忆'))
         reason = ""

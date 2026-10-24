@@ -70,8 +70,10 @@ def test_run_facts_reads_what_the_core_recorded():
     assert usage["available"] and usage["calls"] == 12 and usage["total_tokens"] == 34567
     assert usage["estimated"] is True, "12 次里只有 10 次有精确 token，整体必须标为估算"
     assert [role["role"] for role in usage["roles"]] == ["translation", "review"]
-    assert facts["reuse"] == {"tm_used": 3, "tm_recovered": 0, "cache_hits": 5,
-                              "cache_misses": 7, "available": True}
+    assert facts["reuse"] == {
+        "tm_used": 3, "tm_recovered": 0, "tm_conflicts": 0,
+        "tm_legacy_unused": 0, "tm_status": "", "cache_hits": 5,
+        "cache_misses": 7, "available": True}
     understanding = facts["understanding"]
     assert understanding["available"] and understanding["summary"].startswith("一本")
     assert [item["fallback"] for item in understanding["sections"]] == [False, True]

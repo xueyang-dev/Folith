@@ -48,6 +48,10 @@ RISK_RULES: Tuple[Tuple[str, str], ...] = (
     ("protocol_failure", "provider protocol failure during generation"),
     ("malformed_output", "empty, truncated or structurally invalid target"),
     ("entity_conflict", "entity conflict or drift on a batch segment"),
+    # #107: a TM hit was downgraded because its recorded neighbours differ.
+    # It is pre-filled as a suggestion, so independent review is the reason the
+    # batch is no longer "clean deterministic" -- not a reason to skip it.
+    ("context_conflict", "translation-memory context conflict in batch"),
     ("source_quality_flag", "source-quality gate flagged a batch segment"),
 )
 
@@ -86,6 +90,7 @@ def batch_risk_signals(
     protocol_failure: bool = False,
     malformed_output: bool = False,
     entity_conflicts: int = 0,
+    context_conflicts: int = 0,
     source_quality_flags: int = 0,
     all_from_tm: bool = False,
 ) -> Dict[str, Any]:
@@ -106,6 +111,7 @@ def batch_risk_signals(
         "protocol_failure": bool(protocol_failure),
         "malformed_output": bool(malformed_output),
         "entity_conflict": int(entity_conflicts or 0),
+        "context_conflict": int(context_conflicts or 0),
         "source_quality_flag": int(source_quality_flags or 0),
         "all_from_tm": bool(all_from_tm),
     }
@@ -168,6 +174,7 @@ def batch_signals_from_context(
             malformed = True
             break
     all_from_tm = bool(pairs) and all(bool(p.get("from_tm")) for p in pairs)
+    context_conflicts = sum(1 for p in pairs if p.get("tm_context_conflict"))
     return batch_risk_signals(
         findings=findings,
         fixable=fixable,
@@ -175,6 +182,7 @@ def batch_signals_from_context(
         protocol_failure=protocol_failure,
         malformed_output=malformed,
         entity_conflicts=conflicts,
+        context_conflicts=context_conflicts,
         source_quality_flags=len(list(blocked_local_indexes or ())),
         all_from_tm=all_from_tm,
     )

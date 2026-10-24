@@ -173,10 +173,21 @@ class TaskDetailsPanel(QWidget):
         else:
             self.usage_summary.setText(i18n.tr('还没有模型调用记录。'))
         reuse_parts = []
+        if reuse.get("tm_status") == "disabled":
+            reuse_parts.append(i18n.tr('翻译记忆本次未启用（没有逐段查询）'))
+        elif reuse.get("tm_status") == "no_target_language":
+            reuse_parts.append(i18n.tr('目标语言无法确定，翻译记忆未参与查询'))
         if reuse.get("tm_used"):
             reuse_parts.append(i18n.tr('翻译记忆直接复用 {v0} 段', v0=reuse["tm_used"]))
         if reuse.get("tm_recovered"):
             reuse_parts.append(i18n.tr('恢复进度时从记忆找回 {v0} 段', v0=reuse["tm_recovered"]))
+        if reuse.get("tm_conflicts"):
+            reuse_parts.append(i18n.tr('同原文不同上下文、仅作建议 {v0} 段',
+                                       v0=reuse["tm_conflicts"]))
+        if reuse.get("tm_legacy_unused"):
+            reuse_parts.append(i18n.tr('项目里有 {v0} 条旧记忆没有语言标注，'
+                                       '保留但未参与自动复用',
+                                       v0=reuse["tm_legacy_unused"]))
         if reuse.get("cache_hits"):
             reuse_parts.append(i18n.tr('相同原文复用已有译文 {v0} 次', v0=reuse["cache_hits"]))
         self.reuse_label.setText(("；".join(reuse_parts) + "。") if reuse_parts else "")
