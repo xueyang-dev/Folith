@@ -57,58 +57,32 @@ def test_manual_review_uses_reviewer_runtime_and_base_url(tmp_path, monkeypatch)
                       "https://reviewer.example/v1")]
 
 
-def test_retranslate_uses_translator_then_separate_reviewer_runtime(tmp_path, monkeypatch):
-    _job(tmp_path, monkeypatch, "review-runtime-0002")
-    translation_calls, review_calls = [], []
+def test_retranslation_generation_does_not_review_unadopted_text(tmp_path, monkeypatch):
+    """重译只生成候选，不审校：审校证据只能针对用户真正选择的译文。
 
-    def fake_retranslate(job_id, indexes, provider, api_key, model, target_lang,
-                         *args, **kwargs):
-        translation_calls.append((provider, api_key, model))
-        return core.load_job_state(job_id), list(indexes)
+    这里同时锁定原先由本文件覆盖的一点——独立审校角色只在**显式审校**时生效。
+    生成候选时，即使调用方传了 reviewer_*，也不允许触发审校（否则会给尚未采用的
+    建议生成证据）。
+    """
+    _job(tmp_path, monkeypatch, "review-runtime-0002", review_required=True)
+    review_calls = []
+    monkeypatch.setattr(core, "translate_batch", lambda *a, **k: ["当前译文 v2。"])
+    monkeypatch.setattr(core, "check_translation_batch", lambda *a, **k: [])
+    monkeypatch.setattr(
+        core, "review_translation_segments",
+        lambda *args, **kwargs: review_calls.append((args, kwargs)))
 
-    def fake_review(job_id, indexes, provider, api_key, model, target_lang,
-                    *, style_rules="", base_url=None):
-        review_calls.append((provider, api_key, model, base_url))
-        return core.load_job_state(job_id), {
-            "reviewed_segment_ids": list(indexes), "failed_segment_ids": [],
-        }
-
-    monkeypatch.setattr(delivery, "retranslate_segments", fake_retranslate)
-    monkeypatch.setattr(core, "review_translation_segments", fake_review)
-
-    core.retranslate_segments(
+    created_state, created = core.retranslate_segments(
         "review-runtime-0002", [0], "DeepSeek", "translator-key", "translator-model",
         "简体中文", reviewer_provider="OpenAI", reviewer_api_key="reviewer-key",
         reviewer_model="reviewer-model", reviewer_base_url="https://reviewer/v1")
 
-    assert translation_calls == [("DeepSeek", "translator-key", "translator-model")]
-    assert review_calls == [("OpenAI", "reviewer-key", "reviewer-model",
-                             "https://reviewer/v1")]
-
-
-def test_retranslate_same_mode_defaults_review_to_translator_runtime(tmp_path, monkeypatch):
-    _job(tmp_path, monkeypatch, "review-runtime-0003")
-    review_calls = []
-
-    monkeypatch.setattr(
-        delivery, "retranslate_segments",
-        lambda job_id, indexes, *args, **kwargs:
-            (core.load_job_state(job_id), list(indexes)),
-    )
-
-    def fake_review(job_id, indexes, provider, api_key, model, target_lang,
-                    *, style_rules="", base_url=None):
-        review_calls.append((provider, api_key, model, base_url))
-        return core.load_job_state(job_id), {
-            "reviewed_segment_ids": list(indexes), "failed_segment_ids": [],
-        }
-
-    monkeypatch.setattr(core, "review_translation_segments", fake_review)
-    core.retranslate_segments(
-        "review-runtime-0003", [0], "DeepSeek", "translator-key", "translator-model",
-        "简体中文")
-
-    assert review_calls == [("DeepSeek", "translator-key", "translator-model", None)]
+    assert created == [0]
+    assert review_calls == [], "生成候选不得产生审校调用"
+    record = created_state["translation_candidates"][0]
+    assert record["status"] == "pending"
+    assert created_state["pairs"][0]["target"] == "当前译文。"
+    assert created_state["review_evidence"] == []
 
 
 def test_no_review_retranslation_does_not_call_independent_review(tmp_path, monkeypatch):

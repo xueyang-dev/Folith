@@ -1085,8 +1085,18 @@ def include_segment(job_id: str, excluded_id: str) -> dict:
 
 
 def retranslate_segment(job_id: str, index: int, config: EngineConfig,
-                        *, style_rules: str = "") -> dict:
-    """定点重译一段（走既有重译能力；审校按任务配置一并刷新）。"""
+                        *, style_rules: str = "", instruction: str = "",
+                        origin: str = "", finding_ids: Sequence[str] = ()) -> dict:
+    """定点重译一段：生成**候选**，不写正文。
+
+    旧行为是一次模型调用直接覆盖 ``target``、重写 ``initial_target``、清掉人工
+    接受标记并关掉旧检查项——人工已经做过的工作被一次生成销毁。现在生成与提交
+    分开：这里只产出候选（持久化、可预览、可丢弃），写入正文必须显式调用
+    :func:`adopt_candidate`。
+
+    返回里的 ``candidates`` 是这一段待采用的候选（含差异预览）；``created`` 是
+    真正落库的段索引。生成、取消或失败都不改稿，所以返回值不再叫 ``fixed``。
+    """
     problem = config.connection_problem()
     if problem:
         raise AdapterError(problem)
@@ -1108,7 +1118,7 @@ def retranslate_segment(job_id: str, index: int, config: EngineConfig,
         }
     notes: list[str] = []
     try:
-        new_state, fixed = core.retranslate_segments(
+        new_state, created = core.retranslate_segments(
             job_id, [int(index)], config.provider, config.api_key, config.model,
             target_lang,
             style_rules=style_rules or config.style_rules or DEFAULT_STYLE_RULES,
@@ -1117,12 +1127,64 @@ def retranslate_segment(job_id: str, index: int, config: EngineConfig,
             # 自定义中转站地址必须显式传下去：定点重译不在管线 worker 里跑，
             # 线程级地址没有设置过（此前会静默失败）。
             translator_base_url=config.translator_base_url(),
-            on_caption=notes.append, **reviewer)
+            on_caption=notes.append, instruction=instruction, origin=origin,
+            finding_ids=list(finding_ids), **reviewer)
     except ValueError as exc:
         raise AdapterError(str(exc)) from exc
-    if not fixed:
-        raise AdapterError("这一段没有产生新的译文，请重试或检查模型连接。")
-    return {"state": new_state, "fixed": list(fixed), "notes": notes}
+    candidates = _segment_candidates(new_state, index)
+    if not created and not candidates:
+        raise AdapterError("这一段没有生成候选译文，请重试或检查模型连接。")
+    return {"state": new_state, "created": list(created),
+            "candidates": candidates, "notes": notes}
+
+
+def _segment_candidates(state: dict, index: int) -> list[dict]:
+    from folith import translation_candidates as _candidates
+
+    pairs = state.get("pairs") or []
+    if not (0 <= index < len(pairs)):
+        return []
+    uid = core.segment_uid(pairs[index])
+    if not uid:
+        return []
+    return _candidates.view_for_segment(state, uid)
+
+
+def segment_candidates(job_id: str, index: int,
+                       state: dict | None = None) -> list[dict]:
+    """这一段的待采用候选（工作台右栏用）。"""
+    state = state if state is not None else load_state(job_id)
+    return _segment_candidates(state, int(index))
+
+
+def pending_candidate_count(job_id: str, state: dict | None = None) -> int:
+    from folith import translation_candidates as _candidates
+
+    state = state if state is not None else load_state(job_id)
+    return len(_candidates.pending_records(state))
+
+
+def adopt_candidate(job_id: str, candidate_id: str, note: str = "") -> dict:
+    """采用候选：唯一的"建议变正文"入口（核心事务，带版本与身份校验）。
+
+    过期、错段、已排除的候选不会被写入；调用方必须看 ``committed``，不能假定成功。
+    """
+    try:
+        result = core.adopt_translation_candidate(
+            job_id, str(candidate_id or ""), actor="user", note=note)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return result
+
+
+def discard_candidate(job_id: str, candidate_id: str, note: str = "") -> dict:
+    """丢弃候选：不写正文、不改检查项、不产生"已解决"。"""
+    try:
+        result = core.discard_translation_candidate(
+            job_id, str(candidate_id or ""), actor="user", note=note)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return result
 
 
 def excluded_segments(job_id: str, state: dict | None = None) -> list[dict]:
@@ -1385,13 +1447,15 @@ def analyze_segment_decisions(job_id: str, index: int, config: EngineConfig) -> 
 
 
 def suggest_translation(job_id: str, index: int, instruction: str,
-                        config: EngineConfig) -> str:
-    """按要求重译：按这一次的要求（"更口语一点""保留原文语序"……）生成一个候选译文。
+                        config: EngineConfig) -> dict:
+    """按要求重译：按这一次的要求（"更口语一点""保留原文语序"……）生成候选。
 
-    只生成，不写入：候选交给工作台显示，用户点「采用」才放进编辑框，仍由用户保存
-    （docs/agent-inspector-workspace.md：AI 不自动改写译文）。上下文、术语与任务的
-    风格规则和正式翻译同一套。
+    只生成，不写正文：候选持久化在任务里（关掉窗口再打开仍在），用户点「采用」
+    才由 :func:`adopt_candidate` 写入，且带基线与身份校验。上下文、术语与任务的
+    风格规则和正式翻译同一套；这一次调用仍然是**一次**模型请求。
     """
+    from folith import translation_candidates as _candidates
+
     instruction = str(instruction or "").strip()
     if not instruction:
         raise AdapterError("请先写下这次重译的要求。")
@@ -1403,11 +1467,15 @@ def suggest_translation(job_id: str, index: int, instruction: str,
     paras = state.get("paras") or []
     if not 0 <= index < len(pairs):
         raise AdapterError("这一段已不存在，请重新选择段落。")
-    source = str(pairs[index].get("source") or "")
+    pair = pairs[index]
+    source = str(pair.get("source") or "")
+    # 基线必须在模型调用**之前**取：调用期间用户可能已经改了这一段，
+    # 那时这个候选就是迟到的结果，只能标记过期而不能覆盖新稿。
+    baseline = _candidates.pair_signature(pair)
     glossary = core.normalize_glossary(state.get("glossary") or [])
     base_rules = str(state.get("style_rules") or config.style_rules or DEFAULT_STYLE_RULES)
     rules = (f"{base_rules}\n\n本次重译的额外要求（优先于上面的一般风格，但不得违反术语表）："
-             f"{instruction}\n当前译文供参考：{pairs[index].get('target') or ''}")
+             f"{instruction}\n当前译文供参考：{pair.get('target') or ''}")
     target_lang = str(state.get("target_lang") or config.target_lang)
     # 后台线程里调用：自定义中转站地址按线程设置，用完还原（与定点重译同一做法）。
     previous_url = getattr(core._LLM_CTX, "base_url", None)
@@ -1430,7 +1498,29 @@ def suggest_translation(job_id: str, index: int, instruction: str,
     candidate = core.clean_xml_chars(str((result or [""])[0] or "")).strip()
     if not candidate:
         raise AdapterError("模型没有返回译文，请换个说法再试。")
-    return candidate
+    try:
+        committed = core.commit_candidates(job_id, [{
+            "segment_uid": core.segment_uid(pair),
+            "segment_index": int(index),
+            "source": source,
+            "baseline": baseline,
+            "candidate_target": candidate,
+            "origin": _candidates.ORIGIN_INSTRUCTED,
+            "instruction": instruction,
+            "provider": config.provider,
+            "model": config.model,
+            "usage": {"unknown": True},
+        }], actor="user")
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+    created = [view for view in committed.get("created") or []
+               if view.get("status") == _candidates.STATUS_PENDING]
+    if not created:
+        reason = _candidates.CONFLICT_REASONS.get(
+            str((committed.get("created") or [{}])[0].get("conflict") or ""),
+            "候选已过期：生成期间这一段被修改了，请对当前译文重新生成。")
+        raise AdapterError(reason)
+    return created[0]
 
 
 def ask_about_segment(job_id: str, index: int, question: str,
@@ -1527,9 +1617,10 @@ def unresolved_blocking(job_id: str, state: dict | None = None) -> list[dict]:
 # 审校页复用 ``folith.workbench_view``（与界面框架无关的只读投影，旧界面也用它）
 # 来生成队列，处置动作全部走核心已有的 HumanDecision 路径；这里不另存一份决定。
 
-#: ``mark_findings_resolved`` 认识的两个人工动作。
+#: ``mark_findings_resolved`` 认识的三个**不同**的人工动作。
 RESOLVE_CONFIRMED = "human_fixed"      # 人工核对后确认问题已解决
 RESOLVE_PRESERVED = "preserved"        # 人工确认保留当前译文
+RESOLVE_CONFIRMED_OPEN = "confirmed_open"  # 人确认问题存在，但仍待修订（不改稿、不结项）
 
 
 def source_review_projection(state: dict) -> dict:
@@ -1607,21 +1698,25 @@ def review_queue(job_id: str, state: dict | None = None) -> dict:
 
 def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,
                      note: str = "") -> dict:
-    """人工处置发现项（确认已解决 / 保留当前译文）。
+    """人工处置发现项（确认问题存在 / 确认已解决 / 保留当前译文）。
 
     核心的 ``mark_findings_resolved`` 会把 Translation Core 的发现项转成
     HumanDecision，旧式发现项走 delivery.mark_findings——两种都在这一个入口里。
+
+    "确认问题存在"与"确认已解决"是两件事：前者只记录人的判断，发现项仍待处理、
+    仍挡住交付；后者才结束它。界面不能把它们合成一个含混的按钮。
     """
-    if action not in (RESOLVE_CONFIRMED, RESOLVE_PRESERVED):
+    if action not in (RESOLVE_CONFIRMED, RESOLVE_PRESERVED, RESOLVE_CONFIRMED_OPEN):
         raise AdapterError(f"不支持的处置动作：{action}")
     ids = [str(item) for item in finding_ids if str(item or "").strip()]
     if not ids:
         raise AdapterError("这一项没有可记录人工决定的标识；请先修改译文或重新审校该段。")
+    defaults = {RESOLVE_CONFIRMED: "人工核对后确认问题已解决",
+                RESOLVE_PRESERVED: "人工确认保留当前译文",
+                RESOLVE_CONFIRMED_OPEN: "确认问题存在，仍待修订"}
     try:
         state = core.mark_findings_resolved(
-            job_id, ids, action,
-            note or ("人工核对后确认问题已解决" if action == RESOLVE_CONFIRMED
-                     else "人工确认保留当前译文"))
+            job_id, ids, action, note or defaults[action])
     except (RuntimeError, ValueError) as exc:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
     if state is None:
