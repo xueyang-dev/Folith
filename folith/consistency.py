@@ -54,6 +54,10 @@ def _pattern(variants):
     return re.compile('|'.join(alternatives), re.IGNORECASE) if alternatives else None
 
 
+#: 公开别名：概念批量修订（#97）复用同一个词边界替换模式。
+variant_pattern = _pattern
+
+
 def current_occurrences(record, pairs):
     variants = {spelling(item.get('target')) for item in record.get('observations') or []}
     variants.add(spelling(record.get('preferred_target')))
