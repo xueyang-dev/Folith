@@ -536,3 +536,43 @@ def test_failed_scan_pages_show_a_danger_card_with_a_reread_action(qapp):
     panel.apply(adapter.followup_view("no-such-job", core.new_job_state("scan.pdf")))
     assert panel.scan_pages_card.isHidden()
     panel.deleteLater()
+
+
+def test_a_failed_profile_is_reported_instead_of_being_silently_skipped():
+    """#49：画像失败后任务照常往下跑，文档级上下文没了却没有任何提示。
+
+    画像在提取报告落盘之后才跑，它的警告只写在 ``state["profile_warnings"]`` 上，
+    只看提取报告就永远看不到这一条。
+    """
+    state = core.new_job_state("scan.pdf")
+    state.update(p1_done=True, p2_done=True, profile_done=False, profile_warnings=[
+        "文档画像失败（该连接的本月用量额度已用尽，等一会儿不会恢复；"
+        "请更换连接或提升额度。），已跳过；可在 UI 中人工填写。"])
+    view = adapter.followup_view("no-such-job", state)
+    assert view["profile"]["missing"] is True
+    assert "额度" in view["profile"]["reason"], "要说出为什么，而不是只说失败"
+
+    # 画像补上之后这一项必须消失。
+    state.update(profile_done=True, profile_warnings=[],
+                 document_profile={"domain": "文学", "genre": "回忆录"})
+    assert adapter.followup_view("no-such-job", state)["profile"]["missing"] is False
+
+
+def test_a_failed_profile_is_reported_instead_of_being_silently_skipped():
+    """#49：画像失败后任务照常往下跑，文档级上下文没了却没有任何提示。
+
+    画像在提取报告落盘之后才跑，它的警告只写在 ``state["profile_warnings"]`` 上，
+    只看提取报告就永远看不到这一条。
+    """
+    state = core.new_job_state("scan.pdf")
+    state.update(p1_done=True, p2_done=True, profile_done=False, profile_warnings=[
+        "文档画像失败（该连接的本月用量额度已用尽，等一会儿不会恢复；"
+        "请更换连接或提升额度。），已跳过；可在 UI 中人工填写。"])
+    view = adapter.followup_view("no-such-job", state)
+    assert view["profile"]["missing"] is True
+    assert "额度" in view["profile"]["reason"], "要说出为什么，而不是只说失败"
+
+    # 画像补上之后这一项必须消失。
+    state.update(profile_done=True, profile_warnings=[],
+                 document_profile={"domain": "文学", "genre": "回忆录"})
+    assert adapter.followup_view("no-such-job", state)["profile"]["missing"] is False

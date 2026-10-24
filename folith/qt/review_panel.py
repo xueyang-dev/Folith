@@ -4,15 +4,20 @@
 回看原页后确认原文）；Qt 工作台原来只在检查器里只读地列出它们，于是一条
 误报就能永远挡住交付。这个面板把处置放回界面。
 
+"确认问题存在"与"确认已解决"是两件事：前者只记录人的判断，发现项保持待处理、
+仍挡住交付；后者才结束它。两个按钮不能合并成一个含混的动作。
+
 只做展示与发出信号：队列由 :func:`adapter.review_queue` 给出（复用
 ``folith.workbench_view``，不另写一套规则），真正写状态的是窗口层调用的适配器。
 """
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-    QTextBrowser, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QPlainTextEdit, QPushButton, QTextBrowser, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from . import adapter
@@ -64,6 +69,7 @@ class ReviewPanel(QWidget):
         self._filter = "actionable"
         self._user_filter = False       # 用户点过页签后，不再替他换回默认页签
         self._busy = False
+        self._advance_hint = ""         # 处置成功后要去的下一项（窗口层消费）
 
         def button(text: str, icon_name: str, token: str = "text-secondary",
                    name: str = "") -> QPushButton:
@@ -135,13 +141,24 @@ class ReviewPanel(QWidget):
         self.confirm_source_button.clicked.connect(self._emit_confirm_source)
 
         self.apply_button = button(
-            i18n.tr('应用建议译文'), "sparkles", "text-on-accent", "primary")
+            i18n.tr('暂存为候选'), "sparkles", "text-on-accent", "primary")
+        self.apply_button.setToolTip(
+            i18n.tr('把建议译文暂存为候选并显示差异；采用后才会写入译文'))
         self.apply_button.clicked.connect(self._emit_apply)
+        self.open_button = button(i18n.tr('确认问题存在'), "alert")
+        self.open_button.setToolTip(
+            i18n.tr('问题是真的，但译文还没改：这一项保持待处理，仍会挡住交付'))
+        self.open_button.clicked.connect(
+            lambda: self._emit_resolve("confirmed_open"))
         self.confirm_button = button(i18n.tr('确认已解决'), "check", "text-on-accent",
                                      "primary")
+        self.confirm_button.setToolTip(
+            i18n.tr('当前译文已经满足这一项要求（不修改译文）'))
         self.confirm_button.clicked.connect(
             lambda: self._emit_resolve("human_fixed"))
         self.preserve_button = button(i18n.tr('保留当前译文'), "shield-check")
+        self.preserve_button.setToolTip(
+            i18n.tr('这次不改：驳回这一项或接受它的风险，并记录理由'))
         self.preserve_button.clicked.connect(
             lambda: self._emit_resolve("preserved"))
         self.edit_button = button(i18n.tr('修改译文'), "translate")
@@ -160,7 +177,7 @@ class ReviewPanel(QWidget):
         self.hint.setProperty("role", "muted")
 
         action_row = QHBoxLayout()
-        for widget in (self.apply_button, self.confirm_button,
+        for widget in (self.apply_button, self.open_button, self.confirm_button,
                        self.confirm_source_button, self.preserve_button,
                        self.review_button, self.edit_button,
                        self.retranslate_button, self.style_rule_button):
@@ -215,6 +232,30 @@ class ReviewPanel(QWidget):
         layout.setSpacing(10)
         layout.addWidget(self.content, 1)
         layout.addWidget(self.empty_state, 1)
+
+        # 键盘连续处理（issue #98）：看 → 决定 → 下一项不离开键盘。守卫只挂
+        # 在快捷键上：焦点在文本输入里（正在写备注）时不触发；按钮点击不走
+        # 这个守卫——全局焦点在段编辑器里时点按钮必须照常生效。
+        def _guarded(handler):
+            def run():
+                if not self._typing():
+                    handler()
+            return run
+
+        self._shortcut_handlers: dict[str, object] = {
+            "next": _guarded(self._goto_next_item),
+            "apply": _guarded(self._emit_apply),
+            "confirm": _guarded(lambda: self._emit_resolve("human_fixed")),
+            "keep": _guarded(lambda: self._emit_resolve("preserved")),
+            "edit": _guarded(self._emit_edit),
+        }
+        self._shortcuts = []
+        for key, sequence in (("next", "N"), ("apply", "A"), ("confirm", "C"),
+                              ("keep", "K"), ("edit", "E")):
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(self._shortcut_handlers[key])
+            self._shortcuts.append(shortcut)
 
         self._render_detail()
 
@@ -317,6 +358,17 @@ class ReviewPanel(QWidget):
         return item.get("finding_type") == "source_quality_gate"
 
     @staticmethod
+    def _highlight(text: str, span: str) -> str:
+        """只高亮**有证据**的 span：span 确实出现在文本里才标，否则原样返回。
+
+        陈旧/错误的 span 不高亮——宁可没有标记，也不假装指到了问题。"""
+        text, span = str(text or ""), str(span or "")
+        if span and span in text:
+            before, after = text.split(span, 1)
+            return f"{_escape(before)}<mark>{_escape(span)}</mark>{_escape(after)}"
+        return _escape(text)
+
+    @staticmethod
     def _item_title(item: dict) -> str:
         """名字译法不一按名字列一行，不写第一处出现的段号。"""
         source = str(item.get("entity_source") or "")
@@ -356,16 +408,19 @@ class ReviewPanel(QWidget):
                 parts.append(f"<p><b>{_escape(i18n.tr(label))}：</b>{_escape(value)}</p>")
         from folith.textual import text_direction
 
-        for label, key in (("原文", "source"), ("当前译文", "target"),
-                           ("建议译文", "suggested_target")):
+        for label, key, span_key in (("原文", "source", "source_span"),
+                                     ("当前译文", "target", "target_span"),
+                                     ("建议译文", "suggested_target", None)):
             value = str(item.get(key) or "").strip()
             if value:
                 # 原文与译文各按自己的书写方向排：中文原文从左往右、阿拉伯语译文从右往左，
                 # 同一个面板里混排（试用反馈）。
                 rtl = text_direction(value, None) == "rtl"
                 block = ' dir="rtl"' if rtl else ""
-                parts.append(f"<p style=\"margin-bottom:0\"><b>{_escape(i18n.tr(label))}：</b></p>"
-                             f"<p{block} style=\"margin-top:2px\">{_escape(value)}</p>")
+                span = str(item.get(span_key) or "") if span_key else ""
+                parts.append(f"<p><b>{_escape(i18n.tr(label))}：</b></p>"
+                             f"<p{block} style=\"margin-top:2px\">"
+                             f"{self._highlight(value, span)}</p>")
         self.item_body.setHtml("".join(parts))
         entity = self._entity_for(item)
         if entity:
@@ -379,6 +434,7 @@ class ReviewPanel(QWidget):
         self.source_note_edit.setVisible(source)
         self.confirm_source_button.setVisible(source)
         self.apply_button.setVisible(suggestion)
+        self.open_button.setVisible(decision)
         self.confirm_button.setVisible(decision)
         self.preserve_button.setVisible(decision)
         self.review_button.setVisible(task)
@@ -420,6 +476,7 @@ class ReviewPanel(QWidget):
             self.edit_button.setVisible(has_segment)
         enabled = not self._busy
         self.apply_button.setEnabled(enabled and suggestion)
+        self.open_button.setEnabled(enabled and decision)
         self.confirm_button.setEnabled(enabled and decision)
         self.preserve_button.setEnabled(enabled and decision)
         self.review_button.setEnabled(enabled and task and has_segment)
@@ -449,16 +506,50 @@ class ReviewPanel(QWidget):
         else:
             self.hint.setText("")
 
+    # ================= 键盘与导航 =================
+    def shortcut_handlers(self) -> dict:
+        """测试 / 调用方用：键位 → 动作。N=下一项 A=暂存建议 C=确认已解决
+        K=保留当前译文 E=修改译文。"""
+        return dict(self._shortcut_handlers)
+
+    def _typing(self) -> bool:
+        """焦点在文本输入控件里：快捷键让位给打字。"""
+        focus = QApplication.focusWidget()
+        return isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox))
+
+    def _goto_next_item(self) -> None:
+        if self._typing():
+            return
+        row = self.list.currentRow()
+        if 0 <= row + 1 < self.list.count():
+            self.list.setCurrentRow(row + 1)
+
+    def _next_item_id(self) -> str:
+        row = self.list.currentRow()
+        if 0 <= row + 1 < len(self._visible):
+            return str(self._visible[row + 1].get("id") or "")
+        return ""
+
+    def consume_advance_hint(self) -> bool:
+        """窗口层在**动作成功**后调用：前进到处置前记下的下一项。
+
+        动作失败时窗口层不调用——队列停在原地，未处理的发现项不会被跳过，
+        也不会被顺手标成已解决。"""
+        hint, self._advance_hint = self._advance_hint, ""
+        return bool(hint) and self.select_item_id(hint)
+
     # ================= 信号 =================
     def _emit_resolve(self, action: str) -> None:
         item = self.selected_item()
         if item:
+            self._advance_hint = self._next_item_id()
             self.resolveRequested.emit(
                 [str(item.get("finding_id") or "")], action, self.note_edit.text().strip())
 
     def _emit_apply(self) -> None:
         item = self.selected_item()
         if item:
+            self._advance_hint = self._next_item_id()
             self.applySuggestionRequested.emit(dict(item), self.note_edit.text().strip())
 
     def _emit_edit(self) -> None:

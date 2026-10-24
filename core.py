@@ -821,6 +821,16 @@ from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps
     validate_translation_pairs,
     validate_translation_target,
 )
+from folith.engine.candidates import (  # noqa: F401  (re-export: core keeps its public surface)
+    adopt_translation_candidate,
+    adopt_translation_candidates,
+    candidate_status,
+    candidate_view,
+    commit_candidates,
+    discard_translation_candidate,
+    pending_candidate_count,
+    stage_concept_revision,
+)
 
 
 
@@ -2711,6 +2721,7 @@ _JOURNAL_SET_KEYS = (
     "delivery_approved_by_human", "delivery_approval", "stage",
     "review_stats", "entity_registry", "knowledge_feedback_policy",
     "knowledge_feedback_failures", "has_blocking",
+    "terminology_variant_decisions", "concept_decisions",
 )
 _JOURNAL_EXTEND_KEYS = (
     "findings", "review_evidence", "repair_overlays", "human_actions",
@@ -10215,6 +10226,10 @@ def _reset_source_dependent_state(state):
         "confirmed_style_rules": [],
         "knowledge_feedback_failures": 0,
         "entity_registry": [],
+        # Issue #95：术语变体聚类的人工决策；证据留在 entity_registry。
+        "terminology_variant_decisions": {},
+        # Issue #96：概念级术语决策卡（首选译名 + 上下文例外 + keep_variants）。
+        "concept_decisions": {},
         "translation_failures": [],
         "review_evidence": [],
         "repair_overlays": [],
@@ -11269,14 +11284,25 @@ def _run_targeted_final_review(
 
 @_serialized_job_mutation
 def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
-    """Legacy action surface; Core findings route through HumanDecision."""
+    """Legacy action surface; Core findings route through HumanDecision.
+
+    ``action`` 是三件不同的事，不能共用一个"已处理"：
+
+    * ``human_fixed``  —— 人确认当前译文已经满足要求（问题已解决）；
+    * ``preserved``   —— 人决定保留当前译文（问题被驳回/接受风险）；
+    * ``confirmed_open`` —— 人确认问题是真的，但还没改（问题仍待处理）。
+
+    前两种会结束问题；第三种只写一条人工记录，finding 保持 open，门禁照旧。
+    """
     from folith import delivery as _delivery
     state = load_job_state(job_id)
     if state is None:
         return None
     legacy_ids = []
+    legacy_confirmations = []
     promotions = []
-    mapped = {"human_fixed": "accept_resolution", "preserved": "dismiss"}
+    mapped = {"human_fixed": "accept_resolution", "preserved": "dismiss",
+              "confirmed_open": "request_revision"}
     for selector in finding_ids or []:
         finding = _translation_review_finding(state, selector)
         if finding is not None and finding.get("finding_id") \
@@ -11292,11 +11318,16 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
                     state, updated.get("segment_id"), actor)
                 if promotion:
                     promotions.append(promotion)
+        elif action == "confirmed_open":
+            legacy_confirmations.append(selector)
         else:
             legacy_ids.append(selector)
     if legacy_ids:
         state, _marked = _delivery.mark_findings(
             state, legacy_ids, action, note, actor)
+    if legacy_confirmations:
+        state, _confirmed = _delivery.record_finding_confirmation(
+            state, legacy_confirmations, note, actor)
     _recount_reviewed_segments(state)
     state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
     state["delivery_status"] = _delivery.compute_delivery_status(state)
@@ -11311,32 +11342,35 @@ def retranslate_segments(job_id, indexes, provider, api_key, model, target_lang,
                          style_rules="", glossary=None, on_status=None,
                          on_caption=None, actor="user", reviewer_provider=None,
                          reviewer_api_key=None, reviewer_model=None,
-                         reviewer_base_url=None, translator_base_url=None):
-    """定点重译（抽取自 scripts/fix_segments.py 的能力）。
+                         reviewer_base_url=None, translator_base_url=None,
+                         instruction="", origin="", finding_ids=None):
+    """定点重译为**候选**（抽取自 scripts/fix_segments.py 的能力）。
 
-    ``translator_base_url`` 与管线同名同义：自定义中转站必须显式传入，否则
-    在非管线线程里调用会解析不到地址（此前会静默失败）。
+    生成不再改写当前译文：模型产出落成候选，由人预览、采用或丢弃；只有
+    :func:`adopt_translation_candidate` 会改动 CURRENT_TRANSLATION。
+
+    因为这里什么都没提交，原来紧随重译的那次审校也不再执行——否则一段用户
+    根本还没选用的文字会先变成审校证据。采用候选与其它文本变更一样会让该段的
+    审校证据失效，之后的审校仍走既有入口。
+
+    ``reviewer_*`` 为仍传入的老调用方（CLI 与 worker 路径）保留，在候选被采用
+    之前不会用到。``translator_base_url`` 与管线同名同义：自定义中转站必须显式
+    传入，否则在非管线线程里调用会解析不到地址（此前会静默失败）。
     """
     from folith import delivery as _delivery
     old_base_url = getattr(_LLM_CTX, "base_url", None)
     if translator_base_url is not None:
         set_llm_base_url(translator_base_url)
     try:
-        state, fixed = _delivery.retranslate_segments(
+        state, created = _delivery.retranslate_segments(
             job_id, indexes, provider, api_key, model, target_lang,
             style_rules, glossary, on_status, on_caption, actor,
-            base_url=translator_base_url or "")
+            base_url=translator_base_url or "", instruction=instruction,
+            origin=origin, finding_ids=finding_ids)
     finally:
         if translator_base_url is not None:
             set_llm_base_url(old_base_url)
-    if fixed and state.get("translation_core_review_required"):
-        review_provider = provider if reviewer_provider is None else reviewer_provider
-        review_api_key = api_key if reviewer_api_key is None else reviewer_api_key
-        review_model = model if reviewer_model is None else reviewer_model
-        state, _ = review_translation_segments(
-            job_id, fixed, review_provider, review_api_key, review_model,
-            target_lang, style_rules=style_rules, base_url=reviewer_base_url)
-    return state, fixed
+    return state, created
 
 
 
@@ -12734,7 +12768,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             call_llm=auxiliary_call,
             cancel_check=lambda: _runtime_cancel_requested(job_id))
         state["document_profile"] = profile
-        state["profile_done"] = True
+        # 失败不把这一步标成"已完成"：连接/额度修好之后，用户重跑任务时这一步必须
+        # 还有机会补上。此前失败也写 True，画像就永久停在"已跳过"（#49）。
+        state["profile_done"] = bool(profile)
         state["profile_warnings"] = list(profile_warnings)
         for w in profile_warnings:
             if w not in warnings:

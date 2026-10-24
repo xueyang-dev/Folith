@@ -27,6 +27,18 @@ from . import theme as theme_module
 _SEVERITY_LABELS = {"blocking": "必须处理", "actionable": "建议处理",
                     "informational": "提示"}
 
+#: 候选卡片上"当前译文是什么来路"的说明。键与
+#: ``folith.translation_candidates.PROTECTION_*`` 一致；在调用时取词，切换界面
+#: 语言后立刻生效（模块级 tr 会冻结在导入时的语言）。
+def protection_text(marks) -> str:
+    """Human-readable protection summary for a candidate view (empty if none)."""
+    labels = {
+        "human_accepted": i18n.tr('人工确认过的译文'),
+        "human_edit": i18n.tr('人工改写的译文'),
+        "reviewed": i18n.tr('已审校的译文'),
+    }
+    return "、".join(labels.get(str(mark), str(mark)) for mark in marks or [])
+
 
 def _clear(layout) -> None:
     """Remove and discard every widget in ``layout``.
@@ -432,84 +444,160 @@ class AskAgentBox(QWidget):
         self.answer.setVisible(False)
 
 
-class SuggestBox(QWidget):
-    """按要求重译：写一句要求，生成一个候选译文；「采用」才放进编辑框。"""
+class CandidateBox(QWidget):
+    """待采用的重译候选：当前译文 vs 候选译文，采用 / 丢弃。
 
-    suggestRequested = Signal(str)
-    adoptRequested = Signal(str)
+    生成候选不会改稿，所以这里必须把"当前译文"和"候选"并排摆出来，用户才能判断
+    要不要采用。差异按字符高亮（新增绿、删除红），沿用审校页已有的颜色语义。
+    采用是核心事务（带身份与基线校验），失败时按钮保持可用并把原因写在状态行。
+    """
+
+    adoptRequested = Signal(str)      # candidate_id
+    discardRequested = Signal(str)    # candidate_id
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.input = QLineEdit()
-        self.input.setPlaceholderText(i18n.tr('重译要求，如：更口语'))
-        self.input.returnPressed.connect(self._suggest)
-        self.button = QPushButton(i18n.tr('重译'))
-        self.button.clicked.connect(self._suggest)
-        self.candidate = _wrapped("", "suggestionText")
+        self._candidate_id = ""
+        self._candidate_target = ""
+        self._key = None
+        self.label = style_module.SectionLabel(i18n.tr('待采用候选'))
+        self.meta = _wrapped("", "hint")
+        self.current = _wrapped("", "candidateCurrent")
+        self.proposal = QLabel("")
+        self.proposal.setWordWrap(True)
+        self.proposal.setTextFormat(Qt.TextFormat.RichText)
+        self.proposal.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.proposal.setObjectName("candidateProposal")
+        self.checks = _wrapped("", "candidateChecks")
         self.status = _wrapped("", "hint")
-        self.status.setVisible(False)  # only while generating or on an error
-        self.adopt_button = QPushButton(i18n.tr('采用'))
-        self.adopt_button.setToolTip(i18n.tr('把候选译文放进编辑框；保存仍由你决定'))
+        self.status.setVisible(False)
+        self.adopt_button = QPushButton(i18n.tr('采用候选'))
+        self.adopt_button.setToolTip(
+            i18n.tr('把候选译文写进这一段（会重新标记为待审校，并留下变更记录）'))
         self.adopt_button.clicked.connect(
-            lambda: self.adoptRequested.emit(self.candidate.text()))
+            lambda: self.adoptRequested.emit(self._candidate_id))
         self.discard_button = QPushButton(i18n.tr('丢弃'))
         style_module.set_button(self.discard_button, "plain")
-        self.discard_button.clicked.connect(self.reset_candidate)
-        row = QHBoxLayout()
-        row.setSpacing(theme_module.SPACE["xs"])
-        row.addWidget(self.input, 1)
-        row.addWidget(self.button)
+        self.discard_button.setToolTip(i18n.tr('关掉这个候选；当前译文保持不变'))
+        self.discard_button.clicked.connect(
+            lambda: self.discardRequested.emit(self._candidate_id))
+        self._current_heading = QLabel(i18n.tr('当前译文'))
+        self._current_heading.setObjectName("hint")
         actions = QHBoxLayout()
         actions.setSpacing(theme_module.SPACE["xs"])
         actions.addStretch(1)
         actions.addWidget(self.discard_button)
         actions.addWidget(self.adopt_button)
-        self.result = QWidget()
-        self.result.setObjectName("attentionItem")
-        self.result.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        result_layout = QVBoxLayout(self.result)
-        result_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["xs"],
-                                         theme_module.SPACE["sm"], theme_module.SPACE["xs"])
-        result_layout.addWidget(self.candidate)
-        result_layout.addLayout(actions)
-        self.result.setVisible(False)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["xs"])
-        layout.addLayout(row)
+        layout.addWidget(self.label)
+        layout.addWidget(self.meta)
+        layout.addWidget(self._current_heading)
+        layout.addWidget(self.current)
+        layout.addWidget(self.proposal)
+        layout.addWidget(self.checks)
         layout.addWidget(self.status)
-        layout.addWidget(self.result)
-        self.status.setVisible(False)
+        layout.addLayout(actions)
+        self.setVisible(False)
 
-    def _suggest(self) -> None:
-        instruction = self.input.text().strip()
-        if instruction:
-            self.button.setEnabled(False)
-            self.result.setVisible(False)
-            self.status.setText(i18n.tr('正在生成候选译文…'))
-            self.status.setVisible(True)
-            self.suggestRequested.emit(instruction)
+    def set_candidates(self, items: list[dict]) -> None:
+        """Show the newest pending candidate; hide the box when there is none.
 
-    def set_candidate(self, text: str, *, error: str = "") -> None:
-        self.button.setEnabled(True)
-        if error:
-            self.status.setText(error)
-            self.status.setVisible(True)
-            self.result.setVisible(False)
+        Only an untouched rebuild is skipped: the block is rebuilt whenever the
+        candidate or the current translation changed, because the diff depends on
+        both and a stale diff is worse than no diff.
+        """
+        item = dict(items[0]) if items else {}
+        key = repr((item.get("candidate_id"), item.get("status"),
+                    item.get("candidate_target"), item.get("current_target"),
+                    item.get("protection_labels")))
+        if not item:
+            # 没有候选时按钮不能是活的：点下去只会发出空 id，窗口只能静默忽略。
+            self.adopt_button.setEnabled(False)
+            self.discard_button.setEnabled(False)
+        if key == self._key:
+            self.setVisible(bool(item))
+            return
+        self._key = key
+        self._candidate_id = str(item.get("candidate_id") or "")
+        self._candidate_target = str(item.get("candidate_target") or "")
+        if not item:
+            self.setVisible(False)
             return
         self.status.setVisible(False)
-        self.candidate.setText(text)
-        self.result.setVisible(bool(text))
+        self.setVisible(True)
+        origin = str(item.get("origin_label") or "")
+        # 当前译文是人工处理过的：直接写在来源行里，采用前就能看到代价。
+        protection = protection_text(item.get("protection"))
+        meta = " · ".join(part for part in (
+            origin,
+            protection,
+            str(item.get("model") or ""),
+            str(item.get("generated_at") or "").replace("T", " ")[:16]) if part)
+        self.meta.setText(meta)
+        self.meta.setVisible(bool(meta))
+        self.current.setText(str(item.get("current_target") or "") or "—")
+        self.proposal.setText(self._diff_html(item.get("diff") or {},
+                                              str(item.get("candidate_target") or "")))
+        checks = item.get("checks") or {}
+        warning = []
+        if checks.get("blocking"):
+            warning.append(i18n.tr('{v0} 项必须处理', v0=checks["blocking"]))
+        if checks.get("actionable"):
+            warning.append(i18n.tr('{v0} 项建议检查', v0=checks["actionable"]))
+        self.checks.setText(i18n.tr('候选本身仍有：{v0}', v0="、".join(warning))
+                            if warning else "")
+        self.checks.setVisible(bool(warning))
+        adoptable = bool(item.get("adoptable", True))
+        self.adopt_button.setEnabled(adoptable)
+        self.discard_button.setEnabled(True)
+        if not adoptable:
+            self.adopt_button.setToolTip(str(item.get("conflict_reason") or ""))
+            self.set_status(str(item.get("conflict_reason") or ""), error=True)
 
-    def reset_candidate(self) -> None:
-        self.candidate.clear()
-        self.result.setVisible(False)
-        self.status.setVisible(False)
-        self.button.setEnabled(True)
+    def candidate_text(self) -> str:
+        """当前展示的候选原文（测试与无障碍读取用，不带高亮标记）。"""
+        return self._candidate_target
+
+    def candidate_id(self) -> str:
+        return self._candidate_id
+
+    def set_status(self, text: str, *, error: bool = False) -> None:
+        self.status.setText(text)
+        self.status.setObjectName("candidateError" if error else "hint")
+        self.status.setVisible(bool(text))
+        style_module.repolish(self.status)
+
+    def _diff_html(self, diff: dict, fallback: str) -> str:
+        from html import escape
+
+        chunks = diff.get("chunks") or []
+        if not chunks:
+            return escape(fallback) or "—"
+        parts = []
+        for chunk in chunks:
+            text = escape(str(chunk.get("text") or ""))
+            tag = str(chunk.get("tag") or "equal")
+            if tag == "insert":
+                parts.append(f'<span style="background:#1f7a4d;color:#ffffff">{text}</span>')
+            elif tag == "delete":
+                parts.append(f'<span style="background:#7a1f1f;color:#e8b4b4;'
+                             f'text-decoration:line-through">{text}</span>')
+            else:
+                parts.append(text)
+        return "".join(parts) or "—"
 
     def reset(self) -> None:
-        self.reset_candidate()
-        self.input.clear()
+        self._key = None
+        self._candidate_id = ""
+        self._candidate_target = ""
+        self._candidate_target = ""
+        self.proposal.setText("")
+        self.current.setText("")
+        self.checks.setVisible(False)
+        self.status.setVisible(False)
+        self.setVisible(False)
 
 
 class NoteBox(QWidget):
@@ -553,4 +641,5 @@ class NoteBox(QWidget):
         self.save_button.setEnabled(self.edit.toPlainText().strip() != self._saved.strip())
 
 
-__all__ = ["AskAgentBox", "AttentionList", "ContextView", "NoteBox", "SuggestBox", "TermList"]
+__all__ = ["AskAgentBox", "AttentionList", "CandidateBox", "ContextView",
+           "NoteBox", "TermList"]

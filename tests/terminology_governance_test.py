@@ -11,7 +11,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pytest
+
 import core
+
+_ORIGINAL_CALL_LLM = core.call_llm
+
+
+@pytest.fixture(autouse=True)
+def _restore_core_call_llm():
+    """本文件多处直接给 ``core.call_llm`` 赋值（历史写法）。测试结束必须还原，
+    否则会污染同一次运行里的其他用例（审校传输测试会因此收不到请求）。"""
+    yield
+    core.call_llm = _ORIGINAL_CALL_LLM
 from folith import document_profile, models, state_migration, terminology
 from folith import assets, delivery
 from folith import report_evidence
@@ -643,7 +655,8 @@ def test_mark_fixed_then_final():
     print("  ✓ 人工修复 -> draft -> 确认 final；finding_id 稳定")
 
 
-def test_retranslate_segments():
+def test_retranslate_generates_a_candidate_without_writing():
+    """重译只生成候选：正文、接受标记、检查项都不动；采用才是一次可追溯的变更。"""
     tmp = Path(tempfile.mkdtemp(prefix="folith-rt-"))
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp
@@ -672,6 +685,20 @@ def test_retranslate_segments():
             delivery_approval={"actor": "previous-reviewer"},
         )
         core.save_job_state("rt0000000000000001", state)
+        before = core.load_job_state("rt0000000000000001")
+        protected = {
+            "target": before["pairs"][0]["target"],
+            "initial_target": before["pairs"][0]["initial_target"],
+            "accepted_target": before["pairs"][0]["accepted_target"],
+            "human_accepted": before["pairs"][0]["human_accepted"],
+            "provenance": before["pairs"][0]["target_provenance"],
+            "truth_version": (before.get("translation_truth") or {}).get("version"),
+            "delivery_status": before["delivery_status"],
+            "stage": before["stage"],
+            "approval": before["delivery_approval"],
+            "findings": [(f.get("reason"), bool(f.get("resolved")))
+                         for f in before["findings"]],
+        }
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
             if "学术翻译专家" in system_prompt:
@@ -679,39 +706,63 @@ def test_retranslate_segments():
             return "[]"
 
         core.call_llm = llm
-        state2, fixed = core.retranslate_segments(
+        state2, created = core.retranslate_segments(
             "rt0000000000000001", [0], "DeepSeek", "k", "deepseek-chat",
             "简体中文", glossary=[])
-        assert fixed == [0]
-        assert state2["pairs"][0]["target"].startswith("完整译文：")
-        assert state2["pairs"][0]["reviewed"] is False, "重译段需重新审校"
-        old = [f for f in state2["findings"] if f["segment_index"] == 0]
-        assert old and all(f.get("resolved") for f in old), \
-            "重译段的旧 finding 应保留并标记已解决"
-        assert state2["has_blocking"] is False
-        assert state2["delivery_status"] == "draft"
-        assert state2["stage"] == "TRANSLATED"
-        assert state2["delivery_approved_by_human"] is False
-        assert state2["delivery_approval"] is None
-        assert state2["pairs"][0]["initial_target"] == state2["pairs"][0]["target"]
-        assert state2["pairs"][0]["review_status"] == "not_reviewed"
-        assert state2["pairs"][0]["target_provenance"] == "generated"
-        assert state2["pairs"][0].get("accepted_target") is None
-        assert state2["pairs"][0].get("human_accepted") is None
-        assert any(r["action"] == "retranslated" for r in state2["human_actions"])
-        # 落盘后可恢复
+        assert created == [0]
+        after_generation = core.load_job_state("rt0000000000000001")
+        assert after_generation["pairs"][0]["target"] == protected["target"]
+        assert after_generation["pairs"][0]["initial_target"] == protected["initial_target"]
+        assert after_generation["pairs"][0]["accepted_target"] == protected["accepted_target"]
+        assert after_generation["pairs"][0]["human_accepted"] is True
+        assert after_generation["pairs"][0]["target_provenance"] == protected["provenance"]
+        assert (after_generation.get("translation_truth") or {}).get("version") \
+            == protected["truth_version"]
+        assert after_generation["delivery_status"] == protected["delivery_status"]
+        assert after_generation["stage"] == protected["stage"]
+        assert after_generation["delivery_approval"] == protected["approval"]
+        assert [(f.get("reason"), bool(f.get("resolved")))
+                for f in after_generation["findings"]] == protected["findings"]
+
+        record = state2["translation_candidates"][0]
+        assert record["candidate_target"].startswith("完整译文：")
+        assert record["status"] == "pending"
+        assert record["baseline"]["target"] == protected["target"]
+
+        # 采用：一次可追溯的正文变更
+        result = core.adopt_translation_candidate(
+            "rt0000000000000001", record["candidate_id"])
+        assert result["committed"] is True
+        state3 = core.load_job_state("rt0000000000000001")
+        assert state3["pairs"][0]["target"].startswith("完整译文：")
+        assert state3["pairs"][0]["target_provenance"] == "candidate_adopted"
+        assert state3["pairs"][0]["adopted_candidate_id"] == record["candidate_id"]
+        assert state3["pairs"][0]["reviewed"] is False, "采用后需重新审校"
+        assert not state3["pairs"][0].get("human_accepted")
+        assert state3["pairs"][0]["initial_target"] == protected["initial_target"], \
+            "初译是历史，不因采用而重写"
+        # 旧阻断项没有被"采用候选"顺手关掉，所以交付仍停在 review_required：
+        # 采用一段建议不等于确认这一项问题已解决。
+        assert state3["delivery_status"] == "review_required"
+        assert state3["delivery_approved_by_human"] is False
+        assert state3["delivery_approval"] is None
+        assert any(r["action"] == "candidate_adopted" for r in state3["human_actions"])
+        # 采用不改写检查项：旧问题仍按原样保留，由审校/处置入口决定
+        assert [(f.get("reason"), bool(f.get("resolved")))
+                for f in state3["findings"]] == protected["findings"]
         on_disk = core.load_job_state("rt0000000000000001")
         assert on_disk["pairs"][0]["target"].startswith("完整译文：")
-        print("  ✓ 定点重译（fix_segments 能力复用）：替换译文/清 finding/重算交付")
+        print("  ✓ 定点重译 -> 候选（不改稿）；采用 -> 一次可追溯变更")
     finally:
         core.OUTPUT_DIR = old_dir
+        core.call_llm = _ORIGINAL_CALL_LLM
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def test_retranslate_keeps_postcheck_findings():
+def test_candidate_records_postcheck_findings_without_touching_state():
+    """候选的完整性复验只记在候选上；不动当前正文与既有检查项。"""
     tmp = Path(tempfile.mkdtemp(prefix="folith-rt-postcheck-"))
     old_dir = core.OUTPUT_DIR
-    old_call = core.call_llm
     core.OUTPUT_DIR = tmp
     try:
         source = "RIOT IN CELL BLOCK 11"
@@ -723,20 +774,22 @@ def test_retranslate_keeps_postcheck_findings():
             findings=[{"segment_index": 0, "severity": "actionable", "type": "review",
                        "reason": "旧问题"}], review_stats={})
         core.save_job_state("rtpostcheck000001", state)
+        before_stats = dict(core.load_job_state("rtpostcheck000001")["review_stats"])
         core.call_llm = lambda *_args, **_kwargs: json.dumps([source])
-        updated, fixed = core.retranslate_segments(
+        updated, created = core.retranslate_segments(
             "rtpostcheck000001", [0], "DeepSeek", "k", "model", "简体中文",
             glossary=[])
-        assert fixed == [0]
-        assert any(f.get("segment_index") == 0 and f.get("severity") == "actionable"
-                   and "未翻译" in f.get("reason", "") for f in updated["findings"])
-        assert updated["review_stats"]["actionable"] == 1
-        assert any(f.get("resolved") and f.get("reason") == "旧问题"
-                   for f in updated["findings"])
-        print("  ✓ 定点重译保留最终复验 finding")
+        assert created == [0]
+        record = updated["translation_candidates"][0]
+        assert record["checks"]["actionable"] >= 1, "候选自己的复验结果应被记录"
+        assert updated["pairs"][0]["target"] == "错位译文。"
+        assert [(f.get("reason"), bool(f.get("resolved")))
+                for f in updated["findings"]] == [("旧问题", False)]
+        assert updated["review_stats"] == before_stats
+        print("  ✓ 候选保留复验结果，正文与既有检查项不变")
     finally:
-        core.call_llm = old_call
         core.OUTPUT_DIR = old_dir
+        core.call_llm = _ORIGINAL_CALL_LLM
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -1161,7 +1214,7 @@ if __name__ == "__main__":
     test_batch_injection_log_and_prompt()
     test_delivery_gate_blocking_review_required()
     test_mark_fixed_then_final()
-    test_retranslate_segments()
+    test_retranslate_generates_a_candidate_without_writing()
     test_retranslate_keeps_postcheck_findings()
     test_pipeline_blocking_delivery_status()
     test_tbx_valid_xml()

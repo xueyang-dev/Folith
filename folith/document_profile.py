@@ -171,6 +171,7 @@ def profile_document(
             raw_error = str(e)
             if "任务已请求取消" in raw_error or "请求取消" in raw_error:
                 raise RuntimeError("任务已请求取消") from e
+            provider_status = {"status": "unknown"}
             try:
                 import core
                 provider_status = core.provider_error_status(e)
@@ -179,7 +180,12 @@ def profile_document(
                             else raw_error)
             except Exception:  # pragma: no cover - defensive import fallback
                 last_err = raw_error
-            if ("429" in raw_error or "RESOURCE_EXHAUSTED" in raw_error
+            if provider_status.get("status") == "quota_exhausted":
+                # 额度用尽不是限流：等多久都不会恢复，再试只会把同一份额度再撞一次，
+                # 还把失败推迟到更晚（#49 的真实原因就是这个）。直接如实降级。
+                break
+            if (provider_status.get("status") == "rate_limited"
+                    or "429" in raw_error or "RESOURCE_EXHAUSTED" in raw_error
                     or "rate limit" in raw_error.lower()):
                 controller.note_rate_limited()
                 continue

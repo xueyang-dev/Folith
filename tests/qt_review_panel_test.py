@@ -5,7 +5,7 @@
 * 队列来自 ``folith.workbench_view``（与旧界面同一份投影，不另写规则）；
 * "确认已解决"/"保留当前译文"走核心的人工决定路径，发现项随之消失、门禁放行，
   并留下人工记录；
-* "应用建议译文"写入译文并解决发现项；
+* "暂存为候选"只生成候选（正文与发现项都不动），采用走同一套版本校验；
 * 面板按钮的显示规则：不需要人工决定的纯建议不给"确认已解决"，来源质量项只给
   "确认原文并重新翻译"，且必须勾选并写依据才可点。
 """
@@ -101,6 +101,30 @@ def test_preserving_the_translation_is_recorded_as_such(job):
                and a.get("finding_id") == item["finding_id"] for a in actions)
 
 
+def test_confirming_the_problem_exists_keeps_it_open(job):
+    """确认问题存在 ≠ 确认已解决：决定被记下，问题仍待处理、仍挡交付、正文不变。"""
+    item = next(i for i in adapter.review_queue(job)["queue_items"]
+                if i.get("severity") == "blocking")
+    before = adapter.load_state(job)
+    adapter.resolve_findings(job, [item["finding_id"]],
+                             adapter.RESOLVE_CONFIRMED_OPEN, "确实丢了占位符")
+    state = adapter.load_state(job)
+    assert item["finding_id"] in _open_ids(job), "确认存在不能让问题消失"
+    assert adapter.unresolved_blocking(job), "问题仍待修订，门禁照旧拦着"
+    # 交付状态由存盘时的重算决定（夹具里存的是旧值 "draft"）；关键是它仍在
+    # review_required——确认存在不推进交付。
+    assert state["delivery_status"] == "review_required"
+    actions = state.get("human_actions") or []
+    confirmed = [a for a in actions
+                 if a.get("finding_id") == item["finding_id"]
+                 and a.get("action") == "confirmed_open"]
+    assert confirmed and confirmed[0]["record_type"] == "finding_confirmation"
+    assert confirmed[0]["note"] == "确实丢了占位符"
+    assert not any(a.get("action") == "human_fixed" for a in actions), \
+        "确认有问题不能顺手记成已修复"
+    assert state["pairs"][0]["target"] == before["pairs"][0]["target"]
+
+
 def test_unknown_action_and_missing_identity_are_refused(job):
     with pytest.raises(adapter.AdapterError):
         adapter.resolve_findings(job, ["x"], "delete_everything")
@@ -108,14 +132,27 @@ def test_unknown_action_and_missing_identity_are_refused(job):
         adapter.resolve_findings(job, [""], adapter.RESOLVE_CONFIRMED)
 
 
-def test_applying_a_suggestion_writes_the_translation_and_resolves_the_finding(job):
+def test_staging_a_suggestion_leaves_the_translation_and_the_finding_alone(job):
+    """审校建议先落候选：正文不动、发现项不关；采用是另一个显式动作。"""
     item = next(i for i in adapter.review_queue(job)["queue_items"]
                 if i.get("suggested_target"))
     result = adapter.apply_suggested_translation(job, item, "采用建议")
     state = adapter.load_state(job)
-    assert state["pairs"][1]["target"] == "第二段（建议）"
     assert result["index"] == 1
-    assert item["finding_id"] not in _open_ids(job)
+    assert state["pairs"][1]["target"] == "第二", "生成候选不能改正文"
+    assert item["finding_id"] in _open_ids(job), "暂存建议不等于解决问题"
+    created = result["created"]
+    assert created and created[0]["origin"] == "review_suggestion"
+    assert created[0]["status"] == "pending"
+    assert created[0]["candidate_target"] == "第二段（建议）"
+
+    adopted = adapter.adopt_candidate(job, created[0]["candidate_id"])
+    assert adopted["committed"] and adopted["changed_text"]
+    state = adapter.load_state(job)
+    assert state["pairs"][1]["target"] == "第二段（建议）"
+    assert state["pairs"][1]["target_provenance"] == "candidate_adopted"
+    # 决定与文本变更分离：采用建议不替人把发现项标成已解决。
+    assert item["finding_id"] in _open_ids(job)
 
 
 def test_applying_without_a_suggestion_is_refused(job):
@@ -169,6 +206,26 @@ def test_panel_offers_decisions_for_a_decidable_finding(panel):
     assert panel.preserve_button.isVisibleTo(panel)
     assert not panel.apply_button.isVisibleTo(panel)
     assert not panel.confirm_source_button.isVisibleTo(panel)
+
+
+def test_panel_separates_confirm_exists_from_confirm_resolved(panel):
+    """两个决定必须分成两个按钮：一个说"问题是真的"，一个说"已经改好了"。"""
+    panel.apply(_view(_item()))
+    assert panel.open_button.isVisibleTo(panel)
+    assert panel.open_button.text() != panel.confirm_button.text()
+    assert "存在" in panel.open_button.text()
+    assert "解决" in panel.confirm_button.text()
+    seen = {}
+    panel.resolveRequested.connect(lambda ids, action, note: seen.update(
+        resolve=(ids, action, note)))
+    panel.open_button.click()
+    assert seen["resolve"] == (["a"], "confirmed_open", "")
+
+
+def test_panel_hides_the_confirm_exists_button_for_plain_advice(panel):
+    panel.apply(_view(_item(core_finding=True, requires_human_confirmation=False,
+                            severity="informational", filter_group="reference")))
+    assert not panel.open_button.isVisibleTo(panel)
 
 
 def test_panel_hides_decisions_for_advice_that_needs_no_decision(panel):

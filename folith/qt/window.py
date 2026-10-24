@@ -40,6 +40,7 @@ from . import adapter
 from . import bootstrap
 from . import dialogs
 from . import prompts
+from .segment_assist import protection_text as _protection_text
 from . import components, motion
 from . import style as style_module
 from . import theme as theme_module
@@ -400,6 +401,8 @@ class MainWindow(QMainWindow):
         self.workbench.reviewAllRequested.connect(self.review_all)
         self.workbench.reviewSelectedRequested.connect(self.review_selected)
         self.workbench.retranslateRequested.connect(self.retranslate_segment)
+        self.workbench.candidateAdoptRequested.connect(self.adopt_candidate)
+        self.workbench.candidateDiscardRequested.connect(self.discard_candidate)
         self.workbench.discardDraftRequested.connect(self.discard_draft)
         self.workbench.excludeRequested.connect(self.exclude_segment)
         self.workbench.includeRequested.connect(self.include_segment)
@@ -642,6 +645,7 @@ class MainWindow(QMainWindow):
                              if preference == theme_module.FOLLOW_SYSTEM else False))
             views_module.set_current_theme(resolved)
             self.theme_preference = preference
+            self.workbench.refresh_appearance()
         finally:
             self._applying_theme = False
         return resolved
@@ -2328,7 +2332,11 @@ class MainWindow(QMainWindow):
         self.refresh_workbench(force=True)
 
     def find_replace(self) -> None:
-        """查找替换译文：先预览，再全部替换（逐段人工提交）。"""
+        """查找替换译文：先预览，再把整批暂存为候选并采用。
+
+        批量走和单段采用同一个事务：每段有自己的 UID 与基线，人工改写或人工确认
+        过的段落默认跳过（逐条回复原因），不会被一次"全部替换"悄悄覆盖。
+        """
         job_id = self._current_job_id
         if not job_id or _automation():
             return
@@ -2339,15 +2347,27 @@ class MainWindow(QMainWindow):
             return
         values = dialog.values()
 
-        def done(count: int) -> None:
-            self._notice(i18n.tr('已替换 {v0} 段译文；这些段需要重新审校。', v0=count), job_id=job_id)
-            self.refresh_workbench(force=True)
-            self.workbench.reload_current_segment()
+        def done(result) -> None:
+            if not isinstance(result, dict):
+                result = {"changed": int(result or 0), "skipped": []}
+            changed = int(result.get("changed") or 0)
+            skipped = list(result.get("skipped") or [])
+            message = i18n.tr('已替换 {v0} 段译文；这些段需要重新审校。', v0=changed)
+            if changed == 0 and not skipped:
+                message = i18n.tr('没有需要替换的段落。')
+            elif skipped:
+                message = i18n.tr('已替换 {v0} 段；{v1} 段没有替换（人工确认/已过期的段落需要逐段处理）。',
+                                  v0=changed, v1=len(skipped))
+            self._notice(message, job_id=job_id)
+            if job_id == self._current_job_id:
+                self.refresh_workbench(force=True)
+                self.workbench.reload_current_segment()
 
         self._run_with_busy(i18n.tr('查找替换'), i18n.tr('正在替换译文…'),
                             adapter.replace_in_targets, job_id, values["query"],
                             values["replacement"], on_done=done,
-                            case_sensitive=values["case_sensitive"])
+                            case_sensitive=values["case_sensitive"],
+                            allow_protected=values.get("include_protected", False))
 
     def review_current(self, index: int) -> None:
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校当前段落…'),
@@ -2376,20 +2396,82 @@ class MainWindow(QMainWindow):
 
     def _retranslate_done(self, result, index: int | None = None,
                           job_id: str | None = None) -> None:
+        """重译只生成候选：正文没有变化，所以**不**重载编辑器，也不宣称已改稿。"""
         # 序号取"发起重译的那一段"，而不是完成时的选中段：等待框可以隐藏，
         # 用户可能已经切了段甚至切了任务。
         if index is None:
             index = self.workbench.current_index()
-        self._notice(
-            i18n.tr("已重译第 {v0} 段", v0=index + 1)
-            + (i18n.tr("；该段审校状态已刷新")
-               if (result or {}).get("fixed") else ""))
+        created = list((result or {}).get("created") or [])
+        self._notice(i18n.tr("第 {v0} 段已生成候选译文，待你采用",
+                             v0=index + 1) if created
+                     else i18n.tr("第 {v0} 段没有产生候选", v0=index + 1))
         self.refresh_workbench(force=True)
-        # 新译文必须立刻出现在编辑器里：否则用户按"保存并提交"会把刚重译出来的
-        # 文本又覆盖成旧的。编辑器里有未提交内容时该方法会自行跳过（保留用户输入，
-        # 并以"草稿基于旧译文"的警示呈现）。
         if job_id is None or job_id == self._current_job_id:
-            self.workbench.reload_current_segment()
+            self.workbench.show_candidate(index)
+
+    def adopt_candidate(self, candidate_id: str) -> None:
+        """采用候选：核心校验通过才写入正文；失败时把原因原样给用户。"""
+        job_id = self._current_job_id
+        if not job_id or not candidate_id:
+            return
+        index = self.workbench.current_index()
+        # 编辑器里还有没提交的内容时不能直接采用：那会把用户正在写的内容悄悄
+        # 换成候选。自动保存会把输入落成草稿并清掉"未保存"标记，所以这里按
+        # "输入或草稿"判断，而不是只看编辑器脏标记。
+        if self.workbench.has_uncommitted_editor_change():
+            message = i18n.tr('第 {v0} 段还有未提交的修改或草稿：先保存或放弃，再采用候选。',
+                              v0=index + 1)
+            self.workbench.show_candidate(index, message)
+            self._notice(message)
+            return
+        # 当前译文是人工改写/人工确认过的：采用会覆盖它并撤销那层标记。逐段采用
+        # 允许这么做（用户指的就是这一段），但必须先说清楚，不能悄悄换掉。
+        locked = next((item for item in adapter.segment_candidates(job_id, index)
+                       if str(item.get("candidate_id") or "") == str(candidate_id)
+                       and item.get("protected")), None)
+        if locked is not None:
+            labels = _protection_text(locked.get("protection"))
+            if not self._confirm(
+                    i18n.tr('覆盖人工处理的译文'),
+                    i18n.tr('第 {v0} 段的当前译文是{v1}。采用候选会覆盖它，并撤销这层人工标记。\n\n确定采用吗？',
+                            v0=index + 1, v1=labels),
+                    yes=i18n.tr('采用候选'), no=i18n.tr('取消'), tone="danger"):
+                return
+        try:
+            result = adapter.adopt_candidate(job_id, candidate_id)
+        except adapter.AdapterError as exc:
+            self.workbench.show_candidate(index, str(exc))
+            self._failure(i18n.tr('无法采用候选'), str(exc))
+            return
+        if not result.get("committed"):
+            reason = str(result.get("reason") or i18n.tr('这个候选已不能采用。'))
+            self.workbench.show_candidate(index, reason)
+            self._notice(reason)
+            self.refresh_workbench(force=True)
+            return
+        same_text = not result.get("changed_text", True)
+        self._notice(i18n.tr('已采用第 {v0} 段的候选（同文采用，正文未变化）',
+                             v0=index + 1) if same_text
+                     else i18n.tr('已采用第 {v0} 段的候选；该段需要重新审校',
+                                  v0=index + 1))
+        self.refresh_workbench(force=True)
+        if job_id == self._current_job_id:
+            self.workbench.reload_current_segment(force=True)
+            self.workbench.show_candidate(index)
+
+    def discard_candidate(self, candidate_id: str) -> None:
+        job_id = self._current_job_id
+        if not job_id or not candidate_id:
+            return
+        index = self.workbench.current_index()
+        try:
+            adapter.discard_candidate(job_id, candidate_id)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法丢弃候选'), str(exc))
+            return
+        self._notice(i18n.tr('已丢弃第 {v0} 段的候选；当前译文没有变化',
+                             v0=index + 1))
+        self.workbench.show_candidate(index)
 
     def discard_draft(self, index: int) -> None:
         """放弃某段的未提交草稿（编辑器回到当前已提交的译文）。"""
@@ -2808,7 +2890,7 @@ class MainWindow(QMainWindow):
 
     # ================= 审校页：人工处置 =================
     def resolve_findings(self, finding_ids: list, action: str, note: str) -> None:
-        """人工确认已解决 / 保留当前译文：写一条人工决定，不改译文。"""
+        """人工确认问题存在 / 确认已解决 / 保留当前译文：只记决定，不改译文。"""
         job_id = self._current_job_id
         if not job_id:
             return
@@ -2817,13 +2899,20 @@ class MainWindow(QMainWindow):
         except adapter.AdapterError as exc:
             self._failure(i18n.tr('无法记录人工决定'), str(exc))
             return
-        self._notice(i18n.tr('已保留当前译文。该决定已记录。')
-                     if action == adapter.RESOLVE_PRESERVED
-                     else i18n.tr('已确认问题解决。该决定已记录。'))
+        if action == adapter.RESOLVE_PRESERVED:
+            message = i18n.tr('已保留当前译文。该决定已记录。')
+        elif action == adapter.RESOLVE_CONFIRMED_OPEN:
+            message = i18n.tr('已确认问题存在；这一项仍需修订，仍会挡住交付。')
+        else:
+            message = i18n.tr('已确认问题解决。该决定已记录。')
+        self._notice(message)
         self.refresh_workbench(force=True)
+        # 连续处理（#98）：只有动作**成功**才前进到下一项；失败时提示留在
+        # 队列里，未处理的发现项不会被跳过。
+        self.workbench.review_panel.consume_advance_hint()
 
     def apply_suggestion(self, item: dict, note: str) -> None:
-        """应用审校的建议译文；要求重新审校时顺手重审这一段。"""
+        """把审校建议暂存为候选；正文和发现项都不动，采用是另一个动作。"""
         job_id = self._current_job_id
         if not job_id:
             return
@@ -2831,17 +2920,18 @@ class MainWindow(QMainWindow):
         try:
             result = adapter.apply_suggested_translation(job_id, item, note)
         except adapter.AdapterError as exc:
-            self._failure(i18n.tr('无法应用建议译文'), str(exc))
+            self._failure(i18n.tr('无法暂存建议译文'), str(exc))
             return
         index = int(result["index"])
-        if result.get("needs_review"):
-            self._notice(i18n.tr('建议译文已应用，正在重新审校第 {v0} 段…', v0=index + 1))
-            self.refresh_workbench(force=True)
-            self.review_selected([index])
-            return
-        self._notice(i18n.tr('建议译文已应用。'))
+        self._notice(i18n.tr('已把审校建议暂存为第 {v0} 段的候选；采用后才会写入译文。',
+                             v0=index + 1))
         self.refresh_workbench(force=True)
-        self.workbench.reload_current_segment()
+        # 连续处理（#98）：暂存成功也前进到下一项；失败不动队列。
+        self.workbench.review_panel.consume_advance_hint()
+        if job_id == self._current_job_id:
+            # 建议是针对某一段的：把它选出来，否则右栏看不到刚生成的候选。
+            self.workbench.select_segment(index)
+            self.workbench.show_candidate(index)
 
     def confirm_source_segment(self, index: int, note: str) -> None:
         """回看原页后确认一段疑似残片是有效正文，然后重译这一段。"""
@@ -3119,13 +3209,13 @@ class MainWindow(QMainWindow):
         if not job_id or index < 0:
             return
 
-        def done(candidate: str) -> None:
+        def done(_candidate: dict) -> None:
             if self._current_job_id == job_id:
-                self.workbench.set_suggestion(index, candidate)
+                self.workbench.show_candidate(index)
 
         def failed(message: str, _detail: str) -> None:
             if self._current_job_id == job_id:
-                self.workbench.set_suggestion(index, "", i18n.tr_dynamic(message))
+                self.workbench.show_candidate(index, i18n.tr_dynamic(message))
 
         self.runner.submit(adapter.suggest_translation, job_id, index, instruction,
                            self.config, on_done=done, on_error=failed, label="suggest")

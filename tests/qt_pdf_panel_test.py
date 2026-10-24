@@ -110,7 +110,7 @@ def test_panel_shows_pages_and_navigates(qapp, pdf_job):
     assert panel.image.pixmap() is not None and not panel.image.pixmap().isNull()
     assert not panel.prev_button.isEnabled() and panel.next_button.isEnabled()
     panel.next_button.click()
-    assert panel.current_page() == 1 and panel.page_spin.value() == 2
+    assert panel.current_page() == 1 and panel.page_box.text() == "2"
     assert not panel.next_button.isEnabled()
     panel.goto(50)
     assert panel.current_page() == 1, "越界跳转停在最后一页"
@@ -135,7 +135,42 @@ def test_panel_for_a_non_pdf_task_is_empty(qapp, docx_job):
 
     panel = PdfPanel()
     panel.load("")
-    assert panel.total_label.text() == "/ —" and not panel.page_spin.isEnabled()
+    assert panel.total_label.text() == "/ —" and not panel.page_box.isEnabled()
+
+
+def test_the_page_box_is_a_styled_field_not_a_native_spin_box(qapp, pdf_job):
+    """#83 里"页码框空白/黑块"的根因：这里放的是原生 QSpinBox，而仓库的 QSS 从没给
+    QSpinBox 上过样式（setup_panel.py 里那条"不用 QSpinBox"的约定就是这么来的）。
+    深色主题下整块退回系统外观、上下箭头黑成一片，当前页码看不见。
+    """
+    from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit
+
+    from folith.qt.pdf_panel import PdfPanel
+
+    panel = PdfPanel()
+    panel.load(pdf_job)
+    assert isinstance(panel.page_box, QLineEdit)
+    assert not isinstance(panel.page_box, QAbstractSpinBox), "原生微调框没有主题样式"
+    assert panel.page_box.text() == "1"
+    panel.goto(1)
+    assert panel.page_box.text() == "2", "翻页后页码框跟着走"
+
+
+def test_typing_a_page_number_moves_to_it_and_bad_input_cannot_blank_the_box(qapp, pdf_job):
+    from folith.qt.pdf_panel import PdfPanel
+
+    panel = PdfPanel()
+    panel.load(pdf_job)
+    panel.goto(1)
+    panel.page_box.setText("1")
+    panel.page_box.returnPressed.emit()
+    assert panel.current_page() == 0
+    panel.page_box.setText("99")
+    panel.page_box.returnPressed.emit()          # 越界夹到最后一页
+    assert panel.current_page() == 1 and panel.page_box.text() == "2"
+    panel.page_box.setText("")                    # 清空后回车：还原，不留空白框
+    panel.page_box.returnPressed.emit()
+    assert panel.page_box.text() == "2"
 
 
 def test_workbench_shows_the_original_page_only_for_pdf_tasks(qapp, pdf_job, docx_job):

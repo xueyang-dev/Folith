@@ -54,6 +54,10 @@ def _pattern(variants):
     return re.compile('|'.join(alternatives), re.IGNORECASE) if alternatives else None
 
 
+#: 公开别名：概念批量修订（#97）复用同一个词边界替换模式。
+variant_pattern = _pattern
+
+
 def current_occurrences(record, pairs):
     variants = {spelling(item.get('target')) for item in record.get('observations') or []}
     variants.add(spelling(record.get('preferred_target')))
@@ -79,7 +83,24 @@ def current_occurrences(record, pairs):
     return rows
 
 
-def findings(records, pairs):
+def findings(records, pairs, concept_decisions=None):
+    """产出 entity_conflict。
+
+    ``concept_decisions``（issue #96）可选：记录所属概念已有决策时（按
+    member_keys 交集匹配，含人工跨记录断言的概念），finding 附
+    ``concept_card_id`` + ``inherited_preferred``（继承而非新矛盾卡）；变体
+    已全部符合决策译名（或概念被 keep_variants 决策保留）时不再产出。
+    缺省行为与历史完全一致。
+    """
+    concept_of = None
+    if concept_decisions:
+        from . import concept_cards as _cc
+        from . import terminology_variants as _tv
+
+        def concept_of(record):
+            keys = [_tv.casefold_key(record.get('source_form'))]
+            keys += [_tv.casefold_key(alias) for alias in record.get('aliases') or []]
+            return _cc.decision_for_keys(concept_decisions, keys)
     output = []
     for record in records:
         if record.get('status') == 'rejected':
@@ -94,8 +115,15 @@ def findings(records, pairs):
         locked_mismatch = record.get('status') == 'locked' and variants - {preferred}
         if variants <= accepted or (len(variants) < 2 and not locked_mismatch):
             continue
+        decision = concept_of(record) if concept_of else None
+        if decision:
+            if decision.get('keep_variants'):
+                continue  # 文字游戏/多义/各自符合语境：概念级"保持原样"
+            decided = spelling(decision.get('preferred_target')).casefold()
+            if decided and variants <= accepted | {decided}:
+                continue  # 已决定且无漂移：不出矛盾卡
         indexes = [row['index'] for row in rows]
-        output.append({
+        finding = {
             'type': 'entity_conflict', 'severity': 'actionable',
             'category': 'terminology_consistency', 'source': record['source_form'],
             'reason': f"实体「{record['source_form']}」的当前译名需要确认",
@@ -103,7 +131,11 @@ def findings(records, pairs):
             'observed_targets': sorted(variants), 'segment_indexes': indexes,
             'segment_index': indexes[0], 'segment_id': indexes[0],
             'detector': 'Entity Registry QA', 'occurrences': rows,
-        })
+        }
+        if decision and decision.get('preferred_target'):
+            finding['concept_card_id'] = decision.get('card_id')
+            finding['inherited_preferred'] = decision.get('preferred_target')
+        output.append(finding)
     return output
 
 

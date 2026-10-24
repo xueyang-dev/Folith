@@ -2381,6 +2381,8 @@ class WorkbenchView(QWidget):
     reviewAllRequested = Signal()
     reviewSelectedRequested = Signal(list)
     retranslateRequested = Signal(int)
+    candidateAdoptRequested = Signal(str)      # candidate_id：采用候选（核心事务）
+    candidateDiscardRequested = Signal(str)    # candidate_id：丢弃候选
     discardDraftRequested = Signal(int)
     excludeRequested = Signal(int)
     includeRequested = Signal(str)
@@ -2770,6 +2772,11 @@ class WorkbenchView(QWidget):
         self.segment_list.itemSelectionChanged.connect(self._selection_changed)
         self.segment_list.currentCellChanged.connect(
             lambda row, *_rest: self._row_selected(row))
+        # 同一行再点一次：Qt 不为重复的同一格发 currentCellChanged（见
+        # _load_selected_row 的"同一段"分支），于是"再点一下原页跟着回去"完全没有反应
+        # （#83 里"再点同一段也不动"）。cellClicked 每次都会发，补这一条即可。
+        self.segment_list.cellClicked.connect(
+            lambda row, _column: self._row_reclicked(row))
         self._height_cache: dict = {}
         self._heights_pending: list[int] = []
         self._height_timer = QTimer(self)
@@ -2940,10 +2947,9 @@ class WorkbenchView(QWidget):
         self.note_box = segment_assist.NoteBox()
         self.note_box.saveRequested.connect(self._save_note)
         self._notes: dict[str, dict] = {}
-        self.suggest_box = segment_assist.SuggestBox()
-        self.suggest_box.suggestRequested.connect(
-            lambda instruction: self.suggestRequested.emit(self._current_index, instruction))
-        self.suggest_box.adoptRequested.connect(self._adopt_suggestion)
+        self.candidate_box = segment_assist.CandidateBox()
+        self.candidate_box.adoptRequested.connect(self.candidateAdoptRequested.emit)
+        self.candidate_box.discardRequested.connect(self.candidateDiscardRequested.emit)
         self.ask_box = segment_assist.AskAgentBox()
         self.ask_box.askRequested.connect(
             lambda question: self.askAgentRequested.emit(self._current_index, question))
@@ -3017,19 +3023,23 @@ class WorkbenchView(QWidget):
         for button in (self.assist_retranslate, self.assist_ask):
             style_module.set_button(button, "secondary", small=True)
 
-        def send(box) -> None:
+        def send_suggestion() -> None:
             text = self.assist_input.text().strip()
-            if not text:
-                return
-            box.input.setText(text)
-            (box._suggest if box is self.suggest_box else box._ask)()
+            if text:
+                # 生成的是一个持久化候选；预览与采用在右栏的候选卡片里完成。
+                self.suggestRequested.emit(self._current_index, text)
 
-        self.assist_retranslate.clicked.connect(lambda: send(self.suggest_box))
-        self.assist_ask.clicked.connect(lambda: send(self.ask_box))
-        self.assist_input.returnPressed.connect(lambda: send(self.suggest_box))
-        for box in (self.suggest_box, self.ask_box):
-            box.input.setVisible(False)
-            box.button.setVisible(False)
+        def send_question() -> None:
+            text = self.assist_input.text().strip()
+            if text:
+                self.ask_box.input.setText(text)
+                self.ask_box._ask()
+
+        self.assist_retranslate.clicked.connect(send_suggestion)
+        self.assist_ask.clicked.connect(send_question)
+        self.assist_input.returnPressed.connect(send_suggestion)
+        self.ask_box.input.setVisible(False)
+        self.ask_box.button.setVisible(False)
 
         def row_of(*widgets) -> components.FlowRow:
             # 放得下就一行等分铺满，放不下就折行：操作台永远不会把按钮挤出右边。
@@ -3073,7 +3083,7 @@ class WorkbenchView(QWidget):
         results_layout = QVBoxLayout(results)
         results_layout.setContentsMargins(0, 0, 0, 0)
         results_layout.setSpacing(0)
-        results_layout.addWidget(self.suggest_box)
+        results_layout.addWidget(self.candidate_box)
         results_layout.addWidget(self.ask_box)
         inspector_layout.addWidget(results)
 
@@ -4937,6 +4947,16 @@ class WorkbenchView(QWidget):
         self._sync_word_count()
         self._refresh_term_focus()
 
+    def refresh_appearance(self) -> None:
+        """Update item brushes with QSS, without reloading text or moving the editor.
+
+        Visible rows repaint immediately; large tables keep the existing chunked
+        painting path for the rest. Preserve any unfinished initial row layout;
+        otherwise color-only changes do not need row layout.
+        """
+        pending_layout = self._paint_timer.isActive() and self._paint_schedules_heights
+        self._queue_segment_paint(schedule_heights=pending_layout)
+
     def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
         """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
 
@@ -5074,9 +5094,9 @@ class WorkbenchView(QWidget):
 
     def _paint_row(self, position: int, row: adapter.SegmentRow) -> bool:
         """Paint one row; True when it was (re)painted, False when the cache hit."""
-        look = (current_theme(), i18n.language())
+        look = (current_theme(), theme_module.accent(), i18n.language())
         if look != self._painted_look:
-            # 主题或语言变了：颜色与提示都要重画，缓存整体作废。
+            # 主题、强调色或语言变了：颜色与提示都要重画，缓存整体作废。
             self._painted.clear()
             self._painted_look = look
         if self._painted.get(position) == row:
@@ -5598,6 +5618,7 @@ class WorkbenchView(QWidget):
             self.attention_label.setVisible(False)
             self.attention_list.setVisible(False)
             self.term_list.set_terms([])
+            self.candidate_box.reset()
             self.context_view.set_context({})
             self.submit_button.setEnabled(False)
             self.review_button.setEnabled(False)
@@ -5708,12 +5729,12 @@ class WorkbenchView(QWidget):
         self.context_view.set_context(adapter.segment_context(self._state, row.index))
         self._sync_context_visibility()
         self._decorate_current_row()
+        self._refresh_candidates(row.index)
         if self._assist_index != row.index:
             self._assist_index = row.index
             self.note_box.set_note(self._notes.get(row.segment_uid))
             self._clear_highlights()
             self.ask_box.reset()
-            self.suggest_box.reset()
 
     # ================= 选择 / 编辑器 =================
     def _position_of_loaded_segment(self) -> int | None:
@@ -5723,6 +5744,17 @@ class WorkbenchView(QWidget):
             if row.segment_uid == self._loaded_uid:
                 return position
         return None
+
+    def _row_reclicked(self, position: int) -> None:
+        """点在同一行上也要重新定位（#83）：选中没变，Qt 不会发 currentCellChanged。
+
+        ``_pdf_follow`` 是 150ms 的单次定时器，重复 ``start()`` 只是把它推后，所以
+        新行选择时这里和 ``_render_segment_detail`` 各 start 一次也不会定位两次。
+        """
+        if position < 0 or position >= len(self._rows):
+            return
+        if self.source_open():
+            self._pdf_follow.start()
 
     def _row_selected(self, position: int) -> None:
         # Restore the target's visible position after the previous editor row
@@ -6049,7 +6081,23 @@ class WorkbenchView(QWidget):
         return self._current_index
 
     def has_unsaved_editor_text(self) -> bool:
+        """编辑器里还有没落盘的文字（只看内存里的输入状态）。"""
         return bool(self._dirty)
+
+    def has_uncommitted_editor_change(self) -> bool:
+        """这一段还有用户没提交的内容：内存里的输入，或已落盘的草稿。
+
+        草稿自动保存（``DRAFT_AUTOSAVE_MS``）会把编辑器文字写成草稿并清掉
+        ``_dirty``，所以"还有没有未提交的内容"不能只看 ``_dirty``：草稿同样是
+        没写进正文的文字。任何会覆盖编辑器的动作（例如采用候选）都该按这个
+        更宽的条件判断，否则自动保存一触发，用户正在写的稿子就会被悄悄换掉。
+        """
+        if self._dirty:
+            return True
+        if not self._loaded_uid:
+            return False
+        return any(row.segment_uid == self._loaded_uid and row.has_draft
+                   for row in self._all_rows)
 
     def selected_indexes(self) -> list[int]:
         """Segment indexes currently selected in the grid, in grid order."""
@@ -6080,7 +6128,7 @@ class WorkbenchView(QWidget):
         self.segment_extra_section.setVisible(not multiple)
         self.assist_row.setVisible(not multiple)
         self.ask_box.setVisible(not multiple)
-        self.suggest_box.setVisible(not multiple)
+        self.candidate_box.setVisible(not multiple and bool(self.candidate_box._candidate_id))
         self.segment_status.setVisible(not multiple)
         self.multi_hint.setVisible(multiple)
         for button in (self.retranslate_button, self.copy_source_button,
@@ -6221,18 +6269,37 @@ class WorkbenchView(QWidget):
         self._painted.clear()
         self._render_segments()
 
-    def set_suggestion(self, index: int, text: str, error: str = "") -> None:
-        """窗口把「按要求重译」的候选交回来；用户已经换段时丢掉。"""
-        if index == self._current_index:
-            self.suggest_box.set_candidate(text, error=error)
+    def _refresh_candidates(self, index: int, *, fresh: bool = False) -> None:
+        """把这一段的待采用候选交给右栏卡片（读状态，不调用模型）。
 
-    def _adopt_suggestion(self, text: str) -> None:
-        """采用候选：放进编辑框（成为未保存的修改），保存仍由用户决定。"""
-        if not text or self._active_position < 0:
+        ``fresh`` 用于"刚刚生成/采用过"的刷新：界面里缓存的 state 还是写入之前
+        的那一份，只有重新读盘才看得到新候选。普通换段仍然复用缓存，避免每次
+        选中都反序列化整份状态。
+        """
+        if not self.job_id or index < 0:
+            self.candidate_box.reset()
             return
-        self.target_edit.setPlainText(text)
-        self.target_edit.setFocus()
-        self.suggest_box.reset_candidate()
+        try:
+            items = adapter.segment_candidates(
+                self.job_id, index, None if fresh else self._state)
+        except Exception:  # noqa: BLE001 - 候选只是提示，坏数据不能拖垮工作台
+            items = []
+        self.candidate_box.set_candidates(items)
+
+    def show_candidate(self, index: int, error: str = "") -> None:
+        """窗口把生成/采用/丢弃的结果交回来；用户已经换段时丢掉。"""
+        if index != self._current_index:
+            return
+        self._refresh_candidates(index, fresh=True)
+        if error:
+            self.candidate_box.set_status(error, error=True)
+
+    def candidate_adopted(self, index: int, message: str = "") -> None:
+        """采用成功/失败后刷新卡片；正文变化由窗口负责重载编辑器。"""
+        if index == self._current_index:
+            self._refresh_candidates(index, fresh=True)
+            if message:
+                self.candidate_box.set_status(message)
 
     def set_agent_answer(self, index: int, text: str) -> None:
         """窗口把「询问 Agent」的回答交回来；用户已经换段时丢掉。"""

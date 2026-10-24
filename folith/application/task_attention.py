@@ -10,7 +10,10 @@ def state_facts(state: dict) -> dict:
     import core
 
     outcomes = core.workflow_outcomes(state)
-    warnings = (state.get("extraction_report") or {}).get("warnings") or []
+    # 画像警告写在 state 上（阶段 1.2 在提取报告落盘之后才跑），只读提取报告就会
+    # 看不见"画像失败、文档级上下文没了"（#49）。
+    warnings = list((state.get("extraction_report") or {}).get("warnings") or []) \
+        + list(state.get("profile_warnings") or [])
     profile_missing = any(str(w).startswith("文档画像") and "失败" in str(w) for w in warnings) \
         and not str((state.get("document_profile") or {}).get("domain") or "").strip()
     failures = [item for item in state.get("translation_failures") or []

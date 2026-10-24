@@ -329,8 +329,13 @@ def test_retranslation_saves_completed_segments_then_stops_on_balance(tmp_path, 
             delivery.retranslate_segments(job, [0, 1, 2], 'DeepSeek', 'k', 'm', '简体中文')
         assert len(calls) == 2
         saved = core.load_job_state(job)
-        assert saved['pairs'][0]['target'] == '莉迪亚已经到达。'
-        assert not saved['pairs'][0]['reviewed']
+        # 致命停止前已完成的那一段保存为**候选**，不是正文：生成不改稿。
+        assert saved['pairs'][0]['target'] == state['pairs'][0]['target']
+        pending = saved.get('translation_candidates') or []
+        assert len(pending) == 1
+        assert pending[0]['candidate_target'] == '莉迪亚已经到达。'
+        assert pending[0]['segment_index'] == 0
+        assert pending[0]['status'] == 'pending'
         assert saved['pairs'][1]['target'] == state['pairs'][1]['target']
         assert saved['pairs'][2]['target'] == state['pairs'][2]['target']
     finally:

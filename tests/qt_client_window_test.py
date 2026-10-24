@@ -1621,7 +1621,7 @@ def test_workbench_excludes_a_segment_and_restores_it_from_the_delivery_tab(clie
 
 
 def test_retranslate_one_segment_from_the_workbench(client):
-    """§6.A.5：工作台的「重译本段」走真实模型调用，只动这一段。"""
+    """§6.A.5：工作台的「重译本段」只生成候选；点「采用候选」才改这一段。"""
     adapter = client["adapter"]
     core = client["core"]
     window = client["window"]
@@ -1660,9 +1660,19 @@ def test_retranslate_one_segment_from_the_workbench(client):
         assert workbench.retranslate_button.isEnabled() is True
 
         workbench.retranslate_button.click()
+        assert _pump(app, 240, lambda: adapter.pending_candidate_count(job_id) == 1), \
+            "重译应生成一个待采用候选"
+        assert adapter.load_state(job_id)["pairs"][0]["target"] == "旧译文。", \
+            "生成候选不得改稿"
+        assert _pump(app, 120, lambda: workbench.candidate_box.isVisibleTo(workbench))
+        candidate_id = workbench.candidate_box.candidate_id()
+        assert candidate_id
+
+        workbench.candidate_box.adopt_button.click()
         assert _pump(app, 240, lambda: adapter.load_state(job_id)["pairs"][0]
-                     ["target"] != "旧译文。"), "retranslate did not change segment 1"
+                     ["target"] != "旧译文。"), "采用候选后正文应更新"
         assert adapter.load_state(job_id)["pairs"][1]["target"] == "第二段不动。"
+        assert adapter.load_state(job_id)["pairs"][0]["adopted_candidate_id"] == candidate_id
         assert window.failures == []
     finally:
         stub.stop()
@@ -2084,10 +2094,10 @@ def test_workbench_warns_about_a_draft_based_on_older_text(client):
     assert "⚠" not in workbench.segment_status.text()
 
 
-def test_retranslate_refreshes_the_editor_with_the_new_text(client):
-    """重译后编辑器必须显示新译文。
+def test_adopting_a_candidate_refreshes_the_editor_with_the_new_text(client):
+    """采用候选后编辑器必须显示新译文。
 
-    否则编辑器还留着旧文本，用户一按「保存并提交」就把刚重译出来的译文覆盖回
+    否则编辑器还留着旧文本，用户一按「保存并提交」就把刚采用的译文覆盖回
     旧的——静默的数据回退。
     """
     adapter = client["adapter"]
@@ -2124,6 +2134,11 @@ def test_retranslate_refreshes_the_editor_with_the_new_text(client):
         assert workbench.draft_text() == "旧译文。"
 
         workbench.retranslate_button.click()
+        assert _pump(app, 240, lambda: adapter.pending_candidate_count(job_id) == 1)
+        # 磁盘上有候选 ≠ 卡片已经渲染：先等卡片拿到候选，按钮才有意义。
+        assert _pump(app, 240, lambda: bool(workbench.candidate_box.candidate_id()))
+        assert workbench.draft_text() == "旧译文。", "生成候选不改变编辑器里的已提交译文"
+        workbench.candidate_box.adopt_button.click()
         assert _pump(app, 240, lambda: adapter.load_state(job_id)["pairs"][0]
                      ["target"] != "旧译文。")
         committed = adapter.load_state(job_id)["pairs"][0]["target"]
@@ -2134,8 +2149,8 @@ def test_retranslate_refreshes_the_editor_with_the_new_text(client):
         stub.stop()
 
 
-def test_retranslate_keeps_uncommitted_editor_text(client):
-    """重译不得丢掉用户正在编辑的未提交内容，而是给出过期草稿警示。"""
+def test_candidate_generation_keeps_uncommitted_editor_text(client):
+    """生成候选不得动用户在编辑器里未提交的内容；有草稿时拒绝采用候选。"""
     adapter = client["adapter"]
     core = client["core"]
     window = client["window"]
@@ -2173,14 +2188,18 @@ def test_retranslate_keeps_uncommitted_editor_text(client):
         assert workbench.has_unsaved_editor_text() is True
 
         workbench.retranslate_button.click()
-        assert _pump(app, 240, lambda: adapter.load_state(job_id)["pairs"][0]
-                     ["target"] != "旧译文。")
-        # 用户输入还在，且被标记为"基于旧译文"。
-        # 这里必须**等标记出现**：状态里的 target 一变，_pump 就会返回，而界面刷新
-        # （重算 stale_draft 并写状态行）可能还没跑到——机器负载高时就会偶发失败。
+        assert _pump(app, 240, lambda: adapter.pending_candidate_count(job_id) == 1)
+        # 磁盘上有候选 ≠ 卡片已经渲染：先等卡片拿到候选，按钮才有意义。
+        assert _pump(app, 240, lambda: bool(workbench.candidate_box.candidate_id()))
+        assert workbench.candidate_box.adopt_button.isEnabled()
+        assert workbench.draft_text() == "我打了一半的内容。", "用户输入必须原样还在"
+        assert adapter.load_state(job_id)["pairs"][0]["target"] == "旧译文。"
+
+        # 有未提交草稿时不能直接采用：先保存或放弃。
+        workbench.candidate_box.adopt_button.click()
+        assert _pump(app, 120, lambda: "未提交" in workbench.candidate_box.status.text())
+        assert adapter.load_state(job_id)["pairs"][0]["target"] == "旧译文。"
         assert workbench.draft_text() == "我打了一半的内容。"
-        assert _pump(app, 120, lambda: "⚠" in workbench.segment_status.text()), \
-            workbench.segment_status.text()
     finally:
         stub.stop()
 
