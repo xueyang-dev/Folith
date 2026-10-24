@@ -1,0 +1,32 @@
+[
+  {
+    "id": "term-reach",
+    "source": "the Reach",
+    "target": "里奇",
+    "preferred": "里奇",
+    "forbidden": [],
+    "behavior": "translate",
+    "status": "locked",
+    "scope": "global"
+  },
+  {
+    "id": "term-bayes",
+    "source": "Bayesian evidence",
+    "target": "贝叶斯证据",
+    "preferred": "贝叶斯证据",
+    "forbidden": [],
+    "behavior": "translate",
+    "status": "locked",
+    "scope": "global"
+  },
+  {
+    "id": "term-backpressure",
+    "source": "backpressure",
+    "target": "背压",
+    "preferred": "背压",
+    "forbidden": [],
+    "behavior": "translate",
+    "status": "locked",
+    "scope": "global"
+  }
+]

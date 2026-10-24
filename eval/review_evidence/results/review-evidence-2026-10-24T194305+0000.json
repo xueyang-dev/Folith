@@ -1,0 +1,928 @@
+{
+  "schema_version": 1,
+  "kind": "review_evidence_evaluation",
+  "created_at": "2026-10-24T19:43:05+00:00",
+  "config": {
+    "main_commit": "55a2943fd6c16b7099034b863d9bcd217b9e4f1c",
+    "dataset_sha256": "a9ef2c2cd1ac9004d6b7f33a78f0739f21892ca51cef3b3c16b2c77cc8de3a10",
+    "annotation_sha256": "b554af132ac3afe22c59d728b9e3d206ba7785c5101b952e96fe2897895fd338",
+    "samples": 18,
+    "batch_size": 1,
+    "provider": "scripted (annotated drafts + perfect reviewer for gold errors)",
+    "model": "scripted-model",
+    "target_lang": "简体中文",
+    "glossary_entries": 3,
+    "review_default_on_main": "risk_selective",
+    "token_estimator": "folith.usage.estimate_tokens (ceil(chars/4))",
+    "network": "none; wall time is local harness time, not provider latency"
+  },
+  "annotation_provenance": {
+    "provenance": "authored by the implementing agent (DeepSeek Harness) for this evaluation; synthetic English sources with Chinese draft translations",
+    "independent_human_expert": false,
+    "method": "Each source/draft pair was constructed to contain one clearly identifiable serious error (or to be a clean control) in one of the categories number/unit/tag/placeholder/terminology/omission/mistranslation. Drafts are not model output and were not produced by a live translator.",
+    "limitations": [
+      "Not independent expert annotation; no inter-annotator agreement.",
+      "Synthetic and short: not a real book corpus.",
+      "Only 12 serious-error samples and 6 clean controls.",
+      "The scripted reviewer is perfect on gold errors it sees, so the measured recall isolates routing policy, not reviewer-model quality."
+    ]
+  },
+  "arms": {
+    "always": {
+      "serious_total": 12,
+      "serious_detected": 12,
+      "serious_missed": 0,
+      "serious_recall": 1.0,
+      "missed_by_category": {},
+      "missed_details": [],
+      "per_domain": {
+        "literary": {
+          "samples": 6,
+          "serious_total": 4,
+          "serious_detected": 4,
+          "missed": 0,
+          "reviewed_segments": 2,
+          "skipped_segments": 0,
+          "review_calls": 0,
+          "recall": 1.0
+        },
+        "academic": {
+          "samples": 6,
+          "serious_total": 4,
+          "serious_detected": 4,
+          "missed": 0,
+          "reviewed_segments": 2,
+          "skipped_segments": 0,
+          "review_calls": 0,
+          "recall": 1.0
+        },
+        "technical": {
+          "samples": 6,
+          "serious_total": 4,
+          "serious_detected": 4,
+          "missed": 0,
+          "reviewed_segments": 2,
+          "skipped_segments": 0,
+          "review_calls": 0,
+          "recall": 1.0
+        }
+      },
+      "per_sample": [
+        {
+          "id": "lit-01",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "那封信终于寄到的时候，全村人都聚在邮局周围。",
+          "serious_errors": [
+            {
+              "id": "lit-01-e1",
+              "category": "number",
+              "note": "年份 1898 在译文中消失，叙事时间线被改变。",
+              "detect_tokens": [
+                "1898"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-02",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "她说那条河在那个冬天之前从未结冰。",
+          "serious_errors": [
+            {
+              "id": "lit-02-e1",
+              "category": "omission",
+              "note": "后半句「老人们点头附和」整句漏译，人物反应丢失。",
+              "detect_tokens": [],
+              "detected": true,
+              "captured_by_deterministic": false,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-03",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "老园丁把玫瑰叫作「冬天的孩子」，却坚持要把它们剪掉。",
+          "serious_errors": [
+            {
+              "id": "lit-03-e1",
+              "category": "mistranslation",
+              "note": "refused to cut them back 被译成「坚持剪掉」，语义反转。",
+              "detect_tokens": [],
+              "detected": true,
+              "captured_by_deterministic": false,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-04",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "过了河段，道路收窄成一条白石小径。",
+          "serious_errors": [
+            {
+              "id": "lit-04-e1",
+              "category": "terminology",
+              "note": "锁定地名 the Reach 应译为「里奇」，译文用了「河段」。",
+              "detect_tokens": [
+                "the Reach"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-05",
+          "domain": "literary",
+          "reviewed": true,
+          "review_status": "reviewed_clean",
+          "target": "灯芯低低地燃着，房间里是雨水和雪松的气味。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-06",
+          "domain": "literary",
+          "reviewed": true,
+          "review_status": "reviewed_clean",
+          "target": "他小心地折好地图，仿佛那是一封他可能寄出的信。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-01",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "该干预将复发率从 0.41 降至 0.17（绝对风险降低）。",
+          "serious_errors": [
+            {
+              "id": "aca-01-e1",
+              "category": "number",
+              "note": "绝对风险降低值 0.24 缺失，读者无法核对效应量。",
+              "detect_tokens": [
+                "0.24"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-02",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "调查覆盖了 12 英里海岸线，记录了 38 个筑巢点。",
+          "serious_errors": [
+            {
+              "id": "aca-02-e1",
+              "category": "unit",
+              "note": "km 被译成「英里」，12 km 与 12 miles 相差约 1.6 倍。",
+              "detect_tokens": [
+                "km"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-03",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "数据集已归档，分析脚本也已公开。",
+          "serious_errors": [
+            {
+              "id": "aca-03-e1",
+              "category": "placeholder",
+              "note": "占位符 {doi} 和 {repo} 被删除，可追溯链接丢失。",
+              "detect_tokens": [
+                "{doi}"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-04",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "贝叶斯证明是在弱信息先验下计算得到的。",
+          "serious_errors": [
+            {
+              "id": "aca-04-e1",
+              "category": "terminology",
+              "note": "锁定术语 Bayesian evidence 应译为「贝叶斯证据」。",
+              "detect_tokens": [
+                "Bayesian evidence"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-05",
+          "domain": "academic",
+          "reviewed": true,
+          "review_status": "reviewed_clean",
+          "target": "参与者按 1:1 比例随机分组，随访 12 个月。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-06",
+          "domain": "academic",
+          "reviewed": true,
+          "review_status": "reviewed_clean",
+          "target": "置信区间使用聚类稳健方差估计。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-01",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "启动服务前，请编辑配置文件并把重试次数设为 3。",
+          "serious_errors": [
+            {
+              "id": "tech-01-e1",
+              "category": "tag",
+              "note": "HTML/code 标签 <code>、</code>、<b>、</b> 全部丢失，文档结构被破坏。",
+              "detect_tokens": [
+                "<code>"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-02",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "请求在 30 秒后超时，因此客户端带着重试机制重新发送。",
+          "serious_errors": [
+            {
+              "id": "tech-02-e1",
+              "category": "unit",
+              "note": "30 ms 被译成「30 秒」，量级错误 1000 倍。",
+              "detect_tokens": [
+                "ms"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-03",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "请用保险库中的值替换，然后调用同步接口。",
+          "serious_errors": [
+            {
+              "id": "tech-03-e1",
+              "category": "placeholder",
+              "note": "占位符 {{token}} 与路径 /api/v2/sync 被删除。",
+              "detect_tokens": [
+                "{{token}}"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-04",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "副本同步期间不要运行迁移。",
+          "serious_errors": [
+            {
+              "id": "tech-04-e1",
+              "category": "omission",
+              "note": "后果说明「会损坏日志」被删除，操作风险提示丢失。",
+              "detect_tokens": [],
+              "detected": true,
+              "captured_by_deterministic": false,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-05",
+          "domain": "technical",
+          "reviewed": true,
+          "review_status": "reviewed_clean",
+          "target": "每次写入后缓存都会失效，因此读取方可能短暂看到旧值。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-06",
+          "domain": "technical",
+          "reviewed": true,
+          "review_status": "reviewed_clean",
+          "target": "把依赖固定到次版本，并在 CI 中运行冒烟测试。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        }
+      ],
+      "review_calls": 18,
+      "review_prompt_tokens": 14097,
+      "review_completion_tokens": 402,
+      "all_calls": {
+        "translation": 45,
+        "review": 18,
+        "repair": 0,
+        "auxiliary": 0,
+        "unknown": 0
+      },
+      "all_prompt_tokens": {
+        "translation": 10951,
+        "review": 14097,
+        "repair": 0,
+        "auxiliary": 0,
+        "unknown": 0
+      },
+      "all_completion_tokens": {
+        "translation": 150,
+        "review": 402,
+        "repair": 0,
+        "auxiliary": 0,
+        "unknown": 0
+      },
+      "wall_ms": 43.354,
+      "review_provider_seconds": 0.0,
+      "review_stats": {
+        "reviewed_segments": 6,
+        "batches_reviewed": 18,
+        "batches_skipped_low_risk": 0,
+        "skipped_segments": 0,
+        "blocking": 0,
+        "actionable": 0,
+        "informational": 0,
+        "review_failed": 0
+      },
+      "reviewed_segments": 6,
+      "skipped_segments": 0,
+      "clean_segments_reviewed": 6,
+      "skip_violations": [],
+      "skipped_never_reviewed": true,
+      "skipped_not_tm_eligible": true,
+      "readiness": {
+        "required": true,
+        "status": "current",
+        "coverage_complete": true,
+        "skipped_count": 0,
+        "skipped_reason_counts": {},
+        "ready": true
+      },
+      "review_batches": 18,
+      "reviewer_false_positive_findings": 0,
+      "deterministic_false_positive_findings": 0
+    },
+    "risk_selective": {
+      "serious_total": 12,
+      "serious_detected": 9,
+      "serious_missed": 3,
+      "serious_recall": 0.75,
+      "missed_by_category": {
+        "omission": 2,
+        "mistranslation": 1
+      },
+      "missed_details": [
+        {
+          "sample": "lit-02",
+          "domain": "literary",
+          "error": "lit-02-e1",
+          "category": "omission",
+          "note": "后半句「老人们点头附和」整句漏译，人物反应丢失。",
+          "reviewed": false,
+          "review_status": "skipped_low_risk"
+        },
+        {
+          "sample": "lit-03",
+          "domain": "literary",
+          "error": "lit-03-e1",
+          "category": "mistranslation",
+          "note": "refused to cut them back 被译成「坚持剪掉」，语义反转。",
+          "reviewed": false,
+          "review_status": "skipped_low_risk"
+        },
+        {
+          "sample": "tech-04",
+          "domain": "technical",
+          "error": "tech-04-e1",
+          "category": "omission",
+          "note": "后果说明「会损坏日志」被删除，操作风险提示丢失。",
+          "reviewed": false,
+          "review_status": "skipped_low_risk"
+        }
+      ],
+      "per_domain": {
+        "literary": {
+          "samples": 6,
+          "serious_total": 4,
+          "serious_detected": 2,
+          "missed": 2,
+          "reviewed_segments": 0,
+          "skipped_segments": 4,
+          "review_calls": 0,
+          "recall": 0.5
+        },
+        "academic": {
+          "samples": 6,
+          "serious_total": 4,
+          "serious_detected": 4,
+          "missed": 0,
+          "reviewed_segments": 0,
+          "skipped_segments": 2,
+          "review_calls": 0,
+          "recall": 1.0
+        },
+        "technical": {
+          "samples": 6,
+          "serious_total": 4,
+          "serious_detected": 3,
+          "missed": 1,
+          "reviewed_segments": 0,
+          "skipped_segments": 3,
+          "review_calls": 0,
+          "recall": 0.75
+        }
+      },
+      "per_sample": [
+        {
+          "id": "lit-01",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "那封信终于寄到的时候，全村人都聚在邮局周围。",
+          "serious_errors": [
+            {
+              "id": "lit-01-e1",
+              "category": "number",
+              "note": "年份 1898 在译文中消失，叙事时间线被改变。",
+              "detect_tokens": [
+                "1898"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-02",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "她说那条河在那个冬天之前从未结冰。",
+          "serious_errors": [
+            {
+              "id": "lit-02-e1",
+              "category": "omission",
+              "note": "后半句「老人们点头附和」整句漏译，人物反应丢失。",
+              "detect_tokens": [],
+              "detected": false,
+              "captured_by_deterministic": false,
+              "captured_by_review": false,
+              "missed": true
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-03",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "老园丁把玫瑰叫作「冬天的孩子」，却坚持要把它们剪掉。",
+          "serious_errors": [
+            {
+              "id": "lit-03-e1",
+              "category": "mistranslation",
+              "note": "refused to cut them back 被译成「坚持剪掉」，语义反转。",
+              "detect_tokens": [],
+              "detected": false,
+              "captured_by_deterministic": false,
+              "captured_by_review": false,
+              "missed": true
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-04",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "过了河段，道路收窄成一条白石小径。",
+          "serious_errors": [
+            {
+              "id": "lit-04-e1",
+              "category": "terminology",
+              "note": "锁定地名 the Reach 应译为「里奇」，译文用了「河段」。",
+              "detect_tokens": [
+                "the Reach"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-05",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "灯芯低低地燃着，房间里是雨水和雪松的气味。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "lit-06",
+          "domain": "literary",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "他小心地折好地图，仿佛那是一封他可能寄出的信。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-01",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "该干预将复发率从 0.41 降至 0.17（绝对风险降低）。",
+          "serious_errors": [
+            {
+              "id": "aca-01-e1",
+              "category": "number",
+              "note": "绝对风险降低值 0.24 缺失，读者无法核对效应量。",
+              "detect_tokens": [
+                "0.24"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-02",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "调查覆盖了 12 英里海岸线，记录了 38 个筑巢点。",
+          "serious_errors": [
+            {
+              "id": "aca-02-e1",
+              "category": "unit",
+              "note": "km 被译成「英里」，12 km 与 12 miles 相差约 1.6 倍。",
+              "detect_tokens": [
+                "km"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-03",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "数据集已归档，分析脚本也已公开。",
+          "serious_errors": [
+            {
+              "id": "aca-03-e1",
+              "category": "placeholder",
+              "note": "占位符 {doi} 和 {repo} 被删除，可追溯链接丢失。",
+              "detect_tokens": [
+                "{doi}"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-04",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "贝叶斯证明是在弱信息先验下计算得到的。",
+          "serious_errors": [
+            {
+              "id": "aca-04-e1",
+              "category": "terminology",
+              "note": "锁定术语 Bayesian evidence 应译为「贝叶斯证据」。",
+              "detect_tokens": [
+                "Bayesian evidence"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-05",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "参与者按 1:1 比例随机分组，随访 12 个月。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "aca-06",
+          "domain": "academic",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "置信区间使用聚类稳健方差估计。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-01",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "启动服务前，请编辑配置文件并把重试次数设为 3。",
+          "serious_errors": [
+            {
+              "id": "tech-01-e1",
+              "category": "tag",
+              "note": "HTML/code 标签 <code>、</code>、<b>、</b> 全部丢失，文档结构被破坏。",
+              "detect_tokens": [
+                "<code>"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-02",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "请求在 30 秒后超时，因此客户端带着重试机制重新发送。",
+          "serious_errors": [
+            {
+              "id": "tech-02-e1",
+              "category": "unit",
+              "note": "30 ms 被译成「30 秒」，量级错误 1000 倍。",
+              "detect_tokens": [
+                "ms"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-03",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "reviewed_with_findings",
+          "target": "请用保险库中的值替换，然后调用同步接口。",
+          "serious_errors": [
+            {
+              "id": "tech-03-e1",
+              "category": "placeholder",
+              "note": "占位符 {{token}} 与路径 /api/v2/sync 被删除。",
+              "detect_tokens": [
+                "{{token}}"
+              ],
+              "detected": true,
+              "captured_by_deterministic": true,
+              "captured_by_review": true,
+              "missed": false
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-04",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "副本同步期间不要运行迁移。",
+          "serious_errors": [
+            {
+              "id": "tech-04-e1",
+              "category": "omission",
+              "note": "后果说明「会损坏日志」被删除，操作风险提示丢失。",
+              "detect_tokens": [],
+              "detected": false,
+              "captured_by_deterministic": false,
+              "captured_by_review": false,
+              "missed": true
+            }
+          ],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-05",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "每次写入后缓存都会失效，因此读取方可能短暂看到旧值。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        },
+        {
+          "id": "tech-06",
+          "domain": "technical",
+          "reviewed": false,
+          "review_status": "skipped_low_risk",
+          "target": "把依赖固定到次版本，并在 CI 中运行冒烟测试。",
+          "serious_errors": [],
+          "reviewer_false_positive_findings": 0,
+          "deterministic_false_positive_findings": 0
+        }
+      ],
+      "review_calls": 9,
+      "review_prompt_tokens": 7578,
+      "review_completion_tokens": 299,
+      "all_calls": {
+        "translation": 45,
+        "review": 9,
+        "repair": 0,
+        "auxiliary": 0,
+        "unknown": 0
+      },
+      "all_prompt_tokens": {
+        "translation": 10954,
+        "review": 7578,
+        "repair": 0,
+        "auxiliary": 0,
+        "unknown": 0
+      },
+      "all_completion_tokens": {
+        "translation": 150,
+        "review": 299,
+        "repair": 0,
+        "auxiliary": 0,
+        "unknown": 0
+      },
+      "wall_ms": 31.102,
+      "review_provider_seconds": 0.0,
+      "review_stats": {
+        "reviewed_segments": 0,
+        "batches_reviewed": 9,
+        "batches_skipped_low_risk": 9,
+        "skipped_segments": 9,
+        "blocking": 0,
+        "actionable": 0,
+        "informational": 0,
+        "review_failed": 0
+      },
+      "reviewed_segments": 0,
+      "skipped_segments": 9,
+      "clean_segments_reviewed": 0,
+      "skip_violations": [],
+      "skipped_never_reviewed": true,
+      "skipped_not_tm_eligible": true,
+      "readiness": {
+        "required": true,
+        "status": "current",
+        "coverage_complete": false,
+        "skipped_count": 9,
+        "skipped_reason_counts": {
+          "clean_deterministic": 9
+        },
+        "ready": true
+      },
+      "review_batches": 9,
+      "reviewer_false_positive_findings": 0,
+      "deterministic_false_positive_findings": 0
+    }
+  },
+  "comparison": {
+    "serious_recall_delta": -3,
+    "review_calls_saved": 9,
+    "review_prompt_tokens_saved": 6519,
+    "clean_segments_reviewed_saved": 6
+  },
+  "policy_recommendation": [
+    "Recall: always 12/12, risk_selective 9/12 (delta -3).",
+    "Review calls: always 18, risk_selective 9 (saved 9); clean segments reviewed: always 6, selective 0.",
+    "risk_selective missed serious errors in these annotation categories: mistranslation, omission. This reproduces the #20 finding that deterministic signals alone cannot see terminology drift, omission, negation and mistranslation; the measured misses are the cost of the skipped batches.",
+    "Policy recommendation: keep the modes explicit rather than declaring them equivalent. If the default is risk_selective (#64), the report must not claim full-review recall, and skipped segments must stay visibly skipped (this run verifies reviewed=false, no approval, no TM promotion). A future mode that samples review work cannot be justified by this harness alone."
+  ],
+  "harness_wall_ms": 113.856
+}
