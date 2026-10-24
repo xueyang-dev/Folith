@@ -58,6 +58,13 @@ LEGACY_LINE_ALLOWLIST = {
     # variable names, the legacy asset fallbacks, the project schema id and the
     # absolute paths recorded in verification evidence.
     "folith/application/settings.py": ("FOLIOTHREAD_",),
+    # Rollback switches added in v0.7.5 are technical environment variables, not
+    # brand prose; the legacy prefix is kept for compatibility with existing
+    # deployments.
+    "folith/finding_groups.py": ("FOLIOTHREAD_",),
+    "folith/retrospective.py": ("FOLIOTHREAD_",),
+    "docs/issue-99-retrospective.md": ("FOLIOTHREAD_",),
+    "docs/issue-101-deterministic-groups.md": ("FOLIOTHREAD_",),
     "folith/engine/ocr_config.py": ("FOLIOTHREAD_",),
     "folith/engine/source_quality.py": ("FOLIOTHREAD_",),
     "folith/document_understanding.py": ("FOLIOTHREAD_",),

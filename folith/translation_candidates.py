@@ -65,6 +65,7 @@ ORIGIN_INSTRUCTED = "instructed_retranslate"
 ORIGIN_REVIEW = "review_suggestion"
 ORIGIN_BATCH = "batch_revision"
 ORIGIN_CONCEPT = "concept_revision"
+ORIGIN_DETERMINISTIC_FIX = "deterministic_fix"
 ORIGIN_RETROSPECTIVE = "retrospective_revision"
 
 ORIGIN_LABELS = {
@@ -73,6 +74,7 @@ ORIGIN_LABELS = {
     ORIGIN_REVIEW: "审校建议",
     ORIGIN_BATCH: "批量修订",
     ORIGIN_CONCEPT: "概念统一",
+    ORIGIN_DETERMINISTIC_FIX: "结构修复",
     ORIGIN_RETROSPECTIVE: "回溯一致性",
 }
 
@@ -535,7 +537,7 @@ __all__ = [
     "ORIGIN_BATCH",
     "ORIGIN_INSTRUCTED",
     "ORIGIN_LABELS",
-    "ORIGIN_REVIEW", "ORIGIN_RETROSPECTIVE",
+    "ORIGIN_REVIEW", "ORIGIN_RETROSPECTIVE", "ORIGIN_DETERMINISTIC_FIX",
     "ORIGIN_TARGETED",
     "PROTECTION_HUMAN_ACCEPTED",
     "PROTECTION_HUMAN_EDIT",
