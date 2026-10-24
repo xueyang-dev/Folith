@@ -1,0 +1,213 @@
+{
+  "platform": "cocoa",
+  "repo": "/Users/xueyang/Dev/FolioThread-m5-119",
+  "checks": [
+    {
+      "name": "light: rows use current-theme foregrounds",
+      "ok": true,
+      "detail": {
+        "theme": "light",
+        "row0_target": "#131c2e",
+        "row1_target_untranslated": "#7e8796",
+        "row2_draft": "#667085",
+        "row3_target": "#131c2e",
+        "row0_index_accent": "#2b5fd1",
+        "expect_text_primary": "#131c2e",
+        "expect_muted": "#7e8796",
+        "expect_secondary": "#667085",
+        "expect_accent": "#2b5fd1"
+      }
+    },
+    {
+      "name": "settings->dark (immediate, no pump #0)",
+      "ok": true,
+      "detail": {
+        "theme": "dark",
+        "row0_target": "#ffffff",
+        "row1_target_untranslated": "#ebebf5",
+        "row2_draft": "#ebebf5",
+        "row3_target": "#ffffff",
+        "row0_index_accent": "#82acff",
+        "expect_text_primary": "#ffffff",
+        "expect_muted": "#ebebf5",
+        "expect_secondary": "#ebebf5",
+        "expect_accent": "#82acff"
+      }
+    },
+    {
+      "name": "settings->light (immediate, no pump #1)",
+      "ok": true,
+      "detail": {
+        "theme": "light",
+        "row0_target": "#131c2e",
+        "row1_target_untranslated": "#7e8796",
+        "row2_draft": "#667085",
+        "row3_target": "#131c2e",
+        "row0_index_accent": "#2b5fd1",
+        "expect_text_primary": "#131c2e",
+        "expect_muted": "#7e8796",
+        "expect_secondary": "#667085",
+        "expect_accent": "#2b5fd1"
+      }
+    },
+    {
+      "name": "settings->dark (immediate, no pump #2)",
+      "ok": true,
+      "detail": {
+        "theme": "dark",
+        "row0_target": "#ffffff",
+        "row1_target_untranslated": "#ebebf5",
+        "row2_draft": "#ebebf5",
+        "row3_target": "#ffffff",
+        "row0_index_accent": "#82acff",
+        "expect_text_primary": "#ffffff",
+        "expect_muted": "#ebebf5",
+        "expect_secondary": "#ebebf5",
+        "expect_accent": "#82acff"
+      }
+    },
+    {
+      "name": "unsaved edit preserved",
+      "ok": true,
+      "detail": "Translation 0 unsaved-native"
+    },
+    {
+      "name": "accent=green (dark): accent foreground follows",
+      "ok": true,
+      "detail": {
+        "theme": "dark",
+        "row0_target": "#ffffff",
+        "row1_target_untranslated": "#ebebf5",
+        "row2_draft": "#ebebf5",
+        "row3_target": "#ffffff",
+        "row0_index_accent": "#1ccb96",
+        "expect_text_primary": "#ffffff",
+        "expect_muted": "#ebebf5",
+        "expect_secondary": "#ebebf5",
+        "expect_accent": "#1ccb96"
+      }
+    },
+    {
+      "name": "accent=slate (dark): accent foreground follows",
+      "ok": true,
+      "detail": {
+        "theme": "dark",
+        "row0_target": "#ffffff",
+        "row1_target_untranslated": "#ebebf5",
+        "row2_draft": "#ebebf5",
+        "row3_target": "#ffffff",
+        "row0_index_accent": "#90abc2",
+        "expect_text_primary": "#ffffff",
+        "expect_muted": "#ebebf5",
+        "expect_secondary": "#ebebf5",
+        "expect_accent": "#90abc2"
+      }
+    },
+    {
+      "name": "accent=blue (dark): accent foreground follows",
+      "ok": true,
+      "detail": {
+        "theme": "dark",
+        "row0_target": "#ffffff",
+        "row1_target_untranslated": "#ebebf5",
+        "row2_draft": "#ebebf5",
+        "row3_target": "#ffffff",
+        "row0_index_accent": "#82acff",
+        "expect_text_primary": "#ffffff",
+        "expect_muted": "#ebebf5",
+        "expect_secondary": "#ebebf5",
+        "expect_accent": "#82acff"
+      }
+    },
+    {
+      "name": "follow-system resolves to dark: rows use current-theme foregrounds",
+      "ok": true,
+      "detail": {
+        "theme": "dark",
+        "row0_target": "#ffffff",
+        "row1_target_untranslated": "#ebebf5",
+        "row2_draft": "#ebebf5",
+        "row3_target": "#ffffff",
+        "row0_index_accent": "#82acff",
+        "expect_text_primary": "#ffffff",
+        "expect_muted": "#ebebf5",
+        "expect_secondary": "#ebebf5",
+        "expect_accent": "#82acff"
+      }
+    },
+    {
+      "name": "real OS switch -> light: theme resolved",
+      "ok": true,
+      "detail": "light"
+    },
+    {
+      "name": "after real OS switch to light: rows use current-theme foregrounds",
+      "ok": true,
+      "detail": {
+        "theme": "light",
+        "row0_target": "#131c2e",
+        "row1_target_untranslated": "#7e8796",
+        "row2_draft": "#667085",
+        "row3_target": "#131c2e",
+        "row0_index_accent": "#2b5fd1",
+        "expect_text_primary": "#131c2e",
+        "expect_muted": "#7e8796",
+        "expect_secondary": "#667085",
+        "expect_accent": "#2b5fd1"
+      }
+    },
+    {
+      "name": "real OS switch back -> dark: theme resolved",
+      "ok": true,
+      "detail": "dark"
+    },
+    {
+      "name": "after real OS switch back to dark: rows use current-theme foregrounds",
+      "ok": true,
+      "detail": {
+        "theme": "dark",
+        "row0_target": "#ffffff",
+        "row1_target_untranslated": "#ebebf5",
+        "row2_draft": "#ebebf5",
+        "row3_target": "#ffffff",
+        "row0_index_accent": "#82acff",
+        "expect_text_primary": "#ffffff",
+        "expect_muted": "#ebebf5",
+        "expect_secondary": "#ebebf5",
+        "expect_accent": "#82acff"
+      }
+    },
+    {
+      "name": "unsaved edit still preserved after OS switches",
+      "ok": true,
+      "detail": "Translation 0 unsaved-native"
+    }
+  ],
+  "shots": [
+    {
+      "label": "native-light",
+      "path": "/private/tmp/m5-119/out-fixed/native-light.png"
+    },
+    {
+      "label": "native-dark-immediate-0",
+      "path": "/private/tmp/m5-119/out-fixed/native-dark-immediate-0.png"
+    },
+    {
+      "label": "native-light-immediate-1",
+      "path": "/private/tmp/m5-119/out-fixed/native-light-immediate-1.png"
+    },
+    {
+      "label": "native-dark-immediate-2",
+      "path": "/private/tmp/m5-119/out-fixed/native-dark-immediate-2.png"
+    },
+    {
+      "label": "native-followsystem-light",
+      "path": "/private/tmp/m5-119/out-fixed/native-followsystem-light.png"
+    },
+    {
+      "label": "native-followsystem-dark",
+      "path": "/private/tmp/m5-119/out-fixed/native-followsystem-dark.png"
+    }
+  ],
+  "ok": true
+}
