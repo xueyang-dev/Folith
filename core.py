@@ -67,6 +67,7 @@ from folith import finalization as _finalization
 from folith import rendered_qa as _rendered_qa
 from folith import project as _project
 from folith import translation_memory as _tm_scope
+from folith import retrospective as _retrospective
 from folith import translation_cache as _translation_cache
 from folith import knowledge_cache as _knowledge_cache_module
 from folith import usage as _usage
@@ -6468,11 +6469,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 else:
                     safe_batch_pairs.append({**pair, "source": "", "target": ""})
             _cf_sink.traversed(len(glossary) * len(safe_batch_pairs))
+            _batch_conflict_findings = []
             for cf in _detect_conflicts(safe_batch_pairs, glossary, sections=sections):
                 segment_id = offset + cf["segment_id"]
                 cf["segment_index"] = segment_id
                 cf["segment_id"] = segment_id
                 findings_all.append(cf)
+                _batch_conflict_findings.append(cf)
 
         # 记录仍未解决的确定性问题
         with _critical_path.phase("commit_findings_merge") as _merge_sink:
@@ -6683,6 +6686,17 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             "batch": bi, "offset": offset, "phase": "state_commit_done",
             "pairs_count": len(pairs),
         })
+        # #99: accumulate the terminology evidence this batch already produced
+        # and prepare suggestions for earlier segments.  Pure local work, no
+        # model call; it never writes pairs, review state or findings.
+        with _critical_path.phase("commit_retrospective_suggestions") as _retro_sink:
+            _retro_counts = _retrospective.observe_batch(
+                state, findings=_batch_conflict_findings,
+                pairs=state.get("pairs") or [], glossary=glossary, batch=bi)
+            _retro_sink.traversed(len(_batch_conflict_findings))
+            state["retrospective_stats"] = _retro_counts
+            if _retro_counts.get("evidence_added") or _retro_counts.get("suggestions_added"):
+                _flush_state_snapshot("retrospective_evidence")
         tm_entries = _checkpoint.batch_entries([
             pair for pair in batch_pairs
             if not pair.get("from_tm")
@@ -13197,3 +13211,93 @@ def run_job_pipeline(*args, **kwargs):
         _SCAN_STREAMS.reset(token)
         for stream in streams:
             stream.close()
+
+
+# ================= 回溯一致性建议（#99） =================
+#
+# 这一层只积累证据、准备建议，从不修改正文/审校/交付。建议的“采用”必须先
+# 物化为候选（既有候选事务），再由既有的显式采用入口写入译文——因此 worker
+# 锁、基线核对、审校失效与 truth 版本全部沿用同一套事务，没有平行真值。
+
+
+def retrospective_suggestions(job_id=None, state=None):
+    """只读投影：待确认的回溯一致性建议（不加载任务以外的任何东西）。"""
+    current = state if state is not None else (
+        load_job_state(job_id) if job_id else None)
+    return _retrospective.suggestion_view(current or {})
+
+
+def retrospective_status(state=None):
+    """任务卡投影：建议是否启用、待确认数量与证据数量。"""
+    current = state or {}
+    return {
+        "enabled": _retrospective.enabled(current),
+        "pending": len(_retrospective.pending_suggestions(current)),
+        "evidence": len(current.get("retrospective_evidence") or []),
+        "skipped": int((current.get("retrospective_stats") or {}).get("skipped") or 0),
+    }
+
+
+@_serialized_job_mutation
+def dismiss_retrospective_suggestion(job_id, suggestion_id, *, actor="user", reason=""):
+    """显式忽略一条建议；证据与已采用的译文原样保留（回滚不删数据）。"""
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    record = _retrospective.find_suggestion(state, suggestion_id)
+    if record is None:
+        raise ValueError("找不到回溯建议")
+    if str(record.get("status") or "") != _retrospective.STATUS_PENDING:
+        raise ValueError("这条回溯建议已经处理过")
+    record["status"] = _retrospective.STATUS_DISMISSED
+    record["resolved_at"] = _retrospective._now_iso()
+    record["resolved_by"] = str(actor)
+    record["dismiss_reason"] = str(reason)
+    save_job_state(job_id, state)
+    return {"suggestion": dict(record), "changed": True}
+
+
+@_serialized_job_mutation
+def materialize_retrospective_suggestion(job_id, suggestion_id, *, actor="user"):
+    """把一条建议物化为待采用候选；**不**写正文。
+
+    物化后仍要显式 ``adopt_translation_candidate`` 才会改变历史译文；段落在这
+    期间被编辑/重译时，既有候选基线检查会判为过期而不是写错。
+    """
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    record = _retrospective.find_suggestion(state, suggestion_id)
+    if record is None:
+        raise ValueError("找不到回溯建议")
+    if str(record.get("status") or "") != _retrospective.STATUS_PENDING:
+        raise ValueError("这条回溯建议已经处理过")
+    draft = _retrospective.build_candidate_draft(state, record)
+    if draft is None:
+        record["status"] = _retrospective.STATUS_STALE
+        record["resolved_at"] = _retrospective._now_iso()
+        record["resolved_by"] = str(actor)
+        save_job_state(job_id, state)
+        return {"suggestion": dict(record), "candidate": None, "changed": False,
+                "reason": "stale_or_protected"}
+    result = commit_candidates(job_id, [draft], actor=actor)
+    created = list(result.get("created") or [])
+    rejected = list(result.get("rejected") or [])
+    state = load_job_state(job_id) or {}
+    record = _retrospective.find_suggestion(state, suggestion_id)
+    if record is not None:
+        if created:
+            record["status"] = _retrospective.STATUS_CANDIDATE
+            record["candidate_id"] = str(created[0].get("candidate_id") or "")
+            record["materialized_at"] = _retrospective._now_iso()
+        elif rejected:
+            record["status"] = _retrospective.STATUS_STALE
+            record["resolved_at"] = _retrospective._now_iso()
+            record["resolved_by"] = str(actor)
+        save_job_state(job_id, state)
+    return {
+        "suggestion": dict(record or {}),
+        "candidate": created[0] if created else None,
+        "rejected": rejected,
+        "changed": False,
+    }
