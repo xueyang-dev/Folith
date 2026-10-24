@@ -645,6 +645,7 @@ class MainWindow(QMainWindow):
                              if preference == theme_module.FOLLOW_SYSTEM else False))
             views_module.set_current_theme(resolved)
             self.theme_preference = preference
+            self.workbench.refresh_appearance()
         finally:
             self._applying_theme = False
         return resolved

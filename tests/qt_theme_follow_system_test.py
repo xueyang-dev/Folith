@@ -199,3 +199,104 @@ def test_follow_system_does_not_restyle_repeatedly(client, monkeypatch):
     client["app"].processEvents()
     assert hints.set_calls == sets_before
     assert len(builds) == 5
+
+
+def _loaded_workbench(client, count=40):
+    """Keep polling out of appearance acceptance: colors must change immediately."""
+    import dataclasses
+    import core
+    from folith.qt import adapter
+
+    window = client["window"]
+    window.timer.stop()
+    state = core.new_job_state("appearance.txt")
+    state["paras"] = [f"Source paragraph {i}" for i in range(count)]
+    state["pairs"] = [{"source": text, "target": f"Translation {i}"}
+                      for i, text in enumerate(state["paras"])]
+    state["pairs"][1]["target"] = ""
+    state["pairs"][0]["human_edited"] = True
+    state["p1_done"] = state["p2_done"] = True
+    rows = adapter.segment_rows("appearance", state)
+    rows[2] = dataclasses.replace(rows[2], has_draft=True, draft_text="Draft target")
+    bench = window.workbench
+    bench.load("appearance", window.config, state, rows, [])
+    window.stack.setCurrentWidget(bench)
+    client["app"].processEvents()
+    return bench
+
+
+def _assert_workbench_colors(bench, expected):
+    from folith.qt import theme
+
+    tokens = theme.tokens(expected)
+    for row, token in ((0, "text-primary"), (1, "text-muted"),
+                       (2, "text-secondary"), (3, "text-primary")):
+        assert bench.segment_list.item(row, 2).foreground().color() == theme.qcolor(tokens[token])
+    assert bench.segment_list.item(0, 0).foreground().color() == theme.qcolor(tokens["accent"])
+
+
+@pytest.mark.parametrize("system", ["light", "dark"])
+def test_settings_recolor_loaded_rows_before_polling_without_touching_edits(client, system):
+    from PySide6.QtGui import QTextCursor
+    from folith.qt import theme
+
+    _choose(client["window"], "light")
+    bench = _loaded_workbench(client)
+    client["hints"].set_system(system)
+    bench.select_segment(30)
+    client["app"].processEvents()
+    edit = bench.target_edit
+    edit.moveCursor(QTextCursor.MoveOperation.End)
+    edit.insertPlainText(" unsaved")
+    cursor = edit.textCursor()
+    cursor.setPosition(1)
+    cursor.setPosition(4, QTextCursor.MoveMode.KeepAnchor)
+    edit.setTextCursor(cursor)
+    table = bench.segment_list
+    assert table.verticalScrollBar().value() > 0
+    before = (edit.toPlainText(), cursor.position(), cursor.anchor(),
+              edit.document().isUndoAvailable(), bench._dirty, bench._loaded_uid,
+              table.currentRow(), table.verticalScrollBar().value(),
+              table.horizontalScrollBar().value())
+    dialog = client["window"]._settings_window
+    for _ in range(2):
+        for mode, accent in itertools.product(("dark", "light", "system"),
+                                               ("blue", "green", "slate")):
+            dialog.theme_box.setCurrentIndex(dialog.theme_box.findData(mode))
+            dialog.accent_box.setCurrentIndex(dialog.accent_box.findData(accent))
+            dialog.flush_preferences()
+            # No event-loop pump, background poll or task reload may repair this.
+            expected = system if mode == "system" else mode
+            _assert_workbench_colors(bench, expected)
+            cursor = edit.textCursor()
+            assert (edit.toPlainText(), cursor.position(), cursor.anchor(),
+                    edit.document().isUndoAvailable(), bench._dirty, bench._loaded_uid,
+                    table.currentRow(), table.verticalScrollBar().value(),
+                    table.horizontalScrollBar().value()) == before
+    assert theme.accent() == "slate"
+    edit.undo()
+    assert edit.toPlainText() == "Translation 30"
+
+
+def test_follow_system_recolors_loaded_rows_on_live_scheme_change(client):
+    bench = _loaded_workbench(client)
+    _choose(client["window"], "system")
+    for expected in ("dark", "light", "dark"):
+        client["hints"].set_system(expected)
+        _assert_workbench_colors(bench, expected)
+
+
+def test_large_workbench_recolors_visible_rows_then_finishes_in_chunks(client):
+    import time
+    from folith.qt import theme
+
+    _choose(client["window"], "light")
+    bench = _loaded_workbench(client, count=360)
+    _choose(client["window"], "dark")
+    _assert_workbench_colors(bench, "dark")
+    deadline = time.monotonic() + 5
+    while bench._paint_timer.isActive() and time.monotonic() < deadline:
+        client["app"].processEvents()
+    assert not bench._paint_timer.isActive()
+    assert bench.segment_list.item(359, 2).foreground().color() == theme.qcolor(
+        theme.tokens("dark")["text-primary"])
