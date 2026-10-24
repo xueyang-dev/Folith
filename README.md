@@ -33,8 +33,6 @@
 
 https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
-<sub>备用：[下载 MP4](docs/media/folith-intro.mp4)</sub>
-
 从导入、准备、翻译、人工审校到交付，一分钟走完一本书的流程。视频里的界面画面用合成的公版示例书（《卡拉马佐夫兄弟》）从 Folith 客户端离屏截取，不含真实用户文件；标注「示意」的画面是动画说明。
 
 ---
