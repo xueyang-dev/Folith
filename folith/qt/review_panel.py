@@ -7,6 +7,10 @@
 "确认问题存在"与"确认已解决"是两件事：前者只记录人的判断，发现项保持待处理、
 仍挡住交付；后者才结束它。两个按钮不能合并成一个含混的动作。
 
+右栏详情里内嵌一份 ``PdfPanel``（与翻译页同一个部件）：选中的项变了，原页就跟着翻到
+那一段并高亮。人工判断"这段到底该不该改"时，原文的位置与它在整页里的上下文就在旁边，
+不用先跳到翻译页去看。没有 PDF 原文的任务不显示这一列。
+
 只做展示与发出信号：队列由 :func:`adapter.review_queue` 给出（复用
 ``folith.workbench_view``，不另写一套规则），真正写状态的是窗口层调用的适配器。
 """
@@ -21,6 +25,7 @@ from PySide6.QtWidgets import (
 from . import adapter
 from . import i18n
 from . import icons
+from . import pdf_panel as pdf_panel_module
 from . import style as style_module
 from .name_conflict import NameConflictWidget
 from .style import Card
@@ -67,6 +72,12 @@ class ReviewPanel(QWidget):
         self._filter = "actionable"
         self._user_filter = False       # 用户点过页签后，不再替他换回默认页签
         self._busy = False
+        # 内嵌原页：另一份 PdfPanel 实例（翻译页那份挂在它自己的分栏里，带不动）。
+        self._pdf_ok = False
+        self._pdf_closed = False
+        self._pdf_index = -1        # 最近定位过的段；不变就不重新渲染一页
+        self._pdf_stale = False     # 收起再打开：重新定位一次
+        self._state: dict = {}      # 任务状态：定位原文位置用（不每次重读）
 
         def button(text: str, icon_name: str, token: str = "text-secondary",
                    name: str = "") -> QPushButton:
@@ -186,25 +197,46 @@ class ReviewPanel(QWidget):
         self.conflict.previewRequested.connect(self.entityPreviewRequested.emit)
         self.conflict.repairRequested.connect(self.entityRepairRequested.emit)
         self.conflict.acceptRequested.connect(self.entityAcceptRequested.emit)
-        self.conflict.locateRequested.connect(self.editRequested.emit)
+        self.conflict.locateRequested.connect(self._locate_segment)
         self.conflict.setVisible(False)
+
+        # 原页：与翻译页同一个部件，收起后可用标题行里的「原页」再打开。
+        self.pdf = pdf_panel_module.PdfPanel()
+        self.pdf.setMinimumWidth(280)
+        self.pdf.closeRequested.connect(self._close_source)
+        self.pdf.setVisible(False)
+        self.source_button = button(i18n.tr('原页'), "eye")
+        self.source_button.setVisible(False)
+        self.source_button.clicked.connect(self._open_source)
 
         title_row = QHBoxLayout()
         title_row.addWidget(self.item_title, 1)
+        title_row.addWidget(self.source_button, 0, Qt.AlignmentFlag.AlignTop)
         title_row.addWidget(self.item_chip, 0, Qt.AlignmentFlag.AlignTop)
+
+        column = QVBoxLayout()
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(10)
+        column.addWidget(self.item_body, 1)
+        column.addWidget(self.conflict)
+        column.addWidget(self.source_confirm_box)
+        column.addWidget(self.source_note_edit)
+        column.addWidget(self.note_edit)
+        column.addLayout(action_row)
+        column.addWidget(self.hint)
+
+        # 详情卡：左边是问题与决定，右边是这一段在原文里的位置与上下文。
+        detail_row = QHBoxLayout()
+        detail_row.setSpacing(12)
+        detail_row.addLayout(column, 2)
+        detail_row.addWidget(self.pdf, 1)
 
         detail_card = Card()
         detail_layout = QVBoxLayout(detail_card)
         detail_layout.setContentsMargins(16, 14, 16, 14)
         detail_layout.setSpacing(10)
         detail_layout.addLayout(title_row)
-        detail_layout.addWidget(self.item_body, 1)
-        detail_layout.addWidget(self.conflict)
-        detail_layout.addWidget(self.source_confirm_box)
-        detail_layout.addWidget(self.source_note_edit)
-        detail_layout.addWidget(self.note_edit)
-        detail_layout.addLayout(action_row)
-        detail_layout.addWidget(self.hint)
+        detail_layout.addLayout(detail_row, 1)
 
         body = QHBoxLayout()
         body.setSpacing(12)
@@ -358,6 +390,7 @@ class ReviewPanel(QWidget):
                               suggestion=False, edit=False)
             self.hint.setText("")
             self.conflict.setVisible(False)
+            self._sync_source()
             return
         self.item_title.setText(self._item_title(item))
         self.item_chip.setText(i18n.tr_dynamic(str(item.get("severity_label") or "")))
@@ -386,6 +419,74 @@ class ReviewPanel(QWidget):
             self.conflict.set_entity(entity, busy=self._busy)
         self.conflict.setVisible(bool(entity))
         self._sync_buttons()
+        self._sync_source()
+
+    # ================= 原页 =================
+    def set_pdf_job(self, job_id: str, state: dict | None = None) -> None:
+        """PDF 任务才在右栏显示原页（``job_id`` 为空：没有原页可用）。
+
+        ``state`` 是任务状态：给了它，定位就不必每次都把整份状态再读一遍
+        （翻译页那一份原页也是这么做的）。
+        """
+        self._pdf_ok = bool(job_id)
+        self._pdf_closed = False
+        self._pdf_index = -1
+        self._pdf_stale = False
+        self._state = dict(state or {})
+        self.pdf.load(job_id)
+        self._sync_source()
+
+    def set_source_state(self, state: dict) -> None:
+        """任务状态换了（又跑了一轮翻译/审校）：定位按新的原文来。"""
+        self._state = dict(state or {})
+
+    def _segment_for_source(self) -> int:
+        """选中项对应的段：普通发现项取自己的段，译名项取第一次出现。"""
+        item = self.selected_item()
+        index = item.get("segment_index")
+        if isinstance(index, int):
+            return index
+        indexes = [int(value) for value in item.get("segment_indexes") or []
+                   if isinstance(value, int)]
+        return indexes[0] if indexes else -1
+
+    def _sync_source(self, index: int | None = None) -> None:
+        """让内嵌原页跟着选中项：翻到那一段并高亮；段号没变就不重渲染。
+
+        给了 ``index``（段号链接）就按它定位，不再看选中项是第几段。
+        """
+        forced = index is not None
+        if index is None:
+            index = self._segment_for_source()
+        has = self._pdf_ok and index >= 0
+        self.source_button.setVisible(has)
+        self.pdf.setVisible(has and not self._pdf_closed)
+        if not has or self._pdf_closed:
+            self._pdf_index = -1
+            return
+        if not forced and index == self._pdf_index and not self._pdf_stale:
+            return
+        self._pdf_index = index
+        self._pdf_stale = False
+        self.pdf.locate(index, state=self._state or None)
+
+    def _open_source(self) -> None:
+        """「原页」按钮：把收起的原页重新打开，并回到当前选中项。"""
+        self._pdf_closed = False
+        self._pdf_index = -1
+        self._sync_source()
+
+    def _close_source(self) -> None:
+        self._pdf_closed = True
+        self._sync_source()
+
+    def _locate_segment(self, index: int) -> None:
+        """段号链接：有原页就在原页里定位；没有原页才退回"跳过去改译文"。"""
+        if not self._pdf_ok:
+            self.editRequested.emit(int(index))
+            return
+        self._pdf_closed = False
+        self._sync_source(int(index))
 
     def _set_actions(self, *, source: bool, task: bool, decision: bool,
                      suggestion: bool, edit: bool) -> None:
