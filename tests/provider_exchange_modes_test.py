@@ -374,6 +374,11 @@ def test_mode_semantics():
     try:
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
             prompts.append(system_prompt)
+            if "文档画像" in system_prompt:
+                # 画像要的是对象而不是译文列表；此前这个 mock 对画像也回译文列表，
+                # 画像一直失败，只是旧代码把失败也标成 profile_done=True 才没露馅（#49）。
+                return json.dumps({"domain": "翻译学", "genre": "学术论述",
+                                   "confidence": 0.9, "sections": []})
             return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
 
         core.call_llm = llm

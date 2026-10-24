@@ -1939,8 +1939,10 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
                        ((state.get("extraction_report") or {}).get("warnings") or [])]
     understanding = dict(understanding, reason=_warning_reason(
         [item for item in report_warnings if _UNDERSTANDING_WARNING.search(item)]))
-    profile_warnings = [item for item in report_warnings if _PROFILE_WARNING.search(item)
-                        and "失败" in item]
+    # 画像在提取报告落盘之后才跑，它的警告记在 state 上：两处都要看（#49）。
+    profile_warnings = [item for item in (report_warnings + [
+        str(item) for item in state.get("profile_warnings") or []])
+        if _PROFILE_WARNING.search(item) and "失败" in item]
     profile_view = {
         # 画像生成失败、用户也还没补上领域：翻译与审校少了"这是一份什么文档"的依据。
         "missing": facts["profile_missing"],

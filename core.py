@@ -12745,7 +12745,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             call_llm=auxiliary_call,
             cancel_check=lambda: _runtime_cancel_requested(job_id))
         state["document_profile"] = profile
-        state["profile_done"] = True
+        # 失败不把这一步标成"已完成"：连接/额度修好之后，用户重跑任务时这一步必须
+        # 还有机会补上。此前失败也写 True，画像就永久停在"已跳过"（#49）。
+        state["profile_done"] = bool(profile)
         state["profile_warnings"] = list(profile_warnings)
         for w in profile_warnings:
             if w not in warnings:
