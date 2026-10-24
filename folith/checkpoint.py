@@ -11,6 +11,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from . import critical_path as _critical_path
 from . import translation_target
 from .textual import has_textual_content
+from .translation_memory import (
+    TM_CONTEXT_NEXT, TM_CONTEXT_PREV, tm_context_fields,
+)
 
 
 EVENTS_FILE = "events.jsonl"
@@ -219,7 +222,8 @@ def _state_entries(
     state: Dict[str, Any], scope: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     entries = {}
-    for pair in state.get("pairs") or []:
+    pairs = state.get("pairs") or []
+    for index, pair in enumerate(pairs):
         if not pair.get("reviewed") or pair.get("stale_due_to_glossary"):
             continue
         source, target = pair.get("source"), pair.get("target")
@@ -232,6 +236,14 @@ def _state_entries(
             key, entry = scoped
         else:
             key, entry = str(source), {"target": str(target), "reviewed": True}
+        # #107：用相邻段落的原文重建上下文指纹（恢复后仍能区分"同句同处"
+        # 与"同句异处"）。没有邻居的一侧留空。
+        previous_source = (pairs[index - 1].get("source")
+                           if index > 0 and isinstance(pairs[index - 1], dict) else None)
+        next_source = (pairs[index + 1].get("source")
+                       if index + 1 < len(pairs) and isinstance(pairs[index + 1], dict)
+                       else None)
+        entry = {**entry, **tm_context_fields(previous_source, next_source)}
         entries[key] = entry
     return entries
 
@@ -271,6 +283,11 @@ def reconcile_translation_memory(
                 key, entry = scoped
             else:
                 key, entry = str(source), {"target": str(target), "reviewed": True}
+            # 事件里的条目可能带上下文指纹（新写入路径）；旧事件没有，保持
+            # "语境未知"的兼容行为。
+            for field in (TM_CONTEXT_PREV, TM_CONTEXT_NEXT):
+                if item.get(field):
+                    entry[field] = str(item[field])
             desired[key] = entry
             if initial_tm.get(key) != entry:
                 recovered_sources.add(key)

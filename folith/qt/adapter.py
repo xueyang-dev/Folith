@@ -31,6 +31,7 @@ from folith.desktop import file_actions
 from folith.desktop import legacy_import
 from folith.desktop import paths as desktop_paths
 from folith import translation_evidence
+from folith import retrospective as _retrospective
 from folith import source_languages as _source_languages
 # Architecture Phase 1/3: the shared, frontend-neutral application layer.  Qt only
 # translates `EngineConfig` into it and adapts desktop-specific values back out.
@@ -2045,10 +2046,16 @@ def run_facts(state: dict) -> dict:
     reuse = {
         "tm_used": as_int(state.get("tm_used_count")),
         "tm_recovered": as_int(state.get("tm_recovered_count")),
+        "tm_conflicts": as_int(state.get("tm_conflict_count")),
+        "tm_legacy_unused": as_int(state.get("tm_legacy_unused")),
+        "tm_status": str(state.get("tm_status") or ""),
         "cache_hits": as_int(cache.get("hits")),
         "cache_misses": as_int(cache.get("misses")),
     }
-    reuse["available"] = bool(reuse["tm_used"] or reuse["tm_recovered"] or reuse["cache_hits"])
+    reuse["available"] = bool(
+        reuse["tm_used"] or reuse["tm_recovered"] or reuse["tm_conflicts"]
+        or reuse["tm_legacy_unused"] or reuse["tm_status"] == "disabled"
+        or reuse["tm_status"] == "no_target_language" or reuse["cache_hits"])
 
     synopsis = state.get("document_synopsis") if isinstance(state.get("document_synopsis"), dict) else {}
     digests = [item for item in state.get("section_digests") or [] if isinstance(item, dict)]
@@ -2090,8 +2097,14 @@ def run_facts(state: dict) -> dict:
         failures.append({"batch": as_int(item.get("batch")) + 1, "start": offset,
                          "end": offset + count - 1, "count": count,
                          "reason": str(item.get("reason") or "")[:300]})
+    retrospective = {
+        "enabled": _retrospective.enabled(state),
+        "pending": len(_retrospective.pending_suggestions(state)),
+        "evidence": len(state.get("retrospective_evidence") or []),
+    }
     return {"usage": usage, "reuse": reuse, "understanding": understanding,
-            "failures": failures, "failures_recovered": recovered}
+            "failures": failures, "failures_recovered": recovered,
+            "retrospective": retrospective}
 
 
 def extraction_report_view(state: dict) -> dict:

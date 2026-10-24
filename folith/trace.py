@@ -566,13 +566,20 @@ class RunContext:
         self.segment_durations: List[float] = []
         self.batch_records: List[Dict[str, Any]] = []
 
-        # Cache & TM stats
+        # Cache & TM stats.  #108: "the TM never ran" is not a miss, and a
+        # context-rejected hit is not a hit.  Each reason has its own counter so
+        # the run record can say what actually happened.
         self.tm_stats = {
             "lookups": 0,
             "exact_hits": 0,
             "normalized_hits": 0,
+            "context_conflicts": 0,
+            "legacy_unscoped": 0,
             "misses": 0,
             "durations_ms": [],
+            # Run-level states: recorded once, not once per segment.
+            "disabled": 0,
+            "no_target_language": 0,
         }
         self.terminology_stats = {
             "lookups": 0,
@@ -859,11 +866,19 @@ class RunContext:
 
     def record_tm_lookup(self, hit_type: str, duration_ms: float = 0.0) -> None:
         with self._lock:
+            if hit_type in {"disabled", "no_target_language"}:
+                # Run-level facts, not per-segment lookups: the loop never ran.
+                self.tm_stats[hit_type] += 1
+                return
             self.tm_stats["lookups"] += 1
             if hit_type == "exact":
                 self.tm_stats["exact_hits"] += 1
             elif hit_type in {"normalized", "fuzzy"}:
                 self.tm_stats["normalized_hits"] += 1
+            elif hit_type == "context_conflict":
+                self.tm_stats["context_conflicts"] += 1
+            elif hit_type == "legacy_unscoped":
+                self.tm_stats["legacy_unscoped"] += 1
             else:
                 self.tm_stats["misses"] += 1
             if duration_ms > 0:
@@ -1172,8 +1187,15 @@ class RunContext:
                 "tm_lookups": tm_lookups,
                 "tm_exact_hits": self.tm_stats["exact_hits"],
                 "tm_normalized_hits": self.tm_stats["normalized_hits"],
+                "tm_context_conflicts": self.tm_stats["context_conflicts"],
+                "tm_legacy_unscoped": self.tm_stats["legacy_unscoped"],
                 "tm_misses": self.tm_stats["misses"],
                 "tm_hit_ratio": tm_hit_ratio,
+                # Run-level states. ``tm_disabled`` is the explicit answer to
+                # "was the TM off?" -- zero lookups alone cannot distinguish it
+                # from a book that simply had no reusable segment.
+                "tm_disabled": self.tm_stats["disabled"] > 0,
+                "tm_no_target_language": self.tm_stats["no_target_language"] > 0,
                 "terminology_lookups": self.terminology_stats["lookups"],
                 "terminology_matches": self.terminology_stats["matches"],
                 "caches": self.caches,
@@ -1214,6 +1236,9 @@ class RunContext:
         stages = summary.get("stages", {})
         m = summary.get("model_metrics", {})
         tm = summary.get("tm_and_cache", {})
+        tm_state = ("disabled" if tm.get("tm_disabled")
+                    else "no target language" if tm.get("tm_no_target_language")
+                    else "active")
         r = summary.get("resources", {})
         lp = summary.get("latency_percentiles", {})
         err = summary.get("errors_and_retries", {})
@@ -1334,7 +1359,8 @@ class RunContext:
 - **Latency**: Avg {m.get('avg_call_latency_s', 0.0)} s | P50 {lp.get('model_call_seconds', {}).get('p50', 0.0)} s | P95 {lp.get('model_call_seconds', {}).get('p95', 0.0)} s | Max {lp.get('model_call_seconds', {}).get('max', 0.0)} s
 
 ## TM / Terminology / Cache
-- **TM Lookups**: {tm.get('tm_lookups', 0)} (Exact: {tm.get('tm_exact_hits', 0)}, Normalized: {tm.get('tm_normalized_hits', 0)}, Miss: {tm.get('tm_misses', 0)})
+- **TM Lookups**: {tm.get('tm_lookups', 0)} (Exact: {tm.get('tm_exact_hits', 0)}, Normalized: {tm.get('tm_normalized_hits', 0)}, Context conflict: {tm.get('tm_context_conflicts', 0)}, Legacy unscoped: {tm.get('tm_legacy_unscoped', 0)}, Miss: {tm.get('tm_misses', 0)})
+- **TM Run State**: {tm_state}
 - **TM Hit Rate**: **{tm.get('tm_hit_ratio', 0.0) * 100:.1f}%**
 - **Terminology**: {tm.get('terminology_lookups', 0)} lookups, {tm.get('terminology_matches', 0)} matches
 

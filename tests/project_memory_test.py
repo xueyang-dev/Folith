@@ -808,11 +808,11 @@ def test_tm_lookup_prefers_exact_and_reports_normalized_hits():
         target_lang="简体中文")
     assert kind == "normalized" and hit["target"] == "林冠郁闭指数被重新计算。"
 
-    # 语义不同不得命中
+    # 语义不同不得命中；原因必须明确是"没有这条记忆"，而不是含混的空串
     hit, kind = core.tm_lookup(
         tm, "The canopy closure index was recomputed twice.", index,
         target_lang="简体中文")
-    assert hit is None and kind == ""
+    assert hit is None and kind == "miss"
 
 
 def test_tm_lookup_requires_a_target_language():
@@ -820,8 +820,9 @@ def test_tm_lookup_requires_a_target_language():
     tm = {}
     core.tm_put(tm, "The canopy closure index was recomputed.",
                 "林冠郁闭指数被重新计算。", "简体中文")
+    # #108：原因要能区分"没有目标语言"与"确实没有记忆"。
     assert core.tm_lookup(tm, "The canopy closure index was recomputed.") == \
-        (None, "")
+        (None, "no_target_language")
     assert core.tm_index(tm) == {}
 
 
@@ -847,10 +848,12 @@ def test_tm_reuse_requires_the_same_target_language():
         assert hit is not None and kind == "exact"
         assert hit["target"] == "会议明天开始。"
 
-        # 2) 同项目 + 同原文 + 不同目标语言 -> 不命中
+        # 2) 同项目 + 同原文 + 不同目标语言 -> 不命中（原因：只有别的
+        # 目标语言下的条目，不是"没有记忆"，也绝不能复用）。
         hit, kind = core.tm_lookup(
             tm, source, core.tm_index(tm, "Français"), target_lang="Français")
-        assert hit is None and kind == "", "不得把中文译文复用到法语任务"
+        assert hit is None and kind in {"miss", "legacy_unscoped"}, \
+            "不得把中文译文复用到法语任务"
 
         # 两种目标语言可以并存，互不覆盖
         _seed_tm({source: "La réunion commence demain."}, project["project_id"],
@@ -875,7 +878,11 @@ def test_legacy_tm_without_language_never_auto_matches():
 
         for lang in ("简体中文", "Français", "English", "", None):
             hit, kind = core.tm_lookup(tm, source, target_lang=lang)
-            assert hit is None and kind == "", f"旧条目不得命中：{lang!r}"
+            assert hit is None, f"旧条目不得命中：{lang!r}"
+            # #108：语言未知的旧条目被保留但不参与复用；原因要说清楚，
+            # 不能和"这篇文档真的没有记忆"混为一谈。
+            expected = ("no_target_language" if not lang else "legacy_unscoped")
+            assert kind == expected, f"旧条目原因：{lang!r} -> {kind!r}"
 
 
 def test_legacy_tm_cannot_create_a_cross_language_pipeline_hit():

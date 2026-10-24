@@ -10,6 +10,7 @@ from folith import project as _project
 from folith import translation_target as _translation_target
 from folith.textual import has_textual_content
 from folith.textual import normalize_language
+from folith.translation_memory import tm_context_status
 from folith.engine._link import core as _c
 
 
