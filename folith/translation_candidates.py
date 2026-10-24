@@ -82,6 +82,7 @@ CONFLICT_REVIEW_CHANGED = "review_state_changed"
 CONFLICT_EXCLUDED = "segment_excluded"
 CONFLICT_SOURCE_UNCONFIRMED = "source_unconfirmed"
 CONFLICT_NOT_PENDING = "not_pending"
+CONFLICT_PROTECTED_HUMAN = "protected_human_target"
 
 CONFLICT_REASONS = {
     CONFLICT_SEGMENT_MISSING: "这一段已经不在任务里（可能被删除或排除）。",
@@ -92,7 +93,27 @@ CONFLICT_REASONS = {
     CONFLICT_EXCLUDED: "这一段已被排除，不会进入译文与交付。",
     CONFLICT_SOURCE_UNCONFIRMED: "这一段的原文尚未核对，不能写入译文。",
     CONFLICT_NOT_PENDING: "候选已经不是待采用状态。",
+    CONFLICT_PROTECTED_HUMAN: "这一段是人工改写或人工确认过的译文：批量采用不会覆盖它，"
+                               "需要在段落里单独采用。",
 }
+
+#: What the current text *is*, as far as the human work on it goes.  A candidate
+#: does not become unadoptable because the segment is protected -- the user may
+#: still choose it for that one segment -- but a batch must not sweep those
+#: segments away, and the workbench has to say what adopting one would undo.
+PROTECTION_HUMAN_ACCEPTED = "human_accepted"
+PROTECTION_HUMAN_EDIT = "human_edit"
+PROTECTION_REVIEWED = "reviewed"
+
+PROTECTION_LABELS = {
+    PROTECTION_HUMAN_ACCEPTED: "人工确认过的译文",
+    PROTECTION_HUMAN_EDIT: "人工改写的译文",
+    PROTECTION_REVIEWED: "已审校的译文",
+}
+
+#: Protection levels a batch refuses to overwrite unless the user asks for it.
+#: "Reviewed" is not in here: review is reproducible, the two human ones are not.
+PROTECTION_LOCKED = (PROTECTION_HUMAN_ACCEPTED, PROTECTION_HUMAN_EDIT)
 
 #: The pair fields a candidate is generated from.  Any change to one of them
 #: between generation and adoption makes the candidate stale.  These are the
@@ -341,6 +362,31 @@ def resolve_segment_index(state: Mapping[str, Any], record: Mapping[str, Any]) -
     return index
 
 
+def protection_of(pair: Mapping[str, Any] | None) -> List[str]:
+    """What human work the current text carries, in a stable order.
+
+    Read from the fields the existing write paths already maintain -- a
+    candidate shows this so "adopt" cannot quietly undo an acceptance the user
+    made earlier, and a batch can refuse to sweep those segments away.
+    """
+    if not isinstance(pair, Mapping):
+        return []
+    marks: List[str] = []
+    if pair.get("human_accepted") or pair.get("accepted_target") \
+            or pair.get("accepted_by_human"):
+        marks.append(PROTECTION_HUMAN_ACCEPTED)
+    if pair.get("human_edited") or str(pair.get("target_provenance") or "") == "human_edit":
+        marks.append(PROTECTION_HUMAN_EDIT)
+    if pair.get("reviewed") or str(pair.get("review_status") or "") == "reviewed":
+        marks.append(PROTECTION_REVIEWED)
+    return marks
+
+
+def locked_protection(pair: Mapping[str, Any] | None) -> List[str]:
+    """The protection levels a batch must not overwrite without an explicit ask."""
+    return [mark for mark in protection_of(pair) if mark in PROTECTION_LOCKED]
+
+
 def preview_diff(before: str, after: str, *, limit: int = _DIFF_LIMIT) -> Dict[str, Any]:
     """Character-level comparison of the current text and the candidate.
 
@@ -383,6 +429,7 @@ def public_view(record: Mapping[str, Any], *, pair: Mapping[str, Any] | None = N
     current_target = str((pair or {}).get("target") or baseline.get("target") or "")
     status = str(record.get("status") or STATUS_PENDING)
     conflict = baseline_conflict(record, pair) if status == STATUS_PENDING else None
+    marks = protection_of(pair)
     return {
         "candidate_id": str(record.get("candidate_id") or ""),
         "segment_uid": str(record.get("segment_uid") or ""),
@@ -403,7 +450,15 @@ def public_view(record: Mapping[str, Any], *, pair: Mapping[str, Any] | None = N
         "adoptable": status == STATUS_PENDING and conflict is None,
         "conflict": conflict,
         "conflict_reason": CONFLICT_REASONS.get(conflict or "", ""),
+        # Protection is not a conflict: the candidate can still be adopted for
+        # this one segment.  It tells the UI what that adoption would undo.
+        "protection": marks,
+        "protection_labels": [PROTECTION_LABELS.get(mark, mark) for mark in marks],
+        "protected": any(mark in PROTECTION_LOCKED for mark in marks),
         "checks": dict(record.get("checks") or {}),
+        # Which finding the suggestion answers, so "adopt" and "resolve" can be
+        # connected later without guessing from the segment index.
+        "finding_ids": [str(value) for value in record.get("finding_ids") or []],
         "diff": preview_diff(current_target, str(record.get("candidate_target") or "")),
         "resolved_at": record.get("resolved_at"),
         "note": str(record.get("note") or ""),
@@ -465,6 +520,7 @@ __all__ = [
     "CANDIDATE_SEQ_KEY",
     "CONFLICT_EXCLUDED",
     "CONFLICT_NOT_PENDING",
+    "CONFLICT_PROTECTED_HUMAN",
     "CONFLICT_REASONS",
     "CONFLICT_REVIEW_CHANGED",
     "CONFLICT_SEGMENT_MISSING",
@@ -477,6 +533,11 @@ __all__ = [
     "ORIGIN_LABELS",
     "ORIGIN_REVIEW",
     "ORIGIN_TARGETED",
+    "PROTECTION_HUMAN_ACCEPTED",
+    "PROTECTION_HUMAN_EDIT",
+    "PROTECTION_LABELS",
+    "PROTECTION_LOCKED",
+    "PROTECTION_REVIEWED",
     "STATUS_ADOPTED",
     "STATUS_DISCARDED",
     "STATUS_FAILED",
@@ -488,6 +549,7 @@ __all__ = [
     "by_id",
     "candidate_records",
     "copy_record",
+    "locked_protection",
     "make_record",
     "merge_usage",
     "next_candidate_id",
@@ -495,6 +557,7 @@ __all__ = [
     "pair_signature",
     "pending_records",
     "preview_diff",
+    "protection_of",
     "public_view",
     "records_for_uid",
     "resolve_segment_index",

@@ -1420,9 +1420,10 @@ class WordCountDialog(QDialog):
 
 
 class FindReplaceDialog(QDialog):
-    """查找替换（只改译文）：先看命中了哪些段、改成什么样，再全部替换。
+    """查找替换（只改译文）：先看命中了哪些段、改成什么样，再整批替换。
 
-    每段替换都走人工提交：记为人工修改，需要重新审校；原文不动。
+    替换走候选契约：每段先暂存候选，再由同一个采用事务写入。人工改写或人工确认过
+    的段落默认跳过——批量操作不该覆盖已经完成的人工作业；要改就在段落里单独采用。
     """
 
     def __init__(self, state: dict, parent: QWidget | None = None) -> None:
@@ -1438,8 +1439,10 @@ class FindReplaceDialog(QDialog):
         self.replace_edit = QLineEdit()
         self.replace_edit.setPlaceholderText(i18n.tr('替换为'))
         self.case_box = QCheckBox(i18n.tr('区分大小写'))
+        self.protect_box = QCheckBox(i18n.tr('同时替换人工改写/人工确认过的段落（默认跳过）'))
         self.summary = QLabel("")
         self.summary.setObjectName("hint")
+        self.summary.setWordWrap(True)
         self.preview = QListWidget()
         for widget in (self.find_edit, self.replace_edit):
             widget.textChanged.connect(self._refresh)
@@ -1461,6 +1464,7 @@ class FindReplaceDialog(QDialog):
         layout.addWidget(hint)
         layout.addLayout(form)
         layout.addWidget(self.case_box)
+        layout.addWidget(self.protect_box)
         layout.addWidget(self.summary)
         layout.addWidget(self.preview, 1)
         layout.addWidget(buttons)
@@ -1472,20 +1476,36 @@ class FindReplaceDialog(QDialog):
             case_sensitive=self.case_box.isChecked())
 
     def _refresh(self, *_args) -> None:
+        from folith import translation_candidates as _candidates
+
         matches = self.matches()
+        pairs = self._state.get("pairs") or []
         self.preview.clear()
+        protected = 0
         for item in matches[:200]:
+            pair = pairs[item["index"]] if item["index"] < len(pairs) else {}
+            locked = _candidates.locked_protection(pair)
+            if locked:
+                protected += 1
+            marks = ("  · " + "、".join(_candidates.PROTECTION_LABELS.get(mark, mark)
+                                       for mark in locked)) if locked else ""
             self.preview.addItem(QListWidgetItem(
-                f"#{item['index'] + 1}  {item['before']}\n   → {item['after']}"))
+                f"#{item['index'] + 1}{marks}  {item['before']}\n   → {item['after']}"))
         total = sum(item["count"] for item in matches)
-        self.summary.setText(
-            i18n.tr('{v0} 段、{v1} 处命中', v0=len(matches), v1=total) if matches
-            else (i18n.tr('没有命中') if self.find_edit.text() else ""))
+        if matches:
+            summary = i18n.tr('{v0} 段、{v1} 处命中', v0=len(matches), v1=total)
+            if protected:
+                summary += "  ·  " + i18n.tr('其中 {v0} 段是人工处理的译文，默认跳过',
+                                             v0=protected)
+        else:
+            summary = i18n.tr('没有命中') if self.find_edit.text() else ""
+        self.summary.setText(summary)
         self.ok_button.setEnabled(bool(matches))
 
     def values(self) -> dict:
         return {"query": self.find_edit.text(), "replacement": self.replace_edit.text(),
-                "case_sensitive": self.case_box.isChecked()}
+                "case_sensitive": self.case_box.isChecked(),
+                "include_protected": self.protect_box.isChecked()}
 
 
 class DocumentProfileDialog(QDialog):

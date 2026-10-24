@@ -5,7 +5,7 @@
 * 队列来自 ``folith.workbench_view``（与旧界面同一份投影，不另写规则）；
 * "确认已解决"/"保留当前译文"走核心的人工决定路径，发现项随之消失、门禁放行，
   并留下人工记录；
-* "应用建议译文"写入译文并解决发现项；
+* "暂存为候选"只生成候选（正文与发现项都不动），采用走同一套版本校验；
 * 面板按钮的显示规则：不需要人工决定的纯建议不给"确认已解决"，来源质量项只给
   "确认原文并重新翻译"，且必须勾选并写依据才可点。
 """
@@ -132,14 +132,27 @@ def test_unknown_action_and_missing_identity_are_refused(job):
         adapter.resolve_findings(job, [""], adapter.RESOLVE_CONFIRMED)
 
 
-def test_applying_a_suggestion_writes_the_translation_and_resolves_the_finding(job):
+def test_staging_a_suggestion_leaves_the_translation_and_the_finding_alone(job):
+    """审校建议先落候选：正文不动、发现项不关；采用是另一个显式动作。"""
     item = next(i for i in adapter.review_queue(job)["queue_items"]
                 if i.get("suggested_target"))
     result = adapter.apply_suggested_translation(job, item, "采用建议")
     state = adapter.load_state(job)
-    assert state["pairs"][1]["target"] == "第二段（建议）"
     assert result["index"] == 1
-    assert item["finding_id"] not in _open_ids(job)
+    assert state["pairs"][1]["target"] == "第二", "生成候选不能改正文"
+    assert item["finding_id"] in _open_ids(job), "暂存建议不等于解决问题"
+    created = result["created"]
+    assert created and created[0]["origin"] == "review_suggestion"
+    assert created[0]["status"] == "pending"
+    assert created[0]["candidate_target"] == "第二段（建议）"
+
+    adopted = adapter.adopt_candidate(job, created[0]["candidate_id"])
+    assert adopted["committed"] and adopted["changed_text"]
+    state = adapter.load_state(job)
+    assert state["pairs"][1]["target"] == "第二段（建议）"
+    assert state["pairs"][1]["target_provenance"] == "candidate_adopted"
+    # 决定与文本变更分离：采用建议不替人把发现项标成已解决。
+    assert item["finding_id"] in _open_ids(job)
 
 
 def test_applying_without_a_suggestion_is_refused(job):

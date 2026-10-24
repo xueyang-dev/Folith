@@ -138,7 +138,9 @@ class ReviewPanel(QWidget):
         self.confirm_source_button.clicked.connect(self._emit_confirm_source)
 
         self.apply_button = button(
-            i18n.tr('应用建议译文'), "sparkles", "text-on-accent", "primary")
+            i18n.tr('暂存为候选'), "sparkles", "text-on-accent", "primary")
+        self.apply_button.setToolTip(
+            i18n.tr('把建议译文暂存为候选并显示差异；采用后才会写入译文'))
         self.apply_button.clicked.connect(self._emit_apply)
         self.open_button = button(i18n.tr('确认问题存在'), "alert")
         self.open_button.setToolTip(

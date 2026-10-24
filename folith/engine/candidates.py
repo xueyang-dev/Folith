@@ -188,21 +188,15 @@ def _conflict_reason(code: str, record: Mapping[str, Any]) -> str:
     return reason
 
 
-@_serialized_job_mutation
-def adopt_translation_candidate(job_id: str, candidate_id: str, *,
-                                actor: str = "user", note: str = "") -> Dict[str, Any]:
-    """Adopt one candidate as the working translation, or explain why not.
+def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
+               actor: str, note: str, allow_protected: bool) -> tuple[Dict[str, Any], bool]:
+    """Adopt one candidate against ``state``; return ``(result, state_changed)``.
 
-    The whole decision runs under the task's state lock, against freshly loaded
-    state: the segment is resolved by uid, the baseline is re-checked, the
-    existing source-quality gate is honoured, and the text change, the candidate
-    status and the audit record are saved in the same snapshot.
-
-    Adoption is idempotent.  Re-adopting an adopted candidate returns its
-    original result and does not write the text again, does not bump the
-    translation-truth version and does not append a second change record.
+    Callers own the lock and the save.  Splitting this out is what lets a batch
+    adopt several candidates in **one** snapshot write instead of one write per
+    segment: a crash between two writes would otherwise leave half a batch
+    adopted with no record of the intent.
     """
-    state = _loaded(job_id)
     record = _cand.by_id(state, candidate_id)
     if record is None:
         raise ValueError(f"找不到候选 {candidate_id}")
@@ -210,12 +204,12 @@ def adopt_translation_candidate(job_id: str, candidate_id: str, *,
     status = str(record.get("status") or "")
     if status == _cand.STATUS_ADOPTED:
         return {"committed": True, "already_adopted": True, "candidate": view,
-                "state": state, "conflict": None, "reason": ""}
+                "conflict": None, "reason": ""}, False
     if status != _cand.STATUS_PENDING:
         code = _cand.CONFLICT_NOT_PENDING
         return {"committed": False, "already_adopted": False, "candidate": view,
-                "state": state, "conflict": code,
-                "reason": _conflict_reason(code, record)}
+                "conflict": code,
+                "reason": _conflict_reason(code, record)}, False
 
     index = _cand.resolve_segment_index(state, record)
     pairs = state.get("pairs") or []
@@ -236,11 +230,21 @@ def adopt_translation_candidate(job_id: str, candidate_id: str, *,
         record["resolved_at"] = _cand.now_iso()
         record["conflict"] = conflict
         record["note"] = _cand.CONFLICT_REASONS.get(conflict, "候选已过期")
-        _c.save_job_state(job_id, state)
         return {"committed": False, "already_adopted": False,
-                "candidate": _cand.public_view(record, pair=pair), "state": state,
+                "candidate": _cand.public_view(record, pair=pair),
                 "conflict": conflict,
-                "reason": _cand.CONFLICT_REASONS.get(conflict, "候选已过期")}
+                "reason": _cand.CONFLICT_REASONS.get(conflict, "候选已过期")}, True
+
+    # Protection is checked against the state *now*, not against the baseline:
+    # a candidate generated before the human confirmed the text must not
+    # overwrite that confirmation through a batch.
+    locked = _cand.locked_protection(pair)
+    if locked and not allow_protected:
+        return {"committed": False, "already_adopted": False,
+                "candidate": _cand.public_view(record, pair=pair),
+                "conflict": _cand.CONFLICT_PROTECTED_HUMAN,
+                "reason": _cand.CONFLICT_REASONS[_cand.CONFLICT_PROTECTED_HUMAN],
+                "protection": list(locked)}, False
 
     candidate_target = str(record.get("candidate_target") or "")
     current_target = str(pair.get("target") or "")
@@ -264,18 +268,25 @@ def adopt_translation_candidate(job_id: str, candidate_id: str, *,
         _delivery.add_human_action(
             state, f"candidate:{record.get('candidate_id')}", "candidate_adopted_unchanged",
             record["note"], actor)
-        _c.save_job_state(job_id, state)
         return {"committed": True, "already_adopted": False, "changed_text": False,
-                "candidate": _cand.public_view(record, pair=pair), "state": state,
-                "conflict": None, "reason": ""}
+                "candidate": _cand.public_view(record, pair=pair),
+                "conflict": None, "reason": ""}, True
 
+    if locked:
+        # Recorded on the candidate, not implied: adopting a suggestion over an
+        # accepted translation is a deliberate override, and the decision log
+        # has to say so.
+        record["overrode_protection"] = list(locked)
+        record["overrode_note"] = "采用候选覆盖了" + "、".join(
+            _cand.PROTECTION_LABELS.get(mark, mark) for mark in locked)
+
+    pair.pop("_translation_edit_restore", None)
     pair["target"] = candidate_target
     # Provenance says what this text is: model output a human chose.  Calling it
     # a human edit would relabel model text as hand-written work.
     pair["target_provenance"] = "candidate_adopted"
     pair["adopted_candidate_id"] = str(record.get("candidate_id") or "")
     pair["human_edited"] = False
-    pair.pop("_translation_edit_restore", None)
     pair["from_tm"] = False
     # The acceptance and review markers described the text that was just
     # replaced.  Clearing them here is explicit on purpose: the staleness helper
@@ -322,10 +333,101 @@ def adopt_translation_candidate(job_id: str, candidate_id: str, *,
     _delivery.add_human_action(
         state, f"candidate:{record.get('candidate_id')}", "candidate_adopted",
         note or "采用翻译候选", actor)
-    _c.save_job_state(job_id, state)
     return {"committed": True, "already_adopted": False, "changed_text": True,
-            "candidate": _cand.public_view(record, pair=pair), "state": state,
-            "conflict": None, "reason": ""}
+            "candidate": _cand.public_view(record, pair=pair),
+            "conflict": None, "reason": ""}, True
+
+
+@_serialized_job_mutation
+def adopt_translation_candidate(job_id: str, candidate_id: str, *,
+                                actor: str = "user", note: str = "",
+                                allow_protected: bool = True) -> Dict[str, Any]:
+    """Adopt one candidate as the working translation, or explain why not.
+
+    The whole decision runs under the task's state lock, against freshly loaded
+    state: the segment is resolved by uid, the baseline is re-checked, the
+    existing source-quality gate is honoured, and the text change, the candidate
+    status and the audit record are saved in the same snapshot.
+
+    Adoption is idempotent.  Re-adopting an adopted candidate returns its
+    original result and does not write the text again, does not bump the
+    translation-truth version and does not append a second change record.
+
+    ``allow_protected`` defaults to true because adopting *this one segment* is
+    the user pointing at it; a batch is the case where protection has to be
+    honoured first, and it defaults the other way.
+    """
+    state = _loaded(job_id)
+    result, dirty = _adopt_one(state, job_id, candidate_id, actor=actor,
+                               note=note, allow_protected=allow_protected)
+    if dirty:
+        _c.save_job_state(job_id, state)
+    result["state"] = state
+    return result
+
+
+@_serialized_job_mutation
+def adopt_translation_candidates(job_id: str, candidate_ids: Sequence[str], *,
+                                 actor: str = "user", note: str = "",
+                                 allow_protected: bool = False) -> Dict[str, Any]:
+    """Adopt several candidates in one transaction, reporting every item.
+
+    Policy (documented here because #92 asks for one stated batch semantic):
+    results are **per item** -- a stale or protected item is skipped with its
+    reason and does not block the others -- while the persisted state is a
+    single atomic snapshot.  A caller therefore never sees "the first three
+    were adopted" on disk without the rest of the batch: either the whole
+    snapshot lands or none of it does, and the returned per-item results always
+    describe what actually landed.
+
+    Duplicate ids in one call are adopted once: a double click is not a second
+    change.
+    """
+    state = _loaded(job_id)
+    results: List[Dict[str, Any]] = []
+    committed: List[str] = []
+    skipped: List[Dict[str, Any]] = []
+    already: List[str] = []
+    seen: set = set()
+    changed = 0
+    dirty = False
+
+    for raw in candidate_ids or []:
+        candidate_id = str(raw or "").strip()
+        if not candidate_id or candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        if _cand.by_id(state, candidate_id) is None:
+            skipped.append({"candidate_id": candidate_id,
+                            "conflict": _cand.CONFLICT_SEGMENT_MISSING,
+                            "reason": "找不到候选"})
+            continue
+        result, item_dirty = _adopt_one(state, job_id, candidate_id,
+                                        actor=actor, note=note,
+                                        allow_protected=allow_protected)
+        dirty = dirty or item_dirty
+        results.append({"candidate_id": candidate_id,
+                        "committed": bool(result.get("committed")),
+                        "changed_text": bool(result.get("changed_text")),
+                        "conflict": result.get("conflict") or "",
+                        "reason": result.get("reason") or "",
+                        "candidate": result.get("candidate")})
+        if result.get("committed"):
+            committed.append(candidate_id)
+            if result.get("changed_text"):
+                changed += 1
+            if result.get("already_adopted"):
+                already.append(candidate_id)
+        else:
+            skipped.append({"candidate_id": candidate_id,
+                            "conflict": result.get("conflict") or "",
+                            "reason": result.get("reason") or ""})
+
+    if dirty:
+        _c.save_job_state(job_id, state)
+    return {"committed": committed, "skipped": skipped, "changed": changed,
+            "results": results, "state": state, "already_adopted": already}
+
 
 
 @_serialized_job_mutation
@@ -376,6 +478,7 @@ def candidate_status(job_id: str, candidate_id: str,
 
 __all__ = [
     "adopt_translation_candidate",
+    "adopt_translation_candidates",
     "candidate_status",
     "candidate_view",
     "commit_candidates",

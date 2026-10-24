@@ -256,7 +256,8 @@ def test_repetitions_and_find_replace(env_job):
     matches = adapter.find_in_targets(adapter.load_state(job_id), "图书馆", "藏书楼")
     assert [item["index"] for item in matches] == [0, 1, 2]
     assert matches[1]["after"] == "藏书楼关门了。"
-    assert adapter.replace_in_targets(job_id, "图书馆", "藏书楼", indexes=[1]) == 1
+    result = adapter.replace_in_targets(job_id, "图书馆", "藏书楼", indexes=[1])
+    assert result["staged"] == 1 and result["changed"] == 1
     assert adapter.load_state(job_id)["pairs"][1]["target"] == "藏书楼关门了。"
     assert adapter.find_in_targets(adapter.load_state(job_id), "") == []
 
