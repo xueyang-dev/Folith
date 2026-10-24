@@ -10,9 +10,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QIntValidator, QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QPushButton, QScrollArea, QSpinBox, QToolButton, QVBoxLayout,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QToolButton, QVBoxLayout,
     QWidget,
 )
 
@@ -78,8 +78,20 @@ class PdfPanel(QWidget):
         self.next_button = nav("chevron-right", i18n.tr('下一页'))
         self.close_button = nav("x", i18n.tr('收起原页'))
         self.close_button.clicked.connect(self.closeRequested.emit)
-        self.page_spin = QSpinBox()
-        self.page_spin.setMinimum(1)
+        self.page_box = QLineEdit()
+        # 页码框原来放的是原生 QSpinBox：仓库的 QSS 没有给 QSpinBox 上样式（见
+        # setup_panel.py 的同一条约定），深色主题下整块是原生外观、上下箭头黑成一片，
+        # 用户看不到当前页码（#83 截图里的"空白/黑块"）。改用普通的 QLineEdit，
+        # 它本来就有主题样式；宽度固定、文字居中，语义仍是"当前第几页"。
+        self.page_box.setObjectName("pageBox")
+        self.page_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_box.setFixedWidth(56)
+        self.page_box.setAccessibleName(i18n.tr('页码'))
+        self.page_box.setToolTip(i18n.tr('输入页码后回车跳到该页'))
+        self.page_validator = QIntValidator(1, 1, self)
+        self.page_box.setValidator(self.page_validator)
+        self.page_box.returnPressed.connect(self._commit_page_text)
+        self.page_box.editingFinished.connect(self._commit_page_text)
         self.total_label = QLabel("/ —")
         self.zoom_box = style_module.ComboBox()
         for dpi, label in ZOOMS:
@@ -103,7 +115,7 @@ class PdfPanel(QWidget):
         head.addWidget(self.close_button)
         bar = QHBoxLayout()
         bar.setContentsMargins(0, 0, 0, 0)
-        for widget in (self.prev_button, self.page_spin, self.total_label, self.next_button,
+        for widget in (self.prev_button, self.page_box, self.total_label, self.next_button,
                        self.zoom_box, self.locate_button):
             bar.addWidget(widget)
         bar.addStretch(1)
@@ -116,7 +128,6 @@ class PdfPanel(QWidget):
 
         self.prev_button.clicked.connect(lambda: self.goto(self._page - 1))
         self.next_button.clicked.connect(lambda: self.goto(self._page + 1))
-        self.page_spin.valueChanged.connect(lambda value: self.goto(value - 1))
         self.zoom_box.currentIndexChanged.connect(lambda _i: self._render())
         self.locate_button.clicked.connect(lambda: self.locate(self._segment))
         self._sync()
@@ -133,10 +144,8 @@ class PdfPanel(QWidget):
         self._source = QPixmap()
         self.image.clear()
         self._pages = adapter.pdf_page_count(job_id) if job_id else 0
-        self.page_spin.blockSignals(True)
-        self.page_spin.setMaximum(max(1, self._pages))
-        self.page_spin.setValue(1)
-        self.page_spin.blockSignals(False)
+        self.page_validator.setTop(max(1, self._pages))
+        self.page_box.setText("1")
         self.total_label.setText(f"/ {self._pages}" if self._pages else "/ —")
         self.hint.setText("" if self._pages else i18n.tr('无法加载 PDF 源文件或文档为空。'))
         self._render()
@@ -155,13 +164,27 @@ class PdfPanel(QWidget):
         unchanged = page == self._page and new_rects == self._rects and not self._source.isNull()
         self._rects = new_rects
         self._page = page
-        self.page_spin.blockSignals(True)
-        self.page_spin.setValue(page + 1)
-        self.page_spin.blockSignals(False)
+        self.page_box.setText(str(page + 1))
         if unchanged:
             self._sync()
             return
         self._render()
+
+    def _commit_page_text(self) -> None:
+        """回车或离开输入框：跳到输入的页码；输入非法就还原成当前页。"""
+        if not self._pages:
+            return
+        text = self.page_box.text().strip()
+        try:
+            wanted = int(text)
+        except ValueError:
+            self.page_box.setText(str(self._page + 1))
+            return
+        wanted = max(1, min(wanted, self._pages))
+        if wanted == self._page + 1:
+            self.page_box.setText(str(self._page + 1))
+            return
+        self.goto(wanted - 1)
 
     def locate(self, index: int, state: dict | None = None) -> None:
         """跳到第 ``index`` 段所在的原页并高亮（``state``：调用方已读好的任务状态）。"""
@@ -257,7 +280,7 @@ class PdfPanel(QWidget):
         self.prev_button.setEnabled(self._page > 0)
         self.next_button.setEnabled(bool(self._pages) and self._page < self._pages - 1)
         self.locate_button.setEnabled(self._segment >= 0 and bool(self._pages))
-        self.page_spin.setEnabled(bool(self._pages))
+        self.page_box.setEnabled(bool(self._pages))
 
     def current_page(self) -> int:
         return self._page
