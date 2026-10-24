@@ -207,3 +207,16 @@ uses `_faithful_target()` to keep the source numbers (`保留数字 3 ...`), so 
 scheduling tests still test scheduling rather than number loss. This is a fixture
 fidelity fix, not a relaxed assertion. Re-ran the affected families: scheduler
 10 passed; all `reviewed_clean`-related files 151 passed.
+
+## Additional regression fixes found by the full local suite
+
+- `tests/knowledge_cache_test.py` and `tests/knowledge_feedback_policy_test.py`
+  built translations from the prompt ordinal (`欧洲空间局译文 0/1/2...`) instead of
+  the source text, so batch 2 dropped source numbers 2/3. The new number check
+  correctly flagged that, which changed knowledge-feedback call counts. Fixtures
+  now preserve each source's number; knowledge suites 38 passed.
+- `tests/brand_regression_test.py`: the #99 and #101 rollback environment
+  variables (`FOLIOTHREAD_RETROSPECTIVE_SUGGESTIONS`,
+  `FOLIOTHREAD_FINDING_GROUPS`) are legacy-prefixed technical identifiers, so the
+  line allowlist now names the owning files. (On `main` this was already red
+  after #99; #138 fixes it for both.)
