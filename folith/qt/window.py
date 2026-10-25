@@ -3151,8 +3151,7 @@ class MainWindow(QMainWindow):
         def done(result) -> None:
             version = result.get("version")
             self.workbench.delivery_note.clear()
-            notes = [str(note) for note in
-                     ((result.get("manifest") or {}).get("renderer_notes") or [])]
+            notes = [str(note) for note in result.get("renderer_notes") or []]
             self._notice(i18n.tr('已冻结交付 v{v0}，共 {v1} 个文件。', v0=version,
                                  v1=len(result.get('assets') or []))
                          + ("\n" + "\n".join(notes) if notes else ""), job_id=job_id)
