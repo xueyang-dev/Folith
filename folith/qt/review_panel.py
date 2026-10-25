@@ -59,6 +59,7 @@ class ReviewPanel(QWidget):
     entityPreviewRequested = Signal(str, str)       # source, target
     entityRepairRequested = Signal(str, str, list)  # source, target, preview
     entityAcceptRequested = Signal(str)             # source
+    conceptRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -88,6 +89,8 @@ class ReviewPanel(QWidget):
         self.detail.setProperty("role", "muted")
         self.review_all_button = button(i18n.tr('审校全部段落'), "shield-check")
         self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
+        self.concept_button = button(i18n.tr('概念决策'), "list")
+        self.concept_button.clicked.connect(self.conceptRequested.emit)
         self.filter_control = style_module.SegmentedControl(
             [(value, i18n.tr(label)) for value, label in FILTERS])
         self.filter_control.changed.connect(self._set_filter)
@@ -230,6 +233,7 @@ class ReviewPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
+        layout.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.content, 1)
         layout.addWidget(self.empty_state, 1)
 
@@ -268,6 +272,7 @@ class ReviewPanel(QWidget):
         """用新的视图模型重画队列；保持当前选中项（按稳定标识）。"""
         self._view = view or {}
         self._busy = busy
+        self.concept_button.setEnabled(not busy)
         self._items = list(self._view.get("queue_items") or [])
         readiness = self._view.get("readiness") or {}
         self.headline.setText(i18n.tr_dynamic(str(readiness.get("label") or "")))

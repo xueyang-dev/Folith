@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "dataset": "review-evidence-samples",
+  "count": 18,
+  "domains": {
+    "literary": 6,
+    "academic": 6,
+    "technical": 6
+  },
+  "annotation": {
+    "provenance": "authored by the implementing agent (DeepSeek Harness) for this evaluation; synthetic English sources with Chinese draft translations",
+    "independent_human_expert": false,
+    "method": "Each source/draft pair was constructed to contain one clearly identifiable serious error (or to be a clean control) in one of the categories number/unit/tag/placeholder/terminology/omission/mistranslation. Drafts are not model output and were not produced by a live translator.",
+    "limitations": [
+      "Not independent expert annotation; no inter-annotator agreement.",
+      "Synthetic and short: not a real book corpus.",
+      "Only 12 serious-error samples and 6 clean controls.",
+      "The scripted reviewer is perfect on gold errors it sees, so the measured recall isolates routing policy, not reviewer-model quality."
+    ]
+  },
+  "categories": [
+    "number",
+    "unit",
+    "tag",
+    "placeholder",
+    "terminology",
+    "omission",
+    "mistranslation"
+  ]
+}

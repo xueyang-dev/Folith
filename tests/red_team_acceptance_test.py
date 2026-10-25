@@ -968,6 +968,7 @@ def test_long_document_simulation_and_performance():
                 "max_injected": max(sizes) if sizes else 0,
                 "glossary_size": len(state["glossary"]),
                 "reviewed": reviewed,
+                "tm_conflicts": state.get("tm_conflict_count") or 0,
                 "blocking": state.get("review_stats", {}).get("blocking", 0),
                 "actionable": state.get("review_stats", {}).get("actionable", 0),
                 "conflicts": sum(1 for f in state["findings"] if f.get("conflict")),
@@ -986,8 +987,14 @@ def test_long_document_simulation_and_performance():
         assert ql["blocking"] == 0 and q["blocking"] == 0
         assert q["actionable"] == 0 and ql["actionable"] == 0, \
             "合规 mock 不应产生 scope 误报/残留误报"
+        # #107: identical short sentences recur in different surroundings on
+        # purpose.  They must be detected as context conflicts and independently
+        # reviewed instead of being silently reused -- and a clean review still
+        # lets the run finish as a clean draft.
         assert q["reviewed"] == 2000 and ql["reviewed"] == 2000, \
-            "合规 mock 下全部段落应审校通过（TM eligible）"
+            "合规 mock 下所有段落都应通过（TM 复用或独立审校）"
+        assert q["tm_conflicts"] == ql["tm_conflicts"] > 0, \
+            "重复短句在不同语境下必须被识别为语境冲突"
         assert ql["delivery"] == "draft" and q["delivery"] == "draft"
         # Bound measured expensive work, not runner speed (#77). The 2,000
         # segments have 200 review groups of ten; allow 32 additional full

@@ -268,7 +268,7 @@ def test_shortcut_list_comes_from_the_real_menus(app):
     assert [(m, a) for m, a, _k in rows] == [("文件", "设置…")]
     dialog = ShortcutsDialog(bar)
     assert dialog.table.rowCount() == len(rows) + len(dialog.rows) - len(rows)
-    assert any(text == "展开 / 收起 PDF 原页" for _m, text, _k in dialog.rows)
+    assert any(text == "展开 / 收起原页或原位置" for _m, text, _k in dialog.rows)
 
 
 def test_application_dir_is_the_folder_upgrades_rewrite(tmp_path):

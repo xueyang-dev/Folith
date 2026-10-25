@@ -22,6 +22,8 @@ os.environ["FOLITH_EXIT_FORCE_PROMPT"] = "0"
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QDialog  # noqa: E402
+
 from qt_client_window_test import _pump, client, qt_app  # noqa: E402,F401
 from language_assets_workspace_test import _candidate, _job  # noqa: E402
 from stage3_case_review_test import _synthetic_case  # noqa: E402
@@ -195,3 +197,153 @@ def test_followup_entity_unification_from_the_window(client):
     window.apply_entity_repair("Lydia", "莉迪亚", preview)
     _pump(client["app"], 1.0)
     assert adapter.load_state("wmnames00000001")["pairs"][1]["target"] == "莉迪亚离开了。"
+
+
+# ------------------------------------------------- 术语卡片就地编辑（#125） ------
+
+def _term_state(core, *, preferred="你好", forbidden=None, name="wmterm.docx"):
+    from folith import models
+
+    state = _plain_state(core, name=name)
+    entries = core.normalize_glossary([
+        {"source": "Hello", "target": preferred, "preferred": preferred,
+         "status": "locked", "behavior": "translate",
+         "forbidden": forbidden or [], "domain": "示例", "note": "测试条目"}])
+    state["glossary"] = entries
+    state["glossary_versions"] = [{
+        "version": 1, "entries": entries, "frozen_at": "2026-10-24T00:00:00+00:00",
+        "frozen_by": "test", "glossary_hash": models.glossary_hash(entries)}]
+    state["glossary_frozen"] = state["glossary_versions"][0]
+    state["pairs"][0].update(
+        glossary_hash_used=state["glossary_frozen"]["glossary_hash"],
+        glossary_entry_ids=[entries[0]["id"]], from_tm=True)
+    return state
+
+
+class _FakeTermEditDialog:
+    """非模态替代：不走 exec() 事件循环，直接给字段（窗口级测试只验信号链）。"""
+
+    def __init__(self, entry, parent=None):
+        self.entry = entry
+
+    def exec(self):
+        return QDialog.DialogCode.Accepted
+
+    def values(self):
+        return {"preferred": self._preferred, "status": "locked", "forbidden": [],
+                "preview": False}
+
+
+@pytest.mark.parametrize("changes", [
+    {"preferred": "你好呀"},
+    {"forbidden": ["您好", "哈喽"]},
+    {"status": "provisional"},
+], ids=["preferred", "forbidden", "status"])
+def test_workspace_term_edit_flows_through_the_existing_update_pathway(
+        client, monkeypatch, changes):
+    """真实编辑器 → 单次修订、stale/TM 失效、两处刷新和使用新术语重译。"""
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtTest import QTest
+    from folith.qt import window as window_module
+    from folith import translation_candidates
+
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    core, adapter = client["core"], client["adapter"]
+    before = _term_state(core)
+    _save(core, "wmterm00000001", before)
+    tm = {}
+    affected_key = core.tm_put(tm, "Hello world", "你好世界", before["target_lang"])
+    untouched_key = core.tm_put(tm, "Second", "第二", before["target_lang"])
+    core.save_tm(tm, core.tm_project_id(before))
+    window = _open(client, "wmterm00000001")
+    window.workbench.select_segment(0)
+    _pump(client["app"], 0.5)
+    chip = window.workbench.term_list.buttons[0]
+    assert chip.term["source"] == "Hello"
+    entry_id = chip.term["id"]
+
+    class AutoSaveDialog(window_module.dialogs.TermEditDialog):
+        def __init__(self, entry, parent=None):
+            super().__init__(entry, parent)
+            self.preferred_edit.setText(changes.get("preferred", entry["preferred"]))
+            self.forbidden_edit.setText("、".join(changes.get("forbidden", entry["forbidden"])))
+            self.status_box.setCurrentIndex(
+                self.status_box.findData(changes.get("status", entry["status"])))
+            self.preview_box.setChecked(False)
+            save = self.ok_button
+            QTimer.singleShot(0, lambda: QTest.mouseClick(save, Qt.MouseButton.LeftButton))
+
+    monkeypatch.setattr(window_module.dialogs, "TermEditDialog", AutoSaveDialog)
+    chip.edit_button.setFocus()
+    QTest.keyClick(chip.edit_button, Qt.Key.Key_Space)
+    _pump(client["app"], 1.5)
+    state = adapter.load_state("wmterm00000001")
+    entry = next(e for e in state["glossary"] if e["id"] == entry_id)
+    expected = dict(before["glossary"][0], **changes)
+    for field in ("preferred", "forbidden", "status", "domain", "note"):
+        assert entry[field] == expected[field]
+    assert entry["id"] == entry_id, "内容哈希条目标识不能被改写"
+    assert len(state.get("glossary_versions") or []) == 2, "一次编辑恰好一个新版本"
+    assert (state.get("glossary_frozen") or {}).get("version") == 2
+    assert state["pairs"][0]["stale_due_to_glossary"] is True
+    assert state["pairs"][0]["reviewed"] is False
+    assert state["pairs"][0]["from_tm"] is False
+    assert not state["pairs"][1].get("stale_due_to_glossary")
+    assert state["pairs"][1]["reviewed"] is True
+    assert state["pairs"][0]["target"] == "你好世界", "修订术语不自动覆盖已有译文"
+    remaining_tm = core.load_tm(core.tm_project_id(state))
+    assert affected_key not in remaining_tm and untouched_key in remaining_tm
+    # 工作台和术语页都读取新值。
+    updated = next(c for c in window.workbench.term_list.buttons if c.term["id"] == entry_id)
+    assert updated.term["target"] == expected["preferred"]
+    assert updated.term["forbidden"] == expected["forbidden"]
+    assert updated.term["status"] == expected["status"]
+    panel_row = next(r for r in window.workbench.terms_panel.rows() if r["id"] == entry_id)
+    for field in ("preferred", "forbidden", "status", "domain", "note"):
+        assert panel_row[field] == expected[field]
+
+    # 只替换远程模型调用，验证真实重译流程收到修订后的术语。
+    glossary_blocks = []
+
+    def translate(sources, previous, following, glossary_text, *args, **kwargs):
+        glossary_blocks.append(glossary_text)
+        return [expected["preferred"] + "世界"]
+
+    monkeypatch.setattr(core, "translate_batch", translate)
+    monkeypatch.setattr(core, "call_llm", lambda *args, **kwargs: "[]")
+    regenerated, created = core.retranslate_segments(
+        "wmterm00000001", [0], "DeepSeek", "test-key", "test-model", "简体中文")
+    assert created == [0]
+    assert glossary_blocks == [core.glossary_block(state["glossary"])]
+    assert translation_candidates.pending_records(regenerated)[0]["candidate_target"] == \
+        expected["preferred"] + "世界"
+    assert regenerated["pairs"][0]["target"] == "你好世界"
+    assert len(regenerated["glossary_versions"]) == 2
+
+
+def test_workspace_term_edit_failure_leaves_state_unchanged(client, monkeypatch):
+    """更新失败（首选译名为空被核心拒绝）：状态原样，版本不涨，界面有可见错误。"""
+    from folith.qt import window as window_module
+
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    core, adapter = client["core"], client["adapter"]
+    _save(core, "wmterm00000002", _term_state(core))
+    window = _open(client, "wmterm00000002")
+    before = adapter.load_state("wmterm00000002")
+    window.workbench.select_segment(0)
+    _pump(client["app"], 0.5)
+    chip = window.workbench.term_list.buttons[0]
+    entry_id = chip.term["id"]
+    fake = _FakeTermEditDialog
+    fake._preferred = "  "
+    monkeypatch.setattr(window_module.dialogs, "TermEditDialog", fake)
+    failures = []
+    monkeypatch.setattr(window, "_failure", lambda title, detail: failures.append((title, detail)))
+    chip.edit_button.click()
+    _pump(client["app"], 1.0)
+    assert failures, "失败必须给出可见错误"
+    state = adapter.load_state("wmterm00000002")
+    assert state == before, "失败不得改变任务的任何持久化状态"
+    entry = next(e for e in state["glossary"] if e["id"] == entry_id)
+    assert entry["preferred"] == "你好"
+    assert len(state.get("glossary_versions") or []) == 1, "失败不能生成新版本"

@@ -173,19 +173,24 @@ def test_typing_a_page_number_moves_to_it_and_bad_input_cannot_blank_the_box(qap
     assert panel.page_box.text() == "2"
 
 
-def test_workbench_shows_the_original_page_only_for_pdf_tasks(qapp, pdf_job, docx_job):
+def test_workbench_keeps_the_source_entry_for_pdf_and_docx_tasks(qapp, pdf_job, docx_job):
     from folith.qt import views
 
     bench = views.WorkbenchView()
-    for job_id, expected in ((pdf_job, True), (docx_job, False)):
+    # PDF 任务展开原页；DOCX 任务展开「原位置」上下文（#61）。两者共用检查器里
+    # 的同一颗「查看原位置」；工具条上不再另放「原页」按钮（2026-10-17 试用反馈：
+    # 两个入口重复）。
+    assert not hasattr(bench, "source_button")
+    for job_id, pdf_path in ((pdf_job, True), (docx_job, False)):
         state = adapter.load_state(job_id)
         bench.load(job_id, adapter.EngineConfig(target_lang="简体中文"), state,
                    adapter.segment_rows(job_id, state), [])
-        # 原页从检查器的「原位置」展开（左侧面板），只有 PDF 任务才有；工具条上不再
-        # 另放一个「原页」按钮（2026-10-17 试用反馈：两个入口重复）。
-        assert not hasattr(bench, "source_button")
-        assert (not bench.view_source_button.isHidden()) is expected
+        assert not bench.view_source_button.isHidden()
+        assert bench.view_source_button.isEnabled()
         assert bench.tabs.indexOf(bench.pdf_panel) == -1, "原页不再是整页"
+        assert bench.left_stack.indexOf(bench.source_panel) >= 0, \
+            "上下文面板与原页轮流占左栏同一个位置"
+        assert bench._pdf_ok is pdf_path and bench._stream_ok is not pdf_path
 
 
 def test_view_source_button_jumps_to_the_segment(qapp, pdf_job):

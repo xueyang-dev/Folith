@@ -31,6 +31,7 @@ from folith.desktop import file_actions
 from folith.desktop import legacy_import
 from folith.desktop import paths as desktop_paths
 from folith import translation_evidence
+from folith import retrospective as _retrospective
 from folith import source_languages as _source_languages
 # Architecture Phase 1/3: the shared, frontend-neutral application layer.  Qt only
 # translates `EngineConfig` into it and adapts desktop-specific values back out.
@@ -1102,6 +1103,63 @@ def stage_batch_replacement(job_id: str, query: str, replacement: str, *,
             "selected": len(drafts)}
 
 
+def preview_term_revision(state: dict, source_term: str, old_target: str,
+                          new_target: str, *,
+                          forbidden: Sequence[str] = ()) -> dict:
+    """术语修订预览（纯函数）：原文锚定、逐段分类，不改任何状态。"""
+    from folith import term_revision as _tr
+
+    return _tr.preview_term_revision(
+        source_term, old_target, new_target, state.get("pairs") or [],
+        forbidden=forbidden)
+
+
+def replace_term_targets(job_id: str, source_term: str, old_target: str,
+                         new_target: str, *, forbidden: Sequence[str] = (),
+                         exclusions: Sequence[int] = (),
+                         selected: Sequence[int] = (),
+                         allow_protected: bool = False) -> dict:
+    """术语批量替换：锁内重算预览并暂存候选，再只采用用户预览选中的段。
+
+    ``exclusions`` 是 UI 决定不参与本次批量的段（不暂存）；``selected`` 是
+    预览里勾选要改的段——只有这些段的候选会被采用，重算后多出来的未预览段
+    立即丢弃（记录可追溯），绝不悄悄写入。人工改写/人工确认的段由批量采用
+    入口默认跳过，逐条报告原因。
+    """
+    staged = core.stage_term_revision(
+        job_id, source_term, old_target, new_target, forbidden=forbidden,
+        exclusions=exclusions)
+    created = [item for item in staged.get("created") or []
+               if str(item.get("candidate_id") or "")]
+    selected_set = {int(index) for index in selected}
+    ids = [str(item.get("candidate_id")) for item in created
+           if item.get("segment_index") in selected_set]
+    unselected = [str(item.get("candidate_id")) for item in created
+                  if item.get("segment_index") not in selected_set]
+    for candidate_id in unselected:
+        try:
+            core.discard_translation_candidate(job_id, candidate_id, actor="user",
+                                               note="预览后未选中该段")
+        except ValueError:  # noqa: BLE001 - 已被并发处理掉的候选不必报错
+            pass
+    if not ids:
+        return {"staged": len(created), "changed": 0, "committed": [],
+                "skipped": [], "discarded_unselected": len(unselected),
+                "rejected": staged.get("rejected") or [],
+                "preview": staged.get("preview") or {}}
+    try:
+        adopted = core.adopt_translation_candidates(job_id, ids,
+                                                    allow_protected=allow_protected)
+    except ValueError as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return {"staged": len(created), "changed": int(adopted.get("changed") or 0),
+            "committed": list(adopted.get("committed") or []),
+            "skipped": list(adopted.get("skipped") or []),
+            "discarded_unselected": len(unselected),
+            "rejected": staged.get("rejected") or [],
+            "preview": staged.get("preview") or {}}
+
+
 def exclude_fragments(job_id: str, indexes: Sequence[int]) -> int:
     """一次排除多个疑似原文碎片（原文与译文都保留，可在交付页恢复）。"""
     done = 0
@@ -1734,6 +1792,14 @@ def _group_entity_conflicts(view: dict) -> None:
     view["filter_counts"] = counts
 
 
+def review_handoff_export(job_id: str, fmt: str = "json") -> str:
+    """导出审校交接材料（JSON / JSONL / Markdown）；只读，不改任务。"""
+    try:
+        return core.review_handoff_export(job_id, fmt)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
 def review_queue(job_id: str, state: dict | None = None) -> dict:
     """审校页的整个视图模型：就绪状态、筛选计数、队列项。"""
     from folith import workbench_view as _workbench_view
@@ -1883,6 +1949,44 @@ def segment_pdf_location(job_id: str, index: int, state: dict | None = None,
         return {"page": None, "rects": [], "hint": "没能在 PDF 里定位这一段。"}
     return {"page": int(page), "rects": [list(r) for r in rects or []],
             "hint": ("已高亮" if rects else "在本页（仅定位页面，没有行级坐标，不画高亮）")}
+
+
+# ================= 流式源的原位置上下文（#61） =================
+#
+# DOCX / EPUB / TXT / Markdown 没有页码和坐标；「原位置」给的是片段的原始上下文
+# （标题路径 / 章节 / 行号 + 相邻段落，高亮匹配块），解析与定位在
+# ``folith.source_context``，与 PDF 的「如实说明、不假装」是同一条规矩。
+
+def source_context_available(job_id: str) -> bool:
+    from folith import source_context
+
+    return source_context.has_streaming_source(job_id)
+
+
+def source_document_blocks(job_id: str) -> list[dict]:
+    """解析（并缓存）任务流式源文件的顺序块；给面板后台预热用。"""
+    from folith import source_context
+
+    return source_context.load_blocks(job_id)
+
+
+def segment_source_context(job_id: str, index: int,
+                           state: dict | None = None) -> dict:
+    """某一段在流式源里的上下文：``{kind, found, title, blocks, hint}``。"""
+    from folith import source_context
+
+    state = state if state is not None else load_state(job_id)
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    text = ""
+    if 0 <= index < len(pairs):
+        text = str(pairs[index].get("source") or "")
+    elif 0 <= index < len(paras):
+        text = str(paras[index] or "")
+    if not text:
+        return {"kind": source_context.source_kind(job_id), "found": False,
+                "title": "", "blocks": [], "hint": "这一段没有原文，无法定位。"}
+    return source_context.locate_segment(job_id, text)
 
 
 # ================= 收尾（恢复进度 / 补跑失败步骤 / 实体译名统一） =================
@@ -2045,10 +2149,16 @@ def run_facts(state: dict) -> dict:
     reuse = {
         "tm_used": as_int(state.get("tm_used_count")),
         "tm_recovered": as_int(state.get("tm_recovered_count")),
+        "tm_conflicts": as_int(state.get("tm_conflict_count")),
+        "tm_legacy_unused": as_int(state.get("tm_legacy_unused")),
+        "tm_status": str(state.get("tm_status") or ""),
         "cache_hits": as_int(cache.get("hits")),
         "cache_misses": as_int(cache.get("misses")),
     }
-    reuse["available"] = bool(reuse["tm_used"] or reuse["tm_recovered"] or reuse["cache_hits"])
+    reuse["available"] = bool(
+        reuse["tm_used"] or reuse["tm_recovered"] or reuse["tm_conflicts"]
+        or reuse["tm_legacy_unused"] or reuse["tm_status"] == "disabled"
+        or reuse["tm_status"] == "no_target_language" or reuse["cache_hits"])
 
     synopsis = state.get("document_synopsis") if isinstance(state.get("document_synopsis"), dict) else {}
     digests = [item for item in state.get("section_digests") or [] if isinstance(item, dict)]
@@ -2090,8 +2200,14 @@ def run_facts(state: dict) -> dict:
         failures.append({"batch": as_int(item.get("batch")) + 1, "start": offset,
                          "end": offset + count - 1, "count": count,
                          "reason": str(item.get("reason") or "")[:300]})
+    retrospective = {
+        "enabled": _retrospective.enabled(state),
+        "pending": len(_retrospective.pending_suggestions(state)),
+        "evidence": len(state.get("retrospective_evidence") or []),
+    }
     return {"usage": usage, "reuse": reuse, "understanding": understanding,
-            "failures": failures, "failures_recovered": recovered}
+            "failures": failures, "failures_recovered": recovered,
+            "retrospective": retrospective}
 
 
 def extraction_report_view(state: dict) -> dict:
@@ -2198,6 +2314,31 @@ def prepare_followup_retry(job_id: str, part: str) -> dict:
         return core.prepare_workflow_retry(job_id, part)
     except (RuntimeError, ValueError) as exc:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def concept_workflow_view(job_id: str) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.view(job_id)
+
+
+def save_concept_decision(job_id: str, card: dict, fields: dict) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.save_decision(job_id, card, fields)
+
+
+def preview_concept_revision(job_id: str, card: dict) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.preview(job_id, card)
+
+
+def apply_concept_revision(job_id: str, preview: dict, selected: list) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.apply(job_id, preview, selected)
+
+
+def split_concept(job_id: str, card: dict, form_a: str, form_b: str) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.split(job_id, card, form_a, form_b)
 
 
 def entity_repair_preview(job_id: str, source: str, target: str,

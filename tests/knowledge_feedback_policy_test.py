@@ -30,11 +30,16 @@ KNOWLEDGE_MARKER = "翻译流知识抽取器"
 
 def _translations(user_prompt: str) -> str:
     tail = user_prompt.split(TRANSLATION_MARKER, 1)[-1]
-    count = len(re.findall(r"(?m)^\d+\.\s+", tail))
-    # Carry the observed target so the knowledge extractor's claim-checking
-    # (source expression in the source, observed target in the target) passes.
-    return json.dumps([f"欧洲空间局译文 {index}" for index in range(count)],
-                      ensure_ascii=False)
+    sources = re.findall(r"(?m)^\d+\.\s+(.*)$", tail)
+    # Carry the observed target and each source's number: the extractor's
+    # claim-checking needs the target, and the deterministic number check
+    # (added for #101) correctly flags drafts that drop the source number.
+    results = []
+    for source in sources:
+        numbers = re.findall(r"\d+", source)
+        suffix = f" {numbers[-1]}" if numbers else ""
+        results.append(f"欧洲空间局译文{suffix}")
+    return json.dumps(results, ensure_ascii=False)
 
 
 class RecordingProvider:

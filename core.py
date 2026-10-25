@@ -70,6 +70,9 @@ from folith import finalization as _finalization
 from folith import rendered_qa as _rendered_qa
 from folith import project as _project
 from folith import translation_memory as _tm_scope
+from folith import retrospective as _retrospective
+from folith import finding_groups as _finding_groups
+from folith import review_export as _review_export
 from folith import translation_cache as _translation_cache
 from folith import knowledge_cache as _knowledge_cache_module
 from folith import usage as _usage
@@ -622,6 +625,7 @@ from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keep
     _local_name,
     _termbase_df_to_entries,
     check_glossary_compliance,
+    check_token_structure,
     extract_auto_terms,
     extract_preserved_tokens,
     find_residuals,
@@ -833,6 +837,7 @@ from folith.engine.candidates import (  # noqa: F401  (re-export: core keeps its
     discard_translation_candidate,
     pending_candidate_count,
     stage_concept_revision,
+    stage_term_revision,
 )
 
 
@@ -2265,7 +2270,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             session_id = str(uuid.uuid4())
             _LLM_CTX.opencode_session = session_id
         request["extra_headers"] = {
-            "User-Agent": "Folith/0.7.1",
+            "User-Agent": "Folith/0.7.2",
             "x-opencode-session": str(session_id),
         }
     try:
@@ -2585,14 +2590,21 @@ def check_translation_batch(sources, targets, glossary, target_lang,
                 source_span=residual if residual in src else None,
                 target_span=residual, reason=f"疑似残留源语片段「{residual}」",
                 kind="source_residue", detected_text=residual))
+        # #101: numbers / units / markup tags are mechanical structure checks.
+        # They only add findings; grouping and handling live in finding_groups.
+        findings.extend(check_token_structure(src, tgt, target_lang, i))
         findings.extend(check_glossary_compliance(
             src, tgt, glossary, segment_id=i, section_profile=section_profile,
             entries=normalized_glossary, matcher=glossary_matcher))
-        for f in findings:
-            if "segment_index" not in f:
-                f["segment_index"] = i
-            if "segment_id" not in f or f.get("segment_id") is None:
-                f["segment_id"] = i
+    # Defaults are applied once after the segment loop: the previous placement
+    # was inside it, making every batch O(segments x findings) (with #101's
+    # extra structure findings that showed up as +170 µs/segment on 2 000
+    # segments).  Same result, linear pass.
+    for f in findings:
+        if "segment_index" not in f:
+            f["segment_index"] = f.get("segment_id", 0)
+        if "segment_id" not in f or f.get("segment_id") is None:
+            f["segment_id"] = f.get("segment_index", 0)
     return findings
 
 
@@ -3246,6 +3258,11 @@ tm_record = _tm_scope.tm_record
 tm_put = _tm_scope.tm_put
 tm_discard = _tm_scope.tm_discard
 tm_legacy_keys = _tm_scope.tm_legacy_keys
+tm_context_fingerprint = _tm_scope.tm_context_fingerprint
+tm_context_fields = _tm_scope.tm_context_fields
+tm_context_status = _tm_scope.tm_context_status
+TM_CONTEXT_PREV = _tm_scope.TM_CONTEXT_PREV
+TM_CONTEXT_NEXT = _tm_scope.TM_CONTEXT_NEXT
 
 
 # 归一化只做**可证明等价**的处理：同一段文字在不同来源下的排版差异。
@@ -3260,35 +3277,71 @@ _TM_SPACE_RE = re.compile(r"\s+")
 
 
 
-def tm_lookup(tm, source, index=None, *, target_lang=None):
-    """查找翻译记忆条目，返回 (记录, 命中方式)。
+def tm_lookup(tm, source, index=None, *, target_lang=None, context=None,
+              legacy_index=None):
+    """查找翻译记忆条目，返回 ``(记录, 原因)``。
 
     **必须显式给出目标语言**：语言未知（旧条目没有语言标注）或目标语言不同
     -> 不命中。这是发布阻断级的正确性约束，不是可选过滤。
 
     先精确匹配，再退到归一化匹配。归一化命中是"同一段文字的排版差异"，
     不涉及语义猜测，因此可以安全复用译文；命中方式会被记录，便于审计。
+
+    ``context``（``(前一段原文, 后一段原文)``）用于 #107 的语境校验：
+    记录里写有前后文指纹且与当前不一致时，返回 ``context_conflict``——
+    原文相同但语境不同，不能直接当已审校译文复用，只能作为建议。
+
+    第二个返回值是稳定的机器可读原因（#108），不是只有"命中/未命中"：
+
+    * ``exact`` / ``normalized``：命中；
+    * ``context_conflict``：命中但语境不符，必须人工确认；
+    * ``legacy_unscoped``：原文存在于语言未知的旧条目里，永不自动复用；
+    * ``no_target_language``：目标语言无法证明，不可能命中；
+    * ``miss``：确实没有可用条目。
+
+    ``legacy_index`` 是预计算的语言未知原文集合（规范化后），由调用方在
+    一次运行里建一次，避免每次查询都扫描整个 TM。
     """
     language = normalize_language(target_lang)
     if not language:
-        return None, ""
+        return None, "no_target_language"
     cleaned = str(source or "").replace("\n", " ")
+    hit = None
+    kind = ""
     for key in (tm_scope_key(target_lang, cleaned), cleaned):
         if not key:
             continue
         if _tm_hit((tm or {}).get(key), language, key):
-            return (tm or {}).get(key), "exact"
+            hit, kind = (tm or {}).get(key), "exact"
+            break
+    if hit is None:
+        normalized = tm_normalize(cleaned)
+        if normalized:
+            scoped_index = index if index is not None else tm_index(tm, target_lang)
+            raw_key = scoped_index.get(normalized)
+            if raw_key is not None and raw_key != cleaned:
+                record = (tm or {}).get(raw_key)
+                if _tm_hit(record, language, raw_key):
+                    hit, kind = record, "normalized"
+    if hit is not None:
+        if context is not None:
+            previous_source, next_source = context
+            if tm_context_status(hit, previous_source, next_source) == "conflict":
+                return hit, "context_conflict"
+        return hit, kind
+    # 没有命中时把"为什么没有"说清楚：旧条目的原文存在 -> 它是被保留但
+    # 语言未知的条目，不是"这篇文档没有记忆"。
     normalized = tm_normalize(cleaned)
-    if not normalized:
-        return None, ""
-    scoped_index = index if index is not None else tm_index(tm, target_lang)
-    raw_key = scoped_index.get(normalized)
-    if raw_key is None or raw_key == cleaned:
-        return None, ""
-    record = (tm or {}).get(raw_key)
-    if _tm_hit(record, language, raw_key):
-        return record, "normalized"
-    return None, ""
+    if normalized:
+        if legacy_index is not None:
+            legacy_present = normalized in legacy_index
+        else:
+            legacy_present = any(
+                tm_normalize(tm_unscope_key(key)[1]) == normalized
+                for key in tm_legacy_keys(tm))
+        if legacy_present:
+            return None, "legacy_unscoped"
+    return None, "miss"
 
 
 
@@ -4897,9 +4950,32 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
     _tm_project = tm_project_id(state)
     # 目标语言是 TM 作用域的一部分：没有它就不建立任何命中路径（fail closed）。
     _tm_lang = str(target_lang or "").strip() or str(state.get("target_lang") or "").strip()
-    tm = load_tm(_tm_project) if use_tm else {}
-    tm_norm_index = tm_index(tm, _tm_lang) if use_tm else {}
-    if use_tm:
+    _tm_language_known = bool(normalize_language(_tm_lang))
+    _tm_enabled = bool(use_tm) and _tm_language_known
+    # #108：TM 没有参与，和"参与了但没命中"是两件事。关闭、语言无法证明都
+    # 只在运行级别记录一次原因，并且**不再**为每段伪造一条 miss。
+    _tm_legacy_index = set()
+    if not use_tm:
+        trace.record_tm_lookup(hit_type="disabled", job_id=job_id)
+        state["tm_status"] = "disabled"
+        tm = {}
+        tm_norm_index = {}
+    elif not _tm_language_known:
+        trace.record_tm_lookup(hit_type="no_target_language", job_id=job_id)
+        state["tm_status"] = "no_target_language"
+        tm = {}
+        tm_norm_index = {}
+    else:
+        tm = load_tm(_tm_project)
+        tm_norm_index = tm_index(tm, _tm_lang)
+        state["tm_status"] = "active"
+        legacy_keys = tm_legacy_keys(tm)
+        # 旧条目保留但不参与复用（语言无法证明）；把数量与原文索引留给
+        # 调用方展示 `legacy_unscoped`，避免逐段扫描整个 TM。
+        _tm_legacy_index = {tm_normalize(tm_unscope_key(key)[1])
+                            for key in legacy_keys}
+        state["tm_legacy_unused"] = len(legacy_keys)
+
         def _tm_scope(source, target):
             """把目标语言编进记忆键；语言无法证明时不恢复任何记忆。"""
             key = tm_scope_key(_tm_lang, source)
@@ -5524,6 +5600,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             batch_pairs = [None] * len(batch)
             to_translate = []  # (index, clean_source)
             blocked_local_indexes = set()
+            _paras_all = paras
             for i, para in enumerate(batch):
                 clean_src = para.replace('\n', ' ')
                 source_index = offset + i
@@ -5540,13 +5617,24 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                         "source_quality": dict(source_flag),
                     }
                     continue
-                _tm_t0 = time.perf_counter()
-                hit, tm_match = tm_lookup(tm, clean_src, tm_norm_index,
-                                          target_lang=_tm_lang)
-                _tm_dur_ms = (time.perf_counter() - _tm_t0) * 1000.0
-                trace.record_tm_lookup(hit_type=tm_match if hit else "miss",
-                                       duration_ms=_tm_dur_ms, job_id=job_id)
-                if hit:
+                if _tm_enabled:
+                    prev_src = (_paras_all[source_index - 1].replace('\n', ' ')
+                                if source_index > 0 else None)
+                    next_src = (_paras_all[source_index + 1].replace('\n', ' ')
+                                if source_index + 1 < len(_paras_all) else None)
+                    _tm_t0 = time.perf_counter()
+                    hit, tm_match = tm_lookup(
+                        tm, clean_src, tm_norm_index, target_lang=_tm_lang,
+                        context=(prev_src, next_src),
+                        legacy_index=_tm_legacy_index)
+                    _tm_dur_ms = (time.perf_counter() - _tm_t0) * 1000.0
+                    trace.record_tm_lookup(hit_type=tm_match,
+                                           duration_ms=_tm_dur_ms,
+                                           job_id=job_id)
+                else:
+                    # #108：TM 没启用/语言未知时不再逐段伪造一条 miss。
+                    hit, tm_match = None, "miss"
+                if hit and tm_match in {"exact", "normalized"}:
                     batch_pairs[i] = {"source": clean_src, "target": hit["target"],
                                       "initial_target": hit["target"],
                                       "accepted_target": hit["target"],
@@ -5555,6 +5643,23 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                                       "from_tm": True, "tm_match": tm_match}
                     with commit_lock:
                         state["tm_used_count"] = state.get("tm_used_count", 0) + 1
+                elif hit and tm_match == "context_conflict":
+                    # 原文相同、语境不同：把记忆译文当作**建议**预填，绝不
+                    # 以"已审校"复用。reviewed=False + 明确原因，让它进入
+                    # 人工确认路径（审查队列里的待审校项）。
+                    batch_pairs[i] = {
+                        "source": clean_src, "target": hit["target"],
+                        "initial_target": hit["target"],
+                        "target_provenance": "tm_suggested",
+                        "reviewed": False,
+                        "review_status": "tm_context_conflict",
+                        "from_tm": False,
+                        "tm_match": "context_conflict",
+                        "tm_context_conflict": True,
+                        "tm_review_reason": "same_source_different_context",
+                    }
+                    with commit_lock:
+                        state["tm_conflict_count"] = state.get("tm_conflict_count", 0) + 1
                 elif not has_textual_content(clean_src):
                     batch_pairs[i] = {"source": clean_src, "target": clean_src,
                                       "initial_target": clean_src,
@@ -6454,11 +6559,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 else:
                     safe_batch_pairs.append({**pair, "source": "", "target": ""})
             _cf_sink.traversed(len(glossary) * len(safe_batch_pairs))
+            _batch_conflict_findings = []
             for cf in _detect_conflicts(safe_batch_pairs, glossary, sections=sections):
                 segment_id = offset + cf["segment_id"]
                 cf["segment_index"] = segment_id
                 cf["segment_id"] = segment_id
                 findings_all.append(cf)
+                _batch_conflict_findings.append(cf)
 
         # 记录仍未解决的确定性问题
         with _critical_path.phase("commit_findings_merge") as _merge_sink:
@@ -6590,6 +6697,10 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                     if j in blocked_local_indexes:
                         continue
                     segment_id = offset + j
+                    prev_src = (paras[segment_id - 1].replace('\n', ' ')
+                                if segment_id > 0 else None)
+                    next_src = (paras[segment_id + 1].replace('\n', ' ')
+                                if segment_id + 1 < len(paras) else None)
                     seg_findings = [
                         f for f in findings_all
                         if f.get("segment_id", f.get("segment_index")) == segment_id
@@ -6608,14 +6719,35 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                             p["reviewed"] = False
                         else:
                             p["review_status"] = "reviewed_clean"
+                    if p.get("tm_context_conflict"):
+                        # #107：语境冲突把命中从"直接复用"降级为"建议 + 独立
+                        # 审校"。只有本次审校真的通过，才成为可交付的译文；
+                        # 它保留独立状态，方便工作台与审计说明"为什么没直接复用"。
+                        if review_skipped:
+                            p["review_status"] = _review_gate.SKIPPED_LOW_RISK
+                            p["reviewed"] = False
+                        elif not review_succeeded:
+                            p["review_status"] = "review_failed"
+                            p["reviewed"] = False
+                        elif seg_findings or not _tm_eligible(p["source"], p["target"]):
+                            p["review_status"] = "reviewed_with_findings"
+                            p["reviewed"] = False
+                        else:
+                            p["reviewed"] = True
+                            p["review_status"] = "reviewed_context_conflict"
+                            p["accepted_target"] = p["target"]
+                            p["target_provenance"] = "tm_context_conflict_reviewed"
+                            stats["reviewed_segments"] += 1
                     if review_succeeded and not review_skipped and not seg_findings \
                             and not p["from_tm"] \
+                            and not p.get("tm_context_conflict") \
                             and _tm_eligible(p["source"], p["target"]):
                         p["reviewed"] = True
                         p["accepted_target"] = p["target"]
                         p["target_provenance"] = "tm_approved" if p.get("from_tm") else "reviewed"
                         if use_tm:
-                            _key = tm_put(tm, p["source"], p["target"], _tm_lang)
+                            _key = tm_put(tm, p["source"], p["target"], _tm_lang,
+                                          **tm_context_fields(prev_src, next_src))
                             if _key:
                                 _norm = tm_normalize(p["source"])
                                 if _norm and _norm not in tm_norm_index:
@@ -6644,11 +6776,37 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             "batch": bi, "offset": offset, "phase": "state_commit_done",
             "pairs_count": len(pairs),
         })
+        # #99: accumulate the terminology evidence this batch already produced
+        # and prepare suggestions for earlier segments.  Pure local work, no
+        # model call; it never writes pairs, review state or findings.
+        with _critical_path.phase("commit_retrospective_suggestions") as _retro_sink:
+            _retro_counts = _retrospective.observe_batch(
+                state, findings=_batch_conflict_findings,
+                pairs=state.get("pairs") or [], glossary=glossary, batch=bi)
+            _retro_sink.traversed(len(_batch_conflict_findings))
+            state["retrospective_stats"] = _retro_counts
+            if _retro_counts.get("evidence_added") or _retro_counts.get("suggestions_added"):
+                _flush_state_snapshot("retrospective_evidence")
         tm_entries = _checkpoint.batch_entries([
             pair for pair in batch_pairs
             if not pair.get("from_tm")
             and pair.get("review_status") == "reviewed_clean"
         ]) if enable_review and use_tm and review_succeeded else []
+        if tm_entries:
+            # #107：pending 事件里也带上下文指纹，恢复时不会把"有上下文的
+            # 记忆"降级成"语境未知"。按 (source, target) 找回该段的邻居。
+            _ctx_by_pair = {}
+            for _index, _pair in enumerate(batch_pairs):
+                _ctx_by_pair[(str(_pair.get("source") or ""),
+                              str(_pair.get("target") or ""))] = tm_context_fields(
+                    paras[offset + _index - 1].replace('\n', ' ')
+                    if offset + _index > 0 else None,
+                    paras[offset + _index + 1].replace('\n', ' ')
+                    if offset + _index + 1 < len(paras) else None)
+            for _entry in tm_entries:
+                _entry.update(_ctx_by_pair.get(
+                    (str(_entry.get("source") or ""),
+                     str(_entry.get("target") or "")), {}))
         if tm_entries:
             # Accumulate onto the snapshot window instead of rewriting the whole
             # project TM once per batch.  Recovery does not depend on this
@@ -6953,7 +7111,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         (item.get("type"), item.get("segment_index"), item.get("source"))
         for item in findings_all
     }
-    for conflict in registry.consistency_findings(pairs):
+    for conflict in registry.consistency_findings(pairs, state.get("concept_decisions")):
         key = (conflict.get("type"), conflict.get("segment_index"),
                conflict.get("source"))
         if key not in existing_entity_conflicts:
@@ -10766,21 +10924,26 @@ def _translation_review_finding(state, finding_id):
 
 
 def _promote_human_reviewed_segment(state, segment_id, actor):
-    """Promote one currently clean human-confirmed pair through existing TM truth."""
+    """Promote one currently clean human-confirmed pair in ``state``.
+
+    Returns the TM entry to write, or None. The caller writes it with
+    ``_write_tm_promotions`` only after the job state has been saved, so a
+    failed save never leaves the TM ahead of the task.
+    """
     from folith import delivery as _delivery
     pairs = state.get("pairs") or []
     if not isinstance(segment_id, int) or not 0 <= segment_id < len(pairs):
-        return
+        return None
     if any(_delivery._segment_index(item) == segment_id
            for item in _delivery.unresolved_findings(state)):
-        return
+        return None
     pair = pairs[segment_id]
     deterministic = check_translation_batch(
         [str(pair.get("source") or "")], [str(pair.get("target") or "")],
         state.get("glossary") or [], state.get("target_lang") or "简体中文")
     if any(item.get("severity") in {"blocking", "actionable"}
            for item in deterministic):
-        return
+        return None
     pair["reviewed"] = True
     pair["review_status"] = "reviewed_human"
     pair["accepted_target"] = pair.get("target") or ""
@@ -10788,10 +10951,39 @@ def _promote_human_reviewed_segment(state, segment_id, actor):
     pair["human_accepted"] = True
     pair["accepted_by_human"] = actor
     if state.get("use_tm", True) and _tm_eligible(pair.get("source"), pair.get("target")):
-        tm = load_tm(tm_project_id(state))
-        tm_put(tm, str(pair.get("source") or ""), str(pair.get("target") or ""),
-               state_target_lang(state))
-        save_tm(tm, tm_project_id(state))
+        # #107: the deferred promotion carries the neighbour context so the TM
+        # keeps it through the save-then-write path (main's #109 ordering).
+        _prev = (pairs[segment_id - 1].get("source")
+                 if segment_id > 0 and isinstance(pairs[segment_id - 1], dict) else None)
+        _next = (pairs[segment_id + 1].get("source")
+                 if segment_id + 1 < len(pairs)
+                 and isinstance(pairs[segment_id + 1], dict) else None)
+        _ctx = tm_context_fields(_prev, _next)
+        return (tm_project_id(state), str(pair.get("source") or ""),
+                str(pair.get("target") or ""), state_target_lang(state),
+                str(_ctx.get(TM_CONTEXT_PREV) or ""),
+                str(_ctx.get(TM_CONTEXT_NEXT) or ""))
+    return None
+
+
+def _write_tm_promotions(promotions):
+    """状态保存成功后再写翻译记忆；TM 是派生缓存，可由 reconcile 重建。
+
+    Each promotion is ``(project_id, source, target, target_lang,
+    ctx_prev, ctx_next)``; the context fields stay empty for legacy callers.
+    """
+    for promotion in promotions:
+        project_id, source, target, target_lang = promotion[:4]
+        ctx_prev = promotion[4] if len(promotion) > 4 else ""
+        ctx_next = promotion[5] if len(promotion) > 5 else ""
+        tm = load_tm(project_id)
+        fields = {}
+        if ctx_prev:
+            fields[TM_CONTEXT_PREV] = ctx_prev
+        if ctx_next:
+            fields[TM_CONTEXT_NEXT] = ctx_next
+        tm_put(tm, source, target, target_lang, **fields)
+        save_tm(tm, project_id)
 
 
 @_serialized_job_mutation
@@ -10810,8 +11002,11 @@ def decide_translation_review_finding(
         state, finding["finding_id"], decision, actor, actor_type=actor_type,
         note=note)
     segment_id = updated.get("segment_id")
+    promotions = []
     if decision in {"accept_resolution", "dismiss"}:
-        _promote_human_reviewed_segment(state, segment_id, actor)
+        promotion = _promote_human_reviewed_segment(state, segment_id, actor)
+        if promotion:
+            promotions.append(promotion)
     _recount_reviewed_segments(state)
     queue = _delivery.review_queue_findings(state)
     stats = state.setdefault("review_stats", {})
@@ -10820,6 +11015,7 @@ def decide_translation_review_finding(
     state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
     state["delivery_status"] = _delivery.compute_delivery_status(state)
     save_job_state(job_id, state)
+    _write_tm_promotions(promotions)
     return state, updated, record
 
 
@@ -11149,7 +11345,14 @@ def review_translation_segments(
                 pair["accepted_target"] = target
                 pair["target_provenance"] = "reviewed"
                 if state.get("use_tm", True) and _tm_eligible(source, target):
-                    if tm_put(tm, source, target, state_target_lang(state)):
+                    _prev = (pairs[segment_id - 1].get("source")
+                             if segment_id > 0 and isinstance(pairs[segment_id - 1], dict)
+                             else None)
+                    _next = (pairs[segment_id + 1].get("source")
+                             if segment_id + 1 < len(pairs)
+                             and isinstance(pairs[segment_id + 1], dict) else None)
+                    if tm_put(tm, source, target, state_target_lang(state),
+                              **tm_context_fields(_prev, _next)):
                         tm_changed = True
             else:
                 pair["reviewed"] = False
@@ -11363,6 +11566,7 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
         return None
     legacy_ids = []
     legacy_confirmations = []
+    promotions = []
     mapped = {"human_fixed": "accept_resolution", "preserved": "dismiss",
               "confirmed_open": "request_revision"}
     for selector in finding_ids or []:
@@ -11376,8 +11580,10 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
                     state, finding["finding_id"], mapped[action], actor,
                     actor_type="human", note=note)
             if mapped[action] in {"accept_resolution", "dismiss"}:
-                _promote_human_reviewed_segment(
+                promotion = _promote_human_reviewed_segment(
                     state, updated.get("segment_id"), actor)
+                if promotion:
+                    promotions.append(promotion)
         elif action == "confirmed_open":
             legacy_confirmations.append(selector)
         else:
@@ -11392,6 +11598,7 @@ def mark_findings_resolved(job_id, finding_ids, action, note="", actor="user"):
     state["has_blocking"] = bool(_delivery.unresolved_blocking(state))
     state["delivery_status"] = _delivery.compute_delivery_status(state)
     save_job_state(job_id, state)
+    _write_tm_promotions(promotions)
     return state
 
 
@@ -13094,3 +13301,185 @@ def run_job_pipeline(*args, **kwargs):
         _SCAN_STREAMS.reset(token)
         for stream in streams:
             stream.close()
+
+
+# ================= 回溯一致性建议（#99） =================
+#
+# 这一层只积累证据、准备建议，从不修改正文/审校/交付。建议的“采用”必须先
+# 物化为候选（既有候选事务），再由既有的显式采用入口写入译文——因此 worker
+# 锁、基线核对、审校失效与 truth 版本全部沿用同一套事务，没有平行真值。
+
+
+def retrospective_suggestions(job_id=None, state=None):
+    """只读投影：待确认的回溯一致性建议（不加载任务以外的任何东西）。"""
+    current = state if state is not None else (
+        load_job_state(job_id) if job_id else None)
+    return _retrospective.suggestion_view(current or {})
+
+
+def retrospective_status(state=None):
+    """任务卡投影：建议是否启用、待确认数量与证据数量。"""
+    current = state or {}
+    return {
+        "enabled": _retrospective.enabled(current),
+        "pending": len(_retrospective.pending_suggestions(current)),
+        "evidence": len(current.get("retrospective_evidence") or []),
+        "skipped": int((current.get("retrospective_stats") or {}).get("skipped") or 0),
+    }
+
+
+@_serialized_job_mutation
+def dismiss_retrospective_suggestion(job_id, suggestion_id, *, actor="user", reason=""):
+    """显式忽略一条建议；证据与已采用的译文原样保留（回滚不删数据）。"""
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    record = _retrospective.find_suggestion(state, suggestion_id)
+    if record is None:
+        raise ValueError("找不到回溯建议")
+    if str(record.get("status") or "") != _retrospective.STATUS_PENDING:
+        raise ValueError("这条回溯建议已经处理过")
+    record["status"] = _retrospective.STATUS_DISMISSED
+    record["resolved_at"] = _retrospective._now_iso()
+    record["resolved_by"] = str(actor)
+    record["dismiss_reason"] = str(reason)
+    save_job_state(job_id, state)
+    return {"suggestion": dict(record), "changed": True}
+
+
+@_serialized_job_mutation
+def materialize_retrospective_suggestion(job_id, suggestion_id, *, actor="user"):
+    """把一条建议物化为待采用候选；**不**写正文。
+
+    物化后仍要显式 ``adopt_translation_candidate`` 才会改变历史译文；段落在这
+    期间被编辑/重译时，既有候选基线检查会判为过期而不是写错。
+    """
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    record = _retrospective.find_suggestion(state, suggestion_id)
+    if record is None:
+        raise ValueError("找不到回溯建议")
+    if str(record.get("status") or "") != _retrospective.STATUS_PENDING:
+        raise ValueError("这条回溯建议已经处理过")
+    draft = _retrospective.build_candidate_draft(state, record)
+    if draft is None:
+        record["status"] = _retrospective.STATUS_STALE
+        record["resolved_at"] = _retrospective._now_iso()
+        record["resolved_by"] = str(actor)
+        save_job_state(job_id, state)
+        return {"suggestion": dict(record), "candidate": None, "changed": False,
+                "reason": "stale_or_protected"}
+    result = commit_candidates(job_id, [draft], actor=actor)
+    created = list(result.get("created") or [])
+    rejected = list(result.get("rejected") or [])
+    state = load_job_state(job_id) or {}
+    record = _retrospective.find_suggestion(state, suggestion_id)
+    if record is not None:
+        if created:
+            record["status"] = _retrospective.STATUS_CANDIDATE
+            record["candidate_id"] = str(created[0].get("candidate_id") or "")
+            record["materialized_at"] = _retrospective._now_iso()
+        elif rejected:
+            record["status"] = _retrospective.STATUS_STALE
+            record["resolved_at"] = _retrospective._now_iso()
+            record["resolved_by"] = str(actor)
+        save_job_state(job_id, state)
+    return {
+        "suggestion": dict(record or {}),
+        "candidate": created[0] if created else None,
+        "rejected": rejected,
+        "changed": False,
+    }
+
+
+# ================= 确定性发现项分组（#101） =================
+
+
+def deterministic_finding_groups(job_id=None, state=None, *, group_type=""):
+    """只读投影：把数字/单位/标记/占位符发现项按 (类型, token) 分组。
+
+    分组不修改 findings、译文、审校状态或交付门禁；关闭开关或未启用时调用方
+    仍能拿到逐条发现项（本函数返回空列表，findings 原样保留）。
+    """
+    current = state if state is not None else (
+        load_job_state(job_id) if job_id else None)
+    current = current or {}
+    if not _finding_groups.enabled(current):
+        return []
+    groups = _finding_groups.group_findings(
+        current.get("findings") or [],
+        exceptions=_finding_groups.normalize_exceptions(
+            current.get(_finding_groups.EXCEPTIONS_KEY)))
+    if group_type:
+        groups = [group for group in groups if group.get("group_type") == group_type]
+    return groups
+
+
+def deterministic_finding_group_preview(job_id, group_id, *, state=None):
+    """某一组的逐条预览（只读）：哪几条未处理、哪几条被排除、当前译文是什么。"""
+    current = state if state is not None else load_job_state(job_id)
+    if current is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    group = next((item for item in deterministic_finding_groups(state=current)
+                  if item.get("group_id") == str(group_id or "")), None)
+    if group is None:
+        raise ValueError("找不到这个确定性发现项分组")
+    return _finding_groups.preview_group(group, current.get("pairs") or [])
+
+
+@_serialized_job_mutation
+def materialize_deterministic_group_fix(job_id, group_id, *, actor="user",
+                                        segment_index=None):
+    """把数字分组的确定性修正物化为候选；不写正文。
+
+    只有"一段里恰好缺一个数字、多一个数字"时才生成候选；其余情形保持人工
+    决定。候选仍要显式采用，基线检查保证段落被编辑后不会写错。
+    """
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    group = next((item for item in deterministic_finding_groups(state=state)
+                  if item.get("group_id") == str(group_id or "")), None)
+    if group is None:
+        raise ValueError("找不到这个确定性发现项分组")
+    draft = _finding_groups.build_number_fix_draft(
+        state, group, segment_index=segment_index)
+    if draft is None:
+        return {"candidate": None, "rejected": [{"reason": "needs_human_judgement"}],
+                "preview": deterministic_finding_group_preview(
+                    job_id, group_id, state=state)}
+    result = commit_candidates(job_id, [draft], actor=actor)
+    created = list(result.get("created") or [])
+    return {
+        "candidate": created[0] if created else None,
+        "rejected": list(result.get("rejected") or []),
+        "preview": deterministic_finding_group_preview(
+            job_id, group_id),
+    }
+
+
+# ================= 审校交接导出（#103） =================
+
+
+def review_handoff_export(job_id, fmt="json", *, max_text_chars=None):
+    """只读导出审校决定、正文改动与未解决发现项。
+
+    ``fmt`` 支持 ``json`` / ``jsonl`` / ``markdown`` / ``view``。不新增报告真值，
+    也不改写任务；导出之后删除文件对任务没有任何影响。
+    """
+    state = load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    fmt = str(fmt or "json").lower()
+    if fmt == "view":
+        return _review_export.build_review_export(
+            state, job_id, max_text_chars=max_text_chars)
+    if fmt in {"md", "markdown"}:
+        return _review_export.export_markdown(state, job_id)
+    if fmt == "jsonl":
+        return _review_export.export_jsonl(state, job_id)
+    if fmt == "json":
+        return _review_export.export_json(
+            state, job_id, max_text_chars=max_text_chars)
+    raise ValueError(f"不支持的审校导出格式：{fmt}")

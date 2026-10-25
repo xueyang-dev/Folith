@@ -1,0 +1,22 @@
+{
+  "description": "Synthetic #101 detection fixture: numbers, units, markup tags and placeholders. Only constructed sentences; no real corpus text. Expected findings are annotated per case (kind + token).",
+  "target_lang": "简体中文",
+  "cases": [
+    {"id": "num-pos-1", "source": "The sample weighs 12.5 grams today.", "target": "样本今天重克。", "expected": [{"kind": "number", "token": "12.5"}]},
+    {"id": "num-pos-2", "source": "Page 42 was missing from the report.", "target": "报告中缺少了那一页。", "expected": [{"kind": "number", "token": "42"}]},
+    {"id": "num-neg-keep", "source": "The sample weighs 12.5 grams.", "target": "样本重 12.5 克。", "expected": []},
+    {"id": "num-neg-citation", "source": "See [12] for details.", "target": "详见 [12]。", "expected": []},
+    {"id": "num-neg-fold", "source": "Item 3 is ready.", "target": "第 ٣ 项已就绪。", "expected": []},
+    {"id": "unit-pos-1", "source": "The village is 5 km from here.", "target": "村庄离这里 5 英里。", "expected": [{"kind": "unit", "token": "km"}]},
+    {"id": "unit-pos-2", "source": "It weighs 3 kg in total.", "target": "它总共很轻。", "expected": [{"kind": "unit", "token": "kg"}]},
+    {"id": "unit-neg-keep", "source": "The village is 5 km from here.", "target": "村庄离这里 5 公里。", "expected": []},
+    {"id": "unit-neg-number-words", "source": "It took 2 h to finish.", "target": "完成它花了 2 小时。", "expected": []},
+    {"id": "tag-pos-1", "source": "<b>Warning</b> read this.", "target": "警告：请阅读。", "expected": [{"kind": "tag", "token": "<b>"}, {"kind": "tag", "token": "</b>"}]},
+    {"id": "tag-pos-2", "source": "Read <a href=\"x\">the note</a> now.", "target": "现在阅读这条注释。", "expected": [{"kind": "tag", "token": "<a href=\"x\">"}, {"kind": "tag", "token": "</a>"}]},
+    {"id": "tag-neg-keep", "source": "<b>Warning</b> read this.", "target": "<b>警告</b>：请阅读。", "expected": []},
+    {"id": "ph-pos-1", "source": "Hello {name}, welcome.", "target": "你好，欢迎。", "expected": [{"kind": "placeholder", "token": "{name}"}]},
+    {"id": "ph-pos-2", "source": "Progress: %d%%", "target": "进度：", "expected": [{"kind": "placeholder", "token": "%d"}]},
+    {"id": "ph-neg-keep", "source": "Hello {name}, welcome.", "target": "你好 {name}，欢迎。", "expected": []},
+    {"id": "mixed-pos-1", "source": "<i>Step 3 takes 2 h</i> at 5 km/h.", "target": "第三步需要一些时间。", "expected": [{"kind": "tag", "token": "<i>"}, {"kind": "tag", "token": "</i>"}, {"kind": "number", "token": "3"}, {"kind": "unit", "token": "h"}, {"kind": "unit", "token": "km"}]}
+  ]
+}
