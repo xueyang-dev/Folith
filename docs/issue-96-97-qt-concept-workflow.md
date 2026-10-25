@@ -40,3 +40,5 @@ QT_QPA_PLATFORM=cocoa venv/bin/python scripts/concept_workflow_evidence.py
 ## 与 PR #134 的边界
 
 #134 负责术语词条编辑及词条驱动的全文修订；本次负责概念决策、继承/例外和概念驱动预览。沿用同一工作台与候选事务，不复制 #134 的 TermEditDialog / TermReplaceDialog，不修改该 PR 分支。
+
+以 #134 `5f105b0` 与本分支 `e2bd0c5` 做 `git merge-tree`：无冲突。将合并树导出到临时目录运行上述回归并加入 #134 的 `term_revision_test.py` / `qt_term_edit_test.py`：**285 passed**；合并后五语言 Qt 文案覆盖率均为 **1444/1444**，Web 文案校验 0 errors。这是合用验证，不是对 #134 的合并或 CI 结果的替代。
