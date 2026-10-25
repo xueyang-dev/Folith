@@ -2073,5 +2073,15 @@
   "术语替换": "Reemplazo de término",
   "没有可以确定的替换：{v0} 段原文命中，其中 {v1} 段需要人工确认、{v2} 段是人工保护的译文。": "No hay reemplazo determinista: {v0} segmentos de origen coinciden; {v1} requieren revisión humana y {v2} son traducciones protegidas por una persona.",
   "翻译开始前请在术语页编辑术语；改动会在开始前统一保存。": "Antes de iniciar la traducción, edite los términos en la página de términos; los cambios se guardan juntos antes de comenzar.",
-  "编辑这条术语：改首选译名、禁用译名或状态": "Editar este término: cambiar la traducción preferida, las formas prohibidas o el estado"
+  "编辑这条术语：改首选译名、禁用译名或状态": "Editar este término: cambiar la traducción preferida, las formas prohibidas o el estado",
+  "同原文不同上下文、仅作建议 {v0} 段": "Mismo texto original en otro contexto, solo sugerencia: {v0} segmentos",
+  "回溯一致性建议已关闭；已收集的证据与已采用的译文保持不变。": "Las sugerencias de coherencia retrospectiva están desactivadas; las pruebas recopiladas y las traducciones adoptadas permanecen sin cambios.",
+  "有 {v0} 条回溯一致性建议待确认（历史段落，需显式采用）。": "Hay {v0} sugerencias de coherencia retrospectiva pendientes de confirmar (segmentos históricos; hay que adoptarlas de forma explícita).",
+  "目标语言无法确定，翻译记忆未参与查询": "No se pudo determinar el idioma de destino; la memoria de traducción no participó en la consulta",
+  "翻译记忆仅作建议，已独立审校": "La memoria de traducción es solo una sugerencia; revisada de forma independiente",
+  "翻译记忆仅作建议，待确认": "La memoria de traducción es solo una sugerencia, pendiente de confirmar",
+  "翻译记忆本次未启用（没有逐段查询）": "La memoria de traducción no se activó en esta pasada (sin consulta por segmento)",
+  "翻译记忆（同原文，上下文不同，已独立审校）": "Memoria de traducción (mismo original, distinto contexto; revisada de forma independiente)",
+  "翻译记忆（同原文，上下文不同，待确认）": "Memoria de traducción (mismo original, distinto contexto, pendiente de confirmar)",
+  "项目里有 {v0} 条旧记忆没有语言标注，保留但未参与自动复用": "{v0} entradas antiguas de memoria en este proyecto no tienen etiqueta de idioma; se conservan pero no se reutilizan automáticamente"
 }

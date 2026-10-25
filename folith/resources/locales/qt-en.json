@@ -2072,5 +2072,15 @@
   "术语替换": "Term replacement",
   "没有可以确定的替换：{v0} 段原文命中，其中 {v1} 段需要人工确认、{v2} 段是人工保护的译文。": "No deterministic replacement available: {v0} source segments match; {v1} need human review and {v2} are human-protected translations.",
   "翻译开始前请在术语页编辑术语；改动会在开始前统一保存。": "Before translation starts, edit terms on the terms page; changes are saved together before starting.",
-  "编辑这条术语：改首选译名、禁用译名或状态": "Edit this term: change the preferred translation, forbidden renderings or status"
+  "编辑这条术语：改首选译名、禁用译名或状态": "Edit this term: change the preferred translation, forbidden renderings or status",
+  "同原文不同上下文、仅作建议 {v0} 段": "Same source text in a different context, suggestion only: {v0} segments",
+  "回溯一致性建议已关闭；已收集的证据与已采用的译文保持不变。": "Retrospective consistency suggestions are turned off; collected evidence and adopted translations remain unchanged.",
+  "有 {v0} 条回溯一致性建议待确认（历史段落，需显式采用）。": "{v0} retrospective consistency suggestions await confirmation (historical segments; adopt them explicitly).",
+  "目标语言无法确定，翻译记忆未参与查询": "Target language could not be determined; translation memory was not queried",
+  "翻译记忆仅作建议，已独立审校": "Translation memory is a suggestion only; independently reviewed",
+  "翻译记忆仅作建议，待确认": "Translation memory is a suggestion only, pending confirmation",
+  "翻译记忆本次未启用（没有逐段查询）": "Translation memory was not enabled this run (no per-segment lookup)",
+  "翻译记忆（同原文，上下文不同，已独立审校）": "Translation memory (same source, different context; independently reviewed)",
+  "翻译记忆（同原文，上下文不同，待确认）": "Translation memory (same source, different context, pending confirmation)",
+  "项目里有 {v0} 条旧记忆没有语言标注，保留但未参与自动复用": "{v0} old memory entries in this project have no language tag; they are kept but not reused automatically"
 }
