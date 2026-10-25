@@ -33,8 +33,6 @@ Traducir un pasaje es fácil. Lo difícil es usar las mismas palabras en el cap�
 
 https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
-<sub>Alternativa: [descargar el MP4](docs/media/folith-intro.mp4)</sub>
-
 Un libro, desde la importación, pasando por la preparación, la traducción y la revisión humana, hasta la entrega, en un minuto. Las imágenes de la interfaz se capturaron fuera de pantalla desde el cliente de Folith con un libro de ejemplo sintético de dominio público (*Los hermanos Karamázov*) y no contienen archivos reales de usuarios; las tomas marcadas como «Illustration» son explicaciones animadas.
 
 ---
