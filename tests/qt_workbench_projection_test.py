@@ -37,6 +37,7 @@ def client(tmp_path, monkeypatch, qt_app):
     monkeypatch.setenv("FOLITH_DESKTOP_DATA_DIR", str(data_dir))
     monkeypatch.setenv("FOLITH_DESKTOP_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("FOLITH_OUTPUT_DIR", str(data_dir))
+    monkeypatch.setenv("FOLITH_QT_SETTINGS_DIR", str(tmp_path / "settings"))
     monkeypatch.setattr(core, "OUTPUT_DIR", data_dir, raising=False)
 
     from folith.desktop import paths as desktop_paths
@@ -51,6 +52,10 @@ def client(tmp_path, monkeypatch, qt_app):
         enable_report=False, enable_understanding=False,
         enable_source_cleanup=False)
     main = window_module.MainWindow(config, paths, None)
+    # These tests supply projections or invoke _poll_workbench explicitly.
+    # A real timer tick during processEvents can replace that snapshot (and
+    # its delivery verdict) before the assertions, depending on runner speed.
+    main.timer.stop()
     main.show()
     qt_app.processEvents()
     yield {"window": main, "adapter": adapter, "core": core, "app": qt_app}
