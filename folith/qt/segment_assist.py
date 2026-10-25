@@ -193,17 +193,20 @@ class AttentionList(QWidget):
 
 
 class TermChip(QFrame):
-    """一条术语：原文 → **首选译名** · 本文 N 处，右边一个「插入」。
+    """一条术语：原文 → **首选译名** · 本文 N 处，右边一个「编辑」和一个「插入」。
 
     悬停 = 当前行里这一对亮起来；点击 = 全文定位（网格高亮 + 滚动条标记 + 逐处跳转）；
-    右侧 ↵ 或 ⌥点击 = 把首选译名插入到译文光标处（原先点击的行为）。
+    右侧 ✎ = 编辑这条术语（首选译名/禁用译名/状态，保存后可预览受影响译文）；
+    ↵ 或 ⌥点击 = 把首选译名插入到译文光标处（原先点击的行为）。
     """
 
     hovered = Signal(object)       # 进入时是术语 dict，离开时是 None
     activated = Signal(object)     # 点击：全文定位
     insertRequested = Signal(str)
+    editRequested = Signal(object)  # ✎：编辑这条术语
 
-    def __init__(self, term: dict, count: int | None, parent: QWidget | None = None) -> None:
+    def __init__(self, term: dict, count: int | None, parent: QWidget | None = None,
+                 *, editable: bool = True) -> None:
         super().__init__(parent)
         self.term = dict(term)
         self.setObjectName("termChip")
@@ -230,6 +233,13 @@ class TermChip(QFrame):
         self.insert_button.setAccessibleName(i18n.tr('插入译名'))
         self.insert_button.setEnabled(bool(target) and target != "—")
         self.insert_button.clicked.connect(lambda: self.insertRequested.emit(target))
+        self.edit_button = QToolButton(self)
+        self.edit_button.setObjectName("termEdit")
+        self.edit_button.setText("✎")
+        self.edit_button.setToolTip(i18n.tr('编辑这条术语：改首选译名、禁用译名或状态'))
+        self.edit_button.setAccessibleName(i18n.tr('编辑术语'))
+        self.edit_button.setVisible(bool(editable))
+        self.edit_button.clicked.connect(lambda: self.editRequested.emit(self.term))
         for label in (source, arrow, preferred, self.count_label):
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         row = QHBoxLayout(self)
@@ -240,6 +250,7 @@ class TermChip(QFrame):
         row.addWidget(preferred)
         row.addStretch(1)
         row.addWidget(self.count_label)
+        row.addWidget(self.edit_button)
         row.addWidget(self.insert_button)
         self.setToolTip(i18n.tr('点击：在全文中定位这个术语；悬停：在本段里标出它'))
         self.setAccessibleName(f"{term.get('source')} → {target}")
@@ -279,6 +290,7 @@ class TermList(QWidget):
     insertRequested = Signal(str)
     hovered = Signal(object)        # 术语 dict 或 None
     activated = Signal(object)      # 术语 dict：全文定位
+    editRequested = Signal(object)  # 术语 dict：编辑这条术语
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -288,18 +300,22 @@ class TermList(QWidget):
         self.buttons: list[TermChip] = []
         self.terms: list[dict] = []
         self._key = None
+        self._editable = True
 
-    def set_terms(self, terms: list[dict], counts: dict | None = None) -> None:
+    def set_terms(self, terms: list[dict], counts: dict | None = None,
+                  *, editable: bool = True) -> None:
         terms = [dict(term) for term in terms or []]
         counts = counts or {}
         # 每秒的轮询都会用同样的术语再调一次：内容没变就什么都不做。以前每次都拆掉重建
         # 所有术语条，整个检查器重新排版、整窗重绘——后台的 Folith 在台前调度和菜单栏里
         # 一直闪（2026-10-16 试用反馈）。
         key = repr((terms, sorted((str(k), repr(v)) for k, v in counts.items()
-                                  if any(str(t.get("source") or "") == str(k) for t in terms))))
+                                  if any(str(t.get("source") or "") == str(k) for t in terms)),
+                   editable))
         if key == self._key:
             return
         self._key = key
+        self._editable = editable
         _clear(self._layout)
         self.buttons = []
         self.terms = terms
@@ -307,10 +323,12 @@ class TermList(QWidget):
             self._layout.addWidget(_wrapped(i18n.tr('本段没有命中术语。'), "hint"))
             return
         for term in self.terms:
-            chip = TermChip(term, counts.get(str(term.get("source") or "")))
+            chip = TermChip(term, counts.get(str(term.get("source") or "")),
+                            editable=editable)
             chip.insertRequested.connect(self.insertRequested.emit)
             chip.hovered.connect(self.hovered.emit)
             chip.activated.connect(self.activated.emit)
+            chip.editRequested.connect(self.editRequested.emit)
             self._layout.addWidget(chip)
             self.buttons.append(chip)
             for hit in term.get("forbidden_hits") or []:

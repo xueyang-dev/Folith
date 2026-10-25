@@ -2440,6 +2440,7 @@ class WorkbenchView(QWidget):
     saveSnapshotRequested = Signal(int)
     refreshRequested = Signal()
     termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
+    termEditRequested = Signal(object)      # 从术语建议卡编辑这条术语
     askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
     suggestRequested = Signal(int, str)     # 按要求重译：段索引, 要求
     analyzeRequested = Signal(int)          # 进一步审视本段
@@ -2959,6 +2960,7 @@ class WorkbenchView(QWidget):
         self.term_list.insertRequested.connect(self._insert_into_target)
         self.term_list.hovered.connect(self._hover_term)
         self.term_list.activated.connect(self.focus_term)
+        self.term_list.editRequested.connect(self.termEditRequested.emit)
         self._hover = None
         self._decision_marks: dict = {}    # 决策痕迹的高亮（叠在术语标注之上）
         self._term_focus = None            # term_highlight.Occurrences
@@ -5753,7 +5755,8 @@ class WorkbenchView(QWidget):
         self.analyze_button.setEnabled(can_analyze and not analyzing)
         self.analyze_button.setText(i18n.tr('点评中…') if analyzing else i18n.tr('点评'))
         terms = adapter.segment_terms(self._state, row.index)
-        self.term_list.set_terms(terms, self._document_term_counts(terms))
+        self.term_list.set_terms(terms, self._document_term_counts(terms),
+                                  editable=self._task_started())
         self.term_list.set_active(self._term_focus.focus.source if self._term_focus else "")
         self.term_heading.setText(i18n.tr('术语 · {v0}', v0=len(terms)) if terms
                                   else i18n.tr('术语'))
