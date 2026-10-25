@@ -1686,7 +1686,7 @@
   "删除连接": "Eliminar conexión",
   "邮箱": "Correo",
   "点击「导入文档」选择 PDF 或 DOCX，即可开始翻译。": "Pulse «Importar documentos» y elija un PDF o DOCX para empezar a traducir.",
-  "Beta · 仅 PDF": "Beta · solo PDF",
+  "仅 PDF": "solo PDF",
   "OpenAI 兼容": "Compatible con OpenAI",
   "PDF 原文先做模型纠错": "Corregir antes el PDF de origen con el modelo",
   "{v0} 等 {v1} 个模型": "{v0} · {v1} modelos en total",

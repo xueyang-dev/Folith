@@ -532,3 +532,183 @@ def test_delivery_bundle_without_translations_still_builds(tmp_path, monkeypatch
     manifest = json.loads(bundle["delivery_manifest.json"])
     assert manifest["skipped_assets"] == {}
     assert "original_layout.pdf" not in bundle
+
+
+def test_table_cells_are_separate_slots_and_report_their_cascade():
+    """Cell-wise blocks: independent placement, reported overlap, no silent loss.
+
+    A table whose cells are separate translation blocks is the documented
+    remaining bound of the renderer (report §5): when the fallback font is
+    wider than the original, the cells cannot all fit and the renderer reports
+    the overlap (an unfinished record with reason "overlap") instead of
+    truncating text or leaving a source ghost.  This test pins the two halves
+    of that contract.
+    """
+    def _build(ys, height):
+        doc = pymupdf.open()
+        page = doc.new_page(width=400, height=height)
+        cells = [("Left row one", 40.0, ys[0]), ("Right row one", 220.0, ys[0]),
+                 ("Left row two", 40.0, ys[1]), ("Right row two", 220.0, ys[1])]
+        for text, x, y in cells:
+            page.insert_text((x, y), text, fontsize=12, fontname="helv")
+        source = doc.tobytes()
+        doc.close()
+        return source, cells
+
+    def _state_for(cells, targets, height):
+        pairs = [(cell[0], target) for cell, target in zip(cells, targets)]
+        blocks = []
+        for index, (text, x, y) in enumerate(cells):
+            blocks.append({
+                "block_id": f"paragraph-{index}",
+                "type": "paragraph", "text": text, "reading_order": index,
+                "source_anchor": {"source_spans": [{
+                    "page_id": "p1", "block_id": f"p{index}",
+                    "char_start": None, "char_end": None,
+                    "bbox": [x / 400.0, (y - 12.0) / height,
+                             (x + 150.0) / 400.0, (y + 6.0) / height],
+                    "region_id": None, "grounding_method": "native_pdf",
+                    "grounding_quality": "exact"}]},
+                "provenance": {"provider": "native_pdf"},
+            })
+        return {
+            "pairs": [{"source": s, "target": t,
+                       "source_spans": b["source_anchor"]["source_spans"]}
+                      for (s, t), b in zip(pairs, blocks)],
+            "extraction_report": {
+                "document_ir": {
+                    "version": 1,
+                    "metadata": {"document_id": "doc", "filename": "doc.pdf"},
+                    "pages": [{"page_id": "p1", "page_index": 0, "width": 400.0,
+                               "height": height, "rotation": 0,
+                               "display_page_number": None,
+                               "source_artifact": "source.bin"}],
+                    "blocks": blocks, "assets": [], "references": [],
+                    "provenance": {"provider": "native_pdf"},
+                    "translation_block_ids": [b["block_id"] for b in blocks],
+                },
+                "semantic_source": "native_pdf"},
+            "source_lang": "en", "target_lang": "简体中文",
+        }
+
+    # Comfortable targets: every cell is its own placed slot, nothing collides.
+    source, cells = _build((40.0, 90.0), 300.0)
+    result = _render(source, _state_for(
+        cells, ["左排一行", "右排一行", "左排两行", "右排两行"], 300.0))
+    assert result.report["totals"]["unfinished"] == 0
+    assert result.report["totals"]["placed"] == 4
+    out = pymupdf.open(stream=result.data, filetype="pdf")
+    try:
+        text = out[0].get_text()
+        assert "左排一行" in text and "右排两行" in text
+    finally:
+        out.close()
+
+    # Verbose targets on a short page: the columns cannot hold them even at
+    # the declared floor size.  The renderer must report the overlap, not
+    # truncate or hide the text.
+    source, cells = _build((110.0, 135.0), 160.0)
+    crowded = _render(source, _state_for(cells, [
+        "左排的第一行内容被相当长的译文完全撑满了整个单元格区域的一个部分又一个部分。",
+        "右排的第一行同样被长得多的译文填满了整个区域。",
+        "左排的第二行内容也变得很长很长的确是这样的。",
+        "右排的第二行也变长了很长很长。"], 160.0))
+    doc = pymupdf.open(stream=crowded.data, filetype="pdf")
+    try:
+        text = doc[0].get_text()
+        assert "左排的第一行内容" in text and "右排的第二行" in text
+    finally:
+        doc.close()
+    reasons = [r["reason"] for r in crowded.report["unfinished"]]
+    assert "overlap" in reasons
+    assert crowded.report["totals"]["unfinished"] >= 1
+
+
+def test_missing_glyphs_are_reported_and_reach_the_delivery_manifest(
+        tmp_path, monkeypatch):
+    """A target script with no installed font is surfaced, never substituted.
+
+    The renderer reports the slot in ``missing_glyphs`` instead of silently
+    substituting a font; the delivery bundle repeats that in plain language in
+    the delivery manifest's ``renderer_notes`` so the user does not have to
+    open the render report to learn the text may show empty boxes.
+    """
+    import core
+    real_choose = typeset.choose_fonts
+
+    def without_font(text, **kwargs):
+        choice = real_choose(text, **kwargs)
+        if "⏚" in text:
+            return typeset.FontChoice(families=choice.families,
+                                      missing=["⏚"])
+        return choice
+
+    monkeypatch.setattr(typeset, "choose_fonts", without_font)
+    source = _pdf_with_lines(["A sentence with an exotic glyph."])
+    state = _state(source, [("A sentence with an exotic glyph.",
+                             "含异体字形的句子⏚。")])
+    result = _render(source, state)
+    assert result.report["totals"]["missing_glyph_slots"] == 1
+    note = result.report["missing_glyphs"][0]
+    assert note["page_index"] == 0
+    assert "⏚" in note["missing"]
+
+    job_id = "renderer-missing-glyph-bundle"
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_state = core.new_job_state("doc.pdf")
+    job_state.update({
+        "p1_done": True, "p2_done": True, "source_lang": "en",
+        "target_lang": "简体中文",
+        "paras": ["A sentence with an exotic glyph."],
+        "source_paragraphs": ["A sentence with an exotic glyph."],
+        "source_paras": ["A sentence with an exotic glyph."],
+        "segmentation": {"mode": "sentence", "paragraph_ranges": [
+            {"paragraph_index": 0, "start": 0, "end": 1,
+             "gate": {"status": "passed", "reason": "lossless_sentence_split"}}]},
+        "pairs": [{"source": "A sentence with an exotic glyph.",
+                   "target": "含异体字形的句子⏚。"}],
+        "extraction_report": _state(
+            source, [("A sentence with an exotic glyph.",
+                      "含异体字形的句子⏚。")])["extraction_report"],
+        "delivery_config": dict(core.default_delivery_config(),
+                                deliver_original_pdf=True),
+    })
+    job_state["pairs"][0]["source_spans"] = job_state["extraction_report"][
+        "document_ir"]["blocks"][0]["source_anchor"]["source_spans"]
+    core.save_job_state(job_id, job_state)
+    core.save_source(job_id, source)
+    bundle = core.build_delivery_assets(job_id, job_state)
+    manifest = json.loads(bundle["delivery_manifest.json"])
+    assert any("missing_glyphs" in note and "1 个段落" in note
+               for note in manifest["renderer_notes"])
+
+    # A clean render adds no notes: the field exists, but stays silent.
+    clean_source = _pdf_with_lines(["A plain sentence."])
+    clean_state = _state(clean_source, [("A plain sentence.", "普通句子。")])
+    clean = _render(clean_source, clean_state)
+    assert clean.report["totals"]["missing_glyph_slots"] == 0
+
+
+def test_arabic_target_words_are_all_copyable_from_the_text_layer():
+    """Word-level copy works for every word, ligature or not.
+
+    The known limitation is exact-substring *search* across the lam-alef
+    cluster in MuPDF (report §5); copying the text layer must still yield
+    every word's letters.  This pins the copy path separately from search.
+    """
+    source = _pdf_with_lines(["The meeting starts at nine."])
+    state = _state(source, [("The meeting starts at nine.",
+                             "يبدأ الاجتماع في الساعة التاسعة.")])
+    result = _render(source, state)
+    doc = pymupdf.open(stream=result.data, filetype="pdf")
+    try:
+        page_text = "".join(doc[0].get_text().split())
+        for word in "يبدأ الاجتماع في الساعة التاسعة".split():
+            if "لا" in word:
+                # MuPDF reverses the cluster's two characters; both letters
+                # must still be present in the copied text layer.
+                assert "ا" in page_text and "ل" in page_text
+            else:
+                assert word in page_text, word
+    finally:
+        doc.close()
