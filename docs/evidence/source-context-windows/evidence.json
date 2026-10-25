@@ -1,0 +1,38 @@
+{
+  "platform": "Windows-10-10.0.26200-SP0",
+  "qt_backend": "windows",
+  "synthetic_fixture": true,
+  "human_operated": false,
+  "model_calls": 0,
+  "unicode_space_paths": true,
+  "formats": [
+    {
+      "format": "docx",
+      "title": "Report › Findings",
+      "highlight": true,
+      "miss_explained": true,
+      "targets_unchanged": true
+    },
+    {
+      "format": "epub",
+      "title": "The River",
+      "highlight": true,
+      "miss_explained": true,
+      "targets_unchanged": true
+    },
+    {
+      "format": "txt",
+      "title": "第 3 行",
+      "highlight": true,
+      "miss_explained": true,
+      "targets_unchanged": true
+    },
+    {
+      "format": "md",
+      "title": "Guide › Deep Dive › 第 7 行",
+      "highlight": true,
+      "miss_explained": true,
+      "targets_unchanged": true
+    }
+  ]
+}
