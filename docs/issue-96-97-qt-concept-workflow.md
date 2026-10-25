@@ -24,7 +24,7 @@
 - 相关引擎、候选事务、术语、一致性、Qt 审校/队列/抽屉和 Translation Core 测试：**262 passed**。
 - 新窗口串联测试通过实际审校按钮、真实对话框与后台任务完成保存 → 例外预览 → 取消一段 → 应用 → 重读持久化状态；同时断言人工保护、未选段不变。
 - 最终界面在 `QT_QPA_PLATFORM=cocoa` 下的新 Qt 测试：**3 passed**。
-- `check_ui_locales.py`：0 errors；`qt_i18n_coverage.py --strict`：五语言均 1428/1428。十条既有缺译复用 #134 已准备的译文，避免两份不同翻译。
+- `check_ui_locales.py`：0 errors；`qt_i18n_coverage.py --strict`：五语言均 1428/1428。目录保留 #134 已准备的新增文案（含十条既有缺译），概念文案单独插入，避免重复翻译和目录末尾的合并冲突。
 - 新测试已加入共享 Windows/macOS Qt CI 清单。
 
 原生截图与机器可读记录在 [evidence/concept-workflow](evidence/concept-workflow/)。复现：
