@@ -10266,11 +10266,39 @@ def report_docx_bytes(job_id, state=None, frozen_assets=None):
 
 
 
+def _original_layout_notes(report) -> list:
+    """把原排版 PDF 渲染报告里的缺口翻译成给用户看的一句话提示。
+
+    这些缺口在 PDF 里都有记录（original_layout_report.json），但没人会去翻
+    交付包里的 JSON：缺字形、未完成区域这类"产物已生成但有已知损失"的情况，
+    必须出现在交付清单和冻结通知里，而不是静默交给用户。
+    """
+    totals = report.get("totals") or {}
+    notes = []
+    missing_slots = totals.get("missing_glyph_slots") or 0
+    if missing_slots:
+        notes.append(
+            f"原排版 PDF：{missing_slots} 个段落在系统字体中找不到目标文字的字形，"
+            "这些文字可能显示为空框（详见 original_layout_report.json 的 missing_glyphs）。")
+    unfinished = totals.get("unfinished") or 0
+    if unfinished:
+        notes.append(
+            f"原排版 PDF：{unfinished} 处源文位置未能完成替换，已在页面原处标注"
+            "（详见 original_layout_report.json 的 unfinished）。")
+    overflow = totals.get("overflow") or 0
+    if overflow:
+        notes.append(
+            f"原排版 PDF：{overflow} 处译文超出源文位置的范围，可能挤到相邻内容"
+            "（详见 original_layout_report.json 的 pages[].overflow）。")
+    return notes
+
+
 def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     """Build the configured delivery set used by both preview and snapshots."""
     from folith import assets as _assets
     from folith import report_evidence as _report_evidence
 
+    renderer_notes: list = []
     validation = validate_delivery_translation_state(state)
     _record_delivery_validation_findings(state, validation)
     if validation["blocking"]:
@@ -10353,6 +10381,8 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
                                         if not str(k).startswith("_")},
                                        ensure_ascii=False, indent=2) + "\n"
                         ).encode("utf-8")
+                        renderer_notes.extend(_original_layout_notes(
+                            rendered.report))
             if config["deliver_epub"]:
                 from folith.epub import EpubExportError, build_translation_epub
                 try:
@@ -10419,7 +10449,7 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
             generated_assets=generated_assets, source_filename=filename,
             translator_config=state.get("translator_config"),
             reviewer_config=state.get("reviewer_config"),
-            skipped_assets=skipped_assets)
+            skipped_assets=skipped_assets, renderer_notes=renderer_notes)
         bundle["delivery_manifest.json"] = (
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         return bundle

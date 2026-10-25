@@ -585,7 +585,7 @@ class EngineDialog(QDialog):
         self.deliver_bilingual_box, bilingual = fmt("deliver_bilingual_docx", '双语对照 DOCX', True)
         self.deliver_pdf_box, pdf = fmt("deliver_pdf", '译文 PDF', False)
         self.deliver_original_pdf_box, original = fmt(
-            "deliver_original_pdf", '原排版译文 PDF', False, i18n.tr('Beta · 仅 PDF'))
+            "deliver_original_pdf", '原排版译文 PDF', False, i18n.tr('仅 PDF'))
         # 默认值在选文件之前就定了，不知道源文件类型；导入时非 PDF 任务会去掉这一项。
         self.deliver_original_pdf_box.setToolTip(
             i18n.tr('仅 PDF 任务可用：按原文件的版式重建译文页面。'))

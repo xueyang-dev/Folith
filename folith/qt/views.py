@@ -182,6 +182,8 @@ DELIVERY_ASSET_KINDS: dict[str, tuple[str, str]] = {
     "translation.docx": ("translation", "file-text"),
     "bilingual.docx": ("translation", "file-text"),
     "translation.pdf": ("translation", "file-text"),
+    "original_layout.pdf": ("translation", "file-text"),
+    "original_layout_report.json": ("record", "file-code"),
     "terms.xlsx": ("terms", "file-sheet"),
     "segment_evidence.jsonl": ("evidence", "file-code"),
     "source_cleanup.json": ("evidence", "file-code"),
@@ -2502,6 +2504,9 @@ class WorkbenchView(QWidget):
         self._setup_view: dict | None = None
         self._current_index = -1
         self._loaded_uid = ""
+        #: 上一次由程序装载进编辑框的文本。编辑框里还是它，就说明用户没动过，
+        #: 后台可以安全改写；不一样就一律不碰（见 `_sync_inline_target`）。
+        self._loaded_text = ""
         self._loading = False
         self._dirty = False
         self._last_runtime: dict = {}
@@ -5908,6 +5913,7 @@ class WorkbenchView(QWidget):
         finally:
             self._loading = False
         self._dirty = False
+        self._loaded_text = target or ""
 
     def _text_changed(self) -> None:
         self._place_inline_editor()
@@ -6029,6 +6035,9 @@ class WorkbenchView(QWidget):
         table = self.segment_list
         source_width = table.columnWidth(1)
         target_width = table.columnWidth(2)
+        # 先让译文浮层跟上数据，再按它算高度：反过来行高会按旧文本定死，
+        # 后台译进来的长段落就被截断（#166）。
+        self._sync_inline_target(position)
         footer = segment_editor.FOOTER_HEIGHT if editor.footer.isVisibleTo(editor) else 0
         cap = max(160, int(table.viewport().height() * 0.6))
         wanted = max(segment_editor.source_height(table, self._rows[position].source,
@@ -6061,6 +6070,48 @@ class WorkbenchView(QWidget):
         if not editor.isVisible():
             editor.show()
             editor.raise_()
+
+    def _sync_inline_target(self, position: int) -> None:
+        """译文浮层跟着数据走：同一段在后台拿到新译文，不用换行也能看到。
+
+        ``_load_selected_row()`` 在段身份不变时早退（那里要保护光标、撤销栈和
+        未提交编辑），而轮询刷新根本不经过它——``apply() → _render_segments()``
+        只重画单元格，展开行的那一格又正好被这个浮层盖住。于是后台先译好的段落
+        一直显示占位符，直到用户点了别的段落（#166）。原文浮层在
+        ``_place_inline_editor()`` 里早就这样同步，这里补上译文那一半。
+
+        三条保护一律不碰，宁可晚一步刷新也不能吃掉用户的字：编辑框里的文本已经
+        不是 ``_loaded_text``（用户改过；这条不依赖 ``_dirty``，因为
+        ``_text_changed()`` 先摆放浮层、之后才置 ``_dirty``）、``_dirty``、
+        ``document().isModified()``（``flush_draft()`` 会把 ``_dirty`` 清掉、草稿
+        已经落盘，但框里仍是用户写的字）。正在程序化装载（``_loading``）时也不碰。
+        有草稿的段落以草稿为准。
+        """
+        row = self._rows[position]
+        if row.segment_uid != self._loaded_uid:
+            return      # 浮层还承载着上一段，换段交给 _load_selected_row()
+        expected = (row.draft_text if row.has_draft else row.target) or ""
+        text = self.target_edit.toPlainText()
+        if text == expected:
+            return
+        if text != self._loaded_text:
+            return      # 用户动过编辑框：连清空、连撤销都算
+        if self._dirty or self._loading or self.target_edit.document().isModified():
+            return
+        keep = self.target_edit.textCursor().position()
+        was_blank = not text
+        self._set_editor_text(row.source, expected,
+                              language=self._state.get("target_lang"))
+        from PySide6.QtGui import QTextCursor
+
+        cursor = self.target_edit.textCursor()
+        if was_blank:
+            # 译文刚回来、用户还没动过：光标落到末尾，免得他接着打字插到句首。
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+        else:
+            limit = max(0, self.target_edit.document().characterCount() - 1)
+            cursor.setPosition(min(keep, limit))
+        self.target_edit.setTextCursor(cursor)
 
     def _sync_inline_footer(self) -> None:
         """改过（或有草稿）才出现保存条；没改时编辑框下面什么都没有。"""

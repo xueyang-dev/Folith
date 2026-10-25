@@ -296,7 +296,7 @@ def _count_sentences(text):
     """粗粒度句数统计：按终结符切分（引号/括号闭合归并到前一句）。"""
     text = _c._ABBREV_RE.sub(" ", text)
     text = _SHARED_SURNAME_INITIALS.sub(lambda match: match.group().replace(".", ""), text)
-    parts = re.split(r"[.!?…。！？؟]+[”\"'’)\]]*", text)
+    parts = re.split(r"[.!?…。！？؟۔]+[”\"'’)\]]*", text)
     return sum(1 for p in parts if p.strip())
 
 

@@ -177,10 +177,12 @@ Aquí «agéntico» significa concretamente: un rol de revisor independiente, re
 | **Importación** | PDF (incluidos escaneados) / DOCX / EPUB (sin DRM) / TXT / Markdown; hasta 512 MB por archivo, divide los documentos más grandes antes de importarlos |
 | **Archivos de entrega** | DOCX solo con la traducción, DOCX bilingüe, EPUB (de fuentes PDF o DOCX), PDF (el PDF que conserva la maquetación solo se aplica a fuentes PDF), glosario, TMX, TBX, JSONL, el manifiesto `delivery_manifest.json` |
 | **Recursos lingüísticos** | Glosario y memoria de traducción: importación y exportación XLSX, TBX, TMX; JSONL |
-| **Idioma de origen** | Detección automática o uno de 17: English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Italiano, Português, Русский, Türkçe, العربية, اردو, فارسی, ئۇيغۇرچە, עברית |
-| **Idioma de destino** | 12: 简体中文, 繁體中文, English, 日本語, 한국어, Deutsch, Français, Español, Русский, Português, Italiano, العربية |
+| **Idioma de origen** | Detección automática o uno de 21: English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Italiano, Português, Русский, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
+| **Idioma de destino** | 21: 简体中文, 繁體中文, English, 日本語, 한국어, Deutsch, Français, Español, Русский, Português, Italiano, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
 
-El idioma de origen también guía la ubicación de líneas en las páginas escaneadas (el Tesseract incluido solo trae datos de inglés, chino simplificado y árabe). No se publican mediciones de velocidad ni de escala, ni hay promesas de tiempo o coste para ningún número de páginas: la calidad y el tiempo dependen del documento y del modelo que elijas. Para cada documento, la página de preparación estima llamadas, tokens de entrada y tiempo para los tres modos; guíate por eso y, para un par de idiomas concreto, prueba antes con un capítulo corto.
+El idioma de origen también guía la ubicación de líneas en las páginas escaneadas (el Tesseract incluido solo trae datos de inglés, chino simplificado y árabe; los paquetes faltantes fallan explícitamente en lugar de recurrir silenciosamente al inglés). Véase [Especificación de compatibilidad y validación de idiomas de traducción](docs/translation-languages.md). No se publican mediciones de velocidad ni de escala, ni hay promesas de tiempo o coste para ningún número de páginas: la calidad y el tiempo dependen del documento y del modelo que elijas. Para cada documento, la página de preparación estima llamadas, tokens de entrada y tiempo para los tres modos; guíate por eso y, para un par de idiomas concreto, prueba antes con un capítulo corto.
+
+> **Alcance de la validación lingüística:** Estas son opciones del catálogo. Los nuevos pares aún no han completado la traducción con modelos reales, la revisión independiente ni la validación en lectores; #10 sigue abierto. Las pruebas de componentes no equivalen a una aprobación de calidad.
 
 ---
 
@@ -224,7 +226,7 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## 🌐 Idiomas de la interfaz
 
-La interfaz está en chino simplificado por defecto. English, Español, Русский y العربية son experimentales: los textos están completos, pero no han tenido una revisión lingüística independiente y el RTL del árabe no está plenamente aceptado. Véase [Apariencia y límites multilingües](docs/i18n/README.md).
+La interfaz está en chino simplificado por defecto. English, Español, Русский, العربية, Français y Deutsch son experimentales: los textos están completos, pero no han tenido una revisión lingüística independiente y el RTL del árabe no está plenamente aceptado. Véase [Apariencia y límites multilingües](docs/i18n/README.md).
 
 ---
 

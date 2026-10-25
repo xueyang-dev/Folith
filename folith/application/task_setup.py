@@ -265,7 +265,7 @@ DELIVERY_TRANSLATION_ITEMS: Tuple[Dict[str, Any], ...] = (
         "disambig_fmt": True,
     },
     {
-        "key": "deliver_original_pdf", "title": "原排版译文（Beta）", "format": "PDF",
+        "key": "deliver_original_pdf", "title": "原排版译文", "format": "PDF",
         "detail": "保留原文件的版式、图形与表格，译文就位；未完成的区域会在页面上标出。",
         "file_units": (("PDF", 1),),
         "disambig_fmt": True,

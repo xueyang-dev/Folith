@@ -39,6 +39,7 @@ jobs:
           import core
           import folith
           import folith.qt.app
+          from folith.qt import i18n
 
           root = Path(folith.__file__).resolve().parent
           assert "site-packages" in str(root), root
@@ -46,6 +47,12 @@ jobs:
                       "resources/brand/folith-lockup.png", "resources/brand/folith-mark.png",
                       "resources/locales/qt-zh-CN.json"):
               assert (root / rel).is_file(), rel
+          for code, _label in i18n.available_languages():
+              for kind in ("qt", "web"):
+                  assert i18n.catalog_path(kind, code).is_file(), (kind, code)
+          for code in ("fr", "de"):
+              i18n.set_language(code)
+              assert i18n.tr_dynamic("按模板重新生成") != "按模板重新生成", code
           assert importlib.util.find_spec("streamlit") is None, "streamlit should not be installed"
           print("installed imports and resources: OK")
           PY
