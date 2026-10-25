@@ -322,10 +322,10 @@ class EntityRegistry:
         ))
         return selected[: max(0, int(limit or 0))]
 
-    def consistency_findings(self, pairs=None) -> List[Dict[str, Any]]:
+    def consistency_findings(self, pairs=None, concept_decisions=None) -> List[Dict[str, Any]]:
         if pairs is not None:
             from .consistency import findings
-            return findings(self.records, pairs)
+            return findings(self.records, pairs, concept_decisions)
         """Report repeated entity forms as actionable, never as silent data."""
         findings = []
         for record in self.records:
