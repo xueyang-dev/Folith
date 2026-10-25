@@ -4,7 +4,7 @@
     venv/bin/python scripts/term_workflow_evidence.py [--out docs/evidence/term-workflow]
 
 合成数据（作品名 "The Life of Violet" 的错误译名场景），隔离数据目录，不改本机
-偏好（QSettings 导出/还原）。流程与真实用户一致：
+偏好（QSettings 重定向到隔离目录）。流程与真实用户一致：
 
 1. 打开任务，选中有术语的段——右栏出现术语建议卡（原文 → 首选译名）；
 2. 点击卡上的 ✎，在对话框里把首选译名改成正确译名，勾选"保存后预览"；
@@ -23,7 +23,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -115,9 +114,7 @@ def main() -> int:
     data_dir = work / "data"
     data_dir.mkdir(parents=True)
 
-    backup = work / "qsettings-backup.plist"
-    had_prefs = subprocess.run(["defaults", "export", "com.folith.QtDesktop", str(backup)],
-                               capture_output=True).returncode == 0
+    os.environ["FOLITH_QT_SETTINGS_DIR"] = str(work / "settings")
 
     if args.offscreen:
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -140,6 +137,10 @@ def main() -> int:
     seed(core, data_dir, work)
     app = window_module.build_application([])
     platform_name = QGuiApplication.platformName()
+    # A fresh isolated preference store would otherwise open the unrelated
+    # first-run/what's-new modal during this terminology evidence run.
+    from folith.qt import onboarding, preferences
+    onboarding.mark_completed(preferences.settings(), adapter.app_identity()["app_version"])
 
     try:
         config = adapter.EngineConfig(provider="DeepSeek", model="deepseek-v4-flash",
@@ -319,10 +320,7 @@ def main() -> int:
         window.close()
         pump(0.5)
     finally:
-        if had_prefs:
-            subprocess.run(["defaults", "import", "com.folith.QtDesktop", str(backup)])
-        else:
-            subprocess.run(["defaults", "delete", "com.folith.QtDesktop"], capture_output=True)
+        app.closeAllWindows()
     verdict = "pass" if all(
         item.get("ok") for item in results["steps"] if isinstance(item, dict)) else "fail"
     print("EVIDENCE:", out / "evidence.json", "verdict:", verdict)
