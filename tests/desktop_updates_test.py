@@ -97,3 +97,21 @@ def test_stable_release_is_newer_than_its_prerelease():
     result = support.check_for_update("0.8.0rc1", opener=lambda *a, **k:
         io.BytesIO(json.dumps({"tag_name": "v0.8.0"}).encode()))
     assert result["state"] == "newer"
+
+
+@pytest.mark.parametrize("owned", [True, False])
+def test_recovery_cleanup_only_removes_the_helpers_own_failed_copy(tmp_path, monkeypatch, owned):
+    install = tmp_path / "Folith"
+    install.mkdir()
+    failed = tmp_path / "Folith.update-failed"
+    failed.mkdir()
+    (failed / "marker.txt").write_text("preserve unless the helper created this")
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "update-result.json").write_text(json.dumps({"state": "failed",
+        "failed_path": str(failed) if owned else None}))
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(updates.sys, "executable", str(install / "Folith.exe"))
+    assert updates.acknowledge_windows_update(logs) == "failed"
+    assert failed.exists() is not owned

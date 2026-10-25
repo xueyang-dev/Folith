@@ -163,8 +163,12 @@ def acknowledge_windows_update(log_dir: Path) -> str:
         install = Path(sys.executable).resolve().parent
         if result["state"] == "failed":
             failed = install.with_name(install.name + ".update-failed")
-            if failed.is_dir() and not failed.is_symlink():
-                shutil.rmtree(failed)
+            # A refusal caused by a pre-existing sibling must never delete it.
+            if result.get("failed_path"):
+                if Path(result["failed_path"]).resolve() != failed:
+                    raise UpdateError("Unexpected failed update path")
+                if failed.is_dir() and not failed.is_symlink():
+                    shutil.rmtree(failed)
             result_path.unlink()
             return "failed"
         if result["state"] != "installed" or result["version"] != _installed_version():

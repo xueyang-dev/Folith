@@ -16,6 +16,7 @@ $logPath = Join-Path $LogDir 'update.log'
 $resultPath = Join-Path $LogDir 'update-result.json'
 $backedUp = $false
 $backupStarted = $false
+$failedPathCreated = $false
 function Write-UpdateLog([string]$message) {
     Add-Content -LiteralPath $logPath -Value ((Get-Date -Format o) + ' ' + $message)
 }
@@ -67,7 +68,10 @@ try {
     Write-UpdateLog $failure
     if ($backedUp) {
         # Every move target is a verified sibling of the named installation.
-        if (Test-Path -LiteralPath $installPath) { Move-Item -LiteralPath $installPath -Destination $failedPath }
+        if (Test-Path -LiteralPath $installPath) {
+            Move-Item -LiteralPath $installPath -Destination $failedPath
+            $failedPathCreated = $true
+        }
         Move-Item -LiteralPath $backupPath -Destination $installPath
     } elseif ($backupStarted -and (Test-Path -LiteralPath $backupPath)) {
         # This exact absolute sibling did not exist before our failed copy.
@@ -76,7 +80,8 @@ try {
         }
         Remove-Item -LiteralPath $backupPath -Recurse -Force
     }
-    @{ state='failed'; message=$failure } | ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
+    @{ state='failed'; message=$failure; failed_path=$(if ($failedPathCreated) { $failedPath } else { $null }) } |
+        ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
 }
 if (Test-Path -LiteralPath (Join-Path $installPath 'Folith.exe')) {
     # Preserve the effective data/log locations, including a custom data folder.
