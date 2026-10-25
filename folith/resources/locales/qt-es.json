@@ -2061,5 +2061,15 @@
   "首选译名不能为空。": "La traducción preferida no puede estar vacía.",
   "这条术语没有条目标识。": "Este término no tiene identificador.",
   "找不到这条术语。": "No se encontró este término.",
-  "无法编辑术语": "No se puede editar el término"
+  "无法编辑术语": "No se puede editar el término",
+  "同原文不同上下文、仅作建议 {v0} 段": "{v0} segmentos con el mismo original y distinto contexto; solo sugerencias",
+  "回溯一致性建议已关闭；已收集的证据与已采用的译文保持不变。": "Las sugerencias retrospectivas de coherencia están desactivadas; las evidencias recopiladas y las traducciones adoptadas se mantienen sin cambios.",
+  "有 {v0} 条回溯一致性建议待确认（历史段落，需显式采用）。": "Hay {v0} sugerencias retrospectivas de coherencia pendientes de confirmación (segmentos anteriores; requieren adopción explícita).",
+  "目标语言无法确定，翻译记忆未参与查询": "No se pudo determinar el idioma de destino; no se consultó la memoria de traducción",
+  "翻译记忆仅作建议，已独立审校": "Solo sugerencia de la memoria de traducción; revisada de forma independiente",
+  "翻译记忆仅作建议，待确认": "Solo sugerencia de la memoria de traducción; pendiente de confirmación",
+  "翻译记忆本次未启用（没有逐段查询）": "La memoria de traducción no se activó en esta ejecución (sin consultas por segmento)",
+  "翻译记忆（同原文，上下文不同，已独立审校）": "Memoria de traducción (mismo original, distinto contexto, revisada de forma independiente)",
+  "翻译记忆（同原文，上下文不同，待确认）": "Memoria de traducción (mismo original, distinto contexto, pendiente de confirmación)",
+  "项目里有 {v0} 条旧记忆没有语言标注，保留但未参与自动复用": "Hay {v0} entradas antiguas de la memoria de traducción del proyecto sin etiqueta de idioma; se conservan, pero no se reutilizan automáticamente"
 }

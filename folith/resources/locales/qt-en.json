@@ -2060,5 +2060,15 @@
   "首选译名不能为空。": "Preferred translation cannot be empty.",
   "这条术语没有条目标识。": "This term has no entry id.",
   "找不到这条术语。": "Term not found.",
-  "无法编辑术语": "Cannot edit term"
+  "无法编辑术语": "Cannot edit term",
+  "同原文不同上下文、仅作建议 {v0} 段": "{v0} segments with the same source but different context; suggestions only",
+  "回溯一致性建议已关闭；已收集的证据与已采用的译文保持不变。": "Retrospective consistency suggestions are disabled; collected evidence and adopted translations remain unchanged.",
+  "有 {v0} 条回溯一致性建议待确认（历史段落，需显式采用）。": "{v0} retrospective consistency suggestions await confirmation (earlier segments; explicit adoption required).",
+  "目标语言无法确定，翻译记忆未参与查询": "Target language could not be determined; translation memory was not queried",
+  "翻译记忆仅作建议，已独立审校": "Translation memory suggestion only; independently reviewed",
+  "翻译记忆仅作建议，待确认": "Translation memory suggestion only; awaiting confirmation",
+  "翻译记忆本次未启用（没有逐段查询）": "Translation memory was disabled for this run (no segment queries)",
+  "翻译记忆（同原文，上下文不同，已独立审校）": "Translation memory (same source, different context, independently reviewed)",
+  "翻译记忆（同原文，上下文不同，待确认）": "Translation memory (same source, different context, awaiting confirmation)",
+  "项目里有 {v0} 条旧记忆没有语言标注，保留但未参与自动复用": "{v0} legacy translation memory entries in this project have no language label; retained but excluded from automatic reuse"
 }
