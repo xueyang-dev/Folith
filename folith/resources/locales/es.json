@@ -1670,7 +1670,6 @@
   "原排版译文": "Traducción con formato original",
   "保留原文件的版式、图形与表格，译文就位；未完成的区域会在页面上标出。": "Conserva el diseño, las figuras y las tablas del original con la traducción en su sitio; las zonas sin terminar se marcan en la página.",
   "保留原版式、图形与表格，译文就位": "Conserva el diseño, las figuras y las tablas originales con la traducción en su sitio",
-  "原排版译文（Beta）": "Traducción con formato original (Beta)",
   "支持 PDF、DOCX、EPUB、TXT、Markdown · 单文件最大 200 MB": "PDF, DOCX, EPUB, TXT, Markdown · hasta 200 MB por archivo",
   "支持 PDF、DOCX、EPUB、TXT 和 Markdown，可一次添加多个文件": "Admite PDF, DOCX, EPUB, TXT y Markdown; añade varios archivos a la vez"
 }

@@ -264,6 +264,7 @@ def build_delivery_manifest(
     translator_config: Optional[Dict[str, Any]] = None,
     reviewer_config: Optional[Dict[str, Any]] = None,
     skipped_assets: Optional[Dict[str, str]] = None,
+    renderer_notes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """生成交付清单（统计与任务状态一致）。"""
     from .translation_evidence import translation_review_readiness
@@ -330,6 +331,10 @@ def build_delivery_manifest(
         # A requested artifact that cannot exist for this source must say so
         # here rather than quietly disappearing from the bundle.
         "skipped_assets": dict(skipped_assets or {}),
+        # A generated artifact whose quality the user should know about (e.g.
+        # the original-layout PDF ran out of glyphs for the target script)
+        # surfaces here in plain language, not only deep in its own report.
+        "renderer_notes": [str(note) for note in (renderer_notes or [])],
         "created_at": _now_iso(),
     }
 

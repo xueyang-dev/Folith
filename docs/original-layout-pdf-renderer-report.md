@@ -1,6 +1,7 @@
 # Original-layout PDF Renderer v1 — report
 
-Status: **in progress** (live acceptance pending). Companion file:
+Status: **stabilized** — live acceptance 26/26 (§7), platform evidence and the
+Beta-removal decision in §10. Companion file:
 [original-layout-pdf-renderer-progress.md](original-layout-pdf-renderer-progress.md).
 
 ## 1. What was built
@@ -109,19 +110,35 @@ both modes, which is the point of the same-text check: removal → re-typesettin
   in `tests/original_pdf_renderer_test.py`). MuPDF's bidi reordering reverses
   the two characters of that cluster, so PyMuPDF's `get_text` shows
   `االجتماع` for `الاجتماع`; pypdf keeps the cluster but not the word order.
-  Word-level search works; exact-substring search for words containing the
-  lam-alef ligature does not, in PyMuPDF.
+  Word-level search works (`test_arabic_target_extracts_as_base_characters`);
+  word-level *copy* yields every word's letters
+  (`test_arabic_target_words_are_all_copyable_from_the_text_layer`); only
+  exact-substring search for words containing the lam-alef ligature does not,
+  in PyMuPDF.
 - Fonts come from the system. A target script with no installed font is
-  reported in `missing_glyphs` instead of being silently substituted.
+  reported in `missing_glyphs` instead of being silently substituted, and the
+  gap is surfaced to the user: the delivery manifest carries it as a plain
+  `renderer_notes` line and the Qt client repeats the note in the freeze
+  confirmation (pinned by
+  `test_missing_glyphs_are_reported_and_reach_the_delivery_manifest`).
 - Raster page backgrounds are matched by sampling the local background colour;
   a photographic background behind scanned text cannot be reproduced exactly.
+  The limit does not corrupt text: the cover only paints inside regions with
+  verified geometry and the surrounding page — drawings included — is left
+  untouched (`test_scan_page_is_covered_and_the_rest_is_untouched`,
+  `test_page_only_region_on_a_scan_is_not_erased`).
 - `pikepdf` is used only by the tests; composition is PyMuPDF's
   `show_pdf_page`, which the measurements show is sufficient and keeps the text
   vector.
 - A table whose cells are separate translation blocks can collide when the
   fallback font is wider than the original (seen on the arXiv results table in
   same-text mode). Live translations are shorter and the same page passes; the
-  case is reported rather than papered over.
+  case is reported rather than papered over. The contract is pinned by
+  `tests/original_pdf_renderer_test.py::test_table_cells_are_separate_slots_and_report_their_cascade`:
+  each cell is its own placed slot, and when a column cannot hold the cells
+  even at the declared floor size the renderer falls back to the source
+  positions and reports the overlap (`unfinished` records with reason
+  `"overlap"`) instead of truncating text or leaving a source ghost.
 - A degraded scan whose text layer is *accepted* by the pipeline's quality gate
   never reaches visual understanding, so the renderer is handed reversed text.
   See the challenge group in section 9.
@@ -243,8 +260,8 @@ finished (a bug this phase introduced and then fixed: `skipped_assets` was
 initialised inside the translated branch, so such a job raised
 `UnboundLocalError` while building the manifest).
 
-Platforms: everything above was executed on macOS (darwin, arm64). No Windows or
-Linux run was performed in this environment, so those platforms are **not
+Platforms: everything above was executed on macOS (darwin, arm64). Windows
+evidence was added by the stabilization phase (§10); Linux remains **not
 verified**.
 
 ## 9. Challenge group (excluded from the pass/fail denominator)
@@ -281,3 +298,82 @@ not usable because the pipeline's text-layer gate accepts a reversed layer, so
 the page never reaches visual understanding. Fixing that routing is a separate
 change and is **not claimed** by this phase.
 
+
+## 10. Stabilization (issue #15, 2026-10-25)
+
+The stabilization phase changed **no rendering or placement logic**. The
+changes are: user-visible surfacing of the renderer's own reported gaps, new
+tests pinning the documented bounds, the Beta label removal, and the Windows
+platform evidence below. Because placement is untouched, the live acceptance
+in §7 (26/26 pages, macOS) remains the on-record corpus evidence for the
+renderer's output quality.
+
+### User-visible surfacing
+
+`original_layout_report.json` was already in the bundle, but nothing told the
+user to look at it. Now:
+
+- `delivery_manifest.json` carries a `renderer_notes` list with plain-language
+  notes when the render reports missing-glyph slots, unfinished regions or box
+  overflows (`core._original_layout_notes`);
+- the Qt client appends those notes to the freeze confirmation, so the user
+  learns about a degraded render at the moment it happens;
+- the Qt delivery asset list groups `original_layout.pdf` with the
+  translations and `original_layout_report.json` with the records, instead of
+  dumping both under "other files".
+
+### Bounds now pinned by tests (`tests/original_pdf_renderer_test.py`)
+
+- **Complex tables**: cell-wise blocks place independently, and an unplaceable
+  column is reported (`reason: "overlap"`), never silently truncated
+  (`test_table_cells_are_separate_slots_and_report_their_cascade`). The bound
+  itself remains: a table whose cells are separate blocks can collide when the
+  fallback font is wider than the original; the overlap is the declared
+  behaviour.
+- **Missing glyphs**: a slot whose script has no installed font is reported in
+  `missing_glyphs` and reaches the delivery manifest's `renderer_notes`
+  (`test_missing_glyphs_are_reported_and_reach_the_delivery_manifest`).
+- **Arabic**: word-level copy yields every word's letters
+  (`test_arabic_target_words_are_all_copyable_from_the_text_layer`); word-level
+  search and the lam-alef ToUnicode mapping were already pinned.
+
+### Windows evidence (win32, CPython 3.11.16, 2026-10-25)
+
+- Test suite: `original_pdf_renderer_test.py` (24 tests),
+  `original_layout_delivery_contract_test.py` + `delivery_snapshot_test.py` +
+  `missing_translation_delivery_test.py` + `delivery_status_light_test.py`
+  (28 tests), the Qt delivery/task-setup/i18n suites (84 tests), plus the Qt
+  PDF panel / workbench poll suite (28 tests) — all passing. The i18n coverage
+  script reports 0 untranslated Qt strings for all five catalogues.
+- Offline corpus spot-check (`benchmark/opdf/render_corpus.py --mode offline
+  --only arxiv-attention`, the same methodology as §4): **5/8 pages pass**,
+  matching the macOS offline record exactly — same pass count, the three
+  failures are the same reported overlaps (pages 1, 5, 8), 0 overflow,
+  0 missing-glyph slots, links 10→10, outline 20→20, page geometry preserved.
+  The other six samples live only in `repo:`-pinned job sources that do not
+  exist on this machine, so the offline run is a spot-check, not a corpus
+  re-run.
+- The arXiv source was re-downloaded from the pinned public URL
+  (`1706.03762v7`, sha256 `bdfaa68d…`); its page count, page sizes, link count
+  (10) and outline entries (20) match the frozen manifest's fingerprint.
+
+### Harness note
+
+`benchmark/opdf/acceptance.py --mode offline` currently cannot complete on any
+platform: the export now goes through `core.build_delivery_assets`, whose
+Translation Target Invariant gate rejects the OfflineProvider's deliberately
+verbose fixed sentences (`交付被 Translation Target Invariant 阻止：译文疑似
+遗漏或被截断`). The gate is doing its job; the offline harness predates it.
+Offline corpus work should use `render_corpus.py --mode offline`, which
+bypasses the delivery gate, as §4 did.
+
+### Beta-removal decision
+
+**The Beta label is removed.** Rationale: the renderer's placement logic is
+unchanged since the 26/26 live acceptance on macOS; Windows now passes the
+full renderer/delivery test surface and reproduces the offline corpus
+fingerprint on the one publicly available sample; and every known limitation
+is documented (§5) and now surfaced to the user in the delivery bundle instead
+of living only in a report file. The remaining platform gap is Linux, which
+stays **not verified** and is recorded here; the delivery notes keep the known
+degradations visible on every platform until a Linux run closes that gap.
