@@ -2192,5 +2192,18 @@
   "；收进 {v0} 条术语": "; {v0} Begriffe aufgenommen",
   "；该段审校状态已刷新": "; Überprüfungsstatus des Segments aktualisiert",
   "；还需处理：{v0}": "; noch zu bearbeiten: {v0}",
-  "；阻断 {v0} 项：{v1}": "; {v0} blockierende(r) Punkt(e): {v1}"
+  "；阻断 {v0} 项：{v1}": "; {v0} blockierende(r) Punkt(e): {v1}",
+  "辅助分析": "Hilfsanalyse",
+  "提取术语与知识": "Terminologie und Wissen werden extrahiert",
+  "抽取全文核心术语": "Kernterminologie wird extrahiert",
+  "正在翻译第 {v0}–{v1} 段": "Segmente {v0}–{v1} werden übersetzt",
+  "原文清理批次 #{v0}": "Quelltextbereinigung, Stapel Nr. {v0}",
+  "自动标注批次 #{v0}": "Anmerkungen, Stapel Nr. {v0}",
+  "全文语义理解（{v0}）": "Dokumentverständnis ({v0})",
+  "已向模型发送请求（{v0}）": "Modellanfrage gesendet ({v0})",
+  "已收到模型响应（{v0}）": "Modellantwort empfangen ({v0})",
+  "已收到模型响应（{v0}），仍有 {v1} 个请求进行中": "Modellantwort empfangen ({v0}); noch {v1} Anfrage(n) in Bearbeitung",
+  "等待模型响应：{v0}（{v1} 个请求进行中）": "Warten auf das Modell: {v0} ({v1} Anfrage(n) in Bearbeitung)",
+  "等待模型响应（{v0} 个请求进行中）": "Warten auf das Modell ({v0} Anfrage(n) in Bearbeitung)",
+  "已收到模型响应，仍有 {v0} 个请求进行中": "Modellantwort empfangen; noch {v0} Anfrage(n) in Bearbeitung"
 }

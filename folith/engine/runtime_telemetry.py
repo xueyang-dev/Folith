@@ -58,10 +58,10 @@ class _RuntimeTelemetryCoalescer:
         self.submit(active_delta=-1, status="running", phase="running",
                     event_name="llm_response_received", purpose=purpose)
 
-    def request_failed(self, error=None):
+    def request_failed(self, error=None, *, purpose=None):
         self.submit(force=True, active_delta=-1, status="running", phase="running",
                     event=str(error)[:240] if error else "模型请求失败",
-                    event_name="llm_request_failed")
+                    event_name="llm_request_failed", purpose=purpose)
 
     def submit(self, *, active_delta=0, force=False, purpose=None, **changes):
         """Record one telemetry update; flush on the leading or trailing edge."""
@@ -75,16 +75,13 @@ class _RuntimeTelemetryCoalescer:
                 self._active = max(0, self._active + int(active_delta))
                 if active_delta > 0:
                     self._active_purposes.append(purpose)
-                elif purpose is not None and purpose in self._active_purposes:
+                elif purpose in self._active_purposes:
                     self._active_purposes.remove(purpose)
                 elif self._active_purposes:
                     self._active_purposes.pop(0)
-                # 展示用途在入队时定死：刚完成的请求，它的用途要留在
-                # "已收到模型响应（…）"里——此时活跃列表可能已经空了。
-                display = (purpose if active_delta < 0 else None) \
-                    or (self._active_purposes[-1] if self._active_purposes else None)
-                if display:
-                    changes["purpose"] = display
+                # 事件属于本次请求；等待状态另从仍在途的请求推导。
+                # None 也要覆盖旧值，避免合并窗口沿用上次事件的用途。
+                self._pending["purpose"] = purpose
             for key, value in changes.items():
                 if value is not None:
                     self._pending[key] = value
@@ -141,18 +138,17 @@ class _RuntimeTelemetryCoalescer:
         active = self._active
         event_name = changes.pop("event_name", None)
         event = changes.pop("event", None)
-        # 用途标注（#167）：展示用最近一次在途请求的用途；事件消息、阶段标签与
-        # metadata 都带上它，让"已发送模型请求"能说清在做什么。事件名保持不变
-        # ——它们是下游的稳定标识，明细只进消息与 metadata。
-        purpose = changes.pop("purpose", None) \
-            or (self._active_purposes[-1] if self._active_purposes else None) or None
+        active_purpose = self._active_purposes[-1] if self._active_purposes else None
+        purpose = changes.pop("purpose", None)
+        if event_name is None:
+            purpose = active_purpose
         if purpose:
             changes["event_metadata"] = {"purpose": str(purpose)}
         if active > 0:
             changes["status"] = "waiting_external"
             changes["phase"] = "waiting_llm"
             changes["phase_label"] = (
-                f"等待模型响应：{purpose}（{active} 个请求进行中）" if purpose
+                f"等待模型响应：{active_purpose}（{active} 个请求进行中）" if active_purpose
                 else f"等待模型响应（{active} 个请求进行中）")
             if event is None:
                 if event_name == "llm_response_received":
@@ -197,10 +193,10 @@ def _runtime_telemetry_coalescer(job_id):
         return coalescer
 
 
-def _runtime_telemetry_request_failed(job_id, error=None):
+def _runtime_telemetry_request_failed(job_id, error=None, *, purpose=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_failed(error=error)
+        coalescer.request_failed(error=error, purpose=purpose)
 
 
 def flush_runtime_telemetry(job_id=None):

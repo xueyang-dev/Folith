@@ -2191,5 +2191,18 @@
   "已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。": "Excluded {v0} segments by scope; excluded content stays out of the translation and the delivery, and the exclusion list is attached to the delivery package.",
   "已恢复 {v0} 段；它们回到工作台并重新计入待完成。": "Restored {v0} segments; they are back in the workbench and count as pending again.",
   "无法排除所选范围": "Could not exclude the selected scopes",
-  "无法恢复所选段落": "Could not restore the selected segments"
+  "无法恢复所选段落": "Could not restore the selected segments",
+  "辅助分析": "Auxiliary analysis",
+  "提取术语与知识": "Extracting terminology and knowledge",
+  "抽取全文核心术语": "Extracting core terminology",
+  "正在翻译第 {v0}–{v1} 段": "Translating segments {v0}–{v1}",
+  "原文清理批次 #{v0}": "Source cleanup batch #{v0}",
+  "自动标注批次 #{v0}": "Annotation batch #{v0}",
+  "全文语义理解（{v0}）": "Document understanding ({v0})",
+  "已向模型发送请求（{v0}）": "Model request sent ({v0})",
+  "已收到模型响应（{v0}）": "Model response received ({v0})",
+  "已收到模型响应（{v0}），仍有 {v1} 个请求进行中": "Model response received ({v0}); {v1} request(s) still in progress",
+  "等待模型响应：{v0}（{v1} 个请求进行中）": "Waiting for the model: {v0} ({v1} request(s) in progress)",
+  "等待模型响应（{v0} 个请求进行中）": "Waiting for the model ({v0} request(s) in progress)",
+  "已收到模型响应，仍有 {v0} 个请求进行中": "Model response received; {v0} request(s) still in progress"
 }

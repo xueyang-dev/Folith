@@ -106,7 +106,8 @@ def event_label(event: Mapping[str, Any]) -> str:
     if name in _EXACT:
         # #167：这两个事件的消息带用途明细（"已向模型发送请求（正在翻译第 1–3 段）"）
         # 时优先展示原文；裸消息与旧任务的"仍有 N 个请求进行中"变体继续用稳定短语。
-        if message and "（" in message:
+        if (name in {"llm_request_started", "llm_response_received"}
+                and message and "（" in message):
             return clip(message, 86)
         return _EXACT[name]
     # "完成 …" is only true for a message that reports success; a failure, skip or

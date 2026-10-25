@@ -2157,7 +2157,8 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         if runtime_job_id:
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
             # 看到的是真实结果而不是一个永远不会结束的在途请求。
-            _runtime_telemetry_request_failed(runtime_job_id)
+            _runtime_telemetry_request_failed(
+                runtime_job_id, purpose=_current_llm_purpose())
         raise exc
     finally:
         if _request_run:

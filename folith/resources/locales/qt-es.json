@@ -2192,5 +2192,18 @@
   "已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。": "Excluidos {v0} párrafos por alcance; el contenido excluido no entra en la traducción ni en la entrega, y la lista de exclusiones se adjunta al paquete de entrega.",
   "已恢复 {v0} 段；它们回到工作台并重新计入待完成。": "Restaurados {v0} párrafos; vuelven al banco de trabajo y cuentan como pendientes otra vez.",
   "无法排除所选范围": "No se pudieron excluir los rangos seleccionados",
-  "无法恢复所选段落": "No se pudieron restaurar los párrafos seleccionados"
+  "无法恢复所选段落": "No se pudieron restaurar los párrafos seleccionados",
+  "辅助分析": "Análisis auxiliar",
+  "提取术语与知识": "Extrayendo terminología y conocimiento",
+  "抽取全文核心术语": "Extrayendo terminología clave",
+  "正在翻译第 {v0}–{v1} 段": "Traduciendo los segmentos {v0}–{v1}",
+  "原文清理批次 #{v0}": "Lote de limpieza del original n.º {v0}",
+  "自动标注批次 #{v0}": "Lote de anotación n.º {v0}",
+  "全文语义理解（{v0}）": "Comprensión del documento ({v0})",
+  "已向模型发送请求（{v0}）": "Solicitud enviada al modelo ({v0})",
+  "已收到模型响应（{v0}）": "Respuesta del modelo recibida ({v0})",
+  "已收到模型响应（{v0}），仍有 {v1} 个请求进行中": "Respuesta del modelo recibida ({v0}); quedan {v1} solicitudes en curso",
+  "等待模型响应：{v0}（{v1} 个请求进行中）": "Esperando al modelo: {v0} ({v1} solicitudes en curso)",
+  "等待模型响应（{v0} 个请求进行中）": "Esperando al modelo ({v0} solicitudes en curso)",
+  "已收到模型响应，仍有 {v0} 个请求进行中": "Respuesta del modelo recibida; quedan {v0} solicitudes en curso"
 }

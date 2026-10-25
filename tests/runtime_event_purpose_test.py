@@ -158,3 +158,67 @@ def test_event_view_prefers_enriched_message_for_llm_events():
     finished = {"event": "llm_response_received",
                 "message": "已收到模型响应（文档画像）"}
     assert view.event_label(finished) == "已收到模型响应（文档画像）"
+
+
+def test_response_purpose_is_separate_from_the_remaining_wait():
+    writer = RecordingWriter()
+    coalescer = _coalescer(writer)
+    try:
+        coalescer.request_started(purpose="正在翻译第 1–3 段")
+        coalescer.request_started(purpose="自动标注批次 #2")
+        coalescer.request_finished(purpose="正在翻译第 1–3 段")
+        coalescer.flush()
+        assert writer.last["event"] == "已收到模型响应（正在翻译第 1–3 段），仍有 1 个请求进行中"
+        assert writer.last["event_metadata"]["purpose"] == "正在翻译第 1–3 段"
+        assert writer.last["phase_label"] == "等待模型响应：自动标注批次 #2（1 个请求进行中）"
+    finally:
+        coalescer.close()
+
+
+def test_failed_call_removes_its_own_purpose(tmp_path, monkeypatch):
+    import core
+
+    writer = RecordingWriter()
+    coalescer = _coalescer(writer)
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(core, "_runtime_worker_job_id", lambda: "job-p")
+    monkeypatch.setattr(core, "_runtime_pause_checkpoint", lambda job: None)
+    monkeypatch.setattr(core, "_runtime_cancel_requested", lambda job: False)
+    monkeypatch.setattr(core, "_runtime_telemetry_coalescer", lambda job: coalescer)
+    from folith.engine import runtime_telemetry
+    monkeypatch.setattr(runtime_telemetry, "_runtime_telemetry_coalescer", lambda job: coalescer)
+    monkeypatch.setattr(core.trace, "get_active_run", lambda *args, **kwargs: None)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("test provider failure")
+
+    monkeypatch.setattr(core, "_call_llm_transport", fail)
+    try:
+        coalescer.request_started(purpose="正在翻译第 1–3 段")
+        with core.llm_call_purpose("自动标注批次 #2"):
+            with pytest.raises(RuntimeError, match="test provider failure"):
+                core.call_llm("DeepSeek", "k", "m", "s", "u")
+        assert writer.last["event_name"] == "llm_request_failed"
+        assert writer.last["event_metadata"]["purpose"] == "自动标注批次 #2"
+        assert writer.last["phase_label"] == "等待模型响应：正在翻译第 1–3 段（1 个请求进行中）"
+        coalescer.flush()
+        assert "正在翻译第 1–3 段" in writer.last["phase_label"]
+        coalescer.request_finished(purpose="正在翻译第 1–3 段")
+        assert coalescer.stats()["active"] == 0
+    finally:
+        coalescer.close()
+
+
+def test_unlabelled_completion_does_not_reuse_a_coalesced_purpose():
+    writer = RecordingWriter()
+    coalescer = _coalescer(writer)
+    try:
+        coalescer.request_started(purpose="文档画像")
+        coalescer.request_started()
+        coalescer.request_finished()
+        coalescer.flush()
+        assert writer.last["event"] == "已收到模型响应，仍有 1 个请求进行中"
+        assert "event_metadata" not in writer.last
+        assert writer.last["phase_label"] == "等待模型响应：文档画像（1 个请求进行中）"
+    finally:
+        coalescer.close()
