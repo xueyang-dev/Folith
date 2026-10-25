@@ -17,7 +17,8 @@ from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QWidget,
+    QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QWidget, QProgressBar,
+    QPlainTextEdit,
 )
 
 from . import connection_status
@@ -297,13 +298,19 @@ class AboutPage(QWidget):
 
     diagnosticsRequested = Signal()
 
-    def __init__(self, runner, parent: QWidget | None = None) -> None:
+    def __init__(self, runner, parent: QWidget | None = None, *, updater=None) -> None:
         super().__init__(parent)
         from .dialogs import _panel, _set_status
 
         self.runner = runner
         self._set_status = _set_status
         self._view = support.about_view()
+        if updater is None:
+            from .updater import UpdateController
+            from PySide6.QtCore import QStandardPaths
+            updater = UpdateController(runner, cache_dir=Path(QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.CacheLocation)) / "updates", parent=self)
+        self.updater = updater
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, theme_module.SPACE["lg"], 0, 0)
         layout.setSpacing(theme_module.SPACE["sm"])
@@ -346,7 +353,7 @@ class AboutPage(QWidget):
 
         self.update_button = QPushButton(i18n.tr('检查更新'))
         style_module.set_button(self.update_button, "secondary", small=True)
-        self.update_button.setToolTip(i18n.tr('只在你点这里时联网读取 GitHub 上的最新版本；不会自动下载或安装。'))
+        self.update_button.setToolTip(i18n.tr('检查新版本；下载和重启安装由你决定。'))
         self.update_button.clicked.connect(self.check_update)
         self.update_status = QLabel("")
         self.update_status.setVisible(False)
@@ -354,6 +361,17 @@ class AboutPage(QWidget):
         self.download_link.setVisible(False)
         self._download_url = ""
         self.download_link.clicked.connect(lambda: _open_url(self._download_url))
+        self.install_button = QPushButton(i18n.tr('下载更新'))
+        style_module.set_button(self.install_button, "primary", small=True)
+        self.install_button.clicked.connect(self._update_action)
+        self.cancel_update_button = QPushButton(i18n.tr('取消下载'))
+        style_module.set_button(self.cancel_update_button, "secondary", small=True)
+        self.cancel_update_button.clicked.connect(self.updater.cancel)
+        self.update_progress = QProgressBar()
+        self.release_notes = QPlainTextEdit()
+        self.release_notes.setReadOnly(True)
+        self.release_notes.setMaximumHeight(150)
+        self.release_notes.setAccessibleName(i18n.tr('更新说明'))
         self.diagnostics_button = QPushButton(i18n.tr('诊断信息…'))
         style_module.set_button(self.diagnostics_button, "secondary", small=True)
         self.diagnostics_button.setToolTip(i18n.tr('版本、系统与运行事实，不含 API 密钥与文档正文。'))
@@ -368,30 +386,44 @@ class AboutPage(QWidget):
                                    self.download_link))
         group.add_row(_setting_row(i18n.tr('诊断信息'), self.diagnostics_button))
         layout.addWidget(group)
+        update_actions = QHBoxLayout()
+        update_actions.addWidget(self.install_button)
+        update_actions.addWidget(self.cancel_update_button)
+        update_actions.addStretch()
+        layout.addLayout(update_actions)
+        layout.addWidget(self.update_progress)
+        layout.addWidget(self.release_notes)
+        self.updater.changed.connect(self._render_update)
+        self._render_update()
         layout.addStretch(1)
 
     def check_update(self) -> None:
-        self.update_button.setEnabled(False)
-        self._set_status(self.update_status, i18n.tr('正在检查…'))
-        self.download_link.setVisible(False)
+        self.updater.check()
 
-        def done(result: dict) -> None:
-            self.update_button.setEnabled(True)
-            tone = {"newer": "ok", "failed": "danger"}.get(result["state"], "muted")
-            text = {"newer": i18n.tr('有新版本 {v0}。', v0=result.get("latest") or ""),
-                    "current": i18n.tr('已经是最新版本。')}.get(
-                        result["state"], i18n.tr('无法检查更新，请稍后再试。'))
-            self._set_status(self.update_status, text, tone)
-            self.update_status.setToolTip(result.get("message") or "")
-            self._download_url = result.get("url") or ""
-            self.download_link.setVisible(result["state"] == "newer")
+    def _update_action(self):
+        if self.updater.state == "ready":
+            self.updater.restartRequested.emit()
+        else:
+            self.updater.download()
 
-        def failed(message: str, _detail: str) -> None:
-            self.update_button.setEnabled(True)
-            self._set_status(self.update_status, message, "danger")
-
-        self.runner.submit(support.check_for_update, self._view["version"],
-                           on_done=done, on_error=failed, label="check-update")
+    def _render_update(self):
+        update = self.updater
+        busy = update.state in {"checking", "downloading", "cancelling"}
+        self.update_button.setEnabled(not busy and update.state != "ready")
+        self._set_status(self.update_status, update.message,
+                         "danger" if "failed" in update.state else "muted")
+        self.update_status.setToolTip(update.detail)
+        self._download_url = update.url
+        self.download_link.setVisible(update.state == "newer" and not getattr(update, "manifest", None))
+        self.install_button.setVisible(update.state == "ready" or (
+            update.state in {"newer", "download-failed", "cancelled"} and bool(getattr(update, "manifest", None))))
+        self.install_button.setText(i18n.tr('重启并更新') if update.state == "ready" else i18n.tr('下载更新'))
+        self.cancel_update_button.setVisible(update.state == "downloading")
+        self.update_progress.setVisible(update.state in {"downloading", "cancelling"})
+        self.update_progress.setRange(0, 100)
+        self.update_progress.setValue(int(update.received * 100 / update.total) if update.total else 0)
+        self.release_notes.setPlainText(update.notes)
+        self.release_notes.setVisible(bool(update.notes))
 
 
 # =============================================================================

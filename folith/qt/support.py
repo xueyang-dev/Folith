@@ -14,6 +14,7 @@ import re
 import shutil
 import urllib.parse
 import urllib.request
+from packaging.version import InvalidVersion, Version
 import zipfile
 from pathlib import Path
 
@@ -172,11 +173,6 @@ def issue_url(view: dict | None = None) -> str:
     return ISSUES_URL + "?" + urllib.parse.urlencode({"body": body})
 
 
-def _version_tuple(text: str) -> tuple[int, ...]:
-    numbers = re.findall(r"\d+", str(text or ""))
-    return tuple(int(part) for part in numbers[:3])
-
-
 def check_for_update(current: str, *, timeout: float = 8.0, opener=None) -> dict:
     """只在用户点「检查更新」时调用：读 GitHub Releases 的最新版本，不下载任何东西。
 
@@ -195,8 +191,13 @@ def check_for_update(current: str, *, timeout: float = 8.0, opener=None) -> dict
     url = str(payload.get("html_url") or PROJECT_URL + "/releases")
     if not latest:
         return {"state": "failed", "latest": "", "url": url, "message": "还没有发布的版本。"}
-    if _version_tuple(latest) > _version_tuple(current):
+    try:
+        newer = Version(latest) > Version(current)
+    except InvalidVersion:
+        return {"state": "failed", "latest": latest, "url": url, "message": "无法识别版本号。"}
+    if newer:
         return {"state": "newer", "latest": latest.lstrip("v"), "url": url,
+                "notes": str(payload.get("body") or ""),
                 "message": f"有新版本 {latest.lstrip('v')}。"}
     return {"state": "current", "latest": latest.lstrip("v"), "url": url,
             "message": "已经是最新版本。"}

@@ -39,4 +39,5 @@ include = ["folith*"]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.package-data]
+"folith.desktop" = ["*.ps1"]
 folith = ["resources/*.txt", "resources/locales/zh-CN.json", "resources/locales/en.json", "resources/locales/es.json", "resources/locales/ru.json", "resources/locales/ar.json", "resources/locales/qt-*.json", "resources/brand/*.svg", "resources/brand/*.png"]

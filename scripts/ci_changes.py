@@ -52,7 +52,8 @@ PACKAGING_PATH = re.compile(
     r"scripts/(build_qt_|build_app_icon|check_release_archives|check_windows_|"
     r"qt_(desktop|dmg)_probe|qt_ocr_baseline_runner|qt_release_checks|"
     r"qt_acceptance_kit|release_preflight|stage_tesseract_payload|"
-    r"write_desktop_build_info|write_release_checksums))"
+    r"write_desktop_build_info|write_release_checksums|create_update_manifest|embed_macos_updater|prepare_macos_update)|"
+    r"folith/(desktop/(updates\.py|install-update\.ps1)|qt/(updater|sparkle)\.py))"
 )
 
 # Source paths whose changes can corrupt or lose user data, or break resuming a

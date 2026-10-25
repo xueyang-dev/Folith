@@ -291,7 +291,6 @@ def test_grid_cannot_be_dragged_shut(bench):
 
 def test_collapsing_the_source_closes_it_and_remembers_the_width(bench, app):
     bench._pdf_ok = True
-    # issue #61 之后原页由 _source_available（_pdf_ok 或流式源）把关。
     bench._source_available = True
     bench.set_source_open(True)
     app.processEvents()

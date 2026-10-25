@@ -227,6 +227,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     main_window.show()
+    from folith.desktop import updates
+
+    def update_acknowledged(state):
+        if state == "failed":
+            main_window._notice(i18n.tr('更新未完成，已重新打开原版本。请查看更新日志后重试。'), task=False)
+        elif state == "recovery":
+            main_window._notice(i18n.tr('上次更新需要恢复，请查看更新日志。'), task=False)
+
+    main_window.runner.submit(updates.acknowledge_windows_update, paths.log_dir,
+                              on_done=update_acknowledged, label="update-recovery")
     log(f"qt client started: data_dir={paths.data_dir} "
         f"build={adapter.app_identity().get('build_id')}")
 
