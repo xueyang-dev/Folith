@@ -76,6 +76,8 @@ def main():
                 bench.view_source_button.click()
                 panel = bench.source_panel
                 pump(lambda: panel.location.text() == expected)
+                pump(lambda: not bench._motion.running('translation-columns')
+                     and bench.source_clip.width() > 200)
                 assert bench.source_open() and panel.isVisible()
                 assert sentence in panel.view.toPlainText()
                 assert '#ffe08a' in panel.view.toHtml()
