@@ -4727,11 +4727,22 @@ def ocr_status() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-def provider_models(provider: str, api_key: str, base_url: str = "") -> tuple[bool, list[str], str]:
+def provider_models(provider: str, api_key: str,
+                    base_url: str = "") -> tuple[bool, list[str], str, dict[str, list[str]]]:
+    """模型目录 + 服务商声明过的输入模态（未声明的模型不在 dict 里 = 未知）。"""
     try:
         return core.fetch_provider_models(provider, api_key, base_url or None)
     except Exception as exc:
-        return False, [], f"{type(exc).__name__}: {exc}"
+        return False, [], f"{type(exc).__name__}: {exc}", {}
+
+
+def test_vision_model(provider: str, api_key: str, model: str,
+                      base_url: str = "") -> tuple[bool, str]:
+    """「测试视觉」：用户点按钮才发的一次小图请求（core.test_provider_vision）。"""
+    try:
+        return core.test_provider_vision(provider, api_key, model, base_url or None)
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
 
 
 def test_connection(config: EngineConfig) -> tuple[bool, str]:

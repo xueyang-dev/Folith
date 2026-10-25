@@ -13,10 +13,12 @@ from functools import wraps
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+import base64
 import os
 import queue
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -26,6 +28,7 @@ import time
 import traceback
 import uuid
 import zipfile
+import zlib
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
@@ -2136,6 +2139,46 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
 
 
 
+def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
+    """取一个池化的 OpenAI 兼容 client，返回 (resolved_base, client)。
+
+    正式翻译请求、连接测试和「测试视觉」共用这一条获取路径（代理例外、
+    连接池、跟踪钩子都一致），不会出现「测试能连、正式请求连不上」的分叉。
+    """
+    kwargs = {"api_key": api_key, "timeout": _llm_transport.OPENAI_TIMEOUT,
+              "max_retries": _llm_transport.OPENAI_MAX_RETRIES}
+    resolved_base = resolve_openai_base_url(provider, base_url)
+    if resolved_base:
+        kwargs["base_url"] = resolved_base
+    proxy_bypass = _llm_transport.proxy_bypass_for(cfg.get("proxy_bypass"), resolved_base)
+
+    def _build_openai_client():
+        build_kwargs = dict(kwargs)
+        # Keep SDK defaults on the ordinary route and the existing bypass
+        # transport on the proxy-free route; hooks never inspect bodies/headers.
+        client_type = httpx.Client if proxy_bypass else DefaultHttpxClient
+        client_kwargs = {"timeout": _llm_transport.OPENAI_TIMEOUT,
+                         "event_hooks": {"request": [_trace_http_request],
+                                         "response": [_trace_http_response]}}
+        if proxy_bypass:
+            client_kwargs["trust_env"] = False
+        bypass_client = client_type(**client_kwargs)
+        build_kwargs["http_client"] = bypass_client
+        try:
+            return OpenAI(**build_kwargs)
+        except BaseException:
+            if bypass_client is not None:
+                bypass_client.close()
+            raise
+
+    client = _llm_transport.get_registry().acquire(
+        _llm_transport.build_openai_identity(
+            provider=provider, base_url=resolved_base, proxy_bypass=proxy_bypass,
+            api_key=api_key),
+        _build_openai_client)
+    return resolved_base, client
+
+
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
                         *, temperature=0.1, base_url=None, response_format=None,
                         reasoning_effort=None, reasoning_mode=None,
@@ -2191,9 +2234,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         return out_text
 
     # OpenAI 官方与所有 OpenAI 兼容接口共用 SDK 路由
-    kwargs = {"api_key": api_key, "timeout": _llm_transport.OPENAI_TIMEOUT,
-              "max_retries": _llm_transport.OPENAI_MAX_RETRIES}
-    resolved_base = resolve_openai_base_url(provider, base_url)
+    resolved_base, client = _acquire_openai_compat_client(cfg, provider, api_key, base_url)
     resolved_reasoning = (reasoning_effort if reasoning_effort is not None
                           else getattr(_LLM_CTX, "reasoning_effort", None))
     if resolved_reasoning and resolved_reasoning not in reasoning_effort_options(
@@ -2202,34 +2243,6 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         # reviewer or an unknown relay model must not inherit it accidentally.
         resolved_reasoning = None
     resolved_reasoning_mode = _resolve_reasoning_mode(reasoning_mode)
-    if resolved_base:
-        kwargs["base_url"] = resolved_base
-    proxy_bypass = _llm_transport.proxy_bypass_for(cfg.get("proxy_bypass"), resolved_base)
-
-    def _build_openai_client():
-        build_kwargs = dict(kwargs)
-        # Keep SDK defaults on the ordinary route and the existing bypass
-        # transport on the proxy-free route; hooks never inspect bodies/headers.
-        client_type = httpx.Client if proxy_bypass else DefaultHttpxClient
-        client_kwargs = {"timeout": _llm_transport.OPENAI_TIMEOUT,
-                         "event_hooks": {"request": [_trace_http_request],
-                                         "response": [_trace_http_response]}}
-        if proxy_bypass:
-            client_kwargs["trust_env"] = False
-        bypass_client = client_type(**client_kwargs)
-        build_kwargs["http_client"] = bypass_client
-        try:
-            return OpenAI(**build_kwargs)
-        except BaseException:
-            if bypass_client is not None:
-                bypass_client.close()
-            raise
-
-    client = _llm_transport.get_registry().acquire(
-        _llm_transport.build_openai_identity(
-            provider=provider, base_url=resolved_base, proxy_bypass=proxy_bypass,
-            api_key=api_key),
-        _build_openai_client)
     request = {
         "model": model,
         "messages": [{"role": "system", "content": system_prompt},
@@ -2334,23 +2347,83 @@ def test_provider(provider, api_key, model, base_url=None):
 
 
 
+def _probe_image_png(size=16):
+    """「测试视觉」用的极小 PNG：一张纯红色方块（程序生成，无素材依赖）。"""
+    raw = b"".join(b"\x00" + b"\xff\x00\x00" * size for _ in range(size))
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data +
+                struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)  # 8-bit truecolor
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) +
+            chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def test_provider_vision(provider, api_key, model, base_url=None):
+    """「测试视觉」：给模型发一张极小的纯色方块图，验证它能否接收图像输入（#48）。
+
+    这是一次**付费**请求，只允许用户点按钮触发，任何自动流程都不得调用。
+    判断只依据这一次请求的真实反应：接口拒绝图像内容即不支持；模型说出方块
+    的颜色才算通过；答非所问按「未验证通过」如实返回。不查、不猜任何内置
+    模型清单。
+    """
+    cfg = PROVIDERS.get(provider)
+    if not cfg or cfg.get("kind") not in ("openai", "openai_compat"):
+        return False, "该服务商不是 OpenAI 兼容接口，应用不会通过它发送图像。"
+    try:
+        _resolved_base, client = _acquire_openai_compat_client(cfg, provider, api_key, base_url)
+    except ValueError as exc:
+        return False, str(exc)
+    image_part = {"type": "image_url",
+                  "image_url": {"url": "data:image/png;base64,"
+                                       + base64.b64encode(_probe_image_png()).decode("ascii")}}
+    t0 = time.time()
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": "你是连接测试助手。"},
+                      {"role": "user", "content": [
+                          image_part,
+                          {"type": "text", "text": "图里是一个纯色方块。它是什么颜色？只回答颜色名。"},
+                      ]}])
+    except Exception as exc:  # noqa: BLE001 - the user sees the reason
+        return False, provider_error_message(exc, "图像输入测试失败") + _proxy_hint(provider, base_url, exc)
+    elapsed = time.time() - t0
+    choices = getattr(response, "choices", None) or []
+    message = getattr(choices[0], "message", None) if choices else None
+    reply = str(getattr(message, "content", None) or "").strip()
+    if reply and any(word in reply.lower() for word in ("红", "red", "赤")):
+        return True, f"支持图像输入：模型认出了图里的颜色（回复「{reply[:12]}」）· 耗时 {elapsed:.1f}s"
+    if not reply:
+        return False, "模型返回了空内容，图像输入未验证通过。"
+    return False, f"模型回复了但没认出图里的颜色（「{reply[:24]}」），图像输入未验证通过。"
+
+
+
 def fetch_provider_models(provider, api_key, base_url=None):
-    """获取服务商的文本生成模型目录，返回 (ok, models, message)。"""
+    """获取服务商的文本生成模型目录，返回 (ok, models, message, modalities)。
+
+    ``modalities`` 只放服务商**自己声明**过输入类型的模型（例如 OpenRouter 的
+    ``input_modalities``）：``{"模型名": ["text", "image"]}``，仅文本就是
+    ``["text"]``。目录里没声明的模型不进字典——那是「未知」，不是「仅文本」，
+    界面按 #48 用显式未知态 + 用户触发的「测试视觉」处理，绝不猜测。
+    """
     cfg = PROVIDERS.get(provider) or {}
     if cfg.get("kind") == "gemini":
         return _fetch_gemini_models(api_key)
     if cfg.get("kind") not in ("openai", "openai_compat"):
-        return False, [], "当前服务商不支持 OpenAI 兼容模型目录"
+        return False, [], "当前服务商不支持 OpenAI 兼容模型目录", {}
     if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter"):
-        return False, [], "请先填写 API Key"
+        return False, [], "请先填写 API Key", {}
     try:
         resolved_base = resolve_openai_base_url(provider, base_url)
     except ValueError as exc:
-        return False, [], str(exc)
+        return False, [], str(exc), {}
     if not resolved_base and provider == "OpenAI":
         resolved_base = "https://api.openai.com/v1"
     if not resolved_base:
-        return False, [], "请先填写 API 地址"
+        return False, [], "请先填写 API 地址", {}
     try:
         headers = {"Accept": "application/json"}
         if (api_key or "").strip():
@@ -2368,19 +2441,21 @@ def fetch_provider_models(provider, api_key, base_url=None):
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPStatusError as exc:
-        return False, [], provider_error_message(exc, "获取模型失败")
+        return False, [], provider_error_message(exc, "获取模型失败"), {}
     except httpx.HTTPError as exc:
-        return False, [], provider_error_message(exc, "获取模型失败")
+        return False, [], provider_error_message(exc, "获取模型失败"), {}
     except ValueError:
-        return False, [], "获取模型失败：服务商返回了无法解析的响应。"
+        return False, [], "获取模型失败：服务商返回了无法解析的响应。", {}
 
     rows = payload.get("data") if isinstance(payload, dict) else payload
     if not rows and isinstance(payload, dict):
         rows = payload.get("models")
     if not isinstance(rows, list):
-        return False, [], "模型目录为空或返回格式不受支持"
+        return False, [], "模型目录为空或返回格式不受支持", {}
     models = []
+    modalities = {}
     for row in rows or []:
+        inputs = None
         if isinstance(row, dict):
             architecture = row.get("architecture") or {}
             inputs = row.get("input_modalities", architecture.get("input_modalities"))
@@ -2391,7 +2466,11 @@ def fetch_provider_models(provider, api_key, base_url=None):
             row.get("id") or row.get("model") or row.get("name")
             if isinstance(row, dict) else None)
         if model_id and str(model_id).strip():
-            models.append(str(model_id).strip())
+            model_id = str(model_id).strip()
+            models.append(model_id)
+            if isinstance(inputs, list) and inputs:
+                modalities[model_id] = sorted({
+                    str(item).strip().lower() for item in inputs if str(item).strip()})
     if provider == "OpenAI":
         models = [model for model in models if model.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4", "ft:gpt-", "ft:o"))
                   and not any(part in model for part in (
@@ -2403,8 +2482,8 @@ def fetch_provider_models(provider, api_key, base_url=None):
             "deepseek-", "glm-", "kimi-", "longcat-", "mimo-", "hy", "space-bunny-"))]
     models = sorted(set(models), key=str.casefold)
     if not models:
-        return False, [], "模型目录为空或返回格式不受支持"
-    return True, models, f"已获取 {len(models)} 个可用模型"
+        return False, [], "模型目录为空或返回格式不受支持", {}
+    return True, models, f"已获取 {len(models)} 个可用模型", modalities
 
 
 

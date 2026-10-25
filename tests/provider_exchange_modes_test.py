@@ -233,9 +233,10 @@ def test_fetch_provider_models():
     original_get = core.httpx.get
     core.httpx.get = fake_get
     try:
-        ok, models, msg = core.fetch_provider_models(
+        ok, models, msg, modalities = core.fetch_provider_models(
             "自定义中转站", "k", "https://relay.example.com/v1/chat/completions")
         assert ok and models == ["model-a", "model-z"] and "2" in msg
+        assert modalities == {}, "目录没有声明输入模态时必须为空（= 未知），不能编造"
         assert calls[0][0] == "https://relay.example.com/v1/models"
         assert calls[0][1]["Authorization"] == "Bearer k"
     finally:
@@ -253,11 +254,12 @@ def test_fetch_provider_models():
 
     core.httpx.get = fake_insufficient_balance
     try:
-        ok, models, msg = core.fetch_provider_models(
+        ok, models, msg, modalities = core.fetch_provider_models(
             "自定义中转站", "k", "https://relay.example.com/v1")
         assert not ok and models == []
         assert "余额不足" in msg
         assert "INSUFFICIENT_BALANCE" not in msg
+        assert modalities == {}
     finally:
         core.httpx.get = original_get
     print("  ✓ 自定义中转站模型目录获取")
@@ -504,11 +506,12 @@ def test_go_catalog_is_public_and_uses_matching_transport(monkeypatch):
                      {'id': 'gpt-6-luna'}, {'id': 'qwen3.8-max'}]})
 
     monkeypatch.setattr(core.httpx, 'get', get)
-    ok, models, _ = core.fetch_provider_models('OpenCode Go', '')
+    ok, models, _msg, modalities = core.fetch_provider_models('OpenCode Go', '')
     assert ok and models == ['deepseek-v4.1-flash', 'glm-5.3']
     assert calls[0][0] == 'https://opencode.ai/zen/go/v1/models'
     assert calls[0][1]['trust_env'] is False
     assert 'Authorization' not in calls[0][1]['headers']
+    assert modalities == {}, "Go 目录只有 ID，没有模态声明"
 
 
 def test_gemini_native_model_catalog_paginates_and_filters(monkeypatch):
@@ -524,11 +527,12 @@ def test_gemini_native_model_catalog_paginates_and_filters(monkeypatch):
         if len(calls) == 1: payload['nextPageToken'] = 'page-two'
         return httpx.Response(200, request=httpx.Request('GET', url), json=payload)
     monkeypatch.setattr(core.httpx, 'get', get)
-    ok, models, _ = core.fetch_provider_models('Gemini', 'gemini-key')
+    ok, models, _msg, modalities = core.fetch_provider_models('Gemini', 'gemini-key')
     assert ok and models == ['gemini-new', 'gemma-new']
     assert calls[0][0] == 'https://generativelanguage.googleapis.com/v1beta/models'
     assert calls[0][1]['x-goog-api-key'] == 'gemini-key'
     assert calls[1][2]['pageToken'] == 'page-two'
+    assert modalities == {}
 
 
 def test_catalog_protocol_filters_and_provider_routes(monkeypatch):
@@ -541,12 +545,18 @@ def test_catalog_protocol_filters_and_provider_routes(monkeypatch):
                 {'id': 'gpt-5.3-codex'}, {'id': 'gpt-image-1'}]
         if 'openrouter' in url:
             rows = [{'id': 'text-model', 'architecture': {'input_modalities': ['text'], 'output_modalities': ['text']}},
-                    {'id': 'image-model', 'architecture': {'input_modalities': ['text'], 'output_modalities': ['image']}}]
+                    {'id': 'image-model', 'architecture': {'input_modalities': ['text'], 'output_modalities': ['image']}},
+                    {'id': 'vision-model', 'input_modalities': ['text', 'image'],
+                     'output_modalities': ['text']}]
         return httpx.Response(200, request=httpx.Request('GET', url), json={'data': rows})
     monkeypatch.setattr(core.httpx, 'get', get)
     assert core.fetch_provider_models('OpenAI', 'openai-key')[1] == ['ft:gpt-4.1:org:custom:123', 'gpt-4.1', 'o3']
     assert calls[-1][0] == 'https://api.openai.com/v1/models'
-    assert core.fetch_provider_models('OpenRouter', '')[1] == ['text-model']
+    _ok, router_models, _msg, router_modalities = core.fetch_provider_models('OpenRouter', '')
+    assert router_models == ['text-model', 'vision-model']
+    # #48：目录声明原样保留——仅文本和文本+图像都是「已知」，其余才是未知。
+    assert router_modalities == {'text-model': ['text'],
+                                 'vision-model': ['image', 'text']}
     assert 'Authorization' not in calls[-1][1]['headers']
     core.fetch_provider_models('SiliconFlow', 'sf-key')
     assert calls[-1][0] == 'https://api.siliconflow.cn/v1/models?sub_type=chat'
