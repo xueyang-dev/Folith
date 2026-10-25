@@ -276,8 +276,13 @@ def generate_section_digests(
             f"{unit['end_segment']}）\n原文：\n{unit['source']}"
         )
         try:
-            raw = _parse_object(_call(call_llm, provider, api_key, model,
-                                      system_prompt, user_prompt))
+            # 用途标注（#167）：摘要跑在各自的池线程上，必须在 worker 内设置，
+            # 线程本地的用途才会覆盖到这里的模型调用。
+            import core
+            with core.llm_call_purpose(
+                    f"全文语义理解（{unit['unit_id']}）"):
+                raw = _parse_object(_call(call_llm, provider, api_key, model,
+                                          system_prompt, user_prompt))
             if raw is None:
                 return _fallback_digest(unit), f"{unit['unit_id']}：返回不是结构化 JSON"
             return _normalize_digest(unit, raw), None

@@ -19,7 +19,7 @@ def test_sdk_attempts_join_one_logical_call(tmp_path, monkeypatch, failure):
     monkeypatch.setattr(core, "_runtime_pause_checkpoint", lambda *_: None)
     monkeypatch.setattr(core, "_runtime_cancel_requested", lambda *_: False)
     for name in ["_runtime_telemetry_request_started", "_runtime_telemetry_request_finished"]:
-        monkeypatch.setattr(core, name, lambda *_: None)
+        monkeypatch.setattr(core, name, lambda *_, **__: None)
     attempts = []
 
     class Handler(BaseHTTPRequestHandler):
