@@ -413,6 +413,9 @@ class MainWindow(QMainWindow):
         self.workbench.entityPreviewRequested.connect(self.preview_entity_repair)
         self.workbench.entityRepairRequested.connect(self.apply_entity_repair)
         self.workbench.entityAcceptRequested.connect(self.accept_entity_variants)
+        from .concept_dialog import open_concept_workflow
+        self.workbench.review_panel.conceptRequested.connect(
+            lambda: open_concept_workflow(self))
         self.workbench.rescanRequested.connect(self.rescan_source)
         self.workbench.reportRepairRequested.connect(self.repair_report)
         self.workbench.reportAnswerRequested.connect(self.answer_report_question)

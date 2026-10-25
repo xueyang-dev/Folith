@@ -2316,6 +2316,31 @@ def prepare_followup_retry(job_id: str, part: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+def concept_workflow_view(job_id: str) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.view(job_id)
+
+
+def save_concept_decision(job_id: str, card: dict, fields: dict) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.save_decision(job_id, card, fields)
+
+
+def preview_concept_revision(job_id: str, card: dict) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.preview(job_id, card)
+
+
+def apply_concept_revision(job_id: str, preview: dict, selected: list) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.apply(job_id, preview, selected)
+
+
+def split_concept(job_id: str, card: dict, form_a: str, form_b: str) -> dict:
+    from folith.engine import concept_workflow
+    return concept_workflow.split(job_id, card, form_a, form_b)
+
+
 def entity_repair_preview(job_id: str, source: str, target: str,
                           *, state: dict | None = None) -> list[dict]:
     if not str(target or "").strip():

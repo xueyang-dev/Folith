@@ -7032,7 +7032,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         (item.get("type"), item.get("segment_index"), item.get("source"))
         for item in findings_all
     }
-    for conflict in registry.consistency_findings(pairs):
+    for conflict in registry.consistency_findings(pairs, state.get("concept_decisions")):
         key = (conflict.get("type"), conflict.get("segment_index"),
                conflict.get("source"))
         if key not in existing_entity_conflicts:

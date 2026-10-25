@@ -1,0 +1,13 @@
+{
+  "platform": "Windows-10-10.0.26200-SP0",
+  "qt_backend": "windows",
+  "synthetic_fixture": true,
+  "human_operated": false,
+  "model_calls": 0,
+  "save_does_not_edit": true,
+  "exception_preview": true,
+  "selected_only": true,
+  "protected_unchanged": true,
+  "reopen_persistent": true,
+  "changed": 1
+}
