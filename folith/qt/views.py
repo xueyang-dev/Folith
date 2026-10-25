@@ -2502,6 +2502,8 @@ class WorkbenchView(QWidget):
         self._setup_view: dict | None = None
         self._current_index = -1
         self._loaded_uid = ""
+        # 编辑框最近一次从数据载入的译文：与它不同说明用户改过（哪怕已存成草稿）。
+        self._loaded_text = ""
         self._loading = False
         self._dirty = False
         self._last_runtime: dict = {}
@@ -5907,6 +5909,7 @@ class WorkbenchView(QWidget):
             self.target_edit.document().setModified(False)
         finally:
             self._loading = False
+        self._loaded_text = target or ""
         self._dirty = False
 
     def _text_changed(self) -> None:
@@ -6030,6 +6033,8 @@ class WorkbenchView(QWidget):
         source_width = table.columnWidth(1)
         target_width = table.columnWidth(2)
         footer = segment_editor.FOOTER_HEIGHT if editor.footer.isVisibleTo(editor) else 0
+        # 先同步译文，再按它量行高：否则长译文按旧文字算高会被截掉。
+        self._sync_loaded_target(self._rows[position])
         cap = max(160, int(table.viewport().height() * 0.6))
         wanted = max(segment_editor.source_height(table, self._rows[position].source,
                                                   source_width),
@@ -6061,6 +6066,24 @@ class WorkbenchView(QWidget):
         if not editor.isVisible():
             editor.show()
             editor.raise_()
+
+    def _sync_loaded_target(self, row: adapter.SegmentRow) -> None:
+        """后台写回了当前段的译文（#166）：用户没动过编辑框时让它跟上数据。
+
+        同一段不重新载入（见 ``_load_selected_row``），所以停在这一段等翻译时，
+        新译文只画进被浮层盖住的单元格。这里只在编辑框仍是上次载入的文字时
+        才替换——正在输入、或已自动存成草稿的文字一律不碰。
+        """
+        if self._loading or self._dirty or row.segment_uid != self._loaded_uid:
+            return
+        expected = str((row.draft_text if row.has_draft else row.target) or "")
+        if expected == self._loaded_text:
+            return
+        if self.target_edit.toPlainText() != self._loaded_text:
+            return
+        self._set_editor_text(row.source, expected,
+                              language=self._state.get("target_lang"))
+        self._sync_inline_footer()
 
     def _sync_inline_footer(self) -> None:
         """改过（或有草稿）才出现保存条；没改时编辑框下面什么都没有。"""

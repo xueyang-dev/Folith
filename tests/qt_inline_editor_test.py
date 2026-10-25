@@ -295,3 +295,86 @@ def test_changed_prefix_rebuilds_rows_instead_of_reusing_stale_cells(bench):
     assert view.segment_list.rowCount() == 4
     assert view.segment_list.item(0, 1).text() == "Changed source."
     assert view.segment_list.item(0, 2).text() == "Changed target"
+
+
+def _write_target(job_id, index, text):
+    import core
+
+    state = core.load_job_state(job_id)
+    state["pairs"][index]["target"] = text
+    core.save_job_state(job_id, state)
+
+
+def _refresh(view):
+    from folith.qt import adapter
+
+    view.apply(view.job_id, adapter.load_state(view.job_id),
+               adapter.segment_rows(view.job_id), {}, [])
+
+
+def _bench_with_untranslated_first_segment(bench):
+    """#166：当前段还没有译文，用户停在这一段等后台翻译。"""
+    view, app = bench
+    view.select_segment(1)
+    _pump(app)
+    _write_target(view.job_id, 0, "")
+    _refresh(view)
+    view.select_segment(0)
+    _pump(app)
+    assert view.target_edit.toPlainText() == ""
+    return view, app
+
+
+def test_background_translation_reaches_the_expanded_row_editor(bench):
+    """#166：停在当前段时，后台写回的译文要出现在展开行的编辑框里。"""
+    view, app = _bench_with_untranslated_first_segment(bench)
+    _write_target(view.job_id, 0, "后台写回的译文")
+    _refresh(view)
+    _pump(app)
+    assert view.current_uid() == "s0"
+    assert view.target_edit.toPlainText() == "后台写回的译文"
+    assert not view.has_unsaved_editor_text()
+
+
+def test_background_translation_never_replaces_text_the_user_is_typing(bench):
+    view, app = _bench_with_untranslated_first_segment(bench)
+    view.target_edit.setPlainText("用户正在输入")
+    _write_target(view.job_id, 0, "后台写回的译文")
+    _refresh(view)
+    _pump(app)
+    assert view.target_edit.toPlainText() == "用户正在输入"
+    assert view.has_unsaved_editor_text()
+
+
+def test_background_translation_never_replaces_an_autosaved_draft(bench):
+    """自动保存把输入写成草稿并清掉 dirty 后，编辑框里的字仍归用户所有。"""
+    view, app = _bench_with_untranslated_first_segment(bench)
+    view.target_edit.setPlainText("用户的草稿")
+    assert view.flush_draft()
+    assert not view.has_unsaved_editor_text()
+    _write_target(view.job_id, 0, "后台写回的译文")
+    # 窗口的轮询可能还没读到草稿文件：在它之前的刷新也不能覆盖编辑框。
+    view._place_inline_editor()
+    assert view.target_edit.toPlainText() == "用户的草稿"
+    _refresh(view)
+    _pump(app)
+    assert view.target_edit.toPlainText() == "用户的草稿"
+
+
+def test_background_translation_reaches_the_editor_when_the_grid_is_rebuilt(bench):
+    """#166 第二条路径：行数变化导致重建表格，当前段身份不变也要刷新译文。"""
+    import dataclasses
+
+    view, app = _bench_with_untranslated_first_segment(bench)
+    rows = list(view._all_rows)
+    rows[0] = dataclasses.replace(rows[0], target="后台写回的译文")
+    rows.append(dataclasses.replace(rows[-1], index=len(rows), segment_uid="s-extra",
+                                    source="Appended sentence.", target="追加译文"))
+    view._state.setdefault("pairs", []).append(
+        {"source": "Appended sentence.", "target": "追加译文", "segment_uid": "s-extra"})
+    view._all_rows = rows
+    view._render_segments()
+    _pump(app)
+    assert view.segment_list.rowCount() == 4
+    assert view.current_uid() == "s0"
+    assert view.target_edit.toPlainText() == "后台写回的译文"
