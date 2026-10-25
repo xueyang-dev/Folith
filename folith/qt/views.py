@@ -4739,6 +4739,8 @@ class WorkbenchView(QWidget):
         except Exception:  # noqa: BLE001 - 审校页坏了不能拖垮翻译页
             view = {}
         self._review_items = list(view.get("queue_items") or [])
+        # 原文可能刚被改过（补读 / 重新扫描）：定位要按新的状态来。
+        self.review_panel.set_source_state(self._state or {})
         self.review_panel.apply(view)
 
     def _load_pdf(self, job_id: str) -> None:
@@ -4753,6 +4755,9 @@ class WorkbenchView(QWidget):
             self._stream_ok = False
         self._source_available = self._pdf_ok or self._stream_ok
         self.pdf_panel.load(job_id if self._pdf_ok else "")
+        # 审校页内嵌的原页是另一份实例：同一个任务要喂给它，否则决策时看不到原页。
+        self.review_panel.set_pdf_job(job_id if self._pdf_ok else "",
+                                      state=self._state or None)
         self.source_panel.load(job_id if self._stream_ok else "")
         if not self._source_available:
             self.set_source_open(False)

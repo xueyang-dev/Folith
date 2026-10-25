@@ -495,3 +495,76 @@ def test_review_queue_has_one_row_per_conflicting_name(tmp_path, monkeypatch):
     assert len(rows) == 1 and rows[0]["segment_indexes"] == [0, 1, 2]
     assert view["filter_counts"]["all"] == len(view["queue_items"])
     assert view["filter_counts"]["suggested"] == 1
+
+
+# ---- 决策时看得见原文：审校详情里内嵌的原页 --------------------------------------
+
+def _with_pdf(panel, monkeypatch, job_id="jobwithpdf00001", state=None):
+    """挂上"这个任务有原页"，并把真正的取页/渲染挡在测试外面。"""
+    seen = {"load": [], "locate": []}
+    monkeypatch.setattr(panel.pdf, "load", lambda value: seen["load"].append(value))
+    monkeypatch.setattr(panel.pdf, "locate",
+                        lambda index, state=None: seen["locate"].append((index, state)))
+    panel.set_pdf_job(job_id, state=state)
+    return seen
+
+
+def test_no_original_page_column_without_a_pdf_source(panel):
+    panel.apply(_view(_item(segment_index=3)))
+    assert not panel.pdf.isVisibleTo(panel)
+    assert not panel.source_button.isVisibleTo(panel)
+
+
+def test_selecting_an_item_locates_it_in_the_original_page(panel, monkeypatch):
+    seen = _with_pdf(panel, monkeypatch)
+    panel.apply(_view(_item(segment_index=7)))
+    assert seen["load"] == ["jobwithpdf00001"]
+    assert panel.pdf.isVisibleTo(panel), "有原页的任务：决定时原文就在旁边"
+    assert panel.source_button.isVisibleTo(panel)
+    assert seen["locate"][-1][0] == 7
+
+
+def test_the_page_is_not_relocated_while_the_segment_is_unchanged(panel, monkeypatch):
+    """同一段反复刷新（状态变化会重画整个面板）不该反复渲染同一页。"""
+    seen = _with_pdf(panel, monkeypatch)
+    panel.apply(_view(_item(segment_index=7)))
+    panel.apply(_view(_item(segment_index=7)))
+    assert [index for index, _ in seen["locate"]] == [7]
+    panel.apply(_view(_item(segment_index=9)))
+    assert [index for index, _ in seen["locate"]] == [7, 9]
+
+
+def test_closing_the_original_page_hides_it_and_the_button_brings_it_back(panel, monkeypatch):
+    seen = _with_pdf(panel, monkeypatch)
+    panel.apply(_view(_item(segment_index=7)))
+    panel._close_source()
+    assert not panel.pdf.isVisibleTo(panel)
+    assert panel.source_button.isVisibleTo(panel), "关掉之后还能再打开"
+    panel.source_button.click()
+    assert panel.pdf.isVisibleTo(panel)
+    assert [index for index, _ in seen["locate"]] == [7, 7], "重新打开要重新定位"
+
+
+def test_the_locator_gets_the_task_state_instead_of_rereading_it(panel, monkeypatch):
+    state = {"pairs": [{"source": "Hello", "target": "你好"}]}
+    seen = _with_pdf(panel, monkeypatch, state=state)
+    panel.apply(_view(_item(segment_index=0)))
+    assert seen["locate"][-1][1] == state
+
+
+def test_entity_conflicts_locate_the_first_occurrence(panel, monkeypatch):
+    """译名项是一个名字一行：原页翻到它第一次出现的那一段。"""
+    seen = _with_pdf(panel, monkeypatch)
+    panel.apply(_view(_item(id="finding:e", finding_id="e", entity_source="Lycidas",
+                            segment_index=None, segment_indexes=[792, 795])))
+    assert seen["locate"][-1][0] == 792
+
+
+def test_segment_links_locate_in_the_original_page_not_the_grid(panel, monkeypatch):
+    seen = _with_pdf(panel, monkeypatch)
+    panel.apply(_entity_view())
+    jumped = []
+    panel.editRequested.connect(jumped.append)
+    panel.conflict._link("seg:795")
+    assert seen["locate"][-1][0] == 795
+    assert jumped == [], "有原页时点段号是在原页里翻到它，不是跳去翻译页"
