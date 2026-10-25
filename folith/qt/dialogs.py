@@ -1088,7 +1088,7 @@ class EngineDialog(QDialog):
         _set_status(self.test_label, "正在获取模型列表…")
 
         def done(result) -> None:
-            ok, models, message = result
+            ok, models, message, modalities = result
             self.fetch_button.setEnabled(True)
             _set_status(self.test_label, str(message), "ok" if ok else "danger")
             if ok and models:
@@ -1098,6 +1098,8 @@ class EngineDialog(QDialog):
                 self.model_box.setCurrentText(current or str(models[0]))
                 known = [m.strip() for m in self.connection_library.models.text().split(",") if m.strip()]
                 self.connection_library.models.setText(", ".join(dict.fromkeys(known + [str(m) for m in models])))
+                # #48：目录里声明过的输入模态跟着这次拉取走，交给连接库显示/保存。
+                self.connection_library.set_fetched_modalities(dict(modalities or {}))
 
         def failed(message: str, _detail: str) -> None:
             self.fetch_button.setEnabled(True)

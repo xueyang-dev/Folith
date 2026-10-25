@@ -2055,5 +2055,19 @@
   "人工确认过的译文": "human-accepted translation",
   "人工改写的译文": "human-edited translation",
   "已审校的译文": "reviewed translation",
-  "输入页码后回车跳到该页": "Type a page number and press Enter to jump there"
+  "输入页码后回车跳到该页": "Type a page number and press Enter to jump there",
+  "文本": "Text",
+  "文本 + 视觉": "Text + vision",
+  "测试视觉": "Test vision",
+  "给选中模型发一张极小的纯色方块图，实测它能否接收图像输入。这是一次付费请求，只在这里点击时才会发送。": "Sends the selected model one tiny solid-color square image to check whether it accepts image input. This is a paid request and is only sent when you click here.",
+  "正在测试图像输入…": "Testing image input…",
+  "图像测试失败：{v0}": "Image test failed: {v0}",
+  "输入类型：{v0}（服务商模型目录声明）": "Input type: {v0} (declared by the provider's model catalog)",
+  "输入类型：{v0}（「测试视觉」实测 {v1}）": "Input type: {v0} (verified by “Test vision” {v1})",
+  "输入类型未知：服务商目录没有声明。可点「测试视觉」实测（一次小图请求）。": "Input type unknown: the provider catalog does not declare it. Click “Test vision” to check with one tiny image request.",
+  "服务商目录标注该模型支持图像输入": "The provider catalog marks this model as accepting image input",
+  "服务商目录标注该模型仅接受文本输入": "The provider catalog marks this model as text-only",
+  "「测试视觉」实测支持图像输入": "“Test vision” verified image input",
+  "「测试视觉」实测未通过图像输入": "“Test vision” could not verify image input",
+  "输入类型未知；可在编辑连接里点「测试视觉」实测": "Input type unknown; use “Test vision” in the connection editor to check"
 }

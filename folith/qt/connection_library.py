@@ -35,6 +35,11 @@ class ConnectionLibrary(QWidget):
         self.editing = ""
         #: 编辑区里尚未保存的那条连接的 id：多次读取编辑区时保持不变。
         self._pending_id = ""
+        #: 模型目录声明过的输入模态（#48）：来自「获取可用模型」或正在编辑的
+        #: 已保存连接。换提供商即作废——声明是跟着目录走的。
+        self._catalog_modalities = {}
+        #: 「测试视觉」进行中：按钮去抖。
+        self._vision_probe_busy = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["md"])
@@ -64,6 +69,18 @@ class ConnectionLibrary(QWidget):
             if role != "vision":
                 self.selectors[role] = box
             self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
+            if role == "vision":
+                # #48：所选视觉模型若是「已知仅文本」给出警告；未知如实说未知。
+                hint = components.StatusLabel("", "idle")
+                hint.dot.hide()
+                hint.setVisible(False)
+                holder = QWidget()
+                holder_row = QHBoxLayout(holder)
+                holder_row.setContentsMargins(theme_module.SPACE["lg"], 0,
+                                               theme_module.SPACE["md"], 0)
+                holder_row.addWidget(hint)
+                self.role_group.add_row(holder)
+                self.vision_modality_hint = hint
         layout.addWidget(self.role_group)
         layout.addStretch(1)
         layout.addWidget(dialog._apply_row("models"))
@@ -138,19 +155,27 @@ class ConnectionLibrary(QWidget):
         body.addWidget(self.custom_settings, 0, Qt.AlignmentFlag.AlignLeft)
 
         # 模型目录：一列模型，选中的就是这个连接的默认模型；「获取可用模型」整列替换。
+        # 每个模型后面跟输入类型（文本 / 文本 + 视觉 / 未知，#48）：服务商目录声明过的
+        # 标来源；没声明的显式「未知」，可点「测试视觉」花一次小图请求实测。
         models_head = QHBoxLayout()
         models_label = QLabel(i18n.tr('模型'))
         style.set_text_role(models_label, "section")
         models_head.addWidget(models_label, 1)
         style.set_button(dialog.fetch_button, "plain", small=True)
         models_head.addWidget(dialog.fetch_button)
+        self.vision_probe_button = QPushButton(i18n.tr('测试视觉'))
+        style.set_button(self.vision_probe_button, "plain", small=True)
+        self.vision_probe_button.setToolTip(
+            i18n.tr('给选中模型发一张极小的纯色方块图，实测它能否接收图像输入。'
+                    '这是一次付费请求，只在这里点击时才会发送。'))
+        self.vision_probe_button.setEnabled(False)
+        self.vision_probe_button.clicked.connect(self._test_vision)
+        models_head.addWidget(self.vision_probe_button)
         body.addLayout(models_head)
         self.model_list = QListWidget()
         self.model_list.setObjectName("modelCatalog")
         self.model_list.setMinimumHeight(132)
-        self.model_list.currentTextChanged.connect(
-            lambda text: text and dialog.model_box.currentText() != text
-            and dialog.model_box.setCurrentText(text))
+        self.model_list.currentItemChanged.connect(self._pick_model)
         body.addWidget(self.model_list)
         manual = QHBoxLayout()
         self.models = QLineEdit()
@@ -169,6 +194,8 @@ class ConnectionLibrary(QWidget):
         for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset):
             signal.connect(lambda *_a: self._sync_model_list())
         dialog.model_box.currentTextChanged.connect(lambda _t: self._sync_model_list())
+        # 换提供商（含目录↔自定义切换）后，上一家目录声明过的输入模态不再可信。
+        dialog.provider_box.currentTextChanged.connect(self._provider_changed)
         dialog.test_button.setParent(self.editor)
         dialog.test_button.hide()
         body.addWidget(dialog.test_label)
@@ -189,6 +216,94 @@ class ConnectionLibrary(QWidget):
         footer.addWidget(self.save_button)
         body.addLayout(footer)
 
+    # ---- 模型输入类型（#48）--------------------------------------------------------
+    #: kind → 列表里跟在模型名后面的短语。未知是显式状态，不是省略。
+    INPUT_LABELS = {"text": '文本', "text+image": '文本 + 视觉', "unknown": '未知'}
+
+    def set_fetched_modalities(self, modalities: dict) -> None:
+        """「获取可用模型」成功后，记下目录声明过的输入模态并刷新列表。"""
+        self._catalog_modalities = {str(k): [str(m) for m in (v or [])]
+                                    for k, v in (modalities or {}).items()}
+        self._sync_model_list()
+
+    def _editor_identity(self) -> tuple[str, str, str]:
+        """编辑区当前的 provider / key / 地址（密钥含环境变量回退，与测试连接一致）。"""
+        from folith.model_connections import environment_key
+        provider = self.dialog.provider_box.currentText().strip()
+        key = self.dialog.key_edit.text().strip() or environment_key(provider)
+        return provider, key, self.dialog.base_edit.text().strip()
+
+    def _model_input_view(self, name: str) -> dict:
+        """一个模型的输入类型：目录声明优先，其次本机实测缓存，否则显式未知。
+
+        不查任何内置模型清单——两处来源都是用户自己拿到的证据（拉过目录 / 点过
+        测试），没有就如实显示「未知」。
+        """
+        declared = self._catalog_modalities.get(name)
+        if declared is not None:
+            return {"kind": "text+image" if "image" in declared else "text",
+                    "source": "provider", "at": "", "message": ""}
+        provider, key, base = self._editor_identity()
+        probe = connection_status.vision_probe_result(provider, name, base, key)
+        if probe:
+            return {"kind": "text+image" if probe["ok"] else "text",
+                    "source": "probe", "at": probe["at"], "message": probe["message"]}
+        return {"kind": "unknown", "source": "", "at": "", "message": ""}
+
+    def _input_tooltip(self, view: dict) -> str:
+        if view["source"] == "provider":
+            return i18n.tr('输入类型：{v0}（服务商模型目录声明）',
+                           v0=i18n.tr(self.INPUT_LABELS[view["kind"]]))
+        if view["source"] == "probe":
+            stamp = view["at"].replace("T", " ")[:16]
+            return i18n.tr('输入类型：{v0}（「测试视觉」实测 {v1}）',
+                           v0=i18n.tr(self.INPUT_LABELS[view["kind"]]), v1=stamp)
+        return i18n.tr('输入类型未知：服务商目录没有声明。可点「测试视觉」实测（一次小图请求）。')
+
+    def _provider_changed(self, _text) -> None:
+        """换了提供商：上一家目录声明过的输入模态不再可信，清掉重画。"""
+        self._catalog_modalities = {}
+        self._sync_model_list()
+
+    def _pick_model(self, current, _previous) -> None:
+        if current is None:
+            self.vision_probe_button.setEnabled(False)
+            return
+        name = str(current.data(Qt.ItemDataRole.UserRole) or "")
+        if name and self.dialog.model_box.currentText() != name:
+            self.dialog.model_box.setCurrentText(name)
+        self.vision_probe_button.setEnabled(not self._vision_probe_busy)
+
+    def _test_vision(self) -> None:
+        """对列表里选中的模型发一次极小图像请求（用户点按钮才会发生，#48）。"""
+        from .dialogs import _set_status
+        item = self.model_list.currentItem()
+        model = str(item.data(Qt.ItemDataRole.UserRole) or "") if item else ""
+        if not model:
+            return
+        provider, key, base = self._editor_identity()
+        self._vision_probe_busy = True
+        self.vision_probe_button.setEnabled(False)
+        _set_status(self.dialog.test_label, i18n.tr('正在测试图像输入…'))
+
+        def done(result) -> None:
+            ok, message = result
+            self._vision_probe_busy = False
+            self.vision_probe_button.setEnabled(True)
+            connection_status.record_vision_probe(provider, model, base, key,
+                                                  bool(ok), str(message))
+            _set_status(self.dialog.test_label, str(message), "ok" if ok else "danger")
+            self._sync_model_list()
+            self._update_vision_hint()
+
+        def failed(message, _detail) -> None:
+            self._vision_probe_busy = False
+            self.vision_probe_button.setEnabled(True)
+            _set_status(self.dialog.test_label, i18n.tr('图像测试失败：{v0}', v0=message), "danger")
+
+        self.dialog.runner.submit(adapter.test_vision_model, provider, key, model, base,
+                                  on_done=done, on_error=failed, label="test-vision-input")
+
     def _sync_model_list(self):
         box = self.dialog.model_box
         items = [box.itemText(i) for i in range(box.count())]
@@ -198,14 +313,21 @@ class ConnectionLibrary(QWidget):
         self.model_list.blockSignals(True)
         self.model_list.clear()
         for name in items:
-            item = QListWidgetItem(name)
+            view = self._model_input_view(name)
+            # 显示文本带输入类型，但选中回写用 UserRole 里的纯模型名：
+            # model_box 的条目永远是干净的名字。
+            item = QListWidgetItem(f"{name} · {i18n.tr(self.INPUT_LABELS[view['kind']])}")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setToolTip(self._input_tooltip(view))
             self.model_list.addItem(item)
             if name == current:
                 # 选中的就是默认模型：前面一个强调色对勾（画布上的单选点）。
                 item.setIcon(icons.icon("check", 14, "accent"))
-                item.setToolTip(i18n.tr('默认模型'))
+                item.setToolTip(i18n.tr('默认模型') + "\n" + item.toolTip())
                 self.model_list.setCurrentItem(item)
         self.model_list.blockSignals(False)
+        self.vision_probe_button.setEnabled(
+            self.model_list.currentItem() is not None and not self._vision_probe_busy)
 
     def open_editor(self, key=""):
         if key:
@@ -297,6 +419,7 @@ class ConnectionLibrary(QWidget):
     def reset(self):
         self.editing = ""
         self._pending_id = ""
+        self._catalog_modalities = {}
         self.editor_title.setText(i18n.tr('添加连接'))
         self.save_button.setText(i18n.tr('测试并添加'))
         self.name.clear()
@@ -395,6 +518,9 @@ class ConnectionLibrary(QWidget):
         box.setMinimumContentsLength(12)
         box.setAccessibleName(i18n.tr(connection_status.ROLE_LABELS[role]))
         box.currentTextChanged.connect(lambda value, r=role: self.role_models.update({r: value}))
+        if role == "vision":
+            # 换的不只是连接（select）时，模型本身变了也要重看输入类型。
+            box.currentTextChanged.connect(lambda _v: self._update_vision_hint())
         self.model_selectors[role] = box
         return box
 
@@ -415,6 +541,45 @@ class ConnectionLibrary(QWidget):
             self.role_models[role] = ""
         box.setVisible(profile is not None)
         box.blockSignals(False)
+        if role == "vision":
+            self._update_vision_hint()
+
+    def _update_vision_hint(self):
+        """「视觉」用途当前选中的模型：目录声明 / 实测结果 / 未知，三态如实显示。
+
+        已知仅文本用警告色；未知保持中性——没有证据就不下结论（#48）。
+        """
+        hint = getattr(self, "vision_modality_hint", None)
+        if hint is None:
+            return
+        profile = next((p for p in self.profiles if p["id"] == self.roles.get("vision")), None)
+        model = str(self.role_models.get("vision") or "")
+        if not profile or not model:
+            hint.setVisible(False)
+            return
+        declared = (profile.get("model_modalities") or {}).get(model)
+        if isinstance(declared, list) and declared:
+            if "image" in declared:
+                hint.set_status(i18n.tr('服务商目录标注该模型支持图像输入'), "done")
+            else:
+                hint.set_status(i18n.tr('服务商目录标注该模型仅接受文本输入'), "attention")
+            hint.setToolTip("")
+            hint.setVisible(True)
+            return
+        probe = connection_status.vision_probe_result(
+            str(profile.get("provider") or ""), model, str(profile.get("base_url") or ""),
+            str(profile.get("api_key") or ""))
+        if probe:
+            if probe["ok"]:
+                hint.set_status(i18n.tr('「测试视觉」实测支持图像输入'), "done")
+            else:
+                hint.set_status(i18n.tr('「测试视觉」实测未通过图像输入'), "attention")
+                hint.setToolTip(probe["message"])
+            hint.setVisible(True)
+            return
+        hint.set_status(i18n.tr('输入类型未知；可在编辑连接里点「测试视觉」实测'), "idle")
+        hint.setToolTip("")
+        hint.setVisible(True)
 
     def select(self, role):
         box = self.selectors.get(role) if role != "vision" else self.dialog.vision_connection_box
@@ -443,6 +608,11 @@ class ConnectionLibrary(QWidget):
         self.provider_id.setText(p.get("provider_id", ""))
         self.name.setText(p["name"])
         self.dialog.provider_box.setCurrentText(p["provider"])
+        # 目录声明跟着这条连接的模型走：编辑已保存连接时先恢复它上次的目录信息
+        # （provider 切换信号刚清空过，这里在模型填进去之后重新赋值）。
+        self._catalog_modalities = {
+            str(m): [str(x) for x in (v or [])]
+            for m, v in (p.get("model_modalities") or {}).items()}
         self.dialog.model_box.addItems([m for m in p.get("models", [])
                                        if self.dialog.model_box.findText(m) < 0])
         self.dialog.model_box.setCurrentText(p["model"])
@@ -484,6 +654,11 @@ class ConnectionLibrary(QWidget):
         typed = [m.strip() for m in self.models.text().split(",") if m.strip()]
         p["models"] = list(dict.fromkeys(
             [box.itemText(i) for i in range(box.count())] + typed + [p["model"]]))
+        # #48：目录声明过的输入模态随连接保存；「测试视觉」的实测结果不进配置——
+        # 那是本机观测，在 connection_status 的缓存里按配置指纹失效。
+        p["model_modalities"] = {m: [str(x) for x in (v or [])]
+                                 for m, v in self._catalog_modalities.items()
+                                 if m in p["models"]}
         if not p["model"] or (custom and not p["base_url"]):
             fail(i18n.tr('请填写模型和 API 地址'))
             return None

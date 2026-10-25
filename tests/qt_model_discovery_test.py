@@ -58,8 +58,8 @@ def fetch(monkeypatch):
     def fake(provider, key, base_url=None):
         calls.append((provider, key, base_url))
         if state["fail"]:
-            return False, [], "模型目录暂时不可用"
-        return True, list(state["models"]), f"已获取 {len(state['models'])} 个可用模型"
+            return False, [], "模型目录暂时不可用", {}
+        return True, list(state["models"]), f"已获取 {len(state['models'])} 个可用模型", {}
 
     monkeypatch.setattr(core, "fetch_provider_models", fake)
     return calls, state

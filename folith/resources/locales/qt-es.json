@@ -2056,5 +2056,19 @@
   "人工确认过的译文": "traducción aceptada por una persona",
   "人工改写的译文": "traducción editada por una persona",
   "已审校的译文": "traducción revisada",
-  "输入页码后回车跳到该页": "Escribe un número de página y pulsa Intro para ir allí"
+  "输入页码后回车跳到该页": "Escribe un número de página y pulsa Intro para ir allí",
+  "文本": "Texto",
+  "文本 + 视觉": "Texto + visión",
+  "测试视觉": "Probar visión",
+  "给选中模型发一张极小的纯色方块图，实测它能否接收图像输入。这是一次付费请求，只在这里点击时才会发送。": "Envía al modelo seleccionado una imagen diminuta de un cuadrado de color sólido para comprobar si acepta entrada de imágenes. Es una solicitud de pago y solo se envía al pulsar aquí.",
+  "正在测试图像输入…": "Probando la entrada de imágenes…",
+  "图像测试失败：{v0}": "Falló la prueba de imagen: {v0}",
+  "输入类型：{v0}（服务商模型目录声明）": "Tipo de entrada: {v0} (declarado por el catálogo de modelos del proveedor)",
+  "输入类型：{v0}（「测试视觉」实测 {v1}）": "Tipo de entrada: {v0} (verificado con «Probar visión» {v1})",
+  "输入类型未知：服务商目录没有声明。可点「测试视觉」实测（一次小图请求）。": "Tipo de entrada desconocido: el catálogo del proveedor no lo declara. Pulsa «Probar visión» para comprobarlo con una solicitud de imagen mínima.",
+  "服务商目录标注该模型支持图像输入": "El catálogo del proveedor indica que este modelo acepta entrada de imágenes",
+  "服务商目录标注该模型仅接受文本输入": "El catálogo del proveedor indica que este modelo solo acepta texto",
+  "「测试视觉」实测支持图像输入": "«Probar visión» verificó la entrada de imágenes",
+  "「测试视觉」实测未通过图像输入": "«Probar visión» no pudo verificar la entrada de imágenes",
+  "输入类型未知；可在编辑连接里点「测试视觉」实测": "Tipo de entrada desconocido; usa «Probar visión» en el editor de conexiones para comprobarlo"
 }

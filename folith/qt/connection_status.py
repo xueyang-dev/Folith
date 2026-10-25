@@ -25,6 +25,8 @@ ROLE_LABELS = {"translation": "翻译模型", "reviewer": "审校模型", "visio
 TONES = {"ok": "ok", "failed": "danger", "untested": "warning",
          "missing": "warning", "inherited": "muted"}
 _KEY = "connections/{role}"
+#: 「测试视觉」按 连接+模型 的指纹存；键里只有哈希，不落明文模型名/密钥。
+_KEY_PROBE = "connections/visionProbe/{digest}"
 
 
 def _settings():
@@ -174,3 +176,42 @@ def headline(config: adapter.EngineConfig) -> str:
     profile = next((p for p in config.connections or [] if p.get("id") == selected), None)
     name = (profile or {}).get("name") or config.provider
     return f"{name} · {config.model}" if name else config.model
+
+
+# ---- 「测试视觉」结果（#48）-------------------------------------------------
+#
+# 与上面按角色的连接测试同一套规矩，但键是「连接 + 模型」本身而不是角色：同一条
+# 连接里每个模型各测各的。结果同样存在客户端偏好（QSettings）、按配置指纹失效
+# （换密钥/地址/模型都会让旧结果作废），密钥只进哈希。探测只在用户点按钮时发生；
+# 这里只负责记住结果。
+
+
+def vision_probe_fingerprint(provider: str, model: str, base_url: str, api_key: str) -> str:
+    return _digest("vision-probe", provider, model, base_url,
+                   hashlib.sha256(str(api_key).encode("utf-8")).hexdigest())
+
+
+def record_vision_probe(provider: str, model: str, base_url: str, api_key: str,
+                        ok: bool, message: str, *, settings=None,
+                        now: datetime | None = None) -> None:
+    store = settings if settings is not None else _settings()
+    key = _KEY_PROBE.format(digest=vision_probe_fingerprint(provider, model, base_url, api_key))
+    store.setValue(key, json.dumps({
+        "ok": bool(ok), "message": str(message or "")[:300],
+        "at": (now or datetime.now(timezone.utc)).isoformat(timespec="seconds"),
+    }, ensure_ascii=False))
+
+
+def vision_probe_result(provider: str, model: str, base_url: str, api_key: str,
+                        *, settings=None) -> dict | None:
+    """``{"ok", "message", "at"}``；没测过（或配置已改）返回 None = 未知。"""
+    store = settings if settings is not None else _settings()
+    key = _KEY_PROBE.format(digest=vision_probe_fingerprint(provider, model, base_url, api_key))
+    try:
+        saved = json.loads(str(store.value(key) or "{}"))
+    except (TypeError, ValueError):
+        return None
+    if not saved or "ok" not in saved:
+        return None
+    return {"ok": bool(saved.get("ok")), "message": str(saved.get("message") or ""),
+            "at": str(saved.get("at") or "")}
