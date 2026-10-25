@@ -182,6 +182,8 @@ Aquí «agéntico» significa concretamente: un rol de revisor independiente, re
 
 El idioma de origen también guía la ubicación de líneas en las páginas escaneadas (el Tesseract incluido solo trae datos de inglés, chino simplificado y árabe; los paquetes faltantes fallan explícitamente en lugar de recurrir silenciosamente al inglés). Véase [Especificación de compatibilidad y validación de idiomas de traducción](docs/translation-languages.md). No se publican mediciones de velocidad ni de escala, ni hay promesas de tiempo o coste para ningún número de páginas: la calidad y el tiempo dependen del documento y del modelo que elijas. Para cada documento, la página de preparación estima llamadas, tokens de entrada y tiempo para los tres modos; guíate por eso y, para un par de idiomas concreto, prueba antes con un capítulo corto.
 
+> **Alcance de la validación lingüística:** Estas son opciones del catálogo. Los nuevos pares aún no han completado la traducción con modelos reales, la revisión independiente ni la validación en lectores; #10 sigue abierto. Las pruebas de componentes no equivalen a una aprobación de calidad.
+
 ---
 
 ## ⚙️ Modelos y proveedores

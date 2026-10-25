@@ -182,6 +182,8 @@ The package `foliothread` exists on PyPI (the code module is `folith`), but it i
 
 The source language also guides line positioning on scanned pages (the bundled Tesseract only ships English, Simplified Chinese and Arabic language data; missing packs fail explicitly rather than falling back silently to English). See [Translation language support and validation specification](docs/translation-languages.md) for details. No speed or scale benchmarks are published, and there is no promise about time or cost at any page count: quality and time depend on the document and the model you choose. For each document the prepare page estimates calls, input tokens and time for the three modes; rely on that, and for a given language pair try a short sample chapter first.
 
+> **Language validation scope:** These are selectable catalog entries. Added language pairs have not completed real-model translation, independent review, or reader-quality acceptance; #10 remains open. Component tests are not quality sign-off.
+
 ---
 
 ## ⚙️ Models and providers

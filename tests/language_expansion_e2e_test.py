@@ -1,4 +1,7 @@
-"""End-to-end and component tests for expanded translation source and target languages (#10).
+"""Component and export-structure tests for expanded language catalogs (#10).
+
+Despite the historical filename, this module does not run the full translation
+and independent-review pipeline or validate real-provider language quality.
 
 Covers:
 1. Catalog parity and matching (source catalog, target catalog, aliases, endonyms).
@@ -9,8 +12,8 @@ Covers:
 6. Numerals and Eastern Arabic digits preservation contract.
 7. VLM document understanding language hints and cache identity.
 8. Local OCR Tesseract language packs validation and visible missing pack messages.
-9. Delivery exports (DOCX bidi, PDF story with dir, EPUB XHTML, TMX and TBX language tags).
-10. End-to-end task pipeline: setup, translation, review, TM persistence and delivery bundle.
+9. Export examples (Arabic PDF bytes, Dutch EPUB metadata, Turkish TMX/TBX tags).
+10. Task language field persistence and task-context construction.
 """
 from __future__ import annotations
 
