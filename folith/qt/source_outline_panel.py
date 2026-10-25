@@ -101,17 +101,14 @@ def outline_summary(outline: dict) -> str:
     if outline.get("scanned"):
         return i18n.tr('扫描件 · {pages} 页 · 本地读不出文字，开始后由视觉模型识别',
                        pages=int(outline.get("pages") or 0))
-    kind_labels = {"chapter": i18n.tr('章'), "page": i18n.tr('页'),
-                   "group": i18n.tr('组')}
     chapters = sum(1 for node in nodes if node.get("kind") == "chapter")
     pages = sum(1 for node in nodes if node.get("kind") == "page")
     groups = len(nodes) - chapters - pages
-    parts = []
-    for count, label in ((chapters, kind_labels["chapter"]),
-                         (pages, kind_labels["page"]),
-                         (groups, kind_labels["group"])):
-        if count:
-            parts.append(i18n.tr('{count} {label}', count=count, label=label))
+    parts = [text for count, text in (
+        (chapters, i18n.tr('{count} 章', count=chapters)),
+        (pages, i18n.tr('{count} 页', count=pages)),
+        (groups, i18n.tr('{count} 组', count=groups)),
+    ) if count]
     parts.append(i18n.tr('{count} 段', count=int(outline.get("total_paragraphs") or 0)))
     parts.append(i18n.tr('本地读取，未调用模型'))
     return " · ".join(parts)

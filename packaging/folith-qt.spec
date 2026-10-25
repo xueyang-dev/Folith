@@ -90,6 +90,15 @@ if BUILD_INFO.exists():
     datas.append((str(BUILD_INFO), "."))
 # Brand assets, locale catalogs and other package resources.
 datas += collect_data_files("folith", includes=["resources/**"])
+datas += [(str(ROOT / "folith/desktop/install-update.ps1"), "folith/desktop")]
+_update_key = os.environ.get("FOLITH_UPDATE_PUBLIC_KEY", "").strip()
+if _update_key:
+    import base64
+    if len(base64.b64decode(_update_key, validate=True)) != 32:
+        raise ValueError("FOLITH_UPDATE_PUBLIC_KEY must be a base64 Ed25519 public key")
+    _update_key_path = OUT_DIR / "update-public-key.txt"
+    _update_key_path.write_text(_update_key, encoding="ascii")
+    datas.append((str(_update_key_path), "folith/resources"))
 
 # ------------------------------------------------------ bundled OCR payload
 # eng/chi_sim/ara plus the engine, staged by scripts/stage_tesseract_payload.py
