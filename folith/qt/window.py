@@ -3867,6 +3867,10 @@ class MainWindow(QMainWindow):
         self.runner.submit(work, on_done=done, on_error=failed, label="exit-stop")
 
     def _acquire_close(self, *, forced: bool = False) -> None:
+        if not self._pending_update:
+            # A regular accepted exit must not leave a full download running
+            # in the pool after the last window disappears.
+            self.updates.cancel()
         if self._pending_update:
             # Updating must never use the existing force-quit escape hatch.
             # A cancelled or failed shutdown leaves the verified download ready.

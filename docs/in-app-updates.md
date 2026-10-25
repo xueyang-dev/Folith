@@ -77,4 +77,4 @@ python scripts/prepare_macos_update.py --app dist/qt-desktop/Folith.app \
 
 以上实机发行验收完成前，Issue 保持打开，不宣称自动更新已在用户发行版启用。
 
-2026-10-25 本机 Windows 结果：窗口/设置/打包相关回归 174 passed、6 skipped；更新、平台打包契约、语言目录和 CI 分类的最后一次定向检查 47 passed、1 skipped（真实 macOS 编译检查在本机跳过）；新增真实 Qt 退出边界用例 3 passed。测试集合有重叠，不将这些数字累加为独立用例数。窗口回归存在既有 PySide signal disconnect 和 QMouseEvent 弃用警告。上述结果未替代两版完整 Folith 发行包的 UI 升级验收。
+2026-10-25 本机 Windows 结果：窗口/设置/打包相关回归 174 passed、6 skipped；更新、平台打包契约、语言目录和 CI 分类的定向检查 47 passed、1 skipped（真实 macOS 编译检查在本机跳过）；新增真实 Qt 退出边界与正常退出取消下载用例 4 passed。之后恢复目录保护修正的更新/Windows 助手检查 26 passed。测试集合有重叠，不将这些数字累加为独立用例数。窗口回归存在既有 PySide signal disconnect 和 QMouseEvent 弃用警告。上述结果未替代两版完整 Folith 发行包的 UI 升级验收。

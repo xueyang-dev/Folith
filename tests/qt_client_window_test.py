@@ -291,6 +291,15 @@ def test_declined_update_confirmation_never_installs(client, monkeypatch):
     assert window.isVisible() and not window._pending_update
 
 
+def test_normal_exit_cancels_background_update_download(client, monkeypatch):
+    window = client["window"]
+    cancelled = []
+    monkeypatch.setattr(window.updates, "cancel", lambda: cancelled.append(True))
+    window.close()
+    assert cancelled == [True]
+    assert window._closing_accepted and not window.isVisible()
+
+
 def test_import_then_editor_keeps_text_across_background_refresh(client, monkeypatch):
     adapter = client["adapter"]
     core = client["core"]
