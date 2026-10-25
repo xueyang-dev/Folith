@@ -177,6 +177,41 @@ def test_adoption_keep_manual_edit_unresolved_are_distinct(temp_job_env):
     assert summary["unresolved_segments"] == 1
 
 
+def test_manual_edit_after_adoption_is_not_attributed_to_the_candidate(temp_job_env):
+    job_id = "handoff-adopt-then-edit"
+    state = _run(job_id)
+    pairs = state["pairs"]
+    adopted_text = "北方档案馆收藏着山谷的第一幅地图。"
+    edited_text = "北方档案馆珍藏着这片山谷最早的地图。"
+    draft = {
+        "segment_index": 0,
+        "segment_uid": str(pairs[0].get("segment_uid") or ""),
+        "source": pairs[0]["source"],
+        "candidate_target": adopted_text,
+        "origin": _cand.ORIGIN_REVIEW,
+        "baseline": _cand.pair_signature(pairs[0]),
+    }
+    created = core.commit_candidates(job_id, [draft])
+    core.adopt_translation_candidate(
+        job_id, created["created"][0]["candidate_id"], actor="reviewer")
+    # a person rewrites the adopted text afterwards
+    core.save_translation_edit(job_id, 0, edited_text, actor="handler")
+
+    payload = _export(job_id)
+    row = {r["segment_index"]: r for r in payload["segments"]}[0]
+    assert row["current_target"] == edited_text
+    assert row["status"] == "manual_edit"
+    kinds = [change["kind"] for change in row["changes"]]
+    assert kinds == ["candidate_adoption", "manual_edit"]
+    adoption, manual = row["changes"]
+    assert adoption["before"] == TARGETS[0] and adoption["after"] == adopted_text
+    assert adoption["actor"] == "reviewer"
+    assert manual["before"] == adopted_text and manual["after"] == edited_text
+    summary = payload["summary"]
+    assert summary["manual_edits"] == 1
+    assert summary["adopted"] == 0
+
+
 def test_skipped_and_unreviewed_are_explicit_and_never_passes(temp_job_env):
     skipped_job = "handoff-skipped"
     _run(skipped_job, review_mode="risk_selective")
