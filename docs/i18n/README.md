@@ -1,8 +1,8 @@
 # Folith 外观与多语言支持
 
-## 当前状态（v0.8.0 / 2026-10）
+## 当前状态（计划 v0.8.0 / 2026-10）
 
-外观与语言页面已接入侧栏及 Qt 桌面端偏好设置。日间、夜间、暖黄色纸面三种显示模式可切换。设置保存在本机（Qt 桌面端通过 `QSettings` 持久化，Web 端通过 `outputs/ui_preferences.json`），重启后恢复。
+Qt 桌面端偏好设置提供日间、夜间、暖黄色纸面三种显示模式。设置通过本机 `QSettings` 持久化，重启后恢复。沿用的 Web 文案目录供 Qt 动态文案后备查询使用，不代表仍提供独立 Web 客户端。
 
 已有简体中文默认界面，支持 **English**、**Español**、**Русский**、**العربية**、**Français** 和 **Deutsch** 六门界面语言。
 
@@ -21,6 +21,7 @@
 > [!NOTE]
 > 界面目录完整（100% 覆盖）不等同于母语审阅完成。除简体中文外的所有界面语言当前均明确标记为 **experimental（实验功能）**。
 > 本次新增德语与法语目录已通过语法、占位符、标点及 Qt 长语言布局用例检验，但仍需社区及母语审校者进一步校对与反馈。
+> #11 的独立校对及完整核心界面验收仍待完成；目录实现与打包修复不关闭该 issue。
 > 与其他 Issue 的明确分界：
 > - 翻译源/目标语言拓展属于 [#10](https://github.com/xueyang-dev/Folith/issues/10)；
 > - 阿拉伯语 RTL 验收属于 [#16](https://github.com/xueyang-dev/Folith/issues/16)；
@@ -37,9 +38,7 @@
   - 单复数处理 `i18n.tr_n("源文本", count, **kwargs)`，对于支持单数的语言读取 `<源文本>#one` 键，未配置时回退基准翻译。
   - 阿拉伯语 RTL 判定 `i18n.is_rtl()`，驱动 Qt 窗口及控件方向镜像。
   - 语言列表 `i18n.available_languages()` 与标准化 `i18n.normalize(code)`。
-- **Web 端国际化**（`folith/ui/i18n.py`、`folith/ui/preferences.py`）：
-  - 独立本机设置读写与设置页。显示偏好不会写入任务、模型配置或译文。
-  - 动态格式化 `localized_formatter()`，静态 HTML 片段 `html_literal()`。
+- **后备文案目录**：Qt 查询不到专用条目时，通过 `folith/qt/i18n.py` 查询沿用的 `<locale>.json` 目录；运行时报告操作等文案依赖这些目录，必须与 `qt-<locale>.json` 一起打包。
 - **目录资源**（`folith/resources/locales/`）：
   - Web 界面目录：`zh-CN.json`（源目录）、`en.json`、`es.json`、`ru.json`、`ar.json`、`fr.json`、`de.json`。
   - Qt 界面目录：`qt-zh-CN.json`（源目录）、`qt-en.json`、`qt-es.json`、`qt-ru.json`、`qt-ar.json`、`qt-fr.json`、`qt-de.json`。
