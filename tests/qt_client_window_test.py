@@ -263,6 +263,34 @@ def test_idle_window_exits_without_a_prompt(client):
     assert window.failures == []
 
 
+def test_update_restart_uses_normal_close_boundary(client, monkeypatch):
+    window = client["window"]
+    launched = []
+    monkeypatch.setattr(window, "_confirm", lambda *a, **k: True)
+    monkeypatch.setattr(window.updates, "install", lambda paths: launched.append(paths))
+    window._restart_for_update()
+    assert launched == [window.paths]
+    assert window._closing_accepted and not window.isVisible()
+
+
+def test_cancelled_update_exit_never_installs(client, monkeypatch):
+    window = client["window"]
+    launched = []
+    monkeypatch.setattr(window.updates, "install", lambda paths: launched.append(paths))
+    monkeypatch.setattr(window, "_confirm", lambda *a, **k: True)
+    monkeypatch.setattr(window.workbench, "flush_draft", lambda: False)
+    window._restart_for_update()
+    assert launched == []
+    assert window.isVisible() and not window._closing_accepted and not window._pending_update
+
+
+def test_declined_update_confirmation_never_installs(client, monkeypatch):
+    window = client["window"]
+    monkeypatch.setattr(window, "_confirm", lambda *a, **k: False)
+    window._restart_for_update()
+    assert window.isVisible() and not window._pending_update
+
+
 def test_import_then_editor_keeps_text_across_background_refresh(client, monkeypatch):
     adapter = client["adapter"]
     core = client["core"]

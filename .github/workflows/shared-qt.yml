@@ -34,6 +34,18 @@ jobs:
           cache: pip
       - name: Install shared application and test dependencies
         run: python -m pip install ".[test]" PySide6==6.11.2
+      - name: Prepare the pinned Sparkle framework for native bridge compilation
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/folith-sparkle"
+          curl --fail --location --retry 3 \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz \
+            -o "$RUNNER_TEMP/folith-sparkle/Sparkle.tar.xz"
+          printf '%s  %s\n' c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c \
+            "$RUNNER_TEMP/folith-sparkle/Sparkle.tar.xz" | shasum -a 256 -c -
+          tar -xf "$RUNNER_TEMP/folith-sparkle/Sparkle.tar.xz" -C "$RUNNER_TEMP/folith-sparkle"
+          echo "FOLITH_TEST_SPARKLE_FRAMEWORK=$RUNNER_TEMP/folith-sparkle/Sparkle.framework" >> "$GITHUB_ENV"
       - name: Check shared views and platform boundary
         run: >-
           python -m pytest -q
@@ -48,3 +60,6 @@ jobs:
           tests/concept_workflow_test.py tests/qt_concept_dialog_test.py
           tests/application_commands_test.py tests/state_mutation_lock_test.py
           tests/knowledge_async_commit_test.py
+          tests/desktop_updates_test.py tests/qt_updater_test.py
+          tests/windows_update_helper_test.py tests/macos_updater_packaging_test.py
+          tests/macos_sparkle_native_test.py

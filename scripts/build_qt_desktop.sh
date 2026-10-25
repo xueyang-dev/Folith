@@ -101,6 +101,12 @@ FOLITH_QT_MIN_OS="$MIN_OS" \
 
 echo "=== verify the artifact against the declared minimum ==="
 APP="$DIST_DIR/Folith.app"
+if [[ -n "${FOLITH_SPARKLE_FRAMEWORK:-}" ]]; then
+  "$PYTHON" "$ROOT/scripts/embed_macos_updater.py" --app "$APP" \
+    --framework "$FOLITH_SPARKLE_FRAMEWORK" \
+    --public-key "${FOLITH_SPARKLE_PUBLIC_KEY:?Sparkle public key is required}" \
+    --feed "${FOLITH_SPARKLE_FEED:?Sparkle HTTPS appcast URL is required}"
+fi
 if [[ -d "$APP" ]]; then
   set +e
   # Verify both claims about the artifact: the declared minimum OS and that
