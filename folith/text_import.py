@@ -28,7 +28,9 @@ def decode_text(data: bytes) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _html_paragraphs(markup: str | bytes):
+def _html_paragraphs(markup: str | bytes, headings: list | None = None):
+    """返回 ``(段落, 未纳入内容)``；传入 ``headings`` 列表时，把每个标题块
+    ``{"index": 标题段落在结果里的下标, "level": 1–6}`` 追加进去（结构解析用）。"""
     if isinstance(markup, bytes):
         markup = decode_text(markup)
     root = html.fromstring(markup)
@@ -70,17 +72,28 @@ def _html_paragraphs(markup: str | bytes):
             if child.tail:
                 pending.append(child.tail)
         if block:
+            before = len(paragraphs)
             flush()
+            # 标题块在这里成段：只有真产出了标题文本才登记（空标题不算结构）。
+            if (headings is not None and tag in {"h1", "h2", "h3", "h4", "h5", "h6"}
+                    and len(paragraphs) > before):
+                headings.append({"index": len(paragraphs) - 1,
+                                 "level": int(tag[1])})
     walk(body)
     flush()
     return paragraphs, omitted
 
 
-def extract_text_source(filename: str, data: bytes):
-    """Return paragraphs, omitted-content records and factual import metadata."""
+def extract_text_source(filename: str, data: bytes, *, per_chapter: bool = False):
+    """Return paragraphs, omitted-content records and factual import metadata.
+
+    ``per_chapter=True``（结构解析用）额外把 EPUB 每个阅读顺序章节的段落原样
+    分组返回：``(章节段落列表, unsupported, facts)``；其余格式只有一组。
+    """
     lower = filename.lower()
     omitted = {}
     facts = {}
+    chapter_groups: list[list[str]] = []
     if lower.endswith(".epub"):
         with zipfile.ZipFile(io.BytesIO(data)) as book:
             container = ElementTree.fromstring(book.read("META-INF/container.xml"))
@@ -116,6 +129,7 @@ def extract_text_source(filename: str, data: bytes):
                     content = etree.tostring(document, encoding="unicode")
                 chapter, missing = _html_paragraphs(content)
                 paragraphs.extend(chapter)
+                chapter_groups.append(list(chapter))
                 chapters += 1
                 for kind, count in missing.items():
                     omitted[kind] = omitted.get(kind, 0) + count
@@ -130,4 +144,8 @@ def extract_text_source(filename: str, data: bytes):
     unsupported = [{"kind": kind, "label": labels[kind], "count": count,
                     "detail": "未纳入文本翻译；保留在源文件中。", "sample": ""}
                    for kind, count in omitted.items()]
+    if per_chapter:
+        if not chapter_groups and paragraphs:
+            chapter_groups = [list(paragraphs)]
+        return chapter_groups, unsupported, facts
     return paragraphs, unsupported, facts
