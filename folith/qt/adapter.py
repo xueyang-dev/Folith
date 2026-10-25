@@ -1197,6 +1197,58 @@ def include_segment(job_id: str, excluded_id: str) -> dict:
         raise AdapterError(str(exc)) from exc
 
 
+def translation_scope(job_id: str, state: dict | None = None) -> dict:
+    """翻译范围的只读结构：页 / 章 / 节 → 当前工作列表的连续索引区间。
+
+    范围选择是既有排除账本的批量入口（不另设"排除真相"），这里只做投影，
+    不做任何修改。`available` 为 False 表示任务还没有段落（尚未完成原文提取），
+    界面就不显示范围入口。被排除的段落在 `excluded` 里给出，供同一对话框恢复。
+    """
+    state = state if state is not None else load_state(job_id)
+    tree = core.translation_scope_tree(state or {})
+    return {
+        "available": bool(tree.get("available")),
+        "groups": [
+            {"kind": str(group.get("kind") or ""),
+             "label": str(group.get("label") or ""),
+             "nodes": [dict(node) for node in group.get("nodes") or []]}
+            for group in tree.get("groups") or []],
+        "total": dict(tree.get("total") or {}),
+        "excluded": {
+            "count": int((tree.get("excluded") or {}).get("count") or 0),
+            "records": [dict(record) for record in
+                        (tree.get("excluded") or {}).get("records") or []],
+        },
+    }
+
+
+def exclude_scope(job_id: str, keys: Sequence[str]) -> dict:
+    """按范围（页 / 章 / 节）批量排除段落；语义与逐段排除完全一致。"""
+    wanted = [str(key or "").strip() for key in (keys or []) if str(key or "").strip()]
+    if not wanted:
+        raise AdapterError("请选择要排除的范围。")
+    try:
+        result = core.exclude_translation_scope(job_id, wanted, actor="user")
+    except (ValueError, RuntimeError) as exc:
+        raise AdapterError(str(exc)) from exc
+    result.pop("state", None)
+    return result
+
+
+def restore_scope(job_id: str, excluded_ids: Sequence[str]) -> dict:
+    """批量恢复被排除的段落（范围排除与逐段排除共用同一份账本）。"""
+    wanted = [str(item or "").strip() for item in (excluded_ids or [])
+              if str(item or "").strip()]
+    if not wanted:
+        raise AdapterError("请选择要恢复的已排除段落。")
+    try:
+        result = core.restore_translation_scope(job_id, wanted, actor="user")
+    except (ValueError, RuntimeError) as exc:
+        raise AdapterError(str(exc)) from exc
+    result.pop("state", None)
+    return result
+
+
 def retranslate_segment(job_id: str, index: int, config: EngineConfig,
                         *, style_rules: str = "", instruction: str = "",
                         origin: str = "", finding_ids: Sequence[str] = ()) -> dict:
@@ -5263,6 +5315,17 @@ def source_size(job_id: str) -> dict:
     if key in _source_size_cache:
         return dict(_source_size_cache[key])
     state = load_state(job_id)
+    # 阶段一已经建好段落契约（系统排除与用户的范围排除都已应用）时，用真实的
+    # 工作列表估算：从这里开始预估必须跟随范围选择，而不是每次都从原文件把
+    # 已被排除的段落重新数进来。
+    state_paras = [str(item or "") for item in (state.get("paras") or [])
+                   if str(item or "").strip()]
+    if state_paras:
+        result = {"segments": len(state_paras),
+                  "chars": sum(len(item) for item in state_paras),
+                  "approximate": False}
+        _source_size_cache[key] = dict(result)
+        return result
     filename = str(state.get("filename") or "")
     pdf = filename.lower().endswith(".pdf")
     pages = 0

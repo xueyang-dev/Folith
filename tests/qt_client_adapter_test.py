@@ -1228,6 +1228,60 @@ def test_exclude_and_include_a_segment(adapter_env):
         adapter.include_segment(job_id, "x999999")
 
 
+def test_translation_scope_exclude_and_restore(adapter_env):
+    """§6.A.5 扩展（issue #28）：范围选择是排除账本的批量入口。
+
+    对话框把页/章/节的勾选变成范围键；适配层把它们交给核心的批量排除/恢复。
+    这里的断言是适配层契约：树是只读投影、键随排除重算、恢复把内容按原位
+    放回来——与逐段排除共用同一份 `excluded_segments` 账本。
+    """
+    adapter = adapter_env["adapter"]
+    core = adapter_env["core"]
+    tmp = adapter_env["tmp"]
+
+    source = tmp / "scope.docx"
+    source.write_bytes(_make_docx(["第一章 缘起", "正文一段。", "第二章 争论", "正文二段。"]))
+    config = adapter.EngineConfig(target_lang="简体中文")
+    job_id = adapter.import_documents([source], config)[0].job_id
+    state = core.load_job_state(job_id) or {}
+    state["paras"] = ["第一章 缘起", "正文一段。", "第二章 争论", "正文二段。"]
+    state["p1_done"] = True
+    core.save_job_state(job_id, state)
+
+    scope = adapter.translation_scope(job_id)
+    assert scope["available"] is True
+    assert scope["total"]["segments"] == 4
+    chapter = next(g for g in scope["groups"] if g["kind"] == "chapter")
+    assert [node["label"] for node in chapter["nodes"]] == ["第一章 缘起", "第二章 争论"]
+
+    result = adapter.exclude_scope(job_id, [chapter["nodes"][1]["key"]])
+    assert result["excluded"] == 2 and result["remaining"] == 2
+    state = adapter.load_state(job_id)
+    assert state["paras"] == ["第一章 缘起", "正文一段。"]
+    records = adapter.excluded_segments(job_id, state)
+    assert [record["reason"] for record in records] == ["范围排除：第二章 争论"] * 2
+
+    # 排除之后的范围树反映剩余内容；已排除清单供同一对话框恢复。
+    scope = adapter.translation_scope(job_id, state)
+    assert scope["total"]["segments"] == 2
+    assert scope["excluded"]["count"] == 2
+
+    result = adapter.restore_scope(job_id, [record["excluded_id"]
+                                            for record in records])
+    assert result["restored"] == 2
+    state = adapter.load_state(job_id)
+    assert state["paras"] == ["第一章 缘起", "正文一段。", "第二章 争论", "正文二段。"]
+    assert adapter.excluded_segments(job_id, state) == []
+
+    # 空键与不存在的范围键都要给出可理解的拒绝。
+    with pytest.raises(adapter.AdapterError):
+        adapter.exclude_scope(job_id, [])
+    with pytest.raises(adapter.AdapterError, match="范围与当前段落不匹配"):
+        adapter.exclude_scope(job_id, ["chapter:0009"])
+    with pytest.raises(adapter.AdapterError):
+        adapter.restore_scope(job_id, ["x999999"])
+
+
 def test_retranslate_one_segment_through_the_core(adapter_env):
     """§6.A.5：定点重译只生成候选；采用才改这一段的正文。"""
     adapter = adapter_env["adapter"]
