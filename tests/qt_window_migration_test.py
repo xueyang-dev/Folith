@@ -229,9 +229,9 @@ class _FakeTermEditDialog:
     def exec(self):
         return QDialog.DialogCode.Accepted
 
-    def fields(self):
+    def values(self):
         return {"preferred": self._preferred, "status": "locked", "forbidden": [],
-                "domain": self.entry.get("domain", ""), "note": self.entry.get("note", "")}
+                "preview": False}
 
 
 @pytest.mark.parametrize("changes", [
@@ -244,11 +244,10 @@ def test_workspace_term_edit_flows_through_the_existing_update_pathway(
     """真实编辑器 → 单次修订、stale/TM 失效、两处刷新和使用新术语重译。"""
     from PySide6.QtCore import QTimer, Qt
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QDialogButtonBox
-
     from folith.qt import window as window_module
     from folith import translation_candidates
 
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
     core, adapter = client["core"], client["adapter"]
     before = _term_state(core)
     _save(core, "wmterm00000001", before)
@@ -267,10 +266,11 @@ def test_workspace_term_edit_flows_through_the_existing_update_pathway(
         def __init__(self, entry, parent=None):
             super().__init__(entry, parent)
             self.preferred_edit.setText(changes.get("preferred", entry["preferred"]))
-            self.forbidden_edit.setText("; ".join(changes.get("forbidden", entry["forbidden"])))
+            self.forbidden_edit.setText("、".join(changes.get("forbidden", entry["forbidden"])))
             self.status_box.setCurrentIndex(
                 self.status_box.findData(changes.get("status", entry["status"])))
-            save = self.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Save)
+            self.preview_box.setChecked(False)
+            save = self.ok_button
             QTimer.singleShot(0, lambda: QTest.mouseClick(save, Qt.MouseButton.LeftButton))
 
     monkeypatch.setattr(window_module.dialogs, "TermEditDialog", AutoSaveDialog)
@@ -325,6 +325,7 @@ def test_workspace_term_edit_failure_leaves_state_unchanged(client, monkeypatch)
     """更新失败（首选译名为空被核心拒绝）：状态原样，版本不涨，界面有可见错误。"""
     from folith.qt import window as window_module
 
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
     core, adapter = client["core"], client["adapter"]
     _save(core, "wmterm00000002", _term_state(core))
     window = _open(client, "wmterm00000002")

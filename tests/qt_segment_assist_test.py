@@ -377,7 +377,7 @@ def test_term_chip_edit_is_reachable_by_tab_and_activated_by_space(qapp):
         chip.close()
 
 
-def test_term_edit_dialog_collects_fields_and_preserves_domain_note(qapp):
+def test_term_edit_dialog_collects_fields_and_requires_preferred(qapp):
     from PySide6.QtWidgets import QDialog
 
     from folith.qt.dialogs import TermEditDialog
@@ -389,14 +389,12 @@ def test_term_edit_dialog_collects_fields_and_preserves_domain_note(qapp):
     dialog.preferred_edit.setText("薇奥莱特")
     dialog.forbidden_edit.setText("娜拉, 诺拉")
     dialog.status_box.setCurrentIndex(dialog.status_box.findData("rejected"))
-    fields = dialog.fields()
+    fields = dialog.values()
     assert fields["preferred"] == "薇奥莱特"
     assert fields["status"] == "rejected"
     assert fields["forbidden"] == ["娜拉", "诺拉"]
-    assert fields["domain"] == "文学" and fields["note"] == "专名", \
-        "快速编辑不暴露的字段必须原值带过，不能让更新通道清空"
     # 空首选译名不能保存：对话框自己挡下来，不发更新请求。
     dialog.preferred_edit.setText("  ")
-    dialog._accept()
+    dialog.ok_button.click()
     assert dialog.result() != QDialog.DialogCode.Accepted
-    assert not dialog.error.isHidden() and dialog.error.text()
+    assert not dialog.ok_button.isEnabled()

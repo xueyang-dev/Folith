@@ -1,0 +1,103 @@
+{
+  "platform": "cocoa",
+  "steps": [
+    "截图 term-01-term-chips.png",
+    {
+      "step": "术语建议卡出现（原文 → 首选译名）",
+      "ok": true,
+      "detail": "The Life of Violet → 紫罗兰的一生"
+    },
+    {
+      "step": "术语卡带编辑动作（✎）",
+      "ok": true,
+      "detail": ""
+    },
+    "截图 term-02-edit-dialog.png",
+    "截图 term-03-edit-dialog-filled.png",
+    {
+      "step": "编辑对话框：首选译名改为 薇奥莱特的一生",
+      "ok": true,
+      "detail": ""
+    },
+    "截图 term-04-replace-preview.png",
+    {
+      "step": "预览列出可替换段并默认勾选",
+      "ok": true,
+      "detail": "可替换 4 段"
+    },
+    {
+      "step": "保护段与需人工确认段只展示、不可勾选",
+      "ok": true,
+      "detail": "#4  人工处理的译文，不会替换（人工改写的译文） | #3  需人工确认（译文里没有新旧译名）：她没有读完那本书。"
+    },
+    "截图 term-05-replace-preview-deselected.png",
+    {
+      "step": "取消勾选的段进入 exclusions",
+      "ok": true,
+      "detail": "{'selected': [0, 1, 5], 'exclusions': [6]}"
+    },
+    {
+      "step": "术语保存走既有通道（生成新术语版本）",
+      "ok": true,
+      "detail": "glossary version=1"
+    },
+    {
+      "step": "旧译名不再出现在术语条目",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "选中的段被改写（含同段两处）",
+      "ok": true,
+      "detail": "《薇奥莱特的一生》打开全书，《薇奥莱特的一生》收束全书。"
+    },
+    {
+      "step": "禁用译名段被改写",
+      "ok": true,
+      "detail": "图书馆把《薇奥莱特的一生》放在最前排。"
+    },
+    {
+      "step": "取消勾选的段一字不改",
+      "ok": true,
+      "detail": "评论家称《紫罗兰的一生》是她最好的作品。"
+    },
+    {
+      "step": "需人工确认段不被自动改写",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "人工改写的保护段一字不改",
+      "ok": true,
+      "detail": "他在每个冬天重读这本书。"
+    },
+    {
+      "step": "替换走候选事务（origin=term_revision，逐条可追溯）",
+      "ok": true,
+      "detail": "3 条已采用"
+    },
+    {
+      "step": "无未采用的悬置候选",
+      "ok": true,
+      "detail": ""
+    },
+    "截图 term-06-workbench-after.png",
+    {
+      "step": "重开后术语卡显示新译名",
+      "ok": true,
+      "detail": "薇奥莱特的一生"
+    },
+    {
+      "step": "重开后译文保持替换结果",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "重开后术语条目保持新译名与禁用译名",
+      "ok": true,
+      "detail": "[\"紫罗兰\", \"紫罗兰传\"]"
+    },
+    "截图 term-07-after-reopen.png"
+  ],
+  "verdict": "pass"
+}
