@@ -74,7 +74,16 @@ def language_tag(value: str) -> str:
                  "日语": "ja", "韩语": "ko", "法语": "fr", "德语": "de", "西班牙语": "es", "阿拉伯语": "ar", "俄语": "ru",
                  "English": "en", "日本語": "ja", "한국어": "ko", "Deutsch": "de", "Français": "fr",
                  "Español": "es", "Русский": "ru", "Português": "pt", "Italiano": "it", "العربية": "ar",
-                 "Arabic": "ar", "Modern Standard Arabic": "ar", "现代标准阿拉伯语": "ar"}
+                 "Arabic": "ar", "Modern Standard Arabic": "ar", "现代标准阿拉伯语": "ar",
+                 "Nederlands": "nl", "Dutch": "nl", "荷兰语": "nl", "荷兰文": "nl", "nld": "nl",
+                 "Polski": "pl", "Polish": "pl", "波兰语": "pl", "波兰文": "pl", "pol": "pl",
+                 "Українська": "uk", "Ukrainian": "uk", "乌克兰语": "uk", "乌克兰文": "uk", "ukr": "uk",
+                 "Tiếng Việt": "vi", "Vietnamese": "vi", "越南语": "vi", "越南文": "vi", "vie": "vi",
+                 "Türkçe": "tr", "Turkish": "tr", "土耳其语": "tr", "tur": "tr",
+                 "اردو": "ur", "Urdu": "ur", "乌尔都语": "ur", "urd": "ur",
+                 "فارسی": "fa", "Persian": "fa", "Farsi": "fa", "波斯语": "fa", "fas": "fa",
+                 "ئۇيغۇرچە": "ug", "Uyghur": "ug", "维吾尔语": "ug", "维文": "ug", "uig": "ug",
+                 "עברית": "he", "Hebrew": "he", "希伯来语": "he", "heb": "he"}
     value = str(value or "").strip()
     labels = {normalize_language(key): tag for key, tag in languages.items()}
     if normalize_language(value) in labels:

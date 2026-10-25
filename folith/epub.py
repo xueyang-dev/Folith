@@ -556,6 +556,7 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
               "image_count": len(media), "has_cover": bool(cover), "original_caption_count": caption_count,
               "chapter_count": len(chapters), "linked_toc_count": len(group_links), "missing_translation_count": missing,
               "placement": "图片位于对应完整段落之后；跨图片合并的译文整体位于图片之前。",
+              "language": language, "direction": direction,
               "warnings": warnings}
     identifier = "urn:folith:" + (job_id or "translation")
     files, entries = {}, []

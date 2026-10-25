@@ -179,6 +179,15 @@ def test_validate_language_packs_reports_every_missing_code():
     assert report["missing"] == ["ara"]
     assert report["engine_code"] == "ara+eng"
     assert validate_language_packs("eng", ["eng"])["ok"] is True
+    # Uyghur and new language pack validation
+    report_uig = validate_language_packs("uig+eng", ["eng"])
+    assert report_uig["ok"] is False
+    assert report_uig["missing"] == ["uig"]
+    assert report_uig["ocr_direction"] == "rtl"
+    assert validate_language_packs("nld", ["nld"])["ok"] is True
+    assert validate_language_packs("pol", ["pol"])["ok"] is True
+    assert validate_language_packs("ukr", ["ukr"])["ok"] is True
+    assert validate_language_packs("vie", ["vie"])["ok"] is True
 
 
 # --------------------------------------------------------------------------

@@ -177,10 +177,10 @@ PyPI 上有发行包 `foliothread`（代码模块名为 `folith`），但它**�
 | **导入** | PDF（含扫描件）/ DOCX / EPUB（无 DRM）/ TXT / Markdown；单个文件上限 512 MB，超过请拆分后再导入 |
 | **交付文件** | 纯译文 DOCX、双语对照 DOCX、EPUB（来源为 PDF 或 DOCX）、PDF（保留原版式的 PDF 只适用于 PDF 来源）、术语表、TMX、TBX、JSONL、`delivery_manifest.json` 交付清单 |
 | **语言资产** | 术语表与翻译记忆：XLSX、TBX、TMX 导入导出；JSONL |
-| **原文语言** | 自动识别，或手动选择 17 种之一：English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español、Italiano、Português、Русский、Türkçe、العربية、اردو、فارسی、ئۇيغۇرچە、עברית |
-| **目标语言** | 12 种：简体中文、繁体中文、English、日本語、한국어、Deutsch、Français、Español、Русский、Português、Italiano、العربية |
+| **原文语言** | 自动识别，或手动选择 21 种之一：English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español、Italiano、Português、Русский、Nederlands、Polski、Українська、Tiếng Việt、Türkçe、العربية、فارسی、עברית、اردو、ئۇيغۇرچە |
+| **目标语言** | 21 种：简体中文、繁体中文、English、日本語、한국어、Deutsch、Français、Español、Русский、Português、Italiano、Nederlands、Polski、Українська、Tiếng Việt、Türkçe、العربية、فارسی、עברית、اردو、ئۇيغۇرچە |
 
-源语言也用于扫描页的版面定位（随包的 Tesseract 只含英文、简体中文、阿拉伯文语言包）。没有公布速度或规模基准，不承诺某个页数下的耗时或费用：翻译质量与耗时取决于文档和你选的模型。准备页会按三种模式给出调用次数、输入 token 与耗时的估算，以此为准；语言对之间的质量差异请先用一小段样章自行验证。
+源语言也用于扫描页的版面定位（随包的 Tesseract 只含英文、简体中文、阿拉伯文语言包，其余语言包缺失时显式报错拦截，不隐蔽降级为英文）。支持详情与验收边界见 [翻译语言支持与验收规范](docs/translation-languages.md)。没有公布速度或规模基准，不承诺某个页数下的耗时或费用：翻译质量与耗时取决于文档和你选的模型。准备页会按三种模式给出调用次数、输入 token 与耗时的估算，以此为准；语言对之间的质量差异请先用一小段样章自行验证。
 
 ---
 
