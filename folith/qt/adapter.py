@@ -1951,6 +1951,44 @@ def segment_pdf_location(job_id: str, index: int, state: dict | None = None,
             "hint": ("已高亮" if rects else "在本页（仅定位页面，没有行级坐标，不画高亮）")}
 
 
+# ================= 流式源的原位置上下文（#61） =================
+#
+# DOCX / EPUB / TXT / Markdown 没有页码和坐标；「原位置」给的是片段的原始上下文
+# （标题路径 / 章节 / 行号 + 相邻段落，高亮匹配块），解析与定位在
+# ``folith.source_context``，与 PDF 的「如实说明、不假装」是同一条规矩。
+
+def source_context_available(job_id: str) -> bool:
+    from folith import source_context
+
+    return source_context.has_streaming_source(job_id)
+
+
+def source_document_blocks(job_id: str) -> list[dict]:
+    """解析（并缓存）任务流式源文件的顺序块；给面板后台预热用。"""
+    from folith import source_context
+
+    return source_context.load_blocks(job_id)
+
+
+def segment_source_context(job_id: str, index: int,
+                           state: dict | None = None) -> dict:
+    """某一段在流式源里的上下文：``{kind, found, title, blocks, hint}``。"""
+    from folith import source_context
+
+    state = state if state is not None else load_state(job_id)
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    text = ""
+    if 0 <= index < len(pairs):
+        text = str(pairs[index].get("source") or "")
+    elif 0 <= index < len(paras):
+        text = str(paras[index] or "")
+    if not text:
+        return {"kind": source_context.source_kind(job_id), "found": False,
+                "title": "", "blocks": [], "hint": "这一段没有原文，无法定位。"}
+    return source_context.locate_segment(job_id, text)
+
+
 # ================= 收尾（恢复进度 / 补跑失败步骤 / 实体译名统一） =================
 #
 # 旧界面的"长文处理收尾"：长文跑完后常留下几类尾巴——全文理解降级、标注批次失败、
