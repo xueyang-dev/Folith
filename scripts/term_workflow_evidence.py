@@ -137,6 +137,10 @@ def main() -> int:
     seed(core, data_dir, work)
     app = window_module.build_application([])
     platform_name = QGuiApplication.platformName()
+    # A fresh isolated preference store would otherwise open the unrelated
+    # first-run/what's-new modal during this terminology evidence run.
+    from folith.qt import onboarding, preferences
+    onboarding.mark_completed(preferences.settings(), adapter.app_identity()["app_version"])
 
     try:
         config = adapter.EngineConfig(provider="DeepSeek", model="deepseek-v4-flash",
