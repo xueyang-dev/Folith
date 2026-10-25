@@ -4232,7 +4232,14 @@ def deliver(job_id: str, config: EngineConfig, *, note: str = "",
                "path": str(core.delivery_snapshot_asset_path(
                    job_id, version, item.get("name")))}
               for item in manifest.get("assets") or []]
-    return {"manifest": manifest, "version": version, "assets": assets}
+    renderer_notes = []
+    for asset in assets:
+        if asset["name"] == "delivery_manifest.json":
+            delivery_manifest = json.loads(Path(asset["path"]).read_text(encoding="utf-8"))
+            renderer_notes = list(delivery_manifest.get("renderer_notes") or [])
+            break
+    return {"manifest": manifest, "version": version, "assets": assets,
+            "renderer_notes": renderer_notes}
 
 
 def supplementable_outputs(job_id: str, state: dict | None = None) -> list[dict]:

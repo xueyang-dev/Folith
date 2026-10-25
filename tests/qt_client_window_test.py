@@ -3999,6 +3999,24 @@ def test_freeze_delivery_finishing_elsewhere_does_not_save_the_current_task(clie
     assert saved == [(4, job_a)], saved
 
 
+def test_freeze_notice_includes_renderer_notes(client, monkeypatch):
+    window, adapter = client["window"], client["adapter"]
+    job_id, _ = _two_jobs(client)
+    open_job_and_wait(window, job_id)
+    held = _HeldRunner(window.runner.submit)
+    monkeypatch.setattr(window.runner, "submit", held.submit)
+    monkeypatch.setattr(adapter, "delivery_preview",
+                        lambda *a, **k: {"can_deliver": True, "status_label": "可交付"})
+    monkeypatch.setattr(window, "_confirm",
+                        lambda title, *a, **k: title == "冻结交付")
+    notices = []
+    monkeypatch.setattr(window, "_notice", lambda text, **k: notices.append(text))
+    window.deliver()
+    note = "原排版 PDF：2 处源文位置未能完成替换。"
+    held.calls[0]["on_done"]({"version": 1, "assets": [], "renderer_notes": [note]})
+    assert any(note in text for text in notices)
+
+
 def test_review_all_confirms_with_estimate_and_cancel_sends_nothing(client, monkeypatch):
     window, app = client["window"], client["app"]
     job_a, _job_b = _two_jobs(client)

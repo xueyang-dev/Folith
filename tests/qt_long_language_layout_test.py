@@ -36,7 +36,7 @@ from folith.qt import adapter, components, i18n, style, views  # noqa: E402
 from tests.qt_delivery_supplement_test import env  # noqa: F401,E402  (fixture)
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
-LANGUAGES = ("en", "ru", "es")
+LANGUAGES = ("en", "ru", "es", "fr", "de")
 
 
 @pytest.fixture(scope="module")

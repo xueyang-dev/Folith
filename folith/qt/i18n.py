@@ -30,6 +30,8 @@ LANGUAGES: tuple[tuple[str, str], ...] = (
     ("es", "Español (experimental)"),
     ("ru", "Русский (experimental)"),
     ("ar", "العربية (experimental)"),
+    ("fr", "Français (experimental)"),
+    ("de", "Deutsch (experimental)"),
 )
 
 #: 需要从右到左排版的语种。

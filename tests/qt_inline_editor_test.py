@@ -72,6 +72,21 @@ def _pump(app, seconds=0.2):
         app.processEvents()
 
 
+def _apply_targets(view, targets):
+    """Simulate one background refresh: replace the given translations in place.
+
+    The row count does not change, which is exactly the path that used to skip
+    the editor (#166): `_render_segments()` repaints the cells and the expanded
+    row's target cell is covered by the inline editor.
+    """
+    import dataclasses
+
+    rows = [dataclasses.replace(row, target=targets[row.index]) if row.index in targets else row
+            for row in view._all_rows]
+    view.apply(view.job_id, view._state, rows,
+               getattr(view, "_last_runtime", {}), getattr(view, "_snapshots", []))
+
+
 def test_the_only_editor_sits_in_the_selected_row_of_the_grid(bench):
     view, app = bench
     view.select_segment(1)
@@ -137,6 +152,87 @@ def test_save_bar_appears_only_after_a_change(bench):
     assert footer.isVisibleTo(view.inline_editor)
     assert view.inline_editor.state_label.text() == "● 未保存"
     assert view.submit_button.isVisibleTo(view.inline_editor)
+
+
+def test_translation_arriving_in_the_open_row_shows_up_without_reselecting(bench):
+    """#166：停在当前段不动时，后台返回的译文要自己出现，而不是等用户换行。"""
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    assert view.target_edit.toPlainText() == "译文0"
+
+    _apply_targets(view, {0: "后台刚译好的一句"})
+    _pump(app)
+
+    assert view.target_edit.toPlainText() == "后台刚译好的一句"
+    # The cell under the overlay must agree: otherwise the grid flashes the old
+    # text as soon as the overlay moves to another row.
+    assert view.segment_list.item(0, 2).text() == "后台刚译好的一句"
+
+
+def test_translation_arriving_does_not_overwrite_uncommitted_typing(bench):
+    """Never trade a lost keystroke for a fresher translation."""
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    view.target_edit.setFocus()
+    view.target_edit.insertPlainText("我正在改")
+    _pump(app)
+    assert view._dirty
+
+    _apply_targets(view, {0: "后台新译文"})
+    _pump(app)
+
+    assert view.target_edit.toPlainText() == "我正在改译文0"
+    assert view._dirty
+
+
+def test_saved_draft_survives_a_translation_that_arrives(bench):
+    """`flush_draft()` clears `_dirty`; the text is still the user's, not the job's."""
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    view.target_edit.setFocus()
+    view.target_edit.insertPlainText("我的草稿")
+    _pump(app)
+    assert view.flush_draft()
+    assert not view._dirty
+
+    _apply_targets(view, {0: "后台新译文"})
+    _pump(app)
+
+    assert view.target_edit.toPlainText() == "我的草稿译文0"
+
+
+def test_clearing_the_editor_is_not_undone_by_the_next_refresh(bench):
+    """A cleared editor is a user edit; the refresh must not type the old text back.
+
+    `_text_changed()` lays the overlay out *before* it sets `_dirty`, so a
+    `_dirty`-only guard arrives one refresh too late. Caught by the IME
+    structural pre-check in `tests/qt_client_window_test.py`.
+    """
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    view.target_edit.setPlainText("")      # what select-all + delete does
+    _apply_targets(view, {0: "译文0"})
+    _pump(app)
+    assert view.target_edit.toPlainText() == ""
+
+
+def test_longer_translation_that_arrives_grows_the_open_row(bench):
+    """The overlay is synced before the row height is measured, or text gets clipped."""
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    before = view.segment_list.rowHeight(0)
+    longer = "后台返回了一段明显更长的译文，" * 6
+
+    _apply_targets(view, {0: longer})
+    _pump(app)
+
+    assert view.target_edit.toPlainText() == longer
+    assert view.segment_list.rowHeight(0) > before
 
 
 def test_ctrl_return_in_the_editor_saves_and_moves_on(bench):

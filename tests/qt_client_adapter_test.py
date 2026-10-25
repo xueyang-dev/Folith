@@ -1752,6 +1752,29 @@ def test_unreadable_tasks_are_listed_not_silently_hidden(adapter_env):
     assert not (data_dir / broken_ids["badjson"]).exists()
 
 
+@pytest.mark.parametrize("notes", [[], ["原排版 PDF：2 处源文位置未能完成替换。"]])
+def test_delivery_returns_renderer_notes_from_the_frozen_asset(adapter_env, monkeypatch, notes):
+    from folith import snapshots
+
+    adapter, core = adapter_env["adapter"], adapter_env["core"]
+    job_id = "renderer-notes"
+    state = core.new_job_state("notes.pdf")
+    state["latest_delivery_snapshot_version"] = 1
+    core.save_job_state(job_id, state)
+    snapshot = snapshots.create_snapshot(
+        core.job_dir(job_id), job_id, state,
+        {"delivery_manifest.json": json.dumps({"renderer_notes": notes}).encode("utf-8")},
+        source_identity={}, active_terminology_version={})
+    monkeypatch.setattr(core, "approve_delivery", lambda *a, **k: (state, True, []))
+
+    result = adapter.deliver(job_id, adapter.EngineConfig())
+
+    assert result["renderer_notes"] == notes
+    # The snapshot manifest remains the immutable snapshot metadata; render
+    # notes belong to the generated delivery_manifest.json asset.
+    assert result["manifest"] == snapshot
+
+
 def test_delivery_preview_never_promises_what_the_gate_refuses(adapter_env):
     """预览必须与真实门禁一致：审校未就绪时不能显示"可以交付"。
 
