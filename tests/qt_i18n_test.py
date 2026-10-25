@@ -44,6 +44,8 @@ def test_unknown_language_falls_back_to_chinese():
     assert i18n.normalize("klingon") == "zh-CN"
     assert i18n.normalize("") == "zh-CN"
     assert i18n.normalize("EN") == "en"
+    assert i18n.normalize("FR") == "fr"
+    assert i18n.normalize("DE") == "de"
 
 
 def test_translation_uses_the_qt_catalog(tmp_path, monkeypatch):
@@ -83,7 +85,21 @@ def test_arabic_is_rtl_and_others_are_not():
     assert i18n.is_rtl("ar") is True
     assert i18n.is_rtl("zh-CN") is False
     assert i18n.is_rtl("en") is False
+    assert i18n.is_rtl("fr") is False
+    assert i18n.is_rtl("de") is False
     assert i18n.is_rtl(None) is False
+
+
+def test_french_and_german_runtime_catalogs_and_pluralization():
+    i18n.set_language("fr")
+    assert i18n.tr("导入文档…") == "Importer un document…"
+    assert i18n.tr_n("{v0} 个任务", 1, v0=1) == "1 tâche"
+    assert i18n.tr_n("{v0} 个任务", 3, v0=3) == "3 tâches"
+
+    i18n.set_language("de")
+    assert i18n.tr("导入文档…") == "Dokument importieren…"
+    assert i18n.tr_n("{v0} 个任务", 1, v0=1) == "1 Aufgabe"
+    assert i18n.tr_n("{v0} 个任务", 3, v0=3) == "3 Aufgaben"
 
 
 def test_every_locale_catalog_has_the_same_keys():

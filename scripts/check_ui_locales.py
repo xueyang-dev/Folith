@@ -10,7 +10,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOGS = ROOT / 'folith/resources/locales'
-LOCALES = ('en', 'es', 'ru', 'ar')
+LOCALES = ('en', 'es', 'ru', 'ar', 'fr', 'de')
 
 def placeholders(text):
     return sorted(field for _, field, _, _ in string.Formatter().parse(text) if field is not None)

@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 QT_DIR = ROOT / "folith" / "qt"
 LOCALES = ROOT / "folith" / "resources" / "locales"
-LANGUAGES = ("zh-CN", "en", "es", "ru", "ar")
+LANGUAGES = ("zh-CN", "en", "es", "ru", "ar", "fr", "de")
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
 
