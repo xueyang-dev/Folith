@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import plistlib
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -18,6 +19,9 @@ def embed(app: Path, framework: Path, public_key: str, feed: str):
         raise ValueError("A Sparkle EdDSA public key and HTTPS appcast URL are required")
     if framework.name != "Sparkle.framework" or not (framework / "Sparkle").exists():
         raise ValueError("Expected the Sparkle 2 framework from its official distribution")
+    license_file = framework.parent / "LICENSE"
+    if not license_file.is_file():
+        raise ValueError("Keep Sparkle.framework beside the official distribution's LICENSE")
     contents = app / "Contents"
     plist_path = contents / "Info.plist"
     with plist_path.open("rb") as stream:
@@ -26,6 +30,9 @@ def embed(app: Path, framework: Path, public_key: str, feed: str):
     destination.mkdir(parents=True, exist_ok=True)
     # ditto preserves the framework's versioned symlinks and XPC services.
     subprocess.run(["ditto", str(framework), str(destination / framework.name)], check=True)
+    resources = contents / "Resources"
+    resources.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(license_file, resources / "Sparkle-LICENSE.txt")
     source = Path(__file__).resolve().parents[1] / "packaging/macos/FolithUpdater.m"
     subprocess.run(["xcrun", "clang", "-dynamiclib", "-fobjc-arc", "-fblocks", "-arch", "arm64",
                     "-mmacosx-version-min=" + plist["LSMinimumSystemVersion"], str(source),

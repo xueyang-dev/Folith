@@ -19,6 +19,7 @@ def test_embed_preserves_framework_and_sets_manual_signed_updates(tmp_path, monk
     framework = tmp_path / "Sparkle.framework"
     framework.mkdir()
     (framework / "Sparkle").write_bytes(b"fake framework")
+    (tmp_path / "LICENSE").write_text("Sparkle license fixture")
     calls = []
     monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: calls.append(command))
     embed_macos_updater.embed(app, framework, base64.b64encode(b"x" * 32).decode(), "https://example.org/appcast.xml")
@@ -27,6 +28,7 @@ def test_embed_preserves_framework_and_sets_manual_signed_updates(tmp_path, monk
     assert plist["SUVerifyUpdateBeforeExtraction"]
     assert not plist["SUEnableAutomaticChecks"] and not plist["SUAutomaticallyUpdate"]
     assert calls[0][0] == "ditto"
+    assert (contents / "Resources/Sparkle-LICENSE.txt").read_text() == "Sparkle license fixture"
     assert "-mmacosx-version-min=15.0" in calls[1]
 
 
