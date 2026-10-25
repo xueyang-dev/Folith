@@ -48,6 +48,7 @@ from . import views as views_module
 from .dialogs import DiagnosticsDialog, EngineDialog
 from .project_sheets import BatchAcceptDialog, MoveToProjectSheet
 from .projects_view import NewTermDialog, ProjectsView
+from .scope_dialog import ScopeDialog
 from .views import HomeView, WorkbenchView
 from .workers import TaskRunner
 
@@ -412,6 +413,7 @@ class MainWindow(QMainWindow):
         self.workbench.discardDraftRequested.connect(self.discard_draft)
         self.workbench.excludeRequested.connect(self.exclude_segment)
         self.workbench.includeRequested.connect(self.include_segment)
+        self.workbench.scopeRequested.connect(self.select_translation_scope)
         self.workbench.structureRequested.connect(self.edit_structure)
         self.workbench.restoreRequested.connect(self.restore_translation)
         self.workbench.followupRetryRequested.connect(self.followup_retry)
@@ -2629,6 +2631,43 @@ class MainWindow(QMainWindow):
             self._failure(i18n.tr('无法恢复段落'), str(exc))
             return
         self._notice(i18n.tr('已恢复该段落；它的审校标记需要重新确认。'))
+        self.refresh_workbench(force=True)
+
+    def select_translation_scope(self) -> None:
+        """翻译范围对话框：按页/章/节批量排除与恢复（issue #28）。
+
+        对话框只把勾选变成范围键 / excluded_id；真正的状态变更走适配层，
+        与逐段排除共用同一条账本契约。动作完成后任务刷新，范围树随之重算。
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        dialog = ScopeDialog(job_id, self)
+        dialog.excludeRequested.connect(
+            lambda keys: self._apply_translation_scope(job_id, keys))
+        dialog.restoreRequested.connect(
+            lambda ids: self._apply_scope_restore(job_id, ids))
+        dialog.exec()
+
+    def _apply_translation_scope(self, job_id: str, keys: list) -> None:
+        try:
+            result = adapter.exclude_scope(job_id, keys)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法排除所选范围'), str(exc))
+            return
+        self._notice(i18n.tr(
+            '已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。',
+            v0=result.get("excluded", 0)))
+        self.refresh_workbench(force=True)
+
+    def _apply_scope_restore(self, job_id: str, excluded_ids: list) -> None:
+        try:
+            result = adapter.restore_scope(job_id, excluded_ids)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法恢复所选段落'), str(exc))
+            return
+        self._notice(i18n.tr('已恢复 {v0} 段；它们回到工作台并重新计入待完成。',
+                             v0=result.get("restored", 0)))
         self.refresh_workbench(force=True)
 
     # ================= 收尾 =================

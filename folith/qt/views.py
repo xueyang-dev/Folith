@@ -2413,6 +2413,7 @@ class WorkbenchView(QWidget):
     discardDraftRequested = Signal(int)
     excludeRequested = Signal(int)
     includeRequested = Signal(str)
+    scopeRequested = Signal()                  # 译前按页/章/节选择翻译范围
     revealLogRequested = Signal(str)           # job_id
     followupRetryRequested = Signal(str)       # "understanding" | "annotation"
     followupResumeRequested = Signal()
@@ -2740,6 +2741,18 @@ class WorkbenchView(QWidget):
         self.terms_button.clicked.connect(lambda checked: self.set_terms_open(checked))
         self.terms_button.setVisible(False)
         toolbar.addWidget(self.terms_button)
+        # 翻译范围：译前按页/章/节批量排除（issue #28）。它作用于整份文档，
+        # 所以放在文档级工具条上，而不是作用于选中段的右侧操作栏。
+        self.scope_button = QToolButton()
+        self.scope_button.setObjectName("toolbarButton")
+        self.scope_button.setText(i18n.tr('翻译范围…'))
+        self.scope_button.setIcon(icons.icon("eye-off", 16, "text-secondary"))
+        self.scope_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.scope_button.setToolTip(
+            i18n.tr('按页、章或节排除不需要翻译的内容：排除不产生模型调用，原文保留、随时可恢复'))
+        self.scope_button.clicked.connect(self.scopeRequested.emit)
+        self.scope_button.setVisible(False)
+        toolbar.addWidget(self.scope_button)
         toolbar.addStretch(1)
         # ⚠️ Qt 布局坑（macOS + QSS 主题实测）：QHBoxLayout 给 QLabel / QCheckBox
         # 分配的槽位比控件自身的 sizeHint **窄**（复选框 110→99、"筛选"标签 24→22），
@@ -3777,6 +3790,9 @@ class WorkbenchView(QWidget):
                 self._notes_state = id(state)
             self._render_segments()
             self._grid_source = (rows, state, job_id, grid_key)
+        # 翻译范围入口跟着工作列表走：只要段落已提取（译前或运行中）就可以
+        # 选择范围；还没有段落时按钮隐藏，避免点开一个空对话框。
+        self.scope_button.setVisible(bool(self._all_rows))
         self._render_excluded()
         # 交付预检先于运行区：头部状态芯片要用它给出的任务状态标签。
         self._render_delivery(force=refresh_delivery)

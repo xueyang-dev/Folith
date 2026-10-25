@@ -793,9 +793,14 @@ from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its p
     save_translation_drafts,
     segment_uid,
     translation_drafts_path,
+    translation_scope_tree,
     translation_terms_for_pair,
     translation_visible_indexes,
     undo_translation_segment_structure,
+)
+from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its public surface)
+    exclude_translation_scope,
+    restore_translation_scope,
 )
 from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps its public surface)
     _academic_workspace_archive,
@@ -9770,6 +9775,8 @@ SEGMENT_STRUCTURE_OPERATION_LABELS = {
     "delete": "删除空段",
     "exclude": "排除段落",
     "include": "恢复段落",
+    "scope_exclude": "翻译范围已更新",
+    "scope_include": "翻译范围已更新",
 }
 
 

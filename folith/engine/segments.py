@@ -6,6 +6,7 @@ name defined here.  Anything still owned by ``core`` is read late-bound through
 """
 
 import json
+import re
 from datetime import datetime
 from datetime import timezone
 from folith import finalization as _finalization
@@ -240,26 +241,68 @@ def excluded_segments_summary(state):
 
 
 def excluded_segments_manifest(state):
-    """交付包里如实说明"哪些内容没有进入译文文档"。"""
-    records = excluded_segment_records(state)
-    return {
-        "version": 1,
+    """交付包里如实说明"哪些内容没有进入译文文档"。
+
+    报告把三类"不在译文里"的内容**分开陈述，绝不混算**（issue #28）：
+
+    - 用户跳过（逐段排除或按页/章/节的范围排除）：``origin=user``。跳过永远
+      不计为已翻译、不写翻译记忆、不需要审校；
+    - 系统判定的结构性片段（页眉页码等）：``origin=system``，同样不计为已翻译；
+    - 解析失败（OCR 部分页失败、无法纳入的图片/表格等）：来自提取报告，不是
+      排除——它们在 ``parse_failures`` 里单列，与跳过互不归属。
+    """
+    records = []
+    for record in excluded_segment_records(state):
+        item = dict(record)
+        item["origin"] = "system" \
+            if str(record.get("excluded_by") or "").startswith("system:") else "user"
+        records.append(item)
+    origins = {
+        "user": sum(1 for item in records if item["origin"] == "user"),
+        "system": sum(1 for item in records if item["origin"] == "system"),
+    }
+    report = (state or {}).get("extraction_report") or {}
+    manifest = {
+        "version": 2,
         "rule": "被排除段落不进入译文的生成式输出，也不占用待完成与审校配额；"
-                "原文与排除时的译文在此完整保留，可在工作台恢复。",
+                "原文与排除时的译文在此完整保留，可在工作台恢复。"
+                "跳过永远不计为已翻译。",
+        "skip_semantics": "排除（origin=user/system）是**跳过**：不计为已翻译、"
+                          "不进入审校与质量指标；解析失败不是排除，单独列出。",
         "count": len(records),
+        "origins": origins,
         "records": records,
     }
+    # 解析失败与跳过的分界：提取报告里的"未纳入内容"与部分失败如实带出；
+    # 提取完整成功时这里就是零，不制造一个空的"失败"分组。
+    unsupported = [item for item in report.get("unsupported") or []
+                   if isinstance(item, dict) and item.get("count")]
+    parse_failures = {
+        "extraction_status": str(report.get("status") or ""),
+        "unsupported_count": sum(int(item.get("count") or 0) for item in unsupported),
+        "unsupported": [{"kind": str(item.get("kind") or ""),
+                         "count": int(item.get("count") or 0)}
+                        for item in unsupported],
+    }
+    if (state or {}).get("warnings"):
+        parse_failures["warnings"] = [str(item) for item in state["warnings"]]
+    manifest["parse_failures"] = parse_failures
+    return manifest
 
 
 def _excluded_segments_md(manifest):
     lines = [
         "# 已排除段落清单",
         "",
-        f"- 排除数量：{manifest.get('count', 0)}",
+        f"- 排除数量：{manifest.get('count', 0)}"
+        f"（用户跳过 {int((manifest.get('origins') or {}).get('user', 0))}，"
+        f"系统判定 {int((manifest.get('origins') or {}).get('system', 0))}）",
         f"- 规则：{manifest.get('rule', '')}",
+        "- 跳过不是翻译：被排除的段落不计为已翻译；解析失败不是跳过，"
+        "另见下方「解析失败」。",
         "",
-        "| 原位置 | 排除原因 | 原文 |",
-        "| --- | --- | --- |",
+        "| 原位置 | 来源 | 排除原因 | 原文 |",
+        "| --- | --- | --- | --- |",
     ]
     for record in manifest.get("records") or []:
         index = record.get("segment_index")
@@ -268,7 +311,14 @@ def _excluded_segments_md(manifest):
         if len(source) > 160:
             source = source[:159] + "…"
         reason = str(record.get("reason") or "未填写")
-        lines.append(f"| {position} | {reason} | {source or '（空）'} |")
+        origin = "用户跳过" if record.get("origin") == "user" else "系统判定"
+        lines.append(f"| {position} | {origin} | {reason} | {source or '（空）'} |")
+    failures = manifest.get("parse_failures") or {}
+    if failures.get("unsupported_count"):
+        lines += ["", "## 解析失败（不是排除）", ""]
+        for item in failures.get("unsupported") or []:
+            lines.append(f"- {item.get('kind') or '未知内容'}：{item.get('count')} 处"
+                         "（保留在源文件里，未进入译文）")
     lines.append("")
     return "\n".join(lines)
 
@@ -465,6 +515,409 @@ def _exclusion_restore_index(state, record):
             if text == before:
                 return position + 1
     return max(0, min(int((record or {}).get("index") or 0), len(sources)))
+
+
+# ================= 翻译范围（译前按页 / 章 / 节选择翻译范围） =================
+#
+# 范围选择只是**既有排除账本的批量入口**，不另设"排除真相"：页/章/节是从文档
+# 结构（IR 区块类型 + 标题启发式）算出的只读投影，映射到当前工作列表的连续索引
+# 区间；批量排除复用单段排除的记录形状（`excluded_segments` + 移出 pairs/paras），
+# 恢复复用原文锚点，因此交付清单、恢复入口与"排除不计为已翻译"的既有契约全部
+# 自动成立。被排除的段落始终留在排除清单里可定位、可恢复。
+
+_SCOPE_CHAPTER_RE = re.compile(
+    r"^\s*(?:第\s*[0-9〇零一二三四五六七八九十百千]+\s*(?:章|回|部|编|卷)"
+    r"|[0-9]+\s*(?:章|回)\b"
+    r"|(?:chapter|part|book|volume)\s+[0-9ivxlcdm]+)\b",
+    re.IGNORECASE,
+)
+_SCOPE_LABEL_MAX = 40
+
+
+def _scope_page_numbers(state, count):
+    """每个工作段落所在的页码（1 基，与 block_id ``p{n}`` 一致）；未知为 None。
+
+    页码来自 `segment_source_spans` 里每个 span 的 ``page_id``（``p3`` → 第 3 页）。
+    没有血缘（如纯文本导入）时全部为 None，调用方就不显示"按页"分组。
+    """
+    spans = state.get("segment_source_spans")
+    if not isinstance(spans, list) or len(spans) != count:
+        return [None] * count
+    pages = []
+    for item in spans:
+        page = None
+        for span in (item if isinstance(item, list) else []):
+            match = re.match(r"p(\d+)", str((span or {}).get("page_id") or ""))
+            if match:
+                page = int(match.group(1))
+                break
+        pages.append(page)
+    return pages
+
+
+def _scope_document_block_types(state):
+    """block_id → IR 区块类型（``extraction_report.document_ir`` 的只读投影）。"""
+    blocks = {}
+    document = (state.get("extraction_report") or {}).get("document_ir") or {}
+    for block in (document.get("blocks") or []):
+        if isinstance(block, dict) and block.get("block_id"):
+            blocks[str(block["block_id"])] = str(block.get("type") or "")
+    return blocks
+
+
+def _scope_heading_kinds(state, sources):
+    """每个段落是否开启一章 / 一节；返回 ``"chapter" | "section" | None`` 列表。
+
+    两个信号取并集：IR 区块类型（``title``→章、``heading``→节）与文本启发式
+    （「第X章 / Chapter N」→章，其余短标题→节）。IR 缺失时退化到纯文本判定。
+    """
+    from folith.segmentation import _looks_like_heading
+
+    count = len(sources)
+    types = _scope_document_block_types(state)
+    spans = state.get("segment_source_spans")
+    kinds = []
+    for index, text in enumerate(sources):
+        block_types = set()
+        if isinstance(spans, list) and index < len(spans) \
+                and isinstance(spans[index], list):
+            block_types = {types.get(str((span or {}).get("block_id") or ""), "")
+                           for span in spans[index]}
+        if "title" in block_types or _SCOPE_CHAPTER_RE.match(text):
+            kinds.append("chapter")
+        elif "heading" in block_types or _looks_like_heading(text):
+            kinds.append("section")
+        else:
+            kinds.append(None)
+    return kinds
+
+
+def _scope_contiguous_nodes(kind, split_kinds, sources, label_of, *, start=0):
+    """按"哪一段开启新节点"的标记，把 [start, len) 切成连续索引区间节点。"""
+    nodes = []
+    current = start
+    total = len(sources)
+    for index in range(start + 1, total):
+        if split_kinds[index]:
+            nodes.append((current, index))
+            current = index
+    nodes.append((current, total))
+    result = []
+    for position, (node_start, node_end) in enumerate(nodes):
+        if node_start >= node_end:
+            continue
+        label = label_of(node_start) or (f"{kind}-{position}")
+        result.append({
+            "key": f"{kind}:{position:04d}",
+            "kind": kind,
+            "label": label,
+            "start": node_start,
+            "end": node_end,
+            "segments": node_end - node_start,
+            "chars": sum(len(sources[item]) for item in range(node_start, node_end)),
+        })
+    return result
+
+
+def translation_scope_tree(state):
+    """译前范围选择的只读结构：页 / 章 / 节 → 当前工作列表的连续索引区间。
+
+    排除账本已经把移出的段落拿出了工作列表，所以这里的区间就是"现在还能翻译
+    的内容"；恢复之后下一次调用会重新算出该段的归属。没有页信息或没有标题时
+    对应分组为空——界面只展示存在的分组，绝不用猜出来的结构冒充文档结构。
+    """
+    sources = _segment_source_list(state)
+    total = {"segments": len(sources),
+             "chars": sum(len(item) for item in sources)}
+    excluded = excluded_segments_summary(state)
+    if not sources:
+        return {"available": False, "groups": [],
+                "total": total, "excluded": excluded}
+
+    groups = []
+
+    # 按页：页码变化处切节点；读不出页码的段并入当前节点（它们本来就属于
+    # 前面的流）。全程没有页码时不提供按页分组。
+    pages = _scope_page_numbers(state, len(sources))
+    if any(page is not None for page in pages):
+        def page_label(index):
+            return f"第 {pages[index]} 页" if pages[index] is not None else ""
+        split_pages = [False] * len(sources)
+        for index in range(1, len(sources)):
+            if pages[index] is not None and pages[index] != pages[index - 1]:
+                split_pages[index] = True
+        nodes = _scope_contiguous_nodes("page", split_pages, sources, page_label)
+        if len(nodes) > 1:
+            groups.append({"kind": "page", "label": "按页", "nodes": nodes})
+
+    # 按章 / 按节：标题处切节点；节同时在章边界重开（章的范围不被节吞掉）。
+    # 只剩一个节点时仍要展示——前提是它真的来自标题（排除把别的章移走之后，
+    # 剩下的那一章仍是可选择的范围）；纯文本没有任何标题时整个分组不出现。
+    kinds = _scope_heading_kinds(state, sources)
+
+    def heading_label(index):
+        text = " ".join(str(sources[index] or "").split())
+        if len(text) > _SCOPE_LABEL_MAX:
+            text = text[:_SCOPE_LABEL_MAX - 1] + "…"
+        return text
+
+    chapter_splits = [kind == "chapter" for kind in kinds]
+    chapter_nodes = _scope_contiguous_nodes("chapter", chapter_splits, sources, heading_label)
+    if len(chapter_nodes) > 1 or any(kind == "chapter" for kind in kinds):
+        groups.append({"kind": "chapter", "label": "按章", "nodes": chapter_nodes})
+
+    section_splits = [kind in {"chapter", "section"} for kind in kinds]
+    section_nodes = _scope_contiguous_nodes("section", section_splits, sources, heading_label)
+    if len(section_nodes) > 1 or any(kind == "section" for kind in kinds):
+        groups.append({"kind": "section", "label": "按节", "nodes": section_nodes})
+
+    return {"available": True, "groups": groups,
+            "total": total, "excluded": excluded}
+
+
+def exclude_translation_scope(job_id, keys, *, actor="user"):
+    """按范围（页 / 章 / 节）批量排除段落——映射到既有排除账本的批量入口。
+
+    语义与逐段 `mutate_translation_segments(exclude)` 完全一致：段落移出
+    pairs/paras、进 `state["excluded_segments"]` 留档（含原文锚点），因此不进入
+    翻译、不产生付费模型调用、不计入待完成与审校配额、交付时如实登记；恢复
+    走同一份账本（:func:`restore_translation_scope` 或逐段 include）。
+
+    与逐段排除的两点差别（刻意为之）：
+    - 一次持久化、一条历史记录。几百段的书按范围排除时，逐段落盘既慢又会把
+      撤销历史刷满；
+    - 不接入"撤销上一次结构操作"——批量恢复走锚点（见 restore），不需要内容
+      快照，历史记录里因此没有 ``restore_pairs``，撤销入口对它自动不可用。
+    """
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+
+    runtime = _c.get_job_runtime_status(job_id, state)
+    if str(runtime.get("status") or "") in _c.RUNTIME_ACTIVE_STATUSES:
+        raise RuntimeError("任务正在运行，翻译范围将在任务完成或暂停后可修改。")
+
+    wanted = list(dict.fromkeys(
+        str(key or "").strip() for key in (keys or []) if str(key or "").strip()))
+    if not wanted:
+        raise ValueError("请选择要排除的范围。")
+
+    tree = translation_scope_tree(state)
+    nodes = {node["key"]: node
+             for group in tree.get("groups") or []
+             for node in group.get("nodes") or []}
+    missing = [key for key in wanted if key not in nodes]
+    if missing:
+        raise ValueError("范围与当前段落不匹配（任务状态可能已变化），"
+                         "请重新打开翻译范围后重试。")
+    indexes = sorted(
+        {index for key in wanted
+         for index in range(nodes[key]["start"], nodes[key]["end"])},
+        reverse=True)
+    if not indexes:
+        raise ValueError("所选范围里没有可排除的段落。")
+
+    pairs = list(state.get("pairs") or [])
+    paras = list(state.get("paras") or [])
+    if pairs and len(paras) != len(pairs):
+        raise ValueError("当前任务的源文与双语段落数量不一致，无法安全修改翻译范围。")
+    if not pairs and not paras:
+        raise ValueError("当前任务还没有可编辑的段落。")
+    assign_missing_segment_uids(state, job_id=job_id)
+
+    # 锚点在任何移除之前、对**原始**序列计算：锚点是原文文本，移除之后依然
+    # 唯一可查，恢复时按它们插回。
+    sources = _segment_source_list(state)
+    reason_by_index = {}
+    for key in wanted:
+        node = nodes[key]
+        for index in range(node["start"], node["end"]):
+            reason_by_index[index] = f"范围排除：{node['label']}"
+
+    records = []
+    old_count = len(sources)
+    for index in indexes:  # 从大到小移出，前面的索引不受影响
+        source_value = str(sources[index] or "")
+        target_value = str(pairs[index].get("target") or "") if pairs else ""
+        records.append(_excluded_segment_record(
+            state, index, reason=reason_by_index[index], actor=actor,
+            source=source_value, target=target_value,
+            pair=(pairs[index] if pairs else None), in_pairs=bool(pairs),
+            before_source=sources[index - 1] if index > 0 else "",
+            after_source=(sources[index + 1]
+                          if index + 1 < len(sources) else "")))
+        _drop_segment_at(state, index)
+    # 账本按文档顺序排列（移除必须从大到小做，落账不必）；交付清单与恢复
+    # 入口读到的顺序与原文一致。
+    records.sort(key=lambda record: int(record.get("index") or 0))
+    state["excluded_segments"] = list(
+        state.get("excluded_segments") or []) + records
+
+    labels = "、".join(dict.fromkeys(nodes[key]["label"] for key in wanted))
+    reason = (f"按范围排除了 {len(records)} 段（{labels[:80]}），"
+              "交付范围发生变化，原有审校需要重新确认")
+    if pairs:
+        _translation_evidence.mark_runtime_review_stale(
+            state, list(range(old_count)), reason, dependency_change=True)
+
+    state["annotations"] = {}
+    state["annotations_done"] = False
+    state["annotations_done_offset"] = 0
+    state["annotation_batches"] = {}
+    state["annotations_failed_batches"] = 0
+    state["segment_structure_version"] = int(
+        state.get("segment_structure_version") or 0) + 1
+    history = list(state.get("segment_structure_history") or [])
+    history.append({
+        "operation": "scope_exclude",
+        "index": indexes[-1],
+        "affected_indexes": [],
+        "timestamp": _finalization.now_iso(),
+        "actor": actor,
+        # 批量排除不存内容快照（恢复走排除账本的锚点），撤销入口因此对它
+        # 自动不可用——见 docstring。
+        "excluded_ids_added": [record["excluded_id"] for record in records],
+    })
+    state["segment_structure_history"] = history[-50:]
+
+    _recount_reviewed_segments(state)
+    remaining_pairs = list(state.get("pairs") or [])
+    remaining_indexes = list(range(len(remaining_pairs)))
+    _c._mark_translation_truth_changed(
+        job_id, state, remaining_indexes, reason, actor=actor,
+        action="scope_exclude")
+    _recheck_delivery_invariants_for_segments(
+        state, remaining_indexes, actor=actor)
+    _c._append_runtime_technical_log(
+        job_id, f"translation scope: excluded {len(records)} segment(s) "
+        f"by scope ({labels[:80]}), "
+        f"{len(remaining_pairs) or len(state.get('paras') or [])} segment(s) remain")
+    _c.save_job_state(job_id, state)
+    return {
+        "excluded": len(records),
+        "remaining": len(remaining_pairs) or len(state.get("paras") or []),
+        "excluded_ids": [record["excluded_id"] for record in records],
+        "state": state,
+    }
+
+
+def _exclusion_chronological_key(record):
+    """排除的先后（``x000123`` 里的序号单调递增）；无序号的早期记录排最前。"""
+    match = re.fullmatch(r"x(\d+)", str((record or {}).get("excluded_id") or ""))
+    return (1, int(match.group(1))) if match else (0, 0)
+
+
+def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
+    """按 ``excluded_id`` 批量恢复被排除的段落（范围排除 / 逐段排除通用）。
+
+    按**排除的逆序**（后排除的先恢复）逐条插回：每一步恢复时的工作列表恰好
+    等于该记录被排除那一刻的状态，因此 `_exclusion_restore_index` 的锚点与
+    回退位置在这一步是精确的——这是"按排除栈出栈"的语义，与逐段恢复共用
+    同一套定位逻辑。与单段恢复一致：内容原样回来，但审校通过标记不点亮。
+    """
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+
+    runtime = _c.get_job_runtime_status(job_id, state)
+    if str(runtime.get("status") or "") in _c.RUNTIME_ACTIVE_STATUSES:
+        raise RuntimeError("任务正在运行，翻译范围将在任务完成或暂停后可修改。")
+
+    wanted = list(dict.fromkeys(
+        str(item or "").strip() for item in (excluded_ids or [])
+        if str(item or "").strip()))
+    if not wanted:
+        raise ValueError("请选择要恢复的已排除段落。")
+    by_id = {}
+    for item in state.get("excluded_segments") or []:
+        if isinstance(item, dict) \
+                and str(item.get("excluded_id") or "") in set(wanted):
+            by_id[str(item.get("excluded_id") or "")] = item
+    missing = [key for key in wanted if key not in by_id]
+    if missing:
+        raise ValueError("找不到要恢复的已排除段落（可能已被恢复）。")
+
+    # 直接在 state 的列表上插入：逐条恢复时 `_exclusion_restore_index` 要在
+    # **当前**（已插回若干段）的序列里找锚点，本地副本会让它看不到前一步。
+    # 注意空列表也要用 state 里的原对象（`or []` 会新建列表，插入就丢了）。
+    pairs = state.get("pairs")
+    paras = state.get("paras")
+    if not isinstance(pairs, list):
+        pairs = []
+        state["pairs"] = pairs
+    if not isinstance(paras, list):
+        paras = []
+        state["paras"] = paras
+    if pairs and len(paras) != len(pairs):
+        raise ValueError("当前任务的源文与双语段落数量不一致，无法安全修改翻译范围。")
+
+    records = sorted((dict(item) for item in by_id.values()),
+                     key=_exclusion_chronological_key, reverse=True)
+    restored = []
+    for record in records:
+        index = _exclusion_restore_index(state, record)
+        excluded_pair = record.get("pair")
+        if isinstance(excluded_pair, dict):
+            # 与单段恢复一致：内容原样回来，但旧的"已审校"不跟着点亮。
+            # 用记录里是否存了 pair 来判断，而不是当前 pairs 是否为空——
+            # 全部段落被排除时 pairs 恰好是空列表，但它们都要插回来。
+            if not isinstance(pairs, list):
+                pairs = []
+                state["pairs"] = pairs
+            excluded_pair = json.loads(json.dumps(excluded_pair))
+            excluded_pair["reviewed"] = False
+            excluded_pair["review_status"] = "not_reviewed"
+            for key in ("accepted_target", "human_accepted", "accepted_by_human"):
+                excluded_pair.pop(key, None)
+            pairs.insert(index, excluded_pair)
+        paras.insert(index, str(record.get("source") or ""))
+        state["excluded_segments"] = [
+            item for item in state.get("excluded_segments") or []
+            if not (isinstance(item, dict)
+                    and str(item.get("excluded_id") or "")
+                    == str(record.get("excluded_id") or ""))]
+        restored.append(record)
+
+    reason = (f"恢复了 {len(restored)} 段被排除的段落，交付范围发生变化，"
+              "原有审校需要重新确认")
+    if pairs:
+        _translation_evidence.mark_runtime_review_stale(
+            state, list(range(len(pairs))), reason, dependency_change=True)
+
+    state["annotations"] = {}
+    state["annotations_done"] = False
+    state["annotations_done_offset"] = 0
+    state["annotation_batches"] = {}
+    state["annotations_failed_batches"] = 0
+    state["segment_structure_version"] = int(
+        state.get("segment_structure_version") or 0) + 1
+    history = list(state.get("segment_structure_history") or [])
+    history.append({
+        "operation": "scope_include",
+        "index": int((restored or [{}])[0].get("index") or 0),
+        "affected_indexes": [],
+        "timestamp": _finalization.now_iso(),
+        "actor": actor,
+        "excluded_records_restored": [
+            json.loads(json.dumps(item)) for item in restored],
+    })
+    state["segment_structure_history"] = history[-50:]
+
+    _recount_reviewed_segments(state)
+    _c._mark_translation_truth_changed(
+        job_id, state, list(range(len(pairs))), reason, actor=actor,
+        action="scope_include")
+    _recheck_delivery_invariants_for_segments(
+        state, list(range(len(pairs))), actor=actor)
+    _c._append_runtime_technical_log(
+        job_id, f"translation scope: restored {len(restored)} excluded "
+        f"segment(s), {len(pairs) or len(paras)} segment(s) now in scope")
+    _c.save_job_state(job_id, state)
+    return {
+        "restored": len(restored),
+        "remaining": len(pairs) or len(paras),
+        "state": state,
+    }
 
 
 def can_undo_translation_segment_structure(state):
