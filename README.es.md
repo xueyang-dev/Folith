@@ -224,7 +224,7 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## 🌐 Idiomas de la interfaz
 
-La interfaz está en chino simplificado por defecto. English, Español, Русский y العربية son experimentales: los textos están completos, pero no han tenido una revisión lingüística independiente y el RTL del árabe no está plenamente aceptado. Véase [Apariencia y límites multilingües](docs/i18n/README.md).
+La interfaz está en chino simplificado por defecto. English, Español, Русский, العربية, Français y Deutsch son experimentales: los textos están completos, pero no han tenido una revisión lingüística independiente y el RTL del árabe no está plenamente aceptado. Véase [Apariencia y límites multilingües](docs/i18n/README.md).
 
 ---
 
