@@ -173,7 +173,7 @@ class EngineDialog(QDialog):
 
         self.storage_page = StoragePage(runner)
         self.storage_page.revealRequested.connect(self.revealRequested.emit)
-        self.about_page = AboutPage(runner)
+        self.about_page = AboutPage(runner, updater=getattr(parent, "updates", None))
         self.about_page.diagnosticsRequested.connect(self.diagnosticsRequested.emit)
         builders = {"general": self._build_appearance_tab,
                     "models": self._build_connection_tab,

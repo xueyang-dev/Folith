@@ -291,6 +291,7 @@ def test_grid_cannot_be_dragged_shut(bench):
 
 def test_collapsing_the_source_closes_it_and_remembers_the_width(bench, app):
     bench._pdf_ok = True
+    bench._source_available = True
     bench.set_source_open(True)
     app.processEvents()
     assert bench.source_open()

@@ -127,7 +127,12 @@ Section "Folith" SecMain
   IfFileExists "$INSTDIR\${APP_EXE}" 0 +2
     RMDir /r "$INSTDIR\_internal"
   SetOutPath "$INSTDIR"
+  ClearErrors
+  SetOverwrite on
   File /r "${BUNDLE_DIR}\*.*"
+  IfErrors 0 +3
+    SetErrorLevel 3
+    Quit
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 

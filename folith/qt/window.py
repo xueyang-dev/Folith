@@ -202,6 +202,12 @@ class MainWindow(QMainWindow):
         usage_module.set_daily_log(Path(paths.data_dir) / "usage-daily.json")
         self.instance_lock = instance_lock
         self.runner = TaskRunner(self)
+        from PySide6.QtCore import QStandardPaths
+        from .updater import UpdateController
+        self.updates = UpdateController(self.runner, cache_dir=Path(
+            QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation)) / "updates", parent=self)
+        self.updates.restartRequested.connect(self._restart_for_update)
+        self._pending_update = False
         self._motion = motion.Motion(self)
         self._sidebar_page = None
         self._starting_jobs: set[str] = set()
@@ -3682,6 +3688,16 @@ class MainWindow(QMainWindow):
 
 
     # ================= lifecycle =================
+    def _restart_for_update(self) -> None:
+        if self._exit_in_progress:
+            return
+        if not self._confirm(i18n.tr('重启并更新'),
+                             i18n.tr('将保存编辑并停止正在运行的任务，然后安装更新并重新打开 Folith。'),
+                             yes=i18n.tr('重启并更新'), no=i18n.tr('稍后')):
+            return
+        self._pending_update = True
+        self.close()
+
     def _install_quit_filter(self) -> None:
         app = QApplication.instance()
         if isinstance(app, FolithApplication):
@@ -3737,6 +3753,8 @@ class MainWindow(QMainWindow):
             self._begin_exit()
         finally:
             self._in_close_event = False
+            if not self._exit_in_progress and not self._closing_accepted:
+                self._pending_update = False
         # 退出流程可能在**本次调用内**就决定退出（空闲窗口、无草稿）：
         # 那就把同一个事件改成接受，而不是再嵌套调一次 close()。
         # R70 实测的缺陷：嵌套的那次 close 会被外层已经 ignore 的事件吞掉，
@@ -3838,15 +3856,45 @@ class MainWindow(QMainWindow):
                 self._acquire_close(forced=True)
             else:
                 self._exit_in_progress = False
+                self._pending_update = False
 
         def failed(message: str, detail: str) -> None:
             busy.close()
             self._exit_in_progress = False
+            self._pending_update = False
             self._failure(i18n.tr('停止任务失败'), message, detail, task=False)
 
         self.runner.submit(work, on_done=done, on_error=failed, label="exit-stop")
 
     def _acquire_close(self, *, forced: bool = False) -> None:
+        if not self._pending_update:
+            # A regular accepted exit must not leave a full download running
+            # in the pool after the last window disappears.
+            self.updates.cancel()
+        if self._pending_update:
+            # Updating must never use the existing force-quit escape hatch.
+            # A cancelled or failed shutdown leaves the verified download ready.
+            if forced or not self.runner.wait_for_done(3000):
+                self._pending_update = False
+                self._exit_in_progress = False
+                self._critical(i18n.tr('暂时无法更新'), i18n.tr('请等待任务和保存操作完成后再试。'))
+                return
+            try:
+                while self._edit_queue:
+                    job_id, index, text = self._edit_queue[0]
+                    adapter.submit_edit(job_id, index, text)
+                    self._edit_queue.pop(0)
+                # Sparkle may synchronously ask Cocoa to terminate. Such a
+                # request must see that the Qt save/stop boundary already passed.
+                self._closing_accepted = True
+                self.updates.install(self.paths)
+            except Exception as exc:
+                self._closing_accepted = False
+                self._pending_update = False
+                self._exit_in_progress = False
+                self._failure(i18n.tr('无法安装更新'), str(exc), task=False)
+                return
+            self._pending_update = False
         # 记录是否走了强制退出：探针与用例需要断言"停止流程超时后确实走了显式
         # 强制路径"，而不是只看窗口关掉了。
         self._exit_forced = bool(forced)

@@ -1,5 +1,7 @@
 # 直接依赖（版本下限，安装时自动解析兼容版本）
 PySide6>=6.11
+cryptography>=43
+packaging>=24
 # 2.x changed PDF text extraction/placement behavior; 1.28.2 is the release-tested
 # series used by the frozen Windows/macOS candidates.
 PyMuPDF>=1.24,<2
