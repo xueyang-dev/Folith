@@ -274,6 +274,88 @@ def test_observation_is_pure_local_and_never_calls_a_model(monkeypatch):
     assert counts["evidence_added"] == 1 and counts["suggestions_added"] == 1
 
 
+def test_later_evidence_reaches_earlier_segments_with_same_rendering():
+    """#99 的核心承诺：后出现的证据要能回溯更早的相关段落。
+
+    更早的批次自己没有报冲突（当时没有第二种译法可比）；后一个批次出现冲突后，
+    证据必须把更早使用同一禁用译法的段落也变成建议——这正是验收清单里
+    "以后面的证据回溯前文"的一条。
+    """
+    pairs = [
+        _pair("Violet walks into the northern archive before dawn.",
+              "紫罗兰在黎明前走进北方档案馆。"),   # 更早批次，自身无冲突
+        _pair("Violet asks about the missing letter.",
+              "维奥莱特询问那封丢失的信。"),       # 已用锁定译法
+        _pair("Violet finds the letter hidden in the archive.",
+              "紫罗兰在档案馆里找到了那封信。"),   # 后一个批次，冲突在这里暴露
+    ]
+    state = _state(pairs)
+    assert retro.observe_batch(state, findings=[], pairs=pairs,
+                               glossary=_glossary(), batch=0)["evidence_added"] == 0
+
+    counts = retro.observe_batch(state, findings=[_conflict(2)],
+                                 pairs=pairs, glossary=_glossary(), batch=1)
+    assert counts["evidence_added"] == 1
+    view = retro.suggestion_view(state)
+    assert [item["segment_index"] for item in view] == [0, 2], \
+        "更早使用同一禁用译法的段落必须经由后面的证据得到建议"
+    assert view[0]["proposed_target"] == "维奥莱特在黎明前走进北方档案馆。"
+    assert state["pairs"][0]["target"].startswith("紫罗兰"), "建议层不得改写正文"
+
+    # 重放同一批次（重试 / 日志回放 / 重启）不产生重复建议。
+    again = retro.observe_batch(state, findings=[_conflict(2)],
+                                pairs=pairs, glossary=_glossary(), batch=1)
+    assert again["suggestions_added"] == 0
+    assert [item["segment_index"] for item in retro.suggestion_view(state)] == [0, 2]
+
+
+def test_backtracked_suggestions_respect_the_same_guards():
+    """回溯到的更早段落与证据自身段落在同一组保护规则下。"""
+    pairs = [
+        _pair("The Life of Violet begins in the archive.",
+              "《紫罗兰》的故事。", human_accepted=True),   # 更早，人工确认过
+        _pair("Violet finds the letter hidden in the archive.",
+              "紫罗兰在档案馆里找到了那封信。"),
+    ]
+    state = _state(pairs)
+    counts = retro.observe_batch(state, findings=[_conflict(1)],
+                                 pairs=pairs, glossary=_glossary(), batch=2)
+    assert counts["evidence_added"] == 1
+    assert [item["segment_index"] for item in retro.suggestion_view(state)] == [1], \
+        "人工确认的更早段落不得被回溯建议触碰"
+
+
+def test_backtrack_requires_the_term_in_the_segment_source():
+    """[P2] 回溯要锚定来源术语：无关段落不得被卷进来。
+
+    探针场景：人名 Violet 的冲突，把"花园里满是紫罗兰"（原文只写花园、
+    根本没有这个人物）当成候选。译文含禁用译法但原文没有该术语的段落，
+    不是术语回溯的候选。
+    """
+    pairs = [
+        # 原文只描述花园（violets 是花），译文自然用了"紫罗兰"。
+        _pair("The garden is full of violets in early spring.",
+              "早春的花园里满是紫罗兰。"),
+        # 更早批次、Violet 本人在场、也用了禁用译法：真正的回溯候选。
+        _pair("Violet walks into the northern archive before dawn.",
+              "紫罗兰在黎明前走进北方档案馆。"),
+        # 证据自身段落：Violet 本人在场，禁用译法在这里暴露。
+        _pair("Violet finds the letter hidden in the archive.",
+              "紫罗兰在档案馆里找到了那封信。"),
+    ]
+    state = _state(pairs)
+    counts = retro.observe_batch(state, findings=[_conflict(2)],
+                                 pairs=pairs, glossary=_glossary(), batch=1)
+    assert counts["evidence_added"] == 1
+    view = retro.suggestion_view(state)
+    indexes = {item["segment_index"] for item in view}
+    assert indexes == {1, 2}, \
+        "花园段（原文无该术语，index 0）不得出现在建议里；两个真候选都要有"
+    by_index = {item["segment_index"]: item for item in view}
+    assert by_index[1]["proposed_target"] == "维奥莱特在黎明前走进北方档案馆。"
+    assert by_index[2]["proposed_target"] == "维奥莱特在档案馆里找到了那封信。"
+
+
 def test_complex_cast_suggestions_do_not_cross_contaminate_names():
     """A Solitude-style cast: similar renderings must stay separate terms."""
     glossary = [
@@ -309,3 +391,217 @@ def test_complex_cast_suggestions_do_not_cross_contaminate_names():
     assert by_index[3]["proposed_target"] == "阿尔卡蒂奥·布恩迪亚再次想起了冰块。"
     # No suggestion touches the already-correct segments.
     assert set(by_index) == {1, 3}
+
+
+@pytest.mark.parametrize("pass_sections", [False, True])
+def test_backtrack_preserves_section_scope(pass_sections):
+    pairs = [
+        _pair("Violet walks into the northern archive before dawn.", "紫罗兰走进北方档案馆。"),
+        _pair("Violet walks into the southern archive before dawn.", "紫罗兰走进南方档案馆。"),
+        _pair("Violet finds the missing letter inside the southern archive.", "紫罗兰找到了丢失的信。"),
+    ]
+    state = _state(pairs)
+    state["document_profile"] = {"sections": [
+        {"section_id": "north", "start_segment": 0, "end_segment": 0},
+        {"section_id": "south", "start_segment": 1, "end_segment": 2},
+    ]}
+    glossary = _glossary()
+    glossary[0]["scope"] = "section:south"
+    options = {"sections": state["document_profile"].pop("sections")} if pass_sections else {}
+    retro.observe_batch(state, findings=[_conflict(2)], pairs=pairs,
+                        glossary=glossary, batch=1, **options)
+    assert [item["segment_index"] for item in retro.suggestion_view(state)] == [1, 2]
+
+
+@pytest.mark.parametrize("changed", [
+    {"status": "candidate"}, {"behavior": "keep"},
+    {"preferred": "另一个译名"}, {"forbidden": []}, {"source": "Viola"},
+])
+def test_old_evidence_does_not_extend_a_superseded_glossary_rule(changed):
+    pairs = [_pair("Violet walks into the northern archive before dawn.",
+                   "紫罗兰走进北方档案馆。")]
+    state = _state(pairs)
+    retro.observe_batch(state, findings=[_conflict(0)], pairs=pairs,
+                        glossary=_glossary(), batch=0)
+    # The translator changes the rule before another batch is committed.
+    glossary = _glossary()
+    glossary[0].update(changed)
+    pairs.append(_pair("Violet finds the missing letter inside the archive.",
+                       "紫罗兰找到了丢失的信。"))
+    retro.observe_batch(state, findings=[_conflict(1)], pairs=pairs,
+                        glossary=glossary, batch=1)
+    assert [item["segment_index"] for item in retro.suggestion_view(state)
+            if item["preferred_target"] == "维奥莱特"] == [0]
+
+
+@pytest.mark.parametrize("protected", [
+    {"human_accepted": True}, {"human_edited": True},
+    {"target_provenance": "human_edit"}, {"review_status": "reviewed_human"},
+    {"source": "The Life of Violet"},
+    {"source": '"Violet," she said as she entered the archive.'},
+    {"exception": True},
+])
+def test_all_guards_apply_to_earlier_segments(protected):
+    earlier = _pair("Violet walks into the northern archive before dawn.",
+                    "紫罗兰走进北方档案馆。")
+    earlier.update({key: value for key, value in protected.items() if key != "exception"})
+    pairs = [earlier, _pair("Violet finds the missing letter inside the archive.",
+                            "紫罗兰找到了丢失的信。")]
+    state = _state(pairs)
+    if protected.get("exception"):
+        state["retrospective_exceptions"] = [{"segment_index": 0, "kind": "literary"}]
+    retro.observe_batch(state, findings=[_conflict(1)], pairs=pairs,
+                        glossary=_glossary(), batch=1)
+    assert [item["segment_index"] for item in retro.suggestion_view(state)] == [1]
+    assert earlier["target"] == "紫罗兰走进北方档案馆。"
+
+
+@pytest.mark.parametrize("source", [
+    "The garden is full of violets in early spring.",
+    "UltraViolet lights illuminate the entire archive.",
+    "Violet_2 is the identifier used by this archive.",
+    "The flowers in the garden have opened this morning.",
+])
+def test_backtrack_excludes_unrelated_source_words(source):
+    pairs = [_pair(source, "紫罗兰照亮了档案馆。"),
+             _pair("Violet finds the missing letter inside the archive.",
+                   "紫罗兰找到了丢失的信。")]
+    state = _state(pairs)
+    retro.observe_batch(state, findings=[_conflict(1)], pairs=pairs,
+                        glossary=_glossary(), batch=1)
+    assert [item["segment_index"] for item in retro.suggestion_view(state)] == [1]
+
+
+def _saved_backtrack_job(job_id):
+    state = core.new_job_state("backtrack.docx")
+    pairs = [_pair("Violet walks into the northern archive before dawn.",
+                   "紫罗兰走进北方档案馆。"),
+             _pair("Violet finds the missing letter inside the archive.",
+                   "紫罗兰找到了丢失的信。")]
+    state.update(pairs=pairs, paras=[pair["source"] for pair in pairs],
+                 target_lang=TARGET_LANG, p1_done=True)
+    retro.observe_batch(state, findings=[_conflict(1)], pairs=pairs,
+                        glossary=_glossary(), batch=1)
+    core.save_job_state(job_id, state)
+    return core.retrospective_suggestions(job_id)[0]["suggestion_id"]
+
+
+def test_backtrack_reopen_adopt_dismiss_and_replay(temp_job_env):
+    job_id = "backtrack-reopen"
+    suggestion_id = _saved_backtrack_job(job_id)
+    repo.invalidate_cache()
+    state = core.load_job_state(job_id)
+    ids_before = [record["suggestion_id"] for record in state[retro.SUGGESTIONS_KEY]]
+    evidence_before = [record["evidence_id"] for record in state[retro.EVIDENCE_KEY]]
+    result = core.materialize_retrospective_suggestion(job_id, suggestion_id)
+    assert result["candidate"]
+    assert core.load_job_state(job_id)["pairs"][0]["target"] == "紫罗兰走进北方档案馆。"
+    assert core.adopt_translation_candidate(job_id, result["candidate"]["candidate_id"])["committed"]
+    remaining = core.retrospective_suggestions(job_id)[0]
+    core.dismiss_retrospective_suggestion(job_id, remaining["suggestion_id"])
+    repo.invalidate_cache()
+    state = core.load_job_state(job_id)
+    counts = retro.observe_batch(state, findings=[_conflict(1)], pairs=state["pairs"],
+                                 glossary=_glossary(), batch=1)
+    assert counts["evidence_added"] == counts["suggestions_added"] == 0
+    assert core.retrospective_suggestions(state=state) == []
+    assert state["pairs"][0]["target"] == "维奥莱特走进北方档案馆。"
+    assert state["pairs"][1]["target"] == "紫罗兰找到了丢失的信。"
+    assert [record["suggestion_id"] for record in state[retro.SUGGESTIONS_KEY]] == ids_before
+    assert [record["evidence_id"] for record in state[retro.EVIDENCE_KEY]] == evidence_before
+
+
+def test_backtrack_worker_lock_refuses_materialization_and_adoption(temp_job_env):
+    from folith import job_lock
+    job_id = "backtrack-worker"
+    suggestion_id = _saved_backtrack_job(job_id)
+    holder = job_lock.acquire(core.job_dir(job_id) / ".worker.lock", blocking=False)
+    assert holder is not None
+    try:
+        with pytest.raises(RuntimeError):
+            core.materialize_retrospective_suggestion(job_id, suggestion_id)
+    finally:
+        holder.close()
+    assert retro.find_suggestion(core.load_job_state(job_id), suggestion_id)["status"] == retro.STATUS_PENDING
+    result = core.materialize_retrospective_suggestion(job_id, suggestion_id)
+    candidate_id = result["candidate"]["candidate_id"]
+    holder = job_lock.acquire(core.job_dir(job_id) / ".worker.lock", blocking=False)
+    assert holder is not None
+    try:
+        with pytest.raises(RuntimeError):
+            core.adopt_translation_candidate(job_id, candidate_id)
+    finally:
+        holder.close()
+    assert core.load_job_state(job_id)["pairs"][0]["target"] == "紫罗兰走进北方档案馆。"
+
+
+@pytest.mark.parametrize("edit_before_materializing", [True, False])
+def test_backtrack_does_not_overwrite_an_intervening_human_edit(temp_job_env, edit_before_materializing):
+    job_id = "backtrack-stale"
+    suggestion_id = _saved_backtrack_job(job_id)
+    if not edit_before_materializing:
+        result = core.materialize_retrospective_suggestion(job_id, suggestion_id)
+    core.save_translation_edit(job_id, 0, "人工修订后保留的译文。")
+    if edit_before_materializing:
+        result = core.materialize_retrospective_suggestion(job_id, suggestion_id)
+        assert result["candidate"] is None
+        assert result["reason"] == "stale_or_protected"
+    else:
+        assert not core.adopt_translation_candidate(job_id, result["candidate"]["candidate_id"])["committed"]
+    assert core.load_job_state(job_id)["pairs"][0]["target"] == "人工修订后保留的译文。"
+
+
+def test_real_later_batch_finds_earlier_unflagged_segment(temp_job_env, monkeypatch):
+    job_id = "backtrack-pipeline"
+    sources = [
+        "Violet walks into the northern archive before dawn.",
+        "The clerk places the old records on the table.",
+        "Violet asks about the missing letter again.",
+        "Nobody tells Violet what happened in the archive.",
+    ]
+    targets = ["紫罗兰走进北方档案馆。", "职员将旧档案放在桌上。",
+               "维奥莱特再次询问那封丢失的信。", "没有人告诉紫罗兰档案馆里发生了什么。"]
+    state = core.new_job_state("later-batch.docx")
+    state["paras"] = sources
+    core.save_job_state(job_id, state)
+    calls = []
+
+    def llm(*args, **kwargs):
+        calls.append(args[4])
+        prompt = args[4]
+        if "【待翻译段落（按序号返回等长数组）】" in prompt:
+            content = prompt.split("【待翻译段落（按序号返回等长数组）】")[-1]
+        elif "以下译文未通过检查" in prompt:
+            content = prompt.split("问题清单：")[0]
+        else:
+            return "{}"  # existing knowledge extraction, unrelated to #99
+        selected = [targets[index] for line in content.splitlines()
+                    for index, source in enumerate(sources) if line.endswith(source)]
+        assert selected
+        return json.dumps(selected, ensure_ascii=False)
+
+    monkeypatch.setattr(core, "call_llm", llm)
+    core.translate_stage(state, job_id, glossary=_glossary(), provider="DeepSeek", api_key="k",
+                         model="m", target_lang=TARGET_LANG, style_rules="",
+                         enable_review=False, use_tm=False, batch_size=2, translation_concurrency=1,
+                         use_translation_cache=False, use_knowledge_cache=False)
+    repo.invalidate_cache()
+    reopened = core.load_job_state(job_id)
+    # Batch 0 had only the forbidden usage, so its segment never raised a conflict.
+    assert {item["segment_index"] for item in reopened[retro.EVIDENCE_KEY]} == {3}
+    assert [item["segment_index"] for item in core.retrospective_suggestions(state=reopened)] == [0, 3]
+    assert [pair["target"] for pair in reopened["pairs"]] == targets
+    enabled_calls = list(calls)
+    # Compare the complete production path, including its existing repairs and
+    # knowledge extraction, against exactly the same run with #99 disabled.
+    calls.clear()
+    monkeypatch.setenv(retro.ENV_SWITCH, "0")
+    baseline = core.new_job_state("later-batch.docx")
+    baseline["paras"] = sources
+    core.save_job_state("backtrack-baseline", baseline)
+    core.translate_stage(baseline, "backtrack-baseline", glossary=_glossary(),
+                         provider="DeepSeek", api_key="k", model="m",
+                         target_lang=TARGET_LANG, style_rules="", enable_review=False,
+                         use_tm=False, batch_size=2, translation_concurrency=1,
+                         use_translation_cache=False, use_knowledge_cache=False)
+    assert calls == enabled_calls, "#99 must add zero model calls or prompt changes"

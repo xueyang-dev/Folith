@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from folith import translation_candidates as _cand
+from folith.terminology import _scope_applies, term_matches
 
 EVIDENCE_KEY = "retrospective_evidence"
 SUGGESTIONS_KEY = "retrospective_suggestions"
@@ -157,6 +158,8 @@ def _glossary_index(glossary: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str
         entry_id = str(entry.get("id") or entry.get("entry_id") or "")
         if not entry_id:
             continue
+        if str(entry.get("behavior") or "translate") != "translate":
+            continue
         if str(entry.get("status") or "") != "locked":
             continue
         preferred = str(entry.get("preferred") or entry.get("target") or "")
@@ -166,6 +169,7 @@ def _glossary_index(glossary: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str
             "entry_id": entry_id,
             "term": str(entry.get("source") or ""),
             "preferred": preferred,
+            "scope": str(entry.get("scope") or ""),
             "forbidden": [str(item) for item in entry.get("forbidden") or []
                           if str(item or "").strip()],
         }
@@ -202,6 +206,7 @@ def observe_batch(
     pairs: Sequence[Mapping[str, Any]] = (),
     glossary: Sequence[Mapping[str, Any]] = (),
     batch: int = 0,
+    sections: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Turn this batch's terminology conflicts into evidence and suggestions.
 
@@ -255,7 +260,9 @@ def observe_batch(
         existing_ids.add(evidence_id)
         counts["evidence_added"] += 1
     _prune(evidence, MAX_EVIDENCE)
-    added, skipped = _derive_suggestions(state, pairs, evidence)
+    if sections is None:
+        sections = (state.get("document_profile") or {}).get("sections") or []
+    added, skipped = _derive_suggestions(state, pairs, evidence, entries, sections)
     counts["suggestions_added"] = added
     counts["skipped"] = skipped
     counts["duration_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
@@ -266,7 +273,21 @@ def _derive_suggestions(
     state: Dict[str, Any],
     pairs: Sequence[Mapping[str, Any]],
     evidence: List[Dict[str, Any]],
+    entries: Mapping[str, Mapping[str, Any]],
+    sections: Sequence[Mapping[str, Any]],
 ) -> tuple:
+    """Evidence → suggestions, *including segments earlier than the evidence*.
+
+    Evidence names the segment where a conflict surfaced, but the forbidden
+    rendering it pins down may occur in segments committed by earlier batches
+    that never raised a conflict of their own.  #99's acceptance is exactly
+    that later evidence points back at those earlier segments, so rewritable
+    evidence is grouped by ``(entry, observed, preferred)`` — the deterministic
+    rewrite is identical for every occurrence — and each group scans the whole
+    committed list.  The evidence's own segment is found by the same scan; its
+    suggestion id (digest of entry, index, preferred, observed) is unchanged,
+    so records persisted by the previous single-segment derivation stay valid.
+    """
     suggestions = _suggestion_records(state)
     if not isinstance(state.get(SUGGESTIONS_KEY), list):
         state[SUGGESTIONS_KEY] = suggestions
@@ -275,61 +296,94 @@ def _derive_suggestions(
     exceptions = _exceptions(state)
     added = 0
     skipped = 0
+    groups: Dict[tuple, Dict[str, Any]] = {}
     for item in evidence:
         if not isinstance(item, dict):
             continue
-        segment_index = item.get("segment_index")
-        if not isinstance(segment_index, int) or not 0 <= segment_index < len(pairs):
-            continue
-        pair = pairs[segment_index]
-        if not isinstance(pair, Mapping):
-            continue
-        target = str(pair.get("target") or "")
-        preferred = str(item.get("preferred_target") or "")
-        if not target or not preferred or preferred in target:
-            continue
-        suggestion_id = "rs-" + _digest(item.get("entry_id"), segment_index,
-                                        preferred, item.get("observed_target"))
-        if suggestion_id in existing:
-            continue
-        if not item.get("rewritable"):
-            skipped += 1
-            continue
-        reason = ambiguity_reason(pair, exceptions=exceptions,
-                                  segment_index=segment_index)
-        if reason:
-            skipped += 1
-            continue
+        # Not a known forbidden rendering: evidence-only for every segment,
+        # because inventing the right text would need judgement (a model).
         observed = str(item.get("observed_target") or "")
-        if len(observed) < _MIN_OBSERVED_LEN or observed not in target:
+        preferred = str(item.get("preferred_target") or "")
+        entry = entries.get(str(item.get("entry_id") or ""))
+        if not item.get("rewritable") or len(observed) < _MIN_OBSERVED_LEN \
+                or not preferred or entry is None \
+                or entry["preferred"] != preferred or observed not in entry["forbidden"] \
+                or entry["term"] != str(item.get("term") or ""):
             skipped += 1
             continue
-        proposed = target.replace(observed, preferred, 1)
-        if not proposed.strip() or proposed == target:
-            skipped += 1
-            continue
-        suggestions.append({
-            "suggestion_id": suggestion_id,
-            "segment_index": segment_index,
-            "entry_id": str(item.get("entry_id") or ""),
-            "term": str(item.get("term") or ""),
-            "preferred_target": preferred,
-            "observed_target": observed,
-            "baseline_target": target,
-            "proposed_target": proposed,
-            "evidence_ids": [str(item.get("evidence_id") or "")],
-            "status": STATUS_PENDING,
-            "origin": _cand.ORIGIN_RETROSPECTIVE,
-            "reason": "later_terminology_evidence",
-            "reason_label": (f"后出现的术语证据：术语「{item.get('term')}」"
-                             f"按锁定译法「{preferred}」统一"),
-            "created_at": _now_iso(),
-            "resolved_at": None,
-            "resolved_by": "",
-            "candidate_id": "",
-        })
-        existing.add(suggestion_id)
-        added += 1
+        key = (str(item.get("entry_id") or ""), observed, preferred)
+        group = groups.get(key)
+        evidence_id = str(item.get("evidence_id") or "")
+        if group is None:
+            groups[key] = {
+                "entry_id": str(item.get("entry_id") or ""),
+                "term": entry["term"],
+                "scope": entry["scope"],
+                "preferred_target": preferred,
+                "observed_target": observed,
+                "evidence_ids": [evidence_id] if evidence_id else [],
+            }
+        elif evidence_id and evidence_id not in group["evidence_ids"]:
+            group["evidence_ids"].append(evidence_id)
+    for group in groups.values():
+        observed = group["observed_target"]
+        preferred = group["preferred_target"]
+        term = group["term"]
+        # Match the source as well as the rendering: a flower called violets
+        # must not become a candidate for the character Violet. Reuse the
+        # terminology detector's boundaries and the glossary's current scope.
+        for segment_index, pair in enumerate(pairs):
+            if not isinstance(pair, Mapping):
+                continue
+            target = str(pair.get("target") or "")
+            if not target or preferred in target or observed not in target:
+                continue
+            if not term_matches(term, str(pair.get("source") or "")):
+                continue
+            section = None
+            if group["scope"].startswith("section:"):
+                section = next((section for section in sections
+                                if section.get("start_segment") is not None
+                                and section.get("end_segment") is not None
+                                and section["start_segment"] <= segment_index
+                                <= section["end_segment"]), None)
+            if not _scope_applies(group, segment_index, section):
+                continue
+            suggestion_id = "rs-" + _digest(group["entry_id"], segment_index,
+                                            preferred, observed)
+            if suggestion_id in existing:
+                continue
+            reason = ambiguity_reason(pair, exceptions=exceptions,
+                                      segment_index=segment_index)
+            if reason:
+                skipped += 1
+                continue
+            proposed = target.replace(observed, preferred, 1)
+            if not proposed.strip() or proposed == target:
+                skipped += 1
+                continue
+            suggestions.append({
+                "suggestion_id": suggestion_id,
+                "segment_index": segment_index,
+                "entry_id": group["entry_id"],
+                "term": group["term"],
+                "preferred_target": preferred,
+                "observed_target": observed,
+                "baseline_target": target,
+                "proposed_target": proposed,
+                "evidence_ids": list(group["evidence_ids"]),
+                "status": STATUS_PENDING,
+                "origin": _cand.ORIGIN_RETROSPECTIVE,
+                "reason": "later_terminology_evidence",
+                "reason_label": (f"后出现的术语证据：术语「{group['term']}」"
+                                 f"按锁定译法「{preferred}」统一"),
+                "created_at": _now_iso(),
+                "resolved_at": None,
+                "resolved_by": "",
+                "candidate_id": "",
+            })
+            existing.add(suggestion_id)
+            added += 1
     _prune(suggestions, MAX_SUGGESTIONS,
            keep_statuses=(STATUS_PENDING, STATUS_CANDIDATE))
     return added, skipped

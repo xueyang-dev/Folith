@@ -6787,7 +6787,8 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         with _critical_path.phase("commit_retrospective_suggestions") as _retro_sink:
             _retro_counts = _retrospective.observe_batch(
                 state, findings=_batch_conflict_findings,
-                pairs=state.get("pairs") or [], glossary=glossary, batch=bi)
+                pairs=state.get("pairs") or [], glossary=glossary, batch=bi,
+                sections=sections)
             _retro_sink.traversed(len(_batch_conflict_findings))
             state["retrospective_stats"] = _retro_counts
             if _retro_counts.get("evidence_added") or _retro_counts.get("suggestions_added"):
