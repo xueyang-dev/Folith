@@ -38,6 +38,7 @@ from .pdf_panel import PdfPanel
 from .qa_panel import QAPanel
 from .report_panel import ReportPanel
 from .review_panel import ReviewPanel
+from .source_panel import SourcePanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
 from .task_details_panel import TaskDetailsPanel
@@ -3577,10 +3578,15 @@ class WorkbenchView(QWidget):
         # 原页：工作台左侧可展开的面板（acceptance-feedback D2），不再是一整页。
         self.pdf_panel = PdfPanel()
         self.pdf_panel.closeRequested.connect(lambda: self.set_source_open(False))
+        # 流式源（DOCX / EPUB / TXT / Markdown）没有页码：同一个位置展开的是
+        # 「原位置」上下文面板（#61），与原页共用入口、宽度和快捷键。
+        self.source_panel = SourcePanel()
+        self.source_panel.closeRequested.connect(lambda: self.set_source_open(False))
         # 左栏：原页与术语轮流占它（一个位置一个宽度）。`_source_open` 指左栏开着，
         # `_left_mode` 说开的是哪一个。
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self.pdf_panel)
+        self.left_stack.addWidget(self.source_panel)
         self.left_stack.addWidget(self.terms_side)
         self.source_clip = components.ClippedWidget(self.left_stack, 400)
         self._source_open = False
@@ -3596,6 +3602,8 @@ class WorkbenchView(QWidget):
         self.translation_split.collapseRequested.connect(self._split_collapse_requested)
         self.translation_split.resetRequested.connect(self._split_reset_requested)
         self._pdf_ok = False
+        self._stream_ok = False
+        self._source_available = False
         self._pdf_width = 0
         self._pdf_follow = QTimer(self)
         self._pdf_follow.setSingleShot(True)
@@ -4289,8 +4297,8 @@ class WorkbenchView(QWidget):
         return self._source_open and self._left_mode == "terms"
 
     def set_source_open(self, open_: bool) -> None:
-        """原页在工作台左侧展开 / 收起；中间的网格随之收缩（acceptance-feedback D2）。"""
-        self._set_left_panel("source", bool(open_) and self._pdf_ok)
+        """原页 / 原位置在工作台左侧展开 / 收起；中间的网格随之收缩（D2、#61）。"""
+        self._set_left_panel("source", bool(open_) and self._source_available)
 
     def set_terms_open(self, open_: bool) -> None:
         """术语表在工作台左侧展开 / 收起（与原页同一栏；2026-10-17 试用反馈）。"""
@@ -4305,7 +4313,8 @@ class WorkbenchView(QWidget):
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
             self._left_mode = mode
-            self.left_stack.setCurrentWidget(self.pdf_panel if mode == "source" else self.terms_side)
+            self.left_stack.setCurrentWidget(
+                self._source_widget() if mode == "source" else self.terms_side)
         self._source_open = open_
         self._sync_left_buttons()
         if open_ and mode == "terms":
@@ -4321,13 +4330,17 @@ class WorkbenchView(QWidget):
     def _sync_left_buttons(self) -> None:
         self.terms_button.setChecked(self.terms_open())
 
+    def _source_widget(self) -> QWidget:
+        """左栏「source」位展示的面板：PDF 是原页，流式源是原文上下文（#61）。"""
+        return self.pdf_panel if self._pdf_ok else self.source_panel
+
     def _follow_source(self) -> None:
         if self.source_open() and self._current_index >= 0:
             if self._motion.running("translation-columns"):
                 self._source_locate_pending = True
                 return
             self._source_locate_pending = False
-            self.pdf_panel.locate(self._current_index, state=self._state or None)
+            self._source_widget().locate(self._current_index, state=self._state or None)
 
     def _resume_source_render(self) -> None:
         if getattr(self, "_source_locate_pending", False):
@@ -4729,23 +4742,46 @@ class WorkbenchView(QWidget):
         self.review_panel.apply(view)
 
     def _load_pdf(self, job_id: str) -> None:
-        """PDF 任务才有「原页」页签与「查看原位置」；切换任务时判断一次。"""
+        """PDF 有「原页」，流式源有「原位置」上下文；切换任务时判断一次（#61）。"""
         try:
             self._pdf_ok = adapter.pdf_available(job_id)
         except Exception:  # noqa: BLE001 - 读不出原文时当作没有原页
             self._pdf_ok = False
+        try:
+            self._stream_ok = adapter.source_context_available(job_id)
+        except Exception:  # noqa: BLE001 - 读不出源文件时当作没有上下文
+            self._stream_ok = False
+        self._source_available = self._pdf_ok or self._stream_ok
         self.pdf_panel.load(job_id if self._pdf_ok else "")
-        if not self._pdf_ok:
+        self.source_panel.load(job_id if self._stream_ok else "")
+        if not self._source_available:
             self.set_source_open(False)
-        self.view_source_button.setVisible(self._pdf_ok)
+        # 解释而非隐藏（#61）：只要任务是从源格式导入的，「查看原位置」就留在
+        # 操作栏里；既没有原页也读不出上下文时禁用并说明边界，不再悄悄消失。
+        # 文件名从已加载的 state 取：open 路径不允许在 GUI 线程再读一次状态。
+        filename = str((self._state or {}).get("filename") or "").lower()
+        known_format = any(filename.endswith(item) for item in adapter.SOURCE_SUFFIXES)
+        self._source_format_known = known_format
+        self.view_source_button.setVisible(self._source_available or known_format)
+        self.view_source_button.setEnabled(self._source_available)
+        if self._pdf_ok:
+            tip = i18n.tr('在 PDF 原页里定位并高亮这一段')
+        elif self._stream_ok:
+            tip = i18n.tr('在源文件上下文里定位这一段（章节、标题路径或行号）')
+        else:
+            tip = i18n.tr('原位置目前支持 PDF 原文，以及 DOCX、EPUB、TXT、Markdown 源文件的原文上下文；这份源文件暂时没有可定位的内容')
+        self.view_source_button.setToolTip(f"{i18n.tr('查看原位置')}：{tip}")
         self._sync_more_pages()
 
     def show_source_location(self, index: int) -> None:
-        """切到原页并高亮第 ``index`` 段。"""
-        if not self._pdf_ok or index < 0:
+        """切到原页（PDF）或原文上下文（流式源），并高亮第 ``index`` 段。"""
+        if not self._source_available or index < 0:
             return
         self.set_source_open(True)
-        self.pdf_panel.locate(int(index), state=self._state or None)
+        if self._pdf_ok:
+            self.pdf_panel.locate(int(index), state=self._state or None)
+        else:
+            self.source_panel.locate(int(index), state=self._state or None)
 
     def show_segment_for_edit(self, index: int) -> None:
         """从审校页跳到翻译页的某一段（用户要自己改译文）。"""
@@ -5679,6 +5715,7 @@ class WorkbenchView(QWidget):
         self.exclude_button.setVisible(not row.excluded)
         self._sync_structure_menu(row)
         self.pdf_panel.set_segment(row.index)
+        self.source_panel.set_segment(row.index)
         if self.source_open():
             self._pdf_follow.start()  # follow the selection (debounced for key repeat)
         self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
@@ -6180,7 +6217,9 @@ class WorkbenchView(QWidget):
             if row is not None:
                 self.exclude_button.setVisible(not row.excluded)
                 self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
-            self.view_source_button.setVisible(bool(getattr(self, "_pdf_ok", False)))
+            self.view_source_button.setVisible(
+                bool(getattr(self, "_source_available", False))
+                or bool(getattr(self, "_source_format_known", False)))
         else:
             self.selection_title.setText(i18n.tr('尚未选择段落'))
 
