@@ -352,6 +352,31 @@ def test_term_list_forwards_edit_and_change_key_guard_skips_untouched_polls(qapp
     assert listing.buttons[0] is not first, "首选译名变化必须重建卡片"
 
 
+def test_term_chip_edit_is_reachable_by_tab_and_activated_by_space(qapp):
+    from PySide6.QtTest import QTest
+
+    from folith.qt.segment_assist import TermChip
+
+    chip = TermChip({"id": "g1", "source": "Nora", "target": "诺拉"}, 1)
+    edited, activated, inserted = [], [], []
+    chip.editRequested.connect(edited.append)
+    chip.activated.connect(activated.append)
+    chip.insertRequested.connect(inserted.append)
+    try:
+        chip.show()
+        chip.activateWindow()
+        chip.setFocus()
+        qapp.processEvents()
+        assert chip.hasFocus()
+        QTest.keyClick(chip, Qt.Key.Key_Tab)
+        assert chip.edit_button.hasFocus()
+        QTest.keyClick(chip.edit_button, Qt.Key.Key_Space)
+        assert edited == [chip.term]
+        assert activated == [] and inserted == []
+    finally:
+        chip.close()
+
+
 def test_term_edit_dialog_collects_fields_and_preserves_domain_note(qapp):
     from PySide6.QtWidgets import QDialog
 
@@ -363,10 +388,10 @@ def test_term_edit_dialog_collects_fields_and_preserves_domain_note(qapp):
     assert dialog.forbidden_edit.text() == "娜拉"
     dialog.preferred_edit.setText("薇奥莱特")
     dialog.forbidden_edit.setText("娜拉, 诺拉")
-    dialog.status_box.setCurrentIndex(dialog.status_box.findData("locked"))
+    dialog.status_box.setCurrentIndex(dialog.status_box.findData("rejected"))
     fields = dialog.fields()
     assert fields["preferred"] == "薇奥莱特"
-    assert fields["status"] == "locked"
+    assert fields["status"] == "rejected"
     assert fields["forbidden"] == ["娜拉", "诺拉"]
     assert fields["domain"] == "文学" and fields["note"] == "专名", \
         "快速编辑不暴露的字段必须原值带过，不能让更新通道清空"
