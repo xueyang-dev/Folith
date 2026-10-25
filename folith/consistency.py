@@ -113,15 +113,22 @@ def findings(records, pairs, concept_decisions=None):
         preferred = spelling(record.get('preferred_target')).casefold()
         accepted = {spelling(value).casefold() for value in record.get('accepted_variants') or []}
         locked_mismatch = record.get('status') == 'locked' and variants - {preferred}
-        if variants <= accepted or (len(variants) < 2 and not locked_mismatch):
-            continue
         decision = concept_of(record) if concept_of else None
-        if decision:
-            if decision.get('keep_variants'):
-                continue  # 文字游戏/多义/各自符合语境：概念级"保持原样"
-            decided = spelling(decision.get('preferred_target')).casefold()
-            if decided and variants <= accepted | {decided}:
-                continue  # 已决定且无漂移：不出矛盾卡
+        if decision and decision.get('keep_variants'):
+            continue  # 文字游戏/多义/各自符合语境：概念级“保持原样”
+        decided = spelling((decision or {}).get('preferred_target')).casefold()
+        if decided:
+            exceptions = {e['scope']: spelling(e['target']).casefold()
+                          for e in decision.get('exceptions') or []}
+            rows = [row for row in rows
+                    if {spelling(v).casefold() for v in row['variants']} -
+                    accepted - {exceptions.get(f"segment:{row['index']}", decided)}]
+            if not rows:
+                continue
+            variants = _distinct_variants(
+                {spelling(v).casefold() for row in rows for v in row['variants']})
+        elif variants <= accepted or (len(variants) < 2 and not locked_mismatch):
+            continue
         indexes = [row['index'] for row in rows]
         finding = {
             'type': 'entity_conflict', 'severity': 'actionable',

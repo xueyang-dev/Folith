@@ -71,11 +71,8 @@ def preview_concept_revision(
         return result
     result["preferred_target"] = preferred
 
-    variants = [_spelling(option.get("target"))
-                for option in card.get("options") or []
-                if _spelling(option.get("target")).casefold() != preferred.casefold()]
-    pattern = consistency.variant_pattern(variants)
-    if pattern is None:
+    variants = [_spelling(option.get("target")) for option in card.get("options") or []]
+    if not variants:
         result["reason"] = "nothing_to_replace"
         return result
 
@@ -95,13 +92,19 @@ def preview_concept_revision(
                                         "protection": list(protection)})
             continue
         target = str(pair.get("target") or "")
-        matched = list(dict.fromkeys(match.group() for match in pattern.finditer(target)))
-        if not matched:
-            continue
         exception = next((item for item in (hit or {}).get("exceptions") or []
                           if item.get("scope") == f"segment:{index}"), None)
         replacement = _spelling(exception.get("target")) if exception else preferred
         if not replacement:
+            continue
+        # An exception can also change a segment already using the document's
+        # preferred form; exclude the per-segment destination, not the global one.
+        pattern = consistency.variant_pattern(
+            [variant for variant in variants if variant.casefold() != replacement.casefold()])
+        if pattern is None:
+            continue
+        matched = list(dict.fromkeys(match.group() for match in pattern.finditer(target)))
+        if not matched:
             continue
         after = pattern.sub(lambda _match: replacement, target)
         if after == target:
