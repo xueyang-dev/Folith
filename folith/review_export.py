@@ -159,6 +159,20 @@ def _finding_export(finding: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _edited_after_adoption(adopted: Mapping[str, Any], pair: Mapping[str, Any]) -> bool:
+    """True when a person rewrote the target after the candidate was adopted.
+
+    The adopted candidate's own text is the reference: a target that still
+    equals it is the adoption, anything else was changed by someone afterwards.
+    """
+    adopted_text = str(adopted.get("candidate_target") or "")
+    if not adopted_text:
+        return False
+    provenance = str(pair.get("target_provenance") or "")
+    human = bool(pair.get("human_edited")) or provenance in {"human_edit", "human_accepted"}
+    return human and str(pair.get("target") or "") != adopted_text
+
+
 def _change_records(
     state: Mapping[str, Any],
     pairs: Sequence[Mapping[str, Any]],
@@ -172,17 +186,32 @@ def _change_records(
             candidates, str(pair.get("segment_uid") or ""), index)
         if adopted:
             before = str(adopted.get("previous_target") or "")
-            if before and before != current:
+            edited_after = _edited_after_adoption(adopted, pair)
+            adopted_text = str(adopted.get("candidate_target") or "") \
+                if edited_after else current
+            if before and before != adopted_text:
                 changes.append({
                     "segment_index": index,
                     "kind": "candidate_adoption",
                     "before": before,
-                    "after": current,
+                    "after": adopted_text,
                     "candidate_id": str(adopted.get("candidate_id") or ""),
                     "actor": str(adopted.get("resolved_by") or ""),
                     "timestamp": str(adopted.get("resolved_at") or ""),
                     "note": str(adopted.get("note") or ""),
                     "truth_revision": adopted.get("adopted_truth_version"),
+                })
+            if edited_after:
+                changes.append({
+                    "segment_index": index,
+                    "kind": "manual_edit",
+                    "before": adopted_text or before,
+                    "after": current,
+                    "candidate_id": "",
+                    "actor": str(pair.get("accepted_by_human") or ""),
+                    "timestamp": str(pair.get("accepted_at") or ""),
+                    "note": str(pair.get("human_edit_note") or ""),
+                    "truth_revision": (state.get("translation_truth") or {}).get("version"),
                 })
             continue
         provenance = str(pair.get("target_provenance") or "")
@@ -262,6 +291,8 @@ def build_review_export(
         provenance = str(pair.get("target_provenance") or "")
         if segment_unresolved:
             status = STATUS_UNRESOLVED
+        elif adopted and _edited_after_adoption(adopted, pair):
+            status = STATUS_MANUAL_EDIT
         elif adopted:
             status = (STATUS_ADOPTED
                       if str(adopted.get("previous_target") or "") != current
