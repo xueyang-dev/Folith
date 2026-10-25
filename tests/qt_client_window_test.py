@@ -4750,3 +4750,44 @@ def test_a_stale_delivery_button_still_revalidates_before_freezing(client, monke
     assert busy_calls == [], "a stale enabled button must not reach the delivery gate"
     assert window.failures, "the user must be told why delivery was refused"
     assert "暂不能" in window.failures[-1]["title"]
+
+
+def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
+    from PySide6.QtWidgets import QApplication
+    from folith.qt.scope_dialog import ScopeDialog
+
+    window, adapter, app = client["window"], client["adapter"], client["app"]
+    source = client["tmp"] / "scope.docx"
+    from docx import Document
+    doc = Document()
+    doc.add_heading("第一章", level=1)
+    doc.add_paragraph("Alpha body.")
+    doc.add_heading("第二章", level=1)
+    doc.add_paragraph("Beta body.")
+    doc.save(source)
+    job = adapter.import_documents([source], window.config)[0].job_id
+    open_job_and_wait(window, job)
+    observed = []
+
+    def choose_scope():
+        dialog = QApplication.activeModalWidget()
+        if not isinstance(dialog, ScopeDialog):
+            observed.append("missing dialog")
+            return
+        try:
+            key = next(k for k, (_, node) in dialog._node_checks.items()
+                       if node["label"] == "第二章")
+            dialog._node_checks[key][0].setChecked(True)
+            observed.append(dialog.summary_label.text())
+            dialog.exclude_button.click()
+        except Exception as exc:
+            observed.append(str(exc))
+            dialog.reject()
+
+    QTimer.singleShot(0, choose_scope)
+    window.workbench.setup_panel.source_section.scope_button.click()
+    assert observed and "将排除" in observed[0], observed
+    state = client["core"].load_job_state(job)
+    assert state["scope_exclusion_plan"]["entries"][0]["label"] == "第二章"
+    assert not state["paras"] and not state["pairs"]
+    assert not state.get("excluded_segments")

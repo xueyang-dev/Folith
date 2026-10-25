@@ -802,6 +802,8 @@ from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its p
     exclude_translation_scope,
     restore_translation_scope,
 )
+from folith.engine.segments import apply_scope_exclusion_plan  # noqa: F401
+from folith.engine.segments import scope_plan_totals  # noqa: F401
 from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps its public surface)
     _academic_workspace_archive,
     _delivery_timing,
@@ -10048,6 +10050,35 @@ def load_source(job_id):
 
 
 @_serialized_job_mutation
+def ensure_source_outline(job_id, state=None):
+    """#28：开始翻译前把本地原文结构（#27）的解析结果落进任务状态。
+
+    幂等且只往前走：任务已开始（范围树来自工作列表）、或已有大纲时原样返回。
+    源文件不在盘上、格式读不出结构时同样原样返回——范围接口随后如实报
+    ``available=False``，绝不猜结构。只有真正解析出结构这一次才写盘。
+    """
+    # 重新读取锁内真值；对话框传入的快照可能早于一次后台状态更新。
+    state = load_job_state(job_id)
+    if not isinstance(state, dict):
+        return state
+    if state.get("paras") or state.get("pairs") or state.get("p1_done"):
+        return state
+    outline = state.get("source_outline")
+    if isinstance(outline, dict) and outline.get("nodes"):
+        return state
+    data = load_source(job_id)
+    if not data:
+        return state
+    from folith.source_outline import parse_source_outline
+    parsed = parse_source_outline(str(state.get("filename") or ""), data)
+    if not parsed.get("nodes"):
+        return state
+    state["source_outline"] = parsed
+    save_job_state(job_id, state)
+    return state
+
+
+@_serialized_job_mutation
 def save_report_template(job_id, filename, template_bytes):
     """Parse and persist the uploaded DOCX template before academic stages run."""
     from folith import report_template
@@ -10798,6 +10829,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         # The rescan rebuilt the positional contract, so the deterministic
         # non-translatable admission runs here too (after the reset above).
         _auto_exclude_non_translatable_segments(job_id, state)
+        apply_scope_exclusion_plan(job_id, state)
         state["source_quality_gate"] = _audit_source_quality_for_state(state)
         cleanup_meta["segment_count"] = len(state.get("paras") or [])
         try:
@@ -12807,6 +12839,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # reset, so its exclusion ledger is never discarded with the old
             # translation contract.
             _auto_exclude_non_translatable_segments(job_id, state)
+            # #28：译前选定的范围排除在翻译单元建好这一刻落账（无计划时为空操作）。
+            apply_scope_exclusion_plan(job_id, state)
             state["source_quality_gate"] = _audit_source_quality_for_state(state)
             cleanup_meta.update({
                 "paragraph_count": len(cleaned),
@@ -12891,6 +12925,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                     ocr_mode=effective_ocr_mode, on_status=on_status)
             if not state.get("paras"):
                 raise ValueError(f"未提取到有效文本：{_NO_TEXT_REASON}")
+            # 视觉识别流不走本地大纲坐标；万一存在译前计划，这里会把它记为
+            # 未应用并告警，而不是让计划静默滞留。
+            apply_scope_exclusion_plan(job_id, state)
             state["p1_done"] = True
             save_job_state(job_id, state)
 
@@ -12999,14 +13036,20 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         segments, segmentation_meta = _apply_source_segmentation(
             state, cleaned_paragraphs, mode=effective_segmentation_mode)
         state["paras"] = segments
+        # 清洗映射（output_input_indices）必须在任何排除/计划应用之前落位：
+        # 译前范围计划要经"原始段落 → 清洗段落 → 翻译单元"映射定位，读的就是
+        # 这份 cleanup 元数据。cleanup_meta 随后还会被原地补充计数，同一对象。
+        state["source_cleanup"] = cleanup_meta
+        state["source_cleanup_done"] = True
         # Segments the system can already prove are not translatable leave the
         # working set before the translation contract is built, so they never
         # become a translation request, a review obligation or a delivery
         # notice.
         _auto_exclude_non_translatable_segments(job_id, state)
+        # #28：开始前选定的范围排除在这里落进排除账本——被排除的章节在第一次
+        # 模型调用之前就移出工作列表，不产生付费调用。
+        apply_scope_exclusion_plan(job_id, state)
         segments = state.get("paras") or []
-        state["source_cleanup"] = cleanup_meta
-        state["source_cleanup_done"] = True
         state["source_cleanup"].update({
             "paragraph_count": len(cleaned_paragraphs),
             "segment_count": len(segments),

@@ -283,3 +283,590 @@ def test_manifest_json_stays_serializable_after_scope_exclude(tmp_path):
         assert payload["records"][0]["reason"] == "范围排除：第一章 缘起"
     finally:
         core.OUTPUT_DIR = old_output
+
+
+# ---------------------------------------------------------------- 译前闭环（#28）
+
+def _docx_outline_state(job_id):
+    """新导入、还没开始的两章 DOCX 任务：没有 paras/pairs，只有源文件。
+
+    大纲形状与 ``folith.source_outline.parse_source_outline`` 的 DOCX 分支
+    一致：段落列表 + 每章一个节点（para_start / para_count / 指纹）。
+    """
+    state = core.new_job_state("two-chapters.docx")
+    state["filename"] = "two-chapters.docx"
+    return state
+
+
+def _two_chapter_outline():
+    paragraphs = [
+        "第一章 缘起", "Alpha body one.", "Alpha body two.",
+        "第二章 争论", "Beta body one.", "Beta body two.",
+    ]
+    outline = {
+        "format": "DOCX",
+        "nodes": [
+            {"id": "n0000", "kind": "chapter", "title": "第一章 缘起",
+             "level": 1, "para_start": 0, "para_count": 3,
+             "paragraphs": paragraphs[:3], "chars": 30,
+             "page_start": None, "page_end": None},
+            {"id": "n0001", "kind": "chapter", "title": "第二章 争论",
+             "level": 1, "para_start": 3, "para_count": 3,
+             "paragraphs": paragraphs[3:], "chars": 30,
+             "page_start": None, "page_end": None},
+        ],
+        "paragraphs": paragraphs,
+        "total_paragraphs": len(paragraphs),
+        "total_chars": sum(len(item) for item in paragraphs),
+        "pages": 0, "scanned": False, "partial": False,
+    }
+    from folith.source_outline import outline_fingerprint
+    outline["fingerprint"] = outline_fingerprint(outline)
+    return outline
+
+
+def test_pre_start_scope_tree_comes_from_source_outline(tmp_path):
+    """开始前：范围树从原文大纲读出两章，不再返回 available=false。"""
+    job_id = "scope-prestart-tree"
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        tree = core.translation_scope_tree(core.load_job_state(job_id))
+        assert tree["available"] is True
+        assert tree["pre_start"] is True
+        chapter = _chapter_nodes(tree)
+        assert [(node["key"], node["start"], node["end"]) for node in chapter["nodes"]] == [
+            ("outline:n0000", 0, 3), ("outline:n0001", 3, 6)]
+        assert tree["total"] == {"segments": 6,
+                                 "chars": sum(len(p) for p in [
+                                     "第一章 缘起", "Alpha body one.",
+                                     "Alpha body two.", "第二章 争论",
+                                     "Beta body one.", "Beta body two."])}
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_pre_start_exclusion_is_a_plan_and_applies_when_units_are_built(tmp_path):
+    """操作闭环：译前排除记成计划 → 任务开始建好翻译单元 → 落进排除账本。
+
+    审校探针的场景：新导入两章 DOCX，准备页选范围排除第二章，之后才开始翻译。
+    落账后第二章不进入翻译（不会为它发起任何付费模型调用），账本、交付与
+    恢复入口都按既有契约成立。
+    """
+    job_id = "scope-prestart-plan"
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        # 1) 译前排除第二章：还不触碰排除账本，只记计划。
+        result = core.exclude_translation_scope(job_id, ["outline:n0001"])
+        assert result["planned"] == 1 and result["excluded"] == 0
+        assert result["remaining"] == 3
+        state = core.load_job_state(job_id)
+        assert state.get("excluded_segments") in (None, []), \
+            "译前排除不落账：账本只描述已移出的翻译单元"
+        plan = state["scope_exclusion_plan"]
+        assert [entry["label"] for entry in plan["entries"]] == ["第二章 争论"]
+        assert plan["entries"][0]["para_start"] == 3
+        assert plan["entries"][0]["anchor_first"] == "第二章 争论"
+        tree = core.translation_scope_tree(state)
+        assert tree["excluded"]["count"] == 3, "总量按原文段落，记录按计划范围"
+
+        # 2) 任务开始：阶段一建好翻译单元（paras + paragraph_ranges + 清洗映射）。
+        state = core.load_job_state(job_id)
+        state["paras"] = ["第一章 缘起", "Alpha body one.", "Alpha body two.",
+                          "第二章 争论", "Beta body one.", "Beta body two."]
+        state["source_paras"] = list(state["paras"])
+        state["source_paragraphs"] = list(state["paras"])
+        state["source_cleanup"] = {
+            "output_input_indices": [[i] for i in range(6)]}
+        state["segmentation"] = {"paragraph_ranges": [
+            {"paragraph_index": i, "start": i, "end": i + 1}
+            for i in range(6)]}
+        core.save_job_state(job_id, state)
+        outcome = core.apply_scope_exclusion_plan(job_id, state)
+
+        # 3) 落账：第二章移出工作列表，第一章保持不动。
+        assert [item["label"] for item in outcome["applied"]] == ["第二章 争论"]
+        assert outcome["unapplied"] == []
+        # apply 不落盘（调用方随阶段收尾统一保存），这里保存后从盘上读回验证。
+        core.save_job_state(job_id, state)
+        state = core.load_job_state(job_id)
+        assert state["paras"] == ["第一章 缘起", "Alpha body one.",
+                                  "Alpha body two."]
+        records = core.excluded_segment_records(state)
+        assert [record["source"] for record in records] == \
+            ["第二章 争论", "Beta body one.", "Beta body two."]
+        assert {record["reason"] for record in records} == \
+            {"范围排除（译前）：第二章 争论"}
+        assert all(record["restorable"] for record in records)
+        assert state.get("scope_exclusion_plan") is None
+        assert state.get("source_outline") is None, "落账后范围入口回到工作列表口径"
+        applied_audit = state["scope_exclusion_applied"]
+        assert applied_audit[0]["excluded_count"] == 3
+
+        # 4) 已落账的排除可以照常恢复（与译后范围排除同一入口）。
+        core.restore_translation_scope(
+            job_id, [record["excluded_id"] for record in records])
+        state = core.load_job_state(job_id)
+        assert len(state["paras"]) == 6
+        assert state.get("excluded_segments") in (None, [])
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_pre_start_plan_survives_until_units_exist_and_restores_before_start(
+        tmp_path):
+    """计划撤下走同一个恢复入口；任务开始前不产生任何排除记录。"""
+    job_id = "scope-prestart-unplan"
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        core.exclude_translation_scope(job_id, ["outline:n0000"])
+        state = core.load_job_state(job_id)
+        excluded_id = state["scope_exclusion_plan"]["entries"][0]["excluded_id"]
+        result = core.restore_translation_scope(job_id, [excluded_id])
+        assert result["restored"] == 1 and result["remaining"] == 6
+        state = core.load_job_state(job_id)
+        assert state["scope_exclusion_plan"]["entries"] == []
+        assert state.get("excluded_segments") in (None, [])
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_pre_start_plan_unmappable_structure_is_reported_not_guessed(tmp_path):
+    """导入结构与大纲对不上（锚点验证失败）时如实报未应用，绝不猜位置。"""
+    job_id = "scope-prestart-mismatch"
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        core.exclude_translation_scope(job_id, ["outline:n0001"])
+        state = core.load_job_state(job_id)
+        # 任务开始，但提取出的结构与大纲不一致：锚点对不上。
+        state["paras"] = ["完全不同的开头", "另一段正文"]
+        state["source_paras"] = list(state["paras"])
+        state["source_paragraphs"] = list(state["paras"])
+        core.save_job_state(job_id, state)
+        outcome = core.apply_scope_exclusion_plan(job_id, state)
+        assert outcome["applied"] == []
+        assert [item["label"] for item in outcome["unapplied"]] == ["第二章 争论"]
+        core.save_job_state(job_id, state)
+        state = core.load_job_state(job_id)
+        assert state["paras"] == ["完全不同的开头", "另一段正文"], "不猜位置"
+        assert state.get("excluded_segments") in (None, [])
+        assert any("译前范围排除未能应用" in w for w in state["warnings"])
+        assert state["scope_exclusion_applied"][-1]["unapplied"] is True
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_pre_start_plan_never_applies_after_pairs_exist(tmp_path):
+    """位置契约已建立后计划不得再落账：事后位移会打乱已持久化的引用。"""
+    job_id = "scope-prestart-late"
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        core.exclude_translation_scope(job_id, ["outline:n0001"])
+        state = core.load_job_state(job_id)
+        state["paras"] = ["第一章 缘起", "Alpha body one.", "Alpha body two.",
+                          "第二章 争论", "Beta body one.", "Beta body two."]
+        state["pairs"] = [{"source": text, "target": f"译文{i}"}
+                          for i, text in enumerate(state["paras"])]
+        core.save_job_state(job_id, state)
+        outcome = core.apply_scope_exclusion_plan(job_id, state)
+        assert outcome["applied"] == []
+        assert len(outcome["unapplied"]) == 1
+        state = core.load_job_state(job_id)
+        assert len(state["pairs"]) == 6, "pairs 一个都不能少"
+        assert state.get("scope_exclusion_plan") is not None, "计划保留待查"
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_ensure_source_outline_parses_and_persists_once(tmp_path):
+    """首次打开准备页时解析大纲并落盘；再开一次、或任务已开始时不再重解析。"""
+    job_id = "scope-ensure-outline"
+    state = _docx_outline_state(job_id)
+    state["filename"] = "plan.md"  # 内容按 Markdown 给（本地文字层路径）
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        core.save_source(job_id, (
+            "# 第一章 缘起\n\nAlpha body one.\n\nAlpha body two.\n\n"
+            "# 第二章 争论\n\nBeta body one.\n\nBeta body two.\n"
+        ).encode("utf-8"))
+        first = core.ensure_source_outline(job_id)
+        assert first["source_outline"]["total_paragraphs"] == 6
+        saved_at = (core.job_dir(job_id) / "state.json").stat().st_mtime_ns
+        again = core.ensure_source_outline(job_id)
+        assert again["source_outline"]["total_paragraphs"] == 6
+        assert (core.job_dir(job_id) / "state.json").stat().st_mtime_ns == saved_at, \
+            "已有大纲时不得再次写盘"
+
+        started_state = core.load_job_state(job_id)
+        started_state.pop("source_outline", None)
+        started_state.update(p1_done=True, paras=["已开始"])
+        core.save_job_state(job_id, started_state)
+        started = core.ensure_source_outline(job_id, first)  # intentionally stale snapshot
+        assert "source_outline" not in started
+        assert started["paras"] == ["已开始"]
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+# ------------------------------------------------- 补充探针回归（验收二轮）
+
+def test_multi_entry_plan_applies_all_entries_without_index_drift(tmp_path):
+    """[P1] 多条目一次落账：先汇总全部索引再统一移除，逐条删除不再错位。
+
+    审校探针的场景：真实两章 DOCX 全选排除后，账本四段全部排除，但第二章
+    两段仍到达翻译入口。修复后工作列表必须清空，账本来源与原文一一对应。
+    """
+    job_id = "scope-multi-entry"
+    sources = ["第一章 缘起", "Alpha body.", "第二章 争论", "Beta body."]
+    outline = _two_chapter_outline()
+    outline["paragraphs"] = list(sources)
+    outline["total_paragraphs"] = len(sources)
+    outline["total_chars"] = sum(len(item) for item in sources)
+    outline["nodes"][0].update(paragraphs=sources[:2], para_count=2,
+                               chars=sum(len(item) for item in sources[:2]))
+    outline["nodes"][1].update(para_start=2, paragraphs=sources[2:],
+                               para_count=2,
+                               chars=sum(len(item) for item in sources[2:]))
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = outline
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        # 先在译前把两章都记成计划（此时还没有翻译单元，p1_done 为假）。
+        core.exclude_translation_scope(
+            job_id, ["outline:n0000", "outline:n0001"])
+        state = core.load_job_state(job_id)
+        assert len(state["scope_exclusion_plan"]["entries"]) == 2
+        # 任务开始：建好翻译单元（与大纲逐段对应）。
+        state = core.load_job_state(job_id)
+        state["paras"] = list(sources)
+        state["source_paras"] = list(sources)
+        state["source_paragraphs"] = list(sources)
+        state["p1_done"] = True
+        state["segmentation"] = {"mode": "sentence", "locked": True,
+                                 "paragraph_ranges": [
+            {"paragraph_index": i, "start": i, "end": i + 1}
+            for i in range(4)]}
+        core.save_job_state(job_id, state)
+        state = core.load_job_state(job_id)
+        outcome = core.apply_scope_exclusion_plan(job_id, state)
+        core.save_job_state(job_id, state)
+
+        assert len(outcome["applied"]) == 2 and outcome["unapplied"] == []
+        state = core.load_job_state(job_id)
+        # 工作列表彻底清空：两章的段都到不了翻译入口。
+        assert state["paras"] == []
+        records = core.excluded_segment_records(state)
+        assert [record["source"] for record in records] == list(sources)
+        reasons = {record["source"]: record["reason"] for record in records}
+        assert reasons["第一章 缘起"] == "范围排除（译前）：第一章 缘起"
+        assert reasons["Beta body."] == "范围排除（译前）：第二章 争论"
+        assert state.get("scope_exclusion_plan") is None
+        # 审计里两条目各 2 段，没有把四段算到一个条目头上。
+        counts = sorted(item["excluded_count"] for item in state["scope_exclusion_applied"])
+        assert counts == [2, 2]
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_plan_applies_through_many_to_one_cleanup_mapping(tmp_path):
+    """[P1] 清洗映射（output_input_indices）在计划应用时已可读。
+
+    探针场景：``[[0, 1], [2]]`` 的清洗映射把前两段原始段落并成一个翻译单元；
+    排除第三页（原始第 3 段）必须经映射落到清洗后单元 1，而不是被报成
+    "结构不一致"后仍进入翻译。
+    """
+    job_id = "scope-plan-cleanup-map"
+    raw = ["Alpha one.", "Alpha two.", "Beta body."]
+    cleaned = ["Alpha one.\nAlpha two.", "Beta body."]
+    state = core.new_job_state("three-pages.docx")
+    state["filename"] = "three-pages.docx"
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        state = core.load_job_state(job_id)
+        state["source_outline"] = {
+            "format": "DOCX", "total_paragraphs": 3,
+            "total_chars": sum(len(item) for item in raw),
+            "paragraphs": list(raw),
+            "nodes": [{"id": "n0000", "kind": "chapter", "title": "Beta",
+                       "level": 1, "para_start": 2, "para_count": 1,
+                       "paragraphs": raw[2:], "chars": len(raw[2]),
+                       "page_start": None, "page_end": None}],
+            "pages": 0, "scanned": False, "partial": False, "fingerprint": "x",
+        }
+        core.save_job_state(job_id, state)
+        core.exclude_translation_scope(job_id, ["outline:n0000"])
+        # 任务开始：清洗把 0、1 并成单元 0，原始第 2 段是单元 1。
+        state = core.load_job_state(job_id)
+        state["paras"] = list(cleaned)
+        state["source_paras"] = list(raw)
+        state["source_paragraphs"] = list(cleaned)
+        state["source_cleanup"] = {"output_input_indices": [[0, 1], [2]]}
+        state["segmentation"] = {"mode": "sentence", "locked": True,
+                                 "paragraph_ranges": [
+            {"paragraph_index": 0, "start": 0, "end": 1},
+            {"paragraph_index": 1, "start": 1, "end": 2}]}
+        state["p1_done"] = True
+        core.save_job_state(job_id, state)
+        state = core.load_job_state(job_id)
+        outcome = core.apply_scope_exclusion_plan(job_id, state)
+        core.save_job_state(job_id, state)
+
+        assert outcome["unapplied"] == [], outcome
+        assert [item["label"] for item in outcome["applied"]] == ["Beta"]
+        state = core.load_job_state(job_id)
+        assert state["paras"] == ["Alpha one.\nAlpha two."]
+        records = core.excluded_segment_records(state)
+        assert [record["source"] for record in records] == ["Beta body."]
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_started_task_with_all_excluded_keeps_ledger_visible_in_scope(tmp_path):
+    """[P2] 已开始的任务全部排除后：范围树回到账本口径，恢复记录不丢。"""
+    job_id = "scope-all-excluded-ledger"
+    old_output = _persist(tmp_path, job_id, _state())
+    try:
+        first = _chapter_nodes(core.translation_scope_tree(
+            core.load_job_state(job_id)))["nodes"][0]["key"]
+        core.exclude_translation_scope(job_id, [first])
+        # 范围键跟着工作列表重算：排除一章后剩下的章拿新的键。
+        second = _chapter_nodes(core.translation_scope_tree(
+            core.load_job_state(job_id)))["nodes"][0]["key"]
+        core.exclude_translation_scope(job_id, [second])
+        state = core.load_job_state(job_id)
+        assert state["paras"] == [] and state["p1_done"]
+        tree = core.translation_scope_tree(state)
+        assert tree["available"] is False
+        assert tree["pre_start"] is False, "已开始的任务不得落进译前分支"
+        assert tree["excluded"]["count"] == 4, "账本记录必须能在对话框里恢复"
+        assert all(record["source"] for record in tree["excluded"]["records"])
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_pre_start_totals_reflect_the_exclusion_plan(tmp_path):
+    """[P2] 译前排除后的总量与预估都要扣除计划范围。
+
+    预估按**正常使用顺序**验证：排除前先看一次预估（填充缓存），排除第二章
+    之后**不清缓存**再读一次——缓存命中也必须走计划扣减（审校探针的场景：
+    缓存命中绕过扣减，预估停留在四段）。
+    """
+    job_id = "scope-plan-totals"
+    state = _docx_outline_state(job_id)
+    state["filename"] = "plan.md"  # 预估走本地文字层提取（txt/md 直接读）
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        from folith.qt import adapter as qt_adapter
+        qt_adapter._source_size_cache.clear()
+        core.save_source(job_id, "第一章 缘起\n\nAlpha body one.\n\nAlpha body two.\n\n"
+                         "第二章 争论\n\nBeta body one.\n\nBeta body two.\n".encode("utf-8"))
+        before = qt_adapter.source_size(job_id)
+        assert before and before["segments"] == 6, before
+
+        core.exclude_translation_scope(job_id, ["outline:n0001"])
+        state = core.load_job_state(job_id)
+        tree = core.translation_scope_tree(state)
+        # 总量扣掉第二章：剩第一章的 3 段。
+        assert tree["total"]["segments"] == 3
+        assert tree["total"]["chars"] == sum(len(item) for item in
+                                             state["source_outline"]["paragraphs"][:3])
+        totals = core.scope_plan_totals(state)
+        assert totals["segments"] == 3
+        assert totals["chars"] == sum(len(item) for item in
+                                      state["source_outline"]["paragraphs"][3:])
+
+        # 缓存命中路径：预估同步扣减（排除前后的差异即计划范围）。
+        after = qt_adapter.source_size(job_id)
+        assert after["segments"] == 3, after
+        assert after["chars"] == before["chars"] - totals["chars"], after
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def _cleanup_mapping_state(job_id, tmp_path, raw, cleaned, mapping):
+    """建好翻译单元的任务：清洗映射为 ``mapping``（清洗后段 → 原始段列表）。"""
+    state = core.new_job_state("three-pages.pdf")
+    state["filename"] = "three-pages.pdf"
+    old_output = _persist(tmp_path, job_id, state)
+    state = core.load_job_state(job_id)
+    state["source_outline"] = {
+        "format": "PDF", "total_paragraphs": len(raw),
+        "total_chars": sum(len(item) for item in raw),
+        "paragraphs": list(raw),
+        "nodes": [{"id": "n0000", "kind": "chapter", "title": "第一节",
+                   "level": 1, "para_start": 0, "para_count": 2,
+                   "paragraphs": raw[:2], "chars": sum(len(x) for x in raw[:2]),
+                   "page_start": None, "page_end": None}],
+        "pages": 0, "scanned": False, "partial": False, "fingerprint": "x",
+    }
+    core.save_job_state(job_id, state)
+    return old_output, state
+
+
+def test_partial_cleanup_merge_never_deletes_kept_content(tmp_path):
+    """[P1] 清洗合并跨越排除边界：部分覆盖整条拒用，保留内容一个不删。
+
+    审校探针的复现：三页 PDF，清洗映射 ``[[0, 1], [2]]`` 把第 1、2 页合并成
+    一个翻译单元；只排除第二页时，删掉合并单元会把用户保留的第一页一起
+    移走。修复后整条计划按未应用上报（带警告），翻译列表原样保留。
+    """
+    job_id = "scope-partial-merge"
+    raw = ["第一页的内容。", "第二页的内容。", "第三页的内容。"]
+    cleaned = ["第一页的内容。\n第二页的内容。", "第三页的内容。"]
+    old_output, _state = _cleanup_mapping_state(job_id, tmp_path, raw, cleaned,
+                                                [[0, 1], [2]])
+    try:
+        # 大纲里"第二节"覆盖原始第 2 段（第二页）。
+        state = core.load_job_state(job_id)
+        state["source_outline"]["nodes"].append(
+            {"id": "n0001", "kind": "chapter", "title": "第二节",
+             "level": 1, "para_start": 1, "para_count": 1,
+             "paragraphs": raw[1:2], "chars": len(raw[1]),
+             "page_start": None, "page_end": None})
+        core.save_job_state(job_id, state)
+        core.exclude_translation_scope(job_id, ["outline:n0001"])
+        # 任务开始：清洗合并了第 1、2 页。
+        state = core.load_job_state(job_id)
+        state["paras"] = list(cleaned)
+        state["source_paras"] = list(raw)
+        state["source_paragraphs"] = list(cleaned)
+        state["source_cleanup"] = {"output_input_indices": [[0, 1], [2]]}
+        state["segmentation"] = {"mode": "sentence", "locked": True,
+                                 "paragraph_ranges": [
+            {"paragraph_index": 0, "start": 0, "end": 1},
+            {"paragraph_index": 1, "start": 1, "end": 2}]}
+        state["p1_done"] = True
+        core.save_job_state(job_id, state)
+        state = core.load_job_state(job_id)
+        outcome = core.apply_scope_exclusion_plan(job_id, state)
+        core.save_job_state(job_id, state)
+
+        assert outcome["applied"] == []
+        assert [item["label"] for item in outcome["unapplied"]] == ["第二节"]
+        state = core.load_job_state(job_id)
+        # 保留的内容一个不动：合并单元（含第一页）原样留在翻译列表。
+        assert state["paras"] == cleaned
+        assert state.get("excluded_segments") in (None, [])
+        assert any("合并" in w for w in state["warnings"]), state["warnings"]
+        assert state["scope_exclusion_applied"][-1]["partial_coverage"]
+
+        # 正例：把第一、二页一起排除（并集完整覆盖合并单元）则合法应用。
+        # （apply 之后 source_outline 已被清出；直接注入计划，apply 只对锚点。）
+        state = core.load_job_state(job_id)
+        state["excluded_segments"] = []
+        state["scope_exclusion_applied"] = []
+        state["scope_exclusion_plan"] = {
+            "entries": [{"excluded_id": "x900001", "key": "outline:n0000",
+                         "kind": "chapter", "label": "第一二节",
+                         "para_start": 0, "para_end": 2,
+                         "anchor_first": raw[0], "anchor_last": raw[1],
+                         "reason": "范围排除（译前）：第一二节",
+                         "planned_at": "2026-10-25T00:00:00+00:00",
+                         "planned_by": "user"}],
+            "fingerprint": "x"}
+        core.save_job_state(job_id, state)
+        state = core.load_job_state(job_id)
+        outcome = core.apply_scope_exclusion_plan(job_id, state)
+        core.save_job_state(job_id, state)
+        assert outcome["unapplied"] == []
+        state = core.load_job_state(job_id)
+        assert state["paras"] == ["第三页的内容。"], \
+            "并集完整覆盖合并单元时才允许删除"
+        # 账本记录的是被移出的**翻译单元**（合并后的文本），一条。
+        records = core.excluded_segment_records(state)
+        assert len(records) == 1
+        assert records[0]["source"] == cleaned[0]
+        assert records[0]["reason"] == "范围排除（译前）：第一二节"
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_imported_docx_plan_runs_through_the_real_pipeline(tmp_path, monkeypatch):
+    """真实 DOCX → 本地范围 → 管线钩子 → 翻译请求 → 交付账本 → 恢复。"""
+    import io
+    import re
+    from docx import Document
+    from folith.qt import adapter
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "scope-real-pipeline"
+    document = Document()
+    for title, body in [("第一章 缘起", "Alpha body one."),
+                        ("第二章 争论", "Beta body one.")]:
+        document.add_heading(title, level=1)
+        document.add_paragraph(body)
+    stream = io.BytesIO()
+    document.save(stream)
+    data = stream.getvalue()
+    core.save_source(job_id, data)
+    core.save_job_state(job_id, core.new_job_state("scope.docx"))
+    tree = adapter.translation_scope(job_id)
+    second = tree["groups"][0]["nodes"][1]
+    adapter.exclude_scope(job_id, [second["key"]])
+    requests = []
+
+    def offline_provider(*args, **kwargs):
+        system, user = args[3:5]
+        requests.append(user)
+        if "学术翻译专家" in system:
+            sources = re.findall(r"^\s*\d+\.\s+(.+?)\s*$",
+                                 user.rsplit("待翻译段落", 1)[-1], re.MULTILINE)
+            return json.dumps([f"这是第 {i+1} 段中文译文。" for i in range(len(sources))])
+        return "[]"
+
+    monkeypatch.setattr(core, "call_llm", offline_provider)
+    state = core.run_job_pipeline(
+        job_id, "scope.docx", data, provider="DeepSeek", api_key="offline",
+        model="deepseek-chat", target_lang="简体中文", auto_term=False,
+        enable_report=False, translation_theory="目的论", enable_review=False,
+        enable_annotate=False, use_tm=False, enable_understanding=False,
+        enable_source_cleanup=False, delivery_config=core.default_delivery_config())
+    assert state["p2_done"]
+    assert requests, "管线确实调用过 provider 替身"
+    assert all("Beta body" not in user and "第二章 争论" not in user for user in requests)
+    assert [pair["source"] for pair in state["pairs"]] == ["第一章 缘起", "Alpha body one."]
+    records = core.excluded_segment_records(state)
+    assert [r["source"] for r in records] == ["第二章 争论", "Beta body one."]
+    manifest = core.excluded_segments_manifest(state)
+    assert manifest["origins"]["user"] == 2
+    result = adapter.restore_scope(job_id, [r["excluded_id"] for r in records])
+    assert result["restored"] == 2
+    reopened = core.load_job_state(job_id)
+    assert reopened["paras"] == ["第一章 缘起", "Alpha body one.", "第二章 争论", "Beta body one."]
+
+    assert len(reopened["pairs"]) == len(reopened["paras"])
+    assert [p["source"] for p in reopened["pairs"]] == reopened["paras"]
+    assert [p["target"] for p in reopened["pairs"][:2]] == [p["target"] for p in state["pairs"]]
+    assert all(not p.get("target") and not p.get("reviewed") for p in reopened["pairs"][2:])
+
+
+def test_restore_pretranslation_exclusion_does_not_shift_later_translations(tmp_path):
+    state = _state(translated=True)
+    before_pairs = json.loads(json.dumps(state["pairs"]))
+    # Simulate a source-only exclusion from before translation, in the middle.
+    state["paras"].pop(1)
+    state["pairs"].pop(1)
+    state["excluded_segments"] = [{"excluded_id": "x000001", "index": 1,
+        "source": "Alpha body.", "target": "", "pair": None,
+        "before_source": "第一章 缘起", "after_source": "第二章 争论",
+        "excluded_by": "user"}]
+    old_output = _persist(tmp_path, "scope-restore-middle", state)
+    try:
+        restored = core.restore_translation_scope("scope-restore-middle", ["x000001"])["state"]
+        assert len(restored["pairs"]) == len(restored["paras"]) == 4
+        assert [p["source"] for p in restored["pairs"]] == restored["paras"]
+        assert restored["pairs"][1]["target"] == ""
+        assert restored["pairs"][2]["target"] == before_pairs[2]["target"]
+        assert restored["pairs"][3]["target"] == before_pairs[3]["target"]
+    finally:
+        core.OUTPUT_DIR = old_output

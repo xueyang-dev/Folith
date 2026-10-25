@@ -624,6 +624,8 @@ class TaskSetupPanel(QWidget):
     #: 还要刷新首页的项目列表，那些都是 window 的职责（它持有对话框与其它页面）。
     #: 面板只负责发出意图，再由 window 调 `add_project()` 把结果填回来。
     createProjectRequested = Signal()
+    #: 译前翻译范围入口（#28）：结构区块只发意图，对话框与状态变更在 window。
+    scopeRequested = Signal()
     termbaseAddRequested = Signal()
     styleProfileRequested = Signal()
     profileEditRequested = Signal()
@@ -723,8 +725,10 @@ class TaskSetupPanel(QWidget):
         languages.setColumnStretch(1, 1)
         column.addLayout(languages)
         # ② 原文结构（#27，只读）：里面写了什么——本地解析的章节/页/段落分组
-        #    与原文预览，未调用模型；摘要行收起时也把答案说出来。
+        #    与原文预览，未调用模型；摘要行收起时也把答案说出来。区块里带
+        #    「翻译范围…」按钮（#28）：开始前排除不打算付费翻译的章节。
         self.source_section = SourceOutlineSection()
+        self.source_section.scopeRequested.connect(self.scopeRequested.emit)
         column.addWidget(self.source_section)
         # ③ 常用：翻译模式（一条分段轨道 + 一句话说明）
         column.addWidget(self._build_strategy_card())

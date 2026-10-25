@@ -1200,16 +1200,24 @@ def include_segment(job_id: str, excluded_id: str) -> dict:
 
 
 def translation_scope(job_id: str, state: dict | None = None) -> dict:
-    """翻译范围的只读结构：页 / 章 / 节 → 当前工作列表的连续索引区间。
+    """翻译范围的只读结构：页 / 章 / 节 → 翻译单元（或译前原文段落）区间。
 
     范围选择是既有排除账本的批量入口（不另设"排除真相"），这里只做投影，
-    不做任何修改。`available` 为 False 表示任务还没有段落（尚未完成原文提取），
-    界面就不显示范围入口。被排除的段落在 `excluded` 里给出，供同一对话框恢复。
+    不做任何修改。任务已开始时来自当前工作列表；**还没开始**时来自 #27 的
+    本地原文大纲（``core.ensure_source_outline`` 会在首次打开时解析并落盘），
+    译前排除记成计划、任务开始后落账——这是 #28"开始前排除不想付费翻译的
+    章节"的闭环。`available` 为 False 表示本地读不出可选结构（扫描件、源文件
+    不在盘上），界面就不显示范围入口。被排除的段落在 `excluded` 里给出，供
+    同一个对话框恢复。
     """
     state = state if state is not None else load_state(job_id)
     tree = core.translation_scope_tree(state or {})
+    if not tree.get("available"):
+        state = core.ensure_source_outline(job_id, state) or {}
+        tree = core.translation_scope_tree(state)
     return {
         "available": bool(tree.get("available")),
+        "pre_start": bool(tree.get("pre_start")),
         "groups": [
             {"kind": str(group.get("kind") or ""),
              "label": str(group.get("label") or ""),
@@ -5318,12 +5326,28 @@ _EST_CHARS_PER_SCANNED_PAGE = 1800
 _source_size_cache: dict[tuple[str, int], dict] = {}
 
 
+def _size_after_plan(state: dict | None, result: dict) -> dict:
+    """给预估结果扣掉译前排除计划的范围（缓存命中与首次计算共用）。
+
+    缓存里存的是原文全量口径；计划变化时按当前计划即时扣减，不污染缓存。
+    """
+    if not result:
+        return {}
+    plan = core.scope_plan_totals(state or {})
+    if plan["segments"]:
+        return {"segments": max(0, int(result["segments"]) - plan["segments"]),
+                "chars": max(0, int(result["chars"]) - plan["chars"]),
+                "approximate": result["approximate"]}
+    return dict(result)
+
+
 def source_size(job_id: str) -> dict:
     """原文的段落数与字符数，给模式预估用（只读文字层，不 OCR、不调模型）。
 
     任务开始前状态里还没有段落，所以从原文件读；结果按文件大小缓存。PDF 只数文本块，
     不为预估运行版面重建；扫描页按页数估。PDF 的 ``approximate`` 为 True。
-    读不出来时返回空，界面不显示预估。
+    读不出来时返回空，界面不显示预估。译前排除计划的范围在返回前扣掉——
+    缓存命中与首次计算走同一个扣减出口（``_size_after_plan``）。
     """
     try:
         data = core.load_source(job_id)
@@ -5332,8 +5356,6 @@ def source_size(job_id: str) -> dict:
     if not data:
         return {}
     key = (job_id, len(data))
-    if key in _source_size_cache:
-        return dict(_source_size_cache[key])
     state = load_state(job_id)
     # 阶段一已经建好段落契约（系统排除与用户的范围排除都已应用）时，用真实的
     # 工作列表估算：从这里开始预估必须跟随范围选择，而不是每次都从原文件把
@@ -5344,8 +5366,10 @@ def source_size(job_id: str) -> dict:
         result = {"segments": len(state_paras),
                   "chars": sum(len(item) for item in state_paras),
                   "approximate": False}
-        _source_size_cache[key] = dict(result)
         return result
+    cached = _source_size_cache.get(key)
+    if cached is not None:
+        return _size_after_plan(state, cached)
     filename = str(state.get("filename") or "")
     pdf = filename.lower().endswith(".pdf")
     pages = 0
@@ -5379,10 +5403,10 @@ def source_size(job_id: str) -> dict:
             chars = pages * _EST_CHARS_PER_SCANNED_PAGE
             paragraphs = paragraphs or [""] * (pages * 8)
             approximate = True
-    result = {"segments": len(paragraphs), "chars": chars, "approximate": approximate} \
-        if chars else {}
-    _source_size_cache[key] = dict(result)
-    return result
+    raw_result = {"segments": len(paragraphs), "chars": chars,
+                  "approximate": approximate} if chars else {}
+    _source_size_cache[key] = dict(raw_result)
+    return _size_after_plan(state, raw_result)
 
 
 def strategy_estimates(size: dict) -> dict:

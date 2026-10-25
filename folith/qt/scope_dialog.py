@@ -61,9 +61,19 @@ class ScopeDialog(QDialog):
 
         body = QVBoxLayout()
         body.setSpacing(theme_module.SPACE["sm"])
-        if not self.scope.get("available"):
+        if not self.scope.get("available") and excluded.get("records"):
+            body.addWidget(_label(i18n.tr(
+                '当前没有待翻译段落；可在下方恢复已排除的内容。'), "meta", wrap=True))
+        elif not self.scope.get("available"):
             body.addWidget(_label(
-                i18n.tr('任务还没有可编辑的段落：等原文提取完成后再来选择范围。'),
+                i18n.tr('本地读不出这份文件的结构（扫描件或源文件缺失），'
+                        '开始翻译后可在工作台逐段排除。'),
+                "meta", wrap=True))
+        elif self.scope.get("pre_start"):
+            body.addWidget(_label(
+                i18n.tr('任务还没有开始：这里的范围来自本地读取的原文结构。'
+                        '现在排除的内容在开始翻译时生效，不产生任何模型调用；'
+                        '开始后也能在这里恢复。'),
                 "meta", wrap=True))
         for group in self.scope.get("groups") or []:
             body.addWidget(self._build_group(group))
@@ -153,9 +163,16 @@ class ScopeDialog(QDialog):
         box.addLayout(header)
         for record in records:
             excluded_id = str(record.get("excluded_id") or "")
+            position = str(record.get("position") or "")
             index = record.get("segment_index")
-            where = i18n.tr('第 {v0} 段', v0=int(index) + 1) \
-                if isinstance(index, int) else i18n.tr('原位置未知')
+            start, end = record.get("source_start"), record.get("source_end")
+            if isinstance(start, int) and isinstance(end, int):
+                where = (i18n.tr('原文第 {v0}–{v1} 段', v0=start, v1=end)
+                         if end > start else i18n.tr('原文第 {v0} 段', v0=start))
+            else:
+                where = position or (
+                    i18n.tr('第 {v0} 段', v0=int(index) + 1)
+                    if isinstance(index, int) else i18n.tr('原位置未知'))
             source = " ".join(str(record.get("source") or "").split())[:60]
             reason = str(record.get("reason") or "")
             check = style_module.CheckBox(
