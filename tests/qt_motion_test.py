@@ -350,6 +350,8 @@ def test_reopening_same_sized_grid_restores_editor_and_inspector(bench):
 def test_source_location_waits_for_transition_and_follows_latest_selection(bench, monkeypatch):
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
     bench._pdf_ok = True
+    # issue #61 之后原页由 _source_available（_pdf_ok 或流式源）把关。
+    bench._source_available = True
     located = []
     monkeypatch.setattr(bench.pdf_panel, "locate", lambda index, **kw: located.append(index))
     bench.set_source_open(True)
