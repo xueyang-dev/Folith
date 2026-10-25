@@ -313,7 +313,7 @@ def test_roles_can_use_different_models_from_one_saved_api(isolated, app, monkey
 
 def test_discovered_model_catalog_is_saved_with_the_api(isolated, app, monkeypatch):
     monkeypatch.setattr(adapter, "provider_models", lambda *args:
-                        (True, ["first", "second"], "OK"))
+                        (True, ["first", "second"], "OK", {}))
     dialog = dialogs.EngineDialog(adapter.EngineConfig(), Runner())
     dialog._fetch_models()
     assert dialog.model_box.findText("second") >= 0
@@ -435,7 +435,9 @@ def test_connection_editor_is_a_sheet_and_the_page_has_one_save(isolated, app):
     library.models.setText("m-1, m-2")
     library.add_model()
     assert dialog.model_box.currentText() == "m-2"
-    assert [library.model_list.item(i).text() for i in range(library.model_list.count())][-2:] == ["m-1", "m-2"]
+    # #48：列表显示带输入类型标注；手动加的模型没有目录声明，如实「未知」。
+    assert [library.model_list.item(i).text()
+            for i in range(library.model_list.count())][-2:] == ["m-1 · 未知", "m-2 · 未知"]
     dialog.close()
 
 
@@ -451,6 +453,7 @@ def test_labels_looked_up_from_tables_are_translated():
     keys |= {label for label, _key in dialogs.EngineDialog.MODE_STEPS}
     keys |= set(ConnectionPanel.STATE_TEXT.values()) | set(ConnectionPanel.ROLE_SHORT.values())
     keys |= set(ConnectionLibrary.STATE_TEXT.values()) | {l for _r, l in ConnectionLibrary.ROLES}
+    keys |= set(ConnectionLibrary.INPUT_LABELS.values())
     keys |= set(connection_status.ROLE_LABELS.values())
     keys |= {label.split("（")[0] for label, _mode in adapter.OCR_MODE_CHOICES}
     root = Path(__file__).resolve().parents[1] / "folith" / "resources" / "locales"

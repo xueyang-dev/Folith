@@ -450,7 +450,7 @@ def provider_error_message(error, action="请求失败"):
 def _fetch_gemini_models(api_key):
     """Use Gemini's native, paginated directory instead of an OpenAI route."""
     if not (api_key or "").strip():
-        return False, [], "请先填写 API Key"
+        return False, [], "请先填写 API Key", {}
     models = []
     params = {"pageSize": 1000}
     try:
@@ -471,10 +471,10 @@ def _fetch_gemini_models(api_key):
                 break
             params["pageToken"] = payload["nextPageToken"]
     except httpx.HTTPError as exc:
-        return False, [], provider_error_message(exc, "获取模型失败")
+        return False, [], provider_error_message(exc, "获取模型失败"), {}
     except (ValueError, AttributeError, TypeError):
-        return False, [], "获取模型失败：服务商返回了无法解析的响应。"
+        return False, [], "获取模型失败：服务商返回了无法解析的响应。", {}
     models = sorted(set(models), key=str.casefold)
     if not models:
-        return False, [], "模型目录为空或返回格式不受支持"
-    return True, models, f"已获取 {len(models)} 个可用模型"
+        return False, [], "模型目录为空或返回格式不受支持", {}
+    return True, models, f"已获取 {len(models)} 个可用模型", {}
