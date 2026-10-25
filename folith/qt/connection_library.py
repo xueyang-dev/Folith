@@ -196,6 +196,9 @@ class ConnectionLibrary(QWidget):
         dialog.model_box.currentTextChanged.connect(lambda _t: self._sync_model_list())
         # 换提供商（含目录↔自定义切换）后，上一家目录声明过的输入模态不再可信。
         dialog.provider_box.currentTextChanged.connect(self._provider_changed)
+        # 密钥/地址变了，探测缓存的指纹就换了：标签要跟着回到真实的「未知」。
+        dialog.key_edit.textChanged.connect(lambda _t: self._sync_model_list())
+        dialog.base_edit.textChanged.connect(lambda _t: self._sync_model_list())
         dialog.test_button.setParent(self.editor)
         dialog.test_button.hide()
         body.addWidget(dialog.test_label)
@@ -613,11 +616,13 @@ class ConnectionLibrary(QWidget):
         self._catalog_modalities = {
             str(m): [str(x) for x in (v or [])]
             for m, v in (p.get("model_modalities") or {}).items()}
+        # 密钥/地址要先落位再触发列表刷新：探测缓存按 连接+模型 指纹查，
+        # 刷新发生在密钥还是空的时候会把「实测过」错画成「未知」。
+        self.dialog.key_edit.setText(p.get("api_key", ""))
+        self.dialog.base_edit.setText(p.get("base_url", ""))
         self.dialog.model_box.addItems([m for m in p.get("models", [])
                                        if self.dialog.model_box.findText(m) < 0])
         self.dialog.model_box.setCurrentText(p["model"])
-        self.dialog.key_edit.setText(p.get("api_key", ""))
-        self.dialog.base_edit.setText(p.get("base_url", ""))
         self.custom_settings.setChecked(bool(p.get("base_url")))
         self.dialog.reasoning_box.setCurrentIndex(max(0,
             self.dialog.reasoning_box.findData(p.get("reasoning_effort", ""))))
