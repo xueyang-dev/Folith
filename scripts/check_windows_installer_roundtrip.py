@@ -18,7 +18,7 @@ refuses to run on a machine where Folith is already installed.
 
 Usage:
     python scripts/check_windows_installer_roundtrip.py `
-        --installer dist/installer/Folith-Setup-0.7.1-windows-x64.exe `
+        --installer dist/installer/Folith-Setup-0.7.2-windows-x64.exe `
         --out build/qt-windows/windows-installer-roundtrip.json
 """
 from __future__ import annotations

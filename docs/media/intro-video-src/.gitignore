@@ -1,0 +1,8 @@
+node_modules/
+assets/shots/
+assets/brand/
+audio/music.wav
+renders/
+snapshots/
+.debug/
+.hyperframes/

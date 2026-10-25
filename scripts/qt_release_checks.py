@@ -193,7 +193,7 @@ def build_manifest(app: Path, out_dir: Path) -> dict:
         "distribution": {
             "signed": False,
             "notarized": False,
-            "scope": "public release v0.7.1 (unsigned, not notarized)",
+            "scope": f"release candidate v{build_info.get('app_version', '')} (unsigned, not notarized)",
         },
     }
 
@@ -321,7 +321,7 @@ def render_notes(manifest: dict, dmg: dict, install_notes: str = "") -> str:
         "",
         f"- 签名：{'是' if dist.get('signed') else '否'}；公证："
         f"{'是' if dist.get('notarized') else '否'}",
-        "- 适用范围：**v0.7.1 macOS DMG（未签名、未公证）**。首次打开需在「应用程序」中右键 → 打开，"
+        f"- 适用范围：**v{app.get('app_version', '')} macOS DMG（未签名、未公证）**。首次打开需在「应用程序」中右键 → 打开，"
         "为本应用明确放行一次；**不要**全局关闭 Gatekeeper。",
         "- Developer ID 签名、hardened runtime、公证与 staple 尚未完成，计划在后续版本补齐；"
         "7 条强制人工验收（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9）作为发布后验证继续进行，尚未全部闭环。",

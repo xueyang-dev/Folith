@@ -23,9 +23,16 @@ KNOWLEDGE_MARKER = "翻译流知识抽取器"
 
 def _translations(user_prompt: str) -> str:
     tail = user_prompt.split(TRANSLATION_MARKER, 1)[-1]
-    count = len(re.findall(r"(?m)^\d+\.\s+", tail))
-    return json.dumps([f"欧洲空间局译文 {index}" for index in range(count)],
-                      ensure_ascii=False)
+    sources = re.findall(r"(?m)^\d+\.\s+(.*)$", tail)
+    # Preserve each source's number: the deterministic number check (added for
+    # #101) correctly flags drafts that drop one, and these fixtures are about
+    # knowledge feedback, not about losing numbers.
+    results = []
+    for source in sources:
+        numbers = re.findall(r"\d+", source)
+        suffix = f" {numbers[-1]}" if numbers else ""
+        results.append(f"欧洲空间局译文{suffix}")
+    return json.dumps(results, ensure_ascii=False)
 
 
 class Provider:
@@ -252,12 +259,15 @@ def test_translated_text_change_invalidates_only_that_batch(tmp_path):
                 return super().__call__(provider, api_key, model, system_prompt,
                                         user_prompt, temperature, **kwargs)
             tail = user_prompt.split(TRANSLATION_MARKER, 1)[-1]
-            count = len(re.findall(r"(?m)^\d+\.\s+", tail))
+            sources = re.findall(r"(?m)^\d+\.\s+(.*)$", tail)
             # Only the final batch's rendering changes.
             suffix = "（修订）" if "number 8 " in tail else ""
-            return json.dumps(
-                [f"欧洲空间局译文 {i}{suffix}" for i in range(count)],
-                ensure_ascii=False)
+            results = []
+            for source in sources:
+                numbers = re.findall(r"\d+", source)
+                kept = f" {numbers[-1]}" if numbers else ""
+                results.append(f"欧洲空间局译文{kept}{suffix}")
+            return json.dumps(results, ensure_ascii=False)
 
     altered = _run(tmp_path, "inv-hot", provider=ChangingProvider(),
                    paragraphs=MANY, interval=1)
