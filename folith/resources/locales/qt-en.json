@@ -2127,7 +2127,7 @@
   "清空选择": "Clear selection",
   "已排除的段落（勾选后可恢复）": "Excluded segments (tick to restore)",
   "原位置未知": "Original position unknown",
-  "{v0}　·　{v1}{v2}": "{v0}　·　{v1}{v2}",
+  "{v0}　·　{v1}{v2}": "{v0} · {v1}{v2}",
   "{v0}　·　第 {v1}–{v2} 段 · {v3} 段 / {v4} 字": "{v0}　·　Segments {v1}–{v2} · {v3} segments / {v4} chars",
   "勾选不需要翻译的页、章或节：被排除的范围不产生模型调用、不计入待完成与审校，原文完整保留、随时可恢复。当前 {v0} 段 / {v1} 字（另有 {v2} 段已排除）。": "Tick the pages, chapters or sections that need no translation: excluded scopes make no model calls, are not counted as pending or review work, and their source text is kept in full and can be restored at any time. Currently {v0} segments / {v1} characters ({v2} segments already excluded).",
   "任务还没有可编辑的段落：等原文提取完成后再来选择范围。": "The task has no editable segments yet: choose the scope after source extraction finishes.",

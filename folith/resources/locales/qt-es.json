@@ -2128,7 +2128,7 @@
   "清空选择": "Borrar selección",
   "已排除的段落（勾选后可恢复）": "Segmentos excluidos (marca para restaurar)",
   "原位置未知": "Posición original desconocida",
-  "{v0}　·　{v1}{v2}": "{v0}　·　{v1}{v2}",
+  "{v0}　·　{v1}{v2}": "{v0} · {v1}{v2}",
   "{v0}　·　第 {v1}–{v2} 段 · {v3} 段 / {v4} 字": "{v0}　·　Párrafos {v1}–{v2} · {v3} párrafos / {v4} caracteres",
   "勾选不需要翻译的页、章或节：被排除的范围不产生模型调用、不计入待完成与审校，原文完整保留、随时可恢复。当前 {v0} 段 / {v1} 字（另有 {v2} 段已排除）。": "Marca las páginas, capítulos o secciones que no necesitan traducción: los rangos excluidos no generan llamadas al modelo, no cuentan como pendientes ni como revisión, y su texto original se conserva íntegro y puede restaurarse en cualquier momento. Actualmente {v0} párrafos / {v1} caracteres ({v2} párrafos ya excluidos).",
   "任务还没有可编辑的段落：等原文提取完成后再来选择范围。": "La tarea aún no tiene párrafos editables: elige el alcance cuando termine la extracción del original.",
