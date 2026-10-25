@@ -43,6 +43,7 @@ from . import components
 from .doc_overview import DocumentOverview
 from . import i18n
 from . import icons
+from .source_outline_panel import SourceOutlineSection
 from . import style as style_module
 from .style import Card
 from . import theme as theme_module
@@ -721,12 +722,16 @@ class TaskSetupPanel(QWidget):
         languages.setColumnStretch(0, 1)
         languages.setColumnStretch(1, 1)
         column.addLayout(languages)
-        # ② 常用：翻译模式（一条分段轨道 + 一句话说明）
+        # ② 原文结构（#27，只读）：里面写了什么——本地解析的章节/页/段落分组
+        #    与原文预览，未调用模型；摘要行收起时也把答案说出来。
+        self.source_section = SourceOutlineSection()
+        column.addWidget(self.source_section)
+        # ③ 常用：翻译模式（一条分段轨道 + 一句话说明）
         column.addWidget(self._build_strategy_card())
-        # ③ 可以不管：项目 / 术语库 / 风格 / 文档读取 / 高级设置
+        # ④ 可以不管：项目 / 术语库 / 风格 / 文档读取 / 高级设置
         options.add_row(self.advanced_section)
         column.addWidget(options)
-        # ④ 交付文件：一行摘要，点开才是文件清单（翻译完成后也能在「交付」补生成）
+        # ⑤ 交付文件：一行摘要，点开才是文件清单（翻译完成后也能在「交付」补生成）
         self.delivery_section = DisclosureSection(i18n.tr('交付内容'), icon="package")
         self.delivery_section.body_layout.addWidget(self._build_delivery_card())
         delivery_group = SettingsGroup()
@@ -1597,6 +1602,10 @@ class TaskSetupPanel(QWidget):
         self._view = dict(view or {})
         self._sync_profile_row()
         self._request_source_size(str(self._view.get("job_id") or ""))
+        # 原文结构（#27，只读）：结构在后台线程本地解析，按源文件身份缓存。
+        self.source_section.load(str(self._view.get("job_id") or ""),
+                                  str(self._view.get("filename") or ""),
+                                  self._view)
         self._loading = True
         try:
             # 左栏：这份文档本身（预览、页数、需要注意的地方）。
