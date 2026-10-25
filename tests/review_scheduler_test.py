@@ -29,6 +29,23 @@ def _digest(values) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def _faithful_target(line: str, suffix: str = "译文") -> str:
+    """Keep the source numbers so the deterministic number check stays clean.
+
+    The scheduler tests used to return translations that dropped every number.
+    That was fine before the deterministic number check existed; now it would
+    (correctly) flag the fixture as incomplete and the ``reviewed_clean``
+    assertions would fail.  The fixture is about scheduling, not about dropping
+    numbers, so it translates faithfully instead.
+    """
+    import re
+
+    ordinal = line.split(".", 1)[0].strip()
+    numbers = re.findall(r"\d+", line)
+    kept = "、".join(numbers) if numbers else "无"
+    return f"这是第 {ordinal} 段，保留数字 {kept} 的中文{suffix}。"
+
+
 def _make_dummy_snapshot(batch_index: int, offset: int = 0, count: int = 2) -> BatchReviewSnapshot:
     batch_pairs = [
         {
@@ -242,7 +259,7 @@ def test_e2e_translation_equivalence_sequential_vs_overlap(monkeypatch):
         results = []
         for line in lines:
             ordinal = line.split(".", 1)[0].strip()
-            results.append(f"这是第 {ordinal} 段经过标准翻译的中文译文。")
+            results.append(_faithful_target(line, "标准译文"))
         return json.dumps(results, ensure_ascii=False)
 
     old_output_dir = core.OUTPUT_DIR
@@ -432,7 +449,7 @@ def test_strategy_b_stable_barrier(monkeypatch):
         if "独立的翻译审校专家" in (system_prompt or ""):
             return json.dumps({"findings": [], "evidence_requests": []}, ensure_ascii=False)
         lines = [line.strip() for line in user_prompt.splitlines() if line.strip() and line[0].isdigit()]
-        results = [f"这是第 {line.split('.', 1)[0]} 段稳定译文。" for line in lines]
+        results = [_faithful_target(line, "稳定译文") for line in lines]
         return json.dumps(results, ensure_ascii=False)
 
     try:
@@ -468,7 +485,7 @@ def test_crash_recovery_resumption_with_overlap(monkeypatch):
         lines = [line.strip() for line in user_prompt.splitlines() if line.strip() and line[0].isdigit()]
         first_line = lines[0] if lines else ""
         translated_batches.append(first_line)
-        results = [f"这是第 {line.split('.', 1)[0]} 段恢复译文。" for line in lines]
+        results = [_faithful_target(line, "恢复译文") for line in lines]
         return json.dumps(results, ensure_ascii=False)
 
     try:
@@ -480,16 +497,16 @@ def test_crash_recovery_resumption_with_overlap(monkeypatch):
             "paras": list(sources),
             "pairs": [
                 {
-                    "source": sources[0], "target": "这是第 1 段恢复译文。",
-                    "initial_target": "这是第 1 段恢复译文。",
-                    "accepted_target": "这是第 1 段恢复译文。",
+                    "source": sources[0], "target": "这是第 1 段，保留数字 0 的恢复译文。",
+                    "initial_target": "这是第 1 段，保留数字 0 的恢复译文。",
+                    "accepted_target": "这是第 1 段，保留数字 0 的恢复译文。",
                     "reviewed": True, "review_status": "reviewed_clean",
                     "target_provenance": "reviewed", "from_tm": False,
                 },
                 {
-                    "source": sources[1], "target": "这是第 2 段恢复译文。",
-                    "initial_target": "这是第 2 段恢复译文。",
-                    "accepted_target": "这是第 2 段恢复译文。",
+                    "source": sources[1], "target": "这是第 2 段，保留数字 1 的恢复译文。",
+                    "initial_target": "这是第 2 段，保留数字 1 的恢复译文。",
+                    "accepted_target": "这是第 2 段，保留数字 1 的恢复译文。",
                     "reviewed": True, "review_status": "reviewed_clean",
                     "target_provenance": "reviewed", "from_tm": False,
                 },

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 
@@ -84,6 +85,18 @@ def _fake_llm(_provider, _api_key, _model, system_prompt, user_prompt, **_kwargs
     if "独立的翻译审校专家" in (system_prompt or ""):
         return json.dumps({"findings": [], "evidence_requests": []},
                           ensure_ascii=False)
+    lines = [line.strip() for line in user_prompt.splitlines()
+             if line.strip() and line[0].isdigit()]
+    # Keep the source numbers: the deterministic number check added for #101
+    # correctly flags a draft that drops them, and this suite is about
+    # persistence cadence, not number loss.
+    results = []
+    for line in lines:
+        ordinal = line.split(".", 1)[0].strip()
+        numbers = re.findall(r"\d+", line)
+        kept = "、".join(dict.fromkeys(numbers)) or ordinal
+        results.append(f"第{ordinal}段，保留数字 {kept} 的译文。")
+    return json.dumps(results, ensure_ascii=False)
     lines = [line.strip() for line in user_prompt.splitlines()
              if line.strip() and line[0].isdigit()]
     return json.dumps([f"第{line.split('.', 1)[0].strip()}段译文。" for line in lines],

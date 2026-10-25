@@ -1,0 +1,591 @@
+<!doctype html>
+<!--
+  Folith 介绍视频（16:9，63 s，HyperFrames + GSAP），成片在 docs/media/folith-intro.mp4。
+  重新渲染（在本目录下；截图、品牌图、音乐都是生成物，不入库）：
+    npm install                                                    # 装 gsap（node_modules 不入库）
+    QT_QPA_PLATFORM=offscreen ../../../venv/bin/python capture/intro_shots.py assets/shots
+    mkdir -p assets/brand && cp ../../../folith/resources/brand/folith-lockup-transparent.png assets/brand/
+    ../../../venv/bin/python audio/build_music.py                  # 自制合成音乐垫
+    npm run check && npm run render                                # -> renders/folith-intro.mp4
+    ffmpeg -i renders/folith-intro.mp4 -c:v libx264 -preset veryslow -crf 26 -pix_fmt yuv420p \
+      -tune animation -movflags +faststart -c:a aac -b:a 96k ../folith-intro.mp4
+  界面截图全部来自合成的公版示例书，不用 docs/assets 下的旧截图。
+-->
+<html lang="zh-CN" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Folith 介绍视频</title>
+    <script src="node_modules/gsap/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "PingFang SC"; src: local("PingFang SC"); }
+      @font-face { font-family: "Songti SC"; src: local("Songti SC"); }
+      @font-face { font-family: "Geeza Pro"; src: local("Geeza Pro"); }
+      @font-face { font-family: "Times New Roman"; src: local("Times New Roman"); }
+      :root {
+        --paper: #f3f7ff;
+        --ink: #1b2338;
+        --sub: #5a6a86;
+        --blue: #0052fe;
+        --navy: #000d2d;
+        --app: #f4f5f7;
+        --line: rgba(20, 50, 110, 0.12);
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px; height: 1080px; overflow: hidden; background: var(--paper);
+        font-family: "PingFang SC", "Helvetica Neue", system-ui, sans-serif; color: var(--ink);
+      }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--paper); }
+      .clip { position: absolute; inset: 0; }
+      .bg-paper { background: var(--paper); }
+      .en { font-family: "Helvetica Neue", "PingFang SC", sans-serif; }
+
+      /* ---- 字幕：中文逐字打出，英文随后淡入 ---- */
+      .cap { position: absolute; left: 120px; right: 120px; top: 902px; z-index: 30; text-align: center; }
+      .cap b { display: block; font-size: 50px; line-height: 1.3; font-weight: 600; color: var(--ink); letter-spacing: 0.01em; white-space: nowrap; }
+      .cap b em { font-style: normal; color: var(--blue); }
+      .cap i { display: block; margin-top: 10px; font-style: normal; font-size: 26px; color: var(--sub); letter-spacing: 0.01em; opacity: 0; white-space: nowrap; }
+      .ch { visibility: hidden; position: relative; }
+      .ch.on { visibility: visible; }
+      .ch.fresh { color: var(--blue); }
+      .ch.last::after { content: ""; position: absolute; right: -9px; top: 10%; width: 4px; height: 82%; background: var(--blue); }
+      .off .ch.last::after { opacity: 0; }
+
+      /* ---- 标题页 ---- */
+      .beat { z-index: 45; }
+      .beat .bw { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 26px; }
+      .beat .step { font-size: 26px; font-weight: 700; letter-spacing: 0.24em; color: var(--blue); opacity: 0; }
+      .beat .h { text-align: center; font-size: 92px; line-height: 1.2; font-weight: 600; color: var(--ink); letter-spacing: 0.01em; white-space: nowrap; }
+      .beat .h em { font-style: normal; color: var(--blue); }
+      .beat .s { text-align: center; font-size: 32px; line-height: 1.5; white-space: nowrap; color: var(--sub); letter-spacing: 0.01em; opacity: 0; }
+      .gl { position: absolute; font-family: "Songti SC", serif; font-size: 72px; color: var(--blue); opacity: 0.16; }
+
+      /* ---- 截图窗口 ---- */
+      .win { position: absolute; left: 240px; top: 92px; width: 1440px; height: 780px; overflow: hidden;
+             border-radius: 22px; background: var(--app);
+             box-shadow: 0 0 0 1px var(--line), 0 30px 60px rgba(20, 50, 110, 0.16); }
+      .stage { position: absolute; left: 0; top: 0; width: 1440px; height: 873px; transform-origin: 0 0; }
+      .stage img { position: absolute; left: 0; top: 0; width: 1440px; height: 873px; }
+      .ring { position: absolute; z-index: 9; border: 4px solid var(--blue); border-radius: 12px; opacity: 0; }
+      .tag { position: absolute; right: 18px; bottom: 14px; z-index: 12; font-size: 18px; color: var(--sub);
+             background: rgba(255,255,255,0.9); border-radius: 8px; padding: 4px 10px; opacity: 0; }
+
+      #ptr { position: absolute; left: 0; top: 0; width: 56px; height: 66px; z-index: 60; opacity: 0;
+             transform-origin: 4px 4px; filter: drop-shadow(0 6px 10px rgba(0, 13, 45, 0.35)); }
+      #ripple { position: absolute; left: 0; top: 0; width: 60px; height: 60px; margin: -30px 0 0 -30px;
+                border-radius: 50%; border: 4px solid var(--blue); opacity: 0; z-index: 59; }
+
+      /* ---- 开场：书架 ---- */
+      #shelf { position: absolute; left: 0; right: 0; top: 150px; height: 640px; perspective: 1400px; }
+      .sp { position: absolute; bottom: 0; border-radius: 6px 6px 2px 2px; box-shadow: 0 0 0 1px var(--line), 0 12px 24px rgba(20, 50, 110, 0.12);
+            transform-origin: 50% 100%; }
+      .sp .fo, .sp .zt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                         writing-mode: vertical-rl; padding: 24px 0; backface-visibility: hidden; }
+      .sp .fo { font-family: "Times New Roman", serif; font-size: 30px; letter-spacing: 0.02em; white-space: nowrap; }
+      .sp .fo.ar { font-family: "Geeza Pro", serif; font-size: 34px; }
+      .sp .zt { font-family: "Songti SC", serif; font-size: 38px; font-weight: 700; letter-spacing: 0.12em; opacity: 0; }
+      #board { position: absolute; left: 300px; right: 300px; top: 790px; height: 14px; border-radius: 7px; background: #c9d6ee; }
+
+      /* ---- 导入：格式标签 + 扫描页示意 ---- */
+      .chips { position: absolute; left: 160px; top: 300px; width: 760px; display: flex; flex-wrap: wrap; gap: 22px; }
+      .chip { padding: 20px 34px; border-radius: 18px; background: #fff; font-size: 40px; font-weight: 700; color: var(--ink);
+              box-shadow: 0 0 0 1px var(--line), 0 12px 28px rgba(20, 50, 110, 0.12); opacity: 0; }
+      .chip.scan { color: var(--blue); }
+      .page { position: absolute; top: 150px; width: 400px; height: 560px; background: #fff; border-radius: 10px; padding: 50px 44px;
+              box-shadow: 0 0 0 1px var(--line), 0 20px 44px rgba(20, 50, 110, 0.16); overflow: hidden; }
+      #pgScan { left: 1000px; background: #efe8d8; transform: rotate(-2deg); }
+      #pgText { left: 1440px; opacity: 0; }
+      .bar { height: 14px; border-radius: 7px; margin-bottom: 22px; }
+      #pgScan .bar { background: rgba(60, 45, 30, 0.42); }
+      #pgScan .bar.w { transform: rotate(1.4deg); }
+      #pgScan .pn { position: absolute; bottom: 30px; left: 0; right: 0; text-align: center; font-family: "Times New Roman", serif; font-size: 22px; color: rgba(60,45,30,0.6); }
+      #pgText .bar { background: #c9d6ee; }
+      #pgText .bar.hd { background: var(--blue); opacity: 0.7; height: 18px; width: 55%; margin: 0 auto 30px; }
+      #scanLine { position: absolute; left: 1000px; top: 150px; width: 400px; height: 4px; background: var(--blue); opacity: 0; z-index: 7;
+                  box-shadow: 0 0 18px 4px rgba(0, 82, 254, 0.4); }
+      #arrow { position: absolute; left: 1404px; top: 410px; font-size: 44px; color: var(--blue); opacity: 0; }
+
+      /* ---- 问答 / 候选 示意 ---- */
+      .askbar { position: absolute; left: 420px; right: 420px; top: 560px; z-index: 12; background: #fff; border-radius: 22px;
+                box-shadow: 0 0 0 1px var(--line), 0 16px 40px rgba(20, 50, 110, 0.18); padding: 18px; display: flex; gap: 12px; align-items: center; opacity: 0; }
+      .field { flex: 1; height: 62px; border: 3px solid var(--blue); border-radius: 14px; overflow: hidden; position: relative; }
+      .typed { position: absolute; left: 0; top: 0; height: 56px; overflow: hidden; white-space: nowrap; width: 0;
+               font-size: 26px; line-height: 56px; padding-left: 16px; color: var(--ink); }
+      .typed q { quotes: none; color: var(--blue); font-weight: 700; }
+      .btn { padding: 0 18px; height: 56px; border-radius: 12px; border: 3px solid #d5d8de; font-size: 24px; font-weight: 700;
+             display: inline-flex; align-items: center; background: #fff; color: var(--ink); white-space: nowrap; }
+      .note { position: absolute; z-index: 13; background: #fff; border-radius: 20px; padding: 22px 26px; font-size: 28px;
+              line-height: 1.5; box-shadow: 0 0 0 1px var(--line), 0 16px 40px rgba(20, 50, 110, 0.18); opacity: 0; }
+      .note small { display: block; font-size: 20px; color: var(--sub); margin-bottom: 6px; font-weight: 600; letter-spacing: 0.04em; }
+      #cand { left: 380px; width: 1160px; top: 230px; padding: 30px 34px; }
+      .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 10px; }
+      .cmp div { border-radius: 14px; padding: 18px 20px; font-size: 27px; line-height: 1.55; }
+      .cmp .old { background: #f4f5f7; color: #4a5672; }
+      .cmp .new { background: #eaf1ff; color: var(--ink); box-shadow: inset 0 0 0 2px rgba(0, 82, 254, 0.35); }
+      .cmp mark { background: rgba(0, 82, 254, 0.18); color: inherit; border-radius: 4px; padding: 0 2px; }
+      .cmp s { color: #b04a3a; }
+      .acts { margin-top: 22px; display: flex; gap: 14px; justify-content: flex-end; }
+      #adopt { border-color: var(--blue); color: var(--blue); }
+      #lock { position: absolute; left: 380px; width: 1160px; top: 640px; z-index: 13; opacity: 0; display: flex; gap: 18px; align-items: center;
+              background: #fff; border-radius: 20px; padding: 20px 26px; box-shadow: 0 0 0 1px var(--line), 0 16px 40px rgba(20, 50, 110, 0.18); font-size: 26px; }
+      #lock .k { width: 44px; height: 44px; border-radius: 12px; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; }
+      #lock .sk { margin-left: auto; color: var(--sub); font-size: 22px; }
+
+      /* ---- 交付卡片墙 ---- */
+      #wall { position: absolute; left: 0; top: 140px; width: 1920px; height: 700px; perspective: 1600px; z-index: 6; }
+      #track { position: absolute; left: 0; top: 0; transform-style: preserve-3d; }
+      .pg { position: absolute; top: 0; width: 380px; height: 520px; background: #fff; border-radius: 10px; padding: 36px 32px;
+            box-shadow: 0 0 0 1px var(--line), 0 24px 50px rgba(20, 50, 110, 0.18); transform: rotateY(-14deg); }
+      .pg .lbl { position: absolute; left: 0; right: 0; top: 548px; text-align: center; font-size: 30px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+      .pg.cover { background: linear-gradient(160deg, #0b2a7a, #0052fe); color: #fff; padding: 50px 36px; }
+      .cv-badge { display: inline-block; font-size: 18px; font-weight: 700; letter-spacing: 0.12em; border: 2px solid rgba(255,255,255,0.7); border-radius: 6px; padding: 2px 10px; }
+      .cv-t { font-family: "Songti SC", serif; font-size: 42px; font-weight: 700; margin-top: 60px; }
+      .cv-a { font-size: 22px; opacity: 0.8; margin-top: 12px; }
+      .cv-im { position: absolute; left: 36px; right: 36px; bottom: 44px; height: 150px; border-radius: 8px; background: linear-gradient(135deg, #00e8fe, #0088fd); opacity: 0.85; }
+      .d-h { font-size: 24px; font-weight: 700; color: var(--ink); margin-bottom: 20px; }
+      .pg.doc p { font-family: "Songti SC", serif; font-size: 20px; line-height: 1.8; color: #2a3450; text-indent: 2em; margin-bottom: 10px; }
+      .bi-r { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 17px; line-height: 1.5; }
+      .bi-r span:first-child { color: var(--sub); font-family: "Times New Roman", serif; }
+      .xl-g { display: grid; grid-template-columns: 1.4fr 1fr 0.8fr; border-top: 1px solid #c9d6ee; border-left: 1px solid #c9d6ee; font-size: 17px; }
+      .xl-g > * { padding: 11px 8px; border-right: 1px solid #c9d6ee; border-bottom: 1px solid #c9d6ee; font-style: normal; }
+      .xl-g b { background: #e8f0ff; font-weight: 700; }
+      .xl-g i { color: var(--blue); font-weight: 600; }
+      .pg.tmx { background: #f7f9fd; }
+      .pg pre { font-family: Menlo, monospace; font-size: 16px; line-height: 1.7; color: #2a3450; white-space: pre; }
+
+      /* ---- 三个承诺 ---- */
+      .pillars { position: absolute; left: 160px; right: 160px; top: 250px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 50px; }
+      .pl { background: #fff; border-radius: 26px; padding: 44px 40px; height: 470px; box-shadow: 0 0 0 1px var(--line), 0 20px 44px rgba(20, 50, 110, 0.12); opacity: 0; }
+      .pl .ic { width: 88px; height: 88px; border-radius: 24px; background: linear-gradient(135deg, #00BEFE, #004CFD); color: #fff;
+                display: flex; align-items: center; justify-content: center; font-size: 44px; font-weight: 700; }
+      .pl h4 { margin-top: 34px; font-size: 48px; font-weight: 700; color: var(--ink); }
+      .pl p { margin-top: 18px; font-size: 26px; line-height: 1.55; color: var(--sub); }
+      .pl p.en { font-size: 21px; margin-top: 12px; }
+
+      /* ---- 品牌 ---- */
+      #brand { position: absolute; left: 0; top: 0; width: 1187px; height: 328px; transform-origin: 0 0; z-index: 50; opacity: 0; }
+      #brand .bm { position: absolute; left: 0; top: 0; width: 272px; height: 328px; overflow: hidden; }
+      #brand .bt { position: absolute; left: 272px; top: 0; width: 915px; height: 328px; overflow: hidden; }
+      #brand img { position: absolute; top: 0; left: 0; width: 1187px; height: 328px; }
+      #brand #bti { left: -272px; }
+      #endTag { position: absolute; left: 0; right: 0; top: 680px; text-align: center; z-index: 10; }
+      #endTag b { display: block; font-size: 44px; font-weight: 600; color: var(--ink); letter-spacing: 0.04em; }
+      #endTag i { display: block; font-style: normal; margin-top: 12px; font-size: 26px; color: var(--sub); opacity: 0; }
+      #endUrl { position: absolute; left: 0; right: 0; top: 860px; text-align: center; font-size: 30px; color: var(--blue); font-weight: 600; letter-spacing: 0.02em; opacity: 0; z-index: 10; }
+      #endUrl span { color: var(--sub); font-weight: 400; margin-left: 18px; font-size: 24px; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="63" data-width="1920" data-height="1080">
+
+      <!-- A 开场 0–4.5：书架上读不懂的书，一本本变成中文书名 -->
+      <div class="clip bg-paper" id="hook" data-start="0" data-duration="4.5" data-track-index="0">
+        <div id="shelf">
+          <div class="sp" id="sp0" style="left:330px;height:560px;width:118px;background:#0b2a7a;color:#fff"><div class="fo ar">علم الدين</div><div class="zt">阿拉姆丁</div></div>
+          <div class="sp" id="sp1" style="left:458px;height:620px;width:110px;background:#dfe8f7;color:#1b2338"><div class="fo">Братья Карамазовы</div><div class="zt">卡拉马佐夫兄弟</div></div>
+          <div class="sp" id="sp2" style="left:578px;height:530px;width:118px;background:#0052fe;color:#fff"><div class="fo">Don Quijote</div><div class="zt">堂吉诃德</div></div>
+          <div class="sp" id="sp3" style="left:706px;height:580px;width:110px;background:#ffffff;color:#1b2338"><div class="fo">Madame Bovary</div><div class="zt">包法利夫人</div></div>
+          <div class="sp" id="sp4" style="left:826px;height:636px;width:118px;background:#13306e;color:#fff"><div class="fo">Die Leiden des jungen Werthers</div><div class="zt">少年维特之烦恼</div></div>
+          <div class="sp" id="sp5" style="left:954px;height:550px;width:110px;background:#2f6bf0;color:#fff"><div class="fo ar">شاهنامه</div><div class="zt">列王纪</div></div>
+          <div class="sp" id="sp6" style="left:1074px;height:600px;width:118px;background:#c9d8f5;color:#1b2338"><div class="fo">I promessi sposi</div><div class="zt">约婚夫妇</div></div>
+          <div class="sp" id="sp7" style="left:1202px;height:570px;width:110px;background:#ffffff;color:#1b2338"><div class="fo">源氏物語</div><div class="zt">源氏物语</div></div>
+          <div class="sp" id="sp8" style="left:1322px;height:626px;width:118px;background:#0b2a7a;color:#fff"><div class="fo">Cien años de soledad</div><div class="zt">百年孤独</div></div>
+          <div class="sp" id="sp9" style="left:1450px;height:540px;width:110px;background:#dfe8f7;color:#1b2338"><div class="fo">Le Petit Prince</div><div class="zt">小王子</div></div>
+        </div>
+        <div id="board"></div>
+      </div>
+      <div class="clip" data-start="0" data-duration="4.5" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cA">书架上，总有几本<em>读不懂的书</em></b><i id="eA" class="en">Every shelf holds a few books you can't read yet.</i></div>
+      </div>
+
+      <!-- B 承诺页 4.5–7.5 -->
+      <div class="clip bg-paper beat" id="bB" data-start="4.5" data-duration="3" data-track-index="0">
+        <div class="gl" style="left:260px;top:240px">「</div><div class="gl" style="left:1600px;top:300px">」</div>
+        <div class="gl" style="left:340px;top:760px">¶</div><div class="gl" style="left:1520px;top:780px">§</div>
+        <div class="bw"><div class="step" id="pB">FOLITH · 译页</div>
+          <div class="h" id="hB">想读的外文书，<em>自己译来读</em>。</div>
+          <div class="s" id="sB">开源、本地优先的长文档翻译工作台<br /><span class="en">An open-source, local-first workspace for translating whole books</span></div></div>
+      </div>
+
+      <!-- C 导入 7.5–12.5 -->
+      <div class="clip bg-paper" data-start="7.5" data-duration="5" data-track-index="0">
+        <div class="chips">
+          <div class="chip">PDF</div><div class="chip">DOCX</div><div class="chip">EPUB</div>
+          <div class="chip">TXT</div><div class="chip">Markdown</div><div class="chip scan">扫描件 · Scans</div>
+        </div>
+        <div class="page" id="pgScan">
+          <div class="bar w" style="width:92%"></div><div class="bar" style="width:100%"></div><div class="bar w" style="width:96%"></div>
+          <div class="bar" style="width:70%"></div><div class="bar w" style="width:98%"></div><div class="bar" style="width:100%"></div>
+          <div class="bar w" style="width:88%"></div><div class="bar" style="width:94%"></div><div class="bar w" style="width:60%"></div>
+          <div class="bar" style="width:100%"></div><div class="bar w" style="width:90%"></div><div class="bar" style="width:76%"></div>
+          <div class="pn">— 13 —</div>
+        </div>
+        <div id="scanLine"></div>
+        <div id="arrow">→</div>
+        <div class="page" id="pgText">
+          <div class="bar hd"></div>
+          <div class="bar" style="width:100%"></div><div class="bar" style="width:100%"></div><div class="bar" style="width:100%"></div>
+          <div class="bar" style="width:62%"></div>
+          <div class="bar" style="width:100%;margin-top:34px"></div><div class="bar" style="width:100%"></div><div class="bar" style="width:100%"></div>
+          <div class="bar" style="width:100%"></div><div class="bar" style="width:45%"></div>
+        </div>
+      </div>
+      <div class="clip" data-start="7.5" data-duration="5" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cC">整本书放进来，<em>扫描件也能读成正文</em></b><i id="eC" class="en">Bring in the whole book. Scanned pages are read back into clean text.</i></div>
+      </div>
+
+      <!-- D 01 准备 12.5–14.5 -->
+      <div class="clip bg-paper beat" id="bD" data-start="12.5" data-duration="2" data-track-index="0">
+        <div class="gl" style="left:300px;top:280px">§</div><div class="gl" style="left:1560px;top:320px">「</div><div class="gl" style="left:1500px;top:760px">」</div>
+        <div class="bw"><div class="step" id="pD">01 · 准备 · PREPARE</div><div class="h" id="hD">先读懂，<em>再动笔</em>。</div>
+          <div class="s en" id="sD">Read the whole document first, then start writing.</div></div>
+      </div>
+
+      <!-- E 准备 14.5–20.5：译前准备 → 术语 -->
+      <div class="clip bg-paper" data-start="14.5" data-duration="6" data-track-index="0">
+        <div class="win"><div class="stage" id="stE1"><img src="assets/shots/02-prepare.png" alt="" />
+          <div class="ring" id="rE1" style="left:548px;top:178px;width:640px;height:88px"></div></div>
+          <div class="stage" id="stE2" style="opacity:0"><img src="assets/shots/04-terms.png" alt="" />
+          <div class="ring" id="rE2" style="left:22px;top:360px;width:520px;height:145px"></div></div>
+        </div>
+      </div>
+      <div class="clip" data-start="14.5" data-duration="3" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cE1">开译之前，<em>先估好调用与用量</em></b><i id="eE1" class="en">Three modes, each with estimated calls, tokens and time before you start.</i></div>
+      </div>
+      <div class="clip" data-start="17.5" data-duration="3" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cE2">术语和翻译记忆，<em>按项目沉淀</em></b><i id="eE2" class="en">Glossary and translation memory, kept per project.</i></div>
+      </div>
+
+      <!-- F 02 翻译 20.5–22.5 -->
+      <div class="clip bg-paper beat" id="bF" data-start="20.5" data-duration="2" data-track-index="0">
+        <div class="gl" style="left:280px;top:300px">¶</div><div class="gl" style="left:1580px;top:260px">※</div><div class="gl" style="left:1520px;top:780px">§</div>
+        <div class="bw"><div class="step" id="pF">02 · 翻译 · TRANSLATE</div><div class="h" id="hF">每一句，<em>都对得回原书</em>。</div>
+          <div class="s en" id="sF">Every sentence maps back to the original page.</div></div>
+      </div>
+
+      <!-- G 翻译 22.5–28.5：工作台 → 原页定位 -->
+      <div class="clip bg-paper" data-start="22.5" data-duration="6" data-track-index="0">
+        <div class="win"><div class="stage" id="stG1"><img src="assets/shots/03-translate.png" alt="" /></div>
+          <div class="stage" id="stG2" style="opacity:0"><img src="assets/shots/05-source.png" alt="" />
+          <div class="ring" id="rG1" style="left:98px;top:592px;width:350px;height:30px;border-width:3px;border-radius:6px"></div>
+          <div class="ring" id="rG2" style="left:586px;top:682px;width:454px;height:96px;border-width:3px"></div></div>
+        </div>
+      </div>
+      <div class="clip" data-start="22.5" data-duration="2.8" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cG1">带着全书上下文，<em>分批翻译</em></b><i id="eG1" class="en">Translated in batches, with the whole book as context.</i></div>
+      </div>
+      <div class="clip" data-start="25.3" data-duration="3.2" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cG2">原页定位，<em>逐句对照</em></b><i id="eG2" class="en">Click a segment and the original page highlights the exact line.</i></div>
+      </div>
+
+      <!-- H 03 人工审校 28.5–30.5 -->
+      <div class="clip bg-paper beat" id="bH" data-start="28.5" data-duration="2" data-track-index="0">
+        <div class="gl" style="left:300px;top:280px">「</div><div class="gl" style="left:1560px;top:300px">」</div><div class="gl" style="left:330px;top:780px">※</div>
+        <div class="bw"><div class="step" id="pH">03 · 人工审校 · REVIEW</div><div class="h" id="hH">AI 再审一遍，<em>由你拍板</em>。</div>
+          <div class="s en" id="sH">An independent AI review, with a person making every call.</div></div>
+      </div>
+
+      <!-- I 审校 30.5–40：选中就问 → 候选 → 人工译文受保护 -->
+      <div class="clip bg-paper" data-start="30.5" data-duration="9.5" data-track-index="0">
+        <div class="win"><div class="stage" id="stI"><img src="assets/shots/06-ask.png" alt="" />
+          <div class="ring" id="rI" style="left:34px;top:414px;width:1004px;height:62px;border-width:3px"></div></div>
+          <div class="tag" id="tagI">示意 · Illustration</div>
+        </div>
+        <div class="askbar" id="bar">
+          <div class="field"><div class="typed" id="t1"><q>「в келью старца」</q>келья 是什么意思？</div></div>
+          <div class="btn">按要求重译</div><div class="btn" id="bAsk">提问</div>
+        </div>
+        <div class="note" id="ans" style="left:420px;top:680px;width:1080px"><small>回答 · ANSWER</small>келья 指修道士独居的小屋，这里译作“修道室”。</div>
+        <div class="note" id="cand"><small>重译候选 · CANDIDATE —— 采用前，当前译文不会被改动</small>
+          <div class="cmp"><div class="old">他走进长老的修道室，<s>脚步轻得几乎听不见</s>。</div>
+            <div class="new">他<mark>悄悄</mark>走进长老的修道室，<mark>几乎没发出一点声音</mark>。</div></div>
+          <div class="acts"><span class="btn">丢弃</span><span class="btn" id="adopt">采用</span></div>
+        </div>
+        <div id="lock"><div class="k">✓</div><div>人工译文 · 第 7 段</div><div class="sk">批量替换默认跳过 · Skipped by batch replace</div></div>
+      </div>
+      <div class="clip" data-start="30.5" data-duration="3.4" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cI1">看不懂，<em>选中就问</em></b><i id="eI1" class="en">Select a phrase and ask about it, right in the workbench.</i></div>
+      </div>
+      <div class="clip" data-start="33.9" data-duration="3.4" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cI2">重译先出候选，<em>你采用才替换</em></b><i id="eI2" class="en">Rewrites arrive as candidates. Nothing changes until you accept.</i></div>
+      </div>
+      <div class="clip" data-start="37.3" data-duration="2.7" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cI3">你改过的译文，<em>受保护</em></b><i id="eI3" class="en">Your own edits are protected, even from batch changes.</i></div>
+      </div>
+
+      <!-- J 交付门禁 40–44 -->
+      <div class="clip bg-paper" data-start="40" data-duration="4" data-track-index="0">
+        <div class="win"><div class="stage" id="stJ"><img src="assets/shots/08-deliver-gate.png" alt="" />
+          <div class="ring" id="rJ" style="left:330px;top:106px;width:220px;height:60px;border-width:3px"></div></div></div>
+      </div>
+      <div class="clip" data-start="40" data-duration="4" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cJ">问题没处理完，<em>交付先拦下</em></b><i id="eJ" class="en">While blocking issues remain, the delivery gate stays closed.</i></div>
+      </div>
+
+      <!-- K 04 交付 44–46 -->
+      <div class="clip bg-paper beat" id="bK" data-start="44" data-duration="2" data-track-index="0">
+        <div class="gl" style="left:280px;top:300px">§</div><div class="gl" style="left:1580px;top:280px">¶</div><div class="gl" style="left:1500px;top:780px">「</div>
+        <div class="bw"><div class="step" id="pK">04 · 交付 · DELIVER</div><div class="h" id="hK">拿到<em>一本真正的书</em>。</div>
+          <div class="s en" id="sK">Walk away with a real book, not a pile of fragments.</div></div>
+      </div>
+
+      <!-- L 交付 46–52：冻结交付 → 卡片墙 -->
+      <div class="clip bg-paper" data-start="46" data-duration="3" data-track-index="0">
+        <div class="win"><div class="stage" id="stL"><img src="assets/shots/10-deliver.png" alt="" />
+          <div class="ring" id="rL" style="left:326px;top:106px;width:260px;height:60px;border-width:3px"></div></div></div>
+      </div>
+      <div class="clip bg-paper" data-start="49" data-duration="3" data-track-index="0">
+        <div id="wall"><div id="track">
+          <div class="pg cover" style="left:0px"><div class="cv-badge">EPUB</div><div class="cv-t">卡拉马佐夫兄弟</div><div class="cv-a">陀思妥耶夫斯基</div><div class="cv-im"></div><div class="lbl">电子书 EPUB</div></div>
+          <div class="pg doc" style="left:450px"><div class="d-h">第一卷</div><p>阿列克谢·费奥多罗维奇·卡拉马佐夫，是我们县的地主费奥多尔·巴甫洛维奇·卡拉马佐夫的第三个儿子。</p><p>那时阿廖沙才二十岁。</p><p>他走进长老的修道室，脚步轻得几乎听不见。</p><div class="lbl">纯译文 DOCX</div></div>
+          <div class="pg bi" style="left:900px"><div class="d-h">双语对照</div><div class="bi-r"><span>Алёше было тогда лишь двадцать лет.</span><span>那时阿廖沙才二十岁。</span></div><div class="bi-r"><span>Он вошёл в келью старца тихо.</span><span>他走进长老的修道室。</span></div><div class="bi-r"><span>Иван долго и молча смотрел на брата.</span><span>伊万久久地、一言不发地看着弟弟。</span></div><div class="lbl">双语对照 DOCX</div></div>
+          <div class="pg xl" style="left:1350px"><div class="xl-g"><b>原文</b><b>译名</b><b>状态</b><span>Алексей</span><span>阿列克谢</span><i>锁定</i><span>Алёша</span><span>阿廖沙</span><i>锁定</i><span>Дмитрий</span><span>德米特里</span><i>锁定</i><span>Иван</span><span>伊万</span><i>锁定</i><span>старец</span><span>长老</span><i>锁定</i></div><div class="lbl">术语表 XLSX</div></div>
+          <div class="pg tmx" style="left:1800px"><pre>&lt;tu&gt;
+  &lt;tuv xml:lang="ru"&gt;
+    &lt;seg&gt;Алёше было тогда
+      лишь двадцать лет.&lt;/seg&gt;
+  &lt;/tuv&gt;
+  &lt;tuv xml:lang="zh"&gt;
+    &lt;seg&gt;那时阿廖沙
+      才二十岁。&lt;/seg&gt;
+  &lt;/tuv&gt;
+&lt;/tu&gt;</pre><div class="lbl">翻译记忆 TMX</div></div>
+          <div class="pg tmx" style="left:2250px"><pre>{
+  "version": 1,
+  "frozen": true,
+  "segments": 18,
+  "reviewed": 18,
+  "assets": [
+    "translation.docx",
+    "bilingual.docx",
+    "translation.epub",
+    "terms.xlsx",
+    "memory.tmx"
+  ]
+}</pre><div class="lbl">交付清单</div></div>
+        </div></div>
+      </div>
+      <div class="clip" data-start="46" data-duration="3" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cL1">冻结成<em>可追溯</em>的交付包</b><i id="eL1" class="en">Frozen into an immutable, traceable delivery package.</i></div>
+      </div>
+      <div class="clip" data-start="49" data-duration="3" data-track-index="2" style="z-index:30">
+        <div class="cap"><b id="cL2">电子书、译文、双语、术语、记忆，<em>一次交齐</em></b><i id="eL2" class="en">EPUB, translation, bilingual copy, glossary and memory in one go.</i></div>
+      </div>
+
+      <!-- M 三个承诺 52–57 -->
+      <div class="clip bg-paper" data-start="52" data-duration="5" data-track-index="0">
+        <div class="pillars">
+          <div class="pl" id="pl1"><div class="ic">✓</div><h4>译文受保护</h4><p>候选采用才替换，人工译文不被覆盖。</p><p class="en">Candidates replace text only when you accept; human edits are never overwritten.</p></div>
+          <div class="pl" id="pl2"><div class="ic">≡</div><h4>每一步可审计</h4><p>修改、审校决定都有记录，交付附清单。</p><p class="en">Edits and review decisions are recorded; every delivery ships with a manifest.</p></div>
+          <div class="pl" id="pl3"><div class="ic">⌂</div><h4>本地优先</h4><p>任务与语言资产存在本机，模型由你选。</p><p class="en">Tasks and language assets stay on your computer; you choose the model.</p></div>
+        </div>
+      </div>
+
+      <!-- N 收尾 57–63 -->
+      <div class="clip bg-paper" data-start="57" data-duration="6" data-track-index="0">
+        <div id="endTag"><b id="tN">长文档翻译，从准备到交付</b><i id="eN" class="en">Long-document translation, from preparation to delivery.</i></div>
+        <div id="endUrl">github.com/xueyang-dev/Folith<span>Windows · macOS · MIT</span></div>
+      </div>
+
+      <!-- 全片：左上角品牌（现行 lockup：folith/resources/brand/folith-lockup-transparent.png） -->
+      <div id="brand" aria-label="Folith·译页">
+        <div class="bm"><img src="assets/brand/folith-lockup-transparent.png" alt="" /></div>
+        <div class="bt"><img id="bti" src="assets/brand/folith-lockup-transparent.png" alt="" /></div>
+      </div>
+
+      <!-- 声音：自制合成音乐垫（audio/build_music.py 生成），无配音 -->
+      <audio id="aMusic" src="audio/music.wav" data-start="0" data-duration="63" data-track-index="7" data-volume="0.9"></audio>
+
+      <div id="ripple"></div>
+      <svg id="ptr" viewBox="0 0 84 100" aria-hidden="true">
+        <path d="M6 6 L6 80 L26 62 L40 94 L54 88 L40 57 L68 57 Z" fill="#ffffff" stroke="#000d2d" stroke-width="5" stroke-linejoin="round" />
+      </svg>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      // 截图舞台 1440×873（逻辑像素），窗口 1440×780：把截图坐标 (cx, cy) 放到窗口中心，缩放 s
+      const P = (cx, cy, s) => ({ x: 720 - cx * s, y: 390 - cy * s, scale: s });
+      // 舞台坐标 → 画面坐标（窗口左上角 240, 92）
+      const S = (frame, cx, cy) => [240 + frame.x + cx * frame.scale, 92 + frame.y + cy * frame.scale];
+      const ptrTo = (x, y, t, d = 0.5) => tl.to("#ptr", { x, y, duration: d, ease: "power2.inOut" }, t);
+      const ptrIn = (x, y, t) => tl.set("#ptr", { x, y, opacity: 1, scale: 1 }, t);
+      const ptrOut = (t) => tl.to("#ptr", { opacity: 0, duration: 0.2 }, t);
+      const click = (x, y, t) => {
+        tl.to("#ptr", { scale: 0.82, duration: 0.08 }, t).to("#ptr", { scale: 1, duration: 0.14 }, t + 0.08);
+        tl.set("#ripple", { x, y, scale: 0.2, opacity: 0.8 }, t)
+          .to("#ripple", { scale: 1.3, opacity: 0, duration: 0.45, ease: "power2.out" }, t);
+      };
+      const ring = (sel, t) => tl.fromTo(sel, { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, t);
+
+      // 打字机：逐字显出，最新的两三个字是蓝色，光标跟在最后一个字后面
+      const typeIn = (sel, t, cps = 16) => {
+        const el = document.querySelector(sel);
+        const chars = [];
+        const walk = (node) => [...node.childNodes].forEach((n) => {
+          if (n.nodeType !== 3) return walk(n);
+          const frag = document.createDocumentFragment();
+          [...n.textContent].forEach((c) => { const sp = document.createElement("span"); sp.className = "ch"; sp.textContent = c; frag.appendChild(sp); chars.push(sp); });
+          n.replaceWith(frag);
+        });
+        walk(el);
+        const base = el.getAttribute("class") || "";
+        chars.forEach((c, i) => {
+          const at = t + i / cps;
+          tl.set(c, { attr: { class: "ch on fresh last" } }, at);
+          if (i >= 1) tl.set(chars[i - 1], { attr: { class: "ch on fresh" } }, at);
+          if (i >= 3) tl.set(chars[i - 3], { attr: { class: "ch on" } }, at);
+        });
+        const end = t + chars.length / cps;
+        chars.slice(-3, -1).forEach((c) => tl.set(c, { attr: { class: "ch on" } }, end + 0.15));
+        tl.set(chars[chars.length - 1], { attr: { class: "ch on last" } }, end + 0.15);
+        tl.set(el, { attr: { class: (base + " off").trim() } }, end + 0.5);
+        tl.set(el, { attr: { class: base } }, end + 0.8);
+        tl.set(el, { attr: { class: (base + " off").trim() } }, end + 1.1);
+        return end;
+      };
+      // 字幕：中文打字，英文随后淡入
+      const cap = (id, t, cps = 16) => {
+        const end = typeIn(`#c${id}`, t, cps);
+        tl.fromTo(`#e${id}`, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.35 }, Math.min(end, t + 1.0));
+      };
+      // 标题页：步骤标签淡入，标题打字，打完小字淡入，点缀符号慢慢漂
+      const beat = (id, t, dur) => {
+        tl.fromTo(`#p${id}`, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3 }, t);
+        const end = typeIn(`#h${id}`, t + 0.1, 14);
+        tl.to(`#s${id}`, { opacity: 1, duration: 0.3 }, Math.min(end + 0.05, t + dur - 0.6));
+        tl.fromTo(`#b${id} .gl`, { y: 12 }, { y: -12, duration: dur, ease: "none" }, t);
+      };
+      const stageIn = (sel, frame, t) => tl.fromTo(sel, { ...frame, opacity: 0 }, { ...frame, opacity: 1, duration: 0.35 }, t);
+      const cut = (from, to, frame, t) => {
+        tl.to(from, { opacity: 0, duration: 0.3 }, t);
+        tl.fromTo(to, { ...frame, opacity: 0 }, { ...frame, opacity: 1, duration: 0.3 }, t);
+      };
+
+      // ---------- 左上角品牌：只露 logo 标记 ----------
+      const K0 = 0.2, K1 = 1100 / 1187;
+      tl.set("#brand", { x: 52, y: 26, scale: K0 }, 0);
+      tl.set("#brand .bt", { opacity: 0 }, 0);
+      tl.to("#brand", { opacity: 1, duration: 0.4 }, 0.3);
+
+      // ---------- A 开场 ----------
+      tl.fromTo(".sp", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, stagger: 0.04, ease: "power2.out" }, 0);
+      tl.fromTo("#board", { scaleX: 0.6, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.4, ease: "power2.out" }, 0);
+      cap("A", 0.3, 14);
+      for (let i = 0; i < 10; i++) {
+        const t = 1.6 + i * 0.17;
+        tl.to(`#sp${i} .fo`, { rotationY: 90, opacity: 0, duration: 0.14, ease: "power2.in" }, t);
+        tl.fromTo(`#sp${i} .zt`, { rotationY: -90, opacity: 0 }, { rotationY: 0, opacity: 1, duration: 0.16, ease: "power2.out" }, t + 0.14);
+        tl.to(`#sp${i}`, { y: -16, duration: 0.2, ease: "power2.out" }, t);
+      }
+
+      // ---------- B ----------
+      beat("B", 4.5, 3);
+
+      // ---------- C 导入 ----------
+      tl.fromTo(".chip", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, stagger: 0.12, ease: "back.out(1.8)" }, 7.6);
+      tl.fromTo("#pgScan", { x: 80, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 8.0);
+      tl.set("#scanLine", { opacity: 1, y: 0 }, 8.8);
+      tl.to("#scanLine", { y: 560, duration: 1.6, ease: "none" }, 8.8);
+      tl.to("#scanLine", { opacity: 0, duration: 0.2 }, 10.4);
+      tl.to("#arrow", { opacity: 1, duration: 0.25 }, 10.2);
+      tl.fromTo("#pgText", { x: -40, opacity: 0 }, { x: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 10.4);
+      tl.to("#pgScan .pn", { opacity: 0.15, duration: 0.3 }, 10.6);
+      cap("C", 7.6);
+
+      // ---------- D / E 准备 ----------
+      beat("D", 12.5, 2);
+      const fE1a = P(720, 436, 1), fE1b = P(868, 230, 1.55);
+      stageIn("#stE1", fE1a, 14.5);
+      tl.to("#stE1", { ...fE1b, duration: 0.9, ease: "power2.inOut" }, 15.0);
+      ring("#rE1", 15.95);
+      cap("E1", 14.6);
+      const fE2a = P(560, 436, 1.12), fE2b = P(300, 330, 1.75);
+      cut("#stE1", "#stE2", fE2a, 17.5);
+      tl.to("#stE2", { ...fE2b, duration: 0.9, ease: "power2.inOut" }, 17.9);
+      ring("#rE2", 18.85);
+      cap("E2", 17.6);
+
+      // ---------- F / G 翻译 ----------
+      beat("F", 20.5, 2);
+      const fG1a = P(720, 436, 1), fG1b = P(720, 400, 1.12);
+      stageIn("#stG1", fG1a, 22.5);
+      tl.to("#stG1", { ...fG1b, duration: 2.4, ease: "power1.inOut" }, 22.6);
+      cap("G1", 22.6);
+      const fG2 = P(660, 560, 1.32);
+      cut("#stG1", "#stG2", fG2, 25.3);
+      const [gx, gy] = S(fG2, 760, 720);
+      ptrIn(gx + 160, gy + 180, 25.6);
+      ptrTo(gx, gy, 25.6, 0.45);
+      click(gx, gy, 26.1);
+      ptrOut(26.4);
+      ring("#rG2", 26.15);
+      ring("#rG1", 26.45);
+      cap("G2", 25.4);
+
+      // ---------- H / I 审校 ----------
+      beat("H", 28.5, 2);
+      const fI = P(720, 400, 1.12);
+      stageIn("#stI", fI, 30.5);
+      ring("#rI", 30.9);
+      tl.to("#tagI", { opacity: 1, duration: 0.3 }, 31.0);
+      tl.fromTo("#bar", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" }, 31.1);
+      tl.to("#t1", { width: "100%", duration: 0.9, ease: "steps(22)" }, 31.3);
+      const ax = 1420, ay = 590;
+      ptrIn(ax + 120, ay + 160, 32.1);
+      ptrTo(ax, ay, 32.1, 0.35);
+      click(ax, ay, 32.5);
+      ptrOut(32.8);
+      tl.fromTo("#ans", { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" }, 32.7);
+      cap("I1", 30.6);
+      tl.to(["#ans", "#bar", "#rI"], { opacity: 0, duration: 0.25 }, 33.8);
+      tl.to("#stI", { opacity: 0.35, duration: 0.3 }, 33.9);
+      tl.fromTo("#cand", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: "power2.out" }, 34.0);
+      const [cx2, cy2] = [1490, 538];
+      ptrIn(cx2 + 120, cy2 + 160, 35.4);
+      ptrTo(cx2, cy2, 35.4, 0.4);
+      click(cx2, cy2, 35.9);
+      tl.to("#adopt", { backgroundColor: "#0052fe", color: "#ffffff", duration: 0.15 }, 35.95);
+      ptrOut(36.3);
+      cap("I2", 34.0);
+      tl.fromTo("#lock", { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: "power2.out" }, 37.4);
+      cap("I3", 37.4);
+
+      // ---------- J 交付门禁 ----------
+      const fJa = P(720, 400, 1), fJb = P(560, 200, 1.6);
+      stageIn("#stJ", fJa, 40);
+      tl.to("#stJ", { ...fJb, duration: 1.0, ease: "power2.inOut" }, 40.4);
+      ring("#rJ", 41.5);
+      cap("J", 40.1);
+
+      // ---------- K / L 交付 ----------
+      beat("K", 44, 2);
+      const fLa = P(720, 300, 1.15), fLb = P(720, 560, 1.15);
+      stageIn("#stL", fLa, 46);
+      ring("#rL", 46.5);
+      tl.to("#rL", { opacity: 0, duration: 0.2 }, 47.3);
+      tl.to("#stL", { ...fLb, duration: 1.4, ease: "power1.inOut" }, 47.4);
+      cap("L1", 46.1);
+      tl.fromTo("#track", { x: 380 }, { x: -1060, duration: 3.0, ease: "power1.inOut" }, 49);
+      cap("L2", 49.1, 18);
+
+      // ---------- M 三个承诺 ----------
+      tl.fromTo([".pl"], { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, stagger: 0.35, ease: "power2.out" }, 52.2);
+
+      // ---------- N 收尾：logo 居中，品牌名拉出 ----------
+      tl.to("#brand", { x: (1920 - 1187 * K1) / 2 + (1187 * K1 - 272 * K1) / 2, y: 250, scale: K1, duration: 0.7, ease: "power3.inOut" }, 57.0);
+      tl.set("#brand .bt", { opacity: 1 }, 57.7);
+      tl.set("#bti", { x: -915 }, 57.0);
+      tl.to("#bti", { x: 0, duration: 0.7, ease: "power3.out" }, 57.75);
+      tl.to("#brand", { x: (1920 - 1187 * K1) / 2, duration: 0.7, ease: "power3.out" }, 57.75);
+      typeIn("#tN", 58.6, 14);
+      tl.to("#eN", { opacity: 1, duration: 0.4 }, 59.6);
+      tl.to("#endUrl", { opacity: 1, duration: 0.4 }, 60.0);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

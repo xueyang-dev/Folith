@@ -202,6 +202,12 @@ class MainWindow(QMainWindow):
         usage_module.set_daily_log(Path(paths.data_dir) / "usage-daily.json")
         self.instance_lock = instance_lock
         self.runner = TaskRunner(self)
+        from PySide6.QtCore import QStandardPaths
+        from .updater import UpdateController
+        self.updates = UpdateController(self.runner, cache_dir=Path(
+            QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation)) / "updates", parent=self)
+        self.updates.restartRequested.connect(self._restart_for_update)
+        self._pending_update = False
         self._motion = motion.Motion(self)
         self._sidebar_page = None
         self._starting_jobs: set[str] = set()
@@ -413,6 +419,9 @@ class MainWindow(QMainWindow):
         self.workbench.entityPreviewRequested.connect(self.preview_entity_repair)
         self.workbench.entityRepairRequested.connect(self.apply_entity_repair)
         self.workbench.entityAcceptRequested.connect(self.accept_entity_variants)
+        from .concept_dialog import open_concept_workflow
+        self.workbench.review_panel.conceptRequested.connect(
+            lambda: open_concept_workflow(self))
         self.workbench.rescanRequested.connect(self.rescan_source)
         self.workbench.reportRepairRequested.connect(self.repair_report)
         self.workbench.reportAnswerRequested.connect(self.answer_report_question)
@@ -445,6 +454,7 @@ class MainWindow(QMainWindow):
         self.workbench.deliverWithRiskRequested.connect(self.deliver_with_risk)
         self.workbench.supplementRequested.connect(self.supplement_delivery)
         self.workbench.termAddRequested.connect(self.add_term_from_selection)
+        self.workbench.termEditRequested.connect(self.edit_term_suggestion)
         self.workbench.profileEditRequested.connect(self.edit_document_profile)
         self.workbench.promoteMemoryRequested.connect(self.promote_task_memory)
         self.workbench.styleRuleRequested.connect(self.save_style_rule)
@@ -645,6 +655,7 @@ class MainWindow(QMainWindow):
                              if preference == theme_module.FOLLOW_SYSTEM else False))
             views_module.set_current_theme(resolved)
             self.theme_preference = preference
+            self.workbench.refresh_appearance()
         finally:
             self._applying_theme = False
         return resolved
@@ -2368,6 +2379,105 @@ class MainWindow(QMainWindow):
                             case_sensitive=values["case_sensitive"],
                             allow_protected=values.get("include_protected", False))
 
+    def edit_term_suggestion(self, term: dict) -> None:
+        """从术语建议卡直接编辑这条术语（issue #125），保存后可选预览受影响译文。
+
+        保存走术语页同一条逐条修订通道（core.update_glossary_entry：生成新
+        术语版本、失效受影响段落、清除 TM 信任）。翻译开始前的草稿改动仍然
+        归术语页管——那时还没有译文，"改了术语再改译文"没有意义。
+        """
+        job_id = self._current_job_id
+        if not job_id or _automation():
+            return
+        state = adapter.load_state(job_id)
+        if not state.get("p2_done"):
+            self._notice(i18n.tr('翻译开始前请在术语页编辑术语；改动会在开始前统一保存。'))
+            return
+        from .dialogs import TermEditDialog
+
+        entry = self._term_entry(term)
+        dialog = TermEditDialog(entry, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        entry_id = str(entry.get("id") or "")
+        source = str(entry.get("source") or "")
+        old_target = str(entry.get("preferred") or entry.get("target") or "")
+        # domain/note 不在快捷编辑里：沿用条目现有值，不改写。
+        ok = self._glossary_action(
+            adapter.update_glossary_entry, entry_id,
+            preferred=values["preferred"], status=values["status"],
+            domain=str(entry.get("domain") or ""), note=str(entry.get("note") or ""),
+            forbidden=values["forbidden"], failure=i18n.tr('无法保存术语'))
+        if not ok:
+            return
+        if values["preview"]:
+            self.preview_term_replacement(source, old_target,
+                                          values["preferred"], values["forbidden"])
+
+    def _term_entry(self, term: dict) -> dict:
+        """术语建议卡通常只带 id/source/target：从术语页视图补齐 domain/note 等字段。"""
+        job_id = self._current_job_id
+        entry = dict(term or {})
+        try:
+            view = adapter.glossary_view(job_id, None, count_occurrences=False)
+        except Exception:  # noqa: BLE001 - 视图拿不到就按卡上的字段编辑
+            return entry
+        entry_id = str(entry.get("id") or "")
+        for row in view.get("rows") or []:
+            if str(row.get("id") or "") == entry_id:
+                entry.update(row)
+                break
+        entry.setdefault("preferred", entry.get("target") or "")
+        return entry
+
+    def preview_term_replacement(self, source: str, old_target: str,
+                                 new_target: str, forbidden: list) -> None:
+        """术语批量替换：逐段预览、勾选，再经候选事务写入选中的段（issue #126/#127）。"""
+        job_id = self._current_job_id
+        if not job_id or _automation():
+            return
+        from .dialogs import TermReplaceDialog
+
+        state = adapter.load_state(job_id)
+        preview = adapter.preview_term_revision(
+            state, source, old_target, new_target, forbidden=forbidden or [])
+        if not preview.get("rows"):
+            self._notice(i18n.tr(
+                '没有可以确定的替换：{v0} 段原文命中，其中 {v1} 段需要人工确认、'
+                '{v2} 段是人工保护的译文。', v0=preview.get("source_occurrences") or 0,
+                v1=len(preview.get("ambiguous") or []),
+                v2=len(preview.get("protected") or [])))
+            return
+        dialog = TermReplaceDialog(preview, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        if not values["selected"]:
+            return
+
+        def done(result) -> None:
+            result = result if isinstance(result, dict) else {}
+            changed = int(result.get("changed") or 0)
+            skipped = list(result.get("skipped") or [])
+            if changed == 0 and not skipped:
+                message = i18n.tr('没有需要替换的段落。')
+            elif skipped:
+                message = i18n.tr('已替换 {v0} 段；{v1} 段没有替换（人工确认/已过期的段落需要逐段处理）。',
+                                  v0=changed, v1=len(skipped))
+            else:
+                message = i18n.tr('已替换 {v0} 段译文；这些段需要重新审校。', v0=changed)
+            self._notice(message, job_id=job_id)
+            if job_id == self._current_job_id:
+                self.refresh_workbench(force=True)
+                self.workbench.reload_current_segment()
+
+        self._run_with_busy(
+            i18n.tr('术语替换'), i18n.tr('正在替换译文…'),
+            adapter.replace_term_targets, job_id, source, old_target, new_target,
+            on_done=done, forbidden=forbidden or [],
+            exclusions=values["exclusions"], selected=values["selected"])
+
     def review_current(self, index: int) -> None:
         self._run_with_busy(i18n.tr('审校'), i18n.tr('正在审校当前段落…'),
                             adapter.review_segments, self._current_job_id,
@@ -2906,6 +3016,9 @@ class MainWindow(QMainWindow):
             message = i18n.tr('已确认问题解决。该决定已记录。')
         self._notice(message)
         self.refresh_workbench(force=True)
+        # 连续处理（#98）：只有动作**成功**才前进到下一项；失败时提示留在
+        # 队列里，未处理的发现项不会被跳过。
+        self.workbench.review_panel.consume_advance_hint()
 
     def apply_suggestion(self, item: dict, note: str) -> None:
         """把审校建议暂存为候选；正文和发现项都不动，采用是另一个动作。"""
@@ -2922,6 +3035,8 @@ class MainWindow(QMainWindow):
         self._notice(i18n.tr('已把审校建议暂存为第 {v0} 段的候选；采用后才会写入译文。',
                              v0=index + 1))
         self.refresh_workbench(force=True)
+        # 连续处理（#98）：暂存成功也前进到下一项；失败不动队列。
+        self.workbench.review_panel.consume_advance_hint()
         if job_id == self._current_job_id:
             # 建议是针对某一段的：把它选出来，否则右栏看不到刚生成的候选。
             self.workbench.select_segment(index)
@@ -3573,6 +3688,16 @@ class MainWindow(QMainWindow):
 
 
     # ================= lifecycle =================
+    def _restart_for_update(self) -> None:
+        if self._exit_in_progress:
+            return
+        if not self._confirm(i18n.tr('重启并更新'),
+                             i18n.tr('将保存编辑并停止正在运行的任务，然后安装更新并重新打开 Folith。'),
+                             yes=i18n.tr('重启并更新'), no=i18n.tr('稍后')):
+            return
+        self._pending_update = True
+        self.close()
+
     def _install_quit_filter(self) -> None:
         app = QApplication.instance()
         if isinstance(app, FolithApplication):
@@ -3628,6 +3753,8 @@ class MainWindow(QMainWindow):
             self._begin_exit()
         finally:
             self._in_close_event = False
+            if not self._exit_in_progress and not self._closing_accepted:
+                self._pending_update = False
         # 退出流程可能在**本次调用内**就决定退出（空闲窗口、无草稿）：
         # 那就把同一个事件改成接受，而不是再嵌套调一次 close()。
         # R70 实测的缺陷：嵌套的那次 close 会被外层已经 ignore 的事件吞掉，
@@ -3729,15 +3856,45 @@ class MainWindow(QMainWindow):
                 self._acquire_close(forced=True)
             else:
                 self._exit_in_progress = False
+                self._pending_update = False
 
         def failed(message: str, detail: str) -> None:
             busy.close()
             self._exit_in_progress = False
+            self._pending_update = False
             self._failure(i18n.tr('停止任务失败'), message, detail, task=False)
 
         self.runner.submit(work, on_done=done, on_error=failed, label="exit-stop")
 
     def _acquire_close(self, *, forced: bool = False) -> None:
+        if not self._pending_update:
+            # A regular accepted exit must not leave a full download running
+            # in the pool after the last window disappears.
+            self.updates.cancel()
+        if self._pending_update:
+            # Updating must never use the existing force-quit escape hatch.
+            # A cancelled or failed shutdown leaves the verified download ready.
+            if forced or not self.runner.wait_for_done(3000):
+                self._pending_update = False
+                self._exit_in_progress = False
+                self._critical(i18n.tr('暂时无法更新'), i18n.tr('请等待任务和保存操作完成后再试。'))
+                return
+            try:
+                while self._edit_queue:
+                    job_id, index, text = self._edit_queue[0]
+                    adapter.submit_edit(job_id, index, text)
+                    self._edit_queue.pop(0)
+                # Sparkle may synchronously ask Cocoa to terminate. Such a
+                # request must see that the Qt save/stop boundary already passed.
+                self._closing_accepted = True
+                self.updates.install(self.paths)
+            except Exception as exc:
+                self._closing_accepted = False
+                self._pending_update = False
+                self._exit_in_progress = False
+                self._failure(i18n.tr('无法安装更新'), str(exc), task=False)
+                return
+            self._pending_update = False
         # 记录是否走了强制退出：探针与用例需要断言"停止流程超时后确实走了显式
         # 强制路径"，而不是只看窗口关掉了。
         self._exit_forced = bool(forced)

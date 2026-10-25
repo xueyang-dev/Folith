@@ -1,0 +1,167 @@
+{
+  "platform": "cocoa",
+  "repo": "(local worktree, path stripped)",
+  "steps": [
+    {
+      "step": "open-source-panel",
+      "page_index": 0,
+      "page_box": "1",
+      "rects": 1,
+      "render_generation": 2,
+      "hint": "第 1 段：已高亮",
+      "rows_visible": 341,
+      "current_position": 0,
+      "current_segment": 0,
+      "first_row_segments": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "step": "search-8.5",
+      "page_index": 0,
+      "page_box": "1",
+      "rects": 1,
+      "render_generation": 3,
+      "hint": "第 6 段：已高亮",
+      "rows_visible": 50,
+      "current_position": 5,
+      "current_segment": 40,
+      "first_visible_segments": [
+        5,
+        8,
+        17,
+        25,
+        33,
+        40
+      ],
+      "all_visible_count": 50
+    },
+    {
+      "step": "click-3rd-row",
+      "page_index": 2,
+      "page_box": "3",
+      "rects": 1,
+      "render_generation": 4,
+      "hint": "第 18 段：已高亮",
+      "rows_visible": 50,
+      "current_position": 17,
+      "current_segment": 121,
+      "clicked_segment": 17
+    },
+    {
+      "step": "page-box-goto-1",
+      "page_index": 0,
+      "page_box": "1",
+      "rects": 0,
+      "render_generation": 5,
+      "hint": "第 18 段：已高亮",
+      "rows_visible": 50,
+      "current_position": 17,
+      "current_segment": 121
+    },
+    {
+      "step": "re-click-same-row",
+      "page_index": 2,
+      "page_box": "3",
+      "rects": 1,
+      "render_generation": 6,
+      "hint": "第 18 段：已高亮",
+      "rows_visible": 50,
+      "current_position": 17,
+      "current_segment": 121,
+      "clicked_segment": 17
+    },
+    {
+      "step": "locate-current",
+      "page_index": 2,
+      "page_box": "3",
+      "rects": 1,
+      "render_generation": 6,
+      "hint": "第 18 段：已高亮",
+      "rows_visible": 50,
+      "current_position": 17,
+      "current_segment": 121,
+      "generation_before": 6
+    },
+    {
+      "step": "clear-filter",
+      "page_index": 2,
+      "page_box": "3",
+      "rects": 1,
+      "render_generation": 6,
+      "hint": "第 18 段：已高亮",
+      "rows_visible": 341,
+      "current_position": 17,
+      "current_segment": 17
+    },
+    {
+      "step": "panel-closed-reopened",
+      "page_index": 2,
+      "page_box": "3",
+      "rects": 1,
+      "render_generation": 6,
+      "hint": "第 18 段：已高亮",
+      "rows_visible": 341,
+      "current_position": 17,
+      "current_segment": 17
+    },
+    {
+      "step": "rapid-selection",
+      "page_index": 1,
+      "page_box": "2",
+      "rects": 1,
+      "render_generation": 7,
+      "hint": "第 13 段：已高亮",
+      "rows_visible": 341,
+      "current_position": 12,
+      "current_segment": 12,
+      "clicked_segments": [
+        5,
+        8,
+        12
+      ]
+    }
+  ],
+  "shots": [
+    {
+      "label": "01-panel-open-segment0",
+      "path": "/private/tmp/m5-83/out/01-panel-open-segment0.png"
+    },
+    {
+      "label": "02-filter-8.5",
+      "path": "/private/tmp/m5-83/out/02-filter-8.5.png"
+    },
+    {
+      "label": "03-after-click-3rd-row",
+      "path": "/private/tmp/m5-83/out/03-after-click-3rd-row.png"
+    },
+    {
+      "label": "04-page-box-1",
+      "path": "/private/tmp/m5-83/out/04-page-box-1.png"
+    },
+    {
+      "label": "05-reclick-same-row",
+      "path": "/private/tmp/m5-83/out/05-reclick-same-row.png"
+    },
+    {
+      "label": "06-locate-current",
+      "path": "/private/tmp/m5-83/out/06-locate-current.png"
+    },
+    {
+      "label": "07-filter-cleared",
+      "path": "/private/tmp/m5-83/out/07-filter-cleared.png"
+    },
+    {
+      "label": "08-panel-reopened",
+      "path": "/private/tmp/m5-83/out/08-panel-reopened.png"
+    },
+    {
+      "label": "09-rapid-selection",
+      "path": "/private/tmp/m5-83/out/09-rapid-selection.png"
+    }
+  ],
+  "ok": true,
+  "paths_note": "Local absolute paths removed before publishing: they contained the legacy brand name."
+}

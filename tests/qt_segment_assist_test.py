@@ -7,10 +7,16 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QTextCursor  # noqa: E402
+from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QMouseEvent, QTextCursor  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tests.qt_inline_editor_test import _pump, bench  # noqa: F401,E402  (fixture)
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    return QApplication.instance() or QApplication([])
 
 
 def _state():
@@ -284,3 +290,111 @@ def env_job(tmp_path, monkeypatch):
     state["p1_done"] = state["p2_done"] = True
     core.save_job_state(job_id, state)
     return job_id
+
+
+# ------------------------------------------------- 术语卡片就地编辑（#125） ------
+
+def _term_chip_release(chip, modifiers=Qt.KeyboardModifier.NoModifier):
+    return QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(5.0, 5.0),
+                       Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, modifiers)
+
+
+def test_term_chip_edit_action_is_discoverable_and_keeps_existing_interactions(qapp):
+    from folith.qt.segment_assist import TermChip
+
+    edited, inserted, activated = [], [], []
+    chip = TermChip({"id": "g2", "source": "Nora", "target": "诺拉",
+                     "status": "locked", "forbidden": ["娜拉"]}, 3)
+    chip.editRequested.connect(edited.append)
+    chip.insertRequested.connect(inserted.append)
+    chip.activated.connect(activated.append)
+    # 可发现的编辑动作：按钮在卡片里、有提示、有无障碍名、键盘可达。
+    assert chip.edit_button.parentWidget() is chip
+    assert not chip.edit_button.isHidden() and chip.edit_button.toolTip()
+    assert chip.edit_button.accessibleName() == "编辑术语"
+    assert chip.edit_button.focusPolicy() != Qt.FocusPolicy.NoFocus
+    chip.edit_button.click()
+    assert edited and edited[0]["id"] == "g2" and edited[0]["source"] == "Nora"
+    # 现有交互原样保留：↵ 插入首选译名、点击定位、⌥点击插入。
+    chip.insert_button.click()
+    assert inserted == ["诺拉"]
+    chip.mouseReleaseEvent(_term_chip_release(chip))
+    assert activated and activated[0]["source"] == "Nora"
+    chip.mouseReleaseEvent(
+        _term_chip_release(chip, Qt.KeyboardModifier.AltModifier))
+    assert inserted == ["诺拉", "诺拉"]
+    # 键盘（回车 / 空格）仍定位，不会误触发编辑。
+    from PySide6.QtGui import QKeyEvent
+
+    chip.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return,
+                                 Qt.KeyboardModifier.NoModifier))
+    assert len(activated) == 2
+
+
+def test_term_list_forwards_edit_and_change_key_guard_skips_untouched_polls(qapp):
+    from folith.qt.segment_assist import TermList
+
+    terms = [{"id": "g1", "source": "Midnight Library", "target": "午夜图书馆",
+              "status": "locked", "forbidden": ["子夜图书馆"]}]
+    listing = TermList()
+    listing.set_terms(terms, {"Midnight Library": 3})
+    first = listing.buttons[0]
+    edited = []
+    listing.editRequested.connect(edited.append)
+    listing.buttons[0].edit_button.click()
+    assert edited and edited[0]["id"] == "g1"
+    # 每秒轮询带着同样的术语再来：不重建（不能有轮询重建回归）。
+    listing.set_terms(terms, {"Midnight Library": 3})
+    assert listing.buttons[0] is first, "内容没变时不能拆掉重建"
+    # 术语修订成功之后首选译名变了：key 跟着变，卡片必须刷新。
+    corrected = [dict(term, target="薇奥莱特的一生") for term in terms]
+    listing.set_terms(corrected, {"Midnight Library": 3})
+    assert listing.buttons[0] is not first, "首选译名变化必须重建卡片"
+
+
+def test_term_chip_edit_is_reachable_by_tab_and_activated_by_space(qapp):
+    from PySide6.QtTest import QTest
+
+    from folith.qt.segment_assist import TermChip
+
+    chip = TermChip({"id": "g1", "source": "Nora", "target": "诺拉"}, 1)
+    edited, activated, inserted = [], [], []
+    chip.editRequested.connect(edited.append)
+    chip.activated.connect(activated.append)
+    chip.insertRequested.connect(inserted.append)
+    try:
+        chip.show()
+        chip.activateWindow()
+        chip.setFocus()
+        qapp.processEvents()
+        assert chip.hasFocus()
+        QTest.keyClick(chip, Qt.Key.Key_Tab)
+        assert chip.edit_button.hasFocus()
+        QTest.keyClick(chip.edit_button, Qt.Key.Key_Space)
+        assert edited == [chip.term]
+        assert activated == [] and inserted == []
+    finally:
+        chip.close()
+
+
+def test_term_edit_dialog_collects_fields_and_requires_preferred(qapp):
+    from PySide6.QtWidgets import QDialog
+
+    from folith.qt.dialogs import TermEditDialog
+
+    dialog = TermEditDialog({"source": "Nora", "preferred": "诺拉", "status": "locked",
+                             "forbidden": ["娜拉"], "domain": "文学", "note": "专名"})
+    assert dialog.preferred_edit.text() == "诺拉"
+    assert dialog.forbidden_edit.text() == "娜拉"
+    dialog.preferred_edit.setText("薇奥莱特")
+    dialog.forbidden_edit.setText("娜拉, 诺拉")
+    dialog.status_box.setCurrentIndex(dialog.status_box.findData("rejected"))
+    fields = dialog.values()
+    assert fields["preferred"] == "薇奥莱特"
+    assert fields["status"] == "rejected"
+    assert fields["forbidden"] == ["娜拉", "诺拉"]
+    # 空首选译名不能保存：对话框自己挡下来，不发更新请求。
+    dialog.preferred_edit.setText("  ")
+    dialog.ok_button.click()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert not dialog.ok_button.isEnabled()

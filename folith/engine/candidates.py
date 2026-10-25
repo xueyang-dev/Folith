@@ -157,6 +157,131 @@ def commit_candidates(job_id: str, drafts: Sequence[Mapping[str, Any]], *,
     return {"created": created, "rejected": rejected, "state": state}
 
 
+def stage_concept_revision(job_id: str, card: Mapping[str, Any], *,
+                           exclusions: Sequence[int] = (), note: str = "",
+                           actor: str = "user") -> Dict[str, Any]:
+    """把一次概念决策（#96/#97）的逐段修订暂存为候选，一个事务提交。
+
+    预览在锁内对权威状态**重新计算**——客户端带来的过期预览永远不会被照抄；
+    每个未排除的预览行成为一条 ``concept_revision`` 候选，基线取自当前状态，
+    因此"预览之后段落又被编辑/重译"的情形由 ``commit_candidates`` 的基线门禁
+    判为过期而不是写错段。暂存不改正文；采用是独立的、带版本检查的另一步。
+
+    ``exclusions`` 是 UI 逐段排除的 segment 索引；这些段留在返回的预览里
+    （``excluded: true``）但不产生候选。人工保护段（``locked_protection``）
+    只出现在 ``preview.protected``，绝不进批量——覆盖人工工作必须走单段
+    的显式覆盖路径，不存在批量入口。
+    """
+    from folith import concept_revision as _cr
+
+    state = _loaded(job_id)
+    pairs = state.get("pairs") or []
+    preview = _cr.preview_concept_revision(
+        card, state.get("entity_registry") or [], pairs,
+        state.get("concept_decisions"), exclusions=exclusions)
+    card = dict(card) if isinstance(card, Mapping) else {}
+    card_id = str(card.get("card_id") or "")
+    member_forms = {str(form or "").strip().casefold()
+                    for form in card.get("members") or [] if str(form or "").strip()}
+    drafts: List[Dict[str, Any]] = []
+    for row in preview["rows"]:
+        if row.get("excluded"):
+            continue
+        index = row.get("segment_index")
+        if not isinstance(index, int) or not 0 <= index < len(pairs):
+            continue
+        pair = pairs[index]
+        finding_ids = []
+        for finding in state.get("findings") or []:
+            if not isinstance(finding, Mapping):
+                continue
+            if finding.get("segment_index") != index:
+                continue
+            finding_card = str(finding.get("concept_card_id") or "")
+            if finding_card and card_id and finding_card != card_id:
+                continue
+            source = str(finding.get("source") or "")
+            if finding_card != card_id and source and member_forms \
+                    and source.casefold() not in member_forms:
+                continue
+            finding_id = str(finding.get("id") or finding.get("finding_id") or "")
+            if finding_id:
+                finding_ids.append(finding_id)
+        drafts.append({
+            "segment_index": index,
+            "segment_uid": str(row.get("segment_uid") or ""),
+            "source": str(pair.get("source") or ""),
+            "candidate_target": str(row.get("after") or ""),
+            "origin": _cand.ORIGIN_CONCEPT,
+            "instruction": str(note or ""),
+            "finding_ids": finding_ids,
+            "baseline": _cand.pair_signature(pair),
+            "usage": {"unknown": True},
+        })
+    result = commit_candidates(job_id, drafts, actor=actor)
+    result["preview"] = preview
+    return result
+
+
+def stage_term_revision(job_id: str, source_term: str, old_target: str,
+                        new_target: str, *, forbidden: Sequence[str] = (),
+                        exclusions: Sequence[int] = (), note: str = "",
+                        actor: str = "user") -> Dict[str, Any]:
+    """把一次术语修订（#124/#126）的逐段替换暂存为候选，一个事务提交。
+
+    与 :func:`stage_concept_revision` 同一契约：预览在锁内对权威状态**重新
+    计算**，客户端带来的过期预览永远不会被照抄；每个未排除的预览行成为一条
+    ``term_revision`` 候选（基线取自当前状态）。暂存不改正文；采用是独立的、
+    带版本检查的另一步。原文不含该术语的段落绝不进批量，没有全文档替换入口。
+
+    ``exclusions`` 是 UI 逐段排除的 segment 索引；这些段留在返回的预览里
+    （``excluded: true``）但不产生候选。
+    """
+    from folith import term_revision as _tr
+
+    state = _loaded(job_id)
+    pairs = state.get("pairs") or []
+    preview = _tr.preview_term_revision(
+        source_term, old_target, new_target, pairs,
+        forbidden=forbidden, exclusions=exclusions)
+    source_key = _tr.consistency.spelling(source_term).casefold()
+    drafts: List[Dict[str, Any]] = []
+    for row in preview["rows"]:
+        if row.get("excluded"):
+            continue
+        index = row.get("segment_index")
+        if not isinstance(index, int) or not 0 <= index < len(pairs):
+            continue
+        pair = pairs[index]
+        finding_ids = []
+        for finding in state.get("findings") or []:
+            if not isinstance(finding, Mapping):
+                continue
+            if finding.get("type") != "entity_conflict":
+                continue
+            if finding.get("segment_index") != index:
+                continue
+            if str(finding.get("source") or "").strip().casefold() != source_key:
+                continue
+            finding_id = str(finding.get("id") or finding.get("finding_id") or "")
+            if finding_id:
+                finding_ids.append(finding_id)
+        drafts.append({
+            "segment_index": index,
+            "segment_uid": str(row.get("segment_uid") or ""),
+            "source": str(pair.get("source") or ""),
+            "candidate_target": str(row.get("after") or ""),
+            "origin": _cand.ORIGIN_TERM,
+            "instruction": str(note or f"{old_target} → {new_target}"),
+            "finding_ids": finding_ids,
+            "baseline": _cand.pair_signature(pair),
+            "usage": {"unknown": True},
+        })
+    result = commit_candidates(job_id, drafts, actor=actor)
+    result["preview"] = preview
+    return result
+
+
 def _resolve_draft_index(state: Mapping[str, Any], draft: Mapping[str, Any]) -> Optional[int]:
     """Find the segment a draft belongs to: uid first, index+source as fallback."""
     pairs = state.get("pairs") or []
@@ -430,6 +555,10 @@ def adopt_translation_candidates(job_id: str, candidate_ids: Sequence[str], *,
                             "reason": result.get("reason") or ""})
 
     if dirty:
+        # 注：术语修订候选（ORIGIN_TERM）落地后，实体一致性已随
+        # _adopt_one → _recheck_delivery_invariants_for_segments →
+        # _record_delivery_validation_findings 里的 _refresh_entity_consistency
+        # 重算——冲突已消失的 finding 就地解决，仍然成立的保留（#124/#128）。
         _c.save_job_state(job_id, state)
     return {"committed": committed, "skipped": skipped, "changed": changed,
             "results": results, "state": state, "already_adopted": already}
@@ -490,4 +619,5 @@ __all__ = [
     "commit_candidates",
     "discard_translation_candidate",
     "pending_candidate_count",
+    "stage_concept_revision",
 ]

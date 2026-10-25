@@ -38,6 +38,7 @@ from .pdf_panel import PdfPanel
 from .qa_panel import QAPanel
 from .report_panel import ReportPanel
 from .review_panel import ReviewPanel
+from .source_panel import SourcePanel
 from .terms_panel import TermsPanel
 from .setup_panel import TaskSetupPanel
 from .task_details_panel import TaskDetailsPanel
@@ -367,6 +368,32 @@ def _stage_line(row) -> str:
         else:
             spans.append(f"<span style='color:{muted}'>{label}</span>")
     return f" <span style='color:{muted}'>—</span> ".join(spans)
+
+
+def translation_source_label(pair, *, human_edited: bool):
+    """Describe where the current translation came from (#107).
+
+    Returns ``(label, status_note)``.  A context-conflicted TM hit is never
+    described as "matched and reused": it is a suggestion, and the note says
+    whether the suggestion has already passed independent review or is still
+    waiting for confirmation.
+    """
+    pair = pair if isinstance(pair, dict) else {}
+    status = str(pair.get("review_status") or "")
+    tm_conflict = bool(pair.get("tm_context_conflict")) \
+        or status.startswith("reviewed_context_conflict") \
+        or status == "tm_context_conflict"
+    if human_edited:
+        return i18n.tr("人工修改"), ""
+    if tm_conflict:
+        if pair.get("reviewed"):
+            return (i18n.tr("翻译记忆（同原文，上下文不同，已独立审校）"),
+                    i18n.tr('翻译记忆仅作建议，已独立审校'))
+        return (i18n.tr("翻译记忆（同原文，上下文不同，待确认）"),
+                i18n.tr('翻译记忆仅作建议，待确认'))
+    if pair.get("from_tm"):
+        return i18n.tr("翻译记忆（已匹配并复用）"), i18n.tr('来自翻译记忆')
+    return i18n.tr("机器翻译"), ""
 
 
 def _segment_status_tone(row) -> str:
@@ -2414,6 +2441,7 @@ class WorkbenchView(QWidget):
     saveSnapshotRequested = Signal(int)
     refreshRequested = Signal()
     termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
+    termEditRequested = Signal(object)      # 从术语建议卡编辑这条术语
     askAgentRequested = Signal(int, str)    # 询问 Agent：段索引, 问题
     suggestRequested = Signal(int, str)     # 按要求重译：段索引, 要求
     analyzeRequested = Signal(int)          # 进一步审视本段
@@ -2933,6 +2961,7 @@ class WorkbenchView(QWidget):
         self.term_list.insertRequested.connect(self._insert_into_target)
         self.term_list.hovered.connect(self._hover_term)
         self.term_list.activated.connect(self.focus_term)
+        self.term_list.editRequested.connect(self.termEditRequested.emit)
         self._hover = None
         self._decision_marks: dict = {}    # 决策痕迹的高亮（叠在术语标注之上）
         self._term_focus = None            # term_highlight.Occurrences
@@ -3549,10 +3578,15 @@ class WorkbenchView(QWidget):
         # 原页：工作台左侧可展开的面板（acceptance-feedback D2），不再是一整页。
         self.pdf_panel = PdfPanel()
         self.pdf_panel.closeRequested.connect(lambda: self.set_source_open(False))
+        # 流式源（DOCX / EPUB / TXT / Markdown）没有页码：同一个位置展开的是
+        # 「原位置」上下文面板（#61），与原页共用入口、宽度和快捷键。
+        self.source_panel = SourcePanel()
+        self.source_panel.closeRequested.connect(lambda: self.set_source_open(False))
         # 左栏：原页与术语轮流占它（一个位置一个宽度）。`_source_open` 指左栏开着，
         # `_left_mode` 说开的是哪一个。
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self.pdf_panel)
+        self.left_stack.addWidget(self.source_panel)
         self.left_stack.addWidget(self.terms_side)
         self.source_clip = components.ClippedWidget(self.left_stack, 400)
         self._source_open = False
@@ -3568,6 +3602,8 @@ class WorkbenchView(QWidget):
         self.translation_split.collapseRequested.connect(self._split_collapse_requested)
         self.translation_split.resetRequested.connect(self._split_reset_requested)
         self._pdf_ok = False
+        self._stream_ok = False
+        self._source_available = False
         self._pdf_width = 0
         self._pdf_follow = QTimer(self)
         self._pdf_follow.setSingleShot(True)
@@ -4261,8 +4297,8 @@ class WorkbenchView(QWidget):
         return self._source_open and self._left_mode == "terms"
 
     def set_source_open(self, open_: bool) -> None:
-        """原页在工作台左侧展开 / 收起；中间的网格随之收缩（acceptance-feedback D2）。"""
-        self._set_left_panel("source", bool(open_) and self._pdf_ok)
+        """原页 / 原位置在工作台左侧展开 / 收起；中间的网格随之收缩（D2、#61）。"""
+        self._set_left_panel("source", bool(open_) and self._source_available)
 
     def set_terms_open(self, open_: bool) -> None:
         """术语表在工作台左侧展开 / 收起（与原页同一栏；2026-10-17 试用反馈）。"""
@@ -4277,7 +4313,8 @@ class WorkbenchView(QWidget):
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
             self._left_mode = mode
-            self.left_stack.setCurrentWidget(self.pdf_panel if mode == "source" else self.terms_side)
+            self.left_stack.setCurrentWidget(
+                self._source_widget() if mode == "source" else self.terms_side)
         self._source_open = open_
         self._sync_left_buttons()
         if open_ and mode == "terms":
@@ -4293,13 +4330,17 @@ class WorkbenchView(QWidget):
     def _sync_left_buttons(self) -> None:
         self.terms_button.setChecked(self.terms_open())
 
+    def _source_widget(self) -> QWidget:
+        """左栏「source」位展示的面板：PDF 是原页，流式源是原文上下文（#61）。"""
+        return self.pdf_panel if self._pdf_ok else self.source_panel
+
     def _follow_source(self) -> None:
         if self.source_open() and self._current_index >= 0:
             if self._motion.running("translation-columns"):
                 self._source_locate_pending = True
                 return
             self._source_locate_pending = False
-            self.pdf_panel.locate(self._current_index, state=self._state or None)
+            self._source_widget().locate(self._current_index, state=self._state or None)
 
     def _resume_source_render(self) -> None:
         if getattr(self, "_source_locate_pending", False):
@@ -4703,26 +4744,49 @@ class WorkbenchView(QWidget):
         self.review_panel.apply(view)
 
     def _load_pdf(self, job_id: str) -> None:
-        """PDF 任务才有「原页」页签与「查看原位置」；切换任务时判断一次。"""
+        """PDF 有「原页」，流式源有「原位置」上下文；切换任务时判断一次（#61）。"""
         try:
             self._pdf_ok = adapter.pdf_available(job_id)
         except Exception:  # noqa: BLE001 - 读不出原文时当作没有原页
             self._pdf_ok = False
+        try:
+            self._stream_ok = adapter.source_context_available(job_id)
+        except Exception:  # noqa: BLE001 - 读不出源文件时当作没有上下文
+            self._stream_ok = False
+        self._source_available = self._pdf_ok or self._stream_ok
         self.pdf_panel.load(job_id if self._pdf_ok else "")
         # 审校页内嵌的原页是另一份实例：同一个任务要喂给它，否则决策时看不到原页。
         self.review_panel.set_pdf_job(job_id if self._pdf_ok else "",
                                       state=self._state or None)
-        if not self._pdf_ok:
+        self.source_panel.load(job_id if self._stream_ok else "")
+        if not self._source_available:
             self.set_source_open(False)
-        self.view_source_button.setVisible(self._pdf_ok)
+        # 解释而非隐藏（#61）：只要任务是从源格式导入的，「查看原位置」就留在
+        # 操作栏里；既没有原页也读不出上下文时禁用并说明边界，不再悄悄消失。
+        # 文件名从已加载的 state 取：open 路径不允许在 GUI 线程再读一次状态。
+        filename = str((self._state or {}).get("filename") or "").lower()
+        known_format = any(filename.endswith(item) for item in adapter.SOURCE_SUFFIXES)
+        self._source_format_known = known_format
+        self.view_source_button.setVisible(self._source_available or known_format)
+        self.view_source_button.setEnabled(self._source_available)
+        if self._pdf_ok:
+            tip = i18n.tr('在 PDF 原页里定位并高亮这一段')
+        elif self._stream_ok:
+            tip = i18n.tr('在源文件上下文里定位这一段（章节、标题路径或行号）')
+        else:
+            tip = i18n.tr('原位置目前支持 PDF 原文，以及 DOCX、EPUB、TXT、Markdown 源文件的原文上下文；这份源文件暂时没有可定位的内容')
+        self.view_source_button.setToolTip(f"{i18n.tr('查看原位置')}：{tip}")
         self._sync_more_pages()
 
     def show_source_location(self, index: int) -> None:
-        """切到原页并高亮第 ``index`` 段。"""
-        if not self._pdf_ok or index < 0:
+        """切到原页（PDF）或原文上下文（流式源），并高亮第 ``index`` 段。"""
+        if not self._source_available or index < 0:
             return
         self.set_source_open(True)
-        self.pdf_panel.locate(int(index), state=self._state or None)
+        if self._pdf_ok:
+            self.pdf_panel.locate(int(index), state=self._state or None)
+        else:
+            self.source_panel.locate(int(index), state=self._state or None)
 
     def show_segment_for_edit(self, index: int) -> None:
         """从审校页跳到翻译页的某一段（用户要自己改译文）。"""
@@ -4952,6 +5016,16 @@ class WorkbenchView(QWidget):
         self._sync_word_count()
         self._refresh_term_focus()
 
+    def refresh_appearance(self) -> None:
+        """Update item brushes with QSS, without reloading text or moving the editor.
+
+        Visible rows repaint immediately; large tables keep the existing chunked
+        painting path for the rest. Preserve any unfinished initial row layout;
+        otherwise color-only changes do not need row layout.
+        """
+        pending_layout = self._paint_timer.isActive() and self._paint_schedules_heights
+        self._queue_segment_paint(schedule_heights=pending_layout)
+
     def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
         """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
 
@@ -5089,9 +5163,9 @@ class WorkbenchView(QWidget):
 
     def _paint_row(self, position: int, row: adapter.SegmentRow) -> bool:
         """Paint one row; True when it was (re)painted, False when the cache hit."""
-        look = (current_theme(), i18n.language())
+        look = (current_theme(), theme_module.accent(), i18n.language())
         if look != self._painted_look:
-            # 主题或语言变了：颜色与提示都要重画，缓存整体作废。
+            # 主题、强调色或语言变了：颜色与提示都要重画，缓存整体作废。
             self._painted.clear()
             self._painted_look = look
         if self._painted.get(position) == row:
@@ -5646,6 +5720,7 @@ class WorkbenchView(QWidget):
         self.exclude_button.setVisible(not row.excluded)
         self._sync_structure_menu(row)
         self.pdf_panel.set_segment(row.index)
+        self.source_panel.set_segment(row.index)
         if self.source_open():
             self._pdf_follow.start()  # follow the selection (debounced for key repeat)
         self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
@@ -5663,11 +5738,16 @@ class WorkbenchView(QWidget):
         self.fact_state.setText(row.status)
         self.fact_review.setText(i18n.tr("已审校") if row.reviewed else i18n.tr("未审校"))
         pairs_now = self._state.get("pairs") or []
-        from_tm = 0 <= row.index < len(pairs_now) and bool(pairs_now[row.index].get("from_tm"))
-        self.fact_source.setText(i18n.tr("人工修改") if row.human_edited
-                                 else (i18n.tr("翻译记忆（已匹配并复用）") if from_tm
-                                       else i18n.tr("机器翻译")))
-        if from_tm and not row.human_edited:
+        pair_now = pairs_now[row.index] if 0 <= row.index < len(pairs_now) else {}
+        from_tm = bool(pair_now.get("from_tm"))
+        # #107：同一句原文在记忆里有、但前后文不同时，译文只是建议，不能
+        # 说成"已匹配并复用"。界面必须把"为什么没复用"说出来。
+        source_label, source_note = translation_source_label(
+            pair_now, human_edited=row.human_edited)
+        self.fact_source.setText(source_label)
+        if source_note:
+            self.segment_status.setText(self.segment_status.text() + " · " + source_note)
+        elif from_tm and not row.human_edited:
             self.segment_status.setText(self.segment_status.text() + " · "
                                         + i18n.tr('来自翻译记忆'))
         reason = ""
@@ -5717,7 +5797,8 @@ class WorkbenchView(QWidget):
         self.analyze_button.setEnabled(can_analyze and not analyzing)
         self.analyze_button.setText(i18n.tr('点评中…') if analyzing else i18n.tr('点评'))
         terms = adapter.segment_terms(self._state, row.index)
-        self.term_list.set_terms(terms, self._document_term_counts(terms))
+        self.term_list.set_terms(terms, self._document_term_counts(terms),
+                                  editable=self._task_started())
         self.term_list.set_active(self._term_focus.focus.source if self._term_focus else "")
         self.term_heading.setText(i18n.tr('术语 · {v0}', v0=len(terms)) if terms
                                   else i18n.tr('术语'))
@@ -6141,7 +6222,9 @@ class WorkbenchView(QWidget):
             if row is not None:
                 self.exclude_button.setVisible(not row.excluded)
                 self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
-            self.view_source_button.setVisible(bool(getattr(self, "_pdf_ok", False)))
+            self.view_source_button.setVisible(
+                bool(getattr(self, "_source_available", False))
+                or bool(getattr(self, "_source_format_known", False)))
         else:
             self.selection_title.setText(i18n.tr('尚未选择段落'))
 

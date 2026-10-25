@@ -15,9 +15,9 @@ def acquire(path, *, blocking=True):
     try:
         if os.name == 'nt':
             import msvcrt
-            if path.stat().st_size == 0:
-                stream.write(b'\0')
-                stream.flush()
+            # Windows can lock bytes beyond EOF. Initialising the file first
+            # races with another opener that has already locked byte zero:
+            # its mandatory lock would reject our delayed buffered write.
             stream.seek(0)
             msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
         else:

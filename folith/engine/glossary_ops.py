@@ -656,7 +656,8 @@ def set_entity_translation(job_id, source_form, target, *, entity_type="other_pr
 
 def entity_consistency_queue(state):
     return _entity_registry.EntityRegistry(
-        state.get("entity_registry") or []).consistency_findings(state.get("pairs") or [])
+        state.get("entity_registry") or []).consistency_findings(
+            state.get("pairs") or [], state.get("concept_decisions"))
 
 
 def preview_entity_repair(state, source_form, target):

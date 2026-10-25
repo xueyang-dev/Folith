@@ -34,15 +34,34 @@ jobs:
           cache: pip
       - name: Install shared application and test dependencies
         run: python -m pip install ".[test]" PySide6==6.11.2
+      - name: Prepare the pinned Sparkle framework for native bridge compilation
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/folith-sparkle"
+          curl --fail --location --retry 3 \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz \
+            -o "$RUNNER_TEMP/folith-sparkle/Sparkle.tar.xz"
+          printf '%s  %s\n' c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c \
+            "$RUNNER_TEMP/folith-sparkle/Sparkle.tar.xz" | shasum -a 256 -c -
+          tar -xf "$RUNNER_TEMP/folith-sparkle/Sparkle.tar.xz" -C "$RUNNER_TEMP/folith-sparkle"
+          echo "FOLITH_TEST_SPARKLE_FRAMEWORK=$RUNNER_TEMP/folith-sparkle/Sparkle.framework" >> "$GITHUB_ENV"
+      - name: Compile and load the native Sparkle bridge
+        if: runner.os == 'macOS'
+        run: python -m pytest -q tests/macos_sparkle_native_test.py
       - name: Check shared views and platform boundary
         run: >-
           python -m pytest -q
           tests/qt_platform_ui_test.py tests/qt_i18n_test.py
           tests/qt_settings_window_test.py tests/qt_inline_editor_test.py
+          tests/qt_theme_follow_system_test.py
           tests/qt_segment_assist_test.py tests/desktop_file_actions_test.py
           tests/performance_trace_test.py tests/runtime_state_test.py
           tests/runtime_heartbeat_recovery_test.py tests/workflow_recovery_test.py
           tests/windows_atomic_file_test.py tests/runtime_pause_test.py
           tests/qt_worker_lifetime_test.py
+          tests/concept_workflow_test.py tests/qt_concept_dialog_test.py
           tests/application_commands_test.py tests/state_mutation_lock_test.py
           tests/knowledge_async_commit_test.py
+          tests/desktop_updates_test.py tests/qt_updater_test.py
+          tests/windows_update_helper_test.py tests/macos_updater_packaging_test.py
