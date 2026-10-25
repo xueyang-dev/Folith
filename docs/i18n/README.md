@@ -10,13 +10,13 @@ Qt 桌面端偏好设置提供日间、夜间、暖黄色纸面三种显示模�
 
 | 语言代码 | 语言名称 | 状态 | Web 目录条数 | Qt 桌面目录条数 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `zh-CN` | 简体中文 | 默认/基准 | 1,674 | 2,190 | 基准语言，唯一源目录 |
-| `en` | English | 实验功能 (experimental) | 1,674 | 2,193 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
-| `es` | Español | 实验功能 (experimental) | 1,674 | 2,194 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
-| `ru` | Русский | 实验功能 (experimental) | 1,674 | 2,191 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
-| `ar` | العربية | 实验功能 (experimental) | 1,674 | 2,191 | RTL 布局支持，见 [#16](https://github.com/xueyang-dev/Folith/issues/16) RTL 验收 |
-| `fr` | Français | 实验功能 (experimental) | 1,674 | 2,194 | 包含变音符与标点空格规范，新增于 [#11](https://github.com/xueyang-dev/Folith/issues/11) |
-| `de` | Deutsch | 实验功能 (experimental) | 1,674 | 2,194 | 复合词长文本压力测试，新增于 [#11](https://github.com/xueyang-dev/Folith/issues/11) |
+| `zh-CN` | 简体中文 | 默认/基准 | 1,673 | 2,190 | 基准语言，唯一源目录 |
+| `en` | English | 实验功能 (experimental) | 1,673 | 2,193 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
+| `es` | Español | 实验功能 (experimental) | 1,673 | 2,194 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
+| `ru` | Русский | 实验功能 (experimental) | 1,673 | 2,191 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
+| `ar` | العربية | 实验功能 (experimental) | 1,673 | 2,191 | RTL 布局支持，见 [#16](https://github.com/xueyang-dev/Folith/issues/16) RTL 验收 |
+| `fr` | Français | 实验功能 (experimental) | 1,673 | 2,194 | 包含变音符与标点空格规范，新增于 [#11](https://github.com/xueyang-dev/Folith/issues/11) |
+| `de` | Deutsch | 实验功能 (experimental) | 1,673 | 2,194 | 复合词长文本压力测试，新增于 [#11](https://github.com/xueyang-dev/Folith/issues/11) |
 
 > [!NOTE]
 > 界面目录完整（100% 覆盖）不等同于母语审阅完成。除简体中文外的所有界面语言当前均明确标记为 **experimental（实验功能）**。
@@ -47,6 +47,8 @@ Qt 桌面端偏好设置提供日间、夜间、暖黄色纸面三种显示模�
 ### 目录与界面范围约束
 
 范围仅包括显式 UI 操作文案、按钮、菜单、对话框、提示、静态 HTML 片段、导航、设置以及工作台界面。
+
+文档翻译的源/目标语言目录（21 种可选语言）、OCR 语言包要求和待完成的质量验收，详见 [翻译语言支持与验收规范](../translation-languages.md)。界面文案目录完成与文档翻译质量验收分别跟踪。
 
 **明确排除在界面目录之外的内容：**
 - 用户文档原文与译文、段落内容、项目名称、任务标题与文件路径；

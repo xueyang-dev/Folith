@@ -65,11 +65,17 @@ def test_actual_helper_installs_or_restores_and_restarts(tmp_path, mode):
         "-DataDir", str(data), "-LogDir", str(logs)], check=True, capture_output=True, timeout=40)
     result = json.loads((logs / "update-result.json").read_text(encoding="utf-8-sig"))
     assert result["state"] == ("installed" if mode == "success" else "failed"), result
-    for _ in range(50):
+    content = ""
+    for _ in range(100):
         if marker.exists():
-            break
+            try:
+                content = marker.read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+            if content:
+                break
         time.sleep(0.05)
-    assert marker.read_text() == ("new" if mode == "success" else "old")
+    assert content == ("new" if mode == "success" else "old")
     assert secret.read_text() == "private settings"
     if mode != "success":
         expected = {"failure": "Installer exit code 3", "wrong-version": "Installed version does not match",

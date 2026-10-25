@@ -20,12 +20,28 @@ def test_catalogue_matching_never_guesses():
 
     assert s.match("乌尔都语") == s.match("Urdu") == s.match("urd") == "اردو"
     assert s.match("维吾尔语") == "ئۇيغۇرچە" and s.match("Persian") == "فارسی"
+    assert s.match("土耳其语") == s.match("Turkish") == "Türkçe"
+    assert s.match("荷兰语") == s.match("Dutch") == s.match("nld") == "Nederlands"
+    assert s.match("波兰语") == s.match("Polish") == s.match("pol") == "Polski"
+    assert s.match("乌克兰语") == s.match("Ukrainian") == s.match("ukr") == "Українська"
+    assert s.match("越南语") == s.match("Vietnamese") == s.match("vie") == "Tiếng Việt"
+    assert s.match("希伯来语") == s.match("Hebrew") == "עברית"
     assert s.match("克林贡语") == "" and s.match("") == ""
     assert s.english_name("اردو") == "Urdu"
+    assert s.english_name("Nederlands") == "Dutch"
+    assert s.english_name("Polski") == "Polish"
+    assert s.english_name("Українська") == "Ukrainian"
+    assert s.english_name("Tiếng Việt") == "Vietnamese"
     # 不在目录里的标签（例如本机 OCR 的组合标签）不变成模型提示。
     assert s.english_name("阿拉伯语 + 英语") == ""
     assert s.ocr_code("ئۇيغۇرچە") == "uig" and s.ocr_code("x") is None
+    assert s.ocr_code("Nederlands") == "nld"
+    assert s.ocr_code("Polski") == "pol"
+    assert s.ocr_code("Українська") == "ukr"
+    assert s.ocr_code("Tiếng Việt") == "vie"
     assert s.display_name("اردو") == "اردو · Urdu" and s.display_name("English") == "English"
+    assert s.display_name("Nederlands") == "Nederlands · Dutch"
+    assert s.display_name("Tiếng Việt") == "Tiếng Việt · Vietnamese"
 
 
 def test_vlm_prompt_names_the_language_and_it_is_part_of_the_cache_identity():

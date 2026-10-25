@@ -83,6 +83,8 @@ OCR_LANGUAGE_REGISTRY: Dict[str, Dict[str, Any]] = {
            "aliases": ("persian", "farsi", "fas", "per", "波斯语")},
     "ur": {"label": "اردو", "tesseract": "urd", "direction": "rtl",
            "aliases": ("urdu", "urd", "乌尔都语")},
+    "ug": {"label": "ئۇيغۇرچە", "tesseract": "uig", "direction": "rtl",
+           "aliases": ("uyghur", "uig", "维吾尔语", "维文")},
     "hi": {"label": "हिन्दी", "tesseract": "hin", "direction": "ltr",
            "aliases": ("hindi", "hin", "印地语")},
     "vi": {"label": "Tiếng Việt", "tesseract": "vie", "direction": "ltr",
@@ -102,6 +104,7 @@ _COMBINATION_KEYS: Tuple[Tuple[str, ...], ...] = (
     ("he", "en"),
     ("fa", "en"),
     ("ur", "en"),
+    ("ug", "en"),
 )
 
 

@@ -177,10 +177,12 @@ The package `foliothread` exists on PyPI (the code module is `folith`), but it i
 | **Import** | PDF (including scans) / DOCX / EPUB (no DRM) / TXT / Markdown; up to 512 MB per file, split larger documents before importing |
 | **Delivery files** | Translation-only DOCX, bilingual DOCX, EPUB (from PDF or DOCX sources), PDF (the layout-preserving PDF applies to PDF sources only), glossary, TMX, TBX, JSONL, the `delivery_manifest.json` manifest |
 | **Language assets** | Glossary and translation memory: XLSX, TBX, TMX import and export; JSONL |
-| **Source language** | Auto-detect, or pick one of 17: English, Simplified Chinese, Traditional Chinese, Japanese, Korean, German, French, Spanish, Italian, Portuguese, Russian, Turkish, Arabic, Urdu, Persian, Uyghur, Hebrew |
-| **Target language** | 12: Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Russian, Portuguese, Italian, Arabic |
+| **Source language** | Auto-detect, or pick one of 21: English, 简体中文, 繁体中文, 日本語, 한국어, Deutsch, Français, Español, Italiano, Português, Русский, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
+| **Target language** | 21: 简体中文, 繁体中文, English, 日本語, 한국어, Deutsch, Français, Español, Русский, Português, Italiano, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
 
-The source language also guides line positioning on scanned pages (the bundled Tesseract only ships English, Simplified Chinese and Arabic language data). No speed or scale benchmarks are published, and there is no promise about time or cost at any page count: quality and time depend on the document and the model you choose. For each document the prepare page estimates calls, input tokens and time for the three modes; rely on that, and for a given language pair try a short sample chapter first.
+The source language also guides line positioning on scanned pages (the bundled Tesseract only ships English, Simplified Chinese and Arabic language data; missing packs fail explicitly rather than falling back silently to English). See [Translation language support and validation specification](docs/translation-languages.md) for details. No speed or scale benchmarks are published, and there is no promise about time or cost at any page count: quality and time depend on the document and the model you choose. For each document the prepare page estimates calls, input tokens and time for the three modes; rely on that, and for a given language pair try a short sample chapter first.
+
+> **Language validation scope:** These are selectable catalog entries. Added language pairs have not completed real-model translation, independent review, or reader-quality acceptance; #10 remains open. Component tests are not quality sign-off.
 
 ---
 

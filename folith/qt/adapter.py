@@ -59,7 +59,9 @@ ACTIVE_STATUSES = exit_flow.ACTIVE_STATUSES
 
 TARGET_LANGUAGES: tuple[str, ...] = (
     "简体中文", "繁体中文", "English", "日本語", "한국어", "Deutsch",
-    "Français", "Español", "Русский", "Português", "Italiano", "العربية",
+    "Français", "Español", "Русский", "Português", "Italiano", "Nederlands",
+    "Polski", "Українська", "Tiếng Việt", "Türkçe", "العربية", "فارسی",
+    "עברית", "اردو", "ئۇيغۇرچە",
 )
 
 DEFAULT_STYLE_RULES = _DEFAULT_STYLE_RULES

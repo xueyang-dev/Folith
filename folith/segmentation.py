@@ -152,7 +152,7 @@ def _looks_like_heading(text: str) -> bool:
 def _token_before(text: str, index: int) -> str:
     """Return the word/dotted abbreviation ending immediately before ``index``."""
     prefix = text[:index]
-    match = re.search(r"([A-Za-z](?:[A-Za-z.]*)?)$", prefix)
+    match = re.search(r"([^\W\d_](?:[^\W\d_]|\.)*)$", prefix)
     return match.group(1) if match else ""
 
 
