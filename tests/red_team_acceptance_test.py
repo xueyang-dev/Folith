@@ -823,6 +823,33 @@ def test_external_evidence_attack_and_prompt_scan():
                 for target in node.targets):
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 transport_url_lines.add((support_path, node.value.lineno))
+    # Updater URLs are release transport configuration. Limit the exception to
+    # the repository assignment, the appcast download-prefix argument and the
+    # feed's HTTPS scheme check; other URLs in these files remain scanned.
+    for update_path in ("folith/desktop/updates.py", "scripts/prepare_macos_update.py",
+                        "scripts/embed_macos_updater.py"):
+        with open(os.path.join(repo_root, update_path), encoding="utf-8") as stream:
+            tree = ast.parse(stream.read())
+        transport_values = []
+        for node in ast.walk(tree):
+            if update_path == "folith/desktop/updates.py" and isinstance(node, ast.Assign) \
+                    and any(isinstance(target, ast.Name) and target.id == "REPO"
+                            for target in node.targets):
+                transport_values.append(node.value)
+            elif update_path == "scripts/prepare_macos_update.py" and isinstance(node, ast.List):
+                for flag, value in zip(node.elts, node.elts[1:]):
+                    if isinstance(flag, ast.Constant) and flag.value == "--download-url-prefix":
+                        transport_values.append(value)
+            elif update_path == "scripts/embed_macos_updater.py" and isinstance(node, ast.Call) \
+                    and isinstance(node.func, ast.Attribute) and node.func.attr == "startswith" \
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "feed":
+                transport_values.extend(arg for arg in node.args
+                                        if isinstance(arg, ast.Constant) and arg.value == "https://")
+        for value in transport_values:
+            for literal in ast.walk(value):
+                if isinstance(literal, ast.Constant) and isinstance(literal.value, str) \
+                        and literal.value.startswith(("http://", "https://")):
+                    transport_url_lines.add((update_path, literal.lineno))
     hits = subprocess.run(
         ["rg", "-n", "https?://", "core.py", "folith/", "scripts/"],
         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
