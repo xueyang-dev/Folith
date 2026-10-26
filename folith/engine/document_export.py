@@ -383,20 +383,21 @@ def build_translation_docx(state, source, *, roundtrip: bool = False):
 
 def translations_to_pdf(pairs, target_lang=None):
     """Render a paginated, Unicode-aware translation PDF with PyMuPDF Story."""
+    # Full-width paragraphs, not one-row tables: MuPDF does not split a table
+    # row across pages, so a paragraph taller than the page used to be cut off
+    # (about 37% of a six-page paragraph was lost). ``width: 100%`` keeps the
+    # start-edge alignment that the table cell previously provided.
     paragraphs = "".join(
-        '<table class="entry"><tr>'
-        f'<td dir="{text_direction(pair.get("target"), target_lang)}" '
+        f'<p class="entry" dir="{text_direction(pair.get("target"), target_lang)}" '
         'style="text-align: start">'
-        f'{html_escape(str(pair.get("target") or ""))}</td></tr></table>'
+        f'{html_escape(str(pair.get("target") or ""))}</p>'
         for pair in pairs or [])
     html = f'<article><h1>译文</h1>{paragraphs}</article>'
     css = (
         "@page { size: A4; } "
         "body { font-family: sans-serif; font-size: 11pt; line-height: 1.65; "
         "color: #1f2937; } h1 { font-size: 20pt; margin: 0 0 20pt; "
-        "color: #111827; } table.entry { width: 100%; border-collapse: collapse; "
-        "margin: 0 0 10pt; break-inside: avoid; page-break-inside: avoid; } "
-        "td { padding: 0; }"
+        "color: #111827; } p.entry { width: 100%; margin: 0 0 10pt; }"
     )
     story = fitz.Story(html=html, user_css=css, em=11)
     page_rect = fitz.paper_rect("a4")

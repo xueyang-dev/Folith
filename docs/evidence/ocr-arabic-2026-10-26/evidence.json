@@ -1,0 +1,22 @@
+{
+  "checked_at": "2026-10-26T16:12:12+00:00",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "tesseract": "/opt/homebrew/bin/tesseract",
+  "requested_language": "العربية + English",
+  "engine_code": "ara+eng",
+  "direction": "rtl",
+  "psm": 3,
+  "sample_lines": [
+    "تقرير المشروع جاهز للمراجعة.",
+    "OpenAI API: مهلة الطلب 30 ثانية.",
+    "الاجتماع يبدأ الساعة 9 صباحًا."
+  ],
+  "block_count": 3,
+  "recognized_text": "تقرير المشروع جاهز للمراجعة.\n:OpenAl API‏ مهلة الطلب 30 ثانية.\nالاجتماع يبداً الساعة 9 صباحًا.",
+  "missing_tokens": [],
+  "latin_run_observation": "OpenAl API",
+  "latin_run_exact": false,
+  "rtl_order_top_to_bottom": true,
+  "average_confidence": 88.9,
+  "status": "PASS"
+}
