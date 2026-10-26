@@ -429,7 +429,8 @@ def _entry(state_value: str, reason: str, *, first: int | None = None,
     }
 
 
-def _resolve_from_paragraphs(outline: dict, state: dict) -> dict[str, dict]:
+def _resolve_from_paragraphs(outline: dict, state: dict,
+                             cached_nodes: dict | None = None) -> dict[str, dict]:
     source_paras = [str(item or "") for item in state.get("source_paras") or []]
     positions = match_paragraph_positions(
         [str(item or "") for item in outline.get("paragraphs") or []], source_paras)
@@ -439,7 +440,8 @@ def _resolve_from_paragraphs(outline: dict, state: dict) -> dict[str, dict]:
     cleaned_count = _cleaned_count(state, output_inputs)
     ranges = _by_paragraph(state.get("segmentation"))
     segments = _segment_list(state)
-    _, segment_count = _uid_index(state)
+    uid_index, segment_count = _uid_index(state)
+    excluded = _excluded_uids(state) if cached_nodes else set()
     segmentation_missing = not ranges
 
     nodes: dict[str, dict] = {}
@@ -488,11 +490,46 @@ def _resolve_from_paragraphs(outline: dict, state: dict) -> dict[str, dict]:
         reason = "partial_paragraph_match" if partial else match_reason
         if not uids:
             reason = "positional_fallback"
-        nodes[node_id] = _entry(
+        entry = _entry(
             PARTIAL if partial else RESOLVED, reason,
             first=ordered[0], last=ordered[-1], uids=uids,
             matched=matched, unmatched=max(total - matched, 0), boundary=boundary)
+        nodes[node_id] = _exclusion_refined(
+            entry, (cached_nodes or {}).get(node_id), uid_index, excluded)
     return nodes
+
+
+def _exclusion_refined(entry: dict, cached, uid_index: dict[str, int],
+                       excluded: set[str]) -> dict:
+    """Keep a paragraph-resolved node honest about a partial exclusion.
+
+    Excluding segments rewrites ``paragraph_ranges``, so the structure
+    signature changes and the resolver falls back to the paragraph chain.  That
+    chain can place the node correctly and still not know that part of it left
+    the work list.  The cached uids can: a cached uid that is gone from the
+    current list but present in the exclusion ledger was removed by the user,
+    while the rest of the node is still there.  Uids that vanished for any
+    other reason (a split assigns new ones) fail the ledger check below and
+    keep the paragraph chain's answer.
+    """
+    if entry.get("state") not in NAVIGABLE_STATES or not isinstance(cached, dict):
+        return entry
+    cached_uids = [str(uid) for uid in cached.get("segment_uids") or [] if str(uid)]
+    missing = [uid for uid in cached_uids if uid not in uid_index]
+    if not cached_uids or not missing \
+            or not all(uid in excluded for uid in missing):
+        return entry
+    positions = [uid_index[uid] for uid in cached_uids if uid in uid_index]
+    counts = {
+        "matched": entry.get("matched_paragraphs") or 0,
+        "unmatched": entry.get("unmatched_paragraphs") or 0,
+        "boundary": entry.get("boundary_paragraphs") or 0,
+    }
+    if not positions:
+        return _entry(UNRESOLVED, "node_excluded", uids=cached_uids, **counts)
+    return _entry(PARTIAL, "node_partial_excluded",
+                  first=min(positions), last=max(positions), uids=cached_uids,
+                  **counts)
 
 
 def _verify_cached(nodes: dict, state: dict) -> bool:
@@ -592,16 +629,26 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
 
     ``mapping = {fingerprint, structure_revision, structure_signature,
     nodes: {node_id: entry}}``.  ``payload`` may be the value returned by
-    :func:`load_outline` so a task open parses at most once.
+    :func:`load_outline` so a task open parses at most once; the resolved
+    mapping is written back into it, and when it carries no mapping yet the
+    persisted one is read (a caller may hold the snapshot from before the
+    first resolve).
     """
     state = state if isinstance(state, dict) else {}
-    payload = payload if isinstance(payload, dict) else load_outline(job_id, state)
+    given_payload = payload if isinstance(payload, dict) else None
+    payload = given_payload if given_payload is not None else load_outline(job_id, state)
     outline = payload.get("outline") or {}
     fingerprint = str(outline.get("fingerprint")
                       or payload.get("fingerprint") or "")
     revision = structure_revision(state)
     signature = structure_signature(state)
     cached = payload.get("mapping") or {}
+    if not cached and given_payload is not None:
+        # ``payload`` can be a snapshot held for the whole task (the Qt view
+        # keeps the one read at task open).  A mapping resolved after that read
+        # exists only in the sidecar, and its uids are what prove a partial
+        # exclusion below.
+        cached = (_read_sidecar(job_id) or {}).get("mapping") or {}
     cached_nodes = cached.get("nodes") if isinstance(cached.get("nodes"), dict) else {}
 
     same_document = (cached.get("fingerprint") == fingerprint and bool(cached_nodes))
@@ -623,7 +670,8 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
         nodes = _resolve_by_uid(cached_nodes, state)
         source = "uid"
     else:
-        nodes = _resolve_from_paragraphs(outline, state)
+        nodes = _resolve_from_paragraphs(
+            outline, state, cached_nodes if same_document else None)
         source = "paragraphs"
 
     mapping = {
@@ -634,4 +682,6 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
     }
     if persist:
         _update_mapping(job_id, mapping)
+    if isinstance(payload, dict):
+        payload["mapping"] = mapping
     return {**mapping, "source": source}

@@ -342,6 +342,24 @@ def test_a_cleanup_with_an_unchanged_segment_count_reresolves_the_mapping(
     assert calls, "a changed paragraph structure must not be served from cache"
 
 
+def test_a_range_exclusion_updates_the_visible_row_state(job):
+    """Excluding part of a node must say 部分已排除, not 已定位 (#186)."""
+    bench = _bench(job, _nested_outline())
+    bench.set_outline_open(True)
+    state = adapter.load_state(job)
+    state["segment_source_spans"] = [
+        [{"page_id": f"p{index + 1}"}] for index in range(len(PARAGRAPHS))]
+    core.save_job_state(job, state)
+
+    core.exclude_translation_scope(job, ["page:0001"])
+    state = adapter.load_state(job)
+    bench.apply(job, state, adapter.segment_rows(job, state), {}, [])
+
+    row = bench.outline_panel._items["n0000"].text(0)
+    assert row.startswith("第一章")
+    assert row.endswith("部分已排除")
+
+
 def test_the_open_worker_resolves_the_mapping_before_the_gui_thread(job, monkeypatch):
     outline = _nested_outline()
     outline_anchor.store_outline(job, outline, data=SOURCE)

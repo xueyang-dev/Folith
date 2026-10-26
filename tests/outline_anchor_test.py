@@ -319,6 +319,98 @@ def test_excluding_a_segment_reidentifies_by_uid_and_names_the_exclusion(data_di
     assert (second["first_segment_index"], second["last_segment_index"]) == (1, 2)
 
 
+def _page_per_segment(state, pages):
+    """One page per segment so the scope dialog can exclude a single segment."""
+    state["segment_source_spans"] = [[{"page_id": f"p{page}"}] for page in pages]
+    return state
+
+
+def test_a_range_exclusion_of_part_of_a_node_still_says_partial(data_dir):
+    """A range exclusion rewrites ``paragraph_ranges`` and moves the signature.
+
+    The mapping then falls back to the paragraph chain, which places the node
+    correctly but cannot tell that one of its paragraphs left the work list.
+    """
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    _persisted_mapping(outline)
+    state = _page_per_segment(core.load_job_state(JOB), [1, 2, 3, 4])
+    core.save_job_state(JOB, state)
+
+    core.exclude_translation_scope(JOB, ["page:0001"])
+    mapping = anchor.resolve(JOB, core.load_job_state(JOB))
+
+    first, second = mapping["nodes"]["n0000"], mapping["nodes"]["n0001"]
+    assert first["state"] == "partial"
+    assert first["reason"] == "node_partial_excluded"
+    assert (first["first_segment_index"], first["last_segment_index"]) == (0, 0)
+    assert (second["first_segment_index"], second["last_segment_index"]) == (1, 2)
+
+
+def test_a_range_exclusion_of_one_sentence_still_says_partial(data_dir):
+    """The excluded segment can be one sentence of a paragraph.
+
+    The paragraph row narrows instead of emptying, so detection cannot rely on
+    empty ranges: the cached uid list is what proves the loss.
+    """
+    paragraphs = ["第一章开篇。第一章正文。", "第二章开篇。", "第二章正文。"]
+    segments = ["第一章开篇。", "第一章正文。", "第二章开篇。", "第二章正文。"]
+    state = core.new_job_state("outline.docx")
+    pairs = [{"source": text, "target": f"译文 {index}",
+              "segment_uid": f"seg-{JOB}-{index:04d}"}
+             for index, text in enumerate(segments)]
+    state.update(
+        p1_done=True, p2_done=True, stage="TRANSLATED",
+        source_paras=list(paragraphs), paras=list(segments), pairs=pairs,
+        segmentation={"input_paragraph_count": 3, "paragraph_ranges": [
+            {"paragraph_index": 0, "start": 0, "end": 2},
+            {"paragraph_index": 1, "start": 2, "end": 3},
+            {"paragraph_index": 2, "start": 3, "end": 4}]},
+        source_cleanup={"output_input_indices": [[0], [1], [2]]},
+    )
+    _page_per_segment(state, [1, 2, 2, 3])
+    _save(state)
+    outline = _outline(paragraphs, [("第一章", 0, 2), ("第二章", 2, 1)])
+    anchor.store_outline(JOB, outline, data=SOURCE)
+    anchor.resolve(JOB, state, {"outline": outline, "mapping": {}}, persist=True)
+
+    core.exclude_translation_scope(JOB, ["page:0000"])
+    mapping = anchor.resolve(JOB, core.load_job_state(JOB))
+
+    first = mapping["nodes"]["n0000"]
+    assert first["state"] == "partial"
+    assert first["reason"] == "node_partial_excluded"
+    assert (first["first_segment_index"], first["last_segment_index"]) == (0, 1)
+
+
+def test_an_exclusion_outside_a_node_leaves_it_resolved(data_dir):
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    _persisted_mapping(outline)
+    state = _page_per_segment(core.load_job_state(JOB), [1, 2, 3, 4])
+    core.save_job_state(JOB, state)
+
+    core.exclude_translation_scope(JOB, ["page:0003"])
+    mapping = anchor.resolve(JOB, core.load_job_state(JOB))
+
+    first = mapping["nodes"]["n0000"]
+    assert first["state"] == "resolved"
+    assert first["reason"] == "paragraph_match"
+    assert (first["first_segment_index"], first["last_segment_index"]) == (0, 1)
+
+
+def test_a_range_exclusion_of_a_whole_node_stays_node_excluded(data_dir):
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    _persisted_mapping(outline)
+    state = _page_per_segment(core.load_job_state(JOB), [1, 2, 3, 4])
+    core.save_job_state(JOB, state)
+
+    core.exclude_translation_scope(JOB, ["page:0002", "page:0003"])
+    mapping = anchor.resolve(JOB, core.load_job_state(JOB))
+
+    second = mapping["nodes"]["n0001"]
+    assert second["state"] == "unresolved"
+    assert second["reason"] == "node_excluded"
+
+
 def test_a_split_segment_refuses_the_old_position(data_dir):
     outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
     _persisted_mapping(outline)
