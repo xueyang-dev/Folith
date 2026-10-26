@@ -874,7 +874,7 @@ def test_external_evidence_attack_and_prompt_scan():
             continue
         # SVG 资源的 xmlns 声明不是 prompt 里的引用 URL
         if "xmlns=" in line or "xmlns:" in line or any(namespace in line for namespace in (
-                "http://schemas.openxmlformats.org/", "http://www.w3.org/1999/xhtml")):
+                "http://schemas.openxmlformats.org/", "http://www.w3.org/1999/xhtml", "http://www.w3.org/XML/1998/namespace")):
             continue
         if "PRESERVE_RE" in line or "example.com" in line and "系统" not in line:
             continue

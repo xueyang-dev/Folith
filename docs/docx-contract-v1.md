@@ -1,6 +1,6 @@
 # Folith / 译页 DOCX Contract v1
 
-状态：2026-09-14 已确定的设计方向，尚未实现或验收。本文定义近期 UI 打磨与正式发布之后的首个 CAT 内核里程碑，不能作为当前版本已支持能力的说明。当前进度与优先级见[开发蓝图](foliothread-agentic-native-blueprint.md#7-当前进度与开发路线)。
+状态：2026-10-26 已完成垂直切片实现并通过全部契约验收测试（Issue #26，实现见 `folith/docx_roundtrip.py`，测试与 fixtures 见 `tests/docx_contract_v1_test.py` 及 `tests/fixtures/docx_contract/`）。本文档定义的技术规范与 6 项验收核查全部通过。
 
 ## 交付承诺
 

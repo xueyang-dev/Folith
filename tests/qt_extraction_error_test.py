@@ -75,6 +75,7 @@ def test_corrupt_and_encrypted_inputs_explain_themselves_in_chinese():
     cases = {
         "document closed or encrypted": "已加密",
         "There is no item named '[Content_Types].xml' in the archive": "DOCX",
+        "There is no item named 'word/document.xml' in the archive": "DOCX",
         "Failed to open stream": "PDF",
         "File is not a zip file": "DOCX",
         "EOF marker not found": "不完整",
@@ -146,6 +147,7 @@ def test_broken_docx_reports_a_readable_reason_end_to_end(tmp_path, monkeypatch)
             time.sleep(0.5)
         assert "无法读取这个 DOCX" in detail, detail
         assert "Content_Types" not in detail, f"不应泄露原始异常：{detail}"
+        assert "word/document.xml" not in detail, detail
         assert "未提取到有效文本" in detail
     finally:
         stub.terminate()

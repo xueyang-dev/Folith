@@ -1543,6 +1543,7 @@ _EXTRACTION_FAILURE_HINTS = (
     ("encrypt", "这个 PDF 已加密，无法读取；请先解除密码保护再导入。"),
     ("password", "这个 PDF 已加密，无法读取；请先解除密码保护再导入。"),
     ("content_types", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
+    ("there is no item named 'word/document.xml'", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
     ("not a zip file", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
     ("failed to open stream", "无法读取这个 PDF：文件可能损坏，或它不是真正的 PDF。"),
     ("no objects found", "无法读取这个 PDF：文件可能损坏，或它不是真正的 PDF。"),
@@ -1816,6 +1817,11 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 warnings.append(
                     f"{empty_pages} 页没有文本层；如需翻译请重新导入并允许 OCR。")
         elif name.endswith(".docx"):
+            from folith.docx_roundtrip import inspect_docx_package, TrackChangesPendingError
+            try:
+                inspect_docx_package(file_bytes)
+            except TrackChangesPendingError as exc:
+                raise ValueError(str(exc)) from exc
             doc_word = Document(io.BytesIO(file_bytes))
             for p in doc_word.paragraphs:
                 for sub_p in re.split(r"\n+", clean_xml_chars(p.text)):
@@ -10374,11 +10380,29 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
             if config["deliver_plain_docx"]:
                 from folith.engine.document_export import build_translation_docx
                 docx_state = dict(state, target_lang=state.get("target_lang") or target_lang)
-                docx_bytes, docx_report = build_translation_docx(docx_state, source)
+                roundtrip_requested = bool(
+                    docx_state.get("docx_roundtrip")
+                    or config.get("deliver_roundtrip_docx")
+                    or config.get("roundtrip_docx")
+                )
+                docx_bytes, docx_report = build_translation_docx(
+                    docx_state, source, roundtrip=roundtrip_requested
+                )
                 bundle["translation.docx"] = _bytes(docx_bytes)
                 bundle["docx_export_report.json"] = (
                     json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
                 ).encode("utf-8")
+            if config.get("deliver_original_docx"):
+                if not (filename.endswith(".docx") and source):
+                    skipped_assets["original_format.docx"] = (
+                        "original-format DOCX requires a DOCX source")
+                else:
+                    from folith.docx_roundtrip import build_roundtrip_docx
+                    docx_bytes, docx_report = build_roundtrip_docx(state, source)
+                    bundle["original_format.docx"] = _bytes(docx_bytes)
+                    bundle["original_format_report.json"] = (
+                        json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
+                    ).encode("utf-8")
             if config["deliver_bilingual_docx"]:
                 bundle["bilingual.docx"] = _bytes(pairs_to_word(
                     pairs, source_lang=state.get("source_lang"),

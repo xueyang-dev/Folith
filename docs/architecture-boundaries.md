@@ -6,7 +6,7 @@
 
 ## 当前新增约束：CAT 内核
 
-- DOCX 原格式输出采用 [DOCX Contract v1](docx-contract-v1.md)：保留原 package，仅修改声明的可翻译范围；不得用重建文档冒充 surgical round-trip。该能力尚未实现。
+- DOCX 原格式输出采用 [DOCX Contract v1](docx-contract-v1.md)：保留原 package，仅修改声明的可翻译范围；不得用重建文档冒充 surgical round-trip。该能力已于 2026-10-26 通过完整垂直切片实现与 6 项核查验收（Issue #26）。
 - 版本内 Instance ID、source XML anchor、跨版本 correspondence 各自独立；不能把段落索引或 UUID 当成 Source Update 算法。
 - 翻译单元可以跨 run，编辑/TM 粒度不限制 LLM 上下文粒度；格式和 inline 标记有结构语义。
 - 保留但未翻译的内容必须进入用户可见报告；无法安全处理时明确拒绝，结构损坏不能由语义风险接受放行。

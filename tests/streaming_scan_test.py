@@ -388,10 +388,15 @@ def test_progress_moves_per_page_and_pause_does_not_deadlock(slow_job):
     assert state["streaming_ingest"]["status"] == "complete" and state["p2_done"]
     assert set(slow.requests.values()) == {1}  # 续跑没有重读任何一页
     assert len(slow.requests) == 30
-    events = [e["message"] for e in _runtime("pause-job")["events"]]
-    assert any("正在暂停：等正在识别的页完成" in m for m in events)
+    # runtime_state keeps only the latest 24 user events. Later translation
+    # telemetry can evict the early pause event; check the durable log instead.
+    events = core.read_runtime_events("pause-job", visibility="user")
+    assert any(e["event"] == "scan_pausing" for e in events)
+    assert any(e["event"] == "job_paused" for e in events)
+    messages = [e["message"] for e in events]
+    assert any("正在暂停：等正在识别的页完成" in m for m in messages)
     # 事件日志不逐页刷屏：30 页最多每 5 页一条进度事件。
-    assert sum(1 for e in _runtime("pause-job")["events"] if e["event"] == "scan_progress") <= 7
+    assert sum(1 for e in events if e["event"] == "scan_progress") <= 7
 
 
 def test_cancel_while_paused_during_streaming(slow_job):

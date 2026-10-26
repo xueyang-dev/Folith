@@ -272,7 +272,17 @@ def translations_to_word(pairs, target_lang=None):
     return out
 
 
-def build_translation_docx(state, source):
+def build_translation_docx(state, source, *, roundtrip: bool = False):
+    """Rebuild translated DOCX in source order, retaining supported pictures.
+
+    When roundtrip=True (or state["docx_roundtrip"] is True) and source is a DOCX,
+    executes surgical round-trip writeback into the original package per Contract v1.
+    """
+    filename = str(state.get("filename") or "").lower()
+    if (roundtrip or state.get("docx_roundtrip") or state.get("roundtrip")) and filename.endswith(".docx") and source:
+        from folith.docx_roundtrip import build_roundtrip_docx
+        return build_roundtrip_docx(state, source)
+
     """Rebuild translated DOCX in source order, retaining supported pictures."""
     from folith.epub import (
         EpubExportError, ImageOnlySourceError, _docx_source, _pdf_source, _join_targets,
