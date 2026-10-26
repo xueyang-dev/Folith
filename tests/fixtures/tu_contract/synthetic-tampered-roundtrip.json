@@ -1,0 +1,257 @@
+{
+  "name": "synthetic-tampered-roundtrip",
+  "description": "故意篡改的导出：属性改动、丢失 context 子节点、译文文本变化；diff 必须给出精确差异清单（expected_diff 为黄金输出）。",
+  "provenance": {
+    "origin": "synthetic",
+    "created": "2026-10-26",
+    "generator": "tests/fixtures/tu_contract/generate_fixtures.py",
+    "issue": 143,
+    "license": "与本仓库同许可",
+    "notes": "仓库内合成的最小结构样本，不含真实项目内容，无需外部授权。"
+  },
+  "source_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "70"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Round-trip me.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "往返测试。",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "71"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Untouched.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "note",
+                    "attrs": {},
+                    "text": "keep me",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "external_id": "70",
+      "source_text": "Round-trip me.",
+      "target_text": "往返测试。",
+      "status": "translated",
+      "tags": []
+    },
+    {
+      "external_id": "71",
+      "source_text": "Untouched.",
+      "target_text": "",
+      "status": "untranslated",
+      "tags": []
+    }
+  ],
+  "exported_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "70",
+                  "approved": "yes"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Round-trip me.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "错误的译文。",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "71"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Untouched.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "no_op_ok": false,
+    "expected_diff": [
+      {
+        "path": "/file:0/body:0/trans-unit:0@approved",
+        "kind": "added",
+        "before": null,
+        "after": "yes"
+      },
+      {
+        "path": "/file:0/body:0/trans-unit:0/target:1/g:0#text",
+        "kind": "changed",
+        "before": "往返测试。",
+        "after": "错误的译文。"
+      },
+      {
+        "path": "/file:0/body:0/trans-unit:1/note:2",
+        "kind": "removed",
+        "before": {
+          "name": "note",
+          "attrs": {},
+          "text": "keep me",
+          "children": 0
+        },
+        "after": null
+      }
+    ]
+  }
+}
