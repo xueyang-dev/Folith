@@ -560,18 +560,20 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
               "warnings": warnings}
     identifier = "urn:folith:" + (job_id or "translation")
     files, entries = {}, []
+    toc_heading = "جدول المحتويات" if direction == "rtl" else ("Table of Contents" if str(language).startswith("en") else "目录")
+    cover_label = "الغلاف" if direction == "rtl" else ("Cover" if str(language).startswith("en") else "封面")
     if cover:
         files["cover.xhtml"] = _xhtml(title, f'<section epub:type="cover" class="cover"><img src="{cover}" alt="原书封面"/></section>', language, direction)
-        entries.append(("cover.xhtml", "封面"))
+        entries.append(("cover.xhtml", cover_label))
     for index, (chapter_title, body) in enumerate(chapters, 1):
         name = f"chapter-{index:04d}.xhtml"
         files[name] = _xhtml(chapter_title, body, language, direction)
         entries.append((name, chapter_title))
-    toc = '<nav epub:type="toc" id="toc"><h1>目录</h1><ol>' + "".join(
+    toc = f'<nav epub:type="toc" id="toc"><h1>{_markup(toc_heading)}</h1><ol>' + "".join(
         f'<li><a href="{name}">{_markup(label)}</a></li>' for name, label in entries) + '</ol></nav>'
     if cover:
-        toc += '<nav epub:type="landmarks" hidden="hidden"><ol><li><a epub:type="cover" href="cover.xhtml">封面</a></li></ol></nav>'
-    files["nav.xhtml"] = _xhtml("目录", toc, language, direction)
+        toc += f'<nav epub:type="landmarks" hidden="hidden"><ol><li><a epub:type="cover" href="cover.xhtml">{_markup(cover_label)}</a></li></ol></nav>'
+    files["nav.xhtml"] = _xhtml(toc_heading, toc, language, direction)
     files["style.css"] = b'body { margin: 0 5%; line-height: 1.6; } p { margin: 0.7em 0; } h1,h2 { line-height: 1.3; } figure { margin: 1em 0; text-align: center; break-inside: avoid; } img { max-width: 100%; height: auto; } .caption { text-align: center; font-size: 0.9em; } .cover { text-align: center; margin: 0; padding: 0; } .cover img { max-height: 95vh; object-fit: contain; }'
     manifest = ['<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
                 '<item id="css" href="style.css" media-type="text/css"/>',

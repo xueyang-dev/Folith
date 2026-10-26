@@ -1,0 +1,309 @@
+{
+  "scope": "local deterministic Arabic acceptance pass for v0.8.0",
+  "reference_status": "draft aligned references; quality requires bilingual review",
+  "platform": "darwin",
+  "directions": {
+    "zh-to-ar": {
+      "docx_input_unicode": "PASS",
+      "translation_protocol": "PASS",
+      "state_save_and_reload": "PASS",
+      "tm_isolation": "PASS",
+      "translation_docx_unicode": "PASS",
+      "translation_docx_direction": {
+        "paragraph_bidi_count": 8,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "bilingual_docx_unicode": "PASS",
+      "bilingual_docx_direction": {
+        "paragraph_bidi_count": 16,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "pdf_pages": 1,
+      "pdf_text_extracted": "PASS",
+      "epub_unicode": "PASS",
+      "epub_html_direction": [
+        "rtl"
+      ],
+      "epub_language": [
+        "ar"
+      ],
+      "epub_arabic_nav_toc": "PASS"
+    },
+    "ar-to-zh": {
+      "docx_input_unicode": "PASS",
+      "translation_protocol": "PASS",
+      "state_save_and_reload": "PASS",
+      "tm_isolation": "PASS",
+      "translation_docx_unicode": "PASS",
+      "translation_docx_direction": {
+        "paragraph_bidi_count": 8,
+        "rtl_paragraph_count": 0,
+        "leading_alignment_count": 0,
+        "run_rtl_count": 0,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "bilingual_docx_unicode": "PASS",
+      "bilingual_docx_direction": {
+        "paragraph_bidi_count": 16,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "pdf_pages": 1,
+      "pdf_text_extracted": "PASS",
+      "epub_unicode": "PASS",
+      "epub_html_direction": [
+        "ltr"
+      ],
+      "epub_language": [
+        "zh-CN"
+      ]
+    },
+    "en-to-ar": {
+      "docx_input_unicode": "PASS",
+      "translation_protocol": "PASS",
+      "state_save_and_reload": "PASS",
+      "tm_isolation": "PASS",
+      "translation_docx_unicode": "PASS",
+      "translation_docx_direction": {
+        "paragraph_bidi_count": 8,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "bilingual_docx_unicode": "PASS",
+      "bilingual_docx_direction": {
+        "paragraph_bidi_count": 16,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "pdf_pages": 1,
+      "pdf_text_extracted": "PASS",
+      "epub_unicode": "PASS",
+      "epub_html_direction": [
+        "rtl"
+      ],
+      "epub_language": [
+        "ar"
+      ],
+      "epub_arabic_nav_toc": "PASS"
+    },
+    "ar-to-en": {
+      "docx_input_unicode": "PASS",
+      "translation_protocol": "PASS",
+      "state_save_and_reload": "PASS",
+      "tm_isolation": "PASS",
+      "translation_docx_unicode": "PASS",
+      "translation_docx_direction": {
+        "paragraph_bidi_count": 8,
+        "rtl_paragraph_count": 0,
+        "leading_alignment_count": 0,
+        "run_rtl_count": 0,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "bilingual_docx_unicode": "PASS",
+      "bilingual_docx_direction": {
+        "paragraph_bidi_count": 16,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "pdf_pages": 1,
+      "pdf_text_extracted": "PASS",
+      "epub_unicode": "PASS",
+      "epub_html_direction": [
+        "ltr"
+      ],
+      "epub_language": [
+        "en"
+      ]
+    },
+    "ru-to-ar": {
+      "docx_input_unicode": "PASS",
+      "translation_protocol": "PASS",
+      "state_save_and_reload": "PASS",
+      "tm_isolation": "PASS",
+      "translation_docx_unicode": "PASS",
+      "translation_docx_direction": {
+        "paragraph_bidi_count": 8,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "bilingual_docx_unicode": "PASS",
+      "bilingual_docx_direction": {
+        "paragraph_bidi_count": 16,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "pdf_pages": 1,
+      "pdf_text_extracted": "PASS",
+      "epub_unicode": "PASS",
+      "epub_html_direction": [
+        "rtl"
+      ],
+      "epub_language": [
+        "ar"
+      ],
+      "epub_arabic_nav_toc": "PASS"
+    },
+    "ar-to-ru": {
+      "docx_input_unicode": "PASS",
+      "translation_protocol": "PASS",
+      "state_save_and_reload": "PASS",
+      "tm_isolation": "PASS",
+      "translation_docx_unicode": "PASS",
+      "translation_docx_direction": {
+        "paragraph_bidi_count": 8,
+        "rtl_paragraph_count": 0,
+        "leading_alignment_count": 0,
+        "run_rtl_count": 0,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "bilingual_docx_unicode": "PASS",
+      "bilingual_docx_direction": {
+        "paragraph_bidi_count": 16,
+        "rtl_paragraph_count": 8,
+        "leading_alignment_count": 8,
+        "run_rtl_count": 8,
+        "style_bidi_count": 0,
+        "right_alignment_count": 0
+      },
+      "pdf_pages": 1,
+      "pdf_text_extracted": "PASS",
+      "epub_unicode": "PASS",
+      "epub_html_direction": [
+        "ltr"
+      ],
+      "epub_language": [
+        "ru"
+      ]
+    }
+  },
+  "expanded_language_combinations": {
+    "fr-to-ar": "PASS",
+    "ar-to-fr": "PASS",
+    "de-to-ar": "PASS",
+    "ar-to-de": "PASS",
+    "es-to-ar": "PASS",
+    "ar-to-es": "PASS",
+    "ja-to-ar": "PASS",
+    "ar-to-ja": "PASS",
+    "ko-to-ar": "PASS",
+    "ar-to-ko": "PASS",
+    "hi-to-ar": "PASS",
+    "ar-to-hi": "PASS",
+    "bn-to-ar": "PASS",
+    "ar-to-bn": "PASS",
+    "th-to-ar": "PASS",
+    "ar-to-th": "PASS",
+    "tr-to-ar": "PASS",
+    "ar-to-tr": "PASS",
+    "sw-to-ar": "PASS",
+    "ar-to-sw": "PASS",
+    "el-to-ar": "PASS",
+    "ar-to-el": "PASS",
+    "he-to-ar": "PASS",
+    "ar-to-he": "PASS",
+    "fa-to-ar": "PASS",
+    "ar-to-fa": "PASS",
+    "ur-to-ar": "PASS",
+    "ar-to-ur": "PASS",
+    "nl-to-ar": "PASS",
+    "ar-to-nl": "PASS",
+    "pl-to-ar": "PASS",
+    "ar-to-pl": "PASS",
+    "uk-to-ar": "PASS",
+    "ar-to-uk": "PASS",
+    "vi-to-ar": "PASS",
+    "ar-to-vi": "PASS",
+    "ug-to-ar": "PASS",
+    "ar-to-ug": "PASS"
+  },
+  "mixed_direction_tokens": {
+    "cases_checked": [
+      "latin_prefix_with_brackets",
+      "named_tokens_and_urls",
+      "arabic_indic_digits",
+      "mixed_percentages_and_numbers",
+      "vocalized_tashkeel"
+    ],
+    "docx_direction": {
+      "paragraph_bidi_count": 5,
+      "rtl_paragraph_count": 5,
+      "leading_alignment_count": 5,
+      "run_rtl_count": 5,
+      "style_bidi_count": 0,
+      "right_alignment_count": 0
+    },
+    "status": "PASS"
+  },
+  "academic_report_export": {
+    "arabic_quote_handled": true,
+    "w_bidi_present": true,
+    "w_jc_start_present": true,
+    "status": "PASS"
+  },
+  "font_coverage": {
+    "font_stack": [
+      "SF Pro Text",
+      "Segoe UI",
+      "Helvetica Neue",
+      "PingFang SC",
+      "Hiragino Sans GB",
+      "Microsoft YaHei",
+      "Geeza Pro",
+      "Arial",
+      "Noto Sans Arabic",
+      "Noto Sans SC"
+    ],
+    "arabic_faces_included": [
+      "Segoe UI",
+      "Geeza Pro",
+      "Noto Sans Arabic"
+    ],
+    "status": "PASS"
+  },
+  "summary": {
+    "core_directions_tested": 6,
+    "expanded_language_combinations_tested": 38,
+    "total_combinations_tested": 44,
+    "mixed_direction_runs_validated": true,
+    "academic_report_export_validated": true,
+    "font_stack_verified": true,
+    "all_checks_passed": true
+  },
+  "arabic_question_segmentation": {
+    "input": "متى يبدأ الاجتماع؟ من المسؤول عن تقديم التقرير؟",
+    "units": [
+      "متى يبدأ الاجتماع؟",
+      "من المسؤول عن تقديم التقرير؟"
+    ],
+    "status": "PASS"
+  }
+}
