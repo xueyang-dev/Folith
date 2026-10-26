@@ -30,6 +30,7 @@ from folith import segmentation
 from folith.engine.document_export import _apply_paragraph_direction
 from folith.epub import build_translation_epub
 from folith.qt import segment_editor, theme
+from folith.qt.adapter import TARGET_LANGUAGES
 from folith.report_template import _insert_content_after
 from folith.textual import has_textual_content, text_direction
 
@@ -194,29 +195,35 @@ def run(out: Path) -> dict:
 
                 report["directions"][name] = result
 
-            # 2. Expanded 21 language coverage with Arabic
-            expanded_samples = [
-                ("Français", "Le rapport est prêt.", "fr"),
-                ("Deutsch", "Der Bericht ist fertig.", "de"),
-                ("Español", "El informe está listo.", "es"),
-                ("日本語", "報告書の準備ができました。", "ja"),
-                ("한국어", "보고서가 준비되었습니다.", "ko"),
-                ("हिन्दी", "रिपोर्ट तैयार है।", "hi"),
-                ("বাংলা", "প্রতিবেদন প্রস্তুত।", "bn"),
-                ("ภาษาไทย", "รายงานพร้อมแล้ว", "th"),
-                ("Türkçe", "Rapor hazır.", "tr"),
-                ("Kiswahili", "Ripoti iko tayari.", "sw"),
-                ("Ελληνικά", "Η έκθεση είναι έτοιμη.", "el"),
-                ("עברית", "הדوح מוכן.", "he"),
-                ("فارسی", "گزارش آماده است.", "fa"),
-                ("اردو", "رپورٹ تیار ہے۔", "ur"),
-                ("Nederlands", "Het rapport is klaar.", "nl"),
-                ("Polski", "Raport jest gotowy.", "pl"),
-                ("Українська", "Звіт готовий.", "uk"),
-                ("Tiếng Việt", "Báo cáo đã sẵn sàng.", "vi"),
-                ("ئۇيغۇرچە", "دوكلات تەييار بولدى.", "ug"),
-            ]
-            for lang_name, sample_text, lang_code in expanded_samples:
+            # 2. Every selectable partner language with Arabic, both directions.
+            # The list derives from the product catalogue, so a language cannot
+            # become selectable without appearing in the acceptance pass.
+            partner_samples = {
+                "简体中文": ("zh-Hans", "报告已经准备好了。"),
+                "繁体中文": ("zh-Hant", "報告已經準備好了。"),
+                "English": ("en", "The report is ready."),
+                "日本語": ("ja", "報告書の準備ができました。"),
+                "한국어": ("ko", "보고서가 준비되었습니다."),
+                "Deutsch": ("de", "Der Bericht ist fertig."),
+                "Français": ("fr", "Le rapport est prêt."),
+                "Español": ("es", "El informe está listo."),
+                "Русский": ("ru", "Отчёт готов."),
+                "Português": ("pt", "O relatório está pronto."),
+                "Italiano": ("it", "Il rapporto è pronto."),
+                "Nederlands": ("nl", "Het rapport is klaar."),
+                "Polski": ("pl", "Raport jest gotowy."),
+                "Українська": ("uk", "Звіт готовий."),
+                "Tiếng Việt": ("vi", "Báo cáo đã sẵn sàng."),
+                "Türkçe": ("tr", "Rapor hazır."),
+                "فارسی": ("fa", "گزارش آماده است."),
+                "עברית": ("he", "הדוח מוכן."),
+                "اردو": ("ur", "رپورٹ تیار ہے۔"),
+                "ئۇيغۇرچە": ("ug", "دوكلات تەييار بولدى."),
+            }
+            partners = [name for name in TARGET_LANGUAGES if name != "العربية"]
+            assert set(partners) == set(partner_samples), "language catalogue/sample drift"
+            for lang_name in partners:
+                lang_code, sample_text = partner_samples[lang_name]
                 ar_sample = rows[0]["ar"]
                 # Test forward (lang -> ar) and reverse (ar -> lang)
                 for direction_label, src_txt, tgt_txt, tgt_name in [
@@ -247,9 +254,28 @@ def run(out: Path) -> dict:
             dir_mixed = docx_direction(docx_mixed)
             assert dir_mixed["rtl_paragraph_count"] == len(mixed_cases)
             assert dir_mixed["run_rtl_count"] >= len(mixed_cases)
+
+            mixed_pdf = core.translations_to_pdf(
+                [{"target": rows[4]["ar"]}], target_lang="ar")
+            (out / "mixed-direction-ar.pdf").write_bytes(mixed_pdf)
+            with fitz.open(stream=mixed_pdf, filetype="pdf") as doc:
+                page = doc[0]
+                lines = [line for block in page.get_text("dict")["blocks"]
+                         for line in block.get("lines", [])]
+                arabic_spans = [span for line in lines for span in line["spans"]
+                                if any(unicodedata.bidirectional(char) == "AL"
+                                       for char in span["text"])]
+                assert arabic_spans
+                # A mixed line starts its rightmost run (here the Latin prefix)
+                # at the start margin, so measure the line, not the Arabic runs.
+                body_spans = [span for line in lines for span in line["spans"]
+                              if span["text"].strip() and span["bbox"][1] > 100]
+                mixed_right_edge = max(span["bbox"][2] for span in body_spans) / page.rect.width
+                assert mixed_right_edge > 0.85
             report["mixed_direction_tokens"] = {
                 "cases_checked": list(mixed_cases.keys()),
                 "docx_direction": dir_mixed,
+                "pdf_right_edge_ratio": round(mixed_right_edge, 3),
                 "status": "PASS",
             }
 
@@ -269,10 +295,50 @@ def run(out: Path) -> dict:
                 "status": "PASS",
             }
 
-            # 5. Font coverage audit
+            # 5. Font coverage audit: real glyph support, not just family names
+            from PySide6.QtGui import QFont, QFontDatabase, QRawFont
+            from PySide6.QtWidgets import QApplication
+
+            _app = QApplication.instance() or QApplication([])
+            arabic_sample = "العربيةقَرَأَ؟،١٢٣٤"
+            installed_families = set(QFontDatabase.families())
+            covering_fonts = []
+            for family in theme.FONT_STACK:
+                if family not in installed_families:
+                    continue
+                font = QFont(family)
+                font.setPixelSize(13)
+                raw = QRawFont.fromFont(font)
+                if raw.isValid() and all(
+                        raw.supportsCharacter(ord(char)) for char in arabic_sample):
+                    covering_fonts.append(family)
+            assert covering_fonts, "no installed font in the stack covers Arabic glyphs"
             report["font_coverage"] = {
                 "font_stack": list(theme.FONT_STACK),
-                "arabic_faces_included": [f for f in theme.FONT_STACK if "Arabic" in f or "Geeza" in f or "Segoe UI" in f],
+                "installed_covering_fonts": covering_fonts,
+                "sample": arabic_sample,
+                "status": "PASS",
+            }
+
+            # 6. Long-form document: one Arabic paragraph taller than a page.
+            # Numeric per-segment markers survive shaping, so they prove that
+            # nothing at the tail was dropped by pagination.
+            long_sentence = "هذا نص عربي طويل لاختبار تعدد الصفحات والاتجاه من اليمين إلى اليسار."
+            markers = [f"{index:04d}" for index in range(90)]
+            long_text = " ".join(f"{long_sentence} {marker}." for marker in markers)
+            long_pdf = core.translations_to_pdf([{"target": long_text}], target_lang="ar")
+            (out / "long-paragraph-ar.pdf").write_bytes(long_pdf)
+            with fitz.open(stream=long_pdf, filetype="pdf") as doc:
+                long_pages = len(doc)
+                long_extracted = "".join(page.get_text() for page in doc)
+            long_compact = "".join(long_extracted.split())
+            missing_markers = [marker for marker in markers if marker not in long_compact]
+            assert long_pages >= 2 and not missing_markers
+            report["long_document"] = {
+                "paragraph_characters": len(long_text),
+                "pdf_pages": long_pages,
+                "segments_expected": len(markers),
+                "segments_missing": missing_markers,
                 "status": "PASS",
             }
 
@@ -290,9 +356,11 @@ def run(out: Path) -> dict:
         "core_directions_tested": len(report["directions"]),
         "expanded_language_combinations_tested": len(report["expanded_language_combinations"]),
         "total_combinations_tested": len(report["directions"]) + len(report["expanded_language_combinations"]),
+        "selectable_languages_with_arabic": len(partners),
         "mixed_direction_runs_validated": True,
         "academic_report_export_validated": True,
-        "font_stack_verified": True,
+        "real_font_glyph_coverage": len(covering_fonts),
+        "long_paragraph_pdf_pages": long_pages,
         "all_checks_passed": True,
     }
 

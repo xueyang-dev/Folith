@@ -1,0 +1,224 @@
+[
+  {
+    "shot": "90-review-light-zh.png",
+    "window_id": 970,
+    "frame": [
+      221,
+      50,
+      1180,
+      828
+    ],
+    "dpr": 2.0,
+    "expected_px": [
+      2360,
+      1656
+    ],
+    "got_px": [
+      2360,
+      1656
+    ],
+    "ok": true,
+    "theme": "light",
+    "language": "zh-CN",
+    "panel_width": 1180,
+    "panel_min_width": 451,
+    "filter_height": 32,
+    "detail_width": 728,
+    "queue_count": 3,
+    "selected": "第 1 段 · “目录让筛选保持隐形”",
+    "buttons": [
+      "暂存为候选",
+      "确认问题存在",
+      "确认已解决",
+      "保留当前译文",
+      "修改译文",
+      "重译本段"
+    ],
+    "platform": "cocoa"
+  },
+  {
+    "shot": "90-review-light-en.png",
+    "window_id": 979,
+    "frame": [
+      221,
+      52,
+      1180,
+      828
+    ],
+    "dpr": 2.0,
+    "expected_px": [
+      2360,
+      1656
+    ],
+    "got_px": [
+      2360,
+      1656
+    ],
+    "ok": true,
+    "theme": "light",
+    "language": "en",
+    "panel_width": 1180,
+    "panel_min_width": 539,
+    "filter_height": 32,
+    "detail_width": 728,
+    "queue_count": 3,
+    "selected": "第 1 段 · “目录让筛选保持隐形”",
+    "buttons": [
+      "Stage as candidate",
+      "Confirm the problem exists",
+      "Confirm resolved",
+      "Keep current translation",
+      "Edit translation",
+      "Retranslate this segment"
+    ],
+    "platform": "cocoa"
+  },
+  {
+    "shot": "90-review-light-de.png",
+    "window_id": 981,
+    "frame": [
+      221,
+      52,
+      1180,
+      828
+    ],
+    "dpr": 2.0,
+    "expected_px": [
+      2360,
+      1656
+    ],
+    "got_px": [
+      2360,
+      1656
+    ],
+    "ok": true,
+    "theme": "light",
+    "language": "de",
+    "panel_width": 1180,
+    "panel_min_width": 593,
+    "filter_height": 32,
+    "detail_width": 728,
+    "queue_count": 3,
+    "selected": "第 1 段 · “目录让筛选保持隐形”",
+    "buttons": [
+      "Als Kandidat vormerken",
+      "Problem bestätigen",
+      "Als gelöst bestätigen",
+      "Aktuelle Übersetzung beibehalten",
+      "Übersetzung bearbeiten",
+      "Dieses Segment neu übersetzen"
+    ],
+    "platform": "cocoa"
+  },
+  {
+    "shot": "90-review-light-ar.png",
+    "window_id": 983,
+    "frame": [
+      221,
+      52,
+      1180,
+      828
+    ],
+    "dpr": 2.0,
+    "expected_px": [
+      2360,
+      1656
+    ],
+    "got_px": [
+      2360,
+      1656
+    ],
+    "ok": true,
+    "theme": "light",
+    "language": "ar",
+    "panel_width": 1180,
+    "panel_min_width": 491,
+    "filter_height": 32,
+    "detail_width": 728,
+    "queue_count": 3,
+    "selected": "第 1 段 · “目录让筛选保持隐形”",
+    "buttons": [
+      "حفظ كمرشّح",
+      "تأكيد وجود المشكلة",
+      "تأكيد الحل",
+      "الإبقاء على الترجمة الحالية",
+      "تعديل الترجمة",
+      "إعادة ترجمة هذا المقطع"
+    ],
+    "platform": "cocoa"
+  },
+  {
+    "shot": "90-review-dark-zh.png",
+    "window_id": 985,
+    "frame": [
+      221,
+      52,
+      1180,
+      828
+    ],
+    "dpr": 2.0,
+    "expected_px": [
+      2360,
+      1656
+    ],
+    "got_px": [
+      2360,
+      1656
+    ],
+    "ok": true,
+    "theme": "dark",
+    "language": "zh-CN",
+    "panel_width": 1180,
+    "panel_min_width": 451,
+    "filter_height": 32,
+    "detail_width": 728,
+    "queue_count": 3,
+    "selected": "第 1 段 · “目录让筛选保持隐形”",
+    "buttons": [
+      "暂存为候选",
+      "确认问题存在",
+      "确认已解决",
+      "保留当前译文",
+      "修改译文",
+      "重译本段"
+    ],
+    "platform": "cocoa"
+  },
+  {
+    "shot": "90-review-dark-en.png",
+    "window_id": 987,
+    "frame": [
+      221,
+      52,
+      1180,
+      828
+    ],
+    "dpr": 2.0,
+    "expected_px": [
+      2360,
+      1656
+    ],
+    "got_px": [
+      2360,
+      1656
+    ],
+    "ok": true,
+    "theme": "dark",
+    "language": "en",
+    "panel_width": 1180,
+    "panel_min_width": 539,
+    "filter_height": 32,
+    "detail_width": 728,
+    "queue_count": 3,
+    "selected": "第 1 段 · “目录让筛选保持隐形”",
+    "buttons": [
+      "Stage as candidate",
+      "Confirm the problem exists",
+      "Confirm resolved",
+      "Keep current translation",
+      "Edit translation",
+      "Retranslate this segment"
+    ],
+    "platform": "cocoa"
+  }
+]

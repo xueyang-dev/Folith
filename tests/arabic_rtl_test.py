@@ -13,28 +13,61 @@ from folith.segmentation import segment_paragraphs
 from folith.textual import text_direction
 
 ARABIC = "OpenAI API: مهلة الطلب 30 ثانية (انظر القسم 2)."
-SAMPLES = [
-    ("Français", "Le rapport est prêt."),
-    ("Deutsch", "Der Bericht ist fertig."),
-    ("Español", "El informe está listo."),
+#: Every selectable translation language except Arabic itself (21 - 1).
+#: Keeping this aligned with ``adapter.TARGET_LANGUAGES`` makes the "all
+#: language combinations" claim checkable instead of a sample.
+SELECTABLE_PARTNERS = [
+    ("English", "The report is ready."),
+    ("简体中文", "报告已经准备好了。"),
+    ("繁体中文", "報告已經準備好了。"),
     ("日本語", "報告書の準備ができました。"),
     ("한국어", "보고서가 준비되었습니다."),
+    ("Deutsch", "Der Bericht ist fertig."),
+    ("Français", "Le rapport est prêt."),
+    ("Español", "El informe está listo."),
+    ("Italiano", "Il rapporto è pronto."),
+    ("Português", "O relatório está pronto."),
+    ("Русский", "Отчёт готов."),
+    ("Nederlands", "Het rapport is klaar."),
+    ("Polski", "Raport jest gotowy."),
+    ("Українська", "Звіт готовий."),
+    ("Tiếng Việt", "Báo cáo đã sẵn sàng."),
+    ("Türkçe", "Rapor hazır."),
+    ("فارسی", "گزارش آماده است."),
+    ("עברית", "הדוח מוכן."),
+    ("اردو", "رپورٹ تیار ہے۔"),
+    ("ئۇيغۇرچە", "دوكلات تەييار بولدى."),
+]
+#: Valid language names outside the selectable catalog. The engine accepts any
+#: declared target, so these still need a protocol round trip.
+ADDITIONAL_LANGUAGE_NAMES = [
     ("हिन्दी", "रिपोर्ट तैयार है।"),
     ("বাংলা", "প্রতিবেদন প্রস্তুত।"),
     ("ภาษาไทย", "รายงานพร้อมแล้ว"),
-    ("Türkçe", "Rapor hazır."),
     ("Kiswahili", "Ripoti iko tayari."),
     ("Ελληνικά", "Η έκθεση είναι έτοιμη."),
-    ("עברית", "הדוח מוכן."),
-    ("فارسی", "گزارش آماده است."),
-    ("اردو", "رپورٹ تیار ہے۔"),
 ]
 W = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
-@pytest.mark.parametrize("language,text", SAMPLES)
+@pytest.mark.parametrize("language,text", SELECTABLE_PARTNERS)
 @pytest.mark.parametrize("reverse", [False, True])
-def test_any_language_name_reaches_translation_protocol(language, text, reverse):
+def test_every_selectable_language_pairs_with_arabic(language, text, reverse):
+    source, target, target_language = (ARABIC, text, language) if reverse else (text, ARABIC, "العربية")
+
+    def response(provider, key, model, system, user, **kwargs):
+        assert target_language in system
+        assert source in user
+        return json.dumps([target], ensure_ascii=False)
+
+    assert core.translate_batch([source], [], [], "", "", target_language,
+                                "OpenAI", "unused", "gpt-4o-mini",
+                                call_llm_fn=response) == [target]
+
+
+@pytest.mark.parametrize("language,text", ADDITIONAL_LANGUAGE_NAMES)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_additional_language_names_reach_translation_protocol(language, text, reverse):
     source, target, target_language = (ARABIC, text, language) if reverse else (text, ARABIC, "العربية")
 
     def response(provider, key, model, system, user, **kwargs):
@@ -167,25 +200,36 @@ def test_cell_direction_and_workbench_delegate_respect_column_language():
     assert opt_tgt.direction == Qt.LayoutDirection.RightToLeft
 
 
-@pytest.mark.parametrize("language,text", [
-    ("Nederlands", "Het rapport is klaar."),
-    ("Polski", "Raport jest gotowy."),
-    ("Українська", "Звіт готовий."),
-    ("Tiếng Việt", "Báo cáo đã sẵn sàng."),
-    ("ئۇيغۇرچە", "دوكلات تەييار بولدى."),
-])
-@pytest.mark.parametrize("reverse", [False, True])
-def test_expanded_languages_reach_translation_protocol_with_arabic(language, text, reverse):
-    source, target, target_language = (ARABIC, text, language) if reverse else (text, ARABIC, "العربية")
+def test_pdf_long_arabic_paragraph_paginates_without_truncation():
+    # Extraction returns shaped presentation forms, so compare per-segment
+    # numeric markers rather than character counts.
+    sentence = "هذا نص عربي طويل لاختبار تعدد الصفحات والاتجاه من اليمين إلى اليسار."
+    markers = [f"{index:04d}" for index in range(90)]
+    text = " ".join(f"{sentence} {marker}." for marker in markers)
+    data = core.translations_to_pdf([{"target": text}], target_lang="ar")
+    with core.fitz.open(stream=data, filetype="pdf") as doc:
+        assert len(doc) >= 2
+        extracted = "".join(page.get_text() for page in doc)
+    compact = "".join(extracted.split())
+    assert [marker for marker in markers if marker not in compact] == []
 
-    def response(provider, key, model, system, user, **kwargs):
-        assert target_language in system
-        assert source in user
-        return json.dumps([target], ensure_ascii=False)
 
-    assert core.translate_batch([source], [], [], "", "", target_language,
-                                "OpenAI", "unused", "gpt-4o-mini",
-                                call_llm_fn=response) == [target]
+def test_pdf_many_arabic_paragraphs_keep_the_last_segment():
+    sentence = "هذا نص عربي طويل لاختبار تعدد الصفحات والاتجاه من اليمين إلى اليسار. "
+    pairs = [{"target": f"{sentence} رقم {index}."} for index in range(60)]
+    data = core.translations_to_pdf(pairs, target_lang="ar")
+    with core.fitz.open(stream=data, filetype="pdf") as doc:
+        assert len(doc) >= 3
+        extracted = "".join(page.get_text() for page in doc)
+        for page in doc:
+            arabic = [span for block in page.get_text("dict")["blocks"]
+                      for line in block.get("lines", []) for span in line["spans"]
+                      if any(0x0600 <= ord(char) <= 0x06FF
+                             or 0xFE70 <= ord(char) <= 0xFEFF
+                             for char in span["text"])]
+            if arabic:
+                assert max(span["bbox"][2] for span in arabic) > page.rect.width * 0.85
+    assert "59" in "".join(extracted.split())
 
 
 def test_academic_report_arabic_excerpt_direction():
@@ -224,6 +268,29 @@ def test_epub_arabic_localized_toc_and_cover():
 def test_font_stack_includes_cross_platform_arabic_coverage():
     from folith.qt import theme
     assert any("Arabic" in f or "Geeza" in f or "Segoe UI" in f for f in theme.FONT_STACK)
+
+
+def test_an_installed_font_in_the_stack_covers_arabic_glyphs():
+    from PySide6.QtGui import QFont, QFontDatabase, QRawFont
+    from PySide6.QtWidgets import QApplication
+
+    from folith.qt import theme
+
+    _app = QApplication.instance() or QApplication([])
+    sample = "العربيةقَرَأَ؟،١٢٣٤"
+    installed = set(QFontDatabase.families())
+    covering = []
+    for family in theme.FONT_STACK:
+        if family not in installed:
+            continue
+        font = QFont(family)
+        font.setPixelSize(13)
+        raw = QRawFont.fromFont(font)
+        if raw.isValid() and all(raw.supportsCharacter(ord(char)) for char in sample):
+            covering.append(family)
+    if not covering:
+        pytest.skip("no installed font in FONT_STACK covers the Arabic sample")
+    assert covering
 
 
 

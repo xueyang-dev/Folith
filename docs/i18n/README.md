@@ -14,7 +14,7 @@ Qt 桌面端偏好设置提供日间、夜间、暖黄色纸面三种显示模�
 | `en` | English | 实验功能 (experimental) | 1,673 | 2,193 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
 | `es` | Español | 实验功能 (experimental) | 1,673 | 2,194 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
 | `ru` | Русский | 实验功能 (experimental) | 1,673 | 2,191 | 见 [#17](https://github.com/xueyang-dev/Folith/issues/17) 语言审校验收 |
-| `ar` | العربية | 实验功能 (experimental) | 1,673 | 2,191 | 完整 RTL 镜像、工作台双向排版与 DOCX/PDF/EPUB 导出验收已通过，详见 [阿拉伯语验收文档](../arabic-acceptance-2026-10-26.md) 与 [#16](https://github.com/xueyang-dev/Folith/issues/16) |
+| `ar` | العربية | 实验功能 (experimental) | 1,673 | 2,191 | RTL 镜像、工作台双向排版与 DOCX/PDF/EPUB 导出已完成机器验收（含真实 Microsoft Word 16.114.1 macOS 与 Tesseract 5.5.0 OCR 实测）；真实模型翻译质量与母语审阅仍属实验边界，详见 [阿拉伯语验收文档](../arabic-acceptance-2026-10-26.md) 与 [#16](https://github.com/xueyang-dev/Folith/issues/16) |
 | `fr` | Français | 实验功能 (experimental) | 1,673 | 2,194 | 包含变音符与标点空格规范，新增于 [#11](https://github.com/xueyang-dev/Folith/issues/11) |
 | `de` | Deutsch | 实验功能 (experimental) | 1,673 | 2,194 | 复合词长文本压力测试，新增于 [#11](https://github.com/xueyang-dev/Folith/issues/11) |
 
@@ -24,7 +24,7 @@ Qt 桌面端偏好设置提供日间、夜间、暖黄色纸面三种显示模�
 > #11 的独立校对及完整核心界面验收仍待完成；目录实现与打包修复不关闭该 issue。
 > 与其他 Issue 的明确分界：
 > - 翻译源/目标语言拓展属于 [#10](https://github.com/xueyang-dev/Folith/issues/10)；
-> - 阿拉伯语 RTL 验收属于 [#16](https://github.com/xueyang-dev/Folith/issues/16)；已完成全界面镜像、工作台与独立导出 RTL 排版、复杂表格与混排数字/括号/占位符测试、学术报告 DOCX 导出、跨平台系统字体适配及机器可读验收；真实模型翻译质量与独立母语校对仍保留实验性边界；
+> - 阿拉伯语 RTL 验收属于 [#16](https://github.com/xueyang-dev/Folith/issues/16)；已完成全界面镜像、工作台与独立导出 RTL 排版、真实 Microsoft Word 16.114.1（macOS）渲染、Tesseract 5.5.0 `ara+eng` OCR、20 门可选伙伴语言双向共 40 组组合、真实字体字形覆盖与超长段落分页的机器验收；明确边界如下：EPUB 只做结构与包级校验（未接入真实阅读器）、源文档复杂表格与扫描件 OCR 未覆盖、OCR 拉丁片段存在单字符误识、部分界面文案仍未本地化（如首页 `未分类`）、真实模型翻译质量与独立母语校对仍保留实验性；
 > - 英语、西班牙语、俄语母语审阅属于 [#17](https://github.com/xueyang-dev/Folith/issues/17)；
 > - 法语、德语及新增界面语言框架属于 [#11](https://github.com/xueyang-dev/Folith/issues/11)。
 
@@ -108,7 +108,8 @@ python3 -m pytest tests/qt_long_language_layout_test.py
   - `qt_i18n_test.py` 10 个测试用例全部通过（语言标准化、基准回退、Qt 目录加载、坏占位符容错、RTL 判定、法语/德语单复数形式）。
   - `qt_long_language_layout_test.py` 40 个测试用例全部通过（德语、法语及长语言下交付按钮折行、空状态高度、工作台右栏宽度、项目标签不截断、状态芯片尺寸均符合要求）。
 - **阿拉伯语 RTL 验收测试**（[#16](https://github.com/xueyang-dev/Folith/issues/16)）：
-  - `tests/arabic_rtl_test.py` 59 项测试全部通过（跨语言协议传输、OpenXML Run 级 `<w:rtl>` 与段落级 `<w:bidi>`、Qt 工作台列语言感知与 cell_direction、EPUB 本地化目录与封面、学术报告案例引用 RTL 排版、跨平台字体族覆盖、问号断句）。
+  - `tests/arabic_rtl_test.py` 74 项测试全部通过（跨语言协议传输、OpenXML Run 级 `<w:rtl>` 与段落级 `<w:bidi>`、Qt 工作台列语言感知与 cell_direction、EPUB 本地化目录与封面、学术报告案例引用 RTL 排版、跨平台字体族与真实字形覆盖、问号断句、超长段落 PDF 分页）。
   - `tests/ocr_language_rtl_test.py` 22 项测试全部通过（阿拉伯语 OCR 调度、RTL TSV 行块还原、标点分句、检查点隔离）。
-  - `scripts/arabic_acceptance_audit.py` 机器可读审计完成（6 组核心方向 + 38 组拓展方向共 44 组语言组合全链路断言通过，产物位于 `exports/arabic-acceptance-v0.8.0/`）。
-  - Qt 界面视觉审计截图完成（`docs/ui-audit/arabic-rtl-v0.8.0/`，含工作台、主页、设置、任务配置、交付页面）。
+  - `scripts/arabic_acceptance_audit.py` 机器可读审计完成（6 组核心方向 + 20 门可选伙伴语言双向 40 组，共 46 组语言组合全链路断言通过；含真实字体字形覆盖、超长段落分页与混排右边界实测；产物位于 `exports/arabic-acceptance-v0.8.0/` 与 `docs/evidence/arabic-acceptance-2026-10-26.json`）。
+  - 真实渲染验收：`scripts/word_render_audit.py` 校验 Microsoft Word 16.114.1（macOS）导出的 PDF；`scripts/ocr_arabic_acceptance.py` 校验 Tesseract 5.5.0 `ara+eng` OCR；产物分别位于 `docs/evidence/word-arabic-2026-10-26/` 与 `docs/evidence/ocr-arabic-2026-10-26/`。
+  - Qt 界面视觉审计截图完成（`docs/ui-audit/arabic-rtl-v0.8.0/`，由真实 `MainWindow` 在 `FOLITH_UI_LANGUAGE=ar` 下生成，含工作台、主页、设置、任务配置、交付页面）。

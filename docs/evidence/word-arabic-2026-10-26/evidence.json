@@ -1,0 +1,57 @@
+{
+  "checked_at": "2026-10-26T15:37:52+00:00",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "word_version": "16.114.1",
+  "scope": "real Microsoft Word render of Folith Arabic exports",
+  "documents": {
+    "word-translation-ar": {
+      "pages": 1,
+      "arabic_span_count": 17,
+      "markers_found": [
+        "W00",
+        "W01",
+        "W02",
+        "W03",
+        "W04",
+        "W05",
+        "W06",
+        "W07"
+      ],
+      "markers_missing": [],
+      "first_page_right_edge_ratio": 0.848,
+      "first_page_arabic_right_edge_ratio": 0.848,
+      "percent_visual_observation": "95.5%.",
+      "extracted_characters": 424
+    },
+    "word-bilingual-ar": {
+      "pages": 1,
+      "arabic_span_count": 20,
+      "markers_found": [
+        "W00",
+        "W01",
+        "W02",
+        "W03",
+        "W04",
+        "W05",
+        "W06",
+        "W07"
+      ],
+      "markers_missing": [],
+      "first_page_right_edge_ratio": 0.872,
+      "first_page_arabic_right_edge_ratio": 0.865,
+      "percent_visual_observation": "95.5%.",
+      "extracted_characters": 965
+    },
+    "word-source-en": {
+      "pages": 1,
+      "arabic_span_count": 1,
+      "markers_found": [],
+      "markers_missing": [],
+      "first_page_right_edge_ratio": 0.75,
+      "first_page_arabic_right_edge_ratio": 0.347,
+      "percent_visual_observation": "95.5%.",
+      "extracted_characters": 479
+    }
+  },
+  "status": "PASS"
+}
