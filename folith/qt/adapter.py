@@ -1270,6 +1270,18 @@ def outline_revision(state: dict) -> int:
     return outline_anchor.structure_revision(state)
 
 
+def outline_structure_signature(state: dict) -> str:
+    """Identity of the paragraph/cleanup chain a mapping was resolved from.
+
+    The revision above only moves on editor structural edits; cleanup and
+    re-segmentation rebuild positions without touching it, so the cache keys
+    need this hash too (#186/#204).
+    """
+    from folith import outline_anchor
+
+    return outline_anchor.structure_signature(state)
+
+
 def exclude_scope(job_id: str, keys: Sequence[str]) -> dict:
     """按范围（页 / 章 / 节）批量排除段落；语义与逐段排除完全一致。"""
     wanted = [str(key or "").strip() for key in (keys or []) if str(key or "").strip()]

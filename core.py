@@ -10575,8 +10575,18 @@ def build_delivery_assets(job_id, state=None, target_lang="", provider="", model
             model or state.get("model") or "")
 
 
-def _reset_source_dependent_state(state):
-    """Invalidate artifacts derived from source paragraphs after cleanup."""
+def _reset_source_dependent_state(state, *, job_id=None):
+    """Invalidate artifacts derived from source paragraphs after cleanup.
+
+    ``job_id`` also drops the persisted outline *mapping*: the source bytes did
+    not change, so the parsed outline stays valid, but every cached node
+    position describes the previous segmentation (#186/#204).  The in-state
+    outline is stale for the same reason and is removed with it.
+    """
+    if job_id:
+        from folith import outline_anchor as _outline_anchor
+        _outline_anchor.invalidate_mapping(job_id)
+    state.pop("source_outline", None)
     state.update({
         "profile_done": False,
         "document_profile": None,
@@ -10882,7 +10892,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                 warnings.append(warning)
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
 
-        _reset_source_dependent_state(state)
+        _reset_source_dependent_state(state, job_id=job_id)
         # The rescan replaced the source bytes; a persisted outline belongs to
         # the previous source (see #186).
         from folith import outline_anchor as _outline_anchor
@@ -12900,7 +12910,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # when the OCR cleanup text itself is byte-for-byte unchanged.
             if cleaned != legacy_source or segments != legacy_segments:
                 cleanup_meta["previous_pair_count"] = len(state.get("pairs") or [])
-                _reset_source_dependent_state(state)
+                _reset_source_dependent_state(state, job_id=job_id)
                 state["paras"] = segments
                 state["source_paras"] = legacy_source
                 state["source_paragraphs"] = list(cleaned)

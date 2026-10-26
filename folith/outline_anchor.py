@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
 from datetime import datetime, timezone
 
@@ -111,23 +112,58 @@ def _read_sidecar(job_id: str) -> dict | None:
     return raw
 
 
-def _write_sidecar(job_id: str, payload: dict) -> None:
-    directory = _c.job_dir(job_id)
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / OUTLINE_SIDECAR_FILE
+def _sidecar_payload(job_id: str, payload: dict) -> dict:
     data = dict(payload or {})
     data.update({
         "version": OUTLINE_SIDECAR_VERSION,
         "job_id": str(job_id),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
+    return data
+
+
+def _write_sidecar_file(job_id: str, data: dict) -> None:
+    """Write an already stamped payload; the caller holds ``_WRITE_LOCK``."""
+    directory = _c.job_dir(job_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / OUTLINE_SIDECAR_FILE
     tmp = directory / (OUTLINE_SIDECAR_FILE + ".tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        replace_file(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _write_sidecar(job_id: str, payload: dict) -> None:
+    data = _sidecar_payload(job_id, payload)
     with _WRITE_LOCK:
-        try:
-            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            replace_file(tmp, path)
-        finally:
-            tmp.unlink(missing_ok=True)
+        _write_sidecar_file(job_id, data)
+
+
+def _update_mapping(job_id: str, mapping: dict) -> None:
+    """Replace the mapping under the write lock (read-modify-write is atomic)."""
+    with _WRITE_LOCK:
+        sidecar = _read_sidecar(job_id)
+        if sidecar is None:
+            return
+        sidecar["mapping"] = dict(mapping or {})
+        _write_sidecar_file(job_id, _sidecar_payload(job_id, sidecar))
+
+
+def invalidate_mapping(job_id: str) -> None:
+    """Drop cached node positions; the outline itself stays.
+
+    Source bytes did not change, so the parsed outline is still valid, but every
+    position in the mapping describes the previous segmentation (#186/#204).
+    A missing sidecar is fine.
+    """
+    with _WRITE_LOCK:
+        sidecar = _read_sidecar(job_id)
+        if sidecar is None or not sidecar.get("mapping"):
+            return
+        sidecar["mapping"] = {}
+        _write_sidecar_file(job_id, _sidecar_payload(job_id, sidecar))
 
 
 def delete_outline_sidecar(job_id: str) -> None:
@@ -241,6 +277,43 @@ def structure_revision(state: dict | None) -> int:
         return version
     return len(state.get("segment_structure_history") or []) + len(
         state.get("excluded_segments") or [])
+
+
+def structure_signature(state: dict | None) -> str:
+    """Content identity of the paragraph -> cleanup -> segment chain.
+
+    ``structure_revision`` only tracks edits made *through the editor*.  A
+    cleanup or re-segmentation rebuilds ``segmentation.paragraph_ranges`` and
+    ``source_cleanup.output_input_indices`` without bumping it, and the segment
+    uids are positional, so a cached mapping can look valid while every position
+    moved.  Hashing the two structures catches that case.
+
+    Only the position-bearing fields are hashed: the segmentation rows also
+    carry per-row quality metadata (``gate``, ``separators``) that the pipeline
+    may add or rewrite without moving a single segment.
+    """
+    state = state if isinstance(state, dict) else {}
+    segmentation = state.get("segmentation")
+    cleanup = state.get("source_cleanup")
+    rows = segmentation.get("paragraph_ranges") \
+        if isinstance(segmentation, dict) else None
+    indices = cleanup.get("output_input_indices") \
+        if isinstance(cleanup, dict) else None
+    ranges: list[list] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        ranges.append([row.get("paragraph_index"), row.get("start"), row.get("end")])
+    lineage: list[list[int]] = []
+    for row in indices or []:
+        if not isinstance(row, (list, tuple)):
+            continue
+        lineage.append([int(item) for item in row
+                        if isinstance(item, (int, float)) and math.isfinite(item)])
+    canonical = json.dumps(
+        {"paragraph_ranges": ranges, "output_input_indices": lineage},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _segment_list(state: dict) -> list:
@@ -366,7 +439,7 @@ def _resolve_from_paragraphs(outline: dict, state: dict) -> dict[str, dict]:
     cleaned_count = _cleaned_count(state, output_inputs)
     ranges = _by_paragraph(state.get("segmentation"))
     segments = _segment_list(state)
-    uid_index, segment_count = _uid_index(state)
+    _, segment_count = _uid_index(state)
     segmentation_missing = not ranges
 
     nodes: dict[str, dict] = {}
@@ -424,7 +497,6 @@ def _resolve_from_paragraphs(outline: dict, state: dict) -> dict[str, dict]:
 
 def _verify_cached(nodes: dict, state: dict) -> bool:
     """Whether a cached mapping still describes this exact structure."""
-    segments = _segment_list(state)
     uid_index, segment_count = _uid_index(state)
     for entry in nodes.values():
         if not isinstance(entry, dict):
@@ -444,9 +516,6 @@ def _verify_cached(nodes: dict, state: dict) -> bool:
                 return False
             if min(positions) != first:
                 return False
-        elif first >= len(segments):
-            # Legacy positional cache: usable only while the structure is whole.
-            return False
     return True
 
 
@@ -521,9 +590,9 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
             persist: bool = True) -> dict:
     """Resolve outline nodes to segments; returns the mapping wrapper.
 
-    ``mapping = {fingerprint, structure_revision, nodes: {node_id: entry}}``.
-    ``payload`` may be the value returned by :func:`load_outline` so a task open
-    parses at most once.
+    ``mapping = {fingerprint, structure_revision, structure_signature,
+    nodes: {node_id: entry}}``.  ``payload`` may be the value returned by
+    :func:`load_outline` so a task open parses at most once.
     """
     state = state if isinstance(state, dict) else {}
     payload = payload if isinstance(payload, dict) else load_outline(job_id, state)
@@ -531,19 +600,26 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
     fingerprint = str(outline.get("fingerprint")
                       or payload.get("fingerprint") or "")
     revision = structure_revision(state)
+    signature = structure_signature(state)
     cached = payload.get("mapping") or {}
     cached_nodes = cached.get("nodes") if isinstance(cached.get("nodes"), dict) else {}
 
     same_document = (cached.get("fingerprint") == fingerprint and bool(cached_nodes))
+    # A mapping written before the structure signature existed, or one whose
+    # paragraph/cleanup chain changed (cleanup + resegmentation), cannot say
+    # anything about the current positions.  Only the paragraph path can.
+    same_structure = (bool(cached.get("structure_signature"))
+                      and cached.get("structure_signature") == signature)
     cached_revision = cached.get("structure_revision")
     cached_revision = int(cached_revision) if isinstance(cached_revision, int) else None
-    if same_document and cached_revision == revision:
+    if same_document and same_structure and cached_revision == revision:
         if _verify_cached(cached_nodes, state):
             return {"fingerprint": fingerprint, "structure_revision": revision,
-                    "nodes": cached_nodes, "source": "cache"}
+                    "structure_signature": signature, "nodes": cached_nodes,
+                    "source": "cache"}
         nodes = _resolve_by_uid(cached_nodes, state)
         source = "uid"
-    elif same_document and cached_nodes:
+    elif same_document and same_structure and cached_nodes:
         nodes = _resolve_by_uid(cached_nodes, state)
         source = "uid"
     else:
@@ -553,11 +629,9 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
     mapping = {
         "fingerprint": fingerprint,
         "structure_revision": revision,
+        "structure_signature": signature,
         "nodes": nodes,
     }
     if persist:
-        sidecar = _read_sidecar(job_id)
-        if sidecar is not None:
-            sidecar["mapping"] = mapping
-            _write_sidecar(job_id, sidecar)
+        _update_mapping(job_id, mapping)
     return {**mapping, "source": source}

@@ -3790,10 +3790,12 @@ class WorkbenchView(QWidget):
         self._outline_payload = dict((prepared or {}).get("outline") or {})
         self._outline_mapping = dict((prepared or {}).get("outline_mapping") or {})
         outline = self._outline_payload.get("outline") or {}
-        segments = state.get("pairs") or state.get("paras") or []
+        # Segment count is not part of the key: a cleanup can move every
+        # position without changing it.  The structure signature can (#186).
         self._outline_key = (
             (str(outline.get("fingerprint") or ""),
-             adapter.outline_revision(state), len(segments))
+             adapter.outline_revision(state),
+             adapter.outline_structure_signature(state))
             if self._outline_mapping.get("nodes") else None)
         self.apply(job_id, state, rows, (prepared or {}).get("runtime", self._last_runtime), snapshots,
                    refresh_delivery=True, prepared=prepared)
@@ -4456,8 +4458,8 @@ class WorkbenchView(QWidget):
             # (or was precomputed by the task-open worker).
             return
         revision = adapter.outline_revision(self._state)
-        segments = self._state.get("pairs") or self._state.get("paras") or []
-        key = (str(outline.get("fingerprint") or ""), revision, len(segments))
+        signature = adapter.outline_structure_signature(self._state)
+        key = (str(outline.get("fingerprint") or ""), revision, signature)
         if key != self._outline_key:
             self._outline_mapping = adapter.outline_mapping(
                 self.job_id, self._state, self._outline_payload)
