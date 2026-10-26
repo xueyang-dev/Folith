@@ -511,6 +511,13 @@ def _exclusion_refined(entry: dict, cached, uid_index: dict[str, int],
     while the rest of the node is still there.  Uids that vanished for any
     other reason (a split assigns new ones) fail the ledger check below and
     keep the paragraph chain's answer.
+
+    The snapshot only supplies the *label*; the span stays the paragraph
+    chain's.  A uid names one segment, and a re-segmentation reissues the
+    positional ``seg-<job>-<n>`` strings, so a snapshot taken before one can
+    still name existing uids that now belong to other segments.  When the
+    surviving uids do not match what the chain just placed, the snapshot says
+    nothing about this node and is ignored.
     """
     if entry.get("state") not in NAVIGABLE_STATES or not isinstance(cached, dict):
         return entry
@@ -519,17 +526,16 @@ def _exclusion_refined(entry: dict, cached, uid_index: dict[str, int],
     if not cached_uids or not missing \
             or not all(uid in excluded for uid in missing):
         return entry
-    positions = [uid_index[uid] for uid in cached_uids if uid in uid_index]
-    counts = {
-        "matched": entry.get("matched_paragraphs") or 0,
-        "unmatched": entry.get("unmatched_paragraphs") or 0,
-        "boundary": entry.get("boundary_paragraphs") or 0,
-    }
-    if not positions:
-        return _entry(UNRESOLVED, "node_excluded", uids=cached_uids, **counts)
+    current = [str(uid) for uid in entry.get("segment_uids") or [] if str(uid)]
+    survived = [uid for uid in cached_uids if uid in uid_index]
+    if not current or survived != current:
+        return entry
     return _entry(PARTIAL, "node_partial_excluded",
-                  first=min(positions), last=max(positions), uids=cached_uids,
-                  **counts)
+                  first=entry.get("first_segment_index"),
+                  last=entry.get("last_segment_index"), uids=cached_uids,
+                  matched=entry.get("matched_paragraphs") or 0,
+                  unmatched=entry.get("unmatched_paragraphs") or 0,
+                  boundary=entry.get("boundary_paragraphs") or 0)
 
 
 def _verify_cached(nodes: dict, state: dict) -> bool:

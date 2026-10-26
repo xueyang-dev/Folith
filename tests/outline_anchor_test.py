@@ -398,6 +398,46 @@ def test_a_range_exclusion_of_one_sentence_still_says_partial(data_dir):
     assert (first["first_segment_index"], first["last_segment_index"]) == (0, 1)
 
 
+def test_a_stale_snapshot_cannot_move_a_node(data_dir):
+    """The Qt view keeps the payload it read at task open, mapping included.
+
+    A cleanup joins two paragraphs and re-segments; the rebuilt paragraphs get
+    the positional uids again, so a uid string that was excluded still names a
+    segment now — a different one.  The node's span must come from the
+    paragraph chain, never from that snapshot.
+    """
+    paragraphs = _paragraphs()
+    outline = _outline(paragraphs, [("第一章", 0, 2), ("第二章", 2, 2)])
+    _persisted_mapping(outline)
+    snapshot = {"outline": outline, "mapping": {}}
+    before = anchor.resolve(JOB, core.load_job_state(JOB), snapshot)
+    assert (before["nodes"]["n0001"]["first_segment_index"],
+            before["nodes"]["n0001"]["last_segment_index"]) == (2, 3)
+
+    core.mutate_translation_segments(JOB, 3, "exclude")
+    state = core.load_job_state(JOB)
+    cleaned = ["第一章开篇。第一章正文。", "第二章开篇。", "第二章正文。"]
+    state.update(
+        paras=list(cleaned),
+        pairs=[{"source": text, "target": "",
+                "segment_uid": f"seg-{JOB}-{index:04d}"}
+               for index, text in enumerate(cleaned)],
+        source_cleanup={"output_input_indices": [[0, 1], [2], [3]]},
+        segmentation={"input_paragraph_count": 3, "paragraph_ranges": [
+            {"paragraph_index": 0, "start": 0, "end": 1},
+            {"paragraph_index": 1, "start": 1, "end": 2},
+            {"paragraph_index": 2, "start": 2, "end": 3}]},
+    )
+    core.save_job_state(JOB, state)
+
+    mapping = anchor.resolve(JOB, state, snapshot)
+
+    first, second = mapping["nodes"]["n0000"], mapping["nodes"]["n0001"]
+    assert (first["first_segment_index"], first["last_segment_index"]) == (0, 0)
+    assert (second["first_segment_index"], second["last_segment_index"]) == (1, 2)
+    assert second["segment_uids"] == [f"seg-{JOB}-0001", f"seg-{JOB}-0002"]
+
+
 def test_an_exclusion_outside_a_node_leaves_it_resolved(data_dir):
     outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
     _persisted_mapping(outline)
