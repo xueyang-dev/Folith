@@ -34,6 +34,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
+        "batch_strategy": "sentence",
         "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "high",
@@ -74,6 +75,7 @@
         "api_key",
         "auto_term",
         "batch_size",
+        "batch_strategy",
         "delivery_config",
         "enable_annotate",
         "enable_report",
@@ -109,7 +111,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "95a7c79d3802745b1447347a06671a0feff45353f3ef7652e07c37d3fc3f4a59"
+      "fingerprint": "230659d7120c835412879524569e24d0c280892feaf266fa2d18bb2513993a23"
     },
     "qt_new_pdf_job": {
       "config": {
@@ -139,6 +141,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
+        "batch_strategy": "sentence",
         "knowledge_feedback": true,
         "ocr_language": "",
         "ocr_quality": "standard",
@@ -173,6 +176,7 @@
         "api_key",
         "auto_term",
         "batch_size",
+        "batch_strategy",
         "delivery_config",
         "enable_annotate",
         "enable_report",
@@ -208,7 +212,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "57b72d80f0138c628a784441630361cec2a02b17fa26c3a3c135ba06be7fe6ef"
+      "fingerprint": "2e2b179d4e5a97d3aa4d2bcf02a2a50f9fe4f512d940a9c5207640ef53e01000"
     },
     "resumed_pdf_job": {
       "config": {
@@ -244,6 +248,7 @@
         "translation_concurrency": 4,
         "batch_size": 8,
         "max_batch_chars": 6400,
+        "batch_strategy": "sentence",
         "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "historical",
@@ -283,6 +288,7 @@
         "api_key",
         "auto_term",
         "batch_size",
+        "batch_strategy",
         "delivery_config",
         "enable_annotate",
         "enable_report",
@@ -314,7 +320,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "4d1737fd05bc57d624605508752088a94196bc23c4c7b15877b9751c67f94629"
+      "fingerprint": "76d3908721bb36416434dd0feb706a626c3495bfe3f02d2a09f82cddd5a90a5d"
     }
   }
 }
