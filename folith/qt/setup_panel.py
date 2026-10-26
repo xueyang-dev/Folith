@@ -1887,6 +1887,13 @@ class TaskSetupPanel(QWidget):
             self.mode_summary.setToolTip("")
 
     # ---- 模式成本预估 ----------------------------------------------------------
+    def refresh_scope_estimate(self, job_id: str) -> None:
+        """范围修改后，同一任务也必须重新读取预估；普通轮询仍复用缓存。"""
+        if job_id != str(self._view.get("job_id") or ""):
+            return
+        self._size_job = ""
+        self._request_source_size(job_id)
+
     def _request_source_size(self, job_id: str) -> None:
         if job_id == self._size_job:
             return

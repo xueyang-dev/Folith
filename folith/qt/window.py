@@ -2666,6 +2666,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr(
                 '已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。',
                 v0=result.get("excluded", 0)))
+        self.workbench.setup_panel.refresh_scope_estimate(job_id)
         self.refresh_workbench(force=True)
 
     def _apply_scope_restore(self, job_id: str, excluded_ids: list) -> None:
@@ -2679,6 +2680,7 @@ class MainWindow(QMainWindow):
         else:
             self._notice(i18n.tr('已恢复 {v0} 段；它们回到工作台并重新计入待完成。',
                                  v0=result.get("restored", 0)))
+        self.workbench.setup_panel.refresh_scope_estimate(job_id)
         self.refresh_workbench(force=True)
 
     # ================= 收尾 =================

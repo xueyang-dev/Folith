@@ -4767,6 +4767,8 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     doc.save(source)
     job = adapter.import_documents([source], window.config)[0].job_id
     open_job_and_wait(window, job)
+    setup = window.workbench.setup_panel
+    assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4)
     observed = []
 
     def choose_scope():
@@ -4787,6 +4789,7 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     QTimer.singleShot(0, choose_scope)
     window.workbench.setup_panel.source_section.scope_button.click()
     assert observed and "将排除" in observed[0], observed
+    assert _pump(app, 5, lambda: setup.source_size().get("segments") == 2)
     state = client["core"].load_job_state(job)
     assert state["scope_exclusion_plan"]["entries"][0]["label"] == "第二章"
     assert not state["paras"] and not state["pairs"]
@@ -4797,3 +4800,5 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     assert dialog.restore_button.text() == "撤下所选计划"
     assert "1 项排除计划" in dialog.summary_label.text()
     dialog.close()
+    window._apply_scope_restore(job, list(dialog._record_checks))
+    assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4)

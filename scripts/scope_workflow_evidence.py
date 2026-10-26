@@ -13,6 +13,7 @@ import platform
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -62,6 +63,16 @@ def main():
         checked = []
         failures = []
 
+        def wait_for_size(segments):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                app.processEvents()
+                if window.workbench.setup_panel.source_size().get('segments') == segments:
+                    return
+                time.sleep(0.01)
+            raise AssertionError('Preparation estimate did not refresh')
+
+
         def dialog_action(restore=False):
             dialog = QApplication.activeModalWidget()
             if not isinstance(dialog, ScopeDialog):
@@ -88,6 +99,7 @@ def main():
 
         try:
             before = adapter.source_size(job)
+            wait_for_size(before['segments'])
             for restore in (False, True, False):
                 QTimer.singleShot(0, lambda restore=restore: dialog_action(restore))
                 window.workbench.setup_panel.source_section.scope_button.click()
@@ -96,9 +108,11 @@ def main():
                 assert not state['paras'] and not state['pairs']
                 if restore:
                     assert not state['scope_exclusion_plan']['entries']
+                    wait_for_size(before['segments'])
                 else:
                     assert state['scope_exclusion_plan']['entries'][0]['label'] == '第二章'
                     assert adapter.source_size(job)['segments'] == before['segments'] - 2
+                    wait_for_size(before['segments'] - 2)
             requests = []
 
             def offline_provider(*args, **kwargs):
