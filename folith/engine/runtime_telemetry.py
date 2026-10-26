@@ -49,26 +49,30 @@ class _RuntimeTelemetryCoalescer:
                        "immediate": 0, "events": 0}
 
     # -- public API -------------------------------------------------------
-    def request_started(self, purpose=None):
+    def request_started(self, purpose=None, *, operation_id=None):
         self.submit(active_delta=1, status="waiting_external",
                     phase="waiting_llm", event_name="llm_request_started",
-                    purpose=purpose)
+                    purpose=purpose, operation_id=operation_id)
 
-    def request_finished(self, purpose=None):
+    def request_finished(self, purpose=None, *, operation_id=None):
         self.submit(active_delta=-1, status="running", phase="running",
-                    event_name="llm_response_received", purpose=purpose)
+                    event_name="llm_response_received", purpose=purpose,
+                    operation_id=operation_id)
 
-    def request_failed(self, error=None, *, purpose=None):
+    def request_failed(self, error=None, *, purpose=None, operation_id=None):
         self.submit(force=True, active_delta=-1, status="running", phase="running",
                     event=str(error)[:240] if error else "模型请求失败",
-                    event_name="llm_request_failed", purpose=purpose)
+                    event_name="llm_request_failed", purpose=purpose,
+                    operation_id=operation_id)
 
-    def submit(self, *, active_delta=0, force=False, purpose=None, **changes):
+    def submit(self, *, active_delta=0, force=False, purpose=None, operation_id=None, **changes):
         """Record one telemetry update; flush on the leading or trailing edge."""
         with self._lock:
             if self._closed:
                 return
             self._stats["submits"] += 1
+            if operation_id is not None:
+                self._pending["operation_id"] = operation_id
             if active_delta:
                 if active_delta > 0 and self._active == 0:
                     changes["model_wait_started_at"] = _c._utc_now_iso()
@@ -141,10 +145,16 @@ class _RuntimeTelemetryCoalescer:
         event = changes.pop("event", None)
         active_purpose = self._active_purposes[-1] if self._active_purposes else None
         purpose = changes.pop("purpose", None)
+        operation_id = changes.pop("operation_id", None)
         if event_name is None:
             purpose = active_purpose
-        if purpose:
-            changes["event_metadata"] = {"purpose": str(purpose)}
+        if purpose or operation_id:
+            meta = dict(changes.get("event_metadata") or {})
+            if purpose:
+                meta["purpose"] = str(purpose)
+            if operation_id:
+                meta["operation_id"] = str(operation_id)
+            changes["event_metadata"] = meta
         if active > 0:
             changes["status"] = "waiting_external"
             changes["phase"] = "waiting_llm"
@@ -194,10 +204,10 @@ def _runtime_telemetry_coalescer(job_id):
         return coalescer
 
 
-def _runtime_telemetry_request_failed(job_id, error=None, *, purpose=None):
+def _runtime_telemetry_request_failed(job_id, error=None, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_failed(error=error, purpose=purpose)
+        coalescer.request_failed(error=error, purpose=purpose, operation_id=operation_id)
 
 
 def flush_runtime_telemetry(job_id=None):

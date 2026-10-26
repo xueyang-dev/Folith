@@ -237,19 +237,52 @@ _ROLE_PURPOSE_LABELS = {
 
 
 @contextmanager
-def llm_call_purpose(label):
-    """为当前线程随后发起的模型调用标注用途（#167）。
+def llm_call_purpose(label, operation_id=None):
+    """为当前线程随后发起的模型调用标注用途（#167 / Phase 3）。
 
-    标注只影响运行时遥测的展示文案（事件消息、阶段标签、``metadata.purpose``），
-    不进入任何模型请求、缓存键或用量账本。线程本地生效：并发批次工作线程各自
-    设置各自的用途，互不可见。离开作用域恢复外层值，不向下游泄漏。
+    标注只影响运行时遥测的展示文案与机器标识（事件消息、阶段标签、``metadata.purpose``、
+    ``operation_id``），不进入任何模型请求、缓存键或用量账本。线程本地生效：并发批次
+    工作线程各自设置各自的用途，互不可见。离开作用域恢复外层值，不向下游泄漏。
     """
     previous = getattr(_LLM_CTX, "purpose", None)
+    prev_op = getattr(_LLM_CTX, "operation_id", None)
     _LLM_CTX.purpose = str(label or "").strip() or None
+    _LLM_CTX.operation_id = str(operation_id or "").strip() or None
     try:
         yield
     finally:
         _LLM_CTX.purpose = previous
+        _LLM_CTX.operation_id = prev_op
+
+
+def _infer_operation_id(purpose, role):
+    purpose = str(purpose or "").strip()
+    role = str(role or "").strip().lower()
+    if "标注" in purpose:
+        return "annotation"
+    if "翻译" in purpose:
+        return "translation"
+    if "术语" in purpose or "核心术语" in purpose:
+        return "terminology"
+    if "画像" in purpose or "理解" in purpose:
+        return "understanding"
+    if "审校" in purpose:
+        return "review"
+    if "修复" in purpose:
+        return "repair"
+    if "知识" in purpose:
+        return "knowledge"
+    if role in {"annotation", "translation", "review", "auxiliary"}:
+        return role
+    return role or "unknown"
+
+
+def _current_llm_operation_id():
+    """这次模型调用的机器操作标识；无显式标注时从用途和角色推导。"""
+    op = getattr(_LLM_CTX, "operation_id", None)
+    if op:
+        return op
+    return _infer_operation_id(_current_llm_purpose(), _usage.CURRENT_ROLE.get())
 
 
 def _current_llm_purpose():
@@ -2124,18 +2157,42 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         _runtime_pause_checkpoint(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
-        _runtime_telemetry_request_started(runtime_job_id,
-                                           purpose=_current_llm_purpose())
+        try:
+            _runtime_telemetry_request_started(
+                runtime_job_id,
+                purpose=_current_llm_purpose(),
+                operation_id=_current_llm_operation_id(),
+            )
+        except TypeError:
+            _runtime_telemetry_request_started(
+                runtime_job_id,
+                purpose=_current_llm_purpose(),
+            )
     _llm_started = time.perf_counter()
     _request_run = trace.get_active_run(runtime_job_id)
     if _request_run:
-        _request_run.begin_model_request(provider, model, role=_usage.CURRENT_ROLE.get(),
-                                        batch_id=getattr(_LLM_CTX, "batch_id", None),
-                                        prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
-                                        system_chars=len(system_prompt or ""),
-                                        user_chars=len(user_prompt or ""),
-                                        segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
-                                            "segment_count", getattr(_LLM_CTX, "input_segments", None)))
+        try:
+            _request_run.begin_model_request(
+                provider, model, role=_usage.CURRENT_ROLE.get(),
+                operation_id=_current_llm_operation_id(),
+                purpose=_current_llm_purpose(),
+                batch_id=getattr(_LLM_CTX, "batch_id", None),
+                prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
+                system_chars=len(system_prompt or ""),
+                user_chars=len(user_prompt or ""),
+                segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
+                    "segment_count", getattr(_LLM_CTX, "input_segments", None)),
+            )
+        except TypeError:
+            _request_run.begin_model_request(
+                provider, model, role=_usage.CURRENT_ROLE.get(),
+                batch_id=getattr(_LLM_CTX, "batch_id", None),
+                prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
+                system_chars=len(system_prompt or ""),
+                user_chars=len(user_prompt or ""),
+                segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
+                    "segment_count", getattr(_LLM_CTX, "input_segments", None)),
+            )
     try:
         result = _call_llm_transport(
             cfg, provider, api_key, model, system_prompt, user_prompt,
@@ -2165,16 +2222,34 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         if runtime_job_id:
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
             # 看到的是真实结果而不是一个永远不会结束的在途请求。
-            _runtime_telemetry_request_failed(
-                runtime_job_id, purpose=_current_llm_purpose())
+            try:
+                _runtime_telemetry_request_failed(
+                    runtime_job_id,
+                    purpose=_current_llm_purpose(),
+                    operation_id=_current_llm_operation_id(),
+                )
+            except TypeError:
+                _runtime_telemetry_request_failed(
+                    runtime_job_id,
+                    purpose=_current_llm_purpose(),
+                )
         raise exc
     finally:
         if _request_run:
             _request_run.end_model_request()
     _record_llm_thread_stats(time.perf_counter() - _llm_started, failed=False)
     if runtime_job_id:
-        _runtime_telemetry_request_finished(runtime_job_id,
-                                            purpose=_current_llm_purpose())
+        try:
+            _runtime_telemetry_request_finished(
+                runtime_job_id,
+                purpose=_current_llm_purpose(),
+                operation_id=_current_llm_operation_id(),
+            )
+        except TypeError:
+            _runtime_telemetry_request_finished(
+                runtime_job_id,
+                purpose=_current_llm_purpose(),
+            )
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
     return result
@@ -3025,6 +3100,30 @@ def batch_strategy_diagnostics(state=None):
     if effective not in BATCH_STRATEGIES:
         effective = configured if plan.get("batch_count") else None
     return {"configured": configured, "effective": effective}
+
+
+def workflow_readiness(state=None):
+    """三维就绪读模型聚合（Phase 3）：初译、翻译与增强交付就绪度。"""
+    from folith.readiness import workflow_readiness as _wr
+    return _wr(state)
+
+
+def draft_readiness(state=None):
+    """初译完成度与合法结构读模型（Phase 3）。"""
+    from folith.readiness import draft_readiness as _dr
+    return _dr(state)
+
+
+def translation_readiness(state=None):
+    """翻译质量与审校门禁读模型（Phase 3）。"""
+    from folith.readiness import translation_readiness as _tr
+    return _tr(state)
+
+
+def enhanced_delivery_readiness(state=None):
+    """选定增强产物（标注、报告）读模型（Phase 3）。"""
+    from folith.readiness import enhanced_delivery_readiness as _edr
+    return _edr(state)
 
 
 def _resolve_entry_batch_strategy(saved_strategy=None, explicit_strategy=None,
@@ -3903,9 +4002,10 @@ def repair_batch(sources, targets, findings, glossary_text, style_rules, target_
         try:
             with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
                 controller.acquire(cancel_check)
-            res = _invoke_llm(
-                call_fn, provider, api_key, model, sys_prompt, user_prompt,
-                temperature=0.2, response_format=response_format)
+            with llm_call_purpose("翻译修复", operation_id="repair"):
+                res = _invoke_llm(
+                    call_fn, provider, api_key, model, sys_prompt, user_prompt,
+                    temperature=0.2, response_format=response_format)
             controller.note_success()
             arr = _translation_protocol.parse_translation_response(
                 res, len(sources))
@@ -4397,7 +4497,7 @@ def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, wo
             with trace.span("annotation", operation="batch", job_id=job_id,
                             metadata={"batch_id": bi + 1, "offset": offset, "segment_count": len(pairs)}):
                 # 用途标注（#167）：标注批次在事件里与翻译批次区分开。
-                with llm_call_purpose(f"自动标注批次 #{bi + 1}"):
+                with llm_call_purpose(f"自动标注批次 #{bi + 1}", operation_id="annotation"):
                     items = annotate_batch([pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
             _batch_timing(job_id, "annotation", bi + 1, "result_ready")
             return task, items
@@ -5856,7 +5956,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 try:
                     # 用途标注（#167）：事件里"已发送模型请求"要能对上这批段。
                     with llm_call_purpose(
-                            f"正在翻译第 {offset + 1}–{offset + len(batch)} 段"):
+                            f"正在翻译第 {offset + 1}–{offset + len(batch)} 段", operation_id="translation"):
                         targets = translate_batch(texts, ctx_prev, ctx_next, glossary_text, style_rules,
                                                   target_lang, translator_config["provider"],
                                                   translator_config["api_key"],
@@ -6369,7 +6469,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         if inherited_job_id is not None:
             _RUNTIME_CTX.job_id = inherited_job_id
         # 用途标注（#167）：知识抽取与翻译/标注在事件里区分开。
-        with llm_call_purpose("提取术语与知识"):
+        with llm_call_purpose("提取术语与知识", operation_id="knowledge"):
             return _knowledge.extract_batch(
                 sources, targets, auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"],
@@ -7969,16 +8069,16 @@ def _submit_runtime_status(job_id, **changes):
     return writer.submit(**changes)
 
 
-def _runtime_telemetry_request_started(job_id, *, purpose=None):
+def _runtime_telemetry_request_started(job_id, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_started(purpose=purpose)
+        coalescer.request_started(purpose=purpose, operation_id=operation_id)
 
 
-def _runtime_telemetry_request_finished(job_id, *, purpose=None):
+def _runtime_telemetry_request_finished(job_id, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_finished(purpose=purpose)
+        coalescer.request_finished(purpose=purpose, operation_id=operation_id)
 
 
 
@@ -13223,7 +13323,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_status("【阶段1.2】文档画像（分布式采样 + 结构化校验）...")
         from folith.document_profile import profile_document
         # 用途标注（#167）：画像阶段的模型调用在事件里说清自己。
-        with llm_call_purpose("文档画像"):
+        with llm_call_purpose("文档画像", operation_id="understanding"):
             profile, profile_warnings = profile_document(
                 state["paras"], auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"], target_lang,
@@ -13301,7 +13401,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_caption("正在从全文分布式样本中提取专业术语...")
         from folith.terminology import extract_auto_terms_v2
         # 用途标注（#167）：术语抽取的模型调用在事件里说清自己。
-        with llm_call_purpose("抽取全文核心术语"):
+        with llm_call_purpose("抽取全文核心术语", operation_id="terminology"):
             entries, extract_warnings = extract_auto_terms_v2(
                 state["paras"], target_lang, auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"],
@@ -13428,6 +13528,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         attach_pair_spans(state)
         from folith import delivery as _delivery
         state["delivery_status"] = _delivery.compute_delivery_status(state)
+        from folith.readiness import record_readiness_milestone
+        record_readiness_milestone(job_id, state, "draft_ready")
         save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
@@ -13438,6 +13540,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             job_id, state, reviewer_config, target_lang, style_rules,
             enable_review=enable_review, on_status=on_status)
         active_run.record_point("milestone", phase="translation_review_complete")
+        from folith.readiness import record_readiness_milestone
+        if record_readiness_milestone(job_id, state, "translation_ready"):
+            save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
@@ -13476,6 +13581,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state["p3_done"] = True
         save_job_state(job_id, state)
 
+    from folith.readiness import record_readiness_milestone
+    record_readiness_milestone(job_id, state, "enhanced_delivery_ready")
     state["stage"] = _state_migration.derive_stage(state)
     state["performance"] = persist_performance()
     save_job_state(job_id, state)

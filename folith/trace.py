@@ -757,15 +757,20 @@ class RunContext:
             self.record_point("http_response_headers", logical_request_id=identity[0],
                               attempt=identity[1], status_code=response.status_code)
 
-    def begin_model_request(self, provider: str, model: str, *, role: str = "unknown", batch_id: Any = None, prompt_cost: Optional[Dict[str, Any]] = None, system_chars: Optional[int] = None,
-                            user_chars: Optional[int] = None, segment_count: Optional[int] = None) -> None:
+    def begin_model_request(self, provider: str, model: str, *, role: str = "unknown",
+                            operation_id: Optional[str] = None, purpose: Optional[str] = None,
+                            batch_id: Any = None, prompt_cost: Optional[Dict[str, Any]] = None,
+                            system_chars: Optional[int] = None, user_chars: Optional[int] = None,
+                            segment_count: Optional[int] = None) -> None:
         if self._requests_file is None:
             return
         with self._lock:
             self._request_sequence += 1
+            effective_op = operation_id or role
             rec = {"logical_request_id": f"{self.run_id}/request/{self._request_sequence}", "started_at": _now_iso(),
                    "started_monotonic": time.perf_counter(), "provider": provider,
-                   "model": model, "role": role, "batch_id": batch_id,
+                   "model": model, "role": role, "operation_id": effective_op,
+                   "purpose": purpose, "batch_id": batch_id,
                    "system_chars": system_chars, "user_chars": user_chars,
                    "segment_count": segment_count}
             if prompt_cost is not None:
@@ -834,6 +839,10 @@ class RunContext:
         }
         with self._lock:
             rec.update(self._active_requests.get(threading.get_ident(), {}))
+            if "operation_id" not in rec or not rec["operation_id"]:
+                rec["operation_id"] = (metadata or {}).get("operation_id") or rec.get("role") or "unknown"
+            if "purpose" not in rec or not rec["purpose"]:
+                rec["purpose"] = (metadata or {}).get("purpose")
             self.model_calls.append(rec)
             self._write_request_event({"event": "model_call", **rec})
 
