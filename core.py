@@ -13101,6 +13101,11 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
+    # 未能映射的排除意图仍由用户持有：不能只留警告便对该范围发起翻译。
+    if (state.get("scope_exclusion_plan") or {}).get("entries"):
+        raise RuntimeError("译前范围排除未能应用，已停止翻译。请打开翻译范围，"
+                           "调整范围或撤下未应用的排除计划后再继续。")
+
     # ---------------- 阶段 1.2：文档画像（长文理解；失败仅警告，不阻断） ----------------
     if enable_understanding and not state.get("profile_done"):
         if _runtime_cancel_requested(job_id):

@@ -870,3 +870,40 @@ def test_restore_pretranslation_exclusion_does_not_shift_later_translations(tmp_
         assert restored["pairs"][3]["target"] == before_pairs[3]["target"]
     finally:
         core.OUTPUT_DIR = old_output
+
+
+def test_unapplied_plan_stops_real_pipeline_until_explicitly_withdrawn(tmp_path, monkeypatch):
+    from folith.qt import adapter
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "scope-unmapped-stop"
+    state = core.new_job_state("scope.md")
+    core.save_source(job, b"# Chapter One\n\nAlpha body.\n\n# Chapter Two\n\nBeta body.\n")
+    core.save_job_state(job, state)
+    tree = adapter.translation_scope(job)
+    adapter.exclude_scope(job, [tree["groups"][0]["nodes"][-1]["key"]])
+    state = core.load_job_state(job)
+    state["scope_exclusion_plan"]["entries"][0]["anchor_first"] = "mismatched source"
+    core.save_job_state(job, state)
+    calls = []
+    def offline(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("Unapplied exclusion must not reach a provider")
+    monkeypatch.setattr(core, "call_llm", offline)
+    config = dict(provider="DeepSeek", api_key="offline", model="deepseek-chat",
+        target_lang="简体中文", auto_term=False, enable_report=False,
+        translation_theory="目的论", enable_review=False, enable_annotate=False,
+        use_tm=False, enable_understanding=True, enable_source_cleanup=False)
+    with pytest.raises(RuntimeError, match="译前范围排除未能应用"):
+        core.run_job_pipeline(job, "scope.md", core.load_source(job), **config)
+    assert calls == []
+    tree = adapter.translation_scope(job)
+    assert tree["excluded"]["unapplied_plan"] is True
+    pending = [r for r in tree["excluded"]["records"] if r.get("planned")]
+    assert len(pending) == 1
+    # Merely retrying is not consent to translate excluded content.
+    with pytest.raises(RuntimeError, match="译前范围排除未能应用"):
+        core.run_job_pipeline(job, "scope.md", None, **config)
+    assert calls == []
+    adapter.restore_scope(job, [pending[0]["excluded_id"]])
+    assert not core.load_job_state(job)["scope_exclusion_plan"]["entries"]
+    assert not adapter.translation_scope(job)["excluded"]["unapplied_plan"]

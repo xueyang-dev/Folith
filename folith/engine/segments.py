@@ -668,6 +668,7 @@ def _scope_plan_records(state):
         records.append({
             "excluded_id": str(entry.get("excluded_id") or ""),
             "segment_index": None,
+            "planned": True,
             "source_start": start + 1,
             "source_end": end,
             "position": (f"原文第 {start + 1}–{end} 段" if end > start + 1
@@ -727,16 +728,18 @@ def translation_scope_tree(state):
     sources = _segment_source_list(state)
     total = {"segments": len(sources),
              "chars": sum(len(item) for item in sources)}
+    excluded = excluded_segments_summary(state)
+    if state.get("p1_done") and _scope_plan_entries(state):
+        excluded["records"] = list(excluded["records"]) + _scope_plan_records(state)
+        excluded["unapplied_plan"] = True
     if not sources:
         if state.get("p1_done"):
             # 任务已开始（例如全部段落都被排除了）：工作列表为空是排除的结果，
             # 不是"还没开始"——账本里的记录必须能在这个对话框里恢复，绝不能
             # 落进译前计划的坐标系里。
-            excluded = excluded_segments_summary(state)
             return {"available": False, "groups": [], "total": total,
                     "excluded": excluded, "pre_start": False}
         return _pre_start_scope_tree(state)
-    excluded = excluded_segments_summary(state)
 
     groups = []
 
@@ -942,6 +945,13 @@ def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
         if str(item or "").strip()))
     if not wanted:
         raise ValueError("请选择要恢复的已排除段落。")
+    planned_ids = {str(entry.get("excluded_id") or "") for entry in _scope_plan_entries(state)}
+    withdrawing = [item for item in wanted if item in planned_ids]
+    if withdrawing:
+        result = _unplan_scope_exclusion(state, job_id, withdrawing, actor=actor)
+        wanted = [item for item in wanted if item not in planned_ids]
+        if not wanted:
+            return result
     # 译前排除还没有落账：恢复就是把计划条目撤下来，同样走这一个入口。
     # 判据同 exclude：p1_done 才代表翻译单元契约已存在（全部排除后列表也是空的）。
     if not state.get("pairs") and not state.get("paras") \
@@ -1161,7 +1171,8 @@ def _unplan_scope_exclusion(state, job_id, wanted, *, actor):
     _c.save_job_state(job_id, state)
     return {
         "restored": len(wanted),
-        "remaining": _planned_paragraph_total(state),
+        "remaining": (len(_segment_source_list(state)) if state.get("p1_done")
+                      else _planned_paragraph_total(state)),
         "state": state,
     }
 
@@ -1255,7 +1266,8 @@ def apply_scope_exclusion_plan(job_id, state):
     大纲段落（锚点验证）→ 清洗后段落 → ``segmentation.paragraph_ranges`` 的
     翻译单元区间；映射不到的条目保持未应用并写入警告与技术日志——绝不猜位置、
     绝不静默丢弃。应用与未应用都留 ``scope_exclusion_applied`` 审计；计划与
-    大纲随之清出 state，之后范围入口回到工作列表口径。不落盘：调用方随阶段
+    大纲随之清出 state，未应用的计划保留供用户撤下；之后范围入口回到工作列表口径。
+    不落盘：调用方随阶段
     收尾统一 ``save_job_state``。
     """
     entries = _scope_plan_entries(state)
@@ -1381,7 +1393,10 @@ def apply_scope_exclusion_plan(job_id, state):
             "recorded_at": _finalization.now_iso(),
         })
     state["scope_exclusion_applied"] = audit[-50:]
-    state.pop(SCOPE_PLAN_KEY, None)
+    if unapplied:
+        state[SCOPE_PLAN_KEY] = {**state[SCOPE_PLAN_KEY], "entries": unapplied}
+    else:
+        state.pop(SCOPE_PLAN_KEY, None)
     state.pop("source_outline", None)
     for item in applied_records:
         _c._append_runtime_technical_log(

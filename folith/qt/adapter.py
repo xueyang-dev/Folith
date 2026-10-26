@@ -1226,6 +1226,7 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
         "total": dict(tree.get("total") or {}),
         "excluded": {
             "count": int((tree.get("excluded") or {}).get("count") or 0),
+            "unapplied_plan": bool((tree.get("excluded") or {}).get("unapplied_plan")),
             "records": [dict(record) for record in
                         (tree.get("excluded") or {}).get("records") or []],
         },

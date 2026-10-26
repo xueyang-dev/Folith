@@ -30,10 +30,12 @@ are included.
 - Automatic structural exclusions can precede the plan; shifted paragraph ranges
   remain the mapping source.
 - Cleanup that merges selected and retained raw paragraphs does not authorize
-  deleting the retained text. Such plans are reported unapplied with a warning.
-- Boundary mismatches are reported unapplied, not guessed. The audit is preserved;
-  inspect the warning and choose the scope again on extracted units before proceeding
-  with content whose planned exclusion could not be mapped.
+  deleting the retained text. Such plans remain unapplied and stop the pipeline
+  before profiling/translation model calls.
+- Boundary mismatches are not guessed. The plan and audit are preserved, and merely
+  retrying stays blocked. Open the scope dialog to exclude the appropriate extracted
+  units and withdraw the unapplied plan, or explicitly withdraw it to allow translation
+  of the original scope.
 - A plan does not silently shift an existing bilingual positional contract.
 - Empty working lists after exclusion retain ledger recovery records.
 - Scope mutations serialize state reads/writes; parsing reloads authoritative state
@@ -60,7 +62,8 @@ QT_QPA_PLATFORM=cocoa python scripts/scope_workflow_evidence.py --output docs/ev
 
 On Windows use `QT_QPA_PLATFORM=windows`; the Shared Qt Windows CI job runs the
 same script and uploads `scope-workflow-windows` screenshots plus `evidence.json`.
-The local [macOS record](evidence/scope-workflow-macos/evidence.json) uses Cocoa,
+The [Windows record](evidence/scope-workflow-windows/README.md) includes a successful
+native Windows run and its exact source head/workflow. The local [macOS record](evidence/scope-workflow-macos/evidence.json) uses Cocoa,
 real widgets and an isolated, generated two-chapter DOCX. It verifies exclusion,
 withdrawal, estimates, the real pipeline, the skip manifest and restoration. These
 are scripted native-source runs: no paid provider, human-operated study, installed

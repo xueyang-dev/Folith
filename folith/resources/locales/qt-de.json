@@ -2198,5 +2198,7 @@
   "已计划排除原文 {v0} 段；开始翻译时生效，可在翻译范围中撤下。": "Ausschluss von {v0} Quellabsätzen geplant; gilt ab Übersetzungsbeginn und kann im Übersetzungsumfang zurückgenommen werden.",
   "当前没有待翻译段落；可在下方恢复已排除的内容。": "Keine Segmente mehr zu übersetzen. Ausgeschlossene Inhalte unten wiederherstellen.",
   "原文第 {v0}–{v1} 段": "Quellabsätze {v0}–{v1}",
-  "原文第 {v0} 段": "Quellabsatz {v0}"
+  "原文第 {v0} 段": "Quellabsatz {v0}",
+  "部分译前排除尚未应用，翻译已暂停。请调整范围或撤下未应用计划后继续。": "Einige Ausschlüsse konnten nicht angewendet werden. Die Übersetzung wurde angehalten. Umfang anpassen oder nicht angewendete Pläne zurücknehmen, bevor Sie fortfahren.",
+  "未应用的排除计划：{v0}": "Nicht angewendeter Ausschlussplan: {v0}"
 }

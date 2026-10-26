@@ -61,6 +61,10 @@ class ScopeDialog(QDialog):
 
         body = QVBoxLayout()
         body.setSpacing(theme_module.SPACE["sm"])
+        if excluded.get("unapplied_plan"):
+            body.addWidget(_label(i18n.tr(
+                '部分译前排除尚未应用，翻译已暂停。请调整范围或撤下未应用计划后继续。'),
+                "meta", wrap=True))
         if not self.scope.get("available") and excluded.get("records"):
             body.addWidget(_label(i18n.tr(
                 '当前没有待翻译段落；可在下方恢复已排除的内容。'), "meta", wrap=True))
@@ -173,6 +177,8 @@ class ScopeDialog(QDialog):
                 where = position or (
                     i18n.tr('第 {v0} 段', v0=int(index) + 1)
                     if isinstance(index, int) else i18n.tr('原位置未知'))
+            if record.get("planned") and self.scope.get("excluded", {}).get("unapplied_plan"):
+                where = i18n.tr('未应用的排除计划：{v0}', v0=where)
             source = " ".join(str(record.get("source") or "").split())[:60]
             reason = str(record.get("reason") or "")
             check = style_module.CheckBox(
