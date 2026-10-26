@@ -1001,6 +1001,22 @@ QHeaderView::section {{
     font-size: {f['label']}px;
 }}
 QTableCornerButton::section {{ background: {t['bg-surface-subtle']}; border: none; }}
+/* 文档结构（#187）：树只表达层级，不再套一层盒子；不可跳转的节点弱化成说明文字。 */
+QTreeWidget#outlineTree {{
+    background: transparent;
+    border: none;
+    padding: {sp['xs']}px 0;
+}}
+QTreeWidget#outlineTree::item {{
+    padding: {sp['xs']}px {sp['sm']}px;
+    border-radius: {r['sm']}px;
+    color: {t['text-secondary']};
+}}
+QTreeWidget#outlineTree::item:hover {{ color: {t['text-primary']}; }}
+QTreeWidget#outlineTree::item:selected {{
+    background: {t['bg-selected']};
+    color: {t['text-primary']};
+}}
 /* 列表脚注（选中操作 + 选中摘要）：与表格**同一条底边**，只隔一条 1px 发丝线，
    不再是一个浮在 16px 空白里的独立行。 */
 QFrame#listFooter {{

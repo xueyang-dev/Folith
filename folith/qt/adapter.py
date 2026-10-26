@@ -1233,6 +1233,43 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
     }
 
 
+def task_outline(job_id: str, state: dict | None = None) -> dict:
+    """The task's persisted source outline (#186), parsed at most once.
+
+    The panel consumes this payload; it never calls the parser itself.  Reading
+    a warm sidecar performs no source extraction and no model call.  When the
+    source or parser version changed, ``parsed``/``invalidated`` say so rather
+    than pretending the cache was still current.
+    """
+    from folith import outline_anchor
+
+    try:
+        payload = outline_anchor.load_outline(
+            job_id, state if state is not None else load_state(job_id))
+    except OSError:
+        # A missing/unreadable source is a task with no structure, not a reason
+        # to refuse to open the workspace.
+        return {"outline": {}, "mapping": {}, "parsed": False,
+                "invalidated": "source_missing", "node_count": 0}
+    outline = payload.get("outline") or {}
+    payload["node_count"] = len(outline.get("nodes") or [])
+    return payload
+
+
+def outline_mapping(job_id: str, state: dict, payload: dict | None = None) -> dict:
+    """Resolve outline nodes to segments without re-parsing the source (#186)."""
+    from folith import outline_anchor
+
+    return outline_anchor.resolve(job_id, state or {}, payload)
+
+
+def outline_revision(state: dict) -> int:
+    """Cheap structural counter used to avoid re-resolving an unchanged tree."""
+    from folith import outline_anchor
+
+    return outline_anchor.structure_revision(state)
+
+
 def exclude_scope(job_id: str, keys: Sequence[str]) -> dict:
     """按范围（页 / 章 / 节）批量排除段落；语义与逐段排除完全一致。"""
     wanted = [str(key or "").strip() for key in (keys or []) if str(key or "").strip()]

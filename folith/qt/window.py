@@ -1310,10 +1310,19 @@ class MainWindow(QMainWindow):
             on_progress(4, 5)
             with timing.phase("review_queue"):
                 review = adapter.review_queue(job_id, state)
+            # #187: read the persisted outline once, off the GUI thread.  A warm
+            # sidecar does no extraction; a stale one is re-parsed here and says
+            # so in the panel.
+            with timing.phase("source_outline"):
+                outline = adapter.task_outline(job_id, state)
+                # The cold mapping walks every node's paragraph span, so it
+                # belongs here rather than on the GUI thread (#187).
+                outline_mapping = adapter.outline_mapping(job_id, state, outline)
             on_progress(5, 5)
             runtime = adapter.runtime_view(job_id, state)
             return state, signature, rows, snapshots, {
                 "delivery": preview, "review": review, "runtime": runtime,
+                "outline": outline, "outline_mapping": outline_mapping,
                 "drafts_signature": drafts_signature}
 
         def done(payload):

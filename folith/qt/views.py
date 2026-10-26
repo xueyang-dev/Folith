@@ -31,9 +31,11 @@ from . import adapter
 from . import components
 from . import motion
 from . import icons
+from . import preferences
 from .activity_panel import ActivityPanel
 from .cases_panel import CasesPanel
 from .followup_panel import FollowupPanel
+from .outline_panel import OutlinePanel, reason_text as outline_reason_text
 from .pdf_panel import PdfPanel
 from .qa_panel import QAPanel
 from .report_panel import ReportPanel
@@ -2400,6 +2402,8 @@ class WorkbenchView(QWidget):
     #: 检查器的默认宽度；双击它左侧的分割条回到这个宽度。
     #: 右栏（检查器 / 检查与修复）的默认宽度：两者共用一个宽度，切换时网格不跳（模板 B）。
     INSPECTOR_WIDTH = 360
+    #: 文档结构面板上次是开还是关（客户端偏好，不写进任务目录）。
+    OUTLINE_OPEN_KEY = "workspace/outline_open"
 
     backRequested = Signal()
     startRequested = Signal()
@@ -2487,6 +2491,7 @@ class WorkbenchView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.settings = preferences.settings()
         self.job_id = ""
         self.config: adapter.EngineConfig | None = None
         self._all_rows: list[adapter.SegmentRow] = []
@@ -2534,6 +2539,10 @@ class WorkbenchView(QWidget):
         self._qa_key: tuple = ()
         self._cases_key: tuple = ()
         self._report_key: tuple = ()
+        #: 任务打开时读入的大纲负载（sidecar + 解析状态）；之后只在结构变化时重算映射。
+        self._outline_payload: dict = {}
+        self._outline_mapping: dict = {}
+        self._outline_key: tuple | None = None
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -2747,6 +2756,18 @@ class WorkbenchView(QWidget):
         self.terms_button.clicked.connect(lambda checked: self.set_terms_open(checked))
         self.terms_button.setVisible(False)
         toolbar.addWidget(self.terms_button)
+        # 文档结构：与术语同一个位置、同一种开关；任务有大纲结构时才出现。
+        self.outline_button = QToolButton()
+        self.outline_button.setObjectName("toolbarButton")
+        self.outline_button.setCheckable(True)
+        self.outline_button.setText(i18n.tr('结构'))
+        self.outline_button.setIcon(icons.icon("list", 16, "text-secondary"))
+        self.outline_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.outline_button.setToolTip(i18n.tr(
+            '在左侧展开文档结构（{v0}）', v0=platform_ui.shortcut_text("outline")))
+        self.outline_button.clicked.connect(lambda checked: self.set_outline_open(checked))
+        self.outline_button.setVisible(False)
+        toolbar.addWidget(self.outline_button)
         # 翻译范围：译前按页/章/节批量排除（issue #28）。它作用于整份文档，
         # 所以放在文档级工具条上，而不是作用于选中段的右侧操作栏。
         self.scope_button = QToolButton()
@@ -3602,12 +3623,17 @@ class WorkbenchView(QWidget):
         # 「原位置」上下文面板（#61），与原页共用入口、宽度和快捷键。
         self.source_panel = SourcePanel()
         self.source_panel.closeRequested.connect(lambda: self.set_source_open(False))
+        # 文档结构（#187）：与 PDF 原页、术语共用左侧同一栏、同一个宽度动画。
+        self.outline_panel = OutlinePanel()
+        self.outline_panel.closeRequested.connect(lambda: self.set_outline_open(False))
+        self.outline_panel.nodeActivated.connect(self._outline_node_activated)
         # 左栏：原页与术语轮流占它（一个位置一个宽度）。`_source_open` 指左栏开着，
         # `_left_mode` 说开的是哪一个。
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self.pdf_panel)
         self.left_stack.addWidget(self.source_panel)
         self.left_stack.addWidget(self.terms_side)
+        self.left_stack.addWidget(self.outline_panel)
         self.source_clip = components.ClippedWidget(self.left_stack, 400)
         self._source_open = False
         self._left_mode = "source"
@@ -3634,6 +3660,12 @@ class WorkbenchView(QWidget):
         source_shortcut.setShortcut(platform_ui.shortcut("source"))
         source_shortcut.triggered.connect(lambda: self.set_source_open(not self.source_open()))
         self.addAction(source_shortcut)
+        # 文档结构（#187）：与按钮共用 platform_ui 的同一条快捷键定义。
+        self.outline_shortcut = QAction(i18n.tr('文档结构'), self)
+        self.outline_shortcut.setShortcut(platform_ui.shortcut("outline"))
+        self.outline_shortcut.triggered.connect(
+            lambda: self.set_outline_open(not self.outline_open()))
+        self.addAction(self.outline_shortcut)
         # 检查与修复：从顶栏的盾牌图标下面展开的「凸」字下拉卡片（与运行记录同一种），
         # 不再挤占右栏、也不会自己弹出来挡住操作键（2026-10-16 第三轮试用反馈）。
         # 点外面或 Esc 收起；处理某一条（定位段落、预览）时卡片保持打开。
@@ -3755,8 +3787,19 @@ class WorkbenchView(QWidget):
         # 让"换了任务就一定会重画"成为显然的事实。
         self._delivery_rendered = False
         self._delivery_key = ()
+        self._outline_payload = dict((prepared or {}).get("outline") or {})
+        self._outline_mapping = dict((prepared or {}).get("outline_mapping") or {})
+        outline = self._outline_payload.get("outline") or {}
+        segments = state.get("pairs") or state.get("paras") or []
+        self._outline_key = (
+            (str(outline.get("fingerprint") or ""),
+             adapter.outline_revision(state), len(segments))
+            if self._outline_mapping.get("nodes") else None)
         self.apply(job_id, state, rows, (prepared or {}).get("runtime", self._last_runtime), snapshots,
                    refresh_delivery=True, prepared=prepared)
+        if self.settings.value(self.OUTLINE_OPEN_KEY, False, type=bool) \
+                and self._outline_available():
+            self._set_left_panel("outline", True)
 
     def apply(self, job_id: str, state: dict, rows: list[adapter.SegmentRow],
               runtime: dict, snapshots: list[dict],
@@ -3805,6 +3848,7 @@ class WorkbenchView(QWidget):
         # 选择范围；还没有段落时按钮隐藏，避免点开一个空对话框。
         self.scope_button.setVisible(bool(self._all_rows))
         self._render_excluded()
+        self._render_outline()
         # 交付预检先于运行区：头部状态芯片要用它给出的任务状态标签。
         self._render_delivery(force=refresh_delivery)
         self._render_runtime()
@@ -4314,7 +4358,7 @@ class WorkbenchView(QWidget):
 
     # ---- 翻译页的列：原页 | 段落网格 | 检查器 / 检查与修复 ---------------------
     def left_open(self) -> bool:
-        """左栏（原页或术语）开着。"""
+        """左栏（原页、术语或文档结构）开着。"""
         return self._source_open
 
     def source_open(self) -> bool:
@@ -4323,6 +4367,9 @@ class WorkbenchView(QWidget):
     def terms_open(self) -> bool:
         return self._source_open and self._left_mode == "terms"
 
+    def outline_open(self) -> bool:
+        return self._source_open and self._left_mode == "outline"
+
     def set_source_open(self, open_: bool) -> None:
         """原页 / 原位置在工作台左侧展开 / 收起；中间的网格随之收缩（D2、#61）。"""
         self._set_left_panel("source", bool(open_) and self._source_available)
@@ -4330,6 +4377,17 @@ class WorkbenchView(QWidget):
     def set_terms_open(self, open_: bool) -> None:
         """术语表在工作台左侧展开 / 收起（与原页同一栏；2026-10-17 试用反馈）。"""
         self._set_left_panel("terms", bool(open_) and bool(self.job_id))
+
+    def set_outline_open(self, open_: bool) -> None:
+        """文档结构在工作台左侧展开 / 收起（#187）。"""
+        self._set_left_panel("outline", bool(open_) and self._outline_available())
+
+    def _left_widget(self, mode: str) -> QWidget:
+        if mode == "source":
+            return self._source_widget()
+        if mode == "outline":
+            return self.outline_panel
+        return self.terms_side
 
     def _set_left_panel(self, mode: str, open_: bool) -> None:
         if not open_ and self._left_mode != mode:
@@ -4340,12 +4398,15 @@ class WorkbenchView(QWidget):
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
             self._left_mode = mode
-            self.left_stack.setCurrentWidget(
-                self._source_widget() if mode == "source" else self.terms_side)
+            self.left_stack.setCurrentWidget(self._left_widget(mode))
         self._source_open = open_
+        self._save_outline_preference(self._source_open and self._left_mode == "outline")
         self._sync_left_buttons()
         if open_ and mode == "terms":
             self._render_terms()
+        if open_ and mode == "outline":
+            self._render_outline()
+            self._sync_outline_highlight()
         if was_open == open_:
             # 左栏本来就开着、只是换了内容：不重排列宽；换到原页时定位当前段。
             if open_ and mode == "source":
@@ -4356,6 +4417,131 @@ class WorkbenchView(QWidget):
 
     def _sync_left_buttons(self) -> None:
         self.terms_button.setChecked(self.terms_open())
+        self.outline_button.setChecked(self.outline_open())
+
+    def _save_outline_preference(self, open_: bool) -> None:
+        """Panel open/closed is a client preference, never task data (#187)."""
+        if self.settings.value(self.OUTLINE_OPEN_KEY, False, type=bool) == bool(open_):
+            return
+        self.settings.setValue(self.OUTLINE_OPEN_KEY, bool(open_))
+        self.settings.sync()
+
+    def _outline_available(self) -> bool:
+        outline = (self._outline_payload or {}).get("outline") or {}
+        return bool(self.job_id and outline.get("nodes"))
+
+    def _render_outline(self) -> None:
+        """Refresh the outline panel from the persisted sidecar (#186/#187).
+
+        The outline itself is read once per task open; a structural edit only
+        re-resolves the mapping (uid first) and never re-parses the source.
+        """
+        if not self.job_id:
+            return
+        if not self._outline_payload:
+            self._outline_payload = adapter.task_outline(self.job_id, self._state)
+        outline = (self._outline_payload or {}).get("outline") or {}
+        nodes = [node for node in outline.get("nodes") or [] if isinstance(node, dict)]
+        if not nodes:
+            self.outline_button.setVisible(False)
+            self._outline_mapping = {}
+            self._outline_key = None
+            self.outline_panel.clear()
+            if self.outline_open():
+                self._set_left_panel("outline", False)
+            return
+        self.outline_button.setVisible(True)
+        if not self.outline_open():
+            # Hidden panels do no work: the mapping is resolved on first open
+            # (or was precomputed by the task-open worker).
+            return
+        revision = adapter.outline_revision(self._state)
+        segments = self._state.get("pairs") or self._state.get("paras") or []
+        key = (str(outline.get("fingerprint") or ""), revision, len(segments))
+        if key != self._outline_key:
+            self._outline_mapping = adapter.outline_mapping(
+                self.job_id, self._state, self._outline_payload)
+            self._outline_key = key
+        # ``set_outline`` rebuilds only for a new fingerprint; calling it every
+        # refresh keeps the panel populated when the mapping came precomputed
+        # from the task-open worker.
+        self.outline_panel.set_outline(
+            outline, self._outline_mapping,
+            invalidated=str((self._outline_payload or {}).get("invalidated") or ""))
+        self._sync_outline_highlight()
+
+    def _outline_node_activated(self, node_id: str) -> None:
+        """Jump to a node's first segment through the one selection path."""
+        entry = (self._outline_mapping.get("nodes") or {}).get(str(node_id)) or {}
+        title = ""
+        for node in (self._outline_payload or {}).get("outline", {}).get("nodes") or []:
+            if str(node.get("id") or "") == str(node_id):
+                title = str(node.get("title") or "")
+                break
+        first = entry.get("first_segment_index")
+        if entry.get("state") not in ("resolved", "partial") \
+                or not isinstance(first, int):
+            suffix, _detail = outline_reason_text(entry.get("reason") or "")
+            self.set_task_notice(i18n.tr(
+                '「{v0}」不可跳转：{v1}', v0=title,
+                v1=suffix or i18n.tr('未能定位')), error=True)
+            return
+        if self.select_segment(first):
+            self._sync_outline_highlight()
+            self.focus_editor()
+            return
+        if self._filters_active():
+            # Never a silent False: remove the filter that hides the target and
+            # say that we did, then retry once.
+            self._clear_all_filters()
+            self.set_task_notice(i18n.tr('已清除筛选，以显示「{v0}」', v0=title))
+            if self.select_segment(first):
+                self._sync_outline_highlight()
+                self.focus_editor()
+                return
+        self.set_task_notice(i18n.tr('「{v0}」当前无法定位', v0=title), error=True)
+
+    def _clear_all_filters(self) -> None:
+        self.search_edit.blockSignals(True)
+        self.search_edit.clear()
+        self.search_edit.blockSignals(False)
+        self._search = ""
+        self._status_filter = "全部"
+        for key, button in self.status_buttons.items():
+            button.setChecked(key == self._status_filter)
+        for action in self.filter_actions.values():
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+        self._filters_changed()
+
+    def _sync_outline_highlight(self) -> None:
+        """Select the node that owns the current segment; never touches the grid."""
+        if not self.outline_open() or self._current_index < 0:
+            return
+        nodes = self._outline_mapping.get("nodes") or {}
+        best: tuple[int, int, str] | None = None
+        fallback: tuple[int, int, str] | None = None
+        for node_id, entry in nodes.items():
+            if not isinstance(entry, dict) or entry.get("state") not in ("resolved", "partial"):
+                continue
+            first = entry.get("first_segment_index")
+            if not isinstance(first, int):
+                continue
+            last = entry.get("last_segment_index")
+            last = last if isinstance(last, int) else first
+            if first <= self._current_index:
+                if fallback is None or first >= fallback[0]:
+                    fallback = (first, last, str(node_id))
+                if self._current_index <= last:
+                    # Equal starts (a parent whose first child is its first
+                    # segment) belong to the deeper node: the smaller span.
+                    if best is None or first > best[0] \
+                            or (first == best[0] and last < best[1]):
+                        best = (first, last, str(node_id))
+        chosen = best or fallback
+        if chosen is not None:
+            self.outline_panel.highlight_node(chosen[2])
 
     def _source_widget(self) -> QWidget:
         """左栏「source」位展示的面板：PDF 是原页，流式源是原文上下文（#61）。"""
@@ -5875,6 +6061,7 @@ class WorkbenchView(QWidget):
                 bar = table.verticalScrollBar()
                 bar.setValue(bar.value() + after - anchor)
                 self._place_inline_editor()
+        self._sync_outline_highlight()
 
     def _load_selected_row(self, position: int) -> None:
         QTimer.singleShot(0, self._sync_term_focus_label)

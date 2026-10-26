@@ -10117,10 +10117,12 @@ def ensure_source_outline(job_id, state=None):
     data = load_source(job_id)
     if not data:
         return state
+    from folith import outline_anchor
     from folith.source_outline import parse_source_outline
     parsed = parse_source_outline(str(state.get("filename") or ""), data)
     if not parsed.get("nodes"):
         return state
+    outline_anchor.store_outline(job_id, parsed, data=data)
     state["source_outline"] = parsed
     save_job_state(job_id, state)
     return state
@@ -10881,6 +10883,10 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
 
         _reset_source_dependent_state(state)
+        # The rescan replaced the source bytes; a persisted outline belongs to
+        # the previous source (see #186).
+        from folith import outline_anchor as _outline_anchor
+        _outline_anchor.delete_outline_sidecar(job_id)
         state.update({
             "filename": resolved_filename,
             "source_paras": list(raw_paragraphs),
