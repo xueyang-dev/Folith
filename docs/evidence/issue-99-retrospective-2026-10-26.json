@@ -1,0 +1,63 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "python": "3.11.3",
+  "baseline": "a58ad4f178ac31893bc5df0c29401361ad99b958",
+  "revised_base": "a58ad4f178ac31893bc5df0c29401361ad99b958",
+  "repeats": 7,
+  "local_fixture": {
+    "segments": 2000,
+    "terms": 20,
+    "later_conflicts": 200
+  },
+  "baseline_local": {
+    "first_observe_median_ms": 1.3426659861579537,
+    "replay_median_ms": 0.42662498890422285,
+    "clean_batch_median_ms": 0.0014580145943909883,
+    "evidence": 200,
+    "suggestions": 200,
+    "earlier_suggestions": 0
+  },
+  "revised_local": {
+    "first_observe_median_ms": 12.126332992920652,
+    "replay_median_ms": 10.303500021109357,
+    "clean_batch_median_ms": 0.0038750004023313522,
+    "evidence": 200,
+    "suggestions": 400,
+    "earlier_suggestions": 200
+  },
+  "revised_pipeline": {
+    "segments": 8,
+    "batch_size": 2,
+    "network": false,
+    "provider": "scripted; unchanged targets even on repair",
+    "knowledge_feedback": false,
+    "review": false,
+    "cache": false,
+    "model_calls_per_arm": 8,
+    "additional_model_calls": 0,
+    "wall_ms": {
+      "enabled": [
+        13.180417008697987,
+        10.57233300525695,
+        10.828708007466048,
+        10.435792006319389,
+        10.747916996479034,
+        10.550125007284805,
+        10.381958010839298
+      ],
+      "disabled": [
+        8.408875000895932,
+        8.357333019375801,
+        8.133541996357962,
+        7.900958007667214,
+        8.076541998889297,
+        8.08633299311623,
+        8.063041983405128
+      ]
+    },
+    "median_ms": {
+      "enabled": 10.57233300525695,
+      "disabled": 8.08633299311623
+    }
+  }
+}
