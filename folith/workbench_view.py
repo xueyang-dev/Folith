@@ -74,6 +74,37 @@ FINDING_STATUS_COPY = {
     "stale": "已过期",
 }
 
+#: 人工确认"问题是真的、但译文还没改"的决定。问题仍留在队列里，但它的状态
+#: 必须和"没人看过"区分开（#93 把决定与文本变更分开之后，#102 补上显示）。
+_OPEN_CONFIRMATION_DECISIONS = frozenset({"request_revision", "confirmed_open"})
+_CONFIRMATION_LABEL = "已确认存在，待修订"
+
+
+def _open_confirmations(state: Mapping[str, Any]) -> Dict[str, str]:
+    """Read-only index: finding id → ``confirmed_open`` for still-open findings.
+
+    Scans the authoritative human-action journal once per queue render; it does
+    not persist anything or create a second decision store.
+    """
+    latest: Dict[str, str] = {}
+    for action in state.get("human_actions") or []:
+        if not isinstance(action, Mapping):
+            continue
+        finding_id_ = str(action.get("finding_id") or "")
+        if not finding_id_:
+            continue
+        if str(action.get("record_type") or "") not in {
+                "human_decision", "finding_confirmation"}:
+            continue
+        if action.get("status") == "superseded":
+            continue
+        name = str(action.get("action") or "")
+        if name in _OPEN_CONFIRMATION_DECISIONS:
+            latest[finding_id_] = "confirmed_open"
+        elif name in {"accept_resolution", "dismiss", "human_fixed", "preserved"}:
+            latest.pop(finding_id_, None)
+    return latest
+
 _STALE_REASON_COPY = (
     (("canonical glossary", "glossary"), "项目术语发生变化"),
     (("confirmed style", "style knowledge"), "项目风格规则发生变化"),
@@ -139,7 +170,8 @@ def _is_invariant(finding: Mapping[str, Any]) -> bool:
             or finding.get("detector") == "Translation Target Invariant")
 
 
-def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[str, Any]:
+def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
+                  confirmations: Mapping[str, str] | None = None) -> Dict[str, Any]:
     context = delivery.finding_context(dict(state), dict(finding))
     segment_id = context.get("segment_index")
     severity = str(context.get("severity") or "informational")
@@ -149,10 +181,17 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[
         "informational": "reference",
     }.get(severity, "reference")
     rendered_id = str(context.get("finding_id") or "")
+    core_id = str(finding.get("finding_id") or "")
     summary = str(context.get("summary") or context.get("reason")
                   or "旧版本审校记录").strip()
     core_finding = bool(finding.get("finding_id") and finding.get(
         "input_fingerprint"))
+    # 两条写入路径的键不同：delivery.record_finding_confirmation 记渲染 ID，
+    # runtime 的 HumanDecision 记核心 ID。两个都要认，否则同一条确认在
+    # 「审校工作台」里会看起来像没人处理过。
+    confirmed = (not finding.get("resolved")) and bool(
+        (confirmations or {}).get(rendered_id)
+        or (core_id and (confirmations or {}).get(core_id)))
     return {
         "id": f"finding:{rendered_id}",
         "kind": "finding",
@@ -182,9 +221,14 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any]) -> Dict[
             "resolved" if finding.get("resolved") else "open")),
         "status_label": FINDING_STATUS_COPY.get(str(finding.get("status") or "open"),
                                                 "待处理"),
+        "decision": "confirmed_open" if confirmed else "",
+        "decision_label": _CONFIRMATION_LABEL if confirmed else "",
         "category": context.get("category"),
         "category_label": context.get("category_label"),
         "title": f"第 {context.get('segment_number')} 段 · {_identity_detail(context)}",
+        # 段号的框架文案由界面翻译；这里给出不带段号的定位说明，
+        # 免得为了翻译"第 N 段"去改核心拼好的整串。
+        "identity_detail": _identity_detail(context),
         "summary": summary,
         "reason": context.get("reason"),
         "source": context.get("source"),
@@ -260,6 +304,7 @@ def _review_task_item(
         "segment_id": segment_id,
         "segment_index": segment_id,
         "segment_number": segment_id + 1,
+        "identity_detail": status_label,
         "finding_id": "",
         "core_finding_id": "",
         "core_finding": False,
@@ -326,7 +371,9 @@ def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List
         finding for finding in delivery.review_queue_findings(dict(state))
         if _current_finding(state, finding, index=index)
     ]
-    items.extend(_finding_item(state, finding) for finding in current_findings)
+    confirmations = _open_confirmations(state)
+    items.extend(_finding_item(state, finding, confirmations=confirmations)
+                 for finding in current_findings)
     return sorted(items, key=lambda item: (
         item["priority"], item.get("segment_id") if isinstance(
             item.get("segment_id"), int) else 10**9, item["id"]))
