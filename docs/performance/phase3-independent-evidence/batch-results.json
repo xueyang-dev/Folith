@@ -1,0 +1,56 @@
+[
+  {
+    "strategy": "legacy",
+    "resume": false,
+    "plan_equal": true,
+    "pairs_and_ids_equal": true,
+    "prompt_context_equal": true,
+    "baseline_calls": 4,
+    "candidate_calls": 4
+  },
+  {
+    "strategy": "legacy",
+    "resume": true,
+    "plan_equal": true,
+    "pairs_and_ids_equal": true,
+    "prompt_context_equal": true,
+    "baseline_calls": 3,
+    "candidate_calls": 3
+  },
+  {
+    "strategy": "sentence",
+    "resume": false,
+    "plan_equal": true,
+    "pairs_and_ids_equal": true,
+    "prompt_context_equal": true,
+    "baseline_calls": 4,
+    "candidate_calls": 4
+  },
+  {
+    "strategy": "sentence",
+    "resume": true,
+    "plan_equal": true,
+    "pairs_and_ids_equal": true,
+    "prompt_context_equal": true,
+    "baseline_calls": 3,
+    "candidate_calls": 3
+  },
+  {
+    "strategy": "paragraph",
+    "resume": false,
+    "plan_equal": true,
+    "pairs_and_ids_equal": true,
+    "prompt_context_equal": true,
+    "baseline_calls": 2,
+    "candidate_calls": 2
+  },
+  {
+    "strategy": "paragraph",
+    "resume": true,
+    "plan_equal": true,
+    "pairs_and_ids_equal": true,
+    "prompt_context_equal": true,
+    "baseline_calls": 2,
+    "candidate_calls": 2
+  }
+]

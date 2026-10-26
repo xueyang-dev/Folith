@@ -1,0 +1,2276 @@
+{
+  "kind": "offline mock; 20ms per call; no API throughput inference",
+  "python": "3.11.3",
+  "platform": "Darwin",
+  "runs": [
+    {
+      "label": "A-c1",
+      "configured_concurrency": 1,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 1,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 1.6824710000073537,
+      "cpu_s": 0.24627899999999991,
+      "source_chars": 39970,
+      "source_chars_per_s": 23756.724484300354,
+      "requests": 60,
+      "roles": {
+        "translation": 60
+      },
+      "request_occupancy": {
+        "sum_s": 1.4343897961080074,
+        "union_s": 1.4343897961080074,
+        "span_s": 1.6552877919748425,
+        "peak": 1,
+        "average_active": 0.8665500966431386
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4343897961080074,
+        "union_s": 1.4343897961080074,
+        "span_s": 1.6552877919748425,
+        "peak": 1,
+        "average_active": 0.8665500966431386
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 1.5557881691493094,
+          "union_s": 1.5557881691493094,
+          "span_s": 1.6579027920379303,
+          "peak": 1,
+          "average_active": 0.9384073521203862,
+          "idle_capacity_s": 0.12668283085804433
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 3.999989712610841e-05,
+          "mean": 6.666649521018068e-07,
+          "min": 2.500019036233425e-07,
+          "p50": 6.25033862888813e-07,
+          "p95": 1.208973117172718e-06,
+          "max": 1.3750395737588406e-06
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.00043620908400043845,
+          "mean": 7.2701514000073075e-06,
+          "min": 1.207983586937189e-06,
+          "p50": 6.709014996886253e-06,
+          "p95": 1.4125020243227482e-05,
+          "max": 1.7249956727027893e-05
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.10195533389924094,
+          "mean": 0.001699255564987349,
+          "min": 0.0006506249774247408,
+          "p50": 0.0017369580455124378,
+          "p95": 0.0030685829697176814,
+          "max": 0.003359291993547231
+        }
+      },
+      "input_tokens_estimate": 32642,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 130561,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 51175,
+          "other": 356
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.480121,
+          "interval_union_s": 1.480122,
+          "wall_time_s": 1.68142
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.026121,
+          "interval_union_s": 0.026123,
+          "wall_time_s": 1.681614
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.013274,
+          "interval_union_s": 0.013278,
+          "wall_time_s": 1.681757
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 1.681884
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.00977,
+          "interval_union_s": 0.009773,
+          "wall_time_s": 1.681887
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.033696,
+          "interval_union_s": 0.033694,
+          "wall_time_s": 1.682012
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 1.682133
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 1.681388
+        }
+      },
+      "context_diverged_batches": 0
+    },
+    {
+      "label": "A-c2",
+      "configured_concurrency": 2,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 2,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.8392862919718027,
+      "cpu_s": 0.22115700000000005,
+      "source_chars": 39970,
+      "source_chars_per_s": 47623.79700744935,
+      "requests": 60,
+      "roles": {
+        "translation": 60
+      },
+      "request_occupancy": {
+        "sum_s": 1.4594586229068227,
+        "union_s": 0.8039075000560842,
+        "span_s": 0.8300828339997679,
+        "peak": 2,
+        "average_active": 1.7582084138210607
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4594586229068227,
+        "union_s": 0.8039075000560842,
+        "span_s": 0.8300828339997679,
+        "peak": 2,
+        "average_active": 1.7582084138210607
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 1.6531608310178854,
+          "union_s": 0.8323434590129182,
+          "span_s": 0.8323434590129182,
+          "peak": 2,
+          "average_active": 1.9861522465478134,
+          "idle_capacity_s": 0.025411752925720066
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 2.218536958913319,
+          "mean": 0.03697561598188865,
+          "min": 9.525002678856254e-05,
+          "p50": 0.035058542038314044,
+          "p95": 0.05302500003017485,
+          "max": 0.056188124988693744
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.027951708936598152,
+          "mean": 0.0004658618156099692,
+          "min": 2.170802326872945e-05,
+          "p50": 8.916703518480062e-05,
+          "p95": 0.003405541996471584,
+          "max": 0.00415916700148955
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.147244080202654,
+          "mean": 0.0024540680033775667,
+          "min": 0.0010384170454926789,
+          "p50": 0.002529708028305322,
+          "p95": 0.0038744580233469605,
+          "max": 0.008491375017911196
+        }
+      },
+      "input_tokens_estimate": 37439,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 149656,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 70158,
+          "other": 468
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.521831,
+          "interval_union_s": 0.81633,
+          "wall_time_s": 0.838068
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.024812,
+          "interval_union_s": 0.024813,
+          "wall_time_s": 0.83825
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.020124,
+          "interval_union_s": 0.019009,
+          "wall_time_s": 0.838382
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.838503
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.038586,
+          "interval_union_s": 0.038587,
+          "wall_time_s": 0.838504
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.032952,
+          "interval_union_s": 0.032952,
+          "wall_time_s": 0.838613
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.838721
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.838036
+        }
+      },
+      "context_diverged_batches": 59
+    },
+    {
+      "label": "A-c4",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.42830145900370553,
+      "cpu_s": 0.15395399999999992,
+      "source_chars": 39970,
+      "source_chars_per_s": 93322.11964203043,
+      "requests": 60,
+      "roles": {
+        "translation": 60
+      },
+      "request_occupancy": {
+        "sum_s": 1.4330879607587121,
+        "union_s": 0.40411900100298226,
+        "span_s": 0.41889345896197483,
+        "peak": 4,
+        "average_active": 3.421127568594479
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4330879607587121,
+        "union_s": 0.40411900100298226,
+        "span_s": 0.41889345896197483,
+        "peak": 4,
+        "average_active": 3.421127568594479
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 1.6497576289111748,
+          "union_s": 0.4212893749936484,
+          "span_s": 0.4212893749936484,
+          "peak": 4,
+          "average_active": 3.9159725519686974,
+          "idle_capacity_s": 0.06344820710364729
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 1.7341824550530873,
+          "mean": 0.028903040917551456,
+          "min": 4.374998388811946e-05,
+          "p50": 0.027878041029907763,
+          "p95": 0.04489041701890528,
+          "max": 0.0575762499938719
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.0781979980529286,
+          "mean": 0.00130329996754881,
+          "min": 1.6833015251904726e-05,
+          "p50": 9.104202035814524e-05,
+          "p95": 0.005396375025156885,
+          "max": 0.007467041024938226
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.11737188027473167,
+          "mean": 0.0019561980045788613,
+          "min": 0.0006526249926537275,
+          "p50": 0.0017535000224597752,
+          "p95": 0.0038379160105250776,
+          "max": 0.014699958031997085
+        }
+      },
+      "input_tokens_estimate": 36919,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 147578,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 68088,
+          "other": 460
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.502846,
+          "interval_union_s": 0.416456,
+          "wall_time_s": 0.427182
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.019528,
+          "interval_union_s": 0.01953,
+          "wall_time_s": 0.427327
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.042806,
+          "interval_union_s": 0.031051,
+          "wall_time_s": 0.427449
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.427585
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.027156,
+          "interval_union_s": 0.027153,
+          "wall_time_s": 0.427588
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.025017,
+          "interval_union_s": 0.025016,
+          "wall_time_s": 0.427721
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.427844
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.427157
+        }
+      },
+      "context_diverged_batches": 59
+    },
+    {
+      "label": "A-c6",
+      "configured_concurrency": 6,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 6,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.2800742920371704,
+      "cpu_s": 0.09735800000000006,
+      "source_chars": 39970,
+      "source_chars_per_s": 142712.1343743157,
+      "requests": 60,
+      "roles": {
+        "translation": 60
+      },
+      "request_occupancy": {
+        "sum_s": 1.4376005860976875,
+        "union_s": 0.26645125105278566,
+        "span_s": 0.27318712504347786,
+        "peak": 6,
+        "average_active": 5.262329203357928
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4376005860976875,
+        "union_s": 0.26645125105278566,
+        "span_s": 0.27318712504347786,
+        "peak": 6,
+        "average_active": 5.262329203357928
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 1.6319462100509554,
+          "union_s": 0.2753881250391714,
+          "span_s": 0.2753881250391714,
+          "peak": 6,
+          "average_active": 5.925986132549565,
+          "idle_capacity_s": 0.04849954217206687
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 1.5055171668645926,
+          "mean": 0.025091952781076544,
+          "min": 5.141698056831956e-05,
+          "p50": 0.0242374170338735,
+          "p95": 0.0473881249781698,
+          "max": 0.0559626659960486
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.16206112602958456,
+          "mean": 0.0027010187671597428,
+          "min": 1.9416038412600756e-05,
+          "p50": 0.002995292015839368,
+          "p95": 0.005475916957948357,
+          "max": 0.009907750005368143
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.0699323330190964,
+          "mean": 0.0011655388836516068,
+          "min": 0.0005855420022271574,
+          "p50": 0.0008497909875586629,
+          "p95": 0.0030420830007642508,
+          "max": 0.0045968329650349915
+        }
+      },
+      "input_tokens_estimate": 36522,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 145988,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 66504,
+          "other": 454
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.496734,
+          "interval_union_s": 0.271965,
+          "wall_time_s": 0.279327
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.012581,
+          "interval_union_s": 0.012582,
+          "wall_time_s": 0.279402
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.045893,
+          "interval_union_s": 0.024522,
+          "wall_time_s": 0.27947
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.279533
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.016069,
+          "interval_union_s": 0.016072,
+          "wall_time_s": 0.279533
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.014326,
+          "interval_union_s": 0.014322,
+          "wall_time_s": 0.279592
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.279651
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.279303
+        }
+      },
+      "context_diverged_batches": 59
+    },
+    {
+      "label": "A-c8",
+      "configured_concurrency": 8,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 8,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.20869233302073553,
+      "cpu_s": 0.08423799999999981,
+      "source_chars": 39970,
+      "source_chars_per_s": 191525.96274837086,
+      "requests": 60,
+      "roles": {
+        "translation": 60
+      },
+      "request_occupancy": {
+        "sum_s": 1.412450538831763,
+        "union_s": 0.20230108295800164,
+        "span_s": 0.20230108295800164,
+        "peak": 8,
+        "average_active": 6.9819227765824285
+      },
+      "generation_occupancy": {
+        "sum_s": 1.412450538831763,
+        "union_s": 0.20230108295800164,
+        "span_s": 0.20230108295800164,
+        "peak": 8,
+        "average_active": 6.9819227765824285
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 1.5292735449038446,
+          "union_s": 0.20389358297688887,
+          "span_s": 0.20389358297688887,
+          "peak": 8,
+          "average_active": 7.500351519533531,
+          "idle_capacity_s": 0.14026511926203966
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 1.3481724999728613,
+          "mean": 0.022469541666214354,
+          "min": 2.5541987270116806e-05,
+          "p50": 0.02375345805194229,
+          "p95": 0.03987958299694583,
+          "max": 0.0458845830289647
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.10069870803272352,
+          "mean": 0.001678311800545392,
+          "min": 7.166992872953415e-06,
+          "p50": 0.0017492499900981784,
+          "p95": 0.004140208009630442,
+          "max": 0.005138375039678067
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.05599141609854996,
+          "mean": 0.000933190268309166,
+          "min": 0.0005358330090530217,
+          "p50": 0.0006539159803651273,
+          "p95": 0.0019687089952640235,
+          "max": 0.0024230420240201056
+        }
+      },
+      "input_tokens_estimate": 36777,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 147006,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 67518,
+          "other": 458
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.445179,
+          "interval_union_s": 0.202875,
+          "wall_time_s": 0.208101
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.010931,
+          "interval_union_s": 0.010935,
+          "wall_time_s": 0.208181
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.022483,
+          "interval_union_s": 0.015183,
+          "wall_time_s": 0.208253
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.208322
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.011851,
+          "interval_union_s": 0.011848,
+          "wall_time_s": 0.208323
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.012492,
+          "interval_union_s": 0.012488,
+          "wall_time_s": 0.208389
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.208452
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.208085
+        }
+      },
+      "context_diverged_batches": 59
+    },
+    {
+      "label": "B-p2000",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 20,
+        "max_batch_chars": 2000,
+        "strategy": "paragraph",
+        "batch_count": 21,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.16812829102855176,
+      "cpu_s": 0.05785700000000005,
+      "source_chars": 39970,
+      "source_chars_per_s": 237735.1233125438,
+      "requests": 21,
+      "roles": {
+        "translation": 21
+      },
+      "request_occupancy": {
+        "sum_s": 0.5136533341137692,
+        "union_s": 0.15478204196551815,
+        "span_s": 0.16092362499330193,
+        "peak": 4,
+        "average_active": 3.1919075532579435
+      },
+      "generation_occupancy": {
+        "sum_s": 0.5136533341137692,
+        "union_s": 0.15478204196551815,
+        "span_s": 0.16092362499330193,
+        "peak": 4,
+        "average_active": 3.1919075532579435
+      },
+      "workers": {
+        "batches_observed": 21,
+        "workers": {
+          "sum_s": 0.5939073800691403,
+          "union_s": 0.16307004197733477,
+          "span_s": 0.16307004197733477,
+          "peak": 4,
+          "average_active": 3.6420385551362524,
+          "idle_capacity_s": 0.07860578404506668
+        },
+        "queue_s": {
+          "n": 21,
+          "sum": 0.5386083310004324,
+          "mean": 0.025648015761925352,
+          "min": 3.0750001315027475e-05,
+          "p50": 0.025435916963033378,
+          "p95": 0.045999082969501615,
+          "max": 0.05777845799457282
+        },
+        "ready_to_commit_s": {
+          "n": 21,
+          "sum": 0.04252966400235891,
+          "mean": 0.0020252220953504243,
+          "min": 1.6207981389015913e-05,
+          "p50": 0.0023830000427551568,
+          "p95": 0.0053971660090610385,
+          "max": 0.006142625003121793
+        },
+        "commit_s": {
+          "n": 21,
+          "sum": 0.03383370995288715,
+          "mean": 0.0016111290453755785,
+          "min": 0.0011415830231271684,
+          "p50": 0.0012509169755503535,
+          "p95": 0.0028777089901268482,
+          "max": 0.0031009999802336097
+        }
+      },
+      "input_tokens_estimate": 19632,
+      "output_tokens_estimate": 3699,
+      "source_chars_per_batch": {
+        "n": 21,
+        "sum": 39970,
+        "mean": 1903.3333333333333,
+        "min": 1837,
+        "p50": 1837,
+        "p95": 1992,
+        "max": 2000
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 21,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 78484,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 21,
+        "category_chars": {
+          "instructions": 12768,
+          "source": 44695,
+          "document_context": 189,
+          "neighbor_context": 20684,
+          "other": 148
+        },
+        "requests_by_segment_count": {
+          "12": 9,
+          "11": 12
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 0.535263,
+          "interval_union_s": 0.15903,
+          "wall_time_s": 0.167518
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.012956,
+          "interval_union_s": 0.012957,
+          "wall_time_s": 0.167561
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.017522,
+          "interval_union_s": 0.011608,
+          "wall_time_s": 0.167598
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.167633
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.005899,
+          "interval_union_s": 0.005897,
+          "wall_time_s": 0.167635
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.006081,
+          "interval_union_s": 0.00608,
+          "wall_time_s": 0.167666
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.167698
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.1675
+        }
+      }
+    },
+    {
+      "label": "B-p4000",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 20,
+        "max_batch_chars": 4000,
+        "strategy": "paragraph",
+        "batch_count": 12,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.1068028339650482,
+      "cpu_s": 0.04923499999999992,
+      "source_chars": 39970,
+      "source_chars_per_s": 374241.0057497201,
+      "requests": 12,
+      "roles": {
+        "translation": 12
+      },
+      "request_occupancy": {
+        "sum_s": 0.3005907070473768,
+        "union_s": 0.08088591700652614,
+        "span_s": 0.09245895803906024,
+        "peak": 4,
+        "average_active": 3.2510717557555555
+      },
+      "generation_occupancy": {
+        "sum_s": 0.3005907070473768,
+        "union_s": 0.08088591700652614,
+        "span_s": 0.09245895803906024,
+        "peak": 4,
+        "average_active": 3.2510717557555555
+      },
+      "workers": {
+        "batches_observed": 12,
+        "workers": {
+          "sum_s": 0.3879955849261023,
+          "union_s": 0.09843787498539314,
+          "span_s": 0.09843787498539314,
+          "peak": 4,
+          "average_active": 3.9415274352852054,
+          "idle_capacity_s": 0.039215750934090465
+        },
+        "queue_s": {
+          "n": 12,
+          "sum": 0.274410373007413,
+          "mean": 0.022867531083951082,
+          "min": 4.3082982301712036e-05,
+          "p50": 0.028987249999772757,
+          "p95": 0.03394650004338473,
+          "max": 0.060385583026800305
+        },
+        "ready_to_commit_s": {
+          "n": 12,
+          "sum": 0.03352079092292115,
+          "mean": 0.0027933992435767627,
+          "min": 1.5041965525597334e-05,
+          "p50": 0.0033093749661929905,
+          "p95": 0.0054662919719703496,
+          "max": 0.008046125003602356
+        },
+        "commit_s": {
+          "n": 12,
+          "sum": 0.0347076240577735,
+          "mean": 0.0028923020048144585,
+          "min": 0.001629167003557086,
+          "p50": 0.0018010410130955279,
+          "p95": 0.0070752500323578715,
+          "max": 0.007529249996878207
+        }
+      },
+      "input_tokens_estimate": 15590,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 12,
+        "sum": 39970,
+        "mean": 3330.8333333333335,
+        "min": 3310,
+        "p50": 3340,
+        "p95": 3340,
+        "max": 3340
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 12,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 62350,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 12,
+        "category_chars": {
+          "instructions": 7296,
+          "source": 44110,
+          "document_context": 108,
+          "neighbor_context": 10756,
+          "other": 80
+        },
+        "requests_by_segment_count": {
+          "20": 12
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 0.323203,
+          "interval_union_s": 0.091138,
+          "wall_time_s": 0.106209
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.013606,
+          "interval_union_s": 0.013607,
+          "wall_time_s": 0.106233
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.02632,
+          "interval_union_s": 0.016983,
+          "wall_time_s": 0.106254
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.106273
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.004234,
+          "interval_union_s": 0.004235,
+          "wall_time_s": 0.106274
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.004866,
+          "interval_union_s": 0.004864,
+          "wall_time_s": 0.106292
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.106311
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.10619
+        }
+      }
+    },
+    {
+      "label": "B-p6000",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 20,
+        "max_batch_chars": 6000,
+        "strategy": "paragraph",
+        "batch_count": 12,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.09771166602149606,
+      "cpu_s": 0.042804000000000064,
+      "source_chars": 39970,
+      "source_chars_per_s": 409060.6744051095,
+      "requests": 12,
+      "roles": {
+        "translation": 12
+      },
+      "request_occupancy": {
+        "sum_s": 0.2915340419858694,
+        "union_s": 0.0812628329731524,
+        "span_s": 0.08595137496013194,
+        "peak": 4,
+        "average_active": 3.391848497142667
+      },
+      "generation_occupancy": {
+        "sum_s": 0.2915340419858694,
+        "union_s": 0.0812628329731524,
+        "span_s": 0.08595137496013194,
+        "peak": 4,
+        "average_active": 3.391848497142667
+      },
+      "workers": {
+        "batches_observed": 12,
+        "workers": {
+          "sum_s": 0.3527827910729684,
+          "union_s": 0.0904185000108555,
+          "span_s": 0.0904185000108555,
+          "peak": 4,
+          "average_active": 3.901666042133124,
+          "idle_capacity_s": 0.038063873013015836
+        },
+        "queue_s": {
+          "n": 12,
+          "sum": 0.2586323758587241,
+          "mean": 0.02155269798822701,
+          "min": 2.683396451175213e-05,
+          "p50": 0.02749708399642259,
+          "p95": 0.03217154199955985,
+          "max": 0.05416925001190975
+        },
+        "ready_to_commit_s": {
+          "n": 12,
+          "sum": 0.0174999589798972,
+          "mean": 0.0014583299149914335,
+          "min": 1.2666976545006037e-05,
+          "p50": 0.0015359999961219728,
+          "p95": 0.0034639169462025166,
+          "max": 0.00505283399252221
+        },
+        "commit_s": {
+          "n": 12,
+          "sum": 0.027524290955625474,
+          "mean": 0.0022936909129687897,
+          "min": 0.0014799160417169333,
+          "p50": 0.0016934580053202808,
+          "p95": 0.004161291988566518,
+          "max": 0.006125624990090728
+        }
+      },
+      "input_tokens_estimate": 15723,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 12,
+        "sum": 39970,
+        "mean": 3330.8333333333335,
+        "min": 3310,
+        "p50": 3340,
+        "p95": 3340,
+        "max": 3340
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 12,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 62880,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 12,
+        "category_chars": {
+          "instructions": 7296,
+          "source": 44110,
+          "document_context": 108,
+          "neighbor_context": 11284,
+          "other": 82
+        },
+        "requests_by_segment_count": {
+          "20": 12
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 0.310673,
+          "interval_union_s": 0.086301,
+          "wall_time_s": 0.097155
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.011109,
+          "interval_union_s": 0.01111,
+          "wall_time_s": 0.097177
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.013268,
+          "interval_union_s": 0.00794,
+          "wall_time_s": 0.097195
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.097212
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.002721,
+          "interval_union_s": 0.002722,
+          "wall_time_s": 0.097212
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.005305,
+          "interval_union_s": 0.005305,
+          "wall_time_s": 0.097229
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.097246
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.097138
+        }
+      }
+    },
+    {
+      "label": "B-p8000",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 20,
+        "max_batch_chars": 8000,
+        "strategy": "paragraph",
+        "batch_count": 12,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.09516537497984245,
+      "cpu_s": 0.0419299999999998,
+      "source_chars": 39970,
+      "source_chars_per_s": 420005.7006917304,
+      "requests": 12,
+      "roles": {
+        "translation": 12
+      },
+      "request_occupancy": {
+        "sum_s": 0.2839073740178719,
+        "union_s": 0.08024049998493865,
+        "span_s": 0.08086991700110957,
+        "peak": 4,
+        "average_active": 3.510667310490458
+      },
+      "generation_occupancy": {
+        "sum_s": 0.2839073740178719,
+        "union_s": 0.08024049998493865,
+        "span_s": 0.08086991700110957,
+        "peak": 4,
+        "average_active": 3.510667310490458
+      },
+      "workers": {
+        "batches_observed": 12,
+        "workers": {
+          "sum_s": 0.34501470695249736,
+          "union_s": 0.08659308298956603,
+          "span_s": 0.08659308298956603,
+          "peak": 4,
+          "average_active": 3.9843217846172503,
+          "idle_capacity_s": 0.035646792966872454
+        },
+        "queue_s": {
+          "n": 12,
+          "sum": 0.23629620915744454,
+          "mean": 0.01969135076312038,
+          "min": 3.3374992199242115e-05,
+          "p50": 0.024944916018284857,
+          "p95": 0.028925125021487474,
+          "max": 0.053396834002342075
+        },
+        "ready_to_commit_s": {
+          "n": 12,
+          "sum": 0.033266873040702194,
+          "mean": 0.0027722394200585163,
+          "min": 2.050003968179226e-05,
+          "p50": 0.0025154169998131692,
+          "p95": 0.006100665952544659,
+          "max": 0.008590999990701675
+        },
+        "commit_s": {
+          "n": 12,
+          "sum": 0.026905876933597028,
+          "mean": 0.002242156411133086,
+          "min": 0.0015026669716462493,
+          "p50": 0.0016497090109623969,
+          "p95": 0.004796417022589594,
+          "max": 0.005317000031936914
+        }
+      },
+      "input_tokens_estimate": 15590,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 12,
+        "sum": 39970,
+        "mean": 3330.8333333333335,
+        "min": 3310,
+        "p50": 3340,
+        "p95": 3340,
+        "max": 3340
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 12,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 62350,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 12,
+        "category_chars": {
+          "instructions": 7296,
+          "source": 44110,
+          "document_context": 108,
+          "neighbor_context": 10756,
+          "other": 80
+        },
+        "requests_by_segment_count": {
+          "20": 12
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 0.303794,
+          "interval_union_s": 0.084684,
+          "wall_time_s": 0.094679
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.011353,
+          "interval_union_s": 0.011353,
+          "wall_time_s": 0.0947
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.013996,
+          "interval_union_s": 0.010361,
+          "wall_time_s": 0.094719
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.094736
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.002462,
+          "interval_union_s": 0.002463,
+          "wall_time_s": 0.094737
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.006654,
+          "interval_union_s": 0.006655,
+          "wall_time_s": 0.094753
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.09477
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.094663
+        }
+      }
+    },
+    {
+      "label": "C-generation-only",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.3878649160033092,
+      "cpu_s": 0.07960300000000009,
+      "source_chars": 39970,
+      "source_chars_per_s": 103051.34171933969,
+      "requests": 60,
+      "roles": {
+        "translation": 60
+      },
+      "request_occupancy": {
+        "sum_s": 1.4246637068572454,
+        "union_s": 0.37548474792856723,
+        "span_s": 0.3811226669931784,
+        "peak": 4,
+        "average_active": 3.738071309421082
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4246637068572454,
+        "union_s": 0.37548474792856723,
+        "span_s": 0.3811226669931784,
+        "peak": 4,
+        "average_active": 3.738071309421082
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 1.515275960904546,
+          "union_s": 0.3823422080022283,
+          "span_s": 0.3823422080022283,
+          "peak": 4,
+          "average_active": 3.963140687035304,
+          "idle_capacity_s": 0.03618370310869068
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 1.6190709581715055,
+          "mean": 0.026984515969525093,
+          "min": 2.8542010113596916e-05,
+          "p50": 0.024515540979336947,
+          "p95": 0.046163707971572876,
+          "max": 0.0525261249858886
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.0915285371011123,
+          "mean": 0.0015254756183518718,
+          "min": 1.575000351294875e-05,
+          "p50": 0.0016757910489104688,
+          "p95": 0.004095041018445045,
+          "max": 0.0054601660231128335
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.06034082890255377,
+          "mean": 0.0010056804817092295,
+          "min": 0.00042804196709766984,
+          "p50": 0.0007103749667294323,
+          "p95": 0.002389666042290628,
+          "max": 0.0028367500053718686
+        }
+      },
+      "input_tokens_estimate": 36917,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 147566,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 68076,
+          "other": 460
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.457334,
+          "interval_union_s": 0.380562,
+          "wall_time_s": 0.387121
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 8.4e-05,
+          "interval_union_s": 8.2e-05,
+          "wall_time_s": 0.387234
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.00779,
+          "interval_union_s": 0.006991,
+          "wall_time_s": 0.387333
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.387431
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.016556,
+          "interval_union_s": 0.016552,
+          "wall_time_s": 0.387432
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.016981,
+          "interval_union_s": 0.016983,
+          "wall_time_s": 0.387523
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.387615
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.387102
+        }
+      }
+    },
+    {
+      "label": "C-qa",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.40517362498212606,
+      "cpu_s": 0.14862599999999992,
+      "source_chars": 39970,
+      "source_chars_per_s": 98649.06680873723,
+      "requests": 60,
+      "roles": {
+        "translation": 60
+      },
+      "request_occupancy": {
+        "sum_s": 1.4378679240471683,
+        "union_s": 0.39634787500835955,
+        "span_s": 0.39634787500835955,
+        "peak": 4,
+        "average_active": 3.6277926909961145
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4378679240471683,
+        "union_s": 0.39634787500835955,
+        "span_s": 0.39634787500835955,
+        "peak": 4,
+        "average_active": 3.6277926909961145
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 1.583327671221923,
+          "union_s": 0.39796804200159386,
+          "span_s": 0.39796804200159386,
+          "peak": 4,
+          "average_active": 3.9785296911242485,
+          "idle_capacity_s": 0.037366828706581146
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 1.6804875826928765,
+          "mean": 0.028008126378214607,
+          "min": 5.445798160508275e-05,
+          "p50": 0.02747558301780373,
+          "p95": 0.040890750009566545,
+          "max": 0.047872416966129094
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.06155599589692429,
+          "mean": 0.0010259332649487382,
+          "min": 1.812499249354005e-05,
+          "p50": 6.687501445412636e-05,
+          "p95": 0.003652874962426722,
+          "max": 0.004764792043715715
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.10499100090237334,
+          "mean": 0.0017498500150395558,
+          "min": 0.0009735000203363597,
+          "p50": 0.0016839580493979156,
+          "p95": 0.0030130419763736427,
+          "max": 0.003252958005759865
+        }
+      },
+      "input_tokens_estimate": 37303,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 149114,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 69618,
+          "other": 466
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.475794,
+          "interval_union_s": 0.396852,
+          "wall_time_s": 0.404316
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.019821,
+          "interval_union_s": 0.019818,
+          "wall_time_s": 0.404436
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.023256,
+          "interval_union_s": 0.020666,
+          "wall_time_s": 0.40454
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.404643
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.022735,
+          "interval_union_s": 0.022736,
+          "wall_time_s": 0.404643
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.024573,
+          "interval_union_s": 0.024573,
+          "wall_time_s": 0.404739
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.404834
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.404294
+        }
+      }
+    },
+    {
+      "label": "C-repair",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.8245790000073612,
+      "cpu_s": 0.260926,
+      "source_chars": 39970,
+      "source_chars_per_s": 48473.22087955572,
+      "requests": 120,
+      "roles": {
+        "translation": 60,
+        "repair": 60
+      },
+      "request_occupancy": {
+        "sum_s": 2.922419791284483,
+        "union_s": 0.8073301670374349,
+        "span_s": 0.8096454170299694,
+        "peak": 4,
+        "average_active": 3.6095057537716024
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4486083741649054,
+        "union_s": 0.4923735841293819,
+        "span_s": 0.78118012502091,
+        "peak": 4,
+        "average_active": 1.8543845750378378
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 3.225729251804296,
+          "union_s": 0.8127710840199143,
+          "span_s": 0.8127710840199143,
+          "peak": 4,
+          "average_active": 3.9688041506718514,
+          "idle_capacity_s": 0.07258674822514877
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 3.493391876167152,
+          "mean": 0.0582231979361192,
+          "min": 5.76250022277236e-05,
+          "p50": 0.052092332975007594,
+          "p95": 0.09824825002579018,
+          "max": 0.10441587504465133
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.12230487604392692,
+          "mean": 0.002038414600732115,
+          "min": 2.316699828952551e-05,
+          "p50": 0.0008563339943066239,
+          "p95": 0.005844375002197921,
+          "max": 0.009294249990489334
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.12649262294871733,
+          "mean": 0.0021082103824786222,
+          "min": 0.0010735000250861049,
+          "p50": 0.0014206659980118275,
+          "p95": 0.004182333999779075,
+          "max": 0.005490042036399245
+        }
+      },
+      "input_tokens_estimate": 63930,
+      "output_tokens_estimate": 3033,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 148078,
+        "output_chars": 12130,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 68586,
+          "other": 462
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.496471,
+          "interval_union_s": 0.507652,
+          "wall_time_s": 0.823556
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.024348,
+          "interval_union_s": 0.024347,
+          "wall_time_s": 0.82371
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 1.616411,
+          "interval_union_s": 0.543112,
+          "wall_time_s": 0.823838
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.823969
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.031136,
+          "interval_union_s": 0.031135,
+          "wall_time_s": 0.823971
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.029081,
+          "interval_union_s": 0.029077,
+          "wall_time_s": 0.824091
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.824206
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.823529
+        }
+      }
+    },
+    {
+      "label": "C-review",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 0.7964187920442782,
+      "cpu_s": 0.21544700000000017,
+      "source_chars": 39970,
+      "source_chars_per_s": 50187.16333576644,
+      "requests": 120,
+      "roles": {
+        "translation": 60,
+        "review": 60
+      },
+      "request_occupancy": {
+        "sum_s": 2.861450672207866,
+        "union_s": 0.7736572499270551,
+        "span_s": 0.7823487090063281,
+        "peak": 4,
+        "average_active": 3.65751312588249
+      },
+      "generation_occupancy": {
+        "sum_s": 1.4467169611016288,
+        "union_s": 0.43632670800434425,
+        "span_s": 0.7554320840281434,
+        "peak": 4,
+        "average_active": 1.915085408323393
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 3.1087683393852785,
+          "union_s": 0.7838899589842185,
+          "span_s": 0.7838899589842185,
+          "peak": 4,
+          "average_active": 3.965822375647836,
+          "idle_capacity_s": 0.07690682879183441
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 3.3034568748553284,
+          "mean": 0.05505761458092214,
+          "min": 6.433296948671341e-05,
+          "p50": 0.04913158400449902,
+          "p95": 0.09638666704995558,
+          "max": 0.09970354096731171
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 0.18520228954730555,
+          "mean": 0.003086704825788426,
+          "min": 2.420897362753749e-05,
+          "p50": 0.002409874985460192,
+          "p95": 0.008896916988305748,
+          "max": 0.010012749989982694
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.12447266234084964,
+          "mean": 0.0020745443723474938,
+          "min": 0.0007210000185295939,
+          "p50": 0.0015183330397121608,
+          "p95": 0.0053649580222554505,
+          "max": 0.006713708047755063
+        }
+      },
+      "input_tokens_estimate": 101470,
+      "output_tokens_estimate": 3693,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 147462,
+        "output_chars": 14770,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 67972,
+          "other": 460
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.498837,
+          "interval_union_s": 0.453873,
+          "wall_time_s": 0.795057
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.020458,
+          "interval_union_s": 0.020457,
+          "wall_time_s": 0.795229
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 0.033051,
+          "interval_union_s": 0.025716,
+          "wall_time_s": 0.795383
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": 1.441475,
+          "interval_union_s": 0.440378,
+          "wall_time_s": 0.795546
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.021068,
+          "interval_union_s": 0.021068,
+          "wall_time_s": 0.795695
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.027881,
+          "interval_union_s": 0.027881,
+          "wall_time_s": 0.795855
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.795989
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 0.79503
+        }
+      }
+    },
+    {
+      "label": "C-full",
+      "configured_concurrency": 4,
+      "plan": {
+        "batch_size": 4,
+        "max_batch_chars": 2400,
+        "batch_count": 60,
+        "snapshot_cadence": {
+          "every_batches": 0,
+          "max_interval_s": 0.0,
+          "journal_enabled": true,
+          "journal_bytes": 8388608,
+          "journal_fraction": 4.0,
+          "journal_budget_bytes": 8388608,
+          "crash_window_segments": 0
+        },
+        "concurrency": 4,
+        "review_overlap_enabled": false
+      },
+      "wall_s": 1.6304073329665698,
+      "cpu_s": 0.4378500000000001,
+      "source_chars": 39970,
+      "source_chars_per_s": 24515.346068318715,
+      "requests": 256,
+      "roles": {
+        "translation": 60,
+        "repair": 60,
+        "review": 120,
+        "auxiliary": 16
+      },
+      "request_occupancy": {
+        "sum_s": 6.193470585218165,
+        "union_s": 1.5917326241033152,
+        "span_s": 1.6063195840106346,
+        "peak": 5,
+        "average_active": 3.855690142153656
+      },
+      "generation_occupancy": {
+        "sum_s": 1.439649541163817,
+        "union_s": 0.48060566606000066,
+        "span_s": 1.4971772090066224,
+        "peak": 4,
+        "average_active": 0.9615759126596811
+      },
+      "workers": {
+        "batches_observed": 60,
+        "workers": {
+          "sum_s": 6.264680166030303,
+          "union_s": 1.5759971659863368,
+          "span_s": 1.5759971659863368,
+          "peak": 4,
+          "average_active": 3.9750580148470998,
+          "idle_capacity_s": 0.2569491658359766
+        },
+        "queue_s": {
+          "n": 60,
+          "sum": 5.705137168057263,
+          "mean": 0.09508561946762105,
+          "min": 6.445799954235554e-05,
+          "p50": 0.07871824997710064,
+          "p95": 0.17512050003279,
+          "max": 0.208901041012723
+        },
+        "ready_to_commit_s": {
+          "n": 60,
+          "sum": 1.1043966218130663,
+          "mean": 0.018406610363551106,
+          "min": 5.862500984221697e-05,
+          "p50": 0.02256291703088209,
+          "p95": 0.03578983299667016,
+          "max": 0.041247749992180616
+        },
+        "commit_s": {
+          "n": 60,
+          "sum": 0.5638832960394211,
+          "mean": 0.009398054933990352,
+          "min": 0.0014223339967429638,
+          "p50": 0.0022907499806024134,
+          "p95": 0.0328968339599669,
+          "max": 0.033534916990902275
+        }
+      },
+      "input_tokens_estimate": 198242,
+      "output_tokens_estimate": 3033,
+      "source_chars_per_batch": {
+        "n": 60,
+        "sum": 39970,
+        "mean": 666.1666666666666,
+        "min": 660,
+        "p50": 668,
+        "p95": 668,
+        "max": 668
+      },
+      "quality": {
+        "pairs": 240,
+        "empty": 0,
+        "protocol_fallback_batches": 0,
+        "source_order_correct": true,
+        "reference_matches": 240,
+        "placeholder_errors": 0
+      },
+      "prompt_cost": {
+        "requests": 60,
+        "failed_requests": 0,
+        "segments": 240,
+        "prompt_chars": 147462,
+        "output_chars": 12130,
+        "source_chars": 39970,
+        "cache_hits": 0,
+        "cache_misses": 60,
+        "category_chars": {
+          "instructions": 36480,
+          "source": 42010,
+          "document_context": 540,
+          "neighbor_context": 67972,
+          "other": 460
+        },
+        "requests_by_segment_count": {
+          "4": 60
+        }
+      },
+      "stages": {
+        "translation_generation": {
+          "item_wall_sum_s": 1.540495,
+          "interval_union_s": 0.51415,
+          "wall_time_s": 1.629031
+        },
+        "translation_deterministic_qa": {
+          "item_wall_sum_s": 0.027576,
+          "interval_union_s": 0.027578,
+          "wall_time_s": 1.629209
+        },
+        "translation_repair": {
+          "item_wall_sum_s": 3.099637,
+          "interval_union_s": 0.914492,
+          "wall_time_s": 1.629355
+        },
+        "translation_semantic_review": {
+          "item_wall_sum_s": 1.488098,
+          "interval_union_s": 0.523664,
+          "wall_time_s": 1.629497
+        },
+        "knowledge_feedback": {
+          "item_wall_sum_s": 0.415241,
+          "interval_union_s": 0.415242,
+          "wall_time_s": 1.629647
+        },
+        "state_commit": {
+          "item_wall_sum_s": 0.061305,
+          "interval_union_s": 0.061301,
+          "wall_time_s": 1.629791
+        },
+        "tm_commit": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 1.629928
+        },
+        "runtime_telemetry": {
+          "item_wall_sum_s": null,
+          "interval_union_s": null,
+          "wall_time_s": 1.628999
+        }
+      }
+    }
+  ]
+}

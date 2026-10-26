@@ -1,0 +1,127 @@
+{
+  "date": "2026-10-26",
+  "kind": "implementation validation, not independent reacceptance",
+  "branch": "perf/phase3-runtime-optimization",
+  "head": "397adb22d8de46edb0781dc75e53661318a5cb11",
+  "uncommitted": true,
+  "default_annotation_scheduler": "c2",
+  "c4_release_decision": "explicit experimental opt-in only; no default promotion or full cross-platform acceptance",
+  "fallback_annotation_scheduler": "ordered",
+  "unique_passed": 604,
+  "windows_only_skipped": 4,
+  "findings": [
+    {
+      "finding_id": "F01",
+      "status": "fixed and regression verified",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_draft_and_translation_reject_missing_or_invalid_content"
+      ]
+    },
+    {
+      "finding_id": "F02",
+      "status": "fixed and regression verified",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_readiness_uses_unresolved_findings_not_cached_blocker"
+      ]
+    },
+    {
+      "finding_id": "F03",
+      "status": "fixed and regression verified",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_report_uses_final_policy_gate"
+      ]
+    },
+    {
+      "finding_id": "F04",
+      "status": "P0 follow-up independently verified; see phase3-p0-reacceptance/report.md",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_real_request_identity_invalidates_changed_inputs",
+        "tests/phase3_acceptance_fixes_test.py::test_stale_result_rejected_before_annotation_commit",
+        "tests/phase3_acceptance_fixes_test.py::test_matching_candidate_replay_and_no_credentials_in_metadata"
+      ],
+      "previous_implementation_validation_status": "fixed and regression verified",
+      "previous_boundary_review_status": "reopened: final SDK environment endpoint omitted (BR01)"
+    },
+    {
+      "finding_id": "F05",
+      "status": "fixed and regression verified",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_failed_candidates_retry_on_first_recovery",
+        "tests/phase3_acceptance_fixes_test.py::test_corrupt_and_legacy_failure_stage_is_recomputed"
+      ]
+    },
+    {
+      "finding_id": "F06",
+      "status": "P0 follow-up independently verified; see phase3-p0-reacceptance/report.md",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_staging_write_failure_stops_refill"
+      ],
+      "previous_implementation_validation_status": "fixed and regression verified",
+      "previous_boundary_review_status": "partial: ordinary staging errors fail closed, but paused-peer shutdown fails (BR02)"
+    },
+    {
+      "finding_id": "F07",
+      "status": "fixed and regression verified",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_actual_repair_and_review_calls_get_explicit_operations",
+        "tests/phase3_acceptance_fixes_test.py::test_real_translation_and_knowledge_routes",
+        "tests/phase3_acceptance_fixes_test.py::test_concurrent_nested_operation_context_restores_on_exception"
+      ]
+    },
+    {
+      "finding_id": "F08",
+      "status": "P0 follow-up independently verified; see phase3-p0-reacceptance/report.md",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_runtime_switch_persists_and_allows_explicit_rollback",
+        "tests/phase3_acceptance_fixes_test.py::test_c4_staged_candidates_survive_scheduler_rollback",
+        "tests/phase3_acceptance_fixes_test.py::test_scheduler_fault_matrix_preserves_cursor_and_limits"
+      ],
+      "previous_implementation_validation_status": "scope resolved; default C2 retained",
+      "previous_boundary_review_status": "partial: scheduling rollback works, but shares paused-peer staging shutdown defect (BR02)"
+    },
+    {
+      "finding_id": "F09",
+      "status": "fixed and regression verified",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_failed_stage_write_removes_owned_temp_file",
+        "tests/phase3_acceptance_fixes_test.py::test_restart_sweeps_old_write_temporaries_only",
+        "tests/phase3_acceptance_fixes_test.py::test_staging_retries_windows_replace_without_repeating_request"
+      ]
+    },
+    {
+      "finding_id": "F10",
+      "status": "fixed and regression verified",
+      "tests": [
+        "tests/phase3_acceptance_fixes_test.py::test_milestones_require_ready_revision_and_preserve_first_transition",
+        "tests/phase3_acceptance_fixes_test.py::test_actual_pipeline_does_not_emit_enhanced_ready_for_partial_annotation",
+        "tests/phase3_acceptance_fixes_test.py::test_milestone_preserves_authoritative_zero_version"
+      ]
+    }
+  ],
+  "unverified": [
+    "real Windows filesystem and UI",
+    "host power loss durability",
+    "full repository suite",
+    "real-provider quality/performance/cost",
+    "full Phase 3 completion"
+  ],
+  "independent_boundary_review": {
+    "report": "docs/performance/phase3-boundary-review.md",
+    "observation_tests_passed": 31,
+    "verdict": "FAIL annotation acceptance: two reproduced HIGH findings",
+    "findings": [
+      "BR01",
+      "BR02"
+    ]
+  },
+  "current_p0_validation_report": "docs/performance/phase3-p0-fixes.md",
+  "independent_p0_reacceptance": {
+    "report": "docs/performance/phase3-p0-reacceptance/report.md",
+    "verdict": "PASS within tested P0 contracts",
+    "positive_passed": 13,
+    "closes": [
+      "BR01",
+      "BR02"
+    ]
+  }
+}

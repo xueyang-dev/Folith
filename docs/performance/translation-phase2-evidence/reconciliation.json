@@ -1,0 +1,73 @@
+{
+  "verified_date": "2026-10-26",
+  "local_branch": "feat/0.6-native-workbench",
+  "local_head_is_ancestor_of_remote_main": false,
+  "historical_runtime_is_ancestor_of_remote_main": true,
+  "runtime_identity_of_current_installed_app": "not established; no running artifact identity inferred from source checkout",
+  "capabilities": {
+    "audited_head": {
+      "commit": "c8d6ac1707e0bada4eaf63ff9e9292c0c845178c",
+      "async_knowledge": false,
+      "annotation_ordered_refill": true,
+      "implicit_sentence_for_explicit_batch": true,
+      "review_overlap_default_false": true,
+      "thinking_disabled_opt_in": true,
+      "line_anchors": {
+        "make_batches": 2831,
+        "make_paragraph_batches": 2909,
+        "_annotation_results": 4177,
+        "annotate_stage": 4236,
+        "translate_stage": 4741,
+        "_run_job_pipeline_impl": 11357
+      }
+    },
+    "historical_runtime": {
+      "commit": "cfe2f4ffbcae5b3d2aa4e4cc1a60ab6fee8b0c7b",
+      "async_knowledge": true,
+      "annotation_ordered_refill": true,
+      "implicit_sentence_for_explicit_batch": true,
+      "review_overlap_default_false": true,
+      "thinking_disabled_opt_in": true,
+      "line_anchors": {
+        "make_batches": 2790,
+        "make_paragraph_batches": 2868,
+        "_annotation_results": 4136,
+        "annotate_stage": 4195,
+        "translate_stage": 4700,
+        "_run_job_pipeline_impl": 11522
+      }
+    },
+    "current_local_head": {
+      "commit": "c8d6ac1707e0bada4eaf63ff9e9292c0c845178c",
+      "async_knowledge": false,
+      "annotation_ordered_refill": true,
+      "implicit_sentence_for_explicit_batch": true,
+      "review_overlap_default_false": true,
+      "thinking_disabled_opt_in": true,
+      "line_anchors": {
+        "make_batches": 2831,
+        "make_paragraph_batches": 2909,
+        "_annotation_results": 4177,
+        "annotate_stage": 4236,
+        "translate_stage": 4741,
+        "_run_job_pipeline_impl": 11357
+      }
+    },
+    "verified_remote_main": {
+      "commit": "0a2f29a1230147caa3ff64506e3c3c97d2fc3424",
+      "async_knowledge": true,
+      "annotation_ordered_refill": true,
+      "implicit_sentence_for_explicit_batch": true,
+      "review_overlap_default_false": true,
+      "thinking_disabled_opt_in": true,
+      "line_anchors": {
+        "make_batches": 2941,
+        "make_paragraph_batches": 3019,
+        "_annotation_results": 4328,
+        "annotate_stage": 4389,
+        "translate_stage": 4894,
+        "_run_job_pipeline_impl": 12370
+      }
+    }
+  }
+}
