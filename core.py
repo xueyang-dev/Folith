@@ -70,6 +70,7 @@ from folith import finalization as _finalization
 from folith import rendered_qa as _rendered_qa
 from folith import project as _project
 from folith import translation_memory as _tm_scope
+from folith import concordance as _concordance
 from folith import retrospective as _retrospective
 from folith import finding_groups as _finding_groups
 from folith import review_export as _review_export
@@ -3310,6 +3311,8 @@ tm_context_fields = _tm_scope.tm_context_fields
 tm_context_status = _tm_scope.tm_context_status
 TM_CONTEXT_PREV = _tm_scope.TM_CONTEXT_PREV
 TM_CONTEXT_NEXT = _tm_scope.TM_CONTEXT_NEXT
+ConcordanceItem = _concordance.ConcordanceItem
+search_concordance = _concordance.search_concordance
 
 
 # 归一化只做**可证明等价**的处理：同一段文字在不同来源下的排版差异。

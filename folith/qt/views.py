@@ -40,6 +40,7 @@ from .report_panel import ReportPanel
 from .review_panel import ReviewPanel
 from .source_panel import SourcePanel
 from .terms_panel import TermsPanel
+from .concordance_panel import ConcordancePanel
 from .setup_panel import TaskSetupPanel
 from .task_details_panel import TaskDetailsPanel
 from .stagebar import StageBar
@@ -2735,6 +2736,17 @@ class WorkbenchView(QWidget):
         self.find_replace_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.find_replace_button.clicked.connect(self._request_find_replace)
         toolbar.addWidget(self.find_replace_button)
+        self.concordance_button = QToolButton()
+        self.concordance_button.setObjectName("toolbarButton")
+        self.concordance_button.setCheckable(True)
+        self.concordance_button.setText(i18n.tr('语料检索…'))
+        self.concordance_button.setIcon(icons.icon("search", 16, "text-secondary"))
+        self.concordance_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.concordance_button.setToolTip(
+            i18n.tr('在项目 TM 与任务中检索双语语料（{v0}）',
+                    v0=platform_ui.shortcut_text("concordance")))
+        self.concordance_button.clicked.connect(lambda checked: self.set_concordance_open(checked))
+        toolbar.addWidget(self.concordance_button)
         # 术语：在左侧展开术语表（和 PDF 原页同一个位置、同样宽），不再是整页。
         # 原页不在这里另放按钮：检查器的「原位置」就是它的入口（⌘⌥P 照旧）。
         self.terms_button = QToolButton()
@@ -3528,6 +3540,15 @@ class WorkbenchView(QWidget):
         terms_scroll.viewport().setAutoFillBackground(False)
         terms_scroll.setWidget(self.terms_panel)
         terms_layout.addWidget(terms_scroll, 1)
+
+        self.concordance_panel = ConcordancePanel()
+        self.concordance_panel.closeRequested.connect(lambda: self.set_concordance_open(False))
+        self.concordance_panel.insertRequested.connect(self._insert_into_target)
+        self.concordance_panel.navigateRequested.connect(lambda _j, seg_idx: self.show_segment_for_edit(seg_idx))
+        self.concordance_side = QWidget()
+        concordance_layout = QVBoxLayout(self.concordance_side)
+        concordance_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
+        concordance_layout.addWidget(self.concordance_panel)
         self.review_panel = ReviewPanel()
         self.review_panel.styleRuleRequested.connect(self.styleRuleRequested.emit)
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
@@ -3608,6 +3629,7 @@ class WorkbenchView(QWidget):
         self.left_stack.addWidget(self.pdf_panel)
         self.left_stack.addWidget(self.source_panel)
         self.left_stack.addWidget(self.terms_side)
+        self.left_stack.addWidget(self.concordance_side)
         self.source_clip = components.ClippedWidget(self.left_stack, 400)
         self._source_open = False
         self._left_mode = "source"
@@ -3634,6 +3656,10 @@ class WorkbenchView(QWidget):
         source_shortcut.setShortcut(platform_ui.shortcut("source"))
         source_shortcut.triggered.connect(lambda: self.set_source_open(not self.source_open()))
         self.addAction(source_shortcut)
+        self._concordance_shortcut = QAction(i18n.tr('语料检索'), self)
+        self._concordance_shortcut.setShortcut(platform_ui.shortcut("concordance"))
+        self._concordance_shortcut.triggered.connect(self._toggle_or_focus_concordance)
+        self.addAction(self._concordance_shortcut)
         # 检查与修复：从顶栏的盾牌图标下面展开的「凸」字下拉卡片（与运行记录同一种），
         # 不再挤占右栏、也不会自己弹出来挡住操作键（2026-10-16 第三轮试用反馈）。
         # 点外面或 Esc 收起；处理某一条（定位段落、预览）时卡片保持打开。
@@ -3728,6 +3754,7 @@ class WorkbenchView(QWidget):
         self.job_id = job_id
         self.config = config
         self._state = state
+        self.concordance_panel.set_context(state=state, project_id=state.get("project_id"))
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._snapshots = snapshots
@@ -3773,6 +3800,7 @@ class WorkbenchView(QWidget):
         """
         self.job_id = job_id
         self._state = state
+        self.concordance_panel.set_context(state=state, project_id=state.get("project_id"))
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
@@ -4323,6 +4351,9 @@ class WorkbenchView(QWidget):
     def terms_open(self) -> bool:
         return self._source_open and self._left_mode == "terms"
 
+    def concordance_open(self) -> bool:
+        return self._source_open and self._left_mode == "concordance"
+
     def set_source_open(self, open_: bool) -> None:
         """原页 / 原位置在工作台左侧展开 / 收起；中间的网格随之收缩（D2、#61）。"""
         self._set_left_panel("source", bool(open_) and self._source_available)
@@ -4330,6 +4361,32 @@ class WorkbenchView(QWidget):
     def set_terms_open(self, open_: bool) -> None:
         """术语表在工作台左侧展开 / 收起（与原页同一栏；2026-10-17 试用反馈）。"""
         self._set_left_panel("terms", bool(open_) and bool(self.job_id))
+
+    def set_concordance_open(self, open_: bool) -> None:
+        """语料检索面板在工作台左侧展开 / 收起。"""
+        self._set_left_panel("concordance", bool(open_))
+        if open_:
+            self.concordance_panel.focus_search()
+
+    def _toggle_or_focus_concordance(self) -> None:
+        """F3 快捷键：如果在编辑框或原文里选中了词，填入检索词并检索；否则切换/聚焦检索面板。"""
+        selected = ""
+        target_focused = False
+        if hasattr(self, "target_edit") and self.target_edit.hasFocus():
+            selected = self.target_edit.textCursor().selectedText().strip()
+            target_focused = True
+        elif hasattr(self, "inline_editor") and hasattr(self.inline_editor, "source_view") and self.inline_editor.source_view.hasFocus():
+            selected = self.inline_editor.source_view.textCursor().selectedText().strip()
+
+        if not self.concordance_open():
+            self.set_concordance_open(True)
+
+        if selected:
+            direction = "target" if target_focused else "source"
+            self.concordance_panel.set_query(selected, direction=direction)
+            self.concordance_panel.search()
+        else:
+            self.concordance_panel.focus_search()
 
     def _set_left_panel(self, mode: str, open_: bool) -> None:
         if not open_ and self._left_mode != mode:
@@ -4340,8 +4397,15 @@ class WorkbenchView(QWidget):
         if open_:
             self.tabs.setCurrentWidget(self._pages["translate"])
             self._left_mode = mode
-            self.left_stack.setCurrentWidget(
-                self._source_widget() if mode == "source" else self.terms_side)
+            if mode == "source":
+                widget = self._source_widget()
+            elif mode == "terms":
+                widget = self.terms_side
+            elif mode == "concordance":
+                widget = self.concordance_side
+            else:
+                widget = self._source_widget()
+            self.left_stack.setCurrentWidget(widget)
         self._source_open = open_
         self._sync_left_buttons()
         if open_ and mode == "terms":
@@ -4356,6 +4420,7 @@ class WorkbenchView(QWidget):
 
     def _sync_left_buttons(self) -> None:
         self.terms_button.setChecked(self.terms_open())
+        self.concordance_button.setChecked(self.concordance_open())
 
     def _source_widget(self) -> QWidget:
         """左栏「source」位展示的面板：PDF 是原页，流式源是原文上下文（#61）。"""
@@ -6349,6 +6414,8 @@ class WorkbenchView(QWidget):
             return
         self.target_edit.insertPlainText(text)
         self.target_edit.setFocus()
+
+    insert_into_target = _insert_into_target
 
     def _request_term_add(self) -> None:
         """加入术语库：原文取原文里选中的词，译文取编辑框里选中的词（可留空再填）。"""

@@ -1105,6 +1105,32 @@ def stage_batch_replacement(job_id: str, query: str, replacement: str, *,
             "selected": len(drafts)}
 
 
+def search_concordance(
+    job_id: str | None,
+    query: str,
+    *,
+    direction: str = "source",
+    project_id: str | None = None,
+    sort_by: str = "relevance",
+    case_sensitive: bool = False,
+    limit: int = 500,
+) -> list[dict]:
+    """Search bilingual concordance across project TM and task pairs."""
+    from folith import concordance
+
+    state = load_state(job_id) if job_id else None
+    items = concordance.search_concordance(
+        query,
+        direction=direction,
+        project_id=project_id,
+        state=state,
+        sort_by=sort_by,
+        case_sensitive=case_sensitive,
+        limit=limit,
+    )
+    return [item.as_dict() for item in items]
+
+
 def preview_term_revision(state: dict, source_term: str, old_target: str,
                           new_target: str, *,
                           forbidden: Sequence[str] = ()) -> dict:
