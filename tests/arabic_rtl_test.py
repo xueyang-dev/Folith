@@ -124,3 +124,106 @@ def test_pdf_arabic_with_latin_prefix_reaches_right_margin():
         assert max(span["bbox"][2] for span in spans) > doc[0].rect.width * 0.85
 
 
+def test_docx_runs_receive_rtl_flag_for_complex_script():
+    pairs = [{"source": "API request", "target": ARABIC}]
+    output = core.pairs_to_word(pairs, source_lang="en", target_lang="ar")
+    with ZipFile(output) as archive:
+        xml = ET.fromstring(archive.read("word/document.xml"))
+    rtl_runs = xml.findall(".//w:r/w:rPr/w:rtl", W)
+    assert len(rtl_runs) >= 1
+    assert any(node.get(f'{{{W["w"]}}}val') == "1" for node in rtl_runs)
+
+
+def test_cell_direction_and_workbench_delegate_respect_column_language():
+    from PySide6.QtCore import Qt, QRect
+    from PySide6.QtGui import QStandardItemModel, QStandardItem
+    from PySide6.QtWidgets import QApplication, QStyleOptionViewItem
+    from folith.qt.segment_editor import WorkbenchRowDelegate, cell_direction
+
+    _app = QApplication.instance() or QApplication([])
+    # Direct cell_direction checks
+    assert cell_direction("API", "ar") == Qt.LayoutDirection.RightToLeft
+    assert cell_direction("API", "en") == Qt.LayoutDirection.LeftToRight
+    assert cell_direction(ARABIC, None) == Qt.LayoutDirection.RightToLeft
+
+    # WorkbenchRowDelegate checks
+    model = QStandardItemModel(1, 3)
+    model.setItem(0, 0, QStandardItem("1"))
+    model.setItem(0, 1, QStandardItem("API"))
+    model.setItem(0, 2, QStandardItem("API"))
+
+    delegate = WorkbenchRowDelegate()
+    delegate.source_language = "en"
+    delegate.target_language = "ar"
+
+    opt_src = QStyleOptionViewItem()
+    opt_src.rect = QRect(0, 0, 200, 30)
+    delegate.initStyleOption(opt_src, model.index(0, 1))
+    assert opt_src.direction == Qt.LayoutDirection.LeftToRight
+
+    opt_tgt = QStyleOptionViewItem()
+    opt_tgt.rect = QRect(0, 0, 200, 30)
+    delegate.initStyleOption(opt_tgt, model.index(0, 2))
+    assert opt_tgt.direction == Qt.LayoutDirection.RightToLeft
+
+
+@pytest.mark.parametrize("language,text", [
+    ("Nederlands", "Het rapport is klaar."),
+    ("Polski", "Raport jest gotowy."),
+    ("Українська", "Звіт готовий."),
+    ("Tiếng Việt", "Báo cáo đã sẵn sàng."),
+    ("ئۇيغۇرچە", "دوكلات تەييار بولدى."),
+])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_expanded_languages_reach_translation_protocol_with_arabic(language, text, reverse):
+    source, target, target_language = (ARABIC, text, language) if reverse else (text, ARABIC, "العربية")
+
+    def response(provider, key, model, system, user, **kwargs):
+        assert target_language in system
+        assert source in user
+        return json.dumps([target], ensure_ascii=False)
+
+    assert core.translate_batch([source], [], [], "", "", target_language,
+                                "OpenAI", "unused", "gpt-4o-mini",
+                                call_llm_fn=response) == [target]
+
+
+def test_academic_report_arabic_excerpt_direction():
+    from folith.report_template import _insert_content_after
+    from docx import Document
+
+    doc = Document()
+    anchor = doc.add_paragraph("Heading")
+    content = "> [TARGET seg-1]: " + ARABIC
+    inserted = _insert_content_after(anchor, content)
+    bidi = inserted._p.find("w:pPr/w:bidi", W)
+    assert bidi is not None
+    assert bidi.get(f'{{{W["w"]}}}val') == "1"
+
+
+def test_epub_arabic_localized_toc_and_cover():
+    from folith.epub import build_translation_epub
+
+    state = {
+        "filename": "test.docx",
+        "target_lang": "ar",
+        "source_lang": "en",
+        "source_paras": ["Hello"],
+        "pairs": [{"source": "Hello", "target": ARABIC, "source_refs": [0]}],
+    }
+    doc = Document()
+    doc.add_paragraph("Hello")
+    buf = io.BytesIO()
+    doc.save(buf)
+    epub_bytes, _ = build_translation_epub(state, buf.getvalue())
+    with ZipFile(io.BytesIO(epub_bytes)) as archive:
+        nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+        assert "جدول المحتويات" in nav
+
+
+def test_font_stack_includes_cross_platform_arabic_coverage():
+    from folith.qt import theme
+    assert any("Arabic" in f or "Geeza" in f or "Segoe UI" in f for f in theme.FONT_STACK)
+
+
+

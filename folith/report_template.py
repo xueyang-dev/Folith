@@ -520,6 +520,10 @@ def _insert_content_after(anchor: Paragraph, content: str) -> Paragraph:
         paragraph = _insert_paragraph_after(current, "", style)
         paragraph._p.remove(paragraph.runs[0]._r)
         _add_markdown_runs(paragraph, line)
+        from folith.textual import text_direction
+        if text_direction(line) == "rtl":
+            from folith.engine.document_export import _apply_paragraph_direction
+            _apply_paragraph_direction(paragraph)
         current = paragraph
     return current
 

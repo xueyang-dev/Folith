@@ -3728,6 +3728,8 @@ class WorkbenchView(QWidget):
         self.job_id = job_id
         self.config = config
         self._state = state
+        self.row_delegate.source_language = str(state.get("source_lang") or "")
+        self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._snapshots = snapshots
         self._pending_saved = {}
         self._all_rows = list(rows)
@@ -3771,6 +3773,8 @@ class WorkbenchView(QWidget):
         """
         self.job_id = job_id
         self._state = state
+        self.row_delegate.source_language = str(state.get("source_lang") or "")
+        self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
         self._snapshots = snapshots or []
         self._models = dict(models or {})
@@ -6064,7 +6068,8 @@ class WorkbenchView(QWidget):
 
         segment_editor.set_text_direction(
             editor.source_view, Qt.LayoutDirection.RightToLeft
-            if text_direction(self._rows[position].source, None) == "rtl"
+            if text_direction(self._rows[position].source,
+                              self._state.get("source_lang")) == "rtl"
             else Qt.LayoutDirection.LeftToRight)
         if not editor.source_view.isVisible():
             editor.source_view.show()

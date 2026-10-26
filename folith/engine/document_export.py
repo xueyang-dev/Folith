@@ -205,8 +205,10 @@ def _apply_doc_fonts(doc):
             style.paragraph_format.first_line_indent = None
 
 
-def _apply_run_fonts(run):
+def _apply_run_fonts(run, rtl=False):
     """单个 run 的字体（表格单元格里的 run 不受 Normal 样式继承影响时兜底）。"""
+    import unicodedata
+    from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     run.font.name = _c.EN_FONT
     rpr = run._element.get_or_add_rPr()
@@ -215,6 +217,12 @@ def _apply_run_fonts(run):
     rfonts.set(qn("w:hAnsi"), _c.EN_FONT)
     rfonts.set(qn("w:eastAsia"), _c.CN_FONT)
     rfonts.set(qn("w:cs"), "Arial")
+    if rtl or any(unicodedata.bidirectional(c) in {"R", "AL"} for c in str(run.text or "")):
+        rtl_el = rpr.find(qn("w:rtl"))
+        if rtl_el is None:
+            rtl_el = OxmlElement("w:rtl")
+            rpr.append(rtl_el)
+        rtl_el.set(qn("w:val"), "1")
 
 
 def _apply_paragraph_direction(paragraph, language=None):
@@ -235,7 +243,7 @@ def _apply_paragraph_direction(paragraph, language=None):
         # literal "right" is mirrored by paragraph BiDi in LibreOffice.
         ppr.find(qn("w:jc")).set(qn("w:val"), "start")
     for run in paragraph.runs:
-        _apply_run_fonts(run)
+        _apply_run_fonts(run, rtl=rtl)
 
 
 def dict_to_excel(term_dict):

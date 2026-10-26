@@ -28,11 +28,11 @@ from . import theme as theme_module
 
 
 @lru_cache(maxsize=4096)
-def cell_direction(text: str) -> Qt.LayoutDirection:
-    """一格文字的书写方向：按强方向字符的多少判断（阿拉伯语、希伯来语……从右往左）。"""
+def cell_direction(text: str, language: str | None = None) -> Qt.LayoutDirection:
+    """一格文字的书写方向：优先语言设定，再按强方向字符的多少判断（阿拉伯语、希伯来语……从右往左）。"""
     from folith.textual import text_direction
 
-    return (Qt.LayoutDirection.RightToLeft if text_direction(text, None) == "rtl"
+    return (Qt.LayoutDirection.RightToLeft if text_direction(text, language) == "rtl"
             else Qt.LayoutDirection.LeftToRight)
 
 #: 普通行的高度（与表格默认行高一致）。
@@ -171,6 +171,8 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
         self.saved: dict[int, float] = {}
         #: 全文定位中的术语（term_highlight.Occurrences）；None 表示没有。
         self.focus = None
+        self.source_language: str = ""
+        self.target_language: str = ""
 
     def paint(self, painter, option, index) -> None:  # noqa: N802 - Qt 命名
         super().paint(painter, option, index)
@@ -203,7 +205,9 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
         option.features |= QStyleOptionViewItem.ViewItemFeature.WrapText
         # 译成阿拉伯语等从右往左的语言：这一格按 RTL 排（右对齐、标点与括号随之镜像），
         # 不是左对齐的 LTR 段落（试用反馈图 5）。AlignLeft 在 RTL 方向下会被翻成右对齐。
-        option.direction = cell_direction(str(option.text or ""))
+        lang = self.source_language if index.column() == 1 else (
+            self.target_language if index.column() == 2 else None)
+        option.direction = cell_direction(str(option.text or ""), lang)
         option.displayAlignment = (Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         option.textElideMode = Qt.TextElideMode.ElideNone
         share = self.saved.get(index.data(Qt.ItemDataRole.UserRole), 0.0)

@@ -226,7 +226,7 @@ Folith itself is free and open source. The model calls made while translating ar
 
 ## 🌐 Interface languages
 
-The interface is Simplified Chinese by default. English, Español, Русский, العربية, Français, and Deutsch are experimental: the strings are complete, but they have not had an independent language review, and Arabic RTL has not been fully accepted. See [Appearance and multilingual boundaries](docs/i18n/README.md).
+The interface is Simplified Chinese by default. English, Español, Русский, العربية, Français, and Deutsch are experimental: the strings are complete, and Arabic full-interface mirroring and RTL exports have passed acceptance (see [Arabic acceptance report](docs/arabic-acceptance-2026-10-26.md)); independent native-speaker reviews for non-Chinese languages remain ongoing. See [Appearance and multilingual boundaries](docs/i18n/README.md).
 
 ---
 

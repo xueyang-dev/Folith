@@ -39,8 +39,9 @@ SPACE = {"xxs": 2, "xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "xxl": 32}
 #: 行高/表头在 2026-10-09 的构图精修里从 40/34 收到 36/30：一屏能多显示两行任务，
 #: 表头也更接近 macOS 表格的观感（它只是列名，不需要 34px 的体重）。
 CONTROL = {"sm": 26, "md": 30, "lg": 34, "row": 36, "header": 30}
-FONT_STACK = ("SF Pro Text", "Helvetica Neue", "PingFang SC",
-              "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC")
+FONT_STACK = ("SF Pro Text", "Segoe UI", "Helvetica Neue", "PingFang SC",
+              "Hiragino Sans GB", "Microsoft YaHei", "Geeza Pro", "Arial",
+              "Noto Sans Arabic", "Noto Sans SC")
 MONO_STACK = ("SF Mono", "Menlo", "Monaco", "Courier New")
 #: 字号阶梯：**7 档**（设计审校 40 号第三节）。层级靠"大小 + 粗细 + 颜色"三层表达，
 #: 不靠加粗一切。键是用途，不是档位：同一档可以有几个用途名，但值只能取这 7 个之一

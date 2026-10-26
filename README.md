@@ -226,7 +226,7 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 
 ## 🌐 界面语言
 
-界面默认简体中文。English、Español、Русский、العربية、Français、Deutsch 为实验功能，界面文案已齐全，但尚未完成独立语言审阅和完整的阿拉伯语 RTL 验收。详见 [外观与多语言边界](docs/i18n/README.md)。
+界面默认简体中文。English、Español、Русский、العربية、Français、Deutsch 为实验功能，界面文案已齐全，阿拉伯语已完成全界面镜像与 RTL 导出验收（详见 [阿拉伯语验收文档](docs/arabic-acceptance-2026-10-26.md)）；除中文外的母语独立审阅仍在推进中。详见 [外观与多语言边界](docs/i18n/README.md)。
 
 ---
 
