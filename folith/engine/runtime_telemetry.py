@@ -42,7 +42,7 @@ class _RuntimeTelemetryCoalescer:
         # 在途请求的用途标签（#167）：request_started 压入、request_finished
         # 按用途摘除。并发请求用途可能不同，展示取"最近一次"的用途。
         self._active_purposes = []
-        self._last_flush = 0.0
+        self._last_flush = None
         self._timer = None
         self._closed = False
         self._stats = {"submits": 0, "flushes": 0, "coalesced": 0,
@@ -86,7 +86,8 @@ class _RuntimeTelemetryCoalescer:
                 if value is not None:
                     self._pending[key] = value
             now = time.monotonic()
-            leading_edge = (now - self._last_flush) >= self.flush_interval
+            leading_edge = (self._last_flush is None
+                            or (now - self._last_flush) >= self.flush_interval)
             if force or leading_edge or self._active == 0:
                 self._stats["immediate"] += 1
                 self._flush_locked(now)

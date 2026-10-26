@@ -222,3 +222,22 @@ def test_unlabelled_completion_does_not_reuse_a_coalesced_purpose():
         assert writer.last["phase_label"] == "等待模型响应：文档画像（1 个请求进行中）"
     finally:
         coalescer.close()
+
+
+@pytest.mark.parametrize("now", [0.0, 100.0, 1000.0])
+def test_first_request_flushes_independently_of_clock_origin(monkeypatch, now):
+    """Fresh CI runners may have less uptime than the test's long merge window."""
+    from types import SimpleNamespace
+    from folith.engine import runtime_telemetry
+
+    monkeypatch.setattr(runtime_telemetry, "time", SimpleNamespace(monotonic=lambda: now))
+    writer = RecordingWriter()
+    coalescer = _coalescer(writer)
+    try:
+        coalescer.request_started(purpose="文档画像")
+        assert len(writer.calls) == 1, "The leading edge must publish immediately"
+        assert writer.last["event"] == "已向模型发送请求（文档画像）"
+        coalescer.request_started(purpose="辅助分析")
+        assert len(writer.calls) == 1, "Later requests still use the merge window"
+    finally:
+        coalescer.close()

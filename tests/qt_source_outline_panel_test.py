@@ -233,3 +233,59 @@ def test_setup_panel_hosts_the_structure_section(data_env, qt_app, monkeypatch):
     mode_y = panel.mode_selector.mapTo(panel, QPoint(0, 0)).y()
     assert 0 < source_y < mode_y
     assert panel.source_section.section.title_label.text() == "原文结构"
+
+
+# ---------------------------------------------------------------- 范围入口（#28）
+
+def test_scope_entry_emits_intent_and_wires_through_panel(data_env, qt_app):
+    """准备页的「翻译范围…」按钮发出意图信号；面板把它转发给 window。
+
+    #28 的验收要求"开始前排除"有操作入口：入口就放在结构区块里。真正的
+    对话框与状态变更在 window/引擎，这里只验证意图链路是通的。
+    """
+    section = SourceOutlineSection()
+    emitted = []
+    section.scopeRequested.connect(lambda: emitted.append("section"))
+    section.scope_button.click()
+    assert emitted == ["section"]
+
+    from folith.qt.setup_panel import TaskSetupPanel
+    panel = TaskSetupPanel()
+    panel.set_choices(adapter.setup_choices())
+    forwarded = []
+    panel.scopeRequested.connect(lambda: forwarded.append("panel"))
+    panel.source_section.scopeRequested.emit()
+    assert forwarded == ["panel"]
+
+
+def test_scope_entry_disabled_without_source_file(data_env, qt_app, monkeypatch):
+    job_id = _new_task(data_env)
+    _patch_loader(monkeypatch)
+    source = adapter.source_path(job_id)
+    source.unlink()
+    section = SourceOutlineSection()
+    section.load(job_id, "sample.docx",
+                 adapter.task_setup_view(adapter.EngineConfig(), job_id))
+    qt_app.processEvents()
+    assert not section.scope_button.isEnabled(), "源文件不在盘上时没有可依据的结构"
+
+
+def test_pre_start_scope_via_adapter_returns_outline_tree(data_env, qt_app):
+    """适配层：任务开始前 adapter.translation_scope 返回大纲树（available=True）。
+
+    审校探针的场景是"任务 paras=0、范围接口 available=false"——这条断言
+    钉住修复后的接口契约。
+    """
+    job_id = _new_task(data_env)
+    state = core.load_job_state(job_id)
+    assert not state.get("paras") and not state.get("pairs")
+    core.ensure_source_outline(job_id, state)
+    scope = adapter.translation_scope(job_id)
+    assert scope["available"] is True
+    assert scope["pre_start"] is True
+    chapter = next(group for group in scope["groups"] if group["kind"] == "chapter")
+    assert [node["label"] for node in chapter["nodes"]] == ["第一章", "第二章"]
+    # 排除走范围键（outline:…），结果记成计划，账本保持为空。
+    result = adapter.exclude_scope(job_id, [chapter["nodes"][1]["key"]])
+    assert result["planned"] == 1 and result["excluded"] == 0
+    assert core.load_job_state(job_id).get("excluded_segments") in (None, [])
