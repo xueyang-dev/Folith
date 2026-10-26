@@ -28,9 +28,11 @@ def decode_text(data: bytes) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _html_paragraphs(markup: str | bytes, headings: list | None = None):
+def _html_paragraphs(markup: str | bytes, headings: list | None = None,
+                     anchors: dict | None = None):
     """返回 ``(段落, 未纳入内容)``；传入 ``headings`` 列表时，把每个标题块
-    ``{"index": 标题段落在结果里的下标, "level": 1–6}`` 追加进去（结构解析用）。"""
+    ``{"index": 标题段落在结果里的下标, "level": 1–6}`` 追加进去（结构解析用）。
+    传入 ``anchors`` 字典时，把元素 id/name 映射到其段落在结果里的下标。"""
     if isinstance(markup, bytes):
         markup = decode_text(markup)
     root = html.fromstring(markup)
@@ -59,6 +61,10 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None):
         block = tag in blocks
         if block:
             flush()
+        if anchors is not None:
+            node_id = node.get("id") or node.get("name")
+            if node_id and str(node_id) not in anchors:
+                anchors[str(node_id)] = len(paragraphs)
         if node.text:
             pending.append(node.text)
         for child in node:
