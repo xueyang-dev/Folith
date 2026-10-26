@@ -88,6 +88,28 @@ def test_draft_readiness_complete_with_source_quality_flags():
     assert d["missing_segments"] == 0
 
 
+def test_draft_readiness_ignores_user_excluded_segments():
+    # An excluded paragraph has no target and would fail target validation, but
+    # it is not part of the required scope (auto-exclusion makes this common).
+    state = {
+        "pairs": [
+            {"source": "S0", "target": "T0"},
+            {"source": "S1", "target": "", "excluded": True},
+            {"source": "S2", "target": "T2"},
+        ],
+        "paras": ["S0", "S1", "S2"],
+        "p2_done": True,
+    }
+    d = readiness.draft_readiness(state)
+    assert d["ready"] is True
+    assert d["status"] == "ready"
+    assert d["total_segments"] == 3
+    assert d["required_segments"] == 2
+    assert d["translated_segments"] == 2
+    assert d["missing_segments"] == 0
+    assert d["invalid_targets"] == 0
+
+
 # ---------------------------------------------------------------------------
 # 2. Translation Readiness
 # ---------------------------------------------------------------------------
@@ -294,3 +316,54 @@ def test_runtime_telemetry_coalescer_passes_operation_id():
     last = calls[-1]
     assert last["event_metadata"]["purpose"] == "自动标注批次 #1"
     assert last["event_metadata"]["operation_id"] == "annotation"
+
+
+def test_coalescer_pairs_purpose_and_operation_id_for_concurrent_requests():
+    calls = []
+    coalescer = _RuntimeTelemetryCoalescer(
+        "job-pairs", flush_interval=60.0,
+        writer=lambda job_id, **changes: calls.append(changes))
+    # The first start is the leading edge and flushes immediately; the rest
+    # share one coalescing window.
+    coalescer.request_started(purpose="翻译 A", operation_id="translation")
+    coalescer.request_started(purpose="标注 B", operation_id="annotation")
+    coalescer.request_finished(purpose="翻译 A", operation_id="translation")
+    coalescer.request_finished(purpose="标注 B", operation_id="annotation")
+    coalescer.close()
+
+    allowed = {("翻译 A", "translation"), ("标注 B", "annotation")}
+    for call in calls:
+        meta = call.get("event_metadata") or {}
+        pair = (meta.get("purpose"), meta.get("operation_id"))
+        assert pair in allowed, pair
+
+
+def test_coalescer_does_not_pair_a_purpose_with_another_requests_operation_id():
+    calls = []
+    coalescer = _RuntimeTelemetryCoalescer(
+        "job-stale-op", flush_interval=60.0,
+        writer=lambda job_id, **changes: calls.append(changes))
+    coalescer.request_started(purpose="翻译 A", operation_id="translation")
+    # B's operation_id is pending in the same window.
+    coalescer.request_started(purpose="标注 B", operation_id="annotation")
+    # A's completion caller omits operation_id (older call shape).  It must not
+    # inherit B's operation_id just because purpose was overwritten.
+    coalescer.request_finished(purpose="翻译 A")
+    coalescer.flush()
+
+    for call in calls:
+        meta = call.get("event_metadata") or {}
+        if meta.get("purpose") == "翻译 A":
+            assert meta.get("operation_id") != "annotation"
+
+
+@pytest.mark.parametrize("purpose,expected", [
+    ("翻译修复", "repair"),
+    ("审校批次", "review"),
+    ("自动标注批次 #1", "annotation"),
+    ("翻译批次", "translation"),
+    ("提取术语与知识", "terminology"),
+    ("文档画像", "understanding"),
+])
+def test_infer_operation_id_prefers_specific_keywords(purpose, expected):
+    assert core._infer_operation_id(purpose, "") == expected

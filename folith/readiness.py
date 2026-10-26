@@ -2,8 +2,9 @@
 
 This module defines three explicit, independent readiness dimensions:
 1. **Draft Ready**: All required source segments in scope have a non-empty,
-   structural initial translation; source quarantine follows the recorded gate,
-   and unrecovered source pages prevent readiness.
+   structural initial translation; user-excluded segments are outside the
+   required scope, source quarantine follows the recorded gate, and unrecovered
+   source pages prevent readiness.
 2. **Translation Ready**: Draft Ready is met, plus the document satisfies the
    task configuration's QA/review and consistency gates (including review
    readiness and zero unresolved blocking findings).
@@ -20,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 
 from folith import delivery, translation_target
+from folith.engine.segments import active_pair_indexes, is_excluded
 
 
 def _now_iso() -> str:
@@ -29,7 +31,8 @@ def _now_iso() -> str:
 def draft_readiness(state: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     """Assess whether initial draft translation is complete and structural."""
     state = state if isinstance(state, Mapping) else {}
-    pairs = state.get("pairs") or []
+    raw_pairs = state.get("pairs")
+    pairs = raw_pairs if isinstance(raw_pairs, list) else []
     total_segments = len(pairs)
 
     quality_gate = state.get("source_quality_gate") or {}
@@ -40,25 +43,35 @@ def draft_readiness(state: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
         and isinstance(item.get("segment_index"), int)
         and not isinstance(item.get("segment_index"), bool)
     }
+    excluded_indexes = {
+        index for index, pair in enumerate(pairs)
+        if isinstance(pair, Mapping) and is_excluded(pair)
+    }
 
-    required_indexes = [i for i in range(total_segments) if i not in blocked_source_indexes]
+    # Excluded paragraphs are outside the required scope: they have no target
+    # by design, and their target would also fail validation.  Base the scope
+    # on the active pairs, then subtract the source-quality quarantine.
+    required_indexes = [index for index in active_pair_indexes(state)
+                        if index not in blocked_source_indexes]
     required_count = len(required_indexes)
 
     translated_count = 0
     missing_indexes = []
-    for i in required_indexes:
-        target = str(pairs[i].get("target") or "").strip()
+    for index in required_indexes:
+        pair = pairs[index]
+        target = str(pair.get("target") or "").strip() if isinstance(pair, Mapping) else ""
         if target:
             translated_count += 1
         else:
-            missing_indexes.append(i)
+            missing_indexes.append(index)
 
     p2_done = bool(state.get("p2_done"))
     missing_pages = delivery.unrecovered_scan_pages(state)
     target_report = translation_target.validate_translation_pairs(pairs)
     invalid_targets = [issue for issue in target_report["issues"]
                        if issue["severity"] == "blocking"
-                       and issue.get("segment_index") not in blocked_source_indexes]
+                       and issue.get("segment_index") not in blocked_source_indexes
+                       and issue.get("segment_index") not in excluded_indexes]
     missing_pairs = max(0, len(state.get("paras") or []) - total_segments)
     is_ready = bool(p2_done and not missing_pages and not missing_pairs
                     and not invalid_targets and translated_count == required_count)
@@ -224,6 +237,11 @@ def record_readiness_milestone(
     if not project(state)["ready"]:
         return False
     cfg = state.get("pipeline_config") or {}
+    # This is the configured policy, not completion evidence.  The readiness
+    # projections above also accept "annotations_done"/"p3_done" so an output
+    # that was already produced does not turn its dimension off; the milestone
+    # identity instead records what the task asked for, so toggling a policy
+    # after completion creates a new milestone record.
     identity = {
         "translation_version": int((state.get("translation_truth") or {}).get("version") or 0),
         "policy": {

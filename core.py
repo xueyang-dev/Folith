@@ -260,16 +260,17 @@ def _infer_operation_id(purpose, role):
     role = str(role or "").strip().lower()
     if "标注" in purpose:
         return "annotation"
+    # More specific operations first: "翻译修复" must not be read as translation.
+    if "修复" in purpose:
+        return "repair"
+    if "审校" in purpose:
+        return "review"
     if "翻译" in purpose:
         return "translation"
-    if "术语" in purpose or "核心术语" in purpose:
+    if "术语" in purpose:
         return "terminology"
     if "画像" in purpose or "理解" in purpose:
         return "understanding"
-    if "审校" in purpose:
-        return "review"
-    if "修复" in purpose:
-        return "repair"
     if "知识" in purpose:
         return "knowledge"
     if role in {"annotation", "translation", "review", "auxiliary"}:
@@ -2157,42 +2158,25 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         _runtime_pause_checkpoint(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
-        try:
-            _runtime_telemetry_request_started(
-                runtime_job_id,
-                purpose=_current_llm_purpose(),
-                operation_id=_current_llm_operation_id(),
-            )
-        except TypeError:
-            _runtime_telemetry_request_started(
-                runtime_job_id,
-                purpose=_current_llm_purpose(),
-            )
+        _runtime_telemetry_request_started(
+            runtime_job_id,
+            purpose=_current_llm_purpose(),
+            operation_id=_current_llm_operation_id(),
+        )
     _llm_started = time.perf_counter()
     _request_run = trace.get_active_run(runtime_job_id)
     if _request_run:
-        try:
-            _request_run.begin_model_request(
-                provider, model, role=_usage.CURRENT_ROLE.get(),
-                operation_id=_current_llm_operation_id(),
-                purpose=_current_llm_purpose(),
-                batch_id=getattr(_LLM_CTX, "batch_id", None),
-                prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
-                system_chars=len(system_prompt or ""),
-                user_chars=len(user_prompt or ""),
-                segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
-                    "segment_count", getattr(_LLM_CTX, "input_segments", None)),
-            )
-        except TypeError:
-            _request_run.begin_model_request(
-                provider, model, role=_usage.CURRENT_ROLE.get(),
-                batch_id=getattr(_LLM_CTX, "batch_id", None),
-                prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
-                system_chars=len(system_prompt or ""),
-                user_chars=len(user_prompt or ""),
-                segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
-                    "segment_count", getattr(_LLM_CTX, "input_segments", None)),
-            )
+        _request_run.begin_model_request(
+            provider, model, role=_usage.CURRENT_ROLE.get(),
+            operation_id=_current_llm_operation_id(),
+            purpose=_current_llm_purpose(),
+            batch_id=getattr(_LLM_CTX, "batch_id", None),
+            prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
+            system_chars=len(system_prompt or ""),
+            user_chars=len(user_prompt or ""),
+            segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
+                "segment_count", getattr(_LLM_CTX, "input_segments", None)),
+        )
     try:
         result = _call_llm_transport(
             cfg, provider, api_key, model, system_prompt, user_prompt,
@@ -2222,34 +2206,22 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         if runtime_job_id:
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
             # 看到的是真实结果而不是一个永远不会结束的在途请求。
-            try:
-                _runtime_telemetry_request_failed(
-                    runtime_job_id,
-                    purpose=_current_llm_purpose(),
-                    operation_id=_current_llm_operation_id(),
-                )
-            except TypeError:
-                _runtime_telemetry_request_failed(
-                    runtime_job_id,
-                    purpose=_current_llm_purpose(),
-                )
+            _runtime_telemetry_request_failed(
+                runtime_job_id,
+                purpose=_current_llm_purpose(),
+                operation_id=_current_llm_operation_id(),
+            )
         raise exc
     finally:
         if _request_run:
             _request_run.end_model_request()
     _record_llm_thread_stats(time.perf_counter() - _llm_started, failed=False)
     if runtime_job_id:
-        try:
-            _runtime_telemetry_request_finished(
-                runtime_job_id,
-                purpose=_current_llm_purpose(),
-                operation_id=_current_llm_operation_id(),
-            )
-        except TypeError:
-            _runtime_telemetry_request_finished(
-                runtime_job_id,
-                purpose=_current_llm_purpose(),
-            )
+        _runtime_telemetry_request_finished(
+            runtime_job_id,
+            purpose=_current_llm_purpose(),
+            operation_id=_current_llm_operation_id(),
+        )
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
     return result
