@@ -319,6 +319,22 @@ def test_excluding_a_segment_reidentifies_by_uid_and_names_the_exclusion(data_di
     assert (second["first_segment_index"], second["last_segment_index"]) == (1, 2)
 
 
+def test_restoring_the_excluded_segment_resolves_the_node_again(data_dir):
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    _persisted_mapping(outline)
+    core.mutate_translation_segments(JOB, 1, "exclude")
+    assert anchor.resolve(JOB, core.load_job_state(JOB))["nodes"]["n0000"]["state"] \
+        == "partial"
+
+    record = core.load_job_state(JOB)["excluded_segments"][0]
+    core.restore_translation_scope(JOB, [record["excluded_id"]])
+    entry = anchor.resolve(JOB, core.load_job_state(JOB))["nodes"]["n0000"]
+
+    assert entry["state"] == "resolved"
+    assert entry["reason"] == "uid_match"
+    assert (entry["first_segment_index"], entry["last_segment_index"]) == (0, 1)
+
+
 def _page_per_segment(state, pages):
     """One page per segment so the scope dialog can exclude a single segment."""
     state["segment_source_spans"] = [[{"page_id": f"p{page}"}] for page in pages]

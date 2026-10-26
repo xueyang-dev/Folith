@@ -591,7 +591,11 @@ def _resolve_by_uid(cached_nodes: dict, state: dict) -> dict[str, dict]:
         unmatched = int(entry.get("unmatched_paragraphs") or 0)
         boundary = int(entry.get("boundary_paragraphs") or 0)
         if uids and not missing:
-            state_value = (PARTIAL if entry.get("state") == PARTIAL else RESOLVED)
+            # Every uid is back: a node that was only partially excluded is
+            # whole again.  A partial *paragraph match* stays partial.
+            still_partial = (entry.get("state") == PARTIAL
+                             and entry.get("reason") != "node_partial_excluded")
+            state_value = PARTIAL if still_partial else RESOLVED
             nodes[node_id] = _entry(
                 state_value, "uid_match", first=min(positions), last=max(positions),
                 uids=uids, matched=matched, unmatched=unmatched, boundary=boundary)
