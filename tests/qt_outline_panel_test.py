@@ -303,6 +303,45 @@ def test_apply_without_a_new_outline_does_not_rebuild_the_tree(job):
     assert rebuilt == []
 
 
+def test_a_cleanup_with_an_unchanged_segment_count_reresolves_the_mapping(
+        job, monkeypatch):
+    """The view cache is keyed by structure, not by the segment count (#186)."""
+    bench = _bench(job, _nested_outline())
+    bench.set_outline_open(True)
+    assert bench._outline_key is not None
+
+    calls = []
+    original = adapter.outline_mapping
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "outline_mapping", spy)
+
+    state = adapter.load_state(job)
+    # Cleanup merged raw paragraphs 2 and 3 into one cleaned paragraph, and the
+    # new segmentation split another one: still 8 segments, other positions.
+    state["source_cleanup"] = {
+        "output_input_indices": [[0], [1], [2, 3], [4], [5], [6], [7]]}
+    state["segmentation"] = {
+        "input_paragraph_count": 7,
+        "paragraph_ranges": [
+            {"paragraph_index": 0, "start": 0, "end": 1},
+            {"paragraph_index": 1, "start": 1, "end": 2},
+            {"paragraph_index": 2, "start": 2, "end": 4},
+            {"paragraph_index": 3, "start": 4, "end": 5},
+            {"paragraph_index": 4, "start": 5, "end": 6},
+            {"paragraph_index": 5, "start": 6, "end": 7},
+            {"paragraph_index": 6, "start": 7, "end": 8},
+        ],
+    }
+    assert len(state["pairs"]) == 8, "the segment count must stay the same"
+    bench.apply(job, state, bench._all_rows, {}, [])
+
+    assert calls, "a changed paragraph structure must not be served from cache"
+
+
 def test_the_open_worker_resolves_the_mapping_before_the_gui_thread(job, monkeypatch):
     outline = _nested_outline()
     outline_anchor.store_outline(job, outline, data=SOURCE)
