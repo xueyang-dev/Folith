@@ -1,4 +1,4 @@
-"""准备页的「原文结构」区块（#27，只读）。
+"""准备页的「原文结构」区块（#27，只读）+ 译前范围入口（#28）。
 
 左邻 :class:`folith.qt.doc_overview.DocumentOverview`（这份文档长什么样），这里是
 **里面写了什么**：本地解析的章节/页/段落分组 + 原文预览。不调用模型、不做
@@ -6,19 +6,23 @@ OCR——扫描页如实显示"未识别"，绝不装作已读出。结构解析
 :mod:`folith.source_outline`，后台线程计算，按源文件身份缓存（与缩略图同一套
 :class:`folith.qt.thumbnails.PreviewLoader` 机制，重复打开同源文件直接命中缓存）。
 
-这里只读不改：不排除段落、不改翻译状态——开始翻译后要按范围排除，去翻译范围
-入口（#28）；要在原位置对照，去工作台的原文上下文（#61）。
+结构本身仍然只读；这里的「翻译范围…」按钮是 #28 在**开始翻译之前**的唯一入口：
+打开的范围对话框按同一份大纲选择要排除的页/章/节，排除在第一次模型调用之前
+生效（不产生付费翻译）。任务开始后范围入口回到工作台工具栏，按工作列表口径
+选择。
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QLabel, QListWidget, QListWidgetItem,
-                               QPlainTextEdit, QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget,
+                               QListWidgetItem, QPlainTextEdit, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from . import adapter
 from . import i18n
+from . import style as style_module
 from . import theme as theme_module
 from .thumbnails import PreviewLoader
 
@@ -115,7 +119,11 @@ def outline_summary(outline: dict) -> str:
 
 
 class SourceOutlineSection(QWidget):
-    """「原文结构」：结构列表（只读）+ 原文预览 + 一行事实。"""
+    """「原文结构」：结构列表（只读）+ 原文预览 + 一行事实 + 译前范围入口。"""
+
+    #: 打开翻译范围对话框（#28）。真正的选择与状态变更在 window/引擎里，
+    #: 这里只发出意图——与准备页其它按钮（新建项目、术语库…）同一模式。
+    scopeRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -152,6 +160,20 @@ class SourceOutlineSection(QWidget):
         self.preview.setMinimumHeight(120)
         body.addWidget(self.preview)
 
+        # 译前范围入口（#28）：任务开始前唯一的范围选择入口——排除在第一次
+        # 模型调用之前生效。任务开始后这里随整个区块停用，入口回到工作台工具栏。
+        scope_row = QHBoxLayout()
+        scope_row.setSpacing(theme_module.SPACE["sm"])
+        self.scope_button = QPushButton(i18n.tr('翻译范围…'))
+        style_module.set_button(self.scope_button, "secondary")
+        self.scope_button.setToolTip(i18n.tr(
+            '开始翻译前按页 / 章 / 节排除不需要翻译的内容：被排除的范围不产生'
+            '模型调用，原文保留、开始后也可以恢复。'))
+        self.scope_button.clicked.connect(self.scopeRequested.emit)
+        scope_row.addWidget(self.scope_button)
+        scope_row.addStretch(1)
+        body.addLayout(scope_row)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.section)
@@ -181,7 +203,9 @@ class SourceOutlineSection(QWidget):
             # 源文件不在盘上（例如导入中断）：没有结构可看，也别永远停在"读取中"。
             self.section.set_summary(i18n.tr('没有可解析的结构'))
             self._set_status(i18n.tr('本地找不到这份任务的源文件；不影响已有译文。'))
+            self.scope_button.setEnabled(False)
             return
+        self.scope_button.setEnabled(True)
         outline = loader().request(self._job_id, source, self._filename, priority=10)
         if outline is not None:
             self._apply_outline(outline)

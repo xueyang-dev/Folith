@@ -61,9 +61,23 @@ class ScopeDialog(QDialog):
 
         body = QVBoxLayout()
         body.setSpacing(theme_module.SPACE["sm"])
-        if not self.scope.get("available"):
+        if excluded.get("unapplied_plan"):
+            body.addWidget(_label(i18n.tr(
+                '部分译前排除尚未应用，翻译已暂停。请调整范围或撤下未应用计划后继续。'),
+                "meta", wrap=True))
+        if not self.scope.get("available") and excluded.get("records"):
+            body.addWidget(_label(i18n.tr(
+                '当前没有待翻译段落；可在下方恢复已排除的内容。'), "meta", wrap=True))
+        elif not self.scope.get("available"):
             body.addWidget(_label(
-                i18n.tr('任务还没有可编辑的段落：等原文提取完成后再来选择范围。'),
+                i18n.tr('本地读不出这份文件的结构（扫描件或源文件缺失），'
+                        '开始翻译后可在工作台逐段排除。'),
+                "meta", wrap=True))
+        elif self.scope.get("pre_start"):
+            body.addWidget(_label(
+                i18n.tr('任务还没有开始：这里的范围来自本地读取的原文结构。'
+                        '现在排除的内容在开始翻译时生效，不产生任何模型调用；'
+                        '开始后也能在这里恢复。'),
                 "meta", wrap=True))
         for group in self.scope.get("groups") or []:
             body.addWidget(self._build_group(group))
@@ -153,9 +167,18 @@ class ScopeDialog(QDialog):
         box.addLayout(header)
         for record in records:
             excluded_id = str(record.get("excluded_id") or "")
+            position = str(record.get("position") or "")
             index = record.get("segment_index")
-            where = i18n.tr('第 {v0} 段', v0=int(index) + 1) \
-                if isinstance(index, int) else i18n.tr('原位置未知')
+            start, end = record.get("source_start"), record.get("source_end")
+            if isinstance(start, int) and isinstance(end, int):
+                where = (i18n.tr('原文第 {v0}–{v1} 段', v0=start, v1=end)
+                         if end > start else i18n.tr('原文第 {v0} 段', v0=start))
+            else:
+                where = position or (
+                    i18n.tr('第 {v0} 段', v0=int(index) + 1)
+                    if isinstance(index, int) else i18n.tr('原位置未知'))
+            if record.get("planned") and self.scope.get("excluded", {}).get("unapplied_plan"):
+                where = i18n.tr('未应用的排除计划：{v0}', v0=where)
             source = " ".join(str(record.get("source") or "").split())[:60]
             reason = str(record.get("reason") or "")
             check = style_module.CheckBox(
@@ -211,6 +234,10 @@ class ScopeDialog(QDialog):
                         selected_chars += int(node.get("chars") or 0)
         total = self.scope.get("total") or {}
         restore_ids = self.selected_restore_ids()
+        plans_only = bool(restore_ids) and all(
+            self._record_checks[item][1].get("planned") for item in restore_ids)
+        self.restore_button.setText(i18n.tr('撤下所选计划') if plans_only
+                                    else i18n.tr('恢复所选段落'))
         remaining_segments = max(0, int(total.get("segments") or 0) - selected_segments)
         if keys:
             self.summary_label.setText(i18n.tr(
@@ -218,6 +245,9 @@ class ScopeDialog(QDialog):
                 v0=selected_segments, v1=selected_chars,
                 v2=remaining_segments,
                 v3=max(0, int(total.get("chars") or 0) - selected_chars)))
+        elif plans_only:
+            self.summary_label.setText(i18n.tr(
+                '将撤下所选的 {v0} 项排除计划；原文与已有译文保持不变。', v0=len(restore_ids)))
         elif restore_ids:
             self.summary_label.setText(i18n.tr(
                 '将恢复所选的 {v0} 段；它们会回到工作台并重新计入待完成。',

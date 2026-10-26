@@ -619,20 +619,127 @@ def _scope_contiguous_nodes(kind, split_kinds, sources, label_of, *, start=0):
     return result
 
 
+#: 译前范围排除计划在 state 里的键。计划是大纲段落坐标上的"意图"，任务开始、
+#: 翻译单元建好那一刻由 :func:`apply_scope_exclusion_plan` 落进排除账本。
+SCOPE_PLAN_KEY = "scope_exclusion_plan"
+
+_OUTLINE_KIND_LABELS = {"chapter": "按章", "page": "按页", "group": "按组"}
+
+
+def _outline_scope_nodes(outline):
+    """大纲节点 → 范围树节点（只留有文字层的部分；扫描章不冒充可选范围）。"""
+    nodes = []
+    for node in (outline or {}).get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        start = int(node.get("para_start") or 0)
+        count = int(node.get("para_count") or 0)
+        if count <= 0:
+            continue
+        nodes.append({
+            "key": f"outline:{node.get('id') or ''}",
+            "kind": str(node.get("kind") or "chapter"),
+            "label": str(node.get("title") or "未命名部分"),
+            "start": start,
+            "end": start + count,
+            "segments": count,
+            "chars": int(node.get("chars") or 0),
+        })
+    return nodes
+
+
+def _scope_plan_entries(state):
+    plan = (state or {}).get(SCOPE_PLAN_KEY)
+    if not isinstance(plan, dict) or not isinstance(plan.get("entries"), list):
+        return []
+    return [entry for entry in plan["entries"] if isinstance(entry, dict)]
+
+
+def _scope_plan_records(state):
+    """译前计划排除的只读投影（形状对齐 ``excluded_segment_records``）。
+
+    ``position`` 用原文段落区间描述位置：计划还没变成翻译单元，段内索引
+    不存在，不能拿"原位置未知"糊弄用户。
+    """
+    records = []
+    for entry in _scope_plan_entries(state):
+        start = int(entry.get("para_start") or 0)
+        end = int(entry.get("para_end") or 0)
+        records.append({
+            "excluded_id": str(entry.get("excluded_id") or ""),
+            "segment_index": None,
+            "planned": True,
+            "source_start": start + 1,
+            "source_end": end,
+            "position": (f"原文第 {start + 1}–{end} 段" if end > start + 1
+                         else f"原文第 {start + 1} 段"),
+            "source": str(entry.get("anchor_first") or ""),
+            "target": "",
+            "reason": str(entry.get("reason") or ""),
+            "excluded_at": str(entry.get("planned_at") or ""),
+            "excluded_by": str(entry.get("planned_by") or ""),
+            "restorable": True,
+        })
+    return records
+
+
+def _pre_start_scope_tree(state):
+    """任务还没有段落时的范围树：坐标来自 #27 的本地原文大纲。"""
+    outline = state.get("source_outline")
+    outline = outline if isinstance(outline, dict) else {}
+    nodes = _outline_scope_nodes(outline)
+    records = _scope_plan_records(state)
+    plan_totals = scope_plan_totals(state)
+    base_segments = int(outline.get("total_paragraphs") or 0)
+    base_chars = int(outline.get("total_chars") or 0)
+    if not base_segments:
+        # 兜底：旧任务或手工构造的大纲可能没有汇总字段，按节点重算。
+        base_segments = sum(node["segments"] for node in nodes)
+        base_chars = sum(node["chars"] for node in nodes)
+    # 总量扣除已计划排除的范围：预估里的数字是"还会翻译多少"，不是原文全量。
+    total = {"segments": max(0, base_segments - plan_totals["segments"]),
+             "chars": max(0, base_chars - plan_totals["chars"])}
+    excluded = {"count": plan_totals["segments"], "records": records}
+    if not nodes:
+        return {"available": False, "groups": [], "total": total,
+                "excluded": excluded, "pre_start": True}
+    planned_keys = {str(entry.get("key") or "") for entry in _scope_plan_entries(state)}
+    nodes = [node for node in nodes if node["key"] not in planned_keys]
+    groups = [{"kind": kind, "label": _OUTLINE_KIND_LABELS.get(kind, kind),
+               "nodes": [node for node in nodes if node["kind"] == kind]}
+              for kind in ("chapter", "page", "group")
+              if any(node["kind"] == kind for node in nodes)]
+    return {"available": True, "groups": groups, "total": total,
+            "excluded": excluded, "pre_start": True}
+
+
 def translation_scope_tree(state):
     """译前范围选择的只读结构：页 / 章 / 节 → 当前工作列表的连续索引区间。
 
     排除账本已经把移出的段落拿出了工作列表，所以这里的区间就是"现在还能翻译
     的内容"；恢复之后下一次调用会重新算出该段的归属。没有页信息或没有标题时
     对应分组为空——界面只展示存在的分组，绝不用猜出来的结构冒充文档结构。
+
+    任务还没有段落时（#28 的验收场景：开始翻译**之前**排除不想付费翻译的
+    章节），回落到 ``state["source_outline"]``（#27 的本地原文结构）：大纲的
+    章节/页/段落分组就是译前范围的坐标系，排除记成计划（见
+    :func:`_plan_scope_exclusion`），等翻译单元建好再落账。
     """
     sources = _segment_source_list(state)
     total = {"segments": len(sources),
              "chars": sum(len(item) for item in sources)}
     excluded = excluded_segments_summary(state)
+    if state.get("p1_done") and _scope_plan_entries(state):
+        excluded["records"] = list(excluded["records"]) + _scope_plan_records(state)
+        excluded["unapplied_plan"] = True
     if not sources:
-        return {"available": False, "groups": [],
-                "total": total, "excluded": excluded}
+        if state.get("p1_done"):
+            # 任务已开始（例如全部段落都被排除了）：工作列表为空是排除的结果，
+            # 不是"还没开始"——账本里的记录必须能在这个对话框里恢复，绝不能
+            # 落进译前计划的坐标系里。
+            return {"available": False, "groups": [], "total": total,
+                    "excluded": excluded, "pre_start": False}
+        return _pre_start_scope_tree(state)
 
     groups = []
 
@@ -675,6 +782,7 @@ def translation_scope_tree(state):
             "total": total, "excluded": excluded}
 
 
+@_serialized_job_mutation
 def exclude_translation_scope(job_id, keys, *, actor="user"):
     """按范围（页 / 章 / 节）批量排除段落——映射到既有排除账本的批量入口。
 
@@ -710,6 +818,14 @@ def exclude_translation_scope(job_id, keys, *, actor="user"):
     if missing:
         raise ValueError("范围与当前段落不匹配（任务状态可能已变化），"
                          "请重新打开翻译范围后重试。")
+    # #28 的闭环：开始翻译之前（还没有任何翻译单元）排除的是"意图"——记成
+    # 计划，等任务开始、翻译单元建好那一刻由 apply_scope_exclusion_plan 落进
+    # 同一份排除账本。这样"不付费翻译不想要的章节"在第一次模型调用之前就定了。
+    # 判据用 p1_done 而不是"列表为空"：已开始的任务把段落全部排除后列表同样
+    # 是空的，但那必须走账本路径。
+    if not state.get("pairs") and not state.get("paras") \
+            and not state.get("p1_done"):
+        return _plan_scope_exclusion(state, job_id, wanted, nodes, actor=actor)
     indexes = sorted(
         {index for key in wanted
          for index in range(nodes[key]["start"], nodes[key]["end"])},
@@ -807,6 +923,7 @@ def _exclusion_chronological_key(record):
     return (1, int(match.group(1))) if match else (0, 0)
 
 
+@_serialized_job_mutation
 def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
     """按 ``excluded_id`` 批量恢复被排除的段落（范围排除 / 逐段排除通用）。
 
@@ -828,6 +945,18 @@ def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
         if str(item or "").strip()))
     if not wanted:
         raise ValueError("请选择要恢复的已排除段落。")
+    planned_ids = {str(entry.get("excluded_id") or "") for entry in _scope_plan_entries(state)}
+    withdrawing = [item for item in wanted if item in planned_ids]
+    if withdrawing:
+        result = _unplan_scope_exclusion(state, job_id, withdrawing, actor=actor)
+        wanted = [item for item in wanted if item not in planned_ids]
+        if not wanted:
+            return result
+    # 译前排除还没有落账：恢复就是把计划条目撤下来，同样走这一个入口。
+    # 判据同 exclude：p1_done 才代表翻译单元契约已存在（全部排除后列表也是空的）。
+    if not state.get("pairs") and not state.get("paras") \
+            and not state.get("p1_done"):
+        return _unplan_scope_exclusion(state, job_id, wanted, actor=actor)
     by_id = {}
     for item in state.get("excluded_segments") or []:
         if isinstance(item, dict) \
@@ -857,6 +986,12 @@ def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
     for record in records:
         index = _exclusion_restore_index(state, record)
         excluded_pair = record.get("pair")
+        if excluded_pair is None and pairs:
+            # 译前排除没有译文快照；任务已翻译后恢复时，补回待译的空槽，
+            # 不能只插 paras 而让后面的 pairs 错配原文。
+            excluded_pair = {"source": str(record.get("source") or ""),
+                             "target": "", "initial_target": "",
+                             "target_provenance": "generated", "from_tm": False}
         if isinstance(excluded_pair, dict):
             # 与单段恢复一致：内容原样回来，但旧的"已审校"不跟着点亮。
             # 用记录里是否存了 pair 来判断，而不是当前 pairs 是否为空——
@@ -918,6 +1053,361 @@ def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
         "remaining": len(pairs) or len(paras),
         "state": state,
     }
+
+
+def scope_plan_totals(state):
+    """译前排除计划覆盖的段数与字符数（大纲坐标；无计划返回零）。
+
+    预估与范围树的总量都要扣掉它：排除决定必须先于任何"这份活有多大"的
+    数字反映出来，否则译前看到的成本还是全量原文。
+    """
+    outline = (state or {}).get("source_outline")
+    outline = outline if isinstance(outline, dict) else {}
+    paragraphs = [str(item or "") for item in outline.get("paragraphs") or []]
+    segments = chars = 0
+    for entry in _scope_plan_entries(state):
+        start = int(entry.get("para_start") or 0)
+        end = int(entry.get("para_end") or 0)
+        if not 0 <= start < end <= len(paragraphs):
+            continue
+        segments += end - start
+        chars += sum(len(item) for item in paragraphs[start:end])
+    return {"segments": segments, "chars": chars}
+
+
+def _planned_paragraph_total(state):
+    """按大纲口径：总段数 − 已计划排除的段数（开始前的"还会翻译多少"）。"""
+    outline = (state or {}).get("source_outline")
+    outline = outline if isinstance(outline, dict) else {}
+    remaining = int(outline.get("total_paragraphs") or 0)
+    if not remaining:
+        remaining = sum(int(node.get("para_count") or 0)
+                        for node in outline.get("nodes") or []
+                        if isinstance(node, dict))
+    remaining -= scope_plan_totals(state)["segments"]
+    return max(0, remaining)
+
+
+def _plan_scope_exclusion(state, job_id, wanted, nodes, *, actor):
+    """把译前选定的范围记成计划（大纲段落坐标 + 首尾锚点）。
+
+    计划在 ``apply_scope_exclusion_plan`` 之前不触碰 ``excluded_segments``：
+    排除账本描述的是"已从工作列表移出的翻译单元"，而这里还没有翻译单元。
+    ``excluded_id`` 与账本共用同一个序号源，落账时沿用，绝不重号。
+    """
+    outline = state.get("source_outline")
+    outline = outline if isinstance(outline, dict) else {}
+    paragraphs = [str(item or "") for item in outline.get("paragraphs") or []]
+    plan = state.get(SCOPE_PLAN_KEY)
+    if not isinstance(plan, dict) or not isinstance(plan.get("entries"), list):
+        plan = {"entries": []}
+    planned_keys = {str(entry.get("key") or "")
+                    for entry in plan["entries"] if isinstance(entry, dict)}
+    added = []
+    for key in wanted:
+        if key in planned_keys:
+            continue
+        node = nodes[key]
+        start, end = int(node["start"]), int(node["end"])
+        excluded_id = f"x{int(state.get('exclusion_seq') or 0):06d}"
+        state["exclusion_seq"] = int(state.get("exclusion_seq") or 0) + 1
+        added.append({
+            "excluded_id": excluded_id,
+            "key": key,
+            "kind": str(node.get("kind") or ""),
+            "label": str(node.get("label") or ""),
+            "para_start": start,
+            "para_end": end,
+            "anchor_first": (paragraphs[start]
+                             if 0 <= start < len(paragraphs) else ""),
+            "anchor_last": (paragraphs[end - 1]
+                            if 0 < end <= len(paragraphs) else ""),
+            "reason": f"范围排除（译前）：{node.get('label')}",
+            "planned_at": _finalization.now_iso(),
+            "planned_by": str(actor or "user"),
+        })
+    if not added:
+        raise ValueError("所选范围已在译前排除计划里，无需重复排除。")
+    plan["entries"] = list(plan["entries"]) + added
+    plan["fingerprint"] = str(outline.get("fingerprint") or "")
+    plan["updated_at"] = _finalization.now_iso()
+    state[SCOPE_PLAN_KEY] = plan
+    planned_segments = sum(int(entry["para_end"]) - int(entry["para_start"])
+                           for entry in added)
+    labels = "、".join(str(entry.get("label") or "") for entry in added)
+    _c._append_runtime_technical_log(
+        job_id, "translation scope: planned pre-start exclusion of "
+        f"{planned_segments} paragraph(s) ({labels[:80]}); the exclusion "
+        "ledger is written when translation units are built")
+    _c.save_job_state(job_id, state)
+    return {
+        "planned": len(added),
+        "planned_segments": planned_segments,
+        "excluded": 0,
+        "remaining": _planned_paragraph_total(state),
+        "excluded_ids": [entry["excluded_id"] for entry in added],
+        "state": state,
+    }
+
+
+def _unplan_scope_exclusion(state, job_id, wanted, *, actor):
+    """撤下译前排除计划里的条目（恢复入口与译后共用同一个对话框）。"""
+    plan = state.get(SCOPE_PLAN_KEY)
+    entries = plan.get("entries") if isinstance(plan, dict) else None
+    by_id = {str(entry.get("excluded_id") or ""): entry
+             for entry in entries or [] if isinstance(entry, dict)}
+    missing = [item for item in wanted if item not in by_id]
+    if missing:
+        raise ValueError("找不到要恢复的已排除段落（可能已被恢复）。")
+    state[SCOPE_PLAN_KEY] = {
+        **plan,
+        "entries": [entry for entry in plan["entries"]
+                    if str(entry.get("excluded_id") or "") not in set(wanted)],
+        "updated_at": _finalization.now_iso(),
+    }
+    _c._append_runtime_technical_log(
+        job_id, "translation scope: removed "
+        f"{len(wanted)} pre-start exclusion plan entrie(s) by {actor}")
+    _c.save_job_state(job_id, state)
+    return {
+        "restored": len(wanted),
+        "unplanned": len(wanted),
+        "remaining": (len(_segment_source_list(state)) if state.get("p1_done")
+                      else _planned_paragraph_total(state)),
+        "state": state,
+    }
+
+
+def _raw_to_cleaned_map(state, raw_count, cleaned_count):
+    """原始提取段落（大纲坐标）→ 清洗后段落（翻译契约坐标）的索引映射。
+
+    非整理路径一一对应；整理过的 PDF 用 ``source_cleanup.output_input_indices``
+    （清洗后段 → 原始段列表）的逆映射。两条线索都不成立时返回 ``None``：
+    映射不出来就不动，绝不按比例猜。
+    """
+    output_inputs = (state.get("source_cleanup") or {}).get("output_input_indices")
+    if isinstance(output_inputs, list) and output_inputs:
+        mapping = {}
+        for cleaned_index, inputs in enumerate(output_inputs):
+            if not isinstance(inputs, list):
+                continue
+            for raw_index in inputs:
+                if isinstance(raw_index, int) and 0 <= raw_index < raw_count:
+                    mapping.setdefault(raw_index, cleaned_index)
+        return mapping or None
+    if raw_count == cleaned_count:
+        return {index: index for index in range(raw_count)}
+    return None
+
+
+def _plan_entry_raw_span(entry, raw):
+    """锚点验证后的原始段落区间；大纲与导入结构对不上时返回 ``None``（不猜）。
+
+    首尾锚点必须仍在原始提取段的计划位置上（大纲与导入共用同一条文字层
+    提取路径，锚点不一致说明两边读出了不同结构）。
+    """
+    start = int(entry.get("para_start") or 0)
+    end = int(entry.get("para_end") or 0)
+    if not 0 <= start < end <= len(raw):
+        return None
+    anchor_first = str(entry.get("anchor_first") or "")
+    anchor_last = str(entry.get("anchor_last") or "")
+    if anchor_first and str(raw[start] or "") != anchor_first:
+        return None
+    if anchor_last and str(raw[end - 1] or "") != anchor_last:
+        return None
+    return start, end
+
+
+def _plan_entry_cleaned_units(span, raw_to_cleaned):
+    """原始段落区间映射到的清洗后段落集合；映射不完整时 ``None``。"""
+    if raw_to_cleaned is None:
+        return None
+    start, end = span
+    cleaned_indexes = set()
+    for raw_index in range(start, end):
+        cleaned_index = raw_to_cleaned.get(raw_index)
+        if cleaned_index is None:
+            return None
+        cleaned_indexes.add(cleaned_index)
+    return cleaned_indexes
+
+
+def _cleaned_unit_inputs(raw_to_cleaned):
+    """清洗后段落 → 组成它的原始段落集合（``raw_to_cleaned`` 的逆映射）。"""
+    inputs_by_unit = {}
+    for raw_index, cleaned_index in raw_to_cleaned.items():
+        inputs_by_unit.setdefault(cleaned_index, set()).add(raw_index)
+    return inputs_by_unit
+
+
+def _plan_entry_segment_indexes(units, ranges, segment_count):
+    """清洗后段落集合 → 翻译单元索引（经 ``paragraph_ranges``）。"""
+    indexes = set()
+    for row in ranges:
+        if not isinstance(row, dict):
+            continue
+        paragraph_index = row.get("paragraph_index")
+        span_start, span_end = row.get("start"), row.get("end")
+        if not isinstance(paragraph_index, int) \
+                or paragraph_index not in units:
+            continue
+        if not (isinstance(span_start, int) and isinstance(span_end, int)):
+            continue
+        indexes.update(range(span_start, span_end))
+    indexes = {index for index in indexes if 0 <= index < segment_count}
+    return indexes or None
+
+
+def apply_scope_exclusion_plan(job_id, state):
+    """翻译单元建好那一刻，把译前范围排除计划落进排除账本。
+
+    只在 ``pairs`` 尚不存在、位置契约尚未建立时调用（与
+    ``_auto_exclude_non_translatable_segments`` 同一时刻，紧随其后）。映射链：
+    大纲段落（锚点验证）→ 清洗后段落 → ``segmentation.paragraph_ranges`` 的
+    翻译单元区间；映射不到的条目保持未应用并写入警告与技术日志——绝不猜位置、
+    绝不静默丢弃。应用与未应用都留 ``scope_exclusion_applied`` 审计；计划与
+    大纲随之清出 state，未应用的计划保留供用户撤下；之后范围入口回到工作列表口径。
+    不落盘：调用方随阶段
+    收尾统一 ``save_job_state``。
+    """
+    entries = _scope_plan_entries(state)
+    if not entries:
+        state.pop(SCOPE_PLAN_KEY, None)
+        state.pop("source_outline", None)
+        return {"applied": [], "unapplied": []}
+    if state.get("pairs"):
+        # 位置契约已存在：事后静默位移会打乱已持久化的发现与审校引用，
+        # 计划保持未应用并如实上报。
+        return {"applied": [], "unapplied": entries}
+    raw = [str(item or "") for item in state.get("source_paras") or []]
+    cleaned_count = len(state.get("source_paragraphs") or [])
+    raw_to_cleaned = _raw_to_cleaned_map(state, len(raw), cleaned_count)
+    ranges = (state.get("segmentation") or {}).get("paragraph_ranges") or []
+    sources = _segment_source_list(state)
+
+    # 阶段一（映射）：每个条目的翻译单元索引都对着**移除之前**的原始序列计算。
+    # 多个条目必须先全部映射完再动列表——逐条"边映射边删除"会让后续条目的
+    # 索引全部错位（账本记了四段，正文却只移走一半）。
+    planned = []
+    unapplied = []
+    for entry in entries:
+        span = _plan_entry_raw_span(entry, raw)
+        if span is None:
+            unapplied.append(entry)
+            continue
+        units = _plan_entry_cleaned_units(span, raw_to_cleaned)
+        if units is None:
+            unapplied.append(entry)
+            continue
+        planned.append((entry, span, units))
+    # 清洗合并可能跨越排除边界：一个清洗后段落同时含选中的原始段与**用户
+    # 保留**的原始段时，删掉它就会误伤保留内容。判定以全部条目的并集为准
+    # ——两条目共同覆盖一个合并单元是合法的；任何一条自身的覆盖不完整，
+    # 整条按未应用上报（带警告），绝不部分删除一个翻译单元。
+    union_raws = set()
+    for _entry, (span_start, span_end), _units in planned:
+        union_raws.update(range(span_start, span_end))
+    inputs_by_unit = _cleaned_unit_inputs(raw_to_cleaned) \
+        if raw_to_cleaned else {}
+    entry_indexes = {}
+    partial_coverage = []
+    for entry, _span, units in planned:
+        if raw_to_cleaned is None or not units <= set(inputs_by_unit) \
+                or any(inputs_by_unit[unit] - union_raws for unit in units):
+            unapplied.append(entry)
+            partial_coverage.append(entry)
+            continue
+        indexes = _plan_entry_segment_indexes(
+            units, ranges, len(sources))
+        if indexes is None:
+            unapplied.append(entry)
+            continue
+        entry_indexes[str(entry.get("key") or "")] = indexes
+    # 条目按文档顺序认领索引；条目间区间重叠时（不该发生，防御性处理）
+    # 已被前面条目认领的段落不再重复排除。
+    claimed = set()
+    for entry in entries:
+        indexes = entry_indexes.get(str(entry.get("key") or ""))
+        if indexes is None:
+            continue
+        entry_indexes[str(entry.get("key") or "")] = indexes - claimed
+        claimed |= indexes
+
+    # 阶段二（移除）：全部索引合并后**一次**从大到小移出，锚点都取自原始序列。
+    records_by_entry = {key: [] for key in entry_indexes}
+    for index in sorted(claimed, reverse=True):
+        entry_key = next(key for key, indexes in entry_indexes.items()
+                         if index in indexes)
+        entry = next(item for item in entries
+                     if str(item.get("key") or "") == entry_key)
+        records_by_entry[entry_key].append(_excluded_segment_record(
+            state, index,
+            reason=str(entry.get("reason")
+                       or f"范围排除（译前）：{entry.get('label')}"),
+            actor=str(entry.get("planned_by") or "user"),
+            source=str(sources[index] or ""),
+            target="",
+            pair=None, in_pairs=False,
+            before_source=sources[index - 1] if index > 0 else "",
+            after_source=(sources[index + 1]
+                          if index + 1 < len(sources) else "")))
+        _drop_segment_at(state, index)
+    ledger = list(state.get("excluded_segments") or [])
+    applied_records = []
+    for entry in entries:
+        entry_key = str(entry.get("key") or "")
+        records = records_by_entry.get(entry_key) or []
+        if not records:
+            continue
+        records.sort(key=lambda record: int(record.get("index") or 0))
+        ledger.extend(records)
+        applied_records.append({
+            "key": entry_key,
+            "label": str(entry.get("label") or ""),
+            "excluded_ids": [record["excluded_id"] for record in records],
+            "excluded_count": len(records),
+            "planned_at": str(entry.get("planned_at") or ""),
+            "applied_at": _finalization.now_iso(),
+        })
+    if ledger != list(state.get("excluded_segments") or []):
+        state["excluded_segments"] = ledger
+    audit = list(state.get("scope_exclusion_applied") or []) + applied_records
+    partial_keys = {str(entry.get("key") or "") for entry in partial_coverage}
+    if unapplied:
+        def _reason_of(entry):
+            if str(entry.get("key") or "") in partial_keys:
+                return ("清洗把选中的内容与保留的内容合并成了同一段，"
+                        "为避免误删保留内容，请重新勾选或调整切分")
+            return "导入结构与本地大纲不一致"
+        labels = "、".join(str(entry.get("label") or entry.get("key") or "")
+                           for entry in unapplied)
+        warning = f"译前范围排除未能应用（{_reason_of(unapplied[0])}）：{labels}"
+        warnings = state.setdefault("warnings", [])
+        if warning not in warnings:
+            warnings.append(warning)
+        audit.append({
+            "unapplied": True,
+            "labels": labels,
+            "count": len(unapplied),
+            "partial_coverage": sorted(partial_keys),
+            "recorded_at": _finalization.now_iso(),
+        })
+    state["scope_exclusion_applied"] = audit[-50:]
+    if unapplied:
+        state[SCOPE_PLAN_KEY] = {**state[SCOPE_PLAN_KEY], "entries": unapplied}
+    else:
+        state.pop(SCOPE_PLAN_KEY, None)
+    state.pop("source_outline", None)
+    for item in applied_records:
+        _c._append_runtime_technical_log(
+            job_id, "translation scope: applied pre-start exclusion "
+            f"({item['label']}): {item['excluded_count']} segment(s) excluded")
+    for entry in unapplied:
+        _c._append_runtime_technical_log(
+            job_id, "translation scope: could not apply pre-start exclusion "
+            f"({entry.get('label')}); {_reason_of(entry)}")
+    return {"applied": applied_records, "unapplied": unapplied}
 
 
 def can_undo_translation_segment_structure(state):

@@ -2184,7 +2184,6 @@
   "{v0}　·　{v1}{v2}": "{v0} · {v1}{v2}",
   "{v0}　·　第 {v1}–{v2} 段 · {v3} 段 / {v4} 字": "{v0}　·　Párrafos {v1}–{v2} · {v3} párrafos / {v4} caracteres",
   "勾选不需要翻译的页、章或节：被排除的范围不产生模型调用、不计入待完成与审校，原文完整保留、随时可恢复。当前 {v0} 段 / {v1} 字（另有 {v2} 段已排除）。": "Marca las páginas, capítulos o secciones que no necesitan traducción: los rangos excluidos no generan llamadas al modelo, no cuentan como pendientes ni como revisión, y su texto original se conserva íntegro y puede restaurarse en cualquier momento. Actualmente {v0} párrafos / {v1} caracteres ({v2} párrafos ya excluidos).",
-  "任务还没有可编辑的段落：等原文提取完成后再来选择范围。": "La tarea aún no tiene párrafos editables: elige el alcance cuando termine la extracción del original.",
   "将排除所选 {v0} 段 / {v1} 字；排除后剩余 {v2} 段 / {v3} 字。": "Se excluirán los {v0} párrafos / {v1} caracteres seleccionados; quedarán {v2} párrafos / {v3} caracteres.",
   "将恢复所选的 {v0} 段；它们会回到工作台并重新计入待完成。": "Se restaurarán los {v0} párrafos seleccionados; vuelven al banco de trabajo y vuelven a contar como pendientes.",
   "尚未选择任何范围。": "Aún no se ha seleccionado ningún rango.",
@@ -2192,5 +2191,17 @@
   "已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。": "Excluidos {v0} párrafos por alcance; el contenido excluido no entra en la traducción ni en la entrega, y la lista de exclusiones se adjunta al paquete de entrega.",
   "已恢复 {v0} 段；它们回到工作台并重新计入待完成。": "Restaurados {v0} párrafos; vuelven al banco de trabajo y cuentan como pendientes otra vez.",
   "无法排除所选范围": "No se pudieron excluir los rangos seleccionados",
-  "无法恢复所选段落": "No se pudieron restaurar los párrafos seleccionados"
+  "无法恢复所选段落": "No se pudieron restaurar los párrafos seleccionados",
+  "开始翻译前按页 / 章 / 节排除不需要翻译的内容：被排除的范围不产生模型调用，原文保留、开始后也可以恢复。": "Antes de comenzar, excluya páginas / capítulos / secciones que no quiera traducir: el alcance excluido no genera llamadas al modelo, el texto original se conserva y puede restaurarse después de iniciar.",
+  "本地读不出这份文件的结构（扫描件或源文件缺失），开始翻译后可在工作台逐段排除。": "No se puede leer localmente la estructura de este archivo (documento escaneado o archivo de origen ausente); tras iniciar la traducción podrá excluir segmentos uno a uno en el banco de trabajo.",
+  "任务还没有开始：这里的范围来自本地读取的原文结构。现在排除的内容在开始翻译时生效，不产生任何模型调用；开始后也能在这里恢复。": "La tarea aún no ha comenzado: el alcance de aquí procede de la estructura del original leída localmente. Lo que excluya ahora surte efecto al iniciar la traducción y no genera llamadas al modelo; también podrá restaurarse aquí después.",
+  "已计划排除原文 {v0} 段；开始翻译时生效，可在翻译范围中撤下。": "Exclusión prevista de {v0} párrafos de origen; se aplica al iniciar la traducción y puede retirarse en el alcance de traducción.",
+  "当前没有待翻译段落；可在下方恢复已排除的内容。": "No quedan segmentos por traducir. Restaure el contenido excluido a continuación.",
+  "原文第 {v0}–{v1} 段": "Párrafos de origen {v0}–{v1}",
+  "原文第 {v0} 段": "Párrafo de origen {v0}",
+  "部分译前排除尚未应用，翻译已暂停。请调整范围或撤下未应用计划后继续。": "No se pudieron aplicar algunas exclusiones previas. La traducción está detenida. Ajuste el alcance o retire los planes no aplicados antes de continuar.",
+  "未应用的排除计划：{v0}": "Plan de exclusión no aplicado: {v0}",
+  "撤下所选计划": "Retirar los planes seleccionados",
+  "将撤下所选的 {v0} 项排除计划；原文与已有译文保持不变。": "Se retirarán {v0} planes de exclusión; el original y las traducciones existentes no cambiarán.",
+  "已撤下 {v0} 项译前排除计划。": "Se retiraron {v0} planes de exclusión previos."
 }

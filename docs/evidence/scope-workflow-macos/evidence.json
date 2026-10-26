@@ -1,0 +1,18 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "qt_backend": "cocoa",
+  "synthetic_fixture": true,
+  "human_operated": false,
+  "real_provider_calls": 0,
+  "ui_actions": [
+    "exclude",
+    "restore",
+    "exclude"
+  ],
+  "pretranslation_plan": true,
+  "estimate_updates": true,
+  "excluded_absent_from_model_requests": true,
+  "user_skip_manifest": true,
+  "restore_preserves_existing_targets": true,
+  "reopened_pair_alignment": true
+}

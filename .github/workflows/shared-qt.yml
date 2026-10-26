@@ -52,6 +52,8 @@ jobs:
       - name: Check shared views and platform boundary
         run: >-
           python -m pytest -q
+          tests/translation_scope_test.py tests/qt_source_outline_panel_test.py
+          tests/qt_client_window_test.py::test_setup_scope_button_opens_real_dialog_and_saves_a_plan
           tests/qt_platform_ui_test.py tests/qt_i18n_test.py
           tests/qt_settings_window_test.py tests/qt_inline_editor_test.py
           tests/qt_theme_follow_system_test.py
@@ -65,3 +67,15 @@ jobs:
           tests/knowledge_async_commit_test.py
           tests/desktop_updates_test.py tests/qt_updater_test.py
           tests/windows_update_helper_test.py tests/macos_updater_packaging_test.py
+      - name: Native Windows pretranslation scope workflow
+        if: runner.os == 'Windows'
+        env:
+          QT_QPA_PLATFORM: windows
+        run: python scripts/scope_workflow_evidence.py --output scope-workflow-windows
+      - name: Upload native scope workflow evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scope-workflow-windows
+          path: scope-workflow-windows
+          if-no-files-found: warn

@@ -393,6 +393,7 @@ class MainWindow(QMainWindow):
 
         self.workbench.backRequested.connect(self.show_home)
         self.workbench.startRequested.connect(self.start_or_resume)
+        self.workbench.setupScopeRequested.connect(self.select_translation_scope)
         self.workbench.setupStartRequested.connect(self.start_from_setup)
         self.workbench.setupCreateProjectRequested.connect(
             self.create_project_from_setup)
@@ -2638,6 +2639,8 @@ class MainWindow(QMainWindow):
 
         对话框只把勾选变成范围键 / excluded_id；真正的状态变更走适配层，
         与逐段排除共用同一条账本契约。动作完成后任务刷新，范围树随之重算。
+        任务还没有开始时同样可以打开：范围来自本地原文大纲，排除先记成计划、
+        开始翻译时落账——这是 #28"开始前排除不想付费翻译的章节"的入口。
         """
         job_id = self._current_job_id
         if not job_id:
@@ -2655,9 +2658,15 @@ class MainWindow(QMainWindow):
         except adapter.AdapterError as exc:
             self._failure(i18n.tr('无法排除所选范围'), str(exc))
             return
-        self._notice(i18n.tr(
-            '已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。',
-            v0=result.get("excluded", 0)))
+        if result.get("planned"):
+            self._notice(i18n.tr(
+                '已计划排除原文 {v0} 段；开始翻译时生效，可在翻译范围中撤下。',
+                v0=result.get("planned_segments", 0)))
+        else:
+            self._notice(i18n.tr(
+                '已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。',
+                v0=result.get("excluded", 0)))
+        self.workbench.setup_panel.refresh_scope_estimate(job_id)
         self.refresh_workbench(force=True)
 
     def _apply_scope_restore(self, job_id: str, excluded_ids: list) -> None:
@@ -2666,8 +2675,12 @@ class MainWindow(QMainWindow):
         except adapter.AdapterError as exc:
             self._failure(i18n.tr('无法恢复所选段落'), str(exc))
             return
-        self._notice(i18n.tr('已恢复 {v0} 段；它们回到工作台并重新计入待完成。',
-                             v0=result.get("restored", 0)))
+        if result.get("unplanned"):
+            self._notice(i18n.tr('已撤下 {v0} 项译前排除计划。', v0=result["unplanned"]))
+        else:
+            self._notice(i18n.tr('已恢复 {v0} 段；它们回到工作台并重新计入待完成。',
+                                 v0=result.get("restored", 0)))
+        self.workbench.setup_panel.refresh_scope_estimate(job_id)
         self.refresh_workbench(force=True)
 
     # ================= 收尾 =================

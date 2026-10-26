@@ -2463,6 +2463,7 @@ class WorkbenchView(QWidget):
     openAssetRequested = Signal(str)
     setupStartRequested = Signal(dict)      # 译前准备的「开始翻译」载荷
     setupCreateProjectRequested = Signal()  # 译前准备里点「新建项目…」
+    setupScopeRequested = Signal()          # 译前准备里的「翻译范围…」（#28）
     setupTermbaseAddRequested = Signal()
     setupStyleProfileRequested = Signal()
     setupTermbaseRemoveRequested = Signal()
@@ -3286,6 +3287,7 @@ class WorkbenchView(QWidget):
             self.setupLiteratureRemoveRequested.emit)
         self.setup_panel.createProjectRequested.connect(
             self.setupCreateProjectRequested.emit)
+        self.setup_panel.scopeRequested.connect(self.setupScopeRequested.emit)
         setup_scroll = QScrollArea()
         setup_scroll.setWidgetResizable(True)
         setup_scroll.setFrameShape(QScrollArea.Shape.NoFrame)

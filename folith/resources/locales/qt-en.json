@@ -2183,7 +2183,6 @@
   "{v0}　·　{v1}{v2}": "{v0} · {v1}{v2}",
   "{v0}　·　第 {v1}–{v2} 段 · {v3} 段 / {v4} 字": "{v0}　·　Segments {v1}–{v2} · {v3} segments / {v4} chars",
   "勾选不需要翻译的页、章或节：被排除的范围不产生模型调用、不计入待完成与审校，原文完整保留、随时可恢复。当前 {v0} 段 / {v1} 字（另有 {v2} 段已排除）。": "Tick the pages, chapters or sections that need no translation: excluded scopes make no model calls, are not counted as pending or review work, and their source text is kept in full and can be restored at any time. Currently {v0} segments / {v1} characters ({v2} segments already excluded).",
-  "任务还没有可编辑的段落：等原文提取完成后再来选择范围。": "The task has no editable segments yet: choose the scope after source extraction finishes.",
   "将排除所选 {v0} 段 / {v1} 字；排除后剩余 {v2} 段 / {v3} 字。": "The selected {v0} segments / {v1} characters will be excluded; {v2} segments / {v3} characters remain.",
   "将恢复所选的 {v0} 段；它们会回到工作台并重新计入待完成。": "The selected {v0} segments will be restored; they return to the workbench and count as pending again.",
   "尚未选择任何范围。": "No scope selected yet.",
@@ -2191,5 +2190,17 @@
   "已按范围排除 {v0} 段；排除的内容不进入译文与交付，交付包里会附排除清单。": "Excluded {v0} segments by scope; excluded content stays out of the translation and the delivery, and the exclusion list is attached to the delivery package.",
   "已恢复 {v0} 段；它们回到工作台并重新计入待完成。": "Restored {v0} segments; they are back in the workbench and count as pending again.",
   "无法排除所选范围": "Could not exclude the selected scopes",
-  "无法恢复所选段落": "Could not restore the selected segments"
+  "无法恢复所选段落": "Could not restore the selected segments",
+  "开始翻译前按页 / 章 / 节排除不需要翻译的内容：被排除的范围不产生模型调用，原文保留、开始后也可以恢复。": "Before starting, exclude pages / chapters / sections you don't want to translate: excluded scope triggers no model calls, the source text is kept, and it can be restored after the start.",
+  "本地读不出这份文件的结构（扫描件或源文件缺失），开始翻译后可在工作台逐段排除。": "The structure of this file cannot be read locally (a scanned document or a missing source file); after the translation starts you can exclude segments one by one in the workbench.",
+  "任务还没有开始：这里的范围来自本地读取的原文结构。现在排除的内容在开始翻译时生效，不产生任何模型调用；开始后也能在这里恢复。": "The task has not started yet: the scope here comes from the source structure read locally. What you exclude now takes effect when the translation starts and triggers no model calls; it can also be restored here afterwards.",
+  "已计划排除原文 {v0} 段；开始翻译时生效，可在翻译范围中撤下。": "Planned exclusion of {v0} source paragraphs; takes effect when translation starts and can be removed in Translation scope.",
+  "当前没有待翻译段落；可在下方恢复已排除的内容。": "No segments remain to translate. Restore excluded content below.",
+  "原文第 {v0}–{v1} 段": "Source paragraphs {v0}–{v1}",
+  "原文第 {v0} 段": "Source paragraph {v0}",
+  "部分译前排除尚未应用，翻译已暂停。请调整范围或撤下未应用计划后继续。": "Some pretranslation exclusions could not be applied. Translation is stopped. Adjust the scope or withdraw the unapplied plans before continuing.",
+  "未应用的排除计划：{v0}": "Unapplied exclusion plan: {v0}",
+  "撤下所选计划": "Withdraw selected plans",
+  "将撤下所选的 {v0} 项排除计划；原文与已有译文保持不变。": "Withdraw {v0} selected exclusion plan(s); the source and existing translations stay unchanged.",
+  "已撤下 {v0} 项译前排除计划。": "Withdrew {v0} pretranslation exclusion plan(s)."
 }

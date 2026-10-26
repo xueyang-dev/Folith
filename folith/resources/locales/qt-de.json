@@ -266,7 +266,6 @@
   "任务自己的术语表不会变；已翻译的部分不会被改动": "Aufgabeneigene Glossare bleiben unverändert; bereits übersetzter Text wird nicht geändert",
   "任务详情": "Aufgabendetails",
   "任务运行时不能更改数据位置。": "Der Datenspeicherort kann nicht geändert werden, während eine Aufgabe ausgeführt wird.",
-  "任务还没有可编辑的段落：等原文提取完成后再来选择范围。": "Die Aufgabe hat noch keine bearbeitbaren Segmente: Wählen Sie den Umfang erst nach Abschluss der Ausgangstext-Extraktion.",
   "任务里出现的术语会先在这里等你确认；也可以手动添加。": "In Aufgaben gefundene Begriffe warten hier auf Ihre Bestätigung; Sie können sie auch manuell hinzufügen.",
   "任务默认值": "Standardwerte für Aufgaben",
   "位置": "Speicherort",
@@ -2192,5 +2191,17 @@
   "；收进 {v0} 条术语": "; {v0} Begriffe aufgenommen",
   "；该段审校状态已刷新": "; Überprüfungsstatus des Segments aktualisiert",
   "；还需处理：{v0}": "; noch zu bearbeiten: {v0}",
-  "；阻断 {v0} 项：{v1}": "; {v0} blockierende(r) Punkt(e): {v1}"
+  "；阻断 {v0} 项：{v1}": "; {v0} blockierende(r) Punkt(e): {v1}",
+  "开始翻译前按页 / 章 / 节排除不需要翻译的内容：被排除的范围不产生模型调用，原文保留、开始后也可以恢复。": "Vor der Übersetzung unnötige Seiten, Kapitel oder Abschnitte ausschließen. Der Quelltext bleibt erhalten; ausgeschlossene Inhalte erzeugen keine Übersetzungsanfragen und lassen sich wiederherstellen.",
+  "本地读不出这份文件的结构（扫描件或源文件缺失），开始翻译后可在工作台逐段排除。": "Keine lokale Struktur verfügbar (Scan oder fehlende Quelle). Nach dem Start können Segmente im Arbeitsbereich ausgeschlossen werden.",
+  "任务还没有开始：这里的范围来自本地读取的原文结构。现在排除的内容在开始翻译时生效，不产生任何模型调用；开始后也能在这里恢复。": "Die Aufgabe wurde noch nicht gestartet. Diese Bereiche stammen aus der lokalen Quellstruktur. Ausschlüsse gelten ab Übersetzungsbeginn und lassen sich hier zurücknehmen.",
+  "已计划排除原文 {v0} 段；开始翻译时生效，可在翻译范围中撤下。": "Ausschluss von {v0} Quellabsätzen geplant; gilt ab Übersetzungsbeginn und kann im Übersetzungsumfang zurückgenommen werden.",
+  "当前没有待翻译段落；可在下方恢复已排除的内容。": "Keine Segmente mehr zu übersetzen. Ausgeschlossene Inhalte unten wiederherstellen.",
+  "原文第 {v0}–{v1} 段": "Quellabsätze {v0}–{v1}",
+  "原文第 {v0} 段": "Quellabsatz {v0}",
+  "部分译前排除尚未应用，翻译已暂停。请调整范围或撤下未应用计划后继续。": "Einige Ausschlüsse konnten nicht angewendet werden. Die Übersetzung wurde angehalten. Umfang anpassen oder nicht angewendete Pläne zurücknehmen, bevor Sie fortfahren.",
+  "未应用的排除计划：{v0}": "Nicht angewendeter Ausschlussplan: {v0}",
+  "撤下所选计划": "Ausgewählte Pläne zurücknehmen",
+  "将撤下所选的 {v0} 项排除计划；原文与已有译文保持不变。": "{v0} Ausschlusspläne zurücknehmen; Quelle und vorhandene Übersetzungen bleiben unverändert.",
+  "已撤下 {v0} 项译前排除计划。": "{v0} Ausschlusspläne vor der Übersetzung zurückgenommen."
 }
