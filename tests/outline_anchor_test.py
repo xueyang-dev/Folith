@@ -354,3 +354,125 @@ def test_a_legacy_mapping_refuses_old_positions_after_a_structural_edit(data_dir
         assert entry["state"] == "unresolved"
         assert entry["reason"] == "structure_edited"
         assert entry["first_segment_index"] is None
+
+
+def _resegment_after_cleanup(state):
+    """Simulate cleanup merging two paragraphs, then re-splitting them.
+
+    The segment count is unchanged (4), so every segment uid still exists, but
+    the nodes now cover other segments: exactly what a cleanup + resegmentation
+    run does when the uid scheme is positional (``seg-{job}-{index:04d}``).
+    """
+    state["source_cleanup"] = {"output_input_indices": [[0], [1, 2], [3]]}
+    state["segmentation"] = {
+        "input_paragraph_count": 3,
+        "paragraph_ranges": [
+            {"paragraph_index": 0, "start": 0, "end": 1},
+            {"paragraph_index": 1, "start": 1, "end": 3},
+            {"paragraph_index": 2, "start": 3, "end": 4},
+        ],
+    }
+    return state
+
+
+def test_cleanup_resegmentation_does_not_reuse_the_cached_mapping(data_dir):
+    """#186/#204: cleanup may move node positions without moving segment uids.
+
+    The uids are positional, so the old mapping's uids all still exist and the
+    structure revision is unchanged.  A cached mapping must nevertheless not be
+    served: its positions describe the pre-cleanup segmentation.
+    """
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    first = _persisted_mapping(outline)
+    assert first["source"] == "paragraphs"
+    assert (first["nodes"]["n0000"]["first_segment_index"],
+            first["nodes"]["n0000"]["last_segment_index"]) == (0, 1)
+    assert (first["nodes"]["n0001"]["first_segment_index"],
+            first["nodes"]["n0001"]["last_segment_index"]) == (2, 3)
+
+    state = _resegment_after_cleanup(core.load_job_state(JOB))
+    core.save_job_state(JOB, state)
+    second = anchor.resolve(JOB, state, persist=True)
+
+    assert second["source"] != "cache"
+    first_node, second_node = second["nodes"]["n0000"], second["nodes"]["n0001"]
+    assert (first_node["first_segment_index"],
+            first_node["last_segment_index"]) == (0, 0)
+    assert (second_node["first_segment_index"],
+            second_node["last_segment_index"]) == (3, 3)
+
+
+def test_reset_after_cleanup_drops_the_mapping_but_keeps_the_outline(data_dir):
+    """The reset keeps the outline (source bytes unchanged) and drops positions."""
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    _persisted_mapping(outline)
+    state = core.load_job_state(JOB)
+    state["source_outline"] = outline
+
+    core._reset_source_dependent_state(state, job_id=JOB)
+
+    stored = json.loads(anchor.outline_sidecar_path(JOB).read_text(encoding="utf-8"))
+    assert stored["mapping"] == {}
+    assert stored["outline"]["fingerprint"] == outline["fingerprint"]
+    assert "source_outline" not in state
+
+
+def test_reset_without_a_sidecar_is_harmless(data_dir):
+    _save(_state(_paragraphs()))
+    core._reset_source_dependent_state({}, job_id=JOB)
+    assert not anchor.outline_sidecar_path(JOB).exists()
+
+
+def _pdf_bytes():
+    import fitz
+
+    with fitz.open() as document:
+        page = document.new_page(width=144, height=144)
+        page.insert_text((20, 40), "scan", fontsize=10)
+        return document.tobytes()
+
+
+def test_rescanning_the_source_drops_the_persisted_outline(data_dir, monkeypatch):
+    """A rescan replaces the source bytes: outline and mapping both go (#204)."""
+    state = _state(_paragraphs())
+    state["filename"] = "scan.pdf"
+    _save(state, _pdf_bytes())
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    anchor.store_outline(JOB, outline, data=_pdf_bytes())
+    anchor.resolve(JOB, state, {"outline": outline, "mapping": {}}, persist=True)
+    assert json.loads(anchor.outline_sidecar_path(JOB).read_text())["mapping"]
+
+    raw = list(_paragraphs())
+    monkeypatch.setattr(
+        core, "extract_document_paragraphs_with_report",
+        lambda *args, **kwargs: (raw, [], {"semantic_source": "text"}))
+    monkeypatch.setattr(
+        core, "cleanup_source_paragraphs",
+        lambda *args, **kwargs: (list(raw), {"status": "ok"}, []))
+
+    core.rescan_pdf_source(
+        JOB, filename="scan.pdf", provider="DeepSeek", api_key="offline",
+        model="fixture")
+
+    assert not anchor.outline_sidecar_path(JOB).exists()
+
+
+def test_reimporting_the_document_drops_the_persisted_outline(data_dir):
+    """A re-import may replace the source bytes: the outline is dropped (#204)."""
+    from folith.application import import_document
+
+    values = {
+        "provider": "OpenAI", "model": "gpt-5.1", "api_key": "sk",
+        "translator_base_url": "https://api.openai.com/v1",
+        "target_lang": "English", "enable_report": False,
+    }
+    first = import_document("outline.docx", SOURCE, values)
+    outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
+    anchor.store_outline(first.job_id, outline, data=SOURCE)
+    assert anchor.outline_sidecar_path(first.job_id).is_file()
+
+    again = import_document("outline.docx", SOURCE, values)
+
+    assert again.created is False
+    assert again.job_id == first.job_id
+    assert not anchor.outline_sidecar_path(first.job_id).exists()
