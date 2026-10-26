@@ -37,7 +37,7 @@ R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
-XML_NS = "http://www.w3.org/XML/1998/namespace"
+TAG_XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 NSMAP = {
     "w": W_NS,
@@ -848,7 +848,7 @@ def _render_tagged_target_to_runs(p: LET._Element, target_text: str,
         t = LET.SubElement(r, TAG_T)
         t.text = text
         if text.startswith(" ") or text.endswith(" ") or "\t" in text:
-            t.set(f"{{{XML_NS}}}space", "preserve")
+            t.set(TAG_XML_SPACE, "preserve")
 
     def _process_node(node: ET.Element, current_formats: Set[str], current_parent: LET._Element):
         # Text before children
