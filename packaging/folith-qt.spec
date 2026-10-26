@@ -246,6 +246,9 @@ DOCUMENT_TYPES = [
     {"CFBundleTypeName": "Markdown document", "CFBundleTypeRole": "Viewer",
      "LSHandlerRank": "Alternate", "CFBundleTypeExtensions": ["md", "markdown"],
      "LSItemContentTypes": ["net.daringfireball.markdown"]},
+    {"CFBundleTypeName": "XLIFF translation document", "CFBundleTypeRole": "Editor",
+     "LSHandlerRank": "Alternate", "CFBundleTypeExtensions": ["xliff", "xlf"],
+     "LSItemContentTypes": ["org.oasis.xliff"]},
 ]
 
 info_plist = {

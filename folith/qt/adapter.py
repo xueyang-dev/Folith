@@ -119,6 +119,7 @@ class EngineConfig:
     deliver_pdf: bool = False
     deliver_original_pdf: bool = False
     deliver_epub: bool = False
+    deliver_xliff: bool = False
     deliver_terms_xlsx: bool = True
     deliver_evidence: bool = True
     deliver_review_report: bool = False
@@ -476,6 +477,11 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
     # into a DOCX job and promise an artifact that will never be produced.
     deliver_original_pdf = bool(config.deliver_original_pdf) and (
         core.original_layout_pdf_applicable(state.get("filename")))
+    # The XLIFF round trip rewrites the source file itself, so like the
+    # original-layout PDF it must not promise an artifact a DOCX job can
+    # never produce.
+    deliver_xliff = bool(config.deliver_xliff) and (
+        str(state.get("filename") or "").lower().endswith((".xliff", ".xlf")))
     try:
         base_url = config.translator_base_url()
     except ValueError:
@@ -519,6 +525,7 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
             "deliver_pdf": config.deliver_pdf,
             "deliver_original_pdf": deliver_original_pdf,
             "deliver_epub": config.deliver_epub,
+            "deliver_xliff": deliver_xliff,
             "deliver_terms_xlsx": config.deliver_terms_xlsx,
             "deliver_evidence": config.deliver_evidence,
             "deliver_review_report": config.deliver_review_report,
@@ -4110,6 +4117,8 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
         names.append("original_layout.pdf")
     if configured.get("deliver_epub"):
         names.append("translation.epub")
+    if configured.get("deliver_xliff"):
+        names.append("original_format.xliff")
     if configured.get("deliver_terms_xlsx"):
         names.append("terms.xlsx")
     if configured.get("deliver_evidence"):

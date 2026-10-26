@@ -1,4 +1,7 @@
 {
+  "仅 XLIFF": "XLIFF only",
+  "原格式 XLIFF 回写": "XLIFF write-back in original format",
+  "仅 XLIFF 任务可用：把译文安全写回原文件，保持结构不变。": "Available for XLIFF tasks only: writes the translation safely back into the original file without breaking its structure.",
   "\n文件在磁盘上找不到；快照本身不可修改，请重新冻结交付。": "\nThe file is missing on disk; the snapshot itself cannot be changed — freeze the delivery again.",
   "\n校验：sha256 {v0}…": "\nChecksum: sha256 {v0}…",
   " · {v0} 个候选待确认": " · {v0} candidates to confirm",

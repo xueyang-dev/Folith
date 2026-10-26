@@ -88,7 +88,8 @@ DEFAULT_SEGMENTATION_MODE = "sentence"
 #: Source formats the core can turn into paragraphs. File
 #: admission has exactly one authority — this tuple — so no surface can advertise
 #: a format the engine cannot ingest.
-SOURCE_SUFFIXES: Tuple[str, ...] = (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown")
+SOURCE_SUFFIXES: Tuple[str, ...] = (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown",
+                                    ".xliff", ".xlf")
 
 #: A single document larger than this is refused up front instead of being read
 #: into memory and failing deep inside the pipeline.

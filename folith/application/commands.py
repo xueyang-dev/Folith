@@ -23,6 +23,7 @@ from folith.application.job_config import (
     is_supported_source,
     source_suffix_problem,
 )
+from folith.xliff_roundtrip import is_xliff_filename
 from folith.application.settings import (
     EffectiveSettings,
     SettingsSources,
@@ -185,6 +186,10 @@ def _apply_task_defaults(state: dict, contract: JobConfig) -> None:
     state["style_rules"] = contract.style_rules
     state["translation_theory"] = contract.translation_theory
     state["segmentation_mode"] = contract.segmentation_mode
+    if is_xliff_filename(state.get("filename")):
+        # XLIFF TU Contract：TU 边界即分段边界，源文是写回对位的权威文本。
+        state["segmentation_mode"] = "paragraph"
+        state["enable_source_cleanup"] = False
 
 
 def apply_task_setup(

@@ -154,7 +154,7 @@ def default_delivery_config() -> Dict[str, Any]:
 DELIVERY_OUTPUT_KEYS: Tuple[str, ...] = (
     "enable_annotate", "enable_report", "deliver_plain_docx",
     "deliver_bilingual_docx", "deliver_pdf", "deliver_original_pdf",
-    "deliver_epub", "deliver_terms_xlsx",
+    "deliver_epub", "deliver_xliff", "deliver_terms_xlsx",
     "deliver_tbx", "deliver_tmx", "deliver_jsonl", "deliver_evidence",
     "deliver_cases", "deliver_academic_workspace", "deliver_review_report",
 )
@@ -214,7 +214,7 @@ DELIVERY_PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
 #: widgets when a preset is applied).
 DELIVERY_WIDGET_KEYS: Tuple[str, ...] = (
     "deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
-    "deliver_original_pdf", "deliver_epub",
+    "deliver_original_pdf", "deliver_epub", "deliver_xliff",
     "output_annotate", "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx",
     "deliver_jsonl", "output_report", "deliver_evidence", "deliver_cases",
     "deliver_academic_workspace", "deliver_review_report",

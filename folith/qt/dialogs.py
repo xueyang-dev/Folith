@@ -289,7 +289,8 @@ class EngineDialog(QDialog):
                     self.cleanup_box, self.report_box, self.academic_box,
                     self.deliver_plain_box, self.deliver_bilingual_box, self.deliver_terms_box,
                     self.deliver_evidence_box, self.deliver_pdf_box,
-                    self.deliver_original_pdf_box, self.deliver_epub_box):
+                    self.deliver_original_pdf_box, self.deliver_epub_box,
+                    self.deliver_xliff_box):
             box.toggled.connect(self._immediate_changed)
         for combo in (self.theme_box, self.language_box, self.ocr_backend_box,
                       self.ocr_mode_box, self.ocr_language_box, self.default_mode_box, self.accent_box):
@@ -590,13 +591,18 @@ class EngineDialog(QDialog):
         self.deliver_original_pdf_box.setToolTip(
             i18n.tr('仅 PDF 任务可用：按原文件的版式重建译文页面。'))
         self.deliver_epub_box, epub = fmt("deliver_epub", 'EPUB 电子书', False)
+        self.deliver_xliff_box, xliff = fmt(
+            "deliver_xliff", '原格式 XLIFF 回写', False, i18n.tr('仅 XLIFF'))
+        self.deliver_xliff_box.setToolTip(
+            i18n.tr('仅 XLIFF 任务可用：把译文安全写回原文件，保持结构不变。'))
         self.deliver_terms_box, terms = fmt("deliver_terms_xlsx", '术语表 XLSX', True)
         self.deliver_evidence_box, evidence = fmt("deliver_evidence", '段落证据 JSONL', True)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(theme_module.SPACE["xl"])
         grid.setVerticalSpacing(theme_module.SPACE["sm"])
-        for index, widget in enumerate((plain, bilingual, pdf, original, epub, terms, evidence)):
+        for index, widget in enumerate((plain, bilingual, pdf, original, epub,
+                                        xliff, terms, evidence)):
             grid.addWidget(widget, index // 2, index % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
@@ -963,6 +969,7 @@ class EngineDialog(QDialog):
         config.deliver_pdf = self.deliver_pdf_box.isChecked()
         config.deliver_original_pdf = self.deliver_original_pdf_box.isChecked()
         config.deliver_epub = self.deliver_epub_box.isChecked()
+        config.deliver_xliff = self.deliver_xliff_box.isChecked()
         config.default_translation_mode = str(self.default_mode_box.currentData() or "标准")
         from folith.model_connections import effective_config
         library = self.connection_library
