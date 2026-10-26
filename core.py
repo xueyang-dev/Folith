@@ -1512,6 +1512,7 @@ _EXTRACTION_FAILURE_HINTS = (
     ("encrypt", "这个 PDF 已加密，无法读取；请先解除密码保护再导入。"),
     ("password", "这个 PDF 已加密，无法读取；请先解除密码保护再导入。"),
     ("content_types", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
+    ("there is no item named 'word/document.xml'", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
     ("not a zip file", "无法读取这个 DOCX：文件可能损坏，或它不是真正的 Word 文档。"),
     ("failed to open stream", "无法读取这个 PDF：文件可能损坏，或它不是真正的 PDF。"),
     ("no objects found", "无法读取这个 PDF：文件可能损坏，或它不是真正的 PDF。"),
