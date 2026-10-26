@@ -1498,6 +1498,8 @@ def translation_visible_indexes(state, search="", status_filter="全部",
                 continue
         if status_filter == "待审" and pair.get("reviewed"):
             continue
+        if status_filter in ("锁定", "已锁定") and not (pair.get("locked") or pair.get("excluded")):
+            continue
         if status_filter == "已审校" and not pair.get("reviewed"):
             continue
         if filter_terms and not translation_terms_for_pair(state, pair):

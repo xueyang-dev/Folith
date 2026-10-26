@@ -659,5 +659,142 @@ class NoteBox(QWidget):
         self.save_button.setEnabled(self.edit.toPlainText().strip() != self._saved.strip())
 
 
+
+
+class TMCandidateBox(QWidget):
+    """当前段落的 TM 候选卡片列表（分数、来源、上下文冲突提示、键盘/点击插入）。
+
+    - exact/normalized/fuzzy 多候选；
+    - 显示分数（如 100%、99%、85%）与来源（项目 TM / 导入）；
+    - 上下文冲突时显示警告提示（复用 #107 标记）；
+    - 插入动作只影响当前编辑框草稿，不写业务真值。
+    """
+
+    insertRequested = Signal(str)  # candidate target text
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._items: list[dict] = []
+        self._key = None
+
+        self.label = style_module.SectionLabel(i18n.tr('翻译记忆'))
+        self.empty_label = _wrapped(i18n.tr('暂无匹配的翻译记忆'), "hint")
+        self.error_label = _wrapped(i18n.tr('翻译记忆暂不可用'), "hint")
+        self.error_label.setVisible(False)
+
+        self._cards_layout = QVBoxLayout()
+        self._cards_layout.setContentsMargins(0, 0, 0, 0)
+        self._cards_layout.setSpacing(theme_module.SPACE["xs"])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(theme_module.SPACE["xs"])
+        layout.addWidget(self.label)
+        layout.addWidget(self.empty_label)
+        layout.addWidget(self.error_label)
+        layout.addLayout(self._cards_layout)
+
+    def set_candidates(self, items: list[dict], *, error: bool = False) -> None:
+        """更新候选列表；内容没变时不重构 widget。"""
+        if error:
+            self._key = None
+            _clear(self._cards_layout)
+            self._items = []
+            self.empty_label.setVisible(False)
+            self.error_label.setVisible(True)
+            return
+
+        key = repr([(it.get("score"), it.get("target"), it.get("conflict_warning")) for it in (items or [])])
+        if key == self._key:
+            return
+        self._key = key
+        _clear(self._cards_layout)
+        self._items = list(items or [])
+        self.error_label.setVisible(False)
+
+        if not self._items:
+            self.empty_label.setVisible(True)
+            return
+
+        self.empty_label.setVisible(False)
+        for cand in self._items:
+            self._add_card(cand)
+
+    def top_candidate_target(self) -> str:
+        """返回顶层首选候选的译文（供快捷键插入使用）。"""
+        if self._items:
+            return str(self._items[0].get("target") or "")
+        return ""
+
+    def reset(self) -> None:
+        self._key = None
+        _clear(self._cards_layout)
+        self._items = []
+        self.error_label.setVisible(False)
+        self.empty_label.setVisible(True)
+
+    def _add_card(self, cand: dict) -> None:
+        card = QFrame()
+        card.setObjectName("tmCandidateCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["xs"],
+                                       theme_module.SPACE["sm"], theme_module.SPACE["xs"])
+        card_layout.setSpacing(theme_module.SPACE["xs"])
+
+        # 头部：分数芯片 + 匹配类型 + 来源
+        head = QHBoxLayout()
+        head.setSpacing(theme_module.SPACE["xs"])
+        score = int(cand.get("score") or 0)
+        score_tone = "ok" if score >= 100 else ("warn" if score >= 85 else "info")
+        score_chip = style_module.Chip(f"{score}%", score_tone)
+        head.addWidget(score_chip)
+
+        match_label = {
+            "exact": i18n.tr('精确匹配'),
+            "normalized": i18n.tr('排版归一'),
+            "fuzzy": i18n.tr('模糊匹配'),
+        }.get(str(cand.get("match_type")), str(cand.get("match_type") or ""))
+        if match_label:
+            lbl = QLabel(match_label)
+            lbl.setObjectName("hint")
+            head.addWidget(lbl)
+
+        prov = str(cand.get("provenance") or "")
+        if prov:
+            prov_lbl = QLabel(f"· {prov}")
+            prov_lbl.setObjectName("hint")
+            head.addWidget(prov_lbl)
+
+        head.addStretch(1)
+
+        # 插入按钮
+        insert_btn = QToolButton()
+        insert_btn.setObjectName("termInsert")
+        insert_btn.setText(i18n.tr('插入'))
+        shortcut_text = platform_ui.shortcut_text("tm_insert")
+        insert_btn.setToolTip(i18n.tr('插入此建议到译文编辑框（{v0}）', v0=shortcut_text))
+        target_text = str(cand.get("target") or "")
+        insert_btn.clicked.connect(lambda: self.insertRequested.emit(target_text))
+        head.addWidget(insert_btn)
+        card_layout.addLayout(head)
+
+        # 上下文冲突警告（复用 #107 标记）
+        if cand.get("conflict_warning"):
+            warn_row = QHBoxLayout()
+            warn_row.setSpacing(theme_module.SPACE["xs"])
+            warn_row.addWidget(icons.IconLabel("alert", 14, "warning"), 0, Qt.AlignmentFlag.AlignTop)
+            warn_lbl = _wrapped(i18n.tr('上下文不符，请人工确认'), "hint")
+            warn_lbl.setStyleSheet("color: #e09f3e;")
+            warn_row.addWidget(warn_lbl, 1)
+            card_layout.addLayout(warn_row)
+
+        # 候选译文
+        target_lbl = _wrapped(target_text, "candidateText")
+        card_layout.addWidget(target_lbl)
+
+        self._cards_layout.addWidget(card)
+
+
 __all__ = ["AskAgentBox", "AttentionList", "CandidateBox", "ContextView",
-           "NoteBox", "TermList"]
+           "NoteBox", "TMCandidateBox", "TermList"]

@@ -16,7 +16,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QRect, Qt, Signal
 from PySide6.QtGui import QBrush, QFontMetrics, QTextDocument, QTextOption
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QLabel, QPlainTextEdit, QStyleOptionViewItem,
+    QAbstractItemView, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QStyleOptionViewItem,
     QTableWidget, QVBoxLayout, QWidget,
 )
 
@@ -101,6 +101,10 @@ class InlineSegmentEditor(QWidget):
         self.hint_label = QLabel(i18n.tr('{v0} 保存 · {v1} 保存并进入下一段', v0=platform_ui.shortcut_text("save"), v1=platform_ui.shortcut_text("save_next")))
         self.hint_label.setObjectName("hint")
 
+        self.unlock_button = QPushButton(i18n.tr('解锁段落'))
+        self.unlock_button.setObjectName("unlockButton")
+        self.unlock_button.setVisible(False)
+
         self.footer = QWidget()
         self.footer.setFixedHeight(FOOTER_HEIGHT)
         footer = QHBoxLayout(self.footer)
@@ -108,6 +112,7 @@ class InlineSegmentEditor(QWidget):
         footer.setSpacing(theme_module.SPACE["sm"])
         footer.addWidget(self.state_label)
         footer.addWidget(self.hint_label)
+        footer.addWidget(self.unlock_button)
         footer.addStretch(1)
         self._footer_layout = footer
 

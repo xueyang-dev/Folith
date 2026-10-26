@@ -679,6 +679,7 @@ from folith.engine.tm_store import (  # noqa: F401  (re-export: core keeps its p
     copy_system_tm_to_project,
     knowledge_cache_path,
     state_target_lang,
+    tm_candidates,
     tm_index,
     tm_normalize,
     tm_path,

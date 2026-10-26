@@ -68,6 +68,7 @@ _CUSTOM = {
     "start": "Ctrl+R",
     "reload": "Ctrl+Shift+R",
     "save_next": "Ctrl+Return",
+    "tm_insert": "Ctrl+T",
     "source": "Ctrl+Alt+P",
     "escape": "Esc",
     "previous_segment": "Up",
