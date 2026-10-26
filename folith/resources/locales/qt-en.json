@@ -2202,5 +2202,18 @@
   "未应用的排除计划：{v0}": "Unapplied exclusion plan: {v0}",
   "撤下所选计划": "Withdraw selected plans",
   "将撤下所选的 {v0} 项排除计划；原文与已有译文保持不变。": "Withdraw {v0} selected exclusion plan(s); the source and existing translations stay unchanged.",
-  "已撤下 {v0} 项译前排除计划。": "Withdrew {v0} pretranslation exclusion plan(s)."
+  "已撤下 {v0} 项译前排除计划。": "Withdrew {v0} pretranslation exclusion plan(s).",
+  "辅助分析": "Auxiliary analysis",
+  "提取术语与知识": "Extracting terminology and knowledge",
+  "抽取全文核心术语": "Extracting core terminology",
+  "正在翻译第 {v0}–{v1} 段": "Translating segments {v0}–{v1}",
+  "原文清理批次 #{v0}": "Source cleanup batch #{v0}",
+  "自动标注批次 #{v0}": "Annotation batch #{v0}",
+  "全文语义理解（{v0}）": "Document understanding ({v0})",
+  "已向模型发送请求（{v0}）": "Model request sent ({v0})",
+  "已收到模型响应（{v0}）": "Model response received ({v0})",
+  "已收到模型响应（{v0}），仍有 {v1} 个请求进行中": "Model response received ({v0}); {v1} request(s) still in progress",
+  "等待模型响应：{v0}（{v1} 个请求进行中）": "Waiting for the model: {v0} ({v1} request(s) in progress)",
+  "等待模型响应（{v0} 个请求进行中）": "Waiting for the model ({v0} request(s) in progress)",
+  "已收到模型响应，仍有 {v0} 个请求进行中": "Model response received; {v0} request(s) still in progress"
 }

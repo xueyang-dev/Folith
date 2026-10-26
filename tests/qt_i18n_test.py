@@ -169,3 +169,36 @@ def test_window_has_no_untranslated_chinese_literals():
         and not translated(node)
     ]
     assert not offenders, "window.py 里有未走 i18n.tr 的中文文案：\n" + "\n".join(offenders)
+
+
+@pytest.mark.parametrize("code", LANGUAGES)
+def test_runtime_request_purposes_translate_through_the_activity_view(code):
+    import re
+    from folith import runtime_events_view
+
+    i18n.set_language(code)
+    messages = [
+        "已向模型发送请求（正在翻译第 1–3 段）",
+        "已收到模型响应（自动标注批次 #2），仍有 1 个请求进行中",
+        "已收到模型响应（全文语义理解（unit-7））",
+        "已收到模型响应（文档画像）",
+        "已收到模型响应（原文清理批次 #2）",
+        "已收到模型响应（提取术语与知识）",
+        "已收到模型响应（抽取全文核心术语）",
+        "已收到模型响应（辅助分析）",
+    ]
+    for message in messages:
+        event = "llm_request_started" if message.startswith("已向") else "llm_response_received"
+        row = runtime_events_view.activity_rows([{"event": event, "message": message}])[0]
+        translated = i18n.tr_dynamic(row["label"])
+        if code == "zh-CN":
+            assert translated == message
+        else:
+            assert not re.search(r"[一-鿿]", translated), (code, translated)
+    if code == "en":
+        assert i18n.tr_dynamic(messages[0]) == "Model request sent (Translating segments 1–3)"
+        assert i18n.tr_dynamic(messages[1]) == "Model response received (Annotation batch #2); 1 request(s) still in progress"
+        assert i18n.tr_dynamic(messages[2]) == "Model response received (Document understanding (unit-7))"
+        assert i18n.tr_dynamic("等待模型响应：自动标注批次 #2（1 个请求进行中）") == "Waiting for the model: Annotation batch #2 (1 request(s) in progress)"
+        # Other dynamic labels must keep user/document values untouched.
+        assert i18n.tr_dynamic("全文语义理解（中文标题）") == "Document understanding (中文标题)"
