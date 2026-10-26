@@ -967,7 +967,11 @@ def cleanup_source_paragraphs(
                 queue_wait_s = max(0.0, started - enqueued_at)
                 with progress_lock:
                     active_batches.add(batch_index)
-                result = run_batch(batch_index, batch, queue_wait_s)
+                # 用途标注（#167）：清理请求跑在池线程上，worker 内设置用途。
+                import core
+                with core.llm_call_purpose(
+                        f"原文清理批次 #{batch_index + 1}"):
+                    result = run_batch(batch_index, batch, queue_wait_s)
                 result_map[batch_index] = result
                 retry_counts[batch_index] = int(result.get("retry_count") or 0)
                 api_latencies[batch_index] = float(result.get("api_latency_s") or 0.0)

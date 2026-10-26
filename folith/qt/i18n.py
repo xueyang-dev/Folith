@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 from functools import lru_cache
+from itertools import chain
 from pathlib import Path
 
 #: (代码, 下拉框里显示的名称)。简体中文是基准语言，也是回退语言。
@@ -127,6 +128,24 @@ def _template_pattern(template: str):
     return compiled
 
 
+# 只有这些运行时模板的 v0 是另一个受控用途标签；段号、单元 id 和
+# 其他模板中的文件名/正文/用户输入保持原值。
+_RUNTIME_PURPOSE_TEMPLATES = frozenset({
+    "已向模型发送请求（{v0}）",
+    "已收到模型响应（{v0}）",
+    "已收到模型响应（{v0}），仍有 {v1} 个请求进行中",
+    "等待模型响应：{v0}（{v1} 个请求进行中）",
+})
+
+
+_RUNTIME_PURPOSE_LABEL_TEMPLATES = (
+    "正在翻译第 {v0}–{v1} 段",
+    "原文清理批次 #{v0}",
+    "自动标注批次 #{v0}",
+    "全文语义理解（{v0}）",
+)
+
+
 def tr_dynamic(value: str) -> str:
     """翻译**运行时**才出现的标签（核心产出的状态、语言名、段落状态）。
 
@@ -142,7 +161,12 @@ def tr_dynamic(value: str) -> str:
         return direct
     import re as _re
 
-    for template, translated in _catalog("qt", code).items():
+    catalog = _catalog("qt", code)
+    # 用途模板先于“{v0} 段”等宽泛模板匹配，防止只翻译到句尾。
+    runtime_templates = (*_RUNTIME_PURPOSE_TEMPLATES, *_RUNTIME_PURPOSE_LABEL_TEMPLATES)
+    candidates = chain(((template, catalog[template]) for template in runtime_templates
+                        if template in catalog), catalog.items())
+    for template, translated in candidates:
         if "{v" not in template:
             continue
         match = _template_pattern(template).match(text)
@@ -150,7 +174,10 @@ def tr_dynamic(value: str) -> str:
             continue
         names = _re.findall(r"\{(v\d)\}", template)
         try:
-            return translated.format(**dict(zip(names, match.groups())))
+            values = dict(zip(names, match.groups()))
+            if template in _RUNTIME_PURPOSE_TEMPLATES:
+                values["v0"] = tr_dynamic(values["v0"])
+            return translated.format(**values)
         except (KeyError, IndexError, ValueError):
             continue
     return text

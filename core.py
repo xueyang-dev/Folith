@@ -226,6 +226,37 @@ MODELS = {name: cfg["models"] for name, cfg in PROVIDERS.items()}
 # 每个 Streamlit 会话线程独立，多设备同时使用不会互相串扰。
 _LLM_CTX = threading.local()
 
+# 角色在没有更具体用途标注时的兜底文案（#167）：运行时事件里的
+# 「已发送模型请求」至少要说清这次调用服务于哪个环节。
+_ROLE_PURPOSE_LABELS = {
+    "translation": "翻译",
+    "review": "审校",
+    "annotation": "标注",
+    "auxiliary": "辅助分析",
+}
+
+
+@contextmanager
+def llm_call_purpose(label):
+    """为当前线程随后发起的模型调用标注用途（#167）。
+
+    标注只影响运行时遥测的展示文案（事件消息、阶段标签、``metadata.purpose``），
+    不进入任何模型请求、缓存键或用量账本。线程本地生效：并发批次工作线程各自
+    设置各自的用途，互不可见。离开作用域恢复外层值，不向下游泄漏。
+    """
+    previous = getattr(_LLM_CTX, "purpose", None)
+    _LLM_CTX.purpose = str(label or "").strip() or None
+    try:
+        yield
+    finally:
+        _LLM_CTX.purpose = previous
+
+
+def _current_llm_purpose():
+    """这次模型调用的用途文案；无显式标注时退回角色兜底标签。"""
+    return (getattr(_LLM_CTX, "purpose", None)
+            or _ROLE_PURPOSE_LABELS.get(_usage.CURRENT_ROLE.get()))
+
 # Runtime status is deliberately file-backed: the UI can poll it while the
 # worker is inside a blocking provider request, and a browser refresh does not
 # erase the last known activity.
@@ -2093,7 +2124,8 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         _runtime_pause_checkpoint(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
-        _runtime_telemetry_request_started(runtime_job_id)
+        _runtime_telemetry_request_started(runtime_job_id,
+                                           purpose=_current_llm_purpose())
     _llm_started = time.perf_counter()
     _request_run = trace.get_active_run(runtime_job_id)
     if _request_run:
@@ -2133,14 +2165,16 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         if runtime_job_id:
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
             # 看到的是真实结果而不是一个永远不会结束的在途请求。
-            _runtime_telemetry_request_failed(runtime_job_id)
+            _runtime_telemetry_request_failed(
+                runtime_job_id, purpose=_current_llm_purpose())
         raise exc
     finally:
         if _request_run:
             _request_run.end_model_request()
     _record_llm_thread_stats(time.perf_counter() - _llm_started, failed=False)
     if runtime_job_id:
-        _runtime_telemetry_request_finished(runtime_job_id)
+        _runtime_telemetry_request_finished(runtime_job_id,
+                                            purpose=_current_llm_purpose())
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
     return result
@@ -4320,7 +4354,9 @@ def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, wo
                     raise RuntimeError("任务已请求取消")
             with trace.span("annotation", operation="batch", job_id=job_id,
                             metadata={"batch_id": bi + 1, "offset": offset, "segment_count": len(pairs)}):
-                items = annotate_batch([pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
+                # 用途标注（#167）：标注批次在事件里与翻译批次区分开。
+                with llm_call_purpose(f"自动标注批次 #{bi + 1}"):
+                    items = annotate_batch([pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
             _batch_timing(job_id, "annotation", bi + 1, "result_ready")
             return task, items
         except BaseException as exc:
@@ -5776,14 +5812,17 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 # request assembly.
                 batch_prompt_cost = []
                 try:
-                    targets = translate_batch(texts, ctx_prev, ctx_next, glossary_text, style_rules,
-                                              target_lang, translator_config["provider"],
-                                              translator_config["api_key"],
-                                              translator_config["model"],
-                                              context_packet=context_packet,
-                                              call_llm_fn=translator_call,
-                                              prompt_stats=batch_prompt_cost,
-                                              result_cache=_result_cache)
+                    # 用途标注（#167）：事件里"已发送模型请求"要能对上这批段。
+                    with llm_call_purpose(
+                            f"正在翻译第 {offset + 1}–{offset + len(batch)} 段"):
+                        targets = translate_batch(texts, ctx_prev, ctx_next, glossary_text, style_rules,
+                                                  target_lang, translator_config["provider"],
+                                                  translator_config["api_key"],
+                                                  translator_config["model"],
+                                                  context_packet=context_packet,
+                                                  call_llm_fn=translator_call,
+                                                  prompt_stats=batch_prompt_cost,
+                                                  result_cache=_result_cache)
                 except RuntimeError as batch_error:
                     _workflow_errors.raise_if_fatal(batch_error, job_id)
                     if "任务已请求取消" in str(batch_error):
@@ -6287,11 +6326,13 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             _LLM_CTX.reasoning_modes = inherited_modes
         if inherited_job_id is not None:
             _RUNTIME_CTX.job_id = inherited_job_id
-        return _knowledge.extract_batch(
-            sources, targets, auxiliary_config["provider"],
-            auxiliary_config["api_key"], auxiliary_config["model"],
-            call_llm=auxiliary_call, segment_ids=segment_ids,
-            cache=_knowledge_cache)
+        # 用途标注（#167）：知识抽取与翻译/标注在事件里区分开。
+        with llm_call_purpose("提取术语与知识"):
+            return _knowledge.extract_batch(
+                sources, targets, auxiliary_config["provider"],
+                auxiliary_config["api_key"], auxiliary_config["model"],
+                call_llm=auxiliary_call, segment_ids=segment_ids,
+                cache=_knowledge_cache)
 
     def _submit_knowledge(bi, offset, segment_ids, provenance, sources, targets,
                           paragraphs, pair_context, reason="resumed"):
@@ -7886,16 +7927,16 @@ def _submit_runtime_status(job_id, **changes):
     return writer.submit(**changes)
 
 
-def _runtime_telemetry_request_started(job_id):
+def _runtime_telemetry_request_started(job_id, *, purpose=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_started()
+        coalescer.request_started(purpose=purpose)
 
 
-def _runtime_telemetry_request_finished(job_id):
+def _runtime_telemetry_request_finished(job_id, *, purpose=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_finished()
+        coalescer.request_finished(purpose=purpose)
 
 
 
@@ -13138,11 +13179,13 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         if on_status:
             on_status("【阶段1.2】文档画像（分布式采样 + 结构化校验）...")
         from folith.document_profile import profile_document
-        profile, profile_warnings = profile_document(
-            state["paras"], auxiliary_config["provider"],
-            auxiliary_config["api_key"], auxiliary_config["model"], target_lang,
-            call_llm=auxiliary_call,
-            cancel_check=lambda: _runtime_cancel_requested(job_id))
+        # 用途标注（#167）：画像阶段的模型调用在事件里说清自己。
+        with llm_call_purpose("文档画像"):
+            profile, profile_warnings = profile_document(
+                state["paras"], auxiliary_config["provider"],
+                auxiliary_config["api_key"], auxiliary_config["model"], target_lang,
+                call_llm=auxiliary_call,
+                cancel_check=lambda: _runtime_cancel_requested(job_id))
         state["document_profile"] = profile
         # 失败不把这一步标成"已完成"：连接/额度修好之后，用户重跑任务时这一步必须
         # 还有机会补上。此前失败也写 True，画像就永久停在"已跳过"（#49）。
@@ -13214,12 +13257,14 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         if on_caption:
             on_caption("正在从全文分布式样本中提取专业术语...")
         from folith.terminology import extract_auto_terms_v2
-        entries, extract_warnings = extract_auto_terms_v2(
-            state["paras"], target_lang, auxiliary_config["provider"],
-            auxiliary_config["api_key"], auxiliary_config["model"],
-            document_profile=state.get("document_profile"),
-            call_llm=auxiliary_call,
-            cancel_check=lambda: _runtime_cancel_requested(job_id))
+        # 用途标注（#167）：术语抽取的模型调用在事件里说清自己。
+        with llm_call_purpose("抽取全文核心术语"):
+            entries, extract_warnings = extract_auto_terms_v2(
+                state["paras"], target_lang, auxiliary_config["provider"],
+                auxiliary_config["api_key"], auxiliary_config["model"],
+                document_profile=state.get("document_profile"),
+                call_llm=auxiliary_call,
+                cancel_check=lambda: _runtime_cancel_requested(job_id))
         state["auto_term_entries"] = entries
         state["auto_terms"] = {e["source"]: e["target"] for e in entries}
         if entries:

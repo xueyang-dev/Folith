@@ -39,27 +39,31 @@ class _RuntimeTelemetryCoalescer:
         self._lock = threading.RLock()
         self._pending = {}
         self._active = 0
-        self._last_flush = 0.0
+        # 在途请求的用途标签（#167）：request_started 压入、request_finished
+        # 按用途摘除。并发请求用途可能不同，展示取"最近一次"的用途。
+        self._active_purposes = []
+        self._last_flush = None
         self._timer = None
         self._closed = False
         self._stats = {"submits": 0, "flushes": 0, "coalesced": 0,
                        "immediate": 0, "events": 0}
 
     # -- public API -------------------------------------------------------
-    def request_started(self):
+    def request_started(self, purpose=None):
         self.submit(active_delta=1, status="waiting_external",
-                    phase="waiting_llm", event_name="llm_request_started")
+                    phase="waiting_llm", event_name="llm_request_started",
+                    purpose=purpose)
 
-    def request_finished(self):
+    def request_finished(self, purpose=None):
         self.submit(active_delta=-1, status="running", phase="running",
-                    event_name="llm_response_received")
+                    event_name="llm_response_received", purpose=purpose)
 
-    def request_failed(self, error=None):
+    def request_failed(self, error=None, *, purpose=None):
         self.submit(force=True, active_delta=-1, status="running", phase="running",
                     event=str(error)[:240] if error else "模型请求失败",
-                    event_name="llm_request_failed")
+                    event_name="llm_request_failed", purpose=purpose)
 
-    def submit(self, *, active_delta=0, force=False, **changes):
+    def submit(self, *, active_delta=0, force=False, purpose=None, **changes):
         """Record one telemetry update; flush on the leading or trailing edge."""
         with self._lock:
             if self._closed:
@@ -69,11 +73,21 @@ class _RuntimeTelemetryCoalescer:
                 if active_delta > 0 and self._active == 0:
                     changes["model_wait_started_at"] = _c._utc_now_iso()
                 self._active = max(0, self._active + int(active_delta))
+                if active_delta > 0:
+                    self._active_purposes.append(purpose)
+                elif purpose in self._active_purposes:
+                    self._active_purposes.remove(purpose)
+                elif self._active_purposes:
+                    self._active_purposes.pop(0)
+                # 事件属于本次请求；等待状态另从仍在途的请求推导。
+                # None 也要覆盖旧值，避免合并窗口沿用上次事件的用途。
+                self._pending["purpose"] = purpose
             for key, value in changes.items():
                 if value is not None:
                     self._pending[key] = value
             now = time.monotonic()
-            leading_edge = (now - self._last_flush) >= self.flush_interval
+            leading_edge = (self._last_flush is None
+                            or (now - self._last_flush) >= self.flush_interval)
             if force or leading_edge or self._active == 0:
                 self._stats["immediate"] += 1
                 self._flush_locked(now)
@@ -125,22 +139,32 @@ class _RuntimeTelemetryCoalescer:
         active = self._active
         event_name = changes.pop("event_name", None)
         event = changes.pop("event", None)
+        active_purpose = self._active_purposes[-1] if self._active_purposes else None
+        purpose = changes.pop("purpose", None)
+        if event_name is None:
+            purpose = active_purpose
+        if purpose:
+            changes["event_metadata"] = {"purpose": str(purpose)}
         if active > 0:
             changes["status"] = "waiting_external"
             changes["phase"] = "waiting_llm"
-            changes["phase_label"] = f"等待模型响应（{active} 个请求进行中）"
+            changes["phase_label"] = (
+                f"等待模型响应：{active_purpose}（{active} 个请求进行中）" if active_purpose
+                else f"等待模型响应（{active} 个请求进行中）")
             if event is None:
                 if event_name == "llm_response_received":
                     event = f"已收到模型响应，仍有 {active} 个请求进行中"
+                    if purpose:
+                        event = f"已收到模型响应（{purpose}），仍有 {active} 个请求进行中"
                 else:
-                    event = "已向模型发送请求"
+                    event = "已向模型发送请求" + (f"（{purpose}）" if purpose else "")
                     event_name = "llm_request_started"
         else:
             changes.setdefault("status", "running")
             changes.setdefault("phase", "running")
             changes["phase_label"] = "处理模型结果"
             if event is None:
-                event = "已收到模型响应"
+                event = "已收到模型响应" + (f"（{purpose}）" if purpose else "")
                 event_name = "llm_response_received"
         # 取消是业务真值：一旦用户请求取消，合并窗口里的"等待/处理中"就不该再
         # 覆盖 cancelling。宁可丢掉这几条遥测，也不能让 UI 显示成还在正常跑。
@@ -170,10 +194,10 @@ def _runtime_telemetry_coalescer(job_id):
         return coalescer
 
 
-def _runtime_telemetry_request_failed(job_id, error=None):
+def _runtime_telemetry_request_failed(job_id, error=None, *, purpose=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_failed(error=error)
+        coalescer.request_failed(error=error, purpose=purpose)
 
 
 def flush_runtime_telemetry(job_id=None):
