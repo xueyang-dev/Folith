@@ -181,7 +181,8 @@ class ScriptedProvider:
 
 def _run_arm(samples: Sequence[Mapping[str, Any]],
              glossary: Sequence[Mapping[str, Any]], *,
-             mode: str, batch_size: int, job_id: str) -> Dict[str, Any]:
+             mode: str, batch_size: int, job_id: str,
+             provider=None, reviewer_config=None) -> Dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="folith-review-eval-") as tmp:
         old_output = core.OUTPUT_DIR
         core.OUTPUT_DIR = Path(tmp)
@@ -195,7 +196,7 @@ def _run_arm(samples: Sequence[Mapping[str, Any]],
             state["glossary"] = [dict(item) for item in glossary]
             state["review_mode"] = mode
             state["style_rules"] = ""
-            provider = ScriptedProvider(samples)
+            provider = provider if provider is not None else ScriptedProvider(samples)
             original_call = core.call_llm
             core.call_llm = provider
             started = time.perf_counter()
@@ -206,7 +207,8 @@ def _run_arm(samples: Sequence[Mapping[str, Any]],
                     enable_review=True, use_tm=True, batch_size=batch_size,
                     max_batch_chars=100000, translation_concurrency=1,
                     review_mode=mode, use_translation_cache=False,
-                    use_knowledge_cache=False, knowledge_feedback=False)
+                    use_knowledge_cache=False, knowledge_feedback=False,
+                    reviewer_config=reviewer_config)
             finally:
                 core.call_llm = original_call
                 wall_ms = round((time.perf_counter() - started) * 1000, 3)
