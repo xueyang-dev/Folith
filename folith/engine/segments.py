@@ -199,7 +199,7 @@ def excluded_segment_records(state):
     for position, item in enumerate((state or {}).get("excluded_segments") or []):
         if not isinstance(item, dict):
             continue
-        records.append({
+        record = {
             "excluded_id": str(item.get("excluded_id") or f"x{position:06d}"),
             "segment_index": item.get("index"),
             "source": str(item.get("source") or ""),
@@ -209,7 +209,12 @@ def excluded_segment_records(state):
             "excluded_by": str(item.get("excluded_by") or ""),
             "restorable": bool(item.get("pair") is not None
                                or str(item.get("source") or "").strip()),
-        })
+        }
+        if item.get("node_id"):
+            record["node_id"] = str(item["node_id"])
+        if item.get("scope_key"):
+            record["scope_key"] = str(item["scope_key"])
+        records.append(record)
     # 兼容极早期状态：pair 上直接带 excluded 标记。
     for index, pair in enumerate((state or {}).get("pairs") or []):
         if not isinstance(pair, dict) or not is_excluded(pair):
@@ -336,7 +341,8 @@ def _segment_source_list(state):
 
 def _excluded_segment_record(state, index, *, reason, actor, source="",
                              target="", pair=None, in_pairs=False,
-                             before_source="", after_source=""):
+                             before_source="", after_source="",
+                             node_id=None, scope_key=None):
     """构造一条 ``excluded_segments`` 记录。
 
     人工「排除本段」与系统判定的不可翻译段落共用同一份记录形状：交付清单、
@@ -344,7 +350,7 @@ def _excluded_segment_record(state, index, *, reason, actor, source="",
     """
     excluded_id_value = f"x{int(state.get('exclusion_seq') or 0):06d}"
     state["exclusion_seq"] = int(state.get("exclusion_seq") or 0) + 1
-    return {
+    record = {
         "excluded_id": excluded_id_value,
         "index": index,
         "source": str(source or ""),
@@ -357,6 +363,11 @@ def _excluded_segment_record(state, index, *, reason, actor, source="",
         "excluded_at": _finalization.now_iso(),
         "excluded_by": str(actor or "user"),
     }
+    if node_id:
+        record["node_id"] = str(node_id)
+    if scope_key:
+        record["scope_key"] = str(scope_key)
+    return record
 
 
 def _shift_paragraph_ranges(paragraph_ranges, removed_index):
@@ -665,7 +676,7 @@ def _scope_plan_records(state):
     for entry in _scope_plan_entries(state):
         start = int(entry.get("para_start") or 0)
         end = int(entry.get("para_end") or 0)
-        records.append({
+        plan_rec = {
             "excluded_id": str(entry.get("excluded_id") or ""),
             "segment_index": None,
             "planned": True,
@@ -679,7 +690,12 @@ def _scope_plan_records(state):
             "excluded_at": str(entry.get("planned_at") or ""),
             "excluded_by": str(entry.get("planned_by") or ""),
             "restorable": True,
-        })
+        }
+        if entry.get("node_id"):
+            plan_rec["node_id"] = str(entry["node_id"])
+        if entry.get("key"):
+            plan_rec["scope_key"] = str(entry["key"])
+        records.append(plan_rec)
     return records
 
 
@@ -845,10 +861,15 @@ def exclude_translation_scope(job_id, keys, *, actor="user"):
     # 唯一可查，恢复时按它们插回。
     sources = _segment_source_list(state)
     reason_by_index = {}
+    node_by_index = {}
+    key_by_index = {}
     for key in wanted:
         node = nodes[key]
+        node_id_val = node.get("id") or (key.split(":", 1)[1] if key.startswith("outline:") else None)
         for index in range(node["start"], node["end"]):
             reason_by_index[index] = f"范围排除：{node['label']}"
+            node_by_index[index] = node_id_val
+            key_by_index[index] = key
 
     records = []
     old_count = len(sources)
@@ -861,7 +882,9 @@ def exclude_translation_scope(job_id, keys, *, actor="user"):
             pair=(pairs[index] if pairs else None), in_pairs=bool(pairs),
             before_source=sources[index - 1] if index > 0 else "",
             after_source=(sources[index + 1]
-                          if index + 1 < len(sources) else "")))
+                          if index + 1 < len(sources) else ""),
+            node_id=node_by_index.get(index),
+            scope_key=key_by_index.get(index)))
         _drop_segment_at(state, index)
     # 账本按文档顺序排列（移除必须从大到小做，落账不必）；交付清单与恢复
     # 入口读到的顺序与原文一致。
@@ -1111,9 +1134,11 @@ def _plan_scope_exclusion(state, job_id, wanted, nodes, *, actor):
         start, end = int(node["start"]), int(node["end"])
         excluded_id = f"x{int(state.get('exclusion_seq') or 0):06d}"
         state["exclusion_seq"] = int(state.get("exclusion_seq") or 0) + 1
+        node_id_val = node.get("id") or (key.split(":", 1)[1] if str(key).startswith("outline:") else None)
         added.append({
             "excluded_id": excluded_id,
             "key": key,
+            "node_id": node_id_val,
             "kind": str(node.get("kind") or ""),
             "label": str(node.get("label") or ""),
             "para_start": start,
@@ -1351,7 +1376,9 @@ def apply_scope_exclusion_plan(job_id, state):
             pair=None, in_pairs=False,
             before_source=sources[index - 1] if index > 0 else "",
             after_source=(sources[index + 1]
-                          if index + 1 < len(sources) else "")))
+                          if index + 1 < len(sources) else ""),
+            node_id=entry.get("node_id") or (entry_key.split(":", 1)[1] if str(entry_key).startswith("outline:") else None),
+            scope_key=entry_key))
         _drop_segment_at(state, index)
     ledger = list(state.get("excluded_segments") or [])
     applied_records = []
