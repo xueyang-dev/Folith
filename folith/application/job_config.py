@@ -286,8 +286,11 @@ class JobConfig:
     #: Explicit batching strategy (Phase 3 contract).  The desktop entry always
     #: resolves this to a concrete value — ``sentence`` matches the historic
     #: behavior where ``batch_size``/``max_batch_chars`` were always supplied.
-    #: A task's own saved strategy wins at the runtime; this field never flips
-    #: an already-started job's batch plan.
+    #: This is deliberately different from ``core.DEFAULT_BATCH_STRATEGY``
+    #: (``paragraph``), which stays the core-level default for new tasks that
+    #: do not come through the desktop contract.  A task's own saved strategy
+    #: wins at the runtime; this field never flips an already-started job's
+    #: batch plan.
     batch_strategy: str = "sentence"
     #: per-batch knowledge feedback (name continuity, term candidates); 快速 is off
     knowledge_feedback: bool = True
