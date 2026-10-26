@@ -4791,3 +4791,9 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     assert state["scope_exclusion_plan"]["entries"][0]["label"] == "第二章"
     assert not state["paras"] and not state["pairs"]
     assert not state.get("excluded_segments")
+    dialog = ScopeDialog(job, window)
+    for check, _record in dialog._record_checks.values():
+        check.setChecked(True)
+    assert dialog.restore_button.text() == "撤下所选计划"
+    assert "1 项排除计划" in dialog.summary_label.text()
+    dialog.close()

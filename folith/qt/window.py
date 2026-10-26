@@ -2674,8 +2674,11 @@ class MainWindow(QMainWindow):
         except adapter.AdapterError as exc:
             self._failure(i18n.tr('无法恢复所选段落'), str(exc))
             return
-        self._notice(i18n.tr('已恢复 {v0} 段；它们回到工作台并重新计入待完成。',
-                             v0=result.get("restored", 0)))
+        if result.get("unplanned"):
+            self._notice(i18n.tr('已撤下 {v0} 项译前排除计划。', v0=result["unplanned"]))
+        else:
+            self._notice(i18n.tr('已恢复 {v0} 段；它们回到工作台并重新计入待完成。',
+                                 v0=result.get("restored", 0)))
         self.refresh_workbench(force=True)
 
     # ================= 收尾 =================

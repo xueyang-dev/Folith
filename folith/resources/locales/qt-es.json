@@ -2200,5 +2200,8 @@
   "原文第 {v0}–{v1} 段": "Párrafos de origen {v0}–{v1}",
   "原文第 {v0} 段": "Párrafo de origen {v0}",
   "部分译前排除尚未应用，翻译已暂停。请调整范围或撤下未应用计划后继续。": "No se pudieron aplicar algunas exclusiones previas. La traducción está detenida. Ajuste el alcance o retire los planes no aplicados antes de continuar.",
-  "未应用的排除计划：{v0}": "Plan de exclusión no aplicado: {v0}"
+  "未应用的排除计划：{v0}": "Plan de exclusión no aplicado: {v0}",
+  "撤下所选计划": "Retirar los planes seleccionados",
+  "将撤下所选的 {v0} 项排除计划；原文与已有译文保持不变。": "Se retirarán {v0} planes de exclusión; el original y las traducciones existentes no cambiarán.",
+  "已撤下 {v0} 项译前排除计划。": "Se retiraron {v0} planes de exclusión previos."
 }

@@ -1171,6 +1171,7 @@ def _unplan_scope_exclusion(state, job_id, wanted, *, actor):
     _c.save_job_state(job_id, state)
     return {
         "restored": len(wanted),
+        "unplanned": len(wanted),
         "remaining": (len(_segment_source_list(state)) if state.get("p1_done")
                       else _planned_paragraph_total(state)),
         "state": state,

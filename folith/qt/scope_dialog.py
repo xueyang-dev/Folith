@@ -234,6 +234,10 @@ class ScopeDialog(QDialog):
                         selected_chars += int(node.get("chars") or 0)
         total = self.scope.get("total") or {}
         restore_ids = self.selected_restore_ids()
+        plans_only = bool(restore_ids) and all(
+            self._record_checks[item][1].get("planned") for item in restore_ids)
+        self.restore_button.setText(i18n.tr('撤下所选计划') if plans_only
+                                    else i18n.tr('恢复所选段落'))
         remaining_segments = max(0, int(total.get("segments") or 0) - selected_segments)
         if keys:
             self.summary_label.setText(i18n.tr(
@@ -241,6 +245,9 @@ class ScopeDialog(QDialog):
                 v0=selected_segments, v1=selected_chars,
                 v2=remaining_segments,
                 v3=max(0, int(total.get("chars") or 0) - selected_chars)))
+        elif plans_only:
+            self.summary_label.setText(i18n.tr(
+                '将撤下所选的 {v0} 项排除计划；原文与已有译文保持不变。', v0=len(restore_ids)))
         elif restore_ids:
             self.summary_label.setText(i18n.tr(
                 '将恢复所选的 {v0} 段；它们会回到工作台并重新计入待完成。',
