@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import adapter
+from . import components
 from . import i18n
 from . import icons
 from . import pdf_panel as pdf_panel_module
@@ -48,6 +49,11 @@ _REVIEW_TASK_KINDS = {"failed", "stale", "missing", "skipped"}
 def _escape(text: object) -> str:
     return (str(text or "").replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+def _colon() -> str:
+    """字段名后的冒号：中文用全角，其他语言用半角 + 空格。"""
+    return "：" if i18n.language().startswith(("zh", "ja", "ko")) else ": "
 
 
 class ReviewPanel(QWidget):
@@ -105,6 +111,7 @@ class ReviewPanel(QWidget):
         self.filter_control = style_module.SegmentedControl(
             [(value, i18n.tr(label)) for value, label in FILTERS])
         self.filter_control.changed.connect(self._set_filter)
+        self.filter_control.setAccessibleName(i18n.tr('审校筛选'))
 
         top = QHBoxLayout()
         text_column = QVBoxLayout()
@@ -118,6 +125,13 @@ class ReviewPanel(QWidget):
         self.list = QListWidget()
         self.list.setObjectName("reviewQueue")
         self.list.setMinimumWidth(260)
+        # 队列项是两行纯文本，超出列宽就省略；开横向滚动条会让 RTL（阿拉伯语）
+        # 下的长行把列表撑出可视区，文字贴到窗口边缘。
+        self.list.setWordWrap(False)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setAccessibleName(i18n.tr('审校队列'))
         self.list.currentItemChanged.connect(self._current_changed)
         self.empty_label = QLabel("")
         self.empty_label.setWordWrap(True)
@@ -126,7 +140,6 @@ class ReviewPanel(QWidget):
 
         left = QVBoxLayout()
         left.setSpacing(8)
-        left.addWidget(self.filter_control)
         left.addWidget(self.list, 1)
         left.addWidget(self.empty_label)
 
@@ -139,9 +152,11 @@ class ReviewPanel(QWidget):
         self.item_body.setObjectName("reviewDetail")
         self.item_body.setOpenExternalLinks(False)
         self.item_body.setMinimumHeight(140)
+        self.item_body.setAccessibleName(i18n.tr('审校详情'))
 
         self.note_edit = QLineEdit()
         self.note_edit.setPlaceholderText(i18n.tr('处理说明（可选）：这次决定的依据'))
+        self.note_edit.setAccessibleName(i18n.tr('处理说明'))
 
         self.source_confirm_box = style_module.CheckBox(
             i18n.tr('我已回看 PDF 原页，确认这段是有效正文'))
@@ -149,6 +164,7 @@ class ReviewPanel(QWidget):
         self.source_note_edit = QLineEdit()
         self.source_note_edit.setPlaceholderText(
             i18n.tr('原文核对依据，例如：原页正文清晰可读，且与前后句连续。'))
+        self.source_note_edit.setAccessibleName(i18n.tr('原文核对依据'))
         self.source_note_edit.textChanged.connect(self._sync_buttons)
         self.confirm_source_button = button(
             i18n.tr('确认原文并重新翻译'), "check-circle", "text-on-accent", "primary")
@@ -189,14 +205,22 @@ class ReviewPanel(QWidget):
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
         self.hint.setProperty("role", "muted")
+        # 键位是没有写在按钮上的操作方式：给键盘用户一行看得见的清单。
+        self.shortcut_hint = QLabel(i18n.tr(
+            '快捷键：N 下一项 · A 暂存建议 · O 确认问题存在 · C 确认已解决 · '
+            'K 保留当前译文 · E 修改译文'))
+        self.shortcut_hint.setWordWrap(True)
+        self.shortcut_hint.setProperty("role", "muted")
+        self.shortcut_hint.setAccessibleName(i18n.tr('键盘快捷键'))
 
-        action_row = QHBoxLayout()
+        # 动作按钮会折行：俄语/西语/阿拉伯语的按钮文字比中文长得多，固定一行会把
+        # 整页撑到 2600px 宽（默认窗口只有 1180px），右半列被裁掉。
+        action_row = components.FlowRow(spacing=6, fill=False)
         for widget in (self.apply_button, self.open_button, self.confirm_button,
                        self.confirm_source_button, self.preserve_button,
                        self.review_button, self.edit_button,
                        self.retranslate_button, self.style_rule_button):
             action_row.addWidget(widget)
-        action_row.addStretch(1)
 
         # 名字译法不一：同一个部件（与「检查与修复」抽屉共用），代替逐段的动作行。
         self.conflict = NameConflictWidget()
@@ -230,6 +254,7 @@ class ReviewPanel(QWidget):
         column.addWidget(self.note_edit)
         column.addLayout(action_row)
         column.addWidget(self.hint)
+        column.addWidget(self.shortcut_hint)
 
         # 详情卡：左边是问题与决定，右边是这一段在原文里的位置与上下文。
         detail_row = QHBoxLayout()
@@ -246,8 +271,8 @@ class ReviewPanel(QWidget):
 
         body = QHBoxLayout()
         body.setSpacing(12)
-        body.addLayout(left, 0)
-        body.addWidget(detail_card, 1)
+        body.addLayout(left, 1)
+        body.addWidget(detail_card, 2)
 
         # 队列与详情装在一个容器里：审校队列整个是空的时，它整体让位给一个空状态
         # （设计审校 40 号 4.1：不再画五个 0 计数的筛选、一个空列表和一块空白详情）。
@@ -256,6 +281,8 @@ class ReviewPanel(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
         content_layout.addLayout(top)
+        # 筛选条横跨整页：七个页签放进 260px 的队列表头会把俄语/西语挤成四行。
+        content_layout.addWidget(self.filter_control)
         content_layout.addLayout(body, 1)
         self.empty_state = style_module.EmptyState(icon="shield-check", page=True,
                                                    action=i18n.tr('审校全部段落'))
@@ -281,19 +308,45 @@ class ReviewPanel(QWidget):
         self._shortcut_handlers: dict[str, object] = {
             "next": _guarded(self._goto_next_item),
             "apply": _guarded(self._emit_apply),
+            "open": _guarded(lambda: self._emit_resolve("confirmed_open")),
             "confirm": _guarded(lambda: self._emit_resolve("human_fixed")),
             "keep": _guarded(lambda: self._emit_resolve("preserved")),
             "edit": _guarded(self._emit_edit),
         }
         self._shortcuts = []
-        for key, sequence in (("next", "N"), ("apply", "A"), ("confirm", "C"),
-                              ("keep", "K"), ("edit", "E")):
+        for key, sequence in (("next", "N"), ("apply", "A"), ("open", "O"),
+                              ("confirm", "C"), ("keep", "K"), ("edit", "E")):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(self._shortcut_handlers[key])
             self._shortcuts.append(shortcut)
 
         self._render_detail()
+        self._sync_accessibility()
+
+    def _sync_accessibility(self) -> None:
+        """把工具提示里的语义补成辅助描述，并固定详情区的 Tab 顺序。
+
+        Qt 的默认顺序是**创建顺序**（备注框建于来源核对字段之前），键盘用户从
+        处理说明按 Tab 会跳回上方的勾选框。这里按界面从上到下的阅读顺序重排；
+        隐藏的控件由 Qt 自动跳过。
+        """
+        for widget, key in ((self.apply_button, "A"), (self.open_button, "O"),
+                            (self.confirm_button, "C"),
+                            (self.preserve_button, "K"),
+                            (self.edit_button, "E")):
+            detail = widget.toolTip() or widget.text()
+            widget.setAccessibleDescription(f"{detail} ({key})")
+        self.list.setAccessibleDescription(self.shortcut_hint.text())
+        self.setAccessibleName(i18n.tr('审校工作台'))
+        chain = (self.list, self.source_confirm_box, self.source_note_edit,
+                 self.note_edit, self.apply_button, self.open_button,
+                 self.confirm_button, self.preserve_button,
+                 self.confirm_source_button, self.review_button,
+                 self.edit_button, self.retranslate_button,
+                 self.style_rule_button)
+        for current, following in zip(chain, chain[1:]):
+            QWidget.setTabOrder(current, following)
 
     # ================= 数据 =================
     def view(self) -> dict:
@@ -321,6 +374,7 @@ class ReviewPanel(QWidget):
         self.filter_control.set_value(self._filter)
         self._rebuild_list()
         self._sync_empty(readiness)
+        self.shortcut_hint.setVisible(bool(self._items))
 
     def _sync_empty(self, readiness: dict) -> None:
         """队列整个是空的：整页换成一个空状态，最多一个动作。"""
@@ -361,11 +415,26 @@ class ReviewPanel(QWidget):
         for item in self._visible:
             title = self._item_title(item)
             label = i18n.tr_dynamic(str(item.get("severity_label") or ""))
-            summary = str(item.get("summary") or "")[:60]
+            decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
+            summary = str(item.get("summary") or "")
+            if item.get("kind") in _REVIEW_TASK_KINDS:
+                # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案；
+                # 发现项的摘要是模型产出，必须原样显示。
+                summary = i18n.tr_dynamic(summary)
             # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
-            second = summary if (not label or label in title) else f"{label} · {summary}"
-            entry = QListWidgetItem(f"{title}\n{second}")
+            tags = [value for value in (decision, label)
+                    if value and value not in title]
+            if summary:
+                tags.append(summary)
+            second = " · ".join(dict.fromkeys(tags))
+            text = f"{title}\n{second}" if second else title
+            entry = QListWidgetItem(text)
             entry.setData(Qt.ItemDataRole.UserRole, item.get("id"))
+            # 队列只有两行；完整问题放进悬停提示，读屏读同一份文本，不再显示
+            # 截断到 60 字却没有省略号的半句话。
+            entry.setToolTip(text)
+            entry.setData(Qt.ItemDataRole.AccessibleTextRole,
+                          f"{title}. {second}".strip())
             self.list.addItem(entry)
         row = next((i for i, item in enumerate(self._visible)
                     if item.get("id") == wanted), 0 if self._visible else -1)
@@ -409,11 +478,15 @@ class ReviewPanel(QWidget):
     def _item_title(item: dict) -> str:
         """名字译法不一按名字列一行，不写第一处出现的段号。"""
         source = str(item.get("entity_source") or "")
-        if not source:
-            return str(item.get("title") or "")
-        count = len(item.get("segment_indexes") or [])
-        title = i18n.tr('译名不一致 · {v0}', v0=source)
-        return title + (i18n.tr('（{v0} 处）', v0=count) if count > 1 else "")
+        if source:
+            count = len(item.get("segment_indexes") or [])
+            title = i18n.tr('译名不一致 · {v0}', v0=source)
+            return title + (i18n.tr('（{v0} 处）', v0=count) if count > 1 else "")
+        number = item.get("segment_number")
+        detail = str(item.get("identity_detail") or "")
+        if isinstance(number, int) and detail:
+            return f"{i18n.tr('第 {v0} 段', v0=number)} · {i18n.tr_dynamic(detail)}"
+        return i18n.tr_dynamic(str(item.get("title") or ""))
 
     def _entity_for(self, item: dict) -> dict:
         """名字译法不一的发现项对应的实体（抽屉里的同一份数据）；找不到就是空。"""
@@ -436,14 +509,27 @@ class ReviewPanel(QWidget):
             self._sync_source()
             return
         self.item_title.setText(self._item_title(item))
-        self.item_chip.setText(i18n.tr_dynamic(str(item.get("severity_label") or "")))
+        chip_text = i18n.tr_dynamic(str(item.get("severity_label") or ""))
+        self.item_chip.setText(chip_text)
         self.item_chip.set_tone(_SEVERITY_TONE.get(str(item.get("severity")), "info"))
+        # 没有严重度文字的项不留一个只有颜色、没有字的芯片（颜色不是唯一信号）。
+        self.item_chip.setVisible(bool(chip_text))
+        sep = _colon()
+        task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
         parts = []
+        decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
+        if decision:
+            # 已经记下的人工判断：确认问题存在之后问题仍在队列里，必须说清它
+            # 不是"待处理但没人看过"。
+            parts.append(f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
+                         f"{_escape(decision)}</p>")
         for label, key in (("问题", "summary"), ("原因", "reason"),
                            ("说明", "explanation"), ("建议", "recommendation")):
             value = str(item.get(key) or "").strip()
+            if value and task_item:
+                value = i18n.tr_dynamic(value)
             if value and not any(value in part for part in parts):
-                parts.append(f"<p><b>{_escape(i18n.tr(label))}：</b>{_escape(value)}</p>")
+                parts.append(f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
         from folith.textual import text_direction
 
         for label, key, span_key in (("原文", "source", "source_span"),
@@ -456,10 +542,14 @@ class ReviewPanel(QWidget):
                 rtl = text_direction(value, None) == "rtl"
                 block = ' dir="rtl"' if rtl else ""
                 span = str(item.get(span_key) or "") if span_key else ""
-                parts.append(f"<p><b>{_escape(i18n.tr(label))}：</b></p>"
+                parts.append(f"<p><b>{_escape(i18n.tr(label))}{sep}</b></p>"
                              f"<p{block} style=\"margin-top:2px\">"
                              f"{self._highlight(value, span)}</p>")
         self.item_body.setHtml("".join(parts))
+        self.item_body.setAccessibleDescription(
+            " · ".join(value for value in (self._item_title(item), chip_text,
+                                          str(item.get("summary") or ""))
+                       if value))
         entity = self._entity_for(item)
         if entity:
             self.conflict.set_entity(entity, busy=self._busy)
@@ -550,6 +640,13 @@ class ReviewPanel(QWidget):
         item = self.selected_item() or {}
         self.style_rule_button.setVisible(str(item.get("category") or "") == "style")
 
+    def _set_button_kind(self, button, kind: str, cache: str) -> None:
+        """只在层级真的变了时重新 polish（备注框每次输入都会走一遍这里）。"""
+        if getattr(self, cache, "") == kind:
+            return
+        style_module.set_button(button, kind)
+        setattr(self, cache, kind)
+
     def _sync_buttons(self, *_args) -> None:
         item = self.selected_item()
         if not item:
@@ -575,6 +672,13 @@ class ReviewPanel(QWidget):
             str(item.get("suggested_target") or "").strip()) and has_segment
         self._set_actions(source=source, task=task, decision=decision,
                           suggestion=suggestion, edit=has_segment and not task)
+        # 同一时刻只留一个实心主按钮：有建议时"暂存为候选"是下一步，没有建议时
+        # "确认已解决"才是。两个主按钮并排会让人不知道该点哪个（设计审校 40）。
+        self._set_button_kind(
+            self.apply_button, "primary" if suggestion else "secondary", "_apply_kind")
+        self._set_button_kind(
+            self.confirm_button,
+            "primary" if decision and not suggestion else "secondary", "_confirm_kind")
         if task:
             self.review_button.setText(i18n.tr({
                 "failed": "重试审校本段", "stale": "重新审校本段",
@@ -614,8 +718,8 @@ class ReviewPanel(QWidget):
 
     # ================= 键盘与导航 =================
     def shortcut_handlers(self) -> dict:
-        """测试 / 调用方用：键位 → 动作。N=下一项 A=暂存建议 C=确认已解决
-        K=保留当前译文 E=修改译文。"""
+        """测试 / 调用方用：键位 → 动作。N=下一项 A=暂存建议 O=确认问题存在
+        C=确认已解决 K=保留当前译文 E=修改译文。"""
         return dict(self._shortcut_handlers)
 
     def _typing(self) -> bool:

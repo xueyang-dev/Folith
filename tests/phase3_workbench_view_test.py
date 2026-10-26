@@ -284,3 +284,65 @@ def test_filter_and_selection_helpers_choose_the_next_useful_item():
     assert next_queue_item_id(items, "finding:0", segment_id=0) == "failed:0"
     assert select_queue_item([], "anything") is None
     assert next_queue_item_id([], "anything") is None
+
+
+def _confirmed_finding_state():
+    state = _state()
+    value = fingerprint({"confirmation": True})
+    finding = _finding(0, "review-confirm", value)
+    state["review_evidence"] = [
+        _event(0, "review-confirm", value, decision="findings")]
+    state["findings"] = [finding]
+    return state, finding
+
+
+def test_open_confirmation_is_visible_and_still_counts_as_blocking():
+    state, finding = _confirmed_finding_state()
+    _, recorded = delivery.record_finding_confirmation(
+        state, [delivery.finding_id(finding)], note="确认问题存在")
+    assert recorded == [delivery.finding_id(finding)]
+
+    view = review_workbench_view(state)
+
+    item = view["queue_items"][0]
+    assert item["status"] == "open"
+    assert item["decision"] == "confirmed_open"
+    assert item["decision_label"] == "已确认存在，待修订"
+    assert view["queue_counts"]["blocking"] == 1
+    assert view["primary_action"]["kind"] == "handle_finding"
+
+
+def test_runtime_confirmation_uses_the_core_finding_id():
+    state, finding = _confirmed_finding_state()
+    state["human_actions"].append({
+        "finding_id": finding["finding_id"],
+        "action": "request_revision",
+        "record_type": "human_decision",
+        "status": "current",
+        "note": "",
+        "timestamp": "2026-08-30T12:00:00+00:00",
+        "actor": "user",
+    })
+
+    item = review_workbench_view(state)["queue_items"][0]
+
+    assert item["decision"] == "confirmed_open"
+    assert item["decision_label"] == "已确认存在，待修订"
+
+
+def test_superseded_confirmation_does_not_claim_the_finding_was_reviewed():
+    state, finding = _confirmed_finding_state()
+    state["human_actions"].append({
+        "finding_id": delivery.finding_id(finding),
+        "action": "confirmed_open",
+        "record_type": "finding_confirmation",
+        "status": "superseded",
+        "note": "",
+        "timestamp": "2026-08-30T12:00:00+00:00",
+        "actor": "user",
+    })
+
+    item = review_workbench_view(state)["queue_items"][0]
+
+    assert item["decision"] == ""
+    assert item["decision_label"] == ""

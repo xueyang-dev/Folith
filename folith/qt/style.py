@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFrame,
 
 from . import i18n
 from . import theme as theme_module
+from .flow_layout import FlowRow
 
 # 状态芯片的语义色调 -> 用哪几个 token
 CHIP_TONES = {
@@ -596,6 +597,9 @@ QLabel#groupCaption {{ font-size: {f['label']}px; font-weight: 600; color: {t['t
     padding: 2px 2px 0 2px; }}
 QListWidget#issueList {{ background: {t['bg-surface-sunken']}; border: none;
     border-radius: {r['md']}px; font-size: {f['caption']}px; }}
+/* 审校队列：与"检查与修复"的列表同一套沉底面板，不用输入框的描边盒子。 */
+QListWidget#reviewQueue {{ background: {t['bg-surface-sunken']}; border: none;
+    border-radius: {r['md']}px; font-size: {f['caption']}px; }}
 QLabel#attentionHeading {{ font-size: {f['label']}px; font-weight: 700; color: {t['warning']}; }}
 /* 底栏字数：本身可点（打开字数浮窗）。 */
 QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}
@@ -912,6 +916,14 @@ QTextBrowser#understandingView {{
 }}
 /* 工作台"检查项"：只读报告面（沉底面板），不要输入框那种聚焦边框 */
 QTextBrowser#qaView {{
+    background: {t['bg-surface-sunken']};
+    border: 1px solid {t['border-faint']};
+    border-radius: {r['md']}px;
+    padding: {sp['sm']}px;
+    color: {t['text-primary']};
+}}
+/* 审校详情：同样是只读报告面；发现项文字长，留出与检查项一致的阅读内边距。 */
+QTextBrowser#reviewDetail {{
     background: {t['bg-surface-sunken']};
     border: 1px solid {t['border-faint']};
     border-radius: {r['md']}px;
@@ -1791,11 +1803,12 @@ class SegmentedControl(QFrame):
     def __init__(self, options: list[tuple[str, str]], *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName(self.TRACK)
-        from PySide6.QtWidgets import QButtonGroup, QHBoxLayout
+        from PySide6.QtWidgets import QButtonGroup
 
-        row = QHBoxLayout(self)
+        # 分段会折行：俄语/西语的筛选项比中文宽得多，固定一行会把所在页面的
+        # 最小宽度撑到窗口装不下（审校页七个页签，实测 948px）。
+        row = FlowRow(self, spacing=2, fill=False)
         row.setContentsMargins(2, 2, 2, 2)
-        row.setSpacing(2)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._buttons: dict[str, QPushButton] = {}
@@ -1838,6 +1851,7 @@ class SegmentedControl(QFrame):
             return
         for button in self._buttons.values():
             self._group.removeButton(button)
+            self.layout().removeWidget(button)
             button.hide()  # before detaching (see segment_assist._clear)
             button.setParent(None)
             button.deleteLater()
