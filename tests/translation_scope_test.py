@@ -907,3 +907,89 @@ def test_unapplied_plan_stops_real_pipeline_until_explicitly_withdrawn(tmp_path,
     adapter.restore_scope(job, [pending[0]["excluded_id"]])
     assert not core.load_job_state(job)["scope_exclusion_plan"]["entries"]
     assert not adapter.translation_scope(job)["excluded"]["unapplied_plan"]
+
+
+def test_chapter_scope_node_id_in_exclusion_records(tmp_path):
+    """[Issue #190] 排除记录携带结构化 node_id 与 scope_key，支持章节粒度衍生统计与报告。"""
+    from folith.engine.segments import _excluded_segment_record
+
+    # 1. 直接构造单条记录：未指定时缺省，指定时记录
+    state = {"exclusion_seq": 1}
+    rec_plain = _excluded_segment_record(state, 0, reason="test", actor="user")
+    assert "node_id" not in rec_plain
+    assert "scope_key" not in rec_plain
+
+    rec_scoped = _excluded_segment_record(state, 1, reason="test", actor="user",
+                                          node_id="n0002", scope_key="outline:n0002")
+    assert rec_scoped.get("node_id") == "n0002"
+    assert rec_scoped.get("scope_key") == "outline:n0002"
+
+    # 2. 译前大纲计划排除：落账后携带 node_id 与 scope_key
+    job_id = "scope-node-id-plan"
+    raw = ["Chapter 1", "Body 1", "Chapter 2", "Body 2"]
+    st = core.new_job_state("doc.docx")
+    st["filename"] = "doc.docx"
+    old_output = _persist(tmp_path, job_id, st)
+    try:
+        st = core.load_job_state(job_id)
+        st["source_outline"] = {
+            "format": "DOCX", "total_paragraphs": 4,
+            "total_chars": sum(len(x) for x in raw),
+            "paragraphs": list(raw),
+            "nodes": [
+                {"id": "n0001", "kind": "chapter", "title": "Chapter 1",
+                 "level": 1, "para_start": 0, "para_count": 2,
+                 "paragraphs": raw[:2], "chars": sum(len(x) for x in raw[:2])},
+                {"id": "n0002", "kind": "chapter", "title": "Chapter 2",
+                 "level": 1, "para_start": 2, "para_count": 2,
+                 "paragraphs": raw[2:], "chars": sum(len(x) for x in raw[2:])},
+            ],
+            "pages": 0, "scanned": False, "partial": False, "fingerprint": "fp1",
+        }
+        core.save_job_state(job_id, st)
+        # 排除 Chapter 2
+        core.exclude_translation_scope(job_id, ["outline:n0002"])
+        plan_st = core.load_job_state(job_id)
+        entries = plan_st["scope_exclusion_plan"]["entries"]
+        assert len(entries) == 1
+        assert entries[0].get("node_id") == "n0002"
+        assert entries[0].get("key") == "outline:n0002"
+
+        # 模拟建立翻译单元并应用计划
+        plan_st["paras"] = list(raw)
+        plan_st["source_paras"] = list(raw)
+        plan_st["source_paragraphs"] = list(raw)
+        plan_st["segmentation"] = {
+            "mode": "sentence", "locked": True,
+            "paragraph_ranges": [{"paragraph_index": i, "start": i, "end": i + 1}
+                                 for i in range(len(raw))],
+        }
+        plan_st["p1_done"] = True
+        core.save_job_state(job_id, plan_st)
+
+        st_applied = core.load_job_state(job_id)
+        outcome = core.apply_scope_exclusion_plan(job_id, st_applied)
+        assert len(outcome["applied"]) == 1
+        core.save_job_state(job_id, st_applied)
+
+        final_st = core.load_job_state(job_id)
+        records = core.excluded_segment_records(final_st)
+        assert len(records) == 2
+        for r in records:
+            assert r.get("node_id") == "n0002"
+            assert r.get("scope_key") == "outline:n0002"
+
+        # 3. 任务运行后按范围排除（post-start）：同样携带结构化标识
+        core.exclude_translation_scope(job_id, ["chapter:0000"])
+        post_st = core.load_job_state(job_id)
+        post_records = core.excluded_segment_records(post_st)
+        assert len(post_records) == 4
+        new_records = [r for r in post_records if r.get("scope_key") == "chapter:0000"]
+        assert len(new_records) == 2
+
+        # 4. 恢复测试：恢复不破坏兼容性
+        core.restore_translation_scope(job_id, [r["excluded_id"] for r in new_records])
+        restored_st = core.load_job_state(job_id)
+        assert len(restored_st["paras"]) == 2
+    finally:
+        core.OUTPUT_DIR = old_output
