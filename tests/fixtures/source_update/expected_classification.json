@@ -1,0 +1,64 @@
+{
+  "description": "Golden classification for text_v1.txt vs text_v2.txt",
+  "v1_count": 6,
+  "v2_count": 6,
+  "classifications": [
+    {
+      "v1_index": 0,
+      "v2_index": 0,
+      "classification": "unchanged",
+      "match_method": "exact",
+      "v1_source": "Title: Project Overview.",
+      "v2_source": "Title: Project Overview."
+    },
+    {
+      "v1_index": 4,
+      "v2_index": 1,
+      "classification": "suspected_changed",
+      "match_method": "moved_suspected",
+      "suspected_reason": "moved_segment",
+      "v1_source": "Important safety and privacy notice.",
+      "v2_source": "Important safety and privacy notice."
+    },
+    {
+      "v1_index": 1,
+      "v2_index": 2,
+      "classification": "changed",
+      "match_method": "similarity_changed",
+      "v1_source": "Introduction to Folith workbench.",
+      "v2_source": "Introduction to Folith professional workbench."
+    },
+    {
+      "v1_index": 2,
+      "v2_index": null,
+      "classification": "deleted",
+      "match_method": "removed",
+      "v1_source": "Legacy section to be removed.",
+      "v2_source": null
+    },
+    {
+      "v1_index": 3,
+      "v2_index": 3,
+      "classification": "unchanged",
+      "match_method": "exact",
+      "v1_source": "Core architecture and data integrity principles.",
+      "v2_source": "Core architecture and data integrity principles."
+    },
+    {
+      "v1_index": null,
+      "v2_index": 4,
+      "classification": "added",
+      "match_method": "inserted",
+      "v1_source": null,
+      "v2_source": "New section on professional CAT migration."
+    },
+    {
+      "v1_index": 5,
+      "v2_index": 5,
+      "classification": "unchanged",
+      "match_method": "exact",
+      "v1_source": "Future development roadmap and conclusion.",
+      "v2_source": "Future development roadmap and conclusion."
+    }
+  ]
+}

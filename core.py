@@ -877,6 +877,21 @@ from folith.engine.candidates import (  # noqa: F401  (re-export: core keeps its
     stage_concept_revision,
     stage_term_revision,
 )
+from folith.source_update import (  # noqa: F401  (re-export: core keeps its public surface)
+    align_source_paragraphs,
+    align_docx_units,
+    create_source_update_plan,
+    apply_source_update_plan,
+    create_source_update_snapshot,
+    rollback_source_update,
+    recover_source_update,
+    retranslate_incremental,
+    calculate_source_update_savings,
+    SourceUpdatePlan,
+    SourceUpdateEntry,
+    Classification as SourceUpdateClassification,
+    Resolution as SourceUpdateResolution,
+)
 
 
 
