@@ -797,6 +797,18 @@ from folith.engine.glossary_ops import (  # noqa: F401  (re-export: core keeps i
     update_glossary_entry,
     write_profile_artifacts,
 )
+from folith.outline_anchor import (  # noqa: F401  (re-export: core keeps its public surface)
+    SOURCE_OUTLINE_FILE,
+    SOURCE_OUTLINE_VERSION,
+    clear_source_outline,
+    get_or_create_source_outline,
+    load_source_outline,
+    match_paragraph_positions,
+    node_source_range,
+    resolve_outline_mapping,
+    save_source_outline,
+    source_outline_path,
+)
 from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its public surface)
     restore_translation_edit,
     _auto_exclude_non_translatable_segments,
@@ -10109,6 +10121,14 @@ def ensure_source_outline(job_id, state=None):
     state = load_job_state(job_id)
     if not isinstance(state, dict):
         return state
+    data = load_source(job_id)
+    filename = str(state.get("filename") or "")
+    if data:
+        try:
+            get_or_create_source_outline(
+                job_id, state=state, source_bytes=data, filename=filename)
+        except Exception:
+            pass
     if state.get("paras") or state.get("pairs") or state.get("p1_done"):
         return state
     outline = state.get("source_outline")
@@ -10573,8 +10593,13 @@ def build_delivery_assets(job_id, state=None, target_lang="", provider="", model
             model or state.get("model") or "")
 
 
-def _reset_source_dependent_state(state):
+def _reset_source_dependent_state(state, *, job_id=None):
     """Invalidate artifacts derived from source paragraphs after cleanup."""
+    effective_job_id = job_id or (state or {}).get("job_id")
+    if effective_job_id:
+        clear_source_outline(effective_job_id)
+    if isinstance(state, dict):
+        state.pop("source_outline", None)
     state.update({
         "profile_done": False,
         "document_profile": None,
@@ -10880,7 +10905,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                 warnings.append(warning)
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
 
-        _reset_source_dependent_state(state)
+        _reset_source_dependent_state(state, job_id=job_id)
         state.update({
             "filename": resolved_filename,
             "source_paras": list(raw_paragraphs),
@@ -10943,6 +10968,11 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             "ocr_online": dict(effective_online_descriptor or {}),
         }
         save_source(job_id, source)
+        try:
+            get_or_create_source_outline(
+                job_id, state=state, source_bytes=source, filename=resolved_filename)
+        except Exception:
+            pass
         state["performance"] = profiler.persist()
         trace.finish_run(job_id=job_id, status="checkpointed")
         save_job_state(job_id, state)
@@ -12894,7 +12924,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # when the OCR cleanup text itself is byte-for-byte unchanged.
             if cleaned != legacy_source or segments != legacy_segments:
                 cleanup_meta["previous_pair_count"] = len(state.get("pairs") or [])
-                _reset_source_dependent_state(state)
+                _reset_source_dependent_state(state, job_id=job_id)
                 state["paras"] = segments
                 state["source_paras"] = legacy_source
                 state["source_paragraphs"] = list(cleaned)
@@ -12995,6 +13025,11 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # 未应用并告警，而不是让计划静默滞留。
             apply_scope_exclusion_plan(job_id, state)
             state["p1_done"] = True
+            try:
+                get_or_create_source_outline(
+                    job_id, state=state, source_bytes=file_bytes, filename=filename)
+            except Exception:
+                pass
             save_job_state(job_id, state)
 
     # ---------------- 阶段一：排版清洗 ----------------
@@ -13138,6 +13173,11 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             segment_stage.finish(status="completed")
         if on_status:
             on_status(f"【阶段一】按句构建翻译单元（{len(segments)}/{len(segments)} 句）…")
+        try:
+            get_or_create_source_outline(
+                job_id, state=state, source_bytes=file_bytes, filename=filename)
+        except Exception as exc:
+            _append_runtime_technical_log(job_id, f"source outline persistence warning: {exc}")
         if filename.lower().endswith(".pdf"):
             if file_bytes is not None:
                 try:
