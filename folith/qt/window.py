@@ -394,6 +394,7 @@ class MainWindow(QMainWindow):
         self.workbench.backRequested.connect(self.show_home)
         self.workbench.startRequested.connect(self.start_or_resume)
         self.workbench.setupScopeRequested.connect(self.select_translation_scope)
+        self.workbench.setup_panel.source_section.aiRecoveryRequested.connect(self.analyze_outline_recovery)
         self.workbench.setupStartRequested.connect(self.start_from_setup)
         self.workbench.setupCreateProjectRequested.connect(
             self.create_project_from_setup)
@@ -3357,6 +3358,24 @@ class MainWindow(QMainWindow):
         # 当前任务的术语表同步写入：这样本任务马上按这个译名检查，不必等下一个任务。
         self.add_glossary_entry({"source": values["source"], "preferred": values["target"],
                                  "domain": values["domain"], "status": "locked"})
+
+    def analyze_outline_recovery(self, fingerprint: str) -> None:
+        job_id = self._current_job_id
+        section = self.workbench.setup_panel.source_section
+        if not job_id:
+            section.ai_recovery_finished(i18n.tr('找不到任务。'))
+            return
+
+        def done(_result) -> None:
+            if self._current_job_id == job_id:
+                section.ai_recovery_finished()
+
+        def failed(message: str, _detail: str) -> None:
+            if self._current_job_id == job_id:
+                section.ai_recovery_finished(i18n.tr_dynamic(message))
+
+        self.runner.submit(adapter.analyze_outline_recovery, job_id, self.config, fingerprint,
+                           on_done=done, on_error=failed, label="outline-recovery")
 
     def analyze_segment(self, index: int) -> None:
         """进一步审视本段：后台一次模型调用，结果缓存在这一段上（只说明，不改写）。"""

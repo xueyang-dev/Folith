@@ -16,7 +16,7 @@ import json
 import re
 
 #: 结构解析器版本。任何会改变节点 id、层级或段落范围的修改必须递增此版本号。
-OUTLINE_PARSER_VERSION = 1
+OUTLINE_PARSER_VERSION = 2
 
 #: 逐页检查上限（与 doc_facts 同一口径）：超长 PDF 只看前这么多页，并如实标记。
 MAX_SCAN_PAGES = 2000
@@ -135,7 +135,7 @@ def parse_source_outline(filename: str, data: bytes) -> dict:
 # PDF：版面段落（带页码）+ 目录章节（get_toc，本地读取，保留所有书签层级）
 # ---------------------------------------------------------------------------
 
-def _pdf_paragraphs(data: bytes) -> tuple[list[str], list[int]]:
+def _pdf_paragraphs(data: bytes) -> tuple[list[str], list[int], list[str]]:
     """与 core 文字层路径同一批提取函数：段落文本 + 1 起始页码（未知记 0）。"""
     from folith.engine.llm_provider import clean_xml_chars
     from folith.pdf_ingestion import (ORNAMENT_RE, classify_blocks,
@@ -144,6 +144,7 @@ def _pdf_paragraphs(data: bytes) -> tuple[list[str], list[int]]:
 
     paragraphs: list[str] = []
     page_of: list[int] = []
+    roles: list[str] = []
     records = reconstruct_paragraph_records(
         classify_blocks(extract_layout_blocks(data)))
     for record in records:
@@ -151,10 +152,11 @@ def _pdf_paragraphs(data: bytes) -> tuple[list[str], list[int]]:
         if not text or ORNAMENT_RE.fullmatch(text):
             continue
         paragraphs.append(clean_xml_chars(text))
+        roles.append(str(record.get("role") or "body"))
         numbers = [int(item) for item in (record.get("page_numbers") or [])
                    if isinstance(item, (int, float)) and int(item) > 0]
         page_of.append(numbers[0] if numbers else 0)
-    return paragraphs, page_of
+    return paragraphs, page_of, roles
 
 
 def _pdf_outline(data: bytes) -> dict:
@@ -176,8 +178,9 @@ def _pdf_outline(data: bytes) -> dict:
         outline["textless_pages"] = sorted(textless)
         outline["partial"] = page_count > MAX_SCAN_PAGES
         outline["scanned"] = bool(page_count) and len(textless) >= page_count
-        paragraphs, page_of = _pdf_paragraphs(data)
+        paragraphs, page_of, roles = _pdf_paragraphs(data)
         outline["paragraphs"] = paragraphs
+        outline["paragraph_roles"] = roles
         # 每页覆盖到的段落区间（页码未知=0 的段落不属于任何页，但留在总列表里）。
         spans: dict[int, tuple[int, int]] = {}
         for position, page in enumerate(page_of):

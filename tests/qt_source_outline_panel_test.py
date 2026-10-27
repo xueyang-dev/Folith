@@ -124,6 +124,27 @@ def test_outline_summary_counts_and_scanned_case():
     assert "视觉模型" in outline_summary(scanned)
 
 
+def test_preparation_rename_persists_and_is_used_by_scope(data_env, qt_app, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    job_id = _new_task(data_env)
+    _patch_loader(monkeypatch)
+    section = SourceOutlineSection()
+    view = adapter.task_setup_view(adapter.EngineConfig(), job_id)
+    section.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("手动名称", True))
+    section._edit_outline("rename")
+    assert section.outline()["nodes"][0]["title"] == "手动名称"
+    reopened = SourceOutlineSection()
+    reopened.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    assert reopened.outline()["nodes"][0]["title"] == "手动名称"
+    scope = adapter.translation_scope(job_id)
+    assert scope["groups"][0]["nodes"][0]["label"] == "手动名称"
+    section.deleteLater()
+    reopened.deleteLater()
+
+
 # ---------------------------------------------------------------- 区块行为
 
 def test_section_lists_nodes_readonly_and_shows_preview(

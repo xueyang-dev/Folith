@@ -16,7 +16,7 @@ the tooltip.
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu,
                                QToolButton, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
@@ -75,6 +75,8 @@ def reason_text(reason: str) -> tuple[str, str]:
 def node_tooltip(node: dict, entry: dict, path: str) -> str:
     """Full path + resolver state for a tree node."""
     lines = [path or str(node.get('title') or '')]
+    if node.get("provenance") == "ai_inferred" and isinstance(node.get("confidence"), (int, float)):
+        lines.append(i18n.tr('AI 置信度：{value}', value=f"{node['confidence']:.0%}"))
     state = str((entry or {}).get("state") or "")
     if state == "partial":
         lines.append(i18n.tr('部分定位：{v0}', v0=i18n.tr(
@@ -99,6 +101,7 @@ class OutlinePanel(QWidget):
 
     nodeActivated = Signal(str)
     closeRequested = Signal()
+    correctionRequested = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -125,6 +128,18 @@ class OutlinePanel(QWidget):
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(title, 1)
+        edit = QToolButton()
+        edit.setText(i18n.tr('修正'))
+        edit.setAccessibleName(i18n.tr('修正文档结构'))
+        menu = QMenu(edit)
+        for label, operation in [('重命名', 'rename'), ('修改层级', 'level'),
+                                 ('移动起始段落', 'boundary'), ('删除节点', 'delete'),
+                                 ('恢复原始结构', 'restore')]:
+            action = menu.addAction(i18n.tr(label))
+            action.triggered.connect(lambda _checked=False, op=operation: self._request_correction(op))
+        edit.setMenu(menu)
+        edit.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        head.addWidget(edit)
         head.addWidget(close)
 
         self.summary = QLabel("")
@@ -166,7 +181,7 @@ class OutlinePanel(QWidget):
 
     # ---- data ---------------------------------------------------------
     def set_outline(self, outline: dict, mapping: dict | None = None, *,
-                    invalidated: str = "") -> None:
+                    invalidated: str = "", corrections_dropped: int = 0) -> None:
         """Show an outline and its resolved mapping; rebuild only on a new one."""
         outline = outline if isinstance(outline, dict) else {}
         nodes = [node for node in outline.get("nodes") or []
@@ -177,6 +192,9 @@ class OutlinePanel(QWidget):
         if not nodes:
             self.clear()
             self.empty.setVisible(True)
+            if corrections_dropped:
+                self.status.setText(i18n.tr('有 {count} 项结构修正无法匹配。', count=corrections_dropped))
+                self.status.setVisible(True)
             return
         if not self._items or fingerprint != self._outline_fingerprint:
             self._rebuild(outline, nodes)
@@ -184,8 +202,14 @@ class OutlinePanel(QWidget):
         else:
             self._refresh_items()
         self.empty.setVisible(False)
-        self.summary.setText(i18n.tr('{count} 个节点 · 本地读取',
-                                     count=len(nodes)))
+        provenance = {str(node.get("provenance") or "") for node in nodes}
+        if "ai_inferred" in provenance:
+            summary = i18n.tr('{count} 个节点 · AI 推断', count=len(nodes))
+        elif any(item.startswith("rule_") for item in provenance):
+            summary = i18n.tr('{count} 个节点 · 按编号推断', count=len(nodes))
+        else:
+            summary = i18n.tr('{count} 个节点 · 本地读取', count=len(nodes))
+        self.summary.setText(summary)
         self.summary.setVisible(True)
         status = ""
         # A first read ("missing") is normal, not a warning: the sidecar is
@@ -194,6 +218,9 @@ class OutlinePanel(QWidget):
             status = i18n.tr('解析器已更新，结构已重新读取。')
         elif invalidated == "source_changed":
             status = i18n.tr('原文已变化，结构已重新读取。')
+        if corrections_dropped:
+            status = (status + ' ' if status else '') + i18n.tr(
+                '有 {count} 项结构修正无法匹配。', count=corrections_dropped)
         self.status.setText(status)
         self.status.setVisible(bool(status))
 
@@ -298,6 +325,12 @@ class OutlinePanel(QWidget):
         state = str(entry.get("state") or "")
         suffix, _ = reason_text(entry.get("reason") or "")
         title = str(node.get("title") or "")
+        if node.get("provenance") == "manual":
+            title = f"{title}{PATH_SEPARATOR}{i18n.tr('手动修正')}"
+        elif node.get("provenance") == "ai_inferred":
+            title = f"{title}{PATH_SEPARATOR}{i18n.tr('AI 推断')}"
+        elif str(node.get("provenance") or "").startswith("rule_"):
+            title = f"{title}{PATH_SEPARATOR}{i18n.tr('按编号推断')}"
         if state == "partial" or state == "unresolved":
             title = f"{title}{PATH_SEPARATOR}{suffix}" if suffix else title
         item.setText(0, title)
@@ -316,6 +349,12 @@ class OutlinePanel(QWidget):
         node_id = str(item.data(0, NODE_ROLE) or "")
         if node_id:
             self.activate_node(node_id)
+
+    def _request_correction(self, operation: str) -> None:
+        item = self.tree.currentItem()
+        node_id = str(item.data(0, NODE_ROLE) or "") if item else ""
+        if operation == "restore" or node_id:
+            self.correctionRequested.emit(operation, node_id)
 
     def highlight_node(self, node_id: str) -> None:
         """Select a node and expand its ancestors without emitting navigation."""
