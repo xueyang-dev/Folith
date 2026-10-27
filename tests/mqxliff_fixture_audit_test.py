@@ -192,5 +192,16 @@ def main() -> int:
     return 0
 
 
+def test_real_memoq_fixture_audit():
+    """Run the same structural checks under pytest and the CLI."""
+    assert main() == 0
+    for path in FIXTURES.glob("*.mqxliff"):
+        root = ET.parse(path).getroot()
+        assert root.tag == f"{{{XLIFF_NS}}}xliff"
+        assert any(element.tag.startswith(f"{{{MQ_NS}}}") or
+                   any(key.startswith(f"{{{MQ_NS}}}") for key in element.attrib)
+                   for element in root.iter()), path
+
+
 if __name__ == "__main__":
     sys.exit(main())

@@ -18,7 +18,9 @@
 - 基于 XLIFF 1.2 通用适配器(#144)叠加的**受限 MQXLIFF round trip**,
   范围以兼容性矩阵 §3 为准:P 类原样保全、M 类状态映射(7 种观测状态值)、
   R 类显式拒绝。
-- 适用格式判定:`.mqxliff` 扩展名**且**根命名空间 URI 为字面量 `MQXliff`。
+- 适用格式判定:`.mqxliff` 扩展名、根元素为 XLIFF 1.2 的 `xliff`
+  （命名空间 `urn:oasis:names:tc:xliff:document:1.2`），且存在 URI 为
+  字面量 `MQXliff` 的 memoQ 扩展。不能把扩展命名空间误认为根命名空间。
 
 ## 不承诺什么
 
