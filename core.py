@@ -12311,7 +12311,8 @@ def _refresh_scan_provider(job_id, stream, state):
 
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                        source_language=None, ocr_language=None, ocr_psm=None,
-                       failed_pages=None, online_config_resolver=None):
+                       failed_pages=None, online_config_resolver=None,
+                       committed_paragraphs=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
 
@@ -12332,7 +12333,8 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
             if isinstance(row, dict) and row.get("page")}
     stream = ScanStream(filename, file_bytes, provider, spatial_engine=spatial_engine,
                         checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
-                        page_gate=page_gate, late_pages=late, provider_label=label)
+                        page_gate=page_gate, late_pages=late, provider_label=label,
+                        known_paragraphs=committed_paragraphs)
     stream.facts = _pdf_extraction_facts(file_bytes)
 
     def refresh_provider(state):
@@ -13333,6 +13335,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 source_language=effective_source_language,
                 ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
                 failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"),
+                committed_paragraphs=state.get("source_paragraphs"),
                 online_config_resolver=_current_vision_config)
             registry = _SCAN_STREAMS.get()
             if registry is not None:

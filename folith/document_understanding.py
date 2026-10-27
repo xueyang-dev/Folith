@@ -696,7 +696,11 @@ class VisualDocumentAssembler:
     边翻译用：末段还可能被下一页续上时，它不算定稿。
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, known_paragraphs=None):
+        # Paragraphs already finalised (and translated) by an earlier run.  A page read
+        # again must not glue onto the previous page where that run left them apart:
+        # pages recovered late were appended and re-sorted into place, never joined.
+        self._known = list(known_paragraphs or [])
         self.document = new_document(filename, filename)
         self.paragraphs = []
         self.paragraph_pages = []  # 与 paragraphs 一一对应：每段起始的页（页序从 0 起）
@@ -754,9 +758,14 @@ class VisualDocumentAssembler:
                                     'prompt_version':semantic.diagnostics.get('prompt_version')}}
             aligned += int(any(s['bbox'] is not None for s in spans))
             translatable = bool(block.text) and block.type not in _UNTRANSLATED_TYPES
-            if (self._tail is not None and translatable and block.type in _CONTINUABLE_TYPES
-                    and order == self._first_translatable(semantic.blocks)
-                    and _continues_across_page(self._tail[0]['text'], self._tail[2], block)):
+            joins = (self._tail is not None and translatable and block.type in _CONTINUABLE_TYPES
+                     and order == self._first_translatable(semantic.blocks)
+                     and _continues_across_page(self._tail[0]['text'], self._tail[2], block))
+            if joins:
+                known_end = self._tail[1] + 1 < len(self._known) and self._known[self._tail[1]] == self._tail[0]['text']
+                if known_end:               # the finalised text ends here: keep them apart
+                    joins, self._tail = False, None
+            if joins:
                 tail, paragraph_index, _ = self._tail
                 for span in spans:
                     span['block_id'] = tail['block_id']
