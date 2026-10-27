@@ -696,6 +696,7 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     resolve_reasoning_mode as _resolve_reasoning_mode,
     normalize_reasoning_mode as _normalize_reasoning_mode,
 )
+from folith.script_leak import leaked_scripts as _leaked_scripts
 from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keeps its public surface)
     _count_sentences,
     _deterministic_finding,
@@ -2671,22 +2672,37 @@ def check_translation_batch(sources, targets, glossary, target_lang,
                 "对照原文逐句补齐缺失内容，并确认修复后的译文通过完整性复验。",
                 source_span=src, target_span=tgt, reason=reason))
         source_words = re.findall(r"[A-Za-z]+", src or "")
+        # Not tied to a language pair: a Latin source needs two words (a lone
+        # word is often a name), any other script needs a few letters of its
+        # own (kana, hangul, Cyrillic, Arabic... digits and dot leaders do not count).
+        source_letters = sum(1 for ch in (src or "")
+                             if ch.isalpha() and not ("A" <= ch <= "z"))
+        source_has_text = len(source_words) >= 2 or source_letters >= 4
         whole_source_preserved = any(
             str(entry.get("behavior") or "") == "preserve"
             and str(entry.get("status") or "") == "locked"
             and re.sub(r"\s+", " ", str(entry.get("source") or "")).strip().casefold()
             == re.sub(r"\s+", " ", src or "").strip().casefold()
             for entry in glossary or [])
-        if target_lang != "English" and len(source_words) >= 2 \
+        if target_lang != "English" and source_has_text \
                 and re.sub(r"\s+", " ", src or "").strip().casefold() \
                 == re.sub(r"\s+", " ", tgt or "").strip().casefold() \
                 and not whole_source_preserved:
             findings.append(_deterministic_finding(
                 i, "actionable", "translation_completion", "译文仍保留整段源文",
-                "当前译文与英文原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
+                "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
                 "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。",
                 source_span=src, target_span=tgt,
-                reason="译文与英文源段完全相同，疑似整段未翻译"))
+                reason="译文与源段完全相同，疑似整段未翻译"))
+        leaked = {} if whole_source_preserved else _leaked_scripts(src, tgt, target_lang)
+        if leaked:
+            names = "、".join(f"{script} {count} 个字" for script, count in sorted(leaked.items()))
+            findings.append(_deterministic_finding(
+                i, "actionable", "translation_completion", "译文里还残留着源文的文字",
+                f"译文中仍有目标语言不使用的文字（{names}），而原文里有这种文字，可能没有翻完。",
+                "把残留的原文文字翻成目标语言；专有名词、引文标题确需保留时再保留。",
+                source_span=src, target_span=tgt,
+                reason=f"译文残留源文文字：{names}", kind="script_leak"))
         for token, kind in extract_preserved_tokens(src).items():
             if token in tgt:
                 continue
