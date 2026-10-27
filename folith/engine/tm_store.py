@@ -10,7 +10,11 @@ from folith import project as _project
 from folith import translation_target as _translation_target
 from folith.textual import has_textual_content
 from folith.textual import normalize_language
-from folith.translation_memory import tm_context_status
+from folith.translation_memory import (
+    tm_context_status,
+    tm_scope_key,
+    tm_unscope_key,
+)
 from folith.engine._link import core as _c
 
 
@@ -204,3 +208,138 @@ def _migrate_legacy_system_tm():
     except OSError:
         return False
     return True
+
+
+
+def tm_candidates(
+    tm,
+    source,
+    *,
+    target_lang=None,
+    context=None,
+    legacy_index=None,
+    min_score=75,
+    limit=5,
+):
+    """返回给定源文的 TM 候选列表（按匹配分数降序）。
+
+    - 排除语言未知的 legacy-unscoped 条目（不参与候选）；
+    - 支持 exact (100%)、normalized (99%) 与确定性 fuzzy 匹配；
+    - 显示分数、来源（项目 TM / 导入）、上下文冲突警告（复用 #107 标记）。
+    """
+    import difflib
+
+    language = normalize_language(target_lang)
+    if not language:
+        return []
+
+    cleaned = str(source or "").replace("\n", " ").strip()
+    if not cleaned:
+        return []
+
+    norm_source = tm_normalize(cleaned)
+    prev_source, next_source = context if context else (None, None)
+
+    candidates = []
+    seen_targets = set()
+
+    def _provenance(record: dict) -> str:
+        if record.get("source_type"):
+            return str(record["source_type"])
+        if record.get("source") == "tmx_import" or record.get("imported") or record.get("origin") in ("tmx", "xliff"):
+            return "导入 TM"
+        return "项目 TM"
+
+    # 1. 精确匹配（100%）
+    exact_hit = None
+    for key in (tm_scope_key(target_lang, cleaned), cleaned):
+        if not key:
+            continue
+        rec = (tm or {}).get(key)
+        if _tm_hit(rec, language, key):
+            exact_hit = (key, rec)
+            break
+
+    if exact_hit is not None:
+        key, rec = exact_hit
+        target = str(rec.get("target") or "")
+        ctx_status = tm_context_status(rec, prev_source, next_source)
+        candidates.append({
+            "target": target,
+            "source": cleaned,
+            "score": 100,
+            "match_type": "exact",
+            "provenance": _provenance(rec),
+            "context_status": ctx_status,
+            "conflict_warning": ctx_status == "conflict",
+            "record_key": key,
+        })
+        seen_targets.add(target)
+
+    # 2. 规范化排版等价匹配（99%）
+    scoped_idx = tm_index(tm, target_lang)
+    raw_key = scoped_idx.get(norm_source)
+    if raw_key is not None:
+        rec = (tm or {}).get(raw_key)
+        if _tm_hit(rec, language, raw_key):
+            target = str(rec.get("target") or "")
+            if target not in seen_targets:
+                _, rec_src = tm_unscope_key(raw_key)
+                ctx_status = tm_context_status(rec, prev_source, next_source)
+                candidates.append({
+                    "target": target,
+                    "source": rec_src,
+                    "score": 99,
+                    "match_type": "normalized",
+                    "provenance": _provenance(rec),
+                    "context_status": ctx_status,
+                    "conflict_warning": ctx_status == "conflict",
+                    "record_key": raw_key,
+                })
+                seen_targets.add(target)
+
+    # 3. 确定性模糊匹配（fuzzy, min_score ~ 98%）
+    fuzzy_matches = []
+    for key, rec in (tm or {}).items():
+        if not _tm_hit(rec, language, key):
+            # legacy unscoped 条目语言无法证明，_tm_hit 返回 False，自动跳过
+            continue
+        target = str(rec.get("target") or "")
+        if target in seen_targets:
+            continue
+        _, rec_src = tm_unscope_key(key)
+        norm_rec = tm_normalize(rec_src)
+        if norm_rec == norm_source:
+            continue
+        if not norm_rec:
+            continue
+        len_ratio = min(len(norm_source), len(norm_rec)) / max(len(norm_source), len(norm_rec))
+        if len_ratio < (min_score / 100.0) - 0.15:
+            continue
+        score = int(difflib.SequenceMatcher(None, norm_source, norm_rec).ratio() * 100)
+        if score >= min_score:
+            ctx_status = tm_context_status(rec, prev_source, next_source)
+            fuzzy_matches.append({
+                "target": target,
+                "source": rec_src,
+                "score": score,
+                "match_type": "fuzzy",
+                "provenance": _provenance(rec),
+                "context_status": ctx_status,
+                "conflict_warning": ctx_status == "conflict",
+                "record_key": key,
+            })
+
+    fuzzy_matches.sort(
+        key=lambda item: (item["score"], not item["conflict_warning"]),
+        reverse=True,
+    )
+
+    for item in fuzzy_matches:
+        if item["target"] not in seen_targets:
+            seen_targets.add(item["target"])
+            candidates.append(item)
+            if len(candidates) >= limit:
+                break
+
+    return candidates[:limit]

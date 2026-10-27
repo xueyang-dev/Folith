@@ -726,6 +726,7 @@ from folith.engine.tm_store import (  # noqa: F401  (re-export: core keeps its p
     copy_system_tm_to_project,
     knowledge_cache_path,
     state_target_lang,
+    tm_candidates,
     tm_index,
     tm_normalize,
     tm_path,
@@ -10158,6 +10159,8 @@ def save_translation_edit(job_id, index, target, actor="user"):
     pair = pairs[index]
     if is_excluded(pair):
         raise ValueError("该段落已被排除，不会进入翻译与交付；请先恢复本段再编辑译文。")
+    if pair.get("locked"):
+        raise ValueError("请先解锁段落再编辑译文。")
     assign_missing_segment_uids(state, job_id=job_id)
     new_target = str(target or "").strip()
     if not pair.get("human_edited"):

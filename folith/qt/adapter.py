@@ -739,6 +739,7 @@ class SegmentRow:
     #: 这种草稿仍然保留并显示给用户（那是他没提交的工作），但必须显式提示：
     #: 期间译文已经被改过（例如定点重译），直接提交会覆盖较新的文本。
     stale_draft: bool = False
+    locked: bool = False
 
     @property
     def source_preview(self) -> str:
@@ -759,6 +760,8 @@ def _pair_status(pair: dict) -> str:
     """
     from . import i18n
 
+    if pair.get("locked"):
+        return i18n.tr("已锁定")
     if pair.get("excluded"):
         return i18n.tr("已排除")
     if pair.get("human_edited"):
@@ -810,6 +813,7 @@ def segment_rows(job_id: str, state: dict | None = None) -> list[SegmentRow]:
                 draft_text=str(draft.get("text") or ""),
                 stale_draft=bool(draft) and bool(baseline)
                 and baseline != target,
+                locked=bool(pair.get("locked")),
             ))
         return rows
     # Before translation the workbench still shows the source segments, so the
@@ -1023,7 +1027,7 @@ def find_in_targets(state: dict, query: str, replacement: str = "", *,
     pattern = re.compile(re.escape(query), 0 if case_sensitive else re.IGNORECASE)
     results = []
     for index, pair in enumerate(state.get("pairs") or []):
-        if pair.get("excluded"):
+        if pair.get("excluded") or pair.get("locked"):
             continue
         target = str(pair.get("target") or "")
         count = len(pattern.findall(target))
@@ -5457,3 +5461,89 @@ def setup_choices() -> dict:
                              _source_languages.SOURCE_LANGUAGES],
         "projects": project_options(),
     }
+
+
+# ================= TM candidates, lock/unlock & propagation (Issue #151) =================
+
+
+def segment_tm_candidates(
+    job_id: str,
+    segment_index: int,
+    state: dict | None = None,
+) -> list[dict]:
+    """获取当前段落的 TM 候选列表（按分数降序）。"""
+    state = state if state is not None else load_state(job_id)
+    pairs = state.get("pairs") or []
+    if not (0 <= segment_index < len(pairs)):
+        return []
+    pair = pairs[segment_index]
+    source = str(pair.get("source") or "")
+    if not source.strip():
+        return []
+    project_id = core.tm_project_id(state)
+    tm = core.load_tm(project_id)
+    target_lang = core.state_target_lang(state)
+    if not target_lang:
+        return []
+    prev_src = str(pairs[segment_index - 1].get("source") or "") if segment_index > 0 else None
+    next_src = str(pairs[segment_index + 1].get("source") or "") if segment_index + 1 < len(pairs) else None
+    context = (prev_src, next_src)
+    return core.tm_candidates(tm, source, target_lang=target_lang, context=context)
+
+
+def lock_segment(job_id: str, segment_index: int) -> dict:
+    """锁定段落（禁止直接编辑）。"""
+    def _lock(state):
+        pairs = state.get("pairs") or []
+        if 0 <= segment_index < len(pairs):
+            pairs[segment_index]["locked"] = True
+        return state
+    return core.mutate_job_state(job_id, _lock)
+
+
+def unlock_segment(job_id: str, segment_index: int) -> dict:
+    """解锁段落（允许用户编辑）。"""
+    def _unlock(state):
+        pairs = state.get("pairs") or []
+        if 0 <= segment_index < len(pairs):
+            pairs[segment_index]["locked"] = False
+        return state
+    return core.mutate_job_state(job_id, _unlock)
+
+
+def preview_propagation(
+    job_id: str,
+    source_text: str,
+    target_text: str,
+    *,
+    current_index: int | None = None,
+    exclusions: Sequence[int] = (),
+    state: dict | None = None,
+) -> dict:
+    """计算当前译文传播到所有相同原文段落的预览分类。"""
+    from folith import propagation as _prop
+
+    state = state if state is not None else load_state(job_id)
+    pairs = state.get("pairs") or []
+    return _prop.preview_source_propagation(
+        source_text, target_text, pairs,
+        current_index=current_index, exclusions=exclusions)
+
+
+def apply_propagation(
+    job_id: str,
+    source_text: str,
+    target_text: str,
+    *,
+    current_index: int | None = None,
+    exclusions: Sequence[int] = (),
+    indexes: Sequence[int] | None = None,
+    allow_protected: bool = False,
+) -> dict:
+    """把当前译文传播到相同原文段落（复用候选事务暂存/采纳与保护分类）。"""
+    from folith import propagation as _prop
+
+    return _prop.apply_source_propagation(
+        job_id, source_text, target_text,
+        current_index=current_index, exclusions=exclusions,
+        indexes=indexes, allow_protected=allow_protected)

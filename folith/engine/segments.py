@@ -1498,6 +1498,8 @@ def translation_visible_indexes(state, search="", status_filter="全部",
                 continue
         if status_filter == "待审" and pair.get("reviewed"):
             continue
+        if status_filter in ("锁定", "已锁定") and not (pair.get("locked") or pair.get("excluded")):
+            continue
         if status_filter == "已审校" and not pair.get("reviewed"):
             continue
         if filter_terms and not translation_terms_for_pair(state, pair):
@@ -2048,6 +2050,8 @@ def restore_translation_edit(job_id, index, actor="user"):
     if not (0 <= index < len(pairs)):
         raise IndexError(f"段落索引超出范围：{index}")
     pair = pairs[index]
+    if pair.get("locked"):
+        raise ValueError("请先解锁段落再恢复译文。")
     restore = pair.pop("_translation_edit_restore", None)
     if restore is None and not pair.get("human_edited"):
         return state

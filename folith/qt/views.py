@@ -48,6 +48,7 @@ from . import style as style_module
 from . import theme as theme_module
 from . import segment_assist
 from . import segment_editor
+from .workers import TaskRunner
 from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
@@ -92,11 +93,13 @@ def _tone_color(tokens: dict, tone: str) -> str:
 
 #: 界面标签 -> 核心 `translation_visible_indexes` 认识的取值。
 #: 界面写 "待审校"，核心只认 "待审"；传错标签不会报错，只是**静默不过滤**。
-STATUS_FILTER_VALUES = {"全部": "全部", "待审校": "待审", "已审校": "已审校"}
+STATUS_FILTER_VALUES = {"全部": "全部", "待审校": "待审", "已审校": "已审校", "已锁定": "锁定"}
 
 
 def _segment_tone(row) -> str:
     """段落状态 -> 语义色调。"""
+    if getattr(row, "locked", False):
+        return "muted"
     if getattr(row, "excluded", False):
         return "muted"
     if getattr(row, "human_edited", False):
@@ -2684,10 +2687,10 @@ class WorkbenchView(QWidget):
         # 因为 set_status_filter() 仍然按名字设置选中态。
         self.status_segments = style_module.SegmentedControl(
             [("全部", i18n.tr("全部")), ("待审校", i18n.tr("待审校")),
-             ("已审校", i18n.tr("已审校"))])
+             ("已审校", i18n.tr("已审校")), ("已锁定", i18n.tr("已锁定"))])
         self.status_segments.changed.connect(self.set_status_filter)
         self.status_buttons: dict[str, QPushButton] = {
-            name: self.status_segments.button(name) for name in ("全部", "待审校", "已审校")}
+            name: self.status_segments.button(name) for name in ("全部", "待审校", "已审校", "已锁定")}
 
         # 筛选收进一个菜单：六个条件同时放在工具条上放不下，也读不过来。
         # 勾选多个时取交集（"含项目术语"且"原文质量问题"……）。
@@ -2888,6 +2891,16 @@ class WorkbenchView(QWidget):
         self.restore_button.clicked.connect(
             lambda: self.restoreRequested.emit(self._current_index))
         self.restore_button.setVisible(False)
+        self.lock_button = _icon_button(QPushButton(i18n.tr('锁定段落')), "lock", "text-secondary")
+        self.lock_button.setToolTip(i18n.tr('锁定当前段落，禁止直接编辑'))
+        self.lock_button.clicked.connect(self.lock_current_segment)
+        self.unlock_button = _icon_button(QPushButton(i18n.tr('解锁段落')), "unlock", "text-secondary")
+        self.unlock_button.setToolTip(i18n.tr('解锁当前段落，恢复可编辑状态'))
+        self.unlock_button.clicked.connect(self.unlock_current_segment)
+        self.unlock_button.setVisible(False)
+        self.propagate_button = _icon_button(QPushButton(i18n.tr('应用到相同原文段')), "copy", "text-secondary")
+        self.propagate_button.setToolTip(i18n.tr('把当前译文应用到文中所有相同原文段落（复用候选事务与保护）'))
+        self.propagate_button.clicked.connect(self._propagate_to_identical_segments)
         self.structure_button = _icon_button(QPushButton(i18n.tr('段落结构…')), "list", "text-secondary")
         self.structure_button.setToolTip(
             i18n.tr('改正原文、拆分、合并、插入或删除空段；可撤销最近一次结构操作'))
@@ -2921,6 +2934,7 @@ class WorkbenchView(QWidget):
         self.target_edit.textChanged.connect(self._text_changed)
         self.target_edit.commitAndNext.connect(self._commit_and_next)
         self.target_edit.escaped.connect(self.segment_list.setFocus)
+        self.inline_editor.unlock_button.clicked.connect(self.unlock_current_segment)
         for button in (self.discard_draft_button, self.save_next_button, self.submit_button):
             self.inline_editor.add_footer_button(button)
 
@@ -2978,6 +2992,11 @@ class WorkbenchView(QWidget):
         self._analyzing_index = -1
         self.term_list = segment_assist.TermList()
         self.term_list.insertRequested.connect(self._insert_into_target)
+        self.tm_box = segment_assist.TMCandidateBox()
+        self._tm_runner = TaskRunner(self, max_threads=1)
+        self._tm_request_key = None
+        self._tm_pending = None
+        self.tm_box.insertRequested.connect(self._insert_tm_candidate)
         self.term_list.hovered.connect(self._hover_term)
         self.term_list.activated.connect(self.focus_term)
         self.term_list.editRequested.connect(self.termEditRequested.emit)
@@ -3110,6 +3129,7 @@ class WorkbenchView(QWidget):
         ops.setSpacing(theme_module.SPACE["xs"])
         ops.addWidget(style_module.SectionLabel(i18n.tr('段落操作')))
         ops.addLayout(row_of(self.copy_source_button, self.restore_button,
+                             self.propagate_button, self.lock_button, self.unlock_button,
                              self.structure_button, self.view_source_button,
                              self.exclude_button))
         single.addWidget(self.segment_ops_section)
@@ -3156,7 +3176,7 @@ class WorkbenchView(QWidget):
         references.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # The scroll area must grow its content instead of squeezing reference
         # widgets below their natural heights (which clips term button text).
-        for widget in (self.attention_list, self.term_list, self.context_view, self.note_box):
+        for widget in (self.attention_list, self.term_list, self.tm_box, self.context_view, self.note_box):
             widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         extra = QVBoxLayout(references)
         extra.setContentsMargins(0, 0, 0, 0)
@@ -3167,6 +3187,7 @@ class WorkbenchView(QWidget):
         extra.addWidget(self.term_heading)
         extra.addWidget(self.term_list)
         extra.addWidget(self.term_add_button)
+        extra.addWidget(self.tm_box)
         # 前后文：平时网格里相邻的行就是前后文（整段显示之后这一节是重复的）；
         # 只有筛选 / 搜索让相邻行不再相邻时才出现。
         self.context_heading = style_module.SectionLabel(i18n.tr('原文中的前后文'))
@@ -3711,6 +3732,11 @@ class WorkbenchView(QWidget):
         next_shortcut.setShortcut(platform_ui.shortcut("save_next"))
         next_shortcut.triggered.connect(self._commit_and_next)
         self.addAction(next_shortcut)
+
+        self.tm_insert_action = QAction(i18n.tr('插入 TM 建议'), self)
+        self.tm_insert_action.setShortcut(platform_ui.shortcut("tm_insert"))
+        self.tm_insert_action.triggered.connect(self._insert_top_tm_candidate)
+        self.addAction(self.tm_insert_action)
 
     # ================= 数据 =================
     def load(self, job_id: str, config: adapter.EngineConfig,
@@ -4823,7 +4849,7 @@ class WorkbenchView(QWidget):
 
     # ================= 过滤（复用核心语义） =================
     def set_status_filter(self, name: str) -> None:
-        self._status_filter = name if name in ("全部", "待审校", "已审校") else "全部"
+        self._status_filter = name if name in ("全部", "待审校", "已审校", "已锁定") else "全部"
         for key, button in self.status_buttons.items():
             button.setChecked(key == self._status_filter)
         self._filters_changed()
@@ -5214,7 +5240,8 @@ class WorkbenchView(QWidget):
             # 批注变了也要重画：缓存按行数据比较，批注不在行数据里。
             self._painted.pop(position, None)
         marker = ("⚠" if row.stale_draft else "●") if row.has_draft else (
-            "✓ " if row.human_edited and row.index not in self._pending_saved else "")
+            "🔒 " if getattr(row, "locked", False) else (
+            "✓ " if row.human_edited and row.index not in self._pending_saved else ""))
         noted = "✎" if row.segment_uid in self._notes else ""
         number_text = f"{marker}{row.index + 1}{noted}"
         if number.text() != number_text:
@@ -5833,6 +5860,22 @@ class WorkbenchView(QWidget):
         self._sync_context_visibility()
         self._decorate_current_row()
         self._refresh_candidates(row.index)
+        self._refresh_tm_candidates(row.index)
+        is_locked = bool(getattr(row, "locked", False))
+        self.target_edit.setReadOnly(is_locked)
+        self.inline_editor.unlock_button.setVisible(is_locked)
+        if is_locked:
+            self.inline_editor.state_label.setText(i18n.tr("🔒 此段落已锁定，不可编辑"))
+            self.inline_editor.set_footer_visible(True)
+            self.submit_button.setEnabled(False)
+            self.save_next_button.setEnabled(False)
+            self.lock_button.setVisible(False)
+            self.unlock_button.setVisible(True)
+            self.propagate_button.setEnabled(False)
+        else:
+            self.lock_button.setVisible(True)
+            self.unlock_button.setVisible(False)
+            self.propagate_button.setEnabled(not row.excluded)
         if self._assist_index != row.index:
             self._assist_index = row.index
             self.note_box.set_note(self._notes.get(row.segment_uid))
@@ -6155,7 +6198,7 @@ class WorkbenchView(QWidget):
 
     def flush_draft(self) -> bool:
         """Persist the uncommitted editor text through the core's draft file."""
-        if not self._dirty or not self._loaded_uid or not self.job_id:
+        if not self._dirty or not self._loaded_uid or not self.job_id or self._is_current_segment_locked():
             return True
         text = self.target_edit.toPlainText()
         committed = ""
@@ -6170,6 +6213,10 @@ class WorkbenchView(QWidget):
             self.segment_status.set_status(i18n.tr('草稿保存失败：{v0}', v0=exc), "error")
             return False
         self._dirty = False
+        for row in self._all_rows:
+            if row.segment_uid == self._loaded_uid:
+                row.has_draft = text != committed
+                row.draft_text = text
         marker = i18n.tr(" · 已保存草稿")
         self.segment_status.setText(
             self.segment_status.text().split(marker)[0] + marker)
@@ -6343,12 +6390,158 @@ class WorkbenchView(QWidget):
         if 0 <= target < len(self._rows):
             self._select_only(target)
 
-    def _insert_into_target(self, text: str) -> None:
-        """把术语译名插到译文光标处（只改编辑框，保存仍由用户决定）。"""
-        if not text or self._active_position < 0:
+    def insert_editor_text(self, text: str, *, replace: bool = False) -> None:
+        """把文本插到译文编辑框（只改编辑框草稿，保存仍由用户决定）。"""
+        if not text or self._active_position < 0 or self._is_current_segment_locked():
             return
+        if replace:
+            self.target_edit.selectAll()
         self.target_edit.insertPlainText(text)
         self.target_edit.setFocus()
+
+    def _insert_into_target(self, text: str) -> None:
+        """把术语译名插到译文光标处（只改编辑框，保存仍由用户决定）。"""
+        self.insert_editor_text(text, replace=False)
+
+    def _insert_tm_candidate(self, text: str) -> None:
+        """把 TM 候选插入到译文编辑框（替换整段，草稿待保存）。"""
+        self.insert_editor_text(text, replace=True)
+
+    def _insert_top_tm_candidate(self) -> None:
+        """快捷键插入顶层 TM 候选。"""
+        top = self.tm_box.top_candidate_target()
+        if top:
+            self._insert_tm_candidate(top)
+
+    def _is_current_segment_locked(self) -> bool:
+        if self._current_index < 0:
+            return False
+        row = next((item for item in self._all_rows if item.index == self._current_index), None)
+        return bool(getattr(row, "locked", False))
+
+    def _refresh_tm_candidates(self, index: int) -> None:
+        if not self.job_id or index < 0:
+            self._tm_request_key = None
+            self.tm_box.reset()
+            return
+        pairs = self._state.get("pairs") or []
+        if index >= len(pairs):
+            return
+        # Snapshot only the input needed by matching. Do not hand mutable UI
+        # state to a worker, or enqueue one full-table scan per refresh tick.
+        pair = dict(pairs[index])
+        before = dict(pairs[index - 1]) if index else {}
+        after = dict(pairs[index + 1]) if index + 1 < len(pairs) else {}
+        project = adapter.core.tm_project_id(self._state)
+        language = adapter.core.state_target_lang(self._state)
+        key = (self.job_id, pair.get("segment_uid"), index, pair.get("source"),
+               before.get("source"), after.get("source"), project, language,
+               int(time.monotonic() // 5))
+        if key == self._tm_request_key:
+            return
+        self._tm_request_key = key
+        self.tm_box.reset()
+        self._tm_pending = (key, pair, before, after, project, language)
+        self._start_tm_request()
+
+    def _start_tm_request(self) -> None:
+        if self._tm_runner.busy or self._tm_pending is None:
+            return
+        key, pair, before, after, project, language = self._tm_pending
+        self._tm_pending = None
+
+        def read():
+            tm = adapter.core.load_tm(project)
+            return adapter.core.tm_candidates(
+                tm, pair.get("source", ""), target_lang=language,
+                context=(before.get("source"), after.get("source")))
+
+        def finish(items, error=False):
+            if key == self._tm_request_key:
+                self.tm_box.set_candidates(items, error=error)
+            self._start_tm_request()
+
+        self._tm_runner.submit(read, on_done=finish,
+                               on_error=lambda *_: finish([], True), label="tm_candidates")
+
+    def unlock_current_segment(self) -> None:
+        """显式解锁当前段落，恢复可编辑状态。"""
+        if self._current_index < 0:
+            return
+        row = next((item for item in self._all_rows if item.index == self._current_index), None)
+        if row is None or not getattr(row, "locked", False):
+            return
+        adapter.unlock_segment(self.job_id, self._current_index)
+        row.locked = False
+        pairs = self._state.get("pairs") or []
+        if 0 <= self._current_index < len(pairs):
+            pairs[self._current_index]["locked"] = False
+            row.status = adapter._pair_status(pairs[self._current_index])
+        self.target_edit.setReadOnly(False)
+        self.inline_editor.unlock_button.setVisible(False)
+        self.inline_editor.state_label.setText("")
+        self._sync_inline_footer()
+        self._render_segments()
+        self._render_segment_detail()
+
+    def lock_current_segment(self) -> None:
+        """显式锁定当前段落。"""
+        if self._current_index < 0:
+            return
+        row = next((item for item in self._all_rows if item.index == self._current_index), None)
+        if row is None or getattr(row, "locked", False):
+            return
+        if not self.flush_draft():
+            return
+        adapter.lock_segment(self.job_id, self._current_index)
+        row.locked = True
+        pairs = self._state.get("pairs") or []
+        if 0 <= self._current_index < len(pairs):
+            pairs[self._current_index]["locked"] = True
+            row.status = i18n.tr("已锁定")
+        self.target_edit.setReadOnly(True)
+        self.inline_editor.unlock_button.setVisible(True)
+        self.inline_editor.state_label.setText(i18n.tr("🔒 此段落已锁定，不可编辑"))
+        self.inline_editor.set_footer_visible(True)
+        self._render_segments()
+        self._render_segment_detail()
+
+    def _propagate_to_identical_segments(self) -> None:
+        """把当前段落的译文传播到全文所有具有相同源文的段落。"""
+        if self._current_index < 0 or self._is_current_segment_locked():
+            return
+        row = next((item for item in self._all_rows if item.index == self._current_index), None)
+        if row is None:
+            return
+        source = str(row.source or "").strip()
+        target = str(self.target_edit.toPlainText() or row.target or "").strip()
+        if not source or not target:
+            return
+        preview = adapter.preview_propagation(
+            self.job_id, source, target,
+            current_index=row.index, state=self._state)
+        replaceable_count = len(preview.get("rows") or [])
+        already_count = len(preview.get("already_correct") or [])
+        protected_count = len(preview.get("protected") or [])
+        if replaceable_count == 0:
+            return
+        confirmed = getattr(self, "_auto_confirm_propagation", False)
+        if not confirmed:
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self, i18n.tr('重复段传播'),
+                i18n.tr('发现 {v0} 处相同原文段落可更新：\n• 可替换：{v1} 处\n• 已是此译文：{v2} 处\n• 受保护跳过：{v3} 处\n是否确认应用？',
+                        v0=replaceable_count, v1=replaceable_count, v2=already_count, v3=protected_count),
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Ok)
+            confirmed = (reply == QMessageBox.StandardButton.Ok)
+        if confirmed:
+            res = adapter.apply_propagation(
+                self.job_id, source, target,
+                current_index=row.index)
+            state = adapter.load_state(self.job_id)
+            rows = adapter.segment_rows(self.job_id, state)
+            self.apply(self.job_id, state, rows, self._last_runtime, self._snapshots)
 
     def _request_term_add(self) -> None:
         """加入术语库：原文取原文里选中的词，译文取编辑框里选中的词（可留空再填）。"""
@@ -6469,7 +6662,7 @@ class WorkbenchView(QWidget):
         self.segment_list.selectRow(position)
 
     def _submit(self) -> None:
-        if self._current_index < 0:
+        if self._current_index < 0 or self._is_current_segment_locked():
             return
         self.flush_draft()
         self.editSubmitted.emit(self._current_index)
