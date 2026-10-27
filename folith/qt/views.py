@@ -48,6 +48,7 @@ from . import style as style_module
 from . import theme as theme_module
 from . import segment_assist
 from . import segment_editor
+from .workers import TaskRunner
 from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
@@ -2992,6 +2993,9 @@ class WorkbenchView(QWidget):
         self.term_list = segment_assist.TermList()
         self.term_list.insertRequested.connect(self._insert_into_target)
         self.tm_box = segment_assist.TMCandidateBox()
+        self._tm_runner = TaskRunner(self, max_threads=1)
+        self._tm_request_key = None
+        self._tm_pending = None
         self.tm_box.insertRequested.connect(self._insert_tm_candidate)
         self.term_list.hovered.connect(self._hover_term)
         self.term_list.activated.connect(self.focus_term)
@@ -6209,6 +6213,10 @@ class WorkbenchView(QWidget):
             self.segment_status.set_status(i18n.tr('草稿保存失败：{v0}', v0=exc), "error")
             return False
         self._dirty = False
+        for row in self._all_rows:
+            if row.segment_uid == self._loaded_uid:
+                row.has_draft = text != committed
+                row.draft_text = text
         marker = i18n.tr(" · 已保存草稿")
         self.segment_status.setText(
             self.segment_status.text().split(marker)[0] + marker)
@@ -6413,13 +6421,48 @@ class WorkbenchView(QWidget):
 
     def _refresh_tm_candidates(self, index: int) -> None:
         if not self.job_id or index < 0:
+            self._tm_request_key = None
             self.tm_box.reset()
             return
-        try:
-            items = adapter.segment_tm_candidates(self.job_id, index, self._state)
-            self.tm_box.set_candidates(items)
-        except Exception:
-            self.tm_box.set_candidates([], error=True)
+        pairs = self._state.get("pairs") or []
+        if index >= len(pairs):
+            return
+        # Snapshot only the input needed by matching. Do not hand mutable UI
+        # state to a worker, or enqueue one full-table scan per refresh tick.
+        pair = dict(pairs[index])
+        before = dict(pairs[index - 1]) if index else {}
+        after = dict(pairs[index + 1]) if index + 1 < len(pairs) else {}
+        project = adapter.core.tm_project_id(self._state)
+        language = adapter.core.state_target_lang(self._state)
+        key = (self.job_id, pair.get("segment_uid"), index, pair.get("source"),
+               before.get("source"), after.get("source"), project, language,
+               int(time.monotonic() // 5))
+        if key == self._tm_request_key:
+            return
+        self._tm_request_key = key
+        self.tm_box.reset()
+        self._tm_pending = (key, pair, before, after, project, language)
+        self._start_tm_request()
+
+    def _start_tm_request(self) -> None:
+        if self._tm_runner.busy or self._tm_pending is None:
+            return
+        key, pair, before, after, project, language = self._tm_pending
+        self._tm_pending = None
+
+        def read():
+            tm = adapter.core.load_tm(project)
+            return adapter.core.tm_candidates(
+                tm, pair.get("source", ""), target_lang=language,
+                context=(before.get("source"), after.get("source")))
+
+        def finish(items, error=False):
+            if key == self._tm_request_key:
+                self.tm_box.set_candidates(items, error=error)
+            self._start_tm_request()
+
+        self._tm_runner.submit(read, on_done=finish,
+                               on_error=lambda *_: finish([], True), label="tm_candidates")
 
     def unlock_current_segment(self) -> None:
         """显式解锁当前段落，恢复可编辑状态。"""
@@ -6447,6 +6490,8 @@ class WorkbenchView(QWidget):
             return
         row = next((item for item in self._all_rows if item.index == self._current_index), None)
         if row is None or getattr(row, "locked", False):
+            return
+        if not self.flush_draft():
             return
         adapter.lock_segment(self.job_id, self._current_index)
         row.locked = True

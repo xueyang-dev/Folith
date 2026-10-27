@@ -2050,6 +2050,8 @@ def restore_translation_edit(job_id, index, actor="user"):
     if not (0 <= index < len(pairs)):
         raise IndexError(f"段落索引超出范围：{index}")
     pair = pairs[index]
+    if pair.get("locked"):
+        raise ValueError("请先解锁段落再恢复译文。")
     restore = pair.pop("_translation_edit_restore", None)
     if restore is None and not pair.get("human_edited"):
         return state

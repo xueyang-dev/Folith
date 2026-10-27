@@ -363,6 +363,11 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
     # Protection is checked against the state *now*, not against the baseline:
     # a candidate generated before the human confirmed the text must not
     # overwrite that confirmation through a batch.
+    if pair.get("locked"):
+        return {"committed": False, "already_adopted": False,
+                "candidate": _cand.public_view(record, pair=pair),
+                "conflict": _cand.CONFLICT_PROTECTED_HUMAN,
+                "reason": "请先解锁段落再采用候选", "protection": ["locked"]}, False
     locked = _cand.locked_protection(pair)
     if locked and not allow_protected:
         return {"committed": False, "already_adopted": False,

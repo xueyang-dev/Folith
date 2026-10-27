@@ -102,8 +102,7 @@ def test_provenance_imported():
     
     key = tm_scope_key(target_lang, "Welcome user")
     rec = tm_record("欢迎用户", target_lang, reviewed=True)
-    rec["imported"] = True
-    rec["origin"] = "tmx"
+    rec["source"] = "tmx_import"
     tm[key] = rec
 
     cands = tm_candidates(tm, "Welcome user", target_lang=target_lang)

@@ -135,6 +135,61 @@ def test_tm_candidate_box_rendering():
     assert received == ["精确匹配译文"]
 
 
+def test_lock_preserves_unsaved_draft_and_blocks_core_writes(tm_bench):
+    view, app, job_id, _ = tm_bench
+    from folith.qt import adapter
+    import core
+    view.select_segment(0)
+    view.target_edit.setPlainText("尚未自动保存的人工草稿")
+    view.lock_current_segment()
+    view.select_segment(1)
+    view.select_segment(0)
+    assert view.target_edit.toPlainText() == "尚未自动保存的人工草稿"
+    with pytest.raises(ValueError, match="解锁"):
+        core.save_translation_edit(job_id, 0, "must not write")
+    staged = core.commit_candidates(job_id, [{
+        "segment_uid": "s0", "segment_index": 0, "candidate_target": "must not adopt"}])
+    result = core.adopt_translation_candidates(
+        job_id, [staged["created"][0]["candidate_id"]], allow_protected=True)
+    assert result["changed"] == 0
+    assert adapter.load_state(job_id)["pairs"][0]["target"] == "第一段旧译文"
+
+
+def test_failed_draft_save_prevents_lock(tm_bench, monkeypatch):
+    view, app, job_id, _ = tm_bench
+    from folith.qt import adapter
+    view.select_segment(0)
+    view.target_edit.setPlainText("keep me")
+    monkeypatch.setattr(view, "flush_draft", lambda: False)
+    view.lock_current_segment()
+    assert not adapter.load_state(job_id)["pairs"][0].get("locked")
+
+
+def test_tm_refresh_is_background_and_discards_old_segment(tm_bench, monkeypatch):
+    view, app, job_id, _ = tm_bench
+    import threading
+    import core
+    entered, release = threading.Event(), threading.Event()
+    def slow(*args, **kwargs):
+        entered.set()
+        release.wait(2)
+        return [{"target": "stale", "score": 100}]
+    view._tm_runner.wait_for_done()
+    _pump(app, 0.1)
+    monkeypatch.setattr(core, "tm_candidates", slow)
+    view._tm_request_key = None
+    started = time.monotonic()
+    view._refresh_tm_candidates(0)
+    assert time.monotonic() - started < 0.3
+    _pump(app, 0.1)
+    assert entered.is_set()
+    view.select_segment(4)
+    assert view.tm_box.top_candidate_target() == ""
+    release.set()
+    assert view._tm_runner.wait_for_done(3000)
+    app.processEvents()
+
+
 def test_tm_candidate_insertion_and_save_flow(tm_bench):
     """Test TM insertion into editor and persistence."""
     view, app, job_id, config = tm_bench

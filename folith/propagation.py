@@ -90,7 +90,7 @@ def preview_source_propagation(
             continue
 
         protection = _cand.locked_protection(pair)
-        if protection or pair.get("locked"):
+        if protection or pair.get("locked") or pair.get("reviewed"):
             prot_list = list(protection) if protection else ["locked"]
             result["protected"].append({
                 "segment_index": index,

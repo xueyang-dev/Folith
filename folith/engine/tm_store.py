@@ -246,7 +246,7 @@ def tm_candidates(
     def _provenance(record: dict) -> str:
         if record.get("source_type"):
             return str(record["source_type"])
-        if record.get("imported") or record.get("origin") in ("tmx", "xliff"):
+        if record.get("source") == "tmx_import" or record.get("imported") or record.get("origin") in ("tmx", "xliff"):
             return "导入 TM"
         return "项目 TM"
 
