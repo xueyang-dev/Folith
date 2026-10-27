@@ -374,7 +374,7 @@ def test_state_import_mapping_20():
 def test_state_path_pairs_match_identity_and_promotes_review():
     source = _xliff12(SIX_TUS_12)
     units, _ = extract_xliff_units(source)
-    pairs = [{"source": u.source, "target": "", "xliff_instance_id": u.instance_id,
+    pairs = [{"source": u.source, "target": u.target, "xliff_instance_id": u.instance_id,
               "xliff_source_hash": u.source_version} for u in units]
     for i in range(3):
         pairs[i].update(target=f"状态路径第 {i + 1} 句。", reviewed=True)
@@ -556,6 +556,10 @@ def test_source_equal_translation_and_review_only_are_exported():
     assert report["modified_units"] == 0
     assert report["promoted_review_units"] == 1
     assert extract_xliff_units(output)[0][0].reviewed
+    pair.update(target="", reviewed=False)
+    output, report = write_roundtrip_xliff(source, {"pairs": [pair]})
+    assert report["modified_units"] == 1
+    assert extract_xliff_units(output)[0][0].target == ""
 
 
 def test_standard_segmented_mrk_is_indexed_and_exported():

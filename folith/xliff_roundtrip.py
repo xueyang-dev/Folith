@@ -893,7 +893,7 @@ def write_roundtrip_xliff(source_bytes: bytes, units_or_state: Any, *,
     else:
         raise ValueError(f"Unsupported units_or_state type: {type(units_or_state)}")
 
-    # 空译文（未翻译）的单元走 untouched 分支，不参与 Tag QA；
+    # 空译文不参与 Tag QA；如果原文件已有译文，空值代表显式清空。
     # 一旦有译文，占位符必须与源文一一对应。
     for unit in units:
         if not unit.locked and unit.target.strip():
@@ -919,7 +919,7 @@ def write_roundtrip_xliff(source_bytes: bytes, units_or_state: Any, *,
             continue
         desired = (unit.target or "").strip()
         file_target = str(unit.state.get("file_target") or "").strip()
-        if not desired or desired == file_target:
+        if desired == file_target:
             untouched += 1
         else:
             _write_unit_target(node, unit, ns, manifest)
