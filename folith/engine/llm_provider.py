@@ -7,6 +7,7 @@ name defined here.  Anything still owned by ``core`` is read late-bound through
 
 import httpx
 import json
+import os
 import re
 from folith import llm_transport as _llm_transport
 from folith import request_control as _request_control
@@ -50,6 +51,13 @@ def resolve_openai_base_url(provider, base_url=None):
         resolved = normalize_openai_base_url(getattr(_c._LLM_CTX, "base_url", None))
     if cfg.get("custom_base_url") and not resolved:
         raise ValueError("自定义中转站未配置有效的 API 地址（需要 http(s)://…/v1）")
+    if provider == "OpenAI" and not resolved:
+        # Resolve SDK environment/default routing here, before cache identity
+        # and client construction. Always pass the result explicitly to SDK.
+        candidate = os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        resolved = normalize_openai_base_url(candidate)
+        if not resolved:
+            raise ValueError("API 地址无效（需要 http(s)://…/v1）")
     return resolved
 
 
@@ -136,7 +144,8 @@ def effective_request_route(provider, model, role=None):
     if cfg.get("kind") == "gemini":
         return {}
     try:
-        base_url = resolve_openai_base_url(provider) or ""
+        pinned = getattr(_c._LLM_CTX, "annotation_base_url", None) if role == "annotation" else None
+        base_url = resolve_openai_base_url(provider, pinned) or ""
     except ValueError:
         base_url = ""             # the request itself will fail; nothing to reuse
     reasoning = getattr(_c._LLM_CTX, "reasoning_effort", None)
@@ -238,6 +247,9 @@ def reset_llm_clients():
 
 
 def _trace_http_request(request):
+    # Runs for each actual HTTP attempt, including SDK retries. A peer's
+    # staging failure must prevent transport dispatch after provider-gate exit.
+    _c._annotation_fail_stop_check()
     run = trace.get_active_run(_c._runtime_job_id())
     if run:
         run.begin_http_attempt(request)

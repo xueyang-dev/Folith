@@ -19,10 +19,7 @@ def environment_key(provider: str) -> str:
 
 def connection_base_url(provider: str, base_url: str = "") -> str:
     import core
-    value = core.resolve_openai_base_url(provider, base_url) or ""
-    if provider == "OpenAI" and not value:
-        value = os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
-    return value
+    return core.resolve_openai_base_url(provider, base_url) or ""
 
 
 def effective_config(config: EngineConfig, profiles: list[dict], roles: dict) -> EngineConfig:

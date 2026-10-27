@@ -1,0 +1,59 @@
+{
+  "status": "DESIGNED_NOT_AUTHORIZED_NOT_EXECUTED",
+  "runtime_commit": "0a2f29a1230147caa3ff64506e3c3c97d2fc3424",
+  "language_direction": "English -> Simplified Chinese",
+  "model": "same explicitly approved endpoint/model for all variants; historical dots3-note-prev name alone is insufficient",
+  "preflight": [
+    "Human approves provider, request limits, both USD caps and permission to send the frozen source samples.",
+    "Obtain gateway billing rules for input, cached input, output and reasoning; record currency and date.",
+    "Use provider-side hard spending quotas. Client stop-after-response alone cannot guarantee a dollar ceiling.",
+    "Verify the gateway supports the same bounded output policy in both modes; inability to bound spending blocks live execution.",
+    "Freeze source segment IDs, reference context, glossary and reviewer rubric. Preserve currently required QA/review; do not modify user jobs.",
+    "Validate sample coverage for terminology, repeated names, pronouns, numbers, placeholders, links, citations and long paragraphs; replace missing coverage before authorization, then freeze the manifest.",
+    "Disable reuse only in isolated experimental tasks and report cache misses; never mutate production TM/cache."
+  ],
+  "batching": {
+    "variants": [
+      {"id": "A", "strategy": "sentence", "max_items": 6, "max_chars": 4800},
+      {"id": "B", "strategy": "paragraph", "max_items": 20, "max_chars": 2000},
+      {"id": "C", "strategy": "paragraph", "max_items": 20, "max_chars": 4000},
+      {"id": "D", "strategy": "paragraph", "max_items": 20, "max_chars": 6000, "exploratory": true}
+    ],
+    "candidate_source_windows_inclusive": [[0, 11], [240, 251], [480, 491], [720, 731]],
+    "manifest_status": "candidate windows; coverage validation and boundary-preserving plan must be frozen before live use",
+    "repetitions": 2,
+    "ordering": "seed 20261026, balanced interleaving of variants per source window; record actual order",
+    "concurrency": 4,
+    "max_translation_logical_requests_per_variant_including_retries": 16,
+    "max_additional_repair_and_quality_review_logical_requests": 16,
+    "max_total_logical_requests": 80,
+    "max_http_attempts_including_sdk_retries": 160,
+    "proposed_provider_side_hard_budget_usd": 5,
+    "comparison": "Report latency and tokens separately from parse success, defects and blinded human acceptance; do not extrapolate fixed per-call latency to a whole book."
+  },
+  "reasoning": {
+    "roles": ["translation", "knowledge_feedback", "annotation"],
+    "modes": ["provider_default", "thinking_disabled"],
+    "paired_payloads_per_role": 4,
+    "max_mode_capability_probe_logical_requests": 2,
+    "max_total_logical_requests_including_retries": 26,
+    "max_http_attempts_including_sdk_retries": 52,
+    "proposed_provider_side_hard_budget_usd": 3,
+    "controls": "Exact same per-role prompt, schema, sampling and supported output ceiling for each pair; no model switch, no automatic risk routing.",
+    "reviewer": "No inherited thinking_disabled control in current runtime. Any explicit reviewer-mode trial is separate and requires its own quality/authorization protocol.",
+    "unknown_gateway_behavior": "A successful response or HTTP 200 does not prove disabled thinking was honored. Require returned usage or provider evidence; otherwise mark enforcement unknown."
+  },
+  "quality_acceptance": {
+    "hard_failures": ["missing or duplicate required segment IDs", "misalignment", "truncated target", "lost or changed protected numbers/placeholders/URLs/citations", "new critical mistranslation", "unaccepted locked-term violation"],
+    "semantic_assessment": "Blinded bilingual review of accuracy, additions/omissions, names, terminology, tone and cross-window reference chains; paired adjudication of any regression. No calibrated composite score is invented.",
+    "statistical_limit": "Small bounded pilot can reject an unsafe candidate; passing it does not prove book-wide non-inferiority."
+  },
+  "stop_conditions": [
+    "Before dispatch, reserve the maximum supported cost and one logical/HTTP attempt allowance; stop if any cap would be exceeded.",
+    "Stop the affected variant on the first hard quality failure; retain the failed result for blind adjudication without automatic retry.",
+    "Stop on two consecutive 429/5xx/connection failures or provider capability rejection; do not compensate by raising concurrency.",
+    "Pause a block when baseline P95 drifts over 25 percent across paired blocks; investigate load rather than attribute it to batching. With too few observations, mark drift uncertain.",
+    "Stop on user cancellation, persistence failure, missing usage needed for budget control, hard quota exhaustion or unsupported output bounds.",
+    "Stop larger-batch exploration when item caps erase meaningful request-count gains, or repeat trials remain inconclusive; do not promote based on mock speed."
+  ]
+}

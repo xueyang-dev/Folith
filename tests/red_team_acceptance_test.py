@@ -593,7 +593,7 @@ def test_crash_recovery_no_duplicate_tm():
         texts = [f"第{i}段，内容足够长以通过过滤检查。" for i in range(9)]
         docx_bytes = _make_docx(texts)
 
-        def flaky(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
+        def flaky(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
             if "学术翻译专家" in system_prompt:
                 if any("第5段" in s for _, s in _numbered(user_prompt)):
                     raise RuntimeError("模拟中断")
@@ -620,7 +620,7 @@ def test_crash_recovery_no_duplicate_tm():
         assert mid["p1_done"] and len(mid["pairs"]) == 4, \
             "失败的批次不得提交任何译文（前一批 4 段应已落盘）"
 
-        def good(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
+        def good(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
             if "学术翻译专家" in system_prompt:
                 return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
             if "翻译审校专家" in system_prompt:
@@ -637,7 +637,7 @@ def test_crash_recovery_no_duplicate_tm():
         # 再次运行应完全幂等（无新 LLM 调用）
         n = 0
 
-        def counting(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
+        def counting(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
             nonlocal n
             n += 1
             return "[]"

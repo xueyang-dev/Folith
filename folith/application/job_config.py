@@ -133,7 +133,7 @@ OPTIONAL_REVIEWER_KWARG_KEYS = frozenset({
 #: callbacks; no product surface sets them today, and migrating them is not part
 #: of Phase 1.
 INTERNAL_CORE_OPTIONS = frozenset({
-    "mode",
+    "mode", "annotation_scheduler",
     "auxiliary_provider", "auxiliary_model", "auxiliary_api_key",
     "auxiliary_base_url",
     "knowledge_feedback_interval",

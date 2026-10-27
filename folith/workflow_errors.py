@@ -9,6 +9,18 @@ class WorkflowStopped(RuntimeError):
         self.reason = reason
 
 
+class AnnotationStagingError(OSError):
+    """A storage failure, distinct from user cancellation; retain its cause."""
+
+    def __init__(self, error):
+        self.storage_error = error
+        if isinstance(error, OSError) and error.errno is not None:
+            super().__init__(error.errno, f"标注结果暂存失败：{error.strerror or error}",
+                             error.filename)
+        else:
+            super().__init__(f"标注结果暂存失败：{error}")
+
+
 _lock = threading.RLock()
 _failures = {}
 
@@ -30,6 +42,10 @@ def fatal_reason(error):
 
 
 def raise_if_fatal(error, job_id=None):
+    if isinstance(error, AnnotationStagingError):
+        # Annotation's execution-scoped latch already broadcasts this failure.
+        # Do not turn it into cancellation or poison a later direct-stage run.
+        raise error
     reason = fatal_reason(error)
     if not reason:
         return

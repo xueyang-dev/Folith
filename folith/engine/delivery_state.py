@@ -85,6 +85,9 @@ def _mark_translation_truth_changed(
                 for index in range(offset, offset + len(batch)):
                     (state.get("annotations") or {}).pop(index, None)
                     (state.get("annotations") or {}).pop(str(index), None)
+                if job_id:
+                    from folith.annotation_staging import clear_staged_annotation
+                    clear_staged_annotation(job_id, offset)
             offset += len(batch)
     truth = dict(state.get("translation_truth") or {})
     truth["authority"] = _finalization.CURRENT_TRANSLATION
