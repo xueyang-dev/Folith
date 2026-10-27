@@ -175,7 +175,7 @@ def test_annotate_stage():
             "findings": [], "review_stats": {},
         }
 
-        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
+        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
             if "翻译教学专家" in system_prompt:
                 return json.dumps([
                     {"seg": 1, "type": "domain", "src": "Mirage", "tgt": "幻影战斗机",
@@ -477,7 +477,7 @@ def test_annotate_resume_by_offset():
                  "annotations_done_offset": 10}
         calls = {"n": 0}
 
-        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
+        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
             if "翻译教学专家" in system_prompt:
                 calls["n"] += 1
                 return json.dumps([{"seg": 1, "type": "hard", "src": "The quick brown fox",

@@ -5,14 +5,14 @@
   "scope": "P0 endpoint identity and annotation fail-stop in tested macOS/MockTransport boundaries",
   "production_files_modified_by_reviewer": false,
   "historical_probes": {
-    "command": "/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q docs/performance/phase3-boundary-review/boundary_observations.py",
+    "command": "python -m pytest -q docs/performance/phase3-boundary-review/boundary_observations.py",
     "passed": 23,
     "failed": 8,
     "duration_s": 15.39,
     "interpretation": "All eight failures are the unmodified observations asserting the former bugs still exist; none is a new positive-contract regression."
   },
   "independent_positive_tests": {
-    "command": "/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q docs/performance/phase3-p0-reacceptance/independent_acceptance_test.py",
+    "command": "python -m pytest -q docs/performance/phase3-p0-reacceptance/independent_acceptance_test.py",
     "passed": 13,
     "failed": 0,
     "skipped": 0,

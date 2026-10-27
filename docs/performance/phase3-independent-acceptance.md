@@ -2,7 +2,7 @@
 
 > 历史报告：以下结论针对修复前工作区。2026-10-26 后续修复和当前 C2/C4 裁定见 [修复记录](phase3-remediation.md)；原审计证据保持不变。
 
-Audit date: 2026-10-26. Target: `/Users/xueyang/Dev/Folith-phase3`.
+Audit date: 2026-10-26. Target: `<phase3-worktree>`.
 
 ## 1. Executive Verdict
 
@@ -122,7 +122,7 @@ Real-provider paragraph/reasoning A/B, semantic noninferiority, gateway contenti
 
 ## 10. Cross-Platform and Regression Results
 
-Environment: macOS 27.0.1 arm64; CPython 3.11.3; existing `/Users/xueyang/Dev/FolioThread/venv/bin/python`, imports from this target checkout. Candidate HEAD as above plus its initial local modifications/untracked code. No Windows machine was executed.
+Environment: macOS 27.0.1 arm64; CPython 3.11.3; existing `python`, imports from this target checkout. Candidate HEAD as above plus its initial local modifications/untracked code. No Windows machine was executed.
 
 | Invocation | Result | Time | Warnings |
 |---|---|---|---|
@@ -268,14 +268,14 @@ After blockers are fixed and scope adjudicated: avoid repeated readiness scans i
 
 ## 15. Reproduction Commands and Evidence
 
-Run from `/Users/xueyang/Dev/Folith-phase3`. All accepted probes use synthetic fixtures; benchmark transport is guarded. Existing regression commands:
+Run from `<phase3-worktree>`. All accepted probes use synthetic fixtures; benchmark transport is guarded. Existing regression commands:
 
 ```sh
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q tests/batch_strategy_contract_test.py tests/application_job_config_test.py tests/effective_settings_test.py tests/readiness_telemetry_test.py tests/annotation_durable_staging_test.py tests/annotation_concurrency_test.py tests/workflow_recovery_test.py tests/paragraph_batching_test.py tests/performance_trace_test.py tests/request_control_test.py tests/llm_transport_test.py
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q tests/annotation_quality_test.py tests/state_journal_test.py tests/persistence_phase_a_test.py tests/cooperative_persistence_test.py tests/delivery_snapshot_test.py tests/missing_translation_delivery_test.py tests/delivery_status_light_test.py tests/reasoning_telemetry_test.py tests/request_trace_persistence_test.py tests/qt_task_setup_test.py tests/qt_client_adapter_test.py tests/qt_projects_adapter_test.py tests/qt_delivery_ui_test.py tests/translation_bottleneck_audit_test.py tests/translation_phase2_research_test.py
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q docs/performance/phase3-independent-evidence/independent_audit_observations.py
-/Users/xueyang/Dev/FolioThread/venv/bin/python docs/performance/phase3-independent-evidence/batch_compare.py
-/Users/xueyang/Dev/FolioThread/venv/bin/python docs/performance/phase3-independent-evidence/benchmark.py
+python -m pytest -q tests/batch_strategy_contract_test.py tests/application_job_config_test.py tests/effective_settings_test.py tests/readiness_telemetry_test.py tests/annotation_durable_staging_test.py tests/annotation_concurrency_test.py tests/workflow_recovery_test.py tests/paragraph_batching_test.py tests/performance_trace_test.py tests/request_control_test.py tests/llm_transport_test.py
+python -m pytest -q tests/annotation_quality_test.py tests/state_journal_test.py tests/persistence_phase_a_test.py tests/cooperative_persistence_test.py tests/delivery_snapshot_test.py tests/missing_translation_delivery_test.py tests/delivery_status_light_test.py tests/reasoning_telemetry_test.py tests/request_trace_persistence_test.py tests/qt_task_setup_test.py tests/qt_client_adapter_test.py tests/qt_projects_adapter_test.py tests/qt_delivery_ui_test.py tests/translation_bottleneck_audit_test.py tests/translation_phase2_research_test.py
+python -m pytest -q docs/performance/phase3-independent-evidence/independent_audit_observations.py
+python docs/performance/phase3-independent-evidence/batch_compare.py
+python docs/performance/phase3-independent-evidence/benchmark.py
 ```
 
 Inventory reproduction: `git status --short`, `git branch --show-current`, `git rev-parse HEAD`, `git merge-base HEAD 397adb22d8de46edb0781dc75e53661318a5cb11`, `git log --oneline 397adb22..HEAD`, `git diff 397adb22` plus reading the initially untracked implementation files. These commands are read-only; baseline comparison exports a temporary archive and never changes this checkout.

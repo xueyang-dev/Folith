@@ -4,7 +4,7 @@
 
 > 后续独立边界复核发现两个 HIGH，F04 需重开、失败退出保证仍有缺口。以下实施验证为历史记录，当前判断以 [三边界复核](phase3-boundary-review.md) 为准。
 
-日期：2026-10-26。工作区：`/Users/xueyang/Dev/Folith-phase3`；分支 `perf/phase3-runtime-optimization`；HEAD 仍为 `397adb22d8de46edb0781dc75e53661318a5cb11`，本轮修复尚未提交。
+日期：2026-10-26。工作区：`<phase3-worktree>`；分支 `perf/phase3-runtime-optimization`；HEAD 仍为 `397adb22d8de46edb0781dc75e53661318a5cb11`，本轮修复尚未提交。
 
 这是实施者的修复与验证记录，不是重新出具的独立验收。原 [独立审计](phase3-independent-acceptance.md) 和 [原始 findings](phase3-acceptance-findings.json) 保留为修复前证据；当前逐项状态见 [修复状态 JSON](phase3-remediation-status.json)。没有修改无关本地工作，没有创建或合并 PR。
 
@@ -59,7 +59,7 @@ pipeline_kwargs["annotation_scheduler"] = "ordered"  # 回退补队算法
 
 ## 4. 验证结果
 
-运行环境：macOS 27.0.1 arm64，CPython 3.11.3，使用现有 `/Users/xueyang/Dev/FolioThread/venv/bin/python`。导入 target checkout。新增测试与回放禁止 provider transport，未进行真实 API 实验。
+运行环境：macOS 27.0.1 arm64，CPython 3.11.3，使用现有 `python`。导入 target checkout。新增测试与回放禁止 provider transport，未进行真实 API 实验。
 
 **分组去重：604 passed，4 skipped，0 当前失败。** 其中 57 项为本轮新增修复回归，547 项为既有相关回归；共有 608 个唯一收集项，见 [测试选择 JSON](phase3-remediation-evidence/test-selection.json)。没有把重复执行相同测试计入通过数。
 
@@ -96,9 +96,9 @@ pipeline_kwargs["annotation_scheduler"] = "ordered"  # 回退补队算法
 ## 6. 复现与后续 PR 边界
 
 ```sh
-cd /Users/xueyang/Dev/Folith-phase3
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q tests/phase3_acceptance_fixes_test.py tests/readiness_telemetry_test.py
-/Users/xueyang/Dev/FolioThread/venv/bin/python scripts/phase3_scheduler_validation.py
+cd <phase3-worktree>
+python -m pytest -q tests/phase3_acceptance_fixes_test.py tests/readiness_telemetry_test.py
+python scripts/phase3_scheduler_validation.py
 ```
 
 全部分组的去重文件列表在测试选择 JSON；重放会更新修复后 evidence，不覆盖修复前审计数据。`git diff --check` 通过。

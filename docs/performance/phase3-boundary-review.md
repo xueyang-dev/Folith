@@ -2,7 +2,7 @@
 
 > 当前 P0 状态：BR01/BR02 已修复并经独立 Agent 在本机工程范围复验通过，见 [P0 修复记录](phase3-p0-fixes.md) 与 [独立复验](phase3-p0-reacceptance/report.md)。下文保留历史验证事实。
 
-日期：2026-10-26。目标工作区 `/Users/xueyang/Dev/Folith-phase3`，分支 `perf/phase3-runtime-optimization`，HEAD `397adb22d8de46edb0781dc75e53661318a5cb11` 加现有未提交改动。
+日期：2026-10-26。目标工作区 `<phase3-worktree>`，分支 `perf/phase3-runtime-optimization`，HEAD `397adb22d8de46edb0781dc75e53661318a5cb11` 加现有未提交改动。
 
 **结论：复现两个 HIGH 问题。F04 的请求身份验收需要重开；F06/F08 关于失败后退出及回退的保证只能算部分成立。暂不批准 Annotation 子系统生产验收。**
 
@@ -89,8 +89,8 @@ Gemini 另在 SDK `generate_content` 边界检查实际 `GenerateContentConfig` 
 ## 4. 证据与限制
 
 ```sh
-cd /Users/xueyang/Dev/Folith-phase3
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q docs/performance/phase3-boundary-review/boundary_observations.py
+cd <phase3-worktree>
+python -m pytest -q docs/performance/phase3-boundary-review/boundary_observations.py
 ```
 
 最终结果：**31 passed，5 warnings，5.70 秒**。其中 8 个 observation 用例通过是确认缺陷存在，不是通过产品验收；其余用例确认正常语义契约及可恢复故障行为。文件：[独立探针](phase3-boundary-review/boundary_observations.py)、[发现 JSON](phase3-boundary-review/findings.json)。

@@ -1,6 +1,6 @@
 # 独立 Agent：P0 Endpoint / Annotation Fail-Stop 复验
 
-日期：2026-10-26。目标：`/Users/xueyang/Dev/Folith-phase3`，分支 `perf/phase3-runtime-optimization`，HEAD `397adb22d8de46edb0781dc75e53661318a5cb11` 加当前未提交改动。
+日期：2026-10-26。目标：`<phase3-worktree>`，分支 `perf/phase3-runtime-optimization`，HEAD `397adb22d8de46edb0781dc75e53661318a5cb11` 加当前未提交改动。
 
 **结论：PASS（限本报告明确执行的 P0 工程契约与 macOS 无网络验证范围）。** 未复现 BR01、BR02；没有发现新的可证实 P0 缺陷。这个结论不等于整个 Phase 3 完成、真实 provider/Windows 生产验收或主机断电持久性证明。
 
@@ -14,9 +14,9 @@
 命令：
 
 ```sh
-cd /Users/xueyang/Dev/Folith-phase3
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q docs/performance/phase3-boundary-review/boundary_observations.py
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q docs/performance/phase3-p0-reacceptance/independent_acceptance_test.py
+cd <phase3-worktree>
+python -m pytest -q docs/performance/phase3-boundary-review/boundary_observations.py
+python -m pytest -q docs/performance/phase3-p0-reacceptance/independent_acceptance_test.py
 ```
 
 独立测试首轮有一个 fixture 错误：没有把 `ANNOT_BATCH_SIZE` 设为 1，两个段落合并成一个 batch，不能进入设计的 peer 等待场景。已修正夹具后才采用上述结果；未为此改生产代码。
@@ -74,4 +74,4 @@ cd /Users/xueyang/Dev/Folith-phase3
 - 主机断电、目录 fsync、整卷持久 ENOSPC 时失败状态能否写回同一磁盘。
 - 完整仓库测试、其他 Phase 3 项目以及任意不受支持的内部状态修改。
 
-环境：macOS arm64 / CPython 3.11.3，现有 `/Users/xueyang/Dev/FolioThread/venv/bin/python`。所有数据为合成 fixture；请求捕获仅在内存中使用。生产修改仍需正常代码审查，本次报告不执行 merge。
+环境：macOS arm64 / CPython 3.11.3，现有 `python`。所有数据为合成 fixture；请求捕获仅在内存中使用。生产修改仍需正常代码审查，本次报告不执行 merge。

@@ -10,7 +10,7 @@
 |---|---|---|
 | Phase 2 核实的远程 main | `0a2f29a1230147caa3ff64506e3c3c97d2fc3424` | Phase 2 报告的快照基线 |
 | **本次 Phase 3 集成基线** | **`397adb22d8de46edb0781dc75e53661318a5cb11`**（`origin/main`） | 2026-10-26 fetch 核实；`0a2f29a` 之后新增 4 个 PR 合并（#199 docx roundtrip、#200 arabic rtl、#201 chapter audit、#202 outline hierarchy） |
-| 实施分支 | `perf/phase3-runtime-optimization`（基于 `origin/main` 的独立 worktree `/Users/xueyang/Dev/Folith-phase3`） | 不 checkout / 不污染 `feat/0.6-native-workbench` 脏工作区；本地 0.6 线的 17 个 tracked 修改与全部 untracked 文件原样保留 |
+| 实施分支 | `perf/phase3-runtime-optimization`（基于 `origin/main` 的独立 worktree `<phase3-worktree>`） | 不 checkout / 不污染 `feat/0.6-native-workbench` 脏工作区；本地 0.6 线的 17 个 tracked 修改与全部 untracked 文件原样保留 |
 | 历史 Dots runtime | `cfe2f4f`（0.7.0） | 仅作真实运行记录身份，不作为实施基线 |
 
 ## 2. Phase 2 发现在新 main 上的复核（2026-10-26 逐项验证）
@@ -27,7 +27,7 @@ Phase 2 的关键发现全部在 `397adb2` 上重新核对，仍然成立：
 
 ## 3. 能力与测试基线
 
-- 复用主仓库 venv（`/Users/xueyang/Dev/FolioThread/venv`）在 worktree 根运行；`import core`、`folith.application.job_config`、`folith.application.settings` 均从 worktree 解析（已验证 `core.__file__`）。
+- 复用主仓库 venv（`<local-venv>`）在 worktree 根运行；`import core`、`folith.application.job_config`、`folith.application.settings` 均从 worktree 解析（已验证 `core.__file__`）。
 - 相关既有测试文件（在新 main 上存在）：`tests/application_job_config_test.py`、`tests/effective_settings_test.py`、`tests/paragraph_batching_test.py`、`tests/performance_trace_test.py`、`tests/request_control_test.py`、`tests/llm_transport_test.py` 等；Phase 1/2 的审计脚本与测试（`scripts/translation_bottleneck_audit.py`、`scripts/translation_phase2_research.py` 及对应 tests）原为 0.6 工作区 untracked 文件，本次已复制进本分支使 PR 自包含。
 - 已知套件陷阱（沿用记忆）：全量套件约 2h、clean HEAD 存在个别已知失败、`locked` fixture 与 `_STATE_CACHE` 隔离需注意。Phase 3 验证以定向测试为主。
 
@@ -44,10 +44,10 @@ Phase 2 的关键发现全部在 `397adb2` 上重新核对，仍然成立：
 ## 5. 复现
 
 ```sh
-git -C /Users/xueyang/Dev/FolioThread fetch origin main
-git -C /Users/xueyang/Dev/FolioThread rev-parse origin/main   # 397adb2...
-git -C /Users/xueyang/Dev/FolioThread worktree add <path> -b perf/phase3-runtime-optimization origin/main
-cd <worktree> && /Users/xueyang/Dev/FolioThread/venv/bin/python -c "import core"
+git -C <original-checkout> fetch origin main
+git -C <original-checkout> rev-parse origin/main   # 397adb2...
+git -C <original-checkout> worktree add <path> -b perf/phase3-runtime-optimization origin/main
+cd <worktree> && python -c "import core"
 ```
 
 ## 6. Phase 3 实施与验收结果（2026-10-26）

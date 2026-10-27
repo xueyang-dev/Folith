@@ -1,6 +1,6 @@
 # Phase 3 P0：最终 Endpoint 身份与 Annotation Fail-Stop
 
-日期：2026-10-26。工作区 `/Users/xueyang/Dev/Folith-phase3`；分支 `perf/phase3-runtime-optimization`；HEAD `397adb22d8de46edb0781dc75e53661318a5cb11` 加未提交修改。
+日期：2026-10-26。工作区 `<phase3-worktree>`；分支 `perf/phase3-runtime-optimization`；HEAD `397adb22d8de46edb0781dc75e53661318a5cb11` 加未提交修改。
 
 **实施完成；独立 Agent 复验 PASS，限实际执行的本机 P0 工程契约。** [独立复验报告](phase3-p0-reacceptance/report.md) 与 [机器结果](phase3-p0-reacceptance/result.json) 确认 BR01/BR02 在所测范围关闭，没有发现新的确认缺陷。这个结论不等于完整 Phase 3 或跨平台生产验收。
 
@@ -55,9 +55,9 @@ pipeline 显式传入的 `translator_base_url` 通过 `annotate_stage(..., base_
 ## 复现
 
 ```sh
-cd /Users/xueyang/Dev/Folith-phase3
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q tests/annotation_fail_stop_test.py
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest -q docs/performance/phase3-p0-reacceptance/independent_acceptance_test.py
+cd <phase3-worktree>
+python -m pytest -q tests/annotation_fail_stop_test.py
+python -m pytest -q docs/performance/phase3-p0-reacceptance/independent_acceptance_test.py
 ```
 
 完整分组选择见 JSON，独立历史探针原始输出见独立报告目录。历史 [边界报告](phase3-boundary-review.md) 与发现 JSON 保留，不改写过去的复现事实。

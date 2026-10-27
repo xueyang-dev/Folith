@@ -53,6 +53,8 @@ LEGACY_ALLOWLIST_FILES = {
 LEGACY_LINE_ALLOWLIST = {
     "scripts/stage_tesseract_payload.py": ("FOLIOTHREAD_",),
     "docs/qt-beta/release-notes.md": ("兼容别名 `foliothread`",),
+    "docs/performance/translation-bottleneck-audit.md": ("FOLIOTHREAD_TRANSLATION_CONCURRENCY",),
+    "docs/performance/phase3-boundary-review/boundary_observations.py": ("FOLIOTHREAD_LLM_CLIENT_POOL",),
     "docs/performance-real-tasks-2026-10-08/evidence.json": ('"technical_log":',),
     # Technical identifiers and evidence paths, not brand prose: environment
     # variable names, the legacy asset fallbacks, the project schema id and the
