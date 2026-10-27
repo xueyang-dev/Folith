@@ -643,6 +643,8 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     ocr_source_options,
     paddle_model_options,
     resolve_ocr_online_config,
+    follow_connection_thinking as _follow_connection_thinking,
+    default_vision_reasoning as _default_vision_reasoning,
     vision_connection_conflict,
     vision_connection_label,
     credential_for_endpoint,
@@ -695,6 +697,9 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     set_llm_reasoning_modes,
     resolve_reasoning_mode as _resolve_reasoning_mode,
     normalize_reasoning_mode as _normalize_reasoning_mode,
+    thinking_control_options,
+    connection_thinking_mode as _connection_thinking_mode,
+    job_reasoning_modes as _job_reasoning_modes,
 )
 from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keeps its public surface)
     _count_sentences,
@@ -2385,6 +2390,9 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     if resolved_reasoning_mode == "thinking_disabled":
         # Same DeepSeek-family control the OCR path sends; opt-in only.
         request["extra_body"] = {"thinking": {"type": "disabled"}}
+    elif resolved_reasoning_mode == "thinking_disabled_vllm":
+        # vLLM/SGLang chat-template switch, as dots3-note-prev expects.
+        request["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     if provider == "OpenCode Go":
         session_id = runtime_job_id or getattr(_LLM_CTX, "opencode_session", None)
         if not session_id:
@@ -12784,17 +12792,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     if ocr_online is None and saved_runtime_config:
         _reconcile_vision_connection(job_id, state)
         saved_runtime_config = state.get("pipeline_config") or {}
-    # Text-path thinking control, default OFF (nothing sent).  Precedence:
-    # explicit argument > saved task config > FOLITH_*REASONING_MODE env var.
-    effective_reasoning_mode = _normalize_reasoning_mode(
-        reasoning_mode if reasoning_mode is not None
-        else saved_runtime_config.get("reasoning_mode")
-        or os.environ.get("FOLITH_REASONING_MODE"))
-    effective_aux_reasoning_mode = _normalize_reasoning_mode(
-        auxiliary_reasoning_mode if auxiliary_reasoning_mode is not None
-        else saved_runtime_config.get("auxiliary_reasoning_mode")
-        or os.environ.get("FOLITH_AUXILIARY_REASONING_MODE"))
-    set_llm_reasoning_modes(effective_reasoning_mode, effective_aux_reasoning_mode)
+    # Text-path thinking control, default OFF (nothing sent).  Resolved once the
+    # auxiliary role's own model is known, below.
     effective_ocr_language, effective_ocr_dpi, effective_ocr_psm, \
         effective_ocr_quality, resolved_ocr = _effective_ocr_config(
             ocr_language, ocr_dpi, ocr_psm, saved_runtime_config, ocr_quality)
@@ -12811,8 +12810,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 provider=provider, model=model, api_key=api_key, base_url=visual_base,
                 credential_source="translation_profile",
                 credential_owner=f"{provider}|{visual_base.rstrip('/')}",
-                reasoning_mode=("thinking_disabled" if provider == "OpenCode Go"
-                                and model == "deepseek-v4.1-flash" else "provider_default"))
+                reasoning_mode=_follow_connection_thinking(
+                    "translation_profile", provider, model,
+                    _default_vision_reasoning(provider, model)))
             effective_online_descriptor = effective_online_config.describe()
         except ValueError:
             pass  # A native document does not require a valid visual endpoint.
@@ -12990,6 +12990,17 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         fallback_api_key=api_key,
         fallback_base_url=(primary_base_url
                            if resolved_auxiliary_provider == provider else ""))
+    # Text-path thinking control, default OFF (nothing sent).  The connection's
+    # switch feeds both roles: leaving auxiliary on its provider default just
+    # moves the wall clock from the translator to the auxiliary calls.  It only
+    # crosses over when the auxiliary model is the same kind, which is why this
+    # waits for auxiliary_config above.
+    effective_reasoning_mode, effective_aux_reasoning_mode = _job_reasoning_modes(
+        reasoning_mode, auxiliary_reasoning_mode, _connection_thinking_mode(),
+        saved_runtime_config,
+        auxiliary_target=(auxiliary_config["provider"], auxiliary_config["model"]),
+        translator_target=(provider, model))
+    set_llm_reasoning_modes(effective_reasoning_mode, effective_aux_reasoning_mode)
     understanding_runtime_config = _model_roles.public_role_config(auxiliary_config)
     has_fallback_digests = any(
         isinstance(item, dict) and item.get("status") == "deterministic_fallback"

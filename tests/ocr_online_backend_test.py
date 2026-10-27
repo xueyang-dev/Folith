@@ -357,3 +357,30 @@ def test_quota_and_billing_errors_are_not_retried_and_are_fatal():
     for failure in (FakeStatusError(402), FakeStatusError(429, "insufficient_quota: billing")):
         error = classify_request_error(failure)
         assert error.code == "quota_error" and not error.retryable
+def test_vllm_thinking_switch_uses_chat_template_shape():
+    backend, client = backend_with([segments_response(["x"])],
+                                   reasoning_mode="thinking_disabled_vllm")
+    backend.ocr_page(PNG, page_index=0, page_number=1, language="eng", dpi=220)
+    assert client.requests[0]["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_vision_follows_translation_connection_thinking_switch(monkeypatch):
+    import core
+    from folith.engine.ocr_config import follow_connection_thinking as follow
+
+    monkeypatch.setattr(core, "_connection_thinking_mode", lambda: "thinking_disabled_vllm")
+    # Verified model on the translation connection: live switch beats the snapshot.
+    assert follow("translation_profile", "自定义中转站", "dots3-note-prev",
+                  "provider_default") == "thinking_disabled_vllm"
+    # Unverified model or a dedicated vision connection never receives it.
+    assert follow("translation_profile", "OpenAI", "gpt-4o", "provider_default") == "provider_default"
+    assert follow("ocr_profile", "自定义中转站", "dots3-note-prev",
+                  "provider_default") == "provider_default"
+
+    monkeypatch.setattr(core, "_connection_thinking_mode", lambda: "provider_default")
+    # 服务默认 can undo an opt-in that an earlier run recorded.
+    assert follow("translation_profile", "自定义中转站", "dots3-note-prev",
+                  "thinking_disabled_vllm") == "provider_default"
+
+

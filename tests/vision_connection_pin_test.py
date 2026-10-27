@@ -166,3 +166,17 @@ def test_credentials_are_looked_up_by_the_endpoint_owner(home, monkeypatch):
     assert found[0] == "relay-key"
     home.save([GO])
     assert core.credential_for_endpoint("自定义中转站", "https://relay.example/v1") is None
+def test_deepseek_vision_reads_default_to_thinking_off_without_overriding_choices():
+    from folith.engine.ocr_config import default_vision_reasoning, _vision_reasoning_mode
+    assert default_vision_reasoning("DeepSeek", "deepseek-flash") == "thinking_disabled"
+    assert default_vision_reasoning("OpenCode Go", "deepseek-v4.1-flash") == "thinking_disabled"
+    assert default_vision_reasoning("OpenAI", "gpt-4o") == "provider_default"
+    assert default_vision_reasoning("自定义中转站", "dots3-note-prev") == "provider_default"
+    # Following the translation connection: an earlier recorded default is not a choice.
+    assert _vision_reasoning_mode("translation_profile", "DeepSeek", "deepseek-flash",
+                                  "provider_default") == "thinking_disabled"
+    # A dedicated vision connection's explicit choice is kept.
+    assert _vision_reasoning_mode("ocr_profile", "DeepSeek", "deepseek-flash",
+                                  "provider_default") == "provider_default"
+    assert _vision_reasoning_mode("translation_profile", "OpenAI", "gpt-4o",
+                                  "") == "provider_default"
