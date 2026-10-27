@@ -64,7 +64,7 @@ Apache-2.0 官方仓库，允许再分发）：
 ### 2.1 根与文件层
 
 - 根元素 `<xliff version="1.2" sdl:version="1.0">`，声明 `xmlns:sdl="http://sdl.com/FileTypes/SdlXliff/1.0"`（全部 4 份真实样本一致）。
-- `<file>` 的 `datatype` 为 `x-sdlfilterframework2`（QuotesSample/TTSExample/quickplace/SamplePhotoPrinter 均是）；人工 fixture 用 `x-sdlxliff`。`original` 属性保留**源机绝对路径**（如 `C:\Users\...\Studio 2019\TTSGerman\en-us\TTSExample.docx`）。
+- `<file>` 的 `datatype` 为 `x-sdlfilterframework2`（QuotesSample/TTSExample/quickplace/SamplePhotoPrinter 均是）；人工 fixture 用 `x-sdlxliff`。`original` 属性保留**源机绝对路径**（如 `C:\Users\<user>\Studio 2019\TTSGerman\en-us\TTSExample.docx`）。
 - `header` 内除 XLIFF 1.2 标准的 `reference/internal-file`（**原始 DOCX/DOC 以 base64 内嵌**）外，还有 7 组 `sdl:` 结构：`sdl:ref-files`、`sdl:file-info`（`sdl:value key=...` 键值对，8–190 个/文件）、`sdl:sniff-info/sdl:detected-source-lang`、`sdl:filetype-info/sdl:filetype-id`、`sdl:fmt-defs`、`sdl:cxt-defs`、`sdl:node-defs`、`sdl:tag-defs`。
 - QuotesSample 在 `xliff` 根下还有 `sdl:doc-info`（含 `cmt-defs`，见 2.3）。**注意**：该文件的 `doc-info` 子树用**默认命名空间**声明（`<doc-info xmlns="http://sdl.com/FileTypes/SdlXliff/1.0">`），不用 `sdl:` 前缀——按前缀字符串解析会漏检，必须按 URI 解析（QuotesSample 实测）。
 - 真实样本均为单 `<file>` 文档（4/4）；多 `<file>` 未见样本。

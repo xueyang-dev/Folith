@@ -111,5 +111,25 @@ def main() -> int:
     return 0
 
 
+def test_real_sdlxliff_fixture_audit():
+    """Keep the vendor sample audit in the ordinary regression suite."""
+    assert main() == 0
+
+
+def test_preflight_only_exempts_unchanged_public_fixtures(monkeypatch):
+    from scripts import release_preflight as preflight
+    path = "tests/fixtures/sdlxliff/TTSExample.docx.sdlxliff"
+    original = (ROOT / path).read_bytes()
+    monkeypatch.setattr(preflight, "_ref_files", lambda _: [path])
+    monkeypatch.setattr(preflight, "_ref_blob", lambda *_: original)
+    monkeypatch.setattr(preflight, "_ref_text", lambda *_: original.decode("utf-8"))
+    report = preflight.Report(quiet=True)
+    preflight.check_no_home_paths(report, "HEAD")
+    assert report.failures == 0
+    monkeypatch.setattr(preflight, "_ref_blob", lambda *_: original + b"changed")
+    preflight.check_no_home_paths(report, "HEAD")
+    assert report.failures == 1
+
+
 if __name__ == "__main__":
     sys.exit(main())
