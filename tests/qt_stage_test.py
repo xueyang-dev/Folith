@@ -240,6 +240,24 @@ def test_locked_steps_cannot_be_opened(qapp):
     assert bar.steps["prepare"].state() == stage.CURRENT
 
 
+def test_stage_hint_does_not_impose_its_preferred_width(qapp):
+    bar = _bar(qapp, stage.stage_view(
+        started=True, runtime={"status": "completed"},
+        state={"p2_done": True, "pairs": [{}]}, review=_review(failed=1), delivery={}))
+    review = bar.steps["review"]
+
+    assert review.hint() == "1 段未完成"
+    assert "1 段未完成" in review.accessibleName()
+    assert review.minimumSizeHint().width() < review.sizeHint().width()
+
+    bar.resize(bar.minimumSizeHint().width(), bar.minimumSizeHint().height())
+    bar.show()
+    qapp.processEvents()
+    assert review.width() < review.sizeHint().width(), \
+        "步骤条压缩时应让状态提示退到无障碍名称，而不是继续撑宽工具栏"
+    bar.close()
+
+
 def test_steps_open_their_pages_and_prepare_is_inert_once_done(qapp):
     bar = _bar(qapp, stage.stage_view(
         started=True, runtime={"status": "completed"},

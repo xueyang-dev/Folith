@@ -269,7 +269,8 @@ def test_unrelated_glossary_change_stales_full_hash_review_event_without_pair_ma
             "status": "locked", "behavior": "translate", "scope": "document",
         }], frozen_by="alice")
 
-        assert changed["review_evidence"][0]["freshness_status"] == "stale"
+        assert changed["review_evidence"][0]["freshness_status"] == "current"
+        assert core.load_job_state(job_id)["review_evidence"][0]["freshness_status"] == "current"
         assert changed["pairs"][0].get("stale_due_to_glossary") is not True
         assert changed["pairs"][0]["reviewed"] is True
     finally:

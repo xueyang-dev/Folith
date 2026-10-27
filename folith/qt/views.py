@@ -19,7 +19,7 @@ import time
 from PySide6.QtCore import QEvent, QMargins, QRect, QRectF, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QFormLayout, QFrame, QGridLayout,
+    QAbstractItemView, QApplication, QCheckBox, QDialog, QFormLayout, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QPlainTextEdit, QProgressBar,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
@@ -2223,7 +2223,12 @@ class RunStatusGroup(QFrame):
         layout.setSpacing(3)
         layout.addLayout(top)
         layout.addWidget(self.line_view)
-        self.setFixedWidth(256)
+        # The status line scrolls on its own, so only the progress row needs a
+        # hard minimum. Letting the group shrink avoids imposing 256 px on the
+        # unified toolbar at narrow window widths.
+        self.setMinimumWidth(144)
+        self.setMaximumWidth(256)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     #: 内容到状态组四边的距离（左、上、右、下）。
     PADDING = (14, 9, 14, 6)
@@ -2486,6 +2491,10 @@ class WorkbenchView(QWidget):
     glossaryEntryAddRequested = Signal(dict)
     glossaryStatusRequested = Signal(list, str)   # entry ids, status
     glossaryEntryDeleteRequested = Signal(str)
+    terminologyReplaceRequested = Signal(str, str, object)
+    terminologyUndoRequested = Signal()
+    terminologyMergeRequested = Signal(str, str, list)
+    terminologyRevalidateRequested = Signal()
 
     COLUMNS = ("段", "原文", "译文")
 
@@ -2535,6 +2544,10 @@ class WorkbenchView(QWidget):
         self._review_items: list[dict] = []
         self._assist_index = -1
         self._terms_key: tuple = ()
+        from .workers import TaskRunner
+        self._terms_runner = TaskRunner(self, max_threads=1)
+        self._terms_generation = 0
+        self._terms_dialog = None
         self._followup_key: tuple = ()
         self._qa_key: tuple = ()
         self._cases_key: tuple = ()
@@ -2656,7 +2669,9 @@ class WorkbenchView(QWidget):
         identity.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignVCenter)
         identity_box = QWidget()
         identity_box.setLayout(identity)
-        identity_box.setMinimumWidth(180)
+        # The title elides; it must not keep the entire workbench above a
+        # narrow desktop width after the stage hints and run status compact.
+        identity_box.setMinimumWidth(120)
         identity_box.setMaximumWidth(360)
 
         self.stage_bar = StageBar()
@@ -3505,6 +3520,10 @@ class WorkbenchView(QWidget):
         self.tabs = QTabWidget()
         self.tabs.tabBar().setVisible(False)
         self.tabs.setIconSize(QSize(16, 16))
+        # QTabWidget takes the widest hidden page's minimumSizeHint (the review
+        # panel), even when that page is not active. Let the surrounding layout
+        # control width; visible pages already own scrolling and elision.
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.tabs.addTab(translation_page,
                          icons.icon("translate", 16, "text-secondary"),
                          i18n.tr('翻译'))
@@ -3541,14 +3560,16 @@ class WorkbenchView(QWidget):
         terms_layout = QVBoxLayout(self.terms_side)
         terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
         terms_layout.addLayout(terms_head)
-        # 窗口矮时整栏上下滚动（表格、表单、冻结按钮都在），左右不滚。
-        terms_scroll = QScrollArea()
-        terms_scroll.setWidgetResizable(True)
-        terms_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        terms_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        terms_scroll.viewport().setAutoFillBackground(False)
-        terms_scroll.setWidget(self.terms_panel)
-        terms_layout.addWidget(terms_scroll, 1)
+        # 表格负责滚动；完整编辑器复用同一面板，避免两份暂存状态。
+        terms_layout.addWidget(self.terms_panel, 1)
+        self._terms_side_layout = terms_layout
+        self.terms_panel.workspaceRequested.connect(self._open_terms_workspace)
+        self.terms_panel.locateRequested.connect(self._locate_panel_term)
+        self.terms_panel.segmentRequested.connect(self._locate_panel_segment)
+        self.terms_panel.replacementRequested.connect(self.terminologyReplaceRequested.emit)
+        self.terms_panel.replacementUndoRequested.connect(self.terminologyUndoRequested.emit)
+        self.terms_panel.conflictsRequested.connect(self._open_terminology_conflicts)
+        self.terms_panel.mergeRequested.connect(self.terminologyMergeRequested.emit)
         self.review_panel = ReviewPanel()
         self.review_panel.styleRuleRequested.connect(self.styleRuleRequested.emit)
         self.review_panel.resolveRequested.connect(self.findingResolveRequested.emit)
@@ -4098,7 +4119,9 @@ class WorkbenchView(QWidget):
             source = str(term.get("source") or "")
             if source not in self._term_counts:
                 self._term_counts[source] = sum(
-                    1 for row in self._all_rows if term_highlight.spans(source, row.source))
+                    1 for row in self._all_rows if any(
+                        term_highlight.spans(form, row.source)
+                        for form in (source, *(term.get('source_aliases') or []))))
             counts[source] = self._term_counts[source]
         return counts
 
@@ -4148,7 +4171,8 @@ class WorkbenchView(QWidget):
         source_pairs, target_pairs = [], []
         for term in terms:
             hovered = hover.get("source") == term.get("source")
-            source_pairs.append((term.get("source"), "hover" if hovered else "term"))
+            source_pairs.extend((form, "hover" if hovered else "term") for form in
+                                (term.get('source'), *(term.get('source_aliases') or [])))
             target_pairs.append((term.get("target"), "hover" if hovered else "term"))
             target_pairs.extend((word, "forbidden") for word in term.get("forbidden") or [])
         decisions = getattr(self, "_decision_marks", {})
@@ -4181,9 +4205,10 @@ class WorkbenchView(QWidget):
         offset = cursor.position()
         text = self.inline_editor.source_view.toPlainText()
         for term in self.term_list.terms:
-            for start, end in term_highlight.spans(term.get("source"), text):
-                if start <= offset <= end:
-                    return i18n.tr('术语：{v0} → {v1}', v0=term.get("source"), v1=term.get("target"))
+            for form in (term.get('source'), *(term.get('source_aliases') or [])):
+                for start, end in term_highlight.spans(form, text):
+                    if start <= offset <= end:
+                        return i18n.tr('术语：{v0} → {v1}', v0=term.get("source"), v1=term.get("target"))
         return ""
 
     def _build_term_focus_bar(self) -> QWidget:
@@ -4247,7 +4272,8 @@ class WorkbenchView(QWidget):
         if self._term_focus is not None and self._term_focus.focus.source == term.get("source"):
             return self.step_term_focus(1)
         focus = term_highlight.Focus(str(term.get("source") or ""), str(term.get("target") or ""),
-                                     tuple(term.get("forbidden") or ()))
+                                     tuple(term.get("forbidden") or ()),
+                                     tuple(term.get('source_aliases') or ()))
         self._term_focus = term_highlight.occurrences(
             self._rows, focus, lambda row: row.draft_text if row.has_draft else row.target)
         self._apply_term_focus()
@@ -4334,10 +4360,18 @@ class WorkbenchView(QWidget):
         if self._term_focus is None:
             return
         term = {"source": self._term_focus.focus.source, "target": self._term_focus.focus.target,
-                "forbidden": list(self._term_focus.focus.forbidden)}
+                "forbidden": list(self._term_focus.focus.forbidden),
+                'source_aliases': list(self._term_focus.focus.aliases)}
+        entry = next((item for item in self._state.get('glossary') or []
+                      if item.get('source') == term['source']), None)
+        if entry is not None:
+            term['target'] = str(entry.get('preferred') or entry.get('target') or '')
+            term['forbidden'] = list(entry.get('forbidden') or [])
+            term['source_aliases'] = list(entry.get('source_aliases') or [])
         from . import term_highlight
 
-        focus = term_highlight.Focus(term["source"], term["target"], tuple(term["forbidden"]))
+        focus = term_highlight.Focus(term["source"], term["target"], tuple(term["forbidden"]),
+                                     tuple(term['source_aliases']))
         self._term_focus = term_highlight.occurrences(
             self._rows, focus, lambda row: row.draft_text if row.has_draft else row.target)
         self._apply_term_focus()
@@ -4655,7 +4689,8 @@ class WorkbenchView(QWidget):
             side = max(self._inspector_width, minimum)
         pdf = 0
         if source:
-            pdf = self._pdf_width or int(total * 0.4)
+            # A term list needs less width than the source document preview.
+            pdf = self._pdf_width or (340 if self.terms_open() else int(total * 0.4))
             pdf = max(320, min(pdf, total - side - 360))
         # 窗口不够时先压段落表、再压原页，操作台不低于完整宽度。
         side = max(minimum, min(side, total - pdf - 360)) if side else 0
@@ -4914,11 +4949,28 @@ class WorkbenchView(QWidget):
         if view is None:
             try:
                 view = adapter.glossary_view(self.job_id, self._state,
-                                             count_occurrences=on_page)
+                                             count_occurrences=False)
             except Exception:  # noqa: BLE001 - 术语页坏了不能拖垮翻译页
                 view = {}
+        self._terms_generation += 1
+        generation = self._terms_generation
+        self.terms_panel.set_pairs(self._state.get('pairs') or [])
         self.terms_panel.apply(self.job_id, view, force=force)
         self._sync_terms_gate(view)
+        if on_page:
+            # The worker receives a snapshot of the fields used by the projection.
+            snapshot = {key: self._state.get(key) for key in
+                        ('glossary', 'auto_terms', 'entity_registry', 'paras',
+                         'glossary_frozen', 'quality_bypass', 'quality_mode', 'p2_done')}
+            snapshot['pairs'] = list(self.terms_panel._pairs)
+            job_id = self.job_id
+            self._terms_runner.submit(adapter.glossary_view, job_id, snapshot,
+                                      on_done=lambda result: self._apply_terms_counts(
+                                          generation, job_id, result))
+
+    def _apply_terms_counts(self, generation: int, job_id: str, view: dict) -> None:
+        if generation == self._terms_generation and job_id == self.job_id:
+            self.terms_panel.apply_counts(view)
 
     def _sync_terms_gate(self, view: dict | None = None) -> None:
         view = view if view is not None else self.terms_panel._view
@@ -4932,6 +4984,115 @@ class WorkbenchView(QWidget):
             '严格术语治理：还有 {v0} 个候选术语未确认，翻译不会开始。冻结术语表后才能继续。',
             v0=(view or {}).get("pending_count", 0)))
         self.terms_gate.set_action(i18n.tr('前往术语页'), self.show_terms)
+
+    def _open_terms_workspace(self) -> None:
+        dialog = QDialog(self)
+        self._terms_dialog = dialog
+        dialog.setWindowTitle(i18n.tr('术语管理'))
+        layout = QVBoxLayout(dialog)
+        self._terms_side_layout.removeWidget(self.terms_panel)
+        layout.addWidget(self.terms_panel)
+        self.terms_panel.set_compact(False)
+        dialog.resize(1000, 700)
+        try:
+            dialog.exec()
+        finally:
+            self._terms_dialog = None
+            layout.removeWidget(self.terms_panel)
+            self._terms_side_layout.addWidget(self.terms_panel, 1)
+            self.terms_panel.set_compact(True)
+            self.terms_panel.show()
+
+    def _locate_panel_term(self, term: dict) -> None:
+        if self._terms_dialog is not None:
+            self._terms_dialog.accept()
+        self.focus_term(term)
+
+    def _locate_panel_segment(self, index: int) -> None:
+        if self._terms_dialog is not None:
+            self._terms_dialog.accept()
+        self.show_segment_for_edit(index)
+
+    def _open_terminology_conflicts(self) -> None:
+        # Exactly the current review queue also used by the review page.
+        items = [item for item in self._review_items if item.get('kind') == 'finding'
+                 and item.get('category') == 'terminology_consistency']
+        dialog = QDialog(self.terms_panel.window())
+        dialog.setWindowTitle(i18n.tr('术语审校问题'))
+        dialog.resize(850, 600)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(i18n.tr('当前审校队列中的术语问题：{v0}', v0=len(items))))
+        table = QTableWidget(len(items), 3)
+        table.setHorizontalHeaderLabels([i18n.tr('段'), i18n.tr('问题'), i18n.tr('严重程度')])
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for row, item in enumerate(items):
+            index = item.get('segment_index')
+            for column, value in enumerate((str(index + 1) if isinstance(index, int) else '—',
+                                             str(item.get('summary') or item.get('reason') or ''),
+                                             str(item.get('severity_label') or item.get('severity') or ''))):
+                table.setItem(row, column, QTableWidgetItem(value))
+        layout.addWidget(table, 1)
+        detail = QPlainTextEdit()
+        detail.setReadOnly(True)
+        detail.setMaximumHeight(150)
+        layout.addWidget(detail)
+        buttons = QHBoxLayout()
+        locate = QPushButton(i18n.tr('定位段落'))
+        review = QPushButton(i18n.tr('重新审校'))
+        resolve = QPushButton(i18n.tr('确认已解决'))
+        revalidate = QPushButton(i18n.tr('重新验证术语表'))
+        for button in (locate, review, resolve, revalidate):
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+        action = []
+
+        def selected():
+            row = table.currentRow()
+            return items[row] if 0 <= row < len(items) else None
+
+        def sync():
+            item = selected() or {}
+            detail.setPlainText('\n\n'.join(str(item.get(key) or '') for key in
+                                            ('source', 'target', 'explanation', 'recommendation')))
+            has_segment = isinstance(item.get('segment_index'), int)
+            locate.setEnabled(has_segment)
+            review.setEnabled(has_segment)
+            resolve.setEnabled(bool(item.get('finding_id')) and bool(item.get('decidable')))
+
+        def choose(name):
+            item = selected()
+            if item:
+                action.extend((name, item))
+                dialog.accept()
+
+        table.itemSelectionChanged.connect(sync)
+        table.cellDoubleClicked.connect(lambda *_: choose('locate'))
+        locate.clicked.connect(lambda: choose('locate'))
+        review.clicked.connect(lambda: choose('review'))
+        resolve.clicked.connect(lambda: choose('resolve'))
+        revalidate.clicked.connect(lambda: (action.append('revalidate'), dialog.accept()))
+        if items:
+            table.selectRow(0)
+        sync()
+        if dialog.exec() != QDialog.DialogCode.Accepted or not action:
+            return
+        if action[0] == 'revalidate':
+            self.terminologyRevalidateRequested.emit()
+            return
+        name, item = action
+        if name == 'resolve':
+            self.findingResolveRequested.emit([item['finding_id']], adapter.RESOLVE_CONFIRMED, '')
+        else:
+            if self._terms_dialog is not None:
+                self._terms_dialog.accept()
+            if name == 'review':
+                self.reviewSelectedRequested.emit([item['segment_index']])
+            else:
+                self.show_segment_for_edit(item['segment_index'])
 
     def show_terms(self) -> None:
         self.show_page("terms")
@@ -4960,6 +5121,7 @@ class WorkbenchView(QWidget):
         self._review_items = list(view.get("queue_items") or [])
         # 原文可能刚被改过（补读 / 重新扫描）：定位要按新的状态来。
         self.review_panel.set_source_state(self._state or {})
+        self.terms_panel.set_review_items(self._review_items)
         self.review_panel.apply(view)
 
     def _load_pdf(self, job_id: str) -> None:
@@ -6016,6 +6178,7 @@ class WorkbenchView(QWidget):
         self.analyze_button.setEnabled(can_analyze and not analyzing)
         self.analyze_button.setText(i18n.tr('点评中…') if analyzing else i18n.tr('点评'))
         terms = adapter.segment_terms(self._state, row.index)
+        self.terms_panel.set_current_source(row.source)
         self.term_list.set_terms(terms, self._document_term_counts(terms),
                                   editable=self._task_started())
         self.term_list.set_active(self._term_focus.focus.source if self._term_focus else "")

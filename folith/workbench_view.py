@@ -248,6 +248,7 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
         "review_evidence": list(context.get("review_evidence") or []),
         "review_event_id": context.get("review_event_id"),
         "entry_id": str(finding.get("entry_id") or ""),
+        "entry_ids": list(finding.get('entry_ids') or []),
         "technical_reason": str(finding.get("stale_reason") or ""),
         "identity_stability": finding.get("identity_stability") or "legacy",
         # #101: only number/unit/tag/placeholder findings are grouped; every
