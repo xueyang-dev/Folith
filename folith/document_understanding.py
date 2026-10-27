@@ -1,7 +1,7 @@
 """One structured VLM adapter and the native PDF adapter for DocumentIR v1."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Optional
 import json
 import hashlib
@@ -19,7 +19,7 @@ import fitz
 from folith.document_ir import (BLOCK_TYPES, DocumentUnderstandingProvider, PageEnvelope, PageUnderstanding,
                                 SemanticBlock, SourceSpan, new_document, normalized_bbox)
 from folith import page_events
-from folith.ocr_online import OnlineOCRBackend
+from folith.ocr_online import OnlineOCRBackend, default_vision_reasoning
 from folith.spatial_index import SpatialTextIndex, align_blocks
 
 LOG = logging.getLogger(__name__)
@@ -31,18 +31,32 @@ Return only JSON: {"b":[{"t":"paragraph","s":"visible text"}]}.
 Blocks must be in reading order. t may be title, heading, paragraph, list_item,
 table, figure, caption, footnote, header, footer, equation, code, page_number, unknown.
 Optional l=language, d=ltr/rtl. Tables must have c=[{"r":0,"c":0,"s":"cell text",
-"rs":1,"cs":1}]; do not substitute Markdown tables. Figures use empty s; include
+"rs":1,"cs":1}]; do not substitute Markdown tables. List only the cells that
+contain text: never emit an empty cell and never repeat a cell. Figures use empty s; include
 captions as separate blocks. A genuinely blank page uses {"b":[]}.
 A title or heading set over several lines is one block. Text that is part of a
 logo, badge or certification mark belongs to its figure, not to separate blocks.
 On a printed page, omit later handwritten additions (reader notes, signatures,
 dates, underlining) and library or ownership stamps; transcribe handwriting only
 when it is the page's own content, as in a manuscript or a facsimile letter.
+Ignore show-through: faint, mirrored or reversed text that is the other side of the
+sheet showing through thin paper is not content of this page, and a page that has
+only such ghost text is blank ({"b":[]}).
 On the first and the last paragraph block of the page, add p and n (0 or 1):
 p=1 if the block continues a paragraph from the previous page (its first line is
 not indented and starts mid-sentence); n=1 if the paragraph runs on to the next
 page (its last line is full width and the paragraph has not ended).
 Do not emit page identity, image dimensions, provenance, coordinates or word boxes.'''
+
+
+#: Second chance for a page whose structured read broke (cut off, or JSON that does not parse).
+#: Dense ruled tables with many empty cells are the usual cause; the translation only needs the
+#: text, so a table becomes plain lines instead of a grid of cells.
+PLAIN_PROMPT_SUFFIX = '''
+For this page do not return table cells. Use only paragraph, heading, title, list_item,
+footnote, header, footer and page_number blocks. Write a table as plain lines, one
+paragraph per table row, the cell texts of a row in reading order separated by " | ";
+skip empty cells. Vertical text is read in its reading order, column by column.'''
 
 
 def decode_semantics(raw):
@@ -65,7 +79,14 @@ def decode_semantics(raw):
         return [None]
     blocks = []
     for item in value['b']:
-        if not isinstance(item, dict) or item.get('t') not in BLOCK_TYPES or not isinstance(item.get('s'), str):
+        if not isinstance(item, dict) or item.get('t') not in BLOCK_TYPES:
+            raise ValueError('invalid_semantic_block')
+        text = item.get('s')
+        if text is None and item['t'] in {'table', 'figure'}:
+            # Models routinely leave ``s`` out of a table (its text lives in the cells)
+            # or a figure (the prompt asks for an empty one); that is not a broken page.
+            text = ''
+        if not isinstance(text, str):
             raise ValueError('invalid_semantic_block')
         if (item.get('d') not in {None, 'ltr', 'rtl'}
                 or (item.get('l') is not None and not isinstance(item.get('l'), str))):
@@ -88,14 +109,19 @@ def decode_semantics(raw):
                 occupied.add((r, c, r + rs, c + cs))
                 cells.append({'row': r, 'col': c, 'row_span': rs, 'col_span': cs,
                               'text': cell['s'], 'source_anchor': None})
-        if not item['s'].strip() and item['t'] not in {'figure', 'table'}:
+        if item['t'] == 'table' and not text.strip():
+            rows = {}
+            for cell in cells:
+                rows.setdefault(cell['row'], []).append((cell['col'], cell['text']))
+            text = '\n'.join('\t'.join(t for _, t in sorted(row)) for _, row in sorted(rows.items()))
+        if not text.strip() and item['t'] not in {'figure', 'table'}:
             raise ValueError('empty_semantic_block')
         flags = {}
         for key, name in (('p', 'continues_previous'), ('n', 'continues_next')):
             # 续段标记只是提示：缺失或取值不合法都当作"没给"，不拒收整页。
             if item.get(key) in (0, 1, True, False):
                 flags[name] = bool(item[key])
-        blocks.append(SemanticBlock(item['t'], item['s'].strip(), language=item.get('l'),
+        blocks.append(SemanticBlock(item['t'], text.strip(), language=item.get('l'),
                                     direction=item.get('d'), cells=cells, **flags))
     return blocks
 
@@ -155,6 +181,9 @@ def language_hint(language: str) -> str:
             f"it into another language that shares the script.")
 
 
+THINKING_OFF_MODES = frozenset({'thinking_disabled', 'thinking_disabled_vllm'})
+
+
 class VLMDocumentProvider:
     def __init__(self, config, *, client=None, cancel_check=None, language=''):
         self.language = str(language or '').strip()
@@ -171,12 +200,89 @@ class VLMDocumentProvider:
         config, client, cancel_check, language = self._init_args
         return VLMDocumentProvider(config, client=client, cancel_check=cancel_check, language=language)
 
+    def _read(self, transport, page, system_prompt=None):
+        return transport.read_image(page.image, system_prompt=system_prompt or self.system_prompt,
+                                    user_prompt='Read all content on this page.', decoder=decode_semantics)
+
+    def _thinking_fallback(self, page, first):
+        """Final failure with thinking switched off: read the page once more with it on.
+
+        Switching thinking off is a speed trade; a few pages (dense tables, long
+        runs of text) come back as broken JSON or never stop.  Those are content
+        failures, so one bounded attempt with the service default is worth it.
+        Transport trouble (timeouts, 5xx, rate limits) and configuration errors
+        would only be slower with thinking on, so they are not retried here.
+        Models whose default is thinking-off (DeepSeek family) are skipped too:
+        with thinking on they spend the whole output budget on reasoning and
+        come back truncated, so the retry would only cost tokens.
+        """
+        config = self._init_args[0]
+        code = str(first.get('error_code') or '')
+        if (str(config.reasoning_mode or '') not in THINKING_OFF_MODES or not code
+                or default_vision_reasoning(config.provider, config.model) != 'provider_default'
+                or code in FATAL_PAGE_ERROR_CODES or code in TIMEOUT_LIKE_ERROR_CODES
+                or code == 'rate_limited'):
+            return None
+        client, cancel_check = self._init_args[1], self._init_args[2]
+        fallback = OnlineOCRBackend(
+            replace(config, reasoning_mode='provider_default',
+                    max_retries=min(int(config.max_retries), 1)),
+            client_factory=(lambda _: client) if client is not None else None,
+            cancel_check=cancel_check)
+        page_events.emit('retry', attempt=0, attempts=2, http_status=None, code=code,
+                         message='关闭思考读页失败，改用服务默认再试一次')
+        blocks, error = self._read(fallback, page)
+        return blocks, error, fallback
+
+    def _plain_fallback(self, page, first):
+        """Last resort for a content failure: read the page again as plain text lines.
+
+        Only for failures of the reply itself (cut off, not JSON, wrong shape).  Transport
+        trouble, rate limits and configuration errors are not helped by asking differently.
+        """
+        config = self._init_args[0]
+        code = str(first.get('error_code') or '')
+        if (not code or code in FATAL_PAGE_ERROR_CODES or code in TIMEOUT_LIKE_ERROR_CODES
+                or code == 'rate_limited'):
+            return None
+        client, cancel_check = self._init_args[1], self._init_args[2]
+        fallback = OnlineOCRBackend(
+            replace(config, max_retries=min(int(config.max_retries), 1)),
+            client_factory=(lambda _: client) if client is not None else None,
+            cancel_check=cancel_check)
+        page_events.emit('retry', attempt=0, attempts=2, http_status=None, code=code,
+                         message='结构化读页失败，改用纯文本行再试一次')
+        blocks, error = self._read(fallback, page, self.system_prompt + PLAIN_PROMPT_SUFFIX)
+        return blocks, error, fallback
+
+    def _adopt(self, fallback, first, key, extra=None):
+        """Diagnostics of a fallback read, with what the first read looked like."""
+        diagnostics = dict(fallback._last_request)
+        diagnostics['prompt_version'] = PROMPT_VERSION
+        diagnostics['latency_s'] = fallback._last_timings.get('request_s')
+        diagnostics[key] = {'first_error': first.get('error_code'),
+                            'first_attempts': first.get('attempts'), **(extra or {})}
+        # The caller reads the last request off ``transport`` for its failure record.
+        self.transport._last_request = dict(diagnostics)
+        self.transport._last_timings = dict(fallback._last_timings)
+        return diagnostics
+
     def understand_page(self, page):
-        blocks, error = self.transport.read_image(page.image, system_prompt=self.system_prompt,
-                                                   user_prompt='Read all content on this page.', decoder=decode_semantics)
+        blocks, error = self._read(self.transport, page)
         diagnostics = dict(self.transport._last_request)
         diagnostics['prompt_version'] = PROMPT_VERSION
         diagnostics['latency_s'] = self.transport._last_timings.get('request_s')
+        if error:
+            retried = self._thinking_fallback(page, diagnostics)
+            if retried is not None:
+                blocks, error, fallback = retried
+                diagnostics = self._adopt(fallback, diagnostics, 'thinking_fallback',
+                                          {'from': str(self._init_args[0].reasoning_mode)})
+        if error:
+            retried = self._plain_fallback(page, diagnostics)
+            if retried is not None:
+                blocks, error, fallback = retried
+                diagnostics = self._adopt(fallback, diagnostics, 'plain_fallback')
         if error:
             raise DocumentUnderstandingError(f'Visual understanding failed for {page.page_id}: {error}',
                                                {**diagnostics, 'page_id':page.page_id, 'provider':'vlm',
@@ -391,6 +497,14 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                 path = Path(checkpoint_dir)/'document_understanding'/f'{i}-failure.json'
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(failure, ensure_ascii=False), encoding='utf-8')
+                # The per-page file is deleted once the page is later read; this log is
+                # append-only so every failure (with its rejected replies) stays for study.
+                try:
+                    with open(path.parent/'failures.jsonl', 'a', encoding='utf-8') as log:
+                        log.write(json.dumps({'at': time.time(), 'page_index': i, **failure},
+                                             ensure_ascii=False) + '\n')
+                except OSError:
+                    pass
             diagnostics = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
             code = str((diagnostics or {}).get('error_code') or '')
             if skip_failed and diagnostics is not None and code not in FATAL_PAGE_ERROR_CODES \
