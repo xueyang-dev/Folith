@@ -32,7 +32,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
@@ -3004,6 +3004,48 @@ def _batch_strategy(state=None, explicit=None, default="sentence"):
         if value in BATCH_STRATEGIES:
             return value
     return default
+
+
+def batch_strategy_diagnostics(state=None):
+    """组批策略的只读诊断读数：``configured``（任务记录）与 ``effective``（实际生效）。
+
+    按段组批的批次计划显式记录 ``strategy``；按句组批的计划沿用历史格式、省略
+    该键，此时以任务配置记录的策略为准（翻译阶段读的正是同一字段）。两者都无
+    法确认时保持 ``None``——诊断不用默认值冒充事实。
+    """
+    state = state if isinstance(state, Mapping) else {}
+    config = state.get("pipeline_config")
+    config = config if isinstance(config, Mapping) else {}
+    configured = str(config.get("batch_strategy") or "").strip().lower()
+    if configured not in BATCH_STRATEGIES:
+        configured = None
+    plan = state.get("batch_plan")
+    plan = plan if isinstance(plan, Mapping) else {}
+    effective = plan.get("strategy")
+    if effective not in BATCH_STRATEGIES:
+        effective = configured if plan.get("batch_count") else None
+    return {"configured": configured, "effective": effective}
+
+
+def _resolve_entry_batch_strategy(saved_strategy=None, explicit_strategy=None,
+                                  has_pairs=False, has_batch_args=False):
+    """任务开跑时组批方式的显式裁决（Phase 3 合同化）。
+
+    优先级固定为：任务已保存的策略 > 入口显式给的策略 > 兼容推断 > 核心新任务
+    默认。兼容推断保留旧行为——已经开译（``has_pairs``）或调用方给了批次大小
+    （``has_batch_args``，桌面合同总会给）的老任务/直接调用沿用每批 4 句。非法
+    的**已保存**值按未提供处理而不是落到新任务默认：一个配置损坏的既有任务不
+    能因此被静默切换到按段组批；显式传入的非法值仍由 :class:`JobConfig` 合同
+    层拒绝。
+    """
+    saved = str(saved_strategy or "").strip().lower()
+    if saved not in BATCH_STRATEGIES:
+        saved = None
+    return _batch_strategy(
+        None,
+        saved or explicit_strategy
+        or ("sentence" if has_pairs or has_batch_args else None),
+        default=DEFAULT_BATCH_STRATEGY)
 
 
 def _paragraph_labels(segment_count, paragraph_ranges):
@@ -12398,6 +12440,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                      strict_terminology_governance=False, mode=None,
                      research_settings=None, literature_sources=None,
                      delivery_config=None, batch_size=None, max_batch_chars=None,
+                     batch_strategy=None,
                      enable_understanding=None, reviewer_provider=None,
                      reviewer_api_key=None, reviewer_model=None,
                      reviewer_base_url=None, translator_base_url=None,
@@ -12714,10 +12757,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     # 组批方式随任务保存：已经开译、却没有记录过组批方式的老任务沿用每批 4 句，
     # 恢复时不换批次划分；显式给了批次大小的调用方要的是按句数组批；其余新任务
     # 用当前默认（按自然段）。
-    pipeline_config["batch_strategy"] = _batch_strategy(
-        None, saved_runtime_config.get("batch_strategy")
-        or ("sentence" if state.get("pairs") or batch_size or max_batch_chars else None),
-        default=DEFAULT_BATCH_STRATEGY)
+    pipeline_config["batch_strategy"] = _resolve_entry_batch_strategy(
+        saved_runtime_config.get("batch_strategy"), batch_strategy,
+        has_pairs=bool(state.get("pairs")),
+        has_batch_args=bool(batch_size or max_batch_chars))
     state["pipeline_config"] = pipeline_config
     state.setdefault("llm_usage", _usage.empty_usage())
     auxiliary_call = _model_roles.make_role_call(

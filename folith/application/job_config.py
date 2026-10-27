@@ -115,6 +115,7 @@ JOB_CONFIG_KWARG_KEYS = frozenset({
     "use_tm", "enable_understanding", "enable_source_cleanup",
     "strict_terminology_governance", "segmentation_mode",
     "translation_concurrency", "batch_size", "max_batch_chars",
+    "batch_strategy",
     "knowledge_feedback",
     "ocr_language", "ocr_quality", "ocr_dpi", "ocr_psm", "ocr_mode",
     "ocr_backend", "ocr_paddle_model", "ocr_online",
@@ -282,6 +283,15 @@ class JobConfig:
     translation_concurrency: int = DEFAULT_TRANSLATION_CONCURRENCY
     batch_size: int = DEFAULT_BATCH_SIZE
     max_batch_chars: int = DEFAULT_MAX_BATCH_CHARS
+    #: Explicit batching strategy (Phase 3 contract).  The desktop entry always
+    #: resolves this to a concrete value — ``sentence`` matches the historic
+    #: behavior where ``batch_size``/``max_batch_chars`` were always supplied.
+    #: This is deliberately different from ``core.DEFAULT_BATCH_STRATEGY``
+    #: (``paragraph``), which stays the core-level default for new tasks that
+    #: do not come through the desktop contract.  A task's own saved strategy
+    #: wins at the runtime; this field never flips an already-started job's
+    #: batch plan.
+    batch_strategy: str = "sentence"
     #: per-batch knowledge feedback (name continuity, term candidates); 快速 is off
     knowledge_feedback: bool = True
 
@@ -423,6 +433,7 @@ class JobConfig:
             values.get("batch_size"), DEFAULT_BATCH_SIZE, "batch_size")
         max_batch_chars = _normalize_positive_int(
             values.get("max_batch_chars"), DEFAULT_MAX_BATCH_CHARS, "max_batch_chars")
+        batch_strategy = _normalize_batch_strategy(values.get("batch_strategy"))
         knowledge_feedback = _as_bool(values.get("knowledge_feedback"), default=True)
 
         # -- OCR / visual source -------------------------------------------------
@@ -473,6 +484,7 @@ class JobConfig:
             translation_concurrency=translation_concurrency,
             batch_size=batch_size,
             max_batch_chars=max_batch_chars,
+            batch_strategy=batch_strategy,
             knowledge_feedback=knowledge_feedback,
             ocr_language=ocr_language,
             ocr_quality=ocr_quality,
@@ -509,6 +521,12 @@ class JobConfig:
             raise JobConfigError("batch_size 必须是正整数。")
         if int(self.max_batch_chars) < 1:
             raise JobConfigError("max_batch_chars 必须是正整数。")
+        import core  # local import: keeps this module import-order independent
+
+        if str(self.batch_strategy or "").strip().lower() not in core.BATCH_STRATEGIES:
+            raise JobConfigError(
+                f"未知的组批策略：{self.batch_strategy!r}"
+                f"（可选：{'、'.join(core.BATCH_STRATEGIES)}）")
         if int(self.translation_concurrency) < 1:
             raise JobConfigError("translation_concurrency 必须大于 0。")
         if self.ocr_mode not in {"auto", "force", "off"}:
@@ -560,6 +578,7 @@ class JobConfig:
             "translation_concurrency": int(self.translation_concurrency),
             "batch_size": int(self.batch_size),
             "max_batch_chars": int(self.max_batch_chars),
+            "batch_strategy": self.batch_strategy,
             "knowledge_feedback": bool(self.knowledge_feedback),
             "ocr_language": self.ocr_language,
             "ocr_quality": self.ocr_quality,
@@ -649,6 +668,27 @@ def _normalize_positive_int(value: Any, default: int, label: str) -> int:
     if number < 1:
         raise JobConfigError(f"{label} 必须是正整数。")
     return number
+
+
+def _normalize_batch_strategy(value: Any) -> str:
+    """Resolve the batching strategy explicitly (Phase 3 contract).
+
+    Absent/empty means "not configured" and falls back to the documented
+    desktop entry default (``sentence``, matching the behavior before the
+    strategy became an explicit field).  A *non-empty* unknown value is a
+    configuration error and is rejected, not silently reinterpreted.
+    """
+    import core  # local import: keeps this module import-order independent
+
+    if value is _MISSING or value is None:
+        return "sentence"
+    text = _as_text(value).strip().lower()
+    if not text:
+        return "sentence"
+    if text in core.BATCH_STRATEGIES:
+        return text
+    raise JobConfigError(
+        f"未知的组批策略：{value!r}（可选：{'、'.join(core.BATCH_STRATEGIES)}）")
 
 
 def _normalize_ocr_backend(value: Any) -> str:
