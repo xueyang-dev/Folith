@@ -5833,6 +5833,10 @@ class WorkbenchView(QWidget):
         self._sync_context_visibility()
         self._decorate_current_row()
         self._refresh_candidates(row.index)
+        self.target_edit.setReadOnly(bool(row.locked))
+        if row.locked:
+            self.submit_button.setEnabled(False)
+            self.save_next_button.setEnabled(False)
         if self._assist_index != row.index:
             self._assist_index = row.index
             self.note_box.set_note(self._notes.get(row.segment_uid))
@@ -6345,7 +6349,7 @@ class WorkbenchView(QWidget):
 
     def _insert_into_target(self, text: str) -> None:
         """把术语译名插到译文光标处（只改编辑框，保存仍由用户决定）。"""
-        if not text or self._active_position < 0:
+        if not text or self._active_position < 0 or self.target_edit.isReadOnly():
             return
         self.target_edit.insertPlainText(text)
         self.target_edit.setFocus()
@@ -6469,7 +6473,7 @@ class WorkbenchView(QWidget):
         self.segment_list.selectRow(position)
 
     def _submit(self) -> None:
-        if self._current_index < 0:
+        if self._current_index < 0 or self.target_edit.isReadOnly():
             return
         self.flush_draft()
         self.editSubmitted.emit(self._current_index)

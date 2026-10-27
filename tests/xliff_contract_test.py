@@ -371,12 +371,13 @@ def test_state_import_mapping_20():
 # 状态路径（与 Folith 任务 state 的对接）
 # ---------------------------------------------------------------------------
 
-def test_state_path_pairs_matched_positionally_and_promotes_review():
+def test_state_path_pairs_match_identity_and_promotes_review():
     source = _xliff12(SIX_TUS_12)
     units, _ = extract_xliff_units(source)
-    pairs = [{"target": ""} for _ in units]
+    pairs = [{"source": u.source, "target": "", "xliff_instance_id": u.instance_id,
+              "xliff_source_hash": u.source_version} for u in units]
     for i in range(3):
-        pairs[i] = {"target": f"状态路径第 {i + 1} 句。", "reviewed": True}
+        pairs[i].update(target=f"状态路径第 {i + 1} 句。", reviewed=True)
     state = {"pairs": pairs, "target_lang": "zh-CN"}
     output, report = write_roundtrip_xliff(source, state)
     assert report["modified_units"] == 3
@@ -468,7 +469,9 @@ def test_delivery_build_produces_roundtripped_xliff():
     units, _ = extract_xliff_units(source)
     pairs = []
     for index, unit in enumerate(units):
-        pairs.append({"target": unit.target or unit.source,
+        pairs.append({"source": unit.source, "xliff_instance_id": unit.instance_id,
+                      "xliff_source_hash": unit.source_version,
+                      "target": unit.target,
                       "reviewed": index == 0})
     state = {"pairs": pairs, "target_lang": "zh-CN",
              "filename": "demo.xliff"}
@@ -493,8 +496,10 @@ def test_1000_units_import_export_within_budget():
     assert manifest["counts"]["units"] == 1000
     assert manifest["counts"]["with_inline"] == 1000
     mid = time.perf_counter()
-    pairs = [{"target": f"第 {i} 句译文 ⟦1⟧。" if i % 2 else ""}
-             for i, _ in enumerate(units)]
+    pairs = [{"source": unit.source, "xliff_instance_id": unit.instance_id,
+              "xliff_source_hash": unit.source_version,
+              "target": f"第 {i} 句译文 ⟦1⟧。" if i % 2 else ""}
+             for i, unit in enumerate(units)]
     output, report = write_roundtrip_xliff(source, {"pairs": pairs})
     elapsed = time.perf_counter() - start
     assert report["modified_units"] == 500
@@ -510,3 +515,113 @@ def test_inspect_manifest_shape():
     assert manifest2["source_hash"] == manifest["source_hash"]
     assert manifest["supported"] and isinstance(manifest["preserved"], list)
     assert units
+
+
+def test_import_preserves_existing_targets_locks_and_identity(tmp_path, monkeypatch):
+    import core
+    from folith.application.commands import import_document
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    source = _xliff12(
+        '<trans-unit id="empty"><source> </source></trans-unit>'
+        '<trans-unit id="a" approved="yes"><source>Alpha</source><target>旧译文</target></trans-unit>'
+        '<trans-unit id="b" translate="no"><source>Beta</source><target>锁定译文</target></trans-unit>')
+    job = import_document("a.xlf", source, {"target_lang": "简体中文"})
+    state = core.load_job_state(job.job_id)
+    assert [p["target"] for p in state["pairs"]] == ["旧译文", "锁定译文"]
+    assert state["pairs"][0]["reviewed"] and state["pairs"][0]["human_accepted"]
+    assert state["pairs"][1]["locked"]
+    assert [p["xliff_instance_id"] for p in state["pairs"]] == ["demo.docx::a", "demo.docx::b"]
+    state["pairs"][0]["target"] = "新译文"
+    output, report = write_roundtrip_xliff(source, state)
+    units, _ = extract_xliff_units(output)
+    assert [u.target for u in units] == ["", "新译文", "锁定译文"]
+    assert report["modified_units"] == 1
+    with pytest.raises(Exception, match="段数"):
+        write_roundtrip_xliff(source, {"pairs": state["pairs"][1:]})
+    swapped = dict(state, pairs=list(reversed(state["pairs"])))
+    with pytest.raises(Exception, match="身份"):
+        write_roundtrip_xliff(source, swapped)
+
+
+def test_source_equal_translation_and_review_only_are_exported():
+    source = _xliff12('<trans-unit id="a"><source>Alpha</source><target>Old</target></trans-unit>')
+    unit = extract_xliff_units(source)[0][0]
+    pair = {"source": unit.source, "xliff_instance_id": unit.instance_id,
+            "xliff_source_hash": unit.source_version, "target": "Alpha", "reviewed": True}
+    output, report = write_roundtrip_xliff(source, {"pairs": [pair]})
+    assert extract_xliff_units(output)[0][0].target == "Alpha"
+    assert report["promoted_review_units"] == 1
+    pair["target"] = "Old"
+    output, report = write_roundtrip_xliff(source, {"pairs": [pair]})
+    assert report["modified_units"] == 0
+    assert report["promoted_review_units"] == 1
+    assert extract_xliff_units(output)[0][0].reviewed
+
+
+def test_standard_segmented_mrk_is_indexed_and_exported():
+    source = _xliff12('<trans-unit id="a"><source>Alpha Beta</source>'
+                      '<seg-source><mrk mtype="seg" mid="1">Alpha</mrk>'
+                      '<mrk mtype="seg" mid="2">Beta</mrk></seg-source>'
+                      '<target><mrk mtype="seg" mid="1">甲</mrk>'
+                      '<mrk mtype="seg" mid="2">乙</mrk></target></trans-unit>')
+    units, _ = extract_xliff_units(source)
+    values = [unit.to_dict() for unit in units]
+    values[1]["target"] = "新乙"
+    output, _ = write_roundtrip_xliff(source, values)
+    assert [unit.target for unit in extract_xliff_units(output)[0]] == ["甲", "新乙"]
+
+
+def test_translation_stage_reuses_imports_and_skips_locked(tmp_path, monkeypatch):
+    import json
+    import core
+    from folith.application.commands import import_document
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    source = _xliff12(
+        '<trans-unit id="a" approved="yes"><source>This first source is already reviewed.</source>'
+        '<target>已有人工译文。</target></trans-unit>'
+        '<trans-unit id="b" translate="no"><source>This locked source stays untouched.</source></trans-unit>'
+        '<trans-unit id="c"><source>This third source needs translation.</source></trans-unit>')
+    job = import_document("test.xlf", source, {"target_lang": "简体中文"})
+    state = core.load_job_state(job.job_id)
+    state["xliff_seed_pairs"] = state["pairs"]
+    state["pairs"] = []
+    prompts = []
+    def call(_provider, _key, _model, _system, user, **kwargs):
+        prompts.append(user)
+        return json.dumps(["新生成的译文。"], ensure_ascii=False)
+    monkeypatch.setattr(core, "call_llm", call)
+    result = core.translate_stage(state, job.job_id, [], "DeepSeek", "key", "model",
+                                  "简体中文", "", enable_review=False, use_tm=False,
+                                  knowledge_feedback=False, use_translation_cache=False)
+    assert result["pairs"][0]["target"] == "已有人工译文。"
+    assert result["pairs"][0]["reviewed"] is True
+    assert result["pairs"][1]["locked"] and result["pairs"][1]["target"] == ""
+    assert result["pairs"][2]["target"] == "新生成的译文。"
+    assert len(prompts) == 1
+    assert [p["xliff_instance_id"] for p in result["pairs"]] == [
+        "demo.docx::a", "demo.docx::b", "demo.docx::c"]
+
+
+def test_import_run_and_export_preserve_translations(tmp_path, monkeypatch):
+    import json
+    import core
+    from folith.application.commands import import_document
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    source = _xliff12(
+        '<trans-unit id="a" approved="yes"><source>This source already has a translation.</source>'
+        '<target>已有译文。</target></trans-unit>'
+        '<trans-unit id="b" translate="no"><source>This source is locked by the client.</source>'
+        '<target>客户锁定。</target></trans-unit>'
+        '<trans-unit id="c"><source>This source needs a new translation.</source></trans-unit>')
+    job = import_document("test.xlf", source, {"target_lang": "简体中文"})
+    monkeypatch.setattr(core, "call_llm", lambda *a, **k: json.dumps(["新增译文。"], ensure_ascii=False))
+    result = core.run_job_pipeline(job.job_id, "test.xlf", None,
+        provider="DeepSeek", api_key="test", model="test", target_lang="简体中文",
+        auto_term=False, enable_report=False, translation_theory="", enable_review=False,
+        enable_annotate=False, enable_understanding=False, enable_source_cleanup=False,
+        use_tm=False)
+    assert result["p2_done"]
+    assert [p["target"] for p in result["pairs"]] == ["已有译文。", "客户锁定。", "新增译文。"]
+    assert result["pairs"][0]["reviewed"] and result["pairs"][1]["locked"]
+    output, _ = build_roundtrip_xliff(result, source)
+    assert [u.target for u in extract_xliff_units(output)[0]] == ["已有译文。", "客户锁定。", "新增译文。"]

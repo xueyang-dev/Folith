@@ -155,6 +155,29 @@ def import_document(
         state["delivery_config"] = dict(contract.delivery_config)
         if created:
             _apply_task_defaults(state, contract)
+            if is_xliff_filename(text):
+                paragraphs, _warnings, report = core.extract_document_paragraphs_with_report(text, data)
+                if report.get("status") == "failed":
+                    raise CommandRejected(str(report.get("error") or "XLIFF 导入失败"))
+                xliff = report.get("xliff") or {}
+                units = xliff.get("units") or []
+                state["source_paras"] = list(paragraphs)
+                state["paras"] = list(paragraphs)
+                state["extraction_report"] = report
+                state["pairs"] = [{
+                    "source": source,
+                    "target": unit.get("target") or "",
+                    "initial_target": unit.get("target") or "",
+                    "xliff_instance_id": unit["instance_id"],
+                    "xliff_source_hash": xliff["source_hash"],
+                    "locked": bool((unit.get("state") or {}).get("translate_no")),
+                    "reviewed": bool((unit.get("state") or {}).get("reviewed")),
+                    "human_accepted": bool((unit.get("state") or {}).get("reviewed")),
+                    "review_status": "reviewed" if (unit.get("state") or {}).get("reviewed") else "not_reviewed",
+                    "target_provenance": "imported_xliff",
+                    "from_tm": False,
+                } for source, unit in zip(paragraphs, units)]
+                core.assign_missing_segment_uids(state, job_id=job_id)
         core.save_job_state(job_id, state)
         core.save_source(job_id, data)
 

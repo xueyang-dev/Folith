@@ -1860,6 +1860,9 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 "imported_units": len(paragraphs),
                 "supported": xliff_manifest["supported"],
                 "preserved": xliff_manifest["preserved"],
+                "source_hash": xliff_manifest["source_hash"],
+                "units": [unit.to_dict() for unit in xliff_units
+                          if unit.source_plain.strip()],
             }
             if xliff_manifest["counts"]["locked"]:
                 warnings.append(
@@ -5277,6 +5280,11 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         nonlocal _journal_seq, _journal_bytes_written, _journal_enabled
         nonlocal _journal_retire_pending
         nonlocal _translated_pair_count
+        xliff_units = ((state.get("extraction_report") or {}).get("xliff") or {}).get("units") or []
+        for index, pair in enumerate(batch_pairs, start=offset):
+            if xliff_units:
+                pair["xliff_instance_id"] = xliff_units[index]["instance_id"]
+                pair["xliff_source_hash"] = xliff_units[index]["source_version"]
         pairs.extend(batch_pairs)
         _translated_pair_count += sum(bool(str(pair.get("target") or "").strip())
                                       for pair in batch_pairs)
@@ -5692,6 +5700,15 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             for i, para in enumerate(batch):
                 clean_src = para.replace('\n', ' ')
                 source_index = offset + i
+                seed_pairs = state.get("xliff_seed_pairs") or []
+                if source_index < len(seed_pairs):
+                    seed = seed_pairs[source_index]
+                    if str(seed.get("source") or "").replace("\n", " ") != clean_src:
+                        raise ValueError("XLIFF 单元与任务源文不一致，已停止翻译。")
+                    if seed.get("locked") or str(seed.get("target") or "").strip():
+                        batch_pairs[i] = dict(seed)
+                        blocked_local_indexes.add(i)
+                        continue
                 source_flag = blocked_source_indexes.get(source_index)
                 if source_flag is not None:
                     blocked_local_indexes.add(i)
@@ -9889,6 +9906,8 @@ def save_translation_edit(job_id, index, target, actor="user"):
     pair = pairs[index]
     if is_excluded(pair):
         raise ValueError("该段落已被排除，不会进入翻译与交付；请先恢复本段再编辑译文。")
+    if pair.get("locked"):
+        raise ValueError("该段落在 XLIFF 源文件中已锁定，不能编辑。")
     assign_missing_segment_uids(state, job_id=job_id)
     new_target = str(target or "").strip()
     if not pair.get("human_edited"):
@@ -13391,6 +13410,13 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
 
     # ---------------- 阶段二：双语翻译（批次 + 确定性检查 + 独立审校 + 翻译记忆）----------------
     if not state["p2_done"]:
+        xliff = (state.get("extraction_report") or {}).get("xliff") or {}
+        if xliff.get("units") and "xliff_seed_pairs" not in state:
+            if len(state.get("pairs") or []) != len(xliff["units"]):
+                raise ValueError("XLIFF 单元与任务段数不一致，已停止翻译。")
+            state["xliff_seed_pairs"] = [dict(pair) for pair in state["pairs"]]
+            state["pairs"] = []
+            save_job_state(job_id, state)
         if _runtime_cancel_requested(job_id):
             raise RuntimeError("任务已请求取消")
         if on_status:
@@ -13442,6 +13468,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             _apply_scan_page_order(job_id, state)
         state["performance"] = profiler.persist()
         state["p2_done"] = True
+        state.pop("xliff_seed_pairs", None)
         from folith.epub import bind_source_references
         bind_source_references(state)
         from folith.document_ir import attach_pair_spans

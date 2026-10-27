@@ -333,6 +333,9 @@ def extract_xliff_units(source_bytes: bytes) -> Tuple[List[XliffUnit], Dict[str,
         units, manifest = _extract_20(root)
     for unit in units:
         unit.source_version = source_hash
+    identities = [unit.instance_id for unit in units]
+    if len(identities) != len(set(identities)):
+        raise XliffStructureError("XLIFF 单元身份重复，无法安全写回。")
     manifest["source_hash"] = source_hash
     return units, manifest
 
@@ -482,7 +485,8 @@ def _extract_trans_unit_12(tu: LET._Element, file_key: str, inherited_locked: bo
     # 源侧内容：seg-source 按 seg 对位，否则整个 source 一个对位项。
     if seg_source_elem is not None:
         segs = [child for child in seg_source_elem
-                if _local(child.tag) == "seg"]
+                if _local(child.tag) == "seg" or
+                (_local(child.tag) == "mrk" and child.get("mtype") == "seg")]
         if not segs:
             raise XliffStructureError(
                 f"{where} 的 <seg-source> 没有 <seg>"
@@ -852,21 +856,22 @@ def _resolve_state_units(source_bytes: bytes,
                          state: Dict[str, Any]) -> Tuple[List[XliffUnit], Dict[str, Any]]:
     units, manifest = extract_xliff_units(source_bytes)
     pairs = state.get("pairs") or []
-    for index, unit in enumerate(units):
+    imported_units = [unit for unit in units if unit.source_plain.strip()]
+    if len(pairs) != len(imported_units):
+        raise XliffRoundtripError("任务段数与 XLIFF 单元不一致，无法安全写回。")
+    for unit in units:
         # 记录文件里现有译文，写回时用于判定「该单元未被修改」。
         unit.state["file_target"] = unit.target
-        if index < len(pairs):
-            pair = pairs[index] or {}
-            target = str(pair.get("target") or "").strip()
-            if not target and pair.get("accepted_target"):
-                target = str(pair.get("accepted_target")).strip()
-            unit.target = target or unit.source
-            # 审校确认是用户显式操作：写入白名单提升（1.2 approved / 2.0 state）。
-            unit.state["promote_reviewed"] = bool(
-                pair.get("reviewed") or pair.get("human_accepted")) \
-                and not unit.reviewed
-        else:
-            unit.target = unit.source
+    for unit, pair in zip(imported_units, pairs):
+        pair = pair or {}
+        pair_id = str(pair.get("xliff_instance_id") or "")
+        if pair_id != unit.instance_id or pair.get("xliff_source_hash") != manifest["source_hash"]:
+            raise XliffRoundtripError(f"单元 '{unit.instance_id}' 的身份或源文件已变化，无法安全写回。")
+        if str(pair.get("source") or "").replace("\n", " ") != unit.source.replace("\n", " "):
+            raise XliffRoundtripError(f"单元 '{unit.instance_id}' 的源文已变化，无法安全写回。")
+        unit.target = str(pair.get("target") or "")
+        unit.state["promote_reviewed"] = bool(
+            pair.get("reviewed") or pair.get("human_accepted")) and not unit.reviewed
     return units, manifest
 
 
@@ -891,7 +896,7 @@ def write_roundtrip_xliff(source_bytes: bytes, units_or_state: Any, *,
     # 空译文（未翻译）的单元走 untouched 分支，不参与 Tag QA；
     # 一旦有译文，占位符必须与源文一一对应。
     for unit in units:
-        if unit.target.strip():
+        if not unit.locked and unit.target.strip():
             validate_target_tags(unit, unit.target)
 
     root = LET.fromstring(source_bytes)
@@ -914,11 +919,11 @@ def write_roundtrip_xliff(source_bytes: bytes, units_or_state: Any, *,
             continue
         desired = (unit.target or "").strip()
         file_target = str(unit.state.get("file_target") or "").strip()
-        if not desired or desired == unit.source.strip() or desired == file_target:
+        if not desired or desired == file_target:
             untouched += 1
-            continue
-        _write_unit_target(node, unit, ns, manifest)
-        modified += 1
+        else:
+            _write_unit_target(node, unit, ns, manifest)
+            modified += 1
         if not unit.reviewed and unit.state.get("promote_reviewed"):
             _promote_reviewed(node, ns)
             promoted += 1
@@ -980,8 +985,10 @@ def _index_units(root: LET._Element, ns: str) -> Dict[str, LET._Element]:
                 if seg_source is None:
                     nodes[f"{file_key}::{tu_id}"] = tu
                 else:
-                    for seg_ordinal, seg in enumerate(
-                            seg_source.findall(f"{{{NS12}}}seg"), start=1):
+                    segments = [child for child in seg_source if
+                                _local(child.tag) == "seg" or
+                                (_local(child.tag) == "mrk" and child.get("mtype") == "seg")]
+                    for seg_ordinal, seg in enumerate(segments, start=1):
                         mid = str(seg.get("mid") or "").strip() or f"s{seg_ordinal}"
                         nodes[f"{file_key}::{tu_id}#{mid}"] = seg
     else:
@@ -1052,6 +1059,8 @@ def _promote_reviewed(node: LET._Element, ns: str) -> None:
     """审校提升（白名单）：1.2 设 trans-unit@approved="yes"；2.0 设 state="reviewed"。"""
     if ns == NS12:
         tu = node if _local(node.tag) == "trans-unit" else node.getparent()
+        if tu is not None and _local(tu.tag) == "seg-source":
+            tu = tu.getparent()
         if tu is not None and _local(tu.tag) == "trans-unit":
             tu.set("approved", "yes")
     else:

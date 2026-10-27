@@ -746,6 +746,7 @@ class SegmentRow:
     #: 这种草稿仍然保留并显示给用户（那是他没提交的工作），但必须显式提示：
     #: 期间译文已经被改过（例如定点重译），直接提交会覆盖较新的文本。
     stale_draft: bool = False
+    locked: bool = False
 
     @property
     def source_preview(self) -> str:
@@ -765,6 +766,9 @@ def _pair_status(pair: dict) -> str:
     语气判断（:func:`views._segment_status_tone`）也用同一份文案比对。
     """
     from . import i18n
+
+    if pair.get("locked"):
+        return i18n.tr("已锁定")
 
     if pair.get("excluded"):
         return i18n.tr("已排除")
@@ -817,6 +821,7 @@ def segment_rows(job_id: str, state: dict | None = None) -> list[SegmentRow]:
                 draft_text=str(draft.get("text") or ""),
                 stale_draft=bool(draft) and bool(baseline)
                 and baseline != target,
+                locked=bool(pair.get("locked")),
             ))
         return rows
     # Before translation the workbench still shows the source segments, so the
