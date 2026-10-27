@@ -4491,6 +4491,8 @@ class WorkbenchView(QWidget):
         if self.select_segment(first):
             self._sync_outline_highlight()
             self.focus_editor()
+            QTimer.singleShot(0, lambda: self._keep_active_row_visible()
+                              if self._current_index == first else None)
             return
         if self._filters_active():
             # Never a silent False: remove the filter that hides the target and
@@ -4500,6 +4502,8 @@ class WorkbenchView(QWidget):
             if self.select_segment(first):
                 self._sync_outline_highlight()
                 self.focus_editor()
+                QTimer.singleShot(0, lambda: self._keep_active_row_visible()
+                                  if self._current_index == first else None)
                 return
         self.set_task_notice(i18n.tr('「{v0}」当前无法定位', v0=title), error=True)
 

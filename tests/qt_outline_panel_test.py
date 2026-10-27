@@ -231,6 +231,22 @@ def test_a_filtered_target_clears_the_filter_and_says_so(job):
     assert "已清除筛选" in _notices(bench)
 
 
+def test_filtered_navigation_reveals_target_after_layout(job, qapp):
+    from PySide6.QtTest import QTest
+    bench = _bench(job, _nested_outline())
+    bench.resize(900, 400)
+    bench.show()
+    bench.set_outline_open(True)
+    bench.set_search("不存在的文字")
+    bench.outline_panel.activate_node("n0005")
+    QTest.qWait(200)
+    position = next(i for i, row in enumerate(bench._rows) if row.index == 5)
+    rect = bench.segment_list.visualRect(bench.segment_list.model().index(position, 0))
+    assert rect.top() < bench.segment_list.viewport().height()
+    assert rect.bottom() >= 0
+    bench.close()
+
+
 def test_a_target_that_still_cannot_be_shown_is_explained(job):
     bench = _bench(job, _nested_outline())
     bench.set_outline_open(True)
