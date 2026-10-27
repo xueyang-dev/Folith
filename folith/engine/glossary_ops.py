@@ -1045,6 +1045,7 @@ def _refresh_source_term_conflicts(state, *, reopen=False):
             'finding_id': fid, 'type': 'glossary_source_conflict',
             'category': 'terminology_consistency', 'severity': 'actionable',
             'entry_id': ids[0], 'entry_ids': ids, 'source_span': source,
+            'preferred_target': forms,
             'segment_index': first_segment,
             'summary': f'术语「{source}」存在多个首选译名',
             'explanation': f'同一范围的术语条目分别指定了：{forms}。',
@@ -1176,6 +1177,7 @@ def _refresh_ai_term_conflicts(state, *, reopen=False):
                 'finding_id': fid, 'type': 'glossary_ai_conflict', 'severity': 'actionable',
                 'category': 'terminology_consistency', 'entry_id': entry['id'],
                 'segment_index': segment, 'source_span': source, 'target_span': proposed,
+                'preferred_target': preferred,
                 'summary': f'AI 候选译名与锁定术语「{entry["source"]}」不一致',
                 'explanation': f'AI 抽取候选为「{proposed}」，当前锁定首选译名为「{preferred}」。',
                 'recommendation': '保留已确认译名或核对证据后修改术语；不会自动覆盖。',
@@ -1233,12 +1235,14 @@ def _refresh_duplicate_term_conflicts(state, *, reopen=False):
         fid = 'term-duplicate-conflict:' + identity
         segment = next((i for i, pair in enumerate(state.get('pairs') or [])
                         if not _c.is_excluded(pair) and any(terminology.entry_matches(e, str(pair.get('source') or '')) for e in (left, right))), None)
-        classification = '规范化后相同' if candidate['kind'] == 'normalized' else '文字相似'
+        classification = ('规范化后相同' if candidate['kind'] == 'normalized'
+                          else '推测相似，仅供人工确认')
         detected[fid] = {
             'finding_id': fid, 'type': 'glossary_duplicate_conflict',
             'severity': 'informational', 'category': 'terminology_consistency',
             'entry_id': left['id'], 'entry_ids': [left['id'], right['id']],
             'segment_index': segment, 'source_span': left['source'],
+            'preferred_target': f'{left["preferred"]} / {right["preferred"]}',
             'summary': f'潜在重复术语的译名不同：{left["source"]} / {right["source"]}',
             'explanation': f'源形式{classification}；首选译名分别为「{left["preferred"]}」和「{right["preferred"]}」。相似不代表含义相同。',
             'recommendation': '检查上下文；仅在确认含义相同时合并或统一译名。',

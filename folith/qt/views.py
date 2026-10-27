@@ -19,7 +19,8 @@ import time
 from PySide6.QtCore import QEvent, QMargins, QRect, QRectF, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QDialog, QFormLayout, QFrame, QGridLayout,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
+    QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QPlainTextEdit, QProgressBar,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
@@ -53,6 +54,48 @@ from . import segment_editor
 from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
+
+
+TERMINOLOGY_CONFLICT_KINDS = (
+    ("all", "全部冲突类型"),
+    ("multiple", "同一源术语多个译名"),
+    ("missing", "未采用首选译名"),
+    ("forbidden", "使用禁用译名"),
+    ("duplicate", "潜在重复术语"),
+    ("ai", "AI 建议与人工决定冲突"),
+    ("other", "其他术语一致性问题"),
+)
+
+
+def terminology_conflict_kind(item: dict) -> str:
+    """Classify a terminology review item without creating a second queue.
+
+    Persisted finding types are authoritative. Older finding records did not
+    consistently carry a type, so their summaries are the compatibility
+    fallback.
+    """
+    finding_type = str(item.get("finding_type") or "")
+    summary = str(item.get("summary") or item.get("reason") or "")
+    if finding_type in ("glossary_source_conflict", "entity_conflict"):
+        return "multiple"
+    if finding_type == "glossary_duplicate_conflict":
+        return "duplicate"
+    if finding_type == "glossary_ai_conflict":
+        return "ai"
+    if "禁止译名" in summary:
+        return "forbidden"
+    if "多种译法" in summary:
+        return "multiple"
+    if finding_type in ("glossary", "glossary_stale") \
+            or "首选译名" in summary or "锁定保留项" in summary:
+        return "missing"
+    return "other"
+
+
+def terminology_conflict_label(kind: str) -> str:
+    label = next((label for code, label in TERMINOLOGY_CONFLICT_KINDS
+                  if code == kind), "其他术语一致性问题")
+    return i18n.tr(label)
 
 #: 核心运行视图里"正在占用管线"的状态（头部进度条与暂停/取消按钮只在这些状态出现）。
 #: 可以请求暂停的运行状态（核心在当前操作结束后暂停）。
@@ -5019,49 +5062,105 @@ class WorkbenchView(QWidget):
                  and item.get('category') == 'terminology_consistency']
         dialog = QDialog(self.terms_panel.window())
         dialog.setWindowTitle(i18n.tr('术语审校问题'))
-        dialog.resize(850, 600)
+        dialog.resize(1050, 680)
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel(i18n.tr('当前审校队列中的术语问题：{v0}', v0=len(items))))
-        table = QTableWidget(len(items), 3)
-        table.setHorizontalHeaderLabels([i18n.tr('段'), i18n.tr('问题'), i18n.tr('严重程度')])
+        header = QHBoxLayout()
+        header.addWidget(QLabel(i18n.tr('当前审校队列中的术语问题：{v0}', v0=len(items))))
+        header.addStretch(1)
+        header.addWidget(QLabel(i18n.tr('问题类型')))
+        kind_filter = QComboBox()
+        counts = {code: sum(terminology_conflict_kind(item) == code for item in items)
+                  for code, _ in TERMINOLOGY_CONFLICT_KINDS}
+        counts['all'] = len(items)
+        for code, label in TERMINOLOGY_CONFLICT_KINDS:
+            kind_filter.addItem(f"{i18n.tr(label)} · {counts[code]}", code)
+        header.addWidget(kind_filter)
+        layout.addLayout(header)
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels([
+            i18n.tr('类型'), i18n.tr('源术语'), i18n.tr('问题'),
+            i18n.tr('当前译法 / 证据'), i18n.tr('段'), i18n.tr('严重程度')])
         table.verticalHeader().setVisible(False)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for row, item in enumerate(items):
-            index = item.get('segment_index')
-            for column, value in enumerate((str(index + 1) if isinstance(index, int) else '—',
-                                             str(item.get('summary') or item.get('reason') or ''),
-                                             str(item.get('severity_label') or item.get('severity') or ''))):
-                table.setItem(row, column, QTableWidgetItem(value))
+        table.setSortingEnabled(False)
+        header_view = table.horizontalHeader()
+        for column in (0, 1, 4, 5):
+            header_view.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header_view.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(table, 1)
+        layout.addWidget(QLabel(i18n.tr('证据与建议')))
         detail = QPlainTextEdit()
         detail.setReadOnly(True)
-        detail.setMaximumHeight(150)
+        detail.setMaximumHeight(180)
         layout.addWidget(detail)
         buttons = QHBoxLayout()
+        edit_term = QPushButton(i18n.tr('编辑相关术语'))
         locate = QPushButton(i18n.tr('定位段落'))
         review = QPushButton(i18n.tr('重新审校'))
         resolve = QPushButton(i18n.tr('确认已解决'))
         revalidate = QPushButton(i18n.tr('重新验证术语表'))
-        for button in (locate, review, resolve, revalidate):
+        for button in (edit_term, locate, review, resolve, revalidate):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         action = []
+        visible_items: list[dict] = []
 
         def selected():
             row = table.currentRow()
-            return items[row] if 0 <= row < len(items) else None
+            return visible_items[row] if 0 <= row < len(visible_items) else None
+
+        def evidence_text(item: dict) -> str:
+            source = str(item.get('source_span') or item.get('source') or '').strip()
+            current = str(item.get('target_span') or item.get('target') or '').strip()
+            expected = str(item.get('preferred_target') or '').strip()
+            rows = [
+                (i18n.tr('原文'), source),
+                (i18n.tr('当前译文'), current),
+                (i18n.tr('期望译名'), expected),
+                (i18n.tr('说明'), str(item.get('explanation') or item.get('reason') or '')),
+                (i18n.tr('建议'), str(item.get('recommendation') or '')),
+                (i18n.tr('检测器'), str(item.get('detector') or '')),
+            ]
+            return '\n'.join(f"{label}：{value}" for label, value in rows if value)
 
         def sync():
             item = selected() or {}
-            detail.setPlainText('\n\n'.join(str(item.get(key) or '') for key in
-                                            ('source', 'target', 'explanation', 'recommendation')))
+            detail.setPlainText(evidence_text(item))
             has_segment = isinstance(item.get('segment_index'), int)
+            edit_term.setEnabled(bool(item.get('entry_id')))
             locate.setEnabled(has_segment)
             review.setEnabled(has_segment)
             resolve.setEnabled(bool(item.get('finding_id')) and bool(item.get('decidable')))
+
+        def fill_table():
+            nonlocal visible_items
+            code = str(kind_filter.currentData() or 'all')
+            visible_items = [item for item in items
+                             if code == 'all' or terminology_conflict_kind(item) == code]
+            table.setRowCount(len(visible_items))
+            for row, item in enumerate(visible_items):
+                index = item.get('segment_index')
+                kind = terminology_conflict_kind(item)
+                evidence = str(item.get('target_span') or item.get('detected_text')
+                               or item.get('target') or item.get('reason') or '')
+                values = (
+                    terminology_conflict_label(kind),
+                    str(item.get('source_span') or item.get('source') or ''),
+                    str(item.get('summary') or item.get('reason') or ''),
+                    evidence,
+                    str(index + 1) if isinstance(index, int) else i18n.tr('全文'),
+                    str(item.get('severity_label') or item.get('severity') or ''),
+                )
+                for column, value in enumerate(values):
+                    table.setItem(row, column, QTableWidgetItem(value))
+            if visible_items:
+                table.selectRow(0)
+                sync()
+            else:
+                sync()
 
         def choose(name):
             item = selected()
@@ -5069,15 +5168,15 @@ class WorkbenchView(QWidget):
                 action.extend((name, item))
                 dialog.accept()
 
+        kind_filter.currentIndexChanged.connect(lambda _index: fill_table())
         table.itemSelectionChanged.connect(sync)
         table.cellDoubleClicked.connect(lambda *_: choose('locate'))
+        edit_term.clicked.connect(lambda: choose('edit_term'))
         locate.clicked.connect(lambda: choose('locate'))
         review.clicked.connect(lambda: choose('review'))
         resolve.clicked.connect(lambda: choose('resolve'))
         revalidate.clicked.connect(lambda: (action.append('revalidate'), dialog.accept()))
-        if items:
-            table.selectRow(0)
-        sync()
+        fill_table()
         if dialog.exec() != QDialog.DialogCode.Accepted or not action:
             return
         if action[0] == 'revalidate':
@@ -5086,6 +5185,13 @@ class WorkbenchView(QWidget):
         name, item = action
         if name == 'resolve':
             self.findingResolveRequested.emit([item['finding_id']], adapter.RESOLVE_CONFIRMED, '')
+        elif name == 'edit_term':
+            self.termEditRequested.emit({
+                'id': str(item.get('entry_id') or ''),
+                'source': str(item.get('source_span') or item.get('source') or ''),
+                'target': str(item.get('preferred_target') or item.get('target_span')
+                              or item.get('target') or ''),
+            })
         else:
             if self._terms_dialog is not None:
                 self._terms_dialog.accept()

@@ -475,6 +475,59 @@ def test_conflict_center_locates_queue_finding(qapp):
     assert called == [5]
 
 
+def test_conflict_center_filters_persisted_finding_types(qapp):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QComboBox, QPlainTextEdit, QTableWidget
+    bench = _bench(qapp)
+    bench._review_items = [
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_source_conflict', 'finding_id': 'f1',
+         'segment_index': 1, 'summary': '同一术语存在多个首选译名'},
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_duplicate_conflict', 'finding_id': 'f2',
+         'segment_index': 2, 'summary': '潜在重复术语的译名不同',
+         'explanation': 'DETAIL-DUPLICATE'},
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_ai_conflict', 'finding_id': 'f3',
+         'segment_index': 3, 'summary': 'AI 候选与锁定术语不一致'},
+    ]
+    observed = {}
+
+    def inspect_and_close():
+        dialog = QApplication.activeModalWidget()
+        kind_filter = dialog.findChild(QComboBox)
+        table = dialog.findChild(QTableWidget)
+        duplicate_index = kind_filter.findData('duplicate')
+        kind_filter.setCurrentIndex(duplicate_index)
+        observed['rows'] = table.rowCount()
+        observed['kind'] = table.item(0, 0).text()
+        observed['detail'] = dialog.findChild(QPlainTextEdit).toPlainText()
+        dialog.reject()
+
+    QTimer.singleShot(0, inspect_and_close)
+    bench._open_terminology_conflicts()
+    assert observed['rows'] == 1
+    assert observed['kind'] == '潜在重复术语'
+    assert 'DETAIL-DUPLICATE' in observed['detail']
+
+
+def test_terminology_conflict_kind_uses_persisted_finding_type():
+    from folith.qt.views import terminology_conflict_kind
+
+    assert terminology_conflict_kind({
+        'finding_type': 'glossary_ai_conflict',
+        'summary': '术语不一致',
+    }) == 'ai'
+    assert terminology_conflict_kind({
+        'finding_type': 'glossary',
+        'summary': '术语「CAT」使用了禁止译名',
+    }) == 'forbidden'
+    assert terminology_conflict_kind({
+        'finding_type': 'glossary',
+        'summary': '术语「CAT」未使用首选译名',
+    }) == 'missing'
+
+
 def test_conflict_count_and_filter_use_only_review_queue_items(panel):
     panel.apply('j', _view([_row(1, 'one', '一'), _row(2, 'two', '二')]))
     panel.set_review_items([
@@ -488,6 +541,16 @@ def test_conflict_count_and_filter_use_only_review_queue_items(panel):
     assert panel.table.item(0, 0).text() == 'one'
 
 
+def test_segment_scoped_term_findings_count_against_matching_term(panel):
+    panel.set_review_items([
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_stale', 'source': '草の墓標 ―副題―'},
+    ])
+    # Workbench rendering may populate the review queue before the term table.
+    panel.apply('j', _view([_row(1, '草の墓標', '草之墓碑', 'locked')]))
+    assert panel.table.item(0, 4).text() == '1'
+
+
 def test_compact_term_row_surfaces_its_conflict_count(panel):
     panel.set_compact(True)
     panel.apply('j', _view([_row(1, 'term', '术语', 'locked')]))
@@ -495,7 +558,7 @@ def test_compact_term_row_surfaces_its_conflict_count(panel):
         {'kind': 'finding', 'category': 'terminology_consistency',
          'entry_id': 't1', 'finding_id': 'f1'},
     ])
-    assert panel.table.item(0, 2).text() == '已锁定 · 冲突 1'
+    assert panel.table.item(0, 2).text() == '锁定 · 冲突 1'
 
 
 def test_workspace_table_shows_all_required_columns_without_horizontal_scroll(panel, qapp):
@@ -537,6 +600,37 @@ def test_workspace_action_buttons_fit_inside_editor_card(panel, qapp):
         top_left = button.mapTo(panel.editor_card, QPoint(0, 0))
         assert panel.editor_card.rect().contains(top_left)
         assert panel.editor_card.rect().contains(top_left + QPoint(button.width() - 1, button.height() - 1))
+    panel.close()
+
+
+def test_workspace_scrolls_detail_column_at_scaled_narrow_height(panel, qapp):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    panel.set_compact(False)
+    panel.apply('j', _view([
+        _row(1, '草の墓標', '草之墓碑', 'locked')],
+        started=True, frozen=True, frozen_version=1, blocks_start=False))
+    panel.details_button.setChecked(True)
+    panel.resize(960, 560)
+    panel.show()
+    QTest.qWait(350)
+
+    assert panel.detail_scroll.verticalScrollBar().maximum() > 0
+    assert panel.detail_scroll.horizontalScrollBar().maximum() == 0
+    card_bottom = panel.editor_card.mapTo(
+        panel.detail_content,
+        QPoint(0, panel.editor_card.height())).y()
+    heading_top = panel.impact_heading.mapTo(panel.detail_content, QPoint(0, 0)).y()
+    heading_bottom = panel.impact_heading.mapTo(
+        panel.detail_content, QPoint(0, panel.impact_heading.height())).y()
+    table_top = panel.impact_table.mapTo(panel.detail_content, QPoint(0, 0)).y()
+    table_bottom = panel.impact_table.mapTo(
+        panel.detail_content, QPoint(0, panel.impact_table.height())).y()
+    actions_top = panel.impact_actions.mapTo(panel.detail_content, QPoint(0, 0)).y()
+    assert card_bottom <= heading_top
+    assert heading_bottom <= table_top
+    assert table_bottom <= actions_top
     panel.close()
 
 

@@ -22,6 +22,24 @@ def test_alias_order_not_semantic_and_legacy_hash_unchanged():
     assert models.glossary_hash([legacy]) != models.glossary_hash([{**legacy, 'source_aliases': ['B']}])
 
 
+def test_ambiguous_same_source_translations_are_not_injected_into_ai_input():
+    entries = models.normalize_glossary([
+        {'source': '草の墓標', 'target': '草之墓碑', 'status': 'locked',
+         'scope': 'document'},
+        {'source': '草の墓標', 'target': '草地墓碑', 'status': 'locked',
+         'scope': 'document'},
+        {'source': '青空', 'target': '蓝天', 'status': 'locked',
+         'scope': 'document'},
+    ])
+
+    block = terminology.glossary_block(entries)
+
+    assert '草の墓標' not in block
+    assert '草之墓碑' not in block
+    assert '草地墓碑' not in block
+    assert '青空 -> 蓝天' in block
+
+
 def test_alias_appears_in_segment_hints_impact_and_fulltext_focus():
     from types import SimpleNamespace
     from folith.qt import adapter, term_highlight

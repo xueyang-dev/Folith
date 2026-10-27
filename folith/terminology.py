@@ -637,11 +637,31 @@ def select_glossary_for_segments(
 
 def glossary_block(entries: List[models.GlossaryEntry]) -> str:
     """把筛选后的条目渲染成注入翻译/审校 prompt 的文本块（含 entry ID 便于审计）。"""
-    locked_translate = [e for e in entries
-                        if e["behavior"] == "translate" and e["status"] == "locked"]
+    translate = [e for e in entries if e["behavior"] == "translate"
+                 and str(e.get("preferred") or e.get("target") or "").strip()]
+    translations_by_source = {}
+    for entry in translate:
+        scope = str(entry.get("scope") or "").strip()
+        scope = "document" if scope in ("", "global", "document") else scope
+        key = (entry["source"].casefold(), scope)
+        translations_by_source.setdefault(key, set()).add(
+            str(entry.get("preferred") or entry.get("target") or "").casefold())
+    # A prompt cannot resolve an ambiguous human decision. Keep affected terms
+    # out of model input until the conflict is resolved; the delivery/review
+    # projections still expose the conflict to the operator.
+    ambiguous = {key for key, translations in translations_by_source.items()
+                 if len(translations) > 1}
+
+    def unambiguous(entry):
+        scope = str(entry.get("scope") or "").strip()
+        scope = "document" if scope in ("", "global", "document") else scope
+        return (entry["source"].casefold(), scope) not in ambiguous
+
+    locked_translate = [e for e in translate
+                        if e["status"] == "locked" and unambiguous(e)]
     preserve = [e for e in entries if e["behavior"] == "preserve"]
-    provisional = [e for e in entries
-                   if e["behavior"] == "translate" and e["status"] != "locked"]
+    provisional = [e for e in translate
+                   if e["status"] != "locked" and unambiguous(e)]
     lines = []
     if locked_translate:
         lines.append("【锁定术语（必须使用首选译名，不得使用禁止译名）】：")
@@ -887,6 +907,7 @@ def check_glossary_compliance(
                     "category": "terminology_consistency",
                     "summary": f"译文遗漏锁定保留项「{e['source']}」",
                     "source_span": e["source"], "target_span": None,
+                    "preferred_target": e["source"],
                     "explanation": f"项目术语表要求保留项「{e['source']}」原样出现，但当前译文中没有找到它。",
                     "recommendation": "确认该词是否确实需要保留；若需要，请补回原文形式并重新检查格式。",
                     "confidence": None, "detector": "Terminology QA",
@@ -904,6 +925,7 @@ def check_glossary_compliance(
                     "category": "terminology_consistency",
                     "summary": f"术语「{e['source']}」未使用首选译名",
                     "source_span": e["source"], "target_span": None,
+                    "preferred_target": preferred,
                     "explanation": f"项目术语表将「{e['source']}」锁定为首选译名「{preferred}」，但当前译文中未出现该译名。",
                     "recommendation": "检查当前语境是否有合理例外；如果没有，请统一为项目术语表中的首选译名。",
                     "confidence": None, "detector": "Terminology QA",
@@ -918,6 +940,7 @@ def check_glossary_compliance(
                         "category": "terminology_consistency",
                         "summary": f"术语「{e['source']}」使用了禁止译名",
                         "source_span": e["source"], "target_span": fb,
+                        "preferred_target": preferred,
                         "explanation": f"当前译文使用了术语「{e['source']}」的禁止译名「{fb}」，与已锁定术语规则冲突。",
                         "recommendation": "改用项目术语表中的首选译名，并检查同一术语在相邻段落中的译法。",
                         "confidence": None, "detector": "Terminology QA",
@@ -984,6 +1007,7 @@ def detect_glossary_conflicts(
                         "category": "terminology_consistency",
                         "summary": f"术语「{e['source']}」在同一范围内出现多种译法",
                         "source_span": e["source"], "target_span": label,
+                        "preferred_target": preferred,
                         "explanation": f"同一范围内的术语「{e['source']}」出现了不同译法，可能破坏项目术语的一致性。",
                         "recommendation": "检查这些译法是否由语境差异造成；若无明确理由，请统一为项目术语表中的译法。",
                         "confidence": None, "detector": "Terminology QA",

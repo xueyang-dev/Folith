@@ -1,0 +1,95 @@
+{
+  "source_state": "<external-state>/state.json",
+  "isolated_copy": true,
+  "qt_platform": "cocoa",
+  "geometry": {
+    "quick_access": {
+      "panel_width": 332,
+      "panel_height": 598,
+      "table_width": 332,
+      "table_height": 336,
+      "editor_width": 332,
+      "editor_height": 107,
+      "table_left": 0,
+      "table_right": 332,
+      "editor_left": 0,
+      "editor_right": 332,
+      "table_horizontal_scroll_max": 0,
+      "detail_horizontal_scroll_max": 0,
+      "detail_vertical_scroll_max": 104
+    },
+    "workspace": {
+      "dark": {
+        "panel_width": 1060,
+        "panel_height": 720,
+        "table_width": 630,
+        "table_height": 442,
+        "editor_width": 411,
+        "editor_height": 383,
+        "table_left": 0,
+        "table_right": 630,
+        "editor_left": 640,
+        "editor_right": 1051,
+        "table_horizontal_scroll_max": 0,
+        "detail_horizontal_scroll_max": 0,
+        "detail_vertical_scroll_max": 210
+      },
+      "paper": {
+        "panel_width": 920,
+        "panel_height": 520,
+        "table_width": 546,
+        "table_height": 242,
+        "editor_width": 355,
+        "editor_height": 419,
+        "table_left": 0,
+        "table_right": 546,
+        "editor_left": 556,
+        "editor_right": 911,
+        "table_horizontal_scroll_max": 0,
+        "detail_horizontal_scroll_max": 0,
+        "detail_vertical_scroll_max": 482
+      }
+    }
+  },
+  "project": {
+    "segments": 7205,
+    "source_characters": 170537,
+    "translated_segments": 7205,
+    "reviewed_segments": 24,
+    "terms": 62
+  },
+  "case_1_search_and_edit": {
+    "search_and_edit_ms": 58.0,
+    "persisted": true,
+    "version_before": 1,
+    "version_after": 3,
+    "segment_hint_target": "草之墓碑",
+    "intermediate_save": true,
+    "final_save": true
+  },
+  "case_2_impact_apply_undo": {
+    "impact_total": 3,
+    "impact_inconsistent": 3,
+    "affected_segments": [
+      0,
+      4,
+      7193
+    ],
+    "applied": 3,
+    "undone": 3
+  },
+  "case_3_conflict": {
+    "review_items": 1,
+    "queue_total": 88
+  },
+  "case_4_frozen_edit": {
+    "frozen_version_before_edit": 3,
+    "frozen_version_after_edit": 4,
+    "ambiguous_term_omitted_from_ai_input": true
+  },
+  "performance": {
+    "full_glossary_view_ms": 566.5,
+    "duplicate_scan_ms": 4.1,
+    "duplicate_candidates": 1
+  }
+}

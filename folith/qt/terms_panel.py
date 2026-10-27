@@ -15,7 +15,8 @@ import re
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QBoxLayout, QDialog, QFormLayout, QHeaderView, QInputDialog, QLabel, QMessageBox,
-    QLineEdit, QPushButton, QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QLineEdit, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import components
@@ -30,6 +31,8 @@ from folith.terminology import entry_matches
 STATUS_ORDER = ("candidate", "provisional", "locked", "rejected")
 STATUS_LABELS = {"candidate": "候选", "provisional": "暂定",
                  "locked": "已锁定", "rejected": "已拒绝"}
+COMPACT_STATUS_LABELS = {"candidate": "候选", "provisional": "暂定",
+                         "locked": "锁定", "rejected": "拒绝"}
 COLUMNS = ("源术语", "首选译名", "状态", "次数", "冲突数量", "最近修改")
 
 
@@ -38,7 +41,7 @@ class _TermsEditorCard(Card):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
-        QTimer.singleShot(0, self.sync_minimum_height)
+        QTimer.singleShot(0, self, self.sync_minimum_height)
 
     def sync_minimum_height(self) -> None:
         layout = self.layout()
@@ -87,6 +90,7 @@ class TermsPanel(QWidget):
         self._pairs = []
         self._segment_source = ''
         self._conflict_counts = {}
+        self._review_items = []
         self._impact_generation = 0
         self._impact_runner = TaskRunner(self, max_threads=1)
         self._impact_timer = QTimer(self)
@@ -285,13 +289,43 @@ class TermsPanel(QWidget):
         list_layout = QVBoxLayout()
         list_layout.addWidget(self.table, 1)
         list_layout.addWidget(self.empty_state, 1)
-        detail_layout = QVBoxLayout()
+        # The workspace has enough horizontal room for the term table and a
+        # complete editor, but a scaled 960x560 window is deliberately shorter
+        # than the expanded editor plus impact table. Let the detail column own
+        # one explicit vertical scroll region; otherwise Qt compresses each
+        # nested section into the same pixels and the action rows overpaint the
+        # impact heading. Compact Quick Access keeps the direct layout and
+        # relies on its smaller set of visible controls.
+        self.detail_content = QWidget()
+        self.detail_content.setObjectName("termsDetailContent")
+        detail_layout = QVBoxLayout(self.detail_content)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
         detail_layout.addWidget(editor_card)
         detail_layout.addWidget(self.impact_heading)
         detail_layout.addWidget(self.impact_table, 1)
         detail_layout.addWidget(self.impact_actions)
+        self.detail_scroll = QScrollArea()
+        self.detail_scroll.setObjectName("termsDetailScroll")
+        self.detail_scroll.setWidgetResizable(True)
+        self.detail_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.detail_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.detail_scroll.viewport().setAutoFillBackground(False)
+        self.detail_scroll.setWidget(self.detail_content)
+        self.detail_direct_page = QWidget()
+        self.detail_direct_layout = QVBoxLayout(self.detail_direct_page)
+        self.detail_direct_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_scroll_page = QWidget()
+        scroll_page_layout = QVBoxLayout(self.detail_scroll_page)
+        scroll_page_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_page_layout.addWidget(self.detail_scroll)
+        self.detail_host = QStackedWidget()
+        self.detail_host.addWidget(self.detail_direct_page)
+        self.detail_host.addWidget(self.detail_scroll_page)
+        self.detail_host.setCurrentWidget(self.detail_scroll_page)
+        self._detail_in_scroll = True
         self.content_layout.addLayout(list_layout, 3)
-        self.content_layout.addLayout(detail_layout, 2)
+        self.content_layout.addWidget(self.detail_host, 2)
         layout.addLayout(self.content_layout, 1)
         layout.addLayout(gate_actions)
         quick_actions = components.FlowRow(spacing=6)
@@ -305,7 +339,7 @@ class TermsPanel(QWidget):
         self.workspace_button.hide()
         self._sync_details()
         self._sync()
-        QTimer.singleShot(0, self.editor_card.sync_minimum_height)
+        QTimer.singleShot(0, self.editor_card, self.editor_card.sync_minimum_height)
 
     #: 窄栏里收起的列：次数、备注（备注在下面的表单里照样能看能改）。
     COMPACT_HIDDEN = (3, 4, 5)
@@ -313,6 +347,20 @@ class TermsPanel(QWidget):
     def set_compact(self, compact: bool) -> None:
         """放进翻译页左栏时：表格只留源术语、译名、状态三列。"""
         self._compact = compact
+        if compact and self._detail_in_scroll:
+            self.detail_scroll.takeWidget()
+            self.detail_direct_layout.addWidget(self.detail_content)
+            self.detail_host.setCurrentWidget(self.detail_direct_page)
+            self.detail_host.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            self._detail_in_scroll = False
+        elif not compact and not self._detail_in_scroll:
+            self.detail_direct_layout.removeWidget(self.detail_content)
+            self.detail_scroll.setWidget(self.detail_content)
+            self.detail_host.setCurrentWidget(self.detail_scroll_page)
+            self.detail_host.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            self._detail_in_scroll = True
         self.content_layout.setDirection(QBoxLayout.Direction.TopToBottom if compact
                                          else QBoxLayout.Direction.LeftToRight)
         # In the sidebar, the compact editor keeps its natural height and the
@@ -331,7 +379,7 @@ class TermsPanel(QWidget):
         self.conflict_box.setVisible(not compact)
         self.details_button.setVisible(not compact)
         self._sync_details()
-        QTimer.singleShot(0, self.editor_card.sync_minimum_height)
+        QTimer.singleShot(0, self.editor_card, self.editor_card.sync_minimum_height)
         self.workspace_button.setVisible(compact)
         # The compact table already carries per-term conflict counts. Keep the
         # detailed conflict queue in the full workspace so the sidebar has
@@ -366,7 +414,7 @@ class TermsPanel(QWidget):
         # Hiding rows changes QFormLayout.heightForWidth() without resizing the
         # card immediately. Wait for Qt to settle, then give wrapped buttons
         # their real minimum height in both the sidebar and full workspace.
-        QTimer.singleShot(0, self.editor_card.sync_minimum_height)
+        QTimer.singleShot(0, self.editor_card, self.editor_card.sync_minimum_height)
 
     def set_pairs(self, pairs: list) -> None:
         # Copy only fields used by the worker; it never accesses live Qt state.
@@ -385,12 +433,8 @@ class TermsPanel(QWidget):
         """Use the review queue's current findings, not a second QA count."""
         terms = [item for item in items if item.get('kind') == 'finding'
                  and item.get('category') == 'terminology_consistency']
-        counts = {}
-        for item in terms:
-            ids = set(item.get('entry_ids') or []) or {str(item.get('entry_id') or '')}
-            for entry_id in ids:
-                if entry_id:
-                    counts[entry_id] = counts.get(entry_id, 0) + 1
+        self._review_items = terms
+        counts = self._conflict_counts_for(terms)
         changed = counts != self._conflict_counts
         self._conflict_counts = counts
         self.conflicts_button.setText(i18n.tr('已记录的术语审校问题 · {v0}', v0=len(terms)))
@@ -404,8 +448,27 @@ class TermsPanel(QWidget):
                 count = self.table.item(position, 4)
                 if cell is not None and count is not None:
                     row = self._rows[int(cell.data(Qt.ItemDataRole.UserRole))]
-                    count.setData(Qt.ItemDataRole.DisplayRole, counts.get(str(row.get('id') or ''), 0))
+                    count.setData(Qt.ItemDataRole.DisplayRole,
+                                  counts.get(str(row.get('id') or ''), 0))
             self.table.setSortingEnabled(sorting)
+
+    def _conflict_counts_for(self, terms: list) -> dict:
+        counts = {}
+        for item in terms:
+            ids = set(item.get('entry_ids') or []) or {str(item.get('entry_id') or '')}
+            if not any(ids):
+                # Glossary staleness is segment-scoped and therefore has no
+                # entry ID. Attribute it by matching the segment source against
+                # the same rows shown in the table so the count cannot silently
+                # disappear from the term column.
+                item_source = str(item.get('source') or '')
+                ids = {str(row.get('id') or '') for row in self._rows
+                       if item_source and entry_matches(row, item_source)}
+                ids.discard('')
+            for entry_id in ids:
+                if entry_id:
+                    counts[entry_id] = counts.get(entry_id, 0) + 1
+        return counts
 
     def _find_duplicates(self) -> None:
         self.duplicates_button.setEnabled(False)
@@ -433,7 +496,7 @@ class TermsPanel(QWidget):
         dialog.setWindowTitle(i18n.tr('潜在重复术语'))
         dialog.resize(850, 500)
         layout = QVBoxLayout(dialog)
-        label = QLabel(i18n.tr('找到 {v0} 组候选。规范化相同或文字相似不代表含义相同，请人工判断。',
+        label = QLabel(i18n.tr('找到 {v0} 组候选。确定性归一仍不代表含义相同；推测相似仅供人工审查。',
                               v0=len(candidates)))
         label.setWordWrap(True)
         layout.addWidget(label)
@@ -446,7 +509,8 @@ class TermsPanel(QWidget):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         for row, candidate in enumerate(candidates):
-            values = (i18n.tr('规范化相同') if candidate['kind'] == 'normalized' else i18n.tr('文字相似'),
+            values = (i18n.tr('确定性归一') if candidate['kind'] == 'normalized'
+                      else i18n.tr('推测相似（需确认）'),
                       candidate['left_source'], candidate['left_target'],
                       candidate['right_source'], candidate['right_target'])
             for column, value in enumerate(values):
@@ -586,6 +650,9 @@ class TermsPanel(QWidget):
         self._busy = busy
         if force or switched or not self._dirty:
             self._rows = [dict(row) for row in self._view.get("rows") or []]
+            self._conflict_counts = self._conflict_counts_for(self._review_items)
+            self.conflicts_button.setText(i18n.tr(
+                '已记录的术语审校问题 · {v0}', v0=len(self._review_items)))
             self._dirty = False
             self._fill_table()
         else:
@@ -627,7 +694,8 @@ class TermsPanel(QWidget):
         self.table.setRowCount(len(self._shown))
         for position, index in enumerate(self._shown):
             row = self._rows[index]
-            status = i18n.tr(STATUS_LABELS.get(row.get("status"), "暂定"))
+            status_labels = COMPACT_STATUS_LABELS if self._compact else STATUS_LABELS
+            status = i18n.tr(status_labels.get(row.get("status"), "暂定"))
             conflict_count = self._conflict_counts.get(str(row.get('id') or ''), 0)
             if self._compact and conflict_count:
                 status += i18n.tr(' · 冲突 {v0}', v0=conflict_count)
@@ -946,4 +1014,4 @@ class TermsPanel(QWidget):
             self.hint.setText("")
         # Button visibility depends on selection, dirty state and translation
         # stage, all of which can change the wrapped card height here.
-        QTimer.singleShot(0, self.editor_card.sync_minimum_height)
+        QTimer.singleShot(0, self.editor_card, self.editor_card.sync_minimum_height)
