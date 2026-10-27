@@ -396,3 +396,63 @@ def test_plain_fallback_is_bounded_and_not_used_for_transport_errors():
         VLMDocumentProvider(cfg, client=client).understand_page(page())
     assert len(calls) == 2           # the read plus one plain-text retry, never more
     assert 'List only the cells that\ncontain text' in calls[0]['messages'][0]['content']
+def _png(width=40, height=80):
+    import io
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new('RGB', (width, height), 'white').save(buffer, format='PNG')
+    return buffer.getvalue()
+
+
+def test_a_page_that_runs_away_even_as_plain_lines_is_read_in_two_bands():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    client, calls = scripted_client(
+        response('{"b":[{"t":"table","c":[', finish='length'),
+        response('{"b":[{"t":"paragraph","s":"一 | 一"}]}', finish='length'),
+        response('{"b":[{"t":"paragraph","s":"top"},{"t":"paragraph","s":"cut line"}]}'),
+        response('{"b":[{"t":"paragraph","s":"cut line"},{"t":"paragraph","s":"bottom"}]}'))
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(), image_width=40, image_height=80)
+    result = VLMDocumentProvider(cfg, client=client).understand_page(tall)
+    assert [b.text for b in result.blocks] == ['top', 'cut line', 'bottom']     # the overlap line once
+    assert len(calls) == 4
+    assert 'tiled_fallback' in result.diagnostics
+    assert result.diagnostics['tiled_fallback']['first_error'] == 'truncated'
+
+
+def test_bands_are_not_tried_for_a_reply_that_was_merely_malformed():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    client, calls = scripted_client(response('bad'))
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(), image_width=40, image_height=80)
+    with pytest.raises(ValueError):
+        VLMDocumentProvider(cfg, client=client).understand_page(tall)
+    assert len(calls) == 2
+
+
+def test_a_band_that_still_runs_away_is_cut_again():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    loop = lambda: response('{"b":[{"t":"paragraph","s":"一 | 一', finish='length')
+    ok = lambda text: response('{"b":[{"t":"paragraph","s":"%s"}]}' % text)
+    client, calls = scripted_client(loop(), loop(),             # whole page: structured, then plain
+                                    ok('top'),                    # upper half reads
+                                    loop(), ok('b1'), ok('b2'))   # lower half runs away, its two quarters read
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(40, 160), image_width=40, image_height=160)
+    result = VLMDocumentProvider(cfg, client=client).understand_page(tall)
+    assert [b.text for b in result.blocks] == ['top', 'b1', 'b2']
+    assert len(calls) == 6
+
+
+def test_bands_skip_empty_blocks_and_retry_a_table_without_cells():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    run = lambda: response('{"b":[{"t":"paragraph","s":"一 | 一', finish='length')
+    ok = lambda text: response('{"b":[{"t":"paragraph","s":"%s"}]}' % text)
+    client, _ = scripted_client(run(), run(), ok('top'), ok('bottom'))
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(), image_width=40, image_height=80)
+    provider = VLMDocumentProvider(cfg, client=client)
+    real = provider._read
+    provider._read = lambda t, pg, system=None: (lambda r: ([None] + list(r[0]), r[1]))(real(t, pg, system))
+    result = provider.understand_page(tall)
+    assert [b.text for b in result.blocks] == ['top', 'bottom']

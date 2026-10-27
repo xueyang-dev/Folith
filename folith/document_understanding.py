@@ -181,6 +181,11 @@ def language_hint(language: str) -> str:
             f"it into another language that shares the script.")
 
 
+TILE_DEPTH = 3   # a page is cut at most into eighths
+# Failures of the reply on a dense page; a smaller piece of the page often reads cleanly.
+TILE_ERROR_CODES = ('truncated', 'missing_table_cells')
+
+
 THINKING_OFF_MODES = frozenset({'thinking_disabled', 'thinking_disabled_vllm'})
 
 
@@ -255,6 +260,70 @@ class VLMDocumentProvider:
         blocks, error = self._read(fallback, page, self.system_prompt + PLAIN_PROMPT_SUFFIX)
         return blocks, error, fallback
 
+    def _tiled_fallback(self, page, first):
+        """A page whose reply ran away even as plain lines: read it in overlapping bands.
+
+        A dense ruled table (vertical text, rows of repeated numerals) can send the model
+        into a loop that only the output limit ends.  Half a page has half the cells and
+        usually breaks the loop; a band that still runs away is cut again, down to an
+        eighth of the page.  The bands overlap so a line on a cut is read whole at least
+        once, and a repeat of it is dropped when the bands are joined.  Only for truncated
+        replies and tables that came back without cells: other failures are not about the amount
+        of content.
+        """
+        if str(first.get('error_code') or '') not in TILE_ERROR_CODES:
+            return None
+        try:
+            import io
+            from PIL import Image
+            image = Image.open(io.BytesIO(page.image))
+            image.load()
+        except Exception:  # noqa: BLE001 - an unreadable image is just not tiled
+            return None
+        width, height = image.size
+        config, client, cancel_check = self._init_args[0], self._init_args[1], self._init_args[2]
+        fallback = OnlineOCRBackend(
+            replace(config, max_retries=min(int(config.max_retries), 1)),
+            client_factory=(lambda _: client) if client is not None else None,
+            cancel_check=cancel_check)
+        page_events.emit('retry', attempt=0, attempts=2, http_status=None, code='truncated',
+                         message='整页读不完，分上下两半再读')
+        system = self.system_prompt + PLAIN_PROMPT_SUFFIX
+
+        def read_band(top, bottom, depth):
+            """A band that still runs away is cut in two again, down to an eighth of the page."""
+            buffer = io.BytesIO()
+            image.crop((0, top, width, bottom)).save(buffer, format='PNG')
+            band = replace(page, image=buffer.getvalue(), image_width=width, image_height=bottom - top)
+            blocks, error = self._read(fallback, band, system)
+            if not error:
+                return blocks, None
+            if depth >= TILE_DEPTH or not any(code in str(error) for code in TILE_ERROR_CODES):
+                return [], error
+            return halves(top, bottom, depth)
+
+        def halves(top, bottom, depth):
+            overlap = max((bottom - top) // 14, 1)
+            middle = (top + bottom) // 2
+            first, error = read_band(top, middle + overlap, depth + 1)
+            if error:
+                return [], error
+            second, error = read_band(middle - overlap, bottom, depth + 1)
+            return (first + second, None) if not error else ([], error)
+
+        blocks, error = halves(0, height, 0)   # the whole page was already read as plain lines
+        if error:
+            return [], error, fallback
+        merged, seen = [], set()
+        for block in blocks:
+            if block is None:
+                continue
+            key = (block.type, block.text.strip())
+            if key not in seen:             # a line on the overlap is read twice
+                seen.add(key)
+                merged.append(block)
+        return merged, None, fallback
+
     def _adopt(self, fallback, first, key, extra=None):
         """Diagnostics of a fallback read, with what the first read looked like."""
         diagnostics = dict(fallback._last_request)
@@ -283,6 +352,11 @@ class VLMDocumentProvider:
             if retried is not None:
                 blocks, error, fallback = retried
                 diagnostics = self._adopt(fallback, diagnostics, 'plain_fallback')
+        if error:
+            retried = self._tiled_fallback(page, diagnostics)
+            if retried is not None:
+                blocks, error, fallback = retried
+                diagnostics = self._adopt(fallback, diagnostics, 'tiled_fallback')
         if error:
             raise DocumentUnderstandingError(f'Visual understanding failed for {page.page_id}: {error}',
                                                {**diagnostics, 'page_id':page.page_id, 'provider':'vlm',
