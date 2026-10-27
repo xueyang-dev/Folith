@@ -104,6 +104,30 @@ def test_pdf_rescan_invalidates_old_structure_undo_and_exclusions(
     assert saved["paras"] == sources
     assert saved["pairs"] == rescanned["pairs"]
 
+def test_manual_exclude_keeps_anchors_marks_and_paragraph_ranges_in_step_with_the_work_list(tmp_path):
+    """The page-order repair of recovered scan pages needs these arrays to match ``paras``."""
+    job_id = "segmentlifecycle02"
+    state = _state()
+    state["segment_source_spans"] = [[{"k": "a"}], [{"k": "b"}], [{"k": "c"}]]
+    state["segment_source_marks"] = [[{"k": "ma"}], [{"k": "mb"}], [{"k": "mc"}]]
+    state["segmentation"] = {"output_segment_count": 3, "paragraph_ranges": [
+        {"paragraph_index": 0, "start": 0, "end": 1},
+        {"paragraph_index": 1, "start": 1, "end": 2},
+        {"paragraph_index": 2, "start": 2, "end": 3}]}
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        core.save_job_state(job_id, state)
+        state = core.mutate_translation_segments(job_id, 1, "exclude", exclude_reason="noise")
+    finally:
+        core.OUTPUT_DIR = old_output
+    assert state["segment_source_spans"] == [[{"k": "a"}], [{"k": "c"}]]
+    assert state["segment_source_marks"] == [[{"k": "ma"}], [{"k": "mc"}]]
+    ranges = [(r["paragraph_index"], r["start"], r["end"]) for r in state["segmentation"]["paragraph_ranges"]]
+    assert ranges == [(0, 0, 1), (1, 1, 1), (2, 1, 2)]       # the removed paragraph keeps an empty range
+    assert state["segmentation"]["output_segment_count"] == len(state["paras"]) == 2
+
+
 def test_exclude_removes_segment_from_work_list_but_keeps_a_restorable_record(
         tmp_path):
     job_id = "segmentlifecycle01"

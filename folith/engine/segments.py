@@ -416,14 +416,8 @@ def _shift_paragraph_ranges(paragraph_ranges, removed_index):
     return shifted
 
 
-def _drop_segment_at(state, index):
-    """从工作列表中移出一个段落，并同步它的位置型派生产物。"""
-    pairs = state.get("pairs") or []
-    paras = state.get("paras") or []
-    if pairs:
-        pairs.pop(index)
-    if 0 <= index < len(paras):
-        paras.pop(index)
+def _drop_positional_artifacts(state, index, segment_count):
+    """段落被移出后，同步按位置排列的派生产物（原文锚点、标记、段落区间）。"""
     for key in ("segment_source_spans", "segment_source_marks"):
         values = state.get(key)
         if isinstance(values, list) and 0 <= index < len(values):
@@ -432,7 +426,18 @@ def _drop_segment_at(state, index):
     if isinstance(segmentation, dict) and segmentation.get("paragraph_ranges"):
         segmentation["paragraph_ranges"] = _shift_paragraph_ranges(
             segmentation["paragraph_ranges"], index)
-        segmentation["output_segment_count"] = len(paras)
+        segmentation["output_segment_count"] = segment_count
+
+
+def _drop_segment_at(state, index):
+    """从工作列表中移出一个段落，并同步它的位置型派生产物。"""
+    pairs = state.get("pairs") or []
+    paras = state.get("paras") or []
+    if pairs:
+        pairs.pop(index)
+    if 0 <= index < len(paras):
+        paras.pop(index)
+    _drop_positional_artifacts(state, index, len(paras))
 
 
 def _non_translatable_exclusions(state, *, paragraphs=None):
@@ -1871,6 +1876,9 @@ def mutate_translation_segments(
         if pairs:
             pairs.pop(index)
         paras.pop(index)
+        # 人工排除与系统排除走同一套位置契约：锚点、标记与段落区间一起前移，
+        # 否则补读的页按页序排回时会因区间与译文数量不一致而失败。
+        _drop_positional_artifacts(state, index, len(paras))
         affected_hint = [max(0, min(index, len(pairs) - 1))] if pairs else []
     elif operation == "include":
         excluded_record = dict(include_record)
