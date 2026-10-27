@@ -155,6 +155,11 @@ def import_document(
         if created:
             _apply_task_defaults(state, contract)
         core.save_job_state(job_id, state)
+        if not created:
+            # A re-import may replace the source bytes; the persisted outline
+            # belongs to the previous source (#186).
+            from folith import outline_anchor
+            outline_anchor.delete_outline_sidecar(job_id)
         core.save_source(job_id, data)
 
     return ImportedDocument(

@@ -10425,10 +10425,12 @@ def ensure_source_outline(job_id, state=None):
     data = load_source(job_id)
     if not data:
         return state
+    from folith import outline_anchor
     from folith.source_outline import parse_source_outline
     parsed = parse_source_outline(str(state.get("filename") or ""), data)
     if not parsed.get("nodes"):
         return state
+    outline_anchor.store_outline(job_id, parsed, data=data)
     state["source_outline"] = parsed
     save_job_state(job_id, state)
     return state
@@ -10881,8 +10883,18 @@ def build_delivery_assets(job_id, state=None, target_lang="", provider="", model
             model or state.get("model") or "")
 
 
-def _reset_source_dependent_state(state):
-    """Invalidate artifacts derived from source paragraphs after cleanup."""
+def _reset_source_dependent_state(state, *, job_id=None):
+    """Invalidate artifacts derived from source paragraphs after cleanup.
+
+    ``job_id`` also drops the persisted outline *mapping*: the source bytes did
+    not change, so the parsed outline stays valid, but every cached node
+    position describes the previous segmentation (#186/#204).  The in-state
+    outline is stale for the same reason and is removed with it.
+    """
+    if job_id:
+        from folith import outline_anchor as _outline_anchor
+        _outline_anchor.invalidate_mapping(job_id)
+    state.pop("source_outline", None)
     state.update({
         "profile_done": False,
         "document_profile": None,
@@ -11188,7 +11200,11 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                 warnings.append(warning)
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
 
-        _reset_source_dependent_state(state)
+        _reset_source_dependent_state(state, job_id=job_id)
+        # The rescan replaced the source bytes; a persisted outline belongs to
+        # the previous source (see #186).
+        from folith import outline_anchor as _outline_anchor
+        _outline_anchor.delete_outline_sidecar(job_id)
         state.update({
             "filename": resolved_filename,
             "source_paras": list(raw_paragraphs),
@@ -13208,7 +13224,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # when the OCR cleanup text itself is byte-for-byte unchanged.
             if cleaned != legacy_source or segments != legacy_segments:
                 cleanup_meta["previous_pair_count"] = len(state.get("pairs") or [])
-                _reset_source_dependent_state(state)
+                _reset_source_dependent_state(state, job_id=job_id)
                 state["paras"] = segments
                 state["source_paras"] = legacy_source
                 state["source_paragraphs"] = list(cleaned)

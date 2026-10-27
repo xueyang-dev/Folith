@@ -69,6 +69,7 @@ _CUSTOM = {
     "reload": "Ctrl+Shift+R",
     "save_next": "Ctrl+Return",
     "source": "Ctrl+Alt+P",
+    "outline": "Ctrl+Alt+O",
     "escape": "Esc",
     "previous_segment": "Up",
     "next_segment": "Down",
