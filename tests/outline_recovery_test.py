@@ -1,4 +1,5 @@
 import json
+import io
 from types import SimpleNamespace
 import core
 import pytest
@@ -41,6 +42,37 @@ def test_rules_reject_repeated_headers_and_adjacent_numbered_list_items():
     original = _outline(["RUNNING HEADER", "1. First", "2. Second", "RUNNING HEADER", "body"])
     original["paragraph_roles"] = ["header", "body", "body", "header", "body"]
     assert not outline_recovery.candidates(original)
+
+
+def test_unstyled_docx_recovers_its_own_numbered_titles():
+    from docx import Document
+    document = Document()
+    for text in ("Chapter 1 Arrival", "The first section has body text.",
+                 "Chapter 2 Departure", "The second section has body text."):
+        document.add_paragraph(text)
+    output = io.BytesIO()
+    document.save(output)
+    original = source_outline.parse_source_outline("book.docx", output.getvalue())
+    recovered = outline_recovery.recover(original)
+    assert [n["title"] for n in recovered["nodes"]] == ["Chapter 1 Arrival", "Chapter 2 Departure"]
+    assert all(n["provenance"] == "rule_numbering" for n in recovered["nodes"])
+
+
+def test_pdf_without_bookmarks_recovers_numbered_text_layer():
+    import fitz
+    document = fitz.open()
+    for heading in ("Chapter 1 Arrival", "Chapter 2 Departure"):
+        page = document.new_page()
+        page.insert_text((72, 80), heading, fontsize=16)
+        page.insert_text((72, 130),
+                         "This chapter contains enough ordinary body text to provide a useful paragraph.",
+                         fontsize=10)
+    data = document.tobytes()
+    document.close()
+    original = source_outline.parse_source_outline("book.pdf", data)
+    recovered = outline_recovery.recover(original)
+    assert [n["title"] for n in recovered["nodes"]] == ["Chapter 1 Arrival", "Chapter 2 Departure"]
+    assert all(n["provenance"] == "rule_numbering" for n in recovered["nodes"])
 
 
 def test_ai_candidates_are_bounded_and_titles_come_only_from_source(tmp_path, monkeypatch):
