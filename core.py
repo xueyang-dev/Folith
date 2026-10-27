@@ -12247,6 +12247,21 @@ def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
     return total > 0 and len(scanned) == total
 
 
+def _explicit_ocr_online(ocr_online, saved_runtime_config):
+    """The visual connection a caller really chose, as opposed to one merely replayed.
+
+    Resuming a task rebuilds its settings from the saved task config, so the
+    connection the task was pinned to arrives here as if it were an explicit
+    argument.  Treating it as explicit skipped the pinned-vs-current decision
+    for good: the user's "use the current connection" choice never applied.  A
+    descriptor identical to the pinned one is a replay and counts as no choice.
+    """
+    pinned = (saved_runtime_config or {}).get("ocr_online")
+    if isinstance(ocr_online, dict) and ocr_online and ocr_online == pinned:
+        return None
+    return ocr_online
+
+
 def _reconcile_vision_connection(job_id, state):
     """续跑时，任务钉住的视觉连接与当前视觉连接不同：决定用哪个，并留痕。
 
@@ -12791,6 +12806,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state, segmentation_mode)
     previous_performance = state.get("performance")
     saved_runtime_config = state.get("pipeline_config") or {}
+    ocr_online = _explicit_ocr_online(ocr_online, saved_runtime_config)
     if ocr_online is None and saved_runtime_config:
         _reconcile_vision_connection(job_id, state)
         saved_runtime_config = state.get("pipeline_config") or {}
