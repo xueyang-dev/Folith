@@ -11,7 +11,7 @@ import csv
 import inspect
 from functools import wraps
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FutureTimeoutError
 import base64
 import os
@@ -32,7 +32,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
@@ -238,19 +238,53 @@ _ROLE_PURPOSE_LABELS = {
 
 
 @contextmanager
-def llm_call_purpose(label):
-    """为当前线程随后发起的模型调用标注用途（#167）。
+def llm_call_purpose(label, operation_id=None):
+    """为当前线程随后发起的模型调用标注用途（#167 / Phase 3）。
 
-    标注只影响运行时遥测的展示文案（事件消息、阶段标签、``metadata.purpose``），
-    不进入任何模型请求、缓存键或用量账本。线程本地生效：并发批次工作线程各自
-    设置各自的用途，互不可见。离开作用域恢复外层值，不向下游泄漏。
+    标注只影响运行时遥测的展示文案与机器标识（事件消息、阶段标签、``metadata.purpose``、
+    ``operation_id``），不进入任何模型请求、缓存键或用量账本。线程本地生效：并发批次
+    工作线程各自设置各自的用途，互不可见。离开作用域恢复外层值，不向下游泄漏。
     """
     previous = getattr(_LLM_CTX, "purpose", None)
+    prev_op = getattr(_LLM_CTX, "operation_id", None)
     _LLM_CTX.purpose = str(label or "").strip() or None
+    _LLM_CTX.operation_id = str(operation_id or "").strip() or None
     try:
         yield
     finally:
         _LLM_CTX.purpose = previous
+        _LLM_CTX.operation_id = prev_op
+
+
+def _infer_operation_id(purpose, role):
+    purpose = str(purpose or "").strip()
+    role = str(role or "").strip().lower()
+    if "标注" in purpose:
+        return "annotation"
+    # More specific operations first: "翻译修复" must not be read as translation.
+    if "修复" in purpose:
+        return "repair"
+    if "审校" in purpose:
+        return "review"
+    if "翻译" in purpose:
+        return "translation"
+    if "术语" in purpose:
+        return "terminology"
+    if "画像" in purpose or "理解" in purpose:
+        return "understanding"
+    if "知识" in purpose:
+        return "knowledge"
+    if role in {"annotation", "translation", "review", "auxiliary"}:
+        return role
+    return role or "unknown"
+
+
+def _current_llm_operation_id():
+    """这次模型调用的机器操作标识；无显式标注时从用途和角色推导。"""
+    op = getattr(_LLM_CTX, "operation_id", None)
+    if op:
+        return op
+    return _infer_operation_id(_current_llm_purpose(), _usage.CURRENT_ROLE.get())
 
 
 def _current_llm_purpose():
@@ -301,7 +335,14 @@ def _runtime_worker_job_id():
 
 
 
+def _annotation_fail_stop_check():
+    failure = getattr(_RUNTIME_CTX, "annotation_fail_stop", None)
+    if failure is not None:
+        failure.check()
+
+
 def _runtime_cancel_requested(job_id):
+    _annotation_fail_stop_check()
     _workflow_errors.check(job_id)
     return bool((load_runtime_state(job_id) or {}).get("cancel_requested"))
 
@@ -324,6 +365,7 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
     ``paused_message``：暂停的原因（例如连续超时的建议），作为「已暂停」的最新状态；
     缺省是通用的「任务已暂停」。
     """
+    _annotation_fail_stop_check()
     if not job_id or not load_runtime_state(job_id).get("pause_requested"):
         return
     previous = load_runtime_state(job_id)
@@ -378,9 +420,14 @@ def continue_job(job_id):
 def _llm_cancel_check():
     """Cancellation probe bound to the job currently running on this thread."""
     job_id = _runtime_worker_job_id()
-    if not job_id:
+    failure = getattr(_RUNTIME_CTX, "annotation_fail_stop", None)
+    if not job_id and failure is None:
         return None
-    return lambda: _runtime_cancel_requested(job_id)
+    def check():
+        if failure is not None:
+            failure.check()
+        return _runtime_cancel_requested(job_id) if job_id else False
+    return check
 
 
 
@@ -2158,6 +2205,7 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
     API Key 只以不可逆指纹参与复用键，不进入日志、cache key 明文或性能产物。
     运行时遥测走可合并通道，见 :func:`_runtime_telemetry_request_started`。
     """
+    _annotation_fail_stop_check()
     cfg = PROVIDERS.get(provider)
     if not cfg:
         return ""
@@ -2166,19 +2214,27 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         _runtime_pause_checkpoint(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
-        _runtime_telemetry_request_started(runtime_job_id,
-                                           purpose=_current_llm_purpose())
+        _runtime_telemetry_request_started(
+            runtime_job_id,
+            purpose=_current_llm_purpose(),
+            operation_id=_current_llm_operation_id(),
+        )
     _llm_started = time.perf_counter()
     _request_run = trace.get_active_run(runtime_job_id)
     if _request_run:
-        _request_run.begin_model_request(provider, model, role=_usage.CURRENT_ROLE.get(),
-                                        batch_id=getattr(_LLM_CTX, "batch_id", None),
-                                        prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
-                                        system_chars=len(system_prompt or ""),
-                                        user_chars=len(user_prompt or ""),
-                                        segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
-                                            "segment_count", getattr(_LLM_CTX, "input_segments", None)))
+        _request_run.begin_model_request(
+            provider, model, role=_usage.CURRENT_ROLE.get(),
+            operation_id=_current_llm_operation_id(),
+            purpose=_current_llm_purpose(),
+            batch_id=getattr(_LLM_CTX, "batch_id", None),
+            prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
+            system_chars=len(system_prompt or ""),
+            user_chars=len(user_prompt or ""),
+            segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
+                "segment_count", getattr(_LLM_CTX, "input_segments", None)),
+        )
     try:
+        _annotation_fail_stop_check()
         result = _call_llm_transport(
             cfg, provider, api_key, model, system_prompt, user_prompt,
             temperature=temperature, base_url=base_url,
@@ -2186,10 +2242,11 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             reasoning_mode=reasoning_mode,
             runtime_job_id=runtime_job_id, started_at=_llm_started)
     except BaseException as exc:
-        try:
-            _workflow_errors.raise_if_fatal(exc, runtime_job_id)
-        except _workflow_errors.WorkflowStopped as stopped:
-            exc = stopped
+        if not isinstance(exc, _workflow_errors.AnnotationStagingError):
+            try:
+                _workflow_errors.raise_if_fatal(exc, runtime_job_id)
+            except _workflow_errors.WorkflowStopped as stopped:
+                exc = stopped
         _llm_dur = time.perf_counter() - _llm_started
         _record_llm_thread_stats(_llm_dur, failed=True)
         run = trace.get_active_run(runtime_job_id)
@@ -2208,15 +2265,21 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
             # 看到的是真实结果而不是一个永远不会结束的在途请求。
             _runtime_telemetry_request_failed(
-                runtime_job_id, purpose=_current_llm_purpose())
+                runtime_job_id,
+                purpose=_current_llm_purpose(),
+                operation_id=_current_llm_operation_id(),
+            )
         raise exc
     finally:
         if _request_run:
             _request_run.end_model_request()
     _record_llm_thread_stats(time.perf_counter() - _llm_started, failed=False)
     if runtime_job_id:
-        _runtime_telemetry_request_finished(runtime_job_id,
-                                            purpose=_current_llm_purpose())
+        _runtime_telemetry_request_finished(
+            runtime_job_id,
+            purpose=_current_llm_purpose(),
+            operation_id=_current_llm_operation_id(),
+        )
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
     return result
@@ -3046,6 +3109,72 @@ def _batch_strategy(state=None, explicit=None, default="sentence"):
         if value in BATCH_STRATEGIES:
             return value
     return default
+
+
+def _resolve_entry_batch_strategy(saved_strategy=None, explicit_strategy=None,
+                                  has_pairs=False, has_batch_args=False):
+    """任务开跑时组批方式的显式裁决（Phase 3 合同化）。
+
+    优先级固定为：任务已保存的策略 > 入口显式给的策略 > 兼容推断 > 核心新任务
+    默认。兼容推断保留旧行为——已经开译（``has_pairs``）或调用方给了批次大小
+    （``has_batch_args``，桌面合同总会给）的老任务/直接调用沿用每批 4 句。非法
+    的**已保存**值按未提供处理而不是落到新任务默认：一个配置损坏的既有任务不
+    能因此被静默切换到按段组批；显式传入的非法值仍由 :class:`JobConfig` 合同
+    层拒绝。
+    """
+    saved = str(saved_strategy or "").strip().lower()
+    if saved not in BATCH_STRATEGIES:
+        saved = None
+    return _batch_strategy(
+        None,
+        saved or explicit_strategy
+        or ("sentence" if has_pairs or has_batch_args else None),
+        default=DEFAULT_BATCH_STRATEGY)
+
+
+def batch_strategy_diagnostics(state=None):
+    """组批策略的只读诊断读数：``configured``（任务记录）与 ``effective``（实际生效）。
+
+    按段组批的批次计划显式记录 ``strategy``；按句组批的计划沿用历史格式、省略
+    该键，此时以任务配置记录的策略为准（翻译阶段读的正是同一字段）。两者都无
+    法确认时保持 ``None``——诊断不用默认值冒充事实。
+    """
+    state = state if isinstance(state, Mapping) else {}
+    config = state.get("pipeline_config")
+    config = config if isinstance(config, Mapping) else {}
+    configured = str(config.get("batch_strategy") or "").strip().lower()
+    if configured not in BATCH_STRATEGIES:
+        configured = None
+    plan = state.get("batch_plan")
+    plan = plan if isinstance(plan, Mapping) else {}
+    effective = plan.get("strategy")
+    if effective not in BATCH_STRATEGIES:
+        effective = configured if plan.get("batch_count") else None
+    return {"configured": configured, "effective": effective}
+
+
+def workflow_readiness(state=None):
+    """三维就绪读模型聚合（Phase 3）：初译、翻译与增强交付就绪度。"""
+    from folith.readiness import workflow_readiness as _wr
+    return _wr(state)
+
+
+def draft_readiness(state=None):
+    """初译完成度与合法结构读模型（Phase 3）。"""
+    from folith.readiness import draft_readiness as _dr
+    return _dr(state)
+
+
+def translation_readiness(state=None):
+    """翻译质量与审校门禁读模型（Phase 3）。"""
+    from folith.readiness import translation_readiness as _tr
+    return _tr(state)
+
+
+def enhanced_delivery_readiness(state=None):
+    """选定增强产物（标注、报告）读模型（Phase 3）。"""
+    from folith.readiness import enhanced_delivery_readiness as _edr
+    return _edr(state)
 
 
 def _paragraph_labels(segment_count, paragraph_ranges):
@@ -3903,9 +4032,10 @@ def repair_batch(sources, targets, findings, glossary_text, style_rules, target_
         try:
             with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
                 controller.acquire(cancel_check)
-            res = _invoke_llm(
-                call_fn, provider, api_key, model, sys_prompt, user_prompt,
-                temperature=0.2, response_format=response_format)
+            with llm_call_purpose("翻译修复", operation_id="repair"):
+                res = _invoke_llm(
+                    call_fn, provider, api_key, model, sys_prompt, user_prompt,
+                    temperature=0.2, response_format=response_format)
             controller.note_success()
             arr = _translation_protocol.parse_translation_response(
                 res, len(sources))
@@ -3960,6 +4090,7 @@ def review_translation_batch(sources, targets, glossary_text, style_rules, targe
 # ================= 自动标注（三色学习重点）=================
 # 红=生僻词/难词；黄=专业名词（特殊译法）；青绿=翻译难点句（特别译法）。
 ANNOT_BATCH_SIZE = 10
+ANNOTATION_TEMPERATURE = 0.2
 ANNOT_MAX_PER_SEG = {"rare": 3, "domain": 3, "hard": 2}
 
 # 常用英语词表（en_50k 字幕语料前 14000 词），用于把 LLM 滥标的"生僻词"挡回去
@@ -4274,20 +4405,36 @@ class AnnotationBatchResult(list):
         self.error = error
 
 
-def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
-    """标注一个批次，返回 [{seg, type, src, tgt, note}]（seg 为 0 基）；解析失败返回 []。"""
+def _annotation_prompts(pairs_slice, target_lang):
     numbered = "\n\n".join(
         f"--- 段落 {i + 1} ---\n原文：{p['source']}\n译文：{p['target']}"
         for i, p in enumerate(pairs_slice))
-    sys_prompt = _annotator_system(target_lang)
-    user_prompt = f"待标注双语段落：\n{numbered}"
+    return _annotator_system(target_lang), f"待标注双语段落：\n{numbered}"
+
+
+def _annotation_request_fingerprint(pairs, indexes, target_lang, provider, model):
+    from folith.annotation_staging import compute_batch_fingerprint
+    prompts = _annotation_prompts([pairs[i] for i in indexes], target_lang)
+    return compute_batch_fingerprint(
+        pairs, target_lang, model, eligible_indexes=indexes,
+        request_context={"provider": provider,
+                         "route": effective_request_route(provider, model, role="annotation"),
+                         "prompts": prompts, "temperature": ANNOTATION_TEMPERATURE})
+
+
+def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
+    """标注一个批次，返回 [{seg, type, src, tgt, note}]（seg 为 0 基）。"""
+    sys_prompt, user_prompt = _annotation_prompts(pairs_slice, target_lang)
     controller = _llm_request_controller(provider, model)
     cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
             with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
                 controller.acquire(cancel_check)
-            res = call_llm(provider, api_key, model, sys_prompt, user_prompt, temperature=0.2)
+            _annotation_fail_stop_check()
+            res = call_llm(provider, api_key, model, sys_prompt, user_prompt,
+                           temperature=ANNOTATION_TEMPERATURE,
+                           base_url=getattr(_LLM_CTX, "annotation_base_url", None))
             controller.note_success()
             arr = parse_json_array(res)
             if arr is None:
@@ -4373,16 +4520,36 @@ def _release_dead_pool_clients():
         pass
 
 
-def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers):
-    """Bounded requests; shared state is only changed by the ordered consumer."""
+def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers,
+                        *, capacity=4, ordered_refill=False, base_url=None):
+    """Bounded requests with durable ready staging (Phase 3 P1a).
+
+    * Workers are strictly bounded (active workers <= workers <= 2);
+    * Outstanding capacity (active + uncommitted ready) is bounded (default 4);
+    * Completed worker results are durably staged to disk before yielding;
+    * On restart/resume, valid staged results matching current inputs are reused
+      without issuing duplicate LLM calls;
+    * Yields sequentially to the consumer for ordered, durable commit.
+    """
+    from folith.annotation_staging import (
+        AnnotationFailStop,
+        load_staged_annotation,
+        save_staged_annotation,
+    )
+
     inherited_base = getattr(_LLM_CTX, "base_url", None)
     inherited_reasoning = getattr(_LLM_CTX, "reasoning_effort", None)
     inherited_modes = getattr(_LLM_CTX, "reasoning_modes", None)
+    endpoint = (resolve_openai_base_url(provider, base_url) if
+                (PROVIDERS.get(provider) or {}).get("kind") != "gemini" else None)
+    failure = AnnotationFailStop()
 
     def request(task):
         bi, offset, pairs, indexes = task
         _RUNTIME_CTX.job_id = job_id
+        _RUNTIME_CTX.annotation_fail_stop = failure
         _LLM_CTX.base_url = inherited_base
+        _LLM_CTX.annotation_base_url = endpoint
         _LLM_CTX.reasoning_effort = inherited_reasoning
         _LLM_CTX.reasoning_modes = inherited_modes
         _LLM_CTX.batch_id = bi + 1
@@ -4394,49 +4561,157 @@ def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, wo
                 _runtime_pause_checkpoint(job_id)
                 if _runtime_cancel_requested(job_id):
                     raise RuntimeError("任务已请求取消")
+
+            snapshot_pairs = [dict(pair) for pair in pairs]
+            fingerprint = _annotation_request_fingerprint(
+                snapshot_pairs, indexes, target_lang, provider, model)
+            if job_id and indexes:
+                staged = load_staged_annotation(job_id, offset, fingerprint)
+                if staged is not None:
+                    _batch_timing(job_id, "annotation", bi + 1, "result_ready", staged_replay=True)
+                    staged.input_fingerprint = fingerprint
+                    return task, staged
+
             with trace.span("annotation", operation="batch", job_id=job_id,
                             metadata={"batch_id": bi + 1, "offset": offset, "segment_count": len(pairs)}):
-                # 用途标注（#167）：标注批次在事件里与翻译批次区分开。
-                with llm_call_purpose(f"自动标注批次 #{bi + 1}"):
-                    items = annotate_batch([pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
+                # 用途标注（#167 / Phase 3）：标注批次在事件里与翻译批次区分开。
+                with llm_call_purpose(f"自动标注批次 #{bi + 1}", operation_id="annotation"):
+                    items = annotate_batch([snapshot_pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
+
+            if items is not None:
+                if not isinstance(items, AnnotationBatchResult):
+                    items = AnnotationBatchResult(items, status="success" if items else "empty")
+                items.input_fingerprint = fingerprint
+                if job_id and indexes and items.status in {"success", "empty"}:
+                    if not save_staged_annotation(job_id, offset, bi, items, fingerprint):
+                        raise _workflow_errors.AnnotationStagingError(
+                            OSError("暂存写入未确认，请检查磁盘后重试"))
+
             _batch_timing(job_id, "annotation", bi + 1, "result_ready")
             return task, items
         except BaseException as exc:
+            if isinstance(exc, _workflow_errors.AnnotationStagingError):
+                failure.fail(exc)
             _batch_timing(job_id, "annotation", bi + 1, "worker_failed", error_type=type(exc).__name__)
+            failure.check()
             raise
         finally:
             _usage.CURRENT_ROLE.reset(token)
             _RUNTIME_CTX.__dict__.clear()
             _LLM_CTX.__dict__.clear()
 
+    workers = max(1, min(2, int(workers or 2)))
+    capacity = max(workers, min(4, int(capacity or 4)))
     pending = {}
+    ready = {}
+    submitted = 0
+    committed = 0
+
+    previous_failure = getattr(_RUNTIME_CTX, "annotation_fail_stop", None)
+    previous_endpoint = getattr(_LLM_CTX, "annotation_base_url", None)
+    _RUNTIME_CTX.annotation_fail_stop = failure
+    _LLM_CTX.annotation_base_url = endpoint
     try:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ft-annot") as executor:
-            try:
-                for i in range(min(workers, len(tasks))):
-                    _batch_timing(job_id, "annotation", tasks[i][0] + 1, "queued")
-                    pending[i] = executor.submit(request, tasks[i])
-                for i in range(len(tasks)):
+            if ordered_refill:
+                # Explicit rollback to the original ordered consumer/refill
+                # algorithm. Staging and commit acknowledgement stay enabled.
+                ordered_pending = {}
+                def submit_ordered(i):
                     if job_id:
                         _runtime_pause_checkpoint(job_id)
                         if _runtime_cancel_requested(job_id):
                             raise RuntimeError("任务已请求取消")
-                    yield pending.pop(i).result()
-                    # Refill only after the consumer has durably committed this result.
-                    next_i = i + workers
-                    if next_i < len(tasks):
-                        _batch_timing(job_id, "annotation", tasks[next_i][0] + 1, "queued")
-                        pending[next_i] = executor.submit(request, tasks[next_i])
+                    _batch_timing(job_id, "annotation", tasks[i][0] + 1, "queued")
+                    ordered_pending[i] = executor.submit(request, tasks[i])
+                try:
+                    for i in range(min(workers, len(tasks))):
+                        submit_ordered(i)
+                    for i in range(len(tasks)):
+                        if job_id:
+                            _runtime_pause_checkpoint(job_id)
+                            if _runtime_cancel_requested(job_id):
+                                raise RuntimeError("任务已请求取消")
+                        yield ordered_pending.pop(i).result()
+                        next_i = i + workers
+                        if next_i < len(tasks):
+                            submit_ordered(next_i)
+                finally:
+                    for future in ordered_pending.values():
+                        future.cancel()
+                return
+
+            def fill():
+                nonlocal submitted
+                while (submitted < len(tasks)
+                       and len(pending) < workers
+                       and (submitted - committed) < capacity):
+                    if job_id:
+                        _runtime_pause_checkpoint(job_id)
+                        if _runtime_cancel_requested(job_id):
+                            raise RuntimeError("任务已请求取消")
+                    t = tasks[submitted]
+                    _batch_timing(job_id, "annotation", t[0] + 1, "queued")
+                    fut = executor.submit(request, t)
+                    pending[fut] = submitted
+                    submitted += 1
+
+            try:
+                fill()
+                while committed < len(tasks):
+                    if job_id:
+                        _runtime_pause_checkpoint(job_id)
+                        if _runtime_cancel_requested(job_id):
+                            raise RuntimeError("任务已请求取消")
+                    if committed in ready:
+                        yield ready.pop(committed)
+                        committed += 1
+                        fill()
+                        continue
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        idx = pending.pop(future)
+                        ready[idx] = future.result()
+                    fill()
+                    if committed in ready:
+                        yield ready.pop(committed)
+                        committed += 1
+                        fill()
             finally:
-                for future in pending.values():
+                for future in list(pending.keys()):
                     future.cancel()
+    except BaseException:
+        # A user cancel or a secondary peer exception may race the first
+        # storage failure. After executor join, preserve that original failure.
+        failure.check()
+        raise
     finally:
-        _release_dead_pool_clients()
+        try:
+            _release_dead_pool_clients()
+        finally:
+            if previous_failure is None:
+                _RUNTIME_CTX.__dict__.pop("annotation_fail_stop", None)
+            else:
+                _RUNTIME_CTX.annotation_fail_stop = previous_failure
+            if previous_endpoint is None:
+                _LLM_CTX.__dict__.pop("annotation_base_url", None)
+            else:
+                _LLM_CTX.annotation_base_url = previous_endpoint
+
+
+def _normalize_annotation_scheduler(value):
+    mode = str(value or "c2").strip().lower()
+    if mode not in {"ordered", "c2", "c4"}:
+        raise ValueError("annotation_scheduler 必须是 ordered、c2 或 c4")
+    return mode
 
 
 def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
-                   on_caption=None):
+                   on_caption=None, *, base_url=None):
     """三色自动标注：LLM 识别 + 术语表确定性覆盖（专业名词=黄色必标）。"""
+    from folith.annotation_staging import cleanup_staged_temporaries
+    if job_id:
+        cleanup_staged_temporaries(job_id)
     pairs = state["pairs"]
     quality_report = _audit_source_quality_for_state(state)
     state["source_quality_gate"] = quality_report
@@ -4483,11 +4758,24 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
         indexes = [i for i in range(len(slice_pairs)) if batch_offset + i not in blocked_source_indexes]
         tasks.append((bi, batch_offset, slice_pairs, indexes))
     workers = min(2, max(1, int((state.get("pipeline_config") or {}).get("translation_concurrency", 2))))
+    scheduler = _normalize_annotation_scheduler(
+        (state.get("pipeline_config") or {}).get("annotation_scheduler"))
+    capacity = 4 if scheduler == "c4" else workers
     run = trace.get_active_run(job_id)
     if run:
-        run.record_point("annotation_plan", concurrency=workers, batch_count=len(batches),
+        run.record_point("annotation_plan", concurrency=workers, capacity=capacity,
+                         scheduler=scheduler, batch_count=len(batches),
                          pending_batch_count=len(tasks), segment_count=len(pairs), batch_size=ANNOT_BATCH_SIZE)
-    results = _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers)
+    try:
+        options = {"capacity": capacity}
+        if base_url is not None:
+            options["base_url"] = base_url
+        if scheduler == "ordered":
+            options["ordered_refill"] = True
+        results = _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers,
+                                      **options)
+    except TypeError:
+        results = _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers)
     # 1) LLM 标注：请求有界并发，按原批次顺序保存。
     try:
         for (bi, offset, slice_pairs, eligible_local_indexes), items in results:
@@ -4498,6 +4786,14 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
             if on_caption and bi % 10 == 0:
                 on_caption(f"自动标注第 {offset + 1}-{offset + len(slice_pairs)} 段"
                            f"（共 {len(pairs)} 段，批次 {bi + 1}/{len(batches)}）...")
+            # The pipeline owns the job lifetime lock. Revalidate the exact
+            # request immediately before mutating authoritative annotation state.
+            if items is not None and getattr(items, "input_fingerprint", None):
+                current_pairs = state["pairs"][offset:offset + len(slice_pairs)]
+                current_fingerprint = _annotation_request_fingerprint(
+                    current_pairs, eligible_local_indexes, target_lang, provider, model)
+                if current_fingerprint != items.input_fingerprint:
+                    raise RuntimeError("标注输入已改变，请重新生成当前批次")
             _batch_timing(job_id, "annotation", bi + 1, "commit_started")
             if items is None:
                 state["annotations"] = annotations
@@ -4534,6 +4830,8 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
             save_job_state(job_id, state)
             _batch_timing(job_id, "annotation", bi + 1, "commit_finished")
             if job_id:
+                from folith.annotation_staging import confirm_staged_annotation
+                confirm_staged_annotation(job_id, offset)
                 update_runtime_state(
                     job_id, heartbeat=True,
                     stage_progress={"completed": min(offset + len(slice_pairs), len(pairs)),
@@ -4581,6 +4879,9 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
     state["annotations_status"] = "partial" if failed_batches else "success"
     state["annotations_failed_batches"] = failed_batches
     save_job_state(job_id, state)
+    if state.get("annotations_done") and job_id:
+        from folith.annotation_staging import clear_all_staged_annotations
+        clear_all_staged_annotations(job_id)
     run = trace.get_active_run(job_id)
     if run:
         run.record_point("milestone", phase="annotation_complete")
@@ -5870,7 +6171,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 try:
                     # 用途标注（#167）：事件里"已发送模型请求"要能对上这批段。
                     with llm_call_purpose(
-                            f"正在翻译第 {offset + 1}–{offset + len(batch)} 段"):
+                            f"正在翻译第 {offset + 1}–{offset + len(batch)} 段", operation_id="translation"):
                         targets = translate_batch(texts, ctx_prev, ctx_next, glossary_text, style_rules,
                                                   target_lang, translator_config["provider"],
                                                   translator_config["api_key"],
@@ -6383,7 +6684,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         if inherited_job_id is not None:
             _RUNTIME_CTX.job_id = inherited_job_id
         # 用途标注（#167）：知识抽取与翻译/标注在事件里区分开。
-        with llm_call_purpose("提取术语与知识"):
+        with llm_call_purpose("提取术语与知识", operation_id="knowledge"):
             return _knowledge.extract_batch(
                 sources, targets, auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"],
@@ -7983,16 +8284,16 @@ def _submit_runtime_status(job_id, **changes):
     return writer.submit(**changes)
 
 
-def _runtime_telemetry_request_started(job_id, *, purpose=None):
+def _runtime_telemetry_request_started(job_id, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_started(purpose=purpose)
+        coalescer.request_started(purpose=purpose, operation_id=operation_id)
 
 
-def _runtime_telemetry_request_finished(job_id, *, purpose=None):
+def _runtime_telemetry_request_finished(job_id, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_finished(purpose=purpose)
+        coalescer.request_finished(purpose=purpose, operation_id=operation_id)
 
 
 
@@ -8855,8 +9156,11 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         reset_runtime_status(job_id)
         runtime_after = load_runtime_state(job_id)
         exit_requested = bool(runtime_after.get("exit_requested"))
-        cancelled = (not exit_requested) and (
+        storage_failed = isinstance(exc, _workflow_errors.AnnotationStagingError)
+        cancelled = (not exit_requested) and not storage_failed and (
             bool(runtime_after.get("cancel_requested")) or "请求取消" in str(exc))
+        if storage_failed:
+            exit_requested = False
         final_status = "interrupted" if exit_requested else (
             "cancelled" if cancelled else "failed")
         if not segment_operation:
@@ -8880,6 +9184,9 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             "timestamp": _utc_now_iso(),
             "technical_log": RUNTIME_TECHNICAL_LOG,
         }
+        if storage_failed:
+            error["errno"] = exc.errno
+            error["storage_error_type"] = type(exc.storage_error).__name__
         try:
             update_runtime_state(
                 job_id, status=final_status,
@@ -8894,6 +9201,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                 event_visibility="user",
                 event_category="lifecycle" if (cancelled or exit_requested) else "error",
                 progress=True, heartbeat=True,
+                **({"pause_requested": False} if storage_failed else {}),
                 worker={"owner_pid": None, "worker_id": None,
                         "lease_expires_at": None})
         except _workflow_errors.WorkflowStopped as stopped:
@@ -12476,6 +12784,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                      strict_terminology_governance=False, mode=None,
                      research_settings=None, literature_sources=None,
                      delivery_config=None, batch_size=None, max_batch_chars=None,
+                     batch_strategy=None, annotation_scheduler=None,
                      enable_understanding=None, reviewer_provider=None,
                      reviewer_api_key=None, reviewer_model=None,
                      reviewer_base_url=None, translator_base_url=None,
@@ -12789,13 +13098,18 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         )
     if segmentation_mode is not None or "segmentation_mode" in saved_runtime_config:
         pipeline_config["segmentation_mode"] = effective_segmentation_mode
-    # 组批方式随任务保存：已经开译、却没有记录过组批方式的老任务沿用每批 4 句，
-    # 恢复时不换批次划分；显式给了批次大小的调用方要的是按句数组批；其余新任务
-    # 用当前默认（按自然段）。
-    pipeline_config["batch_strategy"] = _batch_strategy(
-        None, saved_runtime_config.get("batch_strategy")
-        or ("sentence" if state.get("pairs") or batch_size or max_batch_chars else None),
-        default=DEFAULT_BATCH_STRATEGY)
+    # 组批方式随任务保存（Phase 3 显式合同）：已经开译、却没有记录过组批方式的
+    # 老任务沿用每批 4 句，恢复时不换批次划分；桌面合同现在显式给出策略（与旧
+    # 推断一致）；其余新任务用当前默认（按自然段）。
+    pipeline_config["batch_strategy"] = _resolve_entry_batch_strategy(
+        saved_runtime_config.get("batch_strategy"), batch_strategy,
+        has_pairs=bool(state.get("pairs")),
+        has_batch_args=bool(batch_size or max_batch_chars))
+    # Runtime rollout control: an explicit per-run choice can roll a saved C4
+    # task back to C2 or the ordered refill algorithm without losing its cursor.
+    pipeline_config["annotation_scheduler"] = _normalize_annotation_scheduler(
+        annotation_scheduler if annotation_scheduler is not None
+        else saved_runtime_config.get("annotation_scheduler"))
     state["pipeline_config"] = pipeline_config
     state.setdefault("llm_usage", _usage.empty_usage())
     auxiliary_call = _model_roles.make_role_call(
@@ -13262,7 +13576,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_status("【阶段1.2】文档画像（分布式采样 + 结构化校验）...")
         from folith.document_profile import profile_document
         # 用途标注（#167）：画像阶段的模型调用在事件里说清自己。
-        with llm_call_purpose("文档画像"):
+        with llm_call_purpose("文档画像", operation_id="understanding"):
             profile, profile_warnings = profile_document(
                 state["paras"], auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"], target_lang,
@@ -13340,7 +13654,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_caption("正在从全文分布式样本中提取专业术语...")
         from folith.terminology import extract_auto_terms_v2
         # 用途标注（#167）：术语抽取的模型调用在事件里说清自己。
-        with llm_call_purpose("抽取全文核心术语"):
+        with llm_call_purpose("抽取全文核心术语", operation_id="terminology"):
             entries, extract_warnings = extract_auto_terms_v2(
                 state["paras"], target_lang, auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"],
@@ -13475,6 +13789,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         attach_pair_spans(state)
         from folith import delivery as _delivery
         state["delivery_status"] = _delivery.compute_delivery_status(state)
+        from folith.readiness import record_readiness_milestone
+        record_readiness_milestone(job_id, state, "draft_ready")
         save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
@@ -13485,6 +13801,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             job_id, state, reviewer_config, target_lang, style_rules,
             enable_review=enable_review, on_status=on_status)
         active_run.record_point("milestone", phase="translation_review_complete")
+        from folith.readiness import record_readiness_milestone
+        if record_readiness_milestone(job_id, state, "translation_ready"):
+            save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
@@ -13496,7 +13815,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         if on_status:
             on_status("【阶段 2.5】自动标注学习重点（红=生僻词 / 黄=专业名词 / 青绿=难点句）...")
         annotate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
-                       on_caption=on_caption)
+                       on_caption=on_caption, base_url=translator_config["base_url"] or None)
 
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
@@ -13523,6 +13842,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state["p3_done"] = True
         save_job_state(job_id, state)
 
+    from folith.readiness import record_readiness_milestone
+    record_readiness_milestone(job_id, state, "enhanced_delivery_ready")
     state["stage"] = _state_migration.derive_stage(state)
     state["performance"] = persist_performance()
     save_job_state(job_id, state)

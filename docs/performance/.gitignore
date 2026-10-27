@@ -1,0 +1,4 @@
+# Replay runners regenerate raw timelines locally; compressed evidence is committed.
+phase3-independent-evidence/benchmark-results.json
+phase3-remediation-evidence/benchmark-results.json
+phase3-p0-reacceptance/original-probes.txt

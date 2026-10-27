@@ -1509,11 +1509,13 @@ CROSS_SEGMENT_REVIEW_RULE = (
 
 def _call(call_llm: Callable, provider: str, api_key: str, model: str,
           system_prompt: str, user_prompt: str) -> Any:
-    try:
-        return call_llm(provider, api_key, model, system_prompt, user_prompt,
-                        temperature=0.2)
-    except TypeError:
-        return call_llm(provider, api_key, model, system_prompt, user_prompt)
+    import core
+    with core.llm_call_purpose("独立审校", operation_id="review"):
+        try:
+            return call_llm(provider, api_key, model, system_prompt, user_prompt,
+                            temperature=0.2)
+        except TypeError:
+            return call_llm(provider, api_key, model, system_prompt, user_prompt)
 
 
 def review_translation_batch_with_evidence(
