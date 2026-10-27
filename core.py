@@ -3792,7 +3792,8 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
                     attempt=0, output_chars=sum(len(item) for item in cached),
                     cache="hit"))
             # Older cache entries predate the digit rule.
-            return _numerals.normalize_targets(list(cached), target_lang)
+            return _translation_protocol.strip_echoed_numbering(
+                segments, _numerals.normalize_targets(list(cached), target_lang))
     # Rate limiting is handled by the shared provider controller: it paces
     # request starts and pushes one cooldown every worker observes, instead of
     # each worker sleeping a fixed 15 s and then stampeding the provider.
@@ -3823,7 +3824,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             finally:
                 _LLM_CTX.prompt_cost = previous_cost
             controller.note_success()
-            targets = _numerals.normalize_targets(
+            targets = _translation_protocol.strip_echoed_numbering(segments, _numerals.normalize_targets(
                 _translation_protocol.parse_translation_response(res, len(segments)),
                 target_lang)
             if result_cache is not None and cache_key is not None:

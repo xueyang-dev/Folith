@@ -20,6 +20,11 @@ _EXPLANATION_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _NUMBERED_LINE = re.compile(r"^\s*(\d+)[.)、]\s*(.*?)\s*$")
+# A list number the model put in front of a translation: "1. ", "2) ".
+_ECHOED_NUMBER = re.compile(r"^(\s*)[0-9０-９]{1,3}\s*[.．)）]\s+")
+# A source that really starts with its own number or enumerator ("1.", "(2)", "①", "一、").
+_SOURCE_MARKER = re.compile(
+    r"^\s*(?:[(（]?[0-9０-９]{1,3}\s*[.．)）、]|[(（][0-9０-９一二三四五六七八九十]+[)）]|[①-⑳]|[一二三四五六七八九十]+、)")
 
 
 @dataclass
@@ -171,6 +176,30 @@ def parse_translation_response(response: Any, expected: int) -> List[str]:
     if _EXPLANATION_PREFIX.match(candidate):
         raise _error("explanation_prefix", expected, response)
     return [candidate]
+
+
+def strip_echoed_numbering(sources: Sequence[str], targets: Sequence[str]) -> List[str]:
+    """Remove the list numbers a model puts in front of translations.
+
+    The batch prompt numbers the segments ("1. ...") and a model that sees a run of
+    list-like paragraphs sometimes continues the list in its answer: "1. 2. 3. 4." in
+    front of segments whose source has no number.  A number is only removed when the
+    source does not start with a number or enumerator of its own, or when the number is
+    followed by an enumerator of its own ("1. 一、…").  A source that starts with "一、"
+    and a target that turned it into "1." is a real conversion and is kept.
+    """
+    cleaned = []
+    for source, target in zip(sources, targets):
+        text = str(target)
+        match = _ECHOED_NUMBER.match(text)
+        if match and text[match.end():].strip():
+            rest = text[match.end():]
+            own_marker = bool(_SOURCE_MARKER.match(str(source)))
+            doubled = own_marker and bool(_SOURCE_MARKER.match(rest))   # "1. 一、…", "3. （二）…"
+            if not own_marker or doubled:
+                text = match.group(1) + rest
+        cleaned.append(text)
+    return cleaned
 
 
 def parse_translation_array(response: Any, expected: int) -> Optional[List[str]]:
