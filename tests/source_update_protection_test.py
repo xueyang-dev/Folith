@@ -81,7 +81,9 @@ def test_zero_overwrite_on_unchanged_reviewed_and_locked_segments(tmp_path, monk
     ]
 
     plan = create_source_update_plan(state, v2, job_id=job_id)
-    assert not plan.has_unresolved_suspected
+    assert plan.has_unresolved_suspected
+    protected = next(e for e in plan.entries if e.suspected_reason == "protected_source_changed")
+    plan.resolve(protected.entry_id, Resolution.CONFIRM_RETRANSLATE)
 
     updated_state = apply_source_update_plan(job_id, plan)
 
@@ -99,6 +101,10 @@ def test_zero_overwrite_on_unchanged_reviewed_and_locked_segments(tmp_path, monk
     assert p2_updated["locked"] is True
     assert p2_updated["human_accepted"] is True
     assert p2_updated["segment_uid"] == "seg-u0002"
+
+    p3_updated = updated_state["pairs"][2]
+    assert p3_updated["target"] == "第 3 段：待修改段的旧译文"
+    assert p3_updated["human_accepted"] and p3_updated["retranslation_required"]
 
     p5_updated = updated_state["pairs"][3]
     assert p5_updated["source"] == "P5: Unchanged postamble with human edit."
@@ -156,6 +162,9 @@ def test_statistics_and_delivery_status_consistency(tmp_path, monkeypatch):
     ]
 
     plan = create_source_update_plan(state, v2, job_id=job_id)
+    for entry in plan.entries:
+        if entry.classification == "suspected_changed":
+            plan.resolve(entry.entry_id, Resolution.CONFIRM_RETRANSLATE)
     updated_state = apply_source_update_plan(job_id, plan)
 
     # Invariants
@@ -169,3 +178,42 @@ def test_statistics_and_delivery_status_consistency(tmp_path, monkeypatch):
     # Delivered status transitions to draft because new document requires translation
     assert updated_state["delivery_status"] == "draft"
     assert updated_state["p2_done"] is False  # Translation needed
+
+
+def test_protected_change_requires_decision_and_keeps_locked_target(tmp_path, monkeypatch):
+    from folith.source_update.retranslation import retranslate_incremental
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "protected-update"
+    state = {"paras": ["This is the original paragraph."], "pairs": [{
+        "source": "This is the original paragraph.", "target": "人工定稿",
+        "reviewed": True, "locked": True, "segment_uid": "locked-1"}]}
+    core.save_source(job_id, b"original")
+    core.save_job_state(job_id, state)
+    plan = create_source_update_plan(state, ["This is the revised paragraph."], job_id=job_id)
+    assert plan.has_unresolved_suspected
+    with pytest.raises(ValueError, match="人工确认"):
+        apply_source_update_plan(job_id, plan)
+    plan.resolve(plan.entries[0].entry_id, Resolution.CONFIRM_RETRANSLATE)
+    result = apply_source_update_plan(job_id, plan)
+    assert result["pairs"][0]["target"] == "人工定稿"
+    assert result["pairs"][0]["locked"] is True
+    with pytest.raises(ValueError, match="翻译执行器"):
+        retranslate_incremental(job_id)
+    result = retranslate_incremental(job_id, call_llm_fn=lambda _: pytest.fail("locked text sent"))
+    assert result["pairs"][0]["target"] == "人工定稿"
+    assert result["p2_done"] is False
+
+
+def test_changed_state_invalidates_preview_before_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "stale-preview"
+    state = _build_protected_state()
+    core.save_source(job_id, b"original")
+    core.save_job_state(job_id, state)
+    plan = create_source_update_plan(state, state["paras"], job_id=job_id)
+    current = core.load_job_state(job_id)
+    current["pairs"][0]["target"] = "新的人工作业"
+    core.save_job_state(job_id, current)
+    with pytest.raises(ValueError, match="预览后译文"):
+        apply_source_update_plan(job_id, plan)
+    assert core.load_job_state(job_id)["pairs"][0]["target"] == "新的人工作业"

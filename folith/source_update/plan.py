@@ -8,6 +8,7 @@ Contract:
 from __future__ import annotations
 
 import json
+import copy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
@@ -287,6 +288,12 @@ def create_source_update_plan(
                 v1_reviewed = bool(pair.get("reviewed") or pair.get("review_status") == "reviewed")
                 v1_locked = bool(pair.get("locked") or locked_protection(pair))
 
+        # A changed protected translation needs an explicit choice.  A high
+        # similarity score is not permission to discard human work.
+        if seg.classification == Classification.CHANGED and (v1_reviewed or v1_locked):
+            seg.classification = Classification.SUSPECTED_CHANGED
+            seg.suspected_reason = "protected_source_changed"
+
         entries.append(SourceUpdateEntry(
             entry_id=entry_id,
             classification=seg.classification,
@@ -299,7 +306,7 @@ def create_source_update_plan(
             v1_target=v1_target,
             v1_reviewed=v1_reviewed,
             v1_locked=v1_locked,
-            v1_pair=pair,
+            v1_pair=copy.deepcopy(pair),
             suspected_reason=seg.suspected_reason,
             anchor_id=seg.anchor_id,
             metadata=dict(seg.metadata),

@@ -8,7 +8,6 @@ def retranslate_incremental(
     job_id: str,
     *,
     call_llm_fn: Optional[Callable[[str], str]] = None,
-    mock_target_suffix: str = " (重新翻译)",
 ) -> Dict[str, Any]:
     """Retranslate only segments marked as changed or added, skipping unchanged segments."""
     import core
@@ -17,10 +16,15 @@ def retranslate_incremental(
     if state is None:
         raise ValueError(f"找不到任务: {job_id}")
 
+    if call_llm_fn is None:
+        raise ValueError("未提供翻译执行器，不能生成增量译文。")
+
     pairs = list(state.get("pairs") or [])
     indices_to_translate = [
         i for i, p in enumerate(pairs)
-        if p.get("retranslation_required") or not p.get("target")
+        if (p.get("retranslation_required") or not p.get("target"))
+        and not (p.get("locked") or p.get("reviewed") or p.get("human_accepted")
+                 or p.get("human_edited"))
     ]
 
     total_chars = sum(len(p.get("source") or "") for p in pairs)
@@ -31,10 +35,9 @@ def retranslate_incremental(
         pair = pairs[i]
         src = str(pair.get("source") or "")
         if i in indices_to_translate:
-            if call_llm_fn is not None:
-                new_tgt = call_llm_fn(src)
-            else:
-                new_tgt = f"译文: {src}{mock_target_suffix}"
+            new_tgt = call_llm_fn(src)
+            if not isinstance(new_tgt, str) or not new_tgt.strip():
+                raise ValueError("翻译执行器未返回有效译文。")
 
             pair["target"] = new_tgt
             if not pair.get("initial_target"):
@@ -46,7 +49,8 @@ def retranslate_incremental(
 
     # All translated
     state["pairs"] = pairs
-    state["p2_done"] = all(bool(p.get("target")) for p in pairs)
+    state["p2_done"] = all(bool(p.get("target")) and not p.get("retranslation_required")
+                           for p in pairs)
     state["review_stats"] = {
         "reviewed_segments": sum(1 for p in pairs if p.get("reviewed")),
         "total_segments": len(pairs),

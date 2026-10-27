@@ -45,11 +45,14 @@ def test_create_plan_and_summary_metrics():
     assert plan.v1_count == 4
     assert plan.v2_count == 4
     assert plan.summary["unchanged_count"] == 2
-    assert plan.summary["changed_count"] == 1
+    assert plan.summary["changed_count"] == 0
     assert plan.summary["deleted_count"] == 1
     assert plan.summary["added_count"] == 1
-    assert plan.summary["suspected_count"] == 0
-    assert not plan.has_unresolved_suspected
+    assert plan.summary["suspected_count"] == 1
+    assert plan.has_unresolved_suspected
+    protected = next(e for e in plan.entries if e.suspected_reason == "protected_source_changed")
+    plan.resolve(protected.entry_id, Resolution.CONFIRM_RETRANSLATE)
+    assert plan.summary["changed_count"] == 1
     assert plan.summary["reviewed_preserved_count"] == 2
     assert plan.cost_estimate["reused_chars"] > 0
     assert plan.cost_estimate["estimated_savings_ratio"] > 0.4

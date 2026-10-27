@@ -31,8 +31,8 @@ def test_end_to_end_text_source_update_and_cost_savings(tmp_path, monkeypatch):
             "source": src,
             "target": f"译文: {src}",
             "initial_target": f"译文: {src}",
-            "reviewed": True,
-            "review_status": "reviewed",
+            "reviewed": i != 1,
+            "review_status": "reviewed" if i != 1 else "not_reviewed",
             "segment_uid": f"seg-v1-{i:04d}",
         }
         for i, src in enumerate(paras_v1)
@@ -149,8 +149,8 @@ def test_end_to_end_docx_source_update(tmp_path, monkeypatch):
             "source": src,
             "target": f"DOCX译文: {src}",
             "initial_target": f"DOCX译文: {src}",
-            "reviewed": True,
-            "review_status": "reviewed",
+            "reviewed": i != 1,
+            "review_status": "reviewed" if i != 1 else "not_reviewed",
             "segment_uid": f"seg-docx-{i:04d}",
         }
         for i, src in enumerate(paras_v1)
@@ -187,7 +187,7 @@ def test_end_to_end_docx_source_update(tmp_path, monkeypatch):
         new_source_bytes=docx_v2.read_bytes(),
     )
 
-    retranslated = retranslate_incremental(job_id)
+    retranslated = retranslate_incremental(job_id, call_llm_fn=lambda text: f"译文: {text}")
     assert retranslated["p2_done"] is True
     assert retranslated["incremental_retranslation_metrics"]["skipped_segments"] == 4
     assert retranslated["incremental_retranslation_metrics"]["retranslated_segments"] == 2

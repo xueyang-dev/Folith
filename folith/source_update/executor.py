@@ -221,6 +221,23 @@ def apply_source_update_plan(
     if state is None:
         raise ValueError(f"找不到任务: {job_id}")
 
+    if plan.job_id != job_id:
+        raise ValueError("变更计划不属于当前任务，请重新预览。")
+    current_pairs = state.get("pairs") or []
+    current_paras = state.get("paras") or []
+    for entry in plan.entries:
+        index = entry.v1_index
+        if index is None:
+            continue
+        if index >= len(current_paras) or current_paras[index] != entry.v1_source:
+            raise ValueError("预览后源文已改变，请重新生成变更计划。")
+        original = entry.v1_pair or {}
+        current = current_pairs[index] if index < len(current_pairs) else {}
+        fields = ("source", "target", "initial_target", "segment_uid", "reviewed",
+                  "review_status", "locked", "human_edited", "human_accepted")
+        if any(original.get(field) != current.get(field) for field in fields):
+            raise ValueError("预览后译文或保护状态已改变，请重新生成变更计划。")
+
     # Enforce: No active workers
     runtime = core.get_job_runtime_status(job_id, state)
     if runtime.get("status") in core.RUNTIME_ACTIVE_STATUSES:
@@ -345,6 +362,17 @@ def apply_source_update_plan(
         elif effective_cls == Classification.CHANGED:
             # Marked for retranslation, inherit TM and terminology context
             old_pair = entry.v1_pair or {}
+            if entry.v1_reviewed or entry.v1_locked:
+                # Keep the human translation and lock. Generation may offer a
+                # candidate later, but never replaces this pair automatically.
+                pair = copy.deepcopy(old_pair)
+                pair.update(source=entry.v2_source, previous_source=entry.v1_source,
+                            previous_target=entry.v1_target, retranslation_required=True,
+                            review_status="needs_retranslation", reviewed=False)
+                if entry.v1_reviewed:
+                    pair["human_accepted"] = True
+                new_pairs[j] = pair
+                continue
             pair = {
                 "source": entry.v2_source,
                 "target": "",  # Empty for re-translation
