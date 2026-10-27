@@ -2,7 +2,7 @@
 
 > **Issue reference:** [#152](https://github.com/xueyang-dev/Folith/issues/152)  
 > **Milestone:** v0.9.0 · Professional CAT Migration & Interoperability  
-> **Status:** Implemented & Verified  
+> **Status:** Implemented; desktop and round-trip platform acceptance remains in progress
 > **Scope:** Paragraph-level deterministic alignment, change plan preview, human confirmation gate, zero-overwrite protection invariants, interrupt recovery, and incremental retranslation.
 
 ---
@@ -21,7 +21,7 @@ Prior to Folith v0.9.0 (#152), Folith lacked source update capabilities: users h
 - Paragraph-level alignment is calculated entirely locally using deterministic algorithms:
   1. **Global Monotonic Backbone**: `difflib.SequenceMatcher` over normalized strings (`tm_normalize`) establishes the non-crossing sequence of unchanged segments.
   2. **Translocation (Moved) Detection**: Paragraphs whose normalized text matches across versions but whose positions invert order relative to the monotonic backbone are identified as `moved_segment` and classified into `suspected_changed`.
-  3. **In-place Minor Edits**: Disjoint segments paired with similarity $\ge 0.60$ are classified as `changed`.
+  3. **In-place Minor Edits**: Disjoint segments paired with similarity $\ge 0.60$ are classified as `changed`, unless the old translation is reviewed or protected. Protected changes require an explicit decision.
   4. **Ambiguous Modifications**: Segments with similarity $0.50 \le \text{sim} < 0.60$ are classified into `suspected_changed` (`ambiguous_suspected`).
   5. **Additions & Deletions**: Unpaired segments in v2 are `added`; unpaired segments in v1 are `deleted`.
   6. **Anchor Integration**: Structural anchors (e.g. DOCX #26) are preserved and cross-validated against text identity.
@@ -30,7 +30,7 @@ Prior to Folith v0.9.0 (#152), Folith lacked source update capabilities: users h
 | Classification | Match Method | Confidence | Execution Behavior |
 |---|---|---|---|
 | `unchanged` | `exact`, `normalized`, `anchor_exact` | 1.0 | Retains exact translation, `reviewed` status, and `locked` status with **zero overwrite**. |
-| `changed` | `similarity_changed`, `anchor_changed` | $\ge 0.60$ | Target cleared for incremental retranslation (`retranslation_required=True`); inherits TM and candidate reference. |
+| `changed` | `similarity_changed`, `anchor_changed` | $\ge 0.60$ | An unprotected target is cleared for incremental retranslation; protected targets require confirmation and are retained. |
 | `added` | `inserted` | 1.0 | Brand new unit created for translation; assigned new monotonic `segment_uid`. |
 | `deleted` | `removed` | 1.0 | Moved to `state["excluded_segments"]` ledger with `reason="source_update_deleted"`. Not silently lost. |
 | `suspected_changed` | `moved_suspected`, `ambiguous_suspected` | 0.50–0.90 | **Execution blocked** until human reviewer explicitly confirms resolution (`confirm_reuse`, `confirm_retranslate`, or `split_add_delete`). |
@@ -77,6 +77,17 @@ The execution engine strictly asserts:
 ---
 
 ## 6. Incremental Retranslation & Cost Telemetry
+
+The desktop task menu provides source revision preview, per-segment decisions,
+and incremental translation through the existing candidate transaction. It
+supports TXT, Markdown, EPUB, and DOCX when the new DOCX units can be aligned
+with the task's segmentation; unsupported or ambiguous DOCX structures are
+rejected. Any pending drafts must be saved or discarded before updating.
+Protected changed segments retain their translation and require a human action;
+locked segments must be explicitly unlocked before editing. An incomplete
+update blocks the ordinary translation pipeline until pending segments are
+resolved. No model request occurs during preview. The incremental action uses
+the configured model, so it may incur normal provider charges.
 
 - `retranslate_incremental(job_id, call_llm_fn=...)`:
   - Iterates only over segments where `retranslation_required=True` or `target` is empty.

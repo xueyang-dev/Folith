@@ -2,6 +2,7 @@
 import copy
 import pytest
 import core
+from tests.source_update_helpers import source_args
 from folith.source_update.plan import create_source_update_plan
 from folith.source_update.executor import (
     apply_source_update_plan,
@@ -73,7 +74,7 @@ def test_rollback_restores_pre_update_state(tmp_path, monkeypatch):
         if e.classification == "suspected_changed":
             plan.resolve(e.entry_id, "split_add_delete")
 
-    updated_state = apply_source_update_plan(job_id, plan, new_source_bytes=b"v2 source bytes")
+    updated_state = apply_source_update_plan(job_id, plan, **source_args(job_id, plan, b"v2 source bytes"))
 
     # Confirmed updated
     assert len(updated_state["paras"]) == 3
@@ -110,7 +111,7 @@ def test_crash_recovery_no_duplicate_no_segment_loss(tmp_path, monkeypatch):
 
     # 1. Simulate crash mid-update
     with pytest.raises(RuntimeError, match="Simulated crash during update execution"):
-        apply_source_update_plan(job_id, plan, simulate_crash_at="mid_update")
+        apply_source_update_plan(job_id, plan, simulate_crash_at="mid_update", **source_args(job_id, plan))
 
     # State on disk has pending transaction marker
     crashed_state = core.load_job_state(job_id)

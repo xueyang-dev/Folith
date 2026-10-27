@@ -29,7 +29,7 @@ from PySide6.QtCore import QEvent, QRectF, QSize, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from shiboken6 import isValid
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget, QWidget,
+    QApplication, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QStackedWidget, QWidget,
 )
 
 from folith.desktop import paths as desktop_paths
@@ -549,6 +549,15 @@ class MainWindow(QMainWindow):
         edit_action.setShortcut(platform_ui.shortcut("save"))
         edit_action.triggered.connect(self.workbench._submit)
         task_menu.addAction(edit_action)
+        source_update_action = QAction(i18n.tr('更新源文件…'), self)
+        source_update_action.triggered.connect(self.update_source_document)
+        task_menu.addAction(source_update_action)
+        source_translate_action = QAction(i18n.tr('翻译源文变更…'), self)
+        source_translate_action.triggered.connect(self.translate_source_changes)
+        task_menu.addAction(source_translate_action)
+        source_unlock_action = QAction(i18n.tr('解锁更新段落…'), self)
+        source_unlock_action.triggered.connect(self.unlock_source_change)
+        task_menu.addAction(source_unlock_action)
         deliver_action = QAction(i18n.tr('冻结并保存交付…'), self)
         deliver_action.triggered.connect(self.deliver)
         task_menu.addAction(deliver_action)
@@ -581,6 +590,8 @@ class MainWindow(QMainWindow):
             "start": start_action, "pause": pause_action,
             "cancel": cancel_action, "reload": reload_action,
             "submit": edit_action, "deliver": deliver_action,
+            "source_update": source_update_action, "source_translate": source_translate_action,
+            "source_unlock": source_unlock_action,
             "diagnostics": diagnostics_action, "tools": tools_action,
             "github": github_action, "issue": issue_action, "shortcuts": shortcuts_action,
             "guide": guide_action, "tips": tips_action,
@@ -818,6 +829,9 @@ class MainWindow(QMainWindow):
             "reload": on_workbench,
             "submit": on_workbench and workbench.submit_button.isEnabled(),
             "deliver": on_workbench and workbench.deliver_button.isEnabled(),
+            "source_update": on_workbench,
+            "source_translate": on_workbench and bool((workbench._state or {}).get("source_update_pending")),
+            "source_unlock": on_workbench and bool((workbench._state or {}).get("source_update_pending")),
         }
         for key, enabled in states.items():
             action = actions.get(key)
@@ -2505,6 +2519,76 @@ class MainWindow(QMainWindow):
             i18n.tr('重译'), i18n.tr('正在重译第 {v0} 段…', v0=index + 1),
             adapter.retranslate_segment, job_id, index, self.config,
             on_done=lambda result: self._retranslate_done(result, index, job_id))
+
+    def update_source_document(self) -> None:
+        job_id = self._current_job_id
+        if not job_id or not self.workbench.flush_draft():
+            return
+        if self.workbench.has_uncommitted_editor_change():
+            self._notice(i18n.tr('请先保存或放弃当前草稿。'), error=True)
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, i18n.tr('选择更新后的源文件'), "", "Documents (*.txt *.md *.docx *.epub)")
+        if not path:
+            return
+
+        def preview(payload):
+            if job_id != self._current_job_id:
+                return
+            plan = payload["plan"]
+            from folith.source_update import Classification, Resolution
+            choices = [i18n.tr('保留原译文'), i18n.tr('准备重译'), i18n.tr('删除旧段并新增')]
+            values = [Resolution.CONFIRM_REUSE, Resolution.CONFIRM_RETRANSLATE,
+                      Resolution.SPLIT_ADD_DELETE]
+            for entry in plan.entries:
+                if entry.classification != Classification.SUSPECTED_CHANGED or entry.resolution:
+                    continue
+                message = i18n.tr('旧原文：{v0}\n新原文：{v1}\n旧译文：{v2}',
+                                  v0=entry.v1_source or "", v1=entry.v2_source or "",
+                                  v2=entry.v1_target or "")
+                choice, accepted = QInputDialog.getItem(
+                    self, i18n.tr('确认源文变更'), message, choices, 0, False)
+                if not accepted:
+                    return
+                plan.resolve(entry.entry_id, values[choices.index(choice)])
+            if not self._confirm(i18n.tr('确认源文更新'), plan.markdown_preview(),
+                                 yes=i18n.tr('应用更新'), tone="danger"):
+                return
+            self._run_with_busy(i18n.tr('更新源文件'), i18n.tr('正在更新源文件…'),
+                adapter.execute_source_update, job_id, payload, for_job=job_id,
+                on_done=lambda _: self._notice(i18n.tr('源文件已更新；可翻译变更段。'), job_id=job_id))
+
+        self._run_with_busy(i18n.tr('更新源文件'), i18n.tr('正在对齐源文…'),
+                            adapter.prepare_source_update, job_id, path,
+                            for_job=job_id, on_done=preview)
+
+    def translate_source_changes(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if not self._confirm(i18n.tr('翻译源文变更'),
+                i18n.tr('将调用当前翻译模型处理未保护的变更段。受保护段会保留原译文并等待人工处理。'),
+                yes=i18n.tr('开始翻译')):
+            return
+        def done(result):
+            self._notice(i18n.tr('已处理 {v0} 段；{v1} 段受保护，{v2} 段未完成。',
+                                 v0=result.get("changed", 0), v1=result.get("protected", 0),
+                                 v2=result.get("skipped", 0)), job_id=job_id)
+        self._run_with_busy(i18n.tr('翻译源文变更'), i18n.tr('正在翻译变更段…'),
+                            adapter.translate_source_update, job_id, self.config,
+                            for_job=job_id, on_done=done)
+
+    def unlock_source_change(self) -> None:
+        job_id = self._current_job_id
+        index = self.workbench.current_index()
+        if not job_id or index < 0:
+            return
+        if not self._confirm(i18n.tr('解锁更新段落'),
+                i18n.tr('解锁当前变更段后，可人工修改译文。原译文仍会保留。'),
+                yes=i18n.tr('确定'), tone="danger"):
+            return
+        self._run_with_busy(i18n.tr('解锁更新段落'), i18n.tr('正在解锁更新段落…'),
+                            adapter.unlock_source_update_segment, job_id, index, for_job=job_id)
 
     def _retranslate_done(self, result, index: int | None = None,
                           job_id: str | None = None) -> None:

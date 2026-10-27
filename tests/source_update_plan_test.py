@@ -1,6 +1,7 @@
 """Unit tests for Source Update Change Plan, preview, and human confirmation."""
 import pytest
 import core
+from tests.source_update_helpers import source_args
 from folith.source_update.alignment import Classification
 from folith.source_update.plan import (
     Resolution,
@@ -115,7 +116,7 @@ def test_resolving_suspected_enables_execution(tmp_path, monkeypatch):
     assert plan.summary["unresolved_suspected_count"] == 0
 
     # Execution now succeeds!
-    updated_state = apply_source_update_plan(job_id, plan)
+    updated_state = apply_source_update_plan(job_id, plan, **source_args(job_id, plan))
     assert updated_state["paras"][0] == "Section 4: Conclusion"
     assert updated_state["pairs"][0]["target"] == "第 4 节：结论"
     assert updated_state["pairs"][0]["reviewed"] is True

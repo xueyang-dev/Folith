@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import pytest
 import core
+from tests.source_update_helpers import source_args
 from folith.docx_roundtrip import extract_roundtrip_units
 from folith.source_update import (
     Classification,
@@ -74,7 +75,7 @@ def test_end_to_end_text_source_update_and_cost_savings(tmp_path, monkeypatch):
         job_id,
         plan,
         actor="lead_translator",
-        new_source_bytes=v2_bytes,
+        **source_args(job_id, plan, v2_bytes),
     )
 
     # Verify state after plan application:
@@ -184,7 +185,7 @@ def test_end_to_end_docx_source_update(tmp_path, monkeypatch):
     updated_state = apply_source_update_plan(
         job_id,
         plan,
-        new_source_bytes=docx_v2.read_bytes(),
+        **source_args(job_id, plan, docx_v2.read_bytes()),
     )
 
     retranslated = retranslate_incremental(job_id, call_llm_fn=lambda text: f"译文: {text}")

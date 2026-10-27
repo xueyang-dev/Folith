@@ -2,8 +2,23 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
+from folith.engine.locks import _exclusive_job_execution
 
 
+def mark_segment_resolved(state: Dict[str, Any], pair: Dict[str, Any]) -> None:
+    """An explicit edit or adoption resolves a pending source-update segment."""
+    if not state.get("source_update_pending"):
+        return
+    if str(pair.get("target") or "").strip():
+        pair["retranslation_required"] = False
+    pairs = state.get("pairs") or []
+    done = bool(pairs) and all(str(p.get("target") or "").strip()
+                               and not p.get("retranslation_required") for p in pairs)
+    state["p2_done"] = done
+    state["source_update_pending"] = not done
+
+
+@_exclusive_job_execution(0)
 def retranslate_incremental(
     job_id: str,
     *,
@@ -28,29 +43,33 @@ def retranslate_incremental(
     ]
 
     total_chars = sum(len(p.get("source") or "") for p in pairs)
-    translated_chars = 0
-    skipped_chars = 0
-
-    for i in range(len(pairs)):
+    drafts = []
+    for i in indices_to_translate:
         pair = pairs[i]
         src = str(pair.get("source") or "")
-        if i in indices_to_translate:
-            new_tgt = call_llm_fn(src)
-            if not isinstance(new_tgt, str) or not new_tgt.strip():
-                raise ValueError("翻译执行器未返回有效译文。")
+        new_tgt = call_llm_fn(src)
+        if not isinstance(new_tgt, str) or not new_tgt.strip():
+            raise ValueError("翻译执行器未返回有效译文。")
+        drafts.append({"segment_index": i, "segment_uid": pair.get("segment_uid"),
+                       "source": src, "candidate_target": new_tgt,
+                       "origin": "source_update"})
 
-            pair["target"] = new_tgt
-            if not pair.get("initial_target"):
-                pair["initial_target"] = new_tgt
-            pair["retranslation_required"] = False
-            translated_chars += len(src)
-        else:
-            skipped_chars += len(src)
-
-    # All translated
-    state["pairs"] = pairs
+    committed_indexes = set()
+    if drafts:
+        staged = core.commit_candidates(job_id, drafts, actor="source_update")
+        ids = [item["candidate_id"] for item in staged.get("created") or []]
+        adopted = core.adopt_translation_candidates(job_id, ids, allow_protected=False)
+        committed = set(adopted.get("committed") or [])
+        committed_indexes = {item["segment_index"] for item in staged.get("created") or []
+                             if item.get("candidate_id") in committed}
+        state = adopted["state"]
+        pairs = list(state.get("pairs") or [])
+    translated_chars = sum(len(p.get("source") or "") for i, p in enumerate(pairs)
+                           if i in committed_indexes)
+    skipped_chars = total_chars - translated_chars
     state["p2_done"] = all(bool(p.get("target")) and not p.get("retranslation_required")
                            for p in pairs)
+    state["source_update_pending"] = not state["p2_done"]
     state["review_stats"] = {
         "reviewed_segments": sum(1 for p in pairs if p.get("reviewed")),
         "total_segments": len(pairs),
@@ -58,8 +77,8 @@ def retranslate_incremental(
 
     metrics = {
         "total_segments": len(pairs),
-        "retranslated_segments": len(indices_to_translate),
-        "skipped_segments": len(pairs) - len(indices_to_translate),
+        "retranslated_segments": len(committed_indexes),
+        "skipped_segments": len(pairs) - len(committed_indexes),
         "total_chars": total_chars,
         "retranslated_chars": translated_chars,
         "skipped_chars": skipped_chars,

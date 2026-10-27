@@ -2,6 +2,7 @@
 import copy
 import pytest
 import core
+from tests.source_update_helpers import source_args
 from folith.source_update.plan import Resolution, create_source_update_plan
 from folith.source_update.executor import apply_source_update_plan, assert_protection_invariants
 
@@ -85,7 +86,7 @@ def test_zero_overwrite_on_unchanged_reviewed_and_locked_segments(tmp_path, monk
     protected = next(e for e in plan.entries if e.suspected_reason == "protected_source_changed")
     plan.resolve(protected.entry_id, Resolution.CONFIRM_RETRANSLATE)
 
-    updated_state = apply_source_update_plan(job_id, plan)
+    updated_state = apply_source_update_plan(job_id, plan, **source_args(job_id, plan))
 
     # Assertions on unchanged segments
     p1_updated = updated_state["pairs"][0]
@@ -131,7 +132,7 @@ def test_deleted_segments_appear_in_exclusion_ledger(tmp_path, monkeypatch):
     # P4 deleted
 
     plan = create_source_update_plan(state, v2, job_id=job_id)
-    updated_state = apply_source_update_plan(job_id, plan, actor="qa_auditor")
+    updated_state = apply_source_update_plan(job_id, plan, actor="qa_auditor", **source_args(job_id, plan))
 
     excluded = updated_state.get("excluded_segments") or []
     assert len(excluded) == 1
@@ -165,7 +166,7 @@ def test_statistics_and_delivery_status_consistency(tmp_path, monkeypatch):
     for entry in plan.entries:
         if entry.classification == "suspected_changed":
             plan.resolve(entry.entry_id, Resolution.CONFIRM_RETRANSLATE)
-    updated_state = apply_source_update_plan(job_id, plan)
+    updated_state = apply_source_update_plan(job_id, plan, **source_args(job_id, plan))
 
     # Invariants
     assert len(updated_state["paras"]) == len(v2)
@@ -194,7 +195,7 @@ def test_protected_change_requires_decision_and_keeps_locked_target(tmp_path, mo
     with pytest.raises(ValueError, match="人工确认"):
         apply_source_update_plan(job_id, plan)
     plan.resolve(plan.entries[0].entry_id, Resolution.CONFIRM_RETRANSLATE)
-    result = apply_source_update_plan(job_id, plan)
+    result = apply_source_update_plan(job_id, plan, **source_args(job_id, plan))
     assert result["pairs"][0]["target"] == "人工定稿"
     assert result["pairs"][0]["locked"] is True
     with pytest.raises(ValueError, match="翻译执行器"):
@@ -202,6 +203,15 @@ def test_protected_change_requires_decision_and_keeps_locked_target(tmp_path, mo
     result = retranslate_incremental(job_id, call_llm_fn=lambda _: pytest.fail("locked text sent"))
     assert result["pairs"][0]["target"] == "人工定稿"
     assert result["p2_done"] is False
+    with pytest.raises(ValueError, match="解锁"):
+        core.save_translation_edit(job_id, 0, "修订译文")
+    def unlock(current):
+        current["pairs"][0]["locked"] = False
+    core.mutate_job_state(job_id, unlock)
+    core.save_translation_edit(job_id, 0, "修订译文")
+    resolved = core.load_job_state(job_id)
+    assert resolved["pairs"][0]["target"] == "修订译文"
+    assert resolved["p2_done"] and not resolved["source_update_pending"]
 
 
 def test_changed_state_invalidates_preview_before_snapshot(tmp_path, monkeypatch):

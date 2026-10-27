@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from folith.engine import candidates as _cand_engine
 from folith.engine import segments as _segments
+from folith.engine.locks import _exclusive_job_execution
 from folith.source_update.alignment import Classification
 from folith.source_update.metrics import calculate_source_update_savings
 from folith.source_update.plan import Resolution, SourceUpdateEntry, SourceUpdatePlan
@@ -58,13 +59,10 @@ def create_source_update_snapshot(
     clean_state = copy.deepcopy(state)
     state_file.write_text(json.dumps(clean_state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # Try saving source file if exists
-    try:
-        source_bytes = core.load_source(job_id)
-        if source_bytes:
-            (target_dir / "source.bin").write_bytes(source_bytes)
-    except Exception:
-        pass
+    source_bytes = core.load_source(job_id)
+    if not source_bytes:
+        raise ValueError("无法创建源文件快照，已停止更新。")
+    (target_dir / "source.bin").write_bytes(source_bytes)
 
     manifest = {
         "snapshot_id": snapshot_id,
@@ -88,6 +86,7 @@ def create_source_update_snapshot(
     return manifest
 
 
+@_exclusive_job_execution(0)
 def rollback_source_update(
     job_id: str,
     snapshot_id: Optional[str] = None,
@@ -195,6 +194,7 @@ def assert_protection_invariants(
         assert found, f"删除段 (v1_idx={v1_idx}, source={entry.v1_source}) 未能进入排除台账!"
 
 
+@_exclusive_job_execution(0)
 def apply_source_update_plan(
     job_id: str,
     plan: SourceUpdatePlan,
@@ -202,6 +202,7 @@ def apply_source_update_plan(
     actor: str = "user",
     new_source_bytes: Optional[bytes] = None,
     new_source_filename: Optional[str] = None,
+    source_context: Optional[Mapping[str, Any]] = None,
     simulate_crash_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Apply a confirmed SourceUpdatePlan to a job.
@@ -221,6 +222,9 @@ def apply_source_update_plan(
     if state is None:
         raise ValueError(f"找不到任务: {job_id}")
 
+    if core.load_translation_drafts(job_id):
+        raise ValueError("任务有未提交的草稿，请先保存或放弃所有草稿。")
+
     if plan.job_id != job_id:
         raise ValueError("变更计划不属于当前任务，请重新预览。")
     current_pairs = state.get("pairs") or []
@@ -237,6 +241,19 @@ def apply_source_update_plan(
                   "review_status", "locked", "human_edited", "human_accepted")
         if any(original.get(field) != current.get(field) for field in fields):
             raise ValueError("预览后译文或保护状态已改变，请重新生成变更计划。")
+    if source_context is not None:
+        import hashlib
+        if not new_source_bytes or hashlib.sha256(new_source_bytes).hexdigest() != source_context.get("sha256"):
+            raise ValueError("更新源文件与预览不一致，请重新预览。")
+        previous_source = core.load_source(job_id)
+        if not previous_source or hashlib.sha256(previous_source).hexdigest() != source_context.get("previous_sha256"):
+            raise ValueError("预览后原文件已改变，请重新生成变更计划。")
+        planned = [None] * plan.v2_count
+        for entry in plan.entries:
+            if entry.v2_index is not None:
+                planned[entry.v2_index] = entry.v2_source
+        if planned != source_context.get("segments"):
+            raise ValueError("更新分段与预览不一致，请重新预览。")
 
     # Enforce: No active workers
     runtime = core.get_job_runtime_status(job_id, state)
@@ -252,6 +269,8 @@ def apply_source_update_plan(
         raise ValueError(
             f"存在未确认的疑似变更段落 ({', '.join(unresolved)})，必须先由人工确认后方可执行更新。"
         )
+    if source_context is None or new_source_bytes is None:
+        raise ValueError("更新必须使用已预览的源文件及其分段信息。")
 
     before_state = copy.deepcopy(state)
 
@@ -335,16 +354,10 @@ def apply_source_update_plan(
         if effective_cls == Classification.UNCHANGED:
             # Preserve target, reviewed status, locked status, and segment_uid
             old_pair = copy.deepcopy(entry.v1_pair) if entry.v1_pair else {}
-            pair = {
-                "source": entry.v2_source,
-                "target": entry.v1_target if entry.v1_target is not None else old_pair.get("target", ""),
-                "initial_target": old_pair.get("initial_target", entry.v1_target or ""),
-                "reviewed": bool(entry.v1_reviewed),
-                "review_status": "reviewed" if entry.v1_reviewed else old_pair.get("review_status", "not_reviewed"),
-                "from_tm": old_pair.get("from_tm", False),
-                "target_provenance": old_pair.get("target_provenance", ""),
-                "glossary_entry_ids": old_pair.get("glossary_entry_ids", []),
-            }
+            pair = old_pair
+            pair["source"] = entry.v2_source
+            pair.setdefault("target", entry.v1_target or "")
+            pair.setdefault("initial_target", entry.v1_target or "")
             if old_pair.get(core.SEGMENT_UID_FIELD):
                 pair[core.SEGMENT_UID_FIELD] = old_pair[core.SEGMENT_UID_FIELD]
             else:
@@ -430,6 +443,28 @@ def apply_source_update_plan(
     # Step 4: Update state structures & metrics
     state["paras"] = new_paras
     state["pairs"] = new_pairs
+    if source_context is not None:
+        state["filename"] = new_source_filename or state.get("filename")
+        state["source_paras"] = list(source_context["paragraphs"])
+        state["source_paragraphs"] = list(source_context["paragraphs"])
+        state["segmentation"] = copy.deepcopy(source_context["segmentation"])
+        state["extraction_report"] = copy.deepcopy(source_context["report"])
+        if source_context.get("anchors"):
+            state["segment_source_anchors"] = copy.deepcopy(source_context["anchors"])
+        else:
+            state.pop("segment_source_anchors", None)
+        state["source_cleanup"] = {"status": "skipped", "output_input_indices":
+                                   [[i] for i in range(len(source_context["paragraphs"]))]}
+        # Source-bound evidence and report artifacts cannot describe the new
+        # document. The project glossary and historical delivery stay intact.
+        for field in ("source_outline", "segment_source_spans", "segment_source_marks",
+                      "document_profile", "source_quality_gate"):
+            state.pop(field, None)
+        state.update(findings=[], annotations={}, annotations_done=False,
+                     annotations_done_offset=0, p3_done=False, p3_md="", p3_sections=[])
+        core._mark_translation_truth_changed(
+            job_id, state, list(range(len(new_pairs))), "源文件更新，旧交付需要重新冻结",
+            actor=actor, action="source_update", stale_translation_reviews=False)
 
     # Recompute review stats
     reviewed_count = sum(1 for p in new_pairs if p.get("reviewed"))
@@ -447,6 +482,7 @@ def apply_source_update_plan(
     # Stage completion
     needs_retranslation_count = sum(1 for p in new_pairs if not p.get("target") or p.get("retranslation_required"))
     state["p2_done"] = (needs_retranslation_count == 0 and len(new_pairs) > 0)
+    state["source_update_pending"] = needs_retranslation_count > 0
 
     # Cost savings telemetry
     savings = calculate_source_update_savings(plan)
@@ -479,6 +515,7 @@ def apply_source_update_plan(
     return state
 
 
+@_exclusive_job_execution(0)
 def recover_source_update(job_id: str) -> Dict[str, Any]:
     """Recover from an interrupted source update transaction."""
     import core

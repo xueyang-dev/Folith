@@ -363,6 +363,11 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
     # Protection is checked against the state *now*, not against the baseline:
     # a candidate generated before the human confirmed the text must not
     # overwrite that confirmation through a batch.
+    if pair.get("locked"):
+        return {"committed": False, "already_adopted": False,
+                "candidate": _cand.public_view(record, pair=pair),
+                "conflict": _cand.CONFLICT_PROTECTED_HUMAN,
+                "reason": "请先解锁段落再采用候选", "protection": ["locked"]}, False
     locked = _cand.locked_protection(pair)
     if locked and not allow_protected:
         return {"committed": False, "already_adopted": False,
@@ -378,6 +383,8 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
     resolved_at = _cand.now_iso()
 
     if candidate_target == current_target:
+        from folith.source_update.retranslation import mark_segment_resolved
+        mark_segment_resolved(state, pair)
         # Same text: the human made a choice, the working translation did not
         # change.  No text version is invented and no review evidence is
         # revoked; the decision is recorded once, on the candidate.
@@ -413,6 +420,8 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
         key: pair.get(key)
         for key in ("target", "reviewed", "review_status", "target_provenance", "from_tm")})
     pair["target"] = candidate_target
+    from folith.source_update.retranslation import mark_segment_resolved
+    mark_segment_resolved(state, pair)
     # Provenance says what this text is: model output a human chose.  Calling it
     # a human edit would relabel model text as hand-written work.
     pair["target_provenance"] = "candidate_adopted"
