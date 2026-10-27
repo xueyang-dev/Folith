@@ -431,6 +431,7 @@ class AboutPage(QWidget):
 LOCAL_SHORTCUTS = (
     ("save_next", "保存当前段并进入下一个未确认的段"),
     ("source", "展开 / 收起原页或原位置"),
+    ("concordance", "展开 / 收起语料检索"),
     ("escape", "编辑框：把焦点还给段落网格；检查与修复：收起面板"),
     ("previous_segment", "段落网格：上一段"),
     ("next_segment", "段落网格：下一段"),

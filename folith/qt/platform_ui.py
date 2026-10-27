@@ -69,6 +69,7 @@ _CUSTOM = {
     "reload": "Ctrl+Shift+R",
     "save_next": "Ctrl+Return",
     "source": "Ctrl+Alt+P",
+    "concordance": "F3",
     "escape": "Esc",
     "previous_segment": "Up",
     "next_segment": "Down",
