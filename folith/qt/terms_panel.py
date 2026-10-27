@@ -297,7 +297,12 @@ class TermsPanel(QWidget):
         # impact heading. Compact Quick Access keeps the direct layout and
         # relies on its smaller set of visible controls.
         self.detail_content = QWidget()
-        self.detail_content.setObjectName("termsDetailContent")
+        # A QScrollArea viewport is deliberately transparent. The canvas behind
+        # the inset card shadow must still be painted, including when Qt only
+        # repaints the child after the sidebar changes from compact to expanded.
+        # Reuse the existing page-canvas token rather than layering in a local
+        # stylesheet; the same widget also lives directly in compact mode.
+        self.detail_content.setObjectName("pageCanvas")
         detail_layout = QVBoxLayout(self.detail_content)
         detail_layout.setContentsMargins(0, 0, 0, 0)
         detail_layout.addWidget(editor_card)

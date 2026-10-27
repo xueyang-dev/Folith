@@ -59,7 +59,7 @@
     "terms": 62
   },
   "case_1_search_and_edit": {
-    "search_and_edit_ms": 58.0,
+    "search_and_edit_ms": 56.3,
     "persisted": true,
     "version_before": 1,
     "version_after": 3,
@@ -88,8 +88,8 @@
     "ambiguous_term_omitted_from_ai_input": true
   },
   "performance": {
-    "full_glossary_view_ms": 566.5,
-    "duplicate_scan_ms": 4.1,
+    "full_glossary_view_ms": 546.1,
+    "duplicate_scan_ms": 4.7,
     "duplicate_candidates": 1
   }
 }

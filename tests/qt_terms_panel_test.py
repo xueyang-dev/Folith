@@ -616,6 +616,8 @@ def test_workspace_scrolls_detail_column_at_scaled_narrow_height(panel, qapp):
     panel.show()
     QTest.qWait(350)
 
+    assert panel.detail_content.objectName() == "pageCanvas", (
+        "detail content must paint the existing page canvas behind scroll shadows")
     assert panel.detail_scroll.verticalScrollBar().maximum() > 0
     assert panel.detail_scroll.horizontalScrollBar().maximum() == 0
     card_bottom = panel.editor_card.mapTo(

@@ -31,11 +31,13 @@ between macOS and Windows; no platform-specific view fork was introduced.
    to fit into a narrow two-column split. At scaled or short window sizes, Qt
    compressed adjacent sections until action rows painted over the impact
    heading and preview table.
-2. **The detail column had no owned overflow contract.** The editor card and
-   impact region were direct layout children of the sidebar. There was no single
-   vertical scroll region for the expanded full-workspace detail column, and the
-   Compact layout needs the opposite behavior: a natural-height editor above a
-   separately scrolling term list.
+2. **The detail column had no owned overflow or painting contract.** The editor
+   card and impact region were direct layout children of the sidebar. There was
+   no single vertical scroll region for the expanded full-workspace detail
+   column, and the Compact layout needs the opposite behavior: a natural-height
+   editor above a separately scrolling term list. In the expanded layout,
+   `QScrollArea`'s transparent viewport also exposed unpainted black bands around
+   the inset card shadow.
 3. **Fast and low-frequency edits shared one form flow.** Changing a preferred
    translation required operating in the same dense editor as domain, forbidden
    forms, notes and batch actions. The important transition
@@ -93,7 +95,9 @@ translation-memory reuse and refreshes all term projections.
   filters, all six required columns, sorting and multi-selection.
 - Added one explicit vertical scroll region for the expanded detail column.
   Compact Quick Access moves the shared detail content back out of that scroll
-  region, so it has no nested page scroll.
+  region, so it has no nested page scroll. The shared detail canvas now paints
+  the existing page surface behind card shadows in both placements, eliminating
+  the black bands without a local stylesheet override.
 - Removed horizontal overflow at the tested narrow and scaled sizes. Action rows
   reflow from actual font/control metrics.
 - Distinguished entry status from glossary freeze version in labels, notices and
@@ -161,8 +165,8 @@ Native Qt/Cocoa acceptance used the real project:
   source-conflict review item.
 - Case 4: a human edit after freeze advanced v3 → v4, while the ambiguous source
   was omitted from subsequent AI input.
-- Case 6: the full 62-term view projected in 566.5 ms in the latest isolated run;
-  duplicate scan was 4.1 ms. Both run from snapshots through background
+- Case 6: the full 62-term view projected in 546.1 ms in the latest isolated run;
+  duplicate scan was 4.7 ms. Both run from snapshots through background
   task execution rather than blocking widget interaction.
 
 Evidence:
