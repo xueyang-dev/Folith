@@ -144,8 +144,10 @@ class ConcordancePanel(QWidget):
         extra_jobs: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> None:
         """Update context (current state, TM, project) for search."""
-        old_identity = ((self._state or {}).get("job_id"), self._project_id)
-        new_identity = ((state or {}).get("job_id"), project_id)
+        old_identity = ((self._state or {}).get("job_id"), self._project_id,
+                        (self._state or {}).get("snapshot_revision"))
+        new_identity = ((state or {}).get("job_id"), project_id,
+                        (state or {}).get("snapshot_revision"))
         if old_identity != new_identity:
             self._invalidate_search()
             self._items = []
@@ -174,6 +176,8 @@ class ConcordancePanel(QWidget):
     def _invalidate_search(self, *_args) -> None:
         self._generation += 1
         self.search_button.setEnabled(True)
+        self._items = []
+        self._render_results([])
 
     def search(self, *, sync: bool = False) -> None:
         """Execute concordance search (async by default via TaskRunner)."""
