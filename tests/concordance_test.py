@@ -330,3 +330,26 @@ def test_concordance_benchmark_50k_bounded_and_responsive(app):
     QCoreApplication.processEvents()
     assert len(panel.items()) >= 1
     panel.deleteLater()
+
+
+def test_out_of_order_results_and_task_switch_are_ignored(app, monkeypatch):
+    panel = ConcordancePanel()
+    callbacks = []
+    def queue(fn, *args, on_done, on_error, **kwargs):
+        callbacks.append((fn, args, on_done, on_error))
+    monkeypatch.setattr(panel._runner, "submit", queue)
+    panel.set_context(state={"job_id": "old", "pairs": []}, tm={})
+    panel.set_query("old")
+    panel.search()
+    panel.set_query("new")
+    panel.search()
+    callbacks[1][2]([ConcordanceItem(source="new result", target="x")])
+    callbacks[0][2]([ConcordanceItem(source="old result", target="x")])
+    assert panel.items()[0].source == "new result"
+    panel.search()
+    pending = callbacks[-1]
+    panel.set_context(state={"job_id": "new job", "pairs": []}, tm={})
+    pending[2]([ConcordanceItem(source="old task result", target="x")])
+    assert not panel.items()
+    assert pending[1][-1]["state"]["job_id"] == "old"
+    panel.deleteLater()

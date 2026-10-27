@@ -53,6 +53,7 @@ class ConcordancePanel(QWidget):
         self._extra_jobs: Optional[Sequence[Dict[str, Any]]] = None
         self._runner = TaskRunner(self, max_threads=2)
         self._items: List[concordance.ConcordanceItem] = []
+        self._generation = 0
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -85,6 +86,7 @@ class ConcordancePanel(QWidget):
             QLineEdit.ActionPosition.LeadingPosition,
         )
         self.query_edit.returnPressed.connect(self.search)
+        self.query_edit.textChanged.connect(self._invalidate_search)
         root_layout.addWidget(self.query_edit)
 
         # 3. Filter controls: direction & sort
@@ -142,6 +144,12 @@ class ConcordancePanel(QWidget):
         extra_jobs: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> None:
         """Update context (current state, TM, project) for search."""
+        old_identity = ((self._state or {}).get("job_id"), self._project_id)
+        new_identity = ((state or {}).get("job_id"), project_id)
+        if old_identity != new_identity:
+            self._invalidate_search()
+            self._items = []
+            self._render_results([])
         self._state = state
         self._project_id = project_id
         self._tm = tm
@@ -163,9 +171,15 @@ class ConcordancePanel(QWidget):
         if self.query_edit.text().strip():
             self.search()
 
+    def _invalidate_search(self, *_args) -> None:
+        self._generation += 1
+        self.search_button.setEnabled(True)
+
     def search(self, *, sync: bool = False) -> None:
         """Execute concordance search (async by default via TaskRunner)."""
         query = self.query_edit.text().strip()
+        self._generation += 1
+        generation = self._generation
         if not query:
             self._items = []
             self._render_results([])
@@ -178,28 +192,43 @@ class ConcordancePanel(QWidget):
         self.status_label.setText(i18n.tr('正在检索语料…'))
         self.search_button.setEnabled(False)
 
+        # Each worker uses the context of its own request, even if the user
+        # switches tasks while it is queued. Never read widget fields in it.
+        state = dict(self._state or {})
+        if "pairs" in state:
+            state["pairs"] = [dict(pair) for pair in state["pairs"]]
+        context = dict(state=state, project_id=self._project_id,
+                       tm=self._tm, extra_jobs=self._extra_jobs)
+
+        def done(results):
+            if generation == self._generation:
+                self._on_search_done(results, query)
+
+        def failed(message, detail):
+            if generation == self._generation:
+                self._on_search_error(message, detail)
+
         if sync:
-            results = self._run_search(query, direction, sort_by)
-            self._on_search_done(results, query)
+            results = self._run_search(query, direction, sort_by, context)
+            done(results)
         else:
             self._runner.submit(
                 self._run_search,
                 query,
                 direction,
                 sort_by,
-                on_done=lambda res: self._on_search_done(res, query),
-                on_error=self._on_search_error,
+                context,
+                on_done=done,
+                on_error=failed,
                 label="concordance_search",
             )
 
-    def _run_search(self, query: str, direction: str, sort_by: str) -> List[concordance.ConcordanceItem]:
+    @staticmethod
+    def _run_search(query: str, direction: str, sort_by: str, context: dict) -> List[concordance.ConcordanceItem]:
         return concordance.search_concordance(
             query,
             direction=direction,
-            project_id=self._project_id,
-            state=self._state,
-            tm=self._tm,
-            extra_jobs=self._extra_jobs,
+            **context,
             sort_by=sort_by,
         )
 
