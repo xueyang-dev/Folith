@@ -701,7 +701,104 @@ def available_actions(job_id: str, state: dict | None = None) -> tuple[str, ...]
 
 
 def load_state(job_id: str) -> dict:
-    return core.load_job_state(job_id) or {}
+    state = core.load_job_state(job_id) or {}
+    if ((state.get("source_update_transaction") or {}).get("status") == "applying"
+            and not core._direct_execution_active(job_id)
+            and not core.is_job_worker_alive(job_id)):
+        try:
+            state = core.recover_source_update(job_id)
+        except RuntimeError as exc:
+            # Another process may still own the worker lock.
+            if "后台处理" not in str(exc):
+                raise
+    return state
+
+
+def prepare_source_update(job_id: str, path: str) -> dict:
+    """Read and align a new revision without changing the task."""
+    import hashlib
+    from pathlib import Path
+    from folith.source_update import create_source_update_plan
+
+    state = load_state(job_id)
+    if core.load_translation_drafts(job_id):
+        raise AdapterError("任务有未提交的草稿，请先保存或放弃所有草稿。")
+    if not state.get("p2_done") or not state.get("pairs"):
+        raise AdapterError("请先完成当前任务的翻译，再更新源文。")
+    new_path = Path(path)
+    old_suffix = Path(str(state.get("filename") or "")).suffix.lower()
+    if old_suffix not in {".txt", ".md", ".docx", ".epub"} or new_path.suffix.lower() != old_suffix:
+        raise AdapterError("请选择与当前任务相同格式的 TXT、Markdown、DOCX 或 EPUB 文件。")
+    data = new_path.read_bytes()
+    previous_source = core.load_source(job_id)
+    if not previous_source:
+        raise AdapterError("当前任务缺少源文件，无法创建安全快照。")
+    paragraphs, _warnings, report = core.extract_document_paragraphs_with_report(new_path.name, data)
+    if report.get("status") == "failed" or not paragraphs:
+        raise AdapterError(str(report.get("error") or "新源文件没有可翻译内容。"))
+    segments, segmentation = core.segment_source_paragraphs(paragraphs, state=state)
+    anchors = []
+    if old_suffix == ".docx":
+        from folith.docx_roundtrip import extract_roundtrip_units
+        units, _ = extract_roundtrip_units(data)
+        if [u.source_plain for u in units] != segments:
+            raise AdapterError("此 DOCX 的结构与任务分段不能安全对齐，请使用段落分段或重新导入。")
+        anchors = [u.source_anchor for u in units]
+    plan = create_source_update_plan(state, segments, anchors_v2=anchors or None, job_id=job_id)
+    return {"job_id": job_id, "filename": new_path.name, "bytes": data, "plan": plan,
+            "context": {"sha256": hashlib.sha256(data).hexdigest(),
+                        "previous_sha256": hashlib.sha256(previous_source).hexdigest(),
+                        "paragraphs": list(paragraphs), "segments": list(segments),
+                        "segmentation": segmentation, "report": report, "anchors": anchors}}
+
+
+def execute_source_update(job_id: str, payload: dict) -> dict:
+    if payload.get("job_id") != job_id:
+        raise AdapterError("变更计划不属于当前任务。")
+    return core.apply_source_update_plan(job_id, payload["plan"],
+        new_source_bytes=payload["bytes"], new_source_filename=payload["filename"],
+        source_context=payload["context"])
+
+
+@core._exclusive_job_execution(0)
+def translate_source_update(job_id: str, config: EngineConfig) -> dict:
+    """Generate and adopt only unprotected pending segments through candidates."""
+    problem = config.connection_problem()
+    if problem:
+        raise AdapterError(problem)
+    state = core.load_job_state(job_id) or {}
+    pairs = state.get("pairs") or []
+    indexes = [i for i, pair in enumerate(pairs) if pair.get("retranslation_required")
+               and not (pair.get("locked") or pair.get("reviewed") or
+                        pair.get("human_accepted") or pair.get("human_edited"))]
+    protected = sum(1 for pair in pairs if pair.get("retranslation_required")) - len(indexes)
+    if not indexes:
+        return {"changed": 0, "protected": protected}
+    previous = {str(item.get("candidate_id")) for item in state.get("translation_candidates") or []}
+    state, _ = core.retranslate_segments(
+        job_id, indexes, config.provider, config.api_key, config.model,
+        str(state.get("target_lang") or config.target_lang),
+        style_rules=config.style_rules or DEFAULT_STYLE_RULES,
+        glossary=state.get("glossary") or [], translator_base_url=config.translator_base_url())
+    from folith.translation_candidates import CANDIDATES_KEY
+    candidates = [str(item.get("candidate_id")) for item in state.get(CANDIDATES_KEY) or []
+                  if str(item.get("candidate_id")) not in previous
+                  and item.get("segment_index") in indexes and item.get("status") == "pending"]
+    adopted = core.adopt_translation_candidates(job_id, candidates, allow_protected=False)
+    resolved = len(adopted.get("committed") or [])
+    return {"changed": resolved, "protected": protected,
+            "skipped": len(indexes) - resolved}
+
+
+def unlock_source_update_segment(job_id: str, index: int) -> None:
+    def unlock(state):
+        pairs = state.get("pairs") or []
+        if not 0 <= index < len(pairs) or not pairs[index].get("retranslation_required"):
+            raise AdapterError("当前段落没有待处理的源文变更。")
+        if not pairs[index].get("locked"):
+            raise AdapterError("当前段落没有锁定。")
+        pairs[index]["locked"] = False
+    core.mutate_job_state(job_id, unlock)
 
 
 

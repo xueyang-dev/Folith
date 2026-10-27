@@ -1,0 +1,6 @@
+Title: Project Overview.
+Important safety and privacy notice.
+Introduction to Folith professional workbench.
+Core architecture and data integrity principles.
+New section on professional CAT migration.
+Future development roadmap and conclusion.

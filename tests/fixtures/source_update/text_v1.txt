@@ -1,0 +1,6 @@
+Title: Project Overview.
+Introduction to Folith workbench.
+Legacy section to be removed.
+Core architecture and data integrity principles.
+Important safety and privacy notice.
+Future development roadmap and conclusion.

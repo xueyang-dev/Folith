@@ -924,6 +924,21 @@ from folith.engine.candidates import (  # noqa: F401  (re-export: core keeps its
     stage_concept_revision,
     stage_term_revision,
 )
+from folith.source_update import (  # noqa: F401  (re-export: core keeps its public surface)
+    align_source_paragraphs,
+    align_docx_units,
+    create_source_update_plan,
+    apply_source_update_plan,
+    create_source_update_snapshot,
+    rollback_source_update,
+    recover_source_update,
+    retranslate_incremental,
+    calculate_source_update_savings,
+    SourceUpdatePlan,
+    SourceUpdateEntry,
+    Classification as SourceUpdateClassification,
+    Resolution as SourceUpdateResolution,
+)
 
 
 
@@ -10158,6 +10173,8 @@ def save_translation_edit(job_id, index, target, actor="user"):
     pair = pairs[index]
     if is_excluded(pair):
         raise ValueError("该段落已被排除，不会进入翻译与交付；请先恢复本段再编辑译文。")
+    if pair.get("locked"):
+        raise ValueError("请先解锁段落再编辑译文。")
     assign_missing_segment_uids(state, job_id=job_id)
     new_target = str(target or "").strip()
     if not pair.get("human_edited"):
@@ -10169,6 +10186,8 @@ def save_translation_edit(job_id, index, target, actor="user"):
             "from_tm": bool(pair.get("from_tm")),
         }
     pair["target"] = new_target
+    from folith.source_update.retranslation import mark_segment_resolved
+    mark_segment_resolved(state, pair)
     pair["human_edited"] = True
     pair["reviewed"] = False
     pair["review_status"] = "not_reviewed"
@@ -13642,6 +13661,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
 
     # ---------------- 阶段二：双语翻译（批次 + 确定性检查 + 独立审校 + 翻译记忆）----------------
     if not state["p2_done"]:
+        if state.get("source_update_pending"):
+            raise ValueError("源文更新仍有待处理段落，请先完成增量翻译或人工确认。")
         if _runtime_cancel_requested(job_id):
             raise RuntimeError("任务已请求取消")
         if on_status:
