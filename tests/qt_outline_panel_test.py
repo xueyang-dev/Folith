@@ -203,6 +203,44 @@ def test_clicking_a_node_navigates_through_the_normal_selection(job):
     assert bench.target_edit.toPlainText() == "译文 3"
 
 
+def test_navigation_in_running_large_document_preserves_draft_without_grid_rebuild(job, qapp):
+    paragraphs = [f"Source paragraph {index:04d}" for index in range(2000)]
+    state = core.load_job_state(job)
+    state.update(
+        source_paras=paragraphs, paras=paragraphs,
+        pairs=[{"segment_uid": f"large-{index:04d}", "source": text,
+                "target": f"Target {index}"} for index, text in enumerate(paragraphs)],
+        segmentation={"input_paragraph_count": len(paragraphs),
+                      "paragraph_ranges": [{"paragraph_index": i, "start": i, "end": i + 1}
+                                           for i in range(len(paragraphs))]},
+        source_cleanup={"output_input_indices": [[i] for i in range(len(paragraphs))]},
+    )
+    core.save_job_state(job, state)
+    outline = _outline([(f"Chapter {i + 1}", 1, i * 200, 200) for i in range(10)], paragraphs)
+    bench = _bench(job, outline)
+    bench.resize(1200, 800)
+    bench.show()
+    bench.set_outline_open(True)
+    bench._last_runtime = {"status": "running"}
+    bench.select_segment(0)
+    bench.target_edit.setPlainText("Unsaved draft")
+    model = bench.segment_list.model()
+    calls = []
+    original = bench._render_segments
+    bench._render_segments = lambda: calls.append(True)
+    try:
+        bench.outline_panel.activate_node("n0009")
+        qapp.processEvents()
+        assert bench._current_index == 1800
+        assert bench.target_edit.toPlainText() == "Target 1800"
+        assert core.load_translation_drafts(job)["large-0000"]["text"] == "Unsaved draft"
+        assert bench.segment_list.model() is model
+        assert calls == []
+    finally:
+        bench._render_segments = original
+        bench.close()
+
+
 def test_navigation_flushes_an_unsaved_draft(job):
     bench = _bench(job, _nested_outline())
     bench.set_outline_open(True)
