@@ -109,20 +109,19 @@ def test_commit_path_no_longer_waits_on_the_knowledge_call(job_env, monkeypatch)
     # cannot tell whether a commit waited on the auxiliary provider (#68).
     release = threading.Event()
     knowledge_started = threading.Event()
-    timed_out = threading.Event()
+    all_committed = threading.Event()
+    finished = threading.Event()
     provider = Provider()
     committed = []
+    results = []
+    errors = []
     original_timing = core._batch_timing
 
     def gated_provider(*args, **kwargs):
         system_prompt = args[3] if len(args) > 3 else kwargs.get("system_prompt", "")
         if KNOWLEDGE_MARKER in (system_prompt or ""):
             knowledge_started.set()
-            if not release.wait(timeout=10):
-                # Let a serial implementation unwind and fail this test rather
-                # than leaving a provider thread blocked after the assertion.
-                timed_out.set()
-                release.set()
+            release.wait()
         return provider(*args, **kwargs)
 
     def observe_commit(job_id, stage, batch_id, phase, **metadata):
@@ -130,21 +129,39 @@ def test_commit_path_no_longer_waits_on_the_knowledge_call(job_env, monkeypatch)
         if stage != "translation" or phase != "commit_finished":
             return
         assert metadata["status"] == "completed"
-        assert knowledge_started.wait(timeout=5), "knowledge extraction never started"
+        assert knowledge_started.wait(timeout=30), "knowledge extraction never started"
         assert provider.knowledge_calls == 0, "knowledge finished before all commits"
         committed.append(batch_id)
         if len(committed) == len(PARAGRAPHS):
             persisted = core.load_job_state(job_id)
             assert [pair["target"] for pair in persisted["pairs"]] == [
                 _translate(source) for source in PARAGRAPHS]
-            release.set()
+            all_committed.set()
 
     monkeypatch.setattr(core, "_batch_timing", observe_commit)
+    def run_translation():
+        try:
+            results.append(_run("async-timing", gated_provider, monkeypatch))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=run_translation, daemon=True)
+    worker.start()
     try:
-        result = _run("async-timing", gated_provider, monkeypatch)
+        deadline = time.monotonic() + 60
+        while not all_committed.is_set() and not finished.is_set() and time.monotonic() < deadline:
+            all_committed.wait(timeout=0.1)
+        completed_before_release = all_committed.is_set()
     finally:
         release.set()
-    assert not timed_out.is_set(), "commits waited for the blocked knowledge request"
+        worker.join(timeout=30)
+    assert not worker.is_alive(), "translation did not stop after the knowledge gate was released"
+    if errors:
+        raise errors[0]
+    assert completed_before_release, "commits waited for the blocked knowledge request"
+    result = results[0]
     assert committed == list(range(1, len(PARAGRAPHS) + 1))
     assert len(result["pairs"]) == len(PARAGRAPHS)
     assert provider.knowledge_calls == len(PARAGRAPHS)
