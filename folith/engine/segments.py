@@ -520,6 +520,35 @@ def _drop_positional_artifacts(state, index, segment_count):
         segmentation["output_segment_count"] = segment_count
 
 
+def _merge_positional_artifacts(state, index, segment_count):
+    """两段合并后，同步按位置排列的派生产物（原文锚点、标记、段落区间）。
+
+    index 为保留的左段位置；index+1 的锚点/标记并入 index 后移除，段落区间
+    按「移出 index+1」语义前移（与排除的单段移出契约一致）。
+    """
+    for key in ("segment_source_spans", "segment_source_marks"):
+        values = state.get(key)
+        if not isinstance(values, list) or not values:
+            continue
+        left = values[index] if index < len(values) and isinstance(values[index], list) else []
+        right = (values[index + 1]
+                 if index + 1 < len(values) and isinstance(values[index + 1], list)
+                 else [])
+        merged = list(left)
+        for item in right:
+            if item not in merged:
+                merged.append(dict(item) if isinstance(item, dict) else item)
+        if index < len(values):
+            values[index] = merged
+        if index + 1 < len(values):
+            values.pop(index + 1)
+    segmentation = state.get("segmentation")
+    if isinstance(segmentation, dict) and segmentation.get("paragraph_ranges"):
+        segmentation["paragraph_ranges"] = _shift_paragraph_ranges(
+            segmentation["paragraph_ranges"], index + 1)
+        segmentation["output_segment_count"] = segment_count
+
+
 def _drop_segment_at(state, index):
     """从工作列表中移出一个段落，并同步它的位置型派生产物。"""
     pairs = state.get("pairs") or []
@@ -1930,6 +1959,9 @@ def mutate_translation_segments(
                 following.get("merged_segment_count") or 1)
         pairs[index:index + 2] = [merged]
         paras[index:index + 2] = [merged_source]
+        # 合并减少了一个段落位置：同步原文锚点、标记与段落区间，
+        # 确保后续排除操作的位置契约检查不会因为长度错配而失败。
+        _merge_positional_artifacts(state, index, len(paras))
         affected_hint = [index]
     elif operation == "insert":
         inserted = reset_trust(
