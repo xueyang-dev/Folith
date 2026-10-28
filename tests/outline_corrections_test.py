@@ -149,3 +149,15 @@ def test_duplicate_boundary_text_is_rejected_before_saving(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="must be unique"):
         corrections.save("ambiguous-boundary", outline, "n0001", para_start=1)
     assert not corrections.has_corrections("ambiguous-boundary")
+
+
+def test_save_preserves_corrupt_corrections_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "corrupt-corrections"
+    path = core.job_dir(job) / corrections.FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = b'{"entries": [broken'
+    path.write_bytes(original)
+    with pytest.raises(ValueError, match="file was not changed"):
+        corrections.save(job, outline_with_titles(), "n0000", title="Edited")
+    assert path.read_bytes() == original

@@ -18,11 +18,19 @@ def _path(job_id):
     return _c.job_dir(job_id) / FILENAME
 
 
-def _read(job_id):
+def _read(job_id, *, strict=False):
     try:
         value = json.loads(_path(job_id).read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) and isinstance(value.get("entries"), list) else {}
-    except (OSError, ValueError):
+        if isinstance(value, dict) and isinstance(value.get("entries"), list):
+            return value
+        if strict:
+            raise ValueError("Outline corrections file has an invalid format")
+        return {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise ValueError("Cannot safely read outline corrections; the file was not changed") from exc
         return {}
 
 
@@ -104,7 +112,7 @@ def save(job_id, extracted, node_id, *, title=None, level=None, para_start=None,
     if para_start is not None and paragraphs.count(paragraphs[int(para_start)]) != 1:
         raise ValueError("The boundary paragraph must be unique in the document")
     with _LOCK:
-        saved = _read(job_id)
+        saved = _read(job_id, strict=True)
         same = saved.get("fingerprint") == extracted.get("fingerprint")
         migrated = []
         used = set()
