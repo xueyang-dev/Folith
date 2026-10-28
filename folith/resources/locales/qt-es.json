@@ -2408,5 +2408,9 @@
   "AI 置信度：{value}": "Confianza de IA: {value}",
   "无法保存结构恢复结果。": "No se pudo guardar la recuperación de estructura.",
   "{count} 个节点 · AI 推断": "{count} nodos · inferidos por IA",
-  "{count} 个节点 · 按编号推断": "{count} nodos · inferidos de la numeración"
+  "{count} 个节点 · 按编号推断": "{count} nodos · inferidos de la numeración",
+  "所有段落都被排除了": "Todos los segmentos están excluidos",
+  "被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，原文与当前译文都完整保留。": "Los segmentos excluidos no se traducen ni se entregan. Restáuralos desde la lista de excluidos en Entrega; el original y la traducción actual se conservan.",
+  "当前筛选下没有段落": "Ningún segmento coincide con los filtros",
+  "清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。": "Borra la búsqueda o selecciona Todos en el filtro de estado para ver los segmentos restantes."
 }
