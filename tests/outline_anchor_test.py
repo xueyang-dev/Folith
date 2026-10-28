@@ -312,7 +312,11 @@ def test_excluding_a_segment_reidentifies_by_uid_and_names_the_exclusion(data_di
     first = mapping["nodes"]["n0000"]
     second = mapping["nodes"]["n0001"]
 
-    assert mapping["source"] == "uid"
+    # A manual exclusion moves paragraph_ranges with the work list (as the
+    # automatic one does), so the structure signature changes and the node is
+    # placed through the paragraph chain; the cached uids still name the
+    # exclusion.
+    assert mapping["source"] == "paragraphs"
     assert first["state"] == "partial"
     assert first["reason"] == "node_partial_excluded"
     assert (first["first_segment_index"], first["last_segment_index"]) == (0, 0)
@@ -486,7 +490,7 @@ def test_a_split_segment_refuses_the_old_position(data_dir):
     assert (second["first_segment_index"], second["last_segment_index"]) == (3, 4)
 
 
-def test_a_legacy_mapping_refuses_old_positions_after_a_structural_edit(data_dir):
+def test_a_legacy_mapping_is_replaced_by_current_positions_after_an_exclusion(data_dir):
     state = _save(_state(_paragraphs(), uids=False))
     outline = _outline(_paragraphs(), [("第一章", 0, 2), ("第二章", 2, 2)])
     anchor.store_outline(JOB, outline, data=SOURCE)
@@ -496,12 +500,17 @@ def test_a_legacy_mapping_refuses_old_positions_after_a_structural_edit(data_dir
     state = core.load_job_state(JOB)
     mapping = anchor.resolve(JOB, state)
 
-    assert mapping["source"] == "uid"
-    for node_id in ("n0000", "n0001"):
-        entry = mapping["nodes"][node_id]
-        assert entry["state"] == "unresolved"
-        assert entry["reason"] == "structure_edited"
-        assert entry["first_segment_index"] is None
+    # The exclusion moved paragraph_ranges with the work list, so the old
+    # positional mapping is not reused: the paragraph chain places both nodes
+    # at their current positions.  Without uids there is no evidence to label
+    # the first node as partially excluded.
+    assert mapping["source"] == "paragraphs"
+    first = mapping["nodes"]["n0000"]
+    second = mapping["nodes"]["n0001"]
+    assert (first["first_segment_index"], first["last_segment_index"]) == (0, 0)
+    assert (second["first_segment_index"], second["last_segment_index"]) == (1, 2)
+    assert [pair["source"] for pair in state["pairs"]] == [
+        "第一章开篇。", "第二章开篇。", "第二章正文。"]
 
 
 def _resegment_after_cleanup(state):
