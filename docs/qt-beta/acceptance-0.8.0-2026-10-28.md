@@ -9,7 +9,7 @@ Milestone: v0.8.0 · Document Fidelity, CAT & Languages
 
 ## Test run summary
 
-Interpreter: `/Users/xueyang/Dev/FolioThread/venv/bin/python` (PySide6 6.11.2, Python 3.11.3)
+Interpreter: `venv/bin/python` (PySide6 6.11.2, Python 3.11.3)
 Platform override: `QT_QPA_PLATFORM=offscreen` for the full suite.
 
 **Full suite: `pytest tests/ -x -q --tb=short`**
