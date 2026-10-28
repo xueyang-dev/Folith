@@ -74,7 +74,7 @@ _SESSION_HEADER_PROVIDERS = {"OpenCode Go"}
 #: Reasoning control is a DeepSeek-family API extension.  It is only sent when
 #: the user explicitly selects it, so an unrelated relay never receives an
 #: unsupported request field.
-REASONING_MODES = ("provider_default", "thinking_disabled")
+REASONING_MODES = ("provider_default", "thinking_disabled", "thinking_disabled_vllm")
 
 SYSTEM_PROMPT_V1 = (
     "你是扫描页图像的文字转写员。逐字转写图中正文，按原始印刷行从上到下，"
@@ -273,6 +273,22 @@ TIMEOUT_MAX_RETRIES = 1
 
 def is_timeout_error(error: "OnlineOCRRequestError") -> bool:
     return error.code == "timeout" or error.http_status in TIMEOUT_STATUSES
+
+
+def default_vision_reasoning(provider, model):
+    """Thinking mode vision reads use when nobody chose one.
+
+    DeepSeek-family models spend the whole output budget on reasoning when
+    thinking is on (a page came back with 8,196 reasoning tokens of 8,196 and no
+    answer), so reading a page needs it off.  Everyone else keeps the service
+    default.
+    """
+    name = str(model or "").strip().lower()
+    if provider == "OpenCode Go" and name == "deepseek-v4.1-flash":
+        return "thinking_disabled"
+    if provider == "DeepSeek" and name.startswith(("deepseek-flash", "deepseek-v4")):
+        return "thinking_disabled"
+    return "provider_default"
 
 
 def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
@@ -510,6 +526,9 @@ class OnlineOCRBackend(OCRBackend):
         if config.reasoning_mode == "thinking_disabled":
             # Documented DeepSeek-family control; sent only on explicit opt-in.
             body["extra_body"] = {"thinking": {"type": "disabled"}}
+        elif config.reasoning_mode == "thinking_disabled_vllm":
+            # vLLM/SGLang chat-template switch, same wire shape as the text path.
+            body["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         if config.provider in _SESSION_HEADER_PROVIDERS:
             session_id = getattr(self, "_session_id", None)
             if not session_id:

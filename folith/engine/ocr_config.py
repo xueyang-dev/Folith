@@ -13,6 +13,7 @@ from folith import ocr_backends as _ocr_backends
 from folith import ocr_language as _ocr_language
 from folith import ocr_models as _ocr_models
 from folith import ocr_online as _ocr_online
+from folith.ocr_online import default_vision_reasoning
 from folith.textual import has_textual_content
 from pathlib import Path
 from folith.engine._link import core as _c
@@ -468,6 +469,34 @@ def credential_for_endpoint(provider, resolved_base, prefer=""):
     return (rows[0][4], rows[0][3]) if rows else None
 
 
+def _vision_reasoning_mode(source, provider, model, recorded):
+    """Recorded mode, else the model's default.  When vision simply follows the
+    translation connection there is no vision-side setting, so a recorded
+    ``provider_default`` is only an earlier default, not a choice."""
+    fallback = default_vision_reasoning(provider, model)
+    recorded = str(recorded or "").strip()
+    if not recorded or (source == "translation_profile" and recorded == "provider_default"):
+        return fallback
+    return recorded
+
+
+def follow_connection_thinking(source, provider, model, recorded):
+    """Vision reasoning mode when it rides on the translation connection.
+
+    The switch is live user intent on that connection, so it beats the mode a
+    task snapshot recorded earlier; it only applies to a model whose endpoint
+    was verified to honour it, and "服务默认" can undo a recorded opt-in.
+    """
+    if source != "translation_profile":
+        return recorded
+    live = _c._connection_thinking_mode()
+    if live in _c.thinking_control_options(provider, model):
+        return live
+    if live == "provider_default" and recorded in _c.thinking_control_options(provider, model):
+        return live
+    return recorded
+
+
 def resolve_ocr_online_config(saved=None, *, descriptor=None):
     """Build the runtime online OCR config from a task descriptor + credentials.
 
@@ -516,9 +545,11 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
         temperature=float(snapshot.get("temperature")
                           if snapshot.get("temperature") is not None
                           else profile.get("temperature") or 0.0),
-        reasoning_mode=str(snapshot.get("reasoning_mode") or profile.get("reasoning_mode")
-                           or ("thinking_disabled" if provider == "OpenCode Go"
-                               and model == "deepseek-v4.1-flash" else "provider_default")),
+        reasoning_mode=follow_connection_thinking(
+            source, provider, model,
+            _vision_reasoning_mode(
+                source, provider, model,
+                str(snapshot.get("reasoning_mode") or profile.get("reasoning_mode") or ""))),
         prompt_version=str(snapshot.get("prompt_version")
                            or _ocr_online.ONLINE_PROMPT_VERSION),
         timeout_s=float(snapshot.get("timeout_s") or profile.get("timeout_s")

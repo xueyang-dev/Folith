@@ -3919,7 +3919,8 @@ def remove_termbase(job_id: str) -> dict:
 # 所以需要一个地方单独配置视觉模型。OCR 本身只是可选的本机定位插件，不在这里配置。
 
 VISION_REASONING_LABELS = {"provider_default": "服务默认",
-                           "thinking_disabled": "关闭思考（DeepSeek 系）"}
+                           "thinking_disabled": "关闭思考（DeepSeek 系）",
+                           "thinking_disabled_vllm": "关闭思考"}
 
 
 def vision_providers() -> list[str]:
@@ -3943,7 +3944,11 @@ def vision_connection_view() -> dict:
         "providers": vision_providers(),
         "min_tokens": int(core.OCR_ONLINE_MIN_MAX_TOKENS),
         "max_tokens_limit": int(core.OCR_ONLINE_MAX_MAX_TOKENS),
-        "reasoning_modes": list(core.OCR_ONLINE_REASONING_MODES),
+        "reasoning_modes": [
+            mode for mode in core.OCR_ONLINE_REASONING_MODES
+            if mode != "thinking_disabled_vllm"
+            or mode in core.thinking_control_options(
+                str(profile.get("provider") or ""), str(profile.get("model") or ""))],
         "status": {"ok": bool(status.get("ok")),
                    "message": str(status.get("message") or "").replace("线上 OCR", "视觉理解"),
                    "model": str(status.get("model") or ""),
@@ -5198,6 +5203,15 @@ def _yes(value) -> str:
 def reasoning_effort_options(provider: str, model: str) -> tuple[str, ...]:
     """这个模型可选的推理强度（low / medium / high）；不认识的模型返回空（保持自动）。"""
     return tuple(core.reasoning_effort_options(provider, model) or ())
+
+
+# 只有实测过端点确实认得的模型才出现在这里，所以界面上不会出现"选了但没生效"的开关。
+THINKING_MODE_LABELS = {"thinking_disabled_vllm": "关闭思考", "thinking_disabled": "关闭思考"}
+
+
+def thinking_control_options(provider: str, model: str) -> tuple[str, ...]:
+    """这个模型的端点已验证支持哪些"关闭思考"方式；没有则返回空，界面不显示这一项。"""
+    return tuple(core.thinking_control_options(provider, model) or ())
 
 
 def task_details(config: EngineConfig, job_id: str,
