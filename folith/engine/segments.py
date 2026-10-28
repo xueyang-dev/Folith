@@ -826,7 +826,14 @@ def exclude_translation_scope(job_id, keys, *, actor="user"):
     if not wanted:
         raise ValueError("请选择要排除的范围。")
 
-    tree = translation_scope_tree(state)
+    scope_state = state
+    if not state.get("pairs") and not state.get("paras") and not state.get("p1_done"):
+        from folith import outline_corrections, outline_recovery
+        scope_state = dict(state)
+        recovered = outline_recovery.load(job_id, state.get("source_outline") or {})
+        scope_state["source_outline"], _ = outline_corrections.apply(
+            job_id, recovered)
+    tree = translation_scope_tree(scope_state)
     nodes = {node["key"]: node
              for group in tree.get("groups") or []
              for node in group.get("nodes") or []}
@@ -841,7 +848,8 @@ def exclude_translation_scope(job_id, keys, *, actor="user"):
     # 是空的，但那必须走账本路径。
     if not state.get("pairs") and not state.get("paras") \
             and not state.get("p1_done"):
-        return _plan_scope_exclusion(state, job_id, wanted, nodes, actor=actor)
+        return _plan_scope_exclusion(state, job_id, wanted, nodes, actor=actor,
+                                     outline=scope_state.get("source_outline"))
     indexes = sorted(
         {index for key in wanted
          for index in range(nodes[key]["start"], nodes[key]["end"])},
@@ -1111,14 +1119,14 @@ def _planned_paragraph_total(state):
     return max(0, remaining)
 
 
-def _plan_scope_exclusion(state, job_id, wanted, nodes, *, actor):
+def _plan_scope_exclusion(state, job_id, wanted, nodes, *, actor, outline=None):
     """把译前选定的范围记成计划（大纲段落坐标 + 首尾锚点）。
 
     计划在 ``apply_scope_exclusion_plan`` 之前不触碰 ``excluded_segments``：
     排除账本描述的是"已从工作列表移出的翻译单元"，而这里还没有翻译单元。
     ``excluded_id`` 与账本共用同一个序号源，落账时沿用，绝不重号。
     """
-    outline = state.get("source_outline")
+    outline = outline if outline is not None else state.get("source_outline")
     outline = outline if isinstance(outline, dict) else {}
     paragraphs = [str(item or "") for item in outline.get("paragraphs") or []]
     plan = state.get(SCOPE_PLAN_KEY)

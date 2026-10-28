@@ -1211,10 +1211,13 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
     同一个对话框恢复。
     """
     state = state if state is not None else load_state(job_id)
-    tree = core.translation_scope_tree(state or {})
-    if not tree.get("available"):
+    if not (state or {}).get("pairs") and not (state or {}).get("paras") and not (state or {}).get("p1_done"):
         state = core.ensure_source_outline(job_id, state) or {}
-        tree = core.translation_scope_tree(state)
+        from folith import outline_corrections, outline_recovery
+        state = dict(state)
+        recovered = outline_recovery.load(job_id, state.get("source_outline") or {})
+        state["source_outline"], _ = outline_corrections.apply(job_id, recovered)
+    tree = core.translation_scope_tree(state or {})
     return {
         "available": bool(tree.get("available")),
         "pre_start": bool(tree.get("pre_start")),
@@ -1251,7 +1254,16 @@ def task_outline(job_id: str, state: dict | None = None) -> dict:
         # to refuse to open the workspace.
         return {"outline": {}, "mapping": {}, "parsed": False,
                 "invalidated": "source_missing", "node_count": 0}
-    outline = payload.get("outline") or {}
+    from folith import outline_corrections, outline_recovery
+    native = payload.get("outline") or {}
+    extracted = outline_recovery.load(job_id, native)
+    payload["native_outline"] = native
+    outline, dropped = outline_corrections.apply(job_id, extracted)
+    payload["extracted_outline"] = extracted
+    payload["outline"] = outline
+    payload["corrections_dropped"] = dropped
+    if outline.get("fingerprint") != extracted.get("fingerprint"):
+        payload["mapping"] = {}
     payload["node_count"] = len(outline.get("nodes") or [])
     return payload
 
@@ -1261,6 +1273,48 @@ def outline_mapping(job_id: str, state: dict, payload: dict | None = None) -> di
     from folith import outline_anchor
 
     return outline_anchor.resolve(job_id, state or {}, payload)
+
+
+def analyze_outline_recovery(job_id: str, config: EngineConfig, expected_fingerprint: str) -> dict:
+    """Run one bounded, explicit model request and persist only validated candidates."""
+    from folith import outline_anchor, outline_corrections, outline_recovery
+    problem = config.connection_problem()
+    if problem:
+        raise AdapterError(problem)
+    if outline_corrections.has_corrections(job_id):
+        raise AdapterError("已有手动修正，请先恢复原始结构再分析。")
+    payload = outline_anchor.load_outline(job_id, load_state(job_id))
+    native = payload.get("outline") or {}
+    if native.get("fingerprint") != expected_fingerprint:
+        raise AdapterError("原文结构已经变化，请重新打开准备页。")
+    if outline_recovery.ai_rejected(job_id, native):
+        raise AdapterError("此原文的 AI 结构分析已被撤销。")
+    prompt, rows = outline_recovery.ai_prompt(native)
+    if not rows:
+        raise AdapterError("没有可分析的候选标题。")
+    previous = outline_recovery.load(job_id, native)
+    source_digest = payload.get("source_sha256")
+    calls = 0
+    try:
+        calls = 1
+        raw = core.call_llm(config.provider, config.api_key, config.model,
+            outline_recovery.AI_SYSTEM,
+            prompt, temperature=0.1, base_url=config.translator_base_url() or None,
+            max_attempts=outline_recovery.MAX_AI_CALLS)
+        result = outline_recovery.from_ai(native, rows, raw)
+        if (outline_anchor.source_sha256(core.load_source(job_id) or b"") != source_digest
+                or outline_corrections.has_corrections(job_id)
+                or outline_recovery.load(job_id, native) != previous):
+            raise AdapterError("分析期间原文或结构已变化，结果没有保存。")
+        outline_recovery.save(job_id, native, result, previous=previous)
+    finally:
+        def record(state):
+            state["outline_recovery_analysis"] = {"fingerprint": expected_fingerprint,
+                "calls": calls, "input_characters": len(prompt) + len(outline_recovery.AI_SYSTEM),
+                "max_calls": outline_recovery.MAX_AI_CALLS,
+                "max_input_characters": outline_recovery.MAX_AI_INPUT_CHARS}
+        core.mutate_job_state(job_id, record)
+    return result
 
 
 def outline_revision(state: dict) -> int:

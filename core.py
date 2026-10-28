@@ -2157,7 +2157,7 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
 
 def call_llm(provider, api_key, model, system_prompt, user_prompt,
              temperature=0.1, base_url=None, response_format=None,
-             reasoning_effort=None, reasoning_mode=None):
+             reasoning_effort=None, reasoning_mode=None, max_attempts=None):
     """底层大模型统一路由（超时 150 秒，模型可配置）。
 
     支持官方接口与 OpenAI /chat/completions 兼容中转站：
@@ -2203,7 +2203,8 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             temperature=temperature, base_url=base_url,
             response_format=response_format, reasoning_effort=reasoning_effort,
             reasoning_mode=reasoning_mode,
-            runtime_job_id=runtime_job_id, started_at=_llm_started)
+            runtime_job_id=runtime_job_id, started_at=_llm_started,
+            **({"max_attempts": max_attempts} if max_attempts is not None else {}))
     except BaseException as exc:
         if not isinstance(exc, _workflow_errors.AnnotationStagingError):
             try:
@@ -2292,7 +2293,7 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
                         *, temperature=0.1, base_url=None, response_format=None,
                         reasoning_effort=None, reasoning_mode=None,
-                        runtime_job_id=None, started_at=None):
+                        runtime_job_id=None, started_at=None, max_attempts=None):
     """Perform one provider request on a pooled transport client."""
     if cfg["kind"] == "gemini":
         def _build_gemini_client():
@@ -2308,6 +2309,9 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             _llm_transport.build_gemini_identity(provider=provider, api_key=api_key),
             _build_gemini_client)
         config_kwargs = {"temperature": temperature, "system_instruction": system_prompt}
+        if max_attempts is not None:
+            config_kwargs["http_options"] = genai.types.HttpOptions(
+                retry_options=genai.types.HttpRetryOptions(attempts=max_attempts))
         if response_format and cfg.get("capabilities", {}).get("supports_response_format"):
             config_kwargs["response_mime_type"] = "application/json"
         try:
@@ -2345,6 +2349,8 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
 
     # OpenAI 官方与所有 OpenAI 兼容接口共用 SDK 路由
     resolved_base, client = _acquire_openai_compat_client(cfg, provider, api_key, base_url)
+    if max_attempts is not None:
+        client = client.with_options(max_retries=max(0, int(max_attempts) - 1))
     resolved_reasoning = (reasoning_effort if reasoning_effort is not None
                           else getattr(_LLM_CTX, "reasoning_effort", None))
     if resolved_reasoning and resolved_reasoning not in reasoning_effort_options(

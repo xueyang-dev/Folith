@@ -16,9 +16,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget,
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QMenu,
                                QListWidgetItem, QPlainTextEdit, QPushButton,
-                               QVBoxLayout, QWidget)
+                               QToolButton, QVBoxLayout, QWidget)
 
 from . import adapter
 from . import i18n
@@ -65,6 +65,13 @@ def _page_label(node: dict) -> str:
 def node_item_text(node: dict) -> str:
     """列表一行的文案：标题 · 页码 · 段数（扫描页如实写"未识别"）。"""
     parts = [str(node.get("title") or "")]
+    provenance = str(node.get("provenance") or "")
+    if provenance == "manual":
+        parts.append(i18n.tr('手动修正'))
+    elif provenance == "ai_inferred":
+        parts.append(i18n.tr('AI 推断'))
+    elif provenance.startswith("rule_"):
+        parts.append(i18n.tr('按编号推断'))
     pages = _page_label(node)
     if pages:
         parts.append(pages)
@@ -114,7 +121,8 @@ def outline_summary(outline: dict) -> str:
         (groups, i18n.tr('{count} 组', count=groups)),
     ) if count]
     parts.append(i18n.tr('{count} 段', count=int(outline.get("total_paragraphs") or 0)))
-    parts.append(i18n.tr('本地读取，未调用模型'))
+    if not any(node.get("provenance") == "ai_inferred" for node in nodes):
+        parts.append(i18n.tr('本地读取，未调用模型'))
     return " · ".join(parts)
 
 
@@ -124,6 +132,7 @@ class SourceOutlineSection(QWidget):
     #: 打开翻译范围对话框（#28）。真正的选择与状态变更在 window/引擎里，
     #: 这里只发出意图——与准备页其它按钮（新建项目、术语库…）同一模式。
     scopeRequested = Signal()
+    aiRecoveryRequested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -133,6 +142,8 @@ class SourceOutlineSection(QWidget):
         self._filename = ""
         self._view: dict = {}
         self._outline: dict = {}
+        self._base_outline: dict = {}
+        self._correction_base: dict = {}
 
         self.section = DisclosureSection(i18n.tr('原文结构'), icon="book-open")
         self.section.set_summary(i18n.tr('正在读取结构…'))
@@ -171,6 +182,31 @@ class SourceOutlineSection(QWidget):
             '模型调用，原文保留、开始后也可以恢复。'))
         self.scope_button.clicked.connect(self.scopeRequested.emit)
         scope_row.addWidget(self.scope_button)
+        edit = QToolButton()
+        edit.setObjectName("toolbarButton")
+        edit.setText(i18n.tr('修正'))
+        edit.setAccessibleName(i18n.tr('修正文档结构'))
+        menu = QMenu(edit)
+        for label, operation in [('重命名', 'rename'), ('修改层级', 'level'),
+                                 ('移动起始段落', 'boundary'), ('删除节点', 'delete'),
+                                 ('恢复原始结构', 'restore')]:
+            action = menu.addAction(i18n.tr(label))
+            action.triggered.connect(lambda _checked=False, op=operation: self._edit_outline(op))
+        edit.setMenu(menu)
+        edit.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        scope_row.addWidget(edit)
+        self.edit_button = edit
+        recovery = QToolButton()
+        recovery.setObjectName("toolbarButton")
+        recovery.setText(i18n.tr('恢复结构'))
+        recovery_menu = QMenu(recovery)
+        recovery_menu.addAction(i18n.tr('按编号恢复')).triggered.connect(self._recover_outline)
+        recovery_menu.addAction(i18n.tr('使用 AI 分析候选标题')).triggered.connect(self._request_ai)
+        recovery_menu.addAction(i18n.tr('撤销结构恢复')).triggered.connect(self._reject_recovery)
+        recovery.setMenu(recovery_menu)
+        recovery.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        scope_row.addWidget(recovery)
+        self.recovery_button = recovery
         scope_row.addStretch(1)
         body.addLayout(scope_row)
 
@@ -186,7 +222,11 @@ class SourceOutlineSection(QWidget):
         self._job_id = str(job_id or "")
         self._filename = str(filename or "")
         self._view = dict(view or {})
+        self.recovery_button.setEnabled(True)
+        self.edit_button.setEnabled(True)
         self._outline = {}
+        self._base_outline = {}
+        self._correction_base = {}
         self.node_list.clear()
         self.preview.setPlainText("")
         started = bool(self._view.get("started"))
@@ -223,7 +263,10 @@ class SourceOutlineSection(QWidget):
             self._set_status(i18n.tr('这个文件本地读不出结构；不影响导入与翻译。'))
 
     def _apply_outline(self, outline: dict) -> None:
-        self._outline = dict(outline or {})
+        from folith import outline_corrections, outline_recovery
+        self._base_outline = dict(outline or {})
+        self._correction_base = outline_recovery.load(self._job_id, self._base_outline)
+        self._outline, dropped = outline_corrections.apply(self._job_id, self._correction_base)
         self.node_list.clear()
         for node in self._outline.get("nodes") or []:
             item = QListWidgetItem(node_item_text(node))
@@ -235,9 +278,17 @@ class SourceOutlineSection(QWidget):
                 item.setToolTip(tip)
             self.node_list.addItem(item)
         summary = outline_summary(self._outline)
+        provenances = {n.get("provenance") for n in self._outline.get("nodes") or []}
+        if "ai_inferred" in provenances:
+            summary += ' · ' + i18n.tr('AI 推断')
+        elif any(str(p or "").startswith('rule_') for p in provenances):
+            summary += ' · ' + i18n.tr('按编号推断')
+        elif any(str(p or "").startswith('native_') for p in provenances):
+            summary += ' · ' + i18n.tr('文档原有结构')
         self.section.set_summary(summary or i18n.tr('没有可解析的结构'))
-        self._set_status("" if summary else i18n.tr(
-            '这个文件本地读不出结构；不影响导入与翻译。'))
+        self._set_status(i18n.tr('有 {count} 项结构修正无法匹配。', count=dropped)
+                         if dropped else ("" if summary else i18n.tr(
+            '这个文件本地读不出结构；不影响导入与翻译。')))
         if self.node_list.count():
             self.node_list.setCurrentRow(0)
 
@@ -246,6 +297,57 @@ class SourceOutlineSection(QWidget):
         self.status_label.setVisible(bool(text))
 
     # ---- 交互 ---------------------------------------------------------------
+    def _edit_outline(self, operation: str) -> None:
+        from . import outline_edit
+        node = self._current_node() or {}
+        if outline_edit.edit(self, self._job_id, self._correction_base, self._outline,
+                             operation, str(node.get("id") or "")):
+            self._apply_outline(self._base_outline)
+
+    def _recover_outline(self) -> None:
+        from folith import outline_corrections, outline_recovery
+        if outline_corrections.has_corrections(self._job_id):
+            self._set_status(i18n.tr('已有手动修正，请先恢复原始结构再分析。'))
+            return
+        recovered = outline_recovery.recover(self._base_outline)
+        if recovered != self._base_outline:
+            try:
+                outline_recovery.save(self._job_id, self._base_outline, recovered,
+                    rejected_ai=outline_recovery.ai_rejected(self._job_id, self._base_outline))
+            except OSError:
+                self._set_status(i18n.tr('无法保存结构恢复结果。'))
+                return
+            self._apply_outline(self._base_outline)
+        else:
+            self._set_status(i18n.tr('没有可恢复的编号结构。'))
+
+    def _reject_recovery(self) -> None:
+        from folith import outline_corrections, outline_recovery
+        if outline_corrections.has_corrections(self._job_id):
+            self._set_status(i18n.tr('已有手动修正，请先恢复原始结构再分析。'))
+            return
+        try:
+            outline_recovery.reject(self._job_id, self._base_outline)
+        except OSError:
+            self._set_status(i18n.tr('无法保存结构恢复结果。'))
+            return
+        self._apply_outline(self._base_outline)
+
+    def _request_ai(self) -> None:
+        if not self._base_outline:
+            return
+        self.recovery_button.setEnabled(False)
+        self.edit_button.setEnabled(False)
+        self._set_status(i18n.tr('正在分析候选标题（最多一次请求）。'))
+        self.aiRecoveryRequested.emit(str(self._base_outline.get("fingerprint") or ""))
+
+    def ai_recovery_finished(self, error: str = "") -> None:
+        self.recovery_button.setEnabled(True)
+        self.edit_button.setEnabled(True)
+        self._apply_outline(self._base_outline)
+        if error:
+            self._set_status(error)
+
     def _show_preview(self, current: QListWidgetItem | None,
                       _previous: QListWidgetItem | None = None) -> None:
         node = self._current_node(current)

@@ -347,6 +347,33 @@ def test_pre_start_scope_tree_comes_from_source_outline(tmp_path):
         core.OUTPUT_DIR = old_output
 
 
+def test_renamed_outline_keeps_pre_start_exclusion_anchors(tmp_path):
+    from folith import outline_corrections
+
+    job_id = "scope-corrected-name"
+    state = _docx_outline_state(job_id)
+    outline = state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        outline_corrections.save(job_id, outline, "n0001", title="新标题")
+        core.exclude_translation_scope(job_id, ["outline:n0001"])
+        state = core.load_job_state(job_id)
+        entry = state["scope_exclusion_plan"]["entries"][0]
+        assert entry["label"] == "新标题"
+        assert entry["anchor_first"] == "第二章 争论"
+        state["paras"] = list(outline["paragraphs"])
+        state["source_paras"] = list(state["paras"])
+        state["source_paragraphs"] = list(state["paras"])
+        state["source_cleanup"] = {"output_input_indices": [[i] for i in range(6)]}
+        state["segmentation"] = {"paragraph_ranges": [
+            {"paragraph_index": i, "start": i, "end": i + 1} for i in range(6)]}
+        result = core.apply_scope_exclusion_plan(job_id, state)
+        assert not result["unapplied"]
+        assert state["paras"] == outline["paragraphs"][:3]
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
 def test_pre_start_exclusion_is_a_plan_and_applies_when_units_are_built(tmp_path):
     """操作闭环：译前排除记成计划 → 任务开始建好翻译单元 → 落进排除账本。
 

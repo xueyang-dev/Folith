@@ -3691,6 +3691,7 @@ class WorkbenchView(QWidget):
         self.outline_panel = OutlinePanel()
         self.outline_panel.closeRequested.connect(lambda: self.set_outline_open(False))
         self.outline_panel.nodeActivated.connect(self._outline_node_activated)
+        self.outline_panel.correctionRequested.connect(self._outline_correction)
         # 左栏：原页与术语轮流占它（一个位置一个宽度）。`_source_open` 指左栏开着，
         # `_left_mode` 说开的是哪一个。
         self.left_stack = QStackedWidget()
@@ -4507,7 +4508,8 @@ class WorkbenchView(QWidget):
 
     def _outline_available(self) -> bool:
         outline = (self._outline_payload or {}).get("outline") or {}
-        return bool(self.job_id and outline.get("nodes"))
+        extracted = (self._outline_payload or {}).get("extracted_outline") or {}
+        return bool(self.job_id and (outline.get("nodes") or extracted.get("nodes")))
 
     def _render_outline(self) -> None:
         """Refresh the outline panel from the persisted sidecar (#186/#187).
@@ -4521,7 +4523,7 @@ class WorkbenchView(QWidget):
             self._outline_payload = adapter.task_outline(self.job_id, self._state)
         outline = (self._outline_payload or {}).get("outline") or {}
         nodes = [node for node in outline.get("nodes") or [] if isinstance(node, dict)]
-        if not nodes:
+        if not nodes and not self._outline_available():
             self.outline_button.setVisible(False)
             self._outline_mapping = {}
             self._outline_key = None
@@ -4546,8 +4548,19 @@ class WorkbenchView(QWidget):
         # from the task-open worker.
         self.outline_panel.set_outline(
             outline, self._outline_mapping,
-            invalidated=str((self._outline_payload or {}).get("invalidated") or ""))
+            invalidated=str((self._outline_payload or {}).get("invalidated") or ""),
+            corrections_dropped=int((self._outline_payload or {}).get("corrections_dropped") or 0))
         self._sync_outline_highlight()
+
+    def _outline_correction(self, operation: str, node_id: str) -> None:
+        from . import outline_edit
+
+        payload = self._outline_payload or {}
+        if outline_edit.edit(self, self.job_id, payload.get("extracted_outline") or {},
+                             payload.get("outline") or {}, operation, node_id):
+            self._outline_payload = adapter.task_outline(self.job_id, self._state)
+            self._outline_key = None
+            self._render_outline()
 
     def _outline_node_activated(self, node_id: str) -> None:
         """Jump to a node's first segment through the one selection path."""
