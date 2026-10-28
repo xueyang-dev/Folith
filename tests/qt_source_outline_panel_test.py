@@ -93,6 +93,19 @@ def _patch_loader(monkeypatch):
     return holder
 
 
+def test_unreadable_corrections_reported_in_preparation(qt_app, data_env):
+    from folith import outline_corrections, source_outline
+    job = _new_task(data_env)
+    path = core.job_dir(job) / outline_corrections.FILENAME
+    path.write_bytes(b'{"entries": [broken')
+    section = SourceOutlineSection()
+    section._job_id = job
+    section._apply_outline(source_outline.parse_source_outline("sample.docx", _make_docx()))
+    assert section.node_list.count() > 0
+    assert "无法读取结构修正文件" in section.status_label.text()
+    assert path.read_bytes() == b'{"entries": [broken'
+
+
 # ---------------------------------------------------------------- 纯函数
 
 def test_scanned_node_honestly_says_not_recognized():

@@ -286,7 +286,9 @@ class SourceOutlineSection(QWidget):
         elif any(str(p or "").startswith('native_') for p in provenances):
             summary += ' · ' + i18n.tr('文档原有结构')
         self.section.set_summary(summary or i18n.tr('没有可解析的结构'))
-        self._set_status(i18n.tr('有 {count} 项结构修正无法匹配。', count=dropped)
+        self._set_status(i18n.tr('无法读取结构修正文件；原文件已保留。')
+                         if dropped == outline_corrections.UNREADABLE else
+                         i18n.tr('有 {count} 项结构修正无法匹配。', count=dropped)
                          if dropped else ("" if summary else i18n.tr(
             '这个文件本地读不出结构；不影响导入与翻译。')))
         if self.node_list.count():

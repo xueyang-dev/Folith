@@ -137,6 +137,15 @@ def test_the_panel_is_closed_by_default_and_reachable_from_the_toolbar(job):
     assert bench.left_stack.indexOf(bench.outline_panel) >= 0
 
 
+def test_unreadable_corrections_reported_in_workspace(job):
+    from folith import outline_corrections
+    bench = _bench(job, _nested_outline())
+    bench.outline_panel.set_outline(_nested_outline(), {"nodes": {}},
+                                    corrections_dropped=outline_corrections.UNREADABLE)
+    assert "无法读取结构修正文件" in bench.outline_panel.status.text()
+    bench.close()
+
+
 def test_a_task_without_an_outline_has_no_entry_point(job):
     bench = _bench(job, {"format": "DOCX", "nodes": [], "paragraphs": [],
                          "fingerprint": "", "parser_version": 1})

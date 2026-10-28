@@ -104,3 +104,63 @@ def test_reparse_retains_correction_when_title_and_first_paragraph_match(tmp_pat
     changed["fingerprint"] = source_outline.outline_fingerprint(changed)
     effective, dropped = corrections.apply("same-content-reparse", changed)
     assert dropped == 0 and effective["nodes"][0]["title"] == "Edited"
+
+
+def test_saving_new_correction_preserves_unmatched_old_correction(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "unmatched-preserved"
+    old = outline_with_titles()
+    corrections.save(job, old, "n0000", title="Old edit")
+    changed = outline_with_titles("Different")
+    corrections.save(job, changed, "n0001", title="Second edit")
+    effective, dropped = corrections.apply(job, changed)
+    assert dropped == 1
+    assert [n["title"] for n in effective["nodes"]] == ["Different", "Second edit"]
+    saved = corrections._read(job)
+    assert len(saved["entries"]) == 2
+    assert any(e.get("title") == "Old edit" and e.get("unmatched") for e in saved["entries"])
+    corrections.save(job, changed, "n0000", title="New edit")
+    effective, dropped = corrections.apply(job, changed)
+    assert dropped == 1
+    assert [n["title"] for n in effective["nodes"]] == ["New edit", "Second edit"]
+
+
+def test_changed_boundary_text_is_not_applied_with_same_fingerprint(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "changed-boundary"
+    original = outline_with_titles()
+    corrections.save(job, original, "n0001", para_start=1)
+    changed = copy.deepcopy(original)
+    changed["paragraphs"][1] = "Replacement"
+    assert changed["fingerprint"] == original["fingerprint"]
+    effective, dropped = corrections.apply(job, changed)
+    assert dropped == 1 and effective == changed
+    corrections.save(job, changed, "n0000", title="Other edit")
+    effective, dropped = corrections.apply(job, changed)
+    assert dropped == 1
+    assert effective["nodes"][0]["title"] == "Other edit"
+    assert effective["nodes"][1]["para_start"] == 2
+
+
+def test_duplicate_boundary_text_is_rejected_before_saving(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    outline = outline_with_titles()
+    outline["paragraphs"][3] = outline["paragraphs"][1]
+    with pytest.raises(ValueError, match="must be unique"):
+        corrections.save("ambiguous-boundary", outline, "n0001", para_start=1)
+    assert not corrections.has_corrections("ambiguous-boundary")
+
+
+def test_save_preserves_corrupt_corrections_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "corrupt-corrections"
+    path = core.job_dir(job) / corrections.FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = b'{"entries": [broken'
+    path.write_bytes(original)
+    outline = outline_with_titles()
+    assert corrections.has_corrections(job)
+    assert corrections.apply(job, outline) == (outline, corrections.UNREADABLE)
+    with pytest.raises(ValueError, match="file was not changed"):
+        corrections.save(job, outline, "n0000", title="Edited")
+    assert path.read_bytes() == original
