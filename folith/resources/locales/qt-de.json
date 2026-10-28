@@ -2413,5 +2413,11 @@
   "被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，原文与当前译文都完整保留。": "Ausgeschlossene Segmente werden nicht übersetzt oder ausgeliefert. Stellen Sie sie in der Ausschlussliste unter Auslieferung wieder her; Ausgangstext und aktuelle Übersetzung bleiben erhalten.",
   "当前筛选下没有段落": "Keine Segmente entsprechen den Filtern",
   "清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。": "Löschen Sie die Suche oder setzen Sie den Statusfilter auf Alle, um die übrigen Segmente zu sehen.",
-  "无法读取结构修正文件；原文件已保留。": "Die Datei mit Strukturkorrekturen konnte nicht gelesen werden; die Originaldatei wurde beibehalten."
+  "无法读取结构修正文件；原文件已保留。": "Die Datei mit Strukturkorrekturen konnte nicht gelesen werden; die Originaldatei wurde beibehalten.",
+  "原格式译文 DOCX": "Übersetzungs-DOCX im Originalformat",
+  "仅 DOCX": "Nur DOCX",
+  "仅 DOCX 任务可用：在原 DOCX 文件上写回译文，保留样式、表格与页眉页脚。": "Nur für DOCX-Aufgaben verfügbar: Schreibt die Übersetzung in die Original-DOCX zurück und behält Formatvorlagen, Tabellen sowie Kopf- und Fußzeilen bei.",
+  "仅 DOCX 任务可用：需要原 DOCX 文件作为写回基础。": "Nur für DOCX-Aufgaben verfügbar: Die Original-DOCX wird als Grundlage zum Zurückschreiben benötigt.",
+  "原格式译文": "Übersetzung im Originalformat",
+  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Schreibt die Übersetzung in die Original-DOCX zurück und behält Formatvorlagen, Tabellen, Fußnoten sowie Kopf- und Fußzeilen bei; nicht Übersetztes wird im Lieferbericht aufgeführt."
 }

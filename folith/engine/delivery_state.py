@@ -450,6 +450,18 @@ def original_layout_pdf_applicable(filename, source=None):
     return _is_pdf_source(filename, source)
 
 
+def original_format_docx_applicable(filename, source=None):
+    """Whether the original-format DOCX can exist for this task source.
+
+    The write-back edits the source's own DOCX package, so the option is
+    meaningful for DOCX tasks only.  Same contract as
+    :func:`original_layout_pdf_applicable`: both shells ask before offering it
+    and the delivery bundle asks before building it.
+    """
+    return str(filename or "").lower().endswith(".docx") and (
+        source is None or bool(source))
+
+
 @contextmanager
 def _delivery_timing(job_id, state, operation):
     run = trace.get_active_run(job_id)

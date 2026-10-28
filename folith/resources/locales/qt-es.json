@@ -2413,5 +2413,11 @@
   "被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，原文与当前译文都完整保留。": "Los segmentos excluidos no se traducen ni se entregan. Restáuralos desde la lista de excluidos en Entrega; el original y la traducción actual se conservan.",
   "当前筛选下没有段落": "Ningún segmento coincide con los filtros",
   "清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。": "Borra la búsqueda o selecciona Todos en el filtro de estado para ver los segmentos restantes.",
-  "无法读取结构修正文件；原文件已保留。": "No se pudo leer el archivo de correcciones de estructura; se ha conservado el archivo original."
+  "无法读取结构修正文件；原文件已保留。": "No se pudo leer el archivo de correcciones de estructura; se ha conservado el archivo original.",
+  "原格式译文 DOCX": "DOCX de traducción en formato original",
+  "仅 DOCX": "solo DOCX",
+  "仅 DOCX 任务可用：在原 DOCX 文件上写回译文，保留样式、表格与页眉页脚。": "Solo para tareas DOCX: escribe la traducción en el DOCX original conservando estilos, tablas, encabezados y pies de página.",
+  "仅 DOCX 任务可用：需要原 DOCX 文件作为写回基础。": "Solo para tareas DOCX: se necesita el archivo DOCX original como base de escritura.",
+  "原格式译文": "Traducción en formato original",
+  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Escribe la traducción en el DOCX original conservando estilos, tablas, notas al pie, encabezados y pies de página; lo que quede sin traducir se indica en el informe de entrega."
 }

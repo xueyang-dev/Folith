@@ -919,19 +919,26 @@ def write_roundtrip_docx(source_bytes: bytes,
     - Corrupt tags, missing anchors, or invalid markup raise an actionable error.
     """
     # 1. Resolve units
+    untranslated_units: List[Dict[str, Any]] = []
     if isinstance(units_or_state, dict):
         # Called with Folith job state
         state = units_or_state
         target_lang = target_lang or state.get("target_lang")
         extracted_units, manifest = extract_roundtrip_units(source_bytes)
         pairs = state.get("pairs") or []
-        # Match units with pairs
+        # Match units with pairs.  A unit with no translation keeps its source
+        # text, but is recorded so the report can show it instead of passing
+        # it off as translated.
         for i, u in enumerate(extracted_units):
-            if i < len(pairs):
-                target = pairs[i].get("target") or pairs[i].get("source") or ""
+            target = (pairs[i].get("target") if i < len(pairs) else "") or ""
+            if target.strip():
                 u.target = target
             else:
                 u.target = u.source
+                untranslated_units.append({
+                    "instance_id": u.instance_id,
+                    "reason": "no_target" if i < len(pairs) else "no_pair",
+                })
         units = extracted_units
     elif isinstance(units_or_state, list):
         if units_or_state and isinstance(units_or_state[0], dict):
@@ -1068,6 +1075,7 @@ def write_roundtrip_docx(source_bytes: bytes,
         "supported": manifest["supported"],
         "preserved": manifest["preserved"],
         "rejected": manifest["rejected"],
+        "untranslated_units": untranslated_units,
     }
     return output_bytes, report
 

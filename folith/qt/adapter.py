@@ -118,6 +118,7 @@ class EngineConfig:
     deliver_bilingual_docx: bool = True
     deliver_pdf: bool = False
     deliver_original_pdf: bool = False
+    deliver_original_docx: bool = False
     deliver_epub: bool = False
     deliver_terms_xlsx: bool = True
     deliver_evidence: bool = True
@@ -476,6 +477,8 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
     # into a DOCX job and promise an artifact that will never be produced.
     deliver_original_pdf = bool(config.deliver_original_pdf) and (
         core.original_layout_pdf_applicable(state.get("filename")))
+    deliver_original_docx = bool(config.deliver_original_docx) and (
+        core.original_format_docx_applicable(state.get("filename")))
     try:
         base_url = config.translator_base_url()
     except ValueError:
@@ -518,6 +521,7 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
             "deliver_bilingual_docx": config.deliver_bilingual_docx,
             "deliver_pdf": config.deliver_pdf,
             "deliver_original_pdf": deliver_original_pdf,
+            "deliver_original_docx": deliver_original_docx,
             "deliver_epub": config.deliver_epub,
             "deliver_terms_xlsx": config.deliver_terms_xlsx,
             "deliver_evidence": config.deliver_evidence,
@@ -4252,6 +4256,9 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
         names.append("translation.pdf")
     if configured.get("deliver_original_pdf"):
         names.append("original_layout.pdf")
+    if configured.get("deliver_original_docx") and \
+            core.original_format_docx_applicable(state.get("filename", "")):
+        names.append("original_format.docx")
     if configured.get("deliver_epub"):
         names.append("translation.epub")
     if configured.get("deliver_terms_xlsx"):
@@ -4410,7 +4417,9 @@ def supplementable_outputs(job_id: str, state: dict | None = None) -> list[dict]
     items = _task_setup.delivery_items_for_source(
         (*_task_setup.DELIVERY_TRANSLATION_ITEMS, *_task_setup.DELIVERY_ASSET_ITEMS),
         core.original_layout_pdf_applicable(state.get("filename", ""),
-                                            core.load_source(job_id)))
+                                            core.load_source(job_id)),
+        core.original_format_docx_applicable(state.get("filename", ""),
+                                             core.load_source(job_id)))
     return [{"key": str(item["key"]), "title": str(item["title"]),
              "format": str(item.get("format") or ""),
              "detail": str(item.get("detail") or "")}
@@ -5333,6 +5342,7 @@ def task_setup_view(config: EngineConfig, job_id: str,
         "filename": filename,
         "started": started,
         "is_pdf": filename.lower().endswith(".pdf"),
+        "is_docx": core.original_format_docx_applicable(filename),
         "target_lang": str(_pick(state, "target_lang", config.target_lang)),
         # 原文语言在导入时确定（它是任务身份的一部分）；准备页只显示，不改。
         "source_lang": str(state.get("source_lang") or ""),
