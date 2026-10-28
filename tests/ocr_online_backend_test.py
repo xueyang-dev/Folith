@@ -177,12 +177,26 @@ def test_unusable_responses_are_never_saved_as_success(payload, code):
         decode_segments(payload)
     assert str(error.value) == code
 
-    backend, _client = backend_with([response(payload)])
+    # A malformed reply is asked again a bounded number of times, then fails.
+    backend, client = backend_with([response(payload)] * 3)
     blocks, page_error = backend.ocr_page(PNG, page_index=0, page_number=1,
                                           language="ara", dpi=350)
     assert blocks == []
     assert page_error is not None and page_error.startswith(code)
     assert backend._last_request["status"] == "failed"
+    assert len(client.requests) == ocr_online.CONTENT_MAX_RETRIES + 1
+    # The rejected reply is kept, so a failure can be diagnosed afterwards.
+    assert backend._last_request["attempts"][-1]["response_excerpt"] == payload[:ocr_online.RESPONSE_EXCERPT_CHARS]
+
+
+def test_malformed_reply_is_retried_and_a_good_one_is_kept():
+    backend, client = backend_with([response("not json at all"),
+                                    segments_response(["hello"])])
+    blocks, page_error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                          language="eng", dpi=220)
+    assert page_error is None and [b.text for b in blocks] == ["hello"]
+    assert len(client.requests) == 2
+    assert backend._last_request["attempt_count"] == 2
 
 
 def test_tolerates_a_fenced_json_block():
@@ -357,6 +371,8 @@ def test_quota_and_billing_errors_are_not_retried_and_are_fatal():
     for failure in (FakeStatusError(402), FakeStatusError(429, "insufficient_quota: billing")):
         error = classify_request_error(failure)
         assert error.code == "quota_error" and not error.retryable
+
+
 def test_vllm_thinking_switch_uses_chat_template_shape():
     backend, client = backend_with([segments_response(["x"])],
                                    reasoning_mode="thinking_disabled_vllm")
@@ -384,3 +400,12 @@ def test_vision_follows_translation_connection_thinking_switch(monkeypatch):
                   "thinking_disabled_vllm") == "provider_default"
 
 
+def test_a_truncated_reply_keeps_its_head_tail_and_length_for_study():
+    text = "x" * 3000 + "," + "y" * 3000
+    backend, _client = backend_with([response(text, finish_reason="length")])
+    _blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1, language="eng", dpi=220)
+    assert error and error.startswith("truncated")
+    attempt = backend._last_request["attempts"][-1]
+    assert attempt["response_chars"] == len(text)
+    assert attempt["response_head"] == text[:ocr_online.RESPONSE_EXCERPT_CHARS // 2]
+    assert attempt["response_tail"].endswith("y" * 100)

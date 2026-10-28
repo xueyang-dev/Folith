@@ -12247,6 +12247,21 @@ def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
     return total > 0 and len(scanned) == total
 
 
+def _explicit_ocr_online(ocr_online, saved_runtime_config):
+    """The visual connection a caller really chose, as opposed to one merely replayed.
+
+    Resuming a task rebuilds its settings from the saved task config, so the
+    connection the task was pinned to arrives here as if it were an explicit
+    argument.  Treating it as explicit skipped the pinned-vs-current decision
+    for good: the user's "use the current connection" choice never applied.  A
+    descriptor identical to the pinned one is a replay and counts as no choice.
+    """
+    pinned = (saved_runtime_config or {}).get("ocr_online")
+    if isinstance(ocr_online, dict) and ocr_online and ocr_online == pinned:
+        return None
+    return ocr_online
+
+
 def _reconcile_vision_connection(job_id, state):
     """续跑时，任务钉住的视觉连接与当前视觉连接不同：决定用哪个，并留痕。
 
@@ -12311,7 +12326,8 @@ def _refresh_scan_provider(job_id, stream, state):
 
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                        source_language=None, ocr_language=None, ocr_psm=None,
-                       failed_pages=None, online_config_resolver=None):
+                       failed_pages=None, online_config_resolver=None,
+                       committed_paragraphs=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
 
@@ -12332,7 +12348,8 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
             if isinstance(row, dict) and row.get("page")}
     stream = ScanStream(filename, file_bytes, provider, spatial_engine=spatial_engine,
                         checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
-                        page_gate=page_gate, late_pages=late, provider_label=label)
+                        page_gate=page_gate, late_pages=late, provider_label=label,
+                        known_paragraphs=committed_paragraphs)
     stream.facts = _pdf_extraction_facts(file_bytes)
 
     def refresh_provider(state):
@@ -12789,6 +12806,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state, segmentation_mode)
     previous_performance = state.get("performance")
     saved_runtime_config = state.get("pipeline_config") or {}
+    ocr_online = _explicit_ocr_online(ocr_online, saved_runtime_config)
     if ocr_online is None and saved_runtime_config:
         _reconcile_vision_connection(job_id, state)
         saved_runtime_config = state.get("pipeline_config") or {}
@@ -13333,6 +13351,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 source_language=effective_source_language,
                 ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
                 failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"),
+                committed_paragraphs=state.get("source_paragraphs"),
                 online_config_resolver=_current_vision_config)
             registry = _SCAN_STREAMS.get()
             if registry is not None:
