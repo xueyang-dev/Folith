@@ -119,7 +119,9 @@ def test_real_sdlxliff_fixture_audit():
 def test_preflight_only_exempts_unchanged_public_fixtures(monkeypatch):
     from scripts import release_preflight as preflight
     path = "tests/fixtures/sdlxliff/TTSExample.docx.sdlxliff"
-    original = (ROOT / path).read_bytes()
+    # Preflight scans committed blobs, not a checkout that may have CRLF conversion.
+    original = preflight._ref_blob("HEAD", path)
+    assert original is not None
     monkeypatch.setattr(preflight, "_ref_files", lambda _: [path])
     monkeypatch.setattr(preflight, "_ref_blob", lambda *_: original)
     monkeypatch.setattr(preflight, "_ref_text", lambda *_: original.decode("utf-8"))
