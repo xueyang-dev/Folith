@@ -62,6 +62,32 @@ def _reparse_matches(nodes, entry):
             and _first_paragraph_hash(node) == anchor]
 
 
+def _resolve_entry(nodes, paragraphs, entry, same):
+    if same and entry.get("unmatched"):
+        return None
+    matches = ([n for n in nodes if n.get("id") == entry.get("node_id")
+                and (not entry.get("first_paragraph_sha256") or
+                     _first_paragraph_hash(n) == entry["first_paragraph_sha256"])]
+               if same else _reparse_matches(nodes, entry))
+    if len(matches) != 1:
+        return None
+    node = matches[0]
+    start = entry.get("para_start")
+    if start is not None:
+        # Fingerprints do not include paragraph text: verify the boundary even
+        # when the structural fingerprint has not changed.
+        positions = [i for i, text in enumerate(paragraphs) if text == entry.get("boundary_text")]
+        if len(positions) != 1:
+            return None
+        start = positions[0]
+        position = nodes.index(node)
+        before = int(nodes[position - 1].get("para_start") or 0) if position else -1
+        after = int(nodes[position + 1].get("para_start") or 0) if position + 1 < len(nodes) else len(paragraphs)
+        if not before < start < after:
+            return None
+    return node, start
+
+
 def save(job_id, extracted, node_id, *, title=None, level=None, para_start=None, delete=False):
     """Save one correction against the extracted identity, never an edited title."""
     nodes = extracted.get("nodes") or []
@@ -75,25 +101,28 @@ def save(job_id, extracted, node_id, *, title=None, level=None, para_start=None,
         raise ValueError("Level must be between 1 and 20")
     if para_start is not None and not 0 <= int(para_start) < len(paragraphs):
         raise ValueError("Paragraph is outside the document")
+    if para_start is not None and paragraphs.count(paragraphs[int(para_start)]) != 1:
+        raise ValueError("The boundary paragraph must be unique in the document")
     with _LOCK:
         saved = _read(job_id)
-        if saved.get("fingerprint") != extracted.get("fingerprint"):
-            migrated = []
-            for old in saved.get("entries") or []:
-                matches = _reparse_matches(nodes, old)
-                if len(matches) != 1:
-                    continue
-                updated = dict(old, node_id=matches[0]["id"])
-                if "para_start" in updated:
-                    positions = [i for i, text in enumerate(paragraphs)
-                                 if text == updated.get("boundary_text")]
-                    if len(positions) != 1:
-                        continue
-                    updated["para_start"] = positions[0]
-                migrated.append(updated)
-            saved = {"fingerprint": extracted.get("fingerprint"), "entries": migrated}
+        same = saved.get("fingerprint") == extracted.get("fingerprint")
+        migrated = []
+        used = set()
+        for old in saved.get("entries") or []:
+            resolved = _resolve_entry(nodes, paragraphs, old, same)
+            if resolved is None or resolved[0]["id"] in used:
+                migrated.append(dict(old, unmatched=True))
+                continue
+            matched_node, start = resolved
+            used.add(matched_node["id"])
+            updated = dict(old, node_id=matched_node["id"])
+            updated.pop("unmatched", None)
+            if start is not None:
+                updated["para_start"] = start
+            migrated.append(updated)
+        saved = {"fingerprint": extracted.get("fingerprint"), "entries": migrated}
         entries = saved["entries"]
-        entry = next((e for e in entries if e.get("node_id") == node_id), None)
+        entry = next((e for e in entries if not e.get("unmatched") and e.get("node_id") == node_id), None)
         if entry is None:
             entry = {"node_id": node_id, "original_title": node.get("title", ""),
                      "first_paragraph_sha256": _first_paragraph_hash(node),
@@ -135,31 +164,11 @@ def apply(job_id, extracted):
     dropped = 0
     structural = False
     for entry in entries:
-        if not same and not entry.get("original_title_unique"):
+        resolved = _resolve_entry(nodes, paragraphs, entry, same)
+        if resolved is None or resolved[0]["id"] in used:
             dropped += 1
             continue
-        candidates = ([n for n in nodes if n.get("id") == entry.get("node_id")
-                       and (not entry.get("first_paragraph_sha256") or
-                            _first_paragraph_hash(n) == entry["first_paragraph_sha256"])]
-                      if same else _reparse_matches(nodes, entry))
-        if len(candidates) != 1 or candidates[0]["id"] in used:
-            dropped += 1
-            continue
-        node = candidates[0]
-        start = entry.get("para_start")
-        if start is not None and not same:
-            positions = [i for i, text in enumerate(paragraphs) if text == entry.get("boundary_text")]
-            if len(positions) != 1:
-                dropped += 1
-                continue
-            start = positions[0]
-        if start is not None:
-            position = nodes.index(node)
-            before = int(nodes[position - 1].get("para_start") or 0) if position else -1
-            after = int(nodes[position + 1].get("para_start") or 0) if position + 1 < len(nodes) else len(paragraphs)
-            if not before < int(start) < after:
-                dropped += 1
-                continue
+        node, start = resolved
         used.add(node["id"])
         if entry.get("delete"):
             node["_deleted"] = True
