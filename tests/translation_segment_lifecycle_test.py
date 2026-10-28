@@ -738,3 +738,185 @@ def test_legacy_delivery_fallback_keeps_excluded_manifest(tmp_path):
         assert manifest["records"][0]["reason"] == "历史页码"
     finally:
         core.OUTPUT_DIR = old_output
+
+
+# ----------------------------------------------------------------
+# 位置契约：split / insert / delete / undo 后 spans/marks 与 paras 等长
+# ----------------------------------------------------------------
+
+def _state_3spans():
+    """Three segments each with a distinct page-anchor and mark.  One paragraph
+    range per segment (simulates three independent source paragraphs)."""
+    state = core.new_job_state("segment-positions.pdf")
+    state.update(
+        p1_done=True,
+        p2_done=True,
+        paras=["Alpha source", "Beta source", "Gamma source"],
+        pairs=[{"source": s, "target": t}
+               for s, t in zip(["Alpha source", "Beta source", "Gamma source"],
+                               ["甲", "乙", "丙"])],
+    )
+    state["segment_source_spans"] = [
+        [{"page_id": "p1"}], [{"page_id": "p2"}], [{"page_id": "p3"}]
+    ]
+    state["segment_source_marks"] = [
+        [{"id": "a"}], [{"id": "b"}], [{"id": "c"}]
+    ]
+    state["segmentation"] = {
+        "output_segment_count": 3,
+        "paragraph_ranges": [
+            {"paragraph_index": i, "start": i, "end": i + 1} for i in range(3)
+        ],
+    }
+    return state
+
+
+def _lengths_in_step(state):
+    """Return (True, 'ok') when all positional lists match len(paras)."""
+    n = len(state["paras"])
+    spans = state.get("segment_source_spans")
+    marks = state.get("segment_source_marks")
+    if spans is not None and len(spans) != n:
+        return False, f"spans {len(spans)} != paras {n}"
+    if marks is not None and len(marks) != n:
+        return False, f"marks {len(marks)} != paras {n}"
+    seg = (state.get("segmentation") or {})
+    if seg.get("output_segment_count") is not None and seg["output_segment_count"] != n:
+        return False, f"output_segment_count {seg['output_segment_count']} != paras {n}"
+    return True, "ok"
+
+
+def test_split_then_exclude_keeps_positional_lists_in_step(tmp_path, monkeypatch):
+    """split at index 1 -> N+1 pairs; subsequent exclude must not raise."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "positions-split-excl"
+    core.save_job_state(job, _state_3spans())
+
+    after_split = core.mutate_translation_segments(
+        job, 1, "split",
+        source_a="Beta first", source_b="Beta second",
+        target_a="乙1", target_b="乙2",
+    )
+    ok, msg = _lengths_in_step(after_split)
+    assert ok, f"after split: {msg}"
+    assert len(after_split["segment_source_spans"]) == len(after_split["paras"]) == 4
+    # Right half inherits the original anchor of the split segment.
+    assert after_split["segment_source_spans"][2] == [{"page_id": "p2"}]
+
+    # Exclusion must not raise ValueError about list lengths.
+    after_excl = core.mutate_translation_segments(job, 0, "exclude", exclude_reason="t")
+    ok, msg = _lengths_in_step(after_excl)
+    assert ok, f"after exclude: {msg}"
+    assert len(after_excl["paras"]) == 3
+
+
+def test_insert_then_exclude_keeps_positional_lists_in_step(tmp_path, monkeypatch):
+    """insert at index 1 -> N+1 pairs; subsequent exclude must not raise."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "positions-insert-excl"
+    core.save_job_state(job, _state_3spans())
+
+    after_insert = core.mutate_translation_segments(job, 1, "insert")
+    ok, msg = _lengths_in_step(after_insert)
+    assert ok, f"after insert: {msg}"
+    assert len(after_insert["segment_source_spans"]) == len(after_insert["paras"]) == 4
+    # Inserted segment has an empty span and empty mark.
+    assert after_insert["segment_source_spans"][2] == []
+    assert after_insert["segment_source_marks"][2] == []
+
+    after_excl = core.mutate_translation_segments(job, 0, "exclude", exclude_reason="t")
+    ok, msg = _lengths_in_step(after_excl)
+    assert ok, f"after exclude: {msg}"
+    assert len(after_excl["paras"]) == 3
+
+
+def test_merge_then_split_then_exclude_keeps_positional_lists_in_step(tmp_path, monkeypatch):
+    """merge -> split -> exclude: three consecutive structural ops must stay in step."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "positions-merge-split-excl"
+    core.save_job_state(job, _state_3spans())
+
+    after_merge = core.mutate_translation_segments(job, 0, "merge")
+    ok, msg = _lengths_in_step(after_merge)
+    assert ok, f"after merge: {msg}"
+    assert len(after_merge["paras"]) == 2
+
+    after_split = core.mutate_translation_segments(
+        job, 0, "split",
+        source_a="Alpha Beta first", source_b="Alpha Beta second",
+        target_a="甲乙1", target_b="甲乙2",
+    )
+    ok, msg = _lengths_in_step(after_split)
+    assert ok, f"after split: {msg}"
+    assert len(after_split["paras"]) == 3
+
+    after_excl = core.mutate_translation_segments(job, 2, "exclude", exclude_reason="t")
+    ok, msg = _lengths_in_step(after_excl)
+    assert ok, f"after exclude: {msg}"
+    assert len(after_excl["paras"]) == 2
+
+
+def test_undo_merge_restores_positional_lists_in_step(tmp_path, monkeypatch):
+    """Undoing a merge (= splitting one back to two) must restore list lengths."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "positions-undo-merge"
+    core.save_job_state(job, _state_3spans())
+
+    core.mutate_translation_segments(job, 0, "merge")
+    restored = core.undo_translation_segment_structure(job)
+    ok, msg = _lengths_in_step(restored)
+    assert ok, f"after undo merge: {msg}"
+    assert len(restored["paras"]) == 3
+
+
+def test_undo_split_restores_positional_lists_in_step(tmp_path, monkeypatch):
+    """Undoing a split (= merging two back to one) must restore list lengths."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "positions-undo-split"
+    core.save_job_state(job, _state_3spans())
+
+    core.mutate_translation_segments(
+        job, 1, "split",
+        source_a="Beta A", source_b="Beta B",
+        target_a="乙A", target_b="乙B",
+    )
+    restored = core.undo_translation_segment_structure(job)
+    ok, msg = _lengths_in_step(restored)
+    assert ok, f"after undo split: {msg}"
+    assert len(restored["paras"]) == 3
+
+
+def test_undo_insert_restores_positional_lists_in_step(tmp_path, monkeypatch):
+    """Undoing an insert (= dropping one slot) must restore list lengths."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "positions-undo-insert"
+    core.save_job_state(job, _state_3spans())
+
+    core.mutate_translation_segments(job, 1, "insert")
+    restored = core.undo_translation_segment_structure(job)
+    ok, msg = _lengths_in_step(restored)
+    assert ok, f"after undo insert: {msg}"
+    assert len(restored["paras"]) == 3
+
+
+def test_structural_ops_keep_positional_lists_in_step_after_sequence(tmp_path, monkeypatch):
+    """Arbitrary sequence of structural ops must never leave positional lists
+    out of step with paras.  Covers merge, split, insert in combination."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "positions-sequence"
+    core.save_job_state(job, _state_3spans())
+
+    ops = [
+        ("split", dict(source_a="A1", source_b="A2", target_a="甲1", target_b="甲2"), 0),
+        ("merge", {}, 1),
+        ("insert", {}, 0),
+        ("merge", {}, 0),
+        ("split", dict(source_a="X", source_b="Y", target_a="x", target_b="y"), 0),
+    ]
+    for op_name, kwargs, idx in ops:
+        state = core.mutate_translation_segments(job, idx, op_name, **kwargs)
+        ok, msg = _lengths_in_step(state)
+        assert ok, f"after {op_name}: {msg}"
+        n = len(state["paras"])
+        assert len(state["segment_source_spans"]) == n
+        assert len(state["segment_source_marks"]) == n
