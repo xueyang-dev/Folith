@@ -211,6 +211,28 @@ def test_second_request_hits_cache_without_reparsing(
     assert loader._cache[parsed[0][0]] is parsed[0][1]  # 缓存条目未被重算替换
 
 
+def test_refresh_preserves_selected_node_without_reusing_stale_identity(
+        data_env, qt_app, monkeypatch):
+    job_id = _new_task(data_env)
+    _patch_loader(monkeypatch)
+    view = adapter.task_setup_view(adapter.EngineConfig(), job_id)
+    section = SourceOutlineSection()
+    section.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    section.node_list.setCurrentRow(1)
+    section.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    assert section.node_list.currentRow() == 1
+    assert "第二章" in section.preview.toPlainText()
+
+    # An ID can be reused after reparse; do not select a different node by ID.
+    changed = dict(section._base_outline)
+    changed["nodes"] = [dict(node) for node in changed["nodes"]]
+    changed["nodes"][1]["title"] = "不同章节"
+    section._apply_outline(changed)
+    assert section.node_list.currentRow() == 0
+
+
 def test_section_without_source_file_says_so_and_does_not_hang(
         data_env, qt_app, monkeypatch, tmp_path):
     job_id = _new_task(data_env)
