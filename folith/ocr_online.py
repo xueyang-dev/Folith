@@ -74,7 +74,7 @@ _SESSION_HEADER_PROVIDERS = {"OpenCode Go"}
 #: Reasoning control is a DeepSeek-family API extension.  It is only sent when
 #: the user explicitly selects it, so an unrelated relay never receives an
 #: unsupported request field.
-REASONING_MODES = ("provider_default", "thinking_disabled")
+REASONING_MODES = ("provider_default", "thinking_disabled", "thinking_disabled_vllm")
 
 SYSTEM_PROMPT_V1 = (
     "你是扫描页图像的文字转写员。逐字转写图中正文，按原始印刷行从上到下，"
@@ -269,10 +269,31 @@ def _retry_after_seconds(response: Any) -> Optional[float]:
 #: 网关 / 读取超时：服务商那一页多半一直处理不完，再试几次只是白等几分钟，最多再试一次。
 TIMEOUT_STATUSES = frozenset({408, 504, 524})
 TIMEOUT_MAX_RETRIES = 1
+#: A reply that arrives but breaks the agreed format (not JSON, wrong shape) is a
+#: sampling accident, not a verdict on the page: ask again, but only this often.
+CONTENT_MAX_RETRIES = 2
+#: How much of a rejected reply is kept in the attempt record for diagnosis.
+RESPONSE_EXCERPT_CHARS = 4000
 
 
 def is_timeout_error(error: "OnlineOCRRequestError") -> bool:
     return error.code == "timeout" or error.http_status in TIMEOUT_STATUSES
+
+
+def default_vision_reasoning(provider, model):
+    """Thinking mode vision reads use when nobody chose one.
+
+    DeepSeek-family models spend the whole output budget on reasoning when
+    thinking is on (a page came back with 8,196 reasoning tokens of 8,196 and no
+    answer), so reading a page needs it off.  Everyone else keeps the service
+    default.
+    """
+    name = str(model or "").strip().lower()
+    if provider == "OpenCode Go" and name == "deepseek-v4.1-flash":
+        return "thinking_disabled"
+    if provider == "DeepSeek" and name.startswith(("deepseek-flash", "deepseek-v4")):
+        return "thinking_disabled"
+    return "provider_default"
 
 
 def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
@@ -510,6 +531,9 @@ class OnlineOCRBackend(OCRBackend):
         if config.reasoning_mode == "thinking_disabled":
             # Documented DeepSeek-family control; sent only on explicit opt-in.
             body["extra_body"] = {"thinking": {"type": "disabled"}}
+        elif config.reasoning_mode == "thinking_disabled_vllm":
+            # vLLM/SGLang chat-template switch, same wire shape as the text path.
+            body["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         if config.provider in _SESSION_HEADER_PROVIDERS:
             session_id = getattr(self, "_session_id", None)
             if not session_id:
@@ -658,6 +682,15 @@ class OnlineOCRBackend(OCRBackend):
                 request_ids.append(str(result["request_id"]))
             finish = result.get("finish_reason")
             if finish == "length":
+                # The reply never finished, so it never reaches the decoder: keep its
+                # head and tail, and how repetitive it is, so a runaway can be studied.
+                text = str(result.get("text") or "")
+                half = RESPONSE_EXCERPT_CHARS // 2
+                pieces = text.split(",")
+                attempts[-1].update(
+                    response_chars=len(text), response_head=text[:half],
+                    response_tail=text[-half:] if len(text) > half else "",
+                    distinct_piece_ratio=round(len(set(pieces)) / max(len(pieces), 1), 3))
                 return self._fail(
                     "truncated", "线上 OCR 输出被服务截断（finish_reason=length）；"
                     "该页未保存，请提高输出上限或改用其他来源。",
@@ -673,9 +706,17 @@ class OnlineOCRBackend(OCRBackend):
                 segments = decoder(raw)
             except ValueError as exc:
                 code = str(exc)
-                return self._fail(
-                    code, _parse_failure_message(code),
-                    attempts, usage_total, request_ids, started)
+                attempts[-1].update(error_code=code, response_chars=len(raw),
+                                    response_excerpt=raw[:RESPONSE_EXCERPT_CHARS])
+                if attempt >= min(self.config.max_retries, CONTENT_MAX_RETRIES):
+                    return self._fail(
+                        code, _parse_failure_message(code),
+                        attempts, usage_total, request_ids, started)
+                page_events.emit("retry", attempt=attempt + 1,
+                                 attempts=min(self.config.max_retries, CONTENT_MAX_RETRIES) + 1,
+                                 http_status=None, code=code,
+                                 message=f"返回格式不合要求（{code}）")
+                continue
             if not segments:
                 return self._fail("empty_transcription", "线上 OCR 未返回可用的正文行；该页未保存。",
                                   attempts, usage_total, request_ids, started)

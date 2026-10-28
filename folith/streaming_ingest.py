@@ -85,6 +85,7 @@ class ScanStream:
                  first_window_pages: int = FIRST_WINDOW_PAGES,
                  late_pages: Optional[Dict[int, dict]] = None,
                  provider_label: str = "",
+                 known_paragraphs: Optional[List[str]] = None,
                  timeout_streak_limit: int = TIMEOUT_STREAK_LIMIT):
         with fitz.open(stream=data, filetype="pdf") as pdf:
             self.pages_total = len(pdf)
@@ -106,7 +107,7 @@ class ScanStream:
         self.error: Optional[BaseException] = None
         # 工作线程里的页级重试 / 失败事件（deque.append 线程安全），主线程在 tick 里取走。
         self._page_events: deque = deque(maxlen=200)
-        self._assembler = VisualDocumentAssembler(filename)
+        self._assembler = VisualDocumentAssembler(filename, known_paragraphs)
         self._result = None
         self._cond = threading.Condition()
         self._stop = threading.Event()

@@ -256,6 +256,28 @@ def test_layout_flags_beat_punctuation_in_both_directions():
         == [LONG_CLOSED + " Then she sat down."]
 
 
+def test_a_page_read_again_is_not_glued_to_text_that_was_finalised_apart():
+    """Pages recovered late were appended and re-sorted, never joined; a resumed read must agree."""
+    from folith.document_ir import PageEnvelope
+    from folith.spatial_index import SpatialTextIndex, align_blocks
+
+    pages = [[SemanticBlock("paragraph", LONG_CLOSED)],
+             [SemanticBlock("paragraph", "Then she sat down.", continues_previous=True)]]
+
+    def assemble(known):
+        assembler = VisualDocumentAssembler("x.pdf", known)
+        for index, blocks in enumerate(pages):
+            envelope = PageEnvelope("x.pdf", f"p{index + 1}", index, 100, 100, 0)
+            spatial = SpatialTextIndex(envelope.page_id)
+            assembler.add_page(envelope, (PageUnderstanding(blocks, "vlm", {}),
+                                          align_blocks(envelope, blocks, spatial), spatial, 0.0))
+        return assembler.finish()[0]
+
+    assert assemble([]) == [LONG_CLOSED + " Then she sat down."]                    # first read joins
+    assert assemble([LONG_CLOSED, "Then she sat down."]) == [LONG_CLOSED, "Then she sat down."]
+    assert assemble([LONG_CLOSED + " Then she sat down."]) == [LONG_CLOSED + " Then she sat down."]
+
+
 def test_text_rules_when_the_model_gives_no_layout_flags():
     # 小写开头：续段，哪怕上一页以句号结束。
     assert len(_assemble([[SemanticBlock("paragraph", LONG_CLOSED)],

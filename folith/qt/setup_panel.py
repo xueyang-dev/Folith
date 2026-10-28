@@ -654,6 +654,8 @@ class TaskSetupPanel(QWidget):
         self._size_runner = TaskRunner(self, max_threads=1)
         #: 当前任务是不是 PDF。扫描件识别整块只对 PDF 出现（见 `_sync_ocr_visibility`）。
         self._is_pdf = False
+        #: 当前任务是不是 DOCX。「原格式译文」只对 DOCX 原文可用（见 `_sync_docx_only`）。
+        self._is_docx = False
         #: 研究产物那一组是否适用（由翻译策略决定）。汇总行不能用 ``isVisible()`` 判断：
         #: 面板还没 show 时任何子控件都是"不可见"的，会把研究产物静默漏掉。
         self._research_visible = False
@@ -1600,6 +1602,25 @@ class TaskSetupPanel(QWidget):
                 value.setObjectName("rowValue")
                 value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 group.add_row(_icon_row(icon_name, label, box, value=value, tooltip=detail))
+        self._sync_docx_only()
+
+    def _sync_docx_only(self) -> None:
+        """仅适用于 DOCX 原文的交付项：其它来源禁用、取消勾选并说明原因。"""
+        for items_key in ("translation_items", "asset_items"):
+            for item in self._choices.get(items_key) or []:
+                if not item.get("docx_only"):
+                    continue
+                box = self._delivery_boxes.get(str(item.get("key") or ""))
+                if box is None:
+                    continue
+                detail = i18n.tr(str(item.get("detail") or ""))
+                if self._is_docx:
+                    box.setEnabled(True)
+                    box.setToolTip(detail)
+                else:
+                    box.setChecked(False)
+                    box.setEnabled(False)
+                    box.setToolTip(i18n.tr('仅 DOCX 任务可用：需要原 DOCX 文件作为写回基础。'))
 
     def load(self, view: dict) -> None:
         """按视图回填控件（adapter.task_setup_view()）。"""
@@ -1681,6 +1702,8 @@ class TaskSetupPanel(QWidget):
 
             is_pdf = bool(self._view.get("is_pdf"))
             self._is_pdf = is_pdf
+            self._is_docx = bool(self._view.get("is_docx"))
+            self._sync_docx_only()
             if is_pdf:
                 ocr = self._view.get("ocr") or {}
                 self._set_combo_data(self.ocr_language_box, ocr.get("language"))
@@ -2129,6 +2152,8 @@ class TaskSetupPanel(QWidget):
             delivery[key] = bool(box.isChecked())
         if not delivery.get("deliver_bilingual_docx"):
             delivery["enable_annotate"] = False
+        if not self._is_docx:
+            delivery["deliver_original_docx"] = False
         theory = self.theory_box.currentData()
         if theory is None:
             theory = str(self._view.get("translation_theory") or "")

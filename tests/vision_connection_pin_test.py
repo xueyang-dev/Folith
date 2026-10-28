@@ -166,3 +166,45 @@ def test_credentials_are_looked_up_by_the_endpoint_owner(home, monkeypatch):
     assert found[0] == "relay-key"
     home.save([GO])
     assert core.credential_for_endpoint("自定义中转站", "https://relay.example/v1") is None
+
+
+def test_a_replayed_pinned_connection_is_not_an_explicit_choice(home):
+    """Resume rebuilds settings from the task, so the pinned descriptor comes back as an argument."""
+    saved = {"ocr_online": dict(PINNED)}
+    assert core._explicit_ocr_online(dict(PINNED), saved) is None
+    assert core._explicit_ocr_online(None, saved) is None
+    other = {**PINNED, "provider": "OpenCode Go", "base_url": ""}
+    assert core._explicit_ocr_online(other, saved) == other   # a real override still wins
+
+
+def test_resume_settings_replay_the_pinned_connection_and_the_pipeline_lets_the_choice_win(home):
+    from folith.application.commands import as_settings_sources
+    from folith.application.job_config import JobConfig
+    from folith.application.settings import resolve_effective_settings
+    from folith.qt import adapter
+    job = _job()
+    adapter.set_vision_choice(job, adapter.vision_connection_conflict(job), "current")
+    state = core.load_job_state(job)
+    replayed = JobConfig.from_settings(
+        resolve_effective_settings(as_settings_sources({}).with_state(state))).ocr_online
+    assert replayed["provider"] == "自定义中转站"            # the bug's precondition
+    explicit = core._explicit_ocr_online(replayed, state["pipeline_config"])
+    assert explicit is None
+    assert core._reconcile_vision_connection(job, state)    # so the switch happens
+    assert core.load_job_state(job)["pipeline_config"]["ocr_online"]["provider"] == "OpenCode Go"
+
+
+def test_deepseek_vision_reads_default_to_thinking_off_without_overriding_choices():
+    from folith.engine.ocr_config import default_vision_reasoning, _vision_reasoning_mode
+    assert default_vision_reasoning("DeepSeek", "deepseek-flash") == "thinking_disabled"
+    assert default_vision_reasoning("OpenCode Go", "deepseek-v4.1-flash") == "thinking_disabled"
+    assert default_vision_reasoning("OpenAI", "gpt-4o") == "provider_default"
+    assert default_vision_reasoning("自定义中转站", "dots3-note-prev") == "provider_default"
+    # Following the translation connection: an earlier recorded default is not a choice.
+    assert _vision_reasoning_mode("translation_profile", "DeepSeek", "deepseek-flash",
+                                  "provider_default") == "thinking_disabled"
+    # A dedicated vision connection's explicit choice is kept.
+    assert _vision_reasoning_mode("ocr_profile", "DeepSeek", "deepseek-flash",
+                                  "provider_default") == "provider_default"
+    assert _vision_reasoning_mode("translation_profile", "OpenAI", "gpt-4o",
+                                  "") == "provider_default"

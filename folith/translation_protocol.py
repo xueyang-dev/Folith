@@ -159,7 +159,9 @@ def parse_translation_response(response: Any, expected: int) -> List[str]:
             return _object_items(decoded, expected, response)
         raise _error("unsupported_json_shape", expected, response)
 
-    numbered = _numbered_items(candidate, expected, response)
+    # A single numbered line could be the translation itself (e.g. a
+    # heading); there is no sequence to distinguish it from a wrapper.
+    numbered = _numbered_items(candidate, expected, response) if expected > 1 else None
     if numbered is not None:
         return numbered
     if expected != 1:

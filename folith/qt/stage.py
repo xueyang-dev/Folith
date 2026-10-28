@@ -122,7 +122,7 @@ def _action(review: Mapping, delivery: Mapping, current: str) -> dict | None:
             return {"kind": kind, "label": i18n.tr_dynamic(str(primary.get("label") or "")),
                     "segment_ids": list(primary["segment_ids"]), "target": REVIEW}
         if kind == "handle_finding":
-            return {"kind": kind, "label": str(primary.get("label") or ""),
+            return {"kind": kind, "label": i18n.tr_dynamic(str(primary.get("label") or "")),
                     "item_id": primary.get("item_id"), "target": REVIEW}
         # 审校还没跑过：没有"缺哪几段"的清单，推荐的就是跑一遍全部。
         return {"kind": "review_all", "label": i18n.tr("审校全部段落"), "target": REVIEW}

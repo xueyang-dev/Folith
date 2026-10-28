@@ -108,7 +108,8 @@ def test_parse_translation_array():
     assert core.parse_translation_array('```json\n{"1": "甲"}\n```', 1) == ["甲"]
     assert core.parse_translation_array('1. 甲\n2. 乙', 2) == ["甲", "乙"]
     assert core.parse_translation_array('以下是译文：\n1、甲\n2、乙', 2) == ["甲", "乙"]
-    assert core.parse_translation_array('1. “单段译文。”', 1) == ["“单段译文。”"]
+    # A lone numbered line may be the translation itself (a heading), so it is kept.
+    assert core.parse_translation_array('1. “单段译文。”', 1) == ["1. “单段译文。”"]
     assert core.parse_translation_array('裸文本译文', 1) == ["裸文本译文"]
     assert core.parse_translation_array('["a"]', 2) is None
     assert core.parse_translation_array("普通文本", 2) is None

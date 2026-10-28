@@ -144,6 +144,7 @@ class SourceOutlineSection(QWidget):
         self._outline: dict = {}
         self._base_outline: dict = {}
         self._correction_base: dict = {}
+        self._pending_selection = None
 
         self.section = DisclosureSection(i18n.tr('原文结构'), icon="book-open")
         self.section.set_summary(i18n.tr('正在读取结构…'))
@@ -219,6 +220,8 @@ class SourceOutlineSection(QWidget):
     # ---- 数据 ---------------------------------------------------------------
     def load(self, job_id: str, filename: str, view: dict) -> None:
         """按任务载入：请求结构解析（只读，不动任务状态）。"""
+        self._pending_selection = (self._selection_identity() or self._pending_selection
+                                   if str(job_id or "") == self._job_id else None)
         self._job_id = str(job_id or "")
         self._filename = str(filename or "")
         self._view = dict(view or {})
@@ -264,6 +267,8 @@ class SourceOutlineSection(QWidget):
 
     def _apply_outline(self, outline: dict) -> None:
         from folith import outline_corrections, outline_recovery
+        selection = self._selection_identity() or self._pending_selection
+        self._pending_selection = None
         self._base_outline = dict(outline or {})
         self._correction_base = outline_recovery.load(self._job_id, self._base_outline)
         self._outline, dropped = outline_corrections.apply(self._job_id, self._correction_base)
@@ -292,7 +297,20 @@ class SourceOutlineSection(QWidget):
                          if dropped else ("" if summary else i18n.tr(
             '这个文件本地读不出结构；不影响导入与翻译。')))
         if self.node_list.count():
-            self.node_list.setCurrentRow(0)
+            row = next((index for index, node in enumerate(self._outline.get("nodes") or [])
+                        if self._node_identity(node) == selection), 0)
+            self.node_list.setCurrentRow(row)
+
+    @staticmethod
+    def _node_identity(node: dict) -> tuple:
+        # IDs are positional: require the original title and boundary too so a
+        # changed outline cannot silently select an unrelated node with the same ID.
+        return (str(node.get("id") or ""), str(node.get("title") or ""),
+                node.get("para_start"))
+
+    def _selection_identity(self) -> tuple | None:
+        node = self._current_node()
+        return self._node_identity(node) if node else None
 
     def _set_status(self, text: str) -> None:
         self.status_label.setText(str(text or ""))
