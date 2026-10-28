@@ -68,6 +68,24 @@ def test_other_runs_keep_the_ordinary_empty_state(app):
         assert bench.no_segments_state.title_label.text() == "还没有可编辑的段落"
 
 
+@pytest.mark.parametrize("language", ["en", "es", "ru", "ar", "fr", "de"])
+@pytest.mark.parametrize("state,title,hint", [
+    ({}, '还没有可编辑的段落', '这份文档目前没有切分出的段落。点上方「开始翻译」会导入并切分正文；进度会自动保存，可以随时离开再回来。'),
+    ({"paras": ["source"]}, '当前筛选下没有段落', '清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。'),
+    ({"excluded_segments": [{"source": "source"}]}, '所有段落都被排除了', '被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，原文与当前译文都完整保留。'),
+])
+def test_empty_states_use_selected_locale(app, language, state, title, hint):
+    bench = _bench({}, state)
+    i18n.set_language(language)
+    try:
+        bench._sync_segment_placeholder()
+        assert bench.no_segments_state.title_label.text() == i18n.tr(title) != title
+        assert bench.no_segments_state.hint_label.text() == i18n.tr(hint) != hint
+    finally:
+        bench.close()
+        i18n.set_language("zh-CN")
+
+
 def test_offer_tips_does_not_reference_removed_controls(app):
     from folith.qt import window as window_module
 
