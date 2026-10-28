@@ -263,13 +263,21 @@ def _pdf_outline(data: bytes) -> dict:
 _DOCX_HEADING_RE = re.compile(r"^(?:heading|标题)\s*([1-9])$", re.IGNORECASE)
 
 
-def _docx_paragraph_level_and_provenance(paragraph) -> tuple[int, str]:
+def _docx_paragraph_level_and_provenance(paragraph, style_cache=None) -> tuple[int, str]:
     from docx.oxml.ns import qn
 
     # 1. 标题样式名称（Heading 1–9 / Title / 标题）
     style_name = ""
+    style = None
     try:
-        style_name = str(paragraph.style.name or "").strip() if paragraph.style else ""
+        style_id = paragraph._p.style
+        if style_cache is not None and style_id in style_cache:
+            style = style_cache[style_id]
+        else:
+            style = paragraph.style
+            if style_cache is not None:
+                style_cache[style_id] = style
+        style_name = str(style.name or "").strip() if style else ""
     except Exception:
         style_name = ""
     match = _DOCX_HEADING_RE.match(style_name)
@@ -281,8 +289,8 @@ def _docx_paragraph_level_and_provenance(paragraph) -> tuple[int, str]:
     # 2. w:outlineLvl（段落直接格式或样式定义）
     ppr = getattr(paragraph._p, "pPr", None)
     outline = ppr.find(qn("w:outlineLvl")) if ppr is not None else None
-    if outline is None and getattr(paragraph, "style", None) is not None:
-        style_elem = getattr(paragraph.style, "element", None)
+    if outline is None and style is not None:
+        style_elem = getattr(style, "element", None)
         if style_elem is not None:
             style_ppr = style_elem.find(qn("w:pPr"))
             if style_ppr is not None:
@@ -297,8 +305,8 @@ def _docx_paragraph_level_and_provenance(paragraph) -> tuple[int, str]:
 
     # 3. 多级编号大纲级别（w:numPr / w:ilvl）
     num_pr = ppr.find(qn("w:numPr")) if ppr is not None else None
-    if num_pr is None and getattr(paragraph, "style", None) is not None:
-        style_elem = getattr(paragraph.style, "element", None)
+    if num_pr is None and style is not None:
+        style_elem = getattr(style, "element", None)
         if style_elem is not None:
             style_ppr = style_elem.find(qn("w:pPr"))
             if style_ppr is not None:
@@ -338,8 +346,9 @@ def _docx_outline(data: bytes) -> dict:
     paragraphs: list[str] = []
     levels: list[int] = []
     provenances: list[str] = []
+    style_cache = {}
     for paragraph in document.paragraphs:
-        level, prov = _docx_paragraph_level_and_provenance(paragraph)
+        level, prov = _docx_paragraph_level_and_provenance(paragraph, style_cache)
         first_sub = True
         for sub in re.split(r"\n+", clean_xml_chars(paragraph.text or "")):
             text = sub.strip()

@@ -149,6 +149,32 @@ def test_docx_non_heading_styles_do_not_split():
     assert outline["nodes"][0]["title"] == "唯一一章"
 
 
+def test_docx_reuses_styles_but_honors_each_paragraph_outline_level(monkeypatch):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+
+    document = Document()
+    for index in range(60):
+        paragraph = document.add_paragraph(f"Paragraph {index}")
+        if index in (10, 30):
+            level = OxmlElement("w:outlineLvl")
+            level.set(qn("w:val"), "0" if index == 10 else "1")
+            paragraph._p.get_or_add_pPr().append(level)
+    data = io.BytesIO()
+    document.save(data)
+    original = Paragraph.style
+    calls = []
+    def get_style(paragraph):
+        calls.append(1)
+        return original.fget(paragraph)
+    monkeypatch.setattr(Paragraph, "style", property(get_style, original.fset))
+    outline = parse_source_outline("book.docx", data.getvalue())
+    assert [(node["title"], node["level"]) for node in outline["nodes"]] == [
+        ("未分章内容", 1), ("Paragraph 10", 1), ("Paragraph 30", 2)]
+    assert len(calls) == 1
+
+
 # ---------------------------------------------------------------- PDF
 
 def test_pdf_without_toc_uses_page_nodes():
