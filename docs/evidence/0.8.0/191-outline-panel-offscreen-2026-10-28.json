@@ -1,0 +1,16 @@
+{
+  "platform": "offscreen (PySide6 6.11.2, scripted)",
+  "note": "Cocoa interactive acceptance requires a human on a real macOS session",
+  "nodes_extracted": 120,
+  "total_paragraphs": 1020,
+  "outline_load_ms": 5.34,
+  "avg_nav_ms": 0.0,
+  "nav_samples": 20,
+  "nav_signals_fired": 20,
+  "panel_top_level_items": 20,
+  "first_chapter_sub_items": 5,
+  "panel_preference_roundtrip": true,
+  "rename_correction_manual_provenance": true,
+  "no_model_call_native_doc": true,
+  "source_bytes_unchanged": true
+}
