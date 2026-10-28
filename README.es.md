@@ -215,7 +215,7 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 - El paquete de macOS solo es compatible con Apple silicon y macOS 15.7.5 o posterior; no está firmado ni notarizado.
 - El paquete de Windows no está firmado; no se ha verificado la compatibilidad con Windows 10 x64, Windows en ARM64 ni máquinas virtuales limpias.
-- Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.7.2.md) (en chino) correspondientes.
+- Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.8.0.md) (en chino) correspondientes.
 - No se admiten EPUB con DRM.
 - Las imágenes dentro de tablas y cuadros de texto no se conservan en el DOCX traducido; el DOCX bilingüe no contiene imágenes.
 - No se reescribe la maquetación del DOCX original; se generan archivos nuevos.
@@ -270,7 +270,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 (La mayoría de los documentos están en chino.)
 
-- [Notas de la última versión y registro de aceptación](docs/release-notes-0.7.2.md)
+- [Notas de la última versión y registro de aceptación](docs/release-notes-0.8.0.md)
 - [Plan de publicación](docs/release-plan.md)
 - [Proyectos y memoria a largo plazo](docs/project-memory.md)
 - [Exportación de la traducción a EPUB / DOCX](docs/epub-export.md)

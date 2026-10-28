@@ -215,7 +215,7 @@ Folith itself is free and open source. The model calls made while translating ar
 
 - The macOS package supports Apple silicon and macOS 15.7.5 or later only; it is unsigned and not notarized.
 - The Windows package is unsigned; compatibility with Windows 10 x64, ARM64 Windows and clean virtual machines has not been verified.
-- Some manual acceptance items for the final packages (native file panels, Chinese input method, sleep / wake, first-launch approval, a real model service and so on) may only be completed after publication; what each release has and has not verified is recorded in the [release notes](docs/release-notes-0.7.2.md) (in Chinese) for the release in question.
+- Some manual acceptance items for the final packages (native file panels, Chinese input method, sleep / wake, first-launch approval, a real model service and so on) may only be completed after publication; what each release has and has not verified is recorded in the [release notes](docs/release-notes-0.8.0.md) (in Chinese) for the release in question.
 - EPUB files with DRM are not supported.
 - Images inside tables and text boxes are not kept in the translated DOCX; the bilingual DOCX contains no images.
 - Output is not written back into the original DOCX layout; new files are generated.
@@ -270,7 +270,7 @@ The interface is Simplified Chinese by default. English, Español, Русски�
 
 (Most documents are in Chinese.)
 
-- [Latest release notes and acceptance record](docs/release-notes-0.7.2.md)
+- [Latest release notes and acceptance record](docs/release-notes-0.8.0.md)
 - [Release plan](docs/release-plan.md)
 - [Projects and long-term memory](docs/project-memory.md)
 - [Translated EPUB / DOCX export](docs/epub-export.md)

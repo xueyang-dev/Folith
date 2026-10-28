@@ -517,7 +517,7 @@ class OnlineOCRBackend(OCRBackend):
                 session_id = str(uuid.uuid4())
                 self._session_id = session_id
             body["extra_headers"] = {
-                "User-Agent": "Folith/0.7.2",
+                "User-Agent": "Folith/0.8.0",
                 "x-opencode-session": session_id,
             }
         return body
