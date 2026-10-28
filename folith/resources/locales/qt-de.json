@@ -2409,5 +2409,9 @@
   "无法保存结构恢复结果。": "Strukturwiederherstellung konnte nicht gespeichert werden.",
   "{count} 个节点 · AI 推断": "{count} Knoten · KI-abgeleitet",
   "{count} 个节点 · 按编号推断": "{count} Knoten · aus Nummerierung abgeleitet",
+  "所有段落都被排除了": "Alle Segmente sind ausgeschlossen",
+  "被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，原文与当前译文都完整保留。": "Ausgeschlossene Segmente werden nicht übersetzt oder ausgeliefert. Stellen Sie sie in der Ausschlussliste unter Auslieferung wieder her; Ausgangstext und aktuelle Übersetzung bleiben erhalten.",
+  "当前筛选下没有段落": "Keine Segmente entsprechen den Filtern",
+  "清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。": "Löschen Sie die Suche oder setzen Sie den Statusfilter auf Alle, um die übrigen Segmente zu sehen.",
   "无法读取结构修正文件；原文件已保留。": "Die Datei mit Strukturkorrekturen konnte nicht gelesen werden; die Originaldatei wurde beibehalten."
 }
