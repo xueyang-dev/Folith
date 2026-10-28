@@ -228,6 +228,8 @@ DELIVERY_ASSET_KINDS: dict[str, tuple[str, str]] = {
     "bilingual.docx": ("translation", "file-text"),
     "translation.pdf": ("translation", "file-text"),
     "original_layout.pdf": ("translation", "file-text"),
+    "original_format.docx": ("translation", "file-text"),
+    "original_format_report.json": ("record", "file-code"),
     "original_layout_report.json": ("record", "file-code"),
     "terms.xlsx": ("terms", "file-sheet"),
     "segment_evidence.jsonl": ("evidence", "file-code"),

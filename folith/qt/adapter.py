@@ -118,6 +118,7 @@ class EngineConfig:
     deliver_bilingual_docx: bool = True
     deliver_pdf: bool = False
     deliver_original_pdf: bool = False
+    deliver_original_docx: bool = False
     deliver_epub: bool = False
     deliver_terms_xlsx: bool = True
     deliver_evidence: bool = True
@@ -476,6 +477,8 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
     # into a DOCX job and promise an artifact that will never be produced.
     deliver_original_pdf = bool(config.deliver_original_pdf) and (
         core.original_layout_pdf_applicable(state.get("filename")))
+    deliver_original_docx = bool(config.deliver_original_docx) and (
+        core.original_format_docx_applicable(state.get("filename")))
     try:
         base_url = config.translator_base_url()
     except ValueError:
@@ -518,6 +521,7 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
             "deliver_bilingual_docx": config.deliver_bilingual_docx,
             "deliver_pdf": config.deliver_pdf,
             "deliver_original_pdf": deliver_original_pdf,
+            "deliver_original_docx": deliver_original_docx,
             "deliver_epub": config.deliver_epub,
             "deliver_terms_xlsx": config.deliver_terms_xlsx,
             "deliver_evidence": config.deliver_evidence,
@@ -3919,7 +3923,8 @@ def remove_termbase(job_id: str) -> dict:
 # 所以需要一个地方单独配置视觉模型。OCR 本身只是可选的本机定位插件，不在这里配置。
 
 VISION_REASONING_LABELS = {"provider_default": "服务默认",
-                           "thinking_disabled": "关闭思考（DeepSeek 系）"}
+                           "thinking_disabled": "关闭思考（DeepSeek 系）",
+                           "thinking_disabled_vllm": "关闭思考"}
 
 
 def vision_providers() -> list[str]:
@@ -3943,7 +3948,11 @@ def vision_connection_view() -> dict:
         "providers": vision_providers(),
         "min_tokens": int(core.OCR_ONLINE_MIN_MAX_TOKENS),
         "max_tokens_limit": int(core.OCR_ONLINE_MAX_MAX_TOKENS),
-        "reasoning_modes": list(core.OCR_ONLINE_REASONING_MODES),
+        "reasoning_modes": [
+            mode for mode in core.OCR_ONLINE_REASONING_MODES
+            if mode != "thinking_disabled_vllm"
+            or mode in core.thinking_control_options(
+                str(profile.get("provider") or ""), str(profile.get("model") or ""))],
         "status": {"ok": bool(status.get("ok")),
                    "message": str(status.get("message") or "").replace("线上 OCR", "视觉理解"),
                    "model": str(status.get("model") or ""),
@@ -4252,6 +4261,9 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
         names.append("translation.pdf")
     if configured.get("deliver_original_pdf"):
         names.append("original_layout.pdf")
+    if configured.get("deliver_original_docx") and \
+            core.original_format_docx_applicable(state.get("filename", "")):
+        names.append("original_format.docx")
     if configured.get("deliver_epub"):
         names.append("translation.epub")
     if configured.get("deliver_terms_xlsx"):
@@ -4410,7 +4422,9 @@ def supplementable_outputs(job_id: str, state: dict | None = None) -> list[dict]
     items = _task_setup.delivery_items_for_source(
         (*_task_setup.DELIVERY_TRANSLATION_ITEMS, *_task_setup.DELIVERY_ASSET_ITEMS),
         core.original_layout_pdf_applicable(state.get("filename", ""),
-                                            core.load_source(job_id)))
+                                            core.load_source(job_id)),
+        core.original_format_docx_applicable(state.get("filename", ""),
+                                             core.load_source(job_id)))
     return [{"key": str(item["key"]), "title": str(item["title"]),
              "format": str(item.get("format") or ""),
              "detail": str(item.get("detail") or "")}
@@ -5200,6 +5214,15 @@ def reasoning_effort_options(provider: str, model: str) -> tuple[str, ...]:
     return tuple(core.reasoning_effort_options(provider, model) or ())
 
 
+# 只有实测过端点确实认得的模型才出现在这里，所以界面上不会出现"选了但没生效"的开关。
+THINKING_MODE_LABELS = {"thinking_disabled_vllm": "关闭思考", "thinking_disabled": "关闭思考"}
+
+
+def thinking_control_options(provider: str, model: str) -> tuple[str, ...]:
+    """这个模型的端点已验证支持哪些"关闭思考"方式；没有则返回空，界面不显示这一项。"""
+    return tuple(core.thinking_control_options(provider, model) or ())
+
+
 def task_details(config: EngineConfig, job_id: str,
                  state: dict | None = None) -> list[dict]:
     """任务开始以后，"这个任务用的是什么设置"：分组的（标签, 值）。
@@ -5333,6 +5356,7 @@ def task_setup_view(config: EngineConfig, job_id: str,
         "filename": filename,
         "started": started,
         "is_pdf": filename.lower().endswith(".pdf"),
+        "is_docx": core.original_format_docx_applicable(filename),
         "target_lang": str(_pick(state, "target_lang", config.target_lang)),
         # 原文语言在导入时确定（它是任务身份的一部分）；准备页只显示，不改。
         "source_lang": str(state.get("source_lang") or ""),

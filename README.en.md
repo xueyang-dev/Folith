@@ -218,7 +218,7 @@ Folith itself is free and open source. The model calls made while translating ar
 - Some manual acceptance items for the final packages (native file panels, Chinese input method, sleep / wake, first-launch approval, a real model service and so on) may only be completed after publication; what each release has and has not verified is recorded in the [release notes](docs/release-notes-0.8.0.md) (in Chinese) for the release in question.
 - EPUB files with DRM are not supported.
 - Images inside tables and text boxes are not kept in the translated DOCX; the bilingual DOCX contains no images.
-- Output is not written back into the original DOCX layout; new files are generated.
+- By default output is newly generated files, not written back into the original DOCX layout. For DOCX sources you can switch on "Original-format translation" in the delivery options (`original_format.docx`): it writes the translation into the original file, keeping styles, tables, footnotes, headers and footers. Off by default; no native macOS / Windows manual acceptance yet.
 - Interface languages other than Simplified Chinese are experimental.
 - Scanned pages are recognized by the vision model and can contain errors; check against the original page.
 

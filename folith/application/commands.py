@@ -302,6 +302,10 @@ def enable_delivery_outputs(job_id: str, keys) -> dict:
                 not core.original_layout_pdf_applicable(
                     state.get("filename", ""), core.load_source(job_id)):
             raise CommandRejected("原排版译文只适用于 PDF 原文。")
+        if any(allowed[key].get("docx_only") for key in wanted) and \
+                not core.original_format_docx_applicable(
+                    state.get("filename", ""), core.load_source(job_id)):
+            raise CommandRejected("原格式译文只适用于 DOCX 原文。")
         previous = {key: deepcopy(state.get(key)) for key in _DELIVERY_CHOICE_KEYS}
         updated = dict(configured)
         for key in wanted:

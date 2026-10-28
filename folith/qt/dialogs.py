@@ -289,7 +289,8 @@ class EngineDialog(QDialog):
                     self.cleanup_box, self.report_box, self.academic_box,
                     self.deliver_plain_box, self.deliver_bilingual_box, self.deliver_terms_box,
                     self.deliver_evidence_box, self.deliver_pdf_box,
-                    self.deliver_original_pdf_box, self.deliver_epub_box):
+                    self.deliver_original_pdf_box, self.deliver_original_docx_box,
+                    self.deliver_epub_box):
             box.toggled.connect(self._immediate_changed)
         for combo in (self.theme_box, self.language_box, self.ocr_backend_box,
                       self.ocr_mode_box, self.ocr_language_box, self.default_mode_box, self.accent_box):
@@ -589,6 +590,11 @@ class EngineDialog(QDialog):
         # 默认值在选文件之前就定了，不知道源文件类型；导入时非 PDF 任务会去掉这一项。
         self.deliver_original_pdf_box.setToolTip(
             i18n.tr('仅 PDF 任务可用：按原文件的版式重建译文页面。'))
+        self.deliver_original_docx_box, original_docx = fmt(
+            "deliver_original_docx", '原格式译文 DOCX', False, i18n.tr('仅 DOCX'))
+        # 与原排版 PDF 同理：默认值不知道源文件类型，非 DOCX 任务不会产出这一项。
+        self.deliver_original_docx_box.setToolTip(
+            i18n.tr('仅 DOCX 任务可用：在原 DOCX 文件上写回译文，保留样式、表格与页眉页脚。'))
         self.deliver_epub_box, epub = fmt("deliver_epub", 'EPUB 电子书', False)
         self.deliver_terms_box, terms = fmt("deliver_terms_xlsx", '术语表 XLSX', True)
         self.deliver_evidence_box, evidence = fmt("deliver_evidence", '段落证据 JSONL', True)
@@ -596,7 +602,7 @@ class EngineDialog(QDialog):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(theme_module.SPACE["xl"])
         grid.setVerticalSpacing(theme_module.SPACE["sm"])
-        for index, widget in enumerate((plain, bilingual, pdf, original, epub, terms, evidence)):
+        for index, widget in enumerate((plain, bilingual, pdf, original, original_docx, epub, terms, evidence)):
             grid.addWidget(widget, index // 2, index % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
@@ -915,7 +921,7 @@ class EngineDialog(QDialog):
         "reviewer_provider", "reviewer_model", "reviewer_api_key",
         "reviewer_base_url", "ocr_language", "ocr_mode", "ocr_backend",
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_terms_xlsx",
-        "deliver_evidence", "deliver_pdf", "deliver_original_pdf",
+        "deliver_evidence", "deliver_pdf", "deliver_original_pdf", "deliver_original_docx",
         "deliver_epub", "connections", "connection_roles", "connection_models", "default_translation_mode",
     })
 
@@ -962,6 +968,7 @@ class EngineDialog(QDialog):
         config.deliver_evidence = self.deliver_evidence_box.isChecked()
         config.deliver_pdf = self.deliver_pdf_box.isChecked()
         config.deliver_original_pdf = self.deliver_original_pdf_box.isChecked()
+        config.deliver_original_docx = self.deliver_original_docx_box.isChecked()
         config.deliver_epub = self.deliver_epub_box.isChecked()
         config.default_translation_mode = str(self.default_mode_box.currentData() or "标准")
         from folith.model_connections import effective_config

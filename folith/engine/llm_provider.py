@@ -96,10 +96,67 @@ def set_llm_reasoning_effort(value):
     return _c._LLM_CTX.reasoning_effort
 
 
-REASONING_MODES = ("provider_default", "thinking_disabled")
+REASONING_MODES = ("provider_default", "thinking_disabled", "thinking_disabled_vllm")
 # usage-ledger role -> configurable role.  Reviewer is intentionally absent.
 _MODE_ROLE_OF = {"translation": "translator", "annotation": "translator",
                  "translator": "translator", "auxiliary": "auxiliary"}
+# Model families whose endpoint was verified to honour an explicit "stop
+# thinking" control, and the wire shape that control takes.  A family absent
+# here is offered no switch at all: an unverified request parameter must never
+# reach a relay that could reject it or, worse, ignore it silently.
+_THINKING_CONTROL_MODELS = {
+    # vLLM/SGLang chat-template switch, verified against dots3-note-prev.
+    "thinking_disabled_vllm": (("dots3", "dots-"), None),
+    # DeepSeek's own switch, verified on the official endpoint (page reads with
+    # it came back with 0 reasoning tokens) and on OpenCode Go's deepseek model.
+    # With thinking on, these models spend most of the output on reasoning and,
+    # on vision pages, the whole output budget, so the family reads "off" unless
+    # the user chose otherwise.  Only these model names were measured: older names
+    # such as deepseek-chat are not thinking models and get nothing.  A custom relay serving a deepseek-named model
+    # is not covered: nobody measured what it forwards.
+    "thinking_disabled": (("deepseek-flash", "deepseek-v4"), frozenset({"DeepSeek", "OpenCode Go"})),
+}
+
+
+def thinking_control_options(provider, model):
+    """Return the thinking switches a model's endpoint is known to honour.
+
+    Mirrors :func:`reasoning_effort_options`: the control is offered only for
+    recognizable names, so an unknown custom model stays on its provider
+    default rather than receiving a parameter it may not understand.
+    """
+    cfg = _c.PROVIDERS.get(provider) or {}
+    if cfg.get("kind") not in {"openai", "openai_compat"}:
+        return ()
+    name = str(model or "").strip().lower()
+    if not name:
+        return ()
+    return tuple(mode for mode, (prefixes, providers) in _THINKING_CONTROL_MODELS.items()
+                 if name.startswith(prefixes) and (providers is None or provider in providers))
+
+
+def connection_thinking_mode():
+    """Thinking mode stored on the connection currently used for translation.
+
+    ``None`` means that connection records no choice, so the caller falls back
+    to the task snapshot and the environment.  An explicit default is *not* the
+    same as no choice: it is how the user turns the control back off after a run
+    already recorded the opted-in mode in the snapshot.  The connection editor
+    writes the empty string for 服务默认, so that counts as a choice too.
+    """
+    saved = _c.load_provider_config() or {}
+    wanted = str((saved.get("connection_roles") or {}).get("translation") or "")
+    profile = next((p for p in saved.get("connections") or []
+                    if isinstance(p, dict) and p.get("id") == wanted), None)
+    if not profile or profile.get("reasoning_mode") is None:
+        return None
+    mode = str(profile.get("reasoning_mode") or "").strip().lower()
+    if mode in ("", "provider_default"):
+        return "provider_default"
+    if mode not in thinking_control_options(profile.get("provider", ""),
+                                            profile.get("model", "")):
+        return None                 # the model behind this connection changed
+    return mode
 
 
 def normalize_reasoning_mode(value):
@@ -112,7 +169,8 @@ def set_llm_reasoning_modes(translator=None, auxiliary=None):
 
     Default (``provider_default``) sends nothing extra.  ``thinking_disabled``
     sends ``extra_body={"thinking": {"type": "disabled"}}``, the same opt-in
-    control the online-OCR path uses.  Empty values clear the setting.
+    control the online-OCR path uses; ``thinking_disabled_vllm`` sends the
+    chat-template switch instead.  Empty values clear the setting.
     """
     modes = {"translator": normalize_reasoning_mode(translator),
              "auxiliary": normalize_reasoning_mode(auxiliary)}
@@ -130,6 +188,67 @@ def resolve_reasoning_mode(explicit=None, role=None):
     configurable = _MODE_ROLE_OF.get(role)
     modes = getattr(_c._LLM_CTX, "reasoning_modes", None) or {}
     return normalize_reasoning_mode(modes.get(configurable)) if configurable else "provider_default"
+
+
+def default_thinking_mode(target):
+    """Mode a model gets when nobody chose one: off for families that need it."""
+    if target is not None and "thinking_disabled" in thinking_control_options(*target):
+        return "thinking_disabled"
+    return "provider_default"
+
+
+def job_reasoning_modes(translator=None, auxiliary=None, connection_mode=None,
+                        saved=None, env=None, auxiliary_target=None,
+                        translator_target=None):
+    """Resolve the (translator, auxiliary) reasoning modes a run will use.
+
+    Per role: explicit argument > the connection's own switch > the saved task
+    snapshot > the environment.  The connection beats the snapshot because it is
+    live user intent, and it feeds both roles: a run that only sped the
+    translator up leaves the pipeline waiting on auxiliary calls instead.
+
+    ``translator_target`` / ``auxiliary_target`` are the ``(provider, model)``
+    each role actually calls.  A switch was verified on particular models, so a
+    mode only applies to a model whose endpoint honours it: one carried over from
+    another connection (a task started on a vLLM relay, then moved to DeepSeek)
+    is replaced instead of being sent to an endpoint that ignores or rejects it.
+    When nothing valid is left, the model's own default applies (off for the
+    DeepSeek family).  A recorded ``provider_default`` is not a choice; only the
+    connection's switch or an explicit argument can ask for it.
+    """
+    saved = saved or {}
+    if env is None:
+        env = os.environ
+
+    def connection_mode_for(target):
+        if connection_mode is None:
+            return None
+        if target is None or connection_mode == "provider_default":
+            return connection_mode
+        return (connection_mode
+                if connection_mode in thinking_control_options(*target) else None)
+
+    def one(explicit, snapshot_key, env_key, mode_for, target):
+        if explicit is not None:
+            return explicit
+        inherited = mode_for()
+        if inherited is not None:
+            return inherited
+        recorded = normalize_reasoning_mode(saved.get(snapshot_key) or env.get(env_key))
+        verified = thinking_control_options(*target) if target is not None else ()
+        if not verified:
+            return recorded           # nothing verified for this model: keep what was recorded
+        if recorded != "provider_default" and recorded in verified:
+            return recorded
+        return default_thinking_mode(target)
+
+    return (normalize_reasoning_mode(
+                one(translator, "reasoning_mode", "FOLITH_REASONING_MODE",
+                    lambda: connection_mode_for(translator_target), translator_target)),
+            normalize_reasoning_mode(
+                one(auxiliary, "auxiliary_reasoning_mode",
+                    "FOLITH_AUXILIARY_REASONING_MODE",
+                    lambda: connection_mode_for(auxiliary_target), auxiliary_target)))
 
 
 def effective_request_route(provider, model, role=None):
@@ -152,10 +271,11 @@ def effective_request_route(provider, model, role=None):
     if reasoning not in reasoning_effort_options(provider, model):
         reasoning = None
     route = {"base_url": base_url, "reasoning_effort": reasoning or ""}
-    if resolve_reasoning_mode(role=role) == "thinking_disabled":
+    mode = resolve_reasoning_mode(role=role)
+    if mode != "provider_default":
         # Only present when opted in, so default-route cache keys are unchanged
         # while thinking-on and thinking-off results can never mix.
-        route["reasoning_mode"] = "thinking_disabled"
+        route["reasoning_mode"] = mode
     return route
 
 

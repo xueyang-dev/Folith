@@ -174,6 +174,21 @@ def test_blocking_findings_still_count_when_independent_review_is_off():
     assert _steps(cleared)["deliver"]["state"] == stage.CURRENT
 
 
+@pytest.mark.parametrize(("label", "expected"), [
+    ("继续处理 4 个必须处理的问题", "Resolve 4 required issues"),
+    ("检查 2 个建议", "Check 2 suggestions"),
+])
+def test_review_finding_action_is_localized(label, expected):
+    from folith.qt import i18n
+
+    i18n.set_language("en")
+    action = stage._action({"primary_action": {"kind": "handle_finding",
+                                                "label": label, "item_id": "f1"}},
+                           {}, stage.REVIEW)
+    assert action["label"] == expected
+    assert action["item_id"] == "f1"
+
+
 def test_a_clean_review_hands_over_to_delivery():
     view = stage.stage_view(
         started=True, runtime={"status": "completed"},

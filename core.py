@@ -111,6 +111,7 @@ DELIVERY_CONFIG_DEFAULTS = {
     "deliver_bilingual_docx": True,
     "deliver_pdf": False,
     "deliver_original_pdf": False,
+    "deliver_original_docx": False,
     "deliver_epub": False,
     "deliver_terms_xlsx": True,
     "deliver_tbx": False,
@@ -643,6 +644,8 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     ocr_source_options,
     paddle_model_options,
     resolve_ocr_online_config,
+    follow_connection_thinking as _follow_connection_thinking,
+    default_vision_reasoning as _default_vision_reasoning,
     vision_connection_conflict,
     vision_connection_label,
     credential_for_endpoint,
@@ -695,6 +698,9 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     set_llm_reasoning_modes,
     resolve_reasoning_mode as _resolve_reasoning_mode,
     normalize_reasoning_mode as _normalize_reasoning_mode,
+    thinking_control_options,
+    connection_thinking_mode as _connection_thinking_mode,
+    job_reasoning_modes as _job_reasoning_modes,
 )
 from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keeps its public surface)
     _count_sentences,
@@ -909,6 +915,7 @@ from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps
     delivery_status_label,
     dependency_impact_view,
     list_delivery_snapshots,
+    original_format_docx_applicable,
     original_layout_pdf_applicable,
     progress_label,
     recovery_summary,
@@ -2385,6 +2392,9 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     if resolved_reasoning_mode == "thinking_disabled":
         # Same DeepSeek-family control the OCR path sends; opt-in only.
         request["extra_body"] = {"thinking": {"type": "disabled"}}
+    elif resolved_reasoning_mode == "thinking_disabled_vllm":
+        # vLLM/SGLang chat-template switch, as dots3-note-prev expects.
+        request["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     if provider == "OpenCode Go":
         session_id = runtime_job_id or getattr(_LLM_CTX, "opencode_session", None)
         if not session_id:
@@ -10659,6 +10669,31 @@ def _original_layout_notes(report) -> list:
     return notes
 
 
+def _original_format_docx_notes(report):
+    """Content the write-back kept but did not translate, in plain words.
+
+    Preserved objects (text boxes, comments, formulas, ...) and units that had
+    no translation are shown in the delivery manifest and freeze notice rather
+    than left for the user to discover in Word.
+    """
+    notes = []
+    for item in report.get("preserved") or []:
+        if item.get("kind") in ("textbox", "comment", "formula"):
+            notes.append(
+                f"原格式 DOCX：{item.get('count')} 处{item.get('label')}原样保留、"
+                "未翻译（详见 original_format_report.json 的 preserved）。")
+    untranslated = report.get("untranslated_units") or []
+    if untranslated:
+        notes.append(
+            f"原格式 DOCX：{len(untranslated)} 个单元没有译文，保留了原文"
+            "（详见 original_format_report.json 的 untranslated_units）。")
+    for item in report.get("rejected") or []:
+        notes.append(
+            f"原格式 DOCX：{item.get('label') or item.get('kind')}未处理"
+            "（详见 original_format_report.json 的 rejected）。")
+    return notes
+
+
 def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     """Build the configured delivery set used by both preview and snapshots."""
     from folith import assets as _assets
@@ -10720,16 +10755,25 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
                     json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
                 ).encode("utf-8")
             if config.get("deliver_original_docx"):
-                if not (filename.endswith(".docx") and source):
+                # Original-format DOCX (Contract v1): the source package is the
+                # write-back base.  Failure is surfaced with its reason, never
+                # replaced by the rebuilt translation.docx.
+                if not original_format_docx_applicable(filename, source):
                     skipped_assets["original_format.docx"] = (
                         "original-format DOCX requires a DOCX source")
                 else:
                     from folith.docx_roundtrip import build_roundtrip_docx
-                    docx_bytes, docx_report = build_roundtrip_docx(state, source)
+                    try:
+                        docx_bytes, docx_report = build_roundtrip_docx(state, source)
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "原格式 DOCX 回写失败，未用重建文档代替："
+                            f"{type(exc).__name__}: {exc}") from exc
                     bundle["original_format.docx"] = _bytes(docx_bytes)
                     bundle["original_format_report.json"] = (
                         json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
                     ).encode("utf-8")
+                    renderer_notes.extend(_original_format_docx_notes(docx_report))
             if config["deliver_bilingual_docx"]:
                 bundle["bilingual.docx"] = _bytes(pairs_to_word(
                     pairs, source_lang=state.get("source_lang"),
@@ -12239,6 +12283,21 @@ def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
     return total > 0 and len(scanned) == total
 
 
+def _explicit_ocr_online(ocr_online, saved_runtime_config):
+    """The visual connection a caller really chose, as opposed to one merely replayed.
+
+    Resuming a task rebuilds its settings from the saved task config, so the
+    connection the task was pinned to arrives here as if it were an explicit
+    argument.  Treating it as explicit skipped the pinned-vs-current decision
+    for good: the user's "use the current connection" choice never applied.  A
+    descriptor identical to the pinned one is a replay and counts as no choice.
+    """
+    pinned = (saved_runtime_config or {}).get("ocr_online")
+    if isinstance(ocr_online, dict) and ocr_online and ocr_online == pinned:
+        return None
+    return ocr_online
+
+
 def _reconcile_vision_connection(job_id, state):
     """续跑时，任务钉住的视觉连接与当前视觉连接不同：决定用哪个，并留痕。
 
@@ -12303,7 +12362,8 @@ def _refresh_scan_provider(job_id, stream, state):
 
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                        source_language=None, ocr_language=None, ocr_psm=None,
-                       failed_pages=None, online_config_resolver=None):
+                       failed_pages=None, online_config_resolver=None,
+                       committed_paragraphs=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
 
@@ -12324,7 +12384,8 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
             if isinstance(row, dict) and row.get("page")}
     stream = ScanStream(filename, file_bytes, provider, spatial_engine=spatial_engine,
                         checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
-                        page_gate=page_gate, late_pages=late, provider_label=label)
+                        page_gate=page_gate, late_pages=late, provider_label=label,
+                        known_paragraphs=committed_paragraphs)
     stream.facts = _pdf_extraction_facts(file_bytes)
 
     def refresh_provider(state):
@@ -12781,20 +12842,12 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state, segmentation_mode)
     previous_performance = state.get("performance")
     saved_runtime_config = state.get("pipeline_config") or {}
+    ocr_online = _explicit_ocr_online(ocr_online, saved_runtime_config)
     if ocr_online is None and saved_runtime_config:
         _reconcile_vision_connection(job_id, state)
         saved_runtime_config = state.get("pipeline_config") or {}
-    # Text-path thinking control, default OFF (nothing sent).  Precedence:
-    # explicit argument > saved task config > FOLITH_*REASONING_MODE env var.
-    effective_reasoning_mode = _normalize_reasoning_mode(
-        reasoning_mode if reasoning_mode is not None
-        else saved_runtime_config.get("reasoning_mode")
-        or os.environ.get("FOLITH_REASONING_MODE"))
-    effective_aux_reasoning_mode = _normalize_reasoning_mode(
-        auxiliary_reasoning_mode if auxiliary_reasoning_mode is not None
-        else saved_runtime_config.get("auxiliary_reasoning_mode")
-        or os.environ.get("FOLITH_AUXILIARY_REASONING_MODE"))
-    set_llm_reasoning_modes(effective_reasoning_mode, effective_aux_reasoning_mode)
+    # Text-path thinking control, default OFF (nothing sent).  Resolved once the
+    # auxiliary role's own model is known, below.
     effective_ocr_language, effective_ocr_dpi, effective_ocr_psm, \
         effective_ocr_quality, resolved_ocr = _effective_ocr_config(
             ocr_language, ocr_dpi, ocr_psm, saved_runtime_config, ocr_quality)
@@ -12811,8 +12864,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 provider=provider, model=model, api_key=api_key, base_url=visual_base,
                 credential_source="translation_profile",
                 credential_owner=f"{provider}|{visual_base.rstrip('/')}",
-                reasoning_mode=("thinking_disabled" if provider == "OpenCode Go"
-                                and model == "deepseek-v4.1-flash" else "provider_default"))
+                reasoning_mode=_follow_connection_thinking(
+                    "translation_profile", provider, model,
+                    _default_vision_reasoning(provider, model)))
             effective_online_descriptor = effective_online_config.describe()
         except ValueError:
             pass  # A native document does not require a valid visual endpoint.
@@ -12990,6 +13044,17 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         fallback_api_key=api_key,
         fallback_base_url=(primary_base_url
                            if resolved_auxiliary_provider == provider else ""))
+    # Text-path thinking control, default OFF (nothing sent).  The connection's
+    # switch feeds both roles: leaving auxiliary on its provider default just
+    # moves the wall clock from the translator to the auxiliary calls.  It only
+    # crosses over when the auxiliary model is the same kind, which is why this
+    # waits for auxiliary_config above.
+    effective_reasoning_mode, effective_aux_reasoning_mode = _job_reasoning_modes(
+        reasoning_mode, auxiliary_reasoning_mode, _connection_thinking_mode(),
+        saved_runtime_config,
+        auxiliary_target=(auxiliary_config["provider"], auxiliary_config["model"]),
+        translator_target=(provider, model))
+    set_llm_reasoning_modes(effective_reasoning_mode, effective_aux_reasoning_mode)
     understanding_runtime_config = _model_roles.public_role_config(auxiliary_config)
     has_fallback_digests = any(
         isinstance(item, dict) and item.get("status") == "deterministic_fallback"
@@ -13322,6 +13387,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 source_language=effective_source_language,
                 ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
                 failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"),
+                committed_paragraphs=state.get("source_paragraphs"),
                 online_config_resolver=_current_vision_config)
             registry = _SCAN_STREAMS.get()
             if registry is not None:

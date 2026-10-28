@@ -59,6 +59,7 @@
           "deliver_bilingual_docx": true,
           "deliver_pdf": true,
           "deliver_original_pdf": false,
+          "deliver_original_docx": false,
           "deliver_epub": false,
           "deliver_terms_xlsx": true,
           "deliver_tbx": false,
@@ -111,7 +112,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "230659d7120c835412879524569e24d0c280892feaf266fa2d18bb2513993a23"
+      "fingerprint": "627d437710d58d0d594fc128bc936c6573e0f182be1f2732e3abaf4543dd9f2f"
     },
     "qt_new_pdf_job": {
       "config": {
@@ -160,6 +161,7 @@
           "deliver_bilingual_docx": true,
           "deliver_pdf": false,
           "deliver_original_pdf": false,
+          "deliver_original_docx": false,
           "deliver_epub": false,
           "deliver_terms_xlsx": true,
           "deliver_tbx": false,
@@ -212,7 +214,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "2e2b179d4e5a97d3aa4d2bcf02a2a50f9fe4f512d940a9c5207640ef53e01000"
+      "fingerprint": "c350b1f8cd6df87504ba47d308a853c5edf43d1060389442cbc8a050c9f6420d"
     },
     "resumed_pdf_job": {
       "config": {
@@ -272,6 +274,7 @@
           "deliver_bilingual_docx": true,
           "deliver_pdf": true,
           "deliver_original_pdf": false,
+          "deliver_original_docx": false,
           "deliver_epub": false,
           "deliver_terms_xlsx": true,
           "deliver_tbx": false,
@@ -320,7 +323,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "76d3908721bb36416434dd0feb706a626c3495bfe3f02d2a09f82cddd5a90a5d"
+      "fingerprint": "7fc93ae13fa49a56c19395d953e741fb5ad1253454829421880e1b3cc8869692"
     }
   }
 }
