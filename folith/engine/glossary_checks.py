@@ -212,6 +212,7 @@ def normalize_glossary(entries):
 
 def glossary_block(glossary):
     """把术语表渲染成注入翻译/审校 prompt 的文本块。"""
+    from folith.terminology import source_forms
     locked_translate = [e for e in glossary if e["behavior"] == "translate" and e["status"] == "locked"]
     preserve = [e for e in glossary if e["behavior"] == "preserve"]
     provisional = [e for e in glossary if e["behavior"] == "translate" and e["status"] != "locked"]
@@ -219,7 +220,7 @@ def glossary_block(glossary):
     if locked_translate:
         lines.append("【锁定术语（必须使用首选译名，不得使用禁止译名）】：")
         for e in locked_translate:
-            seg = f"- {e['source']} -> {e['preferred']}"
+            seg = f"- {' / '.join(source_forms(e))} -> {e['preferred']}"
             if e["forbidden"]:
                 seg += f"（禁止：{'、'.join(e['forbidden'])}）"
             lines.append(seg)
@@ -228,7 +229,7 @@ def glossary_block(glossary):
     if provisional:
         lines.append("【建议术语（仅供参考，请优先采用）】：")
         for e in provisional:
-            lines.append(f"- {e['source']} -> {e['target']}")
+            lines.append(f"- {' / '.join(source_forms(e))} -> {e['target']}")
     return "\n".join(lines)
 
 

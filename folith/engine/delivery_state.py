@@ -63,7 +63,7 @@ def _reset_final_qa(state, reason=""):
 
 def _mark_translation_truth_changed(
     job_id, state, indexes, reason, *, actor="user", action="translation_changed",
-    stale_translation_reviews=True, patches=None,
+    stale_translation_reviews=True, patches=None, preserve_tm=False,
 ):
     """Record one canonical CURRENT_TRANSLATION mutation and its impact slice.
 
@@ -107,7 +107,7 @@ def _mark_translation_truth_changed(
     }
     state["translation_truth"] = truth
     if stale_translation_reviews:
-        _invalidate_translation_reviews(state, indexes, reason)
+        _invalidate_translation_reviews(state, indexes, reason, preserve_tm=preserve_tm)
     changed_segment_ids = list(truth["last_change"]["segment_ids"])
     from folith import academic_writer
     propagated = academic_writer.propagate_artifact_staleness(
@@ -151,7 +151,7 @@ def _mark_translation_truth_changed(
 
 
 def _invalidate_translation_reviews(
-    state, indexes, reason, *, review_event_ids=None, patches=None,
+    state, indexes, reason, *, review_event_ids=None, patches=None, preserve_tm=False,
 ):
     """Revoke review/TM trust while preserving review and decision history."""
     # A whole-book consistency pass is a view over the current translation.
@@ -179,7 +179,9 @@ def _invalidate_translation_reviews(
         if not 0 <= index < len(pairs):
             continue
         source = str(pairs[index].get("source") or "")
-        if _c.tm_discard(tm, source, job_lang):
+        changed_tm = (_c.tm_withdraw(tm, source, job_lang, reason=reason) if preserve_tm
+                      else _c.tm_discard(tm, source, job_lang))
+        if changed_tm:
             tm_changed = True
     if tm_changed:
         _c.save_tm(tm, tm_project_id(state))

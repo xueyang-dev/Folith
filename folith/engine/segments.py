@@ -1456,6 +1456,24 @@ def can_undo_translation_segment_structure(state):
 def translation_terms_for_pair(state, pair):
     """Resolve only glossary entries explicitly attached to one pair."""
     ids = {str(item) for item in pair.get("glossary_entry_ids") or []}
+    # Keep pair attribution historical; resolve merged IDs through the recorded
+    # human decisions instead of rewriting the glossary version used by a pair.
+    redirects = {}
+    for action in state.get('human_actions') or []:
+        if not isinstance(action, dict) or action.get('action') != 'glossary_entries_merged':
+            continue
+        originals = action.get('merged_originals') or []
+        if len(originals) == 2 and all(isinstance(item, dict) for item in originals):
+            old_id, new_id = str(originals[1].get('id') or ''), str(originals[0].get('id') or '')
+            if old_id and new_id and old_id != new_id:
+                redirects[old_id] = new_id
+    for old_id in list(ids):
+        seen = set()
+        current = old_id
+        while current in redirects and current not in seen:
+            seen.add(current)
+            current = redirects[current]
+        ids.add(current)
     entries = state.get("glossary") or []
     if not entries:
         frozen = state.get("glossary_frozen") or {}

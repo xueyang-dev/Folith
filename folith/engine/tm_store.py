@@ -90,7 +90,7 @@ def tm_index(tm, target_lang=None):
     if not language:
         return index
     for key, record in (tm or {}).items():
-        if _c.tm_record_language(key, record) != language:
+        if not _tm_hit(record, language, key):
             continue
         _, source = _c.tm_unscope_key(key)
         normalized = tm_normalize(source)

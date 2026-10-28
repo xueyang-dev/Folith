@@ -99,6 +99,23 @@ def tm_discard(tm: Dict[str, Any], source, target_lang) -> bool:
     return removed
 
 
+def tm_withdraw(tm: Dict[str, Any], source, target_lang, *, reason: str) -> bool:
+    """Keep the original translation, but remove its eligibility for reuse."""
+    language = normalize_language(target_lang)
+    if not language:
+        return False
+    scoped = tm_scope_key(target_lang, source)
+    changed = False
+    for candidate in (scoped, str(source or '')):
+        record = tm.get(candidate) if candidate else None
+        if not isinstance(record, dict) or tm_record_language(candidate, record) != language:
+            continue
+        if record.get('reviewed') or record.get('withdrawn_reason') != reason:
+            tm[candidate] = {**record, 'reviewed': False, 'withdrawn_reason': reason}
+            changed = True
+    return changed
+
+
 def tm_legacy_keys(tm: Optional[Mapping[str, Any]]) -> List[str]:
     """语言无法证明的条目键：保留在文件里，但永不自动命中。"""
     return [key for key, record in (tm or {}).items()
@@ -170,7 +187,7 @@ def tm_context_status(record: Optional[Mapping[str, Any]],
 
 __all__ = [
     "TM_SCOPE_SEP", "tm_scope_key", "tm_unscope_key", "tm_record_language",
-    "tm_record", "tm_put", "tm_discard", "tm_legacy_keys",
+    "tm_record", "tm_put", "tm_discard", "tm_withdraw", "tm_legacy_keys",
     "TM_CONTEXT_PREV", "TM_CONTEXT_NEXT", "tm_context_fingerprint",
     "tm_context_fields", "tm_context_status",
 ]

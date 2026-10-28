@@ -270,6 +270,7 @@ def reconcile_runtime_review_truth(state: Dict[str, Any]) -> Dict[str, int]:
         (state.get("glossary_frozen") or {}).get("entries")
         or state.get("glossary") or [])
     current_glossary_hash = models.glossary_hash(glossary)
+    changes_by_hash = {}
     for event in state.get("review_evidence") or []:
         if not isinstance(event, dict) or not _current_translation_review(event) \
                 or event.get("freshness_status") == "stale":
@@ -279,7 +280,12 @@ def reconcile_runtime_review_truth(state: Dict[str, Any]) -> Dict[str, int]:
             translation_core.get("glossary_hash") or event.get("glossary_hash") or "")
         if event_glossary_hash and event_glossary_hash != current_glossary_hash \
                 and event.get("review_event_id"):
-            stale_event_ids.add(str(event["review_event_id"]))
+            if event_glossary_hash not in changes_by_hash:
+                changes_by_hash[event_glossary_hash] = terminology.glossary_changes_since(
+                    state, event_glossary_hash)
+            if terminology.glossary_changes_affect_segments(
+                    state, changes_by_hash[event_glossary_hash], _review_dependency_segment_ids(event)):
+                stale_event_ids.add(str(event["review_event_id"]))
         truths = list(translation_core.get("dependency_truth") or [])
         truths.extend(translation_core.get("review_truth") or [])
         for truth in truths:
@@ -650,7 +656,7 @@ def _review_glossary_scope(
         relevant_glossary = [
             entry for entry in entries
             if ids.intersection(entry.get("occurrences") or [])
-            or any(matcher.matches(entry["source"], source)
+            or any(terminology.entry_matches(entry, source, matcher)
                    for source in sources)
         ]
     relevant_locked = [
