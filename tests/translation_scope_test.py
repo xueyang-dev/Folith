@@ -214,6 +214,28 @@ def test_scope_restore_puts_segments_back_in_original_order(
         core.OUTPUT_DIR = old_output
 
 
+
+def test_scope_exclusion_and_restore_preserves_position_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "scope-position-metadata"
+    state = _state(translated=True)
+    state["segment_source_spans"] = [[{"page_id": f"p{i}"}] for i in range(4)]
+    state["segment_source_marks"] = [[{"id": i}] for i in range(4)]
+    state["segmentation"] = {"output_segment_count": 4, "paragraph_ranges": [
+        {"paragraph_index": i, "start": i, "end": i + 1} for i in range(4)]}
+    core.save_job_state(job_id, state)
+    core.exclude_translation_scope(job_id, ["chapter:0000"])
+    excluded = core.load_job_state(job_id)
+    assert len(excluded["segment_source_spans"]) == len(excluded["paras"]) == 2
+    ids = [item["excluded_id"] for item in excluded["excluded_segments"]]
+    restored = core.restore_translation_scope(job_id, ids)["state"]
+    assert restored["paras"] == _sources()
+    assert restored["segment_source_spans"] == state["segment_source_spans"]
+    assert restored["segment_source_marks"] == state["segment_source_marks"]
+    assert restored["segmentation"]["paragraph_ranges"] == state["segmentation"]["paragraph_ranges"]
+    assert restored["segmentation"]["output_segment_count"] == 4
+
+
 def test_scope_restore_rejects_unknown_ids(tmp_path):
     job_id = "scope-restore-guard"
     old_output = _persist(tmp_path, job_id, _state())
