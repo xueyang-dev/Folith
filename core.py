@@ -111,6 +111,7 @@ DELIVERY_CONFIG_DEFAULTS = {
     "deliver_bilingual_docx": True,
     "deliver_pdf": False,
     "deliver_original_pdf": False,
+    "deliver_original_docx": False,
     "deliver_epub": False,
     "deliver_terms_xlsx": True,
     "deliver_tbx": False,
@@ -914,6 +915,7 @@ from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps
     delivery_status_label,
     dependency_impact_view,
     list_delivery_snapshots,
+    original_format_docx_applicable,
     original_layout_pdf_applicable,
     progress_label,
     recovery_summary,
@@ -10667,6 +10669,31 @@ def _original_layout_notes(report) -> list:
     return notes
 
 
+def _original_format_docx_notes(report):
+    """Content the write-back kept but did not translate, in plain words.
+
+    Preserved objects (text boxes, comments, formulas, ...) and units that had
+    no translation are shown in the delivery manifest and freeze notice rather
+    than left for the user to discover in Word.
+    """
+    notes = []
+    for item in report.get("preserved") or []:
+        if item.get("kind") in ("textbox", "comment", "formula"):
+            notes.append(
+                f"原格式 DOCX：{item.get('count')} 处{item.get('label')}原样保留、"
+                "未翻译（详见 original_format_report.json 的 preserved）。")
+    untranslated = report.get("untranslated_units") or []
+    if untranslated:
+        notes.append(
+            f"原格式 DOCX：{len(untranslated)} 个单元没有译文，保留了原文"
+            "（详见 original_format_report.json 的 untranslated_units）。")
+    for item in report.get("rejected") or []:
+        notes.append(
+            f"原格式 DOCX：{item.get('label') or item.get('kind')}未处理"
+            "（详见 original_format_report.json 的 rejected）。")
+    return notes
+
+
 def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     """Build the configured delivery set used by both preview and snapshots."""
     from folith import assets as _assets
@@ -10728,16 +10755,25 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
                     json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
                 ).encode("utf-8")
             if config.get("deliver_original_docx"):
-                if not (filename.endswith(".docx") and source):
+                # Original-format DOCX (Contract v1): the source package is the
+                # write-back base.  Failure is surfaced with its reason, never
+                # replaced by the rebuilt translation.docx.
+                if not original_format_docx_applicable(filename, source):
                     skipped_assets["original_format.docx"] = (
                         "original-format DOCX requires a DOCX source")
                 else:
                     from folith.docx_roundtrip import build_roundtrip_docx
-                    docx_bytes, docx_report = build_roundtrip_docx(state, source)
+                    try:
+                        docx_bytes, docx_report = build_roundtrip_docx(state, source)
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "原格式 DOCX 回写失败，未用重建文档代替："
+                            f"{type(exc).__name__}: {exc}") from exc
                     bundle["original_format.docx"] = _bytes(docx_bytes)
                     bundle["original_format_report.json"] = (
                         json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
                     ).encode("utf-8")
+                    renderer_notes.extend(_original_format_docx_notes(docx_report))
             if config["deliver_bilingual_docx"]:
                 bundle["bilingual.docx"] = _bytes(pairs_to_word(
                     pairs, source_lang=state.get("source_lang"),

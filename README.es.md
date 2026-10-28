@@ -218,7 +218,7 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 - Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.8.0.md) (en chino) correspondientes.
 - No se admiten EPUB con DRM.
 - Las imágenes dentro de tablas y cuadros de texto no se conservan en el DOCX traducido; el DOCX bilingüe no contiene imágenes.
-- No se reescribe la maquetación del DOCX original; se generan archivos nuevos.
+- Por defecto se generan archivos nuevos y no se reescribe la maquetación del DOCX original. Con fuente DOCX puede activarse «Traducción en formato original» en las opciones de entrega (`original_format.docx`): escribe la traducción en el archivo original conservando estilos, tablas, notas al pie, encabezados y pies de página. Desactivado por defecto; aún sin aceptación manual nativa en macOS / Windows.
 - Los idiomas de interfaz distintos del chino simplificado son experimentales.
 - Las páginas escaneadas las reconoce el modelo de visión y pueden contener errores; compáralas con la página original.
 
@@ -260,7 +260,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 - [ ] Firma de código y notarización
 - [ ] Aceptación en más versiones de Windows y en una VM limpia
-- [ ] Reescritura en el DOCX original conservando maquetación y estilos
+- [x] Reescritura en el DOCX original conservando maquetación y estilos (opcional, desactivada por defecto)
 - [ ] Coincidencias aproximadas en la memoria de traducción
 - [ ] Traducción incremental entre versiones de un documento
 

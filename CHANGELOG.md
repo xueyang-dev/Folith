@@ -65,6 +65,7 @@
 
 ### 交付
 
+- 新增交付选项「原格式译文」（DOCX Contract v1，#26）：DOCX 来源可另外产出 `original_format.docx` 与 `original_format_report.json`，在原文件包上写回译文，样式、表格、脚注、页眉页脚与未改动的包内文件保持不变；默认关闭，不改变 `translation.docx`。非 DOCX 来源在交付清单的 `skipped_assets` 中注明原因，回写失败时直接报错，不退回重建；保留但未翻译的内容（文本框、批注、公式）与无译文的单元写入交付清单的 `renderer_notes`。译文按源段落身份（`epub_source_paragraphs`）对应回原段落，不再按位置配对；被排除的段保留原文并列入 `untranslated_units`，无法对应（跨段落合并、来源不一致）时明确报错。此前引擎已合入但桌面端没有入口。尚未做原生 macOS / Windows 人工验收。
 - 「原排版译文」移除 Beta 标记：macOS 实测 26/26 页通过后，Windows 已通过全部渲染与交付测试，并复现离线语料抽检结果；Linux 尚未验证，已记录在渲染报告（#15）。
 - 原排版 PDF 渲染出现缺字形、未完成区域或溢出时，交付清单以 `renderer_notes` 直接告知用户，桌面端冻结交付的确认提示也会带上这些说明，不再只写在报告 JSON 里（#15）。
 - 带有未处理修订（Track Changes）的 DOCX 在导入时明确拒绝，请先在 Word 里接受或拒绝修订后重新导入（#26）。

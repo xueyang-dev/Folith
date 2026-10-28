@@ -154,7 +154,7 @@ def default_delivery_config() -> Dict[str, Any]:
 DELIVERY_OUTPUT_KEYS: Tuple[str, ...] = (
     "enable_annotate", "enable_report", "deliver_plain_docx",
     "deliver_bilingual_docx", "deliver_pdf", "deliver_original_pdf",
-    "deliver_epub", "deliver_terms_xlsx",
+    "deliver_original_docx", "deliver_epub", "deliver_terms_xlsx",
     "deliver_tbx", "deliver_tmx", "deliver_jsonl", "deliver_evidence",
     "deliver_cases", "deliver_academic_workspace", "deliver_review_report",
 )
@@ -214,7 +214,7 @@ DELIVERY_PRESET_CONFIGS: Dict[str, Dict[str, Any]] = {
 #: widgets when a preset is applied).
 DELIVERY_WIDGET_KEYS: Tuple[str, ...] = (
     "deliver_plain_docx", "deliver_bilingual_docx", "deliver_pdf",
-    "deliver_original_pdf", "deliver_epub",
+    "deliver_original_pdf", "deliver_original_docx", "deliver_epub",
     "output_annotate", "deliver_terms_xlsx", "deliver_tmx", "deliver_tbx",
     "deliver_jsonl", "output_report", "deliver_evidence", "deliver_cases",
     "deliver_academic_workspace", "deliver_review_report",
@@ -271,6 +271,15 @@ DELIVERY_TRANSLATION_ITEMS: Tuple[Dict[str, Any], ...] = (
         "disambig_fmt": True,
         # Only a PDF source has page geometry to rebuild from.
         "pdf_only": True,
+    },
+    {
+        "key": "deliver_original_docx", "title": "原格式译文", "format": "DOCX",
+        "detail": "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；"
+                  "未翻译的内容会在交付报告中列出。",
+        "file_units": (("DOCX", 1),),
+        "disambig_fmt": True,
+        # Only a DOCX source has a package to write back into.
+        "docx_only": True,
     },
     {
         "key": "deliver_epub", "title": "译文电子书", "format": "EPUB",
@@ -330,11 +339,17 @@ DELIVERY_RESEARCH_ITEMS: Tuple[Dict[str, Any], ...] = (
 
 
 def delivery_items_for_source(items: Iterable[Mapping[str, Any]],
-                              source_is_pdf: bool) -> Tuple[Mapping[str, Any], ...]:
-    """Drop PDF-only rows for a non-PDF source (they can never be produced)."""
-    if source_is_pdf:
-        return tuple(items)
-    return tuple(item for item in items if not item.get("pdf_only"))
+                              source_is_pdf: bool,
+                              source_is_docx: bool | None = None) -> Tuple[Mapping[str, Any], ...]:
+    """Drop rows that can never be produced for this source.
+
+    PDF-only rows go for a non-PDF source.  DOCX-only rows go for a non-DOCX
+    source when the caller says whether it is one (``None`` keeps them).
+    """
+    return tuple(
+        item for item in items
+        if (source_is_pdf or not item.get("pdf_only"))
+        and (source_is_docx is None or source_is_docx or not item.get("docx_only")))
 
 
 #: Keys the preparation surface writes for its own round-trip.

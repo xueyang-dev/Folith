@@ -200,7 +200,16 @@ def test_cancel_while_waiting_for_extractions_returns_promptly(job_env, monkeypa
     cancel = threading.Event()
     monkeypatch.setattr(core, "_runtime_cancel_requested",
                         lambda _job: cancel.is_set())
-    threading.Timer(0.8, cancel.set).start()
+    # Cancel only after a batch with a blocked extraction has been committed.
+    # A wall-clock timer can fire before the first commit on a busy runner.
+    original_timing = core._batch_timing
+
+    def cancel_after_commit(job_id, stage, batch_id, phase, **metadata):
+        original_timing(job_id, stage, batch_id, phase, **metadata)
+        if stage == "translation" and phase == "commit_finished" and metadata.get("status") == "completed":
+            cancel.set()
+
+    monkeypatch.setattr(core, "_batch_timing", cancel_after_commit)
     started = time.perf_counter()
     try:
         with pytest.raises(RuntimeError, match="请求取消"):
@@ -218,7 +227,16 @@ def test_resume_rederives_pending_extractions_once(job_env, monkeypatch):
     cancel = threading.Event()
     monkeypatch.setattr(core, "_runtime_cancel_requested",
                         lambda _job: cancel.is_set())
-    threading.Timer(0.8, cancel.set).start()
+    # Cancel only after a batch with a blocked extraction has been committed.
+    # A wall-clock timer can fire before the first commit on a busy runner.
+    original_timing = core._batch_timing
+
+    def cancel_after_commit(job_id, stage, batch_id, phase, **metadata):
+        original_timing(job_id, stage, batch_id, phase, **metadata)
+        if stage == "translation" and phase == "commit_finished" and metadata.get("status") == "completed":
+            cancel.set()
+
+    monkeypatch.setattr(core, "_batch_timing", cancel_after_commit)
     try:
         with pytest.raises(RuntimeError):
             _run("async-resume", Provider(gate=gate), monkeypatch)
