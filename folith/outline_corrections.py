@@ -47,6 +47,21 @@ def has_corrections(job_id):
         return bool(_read(job_id).get("entries"))
 
 
+def _first_paragraph_hash(node):
+    paragraphs = node.get("paragraphs") or []
+    if not paragraphs or not str(paragraphs[0] or "").strip():
+        return None
+    return hashlib.sha256(str(paragraphs[0]).encode("utf-8")).hexdigest()
+
+
+def _reparse_matches(nodes, entry):
+    anchor = entry.get("first_paragraph_sha256")
+    if not anchor or not entry.get("original_title_unique"):
+        return []
+    return [node for node in nodes if node.get("title") == entry.get("original_title")
+            and _first_paragraph_hash(node) == anchor]
+
+
 def save(job_id, extracted, node_id, *, title=None, level=None, para_start=None, delete=False):
     """Save one correction against the extracted identity, never an edited title."""
     nodes = extracted.get("nodes") or []
@@ -65,9 +80,7 @@ def save(job_id, extracted, node_id, *, title=None, level=None, para_start=None,
         if saved.get("fingerprint") != extracted.get("fingerprint"):
             migrated = []
             for old in saved.get("entries") or []:
-                if not old.get("original_title_unique"):
-                    continue
-                matches = [n for n in nodes if n.get("title") == old.get("original_title")]
+                matches = _reparse_matches(nodes, old)
                 if len(matches) != 1:
                     continue
                 updated = dict(old, node_id=matches[0]["id"])
@@ -83,6 +96,7 @@ def save(job_id, extracted, node_id, *, title=None, level=None, para_start=None,
         entry = next((e for e in entries if e.get("node_id") == node_id), None)
         if entry is None:
             entry = {"node_id": node_id, "original_title": node.get("title", ""),
+                     "first_paragraph_sha256": _first_paragraph_hash(node),
                      "original_title_unique": sum(n.get("title") == node.get("title") for n in nodes) == 1}
             entries.append(entry)
         if title is not None:
@@ -124,8 +138,10 @@ def apply(job_id, extracted):
         if not same and not entry.get("original_title_unique"):
             dropped += 1
             continue
-        candidates = [n for n in nodes if (n.get("id") == entry.get("node_id")
-                      if same else n.get("title") == entry.get("original_title"))]
+        candidates = ([n for n in nodes if n.get("id") == entry.get("node_id")
+                       and (not entry.get("first_paragraph_sha256") or
+                            _first_paragraph_hash(n) == entry["first_paragraph_sha256"])]
+                      if same else _reparse_matches(nodes, entry))
         if len(candidates) != 1 or candidates[0]["id"] in used:
             dropped += 1
             continue

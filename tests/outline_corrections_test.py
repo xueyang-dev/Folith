@@ -79,3 +79,28 @@ def test_duplicate_original_title_is_not_guessed_after_reparse(tmp_path, monkeyp
     changed = outline_with_titles()
     effective, dropped = corrections.apply("duplicate-title", changed)
     assert dropped == 1 and effective == changed
+
+
+def test_reparse_rejects_same_title_with_different_first_paragraph(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    original = outline_with_titles()
+    original["nodes"][0]["title"] = "Introduction"
+    original["fingerprint"] = source_outline.outline_fingerprint(original)
+    corrections.save("same-title-new-content", original, "n0000", title="Edited")
+    changed = outline_with_titles("Different text")
+    changed["nodes"][0]["title"] = "Introduction"
+    changed["fingerprint"] = source_outline.outline_fingerprint(changed)
+    effective, dropped = corrections.apply("same-title-new-content", changed)
+    assert dropped == 1 and effective == changed
+
+
+def test_reparse_retains_correction_when_title_and_first_paragraph_match(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    original = outline_with_titles()
+    corrections.save("same-content-reparse", original, "n0000", title="Edited")
+    changed = copy.deepcopy(original)
+    changed["nodes"][1]["level"] = 2
+    changed["nodes"][1]["title"] = "A changed heading"
+    changed["fingerprint"] = source_outline.outline_fingerprint(changed)
+    effective, dropped = corrections.apply("same-content-reparse", changed)
+    assert dropped == 0 and effective["nodes"][0]["title"] == "Edited"
