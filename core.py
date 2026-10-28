@@ -3705,6 +3705,8 @@ def _translator_system(glossary_text, style_rules, target_lang):
             "临时造词、长句逻辑关系与修辞功能；优先复用已提供的术语、实体和连续性选择，"
             "人工锁定实体/术语优先于审校、TM 和生成式建议；生成式实体提示不得覆盖锁定术语。"
             "避免明显的逐词直译和词典首义机械替换。\n"
+            "输入段落前的序号仅用于对齐，不属于原文，不要把这些序号加进译文；"
+            "原文本身的编号和数字须保留。\n"
             "不要输出分析过程，只输出最终译文。\n"
             "请严格输出合法的 JSON 字符串数组，不要包含任何解释文字。")
 
@@ -3792,8 +3794,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
                     attempt=0, output_chars=sum(len(item) for item in cached),
                     cache="hit"))
             # Older cache entries predate the digit rule.
-            return _translation_protocol.strip_echoed_numbering(
-                segments, _numerals.normalize_targets(list(cached), target_lang))
+            return _numerals.normalize_targets(list(cached), target_lang)
     # Rate limiting is handled by the shared provider controller: it paces
     # request starts and pushes one cooldown every worker observes, instead of
     # each worker sleeping a fixed 15 s and then stampeding the provider.
@@ -3824,9 +3825,9 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             finally:
                 _LLM_CTX.prompt_cost = previous_cost
             controller.note_success()
-            targets = _translation_protocol.strip_echoed_numbering(segments, _numerals.normalize_targets(
+            targets = _numerals.normalize_targets(
                 _translation_protocol.parse_translation_response(res, len(segments)),
-                target_lang))
+                target_lang)
             if result_cache is not None and cache_key is not None:
                 # Only a fully parsed, count-matching batch is cacheable.  A
                 # partial or malformed reply never reaches this line.

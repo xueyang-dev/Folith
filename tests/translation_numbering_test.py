@@ -1,27 +1,37 @@
-"""List numbers a model puts in front of translations must not reach the target text."""
-from folith.translation_protocol import strip_echoed_numbering
+"""Numbers inside translated text are content, not transport markers."""
+import core
+from folith.translation_protocol import parse_translation_response
 
 
-def test_a_continued_list_number_is_removed_when_the_source_has_none():
-    sources = ["「現地調査報告」とあるのは、各地の", "その二 十九春、二十秋山東作戦"]
-    targets = ["1. 所谓“现地调查报告”，是指各地的", "2. 其二 十九春、二十秋山东作战"]
-    assert strip_echoed_numbering(sources, targets) == ["所谓“现地调查报告”，是指各地的", "其二 十九春、二十秋山东作战"]
+def test_structured_targets_keep_numbered_text_even_if_source_is_not_numbered():
+    def call(*args, **kwargs):
+        return '["1. First result", "2. Second result"]'
+
+    result = core.translate_batch(["第一项", "第二项"], "", "", "", "",
+                                  "English", "p", "k", "m", call_llm_fn=call)
+    assert result == ["1. First result", "2. Second result"]
 
 
-def test_a_number_in_front_of_the_sources_own_enumerator_is_removed():
-    assert strip_echoed_numbering(["一、「慰霊実行委員会」と略記したもの"],
-                                  ["2. 一、文中将“慰灵实行委员会”作为简称的"]) == ["一、文中将“慰灵实行委员会”作为简称的"]
+def test_cached_targets_keep_numbered_text():
+    class Cache:
+        def get(self, key):
+            return ["1. First result"]
+
+    result = core.translate_batch(["第一项"], "", "", "", "", "English",
+                                  "p", "k", "m", result_cache=Cache())
+    assert result == ["1. First result"]
 
 
-def test_a_number_the_source_really_has_is_kept():
-    sources = ["1. First item", "(2) Second item", "一、本书的内容"]
-    targets = ["1. 第一项", "(2) 第二项", "1. 本书的内容"]          # 一、→1. is a real conversion
-    assert strip_echoed_numbering(sources, targets) == targets
+def test_single_plain_numbered_line_is_ambiguous_and_kept():
+    assert parse_translation_response("1. First result", 1) == ["1. First result"]
 
 
-def test_a_translation_that_is_only_a_number_is_left_alone():
-    assert strip_echoed_numbering(["注"], ["1. "]) == ["1. "]
+def test_numbered_response_sequence_still_parses_outer_numbers():
+    assert parse_translation_response("1. First result\n2. Second result", 2) == [
+        "First result", "Second result"]
 
 
-def test_a_number_in_front_of_a_bracketed_enumerator_is_removed():
-    assert strip_echoed_numbering(["（二） 宿舎施設"], ["3. （二）宿舍设施"]) == ["（二）宿舍设施"]
+def test_prompt_distinguishes_input_indexes_from_source_numbering():
+    prompt = core._translator_system("", "", "English")
+    assert "输入段落前的序号仅用于对齐" in prompt
+    assert "原文本身的编号和数字须保留" in prompt
