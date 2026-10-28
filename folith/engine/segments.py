@@ -363,11 +363,92 @@ def _excluded_segment_record(state, index, *, reason, actor, source="",
         "excluded_at": _finalization.now_iso(),
         "excluded_by": str(actor or "user"),
     }
+    record["positional_artifacts"] = _capture_positional_artifacts(state, index)
     if node_id:
         record["node_id"] = str(node_id)
     if scope_key:
         record["scope_key"] = str(scope_key)
     return record
+
+
+def _capture_positional_artifacts(state, index):
+    """Save the removed segment's provenance and paragraph membership."""
+    count = len(state.get("paras") or [])
+    saved = {"arrays": {}}
+    for key in ("segment_source_spans", "segment_source_marks"):
+        values = state.get(key)
+        if isinstance(values, list) and values:
+            if len(values) != count:
+                raise ValueError("段落来源位置数据与当前段落数量不一致，无法安全排除。")
+            saved["arrays"][key] = json.loads(json.dumps(values[index]))
+    ranges = (state.get("segmentation") or {}).get("paragraph_ranges") or []
+    owners = [i for i, row in enumerate(ranges) if isinstance(row, dict)
+              and isinstance(row.get("start"), int) and isinstance(row.get("end"), int)
+              and row["start"] <= index < row["end"]]
+    if len(owners) > 1:
+        raise ValueError("段落区间重叠，无法安全排除。")
+    if owners:
+        row_index = owners[0]
+        saved["paragraph"] = {"row": row_index,
+                              "paragraph_index": ranges[row_index].get("paragraph_index")}
+    return saved
+
+
+def _restore_positional_artifacts(state, index, record):
+    """Insert saved provenance at the restored position; never guess membership."""
+    saved = record.get("positional_artifacts")
+    if not isinstance(saved, dict):
+        return  # Existing records retain their original restoration behavior.
+    count = len(state.get("paras") or [])
+    arrays = saved.get("arrays") or {}
+    for key in ("segment_source_spans", "segment_source_marks"):
+        values = state.get(key)
+        if isinstance(values, list) and values and key not in arrays:
+            raise ValueError("段落来源位置数据已变化，无法安全恢复被排除的段落。")
+    for key, value in arrays.items():
+        values = state.get(key)
+        if not isinstance(values, list) or len(values) != count:
+            raise ValueError("段落来源位置数据已变化，无法安全恢复被排除的段落。")
+    segmentation = state.get("segmentation")
+    ranges = segmentation.get("paragraph_ranges") if isinstance(segmentation, dict) else None
+    owner = saved.get("paragraph")
+    owner_index = None
+    if owner is not None:
+        owner_index = owner.get("row")
+        if not isinstance(ranges, list) or not isinstance(owner_index, int) or not 0 <= owner_index < len(ranges):
+            raise ValueError("原段落区间已变化，无法安全恢复被排除的段落。")
+        row = ranges[owner_index]
+        if not isinstance(row, dict) or row.get("paragraph_index") != owner.get("paragraph_index") \
+                or not isinstance(row.get("start"), int) or not isinstance(row.get("end"), int) \
+                or not row["start"] <= index <= row["end"]:
+            raise ValueError("原段落区间已变化，无法安全恢复被排除的段落。")
+    for key, value in arrays.items():
+        state[key].insert(index, json.loads(json.dumps(value)))
+    if isinstance(ranges, list) and ranges:
+        updated = []
+        for row_index, row in enumerate(ranges):
+            if not isinstance(row, dict) or not isinstance(row.get("start"), int) or not isinstance(row.get("end"), int):
+                updated.append(row)
+                continue
+            row = dict(row)
+            start, end = row["start"], row["end"]
+            if row_index == owner_index:
+                # A removed internal separator cannot be reconstructed safely.
+                row["end"] = end + 1
+                if "separators" in row:
+                    row["separators"] = []
+                    row["gate"] = {**(row.get("gate") or {}), "separators_recorded": False}
+            else:
+                # Empty earlier paragraphs at this boundary stay before the
+                # restored segment; later paragraphs move with their content.
+                earlier_empty = (owner_index is not None and row_index < owner_index
+                                 and start == end == index)
+                row["start"] = start + (start >= index and not earlier_empty)
+                row["end"] = end + (end > index or (start >= index and end == index
+                                                     and not earlier_empty))
+            updated.append(row)
+        segmentation["paragraph_ranges"] = updated
+        segmentation["output_segment_count"] = count + 1
 
 
 def _shift_paragraph_ranges(paragraph_ranges, removed_index):
@@ -1023,6 +1104,7 @@ def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
     restored = []
     for record in records:
         index = _exclusion_restore_index(state, record)
+        _restore_positional_artifacts(state, index, record)
         excluded_pair = record.get("pair")
         if excluded_pair is None and pairs:
             # 译前排除没有译文快照；任务已翻译后恢复时，补回待译的空槽，
@@ -1657,7 +1739,7 @@ def mutate_translation_segments(
         # mismatch means another invariant has already been violated and the
         # user needs the existing delivery gate to surface it.
         raise ValueError("当前任务的源文与双语段落数量不一致，无法安全编辑段落结构。")
-    if not pairs and not paras:
+    if not pairs and not paras and operation != "include":
         raise ValueError("当前任务还没有可编辑的段落。")
     if not pairs and operation not in {"exclude", "include"}:
         raise ValueError("当前任务还没有可编辑的译文段落。")
@@ -1882,6 +1964,7 @@ def mutate_translation_segments(
         affected_hint = [max(0, min(index, len(pairs) - 1))] if pairs else []
     elif operation == "include":
         excluded_record = dict(include_record)
+        _restore_positional_artifacts(state, index, excluded_record)
         state["excluded_segments"] = [
             item for item in state.get("excluded_segments") or []
             if not (isinstance(item, dict)
@@ -1890,7 +1973,11 @@ def mutate_translation_segments(
         ]
         # 排除发生在翻译之前时没有 pair 记录，此时只需要把原文插回 paras。
         restored_pair = excluded_record.get("pair")
-        if pairs and isinstance(restored_pair, dict):
+        if restored_pair is None and pairs:
+            restored_pair = {"source": str(excluded_record.get("source") or ""),
+                             "target": "", "initial_target": "",
+                             "target_provenance": "generated", "from_tm": False}
+        if isinstance(restored_pair, dict):
             # 内容原样回来，但**不**连带把旧的"已审校"标记也一起点亮：它的审校
             # 依赖在排除那一刻已经被判过期，重新显示"已审校"会是假绿（撤销路径
             # 出于同样的理由在 `undo_translation_segment_structure` 里清标记）。
@@ -2018,6 +2105,18 @@ def undo_translation_segment_structure(job_id, *, actor="user"):
     restored_paras = [str(item or "") for item in record.get("restore_paras") or []]
     if len(restored_paras) != len(restored):
         restored_paras = [str(pair.get("source") or "") for pair in restored]
+
+    operation = str(record.get("operation") or "")
+    if operation == "exclude":
+        added = set(record.get("excluded_ids_added") or [])
+        excluded = next((item for item in state.get("excluded_segments") or []
+                         if isinstance(item, dict) and item.get("excluded_id") in added), None)
+        if excluded is not None:
+            _restore_positional_artifacts(state, undo_index, excluded)
+    elif operation == "include":
+        restored_records = record.get("excluded_records_restored") or []
+        if restored_records and isinstance(restored_records[0].get("positional_artifacts"), dict):
+            _drop_positional_artifacts(state, undo_index, len(paras) - 1)
 
     # 排除发生在翻译之前时 pairs 本来就是空的，撤销只动 paras。
     if pairs:

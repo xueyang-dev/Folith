@@ -128,6 +128,121 @@ def test_manual_exclude_keeps_anchors_marks_and_paragraph_ranges_in_step_with_th
     assert state["segmentation"]["output_segment_count"] == len(state["paras"]) == 2
 
 
+
+def _state_with_positions():
+    state = _state()
+    state["segment_source_spans"] = [[{"page_id": "p1"}], [{"page_id": "p2"}], [{"page_id": "p3"}]]
+    state["segment_source_marks"] = [[{"id": "a"}], [{"id": "b"}], [{"id": "c"}]]
+    state["segmentation"] = {"output_segment_count": 3, "paragraph_ranges": [
+        {"paragraph_index": i, "start": i, "end": i + 1} for i in range(3)]}
+    return state
+
+
+def _assert_positions(state, expected):
+    assert [span[0]["page_id"] for span in state["segment_source_spans"]] == [f"p{i + 1}" for i in expected]
+    assert [mark[0]["id"] for mark in state["segment_source_marks"]] == ["abc"[i] for i in expected]
+    ranges = state["segmentation"]["paragraph_ranges"]
+    for i, row in enumerate(ranges):
+        before = sum(n < i for n in expected)
+        assert (row["start"], row["end"]) == (before, before + (i in expected))
+    assert state["segmentation"]["output_segment_count"] == len(expected)
+
+
+@pytest.mark.parametrize("restore_path", ["single", "scope", "undo"])
+def test_restoring_exclusion_restores_positional_data(tmp_path, monkeypatch, restore_path):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "position-restore"
+    core.save_job_state(job, _state_with_positions())
+    excluded = core.mutate_translation_segments(job, 1, "exclude")
+    _assert_positions(excluded, [0, 2])
+    excluded_id = excluded["excluded_segments"][0]["excluded_id"]
+    if restore_path == "single":
+        restored = core.mutate_translation_segments(job, 0, "include", excluded_id=excluded_id)
+    elif restore_path == "scope":
+        restored = core.restore_translation_scope(job, [excluded_id])["state"]
+    else:
+        restored = core.undo_translation_segment_structure(job)
+    _assert_positions(restored, [0, 1, 2])
+    assert [p["source"] for p in restored["pairs"]] == _state()["paras"]
+    if restore_path == "single":
+        _assert_positions(core.undo_translation_segment_structure(job), [0, 2])
+
+
+def test_restoring_multiple_exclusions_in_either_order(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    for order in ((0, 1), (1, 0)):
+        job = "position-order-" + str(order[0])
+        core.save_job_state(job, _state_with_positions())
+        first = core.mutate_translation_segments(job, 0, "exclude")
+        first_id = first["excluded_segments"][-1]["excluded_id"]
+        second = core.mutate_translation_segments(job, 0, "exclude")
+        ids = [first_id, second["excluded_segments"][-1]["excluded_id"]]
+        for choice in order:
+            core.mutate_translation_segments(job, 0, "include", excluded_id=ids[choice])
+        restored = core.load_job_state(job)
+        _assert_positions(restored, [0, 1, 2])
+        assert restored["paras"] == _state()["paras"]
+
+
+def test_restoring_invalidates_unprovable_intra_paragraph_separators(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    state = _state_with_positions()
+    state["segmentation"]["paragraph_ranges"] = [{"paragraph_index": 0, "start": 0, "end": 3,
+        "separators": [" ", "\n"], "gate": {"separators_recorded": True}}]
+    core.save_job_state("position-separators", state)
+    excluded = core.mutate_translation_segments("position-separators", 1, "exclude")
+    restored = core.mutate_translation_segments("position-separators", 0, "include",
+        excluded_id=excluded["excluded_segments"][0]["excluded_id"])
+    row = restored["segmentation"]["paragraph_ranges"][0]
+    assert (row["start"], row["end"]) == (0, 3)
+    assert row["separators"] == [] and row["gate"]["separators_recorded"] is False
+
+
+
+def test_restore_all_excluded_segments_and_provenance(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "position-all"
+    core.save_job_state(job, _state_with_positions())
+    ids = []
+    for _ in range(3):
+        state = core.mutate_translation_segments(job, 0, "exclude")
+        ids.append(state["excluded_segments"][-1]["excluded_id"])
+    for excluded_id in reversed(ids):
+        state = core.mutate_translation_segments(job, 0, "include", excluded_id=excluded_id)
+    _assert_positions(state, [0, 1, 2])
+    assert state["paras"] == _state()["paras"]
+    assert [p["source"] for p in state["pairs"]] == state["paras"]
+
+
+def test_refuses_to_restore_when_saved_provenance_no_longer_fits(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "position-changed"
+    core.save_job_state(job, _state_with_positions())
+    state = core.mutate_translation_segments(job, 1, "exclude")
+    excluded_id = state["excluded_segments"][0]["excluded_id"]
+    state["segment_source_spans"] = [[{"page_id": "p1"}]]
+    core.save_job_state(job, state)
+    with pytest.raises(ValueError, match="无法安全恢复"):
+        core.mutate_translation_segments(job, 0, "include", excluded_id=excluded_id)
+    assert core.load_job_state(job)["paras"] == state["paras"]
+
+
+def test_restore_pretranslation_exclusion_after_translation_inserts_empty_pair(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "position-pretranslated"
+    state = _state_with_positions()
+    state["pairs"] = []
+    core.save_job_state(job, state)
+    state = core.mutate_translation_segments(job, 1, "exclude")
+    excluded_id = state["excluded_segments"][0]["excluded_id"]
+    state["pairs"] = [{"source": source, "target": "translated"} for source in state["paras"]]
+    core.save_job_state(job, state)
+    restored = core.mutate_translation_segments(job, 0, "include", excluded_id=excluded_id)
+    _assert_positions(restored, [0, 1, 2])
+    assert [p["source"] for p in restored["pairs"]] == restored["paras"]
+    assert restored["pairs"][1]["target"] == ""
+
+
 def test_exclude_removes_segment_from_work_list_but_keeps_a_restorable_record(
         tmp_path):
     job_id = "segmentlifecycle01"

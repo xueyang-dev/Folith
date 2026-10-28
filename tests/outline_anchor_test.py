@@ -335,7 +335,9 @@ def test_restoring_the_excluded_segment_resolves_the_node_again(data_dir):
     entry = anchor.resolve(JOB, core.load_job_state(JOB))["nodes"]["n0000"]
 
     assert entry["state"] == "resolved"
-    assert entry["reason"] == "uid_match"
+    # The cached mapping was refreshed while excluded; the restored range is
+    # resolved through the paragraph chain instead of reusing that cache.
+    assert entry["reason"] == "paragraph_match"
     assert (entry["first_segment_index"], entry["last_segment_index"]) == (0, 1)
 
 
