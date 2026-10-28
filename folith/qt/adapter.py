@@ -1562,15 +1562,8 @@ def _glossary_entries(state: dict) -> list[dict]:
 
 def _term_in(term: str, text: str) -> bool:
     """术语是否出现在原文里：拉丁字母按整词匹配（不把 "art" 算进 "start"），其余按子串。"""
-    import re
-
-    term = str(term or "").strip()
-    if not term:
-        return False
-    if re.search(r"[A-Za-z]", term):
-        return re.search(rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])", text,
-                         re.IGNORECASE) is not None
-    return term in text
+    from folith.terminology import term_matches
+    return term_matches(str(term or ''), str(text or ''))
 
 
 def segment_terms(state: dict, index: int) -> list[dict]:
@@ -1587,24 +1580,26 @@ def segment_terms(state: dict, index: int) -> list[dict]:
     target = str(pair.get("target") or "")
     attached = {str(item) for item in pair.get("glossary_entry_ids") or []}
     rows: list[tuple[int, int, dict]] = []
+    from folith.terminology import entry_matches, source_forms
     for entry in _glossary_entries(state):
         if str(entry.get("status") or "") == "rejected":
             continue
         term = str(entry.get("source") or "")
         hit = str(entry.get("id") or "") in attached
-        if not (hit or _term_in(term, source)):
+        if not (hit or entry_matches(entry, source)):
             continue
         preferred = str(entry.get("preferred") or entry.get("target") or "")
         forbidden = [str(item) for item in entry.get("forbidden") or [] if str(item or "")]
         position = source.lower().find(term.lower()) if term else -1
         rows.append((0 if hit else 1, position if position >= 0 else len(source), {
             "id": str(entry.get("id") or ""), "source": term, "target": preferred,
+            "source_aliases": source_forms(entry)[1:],
             "status": str(entry.get("status") or ""),
             "forbidden": forbidden,
-            "forbidden_hits": [item for item in forbidden if item in target],
+            "forbidden_hits": [item for item in forbidden if _term_in(item, target)],
             # 原文出现了术语、译文已经有了，却没有用首选译名（可能是同义写法，也可能是漏改）。
             "missing_preferred": bool(target.strip() and preferred and preferred != "—"
-                                      and _term_in(term, source)
+                                      and entry_matches(entry, source)
                                       and not _term_in(preferred, target)),
         }))
     rows.sort(key=lambda item: (item[0], item[1]))
@@ -4022,17 +4017,29 @@ def glossary_view(job_id: str, state: dict | None = None, *,
     其余字段（门禁、待确认数、状态）不变；术语页不在眼前时用它。
     """
     from folith import workspace_presentation as _presentation
+    from folith.terminology import source_forms
 
     state = state if state is not None else load_state(job_id)
     rows = []
+    modified = {}
+    for action in state.get('human_actions') or []:
+        if not isinstance(action, dict) or not str(action.get('action') or '').startswith('glossary_'):
+            continue
+        finding_id = str(action.get('finding_id') or '')
+        if finding_id.startswith('glossary:'):
+            key = finding_id[len('glossary:'):]
+            modified[key] = max(modified.get(key, ''), str(action.get('timestamp') or ''))
     for row in _presentation.term_rows(state, count_occurrences=count_occurrences):
         entry = row.get("entry") or {}
         rows.append({
             "id": row["id"],
             "source": row["source"],
+            "source_aliases": source_forms(entry)[1:],
             "preferred": row["target"],
             "status": row["status"],
             "domain": str(entry.get("domain") or ""),
+            "scope": str(entry.get("scope") or ""),
+            "behavior": str(entry.get("behavior") or "translate"),
             "note": str(entry.get("note") or ""),
             "occurrences": len(row.get("occurrences") or []),
             "matched": int(row.get("matched") or 0),
@@ -4040,6 +4047,7 @@ def glossary_view(job_id: str, state: dict | None = None, *,
             "conflict": row.get("exception") == "存在冲突" or bool(entry.get("conflict")),
             "forbidden": [str(item) for item in entry.get("forbidden") or [] if str(item or "")],
             "read_only": bool(entry.get("read_only")),
+            "modified_at": modified.get(str(row['id']), ''),
         })
     frozen = state.get("glossary_frozen") or {}
     pending = [r for r in rows if r["status"] == "candidate"]
@@ -4089,6 +4097,36 @@ def _merge_glossary_rows(state: dict, rows: Sequence[dict]) -> list[dict]:
         base["proposed_target"] = base.get("proposed_target") or base["preferred"]
         merged.append(base)
     return merged
+
+
+def merge_glossary_entries(job_id: str, keep_id: str, remove_id: str, expected: list) -> str:
+    try:
+        state = core.merge_glossary_entries(job_id, keep_id, remove_id, expected, actor='用户')
+    except (ValueError, RuntimeError) as exc:
+        raise AdapterError(str(exc)) from exc
+    if state is None:
+        raise AdapterError('找不到任务')
+    return '术语已合并，原始记录和源形式已保留。'
+
+
+def revalidate_terminology_conflicts(job_id: str) -> dict:
+    try:
+        return core.revalidate_terminology_conflicts(job_id, actor='用户')
+    except (ValueError, RuntimeError) as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def preview_terminology_replacement(job_id: str, entry_id: str, old: str,
+                                    indexes: Sequence[int] | None = None) -> dict:
+    return core.preview_terminology_replacement(load_state(job_id), entry_id, old, indexes)
+
+
+def apply_terminology_replacement(job_id: str, preview: dict) -> int:
+    return core.apply_terminology_replacement(job_id, preview)
+
+
+def undo_terminology_replacement(job_id: str) -> int:
+    return core.undo_terminology_replacement(job_id)
 
 
 def save_glossary_draft(job_id: str, rows: Sequence[dict]) -> dict:
@@ -4161,13 +4199,14 @@ def set_terms_status(job_id: str, entry_ids: Sequence[str], status: str) -> str:
     ids = [str(item) for item in entry_ids if str(item or "")]
     if not ids:
         raise AdapterError("没有选中术语。")
-    state = core.set_glossary_entry_status(job_id, ids, status)
+    try:
+        state = core.set_glossary_entry_status(job_id, ids, status)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
     if state is None:
         raise AdapterError(f"找不到任务 {job_id}")
     if state.get("p2_done"):
-        frozen = core.freeze_glossary(job_id, entries=state.get("glossary") or [],
-                                      frozen_by="用户")
-        version = ((frozen or {}).get("glossary_frozen") or {}).get("version")
+        version = (state.get("glossary_frozen") or {}).get("version")
         return f"已更新 {len(ids)} 个术语" + (f"，术语版本 v{version}" if version else "")
     return f"已更新 {len(ids)} 个术语"
 

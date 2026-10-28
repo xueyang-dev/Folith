@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPointF, QRectF, Qt
@@ -25,15 +24,8 @@ from . import theme as theme_module
 
 def spans(term: str, text: str) -> list[tuple[int, int]]:
     """``term`` 在 ``text`` 里每一处的 ``(start, end)``。"""
-    term = str(term or "").strip()
-    text = str(text or "")
-    if not term or not text:
-        return []
-    if re.search(r"[A-Za-z]", term):
-        pattern = re.compile(rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])", re.IGNORECASE)
-    else:
-        pattern = re.compile(re.escape(term))
-    return [(match.start(), match.end()) for match in pattern.finditer(text)]
+    from folith.terminology import term_spans
+    return term_spans(str(term or ''), str(text or ''))
 
 
 @dataclass(frozen=True)
@@ -43,6 +35,7 @@ class Focus:
     source: str
     target: str
     forbidden: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass
@@ -59,7 +52,7 @@ def occurrences(rows, focus: Focus, target_of) -> Occurrences:
     """在网格行里找 ``focus``：原文出现即算一处；``target_of(row)`` 给出这一行的译文。"""
     found = Occurrences(focus)
     for position, row in enumerate(rows):
-        if not spans(focus.source, getattr(row, "source", "")):
+        if not any(spans(form, getattr(row, 'source', '')) for form in (focus.source, *focus.aliases)):
             continue
         found.positions.append(position)
         target = str(target_of(row) or "")

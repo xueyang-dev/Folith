@@ -184,8 +184,9 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
         from . import term_highlight
 
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        needle = found.focus.source if index.column() == 1 else found.focus.target
-        ranges = term_highlight.spans(needle, text)
+        needles = ((found.focus.source, *found.focus.aliases) if index.column() == 1
+                   else (found.focus.target,))
+        ranges = [span for needle in needles for span in term_highlight.spans(needle, text)]
         if not ranges:
             return
         styled = QStyleOptionViewItem(option)

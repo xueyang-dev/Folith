@@ -1799,3 +1799,32 @@ class RiskAcceptanceDialog(QDialog):
         return self.note_edit.toPlainText().strip()
 
 
+
+
+class TerminologyReplacementPreview(QDialog):
+    """Display every proposed segment before the operator authorizes a batch."""
+
+    def __init__(self, preview: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('确认术语替换'))
+        self.resize(850, 600)
+        layout = QVBoxLayout(self)
+        changes = preview.get('changes') or []
+        label = QLabel(i18n.tr('将修改 {v0} 段。请逐项检查；应用后这些段需要重新审校。', v0=len(changes)))
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        text = QPlainTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText('\n\n'.join(
+            i18n.tr('第 {v0} 段', v0=change['index'] + 1) + '\n'
+            + i18n.tr('原文') + ': ' + change['source'] + '\n'
+            + i18n.tr('修改前') + ': ' + change['before'] + '\n'
+            + i18n.tr('修改后') + ': ' + change['after']
+            for change in changes))
+        layout.addWidget(text, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(i18n.tr('确认应用'))
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(changes))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)

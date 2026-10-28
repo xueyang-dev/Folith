@@ -69,7 +69,7 @@ def _relevant_glossary(
     matcher = terminology.compiled_glossary(entry_list)
     return [entry for entry in entry_list if
             segment_ids.intersection(entry.get("occurrences") or [])
-            or any(matcher.matches(entry["source"], source) for source in sources)]
+            or any(terminology.entry_matches(entry, source, matcher) for source in sources)]
 
 
 def build_review_packet(

@@ -61,6 +61,8 @@ def save_glossary_draft(job_id, entries):
     state["glossary_draft"] = norm
     state["glossary"] = norm
     state["stage"] = "TERMS_PREPARED"
+    _refresh_source_term_conflicts(state)
+    _refresh_duplicate_term_conflicts(state)
     _c.save_job_state(job_id, state)
     return state
 
@@ -131,8 +133,8 @@ def update_glossary_entry(job_id, entry_id, *, preferred=None, domain=None,
          "note": "在语言资产管理中心修改术语条目",
          "previous_status": before.get("status"),
          "new_status": after.get("status")}, actor))
-    _c.save_job_state(job_id, state)
-    frozen = freeze_glossary(job_id, entries=entries, frozen_by=actor)
+    frozen = _freeze_glossary_state(job_id, state, entries, frozen_by=actor)
+    _c.save_job_state(job_id, frozen)
     version = (frozen or {}).get("glossary_frozen", {}).get("version") \
         if isinstance(frozen, dict) else None
     suffix = f"，术语版本已更新为 v{version}" if version else ""
@@ -155,8 +157,8 @@ def delete_glossary_entry(job_id, entry_id, actor="user"):
         "glossary_entry_deleted",
         {"finding_id": f"glossary:{entry_id}",
          "note": "在语言资产管理中心删除术语条目"}, actor))
-    _c.save_job_state(job_id, state)
-    frozen = freeze_glossary(job_id, entries=kept, frozen_by=actor)
+    frozen = _freeze_glossary_state(job_id, state, kept, frozen_by=actor)
+    _c.save_job_state(job_id, frozen)
     return frozen or state, True, "已删除该术语并生成新的术语版本"
 
 
@@ -209,8 +211,8 @@ def add_glossary_entry(job_id, source, target, *, domain="", scope="document",
         "glossary_entry_added",
         {"finding_id": f"glossary:{entry.get('id')}",
          "note": f"在语言资产管理中心新增术语「{source}」"}, actor))
-    _c.save_job_state(job_id, state)
-    frozen = freeze_glossary(job_id, entries=entries, frozen_by=actor)
+    frozen = _freeze_glossary_state(job_id, state, entries, frozen_by=actor)
+    _c.save_job_state(job_id, frozen)
     return frozen or state, True, "已新增术语并生成新的术语版本", str(entry.get("id") or "")
 
 
@@ -221,10 +223,12 @@ def _apply_glossary_staleness(state, job_id=None):
     再标记当前受影响段）。stale 段：
     - stale_due_to_glossary = True，reviewed = False，from_tm = False；
     - 追加 blocking finding（type=glossary_stale），交付回到 review_required；
-    - 从 translation_memory.json 中清除，防止后续任务精确命中旧译文。
+    - 保留翻译记忆原文与译文，但取消审校资格，防止后续任务命中旧译文。
     """
     from folith import delivery as _delivery
-    from folith.terminology import stale_segments_for_glossary
+    from folith.terminology import (stale_segments_for_glossary, glossary_changes_since,
+                                    glossary_changes_affect_segments)
+    from folith.translation_evidence import _review_dependency_segment_ids
 
     stale = stale_segments_for_glossary(state)
     pairs = state.get("pairs") or []
@@ -233,6 +237,7 @@ def _apply_glossary_staleness(state, job_id=None):
         or state.get("glossary") or [])
     current_glossary_hash = _models.glossary_hash(current_glossary)
     stale_event_ids = []
+    changes_by_hash = {}
     for event in state.get("review_evidence") or []:
         if not isinstance(event, dict) or not (
                 event.get("review_scope") == "current_translation"
@@ -242,12 +247,17 @@ def _apply_glossary_staleness(state, job_id=None):
             "glossary_hash") or event.get("glossary_hash") or "")
         if event_hash and event_hash != current_glossary_hash \
                 and event.get("review_event_id"):
+            if event_hash not in changes_by_hash:
+                changes_by_hash[event_hash] = glossary_changes_since(state, event_hash)
+            if not glossary_changes_affect_segments(
+                    state, changes_by_hash[event_hash], _review_dependency_segment_ids(event)):
+                continue
             stale_event_ids.append(str(event["review_event_id"]))
     if stale or stale_event_ids:
         _c._invalidate_translation_reviews(
             state, stale,
             "canonical glossary changed; independent review must be refreshed",
-            review_event_ids=stale_event_ids)
+            review_event_ids=stale_event_ids, preserve_tm=True)
     for p in pairs:
         p.pop("stale_due_to_glossary", None)
     state["findings"] = [f for f in state.get("findings") or []
@@ -290,7 +300,7 @@ def _apply_glossary_staleness(state, job_id=None):
     job_lang = state_target_lang(state)
     for i in stale:
         src = pairs[i]["source"]
-        if _c.tm_discard(tm, src, job_lang):
+        if _c.tm_withdraw(tm, src, job_lang, reason="术语版本变化，需要重新审校"):
             dirty = True
     if dirty:
         _c.save_tm(tm, tm_project_id(state))
@@ -343,9 +353,25 @@ def set_glossary_entry_status(job_id, entry_ids, status):
     if state is None:
         return None
     ids = set(entry_ids or [])
+    existing_ids = {e.get('id') for e in state.get('glossary') or []}
+    if not ids or not ids.issubset(existing_ids):
+        raise ValueError('术语已变化，请刷新后重试')
+    changed = []
     for e in state.get("glossary") or []:
         if e.get("id") in ids:
-            e["status"] = status
+            old = e.get('status')
+            if old != status:
+                e["status"] = status
+                changed.append(str(e.get('id')))
+                state.setdefault('human_actions', []).append(_glossary_mutation_note(
+                    'glossary_status_updated', {'finding_id': f"glossary:{e.get('id')}",
+                    'previous_status': old, 'new_status': status}, 'user'))
+    if changed and state.get('p2_done'):
+        state = _freeze_glossary_state(job_id, state, state.get('glossary') or [], frozen_by='user')
+        state['glossary_draft'] = list(state.get('glossary') or [])
+    elif changed:
+        _refresh_source_term_conflicts(state)
+        _refresh_duplicate_term_conflicts(state)
     _c.save_job_state(job_id, state)
     return state
 
@@ -547,6 +573,13 @@ def freeze_glossary(job_id, entries=None, frozen_by="user"):
     state = _c.load_job_state(job_id)
     if state is None:
         return None
+    state = _freeze_glossary_state(job_id, state, entries, frozen_by=frozen_by)
+    _c.save_job_state(job_id, state)
+    return state
+
+
+def _freeze_glossary_state(job_id, state, entries=None, *, frozen_by='user'):
+    """Apply the version change to a loaded state; the caller commits it once."""
     was_final = state.get("delivery_status") == "final"
     norm = normalize_glossary(entries if entries is not None
                               else state.get("glossary") or [])
@@ -557,7 +590,11 @@ def freeze_glossary(job_id, entries=None, frozen_by="user"):
         state["glossary"] = norm
         state["glossary_frozen"] = versions[-1]
         state["stage"] = "GLOSSARY_FROZEN"
-        _c.save_job_state(job_id, state)
+        _refresh_source_term_conflicts(state)
+        _refresh_duplicate_term_conflicts(state)
+        _refresh_ai_term_conflicts(state)
+        if state.get("p2_done"):
+            _refresh_segment_term_conflicts(state)
         return state
     source_hash = ""
     src = _c.job_dir(job_id) / "source.bin"
@@ -583,7 +620,11 @@ def freeze_glossary(job_id, entries=None, frozen_by="user"):
     state, stale = _apply_glossary_staleness(state, job_id)
     if was_final and not stale:
         _c._invalidate_final_delivery_state(state)
-    _c.save_job_state(job_id, state)
+    _refresh_source_term_conflicts(state)
+    _refresh_duplicate_term_conflicts(state)
+    _refresh_ai_term_conflicts(state)
+    if state.get('p2_done'):
+        _refresh_segment_term_conflicts(state)
     return state
 
 
@@ -783,3 +824,454 @@ def bypass_freeze(job_id, frozen_by="user"):
     })
     _c.save_job_state(job_id, state)
     return state
+
+
+def preview_terminology_replacement(state, entry_id, old_translation, indexes=None):
+    """Build exact, reviewable replacements only in segments matching the term.
+
+    The operator supplies the existing spelling: absence of a preferred term is
+    not enough evidence to guess what text should be replaced.
+    """
+    from folith.terminology import entry_matches, term_spans
+    old = str(old_translation or '').strip()
+    if not old:
+        raise ValueError('请输入需要替换的原有译名')
+    entry = next((e for e in state.get('glossary') or []
+                  if str(e.get('id') or '') == str(entry_id)), None)
+    if entry is None or entry.get('status') == 'rejected':
+        raise ValueError('找不到可用的术语')
+    source = str(entry.get('source') or '').strip()
+    preferred = str(entry.get('preferred') or entry.get('target') or '').strip()
+    if not source or not preferred or old == preferred:
+        raise ValueError('源术语和首选译名必须有效，且替换前后不能相同')
+    selected = None if indexes is None else {int(i) for i in indexes}
+    changes = []
+    for index, pair in enumerate(state.get('pairs') or []):
+        if selected is not None and index not in selected:
+            continue
+        before = str(pair.get('target') or '')
+        spans = term_spans(old, before)
+        if (_c.is_excluded(pair) or not entry_matches(entry, str(pair.get('source') or ''))
+                or not spans):
+            continue
+        after = ''
+        cursor = 0
+        for start, end in spans:
+            after += before[cursor:start] + preferred
+            cursor = end
+        after += before[cursor:]
+        changes.append({'index': index, 'uid': _c.segment_uid(pair),
+                        'source': str(pair.get('source') or ''), 'before': before,
+                        'after': after})
+    return {'entry_id': str(entry_id), 'source': source, 'old': old,
+            'preferred': preferred, 'changes': changes}
+
+
+def _terminology_edit_guard(job_id, state, changes, expected_key):
+    if _c._job_execution_alive(job_id):
+        raise RuntimeError('任务仍在执行，请等待后台处理结束')
+    drafts = _c.load_translation_drafts(job_id)
+    pairs = state.get('pairs') or []
+    for change in changes:
+        index = change['index']
+        if not 0 <= index < len(pairs):
+            raise ValueError('段落已变化，请重新预览')
+        pair = pairs[index]
+        uid = _c.segment_uid(pair)
+        if (_c.is_excluded(pair) or str(pair.get('source') or '') != change['source']
+                or str(pair.get('target') or '') != change[expected_key]
+                or (change.get('uid') and change['uid'] != uid)):
+            raise ValueError('段落或译文已变化，请重新预览')
+        if (uid or str(index)) in drafts:
+            raise ValueError('相关段落存在未保存草稿，请先保存或放弃草稿')
+
+
+def _apply_terminology_changes(job_id, state, changes, key, *, actor, action):
+    indexes = []
+    for change in changes:
+        index = change['index']
+        pair = state['pairs'][index]
+        if not pair.get('human_edited'):
+            pair['_translation_edit_restore'] = {
+                'target': pair.get('target') or '', 'reviewed': bool(pair.get('reviewed')),
+                'review_status': pair.get('review_status', 'not_reviewed'),
+                'target_provenance': pair.get('target_provenance', 'generated'),
+                'from_tm': bool(pair.get('from_tm'))}
+        pair.update(target=change[key], human_edited=True, reviewed=False,
+                    review_status='not_reviewed', target_provenance='human_edit', from_tm=False)
+        for field in ('accepted_target', 'human_accepted', 'accepted_by_human'):
+            pair.pop(field, None)
+        indexes.append(index)
+    _c._recount_reviewed_segments(state)
+    _c._mark_translation_truth_changed(job_id, state, indexes, '人工修改术语译名',
+                                       actor=actor, action=action, preserve_tm=True)
+    # Legacy reviewed segments may have no review event; their memory still
+    # must not be reused after changing the current translation.
+    tm = _c.load_tm(tm_project_id(state))
+    changed_tm = False
+    for index in indexes:
+        changed_tm |= _c.tm_withdraw(tm, state['pairs'][index].get('source'),
+                                     state_target_lang(state), reason='术语译文已修改，需要重新审校')
+    if changed_tm:
+        _c.save_tm(tm, tm_project_id(state))
+    _c._recheck_delivery_invariants_for_segments(state, indexes, actor=actor)
+    _refresh_segment_term_conflicts(state, indexes=indexes)
+
+
+@_serialized_job_mutation
+def apply_terminology_replacement(job_id, preview, *, actor='user'):
+    """Atomically apply exactly the previewed changes and keep an undo record."""
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError('找不到任务')
+    changes = preview.get('changes') or []
+    if not changes:
+        raise ValueError('没有可应用的段落')
+    current = preview_terminology_replacement(state, preview.get('entry_id'),
+                                              preview.get('old'),
+                                              [c['index'] for c in changes])
+    if current != preview:
+        raise ValueError('术语或译文已变化，请重新预览')
+    _terminology_edit_guard(job_id, state, changes, 'before')
+    _c.assign_missing_segment_uids(state, job_id=job_id)
+    changes = [{**c, 'uid': _c.segment_uid(state['pairs'][c['index']])} for c in changes]
+    _apply_terminology_changes(job_id, state, changes, 'after', actor=actor,
+                               action='terminology_replacement')
+    history = state.setdefault('terminology_replacement_history', [])
+    history.append({'entry_id': preview['entry_id'], 'source': preview['source'],
+                    'old': preview['old'], 'preferred': preview['preferred'],
+                    'changes': changes, 'at': _finalization.now_iso(), 'actor': actor,
+                    'undone': False})
+    del history[:-20]
+    _c.save_job_state(job_id, state)
+    return len(changes)
+
+
+@_serialized_job_mutation
+def undo_terminology_replacement(job_id, *, actor='user'):
+    """Undo the latest batch only if none of its translations changed later."""
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError('找不到任务')
+    history = state.get('terminology_replacement_history') or []
+    record = next((item for item in reversed(history) if not item.get('undone')), None)
+    if record is None:
+        raise ValueError('没有可撤销的术语替换')
+    changes = record.get('changes') or []
+    _terminology_edit_guard(job_id, state, changes, 'after')
+    _apply_terminology_changes(job_id, state, changes, 'before', actor=actor,
+                               action='terminology_replacement_undo')
+    record['undone'] = True
+    record['undone_at'] = _finalization.now_iso()
+    record['undone_by'] = actor
+    _c.save_job_state(job_id, state)
+    return len(changes)
+
+
+@_serialized_job_mutation
+def merge_glossary_entries(job_id, keep_id, remove_id, expected, *, actor='user'):
+    """Merge two explicitly confirmed entries, retaining forms and full audit evidence."""
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError('找不到任务')
+    entries = normalize_glossary(state.get('glossary') or [])
+    keep = next((e for e in entries if e['id'] == keep_id), None)
+    remove = next((e for e in entries if e['id'] == remove_id), None)
+    if keep is None or remove is None or keep is remove:
+        raise ValueError('术语已变化，请重新检查重复候选')
+    fields = ('id', 'source', 'source_aliases', 'preferred', 'status', 'domain', 'scope', 'behavior', 'forbidden')
+    def projection(e):
+        return {key: (e.get(key) or [] if key == 'source_aliases' else e.get(key)) for key in fields}
+    if expected != [projection(keep), projection(remove)]:
+        raise ValueError('术语已变化，请重新检查重复候选')
+    if keep['behavior'] != 'translate' or remove['behavior'] != 'translate':
+        raise ValueError('保留原文的术语不能与翻译术语合并')
+    if (keep.get('scope') or '') != (remove.get('scope') or ''):
+        raise ValueError('术语范围不同，请先统一范围再合并')
+    if sorted(keep.get('forbidden') or []) != sorted(remove.get('forbidden') or []):
+        raise ValueError('禁用译名规则不同，请先统一规则再合并')
+    if keep['status'] == 'rejected' or remove['status'] == 'rejected':
+        raise ValueError('已拒绝的术语不能合并')
+    originals = [dict(keep), dict(remove)]
+    aliases = [*(keep.get('source_aliases') or []), remove['source'],
+               *(remove.get('source_aliases') or [])]
+    keep['source_aliases'] = list(dict.fromkeys(form for form in aliases if form != keep['source']))
+    keep['occurrences'] = sorted(set(keep.get('occurrences') or []) | set(remove.get('occurrences') or []))
+    # Evidence from both records remains accessible on the canonical entry.
+    keep['evidence'] = list(keep.get('evidence') or []) + list(remove.get('evidence') or [])
+    entries = [e for e in entries if e is not remove]
+    state['glossary'] = entries
+    state['glossary_draft'] = entries
+    state.setdefault('human_actions', []).append({
+        **_glossary_mutation_note('glossary_entries_merged',
+                                  {'finding_id': f'glossary:{keep_id}',
+                                   'note': f'人工合并术语：{remove["source"]} → {keep["source"]}'}, actor),
+        'merged_originals': originals,
+    })
+    if state.get('p2_done') or state.get('glossary_frozen'):
+        state = _freeze_glossary_state(job_id, state, entries, frozen_by=actor)
+    else:
+        _refresh_source_term_conflicts(state)
+        _refresh_duplicate_term_conflicts(state)
+    _c.save_job_state(job_id, state)
+    return state
+
+
+def _refresh_source_term_conflicts(state, *, reopen=False):
+    """Reconcile exact-source conflicts into the authoritative finding list."""
+    from folith.terminology import entry_matches
+    groups = {}
+    for entry in normalize_glossary(state.get('glossary') or []):
+        if entry['status'] == 'rejected' or entry['behavior'] != 'translate':
+            continue
+        target = str(entry.get('preferred') or entry.get('target') or '').strip()
+        if not target:
+            continue
+        scope = str(entry.get('scope') or '')
+        key = (entry['source'].casefold(), 'document' if scope in ('', 'global', 'document') else scope)
+        groups.setdefault(key, []).append(entry)
+    detected = {}
+    for entries in groups.values():
+        if len({e['preferred'].casefold() for e in entries}) < 2:
+            continue
+        ids = sorted({str(e['id']) for e in entries})
+        identity = json.dumps(sorted((e['id'], e['preferred']) for e in entries), ensure_ascii=False)
+        fid = 'term-source-conflict:' + identity
+        forms = ' / '.join(dict.fromkeys(e['preferred'] for e in entries))
+        source = entries[0]['source']
+        first_segment = next((i for i, pair in enumerate(state.get('pairs') or [])
+                              if not _c.is_excluded(pair) and entry_matches(entries[0], str(pair.get('source') or ''))), None)
+        detected[fid] = {
+            'finding_id': fid, 'type': 'glossary_source_conflict',
+            'category': 'terminology_consistency', 'severity': 'actionable',
+            'entry_id': ids[0], 'entry_ids': ids, 'source_span': source,
+            'preferred_target': forms,
+            'segment_index': first_segment,
+            'summary': f'术语「{source}」存在多个首选译名',
+            'explanation': f'同一范围的术语条目分别指定了：{forms}。',
+            'recommendation': '核对语境后修改或合并条目，再重新验证。',
+            'reason': f'术语「{source}」存在多个首选译名：{forms}',
+            'detector': 'Terminology QA', 'diagnostic_version': 1,
+        }
+    findings = state.setdefault('findings', [])
+    existing = {f.get('finding_id'): f for f in findings
+                if isinstance(f, dict) and f.get('type') == 'glossary_source_conflict'}
+    changed = False
+    for fid, old in existing.items():
+        if fid not in detected and not old.get('resolved'):
+            old['resolved'] = True
+            old['resolution'] = {'action': 'terminology_revalidated', 'actor': 'system',
+                                 'note': '当前术语表不再存在该冲突', 'timestamp': _finalization.now_iso()}
+            changed = True
+    for fid, finding in detected.items():
+        old = existing.get(fid)
+        if old is None:
+            findings.append(finding)
+            changed = True
+        else:
+            if old.get('segment_index') != finding['segment_index']:
+                old['segment_index'] = finding['segment_index']
+                changed = True
+            if reopen and old.get('resolved'):
+                # Keep the prior decision in human_actions; the current conflicting
+                # entries still require attention after an explicit recheck.
+                old.pop('resolved', None)
+                old.pop('resolution', None)
+                changed = True
+    if changed:
+        from folith import delivery
+        if detected and (state.get('delivery_approved_by_human') or state.get('delivery_status') in ('approved', 'final')):
+            _c._invalidate_final_delivery_state(state)
+        state['delivery_status'] = delivery.compute_delivery_status(state)
+    return changed
+
+
+@_serialized_job_mutation
+def revalidate_terminology_conflicts(job_id, *, actor='user'):
+    if _c._job_execution_alive(job_id):
+        raise RuntimeError('任务仍在执行，请等待后台处理结束')
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError('找不到任务')
+    _refresh_source_term_conflicts(state, reopen=True)
+    _refresh_duplicate_term_conflicts(state, reopen=True)
+    _refresh_ai_term_conflicts(state, reopen=True)
+    _refresh_segment_term_conflicts(state, reopen=True)
+    _c.save_job_state(job_id, state)
+    return state
+
+
+def _refresh_segment_term_conflicts(state, *, reopen=False, indexes=None):
+    """Reconcile locked-term QA against current, nonempty translations."""
+    from folith import delivery, terminology
+    from folith.dynamic_context import section_for_segment
+    entries = normalize_glossary(state.get('glossary') or [])
+    matcher = terminology.compiled_glossary(entries)
+    profile = state.get('document_profile') or {}
+    findings = state.setdefault('findings', [])
+    detected = {}
+    selected = None if indexes is None else set(indexes)
+    for index, pair in enumerate(state.get('pairs') or []):
+        if selected is not None and index not in selected:
+            continue
+        target = str(pair.get('target') or '')
+        if _c.is_excluded(pair) or not target.strip():
+            continue
+        section = section_for_segment(profile, index)
+        for item in terminology.check_glossary_compliance(
+                str(pair.get('source') or ''), target, entries, segment_id=index,
+                section_profile={'section_id': section} if section else None,
+                entries=entries, matcher=matcher):
+            item['segment_index'] = index
+            detected[delivery.finding_id(item)] = item
+    existing = {}
+    for item in findings:
+        if (isinstance(item, dict) and item.get('type') == 'glossary'
+                and item.get('detector') == 'Terminology QA' and not item.get('conflict')
+                and not item.get('review_event_id') and not item.get('input_fingerprint')
+                and (selected is None or item.get('segment_index', item.get('segment_id')) in selected)):
+            existing[delivery.finding_id(item)] = item
+    changed = False
+    for fid, old in existing.items():
+        if fid not in detected and not old.get('resolved'):
+            old['resolved'] = True
+            old['resolution'] = {'action': 'terminology_revalidated', 'actor': 'system',
+                                 'note': '当前译文不再触发该术语规则', 'timestamp': _finalization.now_iso()}
+            changed = True
+    for fid, item in detected.items():
+        old = existing.get(fid)
+        if old is None:
+            findings.append(item)
+            changed = True
+        elif reopen and old.get('resolved'):
+            old.pop('resolved', None)
+            old.pop('resolution', None)
+            changed = True
+    if changed:
+        if detected and (state.get('delivery_approved_by_human') or state.get('delivery_status') in ('approved', 'final')):
+            _c._invalidate_final_delivery_state(state)
+        state['delivery_status'] = delivery.compute_delivery_status(state)
+    return changed
+
+
+def _refresh_ai_term_conflicts(state, *, reopen=False):
+    """Reconcile explicit AI extraction suggestions against locked terms."""
+    from folith import delivery, terminology
+    locked = [e for e in normalize_glossary(state.get('glossary') or [])
+              if e['status'] == 'locked' and e['behavior'] == 'translate']
+    proposals = normalize_glossary(state.get('auto_term_entries') or [])
+    detected = {}
+    for entry in locked:
+        forms = {form.casefold() for form in terminology.source_forms(entry)}
+        preferred = str(entry.get('preferred') or entry.get('target') or '')
+        for proposal in proposals:
+            source = str(proposal.get('source') or '')
+            proposed = str(proposal.get('proposed_target') or proposal.get('target') or '').strip()
+            if source.casefold() not in forms or not proposed or proposed.casefold() == preferred.casefold():
+                continue
+            identity = json.dumps([entry['id'], source, proposed, preferred], ensure_ascii=False)
+            fid = 'term-ai-conflict:' + identity
+            segment = next((i for i, pair in enumerate(state.get('pairs') or [])
+                            if not _c.is_excluded(pair) and terminology.term_matches(source, str(pair.get('source') or ''))), None)
+            detected[fid] = {
+                'finding_id': fid, 'type': 'glossary_ai_conflict', 'severity': 'actionable',
+                'category': 'terminology_consistency', 'entry_id': entry['id'],
+                'segment_index': segment, 'source_span': source, 'target_span': proposed,
+                'preferred_target': preferred,
+                'summary': f'AI 候选译名与锁定术语「{entry["source"]}」不一致',
+                'explanation': f'AI 抽取候选为「{proposed}」，当前锁定首选译名为「{preferred}」。',
+                'recommendation': '保留已确认译名或核对证据后修改术语；不会自动覆盖。',
+                'reason': f'AI 候选「{proposed}」与锁定译名「{preferred}」不一致',
+                'detector': 'Terminology QA', 'diagnostic_version': 1,
+            }
+    findings = state.setdefault('findings', [])
+    existing = {f.get('finding_id'): f for f in findings
+                if isinstance(f, dict) and f.get('type') == 'glossary_ai_conflict'}
+    changed = False
+    for fid, old in existing.items():
+        if fid not in detected and not old.get('resolved'):
+            old['resolved'] = True
+            old['resolution'] = {'action': 'terminology_revalidated', 'actor': 'system',
+                                 'note': '当前 AI 候选与锁定术语不再冲突', 'timestamp': _finalization.now_iso()}
+            changed = True
+    for fid, item in detected.items():
+        old = existing.get(fid)
+        if old is None:
+            findings.append(item)
+            changed = True
+        else:
+            if old.get('segment_index') != item['segment_index']:
+                old['segment_index'] = item['segment_index']
+                changed = True
+            if reopen and old.get('resolved'):
+                old.pop('resolved', None)
+                old.pop('resolution', None)
+                changed = True
+    if changed:
+        if detected and (state.get('delivery_approved_by_human') or state.get('delivery_status') in ('approved', 'final')):
+            _c._invalidate_final_delivery_state(state)
+        state['delivery_status'] = delivery.compute_delivery_status(state)
+    return changed
+
+
+def _refresh_duplicate_term_conflicts(state, *, reopen=False):
+    """Record possible duplicate sources with different decisions as evidence, not proof."""
+    from folith import delivery, terminology
+    from folith.workspace_presentation import terminology_duplicates
+    entries = normalize_glossary(state.get('glossary') or [])
+    by_id = {e['id']: e for e in entries}
+    detected = {}
+    for candidate in terminology_duplicates(entries):
+        left = by_id.get(candidate['left_id'])
+        right = by_id.get(candidate['right_id'])
+        if not left or not right or left is right or left['behavior'] != 'translate' or right['behavior'] != 'translate':
+            continue
+        scope = lambda e: 'document' if e.get('scope') in ('', 'global', 'document') else e.get('scope')
+        if scope(left) != scope(right) or left['source'].casefold() == right['source'].casefold():
+            continue
+        if not left['preferred'] or not right['preferred'] or left['preferred'].casefold() == right['preferred'].casefold():
+            continue
+        identity = json.dumps(sorted((e['id'], e['preferred']) for e in (left, right)), ensure_ascii=False)
+        fid = 'term-duplicate-conflict:' + identity
+        segment = next((i for i, pair in enumerate(state.get('pairs') or [])
+                        if not _c.is_excluded(pair) and any(terminology.entry_matches(e, str(pair.get('source') or '')) for e in (left, right))), None)
+        classification = ('规范化后相同' if candidate['kind'] == 'normalized'
+                          else '推测相似，仅供人工确认')
+        detected[fid] = {
+            'finding_id': fid, 'type': 'glossary_duplicate_conflict',
+            'severity': 'informational', 'category': 'terminology_consistency',
+            'entry_id': left['id'], 'entry_ids': [left['id'], right['id']],
+            'segment_index': segment, 'source_span': left['source'],
+            'preferred_target': f'{left["preferred"]} / {right["preferred"]}',
+            'summary': f'潜在重复术语的译名不同：{left["source"]} / {right["source"]}',
+            'explanation': f'源形式{classification}；首选译名分别为「{left["preferred"]}」和「{right["preferred"]}」。相似不代表含义相同。',
+            'recommendation': '检查上下文；仅在确认含义相同时合并或统一译名。',
+            'reason': f'潜在重复术语「{left["source"]}」和「{right["source"]}」的译名不同',
+            'detector': 'Terminology QA', 'diagnostic_version': 1,
+        }
+    findings = state.setdefault('findings', [])
+    existing = {f.get('finding_id'): f for f in findings
+                if isinstance(f, dict) and f.get('type') == 'glossary_duplicate_conflict'}
+    changed = False
+    for fid, old in existing.items():
+        if fid not in detected and not old.get('resolved'):
+            old['resolved'] = True
+            old['resolution'] = {'action': 'terminology_revalidated', 'actor': 'system',
+                                 'note': '当前术语表不再出现该候选冲突', 'timestamp': _finalization.now_iso()}
+            changed = True
+    for fid, item in detected.items():
+        old = existing.get(fid)
+        if old is None:
+            findings.append(item)
+            changed = True
+        else:
+            if old.get('segment_index') != item['segment_index']:
+                old['segment_index'] = item['segment_index']
+                changed = True
+            if reopen and old.get('resolved'):
+                old.pop('resolved', None)
+                old.pop('resolution', None)
+                changed = True
+    if changed:
+        state['delivery_status'] = delivery.compute_delivery_status(state)
+    return changed

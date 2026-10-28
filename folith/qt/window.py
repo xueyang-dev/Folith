@@ -452,6 +452,10 @@ class MainWindow(QMainWindow):
         self.workbench.glossaryEntryAddRequested.connect(self.add_glossary_entry)
         self.workbench.glossaryStatusRequested.connect(self.set_terms_status)
         self.workbench.glossaryEntryDeleteRequested.connect(self.delete_glossary_entry)
+        self.workbench.terminologyReplaceRequested.connect(self.preview_terminology_replacement)
+        self.workbench.terminologyUndoRequested.connect(self.undo_terminology_replacement)
+        self.workbench.terminologyMergeRequested.connect(self.merge_terminology_entries)
+        self.workbench.terminologyRevalidateRequested.connect(self.revalidate_terminology_conflicts)
         self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
@@ -1029,7 +1033,23 @@ class MainWindow(QMainWindow):
         self.open_job(job_id, after_open=(
             lambda: self.workbench.show_segment_for_edit(index)) if index >= 0 else None)
 
+    def _confirm_leave_unsaved_terms(self) -> bool:
+        if not self._current_job_id or not self.workbench.terms_panel.is_dirty():
+            return True
+        if self.workbench.operation_active(self._current_job_id) and not self.workbench.terms_panel.isEnabled():
+            self._notice(i18n.tr('术语正在保存，请等待完成。'), error=True,
+                         job_id=self._current_job_id)
+            return False
+        if not self._confirm(i18n.tr('术语修改尚未保存'),
+                             i18n.tr('离开会丢弃尚未保存的术语修改。请先保存，或确认丢弃。'),
+                             yes=i18n.tr('丢弃修改'), no=i18n.tr('继续编辑'), tone='danger'):
+            return False
+        self.workbench.terms_panel.discard_unsaved()
+        return True
+
     def show_home(self) -> None:
+        if not self._confirm_leave_unsaved_terms():
+            return
         self._cancel_open_job()
         self.workbench.flush_draft()
         returning = self._current_job_id if self.stack.currentWidget() is self.workbench else ""
@@ -1280,6 +1300,8 @@ class MainWindow(QMainWindow):
     def open_job(self, job_id: str, *, after_open=None) -> None:
         """Read a task off-thread, then apply only the latest navigation request."""
         if not job_id:
+            return
+        if job_id != self._current_job_id and not self._confirm_leave_unsaved_terms():
             return
         flight = self._card_document(job_id)
         self.workbench.flush_draft()
@@ -1560,6 +1582,8 @@ class MainWindow(QMainWindow):
 
     def manage_projects(self) -> None:
         """「项目」：切到项目页（侧栏保持在左侧）。"""
+        if not self._confirm_leave_unsaved_terms():
+            return
         self._cancel_open_job()
         self.workbench.flush_draft()
         self._current_job_id = ""
@@ -2978,19 +3002,92 @@ class MainWindow(QMainWindow):
         job_id = self._current_job_id
         if not job_id:
             return False
-        try:
-            result = fn(job_id, *args, **kwargs)
-        except adapter.AdapterError as exc:
-            self._failure(failure or i18n.tr('无法修改术语'), str(exc))
+        if self.workbench.operation_active(job_id):
+            self._notice(i18n.tr('上一个操作还在进行，请等它完成。'), error=True, job_id=job_id)
             return False
-        message = done_message or (result if isinstance(result, str) else "")
-        if message:
-            self._notice(message)
-        self.refresh_workbench(force=True)
-        self.workbench.refresh_terms()
-        if after is not None:
-            after()
+        self.workbench.begin_operation(job_id, i18n.tr('正在保存术语…'), None)
+        self.workbench.terms_panel.setEnabled(False)
+
+        def finished():
+            self.workbench.end_operation(job_id)
+            self.workbench.terms_panel.setEnabled(True)
+
+        def done(result):
+            finished()
+            message = done_message or (result if isinstance(result, str) else '')
+            if message:
+                self._notice(message, job_id=job_id)
+            if self._current_job_id == job_id:
+                self.refresh_workbench(force=True)
+                self.workbench.refresh_terms()
+                if after is not None:
+                    after()
+
+        def failed(message, detail):
+            finished()
+            self._failure(failure or i18n.tr('无法修改术语'), message, detail, job_id=job_id)
+
+        self.runner.submit(fn, job_id, *args, on_done=done, on_error=failed,
+                           label='glossary-save', **kwargs)
         return True
+
+    def merge_terminology_entries(self, keep_id: str, remove_id: str, expected: list) -> None:
+        self._glossary_action(adapter.merge_glossary_entries, keep_id, remove_id, expected,
+                              failure=i18n.tr('无法合并术语'))
+
+    def revalidate_terminology_conflicts(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self.workbench.terms_panel.is_dirty():
+            self._failure(i18n.tr('无法重新验证术语表'), i18n.tr('请先保存或撤销尚未保存的术语修改。'))
+            return
+        self._run_with_busy(i18n.tr('重新验证术语表'), i18n.tr('正在验证术语冲突…'),
+                            adapter.revalidate_terminology_conflicts, job_id,
+                            on_done=lambda _state: self._notice(i18n.tr('术语表验证完成。'), job_id=job_id))
+
+    def preview_terminology_replacement(self, entry_id: str, old: str, indexes) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self.workbench.has_unsaved_editor_text() or self.edits_pending():
+            self._failure(i18n.tr('无法替换术语'), i18n.tr('请先保存或放弃正在编辑的译文。'))
+            return
+
+        def ready(preview):
+            # Let the preview operation finish before starting another operation.
+            QTimer.singleShot(0, lambda: self._confirm_terminology_replacement(job_id, preview))
+
+        self._run_with_busy(i18n.tr('术语替换预览'), i18n.tr('正在计算替换预览…'),
+                            adapter.preview_terminology_replacement, job_id, entry_id, old,
+                            indexes, on_done=ready)
+
+    def _confirm_terminology_replacement(self, job_id: str, preview: dict) -> None:
+        if job_id != self._current_job_id:
+            return
+        parent = self.workbench.terms_panel.window()
+        dialog = dialogs.TerminologyReplacementPreview(preview, parent)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if self.workbench.has_unsaved_editor_text() or self.edits_pending():
+            self._failure(i18n.tr('无法替换术语'), i18n.tr('请先保存或放弃正在编辑的译文。'))
+            return
+        self._run_with_busy(i18n.tr('术语替换'), i18n.tr('正在应用术语替换…'),
+                            adapter.apply_terminology_replacement, job_id, preview,
+                            on_done=lambda count: self._notice(
+                                i18n.tr('已修改 {v0} 段，可在术语管理中撤销。', v0=count), job_id=job_id))
+
+    def undo_terminology_replacement(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self.workbench.has_unsaved_editor_text() or self.edits_pending():
+            self._failure(i18n.tr('无法撤销术语替换'), i18n.tr('请先保存或放弃正在编辑的译文。'))
+            return
+        self._run_with_busy(i18n.tr('撤销术语替换'), i18n.tr('正在撤销术语替换…'),
+                            adapter.undo_terminology_replacement, job_id,
+                            on_done=lambda count: self._notice(
+                                i18n.tr('已恢复 {v0} 段；审校状态需要重新确认。', v0=count), job_id=job_id))
 
     def _continue_after_freeze(self) -> None:
         """冻结后顺手继续翻译（旧界面也是这样）；已开始或正在运行的任务不动。"""
@@ -3038,7 +3135,8 @@ class MainWindow(QMainWindow):
             preferred=fields.get("preferred", ""), status=fields.get("status", ""),
             domain=fields.get("domain", ""), note=fields.get("note", ""),
             forbidden=fields.get("forbidden"),
-            failure=i18n.tr('无法保存术语'))
+            failure=i18n.tr('无法保存术语'),
+            after=lambda: self.workbench.terms_panel.mark_form_saved(entry_id))
 
     def set_terms_status(self, entry_ids: list, status: str) -> None:
         self._glossary_action(adapter.set_terms_status, entry_ids, status,
@@ -3859,6 +3957,8 @@ class MainWindow(QMainWindow):
 
     def _begin_exit(self) -> None:
         if self._exit_in_progress:
+            return
+        if not self._confirm_leave_unsaved_terms():
             return
         self._exit_in_progress = True
         non_interactive = _non_interactive_exit()

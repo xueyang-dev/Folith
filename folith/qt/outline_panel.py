@@ -129,6 +129,7 @@ class OutlinePanel(QWidget):
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(title, 1)
         edit = QToolButton()
+        edit.setObjectName("toolbarButton")
         edit.setText(i18n.tr('修正'))
         edit.setAccessibleName(i18n.tr('修正文档结构'))
         menu = QMenu(edit)

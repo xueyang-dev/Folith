@@ -250,7 +250,7 @@ def test_after_translation_edits_go_straight_to_the_core(panel):
     panel.preferred_edit.setText("功能目的论")
     panel.apply_row_button.click()
     assert seen and seen[0][0] == "t1" and seen[0][1]["preferred"] == "功能目的论"
-    assert not panel.is_dirty(), "翻译开始后不再暂存"
+    assert panel.is_dirty(), "异步保存完成前必须保留待保存内容"
 
 
 # ------------------------------------------------- 工作台：门禁提示 ----------
@@ -272,6 +272,70 @@ def test_workbench_points_at_the_terms_tab_when_candidates_block_the_start(qapp,
     # 术语表在翻译页左栏展开（2026-10-17 试用反馈），不是一整页。
     assert bench.terms_open()
     assert bench.left_stack.currentWidget() is bench.terms_side
+
+
+def test_workbench_stays_at_980px_with_terms_open_and_closed(qapp, job):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    from folith.qt import views
+
+    state = adapter.load_state(job)
+    state.update(
+        p2_done=True,
+        pairs=[
+            {"source": "Skopos theory matters.", "target": "目的论很重要。", "reviewed": True},
+            {"source": "Equivalence is debated.", "target": "对等仍有争议。", "reviewed": True},
+        ],
+    )
+    core.save_job_state(job, state)
+
+    bench = views.WorkbenchView()
+    bench.resize(980, 680)
+    bench.load(job, adapter.EngineConfig(target_lang="简体中文"), state,
+               adapter.segment_rows(job, state), [])
+    bench.show()
+    bench.set_terms_open(True)
+    QTest.qWait(250)
+
+    assert bench.width() == 980, f"术语打开时被硬最小宽度撑到了 {bench.width()}"
+    assert bench.minimumSizeHint().width() <= 980
+    assert bench.terms_open()
+    assert bench.terms_panel.isVisibleTo(bench)
+    assert bench.terms_panel.table.horizontalScrollBar().maximum() == 0
+    panel = bench.terms_panel
+    assert not panel.banner.isVisibleTo(panel), "紧凑侧栏不应让状态横幅挤占列表和编辑器"
+    assert panel.heading.toolTip()
+    for widget in (panel.preferred_edit, panel.apply_row_button):
+        assert widget.isVisibleTo(panel), f"{widget.objectName() or widget.text()} 应保持可见"
+        top_left = widget.mapTo(panel.editor_card, QPoint(0, 0))
+        assert panel.editor_card.rect().contains(top_left)
+        assert panel.editor_card.rect().contains(
+            top_left + QPoint(widget.width() - 1, widget.height() - 1))
+    assert not panel.conflicts_button.isVisibleTo(panel)
+    for widget in (panel.locate_button, panel.workspace_button):
+        assert widget.isVisibleTo(panel), f"{widget.text()} 应保持可见"
+        top_left = widget.mapTo(panel, QPoint(0, 0))
+        assert panel.rect().contains(top_left)
+        assert panel.rect().contains(
+            top_left + QPoint(widget.width() - 1, widget.height() - 1))
+    bench.resize(980, 523)
+    QTest.qWait(250)
+    assert bench.height() <= 536, "矮窗口下不应被隐藏页或侧栏撑高"
+    table_bottom = panel.table.mapTo(panel, QPoint(0, panel.table.height())).y()
+    editor_top = panel.editor_card.mapTo(panel, QPoint(0, 0)).y()
+    editor_bottom = panel.editor_card.mapTo(
+        panel, QPoint(0, panel.editor_card.height())).y()
+    actions_top = min(panel.locate_button.mapTo(panel, QPoint(0, 0)).y(),
+                      panel.workspace_button.mapTo(panel, QPoint(0, 0)).y())
+    assert table_bottom <= editor_top, "矮窗口下术语表不能盖住编辑卡"
+    assert editor_bottom <= actions_top, "矮窗口下编辑卡不能盖住导航按钮"
+    bench.set_terms_open(False)
+    QTest.qWait(250)
+    assert bench.width() == 980, f"术语关闭后布局没有保持窄宽度：{bench.width()}"
+    assert bench.minimumSizeHint().width() <= 980
+    assert bench.grid_card.isVisibleTo(bench)
+    bench.close()
 
 
 def test_workbench_shows_no_gate_notice_once_frozen(qapp, job):
@@ -321,10 +385,331 @@ def test_panel_filters_and_multi_select(panel):
     panel.filter_box.setCurrentIndex(panel.filter_box.findData("locked"))
     assert panel.table.rowCount() == 1
     panel.filter_box.setCurrentIndex(0)
+    panel.set_review_items([{'kind': 'finding', 'category': 'terminology_consistency',
+                             'entry_id': 't3'}])
     panel.conflict_box.setChecked(True)
     assert panel.table.rowCount() == 1 and panel.table.item(0, 0).text() == "Norm"
     panel.conflict_box.setChecked(False)
     panel.table.selectAll()
     panel.reject_selected_button.click()      # 开始前：改暂存行
     assert {row["status"] for row in panel.rows()} == {"rejected"}
+    assert panel.is_dirty()
+
+
+def test_sorting_keeps_edit_attached_to_selected_term(panel):
+    from PySide6.QtCore import Qt
+    panel.apply('j', _view([_row(1, 'Zulu', 'z'), _row(2, 'Alpha', 'a')]))
+    panel.table.sortItems(0, Qt.SortOrder.AscendingOrder)
+    panel.table.selectRow(0)
+    assert panel.source_edit.text() == 'Alpha'
+    panel.preferred_edit.setText('changed')
+    panel.apply_row_button.click()
+    assert next(row for row in panel.rows() if row['source'] == 'Alpha')['preferred'] == 'changed'
+    assert next(row for row in panel.rows() if row['source'] == 'Zulu')['preferred'] == 'z'
+
+
+def test_background_counts_do_not_reset_unsaved_form_text(panel):
+    row = _row(1, '草の墓標', '草之墓碑')
+    panel.apply('j', _view([row]))
+    panel.preferred_edit.setText('正在输入')
+    panel.apply_counts(_view([{**row, 'occurrences': 12}]))
+    assert panel.preferred_edit.text() == '正在输入'
+    assert panel.rows()[0]['occurrences'] == 12
+
+
+def test_selected_impact_replacement_emits_only_the_selected_segment(panel, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QInputDialog
+    panel.set_compact(False)
+    panel.apply('j', _view([_row(1, '草の墓標', '草之墓碑')], started=True))
+    panel.impact_table.setRowCount(1)
+    from PySide6.QtWidgets import QTableWidgetItem
+    item = QTableWidgetItem('8')
+    item.setData(Qt.ItemDataRole.UserRole, 7)
+    panel.impact_table.setItem(0, 0, item)
+    panel.impact_table.selectRow(0)
+    monkeypatch.setattr(QInputDialog, 'getText', lambda *args: ('旧墓碑', True))
+    received = []
+    panel.replacementRequested.connect(lambda *args: received.append(args))
+    panel._request_replacement(True)
+    assert received == [('t1', '旧墓碑', [7])]
+
+
+def test_preview_dialog_shows_each_before_and_after(qapp):
+    from PySide6.QtWidgets import QPlainTextEdit
+    from folith.qt.dialogs import TerminologyReplacementPreview
+    dialog = TerminologyReplacementPreview({'changes': [
+        {'index': 1, 'source': '原文一', 'before': '旧译一', 'after': '新译一'},
+        {'index': 2, 'source': '原文二', 'before': '旧译二', 'after': '新译二'}]})
+    text = dialog.findChild(QPlainTextEdit).toPlainText()
+    assert all(value in text for value in ('原文一', '旧译一', '新译一', '原文二', '旧译二', '新译二'))
+
+
+def test_current_segment_filter_uses_core_term_matching(panel):
+    panel.apply('j', _view([_row(1, 'CAT', '猫'), _row(2, '草の墓標', '草之墓碑')]))
+    panel.set_current_source('The catalog and 草の墓標')
+    panel.current_segment_box.setChecked(True)
+    assert panel.table.rowCount() == 1
+    assert panel.source_edit.text() == '草の墓標'
+    panel.set_current_source('A CAT sleeps')
+    assert panel.table.rowCount() == 1
+    assert panel.source_edit.text() == 'CAT'
+
+
+def test_conflict_center_locates_queue_finding(qapp):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QPushButton
+    bench = _bench(qapp)
+    bench._review_items = [{'kind': 'finding', 'category': 'terminology_consistency',
+                            'entry_id': 't1', 'finding_id': 'f1', 'decidable': True,
+                            'segment_index': 5, 'summary': '未使用首选译名',
+                            'severity': 'actionable', 'source': '原文', 'target': '译文'}]
+    called = []
+    bench.show_segment_for_edit = lambda index: called.append(index)
+    def choose():
+        dialog = QApplication.activeModalWidget()
+        button = next(w for w in dialog.findChildren(QPushButton) if w.text() == '定位段落')
+        button.click()
+    QTimer.singleShot(0, choose)
+    bench._open_terminology_conflicts()
+    assert called == [5]
+
+
+def test_conflict_center_filters_persisted_finding_types(qapp):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QComboBox, QPlainTextEdit, QTableWidget
+    bench = _bench(qapp)
+    bench._review_items = [
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_source_conflict', 'finding_id': 'f1',
+         'segment_index': 1, 'summary': '同一术语存在多个首选译名'},
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_duplicate_conflict', 'finding_id': 'f2',
+         'segment_index': 2, 'summary': '潜在重复术语的译名不同',
+         'explanation': 'DETAIL-DUPLICATE'},
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_ai_conflict', 'finding_id': 'f3',
+         'segment_index': 3, 'summary': 'AI 候选与锁定术语不一致'},
+    ]
+    observed = {}
+
+    def inspect_and_close():
+        dialog = QApplication.activeModalWidget()
+        kind_filter = dialog.findChild(QComboBox)
+        table = dialog.findChild(QTableWidget)
+        duplicate_index = kind_filter.findData('duplicate')
+        kind_filter.setCurrentIndex(duplicate_index)
+        observed['rows'] = table.rowCount()
+        observed['kind'] = table.item(0, 0).text()
+        observed['detail'] = dialog.findChild(QPlainTextEdit).toPlainText()
+        dialog.reject()
+
+    QTimer.singleShot(0, inspect_and_close)
+    bench._open_terminology_conflicts()
+    assert observed['rows'] == 1
+    assert observed['kind'] == '潜在重复术语'
+    assert 'DETAIL-DUPLICATE' in observed['detail']
+
+
+def test_terminology_conflict_kind_uses_persisted_finding_type():
+    from folith.qt.views import terminology_conflict_kind
+
+    assert terminology_conflict_kind({
+        'finding_type': 'glossary_ai_conflict',
+        'summary': '术语不一致',
+    }) == 'ai'
+    assert terminology_conflict_kind({
+        'finding_type': 'glossary',
+        'summary': '术语「CAT」使用了禁止译名',
+    }) == 'forbidden'
+    assert terminology_conflict_kind({
+        'finding_type': 'glossary',
+        'summary': '术语「CAT」未使用首选译名',
+    }) == 'missing'
+
+
+def test_conflict_count_and_filter_use_only_review_queue_items(panel):
+    panel.apply('j', _view([_row(1, 'one', '一'), _row(2, 'two', '二')]))
+    panel.set_review_items([
+        {'kind': 'finding', 'category': 'terminology_consistency', 'entry_id': 't1'},
+        {'kind': 'finding', 'category': 'terminology_consistency', 'entry_id': ''},
+        {'kind': 'finding', 'category': 'other', 'entry_id': 't2'},
+    ])
+    assert '2' in panel.conflicts_button.text()
+    panel.conflict_box.setChecked(True)
+    assert panel.table.rowCount() == 1
+    assert panel.table.item(0, 0).text() == 'one'
+
+
+def test_segment_scoped_term_findings_count_against_matching_term(panel):
+    panel.set_review_items([
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'finding_type': 'glossary_stale', 'source': '草の墓標 ―副題―'},
+    ])
+    # Workbench rendering may populate the review queue before the term table.
+    panel.apply('j', _view([_row(1, '草の墓標', '草之墓碑', 'locked')]))
+    assert panel.table.item(0, 4).text() == '1'
+
+
+def test_compact_term_row_surfaces_its_conflict_count(panel):
+    panel.set_compact(True)
+    panel.apply('j', _view([_row(1, 'term', '术语', 'locked')]))
+    panel.set_review_items([
+        {'kind': 'finding', 'category': 'terminology_consistency',
+         'entry_id': 't1', 'finding_id': 'f1'},
+    ])
+    assert panel.table.item(0, 2).text() == '锁定 · 冲突 1'
+
+
+def test_workspace_table_shows_all_required_columns_without_horizontal_scroll(panel, qapp):
+    panel.set_compact(False)
+    panel.apply('j', _view([_row(1, 'term', '术语', 'locked')]))
+    panel.resize(900, 700)
+    panel.show()
+    qapp.processEvents()
+    assert panel.table.horizontalScrollBar().maximum() == 0
+    for column in range(panel.table.columnCount()):
+        assert panel.table.columnWidth(column) > 0
+    panel.close()
+
+
+def test_workspace_columns_fit_font_scaled_narrow_dialog(panel, qapp):
+    panel.set_compact(False)
+    panel.apply('j', _view([_row(1, '草の墓標', '草之墓碑', 'locked')]))
+    panel.resize(800, 700)
+    panel.show()
+    qapp.processEvents()
+
+    assert panel.table.horizontalScrollBar().maximum() == 0
+    widths = [panel.table.columnWidth(column) for column in range(panel.table.columnCount())]
+    assert all(width > 0 for width in widths)
+    assert panel.table.columnCount() == 6
+    panel.close()
+
+
+def test_workspace_action_buttons_fit_inside_editor_card(panel, qapp):
+    from PySide6.QtCore import QPoint
+    panel.set_compact(False)
+    panel.apply('j', _view([_row(1, '草の墓標', '草之墓碑')], started=True))
+    panel.resize(1000, 700)
+    panel.show()
+    qapp.processEvents()
+    for button in (panel.apply_row_button, panel.add_button, panel.delete_button,
+                   panel.lock_selected_button, panel.reject_selected_button):
+        assert button.isVisible()
+        top_left = button.mapTo(panel.editor_card, QPoint(0, 0))
+        assert panel.editor_card.rect().contains(top_left)
+        assert panel.editor_card.rect().contains(top_left + QPoint(button.width() - 1, button.height() - 1))
+    panel.close()
+
+
+def test_workspace_scrolls_detail_column_at_scaled_narrow_height(panel, qapp):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    panel.set_compact(False)
+    panel.apply('j', _view([
+        _row(1, '草の墓標', '草之墓碑', 'locked')],
+        started=True, frozen=True, frozen_version=1, blocks_start=False))
+    panel.details_button.setChecked(True)
+    panel.resize(960, 560)
+    panel.show()
+    QTest.qWait(350)
+
+    assert panel.detail_content.objectName() == "pageCanvas", (
+        "detail content must paint the existing page canvas behind scroll shadows")
+    assert panel.detail_scroll.verticalScrollBar().maximum() > 0
+    assert panel.detail_scroll.horizontalScrollBar().maximum() == 0
+    card_bottom = panel.editor_card.mapTo(
+        panel.detail_content,
+        QPoint(0, panel.editor_card.height())).y()
+    heading_top = panel.impact_heading.mapTo(panel.detail_content, QPoint(0, 0)).y()
+    heading_bottom = panel.impact_heading.mapTo(
+        panel.detail_content, QPoint(0, panel.impact_heading.height())).y()
+    table_top = panel.impact_table.mapTo(panel.detail_content, QPoint(0, 0)).y()
+    table_bottom = panel.impact_table.mapTo(
+        panel.detail_content, QPoint(0, panel.impact_table.height())).y()
+    actions_top = panel.impact_actions.mapTo(panel.detail_content, QPoint(0, 0)).y()
+    assert card_bottom <= heading_top
+    assert heading_bottom <= table_top
+    assert table_bottom <= actions_top
+    panel.close()
+
+
+def test_started_term_edit_does_not_persist_without_version_if_commit_fails(job, monkeypatch):
+    state = core.load_job_state(job)
+    state['p2_done'] = True
+    core.save_job_state(job, state)
+    core.freeze_glossary(job, entries=state['glossary'])
+    before = core.load_job_state(job)
+    entry = before['glossary'][0]
+    def fail(*_args, **_kwargs):
+        raise OSError('模拟写入失败')
+    with monkeypatch.context() as m:
+        m.setattr(core, 'save_job_state', fail)
+        with pytest.raises(OSError, match='模拟写入失败'):
+            core.update_glossary_entry(job, entry['id'], preferred='新译名')
+    after = core.load_job_state(job)
+    assert after['glossary'] == before['glossary']
+    assert after['glossary_frozen'] == before['glossary_frozen']
+
+
+def test_table_conflicts_follow_review_queue_and_sort_numeric(panel):
+    from PySide6.QtCore import Qt
+    panel.set_compact(False)
+    panel.apply('j', _view([_row(1, 'A', '甲'), _row(2, 'B', '乙')]))
+    panel.set_review_items([{'kind': 'finding', 'category': 'terminology_consistency', 'entry_id': 't1'}] * 12
+                           + [{'kind': 'finding', 'category': 'terminology_consistency', 'entry_id': 't2'}])
+    panel.table.sortItems(4, Qt.SortOrder.DescendingOrder)
+    assert panel.table.item(0, 0).text() == 'A'
+    assert panel.table.item(0, 4).data(Qt.ItemDataRole.DisplayRole) == 12
+
+
+def test_status_update_records_modification_time(job):
+    state = core.load_job_state(job)
+    state['p2_done'] = True
+    core.save_job_state(job, state)
+    row = _rows(job)[0]
+    adapter.set_terms_status(job, [row['id']], 'locked')
+    updated = next(item for item in _rows(job) if item['id'] == row['id'])
+    assert updated['modified_at']
+
+
+def test_batch_status_rejects_stale_selection_without_partial_change(job):
+    rows = _rows(job)
+    with pytest.raises(adapter.AdapterError, match='刷新'):
+        adapter.set_terms_status(job, [rows[0]['id'], 'missing-entry'], 'locked')
+    assert next(r for r in _rows(job) if r['id'] == rows[0]['id'])['status'] == rows[0]['status']
+
+
+def test_unsaved_form_survives_selection_and_filter_and_can_undo(panel):
+    panel.apply('j', _view([_row(1, 'Alpha', '甲'), _row(2, 'Beta', '乙')], started=True))
+    panel.search_edit.setText('Alpha')
+    panel.preferred_edit.setText('待保存译名')
+    assert panel.is_dirty() and not panel.undo_form_button.isHidden()
+    panel.search_edit.setText('Beta')
+    assert panel.preferred_edit.text() == '乙'
+    panel.search_edit.setText('Alpha')
+    assert panel.preferred_edit.text() == '待保存译名'
+    panel.undo_form_button.click()
+    assert panel.preferred_edit.text() == '甲' and not panel.is_dirty()
+
+
+def test_save_staged_includes_unapplied_forms_for_multiple_terms(panel):
+    panel.apply('j', _view([_row(1, 'Alpha', '甲'), _row(2, 'Beta', '乙')]))
+    panel.search_edit.setText('Alpha'); panel.preferred_edit.setText('甲新')
+    panel.search_edit.setText('Beta'); panel.preferred_edit.setText('乙新')
+    received = []
+    panel.draftSaveRequested.connect(received.append)
+    panel.save_button.click()
+    assert {r['source']: r['preferred'] for r in received[0]} == {'Alpha': '甲新', 'Beta': '乙新'}
+
+
+def test_started_source_change_is_not_silently_ignored(panel):
+    panel.apply('j', _view([_row(1, 'Alpha', '甲')], started=True))
+    seen = []
+    panel.entryUpdateRequested.connect(lambda *args: seen.append(args))
+    panel.source_edit.setText('Changed')
+    panel.apply_row_button.click()
+    assert not seen and '源术语不能直接改名' in panel.hint.text()
     assert panel.is_dirty()

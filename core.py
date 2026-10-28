@@ -828,19 +828,24 @@ from folith.engine.glossary_ops import (  # noqa: F401  (re-export: core keeps i
     accept_entity_variants,
     add_glossary_entry,
     apply_entity_repair,
+    apply_terminology_replacement,
     bypass_freeze,
     confirm_translation_style_rule,
     delete_glossary_entry,
     entity_consistency_queue,
     freeze_glossary,
     load_context_artifacts,
+    merge_glossary_entries,
     preview_entity_repair,
+    revalidate_terminology_conflicts,
+    preview_terminology_replacement,
     review_knowledge_candidate,
     save_document_profile,
     save_glossary_draft,
     set_entity_translation,
     set_glossary_entry_status,
     unfreeze_glossary,
+    undo_terminology_replacement,
     update_glossary_entry,
     write_profile_artifacts,
 )
@@ -3439,6 +3444,7 @@ tm_record_language = _tm_scope.tm_record_language
 tm_record = _tm_scope.tm_record
 tm_put = _tm_scope.tm_put
 tm_discard = _tm_scope.tm_discard
+tm_withdraw = _tm_scope.tm_withdraw
 tm_legacy_keys = _tm_scope.tm_legacy_keys
 tm_context_fingerprint = _tm_scope.tm_context_fingerprint
 tm_context_fields = _tm_scope.tm_context_fields
@@ -3537,6 +3543,9 @@ def load_tm(project_id=None):
     `tm_lookup` 命中：证明不了目标语言的记忆不能自动复用。可用
     `tm_legacy_keys` 把它们单独列出来。
 
+    因术语版本变化撤销审校资格的条目也保留原文和译文；只有重新审校后
+    才可再次用于自动匹配。
+
     `project_id=None` 表示默认项目（即历史的全局记忆）。
     """
     p = tm_path(project_id)
@@ -3546,7 +3555,7 @@ def load_tm(project_id=None):
         except Exception:
             return _TranslationMemory()
         return _TranslationMemory({k: v for k, v in raw.items()
-                if isinstance(v, dict) and v.get("reviewed")
+                if isinstance(v, dict) and (v.get("reviewed") or v.get("withdrawn_reason"))
                 and _tm_eligible(tm_unscope_key(k)[1], v.get("target"))})
     return _TranslationMemory()
 
@@ -10186,6 +10195,8 @@ def save_translation_edit(job_id, index, target, actor="user"):
         job_id, state, [index], "人工修改 CURRENT_TRANSLATION；相关案例与学术下游需要重建",
         actor=actor, action="translation_edit")
     _recheck_delivery_invariants_for_segments(state, [index], actor=actor)
+    from folith.engine.glossary_ops import _refresh_segment_term_conflicts
+    _refresh_segment_term_conflicts(state, indexes=[index])
     save_job_state(job_id, state)
     return state
 

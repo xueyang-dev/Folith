@@ -1,5 +1,33 @@
 """Read-only projections for term lists and review evidence surfaces (UI-framework neutral)."""
-from folith.terminology import find_occurrences, term_matches
+from folith.terminology import entry_matches, source_forms, term_matches
+
+
+def term_impact(source, preferred, pairs):
+    """Project current usage without changing any translations.
+
+    Counts are per segment, as in the workbench term navigation. Empty targets
+    are reported separately rather than being described as inconsistent.
+    """
+    matches = []
+    correct = inconsistent = untranslated = 0
+    entry = source if isinstance(source, dict) else {'source': source}
+    for index, pair in enumerate(pairs):
+        if pair.get("excluded") or not entry_matches(entry, str(pair.get("source") or "")):
+            continue
+        target = str(pair.get("target") or "")
+        if not target.strip():
+            status = "untranslated"
+            untranslated += 1
+        elif preferred and term_matches(preferred, target):
+            status = "correct"
+            correct += 1
+        else:
+            status = "inconsistent"
+            inconsistent += 1
+        matches.append({"index": index, "source": str(pair.get("source") or ""),
+                        "target": target, "status": status})
+    return {"total": len(matches), "correct": correct, "inconsistent": inconsistent,
+            "untranslated": untranslated, "segments": matches}
 
 
 def term_rows(state, *, count_occurrences=True):
@@ -19,7 +47,7 @@ def term_rows(state, *, count_occurrences=True):
     for entry in entries:
         source = str(entry.get("source") or "")
         target = str(entry.get("preferred") or entry.get("target") or "")
-        occurrences = find_occurrences(source, paragraphs) \
+        occurrences = [i for i, text in enumerate(paragraphs) if entry_matches(entry, text)] \
             if source and count_occurrences else []
         matched = sum(term_matches(target, str(pairs[i].get("target") or ""))
                       for i in occurrences if i < len(pairs)) if target else 0
@@ -57,3 +85,43 @@ def review_evidence(state, item):
                              "target": str(pairs[index].get("target") or ""),
                              "recorded": False})
     return evidence
+
+
+def terminology_duplicates(entries):
+    """Find normalization-equivalent and textually similar source forms.
+
+    These are review candidates, not assertions of semantic equivalence. NFKC
+    covers width and compatibility variants; punctuation and whitespace are
+    ignored only for comparison. Original forms are returned intact.
+    """
+    import unicodedata
+    from difflib import SequenceMatcher
+
+    def normalize(value):
+        return ''.join(ch for ch in unicodedata.normalize('NFKC', str(value or '')).casefold()
+                       if not ch.isspace() and not unicodedata.category(ch).startswith('P'))
+
+    candidates = []
+    rows = [(str(e.get('id') or ''), str(e.get('source') or ''),
+             str(e.get('preferred') or e.get('target') or '')) for e in entries
+            if e.get('status') != 'rejected' and str(e.get('source') or '').strip()]
+    normalized = [normalize(source) for _, source, _ in rows]
+    for i, left in enumerate(rows):
+        a = normalized[i]
+        if not a:
+            continue
+        for j in range(i + 1, len(rows)):
+            b = normalized[j]
+            if not b:
+                continue
+            if a == b:
+                kind = 'normalized'
+            elif (min(len(a), len(b)) >= 4 and min(len(a), len(b)) / max(len(a), len(b)) >= .75
+                  and SequenceMatcher(None, a, b, autojunk=False).ratio() >= .85):
+                kind = 'similar'
+            else:
+                continue
+            candidates.append({'kind': kind, 'left_id': left[0], 'left_source': left[1],
+                               'left_target': left[2], 'right_id': rows[j][0],
+                               'right_source': rows[j][1], 'right_target': rows[j][2]})
+    return candidates

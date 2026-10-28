@@ -183,6 +183,7 @@ class SourceOutlineSection(QWidget):
         self.scope_button.clicked.connect(self.scopeRequested.emit)
         scope_row.addWidget(self.scope_button)
         edit = QToolButton()
+        edit.setObjectName("toolbarButton")
         edit.setText(i18n.tr('修正'))
         edit.setAccessibleName(i18n.tr('修正文档结构'))
         menu = QMenu(edit)
@@ -196,6 +197,7 @@ class SourceOutlineSection(QWidget):
         scope_row.addWidget(edit)
         self.edit_button = edit
         recovery = QToolButton()
+        recovery.setObjectName("toolbarButton")
         recovery.setText(i18n.tr('恢复结构'))
         recovery_menu = QMenu(recovery)
         recovery_menu.addAction(i18n.tr('按编号恢复')).triggered.connect(self._recover_outline)
