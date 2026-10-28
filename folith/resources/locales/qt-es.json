@@ -1,4 +1,7 @@
 {
+  "仅 XLIFF": "Solo XLIFF",
+  "原格式 XLIFF 回写": "Reescritura XLIFF en formato original",
+  "仅 XLIFF 任务可用：把译文安全写回原文件，保持结构不变。": "Solo para tareas XLIFF: escribe la traducción de forma segura en el archivo original sin alterar su estructura.",
   "\n文件在磁盘上找不到；快照本身不可修改，请重新冻结交付。": "\nEl archivo no está en el disco; la instantánea no se puede modificar: vuelve a congelar la entrega.",
   "\n校验：sha256 {v0}…": "\nSuma de verificación: sha256 {v0}…",
   " · {v0} 个候选待确认": " · {v0} candidatos por confirmar",

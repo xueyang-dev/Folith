@@ -112,6 +112,7 @@ DELIVERY_CONFIG_DEFAULTS = {
     "deliver_pdf": False,
     "deliver_original_pdf": False,
     "deliver_epub": False,
+    "deliver_xliff": False,
     "deliver_terms_xlsx": True,
     "deliver_tbx": False,
     "deliver_tmx": False,
@@ -1885,6 +1886,40 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
             from folith.text_import import extract_text_source
             paragraphs, unsupported, facts = extract_text_source(filename, file_bytes)
             paragraphs = [clean_xml_chars(item) for item in paragraphs]
+        elif name.endswith((".xliff", ".xlf")):
+            from folith.xliff_roundtrip import (
+                XliffRoundtripError,
+                extract_xliff_units,
+            )
+            try:
+                xliff_units, xliff_manifest = extract_xliff_units(file_bytes)
+            except XliffRoundtripError as exc:
+                # TU Contract：无法证明安全的结构显式拒绝，导入不产生部分写入。
+                raise ValueError(str(exc)) from exc
+            # 源文带 ⟦n⟧ 编号占位符：inline 标签可见、可移动，写回时负载回填。
+            # 空源文单元（无可翻译内容）不进入任务，写回时原样保留。
+            paragraphs = [
+                clean_xml_chars(unit.source)
+                for unit in xliff_units
+                if unit.source_plain.strip()
+            ]
+            facts["xliff"] = {
+                "xliff_version": xliff_manifest["xliff_version"],
+                "unit_count": xliff_manifest["counts"]["units"],
+                "locked_units": xliff_manifest["counts"]["locked"],
+                "empty_source_units": xliff_manifest["counts"]["empty_source"],
+                "with_inline_units": xliff_manifest["counts"]["with_inline"],
+                "imported_units": len(paragraphs),
+                "supported": xliff_manifest["supported"],
+                "preserved": xliff_manifest["preserved"],
+                "source_hash": xliff_manifest["source_hash"],
+                "units": [unit.to_dict() for unit in xliff_units
+                          if unit.source_plain.strip()],
+            }
+            if xliff_manifest["counts"]["locked"]:
+                warnings.append(
+                    f"{xliff_manifest['counts']['locked']} 个 locked 段"
+                    "（translate=\"no\"）原样保留，不参与翻译。")
         else:
             warnings.append("不支持的文档格式，无法自动画像")
     except Exception as exc:  # noqa: BLE001
@@ -1903,6 +1938,13 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
     if name.endswith(".epub"):
         report["extracted"]["chapters"] = facts.get("chapters", 0)
         report["notes"].append("按 EPUB 主阅读顺序提取正文；目录及未列入主阅读顺序的资源不纳入翻译。")
+    if name.endswith((".xliff", ".xlf")) and not facts.get("extraction_error"):
+        # XLIFF 的 TU 边界是权威分段：后续分段、清理决策都读这个标记。
+        report["format"] = "xliff"
+        report["xliff"] = facts.get("xliff") or {}
+        report["notes"].append(
+            "XLIFF 翻译单元边界作为分段边界（不重新分句）；"
+            "inline 标签以编号占位符显示，源文清理豁免。")
     if facts.get("extraction_error"):
         report["status"] = "failed"
         report["error"] = facts["extraction_error"]
@@ -5548,6 +5590,11 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         nonlocal _journal_seq, _journal_bytes_written, _journal_enabled
         nonlocal _journal_retire_pending
         nonlocal _translated_pair_count
+        xliff_units = ((state.get("extraction_report") or {}).get("xliff") or {}).get("units") or []
+        for index, pair in enumerate(batch_pairs, start=offset):
+            if xliff_units:
+                pair["xliff_instance_id"] = xliff_units[index]["instance_id"]
+                pair["xliff_source_hash"] = xliff_units[index]["source_version"]
         pairs.extend(batch_pairs)
         _translated_pair_count += sum(bool(str(pair.get("target") or "").strip())
                                       for pair in batch_pairs)
@@ -5963,6 +6010,15 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
             for i, para in enumerate(batch):
                 clean_src = para.replace('\n', ' ')
                 source_index = offset + i
+                seed_pairs = state.get("xliff_seed_pairs") or []
+                if source_index < len(seed_pairs):
+                    seed = seed_pairs[source_index]
+                    if str(seed.get("source") or "").replace("\n", " ") != clean_src:
+                        raise ValueError("XLIFF 单元与任务源文不一致，已停止翻译。")
+                    if seed.get("locked") or str(seed.get("target") or "").strip():
+                        batch_pairs[i] = dict(seed)
+                        blocked_local_indexes.add(i)
+                        continue
                 source_flag = blocked_source_indexes.get(source_index)
                 if source_flag is not None:
                     blocked_local_indexes.add(i)
@@ -10167,6 +10223,8 @@ def save_translation_edit(job_id, index, target, actor="user"):
     pair = pairs[index]
     if is_excluded(pair):
         raise ValueError("该段落已被排除，不会进入翻译与交付；请先恢复本段再编辑译文。")
+    if pair.get("locked"):
+        raise ValueError("该段落在 XLIFF 源文件中已锁定，不能编辑。")
     assign_missing_segment_uids(state, job_id=job_id)
     new_target = str(target or "").strip()
     if not pair.get("human_edited"):
@@ -10723,6 +10781,26 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
                     bundle["original_format.docx"] = _bytes(docx_bytes)
                     bundle["original_format_report.json"] = (
                         json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
+                    ).encode("utf-8")
+            if config.get("deliver_xliff"):
+                if not (str(filename).lower().endswith((".xliff", ".xlf")) and source):
+                    skipped_assets["original_format.xliff"] = (
+                        "original-format XLIFF round trip requires an XLIFF source")
+                else:
+                    from folith.xliff_roundtrip import (
+                        XliffRoundtripError,
+                        build_roundtrip_xliff,
+                    )
+                    try:
+                        xliff_bytes, xliff_report = build_roundtrip_xliff(state, source)
+                    except XliffRoundtripError as exc:
+                        # TU Contract：Tag QA / 锚点失败必须阻断交付，
+                        # 绝不产出"看似成功"的半成品。
+                        raise RuntimeError(
+                            f"XLIFF 原格式写回被阻止：{exc}") from exc
+                    bundle["original_format.xliff"] = _bytes(xliff_bytes)
+                    bundle["original_format_report.json"] = (
+                        json.dumps(xliff_report, ensure_ascii=False, indent=2) + "\n"
                     ).encode("utf-8")
             if config["deliver_bilingual_docx"]:
                 bundle["bilingual.docx"] = _bytes(pairs_to_word(
@@ -13107,6 +13185,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state.get("understanding_retry_requested") or (enable_understanding and state.get("understanding_done")
         and has_fallback_digests
         and state.get("understanding_runtime_config") != understanding_runtime_config))
+    if str(filename or "").lower().endswith((".xliff", ".xlf")):
+        # XLIFF TU Contract：源文是写回对位的权威文本，LLM 清理会改写源文并
+        # 破坏 ⟦n⟧ 占位符，XLIFF 任务永远豁免源文清理。
+        enable_source_cleanup = False
     if enable_source_cleanup is None:
         if isinstance(saved_source_cleanup, bool):
             enable_source_cleanup = saved_source_cleanup
@@ -13669,6 +13751,13 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
 
     # ---------------- 阶段二：双语翻译（批次 + 确定性检查 + 独立审校 + 翻译记忆）----------------
     if not state["p2_done"]:
+        xliff = (state.get("extraction_report") or {}).get("xliff") or {}
+        if xliff.get("units") and "xliff_seed_pairs" not in state:
+            if len(state.get("pairs") or []) != len(xliff["units"]):
+                raise ValueError("XLIFF 单元与任务段数不一致，已停止翻译。")
+            state["xliff_seed_pairs"] = [dict(pair) for pair in state["pairs"]]
+            state["pairs"] = []
+            save_job_state(job_id, state)
         if _runtime_cancel_requested(job_id):
             raise RuntimeError("任务已请求取消")
         if on_status:
@@ -13720,6 +13809,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             _apply_scan_page_order(job_id, state)
         state["performance"] = profiler.persist()
         state["p2_done"] = True
+        state.pop("xliff_seed_pairs", None)
         from folith.epub import bind_source_references
         bind_source_references(state)
         from folith.document_ir import attach_pair_spans

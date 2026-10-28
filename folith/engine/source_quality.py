@@ -247,6 +247,11 @@ def _source_segmentation_mode(state=None, explicit=None):
     saved = {}
     if isinstance(state, dict):
         saved = state.get("segmentation") or {}
+    report = state.get("extraction_report") if isinstance(state, dict) else None
+    if isinstance(report, dict) and report.get("format") == "xliff":
+        # XLIFF TU Contract：TU 边界就是分段边界。重新分句会让写回失去 TU 对位，
+        # 因此格式锁优先于用户偏好、环境变量与默认值。
+        return "paragraph"
     configured = explicit
     if configured is None:
         configured = os.environ.get("FOLIOTHREAD_SEGMENTATION_MODE")

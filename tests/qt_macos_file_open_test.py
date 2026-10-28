@@ -314,6 +314,8 @@ def test_bundle_declares_every_supported_document_type():
         ".txt": "public.plain-text",
         ".md": "net.daringfireball.markdown",
         ".markdown": "net.daringfireball.markdown",
+        ".xliff": "org.oasis.xliff",
+        ".xlf": "org.oasis.xliff",
     }
     assert set(adapter.SUPPORTED_SUFFIXES) == set(ingestible), adapter.SUPPORTED_SUFFIXES
     assert utis == set(ingestible.values()), utis

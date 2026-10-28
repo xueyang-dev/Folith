@@ -234,7 +234,8 @@ def test_bundle_declares_only_ingestible_document_types():
     from folith.application.job_config import SOURCE_SUFFIXES
     from folith.qt import adapter
 
-    assert SOURCE_SUFFIXES == (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown")
+    assert SOURCE_SUFFIXES == (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown",
+                               ".xliff", ".xlf")
     declared = {
         uti
         for entry in _spec_document_types()
@@ -247,6 +248,7 @@ def test_bundle_declares_only_ingestible_document_types():
         "org.idpf.epub-container",
         "public.plain-text",
         "net.daringfireball.markdown",
+        "org.oasis.xliff",
     }
     assert "com.microsoft.word.doc" not in declared
     assert adapter.SUPPORTED_SUFFIXES == SOURCE_SUFFIXES

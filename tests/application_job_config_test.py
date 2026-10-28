@@ -362,7 +362,8 @@ def test_source_cleanup_tristate_on_resume():
 
 def test_only_ingestible_suffixes_are_advertised():
     from folith.qt import adapter
-    assert SOURCE_SUFFIXES == (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown")
+    assert SOURCE_SUFFIXES == (".pdf", ".docx", ".epub", ".txt", ".md", ".markdown",
+                               ".xliff", ".xlf")
     assert adapter.SUPPORTED_SUFFIXES == SOURCE_SUFFIXES
     assert adapter.MAX_SOURCE_BYTES > 0
 

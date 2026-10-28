@@ -1,4 +1,7 @@
 {
+  "仅 XLIFF": "XLIFF uniquement",
+  "原格式 XLIFF 回写": "Réécriture XLIFF au format original",
+  "仅 XLIFF 任务可用：把译文安全写回原文件，保持结构不变。": "Uniquement pour les tâches XLIFF : réinscrit la traduction en toute sécurité dans le fichier original sans en casser la structure.",
   "\n\n……（预览到此为止，共 {count} 段；完整原文可在开始后的工作台查看）": "\n\n… (L’aperçu s’arrête ici, {count} paragraphes au total ; le texte source complet est accessible dans l’espace de travail après le début)",
   "\n文件在磁盘上找不到；快照本身不可修改，请重新冻结交付。": "\nLe fichier est introuvable sur le disque ; l'instantané lui-même ne peut pas être modifié — figez à nouveau la livraison.",
   "\n有 {v0} 段尚无译文：第 {v1}{v2} 段。": "\n{v0} segment(s) n'ont pas encore de traduction : segment {v1}{v2}.",
