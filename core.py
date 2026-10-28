@@ -3826,7 +3826,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             controller.note_success()
             targets = _translation_protocol.strip_echoed_numbering(segments, _numerals.normalize_targets(
                 _translation_protocol.parse_translation_response(res, len(segments)),
-                target_lang)
+                target_lang))
             if result_cache is not None and cache_key is not None:
                 # Only a fully parsed, count-matching batch is cacheable.  A
                 # partial or malformed reply never reaches this line.
