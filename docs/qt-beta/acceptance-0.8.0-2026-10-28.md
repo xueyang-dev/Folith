@@ -131,13 +131,13 @@ CI checks passed:
 
 ### Offscreen Qt acceptance script (2026-10-28)
 
-A 10-step scripted acceptance test was run against the generated 20-chapter, 1020-paragraph DOCX using `OutlinePanel` with PySide6 6.11.2 offscreen backend. Evidence file: `docs/evidence/0.8.0/191-outline-panel-offscreen-2026-10-28.json`.
+A 10-step scripted acceptance test (`scripts/acceptance/outline_191_offscreen.py`, rerunnable) was run against a generated 45-chapter, 2,295-paragraph DOCX (270 headings at two levels) using `OutlinePanel` with PySide6 6.11.2 offscreen backend. Evidence file: `docs/evidence/0.8.0/191-outline-panel-offscreen-2026-10-28.json`.
 
 | Step | Check | Result |
 |---|---|---|
-| 1 | `parse_source_outline()` → 120 nodes (20 chapters × 5 sections + root), provenances `{'native_heading_style'}` | PASS |
+| 1 | `parse_source_outline()` → 270 nodes (45 chapters × 5 sections + 45 chapter headings), provenances `{'native_heading_style'}` | PASS |
 | 2 | Sidecar written to `source_outline.json` | PASS |
-| 3 | `adapter.task_outline()` warm load: 120 nodes in **5.3 ms**, `parsed=False` (cache hit, no reparse) | PASS |
+| 3 | `adapter.task_outline()` warm load: 270 nodes in **8.0 ms**, `parsed=False` (cache hit, no reparse) | PASS |
 | 4 | `OutlinePanel.set_outline()` → 20 top-level items; first chapter expands to **5 children**; collapse restores | PASS |
 | 5 | `panel._activated(item, 0)` fires `nodeActivated` signal 20 times; avg **0.01 ms** per navigation | PASS |
 | 6 | Second `set_outline()` with same fingerprint: item count unchanged, no spurious rebuild | PASS |
@@ -146,7 +146,7 @@ A 10-step scripted acceptance test was run against the generated 20-chapter, 102
 | 9 | `core.load_source(job) == doc_bytes` — source bytes unchanged | PASS |
 | 10 | `task_outline()` on a native-structure document makes no model call (injected `fail_if_called`) | PASS |
 
-**Key measurements:** warm outline load 5.3 ms, navigation signal avg 0.01 ms (all offscreen; real Cocoa latency will differ).
+**Key measurements:** warm outline load 8.0 ms, navigation signal avg 0.01 ms (signal only, not the editor jump) (all offscreen; real Cocoa latency will differ).
 
 ### Acceptance gate evaluation
 
@@ -157,7 +157,7 @@ A 10-step scripted acceptance test was run against the generated 20-chapter, 102
 | Expand/collapse hierarchical outline, hide panel | Scripted offscreen: expand first chapter → 5 children; collapse; hide/show panel — all PASS. Native Cocoa interactive acceptance not performed (human required). | PASS (offscreen); OPEN (Cocoa) |
 | Clicking heading navigates to segment, draft preserved | `panel._activated()` fires `nodeActivated` 20 times (offscreen), avg 0.01 ms. No segment grid rebuild. | PASS (offscreen); OPEN (Cocoa) |
 | Current section identifiable when segment selected | `OutlinePanel.highlight_node()` present in code (`outline_panel.py`). Tested in `qt_outline_panel_test.py` (20 PASSED). | PASS |
-| Navigation on 2000+ segment document while translation runs | 120-node offscreen test: 5.3 ms load, 0.01 ms avg navigation. Concurrent translation not testable without UI event loop. | PASS (offscreen); OPEN (real load) |
+| Navigation on 2000+ segment document while translation runs | 2,295-paragraph / 270-node offscreen run: 8.0 ms warm outline load. The 0.01 ms figure only times `nodeActivated` emission, not the editor scrolling to the segment. Not measured with a translation running. | OPEN — needs a real-window run with translation in progress |
 | Existing workflows unchanged (regression suite) | 2730 tests PASSED (full suite). | PASS |
 | Outline and panel state persist where appropriate | Sidecar persistence tested (26 anchor tests). Panel visibility: tested in step 7 above. | PASS |
 | Missing/empty/malformed outline does not break import | `source_outline.parse_source_outline` returns empty structure on error. Anchor tests cover reset/re-import. | PASS |
@@ -180,7 +180,7 @@ A 10-step scripted acceptance test was run against the generated 20-chapter, 102
 
 **Draft status comment for #191:**
 
-> Code acceptance complete for all children that can be tested without a running Cocoa/GDI window. 106 directly related tests PASSED covering extraction, anchoring, recovery, corrections, Qt panel widget, and signal firing. Offscreen scripted acceptance (10 steps, 120-node DOCX): all PASS; warm load 5.3 ms, navigation signal avg 0.01 ms, expand/collapse and show/hide work.
+> Code acceptance complete for all children that can be tested without a running Cocoa/GDI window. 106 directly related tests PASSED covering extraction, anchoring, recovery, corrections, Qt panel widget, and signal firing. Offscreen scripted acceptance (10 steps, 2,295-paragraph / 270-node DOCX): all PASS; warm load 8.0 ms, navigation signal avg 0.01 ms, expand/collapse and show/hide work.
 >
 > **Remaining for close:** native macOS + Windows interactive walkthrough per the checklist above. This is recorded as a limit, not waived.
 
