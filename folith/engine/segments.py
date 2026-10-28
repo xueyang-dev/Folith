@@ -397,9 +397,19 @@ def _capture_positional_artifacts(state, index):
 def _restore_positional_artifacts(state, index, record):
     """Insert saved provenance at the restored position; never guess membership."""
     saved = record.get("positional_artifacts")
-    if not isinstance(saved, dict):
-        return  # Existing records retain their original restoration behavior.
     count = len(state.get("paras") or [])
+    if not isinstance(saved, dict):
+        # Older manual exclusions left positional data in place; older scope
+        # exclusions removed it without saving it. Only the former can be
+        # restored without inventing source provenance.
+        for key in ("segment_source_spans", "segment_source_marks"):
+            values = state.get(key)
+            if isinstance(values, list) and values and len(values) != count + 1:
+                raise ValueError("旧排除记录缺少来源位置数据，无法安全恢复被排除的段落。")
+        segmentation = state.get("segmentation") or {}
+        if segmentation.get("paragraph_ranges") and segmentation.get("output_segment_count") == count:
+            raise ValueError("旧排除记录缺少段落区间信息，无法安全恢复被排除的段落。")
+        return
     arrays = saved.get("arrays") or {}
     for key in ("segment_source_spans", "segment_source_marks"):
         values = state.get(key)

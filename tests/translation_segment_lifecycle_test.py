@@ -243,6 +243,20 @@ def test_restore_pretranslation_exclusion_after_translation_inserts_empty_pair(t
     assert restored["pairs"][1]["target"] == ""
 
 
+
+def test_older_exclusion_without_saved_removed_provenance_is_not_guessed(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job = "position-legacy"
+    core.save_job_state(job, _state_with_positions())
+    state = core.mutate_translation_segments(job, 1, "exclude")
+    state["excluded_segments"][0].pop("positional_artifacts")
+    core.save_job_state(job, state)
+    with pytest.raises(ValueError, match="旧排除记录缺少"):
+        core.mutate_translation_segments(job, 0, "include",
+            excluded_id=state["excluded_segments"][0]["excluded_id"])
+    assert core.load_job_state(job)["paras"] == state["paras"]
+
+
 def test_exclude_removes_segment_from_work_list_but_keeps_a_restorable_record(
         tmp_path):
     job_id = "segmentlifecycle01"
