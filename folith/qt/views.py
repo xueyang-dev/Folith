@@ -5443,16 +5443,16 @@ class WorkbenchView(QWidget):
                         v0=min(FIRST_WINDOW_PAGES, total)))
             return
         if state.get("excluded_segments"):
-            title = "所有段落都被排除了"
-            hint = ("被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，"
-                    "原文与当前译文都完整保留。")
+            title = i18n.tr('所有段落都被排除了')
+            hint = i18n.tr('被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，'
+                           '原文与当前译文都完整保留。')
         elif state.get("paras") or state.get("pairs"):
-            title = "当前筛选下没有段落"
-            hint = "清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。"
+            title = i18n.tr('当前筛选下没有段落')
+            hint = i18n.tr('清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。')
         else:
-            title = "还没有可编辑的段落"
-            hint = ("这份文档目前没有切分出的段落。点上方「开始翻译」会导入并切分正文；"
-                    "进度会自动保存，可以随时离开再回来。")
+            title = i18n.tr('还没有可编辑的段落')
+            hint = i18n.tr('这份文档目前没有切分出的段落。点上方「开始翻译」会导入并切分正文；'
+                           '进度会自动保存，可以随时离开再回来。')
         self.no_segments_state.set_text(title, hint)
 
     def _render_segments(self) -> None:
