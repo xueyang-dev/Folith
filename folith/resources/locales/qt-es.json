@@ -2408,5 +2408,6 @@
   "AI 置信度：{value}": "Confianza de IA: {value}",
   "无法保存结构恢复结果。": "No se pudo guardar la recuperación de estructura.",
   "{count} 个节点 · AI 推断": "{count} nodos · inferidos por IA",
-  "{count} 个节点 · 按编号推断": "{count} nodos · inferidos de la numeración"
+  "{count} 个节点 · 按编号推断": "{count} nodos · inferidos de la numeración",
+  "无法读取结构修正文件；原文件已保留。": "No se pudo leer el archivo de correcciones de estructura; se ha conservado el archivo original."
 }

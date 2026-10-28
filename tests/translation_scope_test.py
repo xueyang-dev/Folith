@@ -374,6 +374,27 @@ def test_renamed_outline_keeps_pre_start_exclusion_anchors(tmp_path):
         core.OUTPUT_DIR = old_output
 
 
+def test_pre_start_exclusion_refuses_unreadable_corrections(tmp_path, monkeypatch):
+    from folith import outline_corrections
+    from folith.qt import adapter
+    job_id = "scope-corrupt-corrections"
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        path = core.job_dir(job_id) / outline_corrections.FILENAME
+        damaged = b'{"entries": [broken'
+        path.write_bytes(damaged)
+        monkeypatch.setattr(core, "ensure_source_outline", lambda *_: state)
+        assert adapter.translation_scope(job_id, state)["available"] is False
+        with pytest.raises(ValueError, match="无法读取结构修正文件"):
+            core.exclude_translation_scope(job_id, ["outline:n0001"])
+        assert not core.load_job_state(job_id).get("scope_exclusion_plan")
+        assert path.read_bytes() == damaged
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
 def test_pre_start_exclusion_is_a_plan_and_applies_when_units_are_built(tmp_path):
     """操作闭环：译前排除记成计划 → 任务开始建好翻译单元 → 落进排除账本。
 

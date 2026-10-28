@@ -1216,7 +1216,9 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
         from folith import outline_corrections, outline_recovery
         state = dict(state)
         recovered = outline_recovery.load(job_id, state.get("source_outline") or {})
-        state["source_outline"], _ = outline_corrections.apply(job_id, recovered)
+        state["source_outline"], correction_status = outline_corrections.apply(job_id, recovered)
+        if correction_status == outline_corrections.UNREADABLE:
+            state["source_outline"] = {}
     tree = core.translation_scope_tree(state or {})
     return {
         "available": bool(tree.get("available")),

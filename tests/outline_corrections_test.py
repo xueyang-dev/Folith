@@ -158,6 +158,9 @@ def test_save_preserves_corrupt_corrections_file(tmp_path, monkeypatch):
     path.parent.mkdir(parents=True, exist_ok=True)
     original = b'{"entries": [broken'
     path.write_bytes(original)
+    outline = outline_with_titles()
+    assert corrections.has_corrections(job)
+    assert corrections.apply(job, outline) == (outline, corrections.UNREADABLE)
     with pytest.raises(ValueError, match="file was not changed"):
-        corrections.save(job, outline_with_titles(), "n0000", title="Edited")
+        corrections.save(job, outline, "n0000", title="Edited")
     assert path.read_bytes() == original

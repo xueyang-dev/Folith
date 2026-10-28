@@ -2407,5 +2407,6 @@
   "AI 置信度：{value}": "AI confidence: {value}",
   "无法保存结构恢复结果。": "Could not save structure recovery.",
   "{count} 个节点 · AI 推断": "{count} nodes · AI inferred",
-  "{count} 个节点 · 按编号推断": "{count} nodes · inferred from numbering"
+  "{count} 个节点 · 按编号推断": "{count} nodes · inferred from numbering",
+  "无法读取结构修正文件；原文件已保留。": "The outline corrections file could not be read; the original file has been preserved."
 }

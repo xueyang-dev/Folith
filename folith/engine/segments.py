@@ -831,8 +831,10 @@ def exclude_translation_scope(job_id, keys, *, actor="user"):
         from folith import outline_corrections, outline_recovery
         scope_state = dict(state)
         recovered = outline_recovery.load(job_id, state.get("source_outline") or {})
-        scope_state["source_outline"], _ = outline_corrections.apply(
+        scope_state["source_outline"], correction_status = outline_corrections.apply(
             job_id, recovered)
+        if correction_status == outline_corrections.UNREADABLE:
+            raise ValueError("无法读取结构修正文件；原文件已保留。")
     tree = translation_scope_tree(scope_state)
     nodes = {node["key"]: node
              for group in tree.get("groups") or []

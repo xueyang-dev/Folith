@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu,
 from . import i18n
 from . import icons
 from . import theme as theme_module
+from folith.outline_corrections import UNREADABLE
 
 NODE_ROLE = Qt.ItemDataRole.UserRole
 #: Deeper nodes keep this indent (and their level-6 parent) but not a new level.
@@ -194,7 +195,9 @@ class OutlinePanel(QWidget):
             self.clear()
             self.empty.setVisible(True)
             if corrections_dropped:
-                self.status.setText(i18n.tr('有 {count} 项结构修正无法匹配。', count=corrections_dropped))
+                self.status.setText(i18n.tr('无法读取结构修正文件；原文件已保留。')
+                                    if corrections_dropped == UNREADABLE else
+                                    i18n.tr('有 {count} 项结构修正无法匹配。', count=corrections_dropped))
                 self.status.setVisible(True)
             return
         if not self._items or fingerprint != self._outline_fingerprint:
@@ -219,7 +222,9 @@ class OutlinePanel(QWidget):
             status = i18n.tr('解析器已更新，结构已重新读取。')
         elif invalidated == "source_changed":
             status = i18n.tr('原文已变化，结构已重新读取。')
-        if corrections_dropped:
+        if corrections_dropped == UNREADABLE:
+            status = (status + ' ' if status else '') + i18n.tr('无法读取结构修正文件；原文件已保留。')
+        elif corrections_dropped:
             status = (status + ' ' if status else '') + i18n.tr(
                 '有 {count} 项结构修正无法匹配。', count=corrections_dropped)
         self.status.setText(status)

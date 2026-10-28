@@ -11,6 +11,7 @@ from folith.source_outline import outline_fingerprint
 from folith.storage.atomic_file import replace_file
 
 FILENAME = "source_outline_corrections.json"
+UNREADABLE = -1
 _LOCK = threading.RLock()
 
 
@@ -52,7 +53,12 @@ def clear(job_id):
 
 def has_corrections(job_id):
     with _LOCK:
-        return bool(_read(job_id).get("entries"))
+        try:
+            return bool(_read(job_id, strict=True).get("entries"))
+        except ValueError:
+            # An unreadable overlay must not be treated as permission to recover
+            # over potentially user-owned corrections.
+            return True
 
 
 def _first_paragraph_hash(node):
@@ -160,7 +166,12 @@ def apply(job_id, extracted):
     safely matched. A changed boundary is never reidentified by position alone.
     """
     with _LOCK:
-        saved = _read(job_id)
+        try:
+            saved = _read(job_id, strict=True)
+        except ValueError:
+            # Surface a visible unresolved correction while leaving the source
+            # outline usable and the unreadable sidecar untouched.
+            return copy.deepcopy(extracted), UNREADABLE
     entries = saved.get("entries") or []
     if not entries:
         return copy.deepcopy(extracted), 0
