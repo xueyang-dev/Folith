@@ -553,3 +553,60 @@ def test_real_title_empty_response_fails_but_blank_page_warns(monkeypatch):
     assert title_result.error.startswith('empty_response:')
     assert not blank_result.error
     assert any(w.startswith('ocr_api_blank_page:') for w in blank_result.warnings)
+
+
+# A runaway model never resumes ordinary text, so only repetition that runs to
+# the end of the response is a loop.  Repetition followed by more text is page
+# content and must survive untouched.
+
+def test_repeated_table_cells_in_the_middle_are_kept():
+    text = '第一表\n' + '\n'.join(['同上'] * 6) + '\n合計 三十石\n注：以上は推計による。'
+    assert detect_repetition(text) == (text, False)
+
+
+def test_repeated_block_in_the_middle_is_kept():
+    text = '\n'.join(['前文'] + ['甲', '乙'] * 6 + ['後文'])
+    assert detect_repetition(text) == (text, False)
+
+
+def test_response_cut_inside_a_repeated_line_drops_the_fragment():
+    prefix = [f'本文 {i}' for i in range(3)]
+    text = '\n'.join(prefix + ['以下余白'] * 9 + ['以下余'])
+    assert detect_repetition(text) == ('\n'.join(prefix + ['以下余白']), True)
+
+
+def test_response_cut_inside_a_repeated_block_drops_the_fragment():
+    unit = ['甲一', '乙二', '丙三']
+    text = '\n'.join(['本文'] + unit * 7 + ['甲一', '乙'])
+    assert detect_repetition(text) == ('\n'.join(['本文'] + unit), True)
+
+
+def test_fewer_than_six_repeats_at_the_end_are_kept():
+    text = '\n'.join(['本文'] + ['同上'] * 5)
+    assert detect_repetition(text) == (text, False)
+
+
+def test_tail_of_identical_lines_is_counted_once_as_the_shortest_unit():
+    from folith.ocr_api_backend import collapse_tail_loop
+    assert collapse_tail_loop('\n'.join(['本文'] + ['同上'] * 12)) == ('本文\n同上', 12)
+
+
+@pytest.mark.parametrize('truncated', [False, True])
+def test_loop_warning_reports_how_many_repeats_were_folded(truncated):
+    from unittest.mock import patch
+    backend = _make_ocr_backend()
+    loop = '\n'.join(['本文'] + ['以下余白'] * 12)
+
+    def fake_read_image(*args, **kwargs):
+        if truncated:
+            kwargs['context']['response_text'] = loop
+            return [], 'truncated: cut'
+        return kwargs['decoder'](loop), None
+
+    with patch.object(backend, 'read_image', side_effect=fake_read_image):
+        result = backend.recognize_page(_make_png(10, 10, (255, 255, 255)),
+                                        page_index=0, page_number=1, language='jpn', dpi=150)
+    prefix = ('ocr_api_repetition_detected_truncated:' if truncated
+              else 'ocr_api_repetition_detected:')
+    assert not result.error
+    assert [w for w in result.warnings if w.startswith(prefix) and '12 次' in w]

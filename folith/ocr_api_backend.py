@@ -78,22 +78,61 @@ def _strip_num(line: str) -> str:
     return _NUM_PREFIX.sub("", line).strip() or line.strip()
 
 
-def detect_repetition(text: str) -> Tuple[str, bool]:
-    """Keep the text preceding a consecutive loop and one copy of its unit."""
+def _tail_loop(lines: List[str]) -> Optional[Tuple[int, int, int]]:
+    """Find a loop that runs to the end of ``lines``: ``(start, period, repeats)``.
+
+    A runaway model never resumes ordinary text after it starts repeating: it
+    either repeats until the output limit or stops inside the repetition.  A run
+    of identical lines followed by more text is therefore page content (a table
+    column of 同上, a refrain) and is not a loop.  The response may end inside a
+    unit, and its last line may be cut mid-line; that partial tail is allowed
+    but is not counted as a repeat.
+    """
+    total = len(lines)
+    best = None
+    for period in range(1, 6):
+        for partial in range(0, period + 1):
+            end = total - partial
+            if end < period * _REPEAT_MIN_COUNT:
+                continue
+            unit = lines[end - period:end]
+            repeats = 1
+            while (end - (repeats + 1) * period >= 0
+                   and lines[end - (repeats + 1) * period:end - repeats * period] == unit):
+                repeats += 1
+            if repeats < _REPEAT_MIN_COUNT:
+                continue
+            tail = lines[end:]
+            if tail and (tail[:-1] != unit[:len(tail) - 1]
+                         or not unit[len(tail) - 1].startswith(tail[-1])):
+                continue
+            start = end - repeats * period
+            # Widest coverage wins; on a tie the shorter period is the real unit.
+            if best is None or total - start > total - best[0]:
+                best = (start, period, repeats)
+    return best
+
+
+def collapse_tail_loop(text: str) -> Tuple[str, int]:
+    """Return ``(kept_text, repeats)``; ``repeats`` is 0 when there is no loop.
+
+    The kept text is everything before the loop plus one copy of its unit, in
+    the original lines (list numbers included).
+    """
     original = text.splitlines()
     indexed = [(i, _strip_num(line)) for i, line in enumerate(original) if line.strip()]
-    stripped = [line for _, line in indexed]
-    for start in range(len(stripped)):
-        for period in range(1, 6):
-            end = start + period * _REPEAT_MIN_COUNT
-            if end > len(stripped):
-                continue
-            unit = stripped[start:start + period]
-            if all(stripped[pos:pos + period] == unit
-                   for pos in range(start, end, period)):
-                last = indexed[start + period - 1][0]
-                return "\n".join(original[:last + 1]), True
-    return text, False
+    found = _tail_loop([line for _, line in indexed])
+    if found is None:
+        return text, 0
+    start, period, repeats = found
+    last = indexed[start + period - 1][0]
+    return "\n".join(original[:last + 1]), repeats
+
+
+def detect_repetition(text: str) -> Tuple[str, bool]:
+    """Keep the text before a loop that runs to the end, plus one copy of its unit."""
+    kept, repeats = collapse_tail_loop(text)
+    return kept, bool(repeats)
 
 
 # ---------------------------------------------------------------------------
@@ -231,9 +270,10 @@ class OcrApiBackend(OnlineOCRBackend):
         warnings = []
 
         def decode(raw):
-            clean, looped = detect_repetition(raw)
-            if looped:
-                warnings.append("ocr_api_repetition_detected: 响应内容重复，已保留循环前内容，请核查该页。")
+            clean, repeats = collapse_tail_loop(raw)
+            if repeats:
+                warnings.append(f"ocr_api_repetition_detected: 响应末尾有 {repeats} 次重复，"
+                                "已保留第一次，请核查该页。")
             return decode_ocr_api_response(clean)
 
         model = self.config.model or ""
@@ -243,11 +283,12 @@ class OcrApiBackend(OnlineOCRBackend):
             png_bytes, system_prompt=OCR_API_SYSTEM_PROMPT, user_prompt=user_prompt,
             decoder=decode, context=context)
         if error and error.startswith("truncated:"):
-            clean, looped = detect_repetition(context.get("response_text", ""))
-            if looped:
+            clean, repeats = collapse_tail_loop(context.get("response_text", ""))
+            if repeats:
                 try:
                     segments = decode_ocr_api_response(clean)
-                    warnings.append("ocr_api_repetition_detected_truncated: 响应被截断且内容重复，已保留循环前内容，请核查该页。")
+                    warnings.append(f"ocr_api_repetition_detected_truncated: 响应被截断，末尾有 {repeats} 次重复，"
+                                    "已保留第一次，请核查该页。")
                     error = None
                 except ValueError:
                     pass
