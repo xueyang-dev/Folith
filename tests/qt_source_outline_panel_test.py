@@ -75,21 +75,42 @@ def _new_task(data_env) -> str:
 
 def _wait(qt_app):
     panel_module.loader().wait(5000)
+    # Also wait for the shared OutlineLoader (introduced in 0.8.0).
+    # Use panel_module.outline_loader() so tests that monkeypatch it are
+    # correctly handled (the patched version may differ from the global singleton).
+    panel_module.outline_loader().wait(5000)
     qt_app.processEvents()
 
 
 def _patch_loader(monkeypatch):
     """测试任务各自独立输出目录，按需给一个**本测试内稳定**的 loader：
-    既有同进程缓存不串任务，又不至于让 Qt 把无父对象的后台加载器提前回收。"""
-    holder = []
+    既有同进程缓存不串任务，又不至于让 Qt 把无父对象的后台加载器提前回收。
 
-    def factory():
+    Also patches the shared OutlineLoader (0.8.0) so that the two loaders do
+    not race and the legacy PreviewLoader remains the source of truth for these
+    tests.
+    """
+    from folith.qt import outline_loader as ol_module
+    from folith.qt.outline_loader import OutlineLoader
+
+    holder = []
+    ol_holder = []
+
+    def loader_factory():
         if not holder:
             holder.append(panel_module.PreviewLoader(
                 render=panel_module._render_outline))
         return holder[0]
 
-    monkeypatch.setattr(panel_module, "loader", factory)
+    def ol_factory():
+        if not ol_holder:
+            ol_holder.append(OutlineLoader())
+        return ol_holder[0]
+
+    monkeypatch.setattr(panel_module, "loader", loader_factory)
+    # Route outline_loader calls in source_outline_panel through a test-local
+    # instance so the module-level singleton does not absorb cross-test state.
+    monkeypatch.setattr(panel_module, "outline_loader", ol_factory)
     return holder
 
 
@@ -191,24 +212,29 @@ def test_section_lists_nodes_readonly_and_shows_preview(
 def test_second_request_hits_cache_without_reparsing(
         data_env, qt_app, monkeypatch):
     job_id = _new_task(data_env)
-    holder = _patch_loader(monkeypatch)
+    _patch_loader(monkeypatch)
     view = adapter.task_setup_view(adapter.EngineConfig(), job_id)
 
     first = SourceOutlineSection()
     first.load(job_id, "sample.docx", view)
     _wait(qt_app)
     assert first.node_list.count() == 2
-    loader = holder[0]
-    parsed = [(key, value) for key, value in loader._cache.items()
-              if key[0] == job_id]
-    assert parsed  # 解析结果按源文件身份进了缓存
+
+    # The outline result is now cached in the shared OutlineLoader
+    # (0.8.0: the legacy PreviewLoader may not receive the parse request when
+    # the OutlineLoader is pending, so we check its cache instead).
+    ol = panel_module.outline_loader()
+    assert not ol.is_pending(job_id), "outline should be ready after _wait"
+    cached = ol.request(job_id)
+    assert cached is not None, "outline must be cached in the OutlineLoader"
 
     # 同一份源文件再开一次（窗口刷新会重建区块）：同步命中缓存，列表立即就绪。
     second = SourceOutlineSection()
     second.load(job_id, "sample.docx", view)
     qt_app.processEvents()
     assert second.node_list.count() == 2
-    assert loader._cache[parsed[0][0]] is parsed[0][1]  # 缓存条目未被重算替换
+    # Same cached object returned (not re-parsed):
+    assert ol.request(job_id) is cached
 
 
 def test_refresh_preserves_selected_node_without_reusing_stale_identity(

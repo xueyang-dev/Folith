@@ -25,15 +25,25 @@ from . import i18n
 from . import style as style_module
 from . import theme as theme_module
 from .thumbnails import PreviewLoader
+from .outline_loader import OutlineLoader, outline_loader
 
 #: 预览最多显示的字符数：再长滚动也没人读，原文在工作台/PDF 面板里还能看全。
 PREVIEW_MAX_CHARS = 4000
+
+# ---------------------------------------------------------------------------
+# Legacy PreviewLoader-based loader (kept for tests that monkeypatch it).
+# New code should use ``outline_loader()`` from ``folith.qt.outline_loader``.
+# ---------------------------------------------------------------------------
 
 _LOADER: PreviewLoader | None = None
 
 
 def _render_outline(source: Path, filename: str) -> dict:
-    """PreviewLoader 的 render：本地解析结构，读不出返回 ``None``。"""
+    """PreviewLoader 的 render：本地解析结构，读不出返回 ``None``。
+
+    Still used by tests that monkeypatch the module-level ``loader``.
+    The primary code path now uses :func:`outline_loader` instead.
+    """
     from folith.source_outline import parse_source_outline
 
     outline = parse_source_outline(filename, Path(source).read_bytes())
@@ -41,7 +51,12 @@ def _render_outline(source: Path, filename: str) -> dict:
 
 
 def loader() -> PreviewLoader:
-    """进程内唯一的结构加载器（缓存跨页面刷新复用）。"""
+    """进程内唯一的结构加载器（缓存跨页面刷新复用）。
+
+    .. deprecated::
+        New code should use :func:`folith.qt.outline_loader.outline_loader`.
+        This function is kept for test compatibility.
+    """
     global _LOADER
     if _LOADER is None:
         _LOADER = PreviewLoader(render=_render_outline)
@@ -141,6 +156,7 @@ class SourceOutlineSection(QWidget):
         self._job_id = ""
         self._filename = ""
         self._view: dict = {}
+        self._state: dict = {}
         self._outline: dict = {}
         self._base_outline: dict = {}
         self._correction_base: dict = {}
@@ -216,15 +232,23 @@ class SourceOutlineSection(QWidget):
         layout.addWidget(self.section)
 
         loader().ready.connect(self._outline_ready)
+        outline_loader().ready.connect(self._outline_ready)
 
     # ---- 数据 ---------------------------------------------------------------
-    def load(self, job_id: str, filename: str, view: dict) -> None:
-        """按任务载入：请求结构解析（只读，不动任务状态）。"""
+    def load(self, job_id: str, filename: str, view: dict,
+             state: dict | None = None) -> None:
+        """按任务载入：请求结构解析（只读，不动任务状态）。
+
+        *state* is the raw task-state dict.  It is forwarded to
+        :class:`folith.qt.outline_loader.OutlineLoader` so the background parse
+        can use it without a second ``load_state`` call.
+        """
         self._pending_selection = (self._selection_identity() or self._pending_selection
                                    if str(job_id or "") == self._job_id else None)
         self._job_id = str(job_id or "")
         self._filename = str(filename or "")
         self._view = dict(view or {})
+        self._state = dict(state or {})
         self.recovery_button.setEnabled(True)
         self.edit_button.setEnabled(True)
         self._outline = {}
@@ -248,20 +272,48 @@ class SourceOutlineSection(QWidget):
             self._set_status(i18n.tr('本地找不到这份任务的源文件；不影响已有译文。'))
             self.scope_button.setEnabled(False)
             return
-        self.scope_button.setEnabled(True)
+        # Scope controls stay disabled until the outline arrives so the user
+        # cannot open the scope dialog against an empty outline (#28).
+        self.scope_button.setEnabled(False)
+        # Try the shared OutlineLoader first (prefers the sidecar cache).
+        payload = outline_loader().request(self._job_id, self._state)
+        if payload is not None and not payload.get("pending"):
+            # payload["outline"] is the native outline from outline_anchor;
+            # _apply_outline will apply corrections on top of it.
+            self._apply_outline(payload["outline"])
+            self.scope_button.setEnabled(True)
+            return
+        if outline_loader().is_pending(self._job_id):
+            # OutlineLoader already queued a parse; don't also trigger the
+            # legacy PreviewLoader (that would run a second concurrent parse).
+            # Wait for outline_loader.ready → _outline_ready.
+            return
+        # Fall back to the legacy PreviewLoader (kept for test compat — tests
+        # monkeypatch loader() to avoid touching the real sidecar cache).
         outline = loader().request(self._job_id, source, self._filename, priority=10)
         if outline is not None:
             self._apply_outline(outline)
-        # 否则等 loader.ready（_outline_ready）。
+            self.scope_button.setEnabled(True)
+            return
+        # 否则等 outline_loader.ready 或 loader.ready（_outline_ready）。
 
     def _outline_ready(self, job_id: str) -> None:
         if not job_id or job_id != self._job_id:
             return
+        # Try the shared OutlineLoader first.
+        payload = outline_loader().request(self._job_id, self._state)
+        if payload is not None and not payload.get("pending"):
+            # payload["outline"] is the native outline; apply corrections here.
+            self._apply_outline(payload["outline"])
+            self.scope_button.setEnabled(True)
+            return
+        # Fallback: legacy PreviewLoader.
         source = adapter.source_path(self._job_id)
         outline = loader().request(self._job_id, source, self._filename, priority=10)
         if outline is not None:
             self._apply_outline(outline)
-        elif not loader().pending(self._job_id):
+            self.scope_button.setEnabled(True)
+        elif not loader().pending(self._job_id) and not outline_loader().is_pending(self._job_id):
             self.section.set_summary(i18n.tr('没有可解析的结构'))
             self._set_status(i18n.tr('这个文件本地读不出结构；不影响导入与翻译。'))
 
