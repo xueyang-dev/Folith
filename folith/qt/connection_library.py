@@ -80,7 +80,7 @@ class ConnectionLibrary(QWidget):
             box.setAccessibleName(i18n.tr(connection_status.ROLE_LABELS[role]))
             box.currentIndexChanged.connect(lambda _i, r=role: self.select(r))
             model_box = self.make_model_selector(role)
-            # Fix 5: 用途模型选择框的最小显示宽度提升到 24 字符，确保长模型名
+            # 用途模型选择框的最小显示宽度提升到 24 字符，确保长模型名
             # （如 tencent/Hunyuan-MT-7B，21 chars）不被截断。
             model_box.setMinimumContentsLength(24)
             self.selectors[role] = box
@@ -91,7 +91,7 @@ class ConnectionLibrary(QWidget):
             mt_tag.setToolTip("")
             self.capability_tags[role] = mt_tag
             # 模型框 + 标签合为一个复合控件传给 _setting_row。
-            # Fix 5: model_holder 设为 Expanding 策略，占满 _setting_row 里剩余的横向空间；
+            # model_holder 设为 Expanding 策略，占满 _setting_row 里剩余的横向空间；
             # model_box stretch=1 在 model_holder 内伸展，确保长模型名（如 tencent/Hunyuan-MT-7B）
             # 不被截断；标签与模型框之间保持 sm 间距。
             model_holder = QWidget()

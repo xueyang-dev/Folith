@@ -721,7 +721,7 @@ class EngineDialog(QDialog):
 
         连接框和模型框（``vision_connection_box`` + ``model_selectors["vision"]``）只有
         一个 Qt 父控件，始终在 ``vscan_block`` 里，不随通道切换移动；通道切换只显隐
-        附加内容块（channel_a_extra / channel_b_extra），从而避免 Qt reparent。
+        附加内容块，从而避免 Qt reparent。
 
         所有控件属性仍挂在 EngineDialog 上，供其他页面与测试引用。
         """
@@ -811,7 +811,7 @@ class EngineDialog(QDialog):
         vrow.addWidget(scan_test, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # ── OCR 引擎 SegmentedControl（在 vscan_block 模型行之上）────────────
-        # Fix 1: 通道 B 的顺序必须是 ① OCR 引擎 ② OCR 模型 ③ 整理结构。
+        # 通道 B 的顺序必须是 ① OCR 引擎 ② OCR 模型 ③ 整理结构。
         # 引擎选择放在 vscan_block 里（不随通道切换移动），由 sync_channel_ui
         # 控制其可见性。
         init_engine = "ocr_api" if backend_init != "tesseract" else "tesseract"
@@ -823,7 +823,7 @@ class EngineDialog(QDialog):
             self.ocr_engine_picker.set_enabled("tesseract", False)
         self._ocr_engine_row = _setting_row(i18n.tr('OCR 引擎'), self.ocr_engine_picker)
 
-        # ── 提示文字（控件列对齐，Fix 3）──────────────────────────────────────
+        # ── 提示文字（控件列对齐）──────────────────────────────────────
         # 两条提示文字都通过 _setting_row("", lbl) 放入控件列，
         # 与连接框左边缘对齐，无额外缩进。
         vlm_hint_lbl = QLabel(i18n.tr('列表里只显示能看图并按格式回答的模型'))
@@ -859,14 +859,6 @@ class EngineDialog(QDialog):
         vb.addWidget(self._vlm_hint_row)
         vb.addWidget(self._ocr_hint_row)
         vb.addWidget(self._vm_hint_row)
-
-        # ── 通道 A 附加内容（channel_a_extra 现在仅作占位，内容已移入 vscan_block）
-        channel_a_extra = QWidget()
-        cae = QVBoxLayout(channel_a_extra)
-        cae.setContentsMargins(0, 0, 0, 0)
-        cae.setSpacing(0)
-        vb.addWidget(channel_a_extra)
-        self.channel_a_extra = channel_a_extra
 
         # ── 通道 B 附加内容（识别语言 + 整理结构）────────────────────────────
         # 注意：OCR 引擎选择行已移入 vscan_block（在模型行之前），以满足顺序要求：
@@ -914,12 +906,11 @@ class EngineDialog(QDialog):
                 card.setChecked(is_vision == ch_is_vision)
                 card.blockSignals(False)
 
-            # Fix 1: OCR 引擎行在模型行之前，仅通道 B 时可见。
+            # OCR 引擎行在模型行之前，仅通道 B 时可见。
             self._ocr_engine_row.setVisible(not is_vision)
-            channel_a_extra.setVisible(False)  # 已无内容（提示已移入 vscan_block）
             channel_b_extra.setVisible(not is_vision)
 
-            # Fix 3: 提示文字随通道切换，始终在控件列。
+            # 提示文字随通道切换，始终在控件列。
             self._vlm_hint_row.setVisible(is_vision)
             self._ocr_hint_row.setVisible(not is_vision)
             # 输入类型提示由 _update_vision_hint 通过 vision_modality_hint_holder 管理。
@@ -943,10 +934,10 @@ class EngineDialog(QDialog):
             self._scan_model_row.setVisible(uses_model)
             self._ocr_hint_row.setVisible(not is_vision and uses_model)
 
-            # Fix 2: 整理结构 显示实际翻译连接 · 模型名（只读占位）。
+            # 整理结构 显示实际翻译连接 · 模型名（只读占位）。
             self._sync_structure_hint()
 
-            # Fix 4: 卡片第二行 — 当前通道显示「连接 · 模型」，另一张显示通用副标题。
+            # 卡片第二行 — 当前通道显示「连接 · 模型」，另一张显示通用副标题。
             self._sync_channel_card_detail(is_vision)
 
         def sync_engine(*_args):
@@ -960,8 +951,7 @@ class EngineDialog(QDialog):
                 if idx >= 0:
                     self.ocr_backend_box.setCurrentIndex(idx)
 
-        # Fix 6: 切换回「视觉模型」通道时，若当前视觉模型是 OCR 专用模型（仅 OCR），
-        # 通道 A 的列表不显示该模型，自动清空到「沿用翻译连接」以避免无效选择。
+        # OCR 专用模型不能用于结构化视觉理解；选择已确认的视觉模型或保持未配置。
         def _on_vision_channel_selected(on: bool) -> None:
             if not on:
                 return
@@ -1020,7 +1010,7 @@ class EngineDialog(QDialog):
         return group
 
     def _sync_structure_hint(self) -> None:
-        """整理结构行：以静音文字显示当前翻译连接 · 模型（Fix 2）。
+        """整理结构行：以静音文字显示当前翻译连接 · 模型。
 
         0.8.0 的整理结构始终沿用翻译模型。这一行是只读占位，
         显示实际连接名和模型名供用户确认。
@@ -1041,7 +1031,7 @@ class EngineDialog(QDialog):
             label.setText(i18n.tr('沿用翻译模型'))
 
     def _sync_channel_card_detail(self, is_vision: bool) -> None:
-        """通道卡片第二行（Fix 4）。
+        """通道卡片第二行。
 
         当前通道的卡片显示「连接名 · 模型名」；
         另一张卡片显示通用副标题（一步读出版面与文字 / 先认字…）。
@@ -1073,9 +1063,8 @@ class EngineDialog(QDialog):
         if not hasattr(self, "vision_option"):
             return
         # 通道 B 时此方法由 _sync_channel_card_detail 管理，不重复更新。
-        backend = str(getattr(self, "ocr_backend_box",
-                              type("_", (), {"currentData": lambda s: "online"})()
-                              ).currentData() or "online")
+        backend_box = getattr(self, "ocr_backend_box", None)
+        backend = str(backend_box.currentData() or "online") if backend_box else "online"
         if backend != "online":
             return
         library = getattr(self, "connection_library", None)
