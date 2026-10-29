@@ -459,9 +459,21 @@ _ABBREV_RE = re.compile(
 
 
 
+#: Set by extract_document_paragraphs_with_report for one extraction: the bytes
+#: being read, the page-dict cache, and (filled in below) the layout blocks the
+#: text-layer pass built, so native_pdf_document need not parse the PDF again.
+_PDF_LAYOUT_SHARE = contextvars.ContextVar("folith_pdf_layout_share", default=None)
+
+
 def extract_pdf_paragraphs(file_bytes):
     """Compatibility API backed by the layout-aware PDF ingestion module."""
-    return _pdf_ingestion.extract_pdf_paragraphs(file_bytes)
+    share = _PDF_LAYOUT_SHARE.get()
+    if share is None or share.get("data") is not file_bytes:
+        return _pdf_ingestion.extract_pdf_paragraphs(file_bytes)
+    layouts = _pdf_ingestion.classify_blocks(_pdf_ingestion.extract_layout_blocks(
+        file_bytes, _page_dict_cache=share.get("page_cache")))
+    share["layouts"] = layouts
+    return _pdf_ingestion.extract_pdf_paragraphs(file_bytes, _layouts=layouts)
 
 
 def _find_tesseract():
@@ -1816,15 +1828,17 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
             # Computed lazily; stored so native_pdf_document can reuse it.
             _pdf_layouts = None
             if use_text_layer:
-                # Extract layout once and share with native_pdf_document below
-                # to avoid parsing the PDF a second time.  Pass the page-dict
-                # cache so non-rotated pages skip a redundant get_text call.
-                _pdf_layouts = _pdf_ingestion.classify_blocks(
-                    _pdf_ingestion.extract_layout_blocks(
-                        file_bytes, _page_dict_cache=_pdf_page_cache))
-                paragraphs = [clean_xml_chars(p)
-                              for p in _pdf_ingestion.extract_pdf_paragraphs(
-                                  file_bytes, _layouts=_pdf_layouts)]
+                # extract_pdf_paragraphs stays the patchable entry point; inside
+                # this call it records the layout it built so native_pdf_document
+                # below does not parse the PDF a second time.
+                share = {"data": file_bytes, "page_cache": _pdf_page_cache}
+                share_token = _PDF_LAYOUT_SHARE.set(share)
+                try:
+                    paragraphs = [clean_xml_chars(p)
+                                  for p in extract_pdf_paragraphs(file_bytes)]
+                finally:
+                    _PDF_LAYOUT_SHARE.reset(share_token)
+                _pdf_layouts = share.get("layouts")
                 if not paragraphs and resolved_ocr_mode != "off":
                     # The gate accepted the layer but extraction produced
                     # nothing usable; fall through to OCR instead of shipping an
