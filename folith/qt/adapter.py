@@ -1242,24 +1242,33 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
     }
 
 
-def task_outline(job_id: str, state: dict | None = None) -> dict:
+def task_outline(job_id: str, state: dict | None = None, *,
+                 no_parse: bool = False) -> dict:
     """The task's persisted source outline (#186), parsed at most once.
 
     The panel consumes this payload; it never calls the parser itself.  Reading
     a warm sidecar performs no source extraction and no model call.  When the
     source or parser version changed, ``parsed``/``invalidated`` say so rather
     than pretending the cache was still current.
+
+    When ``no_parse=True`` and the sidecar is cold or missing the call returns
+    immediately with ``{"pending": True, ...}`` without starting a parse.  The
+    caller must schedule the actual build separately (e.g. via
+    :class:`folith.qt.outline_loader.OutlineLoader`).
     """
     from folith import outline_anchor
 
     try:
         payload = outline_anchor.load_outline(
-            job_id, state if state is not None else load_state(job_id))
+            job_id, state if state is not None else load_state(job_id),
+            no_parse=no_parse)
     except OSError:
         # A missing/unreadable source is a task with no structure, not a reason
         # to refuse to open the workspace.
         return {"outline": {}, "mapping": {}, "parsed": False,
                 "invalidated": "source_missing", "node_count": 0}
+    if payload.get("pending"):
+        return payload  # cold sidecar; background parse not yet done
     from folith import outline_corrections, outline_recovery
     native = payload.get("outline") or {}
     extracted = outline_recovery.load(job_id, native)

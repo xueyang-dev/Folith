@@ -46,6 +46,7 @@ from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
 from .dialogs import DiagnosticsDialog, EngineDialog
+from .outline_loader import outline_loader as _outline_loader
 from .project_sheets import BatchAcceptDialog, MoveToProjectSheet
 from .projects_view import NewTermDialog, ProjectsView
 from .scope_dialog import ScopeDialog
@@ -482,6 +483,22 @@ class MainWindow(QMainWindow):
         self.workbench.openAssetRequested.connect(self.open_path)
         self.workbench.draftSaved.connect(
             lambda *_args: self._mark_dirty_status(i18n.tr('草稿已保存')))
+        # Shared outline loader: when a background parse finishes, update the
+        # workbench outline and re-enable scope controls if the task is still open.
+        _outline_loader().ready.connect(self._on_outline_ready)
+
+    def _on_outline_ready(self, job_id: str) -> None:
+        """Background parse finished: update the workbench outline for the current task."""
+        if not job_id or job_id != self._current_job_id or self._opening_job_id:
+            return
+        state = self._cached_state
+        if state is None:
+            return
+        outline = adapter.task_outline(job_id, state, no_parse=True)
+        if outline.get("pending"):
+            return  # still pending (shouldn't happen, but guard)
+        outline_mapping = adapter.outline_mapping(job_id, state, outline)
+        self.workbench.update_outline(outline, outline_mapping)
 
     def _build_menus(self) -> None:
         self.menuBar().setNativeMenuBar(platform_ui.is_macos())
@@ -1167,6 +1184,13 @@ class MainWindow(QMainWindow):
             timing = _PhaseLog(self._log, "import_done")
             created = [item for item in results if item.created]
             failed = [item for item in results if not item.ok]
+            # A re-import replaces the source bytes and deletes the sidecar
+            # (commands.import_document).  Drop the old cached outline so the
+            # next open_job triggers a fresh parse instead of returning stale
+            # data from the in-memory OutlineLoader cache.
+            for item in results:
+                if item.ok and not item.created:
+                    _outline_loader().invalidate(item.job_id)
             with timing.phase("refresh_home"):
                 self.refresh_home()
             if on_result is not None:
@@ -1334,14 +1358,19 @@ class MainWindow(QMainWindow):
             on_progress(4, 5)
             with timing.phase("review_queue"):
                 review = adapter.review_queue(job_id, state)
-            # #187: read the persisted outline once, off the GUI thread.  A warm
-            # sidecar does no extraction; a stale one is re-parsed here and says
-            # so in the panel.
+            # #187/#0.8.0: read the persisted outline off the GUI thread.  A
+            # warm sidecar is used immediately; a cold or invalidated sidecar
+            # returns a ``pending`` payload so the open never blocks on parsing.
+            # The actual parse (if needed) is scheduled separately by the
+            # shared OutlineLoader, which the prep panel and workbench both
+            # consume.  Scope controls stay disabled until the parse is done.
             with timing.phase("source_outline"):
-                outline = adapter.task_outline(job_id, state)
-                # The cold mapping walks every node's paragraph span, so it
-                # belongs here rather than on the GUI thread (#187).
-                outline_mapping = adapter.outline_mapping(job_id, state, outline)
+                outline = adapter.task_outline(job_id, state, no_parse=True)
+                if not outline.get("pending"):
+                    # Warm sidecar: pre-compute the mapping off the GUI thread.
+                    outline_mapping = adapter.outline_mapping(job_id, state, outline)
+                else:
+                    outline_mapping = {}
             on_progress(5, 5)
             runtime = adapter.runtime_view(job_id, state)
             return state, signature, rows, snapshots, {
@@ -1392,6 +1421,12 @@ class MainWindow(QMainWindow):
         # 上一次的终态不该影响新任务的"终态变化"判断（节流键已含任务标识，
         # 这里只是让状态本身不跨任务残留）。
         self._last_runtime_status = ""
+        # If the outline was cold at open time, schedule the background parse
+        # now that we have the state in hand.  The loader deduplicates: if the
+        # prep panel or another consumer already queued a parse for this
+        # generation, this is a no-op.
+        if (prepared.get("outline") or {}).get("pending"):
+            _outline_loader().request(job_id, state)
         # Only widget updates remain here; file reads and projections are ready.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         opening = i18n.tr('正在打开任务…')
@@ -1484,6 +1519,9 @@ class MainWindow(QMainWindow):
             except Exception as exc:  # noqa: BLE001
                 refused.append(f"{name}：{type(exc).__name__}: {exc}")
                 continue
+            # Drop the in-memory outline cache so a re-import of the same
+            # filename cannot return stale outline data from a deleted task.
+            _outline_loader().invalidate(item)
             deleted.append(name)
             if self._current_job_id == item:
                 self._current_job_id = ""
@@ -1517,6 +1555,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._failure(i18n.tr('删除失败'), f"{type(exc).__name__}: {exc}", task=False)
             return
+        _outline_loader().invalidate(job_id)
         if self._current_job_id == job_id:
             self.show_home()
         self.refresh_home()
