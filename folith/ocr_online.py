@@ -685,6 +685,9 @@ class OnlineOCRBackend(OCRBackend):
                 # The reply never finished, so it never reaches the decoder: keep its
                 # head and tail, and how repetitive it is, so a runaway can be studied.
                 text = str(result.get("text") or "")
+                # Store text so subclasses (e.g. OcrApiBackend) can inspect it for
+                # repetition loops and attempt recovery before accepting the failure.
+                self._last_response_text = text
                 half = RESPONSE_EXCERPT_CHARS // 2
                 pieces = text.split(",")
                 attempts[-1].update(

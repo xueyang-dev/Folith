@@ -25,6 +25,7 @@ to the existing online OCR path: it delegates to
 from __future__ import annotations
 
 import dataclasses
+import io
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -175,6 +176,35 @@ def decode_ocr_api_response(raw: str) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Blank-page detector
+# ---------------------------------------------------------------------------
+
+#: Fraction of non-white pixels below which a page is considered blank.
+_BLANK_INK_THRESHOLD = 0.02
+
+
+def _image_is_blank(png_bytes: bytes, threshold: float = _BLANK_INK_THRESHOLD) -> bool:
+    """Return True if the rendered PNG has very low ink coverage.
+
+    Converts to grayscale and counts pixels darker than 250/255.  A page with
+    fewer than *threshold* (default 2 %) non-white pixels is treated as blank.
+    Returns False on any import or decode error so callers default to the
+    normal empty-response failure path.
+    """
+    try:
+        from PIL import Image  # soft dependency — already required by the Qt layer
+        img = Image.open(io.BytesIO(png_bytes)).convert("L")
+        total = img.width * img.height
+        if total == 0:
+            return True
+        hist = img.histogram()  # list of 256 counts (brightness 0–255)
+        dark = sum(hist[:250])  # pixels with brightness 0–249 (not near-white)
+        return dark / total < threshold
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Backend class
 # ---------------------------------------------------------------------------
 
@@ -269,6 +299,37 @@ class OcrApiBackend(OnlineOCRBackend):
             decoder=_decoder,
         )
         if error:
+            # Fix A: finish_reason=length + repetition loop → recover the first cycle.
+            # ocr_online.read_image now stores the raw truncated text in
+            # self._last_response_text before calling _fail("truncated", …), so we
+            # can inspect it here.
+            if error.startswith("truncated:"):
+                raw_truncated = getattr(self, "_last_response_text", "")
+                if raw_truncated:
+                    clean, looped = detect_repetition(raw_truncated)
+                    if looped:
+                        self._repetition_detected = True
+                        self._repetition_warning = (
+                            "ocr_api_repetition_detected_truncated: "
+                            "响应被截断且内容重复，已保留第一次出现的内容，请核查该页。"
+                        )
+                        try:
+                            segs = decode_ocr_api_response(clean)
+                            return (self._blocks_from_segments(
+                                segs, page_index, page_number, language), None)
+                        except ValueError:
+                            pass
+                # Fix B: truncated without a detectable loop → OCR-specific message.
+                return [], ("truncated: OCR 输出过长被截断（finish_reason=length）；"
+                            "该页未保存，可提高输出上限后重试。")
+
+            # Fix B: empty response — try blank-page check first (Fix C).
+            if error.startswith("empty_response:"):
+                if _image_is_blank(png_bytes):
+                    # Truly blank page: not a failure, just no text.
+                    return [], None
+                return [], "empty_response: OCR 返回空响应；该页未保存。"
+
             return [], error
 
         return self._blocks_from_segments(segments, page_index, page_number, language), None

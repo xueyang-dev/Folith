@@ -24,6 +24,7 @@ from folith.ocr_api_backend import (
     OCR_API_USER_PROMPT_DEFAULT,
     OCR_API_USER_PROMPT_PADDLE,
     _is_paddle_family,
+    _image_is_blank,
 )
 
 
@@ -297,3 +298,173 @@ class TestResolveBackendOcrApi:
             assert normalize_backend(alias) == "ocr_api", (
                 f"Expected 'ocr_api' for alias {alias!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# _image_is_blank — blank-page detector (Fix C)
+# ---------------------------------------------------------------------------
+
+def _make_png(width: int, height: int, color: tuple) -> bytes:
+    """Create a solid-color PNG in memory without writing to disk."""
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestImageIsBlank:
+
+    def test_all_white_is_blank(self):
+        png = _make_png(100, 100, (255, 255, 255))
+        assert _image_is_blank(png), "A fully white image should be blank"
+
+    def test_light_gray_is_blank(self):
+        # 251/255 is above the 250 threshold → still "white"
+        png = _make_png(100, 100, (251, 251, 251))
+        assert _image_is_blank(png), "Near-white gray should count as blank"
+
+    def test_dark_text_page_not_blank(self):
+        # A page with black text on white: ~50 % dark pixels
+        import io
+        from PIL import Image, ImageDraw
+        img = Image.new("RGB", (200, 200), (255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([10, 10, 190, 190], fill=(0, 0, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png = buf.getvalue()
+        assert not _image_is_blank(png), "A page with a filled black rectangle should not be blank"
+
+    def test_empty_bytes_returns_false(self):
+        assert not _image_is_blank(b""), "Unreadable bytes should return False (not crash)"
+
+    def test_invalid_png_returns_false(self):
+        assert not _image_is_blank(b"\x89PNG garbage"), "Corrupt PNG should return False"
+
+
+# ---------------------------------------------------------------------------
+# Fix A: truncated + looped response → recovery
+# Fix B: truncated without loop → OCR-specific error message
+# ---------------------------------------------------------------------------
+
+def _make_ocr_backend():
+    """Return a minimal OcrApiBackend without hitting any real API."""
+    from folith.ocr_api_backend import OcrApiBackend
+    from folith.ocr_online import OnlineOCRConfig
+    cfg = OnlineOCRConfig(
+        provider="test", model="PaddlePaddle/PaddleOCR-VL-1.5",
+        api_key="test-key")
+    return OcrApiBackend(cfg)
+
+
+class TestTruncatedLoopRecovery:
+    """Fix A + Fix B: repetition guard applied to finish_reason=length responses."""
+
+    def test_truncated_looped_response_is_recovered(self):
+        """When the truncated text contains a repetition loop the page must be
+        returned as recognised (no error) with the loop warning set."""
+        backend = _make_ocr_backend()
+        # Simulate read_image returning "truncated:" and storing the looped raw text.
+        def fake_read_image(*args, **kwargs):
+            backend._last_response_text = _SINGLE_ITEM_LOOP
+            return [], "truncated: 视觉理解返回的是纯文本"
+
+        png = _make_png(10, 10, (255, 255, 255))
+        from unittest.mock import patch
+        with patch.object(backend, "read_image", side_effect=fake_read_image):
+            blocks, error = backend.ocr_page(
+                png, page_index=0, page_number=1, language="zh", dpi=150)
+
+        assert error is None, f"Expected recovery but got error: {error!r}"
+        assert len(blocks) > 0, "Recovered page must have at least one block"
+        assert backend._repetition_detected, "repetition_detected flag must be set"
+        assert "repetition_detected" in backend._repetition_warning
+
+    def test_truncated_non_looped_response_gives_ocr_message(self):
+        """When the truncated text has no repetition, the error must mention
+        output limit rather than the VLM-specific 'structured format' message."""
+        backend = _make_ocr_backend()
+        real_text = "This is a genuine single-occurrence page without a loop."
+
+        def fake_read_image(*args, **kwargs):
+            backend._last_response_text = real_text
+            return [], "truncated: 视觉理解返回的是纯文本"
+
+        png = _make_png(10, 10, (255, 255, 255))
+        from unittest.mock import patch
+        with patch.object(backend, "read_image", side_effect=fake_read_image):
+            blocks, error = backend.ocr_page(
+                png, page_index=0, page_number=1, language="zh", dpi=150)
+
+        assert blocks == []
+        assert error is not None
+        assert "输出上限" in error or "finish_reason=length" in error, (
+            f"OCR truncation error should mention output limit; got: {error!r}"
+        )
+        assert "视觉理解" not in error, (
+            f"OCR truncation error must not reference VLM format; got: {error!r}"
+        )
+
+    def test_truncated_no_text_gives_ocr_message(self):
+        """Edge case: _last_response_text is empty after truncation."""
+        backend = _make_ocr_backend()
+
+        def fake_read_image(*args, **kwargs):
+            # Do not set _last_response_text
+            return [], "truncated: 线上 OCR 输出被服务截断"
+
+        png = _make_png(10, 10, (255, 255, 255))
+        from unittest.mock import patch
+        with patch.object(backend, "read_image", side_effect=fake_read_image):
+            blocks, error = backend.ocr_page(
+                png, page_index=0, page_number=1, language="zh", dpi=150)
+
+        assert blocks == []
+        assert error is not None
+        assert "输出上限" in error or "finish_reason=length" in error
+
+
+# ---------------------------------------------------------------------------
+# Fix C: empty response on blank page → blank page (no error)
+# ---------------------------------------------------------------------------
+
+class TestBlankPageEmptyResponse:
+
+    def test_empty_response_on_blank_image_is_not_an_error(self):
+        """A blank-image page that returns an empty OCR response must be recorded
+        as a blank page (no error) rather than a failure."""
+        backend = _make_ocr_backend()
+
+        def fake_read_image(*args, **kwargs):
+            return [], "empty_response: OCR 返回空响应；该页未保存。"
+
+        blank_png = _make_png(200, 200, (255, 255, 255))
+        from unittest.mock import patch
+        with patch.object(backend, "read_image", side_effect=fake_read_image):
+            blocks, error = backend.ocr_page(
+                blank_png, page_index=0, page_number=1, language="zh", dpi=150)
+
+        assert error is None, (
+            f"A blank page with an empty response must not be an error; got {error!r}"
+        )
+        assert blocks == [], "A blank page should have no text blocks"
+
+    def test_empty_response_on_real_page_stays_an_error(self):
+        """An empty response on a non-blank page must remain a failure."""
+        backend = _make_ocr_backend()
+
+        def fake_read_image(*args, **kwargs):
+            return [], "empty_response: OCR 返回空响应；该页未保存。"
+
+        text_png = _make_png(200, 200, (0, 0, 0))  # fully black = not blank
+        from unittest.mock import patch
+        with patch.object(backend, "read_image", side_effect=fake_read_image):
+            blocks, error = backend.ocr_page(
+                text_png, page_index=0, page_number=1, language="zh", dpi=150)
+
+        assert error is not None, "Empty response on a real page must be an error"
+        assert "empty_response" in error
+        assert "视觉理解" not in error, (
+            f"OCR empty-response error must not reference VLM; got: {error!r}"
+        )
