@@ -78,56 +78,20 @@ def _strip_num(line: str) -> str:
 
 
 def detect_repetition(text: str) -> Tuple[str, bool]:
-    """Return ``(first_occurrence_text, was_looped)``.
-
-    Checks for two patterns:
-
-    * **Single-item repetition**: the stripped content of > 30 % of lines is
-      identical and appears at least ``_REPEAT_MIN_COUNT`` times.
-      Common in PaddleOCR-VL instruction loops::
-
-          1. Read all content on this page.
-          2. Read all content on this page.
-          …
-
-    * **Block repetition**: a block of 2–5 consecutive lines repeats
-      ``_REPEAT_MIN_COUNT`` or more times.
-
-    When a loop is detected, only the *first* unit (one line or one block) is
-    returned so the caller has something to work with rather than empty output.
-    The caller must mark the page for human review.
-    """
-    lines = [l for l in text.split("\n") if l.strip()]
-    if len(lines) < _REPEAT_MIN_COUNT:
-        return text, False
-
-    stripped = [_strip_num(l) for l in lines]
-
-    # --- single-item repetition -------------------------------------------
-    counter: Dict[str, int] = {}
-    for s in stripped:
-        if s:
-            counter[s] = counter.get(s, 0) + 1
-    if counter:
-        best, count = max(counter.items(), key=lambda kv: kv[1])
-        if count >= _REPEAT_MIN_COUNT and count >= len(lines) * 0.30:
-            return best, True
-
-    # --- block repetition (period 2–5) ------------------------------------
-    for period in range(2, 6):
-        if len(lines) < period * _REPEAT_MIN_COUNT:
-            continue
-        unit = tuple(stripped[i] for i in range(period))
-        repeat_count = 0
-        for i in range(0, len(lines), period):
-            chunk = tuple(stripped[i:i + period])
-            if chunk == unit[: len(chunk)]:
-                repeat_count += 1
-            else:
-                break
-        if repeat_count >= _REPEAT_MIN_COUNT:
-            return "\n".join(lines[:period]), True
-
+    """Keep the text preceding a consecutive loop and one copy of its unit."""
+    original = text.splitlines()
+    indexed = [(i, _strip_num(line)) for i, line in enumerate(original) if line.strip()]
+    stripped = [line for _, line in indexed]
+    for start in range(len(stripped)):
+        for period in range(1, 6):
+            end = start + period * _REPEAT_MIN_COUNT
+            if end > len(stripped):
+                continue
+            unit = stripped[start:start + period]
+            if all(stripped[pos:pos + period] == unit
+                   for pos in range(start, end, period)):
+                last = indexed[start + period - 1][0]
+                return "\n".join(original[:last + 1]), True
     return text, False
 
 

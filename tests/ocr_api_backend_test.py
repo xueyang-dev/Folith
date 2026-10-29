@@ -468,3 +468,29 @@ class TestBlankPageEmptyResponse:
         assert "视觉理解" not in error, (
             f"OCR empty-response error must not reference VLM; got: {error!r}"
         )
+
+
+def test_repetition_preserves_prefix_and_first_unit():
+    prefix = [f'本文 {i}' for i in range(20)]
+    text = '\n'.join(prefix + ['以下余白'] * 10)
+    assert detect_repetition(text) == ('\n'.join(prefix + ['以下余白']), True)
+
+
+def test_block_repetition_after_prefix():
+    prefix = ['本文その一', '本文その二']
+    unit = ['甲', '乙', '丙']
+    assert detect_repetition('\n'.join(prefix + unit * 8)) == ('\n'.join(prefix + unit), True)
+
+
+def test_numbered_repetition_preserves_original_first_line():
+    text = '\n'.join(['正文'] + [f'{i}. 读取本页内容。' for i in range(1, 9)])
+    assert detect_repetition(text) == ('正文\n1. 读取本页内容。', True)
+
+
+@pytest.mark.parametrize('compact', [True, False])
+def test_chapter_contents_are_not_a_loop(compact):
+    lines = []
+    for i in range(10):
+        lines.extend([f'第{i}章', 'はじめに'] + ([] if compact else [f'一 {i}', f'二 {i}']) + ['おわりに'])
+    text = '\n'.join(lines)
+    assert detect_repetition(text) == (text, False)
