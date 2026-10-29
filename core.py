@@ -1059,7 +1059,8 @@ def _ocr_pdf_text_with_warnings(
             requested_engine, tesseract_command=command, tesseract_version=version,
             page_ocr=_ocr_page_with_tesseract, language=ocr_language or "eng",
             psm=effective_psm, paddle_model=paddle_model,
-            online_config=online_config)
+            online_config=online_config,
+            ocr_api_config=online_config if requested_engine == _ocr_backends.OCR_API_BACKEND else None)
     except _ocr_backends.OCRUnavailable as exc:
         result = ("", [str(exc)], {"ocr_error": exc.code,
                   "requested_engine": requested_engine, "actual_engine": None,
@@ -13314,6 +13315,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             enable_source_cleanup = saved_source_cleanup
         else:
             enable_source_cleanup = str(filename or "").lower().endswith(".pdf")
+    # Channel B (OCR API) always needs source cleanup to turn raw OCR text into
+    # headings, paragraphs and footnotes — matching what VLM returns directly.
+    if effective_ocr_backend == _ocr_backends.OCR_API_BACKEND:
+        enable_source_cleanup = True
     pipeline_config["enable_understanding"] = bool(enable_understanding)
     # Source cleanup is automatically enabled for PDF jobs.  Persist the key
     # only for PDF tasks (or an explicit opt-in) so legacy DOCX pipeline

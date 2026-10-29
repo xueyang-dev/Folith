@@ -152,9 +152,11 @@ def _effective_ocr_source(ocr_backend, saved_config=None, *, ocr_paddle_model=No
         raise ValueError(f"找不到已注册的 Paddle 模型「{model_id}」；请重新选择模型。")
     model_id = option.model_id
     descriptor_source = _pick(ocr_online, "ocr_online")
-    if backend_name != "online":
+    if backend_name not in ("online", _ocr_backends.OCR_API_BACKEND):
         return backend_name, model_id, (descriptor_source
                                         if isinstance(descriptor_source, dict) else None), None
+    # Both "online" (VLM) and "ocr_api" use the same online-connection descriptor.
+    # The backend class differs: OnlineOCRBackend vs. OcrApiBackend.
     config, error = resolve_ocr_online_config(descriptor_source)
     if error is not None or (config is not None and config.unavailable_reason()):
         # Native sources need no remote credentials. Validate only when a page
