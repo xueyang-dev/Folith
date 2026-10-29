@@ -306,6 +306,23 @@ def test_ocr_language_is_not_derived_from_the_text_layer(monkeypatch, fake_ocr):
     assert fake_ocr[0]["ocr_language"] == "ara"
 
 
+@pytest.mark.parametrize("backend, source, selected, expected", [
+    ("ocr_api", "日本語", "", "jpn"),
+    ("ocr_api", "日本語", "eng", "jpn"),
+    ("ocr_api", "English", "jpn", "eng"),
+    ("tesseract", "日本語", "", ""),
+    ("ocr_api", "unknown language", "", ""),
+])
+def test_ocr_api_uses_declared_source_language_when_unset(
+        monkeypatch, fake_ocr, backend, source, selected, expected):
+    monkeypatch.setattr(core._text_layer_quality, "assess_pdf_text_layer",
+                        lambda *a, **k: _assess("rejected"))
+    core.extract_document_paragraphs_with_report(
+        "scan.pdf", _pdf_bytes(), ocr_backend=backend, ocr_mode="force",
+        source_language=source, ocr_language=selected)
+    assert fake_ocr[0]["ocr_language"] == expected
+
+
 # --------------------------------------------------------------------------
 # real PDF bytes (no monkeypatching of the gate)
 # --------------------------------------------------------------------------
@@ -398,7 +415,8 @@ def test_ocr_mode_and_language_are_independent_configuration():
     assert "ara" in [item["value"] for item in core.ocr_language_options()]
 
 
-def test_rescan_can_switch_to_force_ocr_and_invalidates_downstream(tmp_path, monkeypatch):
+@pytest.mark.parametrize("backend", ["tesseract", "ocr_api"])
+def test_rescan_can_switch_to_force_ocr_and_invalidates_downstream(tmp_path, monkeypatch, backend):
     monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     captured = {}
 
@@ -419,18 +437,31 @@ def test_rescan_can_switch_to_force_ocr_and_invalidates_downstream(tmp_path, mon
         "p1_done": True,
         "pairs": [{"source": "old", "target": "قديم"}],
         "paras": ["old"], "source_paras": ["old"],
+        "source_lang": "日本語",
         "pipeline_config": {"ocr_language": "ara", "ocr_mode": "auto"},
+        "streaming_ingest": {"status": "running", "paragraph_pages": [1]},
         "glossary_frozen": {"version": 1},
     })
     core.save_job_state("rescan-mode-test", state)
+    if backend == "ocr_api":
+        core.save_ocr_online_config(provider="OpenCode Go", model="ocr-model",
+                                    api_key="test-key", base_url="")
     result = core.rescan_pdf_source(
         "rescan-mode-test", provider="DeepSeek", api_key="k", model="m",
-        ocr_backend="tesseract", ocr_mode="force", _allow_active=True)
+        ocr_backend=backend, ocr_online={} if backend == "ocr_api" else None,
+        ocr_mode="force", _allow_active=True)
+    assert captured["ocr_backend"] == backend
+    if backend == "ocr_api":
+        assert captured["ocr_online_config"].model == "ocr-model"
+        assert captured["ocr_language"] == "jpn"
+        assert result["pipeline_config"]["ocr_language"] == "jpn"
     assert captured["ocr_mode"] == "force"
     assert result["pipeline_config"]["ocr_mode"] == "force"
     assert result["ocr_mode"] == "force"
     assert result["source_cleanup"]["ocr_mode_changed"] is True
     assert result["pairs"] == []  # source-derived translations invalidated
+    assert "streaming_ingest" not in result
+    assert result["ocr_backend"] == backend
 
 
 def test_legacy_state_without_ocr_mode_defaults_to_auto():

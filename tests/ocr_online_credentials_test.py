@@ -81,3 +81,19 @@ def test_status_is_readable_without_any_recognition_request(tmp_path, monkeypatc
     assert status["ok"] is True and status["state"] == "configured"
     assert "ocr-key" not in json.dumps(status, ensure_ascii=False)
     assert calls == []
+
+
+def test_explicit_rescan_uses_current_ocr_connection(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    core.save_ocr_online_config(provider="OpenCode Go", model="old-vision",
+                                api_key="ocr-key", base_url="")
+    old, error = core.resolve_ocr_online_config()
+    assert error is None
+    core.save_ocr_online_config(provider="OpenCode Go", model="new-ocr",
+                                api_key="ocr-key", base_url="")
+    backend, _, descriptor, config = core._effective_ocr_source(
+        "ocr_api", {"ocr_backend": "online", "ocr_online": old.describe()},
+        ocr_online={})
+    assert backend == "ocr_api"
+    assert descriptor["model"] == config.model == "new-ocr"
+    assert "ocr-key" not in json.dumps(descriptor)

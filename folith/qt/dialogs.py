@@ -887,6 +887,11 @@ class EngineDialog(QDialog):
 
         # ── 何时识别行（共用）───────────────────────────────────────────────
         group.add_row(_setting_row(i18n.tr('何时识别'), self.ocr_mode_picker))
+        scan_scope_hint = QLabel(i18n.tr(
+            '此设置用于新任务。已开始的任务保留原识别方式；要更换，请在任务中选择重新扫描 PDF 原文。'))
+        scan_scope_hint.setObjectName("hint")
+        scan_scope_hint.setWordWrap(True)
+        group.add_row(_setting_row('', scan_scope_hint))
 
         # ── 同步回调 ──────────────────────────────────────────────────────
         def sync_channel_ui(*_args):

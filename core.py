@@ -1912,6 +1912,13 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 else:
                     warnings.append(f"PDF 无可用文本层，正在自动 OCR {scope}…")
                 ocr_fn = _ocr_pdf_text_with_warnings
+                # OCR API has no separate language selector in the settings UI.
+                # Use the task's declared source language for its metadata and
+                # cache identity; do not infer a local Tesseract language pack.
+                effective_read_language = ocr_language
+                if _ocr_backends.normalize_backend(ocr_backend) == _ocr_backends.OCR_API_BACKEND:
+                    from folith import source_languages as _source_languages
+                    effective_read_language = _source_languages.ocr_code(source_language) or ocr_language
                 ocr_kwargs = {
                     "max_pages": ocr_max_pages,
                     "on_progress": on_progress,
@@ -1931,7 +1938,7 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                         "profiler": profiler,
                         "return_details": True,
                         "profile_cache_dir": profile_cache_dir,
-                        "ocr_language": ocr_language,
+                        "ocr_language": effective_read_language,
                         "dpi": ocr_dpi,
                         "ocr_psm": ocr_psm,
                         "backend": ocr_backend,
@@ -11208,6 +11215,12 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         effective_online_config = _effective_ocr_source(
             ocr_backend, saved_config, ocr_paddle_model=ocr_paddle_model,
             ocr_online=ocr_online)
+    if effective_ocr_backend == _ocr_backends.OCR_API_BACKEND:
+        from folith import source_languages as _source_languages
+        source_code = _source_languages.ocr_code(state.get("source_lang"))
+        if source_code:
+            effective_ocr_language = source_code
+            resolved_ocr = _ocr_language.resolve_ocr_language(source_code)
     previous_ocr_backend = _ocr_backends.normalize_backend(
         saved_config.get("ocr_backend", "tesseract"))
     previous_paddle_model = str(saved_config.get("ocr_paddle_model") or "official")
@@ -11386,6 +11399,10 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
 
         _reset_source_dependent_state(state, job_id=job_id)
+        # A successful full rescan replaces the old streaming source and its
+        # page ordering.  Keeping it would resume the old VLM reader even when
+        # the rescan selected OCR API, and could reorder the new paragraphs.
+        state.pop("streaming_ingest", None)
         # The rescan replaced the source bytes; a persisted outline belongs to
         # the previous source (see #186).
         from folith import outline_anchor as _outline_anchor
@@ -11437,6 +11454,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         else:
             pipeline_config.pop("ocr_online", None)
         state["ocr_mode"] = effective_ocr_mode
+        state["ocr_backend"] = effective_ocr_backend
         state["ocr_language"] = effective_ocr_language or ""
         state["ocr_config"] = {
             "ocr_language": effective_ocr_language or "",
@@ -13007,6 +13025,12 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     effective_source_language = str(
         state.get("source_lang")
         or (resolved_ocr.label if resolved_ocr else "") or "")
+    if effective_ocr_backend == _ocr_backends.OCR_API_BACKEND:
+        from folith import source_languages as _source_languages
+        source_code = _source_languages.ocr_code(state.get("source_lang"))
+        if source_code:
+            effective_ocr_language = source_code
+            resolved_ocr = _ocr_language.resolve_ocr_language(source_code)
     effective_cleanup_concurrency = _runtime_int_option(
         source_cleanup_concurrency,
         saved_runtime_config.get("source_cleanup_concurrency"),

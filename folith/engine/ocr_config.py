@@ -253,11 +253,12 @@ def ocr_engine_status(engine, language="eng", *, paddle_model=None, online_confi
         return {**status, "ok": backend.available(), "capabilities": backend.capabilities(),
                 "source": "paddle",
                 "quality_note": backend.quality_note() if status["state"] != "unsupported" else ""}
-    if name == "online":
+    if name in ("online", _ocr_backends.OCR_API_BACKEND):
         status = ocr_online_status(online_config)
         return {**status, "capabilities": {"line_boxes": False, "word_boxes": False,
                                            "geometry": False},
-                "quality_note": ("VLM 提取原文结构；本地文字框提供尽力而为的高亮，无法匹配时只定位到原页。")}
+                "quality_note": ("VLM 提取原文结构；本地文字框提供尽力而为的高亮，无法匹配时只定位到原页。"
+                                 if name == "online" else "OCR API 提取文本；随后整理原文结构。")}
     if name == "auto" and not _c._find_tesseract():
         status = ocr_engine_status("paddle", language, paddle_model=paddle_model)
         return {**status, "message": "Auto：Tesseract 未安装；将使用 PaddleOCR。 " + status.get("message", "")}
