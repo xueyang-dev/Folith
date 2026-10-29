@@ -793,7 +793,8 @@ class EngineDialog(QDialog):
         head_row.addWidget(head_label, 1)
         group.add_row(head)
 
-        # 视觉模型行：连接选择 + 模型选择 + 测试视觉（均在同一行）
+        # 视觉模型复合块（选择器 + 静态说明 + 能力警告/类型提示）── 无内部分隔线 ──────
+        # 行序：选择器 → 静态说明 → 能力警告（有时）/ 类型提示（无警告时）→ 读取方式（下一行）
         scan_test = QPushButton(i18n.tr('测试视觉'))
         style_module.set_button(scan_test, "plain", small=True)
         scan_test.clicked.connect(self._test_scan_vision)
@@ -808,41 +809,54 @@ class EngineDialog(QDialog):
         vrow.addWidget(cbox, 1, Qt.AlignmentFlag.AlignVCenter)
         vrow.addWidget(mbox, 1, Qt.AlignmentFlag.AlignVCenter)
         vrow.addWidget(scan_test, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        vscan_block = QWidget()
+        vscan_block.inset = components.FORM_ROW_INSET_PLAIN
+        vb = QVBoxLayout(vscan_block)
+        vb.setContentsMargins(0, 0, 0, 0)
+        vb.setSpacing(0)
+
         vision_row = components.FormRow(i18n.tr('视觉模型'), value=vrow_holder)
         vision_row.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
         vision_row.title_label.setWordWrap(True)
-        group.add_row(vision_row)
+        vb.addWidget(vision_row)
 
-        # 输入类型提示（#48，动态，直接在选择器下方）
-        vm_hint = self.connection_library.vision_modality_hint
-        vh_holder = QWidget()
-        vh_layout = QHBoxLayout(vh_holder)
-        vh_layout.setContentsMargins(theme_module.SPACE["lg"], 0, theme_module.SPACE["md"], 0)
-        vh_layout.addWidget(vm_hint)
-        vh_holder.inset = theme_module.SPACE["lg"]
-        group.add_row(vh_holder)
-
-        # 能力警告（#258，动态，直接在选择器下方）
-        cap_warn = self.connection_library.capability_warnings.get("vision")
-        if cap_warn:
-            cw_holder = QWidget()
-            cw_layout = QHBoxLayout(cw_holder)
-            cw_layout.setContentsMargins(theme_module.SPACE["lg"], 0,
-                                         theme_module.SPACE["md"], 0)
-            cw_layout.addWidget(cap_warn)
-            cw_holder.inset = theme_module.SPACE["lg"]
-            group.add_row(cw_holder)
-
-        # 静态说明行（始终可见）
+        # 静态说明（始终可见，直接在选择器下方，无分隔线）
         hint_lbl = QLabel(i18n.tr('需要能看图并按格式回答的视觉模型'))
         hint_lbl.setObjectName("hint")
+        hint_lbl.setWordWrap(True)
         hint_holder = QWidget()
         hint_layout = QHBoxLayout(hint_holder)
         hint_layout.setContentsMargins(theme_module.SPACE["md"], 0, theme_module.SPACE["md"],
                                        theme_module.SPACE["xxs"])
         hint_layout.addWidget(hint_lbl)
-        hint_holder.inset = components.FORM_ROW_INSET_PLAIN
-        group.add_row(hint_holder)
+        vb.addWidget(hint_holder)
+
+        # 能力警告（#258，动态，wrap=True 折行，无分隔线）
+        cap_warn = self.connection_library.capability_warnings.get("vision")
+        if cap_warn:
+            cw_holder = QWidget()
+            cw_holder.setVisible(False)
+            cw_layout = QHBoxLayout(cw_holder)
+            cw_layout.setContentsMargins(theme_module.SPACE["lg"], 0,
+                                         theme_module.SPACE["md"], theme_module.SPACE["xs"])
+            cw_layout.addWidget(cap_warn)
+            vb.addWidget(cw_holder)
+            # 能力警告 holder 登记到 library，供 _update_capability_warning() 显隐。
+            self.connection_library.capability_warning_holders["vision"] = cw_holder
+
+        # 输入类型提示（#48，动态，有警告时被隐藏，无分隔线）
+        vm_hint = self.connection_library.vision_modality_hint
+        vh_holder = QWidget()
+        vh_holder.setVisible(False)
+        vh_layout = QHBoxLayout(vh_holder)
+        vh_layout.setContentsMargins(theme_module.SPACE["lg"], 0, theme_module.SPACE["md"], 0)
+        vh_layout.addWidget(vm_hint)
+        vb.addWidget(vh_holder)
+        # holder 登记到 library，供 _update_vision_hint() 随提示一起显隐。
+        self.connection_library.vision_modality_hint_holder = vh_holder
+
+        group.add_row(vscan_block)
 
         # 读取方式行
         group.add_row(_setting_row(i18n.tr('读取方式'), *read_controls))

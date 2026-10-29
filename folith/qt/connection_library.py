@@ -69,6 +69,8 @@ class ConnectionLibrary(QWidget):
             lambda _i: self.select("vision"))
         self.selectors = {}
         self.capability_warnings: dict[str, "components.StatusLabel"] = {}
+        #: 包裹每条能力警告的外层 QWidget（需随警告一起显隐，避免分隔线残留空白）。
+        self.capability_warning_holders: dict[str, "QWidget"] = {}
         self.role_group = components.FormGroup()
         self.role_group.add_row(self._group_header(i18n.tr('用途')))
         for role, label in self.ROLES:
@@ -79,18 +81,27 @@ class ConnectionLibrary(QWidget):
             box.currentIndexChanged.connect(lambda _i, r=role: self.select(r))
             model_box = self.make_model_selector(role)
             self.selectors[role] = box
-            self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
-            # #258：模型能力警告（仅 OCR / 仅翻译，不适合当前用途）。
-            cap_warn = components.StatusLabel("", "error")
+            # #258：角色行 + 能力警告合并为一个复合块（无内部分隔线）。
+            role_block = QWidget()
+            role_block.inset = components.FORM_ROW_INSET_PLAIN
+            rb = QVBoxLayout(role_block)
+            rb.setContentsMargins(0, 0, 0, 0)
+            rb.setSpacing(0)
+            rb.addWidget(_setting_row(i18n.tr(label), box, model_box))
+            # 能力警告：wrap=True 折行显示完整信息，不省略。
+            cap_warn = components.StatusLabel("", "error", wrap=True)
             cap_warn.dot.hide()
             cap_warn.setVisible(False)
             cap_holder = QWidget()
+            cap_holder.setVisible(False)
             cap_row = QHBoxLayout(cap_holder)
             cap_row.setContentsMargins(theme_module.SPACE["lg"], 0,
-                                       theme_module.SPACE["md"], 0)
+                                       theme_module.SPACE["md"], theme_module.SPACE["xs"])
             cap_row.addWidget(cap_warn)
-            self.role_group.add_row(cap_holder)
+            rb.addWidget(cap_holder)
+            self.role_group.add_row(role_block)
             self.capability_warnings[role] = cap_warn
+            self.capability_warning_holders[role] = cap_holder
         # 视觉角色的控件（模型选择器 / 输入类型提示 / 能力警告）：
         # 只创建，不加入 role_group；由 dialogs._build_scan_section() 负责渲染。
         # parent=self 防止 setVisible 触发前这些控件作为顶层窗口出现。
@@ -99,7 +110,10 @@ class ConnectionLibrary(QWidget):
         hint.dot.hide()
         hint.setVisible(False)
         self.vision_modality_hint = hint
-        cap_warn_v = components.StatusLabel("", "error", self)
+        #: 包裹 vision_modality_hint 的外层 holder（由 dialogs._build_scan_section() 设置）。
+        self.vision_modality_hint_holder: "QWidget | None" = None
+        # 视觉能力警告同样 wrap=True；holder 由 dialogs._build_scan_section() 创建并存入字典。
+        cap_warn_v = components.StatusLabel("", "error", self, wrap=True)
         cap_warn_v.dot.hide()
         cap_warn_v.setVisible(False)
         self.capability_warnings["vision"] = cap_warn_v
@@ -578,14 +592,28 @@ class ConnectionLibrary(QWidget):
         """「视觉」用途当前选中的模型：目录声明 / 实测结果 / 未知，三态如实显示。
 
         已知仅文本用警告色；未知保持中性——没有证据就不下结论（#48）。
+        有能力警告时隐藏类型提示，两者信息重叠，不重复显示。
         """
         hint = getattr(self, "vision_modality_hint", None)
         if hint is None:
             return
+        hint_holder = getattr(self, "vision_modality_hint_holder", None)
+
+        def _set_hint_visible(visible: bool) -> None:
+            hint.setVisible(visible)
+            if hint_holder is not None:
+                hint_holder.setVisible(visible)
+
+        # 有能力警告时隐藏类型提示（两者互斥，避免重复信息）。
+        cap_warn = self.capability_warnings.get("vision")
+        if cap_warn and cap_warn.isVisible():
+            _set_hint_visible(False)
+            return
+
         profile = next((p for p in self.profiles if p["id"] == self.roles.get("vision")), None)
         model = str(self.role_models.get("vision") or "")
         if not profile or not model:
-            hint.setVisible(False)
+            _set_hint_visible(False)
             return
         declared = (profile.get("model_modalities") or {}).get(model)
         if isinstance(declared, list) and declared:
@@ -594,7 +622,7 @@ class ConnectionLibrary(QWidget):
             else:
                 hint.set_status(i18n.tr('服务商目录标注该模型仅接受文本输入'), "attention")
             hint.setToolTip("")
-            hint.setVisible(True)
+            _set_hint_visible(True)
             return
         probe = connection_status.vision_probe_result(
             str(profile.get("provider") or ""), model, str(profile.get("base_url") or ""),
@@ -605,11 +633,11 @@ class ConnectionLibrary(QWidget):
             else:
                 hint.set_status(i18n.tr('「测试视觉」实测未通过图像输入'), "attention")
                 hint.setToolTip(probe["message"])
-            hint.setVisible(True)
+            _set_hint_visible(True)
             return
         hint.set_status(i18n.tr('输入类型未知；可在编辑连接里点「测试视觉」实测'), "idle")
         hint.setToolTip("")
-        hint.setVisible(True)
+        _set_hint_visible(True)
 
     def _update_capability_warning(self, role: str, model: str) -> None:
         """#258：选中的模型与用途不匹配时，在该行下面显示内联警告。"""
@@ -620,11 +648,19 @@ class ConnectionLibrary(QWidget):
         # 视觉用途的角色名对应 "vision"；翻译 / 审校对应各自名称。
         role_cat = "vision" if role == "vision" else role
         message = capability_warning(role_cat, model)
+        warn_holder = self.capability_warning_holders.get(role)
         if message:
             warn.set_status(i18n.tr_dynamic(message), "error")
             warn.setVisible(True)
+            if warn_holder is not None:
+                warn_holder.setVisible(True)
         else:
             warn.setVisible(False)
+            if warn_holder is not None:
+                warn_holder.setVisible(False)
+        # 视觉警告与类型提示互斥：警告状态变化后重新计算类型提示可见性。
+        if role == "vision":
+            self._update_vision_hint()
 
     def select(self, role):
         box = self.selectors.get(role) if role != "vision" else self.dialog.vision_connection_box
