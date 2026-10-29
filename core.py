@@ -12735,7 +12735,15 @@ def _scan_page_failure_reason(status, code, message=""):
         return "服务商限流（HTTP 429）"
     if status and int(status) >= 500:
         return f"服务商暂时不可用（HTTP {status}）"
-    return str(message or code or "请求失败")[:60]
+    text = str(message or code or "请求失败")
+    if len(text) <= 60:
+        return text
+    # 页级事件只放第一句原因；在句读处截断，不在半个词处截断。
+    first = re.split(r"[；。]", text, maxsplit=1)[0]
+    reason = first if 0 < len(first) <= 60 else text[:59] + "…"
+    if "OCR 专用模型" in text:
+        reason += "；请换用通用视觉模型"
+    return reason
 
 
 def _scan_page_event_text(event):

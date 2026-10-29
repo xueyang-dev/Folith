@@ -259,3 +259,12 @@ class TestOCROnlineRuntimeMessages:
         assert "OCR" in msg or "格式" in msg or "结构" in msg
         # Must not be the generic "请提高输出上限" message
         assert "输出上限" not in msg
+
+    def test_page_failure_line_keeps_whole_reason_and_advice(self):
+        """The per-page event cuts at a clause, never mid-word (it used to end in 「是 O」)."""
+        from folith.ocr_online import _parse_failure_message, _truncation_message
+        for message in (_truncation_message("附章 二千年の定説を覆す"),
+                        _parse_failure_message("invalid_semantic_json")):
+            line = core._scan_page_event_text({"page": 9, "code": "", "message": message})
+            assert "请换用通用视觉模型" in line
+            assert "如果你选择的是 O" not in line
