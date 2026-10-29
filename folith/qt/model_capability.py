@@ -110,3 +110,33 @@ def capability_warning(role_category: str, model_name: str) -> str:
     if cap == "general":
         return ""
     return _WARNINGS.get((role_category, cap), "")
+
+
+#: Short tag labels shown inline (muted, next to the model selector) for non-general models.
+#: No tag for "general" or for the vision role (the channel A list is pre-filtered).
+_TAGS: dict[str, str] = {
+    "ocr_only": "仅 OCR",
+    "translation_only": "专用翻译",
+}
+
+_TAG_TOOLTIPS: dict[str, str] = {
+    "ocr_only": "此模型是 OCR 专用模型，不能生成翻译。请选择通用语言模型。",
+    "translation_only": (
+        "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；"
+        "建议选通用模型。"
+    ),
+}
+
+
+def capability_tag(role_category: str, model_name: str) -> tuple[str, str]:
+    """Return ``(tag_text, tooltip_text)`` for a small inline muted tag.
+
+    Returns ``("", "")`` when no tag is needed (general model or vision role).
+    Used by 用途 rows (translation / reviewer) instead of red warning paragraphs.
+    """
+    if role_category == "vision":
+        return "", ""
+    cap = classify_model(model_name)
+    if cap == "general":
+        return "", ""
+    return _TAGS.get(cap, ""), _TAG_TOOLTIPS.get(cap, "")

@@ -152,6 +152,20 @@ class EngineConfig:
         cfg.connection_roles = dict(saved.get("connection_roles") or {})
         cfg.connection_models = dict(saved.get("connection_models") or {})
         cfg.ensure_connections()
+        # Migration: if the saved ocr_backend is "online" but the saved vision model
+        # is an OCR-only model, auto-switch to channel B (ocr_api) so the user sees
+        # the right channel for their configuration.
+        # Check connection_models first (set by ensure_connections or loaded from JSON),
+        # then fall back to load_ocr_online_config for the global singleton path.
+        if cfg.ocr_backend == "online":
+            vision_model = str(cfg.connection_models.get("vision") or "")
+            if not vision_model:
+                vision_profile = core.load_ocr_online_config() or {}
+                vision_model = str(vision_profile.get("model") or "")
+            if vision_model:
+                from folith.qt.model_capability import classify_model
+                if classify_model(vision_model) == "ocr_only":
+                    cfg.ocr_backend = "ocr_api"
         from folith.model_connections import effective_config
         return effective_config(cfg, cfg.connections, cfg.connection_roles)
 
@@ -4859,6 +4873,7 @@ OCR_MODE_CHOICES = (("自动判断", "auto"),
 #: 旧标签「联网识别（默认）」是 10-06 本地化提交 `ecc46cc` 留下的，比 VLM 路径早一天，
 #: 于是成了最容易被误读的一处文案：用户以为自己还在用 OCR。**别再按标签字面理解。**
 OCR_BACKEND_CHOICES = (("视觉理解（VLM，默认）", "online"),
+                       ("OCR API（平文本）", "ocr_api"),
                        ("本机 OCR · Tesseract", "tesseract"),
                        ("本机 OCR · PaddleOCR", "paddle"))
 
