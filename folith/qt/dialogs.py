@@ -435,6 +435,8 @@ class EngineDialog(QDialog):
         self.base_edit = QLineEdit()
         self.reasoning_box = style_module.ComboBox()
         self.reasoning_row = _field(i18n.tr('推理强度'), self.reasoning_box)
+        self.thinking_box = style_module.ComboBox()
+        self.thinking_row = _field(i18n.tr('思考'), self.thinking_box)
         self.fetch_button = QPushButton(i18n.tr('获取可用模型'))
         self.fetch_button.clicked.connect(self._fetch_models)
         self.test_button = QPushButton(i18n.tr('测试连接'))
@@ -443,8 +445,10 @@ class EngineDialog(QDialog):
         self.test_label.setWordWrap(True)
         self.provider_box.currentTextChanged.connect(self._provider_changed)
         self.model_box.currentTextChanged.connect(self._sync_reasoning)
+        self.model_box.currentTextChanged.connect(self._sync_thinking)
         self._provider_changed(self.provider_box.currentText())
         self._sync_reasoning()
+        self._sync_thinking()
         self.connection_library = ConnectionLibrary(self)
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1086,6 +1090,21 @@ class EngineDialog(QDialog):
         self.reasoning_box.setCurrentIndex(max(index, 0))
         self.reasoning_box.blockSignals(False)
         self.reasoning_row.setVisible(bool(options))
+
+    def _sync_thinking(self) -> None:
+        """按当前模型给出可用的思考开关；没实测过的模型不显示这一项，也不会被写入连接。"""
+        options = adapter.thinking_control_options(
+            self.provider_box.currentText().strip(), self.model_box.currentText().strip())
+        current = str(self.thinking_box.currentData() or "")
+        self.thinking_box.blockSignals(True)
+        self.thinking_box.clear()
+        self.thinking_box.addItem(i18n.tr('服务默认'), "provider_default")
+        for value in options:
+            self.thinking_box.addItem(
+                i18n.tr(adapter.THINKING_MODE_LABELS.get(value, value)), value)
+        self.thinking_box.setCurrentIndex(max(self.thinking_box.findData(current), 0))
+        self.thinking_box.blockSignals(False)
+        self.thinking_row.setVisible(bool(options))
 
     def _fetch_models(self) -> None:
         provider = self.provider_box.currentText().strip()
