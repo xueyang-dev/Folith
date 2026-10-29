@@ -6,6 +6,7 @@ fed into the paragraph joiner merely because a preceding sentence is open.
 """
 from __future__ import annotations
 
+import bisect
 import math
 import re
 import statistics
@@ -136,6 +137,87 @@ def _is_full_page_image(block: Dict[str, Any]) -> bool:
     area = float(block.get("x1", 0) - block.get("x0", 0)) * float(
         block.get("y1", 0) - block.get("y0", 0))
     return area >= width * height * FULL_PAGE_IMAGE_AREA
+
+
+def page_text_dict(page) -> Dict[str, Any]:
+    """Return ``page.get_text("dict")`` without PNG-encoding embedded images.
+
+    PyMuPDF's ``TEXTFLAGS_DICT`` includes ``TEXT_PRESERVE_IMAGES``, which
+    re-encodes every image block to PNG (~75 ms/page for large embedded
+    images).  This helper strips that flag so text extraction takes ~3 ms/page,
+    then splices lightweight image-block stubs back from
+    ``page.get_image_info()`` (~0.2 ms/page) to preserve the original block
+    list structure.
+
+    Every consumer that uses the result only needs ``type`` and ``bbox`` for
+    image blocks (type 1); none reads image bytes from the dict.  Block
+    positions in the list are identical to the full dict so
+    ``"p{n}-b{raw_number}"`` block IDs produced by :func:`extract_layout_blocks`
+    are unchanged.
+
+    Falls back to ``page.get_text("dict")`` (with image bytes) for any page
+    where the splice cannot be verified, so callers are never left with an
+    inconsistent block list.
+    """
+    try:
+        flags = fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES
+        text_dict = page.get_text("dict", flags=flags)
+        image_info = page.get_image_info()
+
+        if not image_info:
+            return text_dict
+
+        text_blocks: List[Dict[str, Any]] = list(text_dict.get("blocks") or [])
+        n_img = len(image_info)
+        total = len(text_blocks) + n_img
+
+        # Build image-block stubs keyed by their original block index
+        # ("number" from get_image_info matches the block's position in the
+        # full get_text("dict") result).
+        #
+        # get_image_info() gives the raw placement rect which may extend
+        # slightly outside the page (no CropBox clipping).  page.get_text()
+        # clips to the CropBox.  Intersect with page.rect so bbox values are
+        # identical to what the full dict returns.
+        page_rect = page.rect
+        image_by_number: Dict[int, Dict[str, Any]] = {}
+        for info in image_info:
+            num = info.get("number")
+            if num is None:
+                return page.get_text("dict")  # missing "number" — fall back
+            num = int(num)
+            if num in image_by_number:
+                return page.get_text("dict")  # duplicate — fall back
+            raw_bbox = info["bbox"]
+            # Clip to CropBox to match the coordinates returned by get_text("dict").
+            clipped = fitz.Rect(raw_bbox) & page_rect
+            image_by_number[num] = {"type": 1, "number": num, "bbox": tuple(clipped)}
+
+        # Sanity: all image block indices must fit within [0, total)
+        if image_by_number and max(image_by_number) >= total:
+            return page.get_text("dict")
+
+        # Merge: image stubs at their original positions; text blocks fill gaps
+        result: List[Optional[Dict[str, Any]]] = [None] * total
+        for num, stub in image_by_number.items():
+            result[num] = stub
+
+        text_iter = iter(text_blocks)
+        for i in range(total):
+            if result[i] is None:
+                tb = next(text_iter, None)
+                if tb is None:
+                    return page.get_text("dict")  # ran out of text blocks — fall back
+                # Without images MuPDF numbers text blocks from 0; the full dict
+                # numbers every block by its position, images included.
+                result[i] = {**tb, "number": i}
+
+        if any(r is None for r in result):
+            return page.get_text("dict")  # unfilled slot — fall back
+
+        return {**text_dict, "blocks": result}
+    except Exception:  # noqa: BLE001
+        return page.get_text("dict")
 
 
 def _page_is_ocr_overlay(page_dict: Dict[str, Any]) -> bool:
@@ -346,7 +428,43 @@ def _strip_markers(spans: Sequence[Dict[str, Any]],
     return "".join(parts), marks
 
 
-def superscript_marker_census(file_bytes: bytes) -> Dict[str, Any]:
+def build_page_dict_cache(file_bytes: bytes) -> List[Tuple[Dict[str, Any], float, float, bool, str]]:
+    """Open the PDF once and cache per-page data under natural page rotation.
+
+    Each entry is ``(page_dict, width, height, has_images, plain_text)``
+    where *page_dict* is ``page.get_text("dict")``, *has_images* is
+    ``bool(page.get_images())``, and *plain_text* is ``page.get_text()``.
+
+    The tuple is indexed by 0-based page number.  Callers that would
+    otherwise re-open the PDF and call ``get_text("dict")`` independently
+    can accept this cache and skip the redundant PDF parse.  The cache uses
+    natural page rotation (no ``set_rotation(0)``), which is identical to
+    what ``superscript_marker_census`` and ``_pdf_scan_page_indices``
+    require; ``extract_layout_blocks`` handles rotation internally.
+
+    Returns an empty list on any error so callers fall back to independent
+    parsing gracefully.
+    """
+    cache: List[Tuple[Dict[str, Any], float, float, bool, str]] = []
+    try:
+        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+            for page in doc:
+                d = page_text_dict(page)
+                t = page.get_text()
+                w = float(page.rect.width)
+                h = float(page.rect.height)
+                imgs = bool(page.get_images())
+                cache.append((d, w, h, imgs, t))
+    except Exception:  # noqa: BLE001
+        return []
+    return cache
+
+
+def superscript_marker_census(
+    file_bytes: bytes,
+    *,
+    _page_dict_cache: Optional[List[Tuple[Dict[str, Any], float, float, bool, str]]] = None,
+) -> Dict[str, Any]:
     """Span-level census of superscript markers in a PDF text layer.
 
     Cheap on purpose: it never reconstructs paragraphs, so the text-layer
@@ -354,40 +472,50 @@ def superscript_marker_census(file_bytes: bytes) -> Dict[str, Any]:
     ``footnote_body_candidates`` applies the same typographic rule
     ``classify_blocks`` uses for footnote blocks, and exists so that "N markers
     but no note text in this document" is visible to the operator.
+
+    Pass ``_page_dict_cache`` (from :func:`build_page_dict_cache`) to reuse
+    already-parsed page dicts and avoid a redundant ``fitz.open`` call.
     """
     markers: List[Dict[str, Any]] = []
     footnote_lines = 0
     try:
-        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-            for page_number, page in enumerate(doc):
-                height = float(page.rect.height) or 1.0
-                page_dict = page.get_text("dict")
-                body_size, baselines = _page_body_metrics(page_dict)
-                for raw in page_dict.get("blocks") or []:
-                    if int(raw.get("type") or 0) != 0:
+        def _iter_pages():
+            if _page_dict_cache:
+                for page_number, (d, w, h, imgs, t) in enumerate(_page_dict_cache):
+                    yield page_number, h, d
+            else:
+                with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                    for page_number, page in enumerate(doc):
+                        yield page_number, float(page.rect.height), page_text_dict(page)
+
+        for page_number, height, page_dict in _iter_pages():
+            height = height or 1.0
+            body_size, baselines = _page_body_metrics(page_dict)
+            for raw in page_dict.get("blocks") or []:
+                if int(raw.get("type") or 0) != 0:
+                    continue
+                for line in raw.get("lines") or []:
+                    spans = [s for s in line.get("spans") or []
+                             if str(s.get("text") or "")]
+                    if not spans:
                         continue
-                    for line in raw.get("lines") or []:
-                        spans = [s for s in line.get("spans") or []
-                                 if str(s.get("text") or "")]
-                        if not spans:
-                            continue
-                        for span in spans:
-                            found = _marker_evidence(span, body_size, baselines)
-                            if found:
-                                markers.append({
-                                    "page_number": page_number + 1,
-                                    "text": found["text"],
-                                    "size": found["size"],
-                                    "raise_em": found["raise_em"],
-                                })
-                        line_size = _font_metrics(spans)[0] or body_size
-                        text = _normalise_line(
-                            "".join(str(s.get("text") or "") for s in spans))
-                        box = _bbox(line.get("bbox"))
-                        if (body_size and line_size <= body_size * 0.78
-                                and box["y0"] > height * 0.68
-                                and len(text) > 20):
-                            footnote_lines += 1
+                    for span in spans:
+                        found = _marker_evidence(span, body_size, baselines)
+                        if found:
+                            markers.append({
+                                "page_number": page_number + 1,
+                                "text": found["text"],
+                                "size": found["size"],
+                                "raise_em": found["raise_em"],
+                            })
+                    line_size = _font_metrics(spans)[0] or body_size
+                    text = _normalise_line(
+                        "".join(str(s.get("text") or "") for s in spans))
+                    box = _bbox(line.get("bbox"))
+                    if (body_size and line_size <= body_size * 0.78
+                            and box["y0"] > height * 0.68
+                            and len(text) > 20):
+                        footnote_lines += 1
     except Exception:  # noqa: BLE001 - a census must never break ingestion
         return {"status": "unavailable", "marker_count": 0,
                 "marker_pages": [], "footnote_body_candidates": 0}
@@ -403,7 +531,11 @@ def superscript_marker_census(file_bytes: bytes) -> Dict[str, Any]:
     }
 
 
-def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
+def extract_layout_blocks(
+    file_bytes: bytes,
+    *,
+    _page_dict_cache: Optional[List[Tuple[Dict[str, Any], float, float, bool, str]]] = None,
+) -> List[Dict[str, Any]]:
     """Extract text and image blocks while retaining page/layout metadata.
 
     Returned objects are plain dictionaries so they can be inspected in tests
@@ -412,6 +544,12 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
     Footnote reference marks are removed from the translatable text and kept in
     ``marks`` (additive key) so that fidelity/provenance consumers can still
     place them, while translation never sees a bare digit glued to a sentence.
+
+    Pass ``_page_dict_cache`` (from :func:`build_page_dict_cache`) to reuse
+    already-parsed page dicts for non-rotated pages.  Rotated pages still call
+    ``page.get_text("dict")`` after ``set_rotation(0)`` so the geometry is
+    correct.  The cache is indexed by 0-based page number; if a page falls
+    outside the cache length the dict is recomputed normally.
     """
     blocks: List[Dict[str, Any]] = []
     all_candidates: List[Dict[str, Any]] = []
@@ -421,9 +559,17 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
         order = 0
         for page_number, page in enumerate(doc):
             # Text geometry is unrotated PDF space, including rotated pages.
+            original_rotation = page.rotation  # read before set_rotation
             page.set_rotation(0)
             width, height = float(page.rect.width), float(page.rect.height)
-            page_dict = page.get_text("dict")
+            # Reuse the cached dict when the page was already at rotation 0
+            # (natural and normalised dicts are then identical).
+            if (_page_dict_cache is not None
+                    and original_rotation == 0
+                    and page_number < len(_page_dict_cache)):
+                page_dict = _page_dict_cache[page_number][0]
+            else:
+                page_dict = page_text_dict(page)
             page_body_size, baselines = _page_body_metrics(page_dict)
             ocr_overlay = _page_is_ocr_overlay(page_dict)
             rules = _page_rules(page, width)
@@ -1236,18 +1382,35 @@ def reconstruct_paragraph_records(
     ordered_blocks = sorted(
         blocks or [], key=lambda item: item.get("reading_order", 0)
     )
+    # Precompute sorted reading_order values for image blocks so the
+    # intervening-image check is O(log n) instead of O(n) per text block.
+    # Blocks without reading_order default to 0, matching item.get(..., 0).
+    image_orders: List[int] = sorted(
+        item.get("reading_order", 0)
+        for item in ordered_blocks
+        if item.get("role") == "image"
+    )
     last_kept_order = None
     for block in ordered_blocks:
         role = block.get("role") or "body"
         if role in SKIPPED_ROLES:
             continue
         current_order = block.get("reading_order", 0)
-        intervening_image = any(
-            item.get("role") == "image"
-            and (last_kept_order is None or
-                 last_kept_order < item.get("reading_order", 0) < current_order)
-            for item in ordered_blocks
-        )
+        # Check for an image block whose reading_order lies strictly between
+        # last_kept_order and current_order.  Semantics match the old O(n²)
+        # any() exactly, including the None branch:
+        #   * last_kept_order is None → the or-clause short-circuits to True,
+        #     so *any* image in ordered_blocks triggers intervening_image.
+        #   * last_kept_order is not None → strict inequalities on both sides.
+        # Note: when last_kept_order is None, records is also empty, so
+        # intervening_image cannot actually affect the merge decision; we
+        # still replicate the exact semantics for correctness.
+        if last_kept_order is None:
+            intervening_image = bool(image_orders)
+        else:
+            lo = bisect.bisect_right(image_orders, last_kept_order)
+            hi = bisect.bisect_left(image_orders, current_order)
+            intervening_image = lo < hi
         for group in _line_groups(block):
             if not group["text"] or group["role"] in SKIPPED_ROLES:
                 continue
@@ -1376,6 +1539,16 @@ def reconstruct_paragraphs(blocks: Sequence[Dict[str, Any]]) -> List[str]:
     ]
 
 
-def extract_pdf_paragraphs(file_bytes: bytes) -> List[str]:
-    """Extract body/heading paragraphs while excluding captions and page furniture."""
-    return reconstruct_paragraphs(classify_blocks(extract_layout_blocks(file_bytes)))
+def extract_pdf_paragraphs(
+    file_bytes: bytes,
+    *,
+    _layouts: Optional[List[Dict[str, Any]]] = None,
+) -> List[str]:
+    """Extract body/heading paragraphs while excluding captions and page furniture.
+
+    Pass ``_layouts`` (the result of ``classify_blocks(extract_layout_blocks(…))``)
+    to reuse an already-computed layout and avoid a redundant ``fitz.open`` call.
+    """
+    if _layouts is None:
+        _layouts = classify_blocks(extract_layout_blocks(file_bytes))
+    return reconstruct_paragraphs(_layouts)

@@ -381,8 +381,12 @@ class NativeDocumentProvider:
         return PageUnderstanding(blocks, 'native_pdf')
 
 
-def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None):
-    """Retain hierarchy/styles and multi-block paragraph membership from native PDF."""
+def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None, layouts=None):
+    """Retain hierarchy/styles and multi-block paragraph membership from native PDF.
+
+    Pass ``layouts`` (the result of ``classify_blocks(extract_layout_blocks(data))``)
+    to reuse an already-computed layout and avoid a redundant full-document parse.
+    """
     from folith.pdf_ingestion import extract_layout_blocks, classify_blocks, reconstruct_paragraph_records
     document = new_document(filename, filename)
     with fitz.open(stream=data, filetype='pdf') as pdf:
@@ -392,7 +396,8 @@ def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None):
             document['pages'].append(PageEnvelope(filename, f'p{i+1}', i, page.rect.width,
                                                    page.rect.height, rotation).to_page())
     pages = {p['page_id']: p for p in document['pages']}
-    layouts = classify_blocks(extract_layout_blocks(data))
+    if layouts is None:
+        layouts = classify_blocks(extract_layout_blocks(data))
     for raw in layouts:
         p = pages[f'p{raw["page_number"]}']
         box = normalized_bbox([raw[k] for k in ('x0','y0','x1','y1')], p['width'], p['height'])
@@ -864,7 +869,10 @@ def understand_mixed_pdf(filename, data, visual_indices, provider, **kwargs):
     for index in native_indices:
         records.extend(r for r in reconstruct_paragraph_records([b for b in layouts if b['page_number']-1==index])
                        if r['text'] and not ORNAMENT_RE.fullmatch(r['text']))
-    document = native_pdf_document(filename,data,[r['text'] for r in records],paragraph_records=records)
+    # Pass the already-computed layouts to avoid a second full-document parse
+    # inside native_pdf_document.
+    document = native_pdf_document(filename, data, [r['text'] for r in records],
+                                   paragraph_records=records, layouts=layouts)
     _, visual = understand_visual_pdf(filename,data,provider,page_indices=visual_indices,**kwargs)
     document['blocks'].extend(visual['blocks'])
     document['assets'].extend(visual['assets'])
