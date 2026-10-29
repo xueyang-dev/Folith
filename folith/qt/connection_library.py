@@ -575,9 +575,24 @@ class ConnectionLibrary(QWidget):
         box.clear()
         if profile:
             models = list(dict.fromkeys([profile["model"], *profile.get("models", [])]))
+            backend_box = getattr(self.dialog, "ocr_backend_box", None)
+            backend = (backend_box.currentData() if backend_box is not None
+                       else self.dialog.config.ocr_backend)
+            if role == "vision" and backend == "online":
+                from .model_capability import classify_model
+                modalities = profile.get("model_modalities") or {}
+                models = [model for model in models
+                          if classify_model(model) == "general"
+                          and (not modalities.get(model) or "image" in modalities[model])]
+                if not models:
+                    from folith.model_connections import VISION_UNCONFIGURED
+                    box.blockSignals(False)
+                    selector = self.dialog.vision_connection_box
+                    selector.setCurrentIndex(selector.findData(VISION_UNCONFIGURED))
+                    return
             box.addItems(models)
             chosen = self.role_models.get(role, "")
-            box.setCurrentText(chosen if chosen in models else profile["model"])
+            box.setCurrentText(chosen if chosen in models else models[0])
             self.role_models[role] = box.currentText()
         else:
             self.role_models[role] = ""

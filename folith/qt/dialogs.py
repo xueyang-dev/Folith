@@ -901,6 +901,10 @@ class EngineDialog(QDialog):
         def sync_channel_ui(*_args):
             backend = str(self.ocr_backend_box.currentData() or "online")
             is_vision = (backend == "online")
+            model_mode = "vision" if is_vision else "ocr"
+            if getattr(self, "_scan_model_mode", None) != model_mode:
+                self._scan_model_mode = model_mode
+                self.connection_library.update_model_selector("vision")
             for card, ch_is_vision in ((self.vision_option, True), (self.local_option, False)):
                 card.blockSignals(True)
                 card.setChecked(is_vision == ch_is_vision)
@@ -993,11 +997,12 @@ class EngineDialog(QDialog):
             lib = self.connection_library
             prior = getattr(self, "_ocr_channel_selection", None)
             after = getattr(self, "_vision_after_channel_switch", None)
-            if prior and after == (lib.roles.get("vision"), lib.role_models.get("vision")):
-                self.vision_connection_box.setCurrentIndex(self.vision_connection_box.findData(prior[0]))
-                lib.model_selectors["vision"].setCurrentText(prior[1])
+            restore = prior and after == (lib.roles.get("vision"), lib.role_models.get("vision"))
             self.ocr_backend_box.setCurrentIndex(self.ocr_backend_box.findData(
                 "ocr_api" if self.ocr_engine_picker.value() != "tesseract" else "tesseract"))
+            if restore:
+                self.vision_connection_box.setCurrentIndex(self.vision_connection_box.findData(prior[0]))
+                lib.model_selectors["vision"].setCurrentText(prior[1])
         self.local_option.toggled.connect(_on_ocr_channel_selected)
         self.ocr_engine_picker.changed.connect(sync_engine)
         self.ocr_backend_box.currentIndexChanged.connect(sync_channel_ui)

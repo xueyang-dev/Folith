@@ -462,3 +462,19 @@ def test_switch_ocr_to_vision_keeps_role_model_and_ui_consistent(app, isolated, 
     assert saved.connection_models['vision'] == ocr
     assert lib.model_selectors['vision'].currentText() == ocr
     dialog.close()
+
+
+def test_vision_selector_excludes_known_ocr_and_text_only_models(app, isolated):
+    ocr = 'PaddlePaddle/PaddleOCR-VL-1.5'
+    vlm = 'Qwen/Qwen2.5-VL-72B-Instruct'
+    text = 'tencent/Hunyuan-MT-7B'
+    profile = {'id': 'sf', 'name': 'SiliconFlow', 'provider': 'SiliconFlow',
+               'custom': False, 'model': text, 'models': [ocr, vlm],
+               'model_modalities': {vlm: ['text', 'image'], text: ['text']},
+               'api_key': 'k', 'base_url': '', 'protocol': 'openai_compat'}
+    dialog = dialogs.EngineDialog(_config(connections=[profile],
+        connection_roles={'translation': 'sf', 'vision': 'sf'},
+        connection_models={'vision': vlm}, ocr_backend='online'), _SyncRunner())
+    box = dialog.connection_library.model_selectors['vision']
+    assert [box.itemText(i) for i in range(box.count())] == [vlm]
+    dialog.close()
