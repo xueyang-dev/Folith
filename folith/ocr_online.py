@@ -692,8 +692,7 @@ class OnlineOCRBackend(OCRBackend):
                     response_tail=text[-half:] if len(text) > half else "",
                     distinct_piece_ratio=round(len(set(pieces)) / max(len(pieces), 1), 3))
                 return self._fail(
-                    "truncated", "线上 OCR 输出被服务截断（finish_reason=length）；"
-                    "该页未保存，请提高输出上限或改用其他来源。",
+                    "truncated", _truncation_message(text),
                     attempts, usage_total, request_ids, started)
             if finish not in {None, "stop"}:
                 return self._fail(
@@ -830,7 +829,36 @@ def _sum_optional(left, right):
     return (left or 0) + (right or 0)
 
 
+def _truncation_message(response_text: str) -> str:
+    """#258：finish_reason=length 时，若响应全是纯文本（无 JSON 标记），说明很可能是
+    OCR 专用模型在输出原始文本，而非视觉理解模型按格式回答；给出针对性提示。
+
+    判断依据：响应里完全没有 JSON 的结构特征（{ [ "），同时长度不为零。
+    """
+    text = str(response_text or "").strip()
+    looks_like_json = text.startswith(("{", "[")) or '{"' in text or "'b'" in text
+    if text and not looks_like_json:
+        return (
+            "视觉理解返回的是纯文本，不是约定的结构化格式（finish_reason=length）；该页未保存。"
+            "如果你选择的是 OCR 专用模型（如 PaddleOCR-VL、GOT-OCR），"
+            "请改用支持图像输入并能按格式回答的视觉语言模型。"
+        )
+    return (
+        "线上 OCR 输出被服务截断（finish_reason=length）；"
+        "该页未保存，请提高输出上限或改用其他来源。"
+    )
+
+
 def _parse_failure_message(code: str) -> str:
+    # #258：invalid_semantic_json 是「返回内容无法解析为约定的 JSON」；
+    # 最常见的原因是 OCR 专用模型只返回纯文本——给出针对性提示。
+    if code in ("invalid_semantic_json", "invalid_semantic_blocks", "invalid_semantic_block",
+                "invalid_semantic_language"):
+        return (
+            "视觉理解返回的内容不是约定的结构化格式；该页未保存。"
+            "如果你选择的是 OCR 专用模型（如 PaddleOCR-VL、GOT-OCR），"
+            "请改用支持图像输入并能按格式回答的视觉语言模型。"
+        )
     return {
         "empty_response": "线上 OCR 返回空响应；该页未保存。",
         "not_json": "线上 OCR 响应不是约定的 JSON；该页未保存。",

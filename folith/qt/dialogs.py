@@ -138,7 +138,7 @@ class EngineDialog(QDialog):
     shortcutsRequested = Signal()
 
     PAGES = (("general", "settings", "通用"), ("models", "sparkles", "模型"),
-             ("vision", "image", "视觉与识别"), ("defaults", "package", "任务默认值"),
+             ("defaults", "package", "任务默认值"),
              ("storage", "folder", "存储"), ("about", "info", "关于"))
 
     def __init__(self, config: adapter.EngineConfig, runner: TaskRunner,
@@ -177,7 +177,6 @@ class EngineDialog(QDialog):
         self.about_page.diagnosticsRequested.connect(self.diagnosticsRequested.emit)
         builders = {"general": self._build_appearance_tab,
                     "models": self._build_connection_tab,
-                    "vision": self._build_vision_tab,
                     "defaults": self._build_task_tab,
                     "storage": lambda: self.storage_page,
                     "about": lambda: self.about_page}
@@ -242,6 +241,9 @@ class EngineDialog(QDialog):
         macwindow.hide_when_app_inactive(self)
 
     def show_page(self, key: str) -> None:
+        # 「视觉与识别」页已合并进「模型」；旧的 "vision" 调用方重定向到 "models"。
+        if key == "vision":
+            key = "models"
         if key not in self.pages:
             key = "general"
         self.tab_buttons[key].setChecked(True)
@@ -331,11 +333,12 @@ class EngineDialog(QDialog):
 
     # -- 「应用」：模型与视觉连接 -------------------------------------------------
     def _apply_buttons(self) -> list:
-        return [getattr(self, name) for name in ("models_apply_button", "vision_apply_button")
+        # 「视觉与识别」页已合并入「模型」页；只剩一个应用按钮。
+        return [getattr(self, name) for name in ("models_apply_button",)
                 if hasattr(self, name)]
 
     def _force_buttons(self) -> list:
-        return [getattr(self, name) for name in ("models_force_button", "vision_force_button")
+        return [getattr(self, name) for name in ("models_force_button",)
                 if hasattr(self, name)]
 
     def _apply_row(self, page: str) -> QWidget:
@@ -422,6 +425,11 @@ class EngineDialog(QDialog):
 
     # -- connection --------------------------------------------------------
     def _build_connection_tab(self) -> QWidget:
+        """「模型」页：连接列表 + 用途（含读取扫描页块）+ 测试并保存。
+
+        原「视觉与识别」页合并到这里：读取扫描页块嵌在用途组的末尾，
+        同一个「测试并保存」按钮覆盖翻译连接与视觉连接两者。
+        """
         from .connection_library import ConnectionLibrary
         self.provider_box = style_module.ComboBox()
         self.provider_box.addItems(list(self.config.providers))
@@ -453,16 +461,10 @@ class EngineDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self.connection_library)
-        return page
-
-    def _build_vision_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
-        layout.setSpacing(theme_module.SPACE["sm"])
-        layout.addWidget(self._build_scan_group())
-        layout.addStretch(1)
+        # 「读取扫描页」块紧接在「用途」后面，同一个应用按钮覆盖两者。
+        layout.addWidget(self._build_scan_section())
         return page
 
     def refresh_connection_states(self) -> None:
@@ -695,11 +697,24 @@ class EngineDialog(QDialog):
         else:
             self._vision_view = adapter.clear_vision_connection()
 
-    def _build_scan_group(self) -> QWidget:
-        """扫描件怎么读（阶段 1 画布）：读取方式两张选项卡 · 何时识别三段 ·（本机 OCR 时）识别语言。
+    def _build_scan_section(self) -> QWidget:
+        """读取扫描页：标题卡片包住扫描块，嵌在「模型」页的「用途」组下方。"""
+        card, body = _panel(i18n.tr('读取扫描页'),
+                            i18n.tr('需要能看图并按格式回答的视觉模型'))
+        body.addWidget(self._build_scan_group())
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        outer_layout.setSpacing(0)
+        outer_layout.addWidget(card)
+        outer_layout.addStretch(1)
+        return outer
 
-        视觉模型在「模型 › 用途」里选，这里只显示用的是哪一个。三个下拉框仍是数据来源
-        （窗口、准备页与测试读它们），界面上看到的是选项卡和分段控件。
+    def _build_scan_group(self) -> QWidget:
+        """扫描件怎么读：读取方式两张选项卡 · 视觉连接来自用途栏 · 何时识别三段 ·（本机 OCR 时）识别语言。
+
+        控件属性仍挂在 EngineDialog 上（ocr_backend_box / ocr_mode_picker / vision_option
+        等），使其他页面与测试的引用保持不变。
         """
         page = QWidget()
         page_layout = QVBoxLayout(page)

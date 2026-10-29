@@ -1,0 +1,253 @@
+"""Tests for #258: model capability classification and role warnings.
+
+Covers:
+- folith.qt.model_capability.classify_model
+- capability_warning for each role/capability combination
+- ConnectionLibrary shows warning for ill-suited models
+- ConnectionLibrary does NOT show warning for normal models
+- EngineDialog scan section is in the models page (no vision tab)
+- show_page("vision") redirects to "models"
+- Runtime error messages for OCR-only responses
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+pytest.importorskip("PySide6")
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+import core  # noqa: E402
+from folith.qt import adapter, dialogs  # noqa: E402
+from folith.qt.model_capability import classify_model, capability_warning  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def isolated(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setattr(core, "OUTPUT_DIR", data)
+    monkeypatch.setenv("FOLITH_DESKTOP_DATA_DIR", str(data))
+    monkeypatch.setattr(adapter.core, "load_ocr_online_config", lambda *a, **k: {})
+    return data
+
+
+class _SyncRunner:
+    def submit(self, fn, *args, on_done=None, on_error=None, label="", **kwargs):
+        try:
+            result = fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if on_error:
+                on_error(str(exc), "")
+            return None
+        if on_done:
+            on_done(result)
+        return None
+
+
+def _config(**extra):
+    base = dict(provider="自定义中转站", model="m1", api_key="k1",
+                base_url="http://127.0.0.1:9/v1", target_lang="简体中文")
+    base.update(extra)
+    return adapter.EngineConfig(**base)
+
+
+# ---------------------------------------------------------------- classify_model ---
+
+class TestClassifyModel:
+    """Conservative name matching — no false positives on general-purpose models."""
+
+    # OCR-only family
+    @pytest.mark.parametrize("name", [
+        "PaddlePaddle/PaddleOCR-VL-1.5",
+        "paddleocr-vl-1.5",
+        "stepfun-ai/GOT-OCR2_0",
+        "got-ocr",
+        "olmOCR-7B",
+        "allenai/olmocr-7b",
+        "my-ocr-v2",
+        "vendor/model-ocr",
+    ])
+    def test_ocr_only(self, name):
+        assert classify_model(name) == "ocr_only", f"Expected ocr_only for {name!r}"
+
+    # Translation-only family
+    @pytest.mark.parametrize("name", [
+        "tencent/Hunyuan-MT-7B",
+        "Helsinki-NLP/opus-mt-en-zh",
+        "facebook/m2m100_1.2B",
+        "facebook/seamless-m4t-medium",
+        "facebook/seamlessm4t-medium",
+        "nllb-200-distilled-600M",
+    ])
+    def test_translation_only(self, name):
+        assert classify_model(name) == "translation_only", f"Expected translation_only for {name!r}"
+
+    # General-purpose: must NOT be mis-classified (the critical negatives)
+    @pytest.mark.parametrize("name", [
+        "qwen2.5-vl",
+        "Qwen3-VL",
+        "glm-4.5v",
+        "gpt-5",
+        "gpt-4o",
+        "deepseek-v4.1-flash",
+        "dots3-note-prev",
+        "claude-opus-4",
+        "gemini-2.0-flash",
+        "llama-3.3-70b",
+        "mistral-large",
+        "phi-4-vision",
+    ])
+    def test_general(self, name):
+        assert classify_model(name) == "general", f"Expected general for {name!r}"
+
+    def test_empty_and_none(self):
+        assert classify_model("") == "general"
+        assert classify_model(None) == "general"  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------- capability_warning ---
+
+class TestCapabilityWarning:
+    def test_ocr_only_in_vision_role_warns(self):
+        w = capability_warning("vision", "PaddlePaddle/PaddleOCR-VL-1.5")
+        assert w  # must produce a warning
+        assert "OCR" in w or "纯文本" in w or "结构" in w
+
+    def test_mt_only_in_vision_role_warns(self):
+        w = capability_warning("vision", "tencent/Hunyuan-MT-7B")
+        assert w
+        assert "翻译" in w or "图像" in w
+
+    def test_ocr_only_in_translation_role_warns(self):
+        w = capability_warning("translation", "PaddlePaddle/PaddleOCR-VL-1.5")
+        assert w
+        assert "翻译" in w or "OCR" in w
+
+    def test_ocr_only_in_reviewer_role_warns(self):
+        w = capability_warning("reviewer", "PaddlePaddle/PaddleOCR-VL-1.5")
+        assert w
+
+    def test_general_model_no_warning(self):
+        for role in ("vision", "translation", "reviewer"):
+            for name in ("qwen2.5-vl", "gpt-5", "deepseek-v4.1-flash"):
+                assert capability_warning(role, name) == "", \
+                    f"Unexpected warning for {name!r} in {role!r}"
+
+    def test_mt_in_translation_no_warning(self):
+        # MT models are fine for translation role
+        assert capability_warning("translation", "tencent/Hunyuan-MT-7B") == ""
+
+    def test_empty_model_no_warning(self):
+        for role in ("vision", "translation", "reviewer"):
+            assert capability_warning(role, "") == ""
+
+
+# ---------------------------------------------------------------- ConnectionLibrary warnings ---
+
+class TestConnectionLibraryWarnings:
+    def _make_dialog_with_vision(self, model_name):
+        profile = {
+            "id": "c1", "name": "Test", "provider": "OpenAI", "custom": False,
+            "model": model_name, "models": [model_name],
+            "api_key": "k", "base_url": "", "protocol": "openai_compat",
+        }
+        config = _config(
+            connections=[profile],
+            connection_roles={"translation": "c1", "vision": "c1"},
+            connection_models={"vision": model_name},
+        )
+        return dialogs.EngineDialog(config, _SyncRunner())
+
+    def test_warning_shows_for_ocr_only_vision_model(self, app, isolated):
+        dialog = self._make_dialog_with_vision("PaddlePaddle/PaddleOCR-VL-1.5")
+        lib = dialog.connection_library
+        warn = lib.capability_warnings.get("vision")
+        assert warn is not None, "capability_warnings must have a 'vision' entry"
+        # isHidden() checks this widget's own hidden state regardless of parent visibility.
+        assert not warn.isHidden(), \
+            "OCR-only model in vision role should NOT be hidden (warning should show)"
+        dialog.close()
+
+    def test_no_warning_for_general_vision_model(self, app, isolated):
+        dialog = self._make_dialog_with_vision("qwen2.5-vl")
+        lib = dialog.connection_library
+        warn = lib.capability_warnings.get("vision")
+        assert warn is None or warn.isHidden(), \
+            "General model in vision role should NOT show capability warning"
+        dialog.close()
+
+
+# ---------------------------------------------------------------- Page structure ---
+
+class TestSettingsPageStructure:
+    def test_models_page_contains_scan_controls(self, app, isolated):
+        """読取扫描页块在「模型」页里，不是单独一页。"""
+        dialog = dialogs.EngineDialog(_config(), _SyncRunner())
+        models_inner = dialog.pages["models"].widget()
+        assert models_inner.isAncestorOf(dialog.ocr_backend_box), \
+            "ocr_backend_box must be inside the models page"
+        assert models_inner.isAncestorOf(dialog.vision_option), \
+            "vision_option card must be inside the models page"
+        assert models_inner.isAncestorOf(dialog.ocr_mode_picker), \
+            "ocr_mode_picker must be inside the models page"
+        dialog.close()
+
+    def test_no_separate_vision_tab(self, app, isolated):
+        dialog = dialogs.EngineDialog(_config(), _SyncRunner())
+        assert "vision" not in dialog.pages
+        assert "vision" not in dialog.tab_buttons
+        dialog.close()
+
+    def test_show_page_vision_redirects_to_models(self, app, isolated):
+        dialog = dialogs.EngineDialog(_config(), _SyncRunner())
+        dialog.show_page("vision")
+        assert dialog.current_page() == "models"
+        dialog.close()
+
+    def test_vision_connection_box_in_models_page(self, app, isolated):
+        dialog = dialogs.EngineDialog(_config(), _SyncRunner())
+        models_inner = dialog.pages["models"].widget()
+        assert models_inner.isAncestorOf(dialog.vision_connection_box)
+        dialog.close()
+
+
+# ---------------------------------------------------------------- Runtime messages ---
+
+class TestOCROnlineRuntimeMessages:
+    def test_plain_text_truncation_gives_ocr_hint(self):
+        from folith.ocr_online import _truncation_message
+        # Plain text (no JSON) → OCR-specific hint
+        msg = _truncation_message("第一行\n第二行\n第三行")
+        assert "OCR" in msg or "纯文本" in msg or "结构" in msg
+        assert "PaddleOCR" in msg or "视觉语言" in msg or "格式" in msg
+
+    def test_json_truncation_gives_standard_hint(self):
+        from folith.ocr_online import _truncation_message
+        # JSON-like response → standard truncation hint
+        msg = _truncation_message('{"b": [{"t": "paragraph"')
+        assert "输出上限" in msg or "截断" in msg or "truncated" in msg.lower()
+
+    def test_empty_truncation_gives_standard_hint(self):
+        from folith.ocr_online import _truncation_message
+        msg = _truncation_message("")
+        assert "输出上限" in msg or "截断" in msg
+
+    def test_invalid_semantic_json_gives_ocr_hint(self):
+        from folith.ocr_online import _parse_failure_message
+        msg = _parse_failure_message("invalid_semantic_json")
+        assert "OCR" in msg or "格式" in msg or "结构" in msg
+        # Must not be the generic "请提高输出上限" message
+        assert "输出上限" not in msg

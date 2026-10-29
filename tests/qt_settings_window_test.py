@@ -69,26 +69,32 @@ def _config(**extra):
 
 # ---------------------------------------------------------------- 窗口 -------
 
-def test_settings_is_a_non_modal_window_with_six_titled_pages(app):
+def test_settings_is_a_non_modal_window_with_five_titled_pages(app):
     dialog = dialogs.EngineDialog(_config(), _SyncRunner())
     from PySide6.QtCore import Qt
     from folith.qt import platform_ui
     assert bool(dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) == platform_ui.is_macos()
     assert not dialog.isModal()
+    # 「视觉与识别」已合并入「模型」；现在共 5 页。
     assert [key for key, _icon, _label in dialog.PAGES] == [
-        "general", "models", "vision", "defaults", "storage", "about"]
+        "general", "models", "defaults", "storage", "about"]
+    # 不存在名为 "vision" 的标签页。
+    assert "vision" not in dialog.pages
     for key, _icon, label in dialog.PAGES:
         dialog.show_page(key)
         assert dialog.current_page() == key
         assert dialog.windowTitle() == label
         assert dialog.tab_buttons[key].isChecked()
+    # show_page("vision") 重定向到 "models"，不会出错。
+    dialog.show_page("vision")
+    assert dialog.current_page() == "models"
     # 工作模式属于工作流：在「任务默认值」页里，而不是「通用」。
     defaults = dialog.pages["defaults"].widget()
     assert defaults.isAncestorOf(dialog.academic_box)
     assert not dialog.pages["general"].widget().isAncestorOf(dialog.academic_box)
-    # 视觉模型和翻译、审校一起在「模型 › 用途」里选；扫描件怎么读是单独一页。
+    # 视觉模型和翻译、审校都在「模型」页；扫描件读取控件也在「模型」页。
     assert dialog.pages["models"].widget().isAncestorOf(dialog.vision_connection_box)
-    assert dialog.pages["vision"].widget().isAncestorOf(dialog.ocr_backend_box)
+    assert dialog.pages["models"].widget().isAncestorOf(dialog.ocr_backend_box)
     dialog.close()
 
 

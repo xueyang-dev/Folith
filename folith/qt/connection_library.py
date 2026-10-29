@@ -59,6 +59,7 @@ class ConnectionLibrary(QWidget):
         dialog._vision_view = adapter.vision_connection_view()
         dialog.vision_connection_box = style.ComboBox()
         self.selectors = {}
+        self.capability_warnings: dict[str, "components.StatusLabel"] = {}
         self.role_group = components.FormGroup()
         self.role_group.add_row(self._group_header(i18n.tr('用途')))
         for role, label in self.ROLES:
@@ -83,6 +84,17 @@ class ConnectionLibrary(QWidget):
                 holder_row.addWidget(hint)
                 self.role_group.add_row(holder)
                 self.vision_modality_hint = hint
+            # #258：模型能力警告（仅 OCR / 仅翻译，不适合当前用途）。
+            cap_warn = components.StatusLabel("", "error")
+            cap_warn.dot.hide()
+            cap_warn.setVisible(False)
+            cap_holder = QWidget()
+            cap_row = QHBoxLayout(cap_holder)
+            cap_row.setContentsMargins(theme_module.SPACE["lg"], 0,
+                                       theme_module.SPACE["md"], 0)
+            cap_row.addWidget(cap_warn)
+            self.role_group.add_row(cap_holder)
+            self.capability_warnings[role] = cap_warn
         layout.addWidget(self.role_group)
         layout.addStretch(1)
         layout.addWidget(dialog._apply_row("models"))
@@ -529,6 +541,8 @@ class ConnectionLibrary(QWidget):
         if role == "vision":
             # 换的不只是连接（select）时，模型本身变了也要重看输入类型。
             box.currentTextChanged.connect(lambda _v: self._update_vision_hint())
+        # #258：换模型时刷新能力警告。
+        box.currentTextChanged.connect(lambda model, r=role: self._update_capability_warning(r, model))
         self.model_selectors[role] = box
         return box
 
@@ -551,6 +565,7 @@ class ConnectionLibrary(QWidget):
         box.blockSignals(False)
         if role == "vision":
             self._update_vision_hint()
+        self._update_capability_warning(role, box.currentText())
 
     def _update_vision_hint(self):
         """「视觉」用途当前选中的模型：目录声明 / 实测结果 / 未知，三态如实显示。
@@ -588,6 +603,21 @@ class ConnectionLibrary(QWidget):
         hint.set_status(i18n.tr('输入类型未知；可在编辑连接里点「测试视觉」实测'), "idle")
         hint.setToolTip("")
         hint.setVisible(True)
+
+    def _update_capability_warning(self, role: str, model: str) -> None:
+        """#258：选中的模型与用途不匹配时，在该行下面显示内联警告。"""
+        warn = self.capability_warnings.get(role)
+        if warn is None:
+            return
+        from .model_capability import capability_warning
+        # 视觉用途的角色名对应 "vision"；翻译 / 审校对应各自名称。
+        role_cat = "vision" if role == "vision" else role
+        message = capability_warning(role_cat, model)
+        if message:
+            warn.set_status(i18n.tr_dynamic(message), "error")
+            warn.setVisible(True)
+        else:
+            warn.setVisible(False)
 
     def select(self, role):
         box = self.selectors.get(role) if role != "vision" else self.dialog.vision_connection_box

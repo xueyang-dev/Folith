@@ -2421,5 +2421,11 @@
   "原格式译文": "Übersetzung im Originalformat",
   "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Schreibt die Übersetzung in die Original-DOCX zurück und behält Formatvorlagen, Tabellen, Fußnoten sowie Kopf- und Fußzeilen bei; nicht Übersetztes wird im Lieferbericht aufgeführt.",
   "思考": "Denken",
-  "关闭思考": "Denken deaktivieren"
+  "关闭思考": "Denken deaktivieren",
+  "读取扫描页": "Gescannte Seiten lesen",
+  "需要能看图并按格式回答的视觉模型": "Erfordert ein Sprachmodell mit Bildverarbeitung und strukturierter Ausgabe",
+  "此模型仅输出纯文本，不能按视觉理解所需的结构化格式返回——扫描页将无法读取。请选择支持图像输入并能按格式回答的视觉语言模型。": "Dieses OCR-Modell gibt nur Klartext aus und kann keine strukturierte JSON-Antwort zurueckgeben — gescannte Seiten schlagen fehl. Waehlen Sie ein Sprachmodell mit Bildverarbeitung.",
+  "此模型是机器翻译专用模型，不支持图像输入——扫描页将无法读取。请选择支持图像输入并能按格式回答的视觉语言模型。": "Dies ist ein maschinelles Uebersetzungsmodell ohne Bildunterstuetzung — gescannte Seiten schlagen fehl. Waehlen Sie ein Sprachmodell mit Bildverarbeitung.",
+  "此模型是 OCR 专用模型，不能生成翻译。请选择通用语言模型。": "Dieses OCR-Modell kann keine Uebersetzungen erstellen. Waehlen Sie ein Allzweck-Sprachmodell.",
+  "此模型是 OCR 专用模型，无法审校译文。请选择通用语言模型。": "Dieses OCR-Modell kann keine Uebersetzungen pruefen. Waehlen Sie ein Allzweck-Sprachmodell."
 }
