@@ -117,8 +117,13 @@ def test_every_locale_catalog_has_the_same_keys():
         assert not extra, f"{code} 多 {len(extra)} 条：{sorted(extra)[:3]}"
 
 
-#: 语言自称在所有界面里都保持原样，是"正确的不翻译"。
-ENDONYMS = {"简体中文", "繁體中文", "日本語", "한국어"}
+#: 语言自称和技术产品名在所有界面里都保持原样，是"正确的不翻译"。
+ENDONYMS = {
+    # language self-names
+    "简体中文", "繁體中文", "日本語", "한국어",
+    # technical product/API names that are language-invariant
+    "OCR API",
+}
 
 
 def test_every_locale_translates_all_strings():

@@ -2431,5 +2431,19 @@
   "这是专用翻译模型，术语抽取、文档画像等需要按格式回答的步骤可能失败；建议选通用模型。": "Ce modèle est dédié à la traduction automatique. Les étapes nécessitant une sortie structurée (extraction de termes, profil de document, etc.) peuvent échouer — utilisez un modèle généraliste.",
   "这是专用翻译模型，审校时需要按格式回答的步骤可能失败；建议选通用模型。": "Ce modèle est dédié à la traduction automatique. Les étapes de révision nécessitant une sortie structurée peuvent échouer — utilisez un modèle généraliste.",
   "沿用翻译连接": "Utiliser la connexion de traduction",
-  "请先选择专用视觉连接（或留空沿用翻译连接）": "Sélectionnez d'abord une connexion de vision dédiée (ou laissez vide pour utiliser la connexion de traduction)"
+  "请先选择专用视觉连接（或留空沿用翻译连接）": "Sélectionnez d'abord une connexion de vision dédiée (ou laissez vide pour utiliser la connexion de traduction)",
+  "OCR 识别": "Reconnaissance OCR",
+  "一步读出版面与文字": "Lit la mise en page et le texte en une seule étape",
+  "先认字，再由文本模型整理": "Reconnaître le texte d'abord, puis un modèle de texte le structure",
+  "列表里只显示能看图并按格式回答的模型": "Seuls les modèles capables de lire des images et de renvoyer une sortie structurée sont affichés",
+  "OCR 专用模型列第一位，通用视觉模型也可用": "Les modèles OCR apparaissent en premier ; les modèles de vision générale fonctionnent aussi",
+  "OCR API": "OCR API",
+  "本机 Tesseract": "Tesseract local",
+  "OCR 引擎": "Moteur OCR",
+  "整理结构": "Structurer le texte",
+  "source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落": "L'étape source_cleanup utilise le modèle de traduction pour mettre en forme le texte OCR en paragraphes structurés",
+  "OCR 模型": "Modèle OCR",
+  "专用翻译": "Traduction seule",
+  "仅 OCR": "OCR seul",
+  "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；建议选通用模型。": "Ce modèle est dédié à la traduction (ex. : Hunyuan-MT) ; les étapes nécessitant des réponses structurées, telles que l'extraction de termes, peuvent échouer. Un modèle généraliste est recommandé."
 }

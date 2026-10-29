@@ -132,7 +132,7 @@ def test_ocr_backend_shows_labels_but_collects_core_values(app):
                   for i in range(dialog.ocr_backend_box.count())]
         values = [dialog.ocr_backend_box.itemData(i)
                   for i in range(dialog.ocr_backend_box.count())]
-        assert values == ["online", "tesseract", "paddle"], values
+        assert values == ["online", "ocr_api", "tesseract", "paddle"], values
         assert all(label != value for label, value in zip(labels, values)), labels
         dialog.ocr_backend_box.setCurrentIndex(values.index("tesseract"))
         assert dialog._collect().ocr_backend == "tesseract"

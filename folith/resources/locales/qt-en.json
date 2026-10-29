@@ -2430,5 +2430,19 @@
   "这是专用翻译模型，术语抽取、文档画像等需要按格式回答的步骤可能失败；建议选通用模型。": "This is a machine-translation-only model. Steps requiring structured output (term extraction, document profile, etc.) may fail — use a general-purpose model instead.",
   "这是专用翻译模型，审校时需要按格式回答的步骤可能失败；建议选通用模型。": "This is a machine-translation-only model. Review steps requiring structured output may fail — use a general-purpose model instead.",
   "沿用翻译连接": "Using translation connection",
-  "请先选择专用视觉连接（或留空沿用翻译连接）": "Select a dedicated vision connection first (or leave blank to use the translation connection)"
+  "请先选择专用视觉连接（或留空沿用翻译连接）": "Select a dedicated vision connection first (or leave blank to use the translation connection)",
+  "OCR 识别": "OCR Recognition",
+  "一步读出版面与文字": "Reads layout and text in one step",
+  "先认字，再由文本模型整理": "Recognise text first, then a text model structures it",
+  "列表里只显示能看图并按格式回答的模型": "Only models that can read images and return structured output are shown",
+  "OCR 专用模型列第一位，通用视觉模型也可用": "OCR-only models appear first; general vision models also work",
+  "OCR API": "OCR API",
+  "本机 Tesseract": "Local Tesseract",
+  "OCR 引擎": "OCR engine",
+  "整理结构": "Structure text",
+  "source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落": "The source_cleanup step uses the translation model to format OCR text into structured paragraphs",
+  "OCR 模型": "OCR model",
+  "专用翻译": "Translation-only",
+  "仅 OCR": "OCR only",
+  "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；建议选通用模型。": "This is a dedicated translation model (e.g. Hunyuan-MT); steps requiring structured replies, such as term extraction, may fail. A general-purpose model is recommended."
 }

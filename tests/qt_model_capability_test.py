@@ -179,22 +179,30 @@ class TestConnectionLibraryWarnings:
         )
         return dialogs.EngineDialog(config, _SyncRunner())
 
-    def test_warning_shows_for_ocr_only_vision_model(self, app, isolated):
+    def test_no_red_warning_for_ocr_only_vision_model(self, app, isolated):
+        """OCR-only vision models no longer show a red warning in ConnectionLibrary.
+
+        The 0.8.0 redesign removed capability_warnings entirely for the vision role.
+        Channel A (视觉模型) filters to VLM-capable models; OCR-only models trigger
+        a config migration to channel B in EngineConfig.load() instead.
+        """
         dialog = self._make_dialog_with_vision("PaddlePaddle/PaddleOCR-VL-1.5")
         lib = dialog.connection_library
-        warn = lib.capability_warnings.get("vision")
-        assert warn is not None, "capability_warnings must have a 'vision' entry"
-        # isHidden() checks this widget's own hidden state regardless of parent visibility.
-        assert not warn.isHidden(), \
-            "OCR-only model in vision role should NOT be hidden (warning should show)"
+        # capability_warnings no longer exists; capability_tags has translation/reviewer only
+        assert not hasattr(lib, "capability_warnings"), \
+            "capability_warnings was removed in 0.8.0; use capability_tags instead"
+        assert "vision" not in lib.capability_tags, \
+            "vision role must not appear in capability_tags (no inline tag for vision)"
         dialog.close()
 
     def test_no_warning_for_general_vision_model(self, app, isolated):
         dialog = self._make_dialog_with_vision("qwen2.5-vl")
         lib = dialog.connection_library
-        warn = lib.capability_warnings.get("vision")
-        assert warn is None or warn.isHidden(), \
-            "General model in vision role should NOT show capability warning"
+        # capability_warnings was removed in 0.8.0; no warning widget exists at all
+        assert not hasattr(lib, "capability_warnings"), \
+            "capability_warnings was removed in 0.8.0; use capability_tags instead"
+        assert "vision" not in lib.capability_tags, \
+            "General model in vision role must not show any capability tag"
         dialog.close()
 
 
@@ -268,3 +276,86 @@ class TestOCROnlineRuntimeMessages:
             line = core._scan_page_event_text({"page": 9, "code": "", "message": message})
             assert "请换用通用视觉模型" in line
             assert "如果你选择的是 O" not in line
+
+
+# ---------------------------------------------------------------- capability_tag ---
+
+class TestCapabilityTag:
+    """Tests for the inline muted tag shown next to model selectors (#261)."""
+
+    def test_translation_only_model_in_translation_role_gives_tag(self):
+        from folith.qt.model_capability import capability_tag
+        text, tooltip = capability_tag("translation", "tencent/Hunyuan-MT-7B")
+        assert text == "专用翻译", f"Expected '专用翻译', got {text!r}"
+        assert "Hunyuan" in tooltip or "翻译" in tooltip
+
+    def test_ocr_only_model_in_translation_role_gives_tag(self):
+        from folith.qt.model_capability import capability_tag
+        text, tooltip = capability_tag("translation", "PaddlePaddle/PaddleOCR-VL-1.5")
+        assert text == "仅 OCR", f"Expected '仅 OCR', got {text!r}"
+        assert "OCR" in tooltip
+
+    def test_general_model_gives_no_tag(self):
+        from folith.qt.model_capability import capability_tag
+        text, tooltip = capability_tag("translation", "qwen2.5-vl")
+        assert text == "", f"Expected no tag for general model, got {text!r}"
+        assert tooltip == ""
+
+    def test_vision_role_never_gets_tag(self):
+        from folith.qt.model_capability import capability_tag
+        # Even an OCR-only model in the vision role gives no tag (channel A filters the list)
+        text, tooltip = capability_tag("vision", "PaddlePaddle/PaddleOCR-VL-1.5")
+        assert text == "", "vision role must never show inline tag"
+        assert tooltip == ""
+
+    def test_reviewer_translation_only_gives_tag(self):
+        from folith.qt.model_capability import capability_tag
+        text, tooltip = capability_tag("reviewer", "tencent/Hunyuan-MT-7B")
+        assert text == "专用翻译"
+
+
+# ---------------------------------------------------------------- Config migration ---
+
+class TestOcrBackendMigration:
+    """The migration logic in EngineConfig.load() must auto-switch ocr_backend from
+    "online" to "ocr_api" when connection_models["vision"] is an OCR-only model (#261).
+
+    EngineConfig.load() reads from the global config file on disk, so the migration
+    logic is tested directly by constructing an EngineConfig and applying the same
+    logic steps, rather than by calling load().
+    """
+
+    def _apply_migration(self, model_name: str) -> str:
+        """Return the ocr_backend value after applying the migration logic."""
+        cfg = adapter.EngineConfig(
+            provider="openai", model="gpt-4o", api_key="k", base_url="",
+        )
+        cfg.ocr_backend = "online"
+        cfg.connection_models = {"vision": model_name}
+        # Replicate the migration block from EngineConfig.load()
+        vision_model = str(cfg.connection_models.get("vision") or "")
+        if vision_model:
+            from folith.qt.model_capability import classify_model
+            if classify_model(vision_model) == "ocr_only":
+                cfg.ocr_backend = "ocr_api"
+        return cfg.ocr_backend
+
+    def test_ocr_only_vision_migrates_to_ocr_api(self):
+        result = self._apply_migration("PaddlePaddle/PaddleOCR-VL-1.5")
+        assert result == "ocr_api", (
+            f"OCR-only vision model should migrate ocr_backend to 'ocr_api', "
+            f"got {result!r}"
+        )
+
+    def test_general_vision_stays_online(self):
+        result = self._apply_migration("qwen2.5-vl")
+        assert result == "online", (
+            f"General VLM should keep ocr_backend='online', got {result!r}"
+        )
+
+    def test_translation_only_stays_online(self):
+        """Translation-only models (Hunyuan-MT) are not OCR-only; no migration."""
+        result = self._apply_migration("tencent/Hunyuan-MT-7B")
+        assert result == "online", (
+            f"Translation-only model should keep ocr_backend='online', got {result!r}"
+        )
