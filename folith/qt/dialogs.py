@@ -932,7 +932,7 @@ class EngineDialog(QDialog):
                 self.ocr_engine_picker.blockSignals(True)
                 self.ocr_engine_picker.set_value(engine)
                 self.ocr_engine_picker.blockSignals(False)
-                self.ocr_language_row.setVisible(engine == "tesseract")
+            self.ocr_language_row.setVisible(not is_vision and backend == "tesseract")
             # 本机 Tesseract 不用 API 连接：模型行和它的说明都不显示。
             uses_model = is_vision or backend != "tesseract"
             self._scan_model_row.setVisible(uses_model)

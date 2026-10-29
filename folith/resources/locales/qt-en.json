@@ -2439,6 +2439,7 @@
   "OCR API": "OCR API",
   "本机 Tesseract": "Local Tesseract",
   "OCR 引擎": "OCR engine",
+  "整理结构模型": "Text structuring model",
   "整理结构": "Structure text",
   "source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落": "The source_cleanup step uses the translation model to format OCR text into structured paragraphs",
   "OCR 模型": "OCR model",

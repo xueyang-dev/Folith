@@ -2439,6 +2439,7 @@
   "OCR API": "OCR API",
   "本机 Tesseract": "本机 Tesseract",
   "OCR 引擎": "OCR 引擎",
+  "整理结构模型": "整理结构模型",
   "整理结构": "整理结构",
   "source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落": "source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落",
   "OCR 模型": "OCR 模型",

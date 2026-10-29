@@ -581,9 +581,12 @@ class ConnectionLibrary(QWidget):
             if role == "vision" and backend == "online":
                 from .model_capability import classify_model
                 modalities = profile.get("model_modalities") or {}
+                chosen = self.role_models.get(role, "")
+                # Preserve an existing text-only selection so its warning stays visible.
                 models = [model for model in models
                           if classify_model(model) == "general"
-                          and (not modalities.get(model) or "image" in modalities[model])]
+                          and (model == chosen or not modalities.get(model)
+                               or "image" in modalities[model])]
                 if not models:
                     from folith.model_connections import VISION_UNCONFIGURED
                     box.blockSignals(False)
