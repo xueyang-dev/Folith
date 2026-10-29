@@ -648,6 +648,12 @@ class TaskSetupPanel(QWidget):
         self._group_widgets: dict[str, QWidget] = {}
         self._delivery_groups: dict[str, "SettingsGroup"] = {}
         self._loading = False
+        #: 用户已主动修改过的字段组：``"delivery"`` 和 ``"strategy"``。
+        #: 同一任务的后台刷新遇到脏字段时跳过对应控件，避免覆盖未提交的编辑。
+        #: 切换到不同任务时在 ``load()`` 里清零。
+        self._dirty: set[str] = set()
+        #: ``_dirty`` 所属的任务 ID（切任务时用来判断是否要清零）。
+        self._dirty_job: str = ""
         # 模式成本预估：原文的段数与字符数在后台读一次（每个任务一次）。
         self._size: dict = {}
         self._size_job = ""
@@ -1623,19 +1629,34 @@ class TaskSetupPanel(QWidget):
                     box.setToolTip(i18n.tr('仅 DOCX 任务可用：需要原 DOCX 文件作为写回基础。'))
 
     def load(self, view: dict) -> None:
-        """按视图回填控件（adapter.task_setup_view()）。"""
+        """按视图回填控件（adapter.task_setup_view()）。
+
+        **脏字段保护**：用户在面板上主动修改过的字段组（``"strategy"``、
+        ``"delivery"``）被记录在 ``_dirty`` 集合里；同一任务的后台轮询调用
+        到这里时，脏字段组**不会**被视图数据覆盖，已修改的控件状态保持不变。
+        切换到不同任务时 ``_dirty`` 被清零，面板做完整回填。
+
+        显式触发的刷新（添加术语库 / 参考文件 / 风格档等）同样会调用这里，
+        但它们只改了术语库 / 参考文件 / 风格字段——这些字段不受脏保护，
+        会正确反映最新保存值；脏的交付 / 策略选择仍然保留。
+        """
+        job_id = str(view.get("job_id") or "")
+        # 切换任务时清零脏状态，确保新任务得到完整回填。
+        if job_id != self._dirty_job:
+            self._dirty.clear()
+            self._dirty_job = job_id
         self._view = dict(view or {})
         self._sync_profile_row()
-        self._request_source_size(str(self._view.get("job_id") or ""))
+        self._request_source_size(job_id)
         # 原文结构（#27，只读）：结构在后台线程本地解析，按源文件身份缓存。
-        self.source_section.load(str(self._view.get("job_id") or ""),
+        self.source_section.load(job_id,
                                   str(self._view.get("filename") or ""),
                                   self._view)
         self._loading = True
         try:
             # 左栏：这份文档本身（预览、页数、需要注意的地方）。
             self.overview.set_document(
-                str(self._view.get("job_id") or ""), str(self._view.get("filename") or ""),
+                job_id, str(self._view.get("filename") or ""),
                 source_lang=str(self._view.get("source_lang") or ""))
             # 文件名已经在工作台头部，这里只说"这一步要做什么"。
             self.title_label.setText(i18n.tr('译前准备'))
@@ -1677,27 +1698,31 @@ class TaskSetupPanel(QWidget):
                 self.literature_value.setText(i18n.tr('未添加（可选）'))
             self.literature_remove_button.setVisible(bool(literature))
 
-            self.understanding_box.setChecked(bool(strategy.get("enable_understanding")))
-            self.auto_term_box.setChecked(bool(strategy.get("auto_term")))
-            self.tm_box.setChecked(bool(strategy.get("use_tm")))
-            self.review_box.setChecked(bool(strategy.get("enable_review")))
-            self.strict_terms_box.setChecked(
-                bool(strategy.get("strict_terminology_governance")))
-            self.knowledge_box.setChecked(bool(strategy.get("knowledge_feedback", True)))
-            self._set_combo_data(self.concurrency_box,
-                                 int(strategy.get("translation_concurrency") or 4))
-            self.seg_mode_seg.set_value(
-                str(strategy.get("segmentation_mode") or "sentence"))
-            self.batch_seg.set_value(str(strategy.get("batch_profile") or "保守"))
-            self.mode_selector.set_value(str(self._view.get("strategy_preset") or ""))
+            # 策略开关：用户已主动修改过时跳过，避免后台刷新覆盖未提交的编辑。
+            if "strategy" not in self._dirty:
+                self.understanding_box.setChecked(bool(strategy.get("enable_understanding")))
+                self.auto_term_box.setChecked(bool(strategy.get("auto_term")))
+                self.tm_box.setChecked(bool(strategy.get("use_tm")))
+                self.review_box.setChecked(bool(strategy.get("enable_review")))
+                self.strict_terms_box.setChecked(
+                    bool(strategy.get("strict_terminology_governance")))
+                self.knowledge_box.setChecked(bool(strategy.get("knowledge_feedback", True)))
+                self._set_combo_data(self.concurrency_box,
+                                     int(strategy.get("translation_concurrency") or 4))
+                self.seg_mode_seg.set_value(
+                    str(strategy.get("segmentation_mode") or "sentence"))
+                self.batch_seg.set_value(str(strategy.get("batch_profile") or "保守"))
+                self.mode_selector.set_value(str(self._view.get("strategy_preset") or ""))
 
-            self._delivery = dict(self._view.get("delivery") or {})
-            for key, box in self._delivery_boxes.items():
-                box.setChecked(bool(self._delivery.get(key)))
-            self._normalise_delivery_child()
-            self.delivery_seg.set_value(
-                str(self._view.get("delivery_preset") or "custom"))
-            self._sync_delivery_preset_label()
+            # 交付内容：用户已主动修改过时跳过，避免后台刷新覆盖未提交的勾选。
+            if "delivery" not in self._dirty:
+                self._delivery = dict(self._view.get("delivery") or {})
+                for key, box in self._delivery_boxes.items():
+                    box.setChecked(bool(self._delivery.get(key)))
+                self._normalise_delivery_child()
+                self.delivery_seg.set_value(
+                    str(self._view.get("delivery_preset") or "custom"))
+                self._sync_delivery_preset_label()
             self._set_combo_data(self.theory_box, self._view.get("translation_theory"))
 
             is_pdf = bool(self._view.get("is_pdf"))
@@ -1754,6 +1779,7 @@ class TaskSetupPanel(QWidget):
         preset = self._preset_config(key)
         if not preset:
             return
+        self._dirty.add("strategy")  # 用户主动选了翻译模式
         self._loading = True
         try:
             self._apply_strategy_config(preset)
@@ -1788,6 +1814,7 @@ class TaskSetupPanel(QWidget):
         if not preset:
             self._sync_strategy_note()
             return
+        self._dirty.add("strategy")  # 用户主动恢复了策略默认值
         self._loading = True
         try:
             self._apply_strategy_config(preset)
@@ -1801,6 +1828,7 @@ class TaskSetupPanel(QWidget):
         config = dict((self._choices.get("delivery_preset_configs") or {}).get(key) or {})
         if not config:
             return
+        self._dirty.add("delivery")  # 用户主动选了交付方案预设
         self._loading = True
         try:
             self._apply_delivery_config(config)
@@ -1840,6 +1868,7 @@ class TaskSetupPanel(QWidget):
         box = self._delivery_boxes.get(key)
         if box is None:
             return
+        self._dirty.add("delivery")  # 用户手动勾选了交付项
         self._delivery[key] = bool(box.isChecked())
         self._loading = True
         try:
@@ -1987,6 +2016,7 @@ class TaskSetupPanel(QWidget):
     def _on_advanced_changed(self, *_args) -> None:
         if self._loading:
             return
+        self._dirty.add("strategy")  # 用户手动改了策略开关或下拉框
         self._sync_strategy_note()
 
     def _on_understanding_changed(self, *_args) -> None:

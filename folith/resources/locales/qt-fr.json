@@ -2419,5 +2419,7 @@
   "仅 DOCX 任务可用：在原 DOCX 文件上写回译文，保留样式、表格与页眉页脚。": "Disponible uniquement pour les tâches DOCX : réécrit la traduction dans le DOCX d'origine en conservant styles, tableaux, en-têtes et pieds de page.",
   "仅 DOCX 任务可用：需要原 DOCX 文件作为写回基础。": "Disponible uniquement pour les tâches DOCX : le fichier DOCX d'origine sert de base à la réécriture.",
   "原格式译文": "Traduction au format d'origine",
-  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Réécrit la traduction dans le DOCX d'origine en conservant styles, tableaux, notes, en-têtes et pieds de page ; le contenu non traduit figure dans le rapport de livraison."
+  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Réécrit la traduction dans le DOCX d'origine en conservant styles, tableaux, notes, en-têtes et pieds de page ; le contenu non traduit figure dans le rapport de livraison.",
+  "思考": "Réflexion",
+  "关闭思考": "Désactiver la réflexion"
 }

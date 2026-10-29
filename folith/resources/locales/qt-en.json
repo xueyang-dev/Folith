@@ -2418,5 +2418,7 @@
   "仅 DOCX 任务可用：在原 DOCX 文件上写回译文，保留样式、表格与页眉页脚。": "Available for DOCX tasks only: writes the translation back into the original DOCX, keeping styles, tables, headers and footers.",
   "仅 DOCX 任务可用：需要原 DOCX 文件作为写回基础。": "Available for DOCX tasks only: needs the original DOCX file as the write-back base.",
   "原格式译文": "Original-format translation",
-  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Writes the translation back into the original DOCX, keeping styles, tables, footnotes, headers and footers; anything left untranslated is listed in the delivery report."
+  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Writes the translation back into the original DOCX, keeping styles, tables, footnotes, headers and footers; anything left untranslated is listed in the delivery report.",
+  "思考": "Thinking",
+  "关闭思考": "Disable thinking"
 }

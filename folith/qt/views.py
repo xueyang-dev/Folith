@@ -5377,8 +5377,15 @@ class WorkbenchView(QWidget):
         return self._task_started()
 
     def set_setup(self, view: dict | None) -> None:
-        """设置「译前准备」的数据（``adapter.task_setup_view``），并填进面板。"""
-        self._setup_view = dict(view) if view else None
+        """设置「译前准备」的数据（``adapter.task_setup_view``），并填进面板。
+
+        数据与上次完全相同时跳过 ``setup_panel.load()``，避免后台轮询在用户
+        正在编辑准备面板时把控件重置回已保存的值。
+        """
+        new_view = dict(view) if view else None
+        if new_view == self._setup_view:  # 数据无变化，保留面板现状
+            return
+        self._setup_view = new_view
         if self._setup_view is not None:
             self.setup_panel.load(self._setup_view)
 

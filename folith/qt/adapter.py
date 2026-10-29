@@ -5215,7 +5215,7 @@ def reasoning_effort_options(provider: str, model: str) -> tuple[str, ...]:
 
 
 # 只有实测过端点确实认得的模型才出现在这里，所以界面上不会出现"选了但没生效"的开关。
-THINKING_MODE_LABELS = {"thinking_disabled_vllm": "关闭思考", "thinking_disabled": "关闭思考"}
+THINKING_MODE_LABELS = {"thinking_disabled_vllm": "关闭思考", "thinking_disabled": "关闭思考（DeepSeek 系）"}
 
 
 def thinking_control_options(provider: str, model: str) -> tuple[str, ...]:
