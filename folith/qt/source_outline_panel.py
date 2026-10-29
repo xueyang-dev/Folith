@@ -302,11 +302,19 @@ class SourceOutlineSection(QWidget):
             return
         # Try the shared OutlineLoader first.
         payload = outline_loader().request(self._job_id, self._state)
-        if payload is not None and not payload.get("pending"):
-            # payload["outline"] is the native outline; apply corrections here.
-            self._apply_outline(payload["outline"])
-            self.scope_button.setEnabled(True)
-            return
+        if payload is not None:
+            if payload.get("failed"):
+                # The background parse failed; surface the no-structure state
+                # and keep the scope button disabled.  Do NOT re-request: the
+                # failure marker prevents re-queuing.
+                self.section.set_summary(i18n.tr('没有可解析的结构'))
+                self._set_status(i18n.tr('这个文件本地读不出结构；不影响导入与翻译。'))
+                return
+            if not payload.get("pending"):
+                # payload["outline"] is the native outline; apply corrections here.
+                self._apply_outline(payload["outline"])
+                self.scope_button.setEnabled(True)
+                return
         # Fallback: legacy PreviewLoader.
         source = adapter.source_path(self._job_id)
         outline = loader().request(self._job_id, source, self._filename, priority=10)

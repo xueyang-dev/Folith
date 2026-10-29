@@ -1184,6 +1184,13 @@ class MainWindow(QMainWindow):
             timing = _PhaseLog(self._log, "import_done")
             created = [item for item in results if item.created]
             failed = [item for item in results if not item.ok]
+            # A re-import replaces the source bytes and deletes the sidecar
+            # (commands.import_document).  Drop the old cached outline so the
+            # next open_job triggers a fresh parse instead of returning stale
+            # data from the in-memory OutlineLoader cache.
+            for item in results:
+                if item.ok and not item.created:
+                    _outline_loader().invalidate(item.job_id)
             with timing.phase("refresh_home"):
                 self.refresh_home()
             if on_result is not None:
@@ -1512,6 +1519,9 @@ class MainWindow(QMainWindow):
             except Exception as exc:  # noqa: BLE001
                 refused.append(f"{name}：{type(exc).__name__}: {exc}")
                 continue
+            # Drop the in-memory outline cache so a re-import of the same
+            # filename cannot return stale outline data from a deleted task.
+            _outline_loader().invalidate(item)
             deleted.append(name)
             if self._current_job_id == item:
                 self._current_job_id = ""
@@ -1545,6 +1555,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._failure(i18n.tr('删除失败'), f"{type(exc).__name__}: {exc}", task=False)
             return
+        _outline_loader().invalidate(job_id)
         if self._current_job_id == job_id:
             self.show_home()
         self.refresh_home()

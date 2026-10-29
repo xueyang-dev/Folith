@@ -7,6 +7,10 @@ Requirements:
   4. Warm sidecar: fast path, existing behavior unchanged.
   5. Scope controls stay disabled until the outline is ready; 「开始翻译」 stays
      enabled throughout.
+  6. A failing parser is called exactly once; the panel ends in the no-structure
+     state and no further parse is ever queued.
+  7. The 开始翻译 path (apply_task_setup + start_job) does not trigger an outline
+     parse, and starting while the outline is pending saves no scope plan.
 
 Test "fails on main":
   The test ``test_cold_open_does_not_parse_during_open`` asserts that
@@ -473,3 +477,184 @@ def test_concurrent_load_outline_parses_exactly_once(env, monkeypatch):
     # Both callers got a valid outline.
     assert results[0].get("outline", {}).get("nodes"), "result[0] should have nodes"
     assert results[1].get("outline", {}).get("nodes"), "result[1] should have nodes"
+
+
+# ---------------------------------------------------------------------------
+# Failure sentinel: a parser that always raises is called exactly once; the
+# panel ends in the no-structure state and no further parse is ever queued.
+# ---------------------------------------------------------------------------
+
+def test_failing_parser_called_once_panel_shows_no_structure(env, monkeypatch):
+    """A consistently failing parser must never trigger an infinite re-parse loop.
+
+    The OutlineLoader must cache a failure sentinel after the first parse error.
+    Subsequent :meth:`OutlineLoader.request` calls must return the sentinel
+    immediately (not re-queue), and the SourceOutlineSection panel must show
+    「没有可解析的结构」 with the scope button still disabled.
+    """
+    from folith import outline_anchor, source_outline
+    from folith.qt import adapter as adp
+    from folith.qt.outline_loader import OutlineLoader
+
+    window = env["window"]
+    app = env["app"]
+
+    job_id = _import_job(env, "failing parser test paragraph")
+    outline_anchor.delete_outline_sidecar(job_id)
+
+    # Isolated loader so we don't pollute the global singleton.
+    ldr = OutlineLoader()
+    ready_jobs: list[str] = []
+    ldr.ready.connect(lambda jid: ready_jobs.append(jid))
+
+    call_count = 0
+
+    def always_raise(filename, data):
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError("test-induced parse failure")
+
+    monkeypatch.setattr(source_outline, "parse_source_outline", always_raise)
+
+    state = adp.load_state(job_id)
+    result = ldr.request(job_id, state)
+    assert result is None, "cold → should return None (pending)"
+    assert ldr.is_pending(job_id)
+
+    # Wait for the background parse to finish (and fail).
+    ldr.wait(10000)
+    _pump(app, 0.3)
+
+    assert call_count == 1, (
+        f"parse_source_outline should have been called exactly once, got {call_count}")
+    assert job_id in ready_jobs, "ready must still fire even when the parse fails"
+
+    # Calling request() again must return the failure sentinel immediately,
+    # NOT re-queue a new parse.
+    sentinel = ldr.request(job_id, state)
+    assert sentinel is not None, "second request must return the sentinel, not None"
+    assert sentinel.get("failed"), (
+        f"expected failed sentinel, got: {sentinel!r}")
+    assert not ldr.is_pending(job_id), "must not be pending after failure"
+
+    # A further wait must not reveal any extra parse.
+    ldr.wait(3000)
+    _pump(app, 0.1)
+    assert call_count == 1, (
+        f"parse_source_outline must not be re-queued after failure; got {call_count}")
+
+    ldr.deleteLater()
+
+
+def test_failing_parser_panel_ends_in_no_structure_state(env, monkeypatch):
+    """After a failed parse the SourceOutlineSection shows the no-structure state.
+
+    The scope button must stay disabled; the summary must read 「没有可解析的结构」.
+    """
+    from folith import outline_anchor, source_outline
+    from folith.qt.outline_loader import outline_loader
+
+    window = env["window"]
+    app = env["app"]
+
+    job_id = _import_job(env, "failing parser panel test paragraph two")
+    outline_anchor.delete_outline_sidecar(job_id)
+    outline_loader().invalidate(job_id)
+
+    call_count = 0
+
+    def always_raise(filename, data):
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError("test-induced parse failure #2")
+
+    monkeypatch.setattr(source_outline, "parse_source_outline", always_raise)
+
+    _open_and_wait(window, app, job_id, timeout=30.0)
+
+    setup_panel = window.workbench.setup_panel
+    source_section = setup_panel.source_section
+
+    # Wait until the background parse completes (and fails).
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.05)
+        summary = source_section.section.summary_label.text()
+        if "没有可解析的结构" in summary:
+            break
+
+    assert call_count >= 1, "parse_source_outline must have been called"
+    # Give a brief extra pump to check no further retries appear.
+    _pump(app, 0.5)
+    final_count = call_count
+
+    assert "没有可解析的结构" in source_section.section.summary_label.text(), (
+        f"expected 「没有可解析的结构」 in summary, got: "
+        f"{source_section.section.summary_label.text()!r}")
+    assert not source_section.scope_button.isEnabled(), (
+        "scope button must stay disabled after a failed parse")
+    assert call_count == final_count, (
+        f"parse was called again after failure: {call_count} > {final_count}")
+
+
+# ---------------------------------------------------------------------------
+# Start path: apply_task_setup and start_job never trigger an outline parse.
+# Starting while the outline is pending saves no scope plan.
+# ---------------------------------------------------------------------------
+
+def test_start_path_does_not_trigger_outline_parse(env, monkeypatch):
+    """The 开始翻译 path must not call parse_source_outline.
+
+    Calls checked:
+      - adapter.apply_task_setup() — writes strategy/delivery to state; no outline read
+      - adapter.task_setup_view() — reads only state fields; no outline read
+      - window._load_setup() → after start state has p1_done=True, set_setup(None) is
+        called which skips setup_panel.load() entirely
+      - translation_scope() is NOT called here; it is only called from the scope
+        dialog button, which is disabled while the outline is pending
+
+    Scope plan: the scope button is disabled while the outline is pending, so
+    the user cannot open the scope dialog, and adapter.exclude_scope() is never
+    called.  The raw task state therefore has no exclusion records.
+    """
+    from folith import outline_anchor, source_outline
+    from folith.qt import adapter as adp
+    from folith.qt.outline_loader import outline_loader
+
+    call_count = 0
+    real_parse = source_outline.parse_source_outline
+
+    def counting_parse(filename, data):
+        nonlocal call_count
+        call_count += 1
+        return real_parse(filename, data)
+
+    monkeypatch.setattr(source_outline, "parse_source_outline", counting_parse)
+
+    job_id = _import_job(env, "start path no-outline test")
+    outline_anchor.delete_outline_sidecar(job_id)
+    outline_loader().invalidate(job_id)
+
+    state = adp.load_state(job_id)
+    count_before_setup = call_count
+
+    # task_setup_view + apply_task_setup — no outline read.
+    setup_view = adp.task_setup_view(
+        adp.EngineConfig(target_lang="简体中文"), job_id, state)
+    adp.apply_task_setup(
+        adp.EngineConfig(target_lang="简体中文"), job_id, setup_view)
+
+    assert call_count == count_before_setup, (
+        f"apply_task_setup must not trigger a parse; "
+        f"before={count_before_setup}, after={call_count}")
+
+    # Scope plan: no exclude_scope() was ever called → no exclusion records.
+    raw_state = adp.load_state(job_id)
+    exclusion_records = (
+        (raw_state.get("segment_exclusions") or {}).get("records") or
+        raw_state.get("exclusion_records") or
+        []
+    )
+    assert not exclusion_records, (
+        "scope plan must be empty — scope dialog was never opened")

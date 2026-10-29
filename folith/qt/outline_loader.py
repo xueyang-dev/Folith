@@ -150,8 +150,14 @@ class OutlineLoader(QObject):
     def bump_generation(self, job_id: str) -> None:
         """Increment the generation for *job_id*, invalidating any pending result.
 
-        Call when the user switches to a different task so a late result from
-        the previous parse does not land on the new task.
+        Not called on every job switch: :meth:`_on_finished` guards stale
+        results via the generation token, and :meth:`_on_outline_ready` in the
+        window additionally checks ``_current_job_id``.  Call this when you
+        want to force a fresh parse for a job while it is still the active
+        one — for example, after replacing the source file in-place without
+        going through the normal re-import path.  For the standard re-import
+        and delete flows, :meth:`invalidate` is the right call (it also drops
+        the cache entry).
         """
         job_id = str(job_id or "")
         if not job_id:
@@ -175,16 +181,27 @@ class OutlineLoader(QObject):
             return self._pending.get(job_id) == gen
 
     def _on_finished(self, job_id: str, generation: int, raw: dict | None) -> None:
-        """Main-thread callback: store the result and emit ``ready``."""
+        """Main-thread callback: store the result and emit ``ready``.
+
+        When the parse failed (``raw`` is ``None`` or still pending after the
+        worker ran), we cache a ``{"failed": True}`` marker so that subsequent
+        :meth:`request` calls return it immediately instead of re-queuing a new
+        parse that would fail again, creating an infinite loop.
+        """
         with self._lock:
             current_gen = self._generations.get(job_id, 0)
             self._pending.pop(job_id, None)
             if generation != current_gen:
                 return  # stale result for a job the user already left
             if raw is not None and not raw.get("pending"):
-                self._cache[job_id] = (generation, raw)
-                while len(self._cache) > self.LIMIT:
-                    self._cache.pop(next(iter(self._cache)))
+                entry = raw
+            else:
+                # Parse failed or returned a still-pending payload; store a
+                # failure sentinel so we never re-queue for this generation.
+                entry = {"failed": True}
+            self._cache[job_id] = (generation, entry)
+            while len(self._cache) > self.LIMIT:
+                self._cache.pop(next(iter(self._cache)))
         self.ready.emit(job_id)
 
     def wait(self, msecs: int = 5000) -> bool:

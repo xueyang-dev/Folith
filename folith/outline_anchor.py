@@ -287,19 +287,24 @@ def load_outline(job_id: str, state: dict | None = None, *,
     if no_parse:
         return _pending_payload(reason)
 
-    # Serialise concurrent cold parses for the same job: first caller parses;
-    # later callers wait, then read the sidecar the first caller wrote.
-    with _PARSE_EVENTS_LOCK:
-        waiting_event = _PARSE_EVENTS.get(job_id)
-        if waiting_event is None:
-            my_event = threading.Event()
-            _PARSE_EVENTS[job_id] = my_event
-        else:
-            my_event = None  # another thread is already parsing
-
-    if my_event is None:
-        # Wait for the other parse to finish, then read the warm sidecar.
-        waiting_event.wait()
+    # Serialise concurrent cold parses for the same job.
+    #
+    # Loop invariant: after the loop body executes ``break``, ``my_event`` is
+    # registered in ``_PARSE_EVENTS`` under the lock, and this thread is the
+    # designated parser.  When we fall through (waiter path) we re-check the
+    # sidecar after the event fires; if it is still cold we loop and try to
+    # take the parser role ourselves.  The ``finally`` below always sets
+    # ``my_event`` before removing it, so a waiter is never left blocked on a
+    # stale event.
+    while True:
+        with _PARSE_EVENTS_LOCK:
+            existing = _PARSE_EVENTS.get(job_id)
+            if existing is None:
+                my_event = threading.Event()
+                _PARSE_EVENTS[job_id] = my_event
+                break  # we are the designated parser
+        # Another thread holds the parse slot; wait and re-check.
+        existing.wait()
         sidecar2 = _read_sidecar(job_id)
         if sidecar2 is not None:
             cached_version2 = int(sidecar2.get("parser_version") or 0)
@@ -314,11 +319,8 @@ def load_outline(job_id: str, state: dict | None = None, *,
                     "parsed": False,
                     "invalidated": "",
                 }
-        # Sidecar still absent or wrong digest after waiting — fall through and
-        # parse ourselves (should not happen in normal operation).
-        with _PARSE_EVENTS_LOCK:
-            my_event = threading.Event()
-            _PARSE_EVENTS[job_id] = my_event
+        # Sidecar still absent or stale after waiting (the other parse may have
+        # failed).  Loop and compete for the parser slot again.
 
     try:
         parse = parser or _source_outline.parse_source_outline
