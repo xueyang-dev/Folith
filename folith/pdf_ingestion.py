@@ -139,6 +139,85 @@ def _is_full_page_image(block: Dict[str, Any]) -> bool:
     return area >= width * height * FULL_PAGE_IMAGE_AREA
 
 
+def page_text_dict(page) -> Dict[str, Any]:
+    """Return ``page.get_text("dict")`` without PNG-encoding embedded images.
+
+    PyMuPDF's ``TEXTFLAGS_DICT`` includes ``TEXT_PRESERVE_IMAGES``, which
+    re-encodes every image block to PNG (~75 ms/page for large embedded
+    images).  This helper strips that flag so text extraction takes ~3 ms/page,
+    then splices lightweight image-block stubs back from
+    ``page.get_image_info()`` (~0.2 ms/page) to preserve the original block
+    list structure.
+
+    Every consumer that uses the result only needs ``type`` and ``bbox`` for
+    image blocks (type 1); none reads image bytes from the dict.  Block
+    positions in the list are identical to the full dict so
+    ``"p{n}-b{raw_number}"`` block IDs produced by :func:`extract_layout_blocks`
+    are unchanged.
+
+    Falls back to ``page.get_text("dict")`` (with image bytes) for any page
+    where the splice cannot be verified, so callers are never left with an
+    inconsistent block list.
+    """
+    try:
+        flags = fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES
+        text_dict = page.get_text("dict", flags=flags)
+        image_info = page.get_image_info()
+
+        if not image_info:
+            return text_dict
+
+        text_blocks: List[Dict[str, Any]] = list(text_dict.get("blocks") or [])
+        n_img = len(image_info)
+        total = len(text_blocks) + n_img
+
+        # Build image-block stubs keyed by their original block index
+        # ("number" from get_image_info matches the block's position in the
+        # full get_text("dict") result).
+        #
+        # get_image_info() gives the raw placement rect which may extend
+        # slightly outside the page (no CropBox clipping).  page.get_text()
+        # clips to the CropBox.  Intersect with page.rect so bbox values are
+        # identical to what the full dict returns.
+        page_rect = page.rect
+        image_by_number: Dict[int, Dict[str, Any]] = {}
+        for info in image_info:
+            num = info.get("number")
+            if num is None:
+                return page.get_text("dict")  # missing "number" — fall back
+            num = int(num)
+            if num in image_by_number:
+                return page.get_text("dict")  # duplicate — fall back
+            raw_bbox = info["bbox"]
+            # Clip to CropBox to match the coordinates returned by get_text("dict").
+            clipped = fitz.Rect(raw_bbox) & page_rect
+            image_by_number[num] = {"type": 1, "number": num, "bbox": tuple(clipped)}
+
+        # Sanity: all image block indices must fit within [0, total)
+        if image_by_number and max(image_by_number) >= total:
+            return page.get_text("dict")
+
+        # Merge: image stubs at their original positions; text blocks fill gaps
+        result: List[Optional[Dict[str, Any]]] = [None] * total
+        for num, stub in image_by_number.items():
+            result[num] = stub
+
+        text_iter = iter(text_blocks)
+        for i in range(total):
+            if result[i] is None:
+                tb = next(text_iter, None)
+                if tb is None:
+                    return page.get_text("dict")  # ran out of text blocks — fall back
+                result[i] = tb
+
+        if any(r is None for r in result):
+            return page.get_text("dict")  # unfilled slot — fall back
+
+        return {**text_dict, "blocks": result}
+    except Exception:  # noqa: BLE001
+        return page.get_text("dict")
+
+
 def _page_is_ocr_overlay(page_dict: Dict[str, Any]) -> bool:
     """这一页的文字是不是盖在扫描图上的隐形 OCR 层。"""
     total = invisible = 0
@@ -368,7 +447,7 @@ def build_page_dict_cache(file_bytes: bytes) -> List[Tuple[Dict[str, Any], float
     try:
         with fitz.open(stream=file_bytes, filetype="pdf") as doc:
             for page in doc:
-                d = page.get_text("dict")
+                d = page_text_dict(page)
                 t = page.get_text()
                 w = float(page.rect.width)
                 h = float(page.rect.height)
@@ -405,7 +484,7 @@ def superscript_marker_census(
             else:
                 with fitz.open(stream=file_bytes, filetype="pdf") as doc:
                     for page_number, page in enumerate(doc):
-                        yield page_number, float(page.rect.height), page.get_text("dict")
+                        yield page_number, float(page.rect.height), page_text_dict(page)
 
         for page_number, height, page_dict in _iter_pages():
             height = height or 1.0
@@ -450,7 +529,11 @@ def superscript_marker_census(
     }
 
 
-def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
+def extract_layout_blocks(
+    file_bytes: bytes,
+    *,
+    _page_dict_cache: Optional[List[Tuple[Dict[str, Any], float, float, bool, str]]] = None,
+) -> List[Dict[str, Any]]:
     """Extract text and image blocks while retaining page/layout metadata.
 
     Returned objects are plain dictionaries so they can be inspected in tests
@@ -459,6 +542,12 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
     Footnote reference marks are removed from the translatable text and kept in
     ``marks`` (additive key) so that fidelity/provenance consumers can still
     place them, while translation never sees a bare digit glued to a sentence.
+
+    Pass ``_page_dict_cache`` (from :func:`build_page_dict_cache`) to reuse
+    already-parsed page dicts for non-rotated pages.  Rotated pages still call
+    ``page.get_text("dict")`` after ``set_rotation(0)`` so the geometry is
+    correct.  The cache is indexed by 0-based page number; if a page falls
+    outside the cache length the dict is recomputed normally.
     """
     blocks: List[Dict[str, Any]] = []
     all_candidates: List[Dict[str, Any]] = []
@@ -468,9 +557,17 @@ def extract_layout_blocks(file_bytes: bytes) -> List[Dict[str, Any]]:
         order = 0
         for page_number, page in enumerate(doc):
             # Text geometry is unrotated PDF space, including rotated pages.
+            original_rotation = page.rotation  # read before set_rotation
             page.set_rotation(0)
             width, height = float(page.rect.width), float(page.rect.height)
-            page_dict = page.get_text("dict")
+            # Reuse the cached dict when the page was already at rotation 0
+            # (natural and normalised dicts are then identical).
+            if (_page_dict_cache is not None
+                    and original_rotation == 0
+                    and page_number < len(_page_dict_cache)):
+                page_dict = _page_dict_cache[page_number][0]
+            else:
+                page_dict = page_text_dict(page)
             page_body_size, baselines = _page_body_metrics(page_dict)
             ocr_overlay = _page_is_ocr_overlay(page_dict)
             rules = _page_rules(page, width)
