@@ -2427,5 +2427,9 @@
   "此模型仅输出纯文本，不能按视觉理解所需的结构化格式返回——扫描页将无法读取。请选择支持图像输入并能按格式回答的视觉语言模型。": "Ce modèle OCR ne produit que du texte brut et ne peut pas renvoyer de JSON structuré — les pages numérisées échoueront. Choisissez un modèle vision-langage.",
   "此模型是机器翻译专用模型，不支持图像输入——扫描页将无法读取。请选择支持图像输入并能按格式回答的视觉语言模型。": "Ce modèle de traduction automatique ne prend pas en charge les images — les pages numérisées échoueront. Choisissez un modèle vision-langage.",
   "此模型是 OCR 专用模型，不能生成翻译。请选择通用语言模型。": "Ce modèle OCR ne peut pas générer de traductions. Choisissez un modèle de langage général.",
-  "此模型是 OCR 专用模型，无法审校译文。请选择通用语言模型。": "Ce modèle OCR ne peut pas réviser des traductions. Choisissez un modèle de langage général."
+  "此模型是 OCR 专用模型，无法审校译文。请选择通用语言模型。": "Ce modèle OCR ne peut pas réviser des traductions. Choisissez un modèle de langage général.",
+  "这是专用翻译模型，术语抽取、文档画像等需要按格式回答的步骤可能失败；建议选通用模型。": "Ce modèle est dédié à la traduction automatique. Les étapes nécessitant une sortie structurée (extraction de termes, profil de document, etc.) peuvent échouer — utilisez un modèle généraliste.",
+  "这是专用翻译模型，审校时需要按格式回答的步骤可能失败；建议选通用模型。": "Ce modèle est dédié à la traduction automatique. Les étapes de révision nécessitant une sortie structurée peuvent échouer — utilisez un modèle généraliste.",
+  "沿用翻译连接": "Utiliser la connexion de traduction",
+  "请先选择专用视觉连接（或留空沿用翻译连接）": "Sélectionnez d'abord une connexion de vision dédiée (ou laissez vide pour utiliser la connexion de traduction)"
 }

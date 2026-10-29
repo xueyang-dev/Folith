@@ -146,9 +146,17 @@ class TestCapabilityWarning:
                 assert capability_warning(role, name) == "", \
                     f"Unexpected warning for {name!r} in {role!r}"
 
-    def test_mt_in_translation_no_warning(self):
-        # MT models are fine for translation role
-        assert capability_warning("translation", "tencent/Hunyuan-MT-7B") == ""
+    def test_mt_in_translation_warns(self):
+        # MT-only models warn for translation: term extraction, profiling, etc. need structured output
+        w = capability_warning("translation", "tencent/Hunyuan-MT-7B")
+        assert w, "MT-only model in translation role should produce a warning"
+        assert "翻译" in w or "格式" in w or "术语" in w
+
+    def test_mt_in_reviewer_warns(self):
+        # MT-only models warn for reviewer role too
+        w = capability_warning("reviewer", "tencent/Hunyuan-MT-7B")
+        assert w, "MT-only model in reviewer role should produce a warning"
+        assert "翻译" in w or "格式" in w
 
     def test_empty_model_no_warning(self):
         for role in ("vision", "translation", "reviewer"):

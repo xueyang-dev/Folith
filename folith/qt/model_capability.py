@@ -87,11 +87,17 @@ _WARNINGS: dict[tuple[str, str], str] = {
     ("translation", "ocr_only"): (
         "此模型是 OCR 专用模型，不能生成翻译。请选择通用语言模型。"
     ),
-    ("translation", "translation_only"): "",     # MT for translation is fine
+    ("translation", "translation_only"): (
+        "这是专用翻译模型，术语抽取、文档画像等需要按格式回答的步骤可能失败；"
+        "建议选通用模型。"
+    ),
     ("reviewer", "ocr_only"): (
         "此模型是 OCR 专用模型，无法审校译文。请选择通用语言模型。"
     ),
-    ("reviewer", "translation_only"): "",        # MT for review: marginal but not blocked
+    ("reviewer", "translation_only"): (
+        "这是专用翻译模型，审校时需要按格式回答的步骤可能失败；"
+        "建议选通用模型。"
+    ),
 }
 
 
