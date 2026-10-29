@@ -430,3 +430,35 @@ class TestOcrOnlyFallbackOnChannelSwitch:
             f"General VLM should be kept after channel switch; got {vision_model!r}"
         )
         dialog.close()
+
+
+@pytest.mark.parametrize('has_vision', [True, False])
+def test_switch_ocr_to_vision_keeps_role_model_and_ui_consistent(app, isolated, has_vision):
+    ocr = 'PaddlePaddle/PaddleOCR-VL-1.5'
+    vlm = 'Qwen/Qwen2.5-VL-72B-Instruct'
+    profile = {'id': 'sf', 'name': 'SiliconFlow', 'provider': 'SiliconFlow',
+               'custom': False, 'model': 'tencent/Hunyuan-MT-7B',
+               'models': [ocr] + ([vlm] if has_vision else []),
+               'model_modalities': {vlm: ['text', 'image']} if has_vision else {},
+               'api_key': 'k', 'base_url': '', 'protocol': 'openai_compat'}
+    dialog = dialogs.EngineDialog(_config(connections=[profile],
+        connection_roles={'translation': 'sf', 'vision': 'sf'},
+        connection_models={'vision': ocr}, ocr_backend='ocr_api'), _SyncRunner())
+    dialog.vision_option.setChecked(True)
+    lib = dialog.connection_library
+    saved = dialog._collect()
+    if has_vision:
+        assert dialog.vision_connection_box.currentData() == lib.roles['vision'] == saved.connection_roles['vision'] == 'sf'
+        assert lib.model_selectors['vision'].currentText() == lib.role_models['vision'] == saved.connection_models['vision'] == vlm
+    else:
+        from folith.model_connections import VISION_UNCONFIGURED
+        assert dialog.vision_connection_box.currentData() == lib.roles['vision'] == saved.connection_roles['vision'] == VISION_UNCONFIGURED
+        assert not lib.model_selectors['vision'].currentText()
+        assert not saved.connection_models['vision']
+        assert '未配置' in dialog.vision_connection_box.currentText()
+    dialog.local_option.setChecked(True)
+    saved = dialog._collect()
+    assert saved.connection_roles['vision'] == 'sf'
+    assert saved.connection_models['vision'] == ocr
+    assert lib.model_selectors['vision'].currentText() == ocr
+    dialog.close()

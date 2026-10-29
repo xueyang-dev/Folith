@@ -514,6 +514,10 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
     """
     snapshot = descriptor if isinstance(descriptor, dict) else (
         saved if isinstance(saved, dict) else {})
+    from folith.model_connections import VISION_UNCONFIGURED
+    if (not snapshot and ((_c.load_provider_config() or {}).get("connection_roles") or {}).get("vision")
+            == VISION_UNCONFIGURED):
+        return None, {"error": "unconfigured", "message": "请先配置视觉模型或 OCR 模型。"}
     default_source = "ocr_profile" if _c.load_ocr_online_config() else "translation_profile"
     source = str(snapshot.get("credential_source") or default_source)
     if source not in OCR_ONLINE_CREDENTIAL_SOURCES:

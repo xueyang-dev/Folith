@@ -188,7 +188,9 @@ class EngineConfig:
         if vision:
             targets["vision"] = vision
         else:
-            self.connection_roles["vision"] = ""
+            from folith.model_connections import VISION_UNCONFIGURED
+            if self.connection_roles.get("vision") != VISION_UNCONFIGURED:
+                self.connection_roles["vision"] = ""
         for role, target in targets.items():
             if not target.get("provider") or not target.get("model"):
                 continue

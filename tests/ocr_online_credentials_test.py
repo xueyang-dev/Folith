@@ -97,3 +97,14 @@ def test_explicit_rescan_uses_current_ocr_connection(tmp_path, monkeypatch):
     assert backend == "ocr_api"
     assert descriptor["model"] == config.model == "new-ocr"
     assert "ocr-key" not in json.dumps(descriptor)
+
+
+def test_explicit_unconfigured_vision_does_not_fall_back_to_translation(tmp_path, monkeypatch):
+    from folith.model_connections import VISION_UNCONFIGURED
+    monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
+    core.save_provider_config('SiliconFlow', 'tencent/Hunyuan-MT-7B', 'key',
+                              connection_roles={'vision': VISION_UNCONFIGURED})
+    config, error = core.resolve_ocr_online_config()
+    assert config is None
+    assert error['error'] == 'unconfigured'
+    assert '配置' in error['message']

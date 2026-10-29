@@ -13019,7 +13019,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         effective_online_config = _effective_ocr_source(
             ocr_backend, saved_runtime_config, ocr_paddle_model=ocr_paddle_model,
             ocr_online=ocr_online, prefer_saved=bool(saved_runtime_config))
-    if (effective_ocr_backend == "online" and not effective_online_descriptor
+    from folith.model_connections import VISION_UNCONFIGURED
+    vision_unconfigured = ((load_provider_config() or {}).get("connection_roles") or {}).get("vision") == VISION_UNCONFIGURED
+    if (effective_ocr_backend == "online" and not effective_online_descriptor and not vision_unconfigured
             and not load_ocr_online_config()):
         try:
             visual_base = _resolve_online_ocr_base_url(

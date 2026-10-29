@@ -539,6 +539,9 @@ class ConnectionLibrary(QWidget):
         box.blockSignals(True)
         box.clear()
         box.addItem(i18n.tr('选择连接') if role == "translation" else i18n.tr('沿用翻译模型'), "")
+        if role == "vision":
+            from folith.model_connections import VISION_UNCONFIGURED
+            box.addItem(i18n.tr('未配置'), VISION_UNCONFIGURED)
         for profile in self.profiles:
             if role == "vision" and profile["provider"] not in adapter.vision_providers():
                 continue

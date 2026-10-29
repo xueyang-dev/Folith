@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from folith.qt.adapter import EngineConfig
 
+# An explicit empty visual role is distinct from following translation.
+VISION_UNCONFIGURED = "__vision_unconfigured__"
+
 
 def environment_key(provider: str) -> str:
     names = {"OpenAI": "OPENAI_API_KEY", "Gemini": "GEMINI_API_KEY",

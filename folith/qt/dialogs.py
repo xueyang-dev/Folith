@@ -969,22 +969,46 @@ class EngineDialog(QDialog):
             lib = self.connection_library
             current_model = str(lib.role_models.get("vision") or "")
             if current_model and classify_model(current_model) == "ocr_only":
-                lib.selectors["vision"].setCurrentIndex(0) if "vision" in lib.selectors \
-                    else None
-                # 清空连接选择和模型选择
-                self.vision_connection_box.blockSignals(True)
-                self.vision_connection_box.setCurrentIndex(0)
-                self.vision_connection_box.blockSignals(False)
-                lib.role_models["vision"] = ""
+                from folith.model_connections import VISION_UNCONFIGURED
+                from . import connection_status
+                role_id = str(lib.roles.get("vision") or "")
+                profile = next((p for p in lib.profiles if p["id"] == role_id), {})
+                self._ocr_channel_selection = (role_id, current_model)
+                candidates = list(dict.fromkeys([profile.get("model", ""), *profile.get("models", [])]))
+                def supports_vision(model):
+                    if not model or classify_model(model) != "general":
+                        return False
+                    modalities = (profile.get("model_modalities") or {}).get(model) or []
+                    if "image" in modalities:
+                        return True
+                    probe = connection_status.vision_probe_result(
+                        str(profile.get("provider") or ""), model,
+                        str(profile.get("base_url") or ""), str(profile.get("api_key") or ""))
+                    return bool(probe and probe.get("ok"))
+                selected = next((model for model in candidates if supports_vision(model)), "")
+                if selected:
+                    lib.model_selectors["vision"].setCurrentText(selected)
+                else:
+                    self.vision_connection_box.setCurrentIndex(
+                        self.vision_connection_box.findData(VISION_UNCONFIGURED))
+                self._vision_after_channel_switch = (lib.roles.get("vision"),
+                                                     lib.role_models.get("vision"))
             self.ocr_backend_box.setCurrentIndex(
                 self.ocr_backend_box.findData("online"))
 
         self.vision_option.toggled.connect(_on_vision_channel_selected)
-        self.local_option.toggled.connect(
-            lambda on: on and self.ocr_backend_box.setCurrentIndex(
-                self.ocr_backend_box.findData(
-                    "ocr_api" if self.ocr_engine_picker.value() != "tesseract"
-                    else "tesseract")))
+        def _on_ocr_channel_selected(on):
+            if not on:
+                return
+            lib = self.connection_library
+            prior = getattr(self, "_ocr_channel_selection", None)
+            after = getattr(self, "_vision_after_channel_switch", None)
+            if prior and after == (lib.roles.get("vision"), lib.role_models.get("vision")):
+                self.vision_connection_box.setCurrentIndex(self.vision_connection_box.findData(prior[0]))
+                lib.model_selectors["vision"].setCurrentText(prior[1])
+            self.ocr_backend_box.setCurrentIndex(self.ocr_backend_box.findData(
+                "ocr_api" if self.ocr_engine_picker.value() != "tesseract" else "tesseract"))
+        self.local_option.toggled.connect(_on_ocr_channel_selected)
         self.ocr_engine_picker.changed.connect(sync_engine)
         self.ocr_backend_box.currentIndexChanged.connect(sync_channel_ui)
         sync_channel_ui()
@@ -1063,7 +1087,9 @@ class EngineDialog(QDialog):
             self.vision_option.set_detail(f"{profile['name']} · {model}")
         else:
             # 「沿用翻译连接」（默认）：卡片不显示具体连接，不指向别处。
-            self.vision_option.set_detail(i18n.tr('沿用翻译连接'))
+            from folith.model_connections import VISION_UNCONFIGURED
+            self.vision_option.set_detail(i18n.tr('未配置') if selected == VISION_UNCONFIGURED
+                                          else i18n.tr('沿用翻译连接'))
 
     def _test_scan_vision(self) -> None:
         """「测试视觉」：对当前视觉角色选中的模型发一次极小图像请求（同编辑器里的按钮）。"""
