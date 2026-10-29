@@ -708,8 +708,12 @@ class EngineDialog(QDialog):
         所有控件属性仍挂在 EngineDialog 上（ocr_backend_box / ocr_mode_picker /
         vision_option / vision_connection_box 等），供其他页面与测试引用。
         """
-        # ── OCR 数据控件（hidden data sources）────────────────────────────────
-        self.ocr_language_box = style_module.ComboBox()
+        # ── 平级 FormGroup（先建；后面的隐藏数据控件以它为 parent 确保在页面层级内）────
+        group = components.FormGroup()
+
+        # ── OCR 数据控件（hidden data sources，parent=group）──────────────────
+        # 不显示、只当数据模型：parent=group 使 isAncestorOf 测试通过并避免顶层窗口出现。
+        self.ocr_language_box = style_module.ComboBox(group)
         # 可编辑：既能从核心注册表里选（30 项，带中文标签），也能直接填语言代码。
         self.ocr_language_box.setEditable(True)
         self.ocr_language_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
@@ -717,14 +721,14 @@ class EngineDialog(QDialog):
         for label, value in adapter.ocr_language_choices():
             self.ocr_language_box.addItem(label, value)
         self._select_ocr_language(self.config.ocr_language)
-        self.ocr_mode_box = style_module.ComboBox()
+        self.ocr_mode_box = style_module.ComboBox(group)
         # 标签给用户看，data 给核心用：两者必须对齐，否则核心会静默回退成 auto
         # （历史缺陷：界面写 always/never，核心只认 force/off）。
         for label, mode in adapter.OCR_MODE_CHOICES:
             self.ocr_mode_box.addItem(label, mode)
         self.ocr_mode_box.setCurrentText(adapter.ocr_mode_label(self.config.ocr_mode))
         self.ocr_mode_box.hide()
-        self.ocr_backend_box = style_module.ComboBox()
+        self.ocr_backend_box = style_module.ComboBox(group)
         for label, value in adapter.OCR_BACKEND_CHOICES:
             self.ocr_backend_box.addItem(label, value)
         index = self.ocr_backend_box.findData(self.config.ocr_backend or "online")
@@ -776,9 +780,6 @@ class EngineDialog(QDialog):
             lambda value: self.ocr_mode_box.setCurrentIndex(self.ocr_mode_box.findData(value)))
         self.ocr_mode_box.currentIndexChanged.connect(
             lambda _i: self.ocr_mode_picker.set_value(str(self.ocr_mode_box.currentData() or "")))
-
-        # ── 平级 FormGroup ────────────────────────────────────────────────
-        group = components.FormGroup()
 
         # 节标题行
         head = QWidget()
