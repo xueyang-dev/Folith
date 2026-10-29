@@ -140,6 +140,23 @@ def test_page_text_dict_enumeration_positions_match_full_dict():
         )
 
 
+def test_page_text_dict_text_blocks_equal_full_dict_including_number():
+    """Text blocks are field-for-field the full dict's, ``number`` included."""
+    pdf_bytes = _interleaved_pdf()
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        page = doc[0]
+        full = page.get_text("dict")
+        spliced = pdf_ingestion.page_text_dict(page)
+
+    for i, (fb, sb) in enumerate(
+        zip(full.get("blocks", []), spliced.get("blocks", []))
+    ):
+        if fb["type"] == 0:
+            assert fb == sb, f"position {i}: text block differs from the full dict"
+        else:
+            assert sb["number"] == fb["number"] == i
+
+
 def test_page_text_dict_text_only_page_unchanged():
     """For a page with no images the result should match the full dict."""
     pdf_bytes = _text_only_pdf()

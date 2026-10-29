@@ -208,7 +208,9 @@ def page_text_dict(page) -> Dict[str, Any]:
                 tb = next(text_iter, None)
                 if tb is None:
                     return page.get_text("dict")  # ran out of text blocks — fall back
-                result[i] = tb
+                # Without images MuPDF numbers text blocks from 0; the full dict
+                # numbers every block by its position, images included.
+                result[i] = {**tb, "number": i}
 
         if any(r is None for r in result):
             return page.get_text("dict")  # unfilled slot — fall back
