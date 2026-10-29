@@ -74,7 +74,8 @@ _NUM_PREFIX = re.compile(r"^\s*[\(\[]?\d+[\)\].:]\s*")
 
 
 def _strip_num(line: str) -> str:
-    return _NUM_PREFIX.sub("", line).strip()
+    # A line consisting solely of a number is content, not a list prefix.
+    return _NUM_PREFIX.sub("", line).strip() or line.strip()
 
 
 def detect_repetition(text: str) -> Tuple[str, bool]:

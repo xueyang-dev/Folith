@@ -535,3 +535,8 @@ def test_concurrent_page_results_keep_their_own_text_and_warnings(monkeypatch):
         assert f'正文 page {page}' in ' '.join(block.text for block in result.blocks)
         assert bool(result.warnings) == (page == 1)
         assert result.request['page'] == page
+
+
+def test_number_only_page_numbers_are_not_a_repetition_loop():
+    text = '\n'.join(f'{number}.' for number in range(1, 11))
+    assert detect_repetition(text) == (text, False)
