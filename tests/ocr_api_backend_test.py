@@ -540,3 +540,16 @@ def test_concurrent_page_results_keep_their_own_text_and_warnings(monkeypatch):
 def test_number_only_page_numbers_are_not_a_repetition_loop():
     text = '\n'.join(f'{number}.' for number in range(1, 11))
     assert detect_repetition(text) == (text, False)
+
+
+def test_real_title_empty_response_fails_but_blank_page_warns(monkeypatch):
+    import fitz
+    with fitz.open(Path(__file__).parent / 'fixtures' / 'ocr_sparse_pages.pdf') as pdf:
+        title, blank = [page.get_pixmap(dpi=220, alpha=False).tobytes('png') for page in pdf]
+    backend = _make_ocr_backend()
+    monkeypatch.setattr(backend, 'read_image', lambda *a, **k: ([], 'empty_response: empty'))
+    title_result = backend.recognize_page(title, page_index=10, page_number=11, language='jpn', dpi=220)
+    blank_result = backend.recognize_page(blank, page_index=11, page_number=12, language='jpn', dpi=220)
+    assert title_result.error.startswith('empty_response:')
+    assert not blank_result.error
+    assert any(w.startswith('ocr_api_blank_page:') for w in blank_result.warnings)
