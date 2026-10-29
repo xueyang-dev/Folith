@@ -52,6 +52,18 @@ def _panel(title: str, hint: str = "") -> tuple[Card, QVBoxLayout]:
     return card, outer
 
 
+def _hint_row(label: QLabel, title: str = "") -> QWidget:
+    """控件列里的一段说明：占满控件列宽度再折行，不缩成窄条。"""
+    holder = QWidget()
+    row = QHBoxLayout(holder)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(label, 1)
+    line = components.FormRow(title, value=holder)
+    line.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
+    line.title_label.setWordWrap(True)
+    return line
+
+
 def _setting_row(title: str, *controls: QWidget) -> QWidget:
     """设置分组里的一行：左边固定宽的名称，右边控件从左排起（阶段 1 画布）。"""
     holder = QWidget()
@@ -817,18 +829,18 @@ class EngineDialog(QDialog):
         vlm_hint_lbl = QLabel(i18n.tr('列表里只显示能看图并按格式回答的模型'))
         vlm_hint_lbl.setObjectName("hint")
         vlm_hint_lbl.setWordWrap(True)
-        self._vlm_hint_row = _setting_row("", vlm_hint_lbl)
+        self._vlm_hint_row = _hint_row(vlm_hint_lbl)
 
         ocr_hint_lbl = QLabel(i18n.tr('OCR 专用模型列第一位，通用视觉模型也可用'))
         ocr_hint_lbl.setObjectName("hint")
         ocr_hint_lbl.setWordWrap(True)
-        self._ocr_hint_row = _setting_row("", ocr_hint_lbl)
+        self._ocr_hint_row = _hint_row(ocr_hint_lbl)
 
         # 输入类型提示（modality hint）同样置于控件列。
         # 注意：不在添加到布局前调用 setVisible(True)，避免无父控件时触发顶层窗口。
         # 初始化为隐藏；sync_channel_ui 和 _update_vision_hint 会在时机成熟时显示它。
         vm_hint = self.connection_library.vision_modality_hint
-        self._vm_hint_row = _setting_row("", vm_hint)
+        self._vm_hint_row = _hint_row(vm_hint)
         self._vm_hint_row.setVisible(False)
         self.connection_library.vision_modality_hint_holder = self._vm_hint_row
 
@@ -879,7 +891,7 @@ class EngineDialog(QDialog):
         self._structure_hint_label.setWordWrap(True)
         self._structure_hint_label.setToolTip(
             i18n.tr('source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落'))
-        cbe.addWidget(_setting_row(i18n.tr('整理结构'), self._structure_hint_label))
+        cbe.addWidget(_hint_row(self._structure_hint_label, i18n.tr('整理结构')))
         vb.addWidget(channel_b_extra)
         self.channel_b_extra = channel_b_extra
 
@@ -926,6 +938,10 @@ class EngineDialog(QDialog):
                 self.ocr_engine_picker.set_value(engine)
                 self.ocr_engine_picker.blockSignals(False)
                 self.ocr_language_row.setVisible(engine == "tesseract")
+            # 本机 Tesseract 不用 API 连接：模型行和它的说明都不显示。
+            uses_model = is_vision or backend != "tesseract"
+            self._scan_model_row.setVisible(uses_model)
+            self._ocr_hint_row.setVisible(not is_vision and uses_model)
 
             # Fix 2: 整理结构 显示实际翻译连接 · 模型名（只读占位）。
             self._sync_structure_hint()
@@ -1017,7 +1033,9 @@ class EngineDialog(QDialog):
             # 通道 A 卡片 → 显示通用副标题（不再展示 OCR 专用模型名）
             self.vision_option.set_detail(i18n.tr('一步读出版面与文字'))
             # 通道 B 卡片 → 当前选中的 OCR 连接 · 模型
-            if lib:
+            if self.ocr_engine_picker.value() == "tesseract":
+                self.local_option.set_detail(i18n.tr('本机 Tesseract'))
+            elif lib:
                 t_id = lib.roles.get("vision") or ""
                 profile = next((p for p in lib.profiles if p["id"] == t_id), None)
                 if profile:

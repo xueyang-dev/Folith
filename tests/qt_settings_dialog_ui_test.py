@@ -226,3 +226,22 @@ def test_diagnostics_buttons_carry_icons(app):
             assert not button.icon().isNull(), button.text()
     finally:
         dialog.close()
+
+
+def test_ocr_channel_with_tesseract_hides_the_api_model_row(app, monkeypatch):
+    """本机 Tesseract 不用 API 连接：模型行和它的说明不显示，卡片写明本机 Tesseract。"""
+    monkeypatch.setattr(adapter.core, "_find_tesseract", lambda: "fake-tesseract")
+    dialog = _dialog(app, ocr_backend="ocr_api")
+    try:
+        assert not dialog._scan_model_row.isHidden()
+        assert not dialog._ocr_hint_row.isHidden()
+        dialog.ocr_engine_picker.set_value("tesseract")
+        dialog.ocr_engine_picker.changed.emit("tesseract")
+        app.processEvents()
+        assert dialog.ocr_backend_box.currentData() == "tesseract"
+        assert dialog._scan_model_row.isHidden()
+        assert dialog._ocr_hint_row.isHidden()
+        assert not dialog.ocr_language_row.isHidden()
+        assert "Tesseract" in dialog.local_option.detail_label.text()
+    finally:
+        dialog.close()
