@@ -605,8 +605,9 @@ class ConnectionLibrary(QWidget):
                 hint_holder.setVisible(visible)
 
         # 有能力警告时隐藏类型提示（两者互斥，避免重复信息）。
+        # isHidden()=False 表示控件自身被设为可见（不受父窗口是否 show() 影响）。
         cap_warn = self.capability_warnings.get("vision")
-        if cap_warn and cap_warn.isVisible():
+        if cap_warn and not cap_warn.isHidden():
             _set_hint_visible(False)
             return
 

@@ -844,6 +844,10 @@ class EngineDialog(QDialog):
             vb.addWidget(cw_holder)
             # 能力警告 holder 登记到 library，供 _update_capability_warning() 显隐。
             self.connection_library.capability_warning_holders["vision"] = cw_holder
+            # 初始化时 _update_capability_warning 已经跑过（在 refresh() 里），
+            # 那时 holder 尚未存在；补一次同步，使 holder 与 cap_warn 可见性一致。
+            # isHidden()=False 表示 cap_warn 自身被设为可见（不受父窗口是否 show() 影响）。
+            cw_holder.setVisible(not cap_warn.isHidden())
 
         # 输入类型提示（#48，动态，有警告时被隐藏，无分隔线）
         vm_hint = self.connection_library.vision_modality_hint
@@ -855,6 +859,8 @@ class EngineDialog(QDialog):
         vb.addWidget(vh_holder)
         # holder 登记到 library，供 _update_vision_hint() 随提示一起显隐。
         self.connection_library.vision_modality_hint_holder = vh_holder
+        # 同步初始可见性（_update_vision_hint 在 holder 存在前已跑过）。
+        vh_holder.setVisible(not vm_hint.isHidden())
 
         group.add_row(vscan_block)
 
