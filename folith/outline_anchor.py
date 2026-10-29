@@ -47,6 +47,16 @@ NAVIGABLE_STATES = (RESOLVED, PARTIAL)
 
 _WRITE_LOCK = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Parse-dedup: at most one parse per job_id at a time.
+# A second caller waits for the first and then reads the freshly-written sidecar.
+# ---------------------------------------------------------------------------
+
+#: Protects mutations to ``_PARSE_EVENTS``.
+_PARSE_EVENTS_LOCK = threading.Lock()
+#: Active parse events: ``{job_id: Event}`` set when the parse completes.
+_PARSE_EVENTS: dict[str, threading.Event] = {}
+
 
 # ---------------------------------------------------------------------------
 # Paragraph alignment (lifted from the 0.6 WIP; shared with the resolver)
@@ -189,13 +199,43 @@ def store_outline(job_id: str, outline: dict, *, data: bytes | None = None,
     return payload
 
 
-def load_outline(job_id: str, state: dict | None = None, *, parser=None) -> dict:
+def _pending_payload(reason: str) -> dict:
+    """Return a payload that signals the outline is not yet available.
+
+    Consumers check ``payload.get("pending")`` to detect this state.  The
+    ``invalidated`` key carries the reason so the UI can show the right hint
+    while waiting.
+    """
+    return {
+        "outline": {},
+        "parser_version": 0,
+        "source_sha256": "",
+        "fingerprint": "",
+        "mapping": {},
+        "parsed": False,
+        "pending": True,
+        "invalidated": reason,
+        "node_count": 0,
+    }
+
+
+def load_outline(job_id: str, state: dict | None = None, *,
+                 parser=None, no_parse: bool = False) -> dict:
     """Return the task's outline, parsing the source only when the cache is stale.
 
     The returned payload is the sidecar shape plus two facts:
     ``parsed`` (the parser ran during this call) and ``invalidated``
     (``missing`` / ``source_changed`` / ``parser_changed`` / ``source_missing``).
     Nothing here is navigable state; call :func:`resolve` for that.
+
+    When ``no_parse=True`` and the sidecar is cold or missing, the function
+    returns immediately with a payload whose ``pending`` key is ``True`` instead
+    of running the (potentially expensive) parser.  The caller is responsible
+    for scheduling the parse via :func:`schedule_outline_build`.
+
+    When ``no_parse=False`` (the default) and a concurrent parse is already
+    running for the same ``job_id``, this call waits for it to finish and then
+    reads the freshly-written sidecar, so only one parse ever runs.
     """
     state = state if isinstance(state, dict) else {}
     sidecar = _read_sidecar(job_id)
@@ -243,18 +283,72 @@ def load_outline(job_id: str, state: dict | None = None, *, parser=None) -> dict
     else:
         reason = "missing"
 
-    parse = parser or _source_outline.parse_source_outline
-    parsed = parse(str(state.get("filename") or ""), data)
-    payload = store_outline(job_id, parsed, source_sha256_value=digest)
-    return {
-        "outline": parsed,
-        "parser_version": int(parsed.get("parser_version") or version),
-        "source_sha256": digest,
-        "fingerprint": str(parsed.get("fingerprint") or ""),
-        "mapping": {},
-        "parsed": True,
-        "invalidated": reason,
-    }
+    # Sidecar is cold or missing.
+    if no_parse:
+        return _pending_payload(reason)
+
+    # Serialise concurrent cold parses for the same job.
+    #
+    # Loop invariant: after the loop body executes ``break``, ``my_event`` is
+    # registered in ``_PARSE_EVENTS`` under the lock, and this thread is the
+    # designated parser.  When we fall through (waiter path) we re-check the
+    # sidecar after the event fires; if it is still cold we loop and try to
+    # take the parser role ourselves.  The ``finally`` below always sets
+    # ``my_event`` before removing it, so a waiter is never left blocked on a
+    # stale event.
+    while True:
+        with _PARSE_EVENTS_LOCK:
+            existing = _PARSE_EVENTS.get(job_id)
+            if existing is None:
+                my_event = threading.Event()
+                _PARSE_EVENTS[job_id] = my_event
+                break  # we are the designated parser
+        # Another thread holds the parse slot; wait and re-check.
+        existing.wait()
+        sidecar2 = _read_sidecar(job_id)
+        if sidecar2 is not None:
+            cached_version2 = int(sidecar2.get("parser_version") or 0)
+            if sidecar2.get("source_sha256") == digest and cached_version2 == version:
+                return {
+                    "outline": sidecar2["outline"],
+                    "parser_version": cached_version2,
+                    "source_sha256": digest,
+                    "fingerprint": str(sidecar2.get("fingerprint")
+                                       or sidecar2["outline"].get("fingerprint") or ""),
+                    "mapping": sidecar2.get("mapping") or {},
+                    "parsed": False,
+                    "invalidated": "",
+                }
+        # Sidecar still absent or stale after waiting (the other parse may have
+        # failed).  Loop and compete for the parser slot again.
+
+    try:
+        parse = parser or _source_outline.parse_source_outline
+        parsed = parse(str(state.get("filename") or ""), data)
+        payload = store_outline(job_id, parsed, source_sha256_value=digest)
+        return {
+            "outline": parsed,
+            "parser_version": int(parsed.get("parser_version") or version),
+            "source_sha256": digest,
+            "fingerprint": str(parsed.get("fingerprint") or ""),
+            "mapping": {},
+            "parsed": True,
+            "invalidated": reason,
+        }
+    finally:
+        with _PARSE_EVENTS_LOCK:
+            _PARSE_EVENTS.pop(job_id, None)
+        my_event.set()
+
+
+def schedule_outline_build(job_id: str, state: dict | None = None) -> bool:
+    """Return True if a background parse is already in progress for this job.
+
+    This is a read-only probe: it does not start anything.  The caller uses it
+    to skip scheduling a new parse when one is already running.
+    """
+    with _PARSE_EVENTS_LOCK:
+        return job_id in _PARSE_EVENTS
 
 
 # ---------------------------------------------------------------------------
