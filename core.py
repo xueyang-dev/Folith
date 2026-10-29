@@ -1654,8 +1654,24 @@ def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
     return understanding_provider, spatial_engine
 
 
-def _pdf_scan_page_indices(file_bytes, *, include_ocr_overlay=True):
-    """扫描页：带图片且没有文字，或文字是盖在扫描图上的隐形 OCR 层。"""
+def _pdf_scan_page_indices(file_bytes, *, include_ocr_overlay=True,
+                           _page_dict_cache=None):
+    """扫描页：带图片且没有文字，或文字是盖在扫描图上的隐形 OCR 层。
+
+    Pass ``_page_dict_cache`` (from
+    :func:`folith.pdf_ingestion.build_page_dict_cache`) to reuse
+    already-parsed page dicts and avoid a redundant ``fitz.open`` call.
+    """
+    if _page_dict_cache:
+        result = []
+        for i, (page_dict, w, h, has_images, plain_text) in enumerate(_page_dict_cache):
+            if has_images and (
+                not plain_text.strip()
+                or (include_ocr_overlay
+                    and _pdf_ingestion._page_is_ocr_overlay(page_dict))
+            ):
+                result.append(i)
+        return len(_page_dict_cache), result
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
         return len(pdf), [
             i for i, p in enumerate(pdf)
@@ -1701,6 +1717,7 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
     ocr_used = False
     text_layer_report = {}
     ocr_trigger = ""
+    _pdf_layouts = None  # set during text-layer extraction; reused by native_pdf_document
     name = (filename or "").lower()
     try:
         if name.endswith(".pdf"):
@@ -1715,10 +1732,16 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                     status="completed", text_pages=int(facts.get("text_pages") or 0),
                     empty_pages=int(facts.get("empty_pages") or 0),
                 )
+            # Build per-page text-dict cache once (natural rotation) so that
+            # assess_pdf_text_layer → superscript_marker_census and
+            # _pdf_scan_page_indices can share it instead of each re-opening
+            # the PDF and calling page.get_text("dict") independently.
+            _pdf_page_cache = _pdf_ingestion.build_page_dict_cache(file_bytes)
             # Text existence is not text quality: judge the layer before
             # trusting it, and let the user's ocr_mode override the verdict.
             text_layer_report = _text_layer_quality.assess_pdf_text_layer(
-                file_bytes, source_language=source_language, max_pages=3)
+                file_bytes, source_language=source_language, max_pages=3,
+                _page_dict_cache=_pdf_page_cache)
             # Sampling is deliberately shallow (first/middle/last).  If those
             # pages are empty but the document does have text pages elsewhere,
             # the layer is partial, not absent — do not silently force OCR on a
@@ -1742,15 +1765,23 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                           "text_layer_quality": text_layer_report.get("status")},
             ) if profiler is not None else None
             paragraphs = []
+            # Computed lazily; stored so native_pdf_document can reuse it.
+            _pdf_layouts = None
             if use_text_layer:
+                # Extract layout once and share with native_pdf_document below
+                # to avoid parsing the PDF a second time.
+                _pdf_layouts = _pdf_ingestion.classify_blocks(
+                    _pdf_ingestion.extract_layout_blocks(file_bytes))
                 paragraphs = [clean_xml_chars(p)
-                              for p in extract_pdf_paragraphs(file_bytes)]
+                              for p in _pdf_ingestion.extract_pdf_paragraphs(
+                                  file_bytes, _layouts=_pdf_layouts)]
                 if not paragraphs and resolved_ocr_mode != "off":
                     # The gate accepted the layer but extraction produced
                     # nothing usable; fall through to OCR instead of shipping an
                     # empty document.
                     use_text_layer = False
                     ocr_trigger = "text_layer_empty_after_extraction"
+                    _pdf_layouts = None  # discard layout; not needed for OCR path
             if layout_stage is not None:
                 layout_stage.record["item_count"] = len(paragraphs)
                 layout_stage.record["page_count"] = int(facts.get("pages") or 0)
@@ -1765,7 +1796,8 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 # 的页（扫描仪 / Internet Archive / OCRmyPDF 自带的识别结果）。
                 # 后者的文字是别人的 OCR，不是原生文本：同样交给视觉理解。
                 page_count, visual_indices = _pdf_scan_page_indices(
-                    file_bytes, include_ocr_overlay=vlm_available)
+                    file_bytes, include_ocr_overlay=vlm_available,
+                    _page_dict_cache=_pdf_page_cache)
                 if visual_indices and len(visual_indices) == page_count:
                     # 整本都是扫描件：走纯视觉路径，不再保留第三方 OCR 文本。
                     visual_indices = []
@@ -1937,7 +1969,11 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
         )
     if name.endswith(".pdf") and not ocr_used and paragraphs and facts.get("pages"):
         from folith.document_understanding import native_pdf_document
-        report["document_ir"] = native_pdf_document(filename, file_bytes, paragraphs)
+        # Pass pre-computed layouts (set during text-layer extraction above)
+        # to avoid a second full-document parse inside native_pdf_document.
+        report["document_ir"] = native_pdf_document(
+            filename, file_bytes, paragraphs,
+            layouts=_pdf_layouts)
         report["semantic_source"] = "native_pdf"
     return paragraphs, warnings, report
 
