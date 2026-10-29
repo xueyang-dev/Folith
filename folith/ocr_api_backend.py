@@ -189,11 +189,6 @@ class OcrApiBackend(OnlineOCRBackend):
     name = OCR_API_BACKEND
     display_name = "OCR API"
 
-    def __init__(self, config: OnlineOCRConfig, **kwargs: Any) -> None:
-        super().__init__(config, **kwargs)
-        self._repetition_detected: bool = False
-        self._repetition_warning: str = ""
-
     # -- runtime metadata ------------------------------------------------
     def runtime_info(self, language: str, *,
                      include_model_version: bool = True) -> OCRRuntimeInfo:
@@ -207,96 +202,63 @@ class OcrApiBackend(OnlineOCRBackend):
     # -- page recognition ------------------------------------------------
     def recognize_page(self, png_bytes: bytes, *, page_index: int, page_number: int,
                        language: str, dpi: int) -> OCRPageResult:
-        """Run OCR and return result; repetition warning is added when detected."""
-        self._repetition_detected = False
-        self._repetition_warning = ""
-
+        """Recognize a page using diagnostics owned by this call."""
         started = time.perf_counter()
-        blocks, error = self.ocr_page(
+        blocks, error, warnings, context = self._recognize(
             png_bytes, page_index=page_index, page_number=page_number,
             language=language, dpi=dpi)
-        warnings: List[str] = []
-        if self._repetition_detected:
-            warnings.append(self._repetition_warning or "repetition_detected")
-
         return OCRPageResult(
-            page_index=page_index,
-            page_number=page_number,
-            language=language,
-            direction=direction_for(language),
-            dpi=dpi,
-            blocks=blocks or [],
+            page_index=page_index, page_number=page_number, language=language,
+            direction=direction_for(language), dpi=dpi, blocks=blocks,
             engine=self.runtime_info(language).to_dict(),
             timings={"recognition_s": time.perf_counter() - started,
-                     **dict(self._last_timings)},
-            error=error or "",
-            warnings=warnings,
-            request=dict(self._last_request or {}),
+                     **context.get("timings", {})},
+            error=error or "", warnings=warnings,
+            request=context.get("request", {}),
         )
 
     def ocr_page(self, png_bytes: bytes, *, page_index: int, page_number: int,
                  language: str, dpi: int) -> Tuple[List[OCRBlock], Optional[str]]:
-        """Transcribe one page image; returns ``(blocks, error_or_None)``."""
-        backend_ref = self  # captured by closure below
+        blocks, error, _, _ = self._recognize(
+            png_bytes, page_index=page_index, page_number=page_number,
+            language=language, dpi=dpi)
+        return blocks, error
 
-        def _decoder(raw: str) -> List[Dict[str, Any]]:
-            # Repetition guard: runs before splitting into segments.
+    def _recognize(self, png_bytes, *, page_index, page_number, language, dpi):
+        context = {}
+        warnings = []
+
+        def decode(raw):
             clean, looped = detect_repetition(raw)
             if looped:
-                backend_ref._repetition_detected = True
-                backend_ref._repetition_warning = (
-                    "ocr_api_repetition_detected: "
-                    "响应内容重复，已保留第一次出现的内容，请核查该页。"
-                )
-                raw = clean  # decode only the first occurrence
-            return decode_ocr_api_response(raw)
+                warnings.append("ocr_api_repetition_detected: 响应内容重复，已保留循环前内容，请核查该页。")
+            return decode_ocr_api_response(clean)
 
         model = self.config.model or ""
-        system_prompt = OCR_API_SYSTEM_PROMPT
         user_prompt = (OCR_API_USER_PROMPT_PADDLE if _is_paddle_family(model)
                        else OCR_API_USER_PROMPT_DEFAULT)
-
         segments, error = self.read_image(
-            png_bytes,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            decoder=_decoder,
-        )
-        if error:
-            # Fix A: finish_reason=length + repetition loop → recover the first cycle.
-            # ocr_online.read_image now stores the raw truncated text in
-            # self._last_response_text before calling _fail("truncated", …), so we
-            # can inspect it here.
-            if error.startswith("truncated:"):
-                raw_truncated = getattr(self, "_last_response_text", "")
-                if raw_truncated:
-                    clean, looped = detect_repetition(raw_truncated)
-                    if looped:
-                        self._repetition_detected = True
-                        self._repetition_warning = (
-                            "ocr_api_repetition_detected_truncated: "
-                            "响应被截断且内容重复，已保留第一次出现的内容，请核查该页。"
-                        )
-                        try:
-                            segs = decode_ocr_api_response(clean)
-                            return (self._blocks_from_segments(
-                                segs, page_index, page_number, language), None)
-                        except ValueError:
-                            pass
-                # Fix B: truncated without a detectable loop → OCR-specific message.
-                return [], ("truncated: OCR 输出过长被截断（finish_reason=length）；"
-                            "该页未保存，可提高输出上限后重试。")
-
-            # Fix B: empty response — try blank-page check first (Fix C).
-            if error.startswith("empty_response:"):
-                if _image_is_blank(png_bytes):
-                    # Truly blank page: not a failure, just no text.
-                    return [], None
-                return [], "empty_response: OCR 返回空响应；该页未保存。"
-
-            return [], error
-
-        return self._blocks_from_segments(segments, page_index, page_number, language), None
+            png_bytes, system_prompt=OCR_API_SYSTEM_PROMPT, user_prompt=user_prompt,
+            decoder=decode, context=context)
+        if error and error.startswith("truncated:"):
+            clean, looped = detect_repetition(context.get("response_text", ""))
+            if looped:
+                try:
+                    segments = decode_ocr_api_response(clean)
+                    warnings.append("ocr_api_repetition_detected_truncated: 响应被截断且内容重复，已保留循环前内容，请核查该页。")
+                    error = None
+                except ValueError:
+                    pass
+            if error:
+                error = "truncated: OCR 输出过长被截断（finish_reason=length）；该页未保存，可提高输出上限后重试。"
+        elif error and error.startswith("empty_response:"):
+            if _image_is_blank(png_bytes):
+                warnings.append("ocr_api_blank_page: 没有识别到文字，按空白页处理。")
+                error = None
+            else:
+                error = "empty_response: OCR 返回空响应；该页未保存。"
+        blocks = self._blocks_from_segments(segments, page_index, page_number, language) if not error else []
+        return blocks, error, warnings, context
 
     def capabilities(self) -> Dict[str, Any]:
         caps = super().capabilities()

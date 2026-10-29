@@ -365,21 +365,19 @@ class TestTruncatedLoopRecovery:
         """When the truncated text contains a repetition loop the page must be
         returned as recognised (no error) with the loop warning set."""
         backend = _make_ocr_backend()
-        # Simulate read_image returning "truncated:" and storing the looped raw text.
+        # Simulate a truncated response whose text is kept in this call's context.
         def fake_read_image(*args, **kwargs):
-            backend._last_response_text = _SINGLE_ITEM_LOOP
+            kwargs["context"]["response_text"] = _SINGLE_ITEM_LOOP
             return [], "truncated: 视觉理解返回的是纯文本"
 
         png = _make_png(10, 10, (255, 255, 255))
         from unittest.mock import patch
         with patch.object(backend, "read_image", side_effect=fake_read_image):
-            blocks, error = backend.ocr_page(
+            result = backend.recognize_page(
                 png, page_index=0, page_number=1, language="zh", dpi=150)
-
-        assert error is None, f"Expected recovery but got error: {error!r}"
-        assert len(blocks) > 0, "Recovered page must have at least one block"
-        assert backend._repetition_detected, "repetition_detected flag must be set"
-        assert "repetition_detected" in backend._repetition_warning
+        assert not result.error
+        assert result.blocks
+        assert any("repetition_detected" in warning for warning in result.warnings)
 
     def test_truncated_non_looped_response_gives_ocr_message(self):
         """When the truncated text has no repetition, the error must mention
@@ -388,7 +386,7 @@ class TestTruncatedLoopRecovery:
         real_text = "This is a genuine single-occurrence page without a loop."
 
         def fake_read_image(*args, **kwargs):
-            backend._last_response_text = real_text
+            kwargs["context"]["response_text"] = real_text
             return [], "truncated: 视觉理解返回的是纯文本"
 
         png = _make_png(10, 10, (255, 255, 255))
@@ -494,3 +492,36 @@ def test_chapter_contents_are_not_a_loop(compact):
         lines.extend([f'第{i}章', 'はじめに'] + ([] if compact else [f'一 {i}', f'二 {i}']) + ['おわりに'])
     text = '\n'.join(lines)
     assert detect_repetition(text) == (text, False)
+
+
+def test_concurrent_page_results_keep_their_own_text_and_warnings(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    backend = _make_ocr_backend()
+    barrier = Barrier(4)
+
+    def read_image(png, **kwargs):
+        page = int(png.decode())
+        raw = f'正文 page {page}\n' + ('繰り返し\n' * 8 if page == 1 else '本文です')
+        context = kwargs.get('context')
+        if context is None:
+            backend._last_response_text = raw
+        else:
+            context['response_text'] = raw
+            context['request'] = {'page': page}
+        barrier.wait(timeout=5)
+        if page == 1:
+            return [], 'truncated: length'
+        return kwargs['decoder'](raw), None
+
+    monkeypatch.setattr(backend, 'read_image', read_image)
+    def recognize(page):
+        return backend.recognize_page(str(page).encode(), page_index=page-1,
+                                      page_number=page, language='jpn', dpi=220)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(recognize, range(1, 5)))
+    for page, result in enumerate(results, 1):
+        assert not result.error
+        assert f'正文 page {page}' in ' '.join(block.text for block in result.blocks)
+        assert bool(result.warnings) == (page == 1)
+        assert result.request['page'] == page

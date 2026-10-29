@@ -606,12 +606,28 @@ class OnlineOCRBackend(OCRBackend):
         return self._blocks_from_segments(segments, page_index, page_number, language), None
 
     def read_image(self, png_bytes: bytes, *, system_prompt=None,
-                   user_prompt=None, decoder=decode_segments):
-        """Shared bounded image transport; response normalization belongs to adapters."""
-        self._last_timings = {}
+                   user_prompt=None, decoder=decode_segments, context=None):
+        """Read an image, optionally returning diagnostics in a call-owned context.
+
+        Legacy callers without a context retain the last-request attributes.
+        Concurrent callers supply their own context to avoid sharing diagnostics.
+        """
+        legacy = context is None
+        context = {} if legacy else context
+        context["timings"] = {}
+        try:
+            return self._read_image(png_bytes, system_prompt=system_prompt,
+                                    user_prompt=user_prompt, decoder=decoder,
+                                    context=context)
+        finally:
+            if legacy:
+                self._last_request = context.get("request", {})
+                self._last_timings = context.get("timings", {})
+
+    def _read_image(self, png_bytes, *, system_prompt, user_prompt, decoder, context):
         reason = self.unavailable_reason()
         if reason:
-            self._last_request = {"status": "unavailable", "error_code": "unconfigured",
+            context["request"] = {"status": "unavailable", "error_code": "unconfigured",
                                   **self.config.describe()}
             return [], f"unconfigured: {reason}"
         if self._cancel_check is not None and self._cancel_check():
@@ -655,7 +671,7 @@ class OnlineOCRBackend(OCRBackend):
                                  http_status=classified.http_status,
                                  code=classified.code, message=classified.message[:120])
                 delay = _bounded_backoff(attempt, classified.retry_after)
-                self._last_timings[f"retry_backoff_{attempt}"] = delay
+                context["timings"][f"retry_backoff_{attempt}"] = delay
                 self._sleep_slices(delay)
                 continue
             controller.note_success()
@@ -687,7 +703,7 @@ class OnlineOCRBackend(OCRBackend):
                 text = str(result.get("text") or "")
                 # Store text so subclasses (e.g. OcrApiBackend) can inspect it for
                 # repetition loops and attempt recovery before accepting the failure.
-                self._last_response_text = text
+                context["response_text"] = text
                 half = RESPONSE_EXCERPT_CHARS // 2
                 pieces = text.split(",")
                 attempts[-1].update(
@@ -696,14 +712,14 @@ class OnlineOCRBackend(OCRBackend):
                     distinct_piece_ratio=round(len(set(pieces)) / max(len(pieces), 1), 3))
                 return self._fail(
                     "truncated", _truncation_message(text),
-                    attempts, usage_total, request_ids, started)
+                    attempts, usage_total, request_ids, started, context)
             if finish not in {None, "stop"}:
                 return self._fail(
                     "incomplete_response",
                     f"线上 OCR 未正常结束（finish_reason={finish}）；该页未保存。",
-                    attempts, usage_total, request_ids, started)
+                    attempts, usage_total, request_ids, started, context)
             raw = result.get("text") or ""
-            self._last_response_text = raw
+            context["response_text"] = raw
             try:
                 segments = decoder(raw)
             except ValueError as exc:
@@ -713,7 +729,7 @@ class OnlineOCRBackend(OCRBackend):
                 if attempt >= min(self.config.max_retries, CONTENT_MAX_RETRIES):
                     return self._fail(
                         code, _parse_failure_message(code),
-                        attempts, usage_total, request_ids, started)
+                        attempts, usage_total, request_ids, started, context)
                 page_events.emit("retry", attempt=attempt + 1,
                                  attempts=min(self.config.max_retries, CONTENT_MAX_RETRIES) + 1,
                                  http_status=None, code=code,
@@ -721,8 +737,8 @@ class OnlineOCRBackend(OCRBackend):
                 continue
             if not segments:
                 return self._fail("empty_transcription", "线上 OCR 未返回可用的正文行；该页未保存。",
-                                  attempts, usage_total, request_ids, started)
-            self._last_request = {
+                                  attempts, usage_total, request_ids, started, context)
+            context["request"] = {
                 "status": "completed",
                 "backend": self.name,
                 "provider": self.config.provider,
@@ -740,7 +756,7 @@ class OnlineOCRBackend(OCRBackend):
                 "geometry": False,
                 "confidence": "unknown",
             }
-            self._last_timings["request_s"] = time.perf_counter() - started
+            context["timings"]["request_s"] = time.perf_counter() - started
             return segments, None
         # every attempt failed
         page_events.emit("failed", attempts=len(attempts),
@@ -749,7 +765,7 @@ class OnlineOCRBackend(OCRBackend):
                          message=str(getattr(last_error, "message", ""))[:120])
         error = last_error or OnlineOCRRequestError("request_failed", "线上 OCR 请求失败。",
                                                     retryable=False)
-        self._last_request = {
+        context["request"] = {
             "status": "failed",
             "backend": self.name,
             "provider": self.config.provider,
@@ -765,14 +781,14 @@ class OnlineOCRBackend(OCRBackend):
             "geometry": False,
             "confidence": "unknown",
         }
-        self._last_timings["request_s"] = time.perf_counter() - started
+        context["timings"]["request_s"] = time.perf_counter() - started
         return [], f"{error.code}: {error.message}"
 
     def _fail(self, code: str, message: str, attempts, usage_total, request_ids,
-              started) -> Tuple[List[OCRBlock], Optional[str]]:
+              started, context) -> Tuple[List[OCRBlock], Optional[str]]:
         page_events.emit("failed", attempts=len(attempts), http_status=None,
                          code=code, message=str(message)[:120])
-        self._last_request = {
+        context["request"] = {
             "status": "failed",
             "backend": self.name,
             "provider": self.config.provider,
@@ -787,7 +803,7 @@ class OnlineOCRBackend(OCRBackend):
             "geometry": False,
             "confidence": "unknown",
         }
-        self._last_timings["request_s"] = time.perf_counter() - started
+        context["timings"]["request_s"] = time.perf_counter() - started
         return [], f"{code}: {message}"
 
     def _blocks_from_segments(self, segments, page_index, page_number, language):
