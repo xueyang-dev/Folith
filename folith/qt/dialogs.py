@@ -52,12 +52,17 @@ def _panel(title: str, hint: str = "") -> tuple[Card, QVBoxLayout]:
     return card, outer
 
 
-def _hint_row(label: QLabel, title: str = "") -> QWidget:
-    """控件列里的一段说明：占满控件列宽度再折行，不缩成窄条。"""
+def _hint_row(*labels: QLabel, title: str = "") -> QWidget:
+    """控件列里的说明：占满控件列宽度再折行，不缩成窄条。
+
+    几条相关说明放在同一行里上下排列，不各占一行最小高度、中间空出一大块。
+    """
     holder = QWidget()
-    row = QHBoxLayout(holder)
-    row.setContentsMargins(0, 0, 0, 0)
-    row.addWidget(label, 1)
+    column = QVBoxLayout(holder)
+    column.setContentsMargins(0, 0, 0, 0)
+    column.setSpacing(theme_module.SPACE["xxs"])
+    for label in labels:
+        column.addWidget(label)
     line = components.FormRow(title, value=holder)
     line.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
     line.title_label.setWordWrap(True)
@@ -824,12 +829,10 @@ class EngineDialog(QDialog):
         self._ocr_engine_row = _setting_row(i18n.tr('OCR 引擎'), self.ocr_engine_picker)
 
         # ── 提示文字（控件列对齐）──────────────────────────────────────
-        # 两条提示文字都通过 _setting_row("", lbl) 放入控件列，
-        # 与连接框左边缘对齐，无额外缩进。
+        # 提示文字都通过 _hint_row 放入控件列，与连接框左边缘对齐，无额外缩进。
         vlm_hint_lbl = QLabel(i18n.tr('列表里只显示能看图并按格式回答的模型'))
         vlm_hint_lbl.setObjectName("hint")
         vlm_hint_lbl.setWordWrap(True)
-        self._vlm_hint_row = _hint_row(vlm_hint_lbl)
 
         ocr_hint_lbl = QLabel(i18n.tr('OCR 专用模型列第一位，通用视觉模型也可用'))
         ocr_hint_lbl.setObjectName("hint")
@@ -839,8 +842,10 @@ class EngineDialog(QDialog):
         # 输入类型提示（modality hint）同样置于控件列。
         # 注意：不在添加到布局前调用 setVisible(True)，避免无父控件时触发顶层窗口。
         # 初始化为隐藏；sync_channel_ui 和 _update_vision_hint 会在时机成熟时显示它。
+        # 它和上面那条说明在同一行里上下排列，可以单独隐藏。
         vm_hint = self.connection_library.vision_modality_hint
-        self._vm_hint_row = _hint_row(vm_hint)
+        self._vlm_hint_row = _hint_row(vlm_hint_lbl, vm_hint)
+        self._vm_hint_row = vm_hint
         self._vm_hint_row.setVisible(False)
         self.connection_library.vision_modality_hint_holder = self._vm_hint_row
 
@@ -858,7 +863,6 @@ class EngineDialog(QDialog):
         # 两条提示行紧跟模型行，由 sync_channel_ui 按通道切换显隐。
         vb.addWidget(self._vlm_hint_row)
         vb.addWidget(self._ocr_hint_row)
-        vb.addWidget(self._vm_hint_row)
 
         # ── 通道 B 附加内容（识别语言 + 整理结构）────────────────────────────
         # 注意：OCR 引擎选择行已移入 vscan_block（在模型行之前），以满足顺序要求：
@@ -883,7 +887,7 @@ class EngineDialog(QDialog):
         self._structure_hint_label.setWordWrap(True)
         self._structure_hint_label.setToolTip(
             i18n.tr('source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落'))
-        cbe.addWidget(_hint_row(self._structure_hint_label, i18n.tr('整理结构')))
+        cbe.addWidget(_hint_row(self._structure_hint_label, title=i18n.tr('整理结构')))
         vb.addWidget(channel_b_extra)
         self.channel_b_extra = channel_b_extra
 
