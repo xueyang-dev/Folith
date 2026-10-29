@@ -494,6 +494,16 @@ def test_chapter_contents_are_not_a_loop(compact):
     assert detect_repetition(text) == (text, False)
 
 
+def test_sparse_title_and_blank_scanned_pages():
+    import fitz
+    from pathlib import Path
+    from folith.ocr_api_backend import _image_is_blank
+    with fitz.open(Path(__file__).parent / 'fixtures' / 'ocr_sparse_pages.pdf') as pdf:
+        title, blank = [page.get_pixmap(dpi=220, alpha=False).tobytes('png') for page in pdf]
+    assert not _image_is_blank(title)
+    assert _image_is_blank(blank)
+
+
 def test_concurrent_page_results_keep_their_own_text_and_warnings(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier

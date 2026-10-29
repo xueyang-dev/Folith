@@ -144,14 +144,15 @@ def decode_ocr_api_response(raw: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 #: Fraction of non-white pixels below which a page is considered blank.
-_BLANK_INK_THRESHOLD = 0.02
+# At 220 DPI the source title page has 0.00331 dark-pixel coverage and the
+# adjacent blank scan has 0.0000325 (grayscale <160).
+_BLANK_INK_THRESHOLD = 0.0002
 
 
 def _image_is_blank(png_bytes: bytes, threshold: float = _BLANK_INK_THRESHOLD) -> bool:
     """Return True if the rendered PNG has very low ink coverage.
 
-    Converts to grayscale and counts pixels darker than 250/255.  A page with
-    fewer than *threshold* (default 2 %) non-white pixels is treated as blank.
+    Counts pixels darker than 160 to exclude pale scan noise.
     Returns False on any import or decode error so callers default to the
     normal empty-response failure path.
     """
@@ -162,7 +163,7 @@ def _image_is_blank(png_bytes: bytes, threshold: float = _BLANK_INK_THRESHOLD) -
         if total == 0:
             return True
         hist = img.histogram()  # list of 256 counts (brightness 0–255)
-        dark = sum(hist[:250])  # pixels with brightness 0–249 (not near-white)
+        dark = sum(hist[:160])
         return dark / total < threshold
     except Exception:
         return False
