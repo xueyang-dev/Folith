@@ -1,0 +1,50 @@
+"""End-to-end OCR API page warnings survive extraction and cache reuse."""
+import io
+import fitz
+from PIL import Image
+import core
+from folith.ocr_api_backend import OcrApiBackend
+from folith.ocr_online import OnlineOCRConfig
+
+
+def scanned_pdf():
+    doc = fitz.open()
+    for shade in (0.2, 0.4, 0.6, 1.0):
+        page = doc.new_page(width=80, height=100)
+        page.draw_rect(page.rect, color=None, fill=(shade, shade, shade))
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def test_ocr_warnings_reach_extraction_report_and_cached_pages(tmp_path, monkeypatch):
+    backend = OcrApiBackend(OnlineOCRConfig(provider='test', model='PaddleOCR',
+                                           api_key='test', base_url='https://example.test'))
+    monkeypatch.setattr(core._ocr_backends, 'resolve_backend', lambda *a, **k: (backend, []))
+    def read_image(png, **kwargs):
+        pixel = Image.open(io.BytesIO(png)).convert('L').getpixel((30, 30))
+        context = kwargs.get('context')
+        if context is not None:
+            context['request'] = {'status': 'completed', 'attempt_count': 1}
+        if pixel > 240:
+            return [], 'empty_response: blank'
+        text = ('本文その一。\n本文その二。\n' + '以下余白\n' * 8
+                if pixel < 80 else f'独立した本文 {pixel}。')
+        return kwargs['decoder'](text), None
+    monkeypatch.setattr(backend, 'read_image', read_image)
+    source = scanned_pdf()
+    text, warnings, details = core._ocr_pdf_text_with_warnings(
+        source, backend='ocr_api', workers=4, checkpoint_dir=tmp_path,
+        ocr_language='jpn', return_details=True)
+    assert '本文その一。' in text and '本文その二。' in text
+    assert details['review_pages'] == [1]
+    assert details['blank_pages'] == [4]
+    assert any('第 1 页' in warning and '循环' in warning for warning in warnings)
+    assert any('第 4 页' in warning and '空白' in warning for warning in warnings)
+    paragraphs, _, report = core.extract_document_paragraphs_with_report(
+        'scan.pdf', source, ocr_mode='force', ocr_backend='ocr_api',
+        ocr_language='jpn', source_language='日本語', checkpoint_dir=tmp_path,
+        ocr_workers=4)
+    assert paragraphs
+    assert any('第 1 页' in warning and '循环' in warning for warning in report['warnings'])
+    assert any('第 4 页' in warning and '空白' in warning for warning in report['warnings'])

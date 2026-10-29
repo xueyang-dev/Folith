@@ -1502,6 +1502,18 @@ def _ocr_pdf_text_with_warnings(
                                  if value is not None]
             completed_indices = [index for index in indices
                                  if str(index) in page_records]
+            review_pages = sorted(int(key) + 1 for key, record in page_records.items()
+                                  if any(str(w).startswith("ocr_api_repetition_detected")
+                                         for w in record.get("warnings", [])))
+            blank_pages = sorted(int(key) + 1 for key, record in page_records.items()
+                                 if any(str(w).startswith("ocr_api_blank_page")
+                                        for w in record.get("warnings", [])))
+            if review_pages:
+                warnings.append("第 " + "、".join(map(str, review_pages)) +
+                                " 页 OCR 输出出现循环，已保留循环前的内容，请在原文对照里核查这些页。")
+            if blank_pages:
+                warnings.append("第 " + "、".join(map(str, blank_pages)) +
+                                " 页没有识别到文字，按空白页处理。")
             usage_totals = {"reported": False, "prompt_tokens": None,
                             "completion_tokens": None, "reasoning_tokens": None,
                             "total_tokens": None, "amount": None}
@@ -1525,6 +1537,8 @@ def _ocr_pdf_text_with_warnings(
                 "completed_pages": len(completed_indices),
                 "page_order": [index + 1 for index in completed_indices],
                 "failed_pages": len(failed_pages),
+                "review_pages": review_pages,
+                "blank_pages": blank_pages,
                 # Never let a partly recognised book be reported as complete.
                 "all_pages_completed": len(completed_indices) == len(indices),
                 "checkpoint_file": str(cache.manifest_path) if cache.manifest_path else "",
