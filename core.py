@@ -12791,7 +12791,7 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
         where = f"（{stream.provider_label}）" if stream.provider_label else ""
         pause_message = (
             f"视觉识别连续 {stream.timeout_streak_limit} 页超时：服务商{where}处理图片太慢或不稳定。"
-            "建议在 设置 › 视觉与识别 换一个视觉模型，然后继续任务；已识别的页不会重读。")
+            "建议在 设置 › 模型 › 读取扫描页 换一个视觉模型，然后继续任务；已识别的页不会重读。")
         tracker["streak_message"] = pause_message
         update_runtime_state(
             job_id, pause_requested=True, status="pausing", phase_label=pause_message,
