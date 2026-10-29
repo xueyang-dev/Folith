@@ -798,57 +798,10 @@ class EngineDialog(QDialog):
         vrow.addWidget(mbox, 1, Qt.AlignmentFlag.AlignVCenter)
         vrow.addWidget(scan_test, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        vscan_block = QWidget()
-        vscan_block.inset = components.FORM_ROW_INSET_PLAIN
-        vb = QVBoxLayout(vscan_block)
-        vb.setContentsMargins(0, 0, 0, 0)
-        vb.setSpacing(0)
-        self._scan_model_row = components.FormRow(i18n.tr('视觉模型'), value=vrow_holder)
-        self._scan_model_row.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
-        self._scan_model_row.title_label.setWordWrap(True)
-        vb.addWidget(self._scan_model_row)
-
-        # ── 通道 A 附加内容（静态说明 + 输入类型提示）──────────────────────
-        channel_a_extra = QWidget()
-        cae = QVBoxLayout(channel_a_extra)
-        cae.setContentsMargins(0, 0, 0, 0)
-        cae.setSpacing(0)
-        vlm_hint_lbl = QLabel(i18n.tr('列表里只显示能看图并按格式回答的模型'))
-        vlm_hint_lbl.setObjectName("hint")
-        vlm_hint_lbl.setWordWrap(True)
-        vlm_hint_holder = QWidget()
-        vlm_hint_layout = QHBoxLayout(vlm_hint_holder)
-        vlm_hint_layout.setContentsMargins(theme_module.SPACE["md"], 0,
-                                           theme_module.SPACE["md"], theme_module.SPACE["xxs"])
-        vlm_hint_layout.addWidget(vlm_hint_lbl)
-        cae.addWidget(vlm_hint_holder)
-        vm_hint = self.connection_library.vision_modality_hint
-        vh_holder = QWidget()
-        vh_holder.setVisible(False)
-        vh_layout = QHBoxLayout(vh_holder)
-        vh_layout.setContentsMargins(theme_module.SPACE["lg"], 0, theme_module.SPACE["md"], 0)
-        vh_layout.addWidget(vm_hint)
-        cae.addWidget(vh_holder)
-        self.connection_library.vision_modality_hint_holder = vh_holder
-        vh_holder.setVisible(not vm_hint.isHidden())
-        vb.addWidget(channel_a_extra)
-        self.channel_a_extra = channel_a_extra
-
-        # ── 通道 B 附加内容（OCR 引擎选择 + 子块）──────────────────────────
-        channel_b_extra = QWidget()
-        cbe = QVBoxLayout(channel_b_extra)
-        cbe.setContentsMargins(0, 0, 0, 0)
-        cbe.setSpacing(0)
-        ocr_hint_lbl = QLabel(i18n.tr('OCR 专用模型列第一位，通用视觉模型也可用'))
-        ocr_hint_lbl.setObjectName("hint")
-        ocr_hint_lbl.setWordWrap(True)
-        ocr_hint_holder = QWidget()
-        ocr_hint_layout = QHBoxLayout(ocr_hint_holder)
-        ocr_hint_layout.setContentsMargins(theme_module.SPACE["md"], 0,
-                                           theme_module.SPACE["md"], theme_module.SPACE["xxs"])
-        ocr_hint_layout.addWidget(ocr_hint_lbl)
-        cbe.addWidget(ocr_hint_holder)
-        # OCR 引擎 SegmentedControl
+        # ── OCR 引擎 SegmentedControl（在 vscan_block 模型行之上）────────────
+        # Fix 1: 通道 B 的顺序必须是 ① OCR 引擎 ② OCR 模型 ③ 整理结构。
+        # 引擎选择放在 vscan_block 里（不随通道切换移动），由 sync_channel_ui
+        # 控制其可见性。
         init_engine = "ocr_api" if backend_init != "tesseract" else "tesseract"
         ocr_engine_items = [("ocr_api", i18n.tr('OCR API')),
                             ("tesseract", i18n.tr('本机 Tesseract'))]
@@ -856,7 +809,60 @@ class EngineDialog(QDialog):
         self.ocr_engine_picker.set_value(init_engine)
         if not command:
             self.ocr_engine_picker.set_enabled("tesseract", False)
-        cbe.addWidget(_setting_row(i18n.tr('OCR 引擎'), self.ocr_engine_picker))
+        self._ocr_engine_row = _setting_row(i18n.tr('OCR 引擎'), self.ocr_engine_picker)
+
+        # ── 提示文字（控件列对齐，Fix 3）──────────────────────────────────────
+        # 两条提示文字都通过 _setting_row("", lbl) 放入控件列，
+        # 与连接框左边缘对齐，无额外缩进。
+        vlm_hint_lbl = QLabel(i18n.tr('列表里只显示能看图并按格式回答的模型'))
+        vlm_hint_lbl.setObjectName("hint")
+        vlm_hint_lbl.setWordWrap(True)
+        self._vlm_hint_row = _setting_row("", vlm_hint_lbl)
+
+        ocr_hint_lbl = QLabel(i18n.tr('OCR 专用模型列第一位，通用视觉模型也可用'))
+        ocr_hint_lbl.setObjectName("hint")
+        ocr_hint_lbl.setWordWrap(True)
+        self._ocr_hint_row = _setting_row("", ocr_hint_lbl)
+
+        # 输入类型提示（modality hint）同样置于控件列。
+        # 注意：不在添加到布局前调用 setVisible(True)，避免无父控件时触发顶层窗口。
+        # 初始化为隐藏；sync_channel_ui 和 _update_vision_hint 会在时机成熟时显示它。
+        vm_hint = self.connection_library.vision_modality_hint
+        self._vm_hint_row = _setting_row("", vm_hint)
+        self._vm_hint_row.setVisible(False)
+        self.connection_library.vision_modality_hint_holder = self._vm_hint_row
+
+        vscan_block = QWidget()
+        vscan_block.inset = components.FORM_ROW_INSET_PLAIN
+        vb = QVBoxLayout(vscan_block)
+        vb.setContentsMargins(0, 0, 0, 0)
+        vb.setSpacing(0)
+        # OCR 引擎行在前（只有通道 B 时可见）。
+        vb.addWidget(self._ocr_engine_row)
+        self._scan_model_row = components.FormRow(i18n.tr('视觉模型'), value=vrow_holder)
+        self._scan_model_row.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
+        self._scan_model_row.title_label.setWordWrap(True)
+        vb.addWidget(self._scan_model_row)
+        # 两条提示行紧跟模型行，由 sync_channel_ui 按通道切换显隐。
+        vb.addWidget(self._vlm_hint_row)
+        vb.addWidget(self._ocr_hint_row)
+        vb.addWidget(self._vm_hint_row)
+
+        # ── 通道 A 附加内容（channel_a_extra 现在仅作占位，内容已移入 vscan_block）
+        channel_a_extra = QWidget()
+        cae = QVBoxLayout(channel_a_extra)
+        cae.setContentsMargins(0, 0, 0, 0)
+        cae.setSpacing(0)
+        vb.addWidget(channel_a_extra)
+        self.channel_a_extra = channel_a_extra
+
+        # ── 通道 B 附加内容（识别语言 + 整理结构）────────────────────────────
+        # 注意：OCR 引擎选择行已移入 vscan_block（在模型行之前），以满足顺序要求：
+        # ① OCR 引擎  ② OCR 模型 + 测试（API）或 识别语言（Tesseract）  ③ 整理结构
+        channel_b_extra = QWidget()
+        cbe = QVBoxLayout(channel_b_extra)
+        cbe.setContentsMargins(0, 0, 0, 0)
+        cbe.setSpacing(0)
         # 识别语言（仅 Tesseract 时可见）
         self.ocr_language_row = _setting_row(i18n.tr('识别语言'), self.ocr_language_box)
         cbe.addWidget(self.ocr_language_row)
@@ -867,12 +873,13 @@ class EngineDialog(QDialog):
             from .support import TESSERACT_INSTALL_URL
             install.clicked.connect(lambda: _open_url(TESSERACT_INSTALL_URL))
             cbe.addWidget(_setting_row("", install))
-        # 整理结构（始终沿用翻译模型）
-        structure_label = QLabel(i18n.tr('沿用翻译模型'))
-        structure_label.setObjectName("hint")
-        structure_label.setToolTip(
+        # 整理结构（0.8.0 只读：沿用翻译模型，显示实际连接名和模型名）
+        self._structure_hint_label = QLabel(i18n.tr('沿用翻译模型'))
+        self._structure_hint_label.setObjectName("hint")
+        self._structure_hint_label.setWordWrap(True)
+        self._structure_hint_label.setToolTip(
             i18n.tr('source_cleanup 步骤使用翻译模型把 OCR 文本整理成结构化段落'))
-        cbe.addWidget(_setting_row(i18n.tr('整理结构'), structure_label))
+        cbe.addWidget(_setting_row(i18n.tr('整理结构'), self._structure_hint_label))
         vb.addWidget(channel_b_extra)
         self.channel_b_extra = channel_b_extra
 
@@ -889,8 +896,22 @@ class EngineDialog(QDialog):
                 card.blockSignals(True)
                 card.setChecked(is_vision == ch_is_vision)
                 card.blockSignals(False)
-            channel_a_extra.setVisible(is_vision)
+
+            # Fix 1: OCR 引擎行在模型行之前，仅通道 B 时可见。
+            self._ocr_engine_row.setVisible(not is_vision)
+            channel_a_extra.setVisible(False)  # 已无内容（提示已移入 vscan_block）
             channel_b_extra.setVisible(not is_vision)
+
+            # Fix 3: 提示文字随通道切换，始终在控件列。
+            self._vlm_hint_row.setVisible(is_vision)
+            self._ocr_hint_row.setVisible(not is_vision)
+            # 输入类型提示由 _update_vision_hint 通过 vision_modality_hint_holder 管理。
+            # 通道 B 时强制隐藏；通道 A 时重新同步（初始化时被设为 False）。
+            if not is_vision:
+                self._vm_hint_row.setVisible(False)
+            else:
+                self.connection_library._update_vision_hint()
+
             self._scan_model_row.title_label.setText(
                 i18n.tr('视觉模型') if is_vision else i18n.tr('OCR 模型'))
             scan_test.setText(i18n.tr('测试视觉') if is_vision else i18n.tr('测试'))
@@ -900,6 +921,12 @@ class EngineDialog(QDialog):
                 self.ocr_engine_picker.set_value(engine)
                 self.ocr_engine_picker.blockSignals(False)
                 self.ocr_language_row.setVisible(engine == "tesseract")
+
+            # Fix 2: 整理结构 显示实际翻译连接 · 模型名（只读占位）。
+            self._sync_structure_hint()
+
+            # Fix 4: 卡片第二行 — 当前通道显示「连接 · 模型」，另一张显示通用副标题。
+            self._sync_channel_card_detail(is_vision)
 
         def sync_engine(*_args):
             engine = self.ocr_engine_picker.value()
@@ -912,9 +939,26 @@ class EngineDialog(QDialog):
                 if idx >= 0:
                     self.ocr_backend_box.setCurrentIndex(idx)
 
-        self.vision_option.toggled.connect(
-            lambda on: on and self.ocr_backend_box.setCurrentIndex(
-                self.ocr_backend_box.findData("online")))
+        # Fix 6: 切换回「视觉模型」通道时，若当前视觉模型是 OCR 专用模型（仅 OCR），
+        # 通道 A 的列表不显示该模型，自动清空到「沿用翻译连接」以避免无效选择。
+        def _on_vision_channel_selected(on: bool) -> None:
+            if not on:
+                return
+            from .model_capability import classify_model
+            lib = self.connection_library
+            current_model = str(lib.role_models.get("vision") or "")
+            if current_model and classify_model(current_model) == "ocr_only":
+                lib.selectors["vision"].setCurrentIndex(0) if "vision" in lib.selectors \
+                    else None
+                # 清空连接选择和模型选择
+                self.vision_connection_box.blockSignals(True)
+                self.vision_connection_box.setCurrentIndex(0)
+                self.vision_connection_box.blockSignals(False)
+                lib.role_models["vision"] = ""
+            self.ocr_backend_box.setCurrentIndex(
+                self.ocr_backend_box.findData("online"))
+
+        self.vision_option.toggled.connect(_on_vision_channel_selected)
         self.local_option.toggled.connect(
             lambda on: on and self.ocr_backend_box.setCurrentIndex(
                 self.ocr_backend_box.findData(
@@ -930,9 +974,62 @@ class EngineDialog(QDialog):
             lambda _t: self._sync_vision_detail())
         return group
 
+    def _sync_structure_hint(self) -> None:
+        """整理结构行：以静音文字显示当前翻译连接 · 模型（Fix 2）。
+
+        0.8.0 的整理结构始终沿用翻译模型。这一行是只读占位，
+        显示实际连接名和模型名供用户确认。
+        """
+        label = getattr(self, "_structure_hint_label", None)
+        if label is None:
+            return
+        lib = getattr(self, "connection_library", None)
+        if lib is None:
+            label.setText(i18n.tr('沿用翻译模型'))
+            return
+        t_id = lib.roles.get("translation") or ""
+        profile = next((p for p in lib.profiles if p["id"] == t_id), None)
+        if profile:
+            model = lib.role_models.get("translation") or profile.get("model") or ""
+            label.setText(i18n.tr('沿用翻译模型') + f"（{profile['name']} · {model}）")
+        else:
+            label.setText(i18n.tr('沿用翻译模型'))
+
+    def _sync_channel_card_detail(self, is_vision: bool) -> None:
+        """通道卡片第二行（Fix 4）。
+
+        当前通道的卡片显示「连接名 · 模型名」；
+        另一张卡片显示通用副标题（一步读出版面与文字 / 先认字…）。
+        """
+        # 通道 A（视觉模型）：当前连接 · 模型
+        lib = getattr(self, "connection_library", None)
+        if is_vision:
+            # 通道 A 是当前通道 → 调用既有逻辑
+            self._sync_vision_detail()
+            # 通道 B 卡片 → 显示通用副标题
+            self.local_option.set_detail(i18n.tr('先认字，再由文本模型整理'))
+        else:
+            # 通道 A 卡片 → 显示通用副标题（不再展示 OCR 专用模型名）
+            self.vision_option.set_detail(i18n.tr('一步读出版面与文字'))
+            # 通道 B 卡片 → 当前选中的 OCR 连接 · 模型
+            if lib:
+                t_id = lib.roles.get("vision") or ""
+                profile = next((p for p in lib.profiles if p["id"] == t_id), None)
+                if profile:
+                    model = lib.role_models.get("vision") or profile.get("model") or ""
+                    self.local_option.set_detail(f"{profile['name']} · {model}")
+                else:
+                    self.local_option.set_detail(i18n.tr('先认字，再由文本模型整理'))
+
     def _sync_vision_detail(self) -> None:
-        """视觉理解那张卡的第二行：用的是哪个连接 · 模型。"""
+        """视觉理解那张卡的第二行：用的是哪个连接 · 模型（仅通道 A 有效时更新）。"""
         if not hasattr(self, "vision_option"):
+            return
+        # 通道 B 时此方法由 _sync_channel_card_detail 管理，不重复更新。
+        backend = str(getattr(self, "ocr_backend_box",
+                              type("_", (), {"currentData": lambda s: "online"})()
+                              ).currentData() or "online")
+        if backend != "online":
             return
         library = getattr(self, "connection_library", None)
         selected = library.roles.get("vision") if library else ""

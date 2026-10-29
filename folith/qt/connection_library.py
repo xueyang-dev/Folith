@@ -4,7 +4,8 @@ from __future__ import annotations
 import uuid
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
+                               QListWidgetItem, QPushButton, QSizePolicy,
+                               QVBoxLayout, QWidget)
 from . import adapter, components, connection_status, i18n, icons, style
 from . import theme as theme_module
 from folith.model_connections import effective_config
@@ -79,6 +80,9 @@ class ConnectionLibrary(QWidget):
             box.setAccessibleName(i18n.tr(connection_status.ROLE_LABELS[role]))
             box.currentIndexChanged.connect(lambda _i, r=role: self.select(r))
             model_box = self.make_model_selector(role)
+            # Fix 5: 用途模型选择框的最小显示宽度提升到 24 字符，确保长模型名
+            # （如 tencent/Hunyuan-MT-7B，21 chars）不被截断。
+            model_box.setMinimumContentsLength(24)
             self.selectors[role] = box
             # 小标签（专用翻译 / 仅 OCR）放在模型选择器后面，不可见时占位 0。
             mt_tag = QLabel(self)
@@ -87,11 +91,16 @@ class ConnectionLibrary(QWidget):
             mt_tag.setToolTip("")
             self.capability_tags[role] = mt_tag
             # 模型框 + 标签合为一个复合控件传给 _setting_row。
+            # Fix 5: model_holder 设为 Expanding 策略，占满 _setting_row 里剩余的横向空间；
+            # model_box stretch=1 在 model_holder 内伸展，确保长模型名（如 tencent/Hunyuan-MT-7B）
+            # 不被截断；标签与模型框之间保持 sm 间距。
             model_holder = QWidget()
+            model_holder.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                       QSizePolicy.Policy.Preferred)
             mh = QHBoxLayout(model_holder)
             mh.setContentsMargins(0, 0, 0, 0)
-            mh.setSpacing(theme_module.SPACE["xs"])
-            mh.addWidget(model_box)
+            mh.setSpacing(theme_module.SPACE["sm"])
+            mh.addWidget(model_box, 1)
             mh.addWidget(mt_tag, 0, Qt.AlignmentFlag.AlignVCenter)
             self.role_group.add_row(_setting_row(i18n.tr(label), box, model_holder))
         # 视觉角色的控件（模型选择器 / 输入类型提示）：

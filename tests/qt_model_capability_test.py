@@ -359,3 +359,74 @@ class TestOcrBackendMigration:
         assert result == "online", (
             f"Translation-only model should keep ocr_backend='online', got {result!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix 6: switching from OCR channel back to VLM channel with an OCR-only model
+# ---------------------------------------------------------------------------
+
+class TestOcrOnlyFallbackOnChannelSwitch:
+    """Fix 6: When the user switches from OCR channel (B) back to VLM channel (A)
+    with an OCR-only vision model selected, the vision selection must be cleared to
+    「沿用翻译连接」because channel A's model list hides OCR-only models.
+    """
+
+    def _make_dialog_ocr_channel(self, model_name):
+        """Create a dialog with OCR channel active and an OCR-only vision model."""
+        profile = {
+            "id": "p1", "name": "SFB", "provider": "SiliconFlow", "custom": False,
+            "model": model_name, "models": [model_name],
+            "api_key": "k", "base_url": "", "protocol": "openai_compat",
+        }
+        config = _config(
+            connections=[profile],
+            connection_roles={"translation": "p1", "vision": "p1"},
+            connection_models={"vision": model_name},
+            ocr_backend="ocr_api",
+        )
+        return dialogs.EngineDialog(config, _SyncRunner())
+
+    def test_ocr_only_model_cleared_when_switching_to_vlm_channel(self, app, isolated):
+        """Selecting the 视觉模型 card while an OCR-only model is active must
+        clear the vision connection to 「沿用翻译模型」."""
+        dialog = self._make_dialog_ocr_channel("PaddlePaddle/PaddleOCR-VL-1.5")
+        assert dialog.ocr_backend_box.currentData() == "ocr_api", \
+            "Dialog should start in OCR API channel"
+        # Simulate clicking 视觉模型 card
+        dialog.vision_option.setChecked(True)
+        assert dialog.ocr_backend_box.currentData() == "online", \
+            "Should have switched to VLM channel"
+        # The vision connection should now be empty (沿用翻译连接 / index 0)
+        lib = dialog.connection_library
+        vision_conn = dialog.vision_connection_box.currentData()
+        vision_model = lib.role_models.get("vision") or ""
+        assert vision_conn == "" or vision_model == "", (
+            f"After switching from OCR channel with OCR-only model, vision "
+            f"connection must be cleared; got conn={vision_conn!r} model={vision_model!r}"
+        )
+        dialog.close()
+
+    def test_general_model_kept_when_switching_to_vlm_channel(self, app, isolated):
+        """Switching from OCR channel to VLM channel with a general VLM keeps the
+        current vision selection intact."""
+        profile = {
+            "id": "p1", "name": "SFB", "provider": "SiliconFlow", "custom": False,
+            "model": "Qwen/Qwen2.5-VL-72B-Instruct",
+            "models": ["Qwen/Qwen2.5-VL-72B-Instruct"],
+            "api_key": "k", "base_url": "", "protocol": "openai_compat",
+        }
+        config = _config(
+            connections=[profile],
+            connection_roles={"translation": "p1", "vision": "p1"},
+            connection_models={"vision": "Qwen/Qwen2.5-VL-72B-Instruct"},
+            ocr_backend="ocr_api",
+        )
+        dialog = dialogs.EngineDialog(config, _SyncRunner())
+        dialog.vision_option.setChecked(True)
+        assert dialog.ocr_backend_box.currentData() == "online"
+        lib = dialog.connection_library
+        vision_model = lib.role_models.get("vision") or ""
+        assert vision_model == "Qwen/Qwen2.5-VL-72B-Instruct", (
+            f"General VLM should be kept after channel switch; got {vision_model!r}"
+        )
+        dialog.close()
