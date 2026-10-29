@@ -35,6 +35,8 @@ class ConnectionLibrary(QWidget):
         self.editing = ""
         #: 编辑区里尚未保存的那条连接的 id：多次读取编辑区时保持不变。
         self._pending_id = ""
+        #: 编辑区当前这条连接已保存的思考开关；模型不支持该控件时按它原样写回。
+        self._thinking_mode = ""
         #: 模型目录声明过的输入模态（#48）：来自「获取可用模型」或正在编辑的
         #: 已保存连接。换提供商即作废——声明是跟着目录走的。
         self._catalog_modalities = {}
@@ -188,6 +190,7 @@ class ConnectionLibrary(QWidget):
         manual.addWidget(add)
         body.addLayout(manual)
         body.addWidget(dialog.reasoning_row)
+        body.addWidget(dialog.thinking_row)
         dialog.model_box.setParent(self.editor)
         dialog.model_box.hide()          # 数据模型：列表里看到的就是它的条目
         model = dialog.model_box.model()
@@ -422,7 +425,9 @@ class ConnectionLibrary(QWidget):
     def reset(self):
         self.editing = ""
         self._pending_id = ""
+        self._thinking_mode = ""
         self._catalog_modalities = {}
+        self.dialog.thinking_box.setCurrentIndex(0)
         self.editor_title.setText(i18n.tr('添加连接'))
         self.save_button.setText(i18n.tr('测试并添加'))
         self.name.clear()
@@ -604,6 +609,7 @@ class ConnectionLibrary(QWidget):
     def edit(self, key):
         p = next(p for p in self.profiles if p["id"] == key)
         self.editing = key
+        self._thinking_mode = str(p.get("reasoning_mode") or "")
         self.editor_title.setText(i18n.tr('编辑连接'))
         self.save_button.setText(i18n.tr('测试并保存'))
         self.kind.set_value("custom" if p.get("custom") else "catalog")
@@ -626,6 +632,8 @@ class ConnectionLibrary(QWidget):
         self.custom_settings.setChecked(bool(p.get("base_url")))
         self.dialog.reasoning_box.setCurrentIndex(max(0,
             self.dialog.reasoning_box.findData(p.get("reasoning_effort", ""))))
+        self.dialog.thinking_box.setCurrentIndex(max(0,
+            self.dialog.thinking_box.findData(p.get("reasoning_mode", ""))))
 
     def _editor_profile(self, quiet=False):
         """把编辑区读成一条连接；填得不完整时返回 None（``quiet`` 时不写状态）。"""
@@ -649,6 +657,9 @@ class ConnectionLibrary(QWidget):
              "reasoning_effort": (str(self.dialog.reasoning_box.currentData() or "")
                                   if self.dialog.reasoning_box.count() > 1
                                   else self.dialog.config.reasoning_effort),
+             "reasoning_mode": (str(self.dialog.thinking_box.currentData() or "")
+                                if self.dialog.thinking_box.count() > 1
+                                else self._thinking_mode),
              "provider": self.dialog.provider_box.currentText(),
              "model": self.dialog.model_box.currentText().strip(),
              "api_key": self.dialog.key_edit.text().strip(),
@@ -664,6 +675,11 @@ class ConnectionLibrary(QWidget):
         p["model_modalities"] = {m: [str(x) for x in (v or [])]
                                  for m, v in self._catalog_modalities.items()
                                  if m in p["models"]}
+        if not p["reasoning_mode"]:
+            # 这个模型没有经过验证的思考控件：不写档位，而不是写一个"服务默认"。
+            # 否则任何一次保存都会替连接记下显式默认值，把 FOLITH_REASONING_MODE
+            # 这个出口一起盖掉。
+            del p["reasoning_mode"]
         if not p["model"] or (custom and not p["base_url"]):
             fail(i18n.tr('请填写模型和 API 地址'))
             return None

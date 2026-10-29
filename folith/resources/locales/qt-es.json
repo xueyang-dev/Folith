@@ -2419,5 +2419,7 @@
   "仅 DOCX 任务可用：在原 DOCX 文件上写回译文，保留样式、表格与页眉页脚。": "Solo para tareas DOCX: escribe la traducción en el DOCX original conservando estilos, tablas, encabezados y pies de página.",
   "仅 DOCX 任务可用：需要原 DOCX 文件作为写回基础。": "Solo para tareas DOCX: se necesita el archivo DOCX original como base de escritura.",
   "原格式译文": "Traducción en formato original",
-  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Escribe la traducción en el DOCX original conservando estilos, tablas, notas al pie, encabezados y pies de página; lo que quede sin traducir se indica en el informe de entrega."
+  "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Escribe la traducción en el DOCX original conservando estilos, tablas, notas al pie, encabezados y pies de página; lo que quede sin traducir se indica en el informe de entrega.",
+  "思考": "Pensamiento",
+  "关闭思考": "Desactivar pensamiento"
 }
