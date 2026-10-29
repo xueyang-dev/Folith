@@ -2445,5 +2445,6 @@
   "OCR 模型": "Modèle OCR",
   "专用翻译": "Traduction seule",
   "仅 OCR": "OCR seul",
-  "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；建议选通用模型。": "Ce modèle est dédié à la traduction (ex. : Hunyuan-MT) ; les étapes nécessitant des réponses structurées, telles que l'extraction de termes, peuvent échouer. Un modèle généraliste est recommandé."
+  "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；建议选通用模型。": "Ce modèle est dédié à la traduction (ex. : Hunyuan-MT) ; les étapes nécessitant des réponses structurées, telles que l'extraction de termes, peuvent échouer. Un modèle généraliste est recommandé.",
+  "此设置用于新任务。已开始的任务保留原识别方式；要更换，请在任务中选择重新扫描 PDF 原文。": "Ce réglage concerne les nouvelles tâches. Les tâches commencées conservent leur méthode de lecture ; pour la modifier, relancez la numérisation du PDF dans la tâche."
 }
