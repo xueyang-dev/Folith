@@ -245,3 +245,17 @@ def test_ocr_channel_with_tesseract_hides_the_api_model_row(app, monkeypatch):
         assert "Tesseract" in dialog.local_option.detail_label.text()
     finally:
         dialog.close()
+
+
+def test_scan_scope_hint_uses_the_available_control_width(app):
+    dialog = _dialog(app)
+    try:
+        dialog.resize(900, 1000)
+        dialog.show_page('models')
+        for _ in range(5):
+            app.processEvents()
+        hint = next(label for label in dialog.findChildren(QLabel)
+                    if label.text().startswith('此设置用于新任务。'))
+        assert hint.width() >= 400
+    finally:
+        dialog.close()
