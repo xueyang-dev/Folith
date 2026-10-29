@@ -1859,8 +1859,10 @@ class MainWindow(QMainWindow):
         """给工作台准备「译前准备」数据；已开始的任务则收起准备面。
 
         目录（预设 / 交付项 / OCR / 项目 / 目标语言）在进程内只读一次；视图每次
-        按任务状态重建。``set_setup`` 在数据未变时不动面板，所以后台轮询不会把
-        用户正在准备面板上勾选的内容重置掉。
+        按任务状态重建。``WorkbenchView.set_setup`` 在视图数据与上次完全相同时
+        跳过 ``setup_panel.load()``（等数据相等守卫）；``setup_panel.load``
+        在同一任务内对用户已主动修改过的字段组（策略 / 交付）做脏保护——两层守卫
+        共同确保后台轮询不会把用户正在准备面板上勾选的内容重置掉。
         """
         if self._state_started(state):
             self.workbench.set_setup(None)
