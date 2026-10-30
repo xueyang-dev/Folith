@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 
 pytest.importorskip("PySide6")
 fitz = pytest.importorskip("fitz")
-from PySide6.QtCore import QCoreApplication, QEvent, QSettings  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
@@ -37,9 +38,11 @@ def window(tmp_path, monkeypatch, qt_app):
     from folith.desktop import paths as desktop_paths
     from folith.qt import adapter, i18n, onboarding, window as window_module
 
-    store = str(tmp_path / "w.ini")
-    monkeypatch.setattr(window_module, "QSettings",
-                        lambda *a: QSettings(store, QSettings.Format.IniFormat))
+    # 客户端偏好统一走 folith.qt.preferences；用它的环境变量把存储挪到 tmp，
+    # 测试不碰这台机器的真实设置。
+    from folith.qt import preferences
+
+    monkeypatch.setenv(preferences.SETTINGS_DIR_ENV, str(tmp_path / "settings"))
     # offscreen 下提示一律不弹；这里要验证的正是「会弹哪一个」。
     monkeypatch.setattr(onboarding, "_automatic", lambda: False)
     i18n.set_language("zh-CN")
@@ -78,8 +81,14 @@ def _pdf_job(core) -> str:
 def test_opening_a_pdf_task_offers_the_pdf_tip_on_the_view_source_button(window, qt_app):
     main, core = window
     job_id = _pdf_job(core)
-    main.open_job(job_id)
-    qt_app.processEvents()
+    # main 的 open_job 是异步的：用它的回调等打开完成，再断言。
+    opened = []
+    main.open_job(job_id, after_open=lambda: opened.append(job_id))
+    deadline = time.monotonic() + 10
+    while not opened and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.01)
+    assert opened, "打开任务没有完成"
     bench = main.workbench
     assert bench._pdf_ok is True
     assert not hasattr(bench, "source_button")
