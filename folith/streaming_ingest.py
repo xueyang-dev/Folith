@@ -277,10 +277,24 @@ class ScanStream:
         on the accumulated raw pages.  Called by ``_advance_scan_stream`` after
         ``wait_for_pages`` and before ``snapshot``; the assembler lock is NOT held
         so OCR API calls in the thread pool are not paused.
+
+        Race-condition guard: the background thread may finish (set
+        ``self.finished = True`` and store ``self._result``) before the main
+        thread reaches ``prepare_window`` for windows 2+.  If that happens,
+        ``_result`` is stale — it captured the assembler state *before* this
+        window's cleanup ran.  After cleanup completes we refresh ``_result``
+        under ``_cond`` so that the subsequent ``snapshot()`` call reads the
+        current paragraphs rather than the earlier snapshot.
         """
         prepare = getattr(self._assembler, "prepare_window", None)
         if callable(prepare):
             prepare()
+        # Refresh _result when the background thread already set finished before
+        # this window's cleanup ran.  finish() is idempotent: it only adds
+        # document blocks for paragraphs not yet in the document.
+        with self._cond:
+            if self.finished:
+                self._result = self._assembler.finish()
 
     def snapshot(self) -> Dict[str, Any]:
         """当前可以定稿的段落和对应的 DocumentIR（深拷贝，后台线程不会再改它）。"""
