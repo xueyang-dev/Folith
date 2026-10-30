@@ -511,7 +511,40 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
     pins a provider/endpoint, the key is looked up from the saved connection
     that owns *that* endpoint — never from whichever connection is current.  If
     no saved connection owns it, the result is a ``connection_missing`` error.
+
+    When ``saved`` is already a fully resolved ``OnlineOCRConfig`` (for example
+    when a caller builds the config programmatically and passes it through),
+    return it directly so the disk lookup is skipped and the object's own
+    credentials are preserved.
     """
+    if isinstance(saved, _ocr_online.OnlineOCRConfig):
+        # Normalize: fill in any missing base_url from the known-provider table
+        # (mirrors what the dict snapshot path does for pinned connections).
+        cfg = saved
+        if not cfg.base_url and cfg.provider:
+            try:
+                resolved_base = _resolve_online_ocr_base_url(cfg.provider, "")
+                cfg = _ocr_online.OnlineOCRConfig(
+                    provider=cfg.provider,
+                    base_url=resolved_base,
+                    model=cfg.model,
+                    api_key=cfg.api_key,
+                    max_tokens=cfg.max_tokens,
+                    temperature=cfg.temperature,
+                    reasoning_mode=cfg.reasoning_mode,
+                    prompt_version=cfg.prompt_version,
+                    timeout_s=cfg.timeout_s,
+                    max_retries=cfg.max_retries,
+                    proxy_bypass=cfg.proxy_bypass,
+                    credential_source=cfg.credential_source,
+                    credential_owner=cfg.credential_owner,
+                )
+            except (ValueError, AttributeError):
+                pass
+        reason = cfg.unavailable_reason()
+        if reason:
+            return None, {"error": "unconfigured", "message": reason}
+        return cfg, None
     snapshot = descriptor if isinstance(descriptor, dict) else (
         saved if isinstance(saved, dict) else {})
     from folith.model_connections import VISION_UNCONFIGURED

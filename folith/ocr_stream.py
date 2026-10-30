@@ -26,7 +26,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from folith.document_ir import PageEnvelope, new_document
+from folith.document_ir import PageEnvelope, PageUnderstanding, SemanticBlock, new_document
 from folith.document_understanding import DocumentUnderstandingError, PageFailed
 from folith.ocr_cache import OCRPageCache, OCRPageIdentity, OCR_PREPROCESSING_VERSION
 from folith.ocr_evidence import OCRPageResult
@@ -125,10 +125,14 @@ class OcrApiStreamProvider:
             backend_options=self._backend_options,
         )
 
-    def understand_page(self, envelope: PageEnvelope):
+    def understand_page(self, envelope: PageEnvelope) -> PageUnderstanding:
         """OCR one page; check cache first, store on success.
 
-        Returns the :class:`~folith.ocr_evidence.OCRPageResult` on success.
+        Returns a :class:`~folith.document_ir.PageUnderstanding` whose blocks
+        are :class:`~folith.document_ir.SemanticBlock` objects (one per non-empty
+        OCR line, ``region_ids=[]``).  The OCR-specific metadata (timings,
+        warnings, attempt count) is packed into ``diagnostics``.
+
         Raises :class:`~folith.document_understanding.DocumentUnderstandingError`
         on failure so that ``_understand_page_job`` with ``skip_failed=True``
         produces a :class:`~folith.document_understanding.PageFailed`.
@@ -151,7 +155,8 @@ class OcrApiStreamProvider:
         )
         if str(envelope.page_index) in records:
             record = records[str(envelope.page_index)]
-            return _record_to_page_result(record, envelope.page_index)
+            ocr_result = _record_to_page_result(record, envelope.page_index)
+            return _ocr_result_to_page_understanding(ocr_result, cache_hit=True)
 
         # Not in cache — run OCR.
         if not envelope.image:
@@ -160,7 +165,7 @@ class OcrApiStreamProvider:
                 {"error_code": "missing_image", "http_status": None},
             )
 
-        result: OCRPageResult = self._backend.recognize_page(
+        ocr_result: OCRPageResult = self._backend.recognize_page(
             envelope.image,
             page_index=envelope.page_index,
             page_number=envelope.page_index + 1,
@@ -168,27 +173,53 @@ class OcrApiStreamProvider:
             dpi=self._dpi,
         )
 
-        if result.error:
-            code = _error_code(result.error)
+        if ocr_result.error:
+            code = _error_code(ocr_result.error)
             raise DocumentUnderstandingError(
-                result.error,
+                ocr_result.error,
                 {"error_code": code, "http_status": None,
-                 "attempts": int((result.request or {}).get("attempt_count") or 1)},
+                 "attempts": int((ocr_result.request or {}).get("attempt_count") or 1)},
             )
 
         # Store in cache
-        record = result.to_record(
+        record = ocr_result.to_record(
             float(envelope.width),
             float(envelope.height),
         )
         self._cache.store_page(identity, record)
-        return result
+        return _ocr_result_to_page_understanding(ocr_result, cache_hit=False)
 
 
 def _error_code(error_str: str) -> str:
     """Extract a short code from 「code: message」 error strings."""
     match = re.match(r"^([a-z_]+):", str(error_str or ""))
     return match.group(1) if match else "ocr_error"
+
+
+def _ocr_result_to_page_understanding(ocr: OCRPageResult, *, cache_hit: bool) -> PageUnderstanding:
+    """Wrap an :class:`OCRPageResult` as a :class:`PageUnderstanding`.
+
+    Each non-empty OCR line becomes a ``SemanticBlock(type="body", text=line,
+    region_ids=[])``.  ``region_ids=[]`` tells ``align_blocks`` to fall back to
+    text-based alignment (no VLM bounding boxes available here).
+
+    OCR-specific metadata (timings, warnings, attempt count) is packed into the
+    ``diagnostics`` dict so ``OcrDocumentAssembler.add_page`` can read them back.
+    """
+    blocks = [
+        SemanticBlock(type="body", text=str(b.text or "").strip())
+        for b in (ocr.blocks or [])
+        if str(b.text or "").strip()
+    ]
+    diagnostics: Dict[str, Any] = {
+        "provider": "ocr_api",
+        "model": str((ocr.blocks[0].model if ocr.blocks else "") or ""),
+        "cache_hit": cache_hit,
+        "latency_s": float((ocr.timings or {}).get("recognition_s") or 0),
+        "attempt_count": int((ocr.request or {}).get("attempt_count") or 1),
+        "ocr_warnings": list(ocr.warnings or []),
+    }
+    return PageUnderstanding(blocks=blocks, provider="ocr_api", diagnostics=diagnostics)
 
 
 def _record_to_page_result(record: Dict[str, Any], page_index: int) -> OCRPageResult:
@@ -325,7 +356,13 @@ class OcrDocumentAssembler:
         ``result`` is one of:
         - ``None``: page skipped (not scanned / not selected)
         - :class:`~folith.document_understanding.PageFailed`: OCR failed
-        - :class:`~folith.ocr_evidence.OCRPageResult`: successful OCR
+        - 4-tuple ``(PageUnderstanding, anchors, index, started)`` from
+          ``iter_page_understanding`` / ``_understand_page_job``: successful OCR
+
+        The 4-tuple form is what ``ScanStream`` always delivers (it goes through
+        ``iter_page_understanding``).  The ``PageUnderstanding`` here has
+        ``provider="ocr_api"`` and its ``diagnostics`` carry the OCR-specific
+        metadata packed by :func:`_ocr_result_to_page_understanding`.
         """
         page = envelope.to_page()
         with self._lock:
@@ -370,22 +407,30 @@ class OcrDocumentAssembler:
                 })
                 return
 
-            # Successful OCR result
-            ocr: OCRPageResult = result
-            lines = [
-                str(b.text or "").strip()
-                for b in (ocr.blocks or [])
-                if str(b.text or "").strip()
-            ]
-            page_warnings = list(ocr.warnings or [])
+            # Successful OCR result — arrives as a (PageUnderstanding, anchors,
+            # index, started) 4-tuple from iter_page_understanding.
+            semantic: PageUnderstanding
+            if isinstance(result, tuple) and len(result) == 4:
+                semantic, _anchors, _index, started_ts = result
+            elif isinstance(result, OCRPageResult):
+                # Legacy: direct OCRPageResult (unit tests pass these directly).
+                semantic = _ocr_result_to_page_understanding(result, cache_hit=False)
+                started_ts = 0.0
+            else:
+                # Defensive: caller passed a PageUnderstanding directly.
+                semantic = result
+                started_ts = 0.0
+            diag = semantic.diagnostics or {}
+            lines = [b.text for b in (semantic.blocks or []) if b.text]
+            page_warnings = list(diag.get("ocr_warnings") or [])
             self._raw_pages.append(
                 (envelope.page_index, envelope.page_id, lines, page_warnings))
             self.diagnostics.append({
                 "page_id": envelope.page_id, "provider": "ocr_api",
                 "semantic_result": "complete",
                 "block_count": len(lines),
-                "latency_s": float((ocr.timings or {}).get("recognition_s") or 0),
-                "attempt_count": int((ocr.request or {}).get("attempt_count") or 1),
+                "latency_s": float(diag.get("latency_s") or 0),
+                "attempt_count": int(diag.get("attempt_count") or 1),
             })
 
     def committed_paragraph_count(self) -> int:
