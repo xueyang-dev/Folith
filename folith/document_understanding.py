@@ -61,6 +61,11 @@ skip empty cells. Vertical text is read in its reading order, column by column.'
 
 def decode_semantics(raw):
     """Strict adapter validation: malformed/truncated content is never accepted."""
+    return _decode_semantics(raw)[0]
+
+
+def _decode_semantics(raw):
+    """``decode_semantics`` 的实现，另外返回丢掉的空白块数（写进读页诊断）。"""
     try:
         text = str(raw or '').strip()
         # The exercised relay wraps otherwise valid JSON in Markdown fences.
@@ -76,8 +81,9 @@ def decode_semantics(raw):
     # The transport historically rejects empty OCR. A sentinel permits explicit
     # blank-page understanding without treating malformed content as blank.
     if not value['b']:
-        return [None]
+        return [None], 0
     blocks = []
+    dropped = 0
     for item in value['b']:
         if not isinstance(item, dict) or item.get('t') not in BLOCK_TYPES:
             raise ValueError('invalid_semantic_block')
@@ -115,7 +121,10 @@ def decode_semantics(raw):
                 rows.setdefault(cell['row'], []).append((cell['col'], cell['text']))
             text = '\n'.join('\t'.join(t for _, t in sorted(row)) for _, row in sorted(rows.items()))
         if not text.strip() and item['t'] not in {'figure', 'table'}:
-            raise ValueError('empty_semantic_block')
+            # 模型常在页尾多给一个空 paragraph（只带 p/n）：丢掉它，不拒收整页。
+            # 它的 p/n 不挪给相邻块——那是猜测，续段判断会退回看文字。
+            dropped += 1
+            continue
         flags = {}
         for key, name in (('p', 'continues_previous'), ('n', 'continues_next')):
             # 续段标记只是提示：缺失或取值不合法都当作"没给"，不拒收整页。
@@ -123,7 +132,10 @@ def decode_semantics(raw):
                 flags[name] = bool(item[key])
         blocks.append(SemanticBlock(item['t'], text.strip(), language=item.get('l'),
                                     direction=item.get('d'), cells=cells, **flags))
-    return blocks
+    if not blocks:
+        # 只有空白块不是空白页：空白页要明确回答 {"b":[]}。
+        raise ValueError('empty_semantic_block')
+    return blocks, dropped
 
 
 class DocumentUnderstandingError(ValueError):
@@ -206,8 +218,14 @@ class VLMDocumentProvider:
         return VLMDocumentProvider(config, client=client, cancel_check=cancel_check, language=language)
 
     def _read(self, transport, page, system_prompt=None):
+        def decoder(raw):
+            blocks, dropped = _decode_semantics(raw)
+            # 丢弃的空块数挂在实例上：读页诊断要用，但不改 _read 的调用约定
+            # （测试与调用方都把它当成「读一次图」）。
+            self._dropped_empty_blocks = getattr(self, '_dropped_empty_blocks', 0) + dropped
+            return blocks
         return transport.read_image(page.image, system_prompt=system_prompt or self.system_prompt,
-                                    user_prompt='Read all content on this page.', decoder=decode_semantics)
+                                    user_prompt='Read all content on this page.', decoder=decoder)
 
     def _thinking_fallback(self, page, first):
         """Final failure with thinking switched off: read the page once more with it on.
@@ -337,9 +355,13 @@ class VLMDocumentProvider:
         return diagnostics
 
     def understand_page(self, page):
+        self._dropped_empty_blocks = 0
         blocks, error = self._read(self.transport, page)
+        dropped = self._dropped_empty_blocks
         diagnostics = dict(self.transport._last_request)
         diagnostics['prompt_version'] = PROMPT_VERSION
+        if dropped and not error:
+            diagnostics['dropped_empty_blocks'] = dropped
         diagnostics['latency_s'] = self.transport._last_timings.get('request_s')
         if error:
             retried = self._thinking_fallback(page, diagnostics)
