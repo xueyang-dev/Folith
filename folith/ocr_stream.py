@@ -522,10 +522,12 @@ class OcrDocumentAssembler:
             clean_warns = [f"窗口 {window_id} 原文清洗失败，使用原始 OCR 文字：{exc}"]
 
         # Map each cleaned paragraph back to a page index.
-        # Cleanup may merge consecutive raw items, but the page-index of the
-        # FIRST merged item is a reasonable representative.
+        # Use output_input_indices from cleanup metadata for exact mapping;
+        # it records which raw items each cleaned paragraph originated from,
+        # so the first index gives the correct page even when merges occur.
         cleaned_page: List[int] = _map_cleaned_to_pages(
-            raw_for_cleanup, cleaned, page_of_raw)
+            raw_for_cleanup, cleaned, page_of_raw,
+            output_input_indices=(meta or {}).get("output_input_indices"))
 
         # Accumulate the per-window cleanup meta.
         self._cleanup_meta["input_count"] = int(self._cleanup_meta.get("input_count") or 0) + len(raw_for_cleanup)
@@ -670,20 +672,31 @@ def _map_cleaned_to_pages(
     raw: List[str],
     cleaned: List[str],
     raw_page: List[int],
+    output_input_indices: Optional[List[List[int]]] = None,
 ) -> List[int]:
     """Assign a page index to each cleaned paragraph.
 
     Cleanup can merge consecutive raw items; we attribute each cleaned paragraph
-    to the page of the first raw item it originates from.  A simple heuristic:
-    find the earliest raw item whose text appears at the start of the cleaned
-    paragraph.
+    to the page of the first raw item it originates from.
+
+    When ``output_input_indices`` is provided (from cleanup metadata), each
+    cleaned paragraph is mapped to the page of its first contributing raw item —
+    this is exact.  Otherwise we fall back to a proportional heuristic, which
+    can skip the last raw page when merges occur in the middle of the list.
     """
     if not cleaned:
         return []
     if len(cleaned) == len(raw):
         return list(raw_page)
-    # Fall back: distribute cleaned paragraphs proportionally.
-    result: List[int] = []
+    # Exact mapping via output_input_indices from cleanup metadata.
+    if output_input_indices and len(output_input_indices) == len(cleaned):
+        result: List[int] = []
+        for indices in output_input_indices:
+            raw_idx = indices[0] if indices else 0
+            result.append(raw_page[min(raw_idx, len(raw_page) - 1)])
+        return result
+    # Proportional fallback when exact indices are unavailable.
+    result = []
     ratio = len(raw) / max(len(cleaned), 1)
     for i in range(len(cleaned)):
         raw_idx = min(int(i * ratio), len(raw_page) - 1)
