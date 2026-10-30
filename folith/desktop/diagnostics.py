@@ -210,6 +210,7 @@ def collect(*, paths: desktop_paths.DesktopPaths | None = None,
     paths = paths or desktop_paths.resolve_paths()
     record = build if build is not None else desktop_paths.build_info()
     observed = _observed_schema(paths.data_dir)
+    from .ui_watchdog import latest_incident
     return {
         "app": {
             "version": desktop_paths.app_version(),
@@ -237,6 +238,7 @@ def collect(*, paths: desktop_paths.DesktopPaths | None = None,
             "architecture": platform.machine(),
             "machine": platform.machine(),
         },
+        "ui_health": latest_incident(paths.log_dir),
         "locations": {
             "data_dir": redact_path(paths.data_dir),
             "log_dir": redact_path(paths.log_dir),
