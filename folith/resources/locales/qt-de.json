@@ -1578,6 +1578,8 @@
   "滚动查看本段的注意事项、术语、前后文和批注。": "Scrollen Sie, um Hinweise, Begriffe, Kontext und Anmerkungen dieses Segments anzuzeigen.",
   "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "Die Übersetzung beginnt, sobald {v0} Seiten gelesen wurden. Erkannte Seiten werden gespeichert und nach einer Pause oder einem Neustart nicht erneut gelesen.",
   "全部页识别完、整理好原文后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "Die Übersetzung beginnt, wenn alle Seiten gelesen und der Ausgangstext strukturiert ist. Erkannte Seiten werden gespeichert und nach einer Pause oder einem Neustart nicht erneut gelesen.",
+  "第 {v0} 页未能识别，已在翻译前暂停": "Seite {v0} konnte nicht gelesen werden; vor der Übersetzung angehalten",
+  "点「继续」只重读这些页，其余页沿用已识别的结果；如果一直失败，可在 设置 › 模型 › 读取扫描页 换一个 OCR 模型后再继续。": "Klicken Sie auf „Fortsetzen“, um nur diese Seiten erneut zu lesen; die übrigen Seiten behalten ihre Ergebnisse. Schlägt es weiter fehl, wählen Sie unter Einstellungen › Modelle › Gescannte Seiten lesen ein anderes OCR-Modell und fahren Sie dann fort.",
   "灵活意译": "Flexibel",
   "点一张色卡即可选中对应主题。": "Klicken Sie auf ein Farbfeld, um das entsprechende Thema auszuwählen.",
   "点击「导入文档…」选择 PDF 或 DOCX，即可开始翻译。": "Klicken Sie auf „Dokument importieren…“, um eine PDF- oder DOCX-Datei auszuwählen und mit der Übersetzung zu beginnen.",

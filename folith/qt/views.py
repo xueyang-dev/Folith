@@ -5478,6 +5478,17 @@ class WorkbenchView(QWidget):
             return
         state = self._state or {}
         recognising = self._recognition_progress()
+        missing = [row.get("page") for row in state.get("ocr_missing_pages") or []
+                   if isinstance(row, dict)]
+        if (missing and str((self._last_runtime or {}).get("status") or "") == "paused"
+                and not (state.get("paras") or state.get("pairs"))):
+            # OCR 通道读完整本后有页没读成：停在翻译之前，等用户继续重读。
+            shown = "、".join(str(page) for page in missing[:8]) + ("…" if len(missing) > 8 else "")
+            self.no_segments_state.set_text(
+                i18n.tr('第 {v0} 页未能识别，已在翻译前暂停', v0=shown),
+                i18n.tr('点「继续」只重读这些页，其余页沿用已识别的结果；如果一直失败，'
+                        '可在 设置 › 模型 › 读取扫描页 换一个 OCR 模型后再继续。'))
+            return
         if recognising and not (state.get("paras") or state.get("pairs")):
             done, total = recognising
             from folith.streaming_ingest import FIRST_WINDOW_PAGES

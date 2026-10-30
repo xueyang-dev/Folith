@@ -1014,11 +1014,19 @@ def resolve_paddle_model(model_id):
 
 
 
+def _ocr_page_failure_reason(error):
+    """``truncated: OCR 输出过长…；该页未保存…`` → ``OCR 输出过长被截断``."""
+    code, _, detail = str(error or "").partition(": ")
+    reason = re.split(r"[；。]", detail or code, maxsplit=1)[0]
+    return re.sub(r"\s*（finish_reason=\w+）", "", reason).strip() or code or "请求失败"
+
+
 def _ocr_pdf_text_with_warnings(
     file_bytes, max_pages=None, on_progress=None, *, workers=None, queue_size=None,
     checkpoint_dir=None, cancel_check=None, profiler=None, return_details=False,
     dpi=None, backend=None, profile_cache_dir=None,
     ocr_language=None, ocr_psm=None, paddle_model=None, online_config=None,
+    reread_online_config=None,
 ):
     """OCR a scanned PDF with the local backend and return ``(text, warnings)``.
 
@@ -1067,6 +1075,17 @@ def _ocr_pdf_text_with_warnings(
                   "ocr_source": requested_engine})
         return result if return_details else result[:2]
     warnings.extend(backend_warnings)
+    # Pages missing from the cache are read with ``reread_online_config`` when the
+    # user switched the OCR model after some pages failed.  Their records are
+    # still stored under the task's original cache identity, so the pages that
+    # were already read are reused instead of re-reading the whole book.
+    page_backend = resolved_backend
+    if reread_online_config is not None and requested_engine == _ocr_backends.OCR_API_BACKEND:
+        try:
+            page_backend, _ = _ocr_backends.resolve_backend(
+                requested_engine, ocr_api_config=reread_online_config)
+        except _ocr_backends.OCRUnavailable as exc:
+            warnings.append(f"无法改用新的 OCR 模型重读：{exc}；继续使用原模型。")
     installed = []
     if resolved_backend.name == "tesseract":
         if not command:
@@ -1290,9 +1309,7 @@ def _ocr_pdf_text_with_warnings(
                 """One line for the page that failed; the progress line only counts it."""
                 if not on_progress:
                     return
-                code, _, detail = str(error).partition(": ")
-                reason = re.split(r"[；。]", detail or code, maxsplit=1)[0]
-                reason = re.sub(r"\s*（finish_reason=\w+）", "", reason).strip() or code
+                reason = _ocr_page_failure_reason(error)
                 try:
                     # 「未能…已跳过」 reads as a warning: the run goes on without this page.
                     on_progress(f"【阶段一】第 {page_number} 页未能识别，已跳过：{reason}")
@@ -1323,7 +1340,7 @@ def _ocr_pdf_text_with_warnings(
                             idx, png_bytes, enqueued_at, page_width, page_height = task
                             check_cancel()
                             started = time.perf_counter()
-                            evidence = resolved_backend.recognize_page(
+                            evidence = page_backend.recognize_page(
                                 png_bytes, page_index=idx, page_number=idx + 1,
                                 language=language, dpi=pass_dpi)
                             error = evidence.error
@@ -1780,7 +1797,8 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                                             ocr_psm=None, ocr_mode=None, ocr_backend=None,
                                             ocr_paddle_model=None, ocr_online_config=None,
                                             source_language=None,
-                                            understanding_provider=None, spatial_engine=None):
+                                            understanding_provider=None, spatial_engine=None,
+                                            ocr_reread_config=None):
     """Extract paragraphs together with an import-scope report.
 
     Returns ``(paragraphs, warnings, report)``.  The report is what makes the
@@ -1972,6 +1990,7 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                         "backend": ocr_backend,
                         "paddle_model": ocr_paddle_model,
                         "online_config": ocr_online_config,
+                        "reread_online_config": ocr_reread_config,
                     }
                     for key, value in optional_ocr_kwargs.items():
                         if supports_kwargs or key in parameters:
@@ -12468,6 +12487,66 @@ def _explicit_ocr_online(ocr_online, saved_runtime_config):
     return ocr_online
 
 
+def _ocr_missing_pages(report):
+    """OCR 通道读失败的页：``[{"page": 8, "reason": "OCR 输出过长被截断"}]``。"""
+    rows = ((report or {}).get("ocr") or {}).get("page_failures") or []
+    return [{"page": int(row["page_number"]), "reason": _ocr_page_failure_reason(row.get("error"))}
+            for row in rows if isinstance(row, dict) and str(row.get("page_number") or "").isdigit()]
+
+
+def _ocr_missing_pages_message(rows):
+    shown = "、".join(str(row["page"]) for row in rows[:8]) + ("…" if len(rows) > 8 else "")
+    reasons = {row["reason"] for row in rows}
+    reason = rows[0]["reason"] if len(reasons) == 1 else "原因见运行记录"
+    return (f"第 {shown} 页未能识别（{reason}），已在翻译前暂停：原文不能缺页。"
+            "点「继续」只重读这些页；如果一直失败，可在 设置 › 模型 › 读取扫描页 "
+            "换一个 OCR 模型后再继续。")
+
+
+def _ocr_reread_config(backend, pinned):
+    """继续时设置里的 OCR 模型若已换掉，就用它重读缺的页；没换返回 None。"""
+    try:
+        if _ocr_backends.normalize_backend(backend) != _ocr_backends.OCR_API_BACKEND:
+            return None
+    except _ocr_backends.OCRUnavailable:
+        return None
+    current, error = resolve_ocr_online_config()
+    if error or current is None or current.unavailable_reason():
+        return None
+    def key(config):
+        return tuple(str(getattr(config, name, "") or "") for name in ("provider", "model", "base_url"))
+    if pinned is not None and key(current) == key(pinned):
+        return None
+    return current
+
+
+def _extract_with_missing_page_gate(job_id, state, extract, *, backend, pinned_config):
+    """OCR 通道（OCR API / Tesseract）：有页没读成就停在翻译之前，继续时只重读这些页。
+
+    视觉模型通道边读边译，缺页由流式识别补读；OCR 通道先读完整本再整理、翻译，
+    所以缺页必须在这里拦住，否则译稿会悄悄少一页。已读成的页来自页缓存，不会重读。
+    """
+    reread = None
+    while True:
+        result = extract(reread)
+        missing = _ocr_missing_pages(result[2])
+        if not missing:
+            state.pop("ocr_missing_pages", None)
+            return result
+        state["ocr_missing_pages"] = missing
+        state["extraction_report"] = result[2]
+        save_job_state(job_id, state)
+        message = _ocr_missing_pages_message(missing)
+        update_runtime_state(job_id, pause_requested=True, status="pausing", phase_label=message)
+        _runtime_pause_checkpoint(job_id, paused_message=message)
+        reread = _ocr_reread_config(backend, pinned_config)
+        if reread is not None:
+            update_runtime_state(
+                job_id, event=f"缺的页改用『{reread.provider} · {reread.model}』重读",
+                event_name="ocr_reread_model", event_visibility="user",
+                event_category="orchestration")
+
+
 def _reconcile_vision_connection(job_id, state):
     """续跑时，任务钉住的视觉连接与当前视觉连接不同：决定用哪个，并留痕。
 
@@ -13624,8 +13703,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # One extraction path for every format: the same call that produces the
             # paragraphs also produces the import-scope report, so a DOCX table can
             # never be dropped silently just because the pipeline took a shortcut.
-            paragraphs, extraction_warnings, extraction_report = \
-                extract_document_paragraphs_with_report(
+            paragraphs, extraction_warnings, extraction_report = _extract_with_missing_page_gate(
+                job_id, state, lambda reread: extract_document_paragraphs_with_report(
                     filename, file_bytes, ocr_max_pages=None, on_progress=on_status,
                     profiler=profiler, checkpoint_dir=job_dir(job_id),
                     ocr_workers=effective_ocr_workers,
@@ -13639,7 +13718,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                     ocr_backend=effective_ocr_backend,
                     ocr_paddle_model=effective_paddle_model,
                     ocr_online_config=effective_online_config,
-                    source_language=effective_source_language)
+                    source_language=effective_source_language,
+                    ocr_reread_config=reread),
+                backend=effective_ocr_backend, pinned_config=effective_online_config)
 
             raw_paragraphs = list(paragraphs)
             # Persist the extraction boundary before remote cleanup starts.  If the

@@ -149,3 +149,12 @@ def test_ocr_channel_does_not_promise_translation_after_five_pages(app, backend)
     hint = bench.no_segments_state.hint_label.text()
     assert bench.no_segments_state.title_label.text() == "正在识别第 173/416 页"
     assert "满 5 页" not in hint and "全部页识别完" in hint
+
+
+def test_paused_on_missing_ocr_pages_says_which_pages_and_what_continue_does(app):
+    bench = _bench(_running(416, total=416, status="paused"),
+                   state={"pipeline_config": {"ocr_backend": "ocr_api"},
+                          "ocr_missing_pages": [{"page": 8, "reason": "OCR 输出过长被截断"}]})
+    bench._sync_segment_placeholder()
+    assert bench.no_segments_state.title_label.text() == "第 8 页未能识别，已在翻译前暂停"
+    assert "只重读这些页" in bench.no_segments_state.hint_label.text()

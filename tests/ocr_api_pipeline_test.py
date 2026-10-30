@@ -99,3 +99,81 @@ def test_a_failed_page_gets_its_own_warning_line(tmp_path, monkeypatch):
     assert view.message_status('ocr', failure_lines[0]) == 'warning'
     tallies = [m for m in messages if '失败 1 页' in m]
     assert tallies and all(view.message_status('ocr', m) == 'running' for m in tallies)
+
+
+def test_missing_page_is_reread_with_the_new_model_and_the_rest_come_from_cache(
+        tmp_path, monkeypatch):
+    pinned = OcrApiBackend(OnlineOCRConfig(provider='test', model='PaddleOCR',
+                                          api_key='test', base_url='https://example.test'))
+    newer = OcrApiBackend(OnlineOCRConfig(provider='test', model='Qwen-VL',
+                                         api_key='test', base_url='https://example.test'))
+    monkeypatch.setattr(core._ocr_backends, 'resolve_backend',
+                        lambda *a, **k: (newer if k.get('ocr_api_config') is newer.config
+                                         else pinned, []))
+    calls = []
+
+    def reader(name, fail_dark):
+        def read_image(png, **kwargs):
+            pixel = Image.open(io.BytesIO(png)).convert('L').getpixel((30, 30))
+            calls.append((name, pixel))
+            context = kwargs.get('context')
+            if context is not None:
+                context['request'] = {'status': 'completed', 'attempt_count': 1}
+            if fail_dark and pixel < 80:
+                return [], 'truncated: cut'
+            return kwargs['decoder'](f'{name} 本文 {pixel}。'), None
+        return read_image
+    monkeypatch.setattr(pinned, 'read_image', reader('old', True))
+    monkeypatch.setattr(newer, 'read_image', reader('new', False))
+    source = scanned_pdf()
+    run = lambda **extra: core._ocr_pdf_text_with_warnings(
+        source, backend='ocr_api', online_config=pinned.config, workers=4,
+        checkpoint_dir=tmp_path, ocr_language='jpn', return_details=True, **extra)
+    _, _, details = run()
+    assert [row['page_number'] for row in details['page_failures']] == [1]
+    calls.clear()
+    text, _, details = run(reread_online_config=newer.config)
+    assert details['page_failures'] == []
+    assert [name for name, _ in calls] == ['new']          # only the missing page
+    assert 'new 本文' in text and text.count('old 本文') == 3
+    calls.clear()
+    text, _, details = run()                               # identity unchanged: all cached
+    assert calls == [] and details['page_failures'] == []
+
+
+def test_gate_pauses_before_translation_and_rereads_on_continue(monkeypatch):
+    from folith import runtime_events_view as view
+    report_missing = {'ocr': {'page_failures': [
+        {'page_number': 8, 'error': 'truncated: OCR 输出过长被截断（finish_reason=length）；该页未保存'}]}}
+    results = [(['a'], [], report_missing), (['a', 'b'], [], {'ocr': {'page_failures': []}})]
+    seen_reread, pauses, saved = [], [], []
+    monkeypatch.setattr(core, 'save_job_state', lambda job_id, state: saved.append(dict(state)))
+    monkeypatch.setattr(core, 'update_runtime_state', lambda *a, **k: None)
+    monkeypatch.setattr(core, '_runtime_pause_checkpoint',
+                        lambda job_id, paused_message=None: pauses.append(paused_message))
+    newer = OnlineOCRConfig(provider='test', model='Qwen-VL', api_key='k',
+                            base_url='https://example.test')
+    monkeypatch.setattr(core, 'resolve_ocr_online_config', lambda *a, **k: (newer, None))
+    pinned = OnlineOCRConfig(provider='test', model='PaddleOCR', api_key='k',
+                             base_url='https://example.test')
+    state = {}
+
+    def extract(reread):
+        seen_reread.append(reread)
+        return results[len(seen_reread) - 1]
+    paragraphs, _, _ = core._extract_with_missing_page_gate(
+        'job', state, extract, backend='ocr_api', pinned_config=pinned)
+    assert paragraphs == ['a', 'b']
+    assert seen_reread == [None, newer]
+    assert len(pauses) == 1 and '第 8 页未能识别（OCR 输出过长被截断）' in pauses[0]
+    assert view.message_status('job_paused', pauses[0]) == 'warning'
+    assert saved[-1]['ocr_missing_pages'] == [{'page': 8, 'reason': 'OCR 输出过长被截断'}]
+    assert 'ocr_missing_pages' not in state
+
+
+def test_gate_keeps_the_pinned_model_when_settings_did_not_change(monkeypatch):
+    pinned = OnlineOCRConfig(provider='test', model='PaddleOCR', api_key='k',
+                             base_url='https://example.test')
+    monkeypatch.setattr(core, 'resolve_ocr_online_config', lambda *a, **k: (pinned, None))
+    assert core._ocr_reread_config('ocr_api', pinned) is None
+    assert core._ocr_reread_config('tesseract', pinned) is None
