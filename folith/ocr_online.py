@@ -175,10 +175,12 @@ class OnlineOCRConfig:
         """Why this connection cannot run, or ``""`` when it is usable."""
         if not self.model:
             return "未选择线上 OCR 模型。"
-        if not self.api_key:
+        if not self.api_key and self.provider != "Local Gateway":
             return "线上 OCR 缺少访问凭据；请在 OCR 设置中填写或引用已有凭据。"
         if not self.base_url:
             return "线上 OCR 缺少服务地址（需要 http(s)://…/v1）。"
+        if self.provider == "Local Gateway" and self.reasoning_mode != "provider_default":
+            return "本地网关未声明支持此推理控制；请选择服务默认。"
         if self.credential_owner and self.credential_owner != self.endpoint_id():
             # 最后一道闸：密钥属于另一个连接时，宁可让任务失败也不把它发给这个地址。
             return ("线上 OCR 的访问凭据属于另一个连接，与当前服务地址不一致；"
@@ -544,6 +546,10 @@ class OnlineOCRBackend(OCRBackend):
                 "User-Agent": "Folith/0.8.0",
                 "x-opencode-session": session_id,
             }
+        elif config.provider == "Local Gateway" and not config.api_key:
+            # 本地网关按约定不校验密钥：显式省略 Authorization，而不是发一个空串。
+            from openai import Omit
+            body["extra_headers"] = {"Authorization": Omit()}
         return body
 
     def _attempt(self, png_bytes: bytes, system_prompt: str, user_prompt=None) -> Dict[str, Any]:
@@ -618,8 +624,14 @@ class OnlineOCRBackend(OCRBackend):
         if self._cancel_check is not None and self._cancel_check():
             raise RuntimeError("任务已请求取消")
         system_prompt = system_prompt or SYSTEM_PROMPTS[self.config.prompt_version]
+        controller_provider = self.config.provider or ONLINE_OCR_BACKEND
+        if self.config.provider == "Local Gateway":
+            # 同一个网关地址下的不同端点各算一条限流/退避线。
+            from folith.llm_transport import api_key_fingerprint
+            controller_provider = "|".join((controller_provider, self.config.base_url,
+                                            api_key_fingerprint(self.config.api_key)))
         controller = request_control.get_request_controller(
-            self.config.provider or ONLINE_OCR_BACKEND, self.config.model)
+            controller_provider, self.config.model)
         attempts: List[Dict[str, Any]] = []
         usage_total: Dict[str, Any] = self._usage_record(None)
         request_ids: List[str] = []
@@ -861,9 +873,13 @@ def _default_client_factory(config: OnlineOCRConfig):
     def build():
         kwargs: Dict[str, Any] = {"api_key": config.api_key, "base_url": config.base_url,
                                   "timeout": timeout, "max_retries": 0}
+        if config.provider == "Local Gateway" and not config.api_key:
+            # The SDK refuses an empty key; the gateway ignores whatever we send.
+            kwargs["api_key"] = "local-gateway"
         bypass = None
-        if bypass_proxy:
-            bypass = httpx.Client(trust_env=False, timeout=timeout)
+        if bypass_proxy or config.provider == "Local Gateway":
+            bypass = httpx.Client(trust_env=not bypass_proxy, timeout=timeout,
+                                  follow_redirects=False)
             kwargs["http_client"] = bypass
         try:
             return OpenAI(**kwargs)

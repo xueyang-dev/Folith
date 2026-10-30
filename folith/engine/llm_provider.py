@@ -58,6 +58,10 @@ def resolve_openai_base_url(provider, base_url=None):
         resolved = normalize_openai_base_url(candidate)
         if not resolved:
             raise ValueError("API 地址无效（需要 http(s)://…/v1）")
+    if provider == "Local Gateway" and resolved:
+        parsed = urlparse(resolved)
+        if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+            raise ValueError("API 地址不能包含凭据、查询参数或片段")
     return resolved
 
 
@@ -75,6 +79,9 @@ def reasoning_effort_options(provider, model):
     unknown custom models remain in automatic mode so an unsupported request
     parameter cannot break translation.
     """
+    if provider == "Local Gateway":
+        # 网关不声明支持任何推理档位；发过去只会换来 400。
+        return ()
     cfg = _c.PROVIDERS.get(provider) or {}
     if cfg.get("kind") not in {"openai", "openai_compat"}:
         return ()
@@ -125,6 +132,8 @@ def thinking_control_options(provider, model):
     recognizable names, so an unknown custom model stays on its provider
     default rather than receiving a parameter it may not understand.
     """
+    if provider == "Local Gateway":
+        return ()
     cfg = _c.PROVIDERS.get(provider) or {}
     if cfg.get("kind") not in {"openai", "openai_compat"}:
         return ()
@@ -325,8 +334,15 @@ def is_rate_limited(err):
     return '429' in s or 'RESOURCE_EXHAUSTED' in s or 'rate limit' in s.lower()
 
 
-def _llm_request_controller(provider, model):
+def _llm_request_controller(provider, model, api_key="", *, base_url=None):
     """Shared, provider/model scoped request controller (see request_control)."""
+    if provider == "Local Gateway":
+        # 一个网关地址就是一条独立的限流/退避线；同一模型名换个端点不能再共用。
+        route = effective_request_route(provider, model)
+        endpoint = (resolve_openai_base_url(provider, base_url)
+                    if base_url is not None else route.get("base_url", ""))
+        provider = "|".join((provider, endpoint or "",
+                             _llm_transport.api_key_fingerprint(api_key)))
     return _request_control.get_request_controller(provider, model)
 
 

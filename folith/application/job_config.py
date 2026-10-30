@@ -634,10 +634,11 @@ class JobConfig:
             return "尚未选择模型提供商"
         if not str(self.model or "").strip():
             return "尚未填写模型名称"
-        if not str(self.api_key or "").strip():
+        if self.provider != "Local Gateway" and not str(self.api_key or "").strip():
             return "尚未填写 API Key"
         try:
-            core.resolve_openai_base_url(self.provider, self.translator_base_url)
+            core.resolve_openai_base_url(self.provider, self.translator_base_url or
+                                         ("" if self.provider == "Local Gateway" else None))
         except ValueError as exc:
             return str(exc)
         return ""

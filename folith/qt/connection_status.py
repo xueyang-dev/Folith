@@ -79,7 +79,7 @@ def problem(role: str, config: adapter.EngineConfig) -> str:
         return "尚未选择模型提供商"
     if not target["model"]:
         return "尚未填写模型名称"
-    if not target["api_key"]:
+    if target["provider"] != "Local Gateway" and not target["api_key"]:
         return "尚未填写 API Key"
     try:
         adapter.core.resolve_openai_base_url(target["provider"], target["base_url"])
