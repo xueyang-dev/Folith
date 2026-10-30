@@ -461,3 +461,54 @@ def test_cleanup_constraints_freeze_vlm_blocks_and_break_across_skipped_pages():
         "frozen_indices": [2], "hard_breaks_after": [3]}
     assert core._cleanup_constraints({"semantic_source": "native_pdf"}, 5) == {}
     assert core._cleanup_constraints({"semantic_source": "vlm"}, 5) == {}
+
+
+def _numbered_rows(user):
+    lines = [line for line in user.splitlines() if line and line[0].isdigit()]
+    return json.dumps({"segments": [{"index": i, "text": f"Cleaned {i}", "break_after": True}
+                                    for i in range(len(lines))]})
+
+
+def test_cleanup_stops_early_when_the_model_never_returns_the_format():
+    calls = []
+
+    def llm(*args, **kwargs):
+        calls.append(1)
+        return "这不是 JSON，而是翻译出来的说明文字。"
+
+    paras = [f"Raw paragraph {i}" for i in range(30)]
+    cleaned, metadata, warnings = core.cleanup_source_paragraphs(
+        paras, "DeepSeek", "key", "model", call_llm_fn=llm,
+        max_batch_items=1, parallelism=2, retry_backoff_seconds=0)
+    assert metadata["stopped_early"] is True
+    assert cleaned == paras                                  # extracted text kept
+    assert len(calls) < 30                                   # did not try every batch
+    assert sum("整理结构的前 4 批都没有按格式返回" in w for w in warnings) == 1
+    assert len(warnings) < 10                                # no line per unsent batch
+
+
+def test_cleanup_does_not_stop_early_on_network_errors():
+    def llm(*args, **kwargs):
+        raise RuntimeError("request timeout")
+
+    paras = [f"Raw paragraph {i}" for i in range(8)]
+    _, metadata, _ = core.cleanup_source_paragraphs(
+        paras, "DeepSeek", "key", "model", call_llm_fn=llm,
+        max_batch_items=1, parallelism=2, retry_backoff_seconds=0, max_retries=0)
+    assert metadata["stopped_early"] is False
+    assert metadata["failed_batches"] == 8
+
+
+def test_cleanup_does_not_stop_early_after_a_batch_succeeded():
+    calls = []
+
+    def llm(provider, api_key, model, system, user, **kwargs):
+        calls.append(1)
+        return _numbered_rows(user) if len(calls) == 1 else "not json"
+
+    paras = [f"Raw paragraph {i}" for i in range(8)]
+    _, metadata, _ = core.cleanup_source_paragraphs(
+        paras, "DeepSeek", "key", "model", call_llm_fn=llm,
+        max_batch_items=1, parallelism=1, retry_backoff_seconds=0, max_retries=0)
+    assert metadata["stopped_early"] is False
+    assert metadata["failed_batches"] == 7
