@@ -124,6 +124,16 @@ def _is_cjk(value: str) -> bool:
     return any("\u3400" <= char <= "\u9fff" for char in value or "")
 
 
+def _joins_without_space(char: str) -> bool:
+    """Scripts written without spaces between words: CJK ideographs, Japanese
+    kana and CJK / full-width punctuation.  ``_is_cjk`` covers ideographs only,
+    so a Japanese line ending in kana or 「、」 used to gain a space when joined."""
+    code = ord(char) if char else 0
+    return (0x3000 <= code <= 0x30FF or 0x31F0 <= code <= 0x31FF
+            or 0x3400 <= code <= 0x9FFF or 0xF900 <= code <= 0xFAFF
+            or 0xFF00 <= code <= 0xFFEF)
+
+
 def _join(left: str, right: str) -> str:
     left, right = _normalise_text(left), _normalise_text(right)
     if not left:
@@ -135,7 +145,7 @@ def _join(left: str, right: str) -> str:
     # Arabic.  Do not replace it with a language-agnostic guess.
     if left.endswith(("-", "‐", "‑")) and right[:1].islower():
         return left[:-1] + right
-    if ((_is_cjk(left[-1:]) and _is_cjk(right[:1]))
+    if ((_joins_without_space(left[-1:]) and _joins_without_space(right[:1]))
             or right.startswith(tuple(",.!?;:%)]}»”’。，！？；：％）】」』"
                                       "،؛؟۔"))):
         return left + right
