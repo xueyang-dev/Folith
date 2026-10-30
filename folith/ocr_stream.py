@@ -412,10 +412,6 @@ class OcrDocumentAssembler:
             semantic: PageUnderstanding
             if isinstance(result, tuple) and len(result) == 4:
                 semantic, _anchors, _index, started_ts = result
-            elif isinstance(result, OCRPageResult):
-                # Legacy: direct OCRPageResult (unit tests pass these directly).
-                semantic = _ocr_result_to_page_understanding(result, cache_hit=False)
-                started_ts = 0.0
             else:
                 # Defensive: caller passed a PageUnderstanding directly.
                 semantic = result

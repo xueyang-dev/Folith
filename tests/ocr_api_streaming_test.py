@@ -167,27 +167,13 @@ class TestOcrDocumentAssembler:
         return OcrDocumentAssembler("test.pdf", cleanup_fn=cleanup_fn)
 
     def _make_result(self, lines: List[str]):
-        """Fake OCRPageResult with text blocks."""
-        from folith.ocr_evidence import OCRPageResult, OCRBlock
-        blocks = [
-            OCRBlock(
-                text=line, raw_text=line,
-                left=0, top=float(i * 20), right=100, bottom=float(i * 20 + 18),
-                confidence=0.95,
-                page_index=0, page_number=1,
-                backend="ocr_api", device="remote",
-                provider="test", model="test",
-                backend_version="v1",
-                geometry_known=False,
-            )
-            for i, line in enumerate(lines)
-        ]
-        return OCRPageResult(
-            page_index=0, page_number=1,
-            language="eng", direction="ltr",
-            dpi=150, blocks=blocks, engine={},
-            warnings=[], error="", request={},
-        )
+        """Fake 4-tuple as iter_page_understanding produces."""
+        from folith.document_ir import PageUnderstanding, SemanticBlock
+        blocks = [SemanticBlock(type="body", text=line) for line in lines if line]
+        semantic = PageUnderstanding(blocks=blocks, provider="ocr_api", diagnostics={
+            "ocr_warnings": [], "latency_s": 0.0, "attempt_count": 1,
+        })
+        return (semantic, {}, 0, 0.0)
 
     def test_initial_state(self):
         a = self._assembler()
