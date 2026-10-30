@@ -4802,3 +4802,49 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     dialog.close()
     window._apply_scope_restore(job, list(dialog._record_checks))
     assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4)
+
+
+def test_inspector_status_line_is_translated(client):
+    """阿拉伯语界面下，检查器标题下的状态行（"11/18 · 已审校"）和段落事实不能漏中文。"""
+    import re
+
+    from folith.qt import i18n as i18n_module
+
+    adapter = client["adapter"]
+    core = client["core"]
+    window = client["window"]
+    app = client["app"]
+    tmp = client["tmp"]
+
+    source = tmp / "status.docx"
+    source.write_bytes(_make_docx(["第一段。", "第二段。"]))
+    job_id = adapter.import_documents([source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    state = core.load_job_state(job_id) or {}
+    state["paras"] = ["第一段。", "第二段。"]
+    state["pairs"] = [
+        {"source": "第一段。", "target": "First.", "reviewed": True, "segment_uid": "s1"},
+        {"source": "第二段。", "target": "Second.", "segment_uid": "s2"},
+    ]
+    state["p1_done"] = True
+    state["p2_done"] = True
+    core.save_job_state(job_id, state)
+    i18n_module.set_language("ar")
+    # main 的 open_job 是异步的：等它的回调，而不是假定打开是同步的。
+    opened = []
+    window.open_job(job_id, after_open=lambda: opened.append(job_id))
+    deadline = time.monotonic() + 10
+    while not opened and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert opened, "打开任务没有完成"
+
+    workbench = window.workbench
+    cjk = re.compile(r"[一-鿿]")
+    for index, status in ((0, "已审校"), (1, "待审校")):
+        assert workbench.select_segment(index) is True
+        app.processEvents()
+        assert workbench.segment_status.text().endswith(i18n_module.tr(status)), \
+            workbench.segment_status.text()
+        for label in (workbench.segment_status, workbench.fact_state, workbench.fact_review,
+                      workbench.fact_source, workbench.fact_excluded):
+            assert not cjk.search(label.text()), label.text()
