@@ -12458,7 +12458,8 @@ def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
         return False
     if strict_terminology_governance:
         return False
-    if _ocr_backends.normalize_backend(ocr_backend) != "online":
+    normalized_backend = _ocr_backends.normalize_backend(ocr_backend)
+    if normalized_backend not in ("online", _ocr_backends.OCR_API_BACKEND):
         return False
     mode = normalize_ocr_mode(ocr_mode)
     if mode == "off":
@@ -12612,7 +12613,40 @@ def _refresh_scan_provider(job_id, stream, state):
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                        source_language=None, ocr_language=None, ocr_psm=None,
                        failed_pages=None, online_config_resolver=None,
-                       committed_paragraphs=None):
+                       committed_paragraphs=None,
+                       ocr_backend=None, ocr_dpi=None,
+                       llm_provider=None, llm_api_key=None, llm_model=None,
+                       llm_call=None, cleanup_concurrency=None,
+                       cleanup_confidence_threshold=None, cleanup_max_retries=None,
+                       cleanup_request_interval=None):
+    """Start a scan stream for VLM (online) or OCR API (ocr_api) backend."""
+    normalized = _ocr_backends.normalize_backend(ocr_backend) if ocr_backend else "online"
+    if normalized == _ocr_backends.OCR_API_BACKEND:
+        return _start_ocr_api_scan_stream(
+            job_id, filename, file_bytes,
+            ocr_online_config=online_config,
+            source_language=source_language,
+            ocr_language=ocr_language, ocr_psm=ocr_psm, ocr_dpi=ocr_dpi,
+            failed_pages=failed_pages,
+            ocr_online_config_resolver=online_config_resolver,
+            committed_paragraphs=committed_paragraphs,
+            llm_provider=llm_provider, llm_api_key=llm_api_key, llm_model=llm_model,
+            llm_call=llm_call, cleanup_concurrency=cleanup_concurrency,
+            cleanup_confidence_threshold=cleanup_confidence_threshold,
+            cleanup_max_retries=cleanup_max_retries,
+            cleanup_request_interval=cleanup_request_interval)
+    return _start_vlm_scan_stream(
+        job_id, filename, file_bytes, online_config=online_config,
+        source_language=source_language, ocr_language=ocr_language, ocr_psm=ocr_psm,
+        failed_pages=failed_pages, online_config_resolver=online_config_resolver,
+        committed_paragraphs=committed_paragraphs)
+
+
+def _start_vlm_scan_stream(job_id, filename, file_bytes, *, online_config=None,
+                            source_language=None, ocr_language=None, ocr_psm=None,
+                            failed_pages=None, online_config_resolver=None,
+                            committed_paragraphs=None):
+    """Start VLM streaming (channel A, backend=online)."""
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
 
@@ -12643,6 +12677,172 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
             ocr_online_config=config, cancel_check=cancel_check,
             source_language=source_language, ocr_language=ocr_language,
             ocr_psm=ocr_psm)[0]
+
+    stream.refresh_provider = refresh_provider
+    return stream
+
+
+def _start_ocr_api_scan_stream(job_id, filename, file_bytes, *,
+                                ocr_online_config=None,
+                                source_language=None,
+                                ocr_language=None, ocr_psm=None, ocr_dpi=None,
+                                failed_pages=None,
+                                ocr_online_config_resolver=None,
+                                committed_paragraphs=None,
+                                llm_provider=None, llm_api_key=None, llm_model=None,
+                                llm_call=None, cleanup_concurrency=None,
+                                cleanup_confidence_threshold=None,
+                                cleanup_max_retries=None,
+                                cleanup_request_interval=None):
+    """Start OCR API streaming (channel B, backend=ocr_api).
+
+    The page provider wraps ``OcrApiBackend`` and reads/writes the same per-page
+    cache as the batch OCR path so that existing cached pages are reused.
+    The assembler runs ``cleanup_source_paragraphs`` per window.
+    """
+    import hashlib as _hashlib
+    from folith.streaming_ingest import ScanStream
+    from folith.ocr_stream import OcrApiStreamProvider, OcrDocumentAssembler, build_ocr_cache_version
+    from folith.ocr_cache import OCRPageCache
+    from folith.ocr_language import DEFAULT_PSM, OCR_CONFIG_VERSION, try_resolve_ocr_language
+    from folith.source_cleanup import cleanup_source_paragraphs
+
+    cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
+
+    def page_gate():
+        while (not cancel_check()
+               and (load_runtime_state(job_id) or {}).get("pause_requested")):
+            time.sleep(1.0)
+        return cancel_check()
+
+    # Resolve the OCR API configuration.
+    config = ocr_online_config
+    if config is None:
+        config, err = resolve_ocr_online_config()
+        if err or config is None:
+            raise ValueError(f"OCR API 连接未配置：{err}")
+    try:
+        from folith import ocr_backends as _ob
+        backend, _ = _ob.resolve_backend(
+            _ob.OCR_API_BACKEND, ocr_api_config=config)
+    except _ocr_backends.OCRUnavailable as exc:
+        raise ValueError(f"OCR API 不可用：{exc}") from exc
+
+    # Resolve language / DPI / PSM (same defaults as the batch path).
+    effective_dpi = max(72, int(ocr_dpi or OCR_DPI_BASELINE))
+    effective_psm = int(ocr_psm) if ocr_psm is not None else DEFAULT_PSM
+    try:
+        resolved_lang = try_resolve_ocr_language(ocr_language or "eng") or \
+            try_resolve_ocr_language("eng")
+    except Exception:
+        resolved_lang = None
+    language_code = resolved_lang.engine_code if resolved_lang else "eng"
+    direction = resolved_lang.direction if resolved_lang else "ltr"
+
+    # Build the cache version string — must match the batch path exactly.
+    runtime_meta = backend.runtime_info(language_code).to_dict()
+    cache_version = build_ocr_cache_version(runtime_meta)
+
+    # backend_options is "" for ocr_api (matches batch path _ocr_backends.backend_options).
+    backend_options_str = _ocr_backends.backend_options(backend.name, runtime_meta)
+
+    # Source file hash for cache identity.
+    source_sha256 = _hashlib.sha256(file_bytes).hexdigest()
+
+    # Cache directory (same sub-path as batch path: job_dir/ocr_cache/).
+    cache = OCRPageCache(_ocr_cache_dir(job_dir(job_id)))
+
+    provider = OcrApiStreamProvider(
+        backend, cache,
+        source_sha256=source_sha256,
+        language=language_code,
+        dpi=effective_dpi,
+        psm=effective_psm,
+        direction=direction,
+        cache_backend_version=cache_version,
+        backend_options=backend_options_str,
+    )
+    label = f"{config.provider or 'OCR API'} · {config.model or 'unknown'}"
+
+    # Build cleanup callback (called per window by OcrDocumentAssembler.prepare_window).
+    effective_cleanup_concurrency = int(cleanup_concurrency or 1)
+    effective_cleanup_threshold = float(cleanup_confidence_threshold or 0.0)
+    effective_cleanup_max_retries = int(cleanup_max_retries or 3)
+    effective_cleanup_interval = float(cleanup_request_interval or 0.0)
+
+    # OCR language context strings for the cleanup prompt.
+    ocr_lang_label = resolved_lang.label if resolved_lang else ""
+    ocr_engine_code = resolved_lang.engine_code if resolved_lang else "eng"
+    ocr_text_direction = resolved_lang.direction if resolved_lang else "ltr"
+
+    checkpoint_base = job_dir(job_id)
+
+    def cleanup_fn(raw_paragraphs, window_id, *, prev_tail_count=0):
+        """Run cleanup_source_paragraphs for one window with a window-specific checkpoint."""
+        if not raw_paragraphs or llm_call is None or llm_provider is None:
+            return raw_paragraphs, {"status": "skipped"}, []
+        # Window-specific checkpoint sub-dir so different windows don't collide.
+        window_checkpoint = checkpoint_base / f"ocr_stream_cleanup_w{window_id}"
+        return cleanup_source_paragraphs(
+            raw_paragraphs,
+            llm_provider, llm_api_key or "", llm_model or "",
+            call_llm=llm_call,
+            parallelism=effective_cleanup_concurrency,
+            confidence_threshold=effective_cleanup_threshold,
+            checkpoint_dir=window_checkpoint,
+            cancel_check=cancel_check,
+            max_retries=effective_cleanup_max_retries,
+            request_interval_seconds=effective_cleanup_interval,
+            ocr_language=ocr_language or "",
+            source_language=source_language or "",
+            text_direction=ocr_text_direction,
+            ocr_engine_code=ocr_engine_code,
+            ocr_backend=_ocr_backends.OCR_API_BACKEND,
+        )
+
+    late = {int(row["page"]) - 1: row for row in failed_pages or []
+            if isinstance(row, dict) and row.get("page")}
+
+    def assembler_factory(fname, known_paras):
+        return OcrDocumentAssembler(fname, known_paras, cleanup_fn=cleanup_fn)
+
+    stream = ScanStream(
+        filename, file_bytes, provider,
+        checkpoint_dir=job_dir(job_id),
+        cancel_check=cancel_check,
+        page_gate=page_gate,
+        late_pages=late,
+        provider_label=label,
+        known_paragraphs=committed_paragraphs,
+        assembler_factory=assembler_factory,
+    )
+    stream.facts = _pdf_extraction_facts(file_bytes)
+
+    def refresh_provider(current_state):
+        """Switch to a new OCR config if the user changed the model on resume."""
+        new_config = ocr_online_config_resolver(current_state) if ocr_online_config_resolver else ocr_online_config
+        if new_config is None:
+            return None
+        try:
+            new_backend, _ = _ocr_backends.resolve_backend(
+                _ocr_backends.OCR_API_BACKEND, ocr_api_config=new_config)
+        except _ocr_backends.OCRUnavailable:
+            return None
+        new_meta = new_backend.runtime_info(language_code).to_dict()
+        new_version = build_ocr_cache_version(new_meta)
+        new_options = _ocr_backends.backend_options(new_backend.name, new_meta)
+        new_provider = OcrApiStreamProvider(
+            new_backend, cache,
+            source_sha256=source_sha256,
+            language=language_code,
+            dpi=effective_dpi,
+            psm=effective_psm,
+            direction=direction,
+            cache_backend_version=new_version,
+            backend_options=new_options,
+        )
+        new_provider.cache_identity = getattr(provider, "cache_identity", None)
+        return new_provider
 
     stream.refresh_provider = refresh_provider
     return stream
@@ -12682,7 +12882,7 @@ def _merge_streaming_segmentation(previous, addition, *, paragraph_offset,
 
 
 def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
-                        ocr_mode, warnings):
+                        ocr_mode, warnings, scan_stream=None):
     """把识别快照里新定稿的段落追加成翻译单元；返回新增翻译单元的区间。"""
     paragraphs = list(snapshot["paragraphs"])
     committed = list(state.get("source_paragraphs") or [])
@@ -12692,17 +12892,34 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
             "边识别边翻译：已定稿的原文与重新识别的结果不一致，"
             "请删除该任务后重新导入。")
     document = snapshot["document"]
+    stream_provider = str((document.get("provenance") or {}).get("provider") or "vlm")
+    is_ocr_stream = (stream_provider == "ocr_api")
     failed_pages = list(snapshot.get("failed_pages") or [])
     warnings = list(warnings) + [
         f"第 {row['page']} 页识别失败（{row.get('reason') or row.get('code') or '请求失败'}），"
         "原文缺失；继续任务时会补读" for row in failed_pages]
+    # Include per-page OCR warnings (repetition, blank pages) from OCR streaming.
+    if is_ocr_stream and scan_stream is not None:
+        assembler = getattr(scan_stream, "_assembler", None)
+        if assembler is not None:
+            ocr_stream_warnings = getattr(assembler, "cleanup_warnings", lambda: [])()
+            for w in ocr_stream_warnings:
+                if w not in warnings:
+                    warnings.append(w)
     report = _build_extraction_report(filename, paragraphs, facts=facts,
                                       warnings=list(warnings))
-    report.update({
-        "semantic_source": "vlm", "document_ir": document, "ocr_used": False,
-        "ocr_mode": ocr_mode, "ocr_trigger": "scanned_pdf_streaming",
-        "page_diagnostics": (document.get("provenance") or {}).get("page_diagnostics") or [],
-    })
+    if is_ocr_stream:
+        report.update({
+            "semantic_source": "ocr_api", "document_ir": document, "ocr_used": True,
+            "ocr_mode": ocr_mode, "ocr_trigger": "scanned_pdf_ocr_streaming",
+            "page_diagnostics": (document.get("provenance") or {}).get("page_diagnostics") or [],
+        })
+    else:
+        report.update({
+            "semantic_source": "vlm", "document_ir": document, "ocr_used": False,
+            "ocr_mode": ocr_mode, "ocr_trigger": "scanned_pdf_streaming",
+            "page_diagnostics": (document.get("provenance") or {}).get("page_diagnostics") or [],
+        })
     if not snapshot["finished"] or failed_pages:
         report["status"] = "partial"  # 缺页的书：原文不完整，交付门禁据此拦截
     state["extraction_report"] = report
@@ -12727,11 +12944,26 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
         state["segment_source_spans"] = list(state.get("segment_source_spans") or []) + spans
         state["segment_source_marks"] = list(state.get("segment_source_marks") or []) + \
             segment_marks(document, spans, segments)
-    state["source_cleanup"] = {
-        "status": "skipped", "reason": "vlm_semantics_no_ocr_repair",
-        "input_count": len(paragraphs), "output_count": len(paragraphs),
-        "paragraph_count": len(paragraphs), "segment_count": len(paras),
-    }
+    if is_ocr_stream:
+        # OCR streaming: cleanup was done per-window; mark as complete so the
+        # whole-book batch cleanup in stage-1 is not repeated.
+        assembler = getattr(scan_stream, "_assembler", None) if scan_stream else None
+        ocr_meta = getattr(assembler, "cleanup_meta", lambda: {})() if assembler else {}
+        state["source_cleanup"] = {
+            "status": "complete" if snapshot["finished"] else "running",
+            "reason": "ocr_stream_windowed_cleanup",
+            "input_count": int(ocr_meta.get("input_count") or len(paragraphs)),
+            "output_count": int(ocr_meta.get("output_count") or len(paragraphs)),
+            "paragraph_count": len(paragraphs),
+            "segment_count": len(paras),
+            "window_count": int(ocr_meta.get("window_count") or 0),
+        }
+    else:
+        state["source_cleanup"] = {
+            "status": "skipped", "reason": "vlm_semantics_no_ocr_repair",
+            "input_count": len(paragraphs), "output_count": len(paragraphs),
+            "paragraph_count": len(paragraphs), "segment_count": len(paras),
+        }
     state["source_cleanup_done"] = True
     state["source_quality_gate"] = _audit_source_quality_for_state(state)
     if facts.get("pages"):
@@ -12973,11 +13205,15 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
     stream.wait_for_pages(
         target, on_tick=lambda done, total, retried: _scan_stream_tick(
             job_id, state, stream, tracker, done, total, retried))
+    # For OCR streams: run cleanup on accumulated pages BEFORE taking the snapshot.
+    # For VLM streams: this is a no-op.
+    stream.prepare_window()
     snapshot = stream.snapshot()
     start, end = _commit_scan_stream(
         state, snapshot, filename=filename, facts=stream.facts,
         segmentation_mode=segmentation_mode, ocr_mode=ocr_mode,
-        warnings=state.get("warnings") or [])
+        warnings=state.get("warnings") or [],
+        scan_stream=stream)
     if on_status:
         on_status(f"【阶段一】视觉识别：{snapshot['pages_done']}/{snapshot['pages_total']} 页，"
                   f"新增 {end - start} 句进入翻译")
@@ -13653,18 +13889,52 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 save_source(job_id, file_bytes)
             except Exception:
                 pass
+            _is_ocr_stream = (
+                _ocr_backends.normalize_backend(effective_ocr_backend)
+                == _ocr_backends.OCR_API_BACKEND)
             if on_status:
                 from folith import streaming_ingest as _streaming_ingest
-                on_status(
-                    f"【阶段一】视觉识别（边识别边翻译：先识别 {_streaming_ingest.FIRST_WINDOW_PAGES} 页"
-                    f"即开始翻译，之后每 {_streaming_ingest.DEFAULT_WINDOW_PAGES} 页交给翻译一次）…")
+                if _is_ocr_stream:
+                    on_status(
+                        f"【阶段一】OCR 识别（边识别边翻译：先识别 {_streaming_ingest.FIRST_WINDOW_PAGES} 页"
+                        f"即开始翻译，之后每 {_streaming_ingest.DEFAULT_WINDOW_PAGES} 页交给翻译一次）…")
+                else:
+                    on_status(
+                        f"【阶段一】视觉识别（边识别边翻译：先识别 {_streaming_ingest.FIRST_WINDOW_PAGES} 页"
+                        f"即开始翻译，之后每 {_streaming_ingest.DEFAULT_WINDOW_PAGES} 页交给翻译一次）…")
             scan_stream = _start_scan_stream(
                 job_id, filename, file_bytes, online_config=effective_online_config,
                 source_language=effective_source_language,
                 ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
+                ocr_dpi=effective_ocr_dpi,
+                ocr_backend=effective_ocr_backend,
                 failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"),
                 committed_paragraphs=state.get("source_paragraphs"),
-                online_config_resolver=_current_vision_config)
+                online_config_resolver=_current_vision_config,
+                llm_provider=provider, llm_api_key=api_key, llm_model=model,
+                llm_call=call_llm,
+                cleanup_concurrency=effective_cleanup_concurrency,
+                cleanup_confidence_threshold=effective_cleanup_confidence_threshold,
+                cleanup_max_retries=effective_cleanup_max_retries,
+                cleanup_request_interval=effective_cleanup_request_interval)
+            # Pre-populate streaming_ingest so the UI shows the streaming hint
+            # for the OCR API backend BEFORE the first window is committed.
+            # Only do this for OCR API streams: for VLM streams the save_job_state
+            # call would give the background thread time to race ahead and process
+            # pages 0-24, making stream.pages_done large when _advance_scan_stream
+            # is first called — which would push the first target past the blocking
+            # page boundary and delay translation start.
+            if _is_ocr_stream and not state.get("streaming_ingest"):
+                state["streaming_ingest"] = {
+                    "status": "running",
+                    "pages_done": 0,
+                    "pages_total": scan_stream.pages_total,
+                    "paragraphs": 0,
+                    "segments": 0,
+                    "failed_pages": [],
+                    "paragraph_pages": [],
+                }
+                save_job_state(job_id, state)
             registry = _SCAN_STREAMS.get()
             if registry is not None:
                 registry.append(scan_stream)

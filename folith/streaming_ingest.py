@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 import fitz
 
 from folith.document_understanding import PageFailed, VisualDocumentAssembler, iter_page_understanding
+from typing import Type
 
 #: 后续窗口：每攒够这么多页就交给翻译一次，批量大些效率高。
 DEFAULT_WINDOW_PAGES = 20
@@ -86,7 +87,8 @@ class ScanStream:
                  late_pages: Optional[Dict[int, dict]] = None,
                  provider_label: str = "",
                  known_paragraphs: Optional[List[str]] = None,
-                 timeout_streak_limit: int = TIMEOUT_STREAK_LIMIT):
+                 timeout_streak_limit: int = TIMEOUT_STREAK_LIMIT,
+                 assembler_factory=None):
         with fitz.open(stream=data, filetype="pdf") as pdf:
             self.pages_total = len(pdf)
         self.window_pages = max(1, int(window_pages or DEFAULT_WINDOW_PAGES))
@@ -107,7 +109,8 @@ class ScanStream:
         self.error: Optional[BaseException] = None
         # 工作线程里的页级重试 / 失败事件（deque.append 线程安全），主线程在 tick 里取走。
         self._page_events: deque = deque(maxlen=200)
-        self._assembler = VisualDocumentAssembler(filename, known_paragraphs)
+        factory = assembler_factory if assembler_factory is not None else VisualDocumentAssembler
+        self._assembler = factory(filename, known_paragraphs)
         self._result = None
         self._cond = threading.Condition()
         self._stop = threading.Event()
@@ -266,6 +269,19 @@ class ScanStream:
             if on_tick is not None:
                 on_tick(done, self.pages_total, retried)
 
+    def prepare_window(self) -> None:
+        """Main-thread hook: let the assembler run pre-snapshot work (e.g. OCR cleanup).
+
+        For VLM streams (``VisualDocumentAssembler``) this is a no-op.  For OCR
+        streams (``OcrDocumentAssembler``) it runs ``cleanup_source_paragraphs``
+        on the accumulated raw pages.  Called by ``_advance_scan_stream`` after
+        ``wait_for_pages`` and before ``snapshot``; the assembler lock is NOT held
+        so OCR API calls in the thread pool are not paused.
+        """
+        prepare = getattr(self._assembler, "prepare_window", None)
+        if callable(prepare):
+            prepare()
+
     def snapshot(self) -> Dict[str, Any]:
         """当前可以定稿的段落和对应的 DocumentIR（深拷贝，后台线程不会再改它）。"""
         with self._cond:
@@ -279,8 +295,11 @@ class ScanStream:
                 document = self._assembler.document
                 committed = self._assembler.committed_paragraph_count()
             document = copy.deepcopy(document)
+            # Use the provenance already set by the assembler (vlm or ocr_api).
+            existing_provenance = document.get("provenance") or {}
+            provider_name = str(existing_provenance.get("provider") or "vlm")
             document["provenance"] = {
-                "provider": "vlm",
+                "provider": provider_name,
                 "page_diagnostics": copy.deepcopy(self._assembler.diagnostics),
             }
             return {
