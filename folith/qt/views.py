@@ -5481,10 +5481,17 @@ class WorkbenchView(QWidget):
         if recognising and not (state.get("paras") or state.get("pairs")):
             done, total = recognising
             from folith.streaming_ingest import FIRST_WINDOW_PAGES
+            backend = ((state.get("pipeline_config") or {}).get("ocr_backend")
+                       or state.get("ocr_backend") or "online")
+            if isinstance(state.get("streaming_ingest"), dict) or backend == "online":
+                # 视觉模型通道边识别边翻译。
+                hint = i18n.tr('满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。',
+                               v0=min(FIRST_WINDOW_PAGES, total))
+            else:
+                # OCR 通道（OCR API / Tesseract）先读完整本、整理原文，再开始翻译。
+                hint = i18n.tr('全部页识别完、整理好原文后开始翻译；已识别的页会保存，暂停或重开后不会重读。')
             self.no_segments_state.set_text(
-                i18n.tr('正在识别第 {v0}/{v1} 页', v0=done, v1=total),
-                i18n.tr('满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。',
-                        v0=min(FIRST_WINDOW_PAGES, total)))
+                i18n.tr('正在识别第 {v0}/{v1} 页', v0=done, v1=total), hint)
             return
         if state.get("excluded_segments"):
             title = i18n.tr('所有段落都被排除了')

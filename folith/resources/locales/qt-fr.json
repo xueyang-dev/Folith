@@ -1577,6 +1577,7 @@
   "源术语": "Terme source",
   "滚动查看本段的注意事项、术语、前后文和批注。": "Faites défiler pour voir les remarques, termes, contexte et notes de ce segment.",
   "满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "La traduction commence dès que {v0} pages sont lues. Les pages reconnues sont enregistrées et ne sont pas relues après une pause ou une réouverture.",
+  "全部页识别完、整理好原文后开始翻译；已识别的页会保存，暂停或重开后不会重读。": "La traduction commence une fois toutes les pages lues et le texte source structuré. Les pages reconnues sont enregistrées et ne sont pas relues après une pause ou une réouverture.",
   "灵活意译": "Flexible",
   "点一张色卡即可选中对应主题。": "Cliquez sur un échantillon pour sélectionner ce thème.",
   "点击「导入文档…」选择 PDF 或 DOCX，即可开始翻译。": "Cliquez sur « Importer un document… » pour choisir un fichier PDF ou DOCX et commencer la traduction.",

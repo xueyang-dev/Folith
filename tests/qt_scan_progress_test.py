@@ -138,3 +138,14 @@ def test_header_status_line_is_scrollable_not_elided_and_tooltip_has_full_text(a
     group.set_state(tone="running", line="短")
     assert not view.overflows()
     group.close()
+
+
+@pytest.mark.parametrize("backend", ["ocr_api", "tesseract"])
+def test_ocr_channel_does_not_promise_translation_after_five_pages(app, backend):
+    """OCR 通道先读完整本再翻译：不能写「满 5 页后开始翻译」。"""
+    bench = _bench(_running(173, total=416),
+                   state={"pipeline_config": {"ocr_backend": backend}})
+    bench._sync_segment_placeholder()
+    hint = bench.no_segments_state.hint_label.text()
+    assert bench.no_segments_state.title_label.text() == "正在识别第 173/416 页"
+    assert "满 5 页" not in hint and "全部页识别完" in hint
