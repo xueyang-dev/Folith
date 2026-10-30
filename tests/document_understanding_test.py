@@ -1,6 +1,7 @@
 """Provider/geometry contracts: fake service responses, real PDFs and persistence."""
 import json
 from dataclasses import asdict
+from pathlib import Path
 from types import SimpleNamespace
 
 import fitz
@@ -9,7 +10,8 @@ import pytest
 import core
 from folith import pdf_preview
 from folith.document_ir import PageEnvelope, PageUnderstanding, SemanticBlock, SourceSpan, normalized_bbox
-from folith.document_understanding import VLMDocumentProvider, decode_semantics, understand_visual_pdf
+from folith.document_understanding import (DocumentUnderstandingError, VLMDocumentProvider, decode_semantics,
+                                           understand_visual_pdf)
 from folith.ocr_online import OnlineOCRConfig
 from folith.spatial_index import SpatialRegion, SpatialTextIndex, align_blocks
 
@@ -106,6 +108,80 @@ def test_bad_or_truncated_response_is_failure(raw,finish):
 def test_explicit_blank_page_accepted():
     client,_ = fake_client(response('{"b":[]}'))
     assert VLMDocumentProvider(config(),client=client).understand_page(page()).blocks == []
+
+
+EMPTY_TRAILING_BLOCK_CASES = json.loads(
+    (Path(__file__).parent/'fixtures'/'vlm_empty_trailing_block_responses.json').read_text(encoding='utf-8'))['cases']
+
+
+@pytest.mark.parametrize('case', EMPTY_TRAILING_BLOCK_CASES, ids=lambda c: c['source_run_file'])
+def test_issue8_trailing_empty_paragraph_is_dropped_not_rejected(case):
+    # Issue #8：这 7 份真实响应以前只因末尾空 paragraph 被整页拒收。
+    client,_ = fake_client(response(case['raw']))
+    result = VLMDocumentProvider(config(),client=client).understand_page(page())
+    assert [{'type':b.type, 'text':b.text} for b in result.blocks] == case['expected_blocks']
+    assert result.diagnostics['dropped_empty_blocks'] == case['dropped_empty_blocks']
+    # 空块上的 p/n 不挪给正文段：续段判断退回看文字。
+    assert all(b.continues_previous is None and b.continues_next is None for b in result.blocks)
+
+
+def test_whitespace_blocks_dropped_anywhere_and_order_kept():
+    raw = ('{"b":[{"t":"heading","s":"Chapter 3"},{"t":"paragraph","s":" \\n "},'
+           '{"t":"paragraph","s":"First body text.","p":1},{"t":"caption","s":""},'
+           '{"t":"figure","s":""},{"t":"paragraph","s":"Last body text","n":1}]}')
+    client,_ = fake_client(response(raw))
+    result = VLMDocumentProvider(config(),client=client).understand_page(page())
+    assert [(b.type, b.text) for b in result.blocks] == [
+        ('heading','Chapter 3'), ('paragraph','First body text.'), ('figure',''), ('paragraph','Last body text')]
+    assert result.blocks[1].continues_previous is True and result.blocks[3].continues_next is True
+    assert result.diagnostics['dropped_empty_blocks'] == 2
+
+
+def test_nothing_dropped_leaves_no_diagnostic():
+    client,_ = fake_client(response('{"b":[{"t":"paragraph","s":"Visible"}]}'))
+    assert 'dropped_empty_blocks' not in VLMDocumentProvider(config(),client=client).understand_page(page()).diagnostics
+
+
+@pytest.mark.parametrize('raw', ['{"b":[{"t":"paragraph","s":"","n":1}]}',
+                                 '{"b":[{"t":"paragraph","s":"  "},{"t":"heading","s":"\\n"}]}'])
+def test_page_of_only_empty_blocks_still_fails(raw):
+    with pytest.raises(ValueError, match='empty_semantic_block'):
+        decode_semantics(raw)
+    client,_ = fake_client(response(raw))
+    with pytest.raises(DocumentUnderstandingError) as failure:
+        VLMDocumentProvider(config(),client=client).understand_page(page())
+    assert failure.value.diagnostics['error_code'] == 'empty_semantic_block'
+    assert 'dropped_empty_blocks' not in failure.value.diagnostics
+
+
+def test_empty_figure_and_table_text_unchanged():
+    blocks = decode_semantics('{"b":[{"t":"figure","s":""},{"t":"table","s":" ","c":[{"r":0,"c":0,"s":"A"}]}]}')
+    assert [(b.type, b.text) for b in blocks] == [('figure',''), ('table','')]
+    assert blocks[1].cells[0]['text'] == 'A'
+
+
+def test_dropped_block_keeps_ids_anchors_and_cross_page_join_aligned():
+    pages = {0: decode_semantics('{"b":[{"t":"paragraph","s":"Opening paragraph ends here."},'
+                                 '{"t":"paragraph","s":""},'
+                                 '{"t":"paragraph","s":"The sensorium of the drone was an instrument of"},'
+                                 '{"t":"paragraph","s":"","p":0,"n":1}]}'),
+             1: decode_semantics('{"b":[{"t":"paragraph","s":"perception and of war."}]}')}
+
+    class PerPage:
+        def understand_page(self, envelope):
+            return PageUnderstanding(pages[envelope.page_index],'fixture-vlm')
+
+    paragraphs,document = understand_visual_pdf('scan.pdf',scanned_pdf(2),PerPage())
+    assert paragraphs == ['Opening paragraph ends here.',
+                          'The sensorium of the drone was an instrument of perception and of war.']
+    ids = [b['block_id'] for b in document['blocks']]
+    assert ids == ['p1-semantic-0','p1-semantic-1']
+    assert document['translation_block_ids'] == ids
+    assert [b['reading_order'] for b in document['blocks']] == [0,1]
+    joined = document['blocks'][1]
+    assert joined['relations'] == [{'type':'continued_by','block_id':'p2-semantic-0'}]
+    assert [s['page_id'] for s in joined['source_anchor']['source_spans']] == ['p1','p2']
+    assert all(s['block_id'] == 'p1-semantic-1' for s in joined['source_anchor']['source_spans'])
 
 
 class Provider:

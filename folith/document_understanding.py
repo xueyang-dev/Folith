@@ -47,6 +47,11 @@ Do not emit page identity, image dimensions, provenance, coordinates or word box
 
 def decode_semantics(raw):
     """Strict adapter validation: malformed/truncated content is never accepted."""
+    return _decode_semantics(raw)[0]
+
+
+def _decode_semantics(raw):
+    """``decode_semantics`` 的实现，另外返回丢掉的空白块数（写进读页诊断）。"""
     try:
         text = str(raw or '').strip()
         # The exercised relay wraps otherwise valid JSON in Markdown fences.
@@ -62,8 +67,9 @@ def decode_semantics(raw):
     # The transport historically rejects empty OCR. A sentinel permits explicit
     # blank-page understanding without treating malformed content as blank.
     if not value['b']:
-        return [None]
+        return [None], 0
     blocks = []
+    dropped = 0
     for item in value['b']:
         if not isinstance(item, dict) or item.get('t') not in BLOCK_TYPES or not isinstance(item.get('s'), str):
             raise ValueError('invalid_semantic_block')
@@ -89,7 +95,10 @@ def decode_semantics(raw):
                 cells.append({'row': r, 'col': c, 'row_span': rs, 'col_span': cs,
                               'text': cell['s'], 'source_anchor': None})
         if not item['s'].strip() and item['t'] not in {'figure', 'table'}:
-            raise ValueError('empty_semantic_block')
+            # 模型常在页尾多给一个空 paragraph（只带 p/n）：丢掉它，不拒收整页。
+            # 它的 p/n 不挪给相邻块——那是猜测，续段判断会退回看文字。
+            dropped += 1
+            continue
         flags = {}
         for key, name in (('p', 'continues_previous'), ('n', 'continues_next')):
             # 续段标记只是提示：缺失或取值不合法都当作"没给"，不拒收整页。
@@ -97,7 +106,10 @@ def decode_semantics(raw):
                 flags[name] = bool(item[key])
         blocks.append(SemanticBlock(item['t'], item['s'].strip(), language=item.get('l'),
                                     direction=item.get('d'), cells=cells, **flags))
-    return blocks
+    if not blocks:
+        # 只有空白块不是空白页：空白页要明确回答 {"b":[]}。
+        raise ValueError('empty_semantic_block')
+    return blocks, dropped
 
 
 class DocumentUnderstandingError(ValueError):
@@ -172,10 +184,19 @@ class VLMDocumentProvider:
         return VLMDocumentProvider(config, client=client, cancel_check=cancel_check, language=language)
 
     def understand_page(self, page):
+        dropped = 0
+
+        def decoder(raw):
+            nonlocal dropped
+            blocks, dropped = _decode_semantics(raw)
+            return blocks
+
         blocks, error = self.transport.read_image(page.image, system_prompt=self.system_prompt,
-                                                   user_prompt='Read all content on this page.', decoder=decode_semantics)
+                                                   user_prompt='Read all content on this page.', decoder=decoder)
         diagnostics = dict(self.transport._last_request)
         diagnostics['prompt_version'] = PROMPT_VERSION
+        if dropped and not error:
+            diagnostics['dropped_empty_blocks'] = dropped
         diagnostics['latency_s'] = self.transport._last_timings.get('request_s')
         if error:
             raise DocumentUnderstandingError(f'Visual understanding failed for {page.page_id}: {error}',
