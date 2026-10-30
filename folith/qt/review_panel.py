@@ -48,10 +48,36 @@ _SEVERITY_TONE = {"blocking": "danger", "actionable": "warn",
 #: 队列项里「需要重新审校」的几种合成项。
 _REVIEW_TASK_KINDS = {"failed", "stale", "missing", "skipped"}
 
+#: 术语卡详情里最多并排列出的段落数；再多就只报数。
+TERM_ROWS_SHOWN = 40
+
 
 def _escape(text: object) -> str:
     return (str(text or "").replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+def _term_card_title(item: dict) -> str:
+    """术语卡的标题：术语、冻结译法、影响段数——不写某一处的段号。"""
+    source = str(item.get("term_source") or "").strip()
+    target = str(item.get("term_target") or "").strip()
+    count = int(item.get("term_segment_total") or 0)
+    if source and target:
+        return i18n.tr('{v0} → {v1} · 影响 {v2} 段',
+                       v0=source, v1=target, v2=count)
+    if source:
+        return i18n.tr('术语「{v0}」· 影响 {v1} 段', v0=source, v1=count)
+    return i18n.tr_dynamic(str(item.get("title") or ""))
+
+
+def _trim(text: object, limit: int = 90) -> str:
+    """表格单元格只放一行摘要：太长就把中间略掉，保留首尾。"""
+    value = " ".join(str(text or "").split())
+    if len(value) <= limit:
+        return value
+    head = limit // 2
+    tail = limit - head
+    return f"{value[:head]}…{value[-tail:]}"
 
 
 def _colon() -> str:
@@ -547,6 +573,8 @@ class ReviewPanel(QWidget):
     @staticmethod
     def _item_title(item: dict) -> str:
         """名字译法不一按名字列一行，不写第一处出现的段号。"""
+        if item.get("term_card"):
+            return _term_card_title(item)
         source = str(item.get("entity_source") or "")
         if source:
             count = len(item.get("segment_indexes") or [])
@@ -563,6 +591,44 @@ class ReviewPanel(QWidget):
         source = str(item.get("entity_source") or "")
         return next((entity for entity in self._view.get("entities") or []
                      if entity.get("source") == source), {}) if source else {}
+
+    def _term_html(self, item: dict) -> str:
+        """一张术语卡：术语、冻结/旧译法、受影响段落并排对照。"""
+        source = str(item.get("term_source") or "").strip()
+        target = str(item.get("term_target") or "").strip()
+        previous = str(item.get("term_previous_target") or "").strip()
+        rows = list(item.get("term_segments") or [])
+        total = int(item.get("term_segment_total") or len(rows))
+        sep = _colon()
+        parts = []
+        if source:
+            parts.append(f"<p><b>{_escape(i18n.tr('术语'))}{sep}</b>{_escape(source)}</p>")
+        if target:
+            parts.append(f"<p><b>{_escape(i18n.tr('冻结译法'))}{sep}</b>{_escape(target)}</p>")
+        if previous and previous != target:
+            parts.append(f"<p><b>{_escape(i18n.tr('旧译法'))}{sep}</b>{_escape(previous)}</p>")
+        parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}{sep}</b>"
+                     f"{_escape(i18n.tr('{v0} 段', v0=total))}</p>")
+        shown = rows[:TERM_ROWS_SHOWN]
+        if shown:
+            cells = []
+            for row in shown:
+                mark = "" if row.get("uses_frozen", True) else (
+                    f" <b>【{_escape(i18n.tr('未用冻结译法'))}】</b>")
+                cells.append(
+                    "<tr>"
+                    f"<td valign=\"top\"><b>{_escape(i18n.tr('第 {v0} 段', v0=row.get('number')))}</b></td>"
+                    f"<td valign=\"top\">{_escape(_trim(row.get('source')))}</td>"
+                    f"<td valign=\"top\">{_escape(_trim(row.get('target')))}{mark}</td>"
+                    "</tr>")
+            parts.append(
+                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"3\">"
+                f"<tr><td></td><td><b>{_escape(i18n.tr('原文'))}</b></td>"
+                f"<td><b>{_escape(i18n.tr('当前译文'))}</b></td></tr>"
+                + "".join(cells) + "</table>")
+        if total > len(shown):
+            parts.append(f"<p>{_escape(i18n.tr('另有 {v0} 段未列出', v0=total - len(shown)))}</p>")
+        return "".join(parts)
 
     def _render_detail(self) -> None:
         item = self.selected_item()
@@ -584,6 +650,11 @@ class ReviewPanel(QWidget):
         self.item_chip.set_tone(_SEVERITY_TONE.get(str(item.get("severity")), "info"))
         # 没有严重度文字的项不留一个只有颜色、没有字的芯片（颜色不是唯一信号）。
         self.item_chip.setVisible(bool(chip_text))
+        if item.get("term_card"):
+            # 术语卡的重点是「哪些段还在用旧译法」，不是某一段的问题描述。
+            self.item_body.setHtml(self._term_html(item))
+            self._sync_source()
+            return
         sep = _colon()
         task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
         parts = []

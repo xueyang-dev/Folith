@@ -571,3 +571,40 @@ def test_segment_links_locate_in_the_original_page_not_the_grid(panel, monkeypat
     panel.conflict._link("seg:795")
     assert seen["locate"][-1][0] == 795
     assert jumped == [], "有原页时点段号是在原页里翻到它，不是跳去翻译页"
+
+
+# ---- #102：术语卡详情 ----------------------------------------------------------
+
+def test_term_card_detail_lists_the_paragraphs_that_still_use_the_old_term(panel):
+    item = _item(id="finding:t", finding_id="t", finding_type="glossary_stale",
+                 severity="actionable", segment_index=0)
+    item.update({
+        "term_card": True,
+        "term_source": "Lycidas",
+        "term_target": "利西达斯",
+        "term_previous_target": "吕西达斯",
+        "term_segment_total": 2,
+        "term_segments": [
+            {"index": 0, "number": 1, "source": "Lycidas 在诗中",
+             "target": "利西达斯在诗中", "uses_frozen": True},
+            {"index": 1, "number": 2, "source": "Lycidas 再次出现",
+             "target": "吕西达斯再次出现", "uses_frozen": False},
+        ],
+    })
+    panel.apply(_view(item))
+    assert panel.select_item_id("finding:t")
+    body = panel.item_body.toPlainText()
+    assert "Lycidas" in body and "利西达斯" in body
+    assert "吕西达斯" in body, "旧译法也要摆出来，用户才知道差在哪"
+    assert "未用冻结译法" in body
+    # 标题按术语写，不写某一段的段号。
+    assert panel.item_title.text().startswith("Lycidas → 利西达斯")
+
+
+def test_term_card_title_counts_the_affected_paragraphs(panel):
+    item = _item(id="finding:t2", finding_id="t2", finding_type="glossary")
+    item.update({"term_card": True, "term_source": "Lycidas",
+                 "term_target": "利西达斯", "term_segment_total": 7,
+                 "term_segments": []})
+    panel.apply(_view(item))
+    assert "7" in panel._item_title(item)
