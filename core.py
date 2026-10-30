@@ -1286,6 +1286,19 @@ def _ocr_pdf_text_with_warnings(
                 except Exception:  # noqa: BLE001 - UI progress is optional
                     pass
 
+            def emit_page_failure(page_number, error):
+                """One line for the page that failed; the progress line only counts it."""
+                if not on_progress:
+                    return
+                code, _, detail = str(error).partition(": ")
+                reason = re.split(r"[；。]", detail or code, maxsplit=1)[0]
+                reason = re.sub(r"\s*（finish_reason=\w+）", "", reason).strip() or code
+                try:
+                    # 「未能…已跳过」 reads as a warning: the run goes on without this page.
+                    on_progress(f"【阶段一】第 {page_number} 页未能识别，已跳过：{reason}")
+                except Exception:  # noqa: BLE001 - UI progress is optional
+                    pass
+
             def run_pass(pass_indices, pass_dpi):
                 """Bounded worker fan-out at one DPI; returns failed (page, error)."""
                 nonlocal completed_pages
@@ -1325,6 +1338,7 @@ def _ocr_pdf_text_with_warnings(
                                 with page_lock:
                                     local_failed.append((idx + 1, error))
                                     failure_count += 1
+                                emit_page_failure(idx + 1, error)
                             else:
                                 record = evidence.to_record(page_width, page_height)
                                 with page_lock:

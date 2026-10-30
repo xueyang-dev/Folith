@@ -73,3 +73,29 @@ def test_table_with_repeated_cells_is_complete_and_not_flagged(tmp_path, monkeyp
     assert details['review_pages'] == [2]
     assert any('第 2 页' in warning and '循环' in warning for warning in warnings)
     assert not any('第 1 页' in warning for warning in warnings)
+
+
+def test_a_failed_page_gets_its_own_warning_line(tmp_path, monkeypatch):
+    from folith import runtime_events_view as view
+    backend = OcrApiBackend(OnlineOCRConfig(provider='test', model='PaddleOCR',
+                                           api_key='test', base_url='https://example.test'))
+    monkeypatch.setattr(core._ocr_backends, 'resolve_backend', lambda *a, **k: (backend, []))
+    def read_image(png, **kwargs):
+        pixel = Image.open(io.BytesIO(png)).convert('L').getpixel((30, 30))
+        context = kwargs.get('context')
+        if context is not None:
+            context['request'] = {'status': 'completed', 'attempt_count': 1}
+            context['response_text'] = '一、目次\\n二、目次\\n三、目次'
+        if pixel < 80:
+            return [], 'truncated: cut'
+        return kwargs['decoder'](f'独立した本文 {pixel}。'), None
+    monkeypatch.setattr(backend, 'read_image', read_image)
+    messages = []
+    core._ocr_pdf_text_with_warnings(
+        scanned_pdf(), backend='ocr_api', workers=4, checkpoint_dir=tmp_path,
+        ocr_language='jpn', return_details=True, on_progress=messages.append)
+    failure_lines = [m for m in messages if '未能识别' in m]
+    assert failure_lines == ['【阶段一】第 1 页未能识别，已跳过：OCR 输出过长被截断']
+    assert view.message_status('ocr', failure_lines[0]) == 'warning'
+    tallies = [m for m in messages if '失败 1 页' in m]
+    assert tallies and all(view.message_status('ocr', m) == 'running' for m in tallies)

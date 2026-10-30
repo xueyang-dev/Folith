@@ -48,6 +48,9 @@ _EMOJI = re.compile("[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _EMOJI_RA
 _WARNING_WORDS = ("跳过", "降级", "部分完成", "格式异常", "未能")
 _FAILURE_WORDS = ("失败", "出错", "错误")
 _PROGRESS_SUFFIXES = ("...", "…", "……")
+# A running tally inside a progress line (「失败 1 页」) counts earlier pages; the
+# line itself has not failed.  The failed page gets its own line.
+_FAILURE_TALLY = re.compile(r"(失败|出错|错误)\s*\d+\s*(页|段|个|次)")
 
 
 def strip_emoji(text: Any) -> str:
@@ -66,6 +69,8 @@ def message_status(name: str, message: str) -> str:
     if name in _RUNNING_EVENTS:
         return "running"
     body = re.sub(r"^【[^】]+】\s*", "", message)
+    if body.startswith("正在") or body.rstrip().endswith(_PROGRESS_SUFFIXES):
+        body = _FAILURE_TALLY.sub("", body)
     if any(word in body for word in _WARNING_WORDS):
         return "warning"
     if any(word in body for word in _FAILURE_WORDS):
