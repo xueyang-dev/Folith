@@ -27,6 +27,7 @@ never drift apart.
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import random
 import threading
@@ -49,6 +50,54 @@ def _env_float(name: str, default: float) -> float:
 def _raise_if_cancelled(cancel_check: Optional[Callable[[], bool]]) -> None:
     if cancel_check is not None and cancel_check():
         raise RuntimeError("任务已请求取消")
+
+
+CANCEL_POLL_S = 0.25
+# The thread a request is made for; set on the helper thread of call_cancellable.
+_CALLER_THREAD: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar(
+    "folith_request_caller_thread", default=None)
+
+
+def request_owner_thread() -> int:
+    """The thread a request belongs to, also when it runs on a cancellable helper."""
+    return _CALLER_THREAD.get() or threading.get_ident()
+
+
+def call_cancellable(fn: Callable[[], Any],
+                     cancel_check: Optional[Callable[[], bool]],
+                     *, poll: float = CANCEL_POLL_S) -> Any:
+    """Run one blocking provider request, giving it up as soon as cancel is asked.
+
+    A blocking HTTP call cannot be interrupted from outside, so it runs on a
+    daemon helper thread while this thread waits in short slices.  On cancel
+    the request is abandoned: its late reply (or error) is dropped, and the
+    socket is released when the transport's own timeout ends it.  The service
+    may still bill for that request.
+    """
+    if cancel_check is None:
+        return fn()
+    _raise_if_cancelled(cancel_check)
+    done = threading.Event()
+    box: Dict[str, Any] = {}
+    # Request tracing and usage roles live in context variables; the helper
+    # thread must see the caller's, or its HTTP attempts join no logical call.
+    context = contextvars.copy_context()
+    context.run(_CALLER_THREAD.set, request_owner_thread())
+
+    def run() -> None:
+        try:
+            box["value"] = context.run(fn)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller
+            box["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=run, name="folith-request", daemon=True).start()
+    while not done.wait(poll):
+        _raise_if_cancelled(cancel_check)
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 class ProviderRequestController:

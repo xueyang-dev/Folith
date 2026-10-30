@@ -17,8 +17,10 @@ def normalize_role_config(
     return {
         "provider": str(raw.get("provider") or fallback_provider or ""),
         "model": str(raw.get("model") or fallback_model or ""),
-        "api_key": str(raw.get("api_key") or fallback_api_key or ""),
-        "base_url": str(raw.get("base_url") or fallback_base_url or ""),
+        "api_key": str((raw.get("api_key") if raw.get("provider") == "Local Gateway"
+                        else raw.get("api_key") or fallback_api_key) or ""),
+        "base_url": str((raw.get("base_url") if raw.get("provider") == "Local Gateway"
+                         else raw.get("base_url") or fallback_base_url) or ""),
     }
 
 
@@ -83,6 +85,8 @@ def make_role_call(
         response_format: Optional[Dict[str, Any]] = None,
     ) -> Any:
         del provider, api_key, model
+        if normalized["provider"] == "Local Gateway" and not normalized["base_url"]:
+            raise ValueError("Local Gateway requires an explicit API URL")
         kwargs = {"temperature": temperature}
         if response_format is not None:
             kwargs["response_format"] = response_format
@@ -97,6 +101,9 @@ def make_role_call(
                 **kwargs,
             )
         except TypeError:
+            if normalized["provider"] == "Local Gateway":
+                # Never retry a gateway request without its bound endpoint.
+                raise
             # Existing test/dry-run providers expose the legacy six-argument
             # signature and must keep working.
             try:
@@ -117,6 +124,9 @@ def make_role_call(
                     user_prompt,
                 )
 
+    # 绑定的 provider/model/地址随调用函数一起走：缓存键与限流线都要知道
+    # 这次请求实际发往哪个端点（本地网关靠它区分地址与凭据）。
+    invoke.request_target = normalized
     if not job_id:
         return invoke
 
@@ -134,4 +144,5 @@ def make_role_call(
         finally:
             core._RUNTIME_CTX.job_id = previous_job
 
+    job_call.request_target = normalized
     return job_call

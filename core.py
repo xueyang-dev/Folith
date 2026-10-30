@@ -53,6 +53,7 @@ from folith import checkpoint as _checkpoint
 from folith import snapshots as _snapshots
 from folith import entity_registry as _entity_registry
 from folith import dynamic_context as _dynamic_context
+from folith import request_control as _request_control
 from folith import model_roles as _model_roles
 from folith import pdf_ingestion as _pdf_ingestion
 from folith import source_cleanup as _source_cleanup
@@ -217,6 +218,14 @@ PROVIDERS = {
         "custom_base_url": True,
         "models": [],
         "model_hint": "填写中转站提供的模型名（OpenAI /chat/completions 兼容）",
+    },
+    "Local Gateway": {
+        # 本机/局域网的 OpenAI 兼容网关：地址必填、不校验密钥、不声明推理档位。
+        "kind": "openai_compat",
+        "base_url": None,
+        "custom_base_url": True,
+        "models": [],
+        "model_hint": "OpenAI-compatible model ID",
     },
 }
 
@@ -2371,6 +2380,12 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
     """
     kwargs = {"api_key": api_key, "timeout": _llm_transport.OPENAI_TIMEOUT,
               "max_retries": _llm_transport.OPENAI_MAX_RETRIES}
+    if provider == "Local Gateway" and not api_key:
+        from openai import Omit
+        # Some SDK versions require a nonempty constructor key. Omit the
+        # resulting header so unauthenticated gateways receive no credential.
+        kwargs["api_key"] = "local-gateway"
+        kwargs["default_headers"] = {"Authorization": Omit()}
     resolved_base = resolve_openai_base_url(provider, base_url)
     if resolved_base:
         kwargs["base_url"] = resolved_base
@@ -2403,6 +2418,11 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
     return resolved_base, client
 
 
+def _request_cancel_check(job_id):
+    """Cancel probe for one in-flight request: a cancel gives the request up at once."""
+    return (lambda: _runtime_cancel_requested(job_id)) if job_id else None
+
+
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
                         *, temperature=0.1, base_url=None, response_format=None,
                         reasoning_effort=None, reasoning_mode=None,
@@ -2428,11 +2448,12 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         if response_format and cfg.get("capabilities", {}).get("supports_response_format"):
             config_kwargs["response_mime_type"] = "application/json"
         try:
-            res = client.models.generate_content(
-                model=model,
-                contents=user_prompt,
-                config=genai.types.GenerateContentConfig(**config_kwargs),
-            )
+            res = _request_control.call_cancellable(
+                lambda: client.models.generate_content(
+                    model=model,
+                    contents=user_prompt,
+                    config=genai.types.GenerateContentConfig(**config_kwargs),
+                ), _request_cancel_check(runtime_job_id))
             out_text = (res.text or "").strip()
             usage = getattr(res, "usage_metadata", None)
             run = trace.get_active_run(runtime_job_id)
@@ -2495,6 +2516,8 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     if response_format and cfg.get("capabilities", {}).get(
             "supports_response_format"):
         request["response_format"] = response_format
+    elif response_format and provider == "Local Gateway":
+        raise ValueError("Local Gateway does not advertise structured-output support")
     if resolved_reasoning_mode == "thinking_disabled":
         # Same DeepSeek-family control the OCR path sends; opt-in only.
         request["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -2510,8 +2533,14 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             "User-Agent": "Folith/0.8.0",
             "x-opencode-session": str(session_id),
         }
+    if provider == "Local Gateway" and not api_key:
+        # 本地网关不校验密钥：逐个请求显式省略 Authorization，而不是编一个假 key。
+        from openai import Omit
+        request.setdefault("extra_headers", {})["Authorization"] = Omit()
     try:
-        res = client.chat.completions.create(**request)
+        res = _request_control.call_cancellable(
+            lambda: client.chat.completions.create(**request),
+            _request_cancel_check(runtime_job_id))
         out_text = (res.choices[0].message.content or "").strip()
         usage = getattr(res, "usage", None)
         pt_details = getattr(usage, "prompt_tokens_details", None) if usage else None
@@ -2646,10 +2675,12 @@ def fetch_provider_models(provider, api_key, base_url=None):
         return _fetch_gemini_models(api_key)
     if cfg.get("kind") not in ("openai", "openai_compat"):
         return False, [], "当前服务商不支持 OpenAI 兼容模型目录", {}
-    if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter"):
+    if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter", "Local Gateway"):
         return False, [], "请先填写 API Key", {}
     try:
-        resolved_base = resolve_openai_base_url(provider, base_url)
+        # 本地网关的地址永远来自调用方；不能退回注册表里的默认地址。
+        resolved_base = resolve_openai_base_url(
+            provider, (base_url or "") if provider == "Local Gateway" else base_url)
     except ValueError as exc:
         return False, [], str(exc), {}
     if not resolved_base and provider == "OpenAI":
@@ -2673,6 +2704,10 @@ def fetch_provider_models(provider, api_key, base_url=None):
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPStatusError as exc:
+        if provider == "Local Gateway" and exc.response.status_code in (404, 405):
+            return False, [], "模型目录不受支持或 API 地址不兼容；可手动填写模型。", {}
+        if provider == "Local Gateway" and 300 <= exc.response.status_code < 400:
+            return False, [], "API 地址返回重定向；请直接配置最终地址。", {}
         return False, [], provider_error_message(exc, "获取模型失败"), {}
     except httpx.HTTPError as exc:
         return False, [], provider_error_message(exc, "获取模型失败"), {}
@@ -3891,6 +3926,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             "source_chars": len(numbered),
         }
     call_fn = call_llm_fn or call_llm
+    request_target = getattr(call_fn, "request_target", {})
     response_format = _native_translation_response_format(
         provider, model, len(segments))
     cache_key = None
@@ -3899,7 +3935,11 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             provider=provider, model=model, system_prompt=sys_prompt,
             user_prompt=user_prompt, temperature=0.3,
             response_format=response_format,
-            route=effective_request_route(provider, model, role="translation"))
+            route={**effective_request_route(provider, model, role="translation"),
+                   # 网关按地址 + 凭据计费与限流：同一模型名换个端点就是另一个服务。
+                   **({"base_url": request_target.get("base_url") or effective_request_route(provider, model, role="translation").get("base_url", ""),
+                       "credential": _llm_transport.api_key_fingerprint(request_target.get("api_key", api_key))}
+                      if provider == "Local Gateway" else {})})
         cached = result_cache.get(cache_key)
         if cached is not None and len(cached) == len(segments):
             if prompt_stats is not None:
@@ -3913,7 +3953,8 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     # Rate limiting is handled by the shared provider controller: it paces
     # request starts and pushes one cooldown every worker observes, instead of
     # each worker sleeping a fixed 15 s and then stampeding the provider.
-    controller = _llm_request_controller(provider, model)
+    controller = _llm_request_controller(provider, model, request_target.get("api_key", api_key),
+                                         base_url=request_target.get("base_url") or None)
     cancel_check = _llm_cancel_check()
     last_err = None
     for _attempt in range(3):

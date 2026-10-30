@@ -269,6 +269,11 @@ class ConnectionLibrary(QWidget):
     def _provider_changed(self, _text) -> None:
         """换了提供商：上一家目录声明过的输入模态不再可信，清掉重画。"""
         self._catalog_modalities = {}
+        # 本地网关不校验密钥：占位提示不能还写着「留空则用环境变量」。
+        provider = self.dialog.provider_box.currentText().strip()
+        self.dialog.key_edit.setPlaceholderText(
+            i18n.tr('可选（本地网关不校验密钥）') if provider == "Local Gateway"
+            else i18n.tr('留空则用环境变量'))
         self._sync_model_list()
 
     def _pick_model(self, current, _previous) -> None:

@@ -72,6 +72,23 @@ def _view(*items):
                           "detail": "完成待审段落或处理必须解决的问题后即可继续"}}
 
 
+def _first_card_text(panel) -> str:
+    """队列表第 0 行是分组标题；测试要的是第一张卡片。"""
+    for row in range(panel.list.count()):
+        entry = panel.list.item(row)
+        if entry.data(Qt.ItemDataRole.UserRole):
+            return entry.text()
+    return ""
+
+
+def _first_card_entry(panel):
+    for row in range(panel.list.count()):
+        entry = panel.list.item(row)
+        if entry.data(Qt.ItemDataRole.UserRole):
+            return entry
+    return None
+
+
 def _panel(*items):
     panel = ReviewPanel()
     panel.resize(1180, 760)
@@ -90,9 +107,10 @@ def test_panel_fits_the_default_window_in_every_ui_language(qt_app, lang):
     try:
         # 默认窗口 1180px；门槛留一点余量，确认长语言不再把最小宽度撑出去。
         assert panel.minimumSizeHint().width() <= 900
-        # 筛选条横跨整页，七个页签在默认窗口里是一行。
-        assert panel.filter_control.height() <= 40
-        assert panel.filter_control.width() > 900
+        # 左栏的组标题只有一行高，长语言也不会把面板撑宽。
+        group = panel._group_of(panel._items[0])
+        assert panel._group_buttons[group].height() <= 40
+        assert panel.list.minimumWidth() <= 300
         # 两个主按钮不能同时是实心主行动。
         assert [button for button in (panel.apply_button, panel.open_button,
                                       panel.confirm_button)
@@ -137,15 +155,14 @@ def test_synthetic_task_copy_is_translated_but_findings_are_not(qt_app):
                  summary="当前译文尚未完成独立审校")
     panel = _panel(task)
     try:
-        assert "The current translation has not been reviewed" in (
-            panel.list.item(0).text())
+        assert "The current translation has not been reviewed" in _first_card_text(panel)
     finally:
         panel.close()
 
     finding = _item(summary="模型产出的中文问题")
     panel = _panel(finding)
     try:
-        assert "模型产出的中文问题" in panel.list.item(0).text()
+        assert "模型产出的中文问题" in _first_card_text(panel)
     finally:
         panel.close()
 
@@ -156,7 +173,7 @@ def test_queue_keeps_the_full_problem_and_offers_it_as_a_tooltip(qt_app):
     item = _item(summary="这句话可以更自然一些，" * 8)
     panel = _panel(item)
     try:
-        entry = panel.list.item(0)
+        entry = _first_card_entry(panel)
         assert len(item["summary"]) > 60
         assert item["summary"] in entry.toolTip()
         accessible = entry.data(Qt.ItemDataRole.AccessibleTextRole)
@@ -170,7 +187,7 @@ def test_confirmed_open_decision_is_visible_in_the_queue_and_detail(qt_app):
     panel = _panel(_item(decision="confirmed_open",
                          decision_label="已确认存在，待修订"))
     try:
-        assert "已确认存在，待修订" in panel.list.item(0).text()
+        assert "已确认存在，待修订" in _first_card_text(panel)
         assert "已确认存在，待修订" in panel.item_body.toPlainText()
         assert "已记录的决定" in panel.item_body.toPlainText()
     finally:
@@ -183,7 +200,7 @@ def test_key_controls_expose_accessible_names(qt_app):
     panel = _panel(_item())
     try:
         assert panel.accessibleName()
-        for widget in (panel.list, panel.item_body, panel.filter_control,
+        for widget in (panel.list, panel.item_body,
                        panel.note_edit, panel.source_note_edit):
             assert widget.accessibleName(), widget
         # 快捷键没有画在按钮文字里，但读屏要能听到。
@@ -242,9 +259,8 @@ def test_english_filter_and_segment_frame_are_translated(qt_app):
     i18n.set_language("en")
     panel = _panel(_item())
     try:
-        labels = [button.text() for button in panel.filter_control.findChildren(
-            type(panel.review_all_button))]
-        assert any(label.startswith("Skipped") for label in labels)
-        assert panel.list.item(0).text().startswith("Segment 4 · ")
+        labels = [button.text() for button in panel._group_buttons.values()]
+        assert any(label.startswith("Suggestion") for label in labels)
+        assert _first_card_text(panel).startswith("Segment 4 · ")
     finally:
         panel.close()

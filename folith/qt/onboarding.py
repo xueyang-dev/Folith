@@ -42,7 +42,7 @@ TIPS = {
     "prepare": ("先确认，再开始", "这一步确认目标语言、风格与交付格式；准备好后点「开始翻译」。"),
     "translate": ("翻译进行中", "点这里查看运行记录：每一批译到哪里、在等什么、有没有出错。"),
     "check": ("有需要处理的问题", "黄色是建议处理，红色会挡住交付。点开逐条处理，点段号可以跳过去改。"),
-    "pdf": ("对照原页", "PDF 任务可以在左侧展开原页，选中的段落会自动翻到对应位置并高亮（⌘⌥P）。"),
+    "pdf": ("对照原页", "PDF 任务可以在左侧展开原页，选中的段落会自动翻到对应位置并高亮（{v0}）。"),
     "deliver": ("冻结交付", "冻结之后的交付快照不可修改；之后再改译文，需要重新冻结一个新版本。"),
 }
 
@@ -330,7 +330,7 @@ class WelcomeDialog(QDialog):
 # =============================================================================
 #: 「新变化」的条目（老用户第一次打开这个版本时看到，一页结束）。
 WHATS_NEW = (
-    ("workbench", "工作台重新整理", "段落整段显示、行高自适应；右侧检查器一屏放下，原页在左侧展开（⌘⌥P）。"),
+    ("workbench", "工作台重新整理", "段落整段显示、行高自适应；右侧检查器一屏放下，原页在左侧展开（{v0}）。"),
     ("check-circle", "检查与修复", "进度条旁的图标：黄色建议处理、红色挡住交付；点开逐条处理，原因写成人话。"),
     ("settings", "新的设置窗口", "改了立即生效；模型连接先测试再保存；新增「存储」与「关于」两页。"),
     ("pulse", "更流畅", "大文档打开、保存、切换段落都不再卡住；动画尊重「减少动态效果」。"),
@@ -358,7 +358,7 @@ class WhatsNewDialog(QDialog):
             column.setSpacing(2)
             head = QLabel(i18n.tr(name))
             head.setObjectName("cardTitle")
-            body = QLabel(i18n.tr(text))
+            body = QLabel(i18n.tr(text, v0=platform_ui.shortcut_text("source")))
             body.setObjectName("hint")
             body.setWordWrap(True)
             column.addWidget(head)
@@ -423,7 +423,7 @@ class CoachMarks:
         column = QVBoxLayout(body)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["sm"])
-        label = QLabel(i18n.tr(text))
+        label = QLabel(i18n.tr(text, v0=platform_ui.shortcut_text("source")))
         label.setWordWrap(True)
         column.addWidget(label)
         got = QPushButton(i18n.tr('知道了'))
