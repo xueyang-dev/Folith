@@ -13086,6 +13086,13 @@ def _reopen_scan_stream_for_failed_pages(state):
 _SCAN_EVENT_EVERY_PAGES = 5  # 用户可见事件的最小间隔页数；进度条逐页更新
 
 
+def _scan_reader_label(stream):
+    """「OCR 识别」 for an OCR API stream, 「视觉识别」 for a vision-model stream."""
+    document = getattr(getattr(stream, "_assembler", None), "document", None) or {}
+    provider = (document.get("provenance") or {}).get("provider")
+    return "OCR 识别" if provider == "ocr_api" else "视觉识别"
+
+
 def _scan_page_failure_reason(status, code, message=""):
     if status in (408, 504, 524) or code in ("timeout", "service_error", "transient_error"):
         return f"服务商超时（HTTP {status}）" if status else "服务商超时"
@@ -13126,7 +13133,7 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
     """
     if done != tracker["done"] or retried != tracker["retried"]:
         tracker["done"], tracker["retried"] = done, retried
-        detail = f"视觉识别 {done}/{total} 页"
+        detail = f"{_scan_reader_label(stream)} {done}/{total} 页"
         if retried:
             detail += f"（其中 {retried} 页重试后读成）"
         emit = done >= total or done - tracker["event_at"] >= _SCAN_EVENT_EVERY_PAGES
@@ -13140,7 +13147,7 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
             job_id, progress=True,
             stage_progress={"completed": done, "total": total, "unit": "页",
                             "in_flight": []},
-            operation_label="视觉识别", phase_label=detail, **extra)
+            operation_label=_scan_reader_label(stream), phase_label=detail, **extra)
     page_events = stream.drain_page_events()
     if page_events:
         # 重试 / 失败不算进展（停滞提示照旧），但要让用户看到正在发生什么。
@@ -13155,9 +13162,11 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
         # 连续几页都超时：自动暂停（走同一条暂停路径，最终是「已暂停」），建议换模型。
         tracker["streak"] = True
         where = f"（{stream.provider_label}）" if stream.provider_label else ""
+        reader = _scan_reader_label(stream)
+        model_kind = "OCR 模型" if reader == "OCR 识别" else "视觉模型"
         pause_message = (
-            f"视觉识别连续 {stream.timeout_streak_limit} 页超时：服务商{where}处理图片太慢或不稳定。"
-            "建议在 设置 › 模型 › 读取扫描页 换一个视觉模型，然后继续任务；已识别的页不会重读。")
+            f"{reader}连续 {stream.timeout_streak_limit} 页超时：服务商{where}处理图片太慢或不稳定。"
+            f"建议在 设置 › 模型 › 读取扫描页 换一个{model_kind}，然后继续任务；已识别的页不会重读。")
         tracker["streak_message"] = pause_message
         update_runtime_state(
             job_id, pause_requested=True, status="pausing", phase_label=pause_message,
@@ -13198,7 +13207,7 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
     window = stream.window_pages if state.get("paras") else stream.first_window_pages
     target = max(stream.pages_done, previous_pages) + window
     if on_status:
-        on_status(f"【阶段一】视觉识别：{stream.pages_done}/{stream.pages_total} 页"
+        on_status(f"【阶段一】{_scan_reader_label(stream)}：{stream.pages_done}/{stream.pages_total} 页"
                   f"（满 {min(target, stream.pages_total)} 页后先交给翻译）…")
     tracker = {"done": stream.pages_done, "retried": stream.pages_retried,
                "event_at": stream.pages_done}
@@ -13215,7 +13224,7 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
         warnings=state.get("warnings") or [],
         scan_stream=stream)
     if on_status:
-        on_status(f"【阶段一】视觉识别：{snapshot['pages_done']}/{snapshot['pages_total']} 页，"
+        on_status(f"【阶段一】{_scan_reader_label(stream)}：{snapshot['pages_done']}/{snapshot['pages_total']} 页，"
                   f"新增 {end - start} 句进入翻译")
     save_job_state(job_id, state)
     return start, end

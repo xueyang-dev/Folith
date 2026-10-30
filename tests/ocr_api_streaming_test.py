@@ -542,3 +542,13 @@ class TestScanStreamPrepareWindow:
         )
         # Must not raise even though VisualDocumentAssembler has no prepare_window
         stream.prepare_window()
+
+
+def test_progress_label_names_the_reading_channel():
+    import core
+    from types import SimpleNamespace
+    ocr = SimpleNamespace(_assembler=SimpleNamespace(document={"provenance": {"provider": "ocr_api"}}))
+    vlm = SimpleNamespace(_assembler=SimpleNamespace(document={"provenance": {"provider": "vlm"}}))
+    assert core._scan_reader_label(ocr) == "OCR 识别"
+    assert core._scan_reader_label(vlm) == "视觉识别"
+    assert core._scan_reader_label(SimpleNamespace()) == "视觉识别"
