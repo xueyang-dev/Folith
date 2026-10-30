@@ -868,17 +868,28 @@ class ReviewPanel(QWidget):
         focus = QApplication.focusWidget()
         return isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox))
 
+    def _visible_index(self) -> int:
+        """当前列表行在 ``_visible`` 里的下标；分组标题行不算（返回 -1）。"""
+        row = self.list.currentRow()
+        seen = -1
+        for position in range(self.list.count()):
+            if self.list.item(position).data(Qt.ItemDataRole.UserRole):
+                seen += 1
+                if position == row:
+                    return seen
+        return -1
+
     def _goto_next_item(self) -> None:
         if self._typing():
             return
-        row = self.list.currentRow()
-        if 0 <= row + 1 < self.list.count():
-            self.list.setCurrentRow(row + 1)
+        index = self._visible_index()
+        if 0 <= index + 1 < len(self._visible):
+            self.list.setCurrentRow(self._list_row(index + 1))
 
     def _next_item_id(self) -> str:
-        row = self.list.currentRow()
-        if 0 <= row + 1 < len(self._visible):
-            return str(self._visible[row + 1].get("id") or "")
+        index = self._visible_index()
+        if 0 <= index + 1 < len(self._visible):
+            return str(self._visible[index + 1].get("id") or "")
         return ""
 
     def consume_advance_hint(self) -> bool:

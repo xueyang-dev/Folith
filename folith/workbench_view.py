@@ -16,7 +16,7 @@ _LIST_GROUP_BY_SEVERITY = {
 }
 
 #: 术语类发现按概念归并：一条术语只出现一次，而不是每段一张卡。
-_TERM_FINDING_TYPES = frozenset({"glossary", "glossary_stale"})
+_TERM_FINDING_TYPES = frozenset({"glossary_stale"})
 _TERM_SEVERITY_ORDER = {"blocking": 0, "actionable": 1, "informational": 2}
 #: How many affected paragraphs a term card carries for its side-by-side detail.
 TERM_SEGMENT_PREVIEW = 100
@@ -379,49 +379,6 @@ def _glossary_entries_by_id(state: Mapping[str, Any]) -> Dict[str, Mapping[str, 
     return {entry["id"]: entry for entry in entries if entry.get("id")}
 
 
-def _legacy_term_identity(
-    state: Mapping[str, Any], items: Sequence[Mapping[str, Any]],
-) -> List[Dict[str, Any]]:
-    """Recover term identity for per-segment stale cards written by older builds.
-
-    Those tasks stored one ``glossary_stale`` finding per segment with an empty
-    ``entry_id``, so the queue could not see that they were the same decision.
-    The frozen version history still tells which term changed, so the cards can be
-    grouped without rewriting saved findings.
-    """
-    legacy = [item for item in items
-              if item.get("finding_type") == "glossary_stale"
-              and not str(item.get("entry_id") or "")]
-    if not legacy:
-        return [dict(item) for item in items]
-    from .terminology import glossary_stale_dependencies
-    by_segment: Dict[Any, List[Dict[str, Any]]] = {}
-    for row in glossary_stale_dependencies(dict(state)):
-        for index in row["segment_indexes"]:
-            by_segment.setdefault(index, []).append(row)
-    if not by_segment:
-        return [dict(item) for item in items]
-    recovered: List[Dict[str, Any]] = []
-    for item in items:
-        segment_id = item.get("segment_index")
-        rows = by_segment.get(segment_id) or []
-        if item.get("finding_type") != "glossary_stale" or item.get("entry_id") \
-                or len(rows) != 1:
-            recovered.append(dict(item))
-            continue
-        row = rows[0]
-        enriched = dict(item)
-        enriched.update({
-            "entry_id": row["entry_id"],
-            "affected_segment_ids": [segment_id],
-            "source_span": row["source"],
-            "target_span": row["target"],
-            "previous_target": row["previous_target"],
-        })
-        recovered.append(enriched)
-    return recovered
-
-
 def _merge_term_cards(
     state: Mapping[str, Any], items: Sequence[Mapping[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -535,7 +492,7 @@ def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
         return []
     for item in items:
         item.update({"handled": True, "list_group": "reference", "priority": 6})
-    return _merge_term_cards(state, _legacy_term_identity(state, items))
+    return _merge_term_cards(state, items)
 
 
 def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List[Dict[str, Any]]:
@@ -565,7 +522,7 @@ def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List
     confirmations = _open_confirmations(state)
     items.extend(_finding_item(state, finding, confirmations=confirmations)
                  for finding in current_findings)
-    items = _merge_term_cards(state, _legacy_term_identity(state, items))
+    items = _merge_term_cards(state, items)
     return sorted(items, key=lambda item: (
         item["priority"], item.get("segment_id") if isinstance(
             item.get("segment_id"), int) else 10**9, item["id"]))
