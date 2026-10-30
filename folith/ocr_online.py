@@ -556,7 +556,8 @@ class OnlineOCRBackend(OCRBackend):
         body = self._request_body(system_prompt, user_content)
         client = self._get_client()
         started = time.perf_counter()
-        response = client.chat.completions.create(**body)
+        response = request_control.call_cancellable(
+            lambda: client.chat.completions.create(**body), self._cancel_check)
         elapsed = time.perf_counter() - started
         choices = getattr(response, "choices", None) or []
         if not choices:
@@ -632,6 +633,7 @@ class OnlineOCRBackend(OCRBackend):
                 result = (self._attempt(png_bytes, system_prompt, user_prompt=user_prompt)
                           if user_prompt is not None else self._attempt(png_bytes, system_prompt))
             except BaseException as exc:  # noqa: BLE001 - classified below
+                self._ensure_cancelled()  # a cancel is not a failed attempt to retry
                 classified = classify_request_error(exc)
                 attempts.append({
                     "attempt": attempt,

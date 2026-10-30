@@ -562,7 +562,9 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
         try:
             semantic = provider.understand_page(envelope)
         except Exception as exc:
-            failure = {'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
+            if cancel_check and cancel_check():
+                raise RuntimeError('任务已请求取消') from exc   # not a page failure
+            failure ={'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
                        'regions':len(index.regions), 'spatial_available':bool(index.regions),
                        'error':str(exc), 'latency_s':time.perf_counter()-started,
                        'request':dict(getattr(getattr(provider, 'transport', None), '_last_request', {}))}
@@ -690,7 +692,9 @@ def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvi
         for _, future in pending:
             if future is not None:
                 future.cancel()
-        executor.shutdown(wait=True, cancel_futures=True)
+        # On cancel a page still in local location work is not waited for; its
+        # late cache write is harmless and a resume reads it like any other.
+        executor.shutdown(wait=not (cancel_check and cancel_check()), cancel_futures=True)
 
 
 class VisualDocumentAssembler:

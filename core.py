@@ -53,6 +53,7 @@ from folith import checkpoint as _checkpoint
 from folith import snapshots as _snapshots
 from folith import entity_registry as _entity_registry
 from folith import dynamic_context as _dynamic_context
+from folith import request_control as _request_control
 from folith import model_roles as _model_roles
 from folith import pdf_ingestion as _pdf_ingestion
 from folith import source_cleanup as _source_cleanup
@@ -2403,6 +2404,11 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
     return resolved_base, client
 
 
+def _request_cancel_check(job_id):
+    """Cancel probe for one in-flight request: a cancel gives the request up at once."""
+    return (lambda: _runtime_cancel_requested(job_id)) if job_id else None
+
+
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
                         *, temperature=0.1, base_url=None, response_format=None,
                         reasoning_effort=None, reasoning_mode=None,
@@ -2428,11 +2434,12 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         if response_format and cfg.get("capabilities", {}).get("supports_response_format"):
             config_kwargs["response_mime_type"] = "application/json"
         try:
-            res = client.models.generate_content(
-                model=model,
-                contents=user_prompt,
-                config=genai.types.GenerateContentConfig(**config_kwargs),
-            )
+            res = _request_control.call_cancellable(
+                lambda: client.models.generate_content(
+                    model=model,
+                    contents=user_prompt,
+                    config=genai.types.GenerateContentConfig(**config_kwargs),
+                ), _request_cancel_check(runtime_job_id))
             out_text = (res.text or "").strip()
             usage = getattr(res, "usage_metadata", None)
             run = trace.get_active_run(runtime_job_id)
@@ -2511,7 +2518,9 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             "x-opencode-session": str(session_id),
         }
     try:
-        res = client.chat.completions.create(**request)
+        res = _request_control.call_cancellable(
+            lambda: client.chat.completions.create(**request),
+            _request_cancel_check(runtime_job_id))
         out_text = (res.choices[0].message.content or "").strip()
         usage = getattr(res, "usage", None)
         pt_details = getattr(usage, "prompt_tokens_details", None) if usage else None
