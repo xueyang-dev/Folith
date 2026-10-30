@@ -3970,12 +3970,18 @@ def vision_connection_view() -> dict:
 
 
 def vision_connection_problem(*, provider: str, model: str, api_key: str,
-                              has_saved_key: bool) -> str:
+                              has_saved_key: bool, base_url: str = "") -> str:
     """保存专用视觉连接前的检查；返回空串表示可以保存。"""
-    if not str(provider or "").strip():
+    provider = str(provider or "").strip()
+    if not provider:
         return "请选择视觉模型的服务商。"
     if not str(model or "").strip():
         return "请填写视觉模型名（需要支持图像输入）。"
+    if provider == "Local Gateway":
+        # 本地网关不校验密钥，但地址必须显式给：没有注册表默认值可退回。
+        if not str(base_url or "").strip():
+            return "本地网关需要填写视觉连接的 API 地址。"
+        return ""
     if not str(api_key or "").strip() and not has_saved_key:
         return "请填写视觉连接的 API Key。"
     return ""
@@ -3988,7 +3994,7 @@ def save_vision_connection(*, provider: str, model: str, api_key: str = "",
     saved = core.load_ocr_online_config() or {}
     problem = vision_connection_problem(
         provider=provider, model=model, api_key=api_key,
-        has_saved_key=bool(saved.get("api_key")))
+        has_saved_key=bool(saved.get("api_key")), base_url=base_url)
     if problem:
         raise AdapterError(problem)
     limits = (int(core.OCR_ONLINE_MIN_MAX_TOKENS), int(core.OCR_ONLINE_MAX_MAX_TOKENS))

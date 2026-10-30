@@ -244,6 +244,7 @@
   "可以交付": "Ready to deliver",
   "可以冻结交付": "Ready to freeze delivery",
   "可复用": "Reusable",
+  "可选（本地网关不校验密钥）": "Optional (a local gateway does not check keys)",
   "可选：添加术语库（Excel / CSV / TBX）或翻译记忆（TMX），用于保持术语与专名一致。": "Optional: add a termbase (Excel / CSV / TBX) or a translation memory (TMX) to keep terms and names consistent.",
   "可选：用 DOCX 模板固定章节、标题层级、前后置部分和 Word 样式。": "Optional: fix chapters, heading levels, front/back matter and Word styles with a DOCX template.",
   "合同": "Contracts",

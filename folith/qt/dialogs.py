@@ -684,7 +684,7 @@ class EngineDialog(QDialog):
             return ""
         return adapter.vision_connection_problem(
             provider=form["provider"], model=form["model"], api_key=form["api_key"],
-            has_saved_key=False)
+            has_saved_key=False, base_url=form.get("base_url", ""))
 
     def _apply_vision(self) -> None:
         if not self._vision_changed():

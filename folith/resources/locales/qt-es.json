@@ -244,6 +244,7 @@
   "可以交付": "Lista para entregar",
   "可以冻结交付": "Listo para congelar la entrega",
   "可复用": "Reutilizable",
+  "可选（本地网关不校验密钥）": "Opcional (una pasarela local no verifica claves)",
   "可选：添加术语库（Excel / CSV / TBX）或翻译记忆（TMX），用于保持术语与专名一致。": "Opcional: añada una base terminológica (Excel / CSV / TBX) o una memoria de traducción (TMX) para mantener la coherencia de términos y nombres.",
   "可选：用 DOCX 模板固定章节、标题层级、前后置部分和 Word 样式。": "Opcional: fije capítulos, niveles de título, partes preliminares/finales y estilos de Word con una plantilla DOCX.",
   "合同": "Contratos",

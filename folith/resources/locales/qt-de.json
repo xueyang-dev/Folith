@@ -540,6 +540,7 @@
   "可以冻结交付": "Bereit zum Einfrieren der Lieferung",
   "可修改 {v0} 段，人工保护 {v1} 段；未显示的段落不会应用。": "{v0} bearbeitbare Segmente, {v1} manuell geschützte Segmente. Nicht angezeigte Segmente werden nicht geändert.",
   "可复用": "Wiederverwendbar",
+  "可选（本地网关不校验密钥）": "Optional (ein lokales Gateway prüft keine Schlüssel)",
   "可选：添加术语库（Excel / CSV / TBX）或翻译记忆（TMX），用于保持术语与专名一致。": "Optional: Begriffssammlung (Excel / CSV / TBX) oder Translation Memory (TMX) hinzufügen, um Begriffe und Eigennamen konsistent zu halten.",
   "可选：用 DOCX 模板固定章节、标题层级、前后置部分和 Word 样式。": "Optional: Kapitel, Überschriftenebenen, Vor-/Nachspann und Word-Formatvorlagen über eine DOCX-Vorlage festlegen.",
   "各任务的术语": "Begriffe nach Aufgabe",

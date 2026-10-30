@@ -172,3 +172,21 @@ def test_gateway_readiness_does_not_require_credentials():
     assert view['translator']['state'] == 'connected'
     assert not view['translator']['credentials_configured']
     assert task_ai_ready(view)
+
+
+def test_the_vision_connection_accepts_a_gateway_but_still_needs_its_address():
+    """视觉连接沿用翻译连接的规则：网关不要密钥，但地址必填。"""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from folith.qt import adapter
+
+    assert not adapter.vision_connection_problem(
+        provider="Local Gateway", model="vision-model", api_key="",
+        has_saved_key=False, base_url="http://localhost:1234/v1")
+    assert "API 地址" in adapter.vision_connection_problem(
+        provider="Local Gateway", model="vision-model", api_key="",
+        has_saved_key=False)
+    # 其它服务商仍然要密钥。
+    assert adapter.vision_connection_problem(
+        provider="OpenAI", model="gpt-5", api_key="", has_saved_key=False,
+        base_url="https://api.openai.com/v1")
