@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import fitz
+import pytest
 
 import core
 
@@ -512,3 +513,16 @@ def test_cleanup_does_not_stop_early_after_a_batch_succeeded():
         max_batch_items=1, parallelism=1, retry_backoff_seconds=0, max_retries=0)
     assert metadata["stopped_early"] is False
     assert metadata["failed_batches"] == 7
+
+
+@pytest.mark.parametrize("left,right,joined", [
+    ("ページをまたいで、", "前のページから続く。", "ページをまたいで、前のページから続く。"),
+    ("儒教の理念を述べて", "いる。", "儒教の理念を述べている。"),
+    ("「古典中國」の", "形成", "「古典中國」の形成"),
+    ("中国史の時代区分と", "Weber の議論", "中国史の時代区分と Weber の議論"),
+    ("국가의", "규범", "국가의 규범"),
+    ("the state", "and society", "the state and society"),
+])
+def test_join_adds_no_space_inside_japanese_and_keeps_it_elsewhere(left, right, joined):
+    from folith.source_cleanup import _join
+    assert _join(left, right) == joined
