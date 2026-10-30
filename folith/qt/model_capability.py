@@ -27,43 +27,9 @@ A name matching BOTH families is classified as "ocr_only" (OCR takes precedence)
 """
 from __future__ import annotations
 
-import re
-
-# ---- OCR-only patterns -------------------------------------------------------
-#: Compiled patterns for the OCR-only model family.
-_OCR_PATTERNS = re.compile(
-    r'paddleocr|paddle-ocr|got-ocr|olmocr|'
-    r'-ocr-|-ocr$|_ocr_|_ocr$|/ocr-|/ocr$',
-    re.IGNORECASE,
+from folith.model_capability import (  # noqa: F401 - re-exported
+    _MT_PATTERNS, _OCR_PATTERNS, classify_model, task_model_problem,
 )
-
-# ---- Translation-only patterns -----------------------------------------------
-#: Compiled patterns for the machine-translation-only model family.
-_MT_PATTERNS = re.compile(
-    r'hunyuan-mt|-mt-7b|-mt-\d|-mt$|'
-    r'\bnllb\b|opus-mt|m2m100|seamlessm4t|seamless-m4t',
-    re.IGNORECASE,
-)
-
-
-def classify_model(name: str) -> str:
-    """Return the capability class of *name*: ``"ocr_only"``, ``"translation_only"``, or ``"general"``.
-
-    >>> classify_model("PaddlePaddle/PaddleOCR-VL-1.5")
-    'ocr_only'
-    >>> classify_model("tencent/Hunyuan-MT-7B")
-    'translation_only'
-    >>> classify_model("qwen2.5-vl")
-    'general'
-    >>> classify_model("gpt-5")
-    'general'
-    """
-    name = str(name or "").strip()
-    if _OCR_PATTERNS.search(name):
-        return "ocr_only"
-    if _MT_PATTERNS.search(name):
-        return "translation_only"
-    return "general"
 
 
 #: Short human-readable labels for each capability class (Chinese UI).
@@ -122,8 +88,8 @@ _TAGS: dict[str, str] = {
 _TAG_TOOLTIPS: dict[str, str] = {
     "ocr_only": "此模型是 OCR 专用模型，不能生成翻译。请选择通用语言模型。",
     "translation_only": (
-        "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；"
-        "建议选通用模型。"
+        "这是专用翻译模型（如 Hunyuan-MT），读不懂 Folith 的翻译要求，译文会变成无关的文字；"
+        "用它不能开始任务。请选通用模型。"
     ),
 }
 

@@ -13087,6 +13087,13 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     不提供时沿用正文模型。``knowledge_feedback_interval`` 仅控制普通模式的
     批后连续性观察频率，严格审校模式仍逐批观察。
     """
+    # The desktop refuses these before starting; this guards every other caller
+    # (resume, automation) so a run that cannot translate never spends hours.
+    from folith.model_capability import task_model_problem
+    unfit = task_model_problem("translation", model) or (
+        task_model_problem("reviewer", reviewer_model) if reviewer_model else "")
+    if unfit:
+        raise ValueError(unfit)
     _ensure_output_dir()
     if translator_base_url is not None:
         set_llm_base_url(translator_base_url)

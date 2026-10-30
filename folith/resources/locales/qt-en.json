@@ -2448,6 +2448,11 @@
   "OCR 模型": "OCR model",
   "专用翻译": "Translation-only",
   "仅 OCR": "OCR only",
-  "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；建议选通用模型。": "This is a dedicated translation model (e.g. Hunyuan-MT); steps requiring structured replies, such as term extraction, may fail. A general-purpose model is recommended.",
+  "翻译模型「{v0}」是专用翻译模型，只会逐句直译，读不懂 Folith 的翻译要求（术语、文风、按格式返回），译文会变成无关的文字。请在 设置 › 模型 › 用途 换一个通用模型。": "The translation model “{v0}” is a dedicated machine-translation model. It translates sentence by sentence and cannot follow Folith’s translation instructions (terminology, style, structured output), so the output becomes unrelated text. Choose a general model in Settings › Models › Uses.",
+  "翻译模型「{v0}」是 OCR 专用模型，只能识别图片里的文字，不能翻译。请在 设置 › 模型 › 用途 换一个通用模型。": "The translation model “{v0}” is an OCR-only model. It can only read text in images and cannot translate. Choose a general model in Settings › Models › Uses.",
+  "审校模型「{v0}」是专用翻译模型，读不懂审校要求，审校结果会是无关的文字。请在 设置 › 模型 › 用途 换一个通用模型。": "The review model “{v0}” is a dedicated machine-translation model. It cannot follow review instructions, so its review would be unrelated text. Choose a general model in Settings › Models › Uses.",
+  "审校模型「{v0}」是 OCR 专用模型，不能审校译文。请在 设置 › 模型 › 用途 换一个通用模型。": "The review model “{v0}” is an OCR-only model and cannot review translations. Choose a general model in Settings › Models › Uses.",
+  "这是专用翻译模型（如 Hunyuan-MT），读不懂 Folith 的翻译要求，译文会变成无关的文字；用它不能开始任务。请选通用模型。": "A dedicated machine-translation model (such as Hunyuan-MT) cannot follow Folith’s translation instructions, so the output becomes unrelated text; a task cannot start with it. Choose a general model.",
+  "整理结构的前 4 批都没有按格式返回（{v0}），已停止整理并保留识别出的文本。当前模型可能不适合整理原文；请在 设置 › 模型 › 用途 换一个通用模型后，在任务里重新扫描 PDF 原文。": "The first 4 structuring batches did not return the expected format ({v0}). Structuring stopped and the recognised text was kept. The current model may not be suited to structuring the source; choose a general model in Settings › Models › Uses, then rescan the PDF source in the task.",
   "此设置用于新任务。已开始的任务保留原识别方式；要更换，请在任务中选择重新扫描 PDF 原文。": "This setting applies to new tasks. Started tasks keep their original reading method; to change it, select Rescan PDF source in the task."
 }

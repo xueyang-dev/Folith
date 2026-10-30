@@ -2449,6 +2449,11 @@
   "OCR 模型": "Modelo OCR",
   "专用翻译": "Solo traducción",
   "仅 OCR": "Solo OCR",
-  "这是专用翻译模型（如 Hunyuan-MT），术语抽取等需要按格式回答的步骤可能失败；建议选通用模型。": "Este es un modelo de traducción especializado (p. ej., Hunyuan-MT); los pasos que requieren respuestas estructuradas, como la extracción de términos, pueden fallar. Se recomienda un modelo de propósito general.",
+  "翻译模型「{v0}」是专用翻译模型，只会逐句直译，读不懂 Folith 的翻译要求（术语、文风、按格式返回），译文会变成无关的文字。请在 设置 › 模型 › 用途 换一个通用模型。": "El modelo de traducción «{v0}» es un modelo de traducción automática dedicado. Traduce frase a frase y no puede seguir las instrucciones de traducción de Folith (terminología, estilo, salida estructurada); el resultado se convierte en texto sin relación. Elija un modelo general en Ajustes › Modelos › Usos.",
+  "翻译模型「{v0}」是 OCR 专用模型，只能识别图片里的文字，不能翻译。请在 设置 › 模型 › 用途 换一个通用模型。": "El modelo de traducción «{v0}» es un modelo solo de OCR. Solo lee texto en imágenes y no puede traducir. Elija un modelo general en Ajustes › Modelos › Usos.",
+  "审校模型「{v0}」是专用翻译模型，读不懂审校要求，审校结果会是无关的文字。请在 设置 › 模型 › 用途 换一个通用模型。": "El modelo de revisión «{v0}» es un modelo de traducción automática dedicado. No puede seguir las instrucciones de revisión; su revisión sería texto sin relación. Elija un modelo general en Ajustes › Modelos › Usos.",
+  "审校模型「{v0}」是 OCR 专用模型，不能审校译文。请在 设置 › 模型 › 用途 换一个通用模型。": "El modelo de revisión «{v0}» es un modelo solo de OCR y no puede revisar traducciones. Elija un modelo general en Ajustes › Modelos › Usos.",
+  "这是专用翻译模型（如 Hunyuan-MT），读不懂 Folith 的翻译要求，译文会变成无关的文字；用它不能开始任务。请选通用模型。": "Un modelo de traducción automática dedicado (como Hunyuan-MT) no puede seguir las instrucciones de traducción de Folith; el resultado se convierte en texto sin relación y no se puede iniciar una tarea con él. Elija un modelo general.",
+  "整理结构的前 4 批都没有按格式返回（{v0}），已停止整理并保留识别出的文本。当前模型可能不适合整理原文；请在 设置 › 模型 › 用途 换一个通用模型后，在任务里重新扫描 PDF 原文。": "Los primeros 4 lotes de estructuración no devolvieron el formato esperado ({v0}). La estructuración se detuvo y se conservó el texto reconocido. Puede que el modelo actual no sirva para esto; elija un modelo general en Ajustes › Modelos › Usos y vuelva a escanear el PDF de origen en la tarea.",
   "此设置用于新任务。已开始的任务保留原识别方式；要更换，请在任务中选择重新扫描 PDF 原文。": "Este ajuste se aplica a tareas nuevas. Las tareas iniciadas conservan su método de lectura; para cambiarlo, vuelve a escanear el PDF desde la tarea."
 }

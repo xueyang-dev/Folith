@@ -300,6 +300,18 @@ class EngineConfig:
             return str(exc)
         return ""
 
+    def model_problem(self) -> str:
+        """The configured model cannot do its role (e.g. a translation-only model); ``""`` if fine."""
+        from folith.model_capability import task_model_problem
+        problem = task_model_problem("translation", self.model)
+        if not problem and self.reviewer_mode == "separate" and self.connection_roles.get("reviewer"):
+            problem = task_model_problem("reviewer", self.reviewer_model)
+        return problem
+
+    def start_problem(self) -> str:
+        """Why a task cannot start: an incomplete connection, or a model unfit for its role."""
+        return self.connection_problem() or self.model_problem()
+
 
 # ================= job listing =================
 
@@ -655,7 +667,7 @@ def start_job(
     # Desktop pre-flight: the client refuses to start with an incomplete model
     # connection and says exactly what is missing (a desktop-dialog policy, not
     # part of the shared command).
-    problem = config.connection_problem()
+    problem = config.start_problem()
     if problem:
         raise AdapterError(problem)
     switched = _switch_empty_misrouted_scan(job_id, config)
