@@ -629,6 +629,7 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     OCR_ONLINE_DEFAULT_MAX_TOKENS,
     OCR_ONLINE_MAX_MAX_TOKENS,
     OCR_ONLINE_MIN_MAX_TOKENS,
+    OCR_ONLINE_REASONING_EFFORTS,
     OCR_ONLINE_REASONING_MODES,
     OCR_PROFILE_CACHE_DIRNAME,
     OCR_QUEUE_SIZE_DEFAULT,
@@ -666,7 +667,9 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     paddle_model_options,
     resolve_ocr_online_config,
     follow_connection_thinking as _follow_connection_thinking,
+    follow_connection_effort as _follow_connection_effort,
     default_vision_reasoning as _default_vision_reasoning,
+    default_vision_effort as _default_vision_effort,
     vision_connection_conflict,
     vision_connection_label,
     credential_for_endpoint,
@@ -721,6 +724,7 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     normalize_reasoning_mode as _normalize_reasoning_mode,
     thinking_control_options,
     connection_thinking_mode as _connection_thinking_mode,
+    connection_reasoning_effort as _connection_reasoning_effort,
     job_reasoning_modes as _job_reasoning_modes,
 )
 from folith.script_leak import leaked_scripts as _leaked_scripts
@@ -1009,6 +1013,7 @@ def load_ocr_online_config():
             "max_tokens": int(data.get("max_tokens") or _ocr_online.DEFAULT_MAX_TOKENS),
             "temperature": float(data.get("temperature") or 0.0),
             "reasoning_mode": str(data.get("reasoning_mode") or "provider_default"),
+            "reasoning_effort": str(data.get("reasoning_effort") or ""),
             "timeout_s": float(data.get("timeout_s") or _ocr_online.DEFAULT_TIMEOUT_S),
             "max_retries": int(data.get("max_retries") or _ocr_online.DEFAULT_MAX_RETRIES),
         }
@@ -13030,7 +13035,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 credential_owner=f"{provider}|{visual_base.rstrip('/')}",
                 reasoning_mode=_follow_connection_thinking(
                     "translation_profile", provider, model,
-                    _default_vision_reasoning(provider, model)))
+                    _default_vision_reasoning(provider, model)),
+                reasoning_effort=_follow_connection_effort(
+                    "translation_profile", provider, model,
+                    _default_vision_effort(provider, model)))
             effective_online_descriptor = effective_online_config.describe()
         except ValueError:
             pass  # A native document does not require a valid visual endpoint.

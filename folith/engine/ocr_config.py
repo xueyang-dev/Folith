@@ -13,7 +13,7 @@ from folith import ocr_backends as _ocr_backends
 from folith import ocr_language as _ocr_language
 from folith import ocr_models as _ocr_models
 from folith import ocr_online as _ocr_online
-from folith.ocr_online import default_vision_reasoning
+from folith.ocr_online import default_vision_effort, default_vision_reasoning
 from folith.textual import has_textual_content
 from pathlib import Path
 from folith.engine._link import core as _c
@@ -370,6 +370,9 @@ OCR_ONLINE_MAX_MAX_TOKENS = _ocr_online.MAX_MAX_TOKENS
 OCR_ONLINE_REASONING_MODES = tuple(_ocr_online.REASONING_MODES)
 
 
+OCR_ONLINE_REASONING_EFFORTS = tuple(_ocr_online.REASONING_EFFORTS)
+
+
 OCR_ONLINE_CREDENTIAL_LABELS = {
     "ocr_profile": "使用 OCR 专用凭据",
     "translation_profile": "引用已保存的翻译模型凭据",
@@ -383,6 +386,7 @@ def ocr_online_config_path():
 def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
                            max_tokens=_ocr_online.DEFAULT_MAX_TOKENS,
                            temperature=0.0, reasoning_mode="provider_default",
+                           reasoning_effort="",
                            timeout_s=_ocr_online.DEFAULT_TIMEOUT_S,
                            max_retries=_ocr_online.DEFAULT_MAX_RETRIES):
     """Persist the OCR-only connection (0600), mirroring provider_config.json."""
@@ -390,7 +394,8 @@ def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
     normalized = _ocr_online.OnlineOCRConfig(
         provider=provider, model=model, api_key=api_key, base_url=base_url or "",
         max_tokens=max_tokens, temperature=temperature,
-        reasoning_mode=reasoning_mode, timeout_s=timeout_s,
+        reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
+        timeout_s=timeout_s,
         max_retries=max_retries).normalized()
     payload = {
         "provider": normalized.provider,
@@ -400,6 +405,7 @@ def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
         "max_tokens": normalized.max_tokens,
         "temperature": normalized.temperature,
         "reasoning_mode": normalized.reasoning_mode,
+        "reasoning_effort": normalized.reasoning_effort,
         "timeout_s": normalized.timeout_s,
         "max_retries": normalized.max_retries,
     }
@@ -497,6 +503,31 @@ def follow_connection_thinking(source, provider, model, recorded):
     return recorded
 
 
+def _vision_reasoning_effort(provider, model, recorded):
+    """Recorded level, else the model's default.
+
+    An empty value is "nobody chose", so the model's default applies — the same
+    rule as the thinking mode above.
+    """
+    fallback = default_vision_effort(provider, model)
+    recorded = str(recorded or "").strip().lower()
+    if recorded not in OCR_ONLINE_REASONING_EFFORTS:
+        recorded = ""
+    return recorded or fallback
+
+
+def follow_connection_effort(source, provider, model, recorded):
+    """Vision reasoning level when it rides on the translation connection.
+
+    The level is live user intent on that connection, so it beats what an
+    earlier task recorded; a connection that records no level leaves the
+    model's default in place.
+    """
+    if source != "translation_profile":
+        return recorded
+    return _c._connection_reasoning_effort() or recorded
+
+
 def resolve_ocr_online_config(saved=None, *, descriptor=None):
     """Build the runtime online OCR config from a task descriptor + credentials.
 
@@ -535,13 +566,25 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
                                       "已不在已保存的连接里，无法取得它的访问凭据。")}
         api_key = found[0] if found else api_key
         owner = found[1] if found else owner
+    effort = follow_connection_effort(
+        source, provider, model,
+        _vision_reasoning_effort(
+            provider, model,
+            str(snapshot.get("reasoning_effort") or profile.get("reasoning_effort") or "")))
+    budget = int(snapshot.get("max_tokens") or profile.get("max_tokens")
+                 or _ocr_online.DEFAULT_MAX_TOKENS)
+    if effort:
+        # A reasoning endpoint pays for thinking out of the same budget, and a
+        # task recorded before the page-read budget was raised still carries the
+        # old 8,192 — which is exactly what a dense page cannot fit.  Giving
+        # such a task the current floor keeps it from failing on the old value.
+        budget = max(budget, _ocr_online.DEFAULT_MAX_TOKENS)
     config = _ocr_online.OnlineOCRConfig(
         provider=provider,
         base_url=resolved_base,
         model=model,
         api_key=api_key,
-        max_tokens=int(snapshot.get("max_tokens") or profile.get("max_tokens")
-                       or _ocr_online.DEFAULT_MAX_TOKENS),
+        max_tokens=budget,
         temperature=float(snapshot.get("temperature")
                           if snapshot.get("temperature") is not None
                           else profile.get("temperature") or 0.0),
@@ -550,6 +593,7 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
             _vision_reasoning_mode(
                 source, provider, model,
                 str(snapshot.get("reasoning_mode") or profile.get("reasoning_mode") or ""))),
+        reasoning_effort=effort,
         prompt_version=str(snapshot.get("prompt_version")
                            or _ocr_online.ONLINE_PROMPT_VERSION),
         timeout_s=float(snapshot.get("timeout_s") or profile.get("timeout_s")

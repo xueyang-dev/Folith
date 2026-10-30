@@ -3953,6 +3953,9 @@ def vision_connection_view() -> dict:
         "base_url": str(profile.get("base_url") or ""),
         "max_tokens": int(profile.get("max_tokens") or core.OCR_ONLINE_DEFAULT_MAX_TOKENS),
         "reasoning_mode": str(profile.get("reasoning_mode") or "provider_default"),
+        "reasoning_effort": str(profile.get("reasoning_effort") or ""),
+        "reasoning_efforts": list(reasoning_effort_options(
+            str(profile.get("provider") or ""), str(profile.get("model") or ""))),
         "has_key": bool(profile.get("api_key")),
         "providers": vision_providers(),
         "min_tokens": int(core.OCR_ONLINE_MIN_MAX_TOKENS),
@@ -3989,7 +3992,8 @@ def vision_connection_problem(*, provider: str, model: str, api_key: str,
 
 def save_vision_connection(*, provider: str, model: str, api_key: str = "",
                            base_url: str = "", max_tokens: int | None = None,
-                           reasoning_mode: str = "provider_default") -> dict:
+                           reasoning_mode: str = "provider_default",
+                           reasoning_effort: str | None = None) -> dict:
     """保存专用视觉连接。``api_key`` 留空表示沿用已保存的值。"""
     saved = core.load_ocr_online_config() or {}
     problem = vision_connection_problem(
@@ -4002,12 +4006,17 @@ def save_vision_connection(*, provider: str, model: str, api_key: str = "",
     tokens = max(limits[0], min(limits[1], tokens))
     if reasoning_mode not in core.OCR_ONLINE_REASONING_MODES:
         reasoning_mode = "provider_default"
+    # 档位只对实测认这个字段的端点有意义；换了模型就丢掉，不留一个发不出去的档位。
+    effort = str(reasoning_effort if reasoning_effort is not None
+                 else saved.get("reasoning_effort") or "").strip().lower()
+    if effort not in reasoning_effort_options(str(provider).strip(), str(model).strip()):
+        effort = ""
     try:
         core.save_ocr_online_config(
             provider=str(provider).strip(), model=str(model).strip(),
             api_key=str(api_key or "").strip() or str(saved.get("api_key") or ""),
             base_url=str(base_url or "").strip(), max_tokens=tokens,
-            reasoning_mode=reasoning_mode)
+            reasoning_mode=reasoning_mode, reasoning_effort=effort)
     except (OSError, ValueError) as exc:
         raise AdapterError(f"无法保存视觉连接：{exc}") from exc
     return vision_connection_view()

@@ -668,7 +668,9 @@ class EngineDialog(QDialog):
                 "api_key": profile.get("api_key") or environment_key(profile["provider"]),
                 "base_url": profile.get("base_url", ""),
                 "max_tokens": self._vision_view["max_tokens"],
-                "reasoning_mode": self._vision_view["reasoning_mode"]}
+                "reasoning_mode": self._vision_view["reasoning_mode"],
+                # 读页的推理强度跟这条连接走：连接编辑器里选「低/中/高」，这里原样带上。
+                "reasoning_effort": str(profile.get("reasoning_effort") or "")}
 
     def _vision_changed(self) -> bool:
         form = self._vision_form()
@@ -676,7 +678,7 @@ class EngineDialog(QDialog):
             return bool(self._vision_view["dedicated"])
         stored = adapter.core.load_ocr_online_config() or {}
         return any(form.get(k) != stored.get(k) for k in
-                   ("provider", "model", "api_key", "base_url"))
+                   ("provider", "model", "api_key", "base_url", "reasoning_effort"))
 
     def _vision_problem(self) -> str:
         form = self._vision_form()
