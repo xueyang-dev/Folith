@@ -349,9 +349,21 @@ def _pdf_source(source: bytes):
             for block in images:
                 name = f"images/image-{len(media) + 1:04d}.png"
                 rectangle = fitz.Rect(block["x0"], block["y0"], block["x1"], block["y1"])
+                # A zero-width or zero-height image box (a hairline or a broken
+                # extraction) cannot be rendered: MuPDF fails with "Invalid
+                # bandwriter header" and that one box used to block the whole
+                # delivery. Skip it and say so instead.
+                if rectangle.is_empty or rectangle.width < 1 or rectangle.height < 1:
+                    warnings.append(f"PDF 第 {page_number} 页有一处图片区域尺寸为零，已跳过。")
+                    continue
                 # Rendering the image's rectangle preserves PDF masks, rotation
                 # and clipping instead of exporting an untransformed image blob.
-                data = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rectangle, alpha=False).tobytes("png")
+                try:
+                    data = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rectangle,
+                                           alpha=False).tobytes("png")
+                except Exception as exc:  # noqa: BLE001 - one bad picture must not block delivery
+                    warnings.append(f"PDF 第 {page_number} 页有一张图片无法提取（{exc}），已跳过。")
+                    continue
                 media[name] = (data, "image/png")
                 ordered.append((page_number, block["y0"], block["x0"], 1,
                                 {"kind": "image", "name": name, "page": page_number}))

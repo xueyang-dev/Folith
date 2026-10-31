@@ -185,3 +185,27 @@ def test_image_only_source_falls_back_to_plain_docx(monkeypatch):
     payload, report = build_translation_docx(state, b'%PDF-1.4 scanned')
     assert '扫描行。' in [p.text for p in Document(io.BytesIO(payload if isinstance(payload, bytes) else payload.getvalue())).paragraphs]
     assert report['image_count'] == 0 and '纯文字重建' in report['warnings'][0]
+
+
+def test_zero_width_image_box_is_skipped_instead_of_blocking_the_docx(monkeypatch):
+    """A 0-wide image box made MuPDF fail ("Invalid bandwriter header") and the
+    whole translated DOCX was refused. It is skipped with a warning now, and the
+    real picture still lands in the document."""
+    from folith import pdf_ingestion
+
+    real = pdf_ingestion.classify_blocks
+
+    def with_broken_box(blocks):
+        classified = real(blocks)
+        image = next(block for block in classified if block["role"] == "image")
+        broken = dict(image, block_id="broken-box", x1=image["x0"])
+        return classified + [broken]
+
+    source = pdf_source()
+    state = translated_state('book.pdf', source)
+    monkeypatch.setattr(pdf_ingestion, "classify_blocks", with_broken_box)
+    payload, report = build_translation_docx(state, source)
+    document, parts = flow(payload)
+    assert report['image_count'] == len(document.inline_shapes) == 1
+    assert any("尺寸为零" in warning for warning in report['warnings'])
+    assert '[image]' in parts
