@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=0052fe" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-15.8.1%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.8.1+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -100,7 +100,7 @@ https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
 下载 `Folith-Qt-<版本>-macos-arm64.dmg`，打开后把 Folith 拖进「应用程序」。
 
-- 系统要求：macOS 15.7.5 或更高，Apple 芯片（M 系列）。不支持 Intel Mac。
+- 系统要求：macOS 15.8.1 或更高，Apple 芯片（M 系列）。不支持 Intel Mac。
 - 安装包未签名、未公证：第一次打开时，在「应用程序」里右键点 Folith → 打开，放行一次即可。**不要**全局关闭 Gatekeeper。
 - 已内置 Tesseract（英文、简体中文、阿拉伯文），不需要另装任何依赖。
 - 校验（可选）：在终端运行 `shasum -a 256 Folith-Qt-<版本>-macos-arm64.dmg`，与 `SHA256SUMS.txt` 对比。
@@ -213,7 +213,7 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 
 ## ⚠️ 已知限制
 
-- macOS 安装包仅支持 Apple 芯片和 macOS 15.7.5 或更高；未签名、未公证。
+- macOS 安装包仅支持 Apple 芯片和 macOS 15.8.1 或更高；未签名、未公证。
 - Windows 安装包未签名；Windows 10 x64、ARM64 Windows 和干净虚拟机上的兼容性尚未验证。
 - 最终安装包的部分人工验收项（系统文件面板、中文输入法、睡眠 / 唤醒、首次放行、真实模型服务等）可能在发布后才完成，每个版本已验证和待验证的范围以对应的[发布说明](docs/release-notes-0.8.0.md)为准。
 - 不支持有 DRM 的 EPUB。
