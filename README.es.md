@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=%C3%BAltima%20versi%C3%B3n&color=0052fe" alt="Última versión"></a>
   <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-15.8.1%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.8.1+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -100,7 +100,7 @@ Todos los paquetes de escritorio están en la página de la [última versión](h
 
 Descarga `Folith-Qt-<versión>-macos-arm64.dmg`, ábrelo y arrastra Folith a Aplicaciones.
 
-- Requisitos: macOS 15.7.5 o posterior en Apple silicon (serie M). Los Mac con Intel no son compatibles.
+- Requisitos: macOS 15.8.1 o posterior en Apple silicon (serie M). Los Mac con Intel no son compatibles.
 - El paquete no está firmado ni notarizado. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
 - Tesseract (inglés, chino simplificado, árabe) viene incluido, así que no hay que instalar nada más.
 - Verificación (opcional): ejecuta `shasum -a 256 Folith-Qt-<versión>-macos-arm64.dmg` en Terminal y compáralo con `SHA256SUMS.txt`.
@@ -213,7 +213,7 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## ⚠️ Limitaciones conocidas
 
-- El paquete de macOS solo es compatible con Apple silicon y macOS 15.7.5 o posterior; no está firmado ni notarizado.
+- El paquete de macOS solo es compatible con Apple silicon y macOS 15.8.1 o posterior; no está firmado ni notarizado.
 - El paquete de Windows no está firmado; no se ha verificado la compatibilidad con Windows 10 x64, Windows en ARM64 ni máquinas virtuales limpias.
 - Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.8.0.md) (en chino) correspondientes.
 - No se admiten EPUB con DRM.

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=latest%20release&color=0052fe" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-15.8.1%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.8.1+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -100,7 +100,7 @@ All desktop packages are on the [latest release](https://github.com/xueyang-dev/
 
 Download `Folith-Qt-<version>-macos-arm64.dmg`, open it and drag Folith into Applications.
 
-- Requirements: macOS 15.7.5 or later on Apple silicon (M-series). Intel Macs are not supported.
+- Requirements: macOS 15.8.1 or later on Apple silicon (M-series). Intel Macs are not supported.
 - The package is unsigned and not notarized. The first time, right-click Folith in Applications → Open, and allow it once. **Do not** turn Gatekeeper off globally.
 - Tesseract (English, Simplified Chinese, Arabic) is bundled, so there is nothing else to install.
 - Verify (optional): run `shasum -a 256 Folith-Qt-<version>-macos-arm64.dmg` in Terminal and compare it with `SHA256SUMS.txt`.
@@ -213,7 +213,7 @@ Folith itself is free and open source. The model calls made while translating ar
 
 ## ⚠️ Known limitations
 
-- The macOS package supports Apple silicon and macOS 15.7.5 or later only; it is unsigned and not notarized.
+- The macOS package supports Apple silicon and macOS 15.8.1 or later only; it is unsigned and not notarized.
 - The Windows package is unsigned; compatibility with Windows 10 x64, ARM64 Windows and clean virtual machines has not been verified.
 - Some manual acceptance items for the final packages (native file panels, Chinese input method, sleep / wake, first-launch approval, a real model service and so on) may only be completed after publication; what each release has and has not verified is recorded in the [release notes](docs/release-notes-0.8.0.md) (in Chinese) for the release in question.
 - EPUB files with DRM are not supported.

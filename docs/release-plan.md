@@ -20,7 +20,7 @@
 
 ## 冻结范围
 
-- 分发主产物：Qt Widgets 原生客户端的 macOS arm64 DMG，声明最低 macOS 15.7.5（发布负责人 2026-10-13 确认）；每次构建复核原生闭包。Windows、Linux、Intel Mac 不在桌面支持声明内。
+- 分发主产物：Qt Widgets 原生客户端的 macOS arm64 DMG，声明最低 macOS 15.8.1（2026-10-31 由 15.7.5 改定，随包 Homebrew Tesseract 的闭包实测要求）；每次构建复核原生闭包。Windows、Linux、Intel Mac 不在桌面支持声明内。
 - 中文主界面；English、Español、Русский、العربية 为实验功能。目录完整性必须通过，但不代表语言语义、字体及 RTL 真机验收通过。
 - PDF / DOCX / EPUB / TXT / Markdown 导入。扫描页以**视觉模型为主路径**，OCR（随包 Tesseract，eng / chi_sim / ara）只提供原文位置坐标，缺语言包明确失败；Paddle 与独立的线上 OCR 设置不在范围内，`paddle` 安装依赖组已从 `pyproject.toml` 移除。视觉连接在任务实际含扫描页时才校验。
 - 扫描流：先读 5 页即开始翻译；单页失败只跳过该页；超时重试一次、连续超时自动暂停；暂停与恢复可选择视觉连接。
