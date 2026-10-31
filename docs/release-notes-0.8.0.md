@@ -27,6 +27,7 @@
 
 ## 已知限制
 
+- macOS 安装包的最低系统为 15.8.1（0.7.x 为 15.7.5）：随包 Tesseract 及其依赖在 CI 构建环境升级后要求 15.8.1，实测闭包与 Info.plist 一致。macOS 15.7.x 的用户需要先升级系统。
 - macOS 包未签名、未公证；Windows 包未签名。首次放行、quarantine、安装升级须在最终候选上人工复核。
 - 自动化（CI、offscreen、mock 平台）不能代替真实 Cocoa / Windows 原生窗口验收。
 - 随包 OCR 基线为 Tesseract eng / chi_sim / ara；不随包 PaddleOCR 或 LibreOffice。

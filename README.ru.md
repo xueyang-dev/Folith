@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=%D0%BF%D0%BE%D1%81%D0%BB%D0%B5%D0%B4%D0%BD%D0%B8%D0%B9%20%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=0052fe" alt="Последний релиз"></a>
   <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-15.8.1%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.8.1+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -100,7 +100,7 @@ https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
 Скачайте `Folith-Qt-<версия>-macos-arm64.dmg`, откройте его и перетащите Folith в «Программы».
 
-- Требования: macOS 15.7.5 или новее на Apple silicon (серия M). Mac с Intel не поддерживаются.
+- Требования: macOS 15.8.1 или новее на Apple silicon (серия M). Mac с Intel не поддерживаются.
 - Пакет не подписан и не нотаризован. При первом запуске щёлкните Folith в «Программах» правой кнопкой → «Открыть» и разрешите запуск один раз. **Не отключайте** Gatekeeper глобально.
 - Tesseract (английский, упрощённый китайский, арабский) встроен, больше ничего ставить не нужно.
 - Проверка (необязательно): выполните в Терминале `shasum -a 256 Folith-Qt-<версия>-macos-arm64.dmg` и сравните с `SHA256SUMS.txt`.
@@ -213,7 +213,7 @@ python -m folith.qt
 
 ## ⚠️ Известные ограничения
 
-- Пакет для macOS поддерживает только Apple silicon и macOS 15.7.5 или новее; он не подписан и не нотаризован.
+- Пакет для macOS поддерживает только Apple silicon и macOS 15.8.1 или новее; он не подписан и не нотаризован.
 - Пакет для Windows не подписан; совместимость с Windows 10 x64, Windows на ARM64 и чистыми виртуальными машинами не проверена.
 - Часть пунктов ручной приёмки финальных пакетов (системные файловые панели, китайский метод ввода, сон / пробуждение, разрешение первого запуска, реальный сервис модели и т. п.) может завершаться уже после публикации; что проверено и что нет, записано в [примечаниях к выпуску](docs/release-notes-0.8.0.md) (на китайском) для соответствующей версии.
 - EPUB с DRM не поддерживаются.

@@ -121,7 +121,7 @@ Gerrit 765434 仍在评审）。同一签名同样出现在 calibre（PyQt6）�
 ## 五、已知限制（不必当缺陷回报）
 
 - 未签名、未公证：首次启动需要右键「打开」放行一次（受邀 Private Beta）。
-- 本轮声明最低 **macOS 15.7.5**（当前 CI 的随包 Tesseract 实测要求）；不声称支持更低版本。
+- 本轮声明最低 **macOS 15.8.1**（当前 CI 的随包 Tesseract 实测要求）；不声称支持更低版本。
 - 仅 arm64（Apple Silicon）；Windows / Intel 本轮不在范围内。
 - 扫描件 OCR 需要语言包（随包已含 `eng`/`chi_sim`/`ara`）；缺包时会明确报出缺哪个。
 - LibreOffice 未安装：渲染 QA 记为 `NOT_RUN`，不阻塞 Beta。
