@@ -75,6 +75,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--diagnostics-report", action="store_true",
                         help="打印诊断信息（版本/构建/运行时/位置/schema/工具）后退出")
     parser.add_argument("--result", default=None, help="把摘要 JSON 写到这个路径")
+    parser.add_argument("--ui-watchdog", nargs=4, help=argparse.SUPPRESS)
     parser.add_argument("--allow-second-instance", action="store_true",
                         help="跳过单实例锁（仅用于隔离测试）")
     parser.add_argument("files", nargs="*", default=[],
@@ -84,6 +85,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.ui_watchdog:
+        from folith.desktop.ui_watchdog import run
+        pid, directory, data_dir, timeout = args.ui_watchdog
+        return run(int(pid), Path(directory), Path(data_dir), float(timeout))
     # The translation worker runs in-process and does CPU-bound work (JSON,
     # python-docx, hashing).  With the default 5 ms GIL switch interval a large
     # job can starve the GUI thread for up to a second, which the Beta
@@ -270,9 +275,18 @@ def main(argv: list[str] | None = None) -> int:
             lock.release()
         return 0 if report.get("ok") else 1
 
+    from .ui_health import UiHealthMonitor
+
+    monitor = UiHealthMonitor(app, main_window, paths, identity=adapter.app_identity())
+    try:
+        monitor.start()
+    except OSError as exc:
+        monitor.stop()
+        log(f"UI watchdog unavailable: {type(exc).__name__}")
     try:
         code = app.exec()
     finally:
+        monitor.stop()
         log("qt client exited")
     return int(code)
 

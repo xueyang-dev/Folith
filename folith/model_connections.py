@@ -8,7 +8,26 @@ if TYPE_CHECKING:
     from folith.qt.adapter import EngineConfig
 
 
+def input_capability(metadata: dict) -> str:
+    """Interpret advertised input modalities without guessing from model names."""
+    if not isinstance(metadata, dict):
+        return "unknown"
+    architecture = metadata.get("architecture")
+    architecture = architecture if isinstance(architecture, dict) else {}
+    inputs = metadata.get("input_modalities", architecture.get("input_modalities"))
+    if not isinstance(inputs, list):
+        return "unknown"
+    values = {str(value).lower() for value in inputs}
+    if "image" in values or "vision" in values:
+        return "vision"
+    if "text" in values:
+        return "text"
+    return "unknown"
+
+
 def environment_key(provider: str) -> str:
+    if provider == "Local Gateway":
+        return ""
     names = {"OpenAI": "OPENAI_API_KEY", "Gemini": "GEMINI_API_KEY",
              "OpenCode Go": "OPENCODE_API_KEY",
              "DeepSeek": "DEEPSEEK_API_KEY", "OpenRouter": "OPENROUTER_API_KEY",

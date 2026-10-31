@@ -24,6 +24,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
+from folith import request_control
+
 
 try:
     import resource  # POSIX only; absent on Windows.
@@ -742,7 +744,8 @@ class RunContext:
 
     def begin_http_attempt(self, request: Any) -> None:
         with self._lock:
-            active = self._active_requests.get(threading.get_ident())
+            # A cancellable request sends from a helper thread on behalf of its caller.
+            active = self._active_requests.get(request_control.request_owner_thread())
             if active is None:
                 return
             attempt = active.get("http_attempts", 0) + 1

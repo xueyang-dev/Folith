@@ -8,6 +8,20 @@ from . import delivery, translation_evidence
 from . import finding_groups as _finding_groups
 
 
+#: 左栏三组（xueyang-dev/Folith#102）：必须处理 / 建议 / 已处理 · 仅供参考。
+_LIST_GROUP_BY_SEVERITY = {
+    "blocking": "must",
+    "actionable": "suggested",
+    "informational": "reference",
+}
+
+#: 术语类发现按概念归并：一条术语只出现一次，而不是每段一张卡。
+_TERM_FINDING_TYPES = frozenset({"glossary_stale"})
+_TERM_SEVERITY_ORDER = {"blocking": 0, "actionable": 1, "informational": 2}
+#: How many affected paragraphs a term card carries for its side-by-side detail.
+TERM_SEGMENT_PREVIEW = 100
+
+
 _SKIP_REASON_COPY = {
     "already_reviewed_tm": "复用已审校翻译记忆",
     "clean_deterministic": "无确定性风险信号",
@@ -196,6 +210,10 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
         "id": f"finding:{rendered_id}",
         "kind": "finding",
         "filter_group": filter_group,
+        "list_group": _LIST_GROUP_BY_SEVERITY.get(severity, "reference"),
+        "affected_segment_ids": ([segment_id]
+                                 if isinstance(segment_id, int)
+                                 and not isinstance(segment_id, bool) else []),
         "priority": {"blocking": 2, "actionable": 4,
                      "informational": 5}.get(severity, 5),
         "segment_id": segment_id,
@@ -302,6 +320,9 @@ def _review_task_item(
         "kind": kind,
         "filter_group": ("skipped" if kind == "skipped" else
                          "rereview" if kind in {"failed", "stale"} else "pending"),
+        # 审校覆盖类的一律是「必须处理」：没审过、审失败、译文变了都要先处理。
+        "list_group": "must",
+        "affected_segment_ids": [segment_id],
         "priority": priority,
         "segment_id": segment_id,
         "segment_index": segment_id,
@@ -349,6 +370,131 @@ def _review_task_item(
     }
 
 
+def _glossary_entries_by_id(state: Mapping[str, Any]) -> Dict[str, Mapping[str, Any]]:
+    from . import models
+    frozen = state.get("glossary_frozen") or {}
+    # The card describes the frozen decision, so its entry wins over an unfrozen draft.
+    entries = models.normalize_glossary(
+        frozen.get("entries") or state.get("glossary") or [])
+    return {entry["id"]: entry for entry in entries if entry.get("id")}
+
+
+def _merge_term_cards(
+    state: Mapping[str, Any], items: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """One card per term: the queue follows concepts, not segments."""
+    groups: Dict[str, List[Mapping[str, Any]]] = {}
+    kept: List[Dict[str, Any]] = []
+    for item in items:
+        entry_id = str(item.get("entry_id") or "")
+        if item.get("finding_type") in _TERM_FINDING_TYPES and entry_id:
+            groups.setdefault(entry_id, []).append(item)
+        else:
+            kept.append(dict(item))
+    if not groups:
+        return kept
+    entries = _glossary_entries_by_id(state)
+    for entry_id, rows in groups.items():
+        representative = next(
+            (row for row in rows if row.get("finding_type") == "glossary_stale"),
+            rows[0])
+        entry = entries.get(entry_id) or {}
+        severe = min((str(row.get("severity") or "informational") for row in rows),
+                     key=lambda value: _TERM_SEVERITY_ORDER.get(value, 9))
+        segments = sorted({
+            index
+            for row in rows
+            for index in (row.get("affected_segment_ids")
+                          or [row.get("segment_index")])
+            if isinstance(index, int) and not isinstance(index, bool)
+        })
+        source = str(entry.get("source") or representative.get("source_span")
+                     or "").strip()
+        target = str(entry.get("preferred") or entry.get("target")
+                     or representative.get("target_span") or "").strip()
+        stale = any(row.get("finding_type") == "glossary_stale" for row in rows)
+        previous = str(representative.get("previous_target") or "").strip()
+        count = len(segments) or 1
+        if source and target:
+            title = f"{source} → {target} · 影响 {count} 段"
+            if stale and previous and previous != target:
+                # The conflict the user has to settle: the translation still says
+                # the old term, the frozen glossary now says the new one.
+                summary = (f"「{source}」的译法从「{previous}」改为「{target}」，"
+                           f"{count} 段译文需要确认或重译")
+            elif stale:
+                summary = f"冻结术语表已更新「{source}」的译法，{count} 段译文需要确认或重译"
+            else:
+                summary = f"译文与术语表不一致：「{source}」应译为「{target}」，涉及 {count} 段"
+        elif source:
+            title = f"术语「{source}」· 影响 {count} 段"
+            summary = str(representative.get("summary") or "")
+            if summary and f"{count} 段" not in summary:
+                summary = f"{summary}（涉及 {count} 段）"
+        else:
+            title = str(representative.get("title") or "")
+            summary = str(representative.get("summary") or "")
+        handled = all(bool(row.get("handled")) for row in rows)
+        pairs = state.get("pairs") or []
+        segment_rows: List[Dict[str, Any]] = []
+        for index in segments[:TERM_SEGMENT_PREVIEW]:
+            pair = pairs[index] if 0 <= index < len(pairs) else {}
+            pair = pair if isinstance(pair, Mapping) else {}
+            current = str(pair.get("target") or "")
+            segment_rows.append({
+                "index": index,
+                "number": index + 1,
+                "source": str(pair.get("source") or ""),
+                "target": current,
+                # False is the conflict: the paragraph still uses another spelling.
+                "uses_frozen": not target or not current or target in current,
+            })
+        card = dict(representative)
+        card.update({
+            "term_card": True,
+            "handled": handled,
+            "list_group": ("reference" if handled
+                           else _LIST_GROUP_BY_SEVERITY.get(severe, "reference")),
+            "term_entry_id": entry_id,
+            "term_source": source,
+            "term_target": target,
+            "term_previous_target": previous,
+            "term_segments": segment_rows,
+            "term_segment_total": len(segments),
+            "affected_segment_ids": segments,
+            "finding_ids": [str(row.get("finding_id") or "") for row in rows
+                            if row.get("finding_id")],
+            "severity": severe,
+            "priority": {"blocking": 2, "actionable": 4,
+                         "informational": 5}.get(severe, 5),
+            "title": title,
+            "summary": summary,
+            "segment_id": segments[0] if segments else representative.get("segment_id"),
+            "segment_index": segments[0] if segments else representative.get("segment_index"),
+        })
+        kept.append(card)
+    return kept
+
+
+def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Decisions already made, one card per concept, collapsed by default."""
+    items: List[Dict[str, Any]] = []
+    for finding in state.get("findings") or []:
+        if not isinstance(finding, Mapping):
+            continue
+        if not (finding.get("resolved") or str(finding.get("status") or "")
+                in {"resolved", "dismissed"}):
+            continue
+        if finding.get("superseded_by_review_event_id"):
+            continue
+        items.append(_finding_item(state, finding))
+    if not items:
+        return []
+    for item in items:
+        item.update({"handled": True, "list_group": "reference", "priority": 6})
+    return _merge_term_cards(state, items)
+
+
 def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List[Dict[str, Any]]:
     # One index for the whole queue: per-item reverse scans of every review event
     # were O(items × events) (thousands × ~1 000 on a book-length task).
@@ -376,6 +522,7 @@ def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List
     confirmations = _open_confirmations(state)
     items.extend(_finding_item(state, finding, confirmations=confirmations)
                  for finding in current_findings)
+    items = _merge_term_cards(state, items)
     return sorted(items, key=lambda item: (
         item["priority"], item.get("segment_id") if isinstance(
             item.get("segment_id"), int) else 10**9, item["id"]))
@@ -503,6 +650,11 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         for name in ("pending", "rereview", "skipped", "suggested", "reference")
     }
     filter_counts["all"] = len(items)
+    handled = _handled_items(state)
+    group_counts = {
+        name: sum(item.get("list_group") == name for item in items + handled)
+        for name in ("must", "suggested", "reference")
+    }
     label, detail, tone = _coverage_copy(readiness)
     progress = {
         "total": len(readiness.get("expected_segment_ids") or []),
@@ -525,8 +677,10 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         "readiness": {**readiness, "label": label, "detail": detail, "tone": tone},
         "progress": progress,
         "queue_items": items,
+        "handled_items": handled,
         "queue_counts": counts,
         "filter_counts": filter_counts,
+        "group_counts": group_counts,
         "primary_action": _primary_action(readiness, counts, items),
         "delivery": _delivery_copy(readiness, counts),
         "nav": _nav_copy(readiness, counts),

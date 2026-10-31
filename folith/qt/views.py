@@ -3854,8 +3854,17 @@ class WorkbenchView(QWidget):
         # 让"换了任务就一定会重画"成为显然的事实。
         self._delivery_rendered = False
         self._delivery_key = ()
-        self._outline_payload = dict((prepared or {}).get("outline") or {})
-        self._outline_mapping = dict((prepared or {}).get("outline_mapping") or {})
+        if prepared is not None:
+            self._outline_payload = dict((prepared or {}).get("outline") or {})
+            self._outline_mapping = dict((prepared or {}).get("outline_mapping") or {})
+        else:
+            # Direct call without a pre-fetched payload (e.g. tests, legacy
+            # callers).  Read the warm sidecar synchronously; no_parse=True
+            # means we never parse the source on the GUI thread.  A cold task
+            # returns a pending payload; update_outline() fills it later.
+            self._outline_payload = dict(
+                adapter.task_outline(job_id, state, no_parse=True) or {})
+            self._outline_mapping = {}
         outline = self._outline_payload.get("outline") or {}
         # Segment count is not part of the key: a cleanup can move every
         # position without changing it.  The structure signature can (#186).
@@ -4513,6 +4522,29 @@ class WorkbenchView(QWidget):
         extracted = (self._outline_payload or {}).get("extracted_outline") or {}
         return bool(self.job_id and (outline.get("nodes") or extracted.get("nodes")))
 
+    def update_outline(self, payload: dict, mapping: dict) -> None:
+        """Apply a freshly-built outline payload (called by the window after a background parse).
+
+        This is the path taken when the task was opened with a cold (pending)
+        sidecar: the background parse finished, and the window hands the result
+        back here so the workbench outline panel and button update without a
+        full workbench reload.
+        """
+        if not self.job_id:
+            return
+        self._outline_payload = dict(payload or {})
+        self._outline_mapping = dict(mapping or {})
+        outline = self._outline_payload.get("outline") or {}
+        self._outline_key = (
+            (str(outline.get("fingerprint") or ""),
+             adapter.outline_revision(self._state),
+             adapter.outline_structure_signature(self._state))
+            if self._outline_mapping.get("nodes") else None)
+        self._render_outline()
+        # Re-enable the workbench scope button if rows are present (#28).
+        if self._all_rows:
+            self.scope_button.setVisible(True)
+
     def _render_outline(self) -> None:
         """Refresh the outline panel from the persisted sidecar (#186/#187).
 
@@ -4521,8 +4553,11 @@ class WorkbenchView(QWidget):
         """
         if not self.job_id:
             return
-        if not self._outline_payload:
-            self._outline_payload = adapter.task_outline(self.job_id, self._state)
+        # Never parse on the GUI thread: if the payload is still pending the
+        # background OutlineLoader hasn't finished yet.  The outline button
+        # stays hidden until the loader calls update_outline().
+        if not self._outline_payload or self._outline_payload.get("pending"):
+            return
         outline = (self._outline_payload or {}).get("outline") or {}
         nodes = [node for node in outline.get("nodes") or [] if isinstance(node, dict)]
         if not nodes and not self._outline_available():

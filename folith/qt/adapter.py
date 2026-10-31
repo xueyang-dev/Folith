@@ -1242,24 +1242,33 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
     }
 
 
-def task_outline(job_id: str, state: dict | None = None) -> dict:
+def task_outline(job_id: str, state: dict | None = None, *,
+                 no_parse: bool = False) -> dict:
     """The task's persisted source outline (#186), parsed at most once.
 
     The panel consumes this payload; it never calls the parser itself.  Reading
     a warm sidecar performs no source extraction and no model call.  When the
     source or parser version changed, ``parsed``/``invalidated`` say so rather
     than pretending the cache was still current.
+
+    When ``no_parse=True`` and the sidecar is cold or missing the call returns
+    immediately with ``{"pending": True, ...}`` without starting a parse.  The
+    caller must schedule the actual build separately (e.g. via
+    :class:`folith.qt.outline_loader.OutlineLoader`).
     """
     from folith import outline_anchor
 
     try:
         payload = outline_anchor.load_outline(
-            job_id, state if state is not None else load_state(job_id))
+            job_id, state if state is not None else load_state(job_id),
+            no_parse=no_parse)
     except OSError:
         # A missing/unreadable source is a task with no structure, not a reason
         # to refuse to open the workspace.
         return {"outline": {}, "mapping": {}, "parsed": False,
                 "invalidated": "source_missing", "node_count": 0}
+    if payload.get("pending"):
+        return payload  # cold sidecar; background parse not yet done
     from folith import outline_corrections, outline_recovery
     native = payload.get("outline") or {}
     extracted = outline_recovery.load(job_id, native)
@@ -3944,6 +3953,9 @@ def vision_connection_view() -> dict:
         "base_url": str(profile.get("base_url") or ""),
         "max_tokens": int(profile.get("max_tokens") or core.OCR_ONLINE_DEFAULT_MAX_TOKENS),
         "reasoning_mode": str(profile.get("reasoning_mode") or "provider_default"),
+        "reasoning_effort": str(profile.get("reasoning_effort") or ""),
+        "reasoning_efforts": list(reasoning_effort_options(
+            str(profile.get("provider") or ""), str(profile.get("model") or ""))),
         "has_key": bool(profile.get("api_key")),
         "providers": vision_providers(),
         "min_tokens": int(core.OCR_ONLINE_MIN_MAX_TOKENS),
@@ -3961,12 +3973,18 @@ def vision_connection_view() -> dict:
 
 
 def vision_connection_problem(*, provider: str, model: str, api_key: str,
-                              has_saved_key: bool) -> str:
+                              has_saved_key: bool, base_url: str = "") -> str:
     """保存专用视觉连接前的检查；返回空串表示可以保存。"""
-    if not str(provider or "").strip():
+    provider = str(provider or "").strip()
+    if not provider:
         return "请选择视觉模型的服务商。"
     if not str(model or "").strip():
         return "请填写视觉模型名（需要支持图像输入）。"
+    if provider == "Local Gateway":
+        # 本地网关不校验密钥，但地址必须显式给：没有注册表默认值可退回。
+        if not str(base_url or "").strip():
+            return "本地网关需要填写视觉连接的 API 地址。"
+        return ""
     if not str(api_key or "").strip() and not has_saved_key:
         return "请填写视觉连接的 API Key。"
     return ""
@@ -3974,12 +3992,13 @@ def vision_connection_problem(*, provider: str, model: str, api_key: str,
 
 def save_vision_connection(*, provider: str, model: str, api_key: str = "",
                            base_url: str = "", max_tokens: int | None = None,
-                           reasoning_mode: str = "provider_default") -> dict:
+                           reasoning_mode: str = "provider_default",
+                           reasoning_effort: str | None = None) -> dict:
     """保存专用视觉连接。``api_key`` 留空表示沿用已保存的值。"""
     saved = core.load_ocr_online_config() or {}
     problem = vision_connection_problem(
         provider=provider, model=model, api_key=api_key,
-        has_saved_key=bool(saved.get("api_key")))
+        has_saved_key=bool(saved.get("api_key")), base_url=base_url)
     if problem:
         raise AdapterError(problem)
     limits = (int(core.OCR_ONLINE_MIN_MAX_TOKENS), int(core.OCR_ONLINE_MAX_MAX_TOKENS))
@@ -3987,12 +4006,17 @@ def save_vision_connection(*, provider: str, model: str, api_key: str = "",
     tokens = max(limits[0], min(limits[1], tokens))
     if reasoning_mode not in core.OCR_ONLINE_REASONING_MODES:
         reasoning_mode = "provider_default"
+    # 档位只对实测认这个字段的端点有意义；换了模型就丢掉，不留一个发不出去的档位。
+    effort = str(reasoning_effort if reasoning_effort is not None
+                 else saved.get("reasoning_effort") or "").strip().lower()
+    if effort not in reasoning_effort_options(str(provider).strip(), str(model).strip()):
+        effort = ""
     try:
         core.save_ocr_online_config(
             provider=str(provider).strip(), model=str(model).strip(),
             api_key=str(api_key or "").strip() or str(saved.get("api_key") or ""),
             base_url=str(base_url or "").strip(), max_tokens=tokens,
-            reasoning_mode=reasoning_mode)
+            reasoning_mode=reasoning_mode, reasoning_effort=effort)
     except (OSError, ValueError) as exc:
         raise AdapterError(f"无法保存视觉连接：{exc}") from exc
     return vision_connection_view()

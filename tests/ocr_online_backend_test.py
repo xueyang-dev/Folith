@@ -8,6 +8,8 @@ cancellation and credential hygiene — are pinned deterministically.
 from __future__ import annotations
 
 import json
+import threading
+import time
 import types
 
 import pytest
@@ -303,6 +305,31 @@ def test_cancellation_during_backoff_does_not_send_the_retry():
     with pytest.raises(RuntimeError, match="任务已请求取消"):
         backend.ocr_page(PNG, page_index=0, page_number=1, language="ara", dpi=350)
     assert len(client.requests) == 1
+
+
+def test_cancellation_gives_up_a_request_that_is_still_waiting_on_the_service():
+    released = threading.Event()
+    state = {"cancel": False}
+
+    class HangingClient(FakeClient):
+        def create(self, **body):
+            self.requests.append(body)
+            state["cancel"] = True          # the user cancels while the reply is pending
+            released.wait(10)
+            return segments_response(["arrived too late"])
+
+    client = HangingClient([])
+    backend = OnlineOCRBackend(config())
+    backend._get_client = lambda: client  # type: ignore[assignment]
+    backend._cancel_check = lambda: state["cancel"]
+    started = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="任务已请求取消"):
+            backend.ocr_page(PNG, page_index=0, page_number=1, language="ara", dpi=350)
+    finally:
+        released.set()
+    assert time.monotonic() - started < 2.0
+    assert len(client.requests) == 1        # not retried as a failed attempt
 
 
 def test_missing_configuration_never_issues_a_request():

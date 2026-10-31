@@ -58,6 +58,10 @@ def resolve_openai_base_url(provider, base_url=None):
         resolved = normalize_openai_base_url(candidate)
         if not resolved:
             raise ValueError("API 地址无效（需要 http(s)://…/v1）")
+    if provider == "Local Gateway" and resolved:
+        parsed = urlparse(resolved)
+        if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+            raise ValueError("API 地址不能包含凭据、查询参数或片段")
     return resolved
 
 
@@ -75,6 +79,11 @@ def reasoning_effort_options(provider, model):
     unknown custom models remain in automatic mode so an unsupported request
     parameter cannot break translation.
     """
+    if provider == "Local Gateway":
+        # 网关是 OpenAI 兼容的本地服务，实测接受 reasoning_effort 并按档位少推理
+        # （同一任务：默认 917 个推理 token，"low" 226 个）。它前面挂的是推理模型，
+        # 不调档位的密排页会把输出预算全花在思考上。三个档位是界面上的通用子集。
+        return ("low", "medium", "high") if str(model or "").strip() else ()
     cfg = _c.PROVIDERS.get(provider) or {}
     if cfg.get("kind") not in {"openai", "openai_compat"}:
         return ()
@@ -125,6 +134,10 @@ def thinking_control_options(provider, model):
     recognizable names, so an unknown custom model stays on its provider
     default rather than receiving a parameter it may not understand.
     """
+    if provider == "Local Gateway":
+        # 网关收下 DeepSeek 的 thinking 字段（HTTP 200），但并不停思考：实测同一请求
+        # 反而把整个预算给了推理、正文为空。所以网关连接只给「推理强度」，不给这个开关。
+        return ()
     cfg = _c.PROVIDERS.get(provider) or {}
     if cfg.get("kind") not in {"openai", "openai_compat"}:
         return ()
@@ -157,6 +170,29 @@ def connection_thinking_mode():
                                             profile.get("model", "")):
         return None                 # the model behind this connection changed
     return mode
+
+
+def connection_reasoning_effort():
+    """Reasoning level stored on the connection currently used for translation.
+
+    ``None`` means that connection records no level, so the caller falls back to
+    the task snapshot and then to the model's own default.  The level is only
+    reported when the connection's model is one whose endpoint honours it, so a
+    connection reused with a different model cannot carry a stale level.
+    """
+    saved = _c.load_provider_config() or {}
+    wanted = str((saved.get("connection_roles") or {}).get("translation") or "")
+    profile = next((p for p in saved.get("connections") or []
+                    if isinstance(p, dict) and p.get("id") == wanted), None)
+    if not profile:
+        return None
+    effort = str(profile.get("reasoning_effort") or "").strip().lower()
+    if not effort:
+        return None
+    if effort not in reasoning_effort_options(profile.get("provider", ""),
+                                              profile.get("model", "")):
+        return None                 # the model behind this connection changed
+    return effort
 
 
 def normalize_reasoning_mode(value):
@@ -325,8 +361,15 @@ def is_rate_limited(err):
     return '429' in s or 'RESOURCE_EXHAUSTED' in s or 'rate limit' in s.lower()
 
 
-def _llm_request_controller(provider, model):
+def _llm_request_controller(provider, model, api_key="", *, base_url=None):
     """Shared, provider/model scoped request controller (see request_control)."""
+    if provider == "Local Gateway":
+        # 一个网关地址就是一条独立的限流/退避线；同一模型名换个端点不能再共用。
+        route = effective_request_route(provider, model)
+        endpoint = (resolve_openai_base_url(provider, base_url)
+                    if base_url is not None else route.get("base_url", ""))
+        provider = "|".join((provider, endpoint or "",
+                             _llm_transport.api_key_fingerprint(api_key)))
     return _request_control.get_request_controller(provider, model)
 
 

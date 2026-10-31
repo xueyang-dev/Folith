@@ -298,20 +298,20 @@ def test_panel_shows_skipped_coverage_as_reviewable_not_completed(panel):
     })
 
     assert panel.headline.text() == label
-    assert panel.list.count() == 1
+    assert len(panel._visible) == 1
     assert panel.review_button.isVisibleTo(panel)
     assert not panel.confirm_button.isVisibleTo(panel)
     assert "跳过不等于审校通过" in panel.hint.text()
 
 
-def test_filter_keeps_the_selection_and_shows_an_empty_hint(panel):
+def test_collapsing_a_group_hides_its_cards_and_shows_a_hint(panel):
     panel.apply(_view(_item()))
-    assert panel.list.count() == 1
-    panel._set_filter("suggested")
-    assert panel.list.count() == 0
+    assert len(panel._visible) == 1
+    panel._toggle_group(panel._group_of(panel._items[0]))
+    assert panel._visible == []
     assert panel.empty_label.isVisibleTo(panel)
-    panel._set_filter("all")
-    assert panel.list.count() == 1
+    panel._toggle_group(panel._group_of(panel._items[0]))
+    assert len(panel._visible) == 1
 
 
 # ---- 名字译法不一：审校页与抽屉共用的选项部件 ----------------------------------
@@ -426,10 +426,11 @@ def _visible_ids(panel):
 
 def test_default_view_lists_only_items_that_need_a_decision(panel):
     panel.apply(_mixed_view())
-    assert panel._filter == "actionable"
-    assert set(_visible_ids(panel)) == {"finding:p", "stale:segment:4", "finding:e"}
+    assert panel._expanded == {"must": True, "suggested": False,
+                               "reference": False}
+    assert set(_visible_ids(panel)) == {"finding:p", "stale:segment:4"}
     assert "finding:r" not in _visible_ids(panel), "仅供参考默认收起"
-    assert "finding:s" not in _visible_ids(panel)
+    assert "finding:s" not in _visible_ids(panel), "建议默认收起"
 
 
 def test_tab_counts_for_the_existing_filters_are_unchanged(panel):
@@ -438,33 +439,35 @@ def test_tab_counts_for_the_existing_filters_are_unchanged(panel):
     assert counts["all"] == 5 and counts["reference"] == 1 and counts["suggested"] == 2
 
 
-def test_all_and_reference_tabs_still_show_everything_they_did(panel):
+def test_every_group_can_be_expanded(panel):
     panel.apply(_mixed_view())
-    panel._set_filter("reference")
-    assert _visible_ids(panel) == ["finding:r"]
-    panel._set_filter("all")
+    for key in ("suggested", "reference"):
+        panel._toggle_group(key)
     assert len(panel._visible) == 5
+    panel._toggle_group("reference")
+    assert "finding:r" not in _visible_ids(panel)
 
 
-def test_default_falls_back_to_all_when_nothing_needs_a_decision(panel):
+def test_the_first_non_empty_group_expands_when_nothing_must_be_handled(panel):
     view = _view(_item(id="finding:r", finding_id="r", filter_group="reference",
                        severity="informational"))
     view["filter_counts"] = {"all": 1, "reference": 1}
     panel.apply(view)
-    assert panel._filter == "all" and _visible_ids(panel) == ["finding:r"]
+    assert _visible_ids(panel) == ["finding:r"]
 
 
-def test_a_users_tab_choice_survives_a_refresh(panel):
+def test_a_users_group_choice_survives_a_refresh(panel):
     panel.apply(_mixed_view())
-    panel._set_filter("reference")
+    panel._toggle_group("reference")
     panel.apply(_mixed_view())
-    assert panel._filter == "reference"
+    assert panel._expanded["reference"] is True
 
 
-def test_jumping_to_a_hidden_item_switches_to_all(panel):
+def test_jumping_to_a_hidden_item_expands_its_group(panel):
     panel.apply(_mixed_view())
     assert panel.select_item_id("finding:r")
-    assert panel._filter == "all" and panel.selected_item()["id"] == "finding:r"
+    assert panel._expanded["reference"] is True
+    assert panel.selected_item()["id"] == "finding:r"
 
 
 def test_entity_rows_are_titled_by_name(panel):
@@ -568,3 +571,40 @@ def test_segment_links_locate_in_the_original_page_not_the_grid(panel, monkeypat
     panel.conflict._link("seg:795")
     assert seen["locate"][-1][0] == 795
     assert jumped == [], "有原页时点段号是在原页里翻到它，不是跳去翻译页"
+
+
+# ---- #102：术语卡详情 ----------------------------------------------------------
+
+def test_term_card_detail_lists_the_paragraphs_that_still_use_the_old_term(panel):
+    item = _item(id="finding:t", finding_id="t", finding_type="glossary_stale",
+                 severity="actionable", segment_index=0)
+    item.update({
+        "term_card": True,
+        "term_source": "Lycidas",
+        "term_target": "利西达斯",
+        "term_previous_target": "吕西达斯",
+        "term_segment_total": 2,
+        "term_segments": [
+            {"index": 0, "number": 1, "source": "Lycidas 在诗中",
+             "target": "利西达斯在诗中", "uses_frozen": True},
+            {"index": 1, "number": 2, "source": "Lycidas 再次出现",
+             "target": "吕西达斯再次出现", "uses_frozen": False},
+        ],
+    })
+    panel.apply(_view(item))
+    assert panel.select_item_id("finding:t")
+    body = panel.item_body.toPlainText()
+    assert "Lycidas" in body and "利西达斯" in body
+    assert "吕西达斯" in body, "旧译法也要摆出来，用户才知道差在哪"
+    assert "未用冻结译法" in body
+    # 标题按术语写，不写某一段的段号。
+    assert panel.item_title.text().startswith("Lycidas → 利西达斯")
+
+
+def test_term_card_title_counts_the_affected_paragraphs(panel):
+    item = _item(id="finding:t2", finding_id="t2", finding_type="glossary")
+    item.update({"term_card": True, "term_source": "Lycidas",
+                 "term_target": "利西达斯", "term_segment_total": 7,
+                 "term_segments": []})
+    panel.apply(_view(item))
+    assert "7" in panel._item_title(item)

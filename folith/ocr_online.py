@@ -56,7 +56,14 @@ ONLINE_PROMPT_VERSION = "v1"
 
 #: Default and hard bounds for the completion budget.  A page whose transcription
 #: does not fit is reported as truncated rather than silently shortened.
-DEFAULT_MAX_TOKENS = 8192
+#:
+#: A reasoning model spends this budget on thinking first, and the answer only
+#: gets what is left.  Measured on a dense scanned page through the local
+#: gateway: 8,189 of 8,192 tokens went to reasoning and the reply came back with
+#: no text at all, while the same page fitted comfortably at 32,768.  The
+#: transcription itself is only ~1,500 characters, so a larger ceiling costs
+#: nothing on pages that finish early.
+DEFAULT_MAX_TOKENS = 32768
 MIN_MAX_TOKENS = 256
 MAX_MAX_TOKENS = 65536
 DEFAULT_TIMEOUT_S = 180.0
@@ -75,6 +82,17 @@ _SESSION_HEADER_PROVIDERS = {"OpenCode Go"}
 #: the user explicitly selects it, so an unrelated relay never receives an
 #: unsupported request field.
 REASONING_MODES = ("provider_default", "thinking_disabled", "thinking_disabled_vllm")
+
+#: OpenAI-style reasoning levels.  The local gateway accepts this field and acts
+#: on it (measured 2026-10-30: same task, reasoning tokens 917 → 226 at "low"),
+#: which makes it the portable way to turn thinking down for a page read.  The
+#: DeepSeek ``thinking`` switch above is not usable there: the gateway answers
+#: 200 but then reasons until the budget runs out.
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+#: Endpoints measured to honour ``reasoning_effort``.  An unverified relay must
+#: never receive a parameter it may reject.
+_REASONING_EFFORT_PROVIDERS = {"Local Gateway"}
 
 SYSTEM_PROMPT_V1 = (
     "你是扫描页图像的文字转写员。逐字转写图中正文，按原始印刷行从上到下，"
@@ -137,6 +155,9 @@ class OnlineOCRConfig:
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = 0.0
     reasoning_mode: str = "provider_default"
+    #: OpenAI-style level (``none``…``max``); empty keeps the endpoint default.
+    #: Only sent to an endpoint listed in ``_REASONING_EFFORT_PROVIDERS``.
+    reasoning_effort: str = ""
     prompt_version: str = ONLINE_PROMPT_VERSION
     timeout_s: float = DEFAULT_TIMEOUT_S
     max_retries: int = DEFAULT_MAX_RETRIES
@@ -154,6 +175,9 @@ class OnlineOCRConfig:
         reasoning = str(self.reasoning_mode or "").strip().lower()
         if reasoning not in REASONING_MODES:
             reasoning = "provider_default"
+        effort = str(self.reasoning_effort or "").strip().lower()
+        if effort not in REASONING_EFFORTS:
+            effort = ""
         prompt = str(self.prompt_version or "").strip() or ONLINE_PROMPT_VERSION
         if prompt not in SYSTEM_PROMPTS:
             prompt = ONLINE_PROMPT_VERSION
@@ -166,6 +190,7 @@ class OnlineOCRConfig:
                                               MAX_MAX_TOKENS)),
             temperature=max(0.0, min(float(self.temperature or 0.0), 2.0)),
             reasoning_mode=reasoning,
+            reasoning_effort=effort,
             prompt_version=prompt,
             timeout_s=max(10.0, min(float(self.timeout_s or DEFAULT_TIMEOUT_S), 900.0)),
             max_retries=max(0, min(int(self.max_retries), MAX_MAX_RETRIES)),
@@ -175,10 +200,12 @@ class OnlineOCRConfig:
         """Why this connection cannot run, or ``""`` when it is usable."""
         if not self.model:
             return "未选择线上 OCR 模型。"
-        if not self.api_key:
+        if not self.api_key and self.provider != "Local Gateway":
             return "线上 OCR 缺少访问凭据；请在 OCR 设置中填写或引用已有凭据。"
         if not self.base_url:
             return "线上 OCR 缺少服务地址（需要 http(s)://…/v1）。"
+        if self.provider == "Local Gateway" and self.reasoning_mode != "provider_default":
+            return "本地网关未声明支持此推理控制；请选择服务默认。"
         if self.credential_owner and self.credential_owner != self.endpoint_id():
             # 最后一道闸：密钥属于另一个连接时，宁可让任务失败也不把它发给这个地址。
             return ("线上 OCR 的访问凭据属于另一个连接，与当前服务地址不一致；"
@@ -203,6 +230,7 @@ class OnlineOCRConfig:
             f"max_tokens={int(self.max_tokens)}",
             f"temperature={self.temperature:g}",
             f"reasoning={self.reasoning_mode}",
+            f"effort={self.reasoning_effort}",
         ))
 
     def describe(self) -> Dict[str, Any]:
@@ -217,6 +245,7 @@ class OnlineOCRConfig:
             "max_tokens": int(self.max_tokens),
             "temperature": float(self.temperature),
             "reasoning_mode": self.reasoning_mode,
+            "reasoning_effort": self.reasoning_effort,
             "timeout_s": float(self.timeout_s),
             "max_retries": int(self.max_retries),
             "credential_source": self.credential_source,
@@ -294,6 +323,21 @@ def default_vision_reasoning(provider, model):
     if provider == "DeepSeek" and name.startswith(("deepseek-flash", "deepseek-v4")):
         return "thinking_disabled"
     return "provider_default"
+
+
+def default_vision_effort(provider, model):
+    """Reasoning level vision reads use when nobody chose one.
+
+    A gateway fronts reasoning models, and their thinking counts against the
+    same output budget as the transcription: at the endpoint default a dense
+    page can spend the whole budget thinking and return no text at all.  "low"
+    keeps a page inside the budget and is the only level measured to work
+    through the gateway.  Everyone else keeps the endpoint default, because
+    ``reasoning_effort`` is not sent to an unverified relay.
+    """
+    if provider == "Local Gateway":
+        return "low"
+    return ""
 
 
 def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
@@ -528,6 +572,9 @@ class OnlineOCRBackend(OCRBackend):
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
         }
+        if config.reasoning_effort and config.provider in _REASONING_EFFORT_PROVIDERS:
+            # 本地网关实测认这个 OpenAI 字段；没验证过的中转站不发。
+            body["reasoning_effort"] = config.reasoning_effort
         if config.reasoning_mode == "thinking_disabled":
             # Documented DeepSeek-family control; sent only on explicit opt-in.
             body["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -544,6 +591,10 @@ class OnlineOCRBackend(OCRBackend):
                 "User-Agent": "Folith/0.8.0",
                 "x-opencode-session": session_id,
             }
+        elif config.provider == "Local Gateway" and not config.api_key:
+            # 本地网关按约定不校验密钥：显式省略 Authorization，而不是发一个空串。
+            from openai import Omit
+            body["extra_headers"] = {"Authorization": Omit()}
         return body
 
     def _attempt(self, png_bytes: bytes, system_prompt: str, user_prompt=None) -> Dict[str, Any]:
@@ -556,7 +607,8 @@ class OnlineOCRBackend(OCRBackend):
         body = self._request_body(system_prompt, user_content)
         client = self._get_client()
         started = time.perf_counter()
-        response = client.chat.completions.create(**body)
+        response = request_control.call_cancellable(
+            lambda: client.chat.completions.create(**body), self._cancel_check)
         elapsed = time.perf_counter() - started
         choices = getattr(response, "choices", None) or []
         if not choices:
@@ -617,8 +669,14 @@ class OnlineOCRBackend(OCRBackend):
         if self._cancel_check is not None and self._cancel_check():
             raise RuntimeError("任务已请求取消")
         system_prompt = system_prompt or SYSTEM_PROMPTS[self.config.prompt_version]
+        controller_provider = self.config.provider or ONLINE_OCR_BACKEND
+        if self.config.provider == "Local Gateway":
+            # 同一个网关地址下的不同端点各算一条限流/退避线。
+            from folith.llm_transport import api_key_fingerprint
+            controller_provider = "|".join((controller_provider, self.config.base_url,
+                                            api_key_fingerprint(self.config.api_key)))
         controller = request_control.get_request_controller(
-            self.config.provider or ONLINE_OCR_BACKEND, self.config.model)
+            controller_provider, self.config.model)
         attempts: List[Dict[str, Any]] = []
         usage_total: Dict[str, Any] = self._usage_record(None)
         request_ids: List[str] = []
@@ -632,6 +690,7 @@ class OnlineOCRBackend(OCRBackend):
                 result = (self._attempt(png_bytes, system_prompt, user_prompt=user_prompt)
                           if user_prompt is not None else self._attempt(png_bytes, system_prompt))
             except BaseException as exc:  # noqa: BLE001 - classified below
+                self._ensure_cancelled()  # a cancel is not a failed attempt to retry
                 classified = classify_request_error(exc)
                 attempts.append({
                     "attempt": attempt,
@@ -859,9 +918,13 @@ def _default_client_factory(config: OnlineOCRConfig):
     def build():
         kwargs: Dict[str, Any] = {"api_key": config.api_key, "base_url": config.base_url,
                                   "timeout": timeout, "max_retries": 0}
+        if config.provider == "Local Gateway" and not config.api_key:
+            # The SDK refuses an empty key; the gateway ignores whatever we send.
+            kwargs["api_key"] = "local-gateway"
         bypass = None
-        if bypass_proxy:
-            bypass = httpx.Client(trust_env=False, timeout=timeout)
+        if bypass_proxy or config.provider == "Local Gateway":
+            bypass = httpx.Client(trust_env=not bypass_proxy, timeout=timeout,
+                                  follow_redirects=False)
             kwargs["http_client"] = bypass
         try:
             return OpenAI(**kwargs)

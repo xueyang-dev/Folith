@@ -39,7 +39,10 @@ def _job(data_dir: Path, job: str, *, runtime: dict | None = None,
 
 def test_collect_reports_the_roadmap_facts(tmp_paths):
     facts = diagnostics.collect(paths=tmp_paths)
-    assert set(facts) == {"app", "runtime", "system", "locations", "data_schema"}
+    assert set(facts) == {"app", "runtime", "system", "ui_health",
+                          "locations", "data_schema"}
+    # 没有卡死记录时这一项必须是空对象，而不是抛错或编一条记录。
+    assert facts["ui_health"] == {}
     app = facts["app"]
     assert app["version"] and app["build_id"]
     assert app["packaging_backend"]

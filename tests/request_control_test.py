@@ -198,3 +198,47 @@ def test_concurrent_translate_batches_share_one_cooldown(monkeypatch):
     starts.sort()
     # the cooldown creates real gaps rather than one simultaneous burst
     assert any(right - left >= 0.03 for left, right in zip(starts, starts[1:]))
+
+
+def test_cancellable_call_returns_the_reply_when_nobody_cancels():
+    assert request_control.call_cancellable(lambda: "reply", lambda: False) == "reply"
+    with pytest.raises(ValueError):
+        request_control.call_cancellable(
+            lambda: (_ for _ in ()).throw(ValueError("bad")), lambda: False)
+
+
+def test_cancellable_call_gives_up_a_blocked_request_at_once():
+    released = threading.Event()
+    cancel = {"now": False}
+
+    def blocked():
+        cancel["now"] = True
+        released.wait(10)
+        return "late"
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="任务已请求取消"):
+            request_control.call_cancellable(blocked, lambda: cancel["now"], poll=0.02)
+    finally:
+        released.set()
+    assert time.monotonic() - started < 1.0
+
+
+def test_translation_request_is_given_up_when_the_job_is_cancelled(monkeypatch):
+    released = threading.Event()
+    cancel = {"now": False}
+
+    def blocked():
+        cancel["now"] = True
+        released.wait(10)
+
+    monkeypatch.setattr(core, "_runtime_cancel_requested", lambda _job: cancel["now"])
+    started = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="任务已请求取消"):
+            request_control.call_cancellable(blocked, core._request_cancel_check("job-x"))
+    finally:
+        released.set()
+    assert time.monotonic() - started < 2.0
+    assert core._request_cancel_check(None) is None

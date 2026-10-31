@@ -33,11 +33,14 @@ from . import style as style_module
 from .name_conflict import NameConflictWidget
 from .style import Card
 
-#: 筛选分段（与旧界面一致）：值 → 标签。「需决定」是默认页签：待处理、需重审和
-#: 名字译法不一；其余建议与「仅供参考」留在各自的页签里。
-FILTERS = (("actionable", "需决定"), ("all", "全部"), ("pending", "待处理"), ("rereview", "需重审"),
-           ("skipped", "已跳过"), ("suggested", "有建议"),
-           ("reference", "仅供参考"))
+#: 左栏三组（xueyang-dev/Folith#102）：必须处理展开，其余默认收起。
+GROUP_ORDER = ("must", "suggested", "reference")
+GROUP_LABELS = {
+    "must": "必须处理",
+    "suggested": "建议",
+    "reference": "已处理 / 仅供参考",
+}
+GROUP_EXPANDED_BY_DEFAULT = {"must": True, "suggested": False, "reference": False}
 
 _SEVERITY_TONE = {"blocking": "danger", "actionable": "warn",
                   "informational": "info"}
@@ -45,10 +48,36 @@ _SEVERITY_TONE = {"blocking": "danger", "actionable": "warn",
 #: 队列项里「需要重新审校」的几种合成项。
 _REVIEW_TASK_KINDS = {"failed", "stale", "missing", "skipped"}
 
+#: 术语卡详情里最多并排列出的段落数；再多就只报数。
+TERM_ROWS_SHOWN = 40
+
 
 def _escape(text: object) -> str:
     return (str(text or "").replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+def _term_card_title(item: dict) -> str:
+    """术语卡的标题：术语、冻结译法、影响段数——不写某一处的段号。"""
+    source = str(item.get("term_source") or "").strip()
+    target = str(item.get("term_target") or "").strip()
+    count = int(item.get("term_segment_total") or 0)
+    if source and target:
+        return i18n.tr('{v0} → {v1} · 影响 {v2} 段',
+                       v0=source, v1=target, v2=count)
+    if source:
+        return i18n.tr('术语「{v0}」· 影响 {v1} 段', v0=source, v1=count)
+    return i18n.tr_dynamic(str(item.get("title") or ""))
+
+
+def _trim(text: object, limit: int = 90) -> str:
+    """表格单元格只放一行摘要：太长就把中间略掉，保留首尾。"""
+    value = " ".join(str(text or "").split())
+    if len(value) <= limit:
+        return value
+    head = limit // 2
+    tail = limit - head
+    return f"{value[:head]}…{value[-tail:]}"
 
 
 def _colon() -> str:
@@ -78,8 +107,10 @@ class ReviewPanel(QWidget):
         self._items: list[dict] = []
         self._visible: list[dict] = []
         self._selected_id = ""
-        self._filter = "actionable"
-        self._user_filter = False       # 用户点过页签后，不再替他换回默认页签
+        self._handled: list[dict] = []
+        self._expanded = dict(GROUP_EXPANDED_BY_DEFAULT)
+        self._initialised = False
+        self._group_buttons: dict[str, QPushButton] = {}
         self._busy = False
         # 内嵌原页：另一份 PdfPanel 实例（翻译页那份挂在它自己的分栏里，带不动）。
         self._pdf_ok = False
@@ -108,11 +139,6 @@ class ReviewPanel(QWidget):
         self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
         self.concept_button = button(i18n.tr('概念决策'), "list")
         self.concept_button.clicked.connect(self.conceptRequested.emit)
-        self.filter_control = style_module.SegmentedControl(
-            [(value, i18n.tr(label)) for value, label in FILTERS])
-        self.filter_control.changed.connect(self._set_filter)
-        self.filter_control.setAccessibleName(i18n.tr('审校筛选'))
-
         top = QHBoxLayout()
         text_column = QVBoxLayout()
         text_column.setSpacing(2)
@@ -281,8 +307,6 @@ class ReviewPanel(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
         content_layout.addLayout(top)
-        # 筛选条横跨整页：七个页签放进 260px 的队列表头会把俄语/西语挤成四行。
-        content_layout.addWidget(self.filter_control)
         content_layout.addLayout(body, 1)
         self.empty_state = style_module.EmptyState(icon="shield-check", page=True,
                                                    action=i18n.tr('审校全部段落'))
@@ -359,26 +383,26 @@ class ReviewPanel(QWidget):
         self._busy = busy
         self.concept_button.setEnabled(not busy)
         self._items = list(self._view.get("queue_items") or [])
+        self._handled = list(self._view.get("handled_items") or [])
         readiness = self._view.get("readiness") or {}
         self.headline.setText(i18n.tr_dynamic(str(readiness.get("label") or "")))
         self.detail.setText(i18n.tr_dynamic(str(readiness.get("detail") or "")))
-        counts = dict(self._view.get("filter_counts") or {})
-        counts["actionable"] = sum(adapter.is_actionable_review_item(item)
-                                   for item in self._items)
-        if not self._user_filter:
-            # 默认页签没有项时退回「全部」，不给一页空白。
-            self._filter = "actionable" if counts["actionable"] else "all"
-        self.filter_control.set_options([
-            (value, f"{i18n.tr(label)} {counts.get(value, 0)}")
-            for value, label in FILTERS])
-        self.filter_control.set_value(self._filter)
+        if not self._initialised:
+            # 第一次打开：有「必须处理」就只展开它；没有就把第一个非空组展开，
+            # 免得左栏看起来是空的。
+            self._initialised = True
+            counts = self._group_counts()
+            if not counts.get("must"):
+                first = next((key for key in GROUP_ORDER if counts.get(key)), "")
+                if first:
+                    self._expanded = {key: key == first for key in GROUP_ORDER}
         self._rebuild_list()
         self._sync_empty(readiness)
         self.shortcut_hint.setVisible(bool(self._items))
 
     def _sync_empty(self, readiness: dict) -> None:
         """队列整个是空的：整页换成一个空状态，最多一个动作。"""
-        empty = not self._items
+        empty = not self._items and not self._handled
         self.content.setVisible(not empty)
         if not empty:
             self.empty_state.setVisible(False)
@@ -396,57 +420,129 @@ class ReviewPanel(QWidget):
         self.empty_state.set_action("" if done else i18n.tr('审校全部段落'))
         self.empty_state.setEnabled(not self._busy)
 
-    def _set_filter(self, value: str) -> None:
-        self._filter = value or "all"
-        self._user_filter = True
-        self._rebuild_list()
+    def _group_counts(self) -> dict:
+        counts = self._view.get("group_counts") or {}
+        if counts:
+            return {key: int(counts.get(key) or 0) for key in GROUP_ORDER}
+        rows = list(self._items) + list(self._handled)
+        return {key: sum(self._group_of(item) == key for item in rows)
+                for key in GROUP_ORDER}
+
+    def _group_of(self, item: dict) -> str:
+        group = str(item.get("list_group") or "")
+        if group in GROUP_ORDER:
+            return group
+        if item.get("handled"):
+            return "reference"
+        if item.get("kind") in _REVIEW_TASK_KINDS:
+            return "must"
+        return {"pending": "must", "rereview": "must",
+                "suggested": "suggested"}.get(str(item.get("filter_group") or ""),
+                                              "reference")
+
+    @staticmethod
+    def _sorted(rows: list[dict]) -> list[dict]:
+        return sorted(rows, key=lambda item: (
+            item.get("priority", 9),
+            item.get("segment_index") if isinstance(item.get("segment_index"), int) else 10**9,
+            str(item.get("id") or "")))
 
     def _rebuild_list(self) -> None:
         wanted = self._selected_id
-        self._visible = [
-            item for item in self._items
-            if self._filter == "all" or (
-                adapter.is_actionable_review_item(item) if self._filter == "actionable"
-                else item.get("filter_group") == self._filter)]
-        self._visible.sort(key=lambda item: (item.get("priority", 9),
-                                             item.get("segment_index") or 0))
+        buckets: dict[str, list[dict]] = {key: [] for key in GROUP_ORDER}
+        for item in self._items:
+            buckets[self._group_of(item)].append(item)
+        for item in self._handled:
+            buckets["reference"].append(item)
+        for key, rows in buckets.items():
+            buckets[key] = self._sorted(rows)
         self.list.blockSignals(True)
         self.list.clear()
-        for item in self._visible:
-            title = self._item_title(item)
-            label = i18n.tr_dynamic(str(item.get("severity_label") or ""))
-            decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
-            summary = str(item.get("summary") or "")
-            if item.get("kind") in _REVIEW_TASK_KINDS:
-                # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案；
-                # 发现项的摘要是模型产出，必须原样显示。
-                summary = i18n.tr_dynamic(summary)
-            # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
-            tags = [value for value in (decision, label)
-                    if value and value not in title]
-            if summary:
-                tags.append(summary)
-            second = " · ".join(dict.fromkeys(tags))
-            text = f"{title}\n{second}" if second else title
-            entry = QListWidgetItem(text)
-            entry.setData(Qt.ItemDataRole.UserRole, item.get("id"))
-            # 队列只有两行；完整问题放进悬停提示，读屏读同一份文本，不再显示
-            # 截断到 60 字却没有省略号的半句话。
-            entry.setToolTip(text)
-            entry.setData(Qt.ItemDataRole.AccessibleTextRole,
-                          f"{title}. {second}".strip())
-            self.list.addItem(entry)
-        row = next((i for i, item in enumerate(self._visible)
+        self._group_buttons.clear()
+        self._visible = []
+        for key in GROUP_ORDER:
+            rows = buckets[key]
+            if not rows:
+                continue
+            self._add_group_header(key, len(rows))
+            if not self._expanded[key]:
+                continue
+            for item in rows:
+                self._add_card(item)
+                self._visible.append(item)
+        row = next((position for position, item in enumerate(self._visible)
                     if item.get("id") == wanted), 0 if self._visible else -1)
-        self.list.setCurrentRow(row)
+        if self._visible:
+            self.list.setCurrentRow(self._list_row(row))
+        else:
+            self.list.setCurrentRow(-1)
         self.list.blockSignals(False)
         self._selected_id = (str(self._visible[row].get("id"))
                              if 0 <= row < len(self._visible) else "")
         self.empty_label.setVisible(not self._visible)
         self.empty_label.setText(
-            i18n.tr('审校队列是空的：没有需要人工处理的项目。')
-            if not self._items else i18n.tr('这个筛选下没有项目。'))
+            i18n.tr('展开分组查看其中的项目。') if self._items or self._handled
+            else i18n.tr('审校队列是空的：没有需要人工处理的项目。'))
         self._render_detail()
+
+    def _add_group_header(self, key: str, count: int) -> None:
+        entry = QListWidgetItem()
+        entry.setFlags(Qt.ItemFlag.NoItemFlags)
+        entry.setSizeHint(QSize(0, 34))
+        self.list.addItem(entry)
+        expanded = self._expanded[key]
+        button = QPushButton(f"{i18n.tr(GROUP_LABELS[key])} · {count}")
+        button.setObjectName("reviewGroupHeader")
+        button.setCheckable(True)
+        button.setChecked(expanded)
+        button.setIcon(icons.icon("chevron-down" if expanded else "chevron-right",
+                                  13, "text-muted"))
+        button.setIconSize(QSize(13, 13))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.clicked.connect(lambda _checked=False, name=key: self._toggle_group(name))
+        self.list.setItemWidget(entry, button)
+        self._group_buttons[key] = button
+
+    def _add_card(self, item: dict) -> None:
+        title = self._item_title(item)
+        label = i18n.tr_dynamic(str(item.get("severity_label") or ""))
+        decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
+        summary = str(item.get("summary") or "")
+        if item.get("kind") in _REVIEW_TASK_KINDS:
+            # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案；
+            # 发现项的摘要是模型产出，必须原样显示。
+            summary = i18n.tr_dynamic(summary)
+        # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
+        tags = [value for value in (decision, label)
+                if value and value not in title]
+        if summary:
+            tags.append(summary)
+        second = " · ".join(dict.fromkeys(tags))
+        text = f"{title}\n{second}" if second else title
+        entry = QListWidgetItem(text)
+        entry.setData(Qt.ItemDataRole.UserRole, item.get("id"))
+        # 队列只有两行；完整问题放进悬停提示，读屏读同一份文本，不再显示
+        # 截断到 60 字却没有省略号的半句话。
+        entry.setToolTip(text)
+        entry.setData(Qt.ItemDataRole.AccessibleTextRole,
+                      f"{title}. {second}".strip())
+        self.list.addItem(entry)
+
+    def _list_row(self, visible_index: int) -> int:
+        """``_visible`` 里的位置 → 列表行（跳过组标题）。"""
+        seen = -1
+        for row in range(self.list.count()):
+            entry = self.list.item(row)
+            if entry.data(Qt.ItemDataRole.UserRole):
+                seen += 1
+                if seen == visible_index:
+                    return row
+        return max(0, self.list.count() - 1)
+
+    def _toggle_group(self, key: str) -> None:
+        self._expanded[key] = not self._expanded[key]
+        self._rebuild_list()
 
     def _current_changed(self, current, _previous) -> None:
         self._selected_id = str(current.data(Qt.ItemDataRole.UserRole)) if current else ""
@@ -477,6 +573,8 @@ class ReviewPanel(QWidget):
     @staticmethod
     def _item_title(item: dict) -> str:
         """名字译法不一按名字列一行，不写第一处出现的段号。"""
+        if item.get("term_card"):
+            return _term_card_title(item)
         source = str(item.get("entity_source") or "")
         if source:
             count = len(item.get("segment_indexes") or [])
@@ -493,6 +591,44 @@ class ReviewPanel(QWidget):
         source = str(item.get("entity_source") or "")
         return next((entity for entity in self._view.get("entities") or []
                      if entity.get("source") == source), {}) if source else {}
+
+    def _term_html(self, item: dict) -> str:
+        """一张术语卡：术语、冻结/旧译法、受影响段落并排对照。"""
+        source = str(item.get("term_source") or "").strip()
+        target = str(item.get("term_target") or "").strip()
+        previous = str(item.get("term_previous_target") or "").strip()
+        rows = list(item.get("term_segments") or [])
+        total = int(item.get("term_segment_total") or len(rows))
+        sep = _colon()
+        parts = []
+        if source:
+            parts.append(f"<p><b>{_escape(i18n.tr('术语'))}{sep}</b>{_escape(source)}</p>")
+        if target:
+            parts.append(f"<p><b>{_escape(i18n.tr('冻结译法'))}{sep}</b>{_escape(target)}</p>")
+        if previous and previous != target:
+            parts.append(f"<p><b>{_escape(i18n.tr('旧译法'))}{sep}</b>{_escape(previous)}</p>")
+        parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}{sep}</b>"
+                     f"{_escape(i18n.tr('{v0} 段', v0=total))}</p>")
+        shown = rows[:TERM_ROWS_SHOWN]
+        if shown:
+            cells = []
+            for row in shown:
+                mark = "" if row.get("uses_frozen", True) else (
+                    f" <b>【{_escape(i18n.tr('未用冻结译法'))}】</b>")
+                cells.append(
+                    "<tr>"
+                    f"<td valign=\"top\"><b>{_escape(i18n.tr('第 {v0} 段', v0=row.get('number')))}</b></td>"
+                    f"<td valign=\"top\">{_escape(_trim(row.get('source')))}</td>"
+                    f"<td valign=\"top\">{_escape(_trim(row.get('target')))}{mark}</td>"
+                    "</tr>")
+            parts.append(
+                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"3\">"
+                f"<tr><td></td><td><b>{_escape(i18n.tr('原文'))}</b></td>"
+                f"<td><b>{_escape(i18n.tr('当前译文'))}</b></td></tr>"
+                + "".join(cells) + "</table>")
+        if total > len(shown):
+            parts.append(f"<p>{_escape(i18n.tr('另有 {v0} 段未列出', v0=total - len(shown)))}</p>")
+        return "".join(parts)
 
     def _render_detail(self) -> None:
         item = self.selected_item()
@@ -514,6 +650,11 @@ class ReviewPanel(QWidget):
         self.item_chip.set_tone(_SEVERITY_TONE.get(str(item.get("severity")), "info"))
         # 没有严重度文字的项不留一个只有颜色、没有字的芯片（颜色不是唯一信号）。
         self.item_chip.setVisible(bool(chip_text))
+        if item.get("term_card"):
+            # 术语卡的重点是「哪些段还在用旧译法」，不是某一段的问题描述。
+            self.item_body.setHtml(self._term_html(item))
+            self._sync_source()
+            return
         sep = _colon()
         task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
         parts = []
@@ -727,17 +868,28 @@ class ReviewPanel(QWidget):
         focus = QApplication.focusWidget()
         return isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox))
 
+    def _visible_index(self) -> int:
+        """当前列表行在 ``_visible`` 里的下标；分组标题行不算（返回 -1）。"""
+        row = self.list.currentRow()
+        seen = -1
+        for position in range(self.list.count()):
+            if self.list.item(position).data(Qt.ItemDataRole.UserRole):
+                seen += 1
+                if position == row:
+                    return seen
+        return -1
+
     def _goto_next_item(self) -> None:
         if self._typing():
             return
-        row = self.list.currentRow()
-        if 0 <= row + 1 < self.list.count():
-            self.list.setCurrentRow(row + 1)
+        index = self._visible_index()
+        if 0 <= index + 1 < len(self._visible):
+            self.list.setCurrentRow(self._list_row(index + 1))
 
     def _next_item_id(self) -> str:
-        row = self.list.currentRow()
-        if 0 <= row + 1 < len(self._visible):
-            return str(self._visible[row + 1].get("id") or "")
+        index = self._visible_index()
+        if 0 <= index + 1 < len(self._visible):
+            return str(self._visible[index + 1].get("id") or "")
         return ""
 
     def consume_advance_hint(self) -> bool:
@@ -786,13 +938,20 @@ class ReviewPanel(QWidget):
     # 测试辅助
     def select_item_id(self, item_id: str) -> bool:
         for attempt in range(2):
-            for row, item in enumerate(self._visible):
+            for position, item in enumerate(self._visible):
                 if item.get("id") == item_id:
-                    self.list.setCurrentRow(row)
+                    self.list.setCurrentRow(self._list_row(position))
                     return True
-            # 目标不在当前页签里（例如从别处跳到一条仅供参考的项）：切到「全部」再找。
-            if attempt or not any(item.get("id") == item_id for item in self._items):
+            # 目标不在展开的组里（例如跳到一条仅供参考的项）：展开它所在的组再找。
+            if attempt:
                 break
-            self.filter_control.set_value("all")
-            self._set_filter("all")
+            target = next((item for item in list(self._items) + list(self._handled)
+                           if item.get("id") == item_id), None)
+            if target is None:
+                break
+            key = self._group_of(target)
+            if self._expanded.get(key):
+                break
+            self._expanded[key] = True
+            self._rebuild_list()
         return False

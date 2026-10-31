@@ -53,6 +53,7 @@ from folith import checkpoint as _checkpoint
 from folith import snapshots as _snapshots
 from folith import entity_registry as _entity_registry
 from folith import dynamic_context as _dynamic_context
+from folith import request_control as _request_control
 from folith import model_roles as _model_roles
 from folith import pdf_ingestion as _pdf_ingestion
 from folith import source_cleanup as _source_cleanup
@@ -217,6 +218,14 @@ PROVIDERS = {
         "custom_base_url": True,
         "models": [],
         "model_hint": "填写中转站提供的模型名（OpenAI /chat/completions 兼容）",
+    },
+    "Local Gateway": {
+        # 本机/局域网的 OpenAI 兼容网关：地址必填、不校验密钥、不声明推理档位。
+        "kind": "openai_compat",
+        "base_url": None,
+        "custom_base_url": True,
+        "models": [],
+        "model_hint": "OpenAI-compatible model ID",
     },
 }
 
@@ -459,9 +468,21 @@ _ABBREV_RE = re.compile(
 
 
 
+#: Set by extract_document_paragraphs_with_report for one extraction: the bytes
+#: being read, the page-dict cache, and (filled in below) the layout blocks the
+#: text-layer pass built, so native_pdf_document need not parse the PDF again.
+_PDF_LAYOUT_SHARE = contextvars.ContextVar("folith_pdf_layout_share", default=None)
+
+
 def extract_pdf_paragraphs(file_bytes):
     """Compatibility API backed by the layout-aware PDF ingestion module."""
-    return _pdf_ingestion.extract_pdf_paragraphs(file_bytes)
+    share = _PDF_LAYOUT_SHARE.get()
+    if share is None or share.get("data") is not file_bytes:
+        return _pdf_ingestion.extract_pdf_paragraphs(file_bytes)
+    layouts = _pdf_ingestion.classify_blocks(_pdf_ingestion.extract_layout_blocks(
+        file_bytes, _page_dict_cache=share.get("page_cache")))
+    share["layouts"] = layouts
+    return _pdf_ingestion.extract_pdf_paragraphs(file_bytes, _layouts=layouts)
 
 
 def _find_tesseract():
@@ -608,6 +629,7 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     OCR_ONLINE_DEFAULT_MAX_TOKENS,
     OCR_ONLINE_MAX_MAX_TOKENS,
     OCR_ONLINE_MIN_MAX_TOKENS,
+    OCR_ONLINE_REASONING_EFFORTS,
     OCR_ONLINE_REASONING_MODES,
     OCR_PROFILE_CACHE_DIRNAME,
     OCR_QUEUE_SIZE_DEFAULT,
@@ -645,7 +667,9 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     paddle_model_options,
     resolve_ocr_online_config,
     follow_connection_thinking as _follow_connection_thinking,
+    follow_connection_effort as _follow_connection_effort,
     default_vision_reasoning as _default_vision_reasoning,
+    default_vision_effort as _default_vision_effort,
     vision_connection_conflict,
     vision_connection_label,
     credential_for_endpoint,
@@ -700,6 +724,7 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     normalize_reasoning_mode as _normalize_reasoning_mode,
     thinking_control_options,
     connection_thinking_mode as _connection_thinking_mode,
+    connection_reasoning_effort as _connection_reasoning_effort,
     job_reasoning_modes as _job_reasoning_modes,
 )
 from folith.script_leak import leaked_scripts as _leaked_scripts
@@ -988,6 +1013,7 @@ def load_ocr_online_config():
             "max_tokens": int(data.get("max_tokens") or _ocr_online.DEFAULT_MAX_TOKENS),
             "temperature": float(data.get("temperature") or 0.0),
             "reasoning_mode": str(data.get("reasoning_mode") or "provider_default"),
+            "reasoning_effort": str(data.get("reasoning_effort") or ""),
             "timeout_s": float(data.get("timeout_s") or _ocr_online.DEFAULT_TIMEOUT_S),
             "max_retries": int(data.get("max_retries") or _ocr_online.DEFAULT_MAX_RETRIES),
         }
@@ -1654,15 +1680,79 @@ def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
     return understanding_provider, spatial_engine
 
 
-def _pdf_scan_page_indices(file_bytes, *, include_ocr_overlay=True):
-    """扫描页：带图片且没有文字，或文字是盖在扫描图上的隐形 OCR 层。"""
+class _LazyPDFPageCache:
+    """Call-scoped, lazily-built cache of per-page ``get_text("dict")`` results.
+
+    A single instance is created per extraction call and passed to every
+    consumer.  The underlying :func:`~folith.pdf_ingestion.build_page_dict_cache`
+    call only happens the first time a consumer iterates the cache; for PDFs
+    whose text layer is rejected the census is never called and the cache is
+    never materialised.
+
+    Supports ``bool()``, ``len()``, iteration, and integer indexing so
+    existing consumers can treat it exactly like the plain list it wraps.
+    Call :meth:`release` once the last consumer has finished so the dicts are
+    freed before heavy downstream work starts.
+    """
+    __slots__ = ("_file_bytes", "_data")
+
+    def __init__(self, file_bytes: bytes) -> None:
+        self._file_bytes: Optional[bytes] = file_bytes
+        self._data: Optional[list] = None
+
+    def _ensure(self) -> list:
+        if self._data is None:
+            if self._file_bytes is None:
+                return []
+            self._data = _pdf_ingestion.build_page_dict_cache(self._file_bytes)
+        return self._data
+
+    def __bool__(self) -> bool:
+        # Truthy as long as the holder hasn't been released so that
+        # ``if _page_dict_cache:`` guards in consumers pass correctly.
+        return self._file_bytes is not None
+
+    def __len__(self) -> int:
+        return len(self._ensure())
+
+    def __iter__(self):
+        return iter(self._ensure())
+
+    def __getitem__(self, index: int):
+        return self._ensure()[index]
+
+    def release(self) -> None:
+        """Drop the cache data and the reference to file_bytes."""
+        self._data = None
+        self._file_bytes = None
+
+
+def _pdf_scan_page_indices(file_bytes, *, include_ocr_overlay=True,
+                           _page_dict_cache=None):
+    """扫描页：带图片且没有文字，或文字是盖在扫描图上的隐形 OCR 层。
+
+    Pass ``_page_dict_cache`` (from
+    :func:`folith.pdf_ingestion.build_page_dict_cache`) to reuse
+    already-parsed page dicts and avoid a redundant ``fitz.open`` call.
+    """
+    if _page_dict_cache:
+        result = []
+        for i, (page_dict, w, h, has_images, plain_text) in enumerate(_page_dict_cache):
+            if has_images and (
+                not plain_text.strip()
+                or (include_ocr_overlay
+                    and _pdf_ingestion._page_is_ocr_overlay(page_dict))
+            ):
+                result.append(i)
+        return len(_page_dict_cache), result
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
         return len(pdf), [
             i for i, p in enumerate(pdf)
             if p.get_images() and (
                 not p.get_text().strip()
                 or (include_ocr_overlay
-                    and _pdf_ingestion._page_is_ocr_overlay(p.get_text("dict"))))]
+                    and _pdf_ingestion._page_is_ocr_overlay(
+                        _pdf_ingestion.page_text_dict(p))))]
 
 
 def extract_document_paragraphs_with_report(filename, file_bytes, *,
@@ -1701,6 +1791,7 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
     ocr_used = False
     text_layer_report = {}
     ocr_trigger = ""
+    _pdf_layouts = None  # set during text-layer extraction; reused by native_pdf_document
     name = (filename or "").lower()
     try:
         if name.endswith(".pdf"):
@@ -1715,10 +1806,16 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                     status="completed", text_pages=int(facts.get("text_pages") or 0),
                     empty_pages=int(facts.get("empty_pages") or 0),
                 )
+            # Lazy cache: per-page text dicts built on first consumer access.
+            # For PDFs whose text layer is rejected the census is never called
+            # and the cache is never materialised, so scanned / rejected-layer
+            # PDFs pay zero extra parsing cost.
+            _pdf_page_cache = _LazyPDFPageCache(file_bytes)
             # Text existence is not text quality: judge the layer before
             # trusting it, and let the user's ocr_mode override the verdict.
             text_layer_report = _text_layer_quality.assess_pdf_text_layer(
-                file_bytes, source_language=source_language, max_pages=3)
+                file_bytes, source_language=source_language, max_pages=3,
+                _page_dict_cache=_pdf_page_cache)
             # Sampling is deliberately shallow (first/middle/last).  If those
             # pages are empty but the document does have text pages elsewhere,
             # the layer is partial, not absent — do not silently force OCR on a
@@ -1742,15 +1839,27 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                           "text_layer_quality": text_layer_report.get("status")},
             ) if profiler is not None else None
             paragraphs = []
+            # Computed lazily; stored so native_pdf_document can reuse it.
+            _pdf_layouts = None
             if use_text_layer:
-                paragraphs = [clean_xml_chars(p)
-                              for p in extract_pdf_paragraphs(file_bytes)]
+                # extract_pdf_paragraphs stays the patchable entry point; inside
+                # this call it records the layout it built so native_pdf_document
+                # below does not parse the PDF a second time.
+                share = {"data": file_bytes, "page_cache": _pdf_page_cache}
+                share_token = _PDF_LAYOUT_SHARE.set(share)
+                try:
+                    paragraphs = [clean_xml_chars(p)
+                                  for p in extract_pdf_paragraphs(file_bytes)]
+                finally:
+                    _PDF_LAYOUT_SHARE.reset(share_token)
+                _pdf_layouts = share.get("layouts")
                 if not paragraphs and resolved_ocr_mode != "off":
                     # The gate accepted the layer but extraction produced
                     # nothing usable; fall through to OCR instead of shipping an
                     # empty document.
                     use_text_layer = False
                     ocr_trigger = "text_layer_empty_after_extraction"
+                    _pdf_layouts = None  # discard layout; not needed for OCR path
             if layout_stage is not None:
                 layout_stage.record["item_count"] = len(paragraphs)
                 layout_stage.record["page_count"] = int(facts.get("pages") or 0)
@@ -1765,13 +1874,19 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 # 的页（扫描仪 / Internet Archive / OCRmyPDF 自带的识别结果）。
                 # 后者的文字是别人的 OCR，不是原生文本：同样交给视觉理解。
                 page_count, visual_indices = _pdf_scan_page_indices(
-                    file_bytes, include_ocr_overlay=vlm_available)
+                    file_bytes, include_ocr_overlay=vlm_available,
+                    _page_dict_cache=_pdf_page_cache)
                 if visual_indices and len(visual_indices) == page_count:
                     # 整本都是扫描件：走纯视觉路径，不再保留第三方 OCR 文本。
                     visual_indices = []
                     use_text_layer = False
                     ocr_trigger = "scanned_ocr_overlay"
                     warnings.append("PDF 的文字是扫描图上的隐形 OCR 层，已改用视觉理解识别全文。")
+            # Release the page-dict cache: all consumers (census, extract_layout_blocks,
+            # _pdf_scan_page_indices) have finished.  Dropping the reference now keeps
+            # peak RSS low during the remaining heavy work (VLM / OCR / document_ir).
+            _pdf_page_cache.release()
+            _pdf_page_cache = None
             if (not use_text_layer or visual_indices) and vlm_available:
                 from folith.document_understanding import understand_visual_pdf, understand_mixed_pdf
                 understanding_provider, spatial_engine = _vlm_runtime(
@@ -1937,7 +2052,11 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
         )
     if name.endswith(".pdf") and not ocr_used and paragraphs and facts.get("pages"):
         from folith.document_understanding import native_pdf_document
-        report["document_ir"] = native_pdf_document(filename, file_bytes, paragraphs)
+        # Pass pre-computed layouts (set during text-layer extraction above)
+        # to avoid a second full-document parse inside native_pdf_document.
+        report["document_ir"] = native_pdf_document(
+            filename, file_bytes, paragraphs,
+            layouts=_pdf_layouts)
         report["semantic_source"] = "native_pdf"
     return paragraphs, warnings, report
 
@@ -2266,6 +2385,12 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
     """
     kwargs = {"api_key": api_key, "timeout": _llm_transport.OPENAI_TIMEOUT,
               "max_retries": _llm_transport.OPENAI_MAX_RETRIES}
+    if provider == "Local Gateway" and not api_key:
+        from openai import Omit
+        # Some SDK versions require a nonempty constructor key. Omit the
+        # resulting header so unauthenticated gateways receive no credential.
+        kwargs["api_key"] = "local-gateway"
+        kwargs["default_headers"] = {"Authorization": Omit()}
     resolved_base = resolve_openai_base_url(provider, base_url)
     if resolved_base:
         kwargs["base_url"] = resolved_base
@@ -2298,6 +2423,11 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
     return resolved_base, client
 
 
+def _request_cancel_check(job_id):
+    """Cancel probe for one in-flight request: a cancel gives the request up at once."""
+    return (lambda: _runtime_cancel_requested(job_id)) if job_id else None
+
+
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
                         *, temperature=0.1, base_url=None, response_format=None,
                         reasoning_effort=None, reasoning_mode=None,
@@ -2323,11 +2453,12 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
         if response_format and cfg.get("capabilities", {}).get("supports_response_format"):
             config_kwargs["response_mime_type"] = "application/json"
         try:
-            res = client.models.generate_content(
-                model=model,
-                contents=user_prompt,
-                config=genai.types.GenerateContentConfig(**config_kwargs),
-            )
+            res = _request_control.call_cancellable(
+                lambda: client.models.generate_content(
+                    model=model,
+                    contents=user_prompt,
+                    config=genai.types.GenerateContentConfig(**config_kwargs),
+                ), _request_cancel_check(runtime_job_id))
             out_text = (res.text or "").strip()
             usage = getattr(res, "usage_metadata", None)
             run = trace.get_active_run(runtime_job_id)
@@ -2390,6 +2521,8 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     if response_format and cfg.get("capabilities", {}).get(
             "supports_response_format"):
         request["response_format"] = response_format
+    elif response_format and provider == "Local Gateway":
+        raise ValueError("Local Gateway does not advertise structured-output support")
     if resolved_reasoning_mode == "thinking_disabled":
         # Same DeepSeek-family control the OCR path sends; opt-in only.
         request["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -2405,8 +2538,14 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             "User-Agent": "Folith/0.8.0",
             "x-opencode-session": str(session_id),
         }
+    if provider == "Local Gateway" and not api_key:
+        # 本地网关不校验密钥：逐个请求显式省略 Authorization，而不是编一个假 key。
+        from openai import Omit
+        request.setdefault("extra_headers", {})["Authorization"] = Omit()
     try:
-        res = client.chat.completions.create(**request)
+        res = _request_control.call_cancellable(
+            lambda: client.chat.completions.create(**request),
+            _request_cancel_check(runtime_job_id))
         out_text = (res.choices[0].message.content or "").strip()
         usage = getattr(res, "usage", None)
         pt_details = getattr(usage, "prompt_tokens_details", None) if usage else None
@@ -2541,10 +2680,12 @@ def fetch_provider_models(provider, api_key, base_url=None):
         return _fetch_gemini_models(api_key)
     if cfg.get("kind") not in ("openai", "openai_compat"):
         return False, [], "当前服务商不支持 OpenAI 兼容模型目录", {}
-    if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter"):
+    if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter", "Local Gateway"):
         return False, [], "请先填写 API Key", {}
     try:
-        resolved_base = resolve_openai_base_url(provider, base_url)
+        # 本地网关的地址永远来自调用方；不能退回注册表里的默认地址。
+        resolved_base = resolve_openai_base_url(
+            provider, (base_url or "") if provider == "Local Gateway" else base_url)
     except ValueError as exc:
         return False, [], str(exc), {}
     if not resolved_base and provider == "OpenAI":
@@ -2568,6 +2709,10 @@ def fetch_provider_models(provider, api_key, base_url=None):
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPStatusError as exc:
+        if provider == "Local Gateway" and exc.response.status_code in (404, 405):
+            return False, [], "模型目录不受支持或 API 地址不兼容；可手动填写模型。", {}
+        if provider == "Local Gateway" and 300 <= exc.response.status_code < 400:
+            return False, [], "API 地址返回重定向；请直接配置最终地址。", {}
         return False, [], provider_error_message(exc, "获取模型失败"), {}
     except httpx.HTTPError as exc:
         return False, [], provider_error_message(exc, "获取模型失败"), {}
@@ -3786,6 +3931,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             "source_chars": len(numbered),
         }
     call_fn = call_llm_fn or call_llm
+    request_target = getattr(call_fn, "request_target", {})
     response_format = _native_translation_response_format(
         provider, model, len(segments))
     cache_key = None
@@ -3794,7 +3940,11 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             provider=provider, model=model, system_prompt=sys_prompt,
             user_prompt=user_prompt, temperature=0.3,
             response_format=response_format,
-            route=effective_request_route(provider, model, role="translation"))
+            route={**effective_request_route(provider, model, role="translation"),
+                   # 网关按地址 + 凭据计费与限流：同一模型名换个端点就是另一个服务。
+                   **({"base_url": request_target.get("base_url") or effective_request_route(provider, model, role="translation").get("base_url", ""),
+                       "credential": _llm_transport.api_key_fingerprint(request_target.get("api_key", api_key))}
+                      if provider == "Local Gateway" else {})})
         cached = result_cache.get(cache_key)
         if cached is not None and len(cached) == len(segments):
             if prompt_stats is not None:
@@ -3808,7 +3958,8 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     # Rate limiting is handled by the shared provider controller: it paces
     # request starts and pushes one cooldown every worker observes, instead of
     # each worker sleeping a fixed 15 s and then stampeding the provider.
-    controller = _llm_request_controller(provider, model)
+    controller = _llm_request_controller(provider, model, request_target.get("api_key", api_key),
+                                         base_url=request_target.get("base_url") or None)
     cancel_check = _llm_cancel_check()
     last_err = None
     for _attempt in range(3):
@@ -12884,7 +13035,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 credential_owner=f"{provider}|{visual_base.rstrip('/')}",
                 reasoning_mode=_follow_connection_thinking(
                     "translation_profile", provider, model,
-                    _default_vision_reasoning(provider, model)))
+                    _default_vision_reasoning(provider, model)),
+                reasoning_effort=_follow_connection_effort(
+                    "translation_profile", provider, model,
+                    _default_vision_effort(provider, model)))
             effective_online_descriptor = effective_online_config.describe()
         except ValueError:
             pass  # A native document does not require a valid visual endpoint.
