@@ -56,7 +56,14 @@ ONLINE_PROMPT_VERSION = "v1"
 
 #: Default and hard bounds for the completion budget.  A page whose transcription
 #: does not fit is reported as truncated rather than silently shortened.
-DEFAULT_MAX_TOKENS = 8192
+#:
+#: A reasoning model spends this budget on thinking first, and the answer only
+#: gets what is left.  Measured on a dense scanned page through the local
+#: gateway: 8,189 of 8,192 tokens went to reasoning and the reply came back with
+#: no text at all, while the same page fitted comfortably at 32,768.  The
+#: transcription itself is only ~1,500 characters, so a larger ceiling costs
+#: nothing on pages that finish early.
+DEFAULT_MAX_TOKENS = 32768
 MIN_MAX_TOKENS = 256
 MAX_MAX_TOKENS = 65536
 DEFAULT_TIMEOUT_S = 180.0
@@ -75,6 +82,17 @@ _SESSION_HEADER_PROVIDERS = {"OpenCode Go"}
 #: the user explicitly selects it, so an unrelated relay never receives an
 #: unsupported request field.
 REASONING_MODES = ("provider_default", "thinking_disabled", "thinking_disabled_vllm")
+
+#: OpenAI-style reasoning levels.  The local gateway accepts this field and acts
+#: on it (measured 2026-10-30: same task, reasoning tokens 917 → 226 at "low"),
+#: which makes it the portable way to turn thinking down for a page read.  The
+#: DeepSeek ``thinking`` switch above is not usable there: the gateway answers
+#: 200 but then reasons until the budget runs out.
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+#: Endpoints measured to honour ``reasoning_effort``.  An unverified relay must
+#: never receive a parameter it may reject.
+_REASONING_EFFORT_PROVIDERS = {"Local Gateway"}
 
 SYSTEM_PROMPT_V1 = (
     "你是扫描页图像的文字转写员。逐字转写图中正文，按原始印刷行从上到下，"
@@ -137,6 +155,9 @@ class OnlineOCRConfig:
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = 0.0
     reasoning_mode: str = "provider_default"
+    #: OpenAI-style level (``none``…``max``); empty keeps the endpoint default.
+    #: Only sent to an endpoint listed in ``_REASONING_EFFORT_PROVIDERS``.
+    reasoning_effort: str = ""
     prompt_version: str = ONLINE_PROMPT_VERSION
     timeout_s: float = DEFAULT_TIMEOUT_S
     max_retries: int = DEFAULT_MAX_RETRIES
@@ -154,6 +175,9 @@ class OnlineOCRConfig:
         reasoning = str(self.reasoning_mode or "").strip().lower()
         if reasoning not in REASONING_MODES:
             reasoning = "provider_default"
+        effort = str(self.reasoning_effort or "").strip().lower()
+        if effort not in REASONING_EFFORTS:
+            effort = ""
         prompt = str(self.prompt_version or "").strip() or ONLINE_PROMPT_VERSION
         if prompt not in SYSTEM_PROMPTS:
             prompt = ONLINE_PROMPT_VERSION
@@ -166,6 +190,7 @@ class OnlineOCRConfig:
                                               MAX_MAX_TOKENS)),
             temperature=max(0.0, min(float(self.temperature or 0.0), 2.0)),
             reasoning_mode=reasoning,
+            reasoning_effort=effort,
             prompt_version=prompt,
             timeout_s=max(10.0, min(float(self.timeout_s or DEFAULT_TIMEOUT_S), 900.0)),
             max_retries=max(0, min(int(self.max_retries), MAX_MAX_RETRIES)),
@@ -205,6 +230,7 @@ class OnlineOCRConfig:
             f"max_tokens={int(self.max_tokens)}",
             f"temperature={self.temperature:g}",
             f"reasoning={self.reasoning_mode}",
+            f"effort={self.reasoning_effort}",
         ))
 
     def describe(self) -> Dict[str, Any]:
@@ -219,6 +245,7 @@ class OnlineOCRConfig:
             "max_tokens": int(self.max_tokens),
             "temperature": float(self.temperature),
             "reasoning_mode": self.reasoning_mode,
+            "reasoning_effort": self.reasoning_effort,
             "timeout_s": float(self.timeout_s),
             "max_retries": int(self.max_retries),
             "credential_source": self.credential_source,
@@ -296,6 +323,21 @@ def default_vision_reasoning(provider, model):
     if provider == "DeepSeek" and name.startswith(("deepseek-flash", "deepseek-v4")):
         return "thinking_disabled"
     return "provider_default"
+
+
+def default_vision_effort(provider, model):
+    """Reasoning level vision reads use when nobody chose one.
+
+    A gateway fronts reasoning models, and their thinking counts against the
+    same output budget as the transcription: at the endpoint default a dense
+    page can spend the whole budget thinking and return no text at all.  "low"
+    keeps a page inside the budget and is the only level measured to work
+    through the gateway.  Everyone else keeps the endpoint default, because
+    ``reasoning_effort`` is not sent to an unverified relay.
+    """
+    if provider == "Local Gateway":
+        return "low"
+    return ""
 
 
 def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
@@ -530,6 +572,9 @@ class OnlineOCRBackend(OCRBackend):
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
         }
+        if config.reasoning_effort and config.provider in _REASONING_EFFORT_PROVIDERS:
+            # 本地网关实测认这个 OpenAI 字段；没验证过的中转站不发。
+            body["reasoning_effort"] = config.reasoning_effort
         if config.reasoning_mode == "thinking_disabled":
             # Documented DeepSeek-family control; sent only on explicit opt-in.
             body["extra_body"] = {"thinking": {"type": "disabled"}}

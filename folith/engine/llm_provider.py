@@ -80,8 +80,10 @@ def reasoning_effort_options(provider, model):
     parameter cannot break translation.
     """
     if provider == "Local Gateway":
-        # 网关不声明支持任何推理档位；发过去只会换来 400。
-        return ()
+        # 网关是 OpenAI 兼容的本地服务，实测接受 reasoning_effort 并按档位少推理
+        # （同一任务：默认 917 个推理 token，"low" 226 个）。它前面挂的是推理模型，
+        # 不调档位的密排页会把输出预算全花在思考上。三个档位是界面上的通用子集。
+        return ("low", "medium", "high") if str(model or "").strip() else ()
     cfg = _c.PROVIDERS.get(provider) or {}
     if cfg.get("kind") not in {"openai", "openai_compat"}:
         return ()
@@ -133,6 +135,8 @@ def thinking_control_options(provider, model):
     default rather than receiving a parameter it may not understand.
     """
     if provider == "Local Gateway":
+        # 网关收下 DeepSeek 的 thinking 字段（HTTP 200），但并不停思考：实测同一请求
+        # 反而把整个预算给了推理、正文为空。所以网关连接只给「推理强度」，不给这个开关。
         return ()
     cfg = _c.PROVIDERS.get(provider) or {}
     if cfg.get("kind") not in {"openai", "openai_compat"}:
@@ -166,6 +170,29 @@ def connection_thinking_mode():
                                             profile.get("model", "")):
         return None                 # the model behind this connection changed
     return mode
+
+
+def connection_reasoning_effort():
+    """Reasoning level stored on the connection currently used for translation.
+
+    ``None`` means that connection records no level, so the caller falls back to
+    the task snapshot and then to the model's own default.  The level is only
+    reported when the connection's model is one whose endpoint honours it, so a
+    connection reused with a different model cannot carry a stale level.
+    """
+    saved = _c.load_provider_config() or {}
+    wanted = str((saved.get("connection_roles") or {}).get("translation") or "")
+    profile = next((p for p in saved.get("connections") or []
+                    if isinstance(p, dict) and p.get("id") == wanted), None)
+    if not profile:
+        return None
+    effort = str(profile.get("reasoning_effort") or "").strip().lower()
+    if not effort:
+        return None
+    if effort not in reasoning_effort_options(profile.get("provider", ""),
+                                              profile.get("model", "")):
+        return None                 # the model behind this connection changed
+    return effort
 
 
 def normalize_reasoning_mode(value):
