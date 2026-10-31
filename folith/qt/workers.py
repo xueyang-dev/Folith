@@ -12,6 +12,7 @@ that lifecycle would create a second truth about whether a task is running.
 from __future__ import annotations
 
 import traceback
+import warnings
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
@@ -40,6 +41,28 @@ class Task(QRunnable):
         self.label = label or getattr(fn, "__name__", "task")
         self.signals = _TaskSignals()
         self.setAutoDelete(True)
+
+    def release(self) -> None:
+        """Drop everything a finished task holds on to.
+
+        ``signals`` keeps the ``_done`` / ``_failed`` closures connected, and those
+        close over this task, so a finished task and everything its callable
+        captured (a poll read holds the whole task state, hundreds of MB on a
+        book) stayed alive forever: a reference cycle through the Qt connection
+        that the Python collector cannot see.
+        """
+        with warnings.catch_warnings():
+            # A signal nobody connected (``progress``) warns instead of raising.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            for signal in (self.signals.done, self.signals.failed,
+                           self.signals.progress):
+                try:
+                    signal.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+        self.fn = None
+        self.args = ()
+        self.kwargs = {}
 
     @Slot()
     def run(self) -> None:  # pragma: no cover - exercised through the pool
@@ -98,6 +121,7 @@ class TaskRunner(QObject):
         def _finish() -> None:
             if task in self._running:
                 self._running.remove(task)
+            task.release()
 
         def _done(value: Any) -> None:
             _finish()
