@@ -1028,11 +1028,19 @@ def resolve_paddle_model(model_id):
 
 
 
+def _ocr_page_failure_reason(error):
+    """``truncated: OCR 输出过长…；该页未保存…`` → ``OCR 输出过长被截断``."""
+    code, _, detail = str(error or "").partition(": ")
+    reason = re.split(r"[；。]", detail or code, maxsplit=1)[0]
+    return re.sub(r"\s*（finish_reason=\w+）", "", reason).strip() or code or "请求失败"
+
+
 def _ocr_pdf_text_with_warnings(
     file_bytes, max_pages=None, on_progress=None, *, workers=None, queue_size=None,
     checkpoint_dir=None, cancel_check=None, profiler=None, return_details=False,
     dpi=None, backend=None, profile_cache_dir=None,
     ocr_language=None, ocr_psm=None, paddle_model=None, online_config=None,
+    reread_online_config=None,
 ):
     """OCR a scanned PDF with the local backend and return ``(text, warnings)``.
 
@@ -1073,13 +1081,25 @@ def _ocr_pdf_text_with_warnings(
             requested_engine, tesseract_command=command, tesseract_version=version,
             page_ocr=_ocr_page_with_tesseract, language=ocr_language or "eng",
             psm=effective_psm, paddle_model=paddle_model,
-            online_config=online_config)
+            online_config=online_config,
+            ocr_api_config=online_config if requested_engine == _ocr_backends.OCR_API_BACKEND else None)
     except _ocr_backends.OCRUnavailable as exc:
         result = ("", [str(exc)], {"ocr_error": exc.code,
                   "requested_engine": requested_engine, "actual_engine": None,
                   "ocr_source": requested_engine})
         return result if return_details else result[:2]
     warnings.extend(backend_warnings)
+    # Pages missing from the cache are read with ``reread_online_config`` when the
+    # user switched the OCR model after some pages failed.  Their records are
+    # still stored under the task's original cache identity, so the pages that
+    # were already read are reused instead of re-reading the whole book.
+    page_backend = resolved_backend
+    if reread_online_config is not None and requested_engine == _ocr_backends.OCR_API_BACKEND:
+        try:
+            page_backend, _ = _ocr_backends.resolve_backend(
+                requested_engine, ocr_api_config=reread_online_config)
+        except _ocr_backends.OCRUnavailable as exc:
+            warnings.append(f"无法改用新的 OCR 模型重读：{exc}；继续使用原模型。")
     installed = []
     if resolved_backend.name == "tesseract":
         if not command:
@@ -1299,6 +1319,17 @@ def _ocr_pdf_text_with_warnings(
                 except Exception:  # noqa: BLE001 - UI progress is optional
                     pass
 
+            def emit_page_failure(page_number, error):
+                """One line for the page that failed; the progress line only counts it."""
+                if not on_progress:
+                    return
+                reason = _ocr_page_failure_reason(error)
+                try:
+                    # 「未能…已跳过」 reads as a warning: the run goes on without this page.
+                    on_progress(f"【阶段一】第 {page_number} 页未能识别，已跳过：{reason}")
+                except Exception:  # noqa: BLE001 - UI progress is optional
+                    pass
+
             def run_pass(pass_indices, pass_dpi):
                 """Bounded worker fan-out at one DPI; returns failed (page, error)."""
                 nonlocal completed_pages
@@ -1323,7 +1354,7 @@ def _ocr_pdf_text_with_warnings(
                             idx, png_bytes, enqueued_at, page_width, page_height = task
                             check_cancel()
                             started = time.perf_counter()
-                            evidence = resolved_backend.recognize_page(
+                            evidence = page_backend.recognize_page(
                                 png_bytes, page_index=idx, page_number=idx + 1,
                                 language=language, dpi=pass_dpi)
                             error = evidence.error
@@ -1338,6 +1369,7 @@ def _ocr_pdf_text_with_warnings(
                                 with page_lock:
                                     local_failed.append((idx + 1, error))
                                     failure_count += 1
+                                emit_page_failure(idx + 1, error)
                             else:
                                 record = evidence.to_record(page_width, page_height)
                                 with page_lock:
@@ -1515,6 +1547,18 @@ def _ocr_pdf_text_with_warnings(
                                  if value is not None]
             completed_indices = [index for index in indices
                                  if str(index) in page_records]
+            review_pages = sorted(int(key) + 1 for key, record in page_records.items()
+                                  if any(str(w).startswith("ocr_api_repetition_detected")
+                                         for w in record.get("warnings", [])))
+            blank_pages = sorted(int(key) + 1 for key, record in page_records.items()
+                                 if any(str(w).startswith("ocr_api_blank_page")
+                                        for w in record.get("warnings", [])))
+            if review_pages:
+                warnings.append("第 " + "、".join(map(str, review_pages)) +
+                                " 页 OCR 输出出现循环，已保留循环前的内容，请在原文对照里核查这些页。")
+            if blank_pages:
+                warnings.append("第 " + "、".join(map(str, blank_pages)) +
+                                " 页没有识别到文字，按空白页处理。")
             usage_totals = {"reported": False, "prompt_tokens": None,
                             "completion_tokens": None, "reasoning_tokens": None,
                             "total_tokens": None, "amount": None}
@@ -1538,6 +1582,8 @@ def _ocr_pdf_text_with_warnings(
                 "completed_pages": len(completed_indices),
                 "page_order": [index + 1 for index in completed_indices],
                 "failed_pages": len(failed_pages),
+                "review_pages": review_pages,
+                "blank_pages": blank_pages,
                 # Never let a partly recognised book be reported as complete.
                 "all_pages_completed": len(completed_indices) == len(indices),
                 "checkpoint_file": str(cache.manifest_path) if cache.manifest_path else "",
@@ -1765,7 +1811,8 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                                             ocr_psm=None, ocr_mode=None, ocr_backend=None,
                                             ocr_paddle_model=None, ocr_online_config=None,
                                             source_language=None,
-                                            understanding_provider=None, spatial_engine=None):
+                                            understanding_provider=None, spatial_engine=None,
+                                            ocr_reread_config=None):
     """Extract paragraphs together with an import-scope report.
 
     Returns ``(paragraphs, warnings, report)``.  The report is what makes the
@@ -1925,6 +1972,13 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 else:
                     warnings.append(f"PDF 无可用文本层，正在自动 OCR {scope}…")
                 ocr_fn = _ocr_pdf_text_with_warnings
+                # OCR API has no separate language selector in the settings UI.
+                # Use the task's declared source language for its metadata and
+                # cache identity; do not infer a local Tesseract language pack.
+                effective_read_language = ocr_language
+                if _ocr_backends.normalize_backend(ocr_backend) == _ocr_backends.OCR_API_BACKEND:
+                    from folith import source_languages as _source_languages
+                    effective_read_language = _source_languages.ocr_code(source_language) or ocr_language
                 ocr_kwargs = {
                     "max_pages": ocr_max_pages,
                     "on_progress": on_progress,
@@ -1944,12 +1998,13 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                         "profiler": profiler,
                         "return_details": True,
                         "profile_cache_dir": profile_cache_dir,
-                        "ocr_language": ocr_language,
+                        "ocr_language": effective_read_language,
                         "dpi": ocr_dpi,
                         "ocr_psm": ocr_psm,
                         "backend": ocr_backend,
                         "paddle_model": ocr_paddle_model,
                         "online_config": ocr_online_config,
+                        "reread_online_config": ocr_reread_config,
                     }
                     for key, value in optional_ocr_kwargs.items():
                         if supports_kwargs or key in parameters:
@@ -11253,6 +11308,12 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         effective_online_config = _effective_ocr_source(
             ocr_backend, saved_config, ocr_paddle_model=ocr_paddle_model,
             ocr_online=ocr_online)
+    if effective_ocr_backend == _ocr_backends.OCR_API_BACKEND:
+        from folith import source_languages as _source_languages
+        source_code = _source_languages.ocr_code(state.get("source_lang"))
+        if source_code:
+            effective_ocr_language = source_code
+            resolved_ocr = _ocr_language.resolve_ocr_language(source_code)
     previous_ocr_backend = _ocr_backends.normalize_backend(
         saved_config.get("ocr_backend", "tesseract"))
     previous_paddle_model = str(saved_config.get("ocr_paddle_model") or "official")
@@ -11431,6 +11492,10 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
 
         _reset_source_dependent_state(state, job_id=job_id)
+        # A successful full rescan replaces the old streaming source and its
+        # page ordering.  Keeping it would resume the old VLM reader even when
+        # the rescan selected OCR API, and could reorder the new paragraphs.
+        state.pop("streaming_ingest", None)
         # The rescan replaced the source bytes; a persisted outline belongs to
         # the previous source (see #186).
         from folith import outline_anchor as _outline_anchor
@@ -11482,6 +11547,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         else:
             pipeline_config.pop("ocr_online", None)
         state["ocr_mode"] = effective_ocr_mode
+        state["ocr_backend"] = effective_ocr_backend
         state["ocr_language"] = effective_ocr_language or ""
         state["ocr_config"] = {
             "ocr_language": effective_ocr_language or "",
@@ -12467,6 +12533,66 @@ def _explicit_ocr_online(ocr_online, saved_runtime_config):
     return ocr_online
 
 
+def _ocr_missing_pages(report):
+    """OCR 通道读失败的页：``[{"page": 8, "reason": "OCR 输出过长被截断"}]``。"""
+    rows = ((report or {}).get("ocr") or {}).get("page_failures") or []
+    return [{"page": int(row["page_number"]), "reason": _ocr_page_failure_reason(row.get("error"))}
+            for row in rows if isinstance(row, dict) and str(row.get("page_number") or "").isdigit()]
+
+
+def _ocr_missing_pages_message(rows):
+    shown = "、".join(str(row["page"]) for row in rows[:8]) + ("…" if len(rows) > 8 else "")
+    reasons = {row["reason"] for row in rows}
+    reason = rows[0]["reason"] if len(reasons) == 1 else "原因见运行记录"
+    return (f"第 {shown} 页未能识别（{reason}），已在翻译前暂停：原文不能缺页。"
+            "点「继续」只重读这些页；如果一直失败，可在 设置 › 模型 › 读取扫描页 "
+            "换一个 OCR 模型后再继续。")
+
+
+def _ocr_reread_config(backend, pinned):
+    """继续时设置里的 OCR 模型若已换掉，就用它重读缺的页；没换返回 None。"""
+    try:
+        if _ocr_backends.normalize_backend(backend) != _ocr_backends.OCR_API_BACKEND:
+            return None
+    except _ocr_backends.OCRUnavailable:
+        return None
+    current, error = resolve_ocr_online_config()
+    if error or current is None or current.unavailable_reason():
+        return None
+    def key(config):
+        return tuple(str(getattr(config, name, "") or "") for name in ("provider", "model", "base_url"))
+    if pinned is not None and key(current) == key(pinned):
+        return None
+    return current
+
+
+def _extract_with_missing_page_gate(job_id, state, extract, *, backend, pinned_config):
+    """OCR 通道（OCR API / Tesseract）：有页没读成就停在翻译之前，继续时只重读这些页。
+
+    视觉模型通道边读边译，缺页由流式识别补读；OCR 通道先读完整本再整理、翻译，
+    所以缺页必须在这里拦住，否则译稿会悄悄少一页。已读成的页来自页缓存，不会重读。
+    """
+    reread = None
+    while True:
+        result = extract(reread)
+        missing = _ocr_missing_pages(result[2])
+        if not missing:
+            state.pop("ocr_missing_pages", None)
+            return result
+        state["ocr_missing_pages"] = missing
+        state["extraction_report"] = result[2]
+        save_job_state(job_id, state)
+        message = _ocr_missing_pages_message(missing)
+        update_runtime_state(job_id, pause_requested=True, status="pausing", phase_label=message)
+        _runtime_pause_checkpoint(job_id, paused_message=message)
+        reread = _ocr_reread_config(backend, pinned_config)
+        if reread is not None:
+            update_runtime_state(
+                job_id, event=f"缺的页改用『{reread.provider} · {reread.model}』重读",
+                event_name="ocr_reread_model", event_visibility="user",
+                event_category="orchestration")
+
+
 def _reconcile_vision_connection(job_id, state):
     """续跑时，任务钉住的视觉连接与当前视觉连接不同：决定用哪个，并留痕。
 
@@ -12781,7 +12907,15 @@ def _scan_page_failure_reason(status, code, message=""):
         return "服务商限流（HTTP 429）"
     if status and int(status) >= 500:
         return f"服务商暂时不可用（HTTP {status}）"
-    return str(message or code or "请求失败")[:60]
+    text = str(message or code or "请求失败")
+    if len(text) <= 60:
+        return text
+    # 页级事件只放第一句原因；在句读处截断，不在半个词处截断。
+    first = re.split(r"[；。]", text, maxsplit=1)[0]
+    reason = first if 0 < len(first) <= 60 else text[:59] + "…"
+    if "OCR 专用模型" in text:
+        reason += "；请换用通用视觉模型"
+    return reason
 
 
 def _scan_page_event_text(event):
@@ -12837,7 +12971,7 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
         where = f"（{stream.provider_label}）" if stream.provider_label else ""
         pause_message = (
             f"视觉识别连续 {stream.timeout_streak_limit} 页超时：服务商{where}处理图片太慢或不稳定。"
-            "建议在 设置 › 视觉与识别 换一个视觉模型，然后继续任务；已识别的页不会重读。")
+            "建议在 设置 › 模型 › 读取扫描页 换一个视觉模型，然后继续任务；已识别的页不会重读。")
         tracker["streak_message"] = pause_message
         update_runtime_state(
             job_id, pause_requested=True, status="pausing", phase_label=pause_message,
@@ -12999,6 +13133,13 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     不提供时沿用正文模型。``knowledge_feedback_interval`` 仅控制普通模式的
     批后连续性观察频率，严格审校模式仍逐批观察。
     """
+    # The desktop refuses these before starting; this guards every other caller
+    # (resume, automation) so a run that cannot translate never spends hours.
+    from folith.model_capability import task_model_problem
+    unfit = task_model_problem("translation", model) or (
+        task_model_problem("reviewer", reviewer_model) if reviewer_model else "")
+    if unfit:
+        raise ValueError(unfit)
     _ensure_output_dir()
     if translator_base_url is not None:
         set_llm_base_url(translator_base_url)
@@ -13024,7 +13165,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         effective_online_config = _effective_ocr_source(
             ocr_backend, saved_runtime_config, ocr_paddle_model=ocr_paddle_model,
             ocr_online=ocr_online, prefer_saved=bool(saved_runtime_config))
-    if (effective_ocr_backend == "online" and not effective_online_descriptor
+    from folith.model_connections import VISION_UNCONFIGURED
+    vision_unconfigured = ((load_provider_config() or {}).get("connection_roles") or {}).get("vision") == VISION_UNCONFIGURED
+    if (effective_ocr_backend == "online" and not effective_online_descriptor and not vision_unconfigured
             and not load_ocr_online_config()):
         try:
             visual_base = _resolve_online_ocr_base_url(
@@ -13047,6 +13190,12 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
     effective_source_language = str(
         state.get("source_lang")
         or (resolved_ocr.label if resolved_ocr else "") or "")
+    if effective_ocr_backend == _ocr_backends.OCR_API_BACKEND:
+        from folith import source_languages as _source_languages
+        source_code = _source_languages.ocr_code(state.get("source_lang"))
+        if source_code:
+            effective_ocr_language = source_code
+            resolved_ocr = _ocr_language.resolve_ocr_language(source_code)
     effective_cleanup_concurrency = _runtime_int_option(
         source_cleanup_concurrency,
         saved_runtime_config.get("source_cleanup_concurrency"),
@@ -13355,6 +13504,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             enable_source_cleanup = saved_source_cleanup
         else:
             enable_source_cleanup = str(filename or "").lower().endswith(".pdf")
+    # Channel B (OCR API) always needs source cleanup to turn raw OCR text into
+    # headings, paragraphs and footnotes — matching what VLM returns directly.
+    if effective_ocr_backend == _ocr_backends.OCR_API_BACKEND:
+        enable_source_cleanup = True
     pipeline_config["enable_understanding"] = bool(enable_understanding)
     # Source cleanup is automatically enabled for PDF jobs.  Persist the key
     # only for PDF tasks (or an explicit opt-in) so legacy DOCX pipeline
@@ -13606,8 +13759,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # One extraction path for every format: the same call that produces the
             # paragraphs also produces the import-scope report, so a DOCX table can
             # never be dropped silently just because the pipeline took a shortcut.
-            paragraphs, extraction_warnings, extraction_report = \
-                extract_document_paragraphs_with_report(
+            paragraphs, extraction_warnings, extraction_report = _extract_with_missing_page_gate(
+                job_id, state, lambda reread: extract_document_paragraphs_with_report(
                     filename, file_bytes, ocr_max_pages=None, on_progress=on_status,
                     profiler=profiler, checkpoint_dir=job_dir(job_id),
                     ocr_workers=effective_ocr_workers,
@@ -13621,7 +13774,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                     ocr_backend=effective_ocr_backend,
                     ocr_paddle_model=effective_paddle_model,
                     ocr_online_config=effective_online_config,
-                    source_language=effective_source_language)
+                    source_language=effective_source_language,
+                    ocr_reread_config=reread),
+                backend=effective_ocr_backend, pinned_config=effective_online_config)
 
             raw_paragraphs = list(paragraphs)
             # Persist the extraction boundary before remote cleanup starts.  If the

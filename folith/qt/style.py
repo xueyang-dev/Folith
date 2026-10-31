@@ -1917,6 +1917,12 @@ class SegmentedControl(QFrame):
     def button(self, value: str):
         return self._buttons.get(value)
 
+    def set_enabled(self, value: str, enabled: bool) -> None:
+        """启用或禁用某个分段按钮（例如 Tesseract 未安装时禁用该选项）。"""
+        button = self._buttons.get(value)
+        if button is not None:
+            button.setEnabled(enabled)
+
 
 class StatStrip(QFrame):
     """内联指标条：一行里若干「标签 + 数值」，用 1px 发丝线分隔。

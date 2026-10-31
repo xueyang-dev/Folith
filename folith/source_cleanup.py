@@ -124,6 +124,16 @@ def _is_cjk(value: str) -> bool:
     return any("\u3400" <= char <= "\u9fff" for char in value or "")
 
 
+def _joins_without_space(char: str) -> bool:
+    """Scripts written without spaces between words: CJK ideographs, Japanese
+    kana and CJK / full-width punctuation.  ``_is_cjk`` covers ideographs only,
+    so a Japanese line ending in kana or 「、」 used to gain a space when joined."""
+    code = ord(char) if char else 0
+    return (0x3000 <= code <= 0x30FF or 0x31F0 <= code <= 0x31FF
+            or 0x3400 <= code <= 0x9FFF or 0xF900 <= code <= 0xFAFF
+            or 0xFF00 <= code <= 0xFFEF)
+
+
 def _join(left: str, right: str) -> str:
     left, right = _normalise_text(left), _normalise_text(right)
     if not left:
@@ -135,7 +145,7 @@ def _join(left: str, right: str) -> str:
     # Arabic.  Do not replace it with a language-agnostic guess.
     if left.endswith(("-", "‐", "‑")) and right[:1].islower():
         return left[:-1] + right
-    if ((_is_cjk(left[-1:]) and _is_cjk(right[:1]))
+    if ((_joins_without_space(left[-1:]) and _joins_without_space(right[:1]))
             or right.startswith(tuple(",.!?;:%)]}»”’。，！？；：％）】」』"
                                       "،؛؟۔"))):
         return left + right
@@ -635,6 +645,18 @@ class _CleanupCheckpointStore:
         return value if isinstance(value, dict) else {}
 
 
+#: Consecutive format failures, with no successful batch yet, that stop cleanup.
+_EARLY_STOP_BATCHES = 4
+_TRANSIENT_MARKERS = ("429", "限流", "超时", "timeout", "Timeout", "HTTP 5", "暂时不可用",
+                      "连接", "网络", "connection", "Connection")
+
+
+def _is_format_failure(error) -> bool:
+    """The model answered but not in the cleanup format (not a network or rate-limit error)."""
+    text = str(error or "")
+    return bool(text) and not any(marker in text for marker in _TRANSIENT_MARKERS)
+
+
 def cleanup_source_paragraphs(
     paragraphs: Sequence[str], provider: str, api_key: str, model: str,
     *, call_llm: Callable[..., Any], on_progress: Callable[[str], None] | None = None,
@@ -940,6 +962,12 @@ def cleanup_source_paragraphs(
     first_error: List[BaseException] = []
     stop_event = threading.Event()
     work_queue: queue.Queue = queue.Queue(maxsize=max(1, workers * 2))
+    # A model that cannot return the cleanup format fails every batch; a whole
+    # book took 4.4 hours of requests to learn that.  Stop once the first
+    # batches all fail on format, before any has succeeded, and keep the text.
+    cleanup_succeeded = any(value.get("status") == "completed" for value in result_map.values())
+    format_failures: List[str] = []
+    stopped_early: List[str] = []
 
     def emit_progress() -> None:
         if not on_progress:
@@ -954,7 +982,7 @@ def cleanup_source_paragraphs(
         on_progress(message)
 
     def worker_loop() -> None:
-        nonlocal finished_count
+        nonlocal finished_count, cleanup_succeeded
         while True:
             task = work_queue.get()
             try:
@@ -981,6 +1009,14 @@ def cleanup_source_paragraphs(
                 with progress_lock:
                     active_batches.discard(batch_index)
                     finished_count += 1
+                    if result.get("status") == "completed":
+                        cleanup_succeeded = True
+                    elif (not cleanup_succeeded and len(batches) > _EARLY_STOP_BATCHES
+                          and _is_format_failure(result.get("error"))):
+                        format_failures.append(str(result.get("error") or ""))
+                        if len(format_failures) >= _EARLY_STOP_BATCHES and not stopped_early:
+                            stopped_early.append(format_failures[0])
+                            stop_event.set()
                 if profiler is not None and llm_stage is not None:
                     llm_stage.item(
                         f"batch-{batch_index + 1}", started,
@@ -1053,9 +1089,20 @@ def cleanup_source_paragraphs(
         if first_error:
             raise first_error[0]
 
+    if stopped_early:
+        warnings.append(
+            f"整理结构的前 {_EARLY_STOP_BATCHES} 批都没有按格式返回（{stopped_early[0][:120]}），"
+            "已停止整理并保留识别出的文本。当前模型可能不适合整理原文；"
+            "请在 设置 › 模型 › 用途 换一个通用模型后，在任务里重新扫描 PDF 原文。")
     for batch_index, batch in enumerate(batches):
         result = result_map.get(batch_index) or {}
         rows, error = result.get("rows"), result.get("error")
+        if stopped_early and batch_index not in result_map:
+            # Never sent: keep the extracted text without one warning per batch.
+            failed_batches += 1
+            for global_index, before in batch:
+                cleaned_items[global_index] = before
+            continue
         if error is not None or not isinstance(rows, list) or len(rows) != len(batch):
             failed_batches += 1
             err_msg = str(error or "批次结果缺失或格式不完整")
@@ -1114,6 +1161,7 @@ def cleanup_source_paragraphs(
         "output_count": len(output),
         "batch_count": len(batches),
         "failed_batches": failed_batches,
+        "stopped_early": bool(stopped_early),
         "changed_segments": changed,
         "paragraph_merges": merges,
         # Keep the complete input-to-output lineage, including one-to-one rows.

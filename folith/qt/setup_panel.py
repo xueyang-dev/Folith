@@ -2068,6 +2068,10 @@ class TaskSetupPanel(QWidget):
         self.ocr_box.setVisible(self._is_pdf)
         local = self._is_local_ocr()
         self.ocr_quality_field.setVisible(local)
+        # OCR API follows the source language selected above; the separate
+        # language control is for local OCR or the VLM's local spatial index.
+        self.ocr_language_field.setVisible(
+            str(self.ocr_backend_box.currentData() or "online") != "ocr_api")
         if self.ocr_language_hint is not None:
             self.ocr_language_hint.setText(i18n.tr(_OCR_LANGUAGE_HINTS[local]))
         self.ocr_hint.setText(i18n.tr(_OCR_SOURCE_HINTS[local]))

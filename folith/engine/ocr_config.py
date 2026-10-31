@@ -152,9 +152,11 @@ def _effective_ocr_source(ocr_backend, saved_config=None, *, ocr_paddle_model=No
         raise ValueError(f"找不到已注册的 Paddle 模型「{model_id}」；请重新选择模型。")
     model_id = option.model_id
     descriptor_source = _pick(ocr_online, "ocr_online")
-    if backend_name != "online":
+    if backend_name not in ("online", _ocr_backends.OCR_API_BACKEND):
         return backend_name, model_id, (descriptor_source
                                         if isinstance(descriptor_source, dict) else None), None
+    # Both "online" (VLM) and "ocr_api" use the same online-connection descriptor.
+    # The backend class differs: OnlineOCRBackend vs. OcrApiBackend.
     config, error = resolve_ocr_online_config(descriptor_source)
     if error is not None or (config is not None and config.unavailable_reason()):
         # Native sources need no remote credentials. Validate only when a page
@@ -251,11 +253,12 @@ def ocr_engine_status(engine, language="eng", *, paddle_model=None, online_confi
         return {**status, "ok": backend.available(), "capabilities": backend.capabilities(),
                 "source": "paddle",
                 "quality_note": backend.quality_note() if status["state"] != "unsupported" else ""}
-    if name == "online":
+    if name in ("online", _ocr_backends.OCR_API_BACKEND):
         status = ocr_online_status(online_config)
         return {**status, "capabilities": {"line_boxes": False, "word_boxes": False,
                                            "geometry": False},
-                "quality_note": ("VLM 提取原文结构；本地文字框提供尽力而为的高亮，无法匹配时只定位到原页。")}
+                "quality_note": ("VLM 提取原文结构；本地文字框提供尽力而为的高亮，无法匹配时只定位到原页。"
+                                 if name == "online" else "OCR API 提取文本；随后整理原文结构。")}
     if name == "auto" and not _c._find_tesseract():
         status = ocr_engine_status("paddle", language, paddle_model=paddle_model)
         return {**status, "message": "Auto：Tesseract 未安装；将使用 PaddleOCR。 " + status.get("message", "")}
@@ -542,6 +545,10 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
     """
     snapshot = descriptor if isinstance(descriptor, dict) else (
         saved if isinstance(saved, dict) else {})
+    from folith.model_connections import VISION_UNCONFIGURED
+    if (not snapshot and ((_c.load_provider_config() or {}).get("connection_roles") or {}).get("vision")
+            == VISION_UNCONFIGURED):
+        return None, {"error": "unconfigured", "message": "请先配置视觉模型或 OCR 模型。"}
     default_source = "ocr_profile" if _c.load_ocr_online_config() else "translation_profile"
     source = str(snapshot.get("credential_source") or default_source)
     if source not in OCR_ONLINE_CREDENTIAL_SOURCES:

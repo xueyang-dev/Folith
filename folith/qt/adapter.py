@@ -152,6 +152,20 @@ class EngineConfig:
         cfg.connection_roles = dict(saved.get("connection_roles") or {})
         cfg.connection_models = dict(saved.get("connection_models") or {})
         cfg.ensure_connections()
+        # Migration: if the saved ocr_backend is "online" but the saved vision model
+        # is an OCR-only model, auto-switch to channel B (ocr_api) so the user sees
+        # the right channel for their configuration.
+        # Check connection_models first (set by ensure_connections or loaded from JSON),
+        # then fall back to load_ocr_online_config for the global singleton path.
+        if cfg.ocr_backend == "online":
+            vision_model = str(cfg.connection_models.get("vision") or "")
+            if not vision_model:
+                vision_profile = core.load_ocr_online_config() or {}
+                vision_model = str(vision_profile.get("model") or "")
+            if vision_model:
+                from folith.qt.model_capability import classify_model
+                if classify_model(vision_model) == "ocr_only":
+                    cfg.ocr_backend = "ocr_api"
         from folith.model_connections import effective_config
         return effective_config(cfg, cfg.connections, cfg.connection_roles)
 
@@ -174,7 +188,9 @@ class EngineConfig:
         if vision:
             targets["vision"] = vision
         else:
-            self.connection_roles["vision"] = ""
+            from folith.model_connections import VISION_UNCONFIGURED
+            if self.connection_roles.get("vision") != VISION_UNCONFIGURED:
+                self.connection_roles["vision"] = ""
         for role, target in targets.items():
             if not target.get("provider") or not target.get("model"):
                 continue
@@ -283,6 +299,18 @@ class EngineConfig:
         except ValueError as exc:
             return str(exc)
         return ""
+
+    def model_problem(self) -> str:
+        """The configured model cannot do its role (e.g. a translation-only model); ``""`` if fine."""
+        from folith.model_capability import task_model_problem
+        problem = task_model_problem("translation", self.model)
+        if not problem and self.reviewer_mode == "separate" and self.connection_roles.get("reviewer"):
+            problem = task_model_problem("reviewer", self.reviewer_model)
+        return problem
+
+    def start_problem(self) -> str:
+        """Why a task cannot start: an incomplete connection, or a model unfit for its role."""
+        return self.connection_problem() or self.model_problem()
 
 
 # ================= job listing =================
@@ -587,6 +615,40 @@ def pipeline_kwargs(config: EngineConfig, state: dict | None = None) -> dict:
         .to_pipeline_kwargs()
 
 
+def _switch_empty_misrouted_scan(job_id: str, config: EngineConfig) -> bool:
+    """Repair an uncommitted VLM scan that was configured with an OCR-only model."""
+    if config.ocr_backend != "ocr_api":
+        return False
+    switched = False
+
+    def update(state):
+        nonlocal switched
+        pipeline = state.get("pipeline_config") or {}
+        stream = state.get("streaming_ingest") or {}
+        descriptor = pipeline.get("ocr_online") or {}
+        from folith.qt.model_capability import classify_model
+        if (pipeline.get("ocr_backend") != "online" or stream.get("status") != "running"
+                or classify_model(str(descriptor.get("model") or "")) != "ocr_only"
+                or state.get("source_rescan_requested")
+                or state.get("p1_done") or state.get("p2_done")
+                or any(state.get(key) for key in ("source_paras", "source_paragraphs", "paras", "pairs"))):
+            return
+        current, error = core.resolve_ocr_online_config()
+        if error or current is None or current.unavailable_reason():
+            return
+        pipeline["ocr_backend"] = "ocr_api"
+        pipeline["ocr_online"] = current.describe()
+        state["pipeline_config"] = pipeline
+        state["ocr_backend"] = "ocr_api"
+        state.pop("streaming_ingest", None)
+        state["source_cleanup_done"] = False
+        state.pop("source_cleanup", None)
+        switched = True
+
+    core.mutate_job_state(job_id, update)
+    return switched
+
+
 def start_job(
     job_id: str,
     filename: str,
@@ -605,9 +667,14 @@ def start_job(
     # Desktop pre-flight: the client refuses to start with an incomplete model
     # connection and says exactly what is missing (a desktop-dialog policy, not
     # part of the shared command).
-    problem = config.connection_problem()
+    problem = config.start_problem()
     if problem:
         raise AdapterError(problem)
+    switched = _switch_empty_misrouted_scan(job_id, config)
+    if switched:
+        core._append_runtime_event(
+            job_id, {"event": "ocr_backend_switched", "message": "已按当前设置改用 OCR API 重新读取扫描页。"},
+            visibility="user", category="extraction")
     state = load_state(job_id)
     saved_pipeline = state.get("pipeline_config") or {}
     requested = (state.get("ocr_backend_requested") or saved_pipeline.get("ocr_backend")
@@ -2465,7 +2532,9 @@ def request_source_rescan(job_id: str, *, backend: str, mode: str, language: str
         "ocr_language": str(language or ""),
         "ocr_backend": backend,
         "ocr_paddle_model": "official",
-        "ocr_online": None,
+        # An explicit rescan uses the current connection, not the old task's
+        # pinned descriptor.  The empty descriptor contains no credentials.
+        "ocr_online": {} if backend in ("online", "ocr_api") else None,
         "ocr_quality": str(quality or "standard"),
         "ocr_dpi": core.ocr_quality_dpi(quality or "standard"),
         "ocr_mode": normalize_ocr_mode(mode),
@@ -4874,6 +4943,7 @@ OCR_MODE_CHOICES = (("自动判断", "auto"),
 #: 旧标签「联网识别（默认）」是 10-06 本地化提交 `ecc46cc` 留下的，比 VLM 路径早一天，
 #: 于是成了最容易被误读的一处文案：用户以为自己还在用 OCR。**别再按标签字面理解。**
 OCR_BACKEND_CHOICES = (("视觉理解（VLM，默认）", "online"),
+                       ("OCR API（平文本）", "ocr_api"),
                        ("本机 OCR · Tesseract", "tesseract"),
                        ("本机 OCR · PaddleOCR", "paddle"))
 

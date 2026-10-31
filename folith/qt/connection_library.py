@@ -4,7 +4,8 @@ from __future__ import annotations
 import uuid
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
+                               QListWidgetItem, QPushButton, QSizePolicy,
+                               QVBoxLayout, QWidget)
 from . import adapter, components, connection_status, i18n, icons, style
 from . import theme as theme_module
 from folith.model_connections import effective_config
@@ -22,7 +23,8 @@ class ConnectionLibrary(QWidget):
                   "missing": "未配置完整"}
     STATE_TONE = {"ok": "done", "failed": "error", "untested": "attention",
                   "missing": "attention"}
-    ROLES = (("translation", "翻译"), ("reviewer", "审校"), ("vision", "视觉"))
+    # 「视觉」已移入「读取扫描页」分组（dialogs.py），不再在「用途」里出现。
+    ROLES = (("translation", "翻译"), ("reviewer", "审校"))
 
     def __init__(self, dialog):
         super().__init__()
@@ -55,37 +57,64 @@ class ConnectionLibrary(QWidget):
         self.list_group = components.FormGroup()
         layout.addWidget(self.list_group)
 
-        # ---- 用途：翻译 / 审校 / 视觉，各选一个已保存的连接和它的模型 ----------------
+        # ---- 用途：翻译 / 审校（视觉已移入「读取扫描页」）--------------------------
         dialog._vision_view = adapter.vision_connection_view()
+        # vision_connection_box 创建在此；渲染在 dialogs._build_scan_section()。
         dialog.vision_connection_box = style.ComboBox()
+        dialog.vision_connection_box.setSizeAdjustPolicy(
+            dialog.vision_connection_box.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        dialog.vision_connection_box.setMinimumContentsLength(12)
+        dialog.vision_connection_box.setAccessibleName(
+            i18n.tr(connection_status.ROLE_LABELS["vision"]))
+        dialog.vision_connection_box.currentIndexChanged.connect(
+            lambda _i: self.select("vision"))
         self.selectors = {}
+        #: 「用途」里每个角色行旁的小标签（专用翻译 / 仅 OCR）。不再有红色警告段落。
+        self.capability_tags: dict[str, "QLabel"] = {}
         self.role_group = components.FormGroup()
         self.role_group.add_row(self._group_header(i18n.tr('用途')))
         for role, label in self.ROLES:
-            box = dialog.vision_connection_box if role == "vision" else style.ComboBox()
+            box = style.ComboBox()
             box.setSizeAdjustPolicy(box.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             box.setMinimumContentsLength(12)
             box.setAccessibleName(i18n.tr(connection_status.ROLE_LABELS[role]))
             box.currentIndexChanged.connect(lambda _i, r=role: self.select(r))
             model_box = self.make_model_selector(role)
-            if role != "vision":
-                self.selectors[role] = box
-            self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
-            if role == "vision":
-                # #48：所选视觉模型若是「已知仅文本」给出警告；未知如实说未知。
-                hint = components.StatusLabel("", "idle")
-                hint.dot.hide()
-                hint.setVisible(False)
-                holder = QWidget()
-                holder_row = QHBoxLayout(holder)
-                holder_row.setContentsMargins(theme_module.SPACE["lg"], 0,
-                                               theme_module.SPACE["md"], 0)
-                holder_row.addWidget(hint)
-                self.role_group.add_row(holder)
-                self.vision_modality_hint = hint
+            # 用途模型选择框的最小显示宽度提升到 24 字符，确保长模型名
+            # （如 tencent/Hunyuan-MT-7B，21 chars）不被截断。
+            model_box.setMinimumContentsLength(24)
+            self.selectors[role] = box
+            # 小标签（专用翻译 / 仅 OCR）放在模型选择器后面，不可见时占位 0。
+            mt_tag = QLabel(self)
+            mt_tag.setObjectName("hint")
+            mt_tag.setVisible(False)
+            mt_tag.setToolTip("")
+            self.capability_tags[role] = mt_tag
+            # 模型框 + 标签合为一个复合控件传给 _setting_row。
+            # model_holder 设为 Expanding 策略，占满 _setting_row 里剩余的横向空间；
+            # model_box stretch=1 在 model_holder 内伸展，确保长模型名（如 tencent/Hunyuan-MT-7B）
+            # 不被截断；标签与模型框之间保持 sm 间距。
+            model_holder = QWidget()
+            model_holder.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                       QSizePolicy.Policy.Preferred)
+            mh = QHBoxLayout(model_holder)
+            mh.setContentsMargins(0, 0, 0, 0)
+            mh.setSpacing(theme_module.SPACE["sm"])
+            mh.addWidget(model_box, 1)
+            mh.addWidget(mt_tag, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.role_group.add_row(_setting_row(i18n.tr(label), box, model_holder))
+        # 视觉角色的控件（模型选择器 / 输入类型提示）：
+        # 只创建，不加入 role_group；由 dialogs._build_scan_section() 负责渲染。
+        # parent=self 防止 setVisible 触发前这些控件作为顶层窗口出现。
+        self.make_model_selector("vision")
+        hint = components.StatusLabel("", "idle", self)
+        hint.dot.hide()
+        hint.setVisible(False)
+        self.vision_modality_hint = hint
+        #: 包裹 vision_modality_hint 的外层 holder（由 dialogs._build_scan_section() 设置）。
+        self.vision_modality_hint_holder: "QWidget | None" = None
         layout.addWidget(self.role_group)
-        layout.addStretch(1)
-        layout.addWidget(dialog._apply_row("models"))
+        # 「测试并保存」由 dialogs._build_connection_tab() 统一放在页面底部。
 
         self._build_editor()
         self.refresh()
@@ -515,6 +544,9 @@ class ConnectionLibrary(QWidget):
         box.blockSignals(True)
         box.clear()
         box.addItem(i18n.tr('选择连接') if role == "translation" else i18n.tr('沿用翻译模型'), "")
+        if role == "vision":
+            from folith.model_connections import VISION_UNCONFIGURED
+            box.addItem(i18n.tr('未配置'), VISION_UNCONFIGURED)
         for profile in self.profiles:
             if role == "vision" and profile["provider"] not in adapter.vision_providers():
                 continue
@@ -526,7 +558,7 @@ class ConnectionLibrary(QWidget):
         self.update_model_selector(role)
 
     def make_model_selector(self, role):
-        box = style.ComboBox()
+        box = style.ComboBox(self)   # parent=self 防止 setVisible 前以顶层窗口出现
         box.setSizeAdjustPolicy(box.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         box.setMinimumContentsLength(12)
         box.setAccessibleName(i18n.tr(connection_status.ROLE_LABELS[role]))
@@ -534,6 +566,8 @@ class ConnectionLibrary(QWidget):
         if role == "vision":
             # 换的不只是连接（select）时，模型本身变了也要重看输入类型。
             box.currentTextChanged.connect(lambda _v: self._update_vision_hint())
+        # #258：换模型时刷新能力警告。
+        box.currentTextChanged.connect(lambda model, r=role: self._update_capability_warning(r, model))
         self.model_selectors[role] = box
         return box
 
@@ -546,9 +580,27 @@ class ConnectionLibrary(QWidget):
         box.clear()
         if profile:
             models = list(dict.fromkeys([profile["model"], *profile.get("models", [])]))
+            backend_box = getattr(self.dialog, "ocr_backend_box", None)
+            backend = (backend_box.currentData() if backend_box is not None
+                       else self.dialog.config.ocr_backend)
+            if role == "vision" and backend == "online":
+                from .model_capability import classify_model
+                modalities = profile.get("model_modalities") or {}
+                chosen = self.role_models.get(role, "")
+                # Preserve an existing text-only selection so its warning stays visible.
+                models = [model for model in models
+                          if classify_model(model) == "general"
+                          and (model == chosen or not modalities.get(model)
+                               or "image" in modalities[model])]
+                if not models:
+                    from folith.model_connections import VISION_UNCONFIGURED
+                    box.blockSignals(False)
+                    selector = self.dialog.vision_connection_box
+                    selector.setCurrentIndex(selector.findData(VISION_UNCONFIGURED))
+                    return
             box.addItems(models)
             chosen = self.role_models.get(role, "")
-            box.setCurrentText(chosen if chosen in models else profile["model"])
+            box.setCurrentText(chosen if chosen in models else models[0])
             self.role_models[role] = box.currentText()
         else:
             self.role_models[role] = ""
@@ -556,19 +608,28 @@ class ConnectionLibrary(QWidget):
         box.blockSignals(False)
         if role == "vision":
             self._update_vision_hint()
+        self._update_capability_warning(role, box.currentText())
 
     def _update_vision_hint(self):
         """「视觉」用途当前选中的模型：目录声明 / 实测结果 / 未知，三态如实显示。
 
         已知仅文本用警告色；未知保持中性——没有证据就不下结论（#48）。
+        有能力警告时隐藏类型提示，两者信息重叠，不重复显示。
         """
         hint = getattr(self, "vision_modality_hint", None)
         if hint is None:
             return
+        hint_holder = getattr(self, "vision_modality_hint_holder", None)
+
+        def _set_hint_visible(visible: bool) -> None:
+            hint.setVisible(visible)
+            if hint_holder is not None:
+                hint_holder.setVisible(visible)
+
         profile = next((p for p in self.profiles if p["id"] == self.roles.get("vision")), None)
         model = str(self.role_models.get("vision") or "")
         if not profile or not model:
-            hint.setVisible(False)
+            _set_hint_visible(False)
             return
         declared = (profile.get("model_modalities") or {}).get(model)
         if isinstance(declared, list) and declared:
@@ -577,7 +638,7 @@ class ConnectionLibrary(QWidget):
             else:
                 hint.set_status(i18n.tr('服务商目录标注该模型仅接受文本输入'), "attention")
             hint.setToolTip("")
-            hint.setVisible(True)
+            _set_hint_visible(True)
             return
         probe = connection_status.vision_probe_result(
             str(profile.get("provider") or ""), model, str(profile.get("base_url") or ""),
@@ -588,11 +649,29 @@ class ConnectionLibrary(QWidget):
             else:
                 hint.set_status(i18n.tr('「测试视觉」实测未通过图像输入'), "attention")
                 hint.setToolTip(probe["message"])
-            hint.setVisible(True)
+            _set_hint_visible(True)
             return
         hint.set_status(i18n.tr('输入类型未知；可在编辑连接里点「测试视觉」实测'), "idle")
         hint.setToolTip("")
-        hint.setVisible(True)
+        _set_hint_visible(True)
+
+    def _update_capability_warning(self, role: str, model: str) -> None:
+        """翻译 / 审校角色：模型不匹配时显示小标签（专用翻译 / 仅 OCR）。无红色警告。"""
+        if role == "vision":
+            # 视觉角色只刷新输入类型提示，无内联标签。
+            self._update_vision_hint()
+            return
+        tag_label = self.capability_tags.get(role)
+        if tag_label is None:
+            return
+        from .model_capability import capability_tag
+        text, tooltip = capability_tag(role, model)
+        if text:
+            tag_label.setText(i18n.tr_dynamic(text))
+            tag_label.setToolTip(i18n.tr_dynamic(tooltip))
+            tag_label.setVisible(True)
+        else:
+            tag_label.setVisible(False)
 
     def select(self, role):
         box = self.selectors.get(role) if role != "vision" else self.dialog.vision_connection_box

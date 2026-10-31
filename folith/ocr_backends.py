@@ -37,11 +37,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 TESSERACT_BACKEND = "tesseract"
 PADDLEOCR_BACKEND = "paddleocr"
 ONLINE_OCR_BACKEND = "online"
+#: Plain-text OCR API backend (channel B, OCR API sub-channel).
+OCR_API_BACKEND = "ocr_api"
 
 #: Values a task may store for the OCR source.  ``auto`` keeps its historical
 #: local-only meaning: it prefers Tesseract and falls back to PaddleOCR, and it
 #: never silently sends page images to a remote service.
-SUPPORTED_BACKENDS = ("auto", "tesseract", "paddle", "online")
+#: ``ocr_api`` is the new plain-text transcription path (channel B, OCR API).
+SUPPORTED_BACKENDS = ("auto", "tesseract", "paddle", "online", "ocr_api")
 
 
 from folith.ocr_evidence import OCRBlock, OCRRuntimeInfo, OCRBackend
@@ -152,7 +155,8 @@ def resolve_backend(requested: Optional[str] = None, *,
                     language: str = "eng",
                     psm: Optional[int] = None,
                     paddle_model: Optional[str] = None,
-                    online_config: Optional[OnlineOCRConfig] = None
+                    online_config: Optional[OnlineOCRConfig] = None,
+                    ocr_api_config: Optional[OnlineOCRConfig] = None,
                     ) -> Tuple[OCRBackend, List[str]]:
     """Return ``(backend, warnings)``; never silently pretends a backend ran.
 
@@ -184,6 +188,12 @@ def resolve_backend(requested: Optional[str] = None, *,
         if not candidate.available():
             raise OCRUnavailable("unconfigured", candidate.unavailable_reason())
         return candidate, []
+    if name == OCR_API_BACKEND:
+        from folith.ocr_api_backend import OcrApiBackend
+        candidate = OcrApiBackend(ocr_api_config or OnlineOCRConfig())
+        if not candidate.available():
+            raise OCRUnavailable("unconfigured", candidate.unavailable_reason())
+        return candidate, []
     raise OCRUnavailable("unsupported", f"未知的 OCR backend：{name}")
 
 
@@ -193,6 +203,8 @@ def normalize_backend(value=None):
         name = "paddle"
     if name in {"online_ocr", "online_api", "openai_ocr", "api"}:
         name = ONLINE_OCR_BACKEND
+    if name in {"ocr_api_backend", "ocrapi", "ocr-api"}:
+        name = OCR_API_BACKEND
     if name not in SUPPORTED_BACKENDS:
         raise OCRUnavailable("unsupported", f"未知的 OCR backend：{name}")
     return name

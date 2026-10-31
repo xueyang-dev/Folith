@@ -5478,13 +5478,31 @@ class WorkbenchView(QWidget):
             return
         state = self._state or {}
         recognising = self._recognition_progress()
+        missing = [row.get("page") for row in state.get("ocr_missing_pages") or []
+                   if isinstance(row, dict)]
+        if (missing and str((self._last_runtime or {}).get("status") or "") == "paused"
+                and not (state.get("paras") or state.get("pairs"))):
+            # OCR 通道读完整本后有页没读成：停在翻译之前，等用户继续重读。
+            shown = "、".join(str(page) for page in missing[:8]) + ("…" if len(missing) > 8 else "")
+            self.no_segments_state.set_text(
+                i18n.tr('第 {v0} 页未能识别，已在翻译前暂停', v0=shown),
+                i18n.tr('点「继续」只重读这些页，其余页沿用已识别的结果；如果一直失败，'
+                        '可在 设置 › 模型 › 读取扫描页 换一个 OCR 模型后再继续。'))
+            return
         if recognising and not (state.get("paras") or state.get("pairs")):
             done, total = recognising
             from folith.streaming_ingest import FIRST_WINDOW_PAGES
+            backend = ((state.get("pipeline_config") or {}).get("ocr_backend")
+                       or state.get("ocr_backend") or "online")
+            if isinstance(state.get("streaming_ingest"), dict) or backend == "online":
+                # 视觉模型通道边识别边翻译。
+                hint = i18n.tr('满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。',
+                               v0=min(FIRST_WINDOW_PAGES, total))
+            else:
+                # OCR 通道（OCR API / Tesseract）先读完整本、整理原文，再开始翻译。
+                hint = i18n.tr('全部页识别完、整理好原文后开始翻译；已识别的页会保存，暂停或重开后不会重读。')
             self.no_segments_state.set_text(
-                i18n.tr('正在识别第 {v0}/{v1} 页', v0=done, v1=total),
-                i18n.tr('满 {v0} 页后开始翻译；已识别的页会保存，暂停或重开后不会重读。',
-                        v0=min(FIRST_WINDOW_PAGES, total)))
+                i18n.tr('正在识别第 {v0}/{v1} 页', v0=done, v1=total), hint)
             return
         if state.get("excluded_segments"):
             title = i18n.tr('所有段落都被排除了')
