@@ -171,7 +171,13 @@ class PageFailed:
             return "服务商超时"
         if self.code == "rate_limited":
             return "服务商限流"
+        # #258：模型不按结构化格式回答（常见于只做 OCR 的模型），不能让用户
+        # 以为是「输出太长」，也不能只显示一句内部错误码。
+        if self.code.startswith("invalid_semantic"):
+            return "模型未按结构化格式回答（疑似只做 OCR 的模型）"
         if self.code == "truncated":
+            if "纯文本" in self.message:
+                return "模型只返回纯文本，未按结构化格式回答"
             return "输出被截断"
         if self.code == "incomplete_response":
             return "模型没有正常结束"

@@ -4,7 +4,8 @@ from __future__ import annotations
 import uuid
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
+                               QListWidgetItem, QPushButton, QSizePolicy, QVBoxLayout,
+                               QWidget)
 from . import adapter, components, connection_status, i18n, icons, style
 from . import theme as theme_module
 from folith.model_connections import effective_config
@@ -59,6 +60,8 @@ class ConnectionLibrary(QWidget):
         dialog._vision_view = adapter.vision_connection_view()
         dialog.vision_connection_box = style.ComboBox()
         self.selectors = {}
+        #: 翻译 / 审校行：所选模型不匹配该角色时显示一行警告（#258）。保存仍然允许。
+        self.capability_warnings: dict[str, components.StatusLabel] = {}
         self.role_group = components.FormGroup()
         self.role_group.add_row(self._group_header(i18n.tr('用途')))
         for role, label in self.ROLES:
@@ -70,17 +73,21 @@ class ConnectionLibrary(QWidget):
             model_box = self.make_model_selector(role)
             if role != "vision":
                 self.selectors[role] = box
-            self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
+                self.role_group.add_row(
+                    self._role_row_with_warning(role, i18n.tr(label), box, model_box))
+            else:
+                self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
             if role == "vision":
-                # #48：所选视觉模型若是「已知仅文本」给出警告；未知如实说未知。
-                hint = components.StatusLabel("", "idle")
+                # #48 / #258：所选视觉模型的能力提示——OCR 专用、仅文本或未知，如实显示。
+                # 能力警告可能不止一行（别的语言更长），所以折行显示，不省略。
+                hint = components.StatusLabel("", "idle", wrap=True)
                 hint.dot.hide()
                 hint.setVisible(False)
                 holder = QWidget()
                 holder_row = QHBoxLayout(holder)
                 holder_row.setContentsMargins(theme_module.SPACE["lg"], 0,
                                                theme_module.SPACE["md"], 0)
-                holder_row.addWidget(hint)
+                holder_row.addWidget(hint, 1)
                 self.role_group.add_row(holder)
                 self.vision_modality_hint = hint
         layout.addWidget(self.role_group)
@@ -104,6 +111,35 @@ class ConnectionLibrary(QWidget):
         for control in controls:
             row.addWidget(control)
         return holder
+
+    def _role_row_with_warning(self, role, title, *controls):
+        """用途行（翻译 / 审校）：选择器在上，模型不匹配该角色时下面跟一行警告（#258）。
+
+        警告放在同一行内（而不是另起 FormGroup 行），隐藏时不占高度、也不留多余的发丝线。
+        """
+        from .dialogs import SETTING_LABEL_WIDTH
+
+        holder = QWidget()
+        holder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(theme_module.SPACE["xxs"])
+        line = QHBoxLayout()
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(theme_module.SPACE["md"])
+        for control in controls:
+            line.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+        line.addStretch(1)
+        column.addLayout(line)
+        warning = components.StatusLabel("", "attention", wrap=True)
+        warning.dot.hide()
+        warning.setVisible(False)
+        column.addWidget(warning)
+        self.capability_warnings[role] = warning
+        row = components.FormRow(title, value=holder)
+        row.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
+        row.title_label.setWordWrap(True)
+        return row
 
     # ---- 添加 / 编辑连接的面板 ------------------------------------------------------
     def _build_editor(self):
@@ -534,6 +570,8 @@ class ConnectionLibrary(QWidget):
         if role == "vision":
             # 换的不只是连接（select）时，模型本身变了也要重看输入类型。
             box.currentTextChanged.connect(lambda _v: self._update_vision_hint())
+        # #258：换模型时刷新该用途的能力警告（视觉由 _update_vision_hint 处理）。
+        box.currentTextChanged.connect(lambda _v, r=role: self._update_capability_warning(r))
         self.model_selectors[role] = box
         return box
 
@@ -554,8 +592,7 @@ class ConnectionLibrary(QWidget):
             self.role_models[role] = ""
         box.setVisible(profile is not None)
         box.blockSignals(False)
-        if role == "vision":
-            self._update_vision_hint()
+        self._update_capability_warning(role)
 
     def _update_vision_hint(self):
         """「视觉」用途当前选中的模型：目录声明 / 实测结果 / 未知，三态如实显示。
@@ -569,6 +606,15 @@ class ConnectionLibrary(QWidget):
         model = str(self.role_models.get("vision") or "")
         if not profile or not model:
             hint.setVisible(False)
+            return
+        # #258：OCR 专用 / 翻译专用模型直接给出能力警告——它们能收图也可能「仅文本」未知，
+        # 但都不会按结构化格式回答，比模态提示更该先说。
+        from .model_capability import capability_warning
+        capability = capability_warning("vision", model)
+        if capability:
+            hint.set_status(capability, "attention")
+            hint.setToolTip("")
+            hint.setVisible(True)
             return
         declared = (profile.get("model_modalities") or {}).get(model)
         if isinstance(declared, list) and declared:
@@ -593,6 +639,19 @@ class ConnectionLibrary(QWidget):
         hint.set_status(i18n.tr('输入类型未知；可在编辑连接里点「测试视觉」实测'), "idle")
         hint.setToolTip("")
         hint.setVisible(True)
+
+    def _update_capability_warning(self, role):
+        """翻译 / 审校：所选模型不匹配该角色时显示一行警告；视觉复用输入类型提示。"""
+        if role == "vision":
+            self._update_vision_hint()
+            return
+        warning = self.capability_warnings.get(role)
+        if warning is None:
+            return
+        from .model_capability import capability_warning
+        text = capability_warning(role, str(self.role_models.get(role) or ""))
+        warning.set_status(text, "attention")
+        warning.setVisible(bool(text))
 
     def select(self, role):
         box = self.selectors.get(role) if role != "vision" else self.dialog.vision_connection_box
