@@ -267,7 +267,7 @@ the code does not do. The design follows the code in every case.
 | **D6** | "place the doc in the existing documentation system; add an index entry if one exists" | There is no `docs/index.md` or `docs/README.md`. The index is the `## 📖 文档` list in the root `README.md` | This document is linked from that list (one line). |
 | **D7** | Real-corpus acceptance drives the HIR number | The repository contains no 漢帝国の成立 translation task, no ~150-suggestion findings export, and no Japanese→Chinese translation regression corpus. `research/historical-japanese/` is an OCR ground-truth experiment on 吾輩は猫である, not a translation task | No HIR, precision, recall or escape-rate number is reported (§7.2). Only the annotation format and the missing inputs are defined. |
 | **D8** | Entity/consistency findings are "produced by detectors" like the others | `concept_decisions` already *suppresses* `entity_conflict` findings and marks them resolved by `system` (`folith/engine/glossary_ops.py:779`) | This is existing `verified_safe`-shaped behaviour. The design formalises it as an evidence kind rather than inventing a second suppression path. |
-| **D9** | `state["qa_triage_enabled"]` is a new switch | No triage switch exists; the closest precedent is `state["finding_groups_enabled"]` / `FOLIOTHREAD_FINDING_GROUPS` (`folith/finding_groups.py:56`) | The switch copies that pattern exactly, including env-var precedence. |
+| **D9** | `state["qa_triage_enabled"]` is a new switch | No triage switch exists; the closest precedent is `state["finding_groups_enabled"]` / `finding_groups.ENV_SWITCH` (`folith/finding_groups.py`) | The switch copies that pattern exactly, including env-var precedence. The new env var uses the current brand prefix (`FOLITH_`), not the legacy one that switch retains. |
 | **D10** | Findings enter the human queue in one place | Two surfaces render them: the review page (`folith/qt/review_panel.py`) and the check-and-fix page (`folith/qt/followup_panel.py`). They do **not** read the same data: the review page renders `queue_items`, the follow-up page aggregates operational cards from `task_attention.state_facts` and never reads findings (`folith/qt/adapter.py:2223`) | The audit list is added to the shared read model (`review_workbench_view`) so the review page cannot diverge from the exported audit trail; the follow-up page is out of scope for this round. |
 | **D11** | Auto-commit must not touch a segment with "human edits or locks" | There is **no segment-level lock**. Protection is three pair flags (`human_accepted`, `human_edited`, `reviewed`), of which two are locked for batch writes, plus `pair["excluded"]` | §5.5 is written in the real vocabulary: `locked_protection(pair) == []`, no `human_edited`, not `excluded`. No new lock flag is introduced. |
 | **D12** | The existing grouping mechanism still makes users confirm one by one (implying it is rendered but ineffective) | `finding_groups` output has **no Qt consumer**: `view["finding_groups"]` and per-item `finding_group_*` are read only by `tests/deterministic_finding_groups_test.py`. The review page renders one row per finding | The grouping does not reduce clicks because it is never shown. This makes P1-4 (queue / audit list) the first place grouping becomes visible, and it is a separate concern from triage. |
@@ -514,8 +514,12 @@ the same.
 ```python
 # default: off
 state["qa_triage_enabled"]  is True     # per-task opt-in
-FOLIOTHREAD_QA_TRIAGE=0                 # env kill switch wins, same as FOLIOTHREAD_FINDING_GROUPS
+FOLITH_QA_TRIAGE=0                      # env kill switch wins, same precedence as finding_groups.ENV_SWITCH
 ```
+
+The environment variable uses the current brand prefix, not the legacy one retained by
+`finding_groups.ENV_SWITCH` (`folith/finding_groups.py`): a new switch must not add a new
+occurrence of the retired prefix (`tests/brand_regression_test.py`).
 
 - **Off (default):** no triage records are written, `queue_items` and `handled_items` are
   exactly what they are today, the gate is exactly what it is today. Byte-for-byte behaviour
@@ -909,7 +913,7 @@ rewritten. Note that in production data the Translation Core lifecycle is dorman
 `input_fingerprint`, five dispositions, allowlisted evidence, `actor_type`, `candidate_id`,
 `committed` and a `snapshot`), one read-model filter that moves `verified_safe` and verified
 `auto_resolvable` findings from the human queue to an audit list, one default-off switch
-(`state["qa_triage_enabled"]` / `FOLIOTHREAD_QA_TRIAGE`), and one verification helper that
+(`state["qa_triage_enabled"]` / `FOLITH_QA_TRIAGE`), and one verification helper that
 re-runs the same detector after a committed repair. Staging and committing already exist and are
 already separated; the design adds the decision record and the queue filter, not a new
 transaction. The gate predicate is unchanged; the only new gate rule is stricter (`blocking` can
