@@ -264,3 +264,124 @@ def test_english_filter_and_segment_frame_are_translated(qt_app):
         assert _first_card_text(panel).startswith("Segment 4 · ")
     finally:
         panel.close()
+
+
+# ---------------------------------------- #102 剩余缺口：核心拼接句本地化 --------
+#
+# 审校就绪里的「按策略跳过：<原因> N 段」与合成项（跳过/待审/需重审/失败）的
+# 摘要/建议原本在核心层拼成中文再交给界面，英文界面会漏出中文。这里钉住：
+# 结构化的覆盖信息 + 跳过原因码能在界面层按语言重排，且默认中文逐字不变。
+
+import re as _re  # noqa: E402
+
+from folith.workbench_view import review_workbench_view  # noqa: E402
+
+_CJK = _re.compile(r"[\u4e00-\u9fff]")
+
+_REVIEW = {"phase": "formal_review", "review_scope": "current_translation",
+           "segment_ids": [], "freshness_status": "current",
+           "stale_segment_ids": []}
+
+
+def _clean_event(index):
+    return {**_REVIEW, "review_event_id": f"clean-{index}",
+            "segment_ids": [index], "decision": "clean",
+            "completion_receipt": {"status": "completed",
+                                   "reviewed_segment_ids": [index]}}
+
+
+def _skipped_event(index):
+    return {**_REVIEW, "review_event_id": f"skip-{index}",
+            "segment_ids": [index], "decision": "skipped_low_risk",
+            "skip_reason": "clean_deterministic",
+            "completion_receipt": {"status": "skipped_low_risk",
+                                   "reviewed_segment_ids": []}}
+
+
+def _stale_event(index):
+    return {**_REVIEW, "review_event_id": f"stale-{index}",
+            "segment_ids": [index], "decision": "clean",
+            "freshness_status": "stale", "stale_segment_ids": [index],
+            "stale_reason": "当前译文已修改",
+            "completion_receipt": {"status": "completed",
+                                   "reviewed_segment_ids": [index]}}
+
+
+def _review_state(count, evidence):
+    return {"translation_core_review_required": True, "p2_done": True,
+            "pairs": [{"source": f"Source {index}", "target": f"Target {index}"}
+                      for index in range(count)],
+            "findings": [], "human_actions": [], "review_evidence": evidence}
+
+
+def _all_skipped():
+    return _review_state(3, [_skipped_event(index) for index in range(3)])
+
+
+def _partial():
+    return _review_state(4, [_clean_event(0), _clean_event(1),
+                             _skipped_event(2), _skipped_event(3)])
+
+
+def _stale():
+    return _review_state(2, [_stale_event(0), _clean_event(1)])
+
+
+def _select_first_card(panel):
+    for row in range(panel.list.count()):
+        if panel.list.item(row).data(Qt.ItemDataRole.UserRole):
+            panel.list.setCurrentRow(row)
+            return
+    raise AssertionError("队列里没有卡片")
+
+
+@pytest.mark.parametrize("lang", ["en", "de", "es", "fr", "ru", "ar"])
+@pytest.mark.parametrize("factory", [_all_skipped, _partial])
+def test_skipped_coverage_copy_is_localized_without_leaking_chinese(
+        qt_app, lang, factory):
+    i18n.set_language(lang)
+    view = review_workbench_view(factory())
+    assert view["coverage"]["kind"] in ("skipped", "partial")
+    panel = ReviewPanel()
+    panel.resize(1180, 760)
+    panel.apply(view)
+    try:
+        assert not _CJK.search(panel.headline.text()), panel.headline.text()
+        assert not _CJK.search(panel.detail.text()), panel.detail.text()
+        card = _first_card_text(panel)
+        assert not _CJK.search(card), card
+        _select_first_card(panel)
+        body = panel.item_body.toPlainText()
+        assert not _CJK.search(body), body
+    finally:
+        panel.close()
+
+
+@pytest.mark.parametrize("lang", ["en", "de"])
+def test_stale_task_recommendation_is_localized(qt_app, lang):
+    i18n.set_language(lang)
+    view = review_workbench_view(_stale())
+    panel = ReviewPanel()
+    panel.resize(1180, 760)
+    panel.apply(view)
+    try:
+        _select_first_card(panel)
+        body = panel.item_body.toPlainText()
+        assert not _CJK.search(body), body
+        if lang == "en":
+            assert "Re-run review" in body
+    finally:
+        panel.close()
+
+
+def test_default_chinese_coverage_copy_is_byte_identical_to_core(qt_app):
+    i18n.set_language("zh-CN")
+    for factory in (_all_skipped, _partial):
+        view = review_workbench_view(factory())
+        panel = ReviewPanel()
+        panel.apply(view)
+        try:
+            assert panel.headline.text() == view["readiness"]["label"]
+            assert panel.detail.text() == view["readiness"]["detail"]
+        finally:
+            panel.close()

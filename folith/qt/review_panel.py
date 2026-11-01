@@ -85,6 +85,92 @@ def _colon() -> str:
     return "：" if i18n.language().startswith(("zh", "ja", "ko")) else ": "
 
 
+def _list_separator() -> str:
+    """并列短句的分隔符：中日韩用全角分号，其余语言用半角 + 空格。"""
+    return "；" if i18n.language().startswith(("zh", "ja", "ko")) else "; "
+
+
+def _localized_reason_breakdown(reasons) -> str:
+    """把核心给出的跳过原因码按当前语言重排成「原因 N 段」列表。
+
+    核心只交出原因码与段数（见 ``workbench_view.coverage_copy_parts``），
+    这里的每个词都走目录，所以英文界面不会漏出「无确定性风险信号 10 段」。
+    """
+    from folith import workbench_view as _workbench_view
+
+    parts: list[str] = []
+    for entry in reasons or []:
+        if not isinstance(entry, dict):
+            continue
+        count = int(entry.get("count") or 0)
+        if count <= 0:
+            continue
+        code = str(entry.get("reason") or "")
+        label = i18n.tr(_workbench_view.skip_reason_label(code))
+        parts.append(i18n.tr("{v0} {v1} 段", v0=label, v1=count))
+    return _list_separator().join(parts)
+
+
+def _coverage_texts(view: dict) -> tuple[str, str]:
+    """审校就绪的标题与说明：覆盖被整段/部分跳过时按当前语言重排。
+
+    其它就绪状态的标题已在目录里，仍走 ``tr_dynamic``；只有核心拼好、带跳过
+    原因明细的句子需要在这里用结构化部件重新拼，否则英文界面会显示中文。
+    """
+    readiness = view.get("readiness") or {}
+    label = i18n.tr_dynamic(str(readiness.get("label") or ""))
+    detail = i18n.tr_dynamic(str(readiness.get("detail") or ""))
+    coverage = view.get("coverage") or {}
+    kind = str(coverage.get("kind") or "")
+    breakdown = _localized_reason_breakdown(coverage.get("reasons"))
+    if kind == "skipped":
+        label = i18n.tr("{v0} 段未执行本轮独立语义审校（按策略跳过）",
+                        v0=int(coverage.get("skipped") or 0))
+        detail = i18n.tr(
+            "按策略跳过：{v0}。这些段落没有独立审校结论，"
+            "不等于审校通过；现有交付门禁保持不变。", v0=breakdown)
+    elif kind == "partial":
+        label = i18n.tr("部分译文未执行独立语义审校")
+        detail = i18n.tr(
+            "{v0} / {v1} 段已完成独立审校，{v2} 段未执行本轮独立语义审校"
+            "（按策略跳过：{v3}）。",
+            v0=int(coverage.get("reviewed") or 0),
+            v1=int(coverage.get("total") or 0),
+            v2=int(coverage.get("skipped") or 0),
+            v3=breakdown)
+    return label, detail
+
+
+def _localized_task_copy(item: dict) -> dict:
+    """合成审校项（待审 / 需重审 / 失败 / 跳过）的界面文案。
+
+    发现项的摘要、说明与建议是模型产出，必须保持原样；只有这几类**合成项**
+    的句子是核心拼好的界面文案，需要按当前语言重排。返回需要覆盖的字段；
+    未覆盖的字段由调用方回落到 ``tr_dynamic`` / 原文。
+    """
+    kind = str(item.get("kind") or "")
+    if kind not in _REVIEW_TASK_KINDS:
+        return {}
+    if kind == "skipped":
+        from folith import workbench_view as _workbench_view
+
+        overrides: dict[str, str] = {}
+        code = str(item.get("skip_reason") or "")
+        reason = i18n.tr(_workbench_view.skip_reason_label(code)) if code else ""
+        if reason:
+            summary = i18n.tr(
+                "按策略跳过：{v0}。没有独立语义审校结果，不等于审校通过。",
+                v0=reason)
+            overrides["summary"] = summary
+            overrides["reason"] = summary
+            overrides["explanation"] = summary
+        overrides["recommendation"] = i18n.tr(
+            "如需覆盖本段，请重新运行独立审校。")
+        return overrides
+    return {"recommendation": i18n.tr(
+        "重新运行此段审校，生成与当前译文一致的新结果。")}
+
+
 class ReviewPanel(QWidget):
     """审校队列与详情。"""
 
@@ -385,8 +471,9 @@ class ReviewPanel(QWidget):
         self._items = list(self._view.get("queue_items") or [])
         self._handled = list(self._view.get("handled_items") or [])
         readiness = self._view.get("readiness") or {}
-        self.headline.setText(i18n.tr_dynamic(str(readiness.get("label") or "")))
-        self.detail.setText(i18n.tr_dynamic(str(readiness.get("detail") or "")))
+        headline, detail = _coverage_texts(self._view)
+        self.headline.setText(headline)
+        self.detail.setText(detail)
         if not self._initialised:
             # 第一次打开：有「必须处理」就只展开它；没有就把第一个非空组展开，
             # 免得左栏看起来是空的。
@@ -408,8 +495,8 @@ class ReviewPanel(QWidget):
             self.empty_state.setVisible(False)
             return
         status = str(readiness.get("status") or "")
-        title = i18n.tr_dynamic(str(readiness.get("label") or "")) or i18n.tr('尚未审校')
-        hint = i18n.tr_dynamic(str(readiness.get("detail") or ""))
+        title, hint = _coverage_texts(self._view)
+        title = title or i18n.tr('尚未审校')
         # 审校已完成：没有要做的事，就不给按钮。
         self.empty_state.set_text(title, hint)
         coverage_complete = readiness.get("coverage_complete")
@@ -512,7 +599,8 @@ class ReviewPanel(QWidget):
         if item.get("kind") in _REVIEW_TASK_KINDS:
             # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案；
             # 发现项的摘要是模型产出，必须原样显示。
-            summary = i18n.tr_dynamic(summary)
+            summary = _localized_task_copy(item).get("summary") \
+                or i18n.tr_dynamic(summary)
         # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
         tags = [value for value in (decision, label)
                 if value and value not in title]
@@ -664,11 +752,12 @@ class ReviewPanel(QWidget):
             # 不是"待处理但没人看过"。
             parts.append(f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
                          f"{_escape(decision)}</p>")
+        task_copy = _localized_task_copy(item) if task_item else {}
         for label, key in (("问题", "summary"), ("原因", "reason"),
                            ("说明", "explanation"), ("建议", "recommendation")):
             value = str(item.get(key) or "").strip()
             if value and task_item:
-                value = i18n.tr_dynamic(value)
+                value = task_copy.get(key) or i18n.tr_dynamic(value)
             if value and not any(value in part for part in parts):
                 parts.append(f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
         from folith.textual import text_direction
@@ -687,9 +776,11 @@ class ReviewPanel(QWidget):
                              f"<p{block} style=\"margin-top:2px\">"
                              f"{self._highlight(value, span)}</p>")
         self.item_body.setHtml("".join(parts))
+        summary_a11y = (task_copy.get("summary") if task_item else "") \
+            or str(item.get("summary") or "")
         self.item_body.setAccessibleDescription(
             " · ".join(value for value in (self._item_title(item), chip_text,
-                                          str(item.get("summary") or ""))
+                                          summary_a11y)
                        if value))
         entity = self._entity_for(item)
         if entity:
