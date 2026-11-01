@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import subprocess
 import sys
@@ -73,6 +74,15 @@ HOME_PATH_PATTERNS = [
     (r"/var/folders/[A-Za-z0-9._\-]+/", "macOS 临时目录"),
     (r"[Cc]:\\Users\\[A-Za-z0-9._\-]+", "Windows 家目录"),
 ]
+
+# Verbatim, publicly redistributed RWS fixtures. Exempt only these exact bytes:
+# an edited file must be scanned again. Provenance and hashes are in the README.
+_PUBLIC_FIXTURE_HASHES = {
+    "tests/fixtures/sdlxliff/TTSExample.docx.sdlxliff":
+        "ab3fcbcb32a91ad894c25636be6970c70c218f674e3d57b87c8eaf4b909b8710",
+    "tests/fixtures/sdlxliff/quickplace.docx.sdlxliff":
+        "85e67619be7594ff80aaae03f17adbbe85f048680f39b74b31e36e19fff1cb4b",
+}
 
 
 class Report:
@@ -203,6 +213,11 @@ def check_no_home_paths(rep: Report, ref: str) -> None:
     rep.section(f"[4] {ref} 树中的本机绝对路径")
     hits: list[tuple[str, int, str]] = []
     for rel in _ref_files(ref):
+        expected = _PUBLIC_FIXTURE_HASHES.get(rel)
+        if expected:
+            blob = _ref_blob(ref, rel)
+            if blob is not None and hashlib.sha256(blob).hexdigest() == expected:
+                continue
         text = _ref_text(ref, rel)
         for pat, label in HOME_PATH_PATTERNS:
             for m in re.finditer(pat, text):
