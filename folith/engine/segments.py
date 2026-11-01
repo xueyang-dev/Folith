@@ -427,9 +427,8 @@ def _splice_positional_columns(state, at, remove_n, insert=None, *,
 
     ``range_action`` moves ``segmentation.paragraph_ranges`` with the edit:
 
-    * ``None``               leave the range table (a forward split/insert does
-                             this on purpose so the outline anchor can prove
-                             "structure edited" instead of silently re-locating);
+    * ``None``               leave the range table (an in-place, same-length
+                             edit such as ``source_edit``);
     * ``("shift", index)``   one segment left the work list at ``index``;
     * ``("widen", index)``   one segment joined the work list at ``index``;
     * ``("replace", rows)``  install an explicitly computed range table.
@@ -477,12 +476,10 @@ def _positional_columns_report(state):
     An empty list means the invariant holds.  Each entry names the offending
     column so a rejected edit points straight at the drifted list.
 
-    The range table is allowed to end *before* ``len(paras)``: a forward split
-    or insert deliberately leaves it unchanged (``range_action=None`` in
-    :func:`_splice_positional_columns`) so the outline anchor can detect
-    "structure edited" through the UID path (see ``tests/outline_anchor_test.py``).
-    It may never *exceed* the work list — that is exactly the direction the
-    six-exclusion desync ran.
+    A non-empty range table must be a contiguous cover from 0 to ``len(paras)``:
+    the last row's ``end`` equals ``len(paras)``, with no gap, overlap or
+    overrun.  Forward split/insert widen the table and their undo shifts it back,
+    so every legitimate edit leaves the table complete.
     """
     errors = []
     paras = state.get("paras")
@@ -536,6 +533,11 @@ def _positional_columns_report(state):
                                    "message": f"第 {position} 行的 paragraph_index 无效：{paragraph_index!r}"})
                     break
                 cursor = end
+            else:
+                if cursor != para_count:
+                    errors.append({"column": "segmentation.paragraph_ranges",
+                                   "message": f"最后一行结束于 {cursor}，应完整覆盖到 {para_count}"
+                                              "（段落区间未覆盖整个工作列表）"})
         output_count = segmentation.get("output_segment_count")
         if isinstance(output_count, int) and not isinstance(output_count, bool) \
                 and output_count != para_count:
@@ -2184,9 +2186,10 @@ def mutate_translation_segments(
                 insert[column] = [json.loads(json.dumps(original)) if original else [],
                                   json.loads(json.dumps(original)) if original else []]
         # 拆分增加了一个段落位置：右半段继承左半段的锚点（无法从拆分文本还原
-        # 空间坐标）。正向拆分刻意不改 paragraph_ranges，让大纲锚点沿 UID 路径
-        # 判定"结构已编辑"。
-        _splice_positional_columns(state, index, 1, insert)
+        # 空间坐标）。区间按「在 index+1 新增一段」加宽，撤销拆分会按同一位置
+        # 移出（shift），正向与撤销互为逆操作。
+        _splice_positional_columns(state, index, 1, insert,
+                                   range_action=("widen", index + 1))
         affected_hint = [index, index + 1]
     elif operation == "merge":
         if index + 1 >= len(pairs):
@@ -2252,11 +2255,13 @@ def mutate_translation_segments(
         if state.get("segment_source_spans"):
             inserted["source_spans"] = []
         inserted[_c.SEGMENT_UID_FIELD] = next_segment_uid(state, job_id)
-        # 插入增加了一个段落位置：新段没有来源锚点，在对应位置插入空列表。
+        # 插入增加了一个段落位置：新段没有来源锚点，在对应位置插入空列表；
+        # 区间按「在 index+1 新增一段」加宽（撤销插入按同一位置移出）。
         _splice_positional_columns(
             state, index + 1, 0,
             {"pairs": [inserted], "paras": [""],
-             "segment_source_spans": [[]], "segment_source_marks": [[]]})
+             "segment_source_spans": [[]], "segment_source_marks": [[]]},
+            range_action=("widen", index + 1))
         affected_hint = [index + 1]
     elif operation == "exclude":
         # 「排除」把这一段整体移出 pairs/paras：不进入翻译、不计入待完成数量、

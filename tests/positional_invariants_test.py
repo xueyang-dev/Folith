@@ -229,6 +229,15 @@ def test_random_structure_edits_keep_positional_columns_in_step(tmp_path, monkey
         report = core.check_positional_invariants(state)
         assert report["ok"], (
             f"第 {step} 步（{operation}，{outcome}）后位置数据脱节：{report['summary']}")
+        # Explicit full-coverage assertion (the invariant now requires it too): a
+        # non-empty range table must run contiguously from 0 to len(paras).
+        rows = (state.get("segmentation") or {}).get("paragraph_ranges") or []
+        if rows:
+            assert rows[0]["start"] == 0, (step, operation, rows)
+            for previous, current in zip(rows, rows[1:]):
+                assert previous["end"] == current["start"], (step, operation, rows)
+            assert rows[-1]["end"] == len(state["paras"]), (
+                step, operation, rows[-1]["end"], len(state["paras"]))
         if outcome == "ok":
             applied += 1
     assert applied >= 100, "property test barely exercised any edit"
@@ -292,6 +301,32 @@ def test_include_reinserts_anchor_mark_and_range_at_the_original_position(
         ["a", "b", "c"]
     assert _ranges(restored) == [(0, 1), (1, 2), (2, 3)]
     assert core.check_positional_invariants(restored)["ok"]
+
+
+# ---------------------------------------------------------------------------
+# 4b. Forward split/insert widen the range table; undo is the exact inverse
+# ---------------------------------------------------------------------------
+def test_forward_split_and_insert_widen_ranges_and_undo_is_their_inverse(
+        tmp_path, monkeypatch):
+    """A forward edit and its undo must move paragraph_ranges symmetrically."""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    for operation, kwargs in (
+            ("split", {"source_a": "source 1 A", "source_b": "source 1 B",
+                       "target_a": "甲", "target_b": "乙"}),
+            ("insert", {})):
+        job = f"positional-symmetry-{operation}"
+        monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+        core.save_job_state(job, _state(4))
+        before = _ranges(core.load_job_state(job))
+        edited = core.mutate_translation_segments(job, 1, operation, **kwargs)
+        after = _ranges(edited)
+        # The table must still be a complete cover, one slot wider than before.
+        assert after[-1][1] == len(edited["paras"]) == 5, (operation, after)
+        assert core.check_positional_invariants(edited)["ok"]
+        undone = core.undo_translation_segment_structure(job)
+        assert _ranges(undone) == before, (operation, _ranges(undone), before)
+        assert len(undone["paras"]) == 4
+        assert core.check_positional_invariants(undone)["ok"]
 
 
 # ---------------------------------------------------------------------------
