@@ -391,3 +391,42 @@ def test_changed_prefix_rebuilds_rows_instead_of_reusing_stale_cells(bench):
     assert view.segment_list.rowCount() == 4
     assert view.segment_list.item(0, 1).text() == "Changed source."
     assert view.segment_list.item(0, 2).text() == "Changed target"
+
+
+def test_rebuilding_the_grid_does_not_notify_the_view_once_per_cell(bench):
+    """Opening a big task used to paint every cell with the model's signals live:
+    tens of thousands of ``dataChanged`` notifications, each handled by the view
+    and the accessibility cache (a 27 GB footprint on a ~5.8k-segment task). The
+    model must stay quiet for the batch and the view told once afterwards."""
+    view, app = bench
+    model = view.segment_list.model()
+    changes = []
+    model.dataChanged.connect(lambda *_: changes.append(1))
+    base = view._visible_rows()
+    view._rows = []
+    view._visible_rows = lambda: base * 84          # 252 rows: full synchronous rebuild
+    view._render_segments()
+    app.processEvents()
+    assert view.segment_list.rowCount() == len(base) * 84
+    assert len(changes) < 50, f"{len(changes)} dataChanged notifications for one rebuild"
+    assert view.segment_list.item(5, 2).text()      # and the cells really are painted
+
+
+def test_chunked_rebuild_does_not_notify_the_view_once_per_cell(bench):
+    """The large-task path paints off-screen rows in 4 ms slices with the model
+    kept quiet; only the visible batch tells the view, once for its range."""
+    view, app = bench
+    model = view.segment_list.model()
+    changes = []
+    model.dataChanged.connect(lambda *_: changes.append(1))
+    base = view._visible_rows()
+    total = len(base) * 400                          # 1,200 rows: forces the chunked path
+    view._rows = []
+    view._visible_rows = lambda: base * 400
+    view._render_segments()
+    _pump(app, 1.0)
+    assert view.segment_list.rowCount() == total
+    assert view.segment_list.item(total - 1, 2).text()   # every row was painted
+    assert 0 < len(changes) < 10, (
+        f"{len(changes)} dataChanged notifications for {total} rows and "
+        f"{total * 3} cells: still notifying per cell")

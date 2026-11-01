@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from contextlib import contextmanager
 
 from PySide6.QtCore import QEvent, QMargins, QRect, QRectF, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
@@ -5570,6 +5571,46 @@ class WorkbenchView(QWidget):
         pending_layout = self._paint_timer.isActive() and self._paint_schedules_heights
         self._queue_segment_paint(schedule_heights=pending_layout)
 
+    @contextmanager
+    def _quiet_segment_model(self):
+        """Block the item model's signals for one painting batch (#226).
+
+        Every ``QTableWidgetItem.setText/setForeground/setToolTip/setData`` makes
+        the model emit ``dataChanged``. Rebuilding a translated task therefore
+        fired tens of thousands of notifications, each handled by the view and
+        the Qt accessibility cache, and the process ballooned (a 27 GB footprint
+        on a ~5.8k-segment task). ``segment_list.blockSignals`` only silences the
+        widget's own signals, never the model's, so the model is blocked here for
+        the batch; the caller repaints its range with a single ``dataChanged``
+        afterwards instead of one notification per cell.
+        """
+        model = self.segment_list.model()
+        previous = model.blockSignals(True) if model is not None else False
+        try:
+            yield model
+        finally:
+            if model is not None:
+                model.blockSignals(previous)
+
+    @staticmethod
+    def _notify_painted_range(model, first: int, last: int) -> None:
+        """Emit one ``dataChanged`` for ``[first, last]`` after a blocked batch.
+
+        One range notification is the chunked equivalent of the single
+        ``layoutChanged`` the synchronous fix used: going through the model's
+        ``dataChanged`` (rather than a full ``layoutChanged``) keeps the current
+        selection, scroll position and inline editor intact, so repainting a
+        visible batch can tell the view once instead of once per cell.
+        """
+        if model is None:
+            return
+        first = max(0, first)
+        last = min(last, model.rowCount() - 1)
+        if last < first or model.columnCount() < 1:
+            return
+        model.dataChanged.emit(model.index(first, 0),
+                               model.index(last, model.columnCount() - 1))
+
     def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
         """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
 
@@ -5584,9 +5625,11 @@ class WorkbenchView(QWidget):
         self._repainted = []
         self._paint_schedules_heights = schedule_heights
         if len(self._rows) < 300:
-            for position, row in enumerate(self._rows):
-                if self._paint_row(position, row):
-                    self._repainted.append(position)
+            with self._quiet_segment_model() as model:
+                for position, row in enumerate(self._rows):
+                    if self._paint_row(position, row):
+                        self._repainted.append(position)
+            self._notify_painted_range(model, 0, len(self._rows) - 1)
             self._paint_pending = iter(())
             self._flush_painted_heights()
             return
@@ -5599,21 +5642,33 @@ class WorkbenchView(QWidget):
         first = max(0, table.rowAt(0))
         last = table.rowAt(table.viewport().height() - 1)
         last = first + 40 if last < 0 else last + 1
-        for position in range(first, min(len(self._rows), last)):
-            if self._paint_row(position, self._rows[position]):
-                self._repainted.append(position)
+        first = min(first, len(self._rows))
+        last = min(last, len(self._rows))
+        if last <= first:
+            self._flush_painted_heights()
+            return
+        with self._quiet_segment_model() as model:
+            for position in range(first, last):
+                if self._paint_row(position, self._rows[position]):
+                    self._repainted.append(position)
+        self._notify_painted_range(model, first, last - 1)
         self._flush_painted_heights()
 
     def _paint_segment_chunk(self) -> None:
         started = time.perf_counter()
-        while time.perf_counter() - started < 0.004:
-            position = next(self._paint_pending, None)
-            if position is None:
-                self._paint_timer.stop()
-                self._flush_painted_heights()
-                return
-            if self._paint_row(position, self._rows[position]):
-                self._repainted.append(position)
+        with self._quiet_segment_model():
+            while time.perf_counter() - started < 0.004:
+                position = next(self._paint_pending, None)
+                if position is None:
+                    self._paint_timer.stop()
+                    break
+                if self._paint_row(position, self._rows[position]):
+                    self._repainted.append(position)
+        # The rows in this slice are off-screen (the visible batch was already
+        # painted and notified), so they are filled silently: the model stays
+        # quiet for the whole pass and the grid reads each row's item when it
+        # later scrolls into view (or a scroll re-notifies the visible range).
+        # This keeps a whole rebuild at O(1) notifications, not one per cell.
         # A new commit can replace the pending paint pass before it finishes.
         # Preserve height changes from each completed slice, not only its tail.
         self._flush_painted_heights()
