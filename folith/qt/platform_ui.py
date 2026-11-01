@@ -9,7 +9,7 @@ from __future__ import annotations
 import platform
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QKeyCombination, QObject, Qt
 from PySide6.QtGui import QKeySequence
 
 
@@ -86,6 +86,75 @@ def shortcut(action: str) -> QKeySequence:
 
 def shortcut_text(action: str) -> str:
     return shortcut(action).toString(QKeySequence.SequenceFormat.NativeText)
+
+
+def install_shortcut_guard(widget, actions) -> QObject | None:
+    """Let a window-level action shortcut win over a focused text widget.
+
+    On Windows ``Ctrl+Alt+<letter>`` *is* AltGr: a text editor that has focus
+    claims the key through ``QEvent.ShortcutOverride`` and inserts a character,
+    so the ``QAction`` that owns the shortcut never fires. macOS is unaffected
+    because Command suppresses text insertion, which is why the same binding
+    works there (#276).
+
+    The guard ignores that override for our own actions so Qt first tries the
+    shortcut map, and — when Windows reports AltGr as ``GroupSwitchModifier``,
+    which can't match a ``Ctrl+Alt`` sequence — triggers the action itself on the
+    resulting key press. Callers pass the very ``QAction`` objects that hold the
+    bindings, so the binding and the visible hint still come from one definition.
+    """
+    if actions is None:
+        return None
+    if hasattr(actions, "shortcuts"):  # a single QAction
+        actions = (actions,)
+    entries = [(sequence, action) for action in actions
+               for sequence in (action.shortcuts() or [action.shortcut()])
+               if isinstance(sequence, QKeySequence) and not sequence.isEmpty()]
+    if widget is None or not entries:
+        return None
+
+    class _ShortcutGuard(QObject):
+        def _action_for(self, event):
+            pressed = QKeySequence(event.keyCombination())
+            modifiers = event.modifiers()
+            for sequence, action in entries:
+                if not action.isEnabled():
+                    continue
+                if pressed == sequence:
+                    return action
+                # Windows' AltGr (right Alt) is reported as GroupSwitchModifier,
+                # which Qt drops from QKeySequence (Ctrl+Alt+P becomes Ctrl+P).
+                # Drop GroupSwitch and restore Alt so the same physical chord
+                # still matches our Ctrl+Alt binding.
+                if modifiers & Qt.KeyboardModifier.GroupSwitchModifier:
+                    alt_modifiers = ((modifiers & ~Qt.KeyboardModifier.GroupSwitchModifier)
+                                     | Qt.KeyboardModifier.AltModifier)
+                    alt = QKeySequence(QKeyCombination(alt_modifiers, Qt.Key(event.key())))
+                    if alt == sequence:
+                        return action
+            return None
+
+        def eventFilter(self, watched, event):  # noqa: N802 - Qt naming
+            if event.type() not in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
+                return False
+            action = self._action_for(event)
+            if action is None:
+                return False
+            if event.type() == QEvent.Type.ShortcutOverride:
+                # 不接受这次 override：文本框不把它当输入，Qt 先走快捷键分发。
+                event.ignore()
+                return True
+            # GroupSwitch/AltGr 时快捷键表匹配不到同一条 QKeySequence，这里直接
+            # 触发动作，保证与正常 Ctrl+Alt 行为一致（且不插入 AltGr 字符）。
+            action.trigger()
+            event.accept()
+            return True
+
+    guard = _ShortcutGuard(widget)
+    widget.installEventFilter(guard)
+    # 事件过滤器在 Qt 里按指针调用：把 Python 包装保活到控件上，否则会被回收。
+    widget._shortcut_guard = guard
+    return guard
 
 
 def modifier_text(modifier: Qt.KeyboardModifier) -> str:

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 工作台
+
+- 修复 Windows 上 `Ctrl+Alt+P`（查看原位置）在 CAT 工作台里按了没反应的问题。AltGr 键盘布局把 `Ctrl+Alt+<字母>` 当成输入字符，聚焦的文本框（译文编辑框、原文浮层、搜索框、页码框等）会通过 `ShortcutOverride` 抢走这个按键，窗口级快捷键就永远收不到；点「查看原位置」按钮走另一条路径，所以一直正常，macOS 上 Command 会抑制文本输入也不受影响。现在工作台会在这些控件上放行 `Ctrl+Alt+P` / `Ctrl+Alt+O`，让按键回到快捷键分发（#276）。Windows 真机验收仍待补，见 [docs/issue-276-windows-shortcut.md](docs/issue-276-windows-shortcut.md)。
+
 ## [0.8.0] - 2026-11-01
 
 验收矩阵、证据边界与待人工验证项见 [发布说明](docs/release-notes-0.8.0.md)。
