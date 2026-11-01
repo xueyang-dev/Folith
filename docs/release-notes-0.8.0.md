@@ -1,6 +1,6 @@
 # Folith 0.8.0 发布说明与验收矩阵
 
-状态：**候选，未发布**。当前候选为 `release/0.8.0` @ `ae20a3db`（2026-10-31 冻结，之前的候选 `5be4fbae`、`76e2f269`、`52279567` 作废），tag 在发布时补入。
+状态：**候选，未发布**。当前候选为 `release/0.8.0` @ `8e361cdf`（2026-11-01 冻结，之前的候选 `5be4fbae`、`76e2f269`、`52279567`、`ae20a3db`、`829edae5` 作废），tag 在发布时补入。
 本页不沿用 0.7.2 的通过结论。
 
 ## 版本变化
@@ -12,8 +12,8 @@
 | 项目 | 状态 |
 | --- | --- |
 | #235、#237、#238、#239、#240 合入 main | 已合入（2026-10-28） |
-| 冻结提交上的 CI | 通过。`release/0.8.0` @ `ae20a3db`（与 main `cd576ae5` 文件树完全相同），[Release Validation run 41221050877](https://github.com/xueyang-dev/Folith/actions/runs/41221050877)：macOS / Windows 候选构建（含冻结主流程、DMG、安装包与发布检查）与 Linux Python 3.10 / 3.11 / 3.12、Windows 3.11 完整回归全部通过。macOS 候选构建首轮在「候选文档与隔离的 Qt 回归」一步卡住，跑满 60 分钟被取消，重跑通过；本机把怀疑的 `qt_open_without_outline_wait_test.py` 连跑 30 次均通过，未能复现 |
-| main 上的 Main Full Regression | **未全绿**：自 #264 起 main 上每次推送的该工作流都因 Linux 任务跑满 60 分钟而被取消，每次未报告的是同一批 8 个测试文件（并行池里最后的 `qt_pdf_tip_test`、`translation_bottleneck_audit_test` 与要等池结束才串行执行的 6 个独占文件）。这些文件本机（macOS）都在几十秒内通过，只在 Linux CI 上间歇卡住，原因未定位。#272 给回归运行器加了单进程超时与卡死时的线程栈输出，下次发生会变成带日志的失败。冻结候选自己的 Release Validation 是全绿的，不受此影响 |
+| 冻结提交上的 CI | 通过。`release/0.8.0` @ `8e361cdf`（与 main `f54d7a70` 文件树完全相同），[Release Validation run 41286021237](https://github.com/xueyang-dev/Folith/actions/runs/41286021237)：macOS / Windows 候选构建（含冻结主流程、DMG、安装包与发布检查）与 Linux Python 3.10 / 3.11 / 3.12、Windows 3.11 完整回归、Main Full Regression 全部通过。此前候选 `829edae5` 的验证在 Linux 3.11 上失败：`qt_pdf_tip_test.py` 卡在模态的「新变化」窗口里被超时杀掉，已在 #275 修复（见更新日志）；更早的 `ae20a3db` 通过属于侥幸（定时器竞争）。`release/0.8.0` 之前一轮的 macOS 候选构建曾有一次在「候选文档与隔离的 Qt 回归」一步卡到 60 分钟被取消，重跑通过，本轮没有再出现 |
+| main 上的 Main Full Regression | 本轮在候选上通过。自 #264 起 main 上该工作流一直为红，原因是 `qt_pdf_tip_test.py` 在较慢的 Linux 机器上卡在「新变化」模态窗口；#272 加了单进程超时与线程栈输出，用它定位到根因，#275 修复。#275 合并后 main 上的该工作流已转绿（`cd610bf6`、`f54d7a70`） |
 | 候选后新增改动的人工验收 | 待人工：审校队列分组与术语卡（#102）、本地网关与推理强度、取消进行中的请求、界面卡死记录、打开任务不等大纲（#260）、跳过零尺寸图片框后的 DOCX 交付（#271）。本机 offscreen 测试不能代替原生窗口验收。已知未解决：作者本机（macOS 27.0.1）上有两类界面线程原生崩溃——11,471 段 PDF 任务打开后约 3 秒、以及交付后刷新工作台时（崩溃栈落在 `qa_panel.py` 的 `rule_list.clear()`），离线复现不稳定，v0.7.2 与本版在同一脚本下各 4 次均未崩，未能判断是否为 0.8.0 引入 |
 | 真实长文档交付验收（PDF / DOCX / EPUB / 旧任务升级 / 中断恢复） | 待人工 |
 | Windows x64 安装版与便携版原生验收 | 待人工 |
@@ -23,7 +23,7 @@
 | #188 / #189 验收与 Issue 更新 | 已关闭（2026-10-28），证据见 [0.8.0 验收记录](qt-beta/acceptance-0.8.0-2026-10-28.md) |
 | #191 大纲真实窗口验收（macOS / Windows，2000+ 段文档在翻译进行中导航） | 待人工；offscreen 脚本 `scripts/acceptance/outline_191_offscreen.py` 已通过，不能代替 |
 | DOCX 原格式译文（#26）原生 macOS / Windows 验收 | 待人工 |
-| 资产 SHA-256 | 来自 run 41221050877 的构建记录（未签名，build id `git:ae20a3d`）：<br>`Folith-Qt-0.8.0-macos-arm64.dmg` `e43f852ca341e720560f7941d172565489ef04a5d376e6989010a55affea6f52`（161,568,240 字节）<br>`Folith-Setup-0.8.0-windows-x64.exe` `8233015eeba6fef6eb35275fbd5042beda42878f5a90a901f1d00b74f142c500`<br>`Folith-Qt-0.8.0-windows-x64.zip` `89484fc89813cce4daf896f5fb06cb8b1fc42b4cd5b09c0736428a9b868a36c3`<br>发布时须用 Release 页上传的文件重新核对 |
+| 资产 SHA-256 | 来自 run 41286021237 的构建记录（未签名，build id `git:8e361cd`）：<br>`Folith-Qt-0.8.0-macos-arm64.dmg` `4a82768581baaea4ca6c1649b294ef123a762210729a009d05bcb833448aef07`（161,564,911 字节）<br>`Folith-Setup-0.8.0-windows-x64.exe` `60fa8223007ff6c15e0452523a1ad218ae3fc1655ae04c627eae1aff89c74aba`<br>`Folith-Qt-0.8.0-windows-x64.zip` `ee7fa08c137077bd2bb0faf6af2e82129052b09cc003ad8cfc5efffb324eded0`<br>发布时须用 Release 页上传的文件重新核对 |
 
 ## 已知限制
 
