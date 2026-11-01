@@ -379,7 +379,9 @@ def _capture_positional_artifacts(state, index):
         values = state.get(key)
         if isinstance(values, list) and values:
             if len(values) != count:
-                raise ValueError("段落来源位置数据与当前段落数量不一致，无法安全排除。")
+                raise ValueError(
+                    f"段落位置数据不一致：{key} 有 {len(values)} 项，paras 有 {count} 段，"
+                    "无法安全排除。")
             saved["arrays"][key] = json.loads(json.dumps(values[index]))
     ranges = (state.get("segmentation") or {}).get("paragraph_ranges") or []
     owners = [i for i, row in enumerate(ranges) if isinstance(row, dict)
@@ -394,8 +396,292 @@ def _capture_positional_artifacts(state, index):
     return saved
 
 
-def _restore_positional_artifacts(state, index, record):
-    """Insert saved provenance at the restored position; never guess membership."""
+# ---------------------------------------------------------------------------
+# Positional columns (issue #233)
+#
+# These lists are indexed by segment position and must always be the same length
+# as the work list (``paras``, and ``pairs`` once translation has started).
+# Every structure edit used to update them by hand at the call site, so a single
+# forgotten ``pop`` left the anchors/marks/range table running ahead of the work
+# list; nothing failed until recovered scan pages were re-ordered hours later.
+# ``_splice_positional_columns`` is now the only place allowed to mutate them,
+# and ``check_positional_invariants`` rejects an edit that would drift before it
+# is saved.
+_POSITIONAL_LIST_COLUMNS = (
+    "pairs",
+    "paras",
+    "segment_source_spans",
+    "segment_source_marks",
+)
+
+
+def _splice_positional_columns(state, at, remove_n, insert=None, *,
+                               range_action=None):
+    """The one choke point for segment-structure edits.
+
+    Replaces ``[at, at + remove_n)`` in every positional column for which
+    ``insert`` supplies a value — a list installs it, ``None`` removes the slice
+    — in place, so aliases held by the caller stay valid.  A column absent from
+    ``insert`` is left untouched, which is how an in-place content edit keeps
+    the anchors the segment already has.
+
+    ``range_action`` moves ``segmentation.paragraph_ranges`` with the edit:
+
+    * ``None``               leave the range table (a forward split/insert does
+                             this on purpose so the outline anchor can prove
+                             "structure edited" instead of silently re-locating);
+    * ``("shift", index)``   one segment left the work list at ``index``;
+    * ``("widen", index)``   one segment joined the work list at ``index``;
+    * ``("replace", rows)``  install an explicitly computed range table.
+
+    ``output_segment_count`` tracks ``len(paras)`` afterwards.
+    """
+    insert = insert or {}
+    for column in _POSITIONAL_LIST_COLUMNS:
+        values = state.get(column)
+        if not isinstance(values, list):
+            continue
+        if column not in insert:
+            continue
+        replacement = insert[column]
+        replacement_list = [] if replacement is None else list(replacement)
+        if column in ("segment_source_spans", "segment_source_marks") \
+                and not values and not any(replacement_list):
+            # An empty anchor list that is only receiving empty anchors stays
+            # empty rather than growing phantom rows (no provenance to track).
+            continue
+        values[at:at + remove_n] = replacement_list
+    segmentation = state.get("segmentation")
+    if isinstance(segmentation, dict):
+        if range_action is not None:
+            kind = range_action[0]
+            rows = segmentation.get("paragraph_ranges") or []
+            if kind == "shift":
+                segmentation["paragraph_ranges"] = _shift_paragraph_ranges(
+                    rows, int(range_action[1]))
+            elif kind == "widen":
+                segmentation["paragraph_ranges"] = _widen_paragraph_ranges(
+                    rows, int(range_action[1]))
+            elif kind == "replace":
+                segmentation["paragraph_ranges"] = list(range_action[1] or [])
+            else:
+                raise ValueError(f"未知的段落区间调整方式：{kind}")
+        if "output_segment_count" in segmentation \
+                or (range_action is not None and segmentation.get("paragraph_ranges")):
+            segmentation["output_segment_count"] = len(state.get("paras") or [])
+
+
+def _positional_columns_report(state):
+    """Return the concrete mismatches in the positional columns (issue #233).
+
+    An empty list means the invariant holds.  Each entry names the offending
+    column so a rejected edit points straight at the drifted list.
+
+    The range table is allowed to end *before* ``len(paras)``: a forward split
+    or insert deliberately leaves it unchanged (``range_action=None`` in
+    :func:`_splice_positional_columns`) so the outline anchor can detect
+    "structure edited" through the UID path (see ``tests/outline_anchor_test.py``).
+    It may never *exceed* the work list — that is exactly the direction the
+    six-exclusion desync ran.
+    """
+    errors = []
+    paras = state.get("paras")
+    paras = paras if isinstance(paras, list) else []
+    para_count = len(paras)
+    pairs = state.get("pairs")
+    if isinstance(pairs, list) and pairs and len(pairs) != para_count:
+        errors.append({"column": "pairs",
+                       "message": f"pairs 有 {len(pairs)} 段，paras 有 {para_count} 段"})
+    for column in ("segment_source_spans", "segment_source_marks"):
+        values = state.get(column)
+        if isinstance(values, list) and values and len(values) != para_count:
+            errors.append({"column": column,
+                           "message": f"{column} 有 {len(values)} 项，paras 有 {para_count} 段"})
+    segmentation = state.get("segmentation")
+    if isinstance(segmentation, dict):
+        rows = segmentation.get("paragraph_ranges")
+        if isinstance(rows, list) and rows:
+            cursor = 0
+            for position, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    errors.append({"column": "segmentation.paragraph_ranges",
+                                   "message": f"第 {position} 行不是对象"})
+                    break
+                start, end = row.get("start"), row.get("end")
+                if isinstance(start, bool) or isinstance(end, bool) \
+                        or not isinstance(start, int) or not isinstance(end, int):
+                    errors.append({"column": "segmentation.paragraph_ranges",
+                                   "message": f"第 {position} 行的 start/end 不是整数"})
+                    break
+                if start != cursor:
+                    errors.append({"column": "segmentation.paragraph_ranges",
+                                   "message": f"第 {position} 行从 {start} 开始，应为 {cursor}"
+                                              "（区间不连续，段落区间与工作列表脱节）"})
+                    break
+                if end < start:
+                    errors.append({"column": "segmentation.paragraph_ranges",
+                                   "message": f"第 {position} 行 end={end} 小于 start={start}"})
+                    break
+                if end > para_count:
+                    errors.append({"column": "segmentation.paragraph_ranges",
+                                   "message": f"第 {position} 行 end={end} 超出工作列表长度 {para_count}"
+                                              "（段落区间跑到了工作列表前面）"})
+                    break
+                paragraph_index = row.get("paragraph_index")
+                if paragraph_index is not None and (
+                        isinstance(paragraph_index, bool)
+                        or not isinstance(paragraph_index, int)
+                        or paragraph_index < 0):
+                    errors.append({"column": "segmentation.paragraph_ranges",
+                                   "message": f"第 {position} 行的 paragraph_index 无效：{paragraph_index!r}"})
+                    break
+                cursor = end
+        output_count = segmentation.get("output_segment_count")
+        if isinstance(output_count, int) and not isinstance(output_count, bool) \
+                and output_count != para_count:
+            errors.append({"column": "segmentation.output_segment_count",
+                           "message": f"output_segment_count={output_count} 与 paras 长度 {para_count} 不一致"})
+    return errors
+
+
+def check_positional_invariants(state, *, raise_on_error=False):
+    """Validate the positional columns; optionally raise naming the culprit."""
+    errors = _positional_columns_report(state)
+    report = {
+        "ok": not errors,
+        "errors": errors,
+        "columns": sorted({error["column"] for error in errors}),
+    }
+    report["summary"] = (
+        "段落位置数据一致" if report["ok"] else
+        "段落位置数据不一致：" + "；".join(
+            f"{error['column']}（{error['message']}）" for error in errors))
+    if raise_on_error and errors:
+        raise ValueError(report["summary"])
+    return report
+
+
+def repair_positional_columns(state):
+    """Best-effort repair for a task damaged by an older build (issue #233).
+
+    Pairs own their anchors once translation has started (``attach_pair_spans``
+    fills ``source_spans``/``marks`` from the parallel lists), so the two anchor
+    lists are rebuilt from the pairs themselves.  The range table cannot be
+    reconstructed semantically once it drifted; it is rebuilt as a contiguous
+    cover clamped to the current work list, keeping each row's paragraph index
+    and relative width.  The goal is to make a damaged task pass
+    :func:`check_positional_invariants` so it can be opened and finished — the
+    invariant at edit time is what prevents new damage.
+    """
+    from folith.document_ir import attach_pair_spans
+
+    attach_pair_spans(state)
+    pairs = state.get("pairs") if isinstance(state.get("pairs"), list) else []
+    paras = state.get("paras") if isinstance(state.get("paras"), list) else []
+    para_count = len(paras)
+    if pairs:
+        spans, marks = [], []
+        for pair in pairs:
+            pair = pair if isinstance(pair, dict) else {}
+            spans.append([dict(span) for span in pair.get("source_spans") or []])
+            marks.append([dict(mark) for mark in pair.get("marks") or []])
+        state["segment_source_spans"] = spans
+        state["segment_source_marks"] = marks
+    else:
+        # No pairs to rebuild from: only clamp the parallel lists to length so a
+        # pre-translation task at least opens; the anchors themselves are lost.
+        for column in ("segment_source_spans", "segment_source_marks"):
+            values = state.get(column)
+            if isinstance(values, list) and values and len(values) != para_count:
+                state[column] = (values[:para_count]
+                                 + [[] for _ in range(max(0, para_count - len(values)))])
+    segmentation = state.get("segmentation")
+    if isinstance(segmentation, dict):
+        rows = segmentation.get("paragraph_ranges")
+        if isinstance(rows, list) and rows:
+            rebuilt, cursor = [], 0
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                start, end = row.get("start"), row.get("end")
+                width = (end - start) if (
+                    isinstance(start, int) and not isinstance(start, bool)
+                    and isinstance(end, int) and not isinstance(end, bool)) else 1
+                width = max(0, min(width, para_count - cursor))
+                rebuilt.append({**row, "start": cursor, "end": cursor + width})
+                cursor += width
+            if cursor < para_count:
+                if rebuilt:
+                    rebuilt[-1]["end"] = para_count
+                else:
+                    rebuilt.append({"paragraph_index": 0, "start": 0,
+                                    "end": para_count})
+            segmentation["paragraph_ranges"] = rebuilt
+        if "output_segment_count" in segmentation:
+            segmentation["output_segment_count"] = para_count
+    return check_positional_invariants(state)
+
+
+def _insert_range_slot(rows, index, preferred_owner):
+    """Insert one segment slot into a contiguous range table at ``index``.
+
+    The table is rebuilt from per-row widths with one row widened, so the result
+    is always contiguous (a later forward split may have left the table lagging,
+    and the saved owner row may no longer sit at ``index``).  The row to widen is
+    the saved owner when it still contains the insertion point, otherwise an
+    empty row exactly at ``index``, otherwise the row holding the predecessor
+    segment.  Returns ``None`` for a table with non-numeric rows.
+    """
+    numeric = [i for i, item in enumerate(rows)
+               if isinstance(item, dict)
+               and isinstance(item.get("start"), int) and not isinstance(item.get("start"), bool)
+               and isinstance(item.get("end"), int) and not isinstance(item.get("end"), bool)]
+    if not numeric or len(numeric) != len(rows):
+        return None
+    starts = [rows[i]["start"] for i in numeric]
+    ends = [rows[i]["end"] for i in numeric]
+    widths = [max(0, ends[k] - starts[k]) for k in range(len(numeric))]
+    cursor = ends[-1]
+    pos = None
+    if preferred_owner in numeric:
+        k = numeric.index(preferred_owner)
+        if starts[k] <= index <= ends[k]:
+            pos = k
+    if pos is None:
+        pos = next((k for k in range(len(numeric))
+                    if starts[k] == index == ends[k]), None)
+    if pos is None:
+        if index == 0:
+            pos = 0
+        else:
+            pos = next((k for k in range(len(numeric))
+                        if starts[k] <= index - 1 < ends[k]), None)
+    if pos is None:
+        pos = len(numeric) - 1 if index >= cursor else 0
+    widths[pos] += 1
+    rebuilt, cursor2 = [], 0
+    for k, i in enumerate(numeric):
+        row = dict(rows[i])
+        row["start"] = cursor2
+        row["end"] = cursor2 + widths[k]
+        if k == pos and "separators" in row:
+            # A removed internal separator cannot be reconstructed safely.
+            row["separators"] = []
+            row["gate"] = {**(row.get("gate") or {}), "separators_recorded": False}
+        rebuilt.append(row)
+        cursor2 = row["end"]
+    return rebuilt
+
+
+def _positional_restore_plan(state, index, record):
+    """Compute what restoring an excluded segment inserts (issue #233).
+
+    Returns ``(insert, range_rows)``: ``insert`` maps positional column names to
+    the value(s) to re-insert at ``index`` (empty for a legacy record that left
+    its anchors in place), and ``range_rows`` is the recomputed range table (or
+    ``None`` to leave it).  All validation lives here so the actual mutation can
+    go through :func:`_splice_positional_columns` with everything else.
+    """
     saved = record.get("positional_artifacts")
     count = len(state.get("paras") or [])
     if not isinstance(saved, dict):
@@ -409,7 +695,7 @@ def _restore_positional_artifacts(state, index, record):
         segmentation = state.get("segmentation") or {}
         if segmentation.get("paragraph_ranges") and segmentation.get("output_segment_count") == count:
             raise ValueError("旧排除记录缺少段落区间信息，无法安全恢复被排除的段落。")
-        return
+        return {}, None
     arrays = saved.get("arrays") or {}
     for key in ("segment_source_spans", "segment_source_marks"):
         values = state.get(key)
@@ -432,33 +718,27 @@ def _restore_positional_artifacts(state, index, record):
                 or not isinstance(row.get("start"), int) or not isinstance(row.get("end"), int) \
                 or not row["start"] <= index <= row["end"]:
             raise ValueError("原段落区间已变化，无法安全恢复被排除的段落。")
+    insert = {}
     for key, value in arrays.items():
-        state[key].insert(index, json.loads(json.dumps(value)))
-    if isinstance(ranges, list) and ranges:
-        updated = []
-        for row_index, row in enumerate(ranges):
-            if not isinstance(row, dict) or not isinstance(row.get("start"), int) or not isinstance(row.get("end"), int):
-                updated.append(row)
-                continue
-            row = dict(row)
-            start, end = row["start"], row["end"]
-            if row_index == owner_index:
-                # A removed internal separator cannot be reconstructed safely.
-                row["end"] = end + 1
-                if "separators" in row:
-                    row["separators"] = []
-                    row["gate"] = {**(row.get("gate") or {}), "separators_recorded": False}
-            else:
-                # Empty earlier paragraphs at this boundary stay before the
-                # restored segment; later paragraphs move with their content.
-                earlier_empty = (owner_index is not None and row_index < owner_index
-                                 and start == end == index)
-                row["start"] = start + (start >= index and not earlier_empty)
-                row["end"] = end + (end > index or (start >= index and end == index
-                                                     and not earlier_empty))
-            updated.append(row)
-        segmentation["paragraph_ranges"] = updated
-        segmentation["output_segment_count"] = count + 1
+        insert[key] = [json.loads(json.dumps(value))]
+    range_rows = _insert_range_slot(ranges, index, owner_index) \
+        if isinstance(ranges, list) and ranges else None
+    return insert, range_rows
+
+
+def _restore_positional_artifacts(state, index, record):
+    """Compatibility wrapper: move only the anchors + range table.
+
+    Structure edits now splice the work lists together with the saved anchors
+    through :func:`_splice_positional_columns`; this wrapper is retained for any
+    caller that only needs the anchor/range part.
+    """
+    insert, range_rows = _positional_restore_plan(state, index, record)
+    if insert or range_rows is not None:
+        _splice_positional_columns(
+            state, index, 0, insert,
+            range_action=("replace", range_rows) if range_rows is not None else None)
+    return insert, range_rows
 
 
 def _shift_paragraph_ranges(paragraph_ranges, removed_index):
@@ -507,140 +787,30 @@ def _shift_paragraph_ranges(paragraph_ranges, removed_index):
     return shifted
 
 
-def _drop_positional_artifacts(state, index, segment_count):
-    """段落被移出后，同步按位置排列的派生产物（原文锚点、标记、段落区间）。"""
-    for key in ("segment_source_spans", "segment_source_marks"):
-        values = state.get(key)
-        if isinstance(values, list) and 0 <= index < len(values):
-            values.pop(index)
-    segmentation = state.get("segmentation")
-    if isinstance(segmentation, dict) and segmentation.get("paragraph_ranges"):
-        segmentation["paragraph_ranges"] = _shift_paragraph_ranges(
-            segmentation["paragraph_ranges"], index)
-        segmentation["output_segment_count"] = segment_count
-
-
-def _merge_positional_artifacts(state, index, segment_count):
-    """两段合并后，同步按位置排列的派生产物（原文锚点、标记、段落区间）。
-
-    index 为保留的左段位置；index+1 的锚点/标记并入 index 后移除，段落区间
-    按「移出 index+1」语义前移（与排除的单段移出契约一致）。
-    """
-    for key in ("segment_source_spans", "segment_source_marks"):
-        values = state.get(key)
-        if not isinstance(values, list) or not values:
-            continue
-        left = values[index] if index < len(values) and isinstance(values[index], list) else []
-        right = (values[index + 1]
-                 if index + 1 < len(values) and isinstance(values[index + 1], list)
-                 else [])
-        merged = list(left)
-        for item in right:
-            if item not in merged:
-                merged.append(dict(item) if isinstance(item, dict) else item)
-        if index < len(values):
-            values[index] = merged
-        if index + 1 < len(values):
-            values.pop(index + 1)
-    segmentation = state.get("segmentation")
-    if isinstance(segmentation, dict) and segmentation.get("paragraph_ranges"):
-        segmentation["paragraph_ranges"] = _shift_paragraph_ranges(
-            segmentation["paragraph_ranges"], index + 1)
-        segmentation["output_segment_count"] = segment_count
-
-
 def _widen_paragraph_ranges(paragraph_ranges, new_index):
     """段落位置 new_index 新增一段后，调整段落区间。
 
-    找到包含紧前一段（new_index-1）的区间并扩展它，同时把所有在 new_index
-    之后的区间整体后移一位。扩展后内部分隔符无法保持语义上的正确性，清空
-    以避免把旧边界错位沿用。
+    用与排除恢复相同的「插入一个槽」算法：选中应容纳新段的区间（包含紧前
+    一段 new_index-1 的区间；new_index 为 0 时取首行；区间整体滞后时取末行），
+    把它的宽度加一，其余区间按宽度累积重排，结果始终连续。扩展后内部分隔符
+    无法保持语义上的正确性，清空以避免把旧边界错位沿用。
     """
-    result = []
-    for row in paragraph_ranges or []:
-        if not isinstance(row, dict):
-            continue
-        start = row.get("start")
-        end = row.get("end")
-        if not (isinstance(start, int) and isinstance(end, int)):
-            result.append(dict(row))
-            continue
-        row = dict(row)
-        if new_index > 0 and start <= new_index - 1 < end:
-            # The predecessor segment is in this range: expand it to include
-            # the new slot.  Clear separators — the new boundary is uncharted.
-            row["end"] = end + 1
-            if "separators" in row:
-                row["separators"] = []
-                row["gate"] = {**(row.get("gate") or {}), "separators_recorded": False}
-        elif start >= new_index:
-            # Range lies entirely after the insertion point: shift both bounds.
-            row["start"] = start + 1
-            row["end"] = end + 1
-        result.append(row)
-    return result
-
-
-def _split_positional_artifacts(state, index, segment_count, *, update_ranges=False):
-    """一段拆为两段后，同步按位置排列的派生产物（原文锚点、标记）。
-
-    右半段（index+1）继承左半段的原文锚点和标记：拆分不携带空间坐标信息，
-    无法确定每半段对应的精确区域；复用原锚点是保守且正确的选择，两半段仍
-    会定位到同一页面区域。
-
-    ``update_ranges`` 正向拆分默认 False，保持 paragraph_ranges 不变，使大纲锚点
-    能沿 UID 路径判定"结构已编辑"而非静默重定位到新段落。撤销合并时传 True，
-    因为合并时已更新 paragraph_ranges，撤销必须将其还原。
-    """
-    for key in ("segment_source_spans", "segment_source_marks"):
-        values = state.get(key)
-        if not isinstance(values, list) or not values:
-            continue
-        if index < len(values):
-            original = values[index]
-            copy = json.loads(json.dumps(original)) if original else []
-            values.insert(index + 1, copy)
-    segmentation = state.get("segmentation")
-    if isinstance(segmentation, dict):
-        if update_ranges and segmentation.get("paragraph_ranges"):
-            segmentation["paragraph_ranges"] = _widen_paragraph_ranges(
-                segmentation["paragraph_ranges"], index + 1)
-        if segmentation.get("output_segment_count") is not None:
-            segmentation["output_segment_count"] = segment_count
-
-
-def _insert_positional_artifacts(state, index, segment_count, *, update_ranges=False):
-    """手动插入空段后，同步按位置排列的派生产物（原文锚点、标记）。
-
-    新插入的空段没有来源锚点：在 segment_source_spans/marks 的对应位置插入
-    空列表。
-
-    ``update_ranges`` 正向插入默认 False，理由同 _split_positional_artifacts。
-    撤销删除时传 True，因为删除时 _drop_positional_artifacts 更新了 paragraph_ranges。
-    """
-    for key in ("segment_source_spans", "segment_source_marks"):
-        values = state.get(key)
-        if not isinstance(values, list) or not values:
-            continue
-        values.insert(index, [])
-    segmentation = state.get("segmentation")
-    if isinstance(segmentation, dict):
-        if update_ranges and segmentation.get("paragraph_ranges"):
-            segmentation["paragraph_ranges"] = _widen_paragraph_ranges(
-                segmentation["paragraph_ranges"], index)
-        if segmentation.get("output_segment_count") is not None:
-            segmentation["output_segment_count"] = segment_count
+    rows = list(paragraph_ranges or [])
+    rebuilt = _insert_range_slot(rows, int(new_index), None)
+    return rebuilt if rebuilt is not None else rows
 
 
 def _drop_segment_at(state, index):
-    """从工作列表中移出一个段落，并同步它的位置型派生产物。"""
-    pairs = state.get("pairs") or []
-    paras = state.get("paras") or []
-    if pairs:
-        pairs.pop(index)
-    if 0 <= index < len(paras):
-        paras.pop(index)
-    _drop_positional_artifacts(state, index, len(paras))
+    """Remove one segment from the work list through the positional splice.
+
+    Kept as a named entry point because several callers (scope exclusion,
+    automatic exclusion) share exactly this "remove one segment" edit.
+    """
+    _splice_positional_columns(
+        state, index, 1,
+        {"pairs": [], "paras": [],
+         "segment_source_spans": [], "segment_source_marks": []},
+        range_action=("shift", index))
 
 
 def _non_translatable_exclusions(state, *, paragraphs=None):
@@ -1226,7 +1396,7 @@ def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
     restored = []
     for record in records:
         index = _exclusion_restore_index(state, record)
-        _restore_positional_artifacts(state, index, record)
+        insert, range_rows = _positional_restore_plan(state, index, record)
         excluded_pair = record.get("pair")
         if excluded_pair is None and pairs:
             # 译前排除没有译文快照；任务已翻译后恢复时，补回待译的空槽，
@@ -1238,16 +1408,16 @@ def restore_translation_scope(job_id, excluded_ids, *, actor="user"):
             # 与单段恢复一致：内容原样回来，但旧的"已审校"不跟着点亮。
             # 用记录里是否存了 pair 来判断，而不是当前 pairs 是否为空——
             # 全部段落被排除时 pairs 恰好是空列表，但它们都要插回来。
-            if not isinstance(pairs, list):
-                pairs = []
-                state["pairs"] = pairs
             excluded_pair = json.loads(json.dumps(excluded_pair))
             excluded_pair["reviewed"] = False
             excluded_pair["review_status"] = "not_reviewed"
             for key in ("accepted_target", "human_accepted", "accepted_by_human"):
                 excluded_pair.pop(key, None)
-            pairs.insert(index, excluded_pair)
-        paras.insert(index, str(record.get("source") or ""))
+            insert["pairs"] = [excluded_pair]
+        insert["paras"] = [str(record.get("source") or "")]
+        _splice_positional_columns(
+            state, index, 0, insert,
+            range_action=("replace", range_rows) if range_rows is not None else None)
         state["excluded_segments"] = [
             item for item in state.get("excluded_segments") or []
             if not (isinstance(item, dict)
@@ -1854,8 +2024,12 @@ def mutate_translation_segments(
     # 结构操作是界面身份最容易漂移的地方：先给所有段落补齐稳定身份，再动列表。
     assign_missing_segment_uids(state, job_id=job_id)
 
-    pairs = list(state.get("pairs") or [])
-    paras = list(state.get("paras") or [])
+    if not isinstance(state.get("pairs"), list):
+        state["pairs"] = []
+    if not isinstance(state.get("paras"), list):
+        state["paras"] = []
+    pairs = state["pairs"]
+    paras = state["paras"]
     if pairs and len(paras) != len(pairs):
         # A completed translation must never be silently repaired here: a
         # mismatch means another invariant has already been violated and the
@@ -1979,8 +2153,8 @@ def mutate_translation_segments(
         updated_pair = reset_trust(
             current, new_source, current.get("target") or "",
             initial_target=current.get("initial_target"), source_edited=True)
-        pairs[index] = updated_pair
-        paras[index] = new_source
+        _splice_positional_columns(
+            state, index, 1, {"pairs": [updated_pair], "paras": [new_source]})
         affected_hint = [index]
     elif operation == "split":
         left_source, right_source = normalized(source_a), normalized(source_b)
@@ -2002,11 +2176,17 @@ def mutate_translation_segments(
         if original_ids:
             left["glossary_entry_ids"] = list(original_ids)
             right["glossary_entry_ids"] = list(original_ids)
-        pairs[index:index + 1] = [left, right]
-        paras[index:index + 1] = [left_source, right_source]
-        # 拆分增加了一个段落位置：同步原文锚点、标记与段落区间。
-        # 右半段继承左半段的锚点（无法从拆分文本还原空间坐标）。
-        _split_positional_artifacts(state, index, len(paras))
+        insert = {"pairs": [left, right], "paras": [left_source, right_source]}
+        for column in ("segment_source_spans", "segment_source_marks"):
+            values = state.get(column)
+            if isinstance(values, list) and values and index < len(values):
+                original = values[index]
+                insert[column] = [json.loads(json.dumps(original)) if original else [],
+                                  json.loads(json.dumps(original)) if original else []]
+        # 拆分增加了一个段落位置：右半段继承左半段的锚点（无法从拆分文本还原
+        # 空间坐标）。正向拆分刻意不改 paragraph_ranges，让大纲锚点沿 UID 路径
+        # 判定"结构已编辑"。
+        _splice_positional_columns(state, index, 1, insert)
         affected_hint = [index, index + 1]
     elif operation == "merge":
         if index + 1 >= len(pairs):
@@ -2043,11 +2223,25 @@ def mutate_translation_segments(
         merged["merged_segment_count"] = int(
             current.get("merged_segment_count") or 1) + int(
                 following.get("merged_segment_count") or 1)
-        pairs[index:index + 2] = [merged]
-        paras[index:index + 2] = [merged_source]
-        # 合并减少了一个段落位置：同步原文锚点、标记与段落区间，
+        insert = {"pairs": [merged], "paras": [merged_source]}
+        for column in ("segment_source_spans", "segment_source_marks"):
+            values = state.get(column)
+            if not isinstance(values, list) or not values:
+                continue
+            left_items = (values[index]
+                          if index < len(values) and isinstance(values[index], list) else [])
+            right_items = (values[index + 1]
+                           if index + 1 < len(values)
+                           and isinstance(values[index + 1], list) else [])
+            merged_items = list(left_items)
+            for item in right_items:
+                if item not in merged_items:
+                    merged_items.append(dict(item) if isinstance(item, dict) else item)
+            insert[column] = [merged_items]
+        # 合并减少了一个段落位置：按「移出 index+1」语义前移段落区间，
         # 确保后续排除操作的位置契约检查不会因为长度错配而失败。
-        _merge_positional_artifacts(state, index, len(paras))
+        _splice_positional_columns(state, index, 2, insert,
+                                   range_action=("shift", index + 1))
         affected_hint = [index]
     elif operation == "insert":
         inserted = reset_trust(
@@ -2058,11 +2252,11 @@ def mutate_translation_segments(
         if state.get("segment_source_spans"):
             inserted["source_spans"] = []
         inserted[_c.SEGMENT_UID_FIELD] = next_segment_uid(state, job_id)
-        pairs.insert(index + 1, inserted)
-        paras.insert(index + 1, "")
-        # 插入增加了一个段落位置：同步原文锚点、标记与段落区间。
-        # 新段没有来源锚点，在对应位置插入空列表。
-        _insert_positional_artifacts(state, index + 1, len(paras))
+        # 插入增加了一个段落位置：新段没有来源锚点，在对应位置插入空列表。
+        _splice_positional_columns(
+            state, index + 1, 0,
+            {"pairs": [inserted], "paras": [""],
+             "segment_source_spans": [[]], "segment_source_marks": [[]]})
         affected_hint = [index + 1]
     elif operation == "exclude":
         # 「排除」把这一段整体移出 pairs/paras：不进入翻译、不计入待完成数量、
@@ -2086,16 +2280,17 @@ def mutate_translation_segments(
         state["excluded_segments"] = list(
             state.get("excluded_segments") or []) + [excluded_record]
         excluded_ids_added = [excluded_id_value]
-        if pairs:
-            pairs.pop(index)
-        paras.pop(index)
         # 人工排除与系统排除走同一套位置契约：锚点、标记与段落区间一起前移，
         # 否则补读的页按页序排回时会因区间与译文数量不一致而失败。
-        _drop_positional_artifacts(state, index, len(paras))
+        _splice_positional_columns(
+            state, index, 1,
+            {"pairs": [], "paras": [],
+             "segment_source_spans": [], "segment_source_marks": []},
+            range_action=("shift", index))
         affected_hint = [max(0, min(index, len(pairs) - 1))] if pairs else []
     elif operation == "include":
         excluded_record = dict(include_record)
-        _restore_positional_artifacts(state, index, excluded_record)
+        insert, range_rows = _positional_restore_plan(state, index, excluded_record)
         state["excluded_segments"] = [
             item for item in state.get("excluded_segments") or []
             if not (isinstance(item, dict)
@@ -2118,8 +2313,11 @@ def mutate_translation_segments(
             restored_pair.pop("accepted_target", None)
             restored_pair.pop("human_accepted", None)
             restored_pair.pop("accepted_by_human", None)
-            pairs.insert(index, restored_pair)
-        paras.insert(index, str(excluded_record.get("source") or ""))
+            insert["pairs"] = [restored_pair]
+        insert["paras"] = [str(excluded_record.get("source") or "")]
+        _splice_positional_columns(
+            state, index, 0, insert,
+            range_action=("replace", range_rows) if range_rows is not None else None)
         affected_hint = [index]
         excluded_records_restored = [excluded_record]
     else:  # delete
@@ -2129,14 +2327,20 @@ def mutate_translation_segments(
                              "导入内容请使用「排除本段」。")
         if normalized(candidate.get("source")) or normalized(candidate.get("target")):
             raise ValueError("该段落已有内容，请先清空原文和译文后再删除。")
-        pairs.pop(index)
-        paras.pop(index)
         # 删除减少了一个段落位置：同步原文锚点、标记与段落区间。
-        _drop_positional_artifacts(state, index, len(paras))
+        _splice_positional_columns(
+            state, index, 1,
+            {"pairs": [], "paras": [],
+             "segment_source_spans": [], "segment_source_marks": []},
+            range_action=("shift", index))
         affected_hint = [max(0, min(index, len(pairs) - 1))] if pairs else []
 
     state["pairs"] = pairs
     state["paras"] = paras
+    # #233: fail the edit before it is saved if any positional column drifted,
+    # naming the column.  A structure edit that desyncs the anchors/marks/range
+    # table must never reach disk.
+    check_positional_invariants(state, raise_on_error=True)
     # Splitting, merging, inserting or deleting changes the meaning of every
     # following ordinal.  Revoke their trust together so no old review badge or
     # TM reuse survives under a different source/target pairing.  A plain
@@ -2220,8 +2424,12 @@ def undo_translation_segment_structure(job_id, *, actor="user"):
     if not isinstance(restore_pairs, list):
         raise ValueError("最近一次结构操作没有保存内容快照，无法撤销。")
 
-    pairs = list(state.get("pairs") or [])
-    paras = list(state.get("paras") or [])
+    if not isinstance(state.get("pairs"), list):
+        state["pairs"] = []
+    if not isinstance(state.get("paras"), list):
+        state["paras"] = []
+    pairs = state["pairs"]
+    paras = state["paras"]
     if len(paras) < len(pairs):
         raise ValueError("当前任务的源文与双语段落数量不一致，无法安全撤销。")
 
@@ -2236,41 +2444,68 @@ def undo_translation_segment_structure(job_id, *, actor="user"):
         pair["reviewed"] = False
         pair["review_status"] = "not_reviewed"
     restored_paras = [str(item or "") for item in record.get("restore_paras") or []]
-    if len(restored_paras) != len(restored):
+    if restored and len(restored_paras) != len(restored):
         restored_paras = [str(pair.get("source") or "") for pair in restored]
 
     operation = str(record.get("operation") or "")
+    remove_n = max(pairs_end - undo_index, paras_end - undo_index)
+    insert = {"pairs": restored, "paras": restored_paras}
+    range_action = None
     if operation == "exclude":
         added = set(record.get("excluded_ids_added") or [])
         excluded = next((item for item in state.get("excluded_segments") or []
                          if isinstance(item, dict) and item.get("excluded_id") in added), None)
         if excluded is not None:
-            _restore_positional_artifacts(state, undo_index, excluded)
+            plan_insert, range_rows = _positional_restore_plan(state, undo_index, excluded)
+            insert.update(plan_insert)
+            if range_rows is not None:
+                range_action = ("replace", range_rows)
     elif operation == "include":
+        # 撤销恢复 = 再移出这一段：锚点、标记随段落一起移出；新式记录在正向
+        # 恢复时也调整了段落区间，需按移出语义还原。
+        insert["segment_source_spans"] = []
+        insert["segment_source_marks"] = []
         restored_records = record.get("excluded_records_restored") or []
         if restored_records and isinstance(restored_records[0].get("positional_artifacts"), dict):
-            _drop_positional_artifacts(state, undo_index, len(paras) - 1)
-
-    # 排除发生在翻译之前时 pairs 本来就是空的，撤销只动 paras。
-    if pairs:
-        pairs[undo_index:pairs_end] = restored
-    paras[undo_index:paras_end] = restored_paras
-
-    # 撤销时与正向操作相反：同步按位置排列的派生产物使其与新的 paras 长度保持一致。
-    # exclude/include 已在切片赋值前处理；其余操作在切片之后，用 len(paras) 作为
-    # 新的段落数量（此时 paras 已被修改）。
-    if operation == "merge":
-        # 撤销合并 = 拆分：一槽变两槽。合并时更新了 paragraph_ranges，撤销需还原。
-        _split_positional_artifacts(state, undo_index, len(paras), update_ranges=True)
+            range_action = ("shift", undo_index)
+    elif operation == "merge":
+        # 撤销合并 = 拆分：一槽变两槽。右半段继承左半段的锚点。
+        for column in ("segment_source_spans", "segment_source_marks"):
+            values = state.get(column)
+            if isinstance(values, list) and values and undo_index < len(values):
+                original = values[undo_index]
+                insert[column] = [json.loads(json.dumps(original)) if original else [],
+                                  json.loads(json.dumps(original)) if original else []]
+        range_action = ("widen", undo_index + 1)
     elif operation == "split":
-        # 撤销拆分 = 合并：两槽变一槽
-        _merge_positional_artifacts(state, undo_index, len(paras))
+        # 撤销拆分 = 合并：两槽变一槽。
+        for column in ("segment_source_spans", "segment_source_marks"):
+            values = state.get(column)
+            if not isinstance(values, list) or not values:
+                continue
+            left = (values[undo_index]
+                    if undo_index < len(values) and isinstance(values[undo_index], list) else [])
+            right = (values[undo_index + 1]
+                     if undo_index + 1 < len(values)
+                     and isinstance(values[undo_index + 1], list) else [])
+            merged_items = list(left)
+            for item in right:
+                if item not in merged_items:
+                    merged_items.append(dict(item) if isinstance(item, dict) else item)
+            insert[column] = [merged_items]
+        range_action = ("shift", undo_index + 1)
     elif operation == "insert":
-        # 撤销插入 = 移除该槽
-        _drop_positional_artifacts(state, undo_index, len(paras))
+        insert["segment_source_spans"] = []
+        insert["segment_source_marks"] = []
+        range_action = ("shift", undo_index)
     elif operation == "delete":
-        # 撤销删除 = 在该位置补一槽。删除时更新了 paragraph_ranges，撤销需还原。
-        _insert_positional_artifacts(state, undo_index, len(paras), update_ranges=True)
+        insert["segment_source_spans"] = [[]]
+        insert["segment_source_marks"] = [[]]
+        range_action = ("widen", undo_index)
+    # source_edit: 内容原地恢复，锚点不动，段落区间也不变。
+
+    _splice_positional_columns(state, undo_index, remove_n, insert,
+                               range_action=range_action)
 
     # 排除/恢复对清单的增量按反方向还原，保证撤销之后"已排除清单"和段落列表一致。
     added_ids = {str(item) for item in record.get("excluded_ids_added") or []}
@@ -2286,6 +2521,8 @@ def undo_translation_segment_structure(job_id, *, actor="user"):
             state.get("excluded_segments") or []) + put_back
     state["pairs"] = pairs
     state["paras"] = paras
+    # #233: an undo is a structure edit too; it must not persist a drifted table.
+    check_positional_invariants(state, raise_on_error=True)
     state["annotations"] = {}
     state["annotations_done"] = False
     state["annotations_done_offset"] = 0
