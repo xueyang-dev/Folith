@@ -274,6 +274,7 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 - [译文 EPUB / DOCX 导出](docs/epub-export.md)
 - [OCR 与视觉阅读](docs/ocr-subsystem.md)
 - [架构与能力边界](docs/architecture-boundaries.md)
+- [智能 QA 分诊设计（v0.8.1 规划，英文）](docs/qa-triage-v0.8.1.md)
 - [变更日志](CHANGELOG.md)
 - [参与贡献](CONTRIBUTING.md)
 
