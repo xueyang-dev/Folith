@@ -2431,5 +2431,17 @@
   "原格式译文": "Traducción en formato original",
   "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Escribe la traducción en el DOCX original conservando estilos, tablas, notas al pie, encabezados y pies de página; lo que quede sin traducir se indica en el informe de entrega.",
   "思考": "Pensamiento",
-  "关闭思考": "Desactivar pensamiento"
+  "关闭思考": "Desactivar pensamiento",
+  "{v0} 段未执行本轮独立语义审校（按策略跳过）": "{v0} párrafos no se revisaron de forma independiente en esta ronda (omitidos por política)",
+  "部分译文未执行独立语义审校": "Algunas traducciones no se revisaron de forma independiente",
+  "按策略跳过：{v0}。这些段落没有独立审校结论，不等于审校通过；现有交付门禁保持不变。": "Omitido por política: {v0}. Estos párrafos no tienen conclusión de revisión independiente; esto no significa que hayan superado la revisión, y la compuerta de entrega existente no cambia.",
+  "{v0} / {v1} 段已完成独立审校，{v2} 段未执行本轮独立语义审校（按策略跳过：{v3}）。": "{v0} / {v1} párrafos revisados de forma independiente; {v2} no revisados en esta ronda (omitidos por política: {v3}).",
+  "按策略跳过：{v0}。没有独立语义审校结果，不等于审校通过。": "Omitido por política: {v0}. Sin resultado de revisión semántica independiente; esto no significa que la revisión se haya superado.",
+  "如需覆盖本段，请重新运行独立审校。": "Para cubrir este párrafo, vuelve a ejecutar la revisión independiente.",
+  "重新运行此段审校，生成与当前译文一致的新结果。": "Vuelve a revisar este párrafo para generar un resultado coherente con la traducción actual.",
+  "{v0} {v1} 段": "{v0} ({v1} párrafos)",
+  "复用已审校翻译记忆": "Se reutilizó una memoria de traducción ya revisada",
+  "无确定性风险信号": "Sin señal de riesgo determinista",
+  "未记录跳过原因": "No se registró el motivo de omisión",
+  "按策略跳过": "Omitido por política"
 }

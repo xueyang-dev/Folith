@@ -2430,5 +2430,17 @@
   "原格式译文": "Original-format translation",
   "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Writes the translation back into the original DOCX, keeping styles, tables, footnotes, headers and footers; anything left untranslated is listed in the delivery report.",
   "思考": "Thinking",
-  "关闭思考": "Disable thinking"
+  "关闭思考": "Disable thinking",
+  "{v0} 段未执行本轮独立语义审校（按策略跳过）": "{v0} paragraphs not independently reviewed this round (skipped by policy)",
+  "部分译文未执行独立语义审校": "Some translations were not independently reviewed",
+  "按策略跳过：{v0}。这些段落没有独立审校结论，不等于审校通过；现有交付门禁保持不变。": "Skipped by policy: {v0}. These paragraphs have no independent review conclusion; this does not mean they passed review, and the existing delivery gate is unchanged.",
+  "{v0} / {v1} 段已完成独立审校，{v2} 段未执行本轮独立语义审校（按策略跳过：{v3}）。": "{v0} / {v1} paragraphs independently reviewed; {v2} not reviewed this round (skipped by policy: {v3}).",
+  "按策略跳过：{v0}。没有独立语义审校结果，不等于审校通过。": "Skipped by policy: {v0}. No independent semantic review result; this does not mean review passed.",
+  "如需覆盖本段，请重新运行独立审校。": "To cover this paragraph, run independent review again.",
+  "重新运行此段审校，生成与当前译文一致的新结果。": "Re-run review for this paragraph to produce a result consistent with the current translation.",
+  "{v0} {v1} 段": "{v0} ({v1} seg)",
+  "复用已审校翻译记忆": "Reused an already-reviewed translation memory",
+  "无确定性风险信号": "No deterministic risk signal",
+  "未记录跳过原因": "No skip reason recorded",
+  "按策略跳过": "Skipped by policy"
 }

@@ -81,6 +81,43 @@ def _coverage_copy(readiness: Mapping[str, Any]) -> tuple[str, str, str]:
     return label, detail, tone
 
 
+def coverage_copy_parts(readiness: Mapping[str, Any]) -> Dict[str, Any]:
+    """Structured pieces behind the "skipped / partial coverage" sentence (#102).
+
+    ``_coverage_copy`` must keep returning the canonical Chinese string for core
+    callers that predate the Qt client, but the Qt review panel has to render
+    that sentence in the user's language instead of showing composed Chinese.
+    Returning the parts (rather than a pre-joined sentence) lets the panel attach
+    its own translated templates without parsing a string, and without the core
+    learning about locales. Only numeric parts and raw reason codes cross the
+    boundary; every human-readable word stays in the Qt catalog.
+    """
+    status = str(readiness.get("status") or "not_run")
+    coverage = str(readiness.get("coverage_status") or "")
+    skipped = int(readiness.get("skipped_count") or 0)
+    if status != "current":
+        return {"kind": ""}
+    if coverage == "skipped":
+        kind = "skipped"
+    elif coverage == "partial" and skipped:
+        kind = "partial"
+    else:
+        return {"kind": ""}
+    reasons = [
+        {"reason": str(reason), "count": int(count)}
+        for reason, count in sorted(
+            (readiness.get("skipped_reason_counts") or {}).items())
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0
+    ]
+    return {
+        "kind": kind,
+        "skipped": skipped,
+        "reviewed": int(readiness.get("reviewed_count") or 0),
+        "total": len(readiness.get("expected_segment_ids") or []),
+        "reasons": reasons,
+    }
+
+
 FINDING_STATUS_COPY = {
     "open": "待处理",
     "resolved": "已确认解决",
@@ -338,6 +375,9 @@ def _review_task_item(
         "severity_label": status_label,
         "status": kind,
         "status_label": status_label,
+        # 原始跳过原因码：界面据此重新组装本地化摘要，而不是把核心拼好的
+        # 中文句子原样塞进英文界面。
+        "skip_reason": skip_reason if kind == "skipped" else "",
         "category": "review_coverage" if kind == "skipped" else "review_freshness",
         "category_label": "审校覆盖" if kind == "skipped" else "独立审校",
         "title": f"第 {segment_id + 1} 段 · {status_label}",
@@ -682,6 +722,8 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         "filter_counts": filter_counts,
         "group_counts": group_counts,
         "primary_action": _primary_action(readiness, counts, items),
+        # 结构化覆盖信息，供 Qt 审校页按当前语言重排「按策略跳过」句子。
+        "coverage": coverage_copy_parts(readiness),
         "delivery": _delivery_copy(readiness, counts),
         "nav": _nav_copy(readiness, counts),
         "risk_acceptance": _risk_acceptance(state, readiness),

@@ -2431,5 +2431,17 @@
   "原格式译文": "Übersetzung im Originalformat",
   "在原 DOCX 文件上写回译文，保留样式、表格、脚注与页眉页脚；未翻译的内容会在交付报告中列出。": "Schreibt die Übersetzung in die Original-DOCX zurück und behält Formatvorlagen, Tabellen, Fußnoten sowie Kopf- und Fußzeilen bei; nicht Übersetztes wird im Lieferbericht aufgeführt.",
   "思考": "Denken",
-  "关闭思考": "Denken deaktivieren"
+  "关闭思考": "Denken deaktivieren",
+  "{v0} 段未执行本轮独立语义审校（按策略跳过）": "{v0} Absätze wurden in dieser Runde nicht unabhängig geprüft (richtlinienbedingt übersprungen)",
+  "部分译文未执行独立语义审校": "Einige Übersetzungen wurden nicht unabhängig geprüft",
+  "按策略跳过：{v0}。这些段落没有独立审校结论，不等于审校通过；现有交付门禁保持不变。": "Richtlinienbedingt übersprungen: {v0}. Diese Absätze haben kein unabhängiges Prüfergebnis; das bedeutet nicht, dass sie die Prüfung bestanden haben, und das bestehende Liefer-Gate bleibt unverändert.",
+  "{v0} / {v1} 段已完成独立审校，{v2} 段未执行本轮独立语义审校（按策略跳过：{v3}）。": "{v0} / {v1} Absätze unabhängig geprüft; {v2} in dieser Runde nicht geprüft (richtlinienbedingt übersprungen: {v3}).",
+  "按策略跳过：{v0}。没有独立语义审校结果，不等于审校通过。": "Richtlinienbedingt übersprungen: {v0}. Kein unabhängiges semantisches Prüfergebnis; das bedeutet nicht, dass die Prüfung bestanden wurde.",
+  "如需覆盖本段，请重新运行独立审校。": "Um diesen Absatz abzudecken, führen Sie die unabhängige Prüfung erneut aus.",
+  "重新运行此段审校，生成与当前译文一致的新结果。": "Prüfen Sie diesen Absatz erneut, um ein zur aktuellen Übersetzung passendes Ergebnis zu erzeugen.",
+  "{v0} {v1} 段": "{v0} ({v1} Absätze)",
+  "复用已审校翻译记忆": "Bereits geprüftes Translation-Memory wiederverwendet",
+  "无确定性风险信号": "Kein deterministisches Risikosignal",
+  "未记录跳过原因": "Kein Überspringgrund erfasst",
+  "按策略跳过": "Richtlinienbedingt übersprungen"
 }
