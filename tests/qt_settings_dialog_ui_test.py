@@ -132,7 +132,7 @@ def test_ocr_backend_shows_labels_but_collects_core_values(app):
                   for i in range(dialog.ocr_backend_box.count())]
         values = [dialog.ocr_backend_box.itemData(i)
                   for i in range(dialog.ocr_backend_box.count())]
-        assert values == ["online", "tesseract", "paddle"], values
+        assert values == ["online", "ocr_api", "tesseract", "paddle"], values
         assert all(label != value for label, value in zip(labels, values)), labels
         dialog.ocr_backend_box.setCurrentIndex(values.index("tesseract"))
         assert dialog._collect().ocr_backend == "tesseract"
@@ -224,5 +224,38 @@ def test_diagnostics_buttons_carry_icons(app):
         for button in (dialog.export_button, dialog.reveal_button,
                        dialog.copy_button):
             assert not button.icon().isNull(), button.text()
+    finally:
+        dialog.close()
+
+
+def test_ocr_channel_with_tesseract_hides_the_api_model_row(app, monkeypatch):
+    """本机 Tesseract 不用 API 连接：模型行和它的说明不显示，卡片写明本机 Tesseract。"""
+    monkeypatch.setattr(adapter.core, "_find_tesseract", lambda: "fake-tesseract")
+    dialog = _dialog(app, ocr_backend="ocr_api")
+    try:
+        assert not dialog._scan_model_row.isHidden()
+        assert not dialog._ocr_hint_row.isHidden()
+        dialog.ocr_engine_picker.set_value("tesseract")
+        dialog.ocr_engine_picker.changed.emit("tesseract")
+        app.processEvents()
+        assert dialog.ocr_backend_box.currentData() == "tesseract"
+        assert dialog._scan_model_row.isHidden()
+        assert dialog._ocr_hint_row.isHidden()
+        assert not dialog.ocr_language_row.isHidden()
+        assert "Tesseract" in dialog.local_option.detail_label.text()
+    finally:
+        dialog.close()
+
+
+def test_scan_scope_hint_uses_the_available_control_width(app):
+    dialog = _dialog(app)
+    try:
+        dialog.resize(900, 1000)
+        dialog.show_page('models')
+        for _ in range(5):
+            app.processEvents()
+        hint = next(label for label in dialog.findChildren(QLabel)
+                    if label.text().startswith('此设置用于新任务。'))
+        assert hint.width() >= 400
     finally:
         dialog.close()

@@ -1215,6 +1215,20 @@ def test_the_quality_knob_only_shows_for_local_ocr(data_env, qt_app):
     panel.close()
 
 
+def test_ocr_api_uses_source_language_instead_of_a_second_language_control(data_env, qt_app):
+    from folith.qt.setup_panel import TaskSetupPanel
+    panel = TaskSetupPanel()
+    panel.set_choices(adapter.setup_choices())
+    panel.load(_pdf_view())
+    panel.ocr_backend_box.setCurrentIndex(panel.ocr_backend_box.findData("ocr_api"))
+    panel.source_box.setCurrentIndex(panel.source_box.findData("日本語"))
+    assert panel.ocr_language_field.isHidden()
+    assert panel.payload()["source_lang"] == "日本語"
+    panel.ocr_backend_box.setCurrentIndex(panel.ocr_backend_box.findData("tesseract"))
+    assert not panel.ocr_language_field.isHidden()
+    panel.close()
+
+
 def test_a_non_pdf_task_does_not_show_scan_settings(data_env, qt_app):
     """DOCX 不走这一步：非 PDF 任务不该出现扫描件识别整块。"""
     from folith.qt.setup_panel import TaskSetupPanel

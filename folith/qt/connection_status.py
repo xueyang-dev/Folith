@@ -19,7 +19,10 @@ from datetime import datetime, timezone
 from . import adapter, preferences
 
 ROLES = ("translation", "reviewer", "vision")
-ROLE_LABELS = {"translation": "翻译模型", "reviewer": "审校模型", "vision": "视觉模型"}
+ROLE_LABELS = {
+    "translation": "翻译模型", "reviewer": "审校模型", "vision": "视觉模型",
+    "ocr_api": "OCR 模型", "ocr_structure": "整理结构模型",
+}
 #: 状态 → 呈现用的 tone。
 #: 未配置是"还没做"，不是错误：用警告色（色彩审校：红色留给真正失败的连接）。
 TONES = {"ok": "ok", "failed": "danger", "untested": "warning",

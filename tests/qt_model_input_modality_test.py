@@ -228,7 +228,8 @@ def test_vision_role_warns_for_declared_text_only(app):
     dialog = _vision_dialog(app)
     hint = dialog.connection_library.vision_modality_hint
     assert not hint.isHidden()
-    assert "仅接受文本输入" in hint.label.text()
+    # fullText() 返回完整语义文本（ElideLabel.text() 可能因已知宽度而省略显示）
+    assert "仅接受文本输入" in hint.label.fullText()
     assert hint.tone() == "attention"
 
 
@@ -236,9 +237,9 @@ def test_vision_role_model_switch_updates_hint(app):
     dialog = _vision_dialog(app)
     hint = dialog.connection_library.vision_modality_hint
     dialog.connection_library.model_selectors["vision"].setCurrentText("vision-x")
-    assert "支持图像输入" in hint.label.text() and hint.tone() == "done"
+    assert "支持图像输入" in hint.label.fullText() and hint.tone() == "done"
     dialog.connection_library.model_selectors["vision"].setCurrentText("mystery-z")
-    assert "未知" in hint.label.text() and hint.tone() == "idle"
+    assert "未知" in hint.label.fullText() and hint.tone() == "idle"
 
 
 def test_vision_role_hint_reads_probe_cache(app, monkeypatch, tmp_path):
@@ -248,7 +249,7 @@ def test_vision_role_hint_reads_probe_cache(app, monkeypatch, tmp_path):
     dialog = _vision_dialog(app, vision_model="mystery-z",
                             profile={"model_modalities": {}})
     hint = dialog.connection_library.vision_modality_hint
-    assert "实测未通过" in hint.label.text() and hint.tone() == "attention"
+    assert "实测未通过" in hint.label.fullText() and hint.tone() == "attention"
     assert hint.toolTip() == "实测失败信息", "失败原因放悬停，不挤版面"
 
 

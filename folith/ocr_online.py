@@ -658,12 +658,28 @@ class OnlineOCRBackend(OCRBackend):
         return self._blocks_from_segments(segments, page_index, page_number, language), None
 
     def read_image(self, png_bytes: bytes, *, system_prompt=None,
-                   user_prompt=None, decoder=decode_segments):
-        """Shared bounded image transport; response normalization belongs to adapters."""
-        self._last_timings = {}
+                   user_prompt=None, decoder=decode_segments, context=None):
+        """Read an image, optionally returning diagnostics in a call-owned context.
+
+        Legacy callers without a context retain the last-request attributes.
+        Concurrent callers supply their own context to avoid sharing diagnostics.
+        """
+        legacy = context is None
+        context = {} if legacy else context
+        context["timings"] = {}
+        try:
+            return self._read_image(png_bytes, system_prompt=system_prompt,
+                                    user_prompt=user_prompt, decoder=decoder,
+                                    context=context)
+        finally:
+            if legacy:
+                self._last_request = context.get("request", {})
+                self._last_timings = context.get("timings", {})
+
+    def _read_image(self, png_bytes, *, system_prompt, user_prompt, decoder, context):
         reason = self.unavailable_reason()
         if reason:
-            self._last_request = {"status": "unavailable", "error_code": "unconfigured",
+            context["request"] = {"status": "unavailable", "error_code": "unconfigured",
                                   **self.config.describe()}
             return [], f"unconfigured: {reason}"
         if self._cancel_check is not None and self._cancel_check():
@@ -714,7 +730,7 @@ class OnlineOCRBackend(OCRBackend):
                                  http_status=classified.http_status,
                                  code=classified.code, message=classified.message[:120])
                 delay = _bounded_backoff(attempt, classified.retry_after)
-                self._last_timings[f"retry_backoff_{attempt}"] = delay
+                context["timings"][f"retry_backoff_{attempt}"] = delay
                 self._sleep_slices(delay)
                 continue
             controller.note_success()
@@ -744,6 +760,9 @@ class OnlineOCRBackend(OCRBackend):
                 # The reply never finished, so it never reaches the decoder: keep its
                 # head and tail, and how repetitive it is, so a runaway can be studied.
                 text = str(result.get("text") or "")
+                # Store text so subclasses (e.g. OcrApiBackend) can inspect it for
+                # repetition loops and attempt recovery before accepting the failure.
+                context["response_text"] = text
                 half = RESPONSE_EXCERPT_CHARS // 2
                 pieces = text.split(",")
                 attempts[-1].update(
@@ -751,16 +770,15 @@ class OnlineOCRBackend(OCRBackend):
                     response_tail=text[-half:] if len(text) > half else "",
                     distinct_piece_ratio=round(len(set(pieces)) / max(len(pieces), 1), 3))
                 return self._fail(
-                    "truncated", "线上 OCR 输出被服务截断（finish_reason=length）；"
-                    "该页未保存，请提高输出上限或改用其他来源。",
-                    attempts, usage_total, request_ids, started)
+                    "truncated", _truncation_message(text),
+                    attempts, usage_total, request_ids, started, context)
             if finish not in {None, "stop"}:
                 return self._fail(
                     "incomplete_response",
                     f"线上 OCR 未正常结束（finish_reason={finish}）；该页未保存。",
-                    attempts, usage_total, request_ids, started)
+                    attempts, usage_total, request_ids, started, context)
             raw = result.get("text") or ""
-            self._last_response_text = raw
+            context["response_text"] = raw
             try:
                 segments = decoder(raw)
             except ValueError as exc:
@@ -770,7 +788,7 @@ class OnlineOCRBackend(OCRBackend):
                 if attempt >= min(self.config.max_retries, CONTENT_MAX_RETRIES):
                     return self._fail(
                         code, _parse_failure_message(code),
-                        attempts, usage_total, request_ids, started)
+                        attempts, usage_total, request_ids, started, context)
                 page_events.emit("retry", attempt=attempt + 1,
                                  attempts=min(self.config.max_retries, CONTENT_MAX_RETRIES) + 1,
                                  http_status=None, code=code,
@@ -778,8 +796,8 @@ class OnlineOCRBackend(OCRBackend):
                 continue
             if not segments:
                 return self._fail("empty_transcription", "线上 OCR 未返回可用的正文行；该页未保存。",
-                                  attempts, usage_total, request_ids, started)
-            self._last_request = {
+                                  attempts, usage_total, request_ids, started, context)
+            context["request"] = {
                 "status": "completed",
                 "backend": self.name,
                 "provider": self.config.provider,
@@ -797,7 +815,7 @@ class OnlineOCRBackend(OCRBackend):
                 "geometry": False,
                 "confidence": "unknown",
             }
-            self._last_timings["request_s"] = time.perf_counter() - started
+            context["timings"]["request_s"] = time.perf_counter() - started
             return segments, None
         # every attempt failed
         page_events.emit("failed", attempts=len(attempts),
@@ -806,7 +824,7 @@ class OnlineOCRBackend(OCRBackend):
                          message=str(getattr(last_error, "message", ""))[:120])
         error = last_error or OnlineOCRRequestError("request_failed", "线上 OCR 请求失败。",
                                                     retryable=False)
-        self._last_request = {
+        context["request"] = {
             "status": "failed",
             "backend": self.name,
             "provider": self.config.provider,
@@ -822,14 +840,14 @@ class OnlineOCRBackend(OCRBackend):
             "geometry": False,
             "confidence": "unknown",
         }
-        self._last_timings["request_s"] = time.perf_counter() - started
+        context["timings"]["request_s"] = time.perf_counter() - started
         return [], f"{error.code}: {error.message}"
 
     def _fail(self, code: str, message: str, attempts, usage_total, request_ids,
-              started) -> Tuple[List[OCRBlock], Optional[str]]:
+              started, context) -> Tuple[List[OCRBlock], Optional[str]]:
         page_events.emit("failed", attempts=len(attempts), http_status=None,
                          code=code, message=str(message)[:120])
-        self._last_request = {
+        context["request"] = {
             "status": "failed",
             "backend": self.name,
             "provider": self.config.provider,
@@ -844,7 +862,7 @@ class OnlineOCRBackend(OCRBackend):
             "geometry": False,
             "confidence": "unknown",
         }
-        self._last_timings["request_s"] = time.perf_counter() - started
+        context["timings"]["request_s"] = time.perf_counter() - started
         return [], f"{code}: {message}"
 
     def _blocks_from_segments(self, segments, page_index, page_number, language):
@@ -889,7 +907,36 @@ def _sum_optional(left, right):
     return (left or 0) + (right or 0)
 
 
+def _truncation_message(response_text: str) -> str:
+    """#258：finish_reason=length 时，若响应全是纯文本（无 JSON 标记），说明很可能是
+    OCR 专用模型在输出原始文本，而非视觉理解模型按格式回答；给出针对性提示。
+
+    判断依据：响应里完全没有 JSON 的结构特征（{ [ "），同时长度不为零。
+    """
+    text = str(response_text or "").strip()
+    looks_like_json = text.startswith(("{", "[")) or '{"' in text or "'b'" in text
+    if text and not looks_like_json:
+        return (
+            "视觉理解返回的是纯文本，不是约定的结构化格式（finish_reason=length）；该页未保存。"
+            "如果你选择的是 OCR 专用模型（如 PaddleOCR-VL、GOT-OCR），"
+            "请改用支持图像输入并能按格式回答的视觉语言模型。"
+        )
+    return (
+        "线上 OCR 输出被服务截断（finish_reason=length）；"
+        "该页未保存，请提高输出上限或改用其他来源。"
+    )
+
+
 def _parse_failure_message(code: str) -> str:
+    # #258：invalid_semantic_json 是「返回内容无法解析为约定的 JSON」；
+    # 最常见的原因是 OCR 专用模型只返回纯文本——给出针对性提示。
+    if code in ("invalid_semantic_json", "invalid_semantic_blocks", "invalid_semantic_block",
+                "invalid_semantic_language"):
+        return (
+            "视觉理解返回的内容不是约定的结构化格式；该页未保存。"
+            "如果你选择的是 OCR 专用模型（如 PaddleOCR-VL、GOT-OCR），"
+            "请改用支持图像输入并能按格式回答的视觉语言模型。"
+        )
     return {
         "empty_response": "线上 OCR 返回空响应；该页未保存。",
         "not_json": "线上 OCR 响应不是约定的 JSON；该页未保存。",

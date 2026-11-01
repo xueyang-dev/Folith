@@ -294,9 +294,48 @@ def test_requesting_a_rescan_registers_the_options_for_the_next_run(pdf_job):
     assert state["source_rescan_requested"] is True
     assert state["source_rescan_options"] == options
     assert options["ocr_dpi"] == core.ocr_quality_dpi("historical")
-    assert options["ocr_online"] is None, "视觉连接不随任务快照保存"
+    assert options["ocr_online"] == {}, "重新扫描应使用当前连接，不保存凭据"
     assert options["ocr_mode"] == "force"
     assert state["pairs"][0]["target"] == "甲", "登记请求本身不能动译文（失效发生在执行时）"
+
+
+def test_ocr_api_rescan_does_not_require_local_tesseract(pdf_job, monkeypatch):
+    from folith.engine import ocr_config
+    monkeypatch.setattr(ocr_config, "ocr_online_status", lambda *a, **k: {
+        "ok": True, "message": "configured"})
+    monkeypatch.setattr(core, "ocr_language_status", lambda *a, **k: {
+        "ok": False, "message": "no Tesseract"})
+    options = adapter.request_source_rescan(
+        pdf_job, backend="ocr_api", mode="force", language="", quality="standard")
+    assert options["ocr_backend"] == "ocr_api"
+    assert options["ocr_online"] == {}
+
+
+@pytest.mark.parametrize("has_source", [False, True])
+def test_empty_misrouted_scan_switches_to_selected_ocr_api(pdf_job, monkeypatch, has_source):
+    core.save_ocr_online_config(provider="OpenCode Go", model="PaddlePaddle/PaddleOCR-VL-1.5",
+                                api_key="ocr-key", base_url="")
+    state = adapter.load_state(pdf_job)
+    state.update(p1_done=False, p2_done=False, paras=[], pairs=[], source_paras=[],
+                 source_paragraphs=["already committed"] if has_source else [],
+                 streaming_ingest={"status": "running", "pages_done": 5},
+                 source_cleanup_done=True,
+                 pipeline_config={"ocr_backend": "online", "ocr_online": {
+                     "model": "PaddlePaddle/PaddleOCR-VL-1.5"}})
+    core.save_job_state(pdf_job, state)
+    switched = adapter._switch_empty_misrouted_scan(
+        pdf_job, adapter.EngineConfig(ocr_backend="ocr_api"))
+    result = adapter.load_state(pdf_job)
+    assert switched is not has_source
+    if has_source:
+        assert result["source_paragraphs"] == ["already committed"]
+        assert result["pipeline_config"]["ocr_backend"] == "online"
+        assert result["streaming_ingest"]["status"] == "running"
+    else:
+        assert result["pipeline_config"]["ocr_backend"] == "ocr_api"
+        assert result["pipeline_config"]["ocr_online"]["model"] == "PaddlePaddle/PaddleOCR-VL-1.5"
+        assert "streaming_ingest" not in result
+        assert result["source_cleanup_done"] is False
 
 
 def test_rescan_is_refused_while_running(pdf_job, monkeypatch):

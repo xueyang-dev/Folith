@@ -768,7 +768,7 @@ class MainWindow(QMainWindow):
         事。现在顶部提示条只说**阻塞**（模型缺失 + 配置入口）、侧栏块说**当前是什么**、
         底栏只说"刚刚发生了什么"——信息不缺，重复消失。
         """
-        problem = i18n.tr_dynamic(self.config.connection_problem())
+        problem = i18n.tr_dynamic(self.config.start_problem())
         self.home.set_engine_problem(
             problem,
             (f"{self.config.provider} / {self.config.model}"
@@ -1910,7 +1910,7 @@ class MainWindow(QMainWindow):
             self.workbench.set_setup_choices(adapter.setup_choices())
             self._setup_choices_loaded = True
         self.workbench.set_setup(adapter.task_setup_view(self.config, job_id, state))
-        self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
+        self.workbench.setup_panel.set_connection_problem(self.config.start_problem())
         self._auto_style_profile(job_id)
 
     def _auto_style_profile(self, job_id: str) -> None:
@@ -3850,7 +3850,7 @@ class MainWindow(QMainWindow):
         self._notice(i18n.tr('模型连接已应用。'), task=False)
         if self.stack.currentWidget() is self.workbench:
             self.workbench.config = self.config
-            self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
+            self.workbench.setup_panel.set_connection_problem(self.config.start_problem())
             self.refresh_workbench(force=True)
 
     @staticmethod

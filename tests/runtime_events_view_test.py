@@ -68,3 +68,16 @@ def test_event_names_decide_failure_and_running():
     assert _row("", name="job_failed")["status"] == "failed"
     assert _row("", name="llm_request_started")["status"] == "running"
     assert _row("", name="job_completed")["status"] == "completed"
+
+
+def test_a_running_failure_tally_does_not_mark_the_progress_line_failed():
+    line = "【阶段一】扫描 PDF OCR（69/416 页；OCR API · 日本語，失败 1 页，重试 4 次）…"
+    assert view.message_status("ocr", line) == "running"
+
+
+def test_a_failed_page_line_is_a_warning_and_real_failures_stay_failed():
+    assert view.message_status(
+        "ocr", "【阶段一】第 8 页未能识别，已跳过：OCR 输出过长被截断") == "warning"
+    assert view.message_status("ocr", "OCR 处理 PDF 失败：未找到模型") == "failed"
+    # A finished summary that reports failures is not hidden as running/completed.
+    assert view.message_status("ocr", "扫描完成，失败 1 页") == "failed"

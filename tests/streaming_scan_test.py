@@ -607,7 +607,7 @@ def test_three_consecutive_timeouts_pause_with_a_suggestion_and_resume_continues
     assert _wait(lambda: _runtime("streak").get("status") == "paused", timeout=20)
     runtime = _runtime("streak")
     assert "视觉识别连续 3 页超时" in runtime["last_event"]
-    assert "relay · flash-1" in runtime["last_event"] and "设置 › 视觉与识别" in runtime["last_event"]
+    assert "relay · flash-1" in runtime["last_event"] and "设置 › 模型 › 读取扫描页" in runtime["last_event"]
     assert thread.is_alive()
     import time
     time.sleep(0.8)
