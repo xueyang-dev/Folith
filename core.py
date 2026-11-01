@@ -897,6 +897,7 @@ from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its p
     active_pair_indexes,
     assign_missing_segment_uids,
     can_undo_translation_segment_structure,
+    check_positional_invariants,
     clear_translation_drafts,
     excluded_segment_records,
     excluded_segments_manifest,
@@ -905,6 +906,7 @@ from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its p
     load_translation_drafts,
     mutate_translation_segments,
     next_segment_uid,
+    repair_positional_columns,
     save_translation_drafts,
     segment_uid,
     translation_drafts_path,
@@ -12697,8 +12699,18 @@ def _apply_scan_page_order(job_id, state):
             break
         cursor = int(row["end"])
     pairs = list(state.get("pairs") or [])
+    # #233: name the drifted column instead of the old generic message.  A
+    # positional list running ahead of the work list used to slip through here
+    # (`permute` below silently keeps a wrong-length list unchanged).
+    report = check_positional_invariants(state)
     if not contiguous or cursor != len(paras) or (pairs and len(pairs) != len(paras)):
-        raise RuntimeError("补读的页无法按原页序排回：分段区间与译文数量不一致，请重新导入任务。")
+        raise RuntimeError(
+            "补读的页无法按原页序排回：分段区间与译文数量不一致，请重新导入任务。"
+            f"（{report['summary']}）")
+    if not report["ok"]:
+        raise RuntimeError(
+            "补读的页无法按原页序排回：段落位置数据已脱节，请重新导入任务。"
+            f"（{report['summary']}）")
 
     segment_order, new_ranges, new_paragraph_of = [], [], {}
     for new_index, old_index in enumerate(order):
