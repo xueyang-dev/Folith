@@ -368,16 +368,133 @@ def _runtime_exit_requested(job_id):
     return bool((load_runtime_state(job_id) or {}).get("exit_requested"))
 
 
+class _WorkerRestartRequested(BaseException):
+    """Internal signal: a paused worker was asked to restart on a new connection.
+
+    Derives from ``BaseException`` (not ``Exception``) on purpose: the pipeline
+    body has many broad ``except Exception`` blocks for provider/parse failures,
+    and none of them may swallow this control-flow signal.  It is caught and
+    handled inside :func:`_run_job_worker`, which re-enters the pipeline with the
+    new connection while keeping the committed pages/translations.
+    """
+
+
+#: job_id -> {"filename", "kwargs", "base_url"} for a pause-then-continue that
+#: must restart the live worker because the connection changed.  Kept in memory
+#: only: the resolved kwargs carry the API key, which must never be persisted.
+_RUNTIME_PENDING_RESTART = {}
+_RUNTIME_PENDING_RESTART_LOCK = threading.RLock()
+
+
+def _conn_text(value):
+    return "" if value is None else str(value).strip()
+
+
+def _conn_base(value):
+    return _conn_text(value).rstrip("/")
+
+
+def _connection_role_signature(provider, model, base_url):
+    return {"provider": _conn_text(provider), "model": _conn_text(model),
+            "base_url": _conn_base(base_url)}
+
+
+def _api_key_fingerprint(value):
+    """A comparable, non-reversible marker for a credential (never the key)."""
+    if not value:
+        return ""
+    try:
+        return str(_llm_transport.api_key_fingerprint(value) or "")
+    except Exception:  # noqa: BLE001 - a hashing failure must not block a restart
+        return "present"
+
+
+def _connection_signature_from_kwargs(kwargs):
+    """The public connection identity of one resolved pipeline configuration.
+
+    Includes provider/model/endpoint, a credential *fingerprint* and the
+    reasoning mode/effort, so an API-key-only change is detected without ever
+    persisting the key itself.
+    """
+    kwargs = kwargs if isinstance(kwargs, dict) else {}
+    separate = bool(kwargs.get("reviewer_provider") and kwargs.get("reviewer_model"))
+    translator = _connection_role_signature(
+        kwargs.get("provider"), kwargs.get("model"), kwargs.get("translator_base_url"))
+    translator["api_key_fp"] = _api_key_fingerprint(kwargs.get("api_key"))
+    if separate:
+        reviewer = _connection_role_signature(
+            kwargs.get("reviewer_provider"), kwargs.get("reviewer_model"),
+            kwargs.get("reviewer_base_url"))
+        reviewer["api_key_fp"] = _api_key_fingerprint(kwargs.get("reviewer_api_key"))
+    else:
+        reviewer = _connection_role_signature("", "", "")
+        reviewer["api_key_fp"] = ""
+    return {
+        "translator": translator,
+        "reviewer": reviewer,
+        "reasoning_effort": _conn_text(kwargs.get("reasoning_effort")).lower(),
+    }
+
+
+def _connection_label_from_kwargs(kwargs):
+    """A short human label ("Provider · model") for one resolved configuration."""
+    kwargs = kwargs if isinstance(kwargs, dict) else {}
+    translator = " · ".join(x for x in (_conn_text(kwargs.get("provider")),
+                                        _conn_text(kwargs.get("model"))) if x)
+    reviewer = ""
+    if kwargs.get("reviewer_provider") and kwargs.get("reviewer_model"):
+        reviewer = " · ".join(x for x in (_conn_text(kwargs.get("reviewer_provider")),
+                                          _conn_text(kwargs.get("reviewer_model"))) if x)
+    parts = [p for p in (translator, f"审校 {reviewer}" if reviewer else "") if p]
+    return "；".join(parts)
+
+
+def _worker_connection_changed(job_id, kwargs):
+    """True when ``kwargs`` differs from the connection the live worker started with.
+
+    ``None``/missing recorded signature means "cannot prove a change" (a task
+    started before this feature existed), and is treated as "no change".
+    """
+    stored = (load_runtime_state(job_id) or {}).get("worker_connection")
+    if not isinstance(stored, dict) or not stored:
+        return False
+    try:
+        return stored != _connection_signature_from_kwargs(kwargs)
+    except Exception:  # noqa: BLE001 - worst case we do a plain continue
+        return False
+
+
+def _take_pending_restart(job_id):
+    with _RUNTIME_PENDING_RESTART_LOCK:
+        return _RUNTIME_PENDING_RESTART.pop(job_id, None)
+
+
+def _pending_restart_exists(job_id):
+    with _RUNTIME_PENDING_RESTART_LOCK:
+        return job_id in _RUNTIME_PENDING_RESTART
+
+
 def _runtime_pause_checkpoint(job_id, paused_message=None):
     """Pause cooperatively between operations; keep in-memory results and lease.
 
     ``paused_message``：暂停的原因（例如连续超时的建议），作为「已暂停」的最新状态；
     缺省是通用的「任务已暂停」。
+
+    A pause request may be paired with a *restart* request (the connection was
+    changed while the task was paused).  When that happens the worker unwinds to
+    :func:`_run_job_worker`, which re-enters the pipeline with the new
+    connection instead of resuming with the old one.
     """
     _annotation_fail_stop_check()
-    if not job_id or not load_runtime_state(job_id).get("pause_requested"):
+    if not job_id:
         return
-    previous = load_runtime_state(job_id)
+    runtime = load_runtime_state(job_id)
+    if runtime.get("restart_requested") and not runtime.get("cancel_requested") \
+            and _pending_restart_exists(job_id):
+        raise _WorkerRestartRequested("连接已更改，正在用新连接重新启动任务")
+    if not runtime.get("pause_requested"):
+        return
+    previous = runtime
     update_runtime_state(job_id, status="paused", phase="paused",
                          event=paused_message or "任务已暂停，可继续处理",
                          event_name="job_paused",
@@ -385,6 +502,10 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
     while load_runtime_state(job_id).get("pause_requested"):
         if _runtime_cancel_requested(job_id):
             raise RuntimeError("任务已请求取消")
+        current = load_runtime_state(job_id)
+        if current.get("restart_requested") and not current.get("cancel_requested") \
+                and _pending_restart_exists(job_id):
+            raise _WorkerRestartRequested("连接已更改，正在用新连接重新启动任务")
         with _RUNTIME_LOCK:
             current = load_runtime_state(job_id)
             if current.get("pause_requested") and not current.get("cancel_requested") \
@@ -395,6 +516,10 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
                 update_runtime_state(job_id, status="paused", phase="paused",
                                      phase_label=paused_message or "任务已暂停，可继续处理")
         time.sleep(0.25)
+    if load_runtime_state(job_id).get("restart_requested") \
+            and not load_runtime_state(job_id).get("cancel_requested") \
+            and _pending_restart_exists(job_id):
+        raise _WorkerRestartRequested("连接已更改，正在用新连接重新启动任务")
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
     update_runtime_state(job_id, status="running", phase=previous.get("phase") or "running",
@@ -406,16 +531,42 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
 def request_job_pause(job_id):
     if not is_job_worker_alive(job_id):
         return False
+    note = "已请求暂停；当前正在进行的请求会先用原连接完成，随后暂停"
     update_runtime_state(job_id, pause_requested=True, status="pausing",
-                         event="已请求暂停，当前操作结束后暂停", event_name="pause_requested",
+                         event=note, event_name="pause_requested",
                          event_visibility="user", event_category="lifecycle")
     return True
 
 
-def continue_job(job_id):
+def continue_job(job_id, *, restart_kwargs=None, base_url=None, filename=None):
+    """Continue a paused task; restart it transparently if the connection changed.
+
+    ``restart_kwargs`` is the caller's *currently resolved* pipeline configuration
+    (the settings the user has now).  When it differs from the connection the live
+    worker started with, the worker is asked to unwind to its pause boundary and
+    re-enter the pipeline with these kwargs — committed pages and translations are
+    kept, so the change takes effect without cancelling the task.
+    """
     if not is_job_worker_alive(job_id):
         return False
+    if restart_kwargs is not None and _worker_connection_changed(job_id, restart_kwargs):
+        with _RUNTIME_PENDING_RESTART_LOCK:
+            _RUNTIME_PENDING_RESTART[job_id] = {
+                "filename": filename or (load_job_state(job_id) or {}).get("filename")
+                or "当前任务",
+                "kwargs": dict(restart_kwargs),
+                "base_url": base_url,
+            }
+        update_runtime_state(
+            job_id, pause_requested=False, exit_requested=False, restart_requested=True,
+            status="running", phase="running",
+            event="连接已更改，正在用新连接重新启动任务；已识别的页面与译文会保留"
+                  "（换模型后部分页面可能按新模型重新读取）",
+            event_name="connection_changed_restart",
+            event_visibility="user", event_category="lifecycle")
+        return True
     update_runtime_state(job_id, pause_requested=False, exit_requested=False,
+                         restart_requested=False,
                          status="running", phase="running",
                          event="正在继续任务", event_name="continue_requested",
                          event_visibility="user", event_category="lifecycle")
@@ -8777,6 +8928,44 @@ def runtime_actions_for_job(job_id, status):
     return actions
 
 
+def _active_connection_view(state):
+    """The connection the task is actually running on, for the run header.
+
+    Reads the task's own ``pipeline_config`` (written when the worker started),
+    so it shows what the running worker is talking to — not what the settings
+    dialog merely has selected now.  Returns ``None`` for a task that never
+    started, or whose connection was not recorded.
+    """
+    state = state if isinstance(state, dict) else {}
+    config = state.get("pipeline_config")
+    config = config if isinstance(config, dict) else {}
+    translator = config.get("translator")
+    translator = translator if isinstance(translator, dict) else {}
+    reviewer = config.get("reviewer")
+    reviewer = reviewer if isinstance(reviewer, dict) else {}
+    provider = _conn_text(translator.get("provider") or state.get("provider"))
+    model = _conn_text(translator.get("model") or state.get("model"))
+    if not (provider or model):
+        return None
+    label = " · ".join(part for part in (provider, model) if part)
+    reviewer_label = ""
+    if reviewer.get("provider") and reviewer.get("model"):
+        reviewer_label = " · ".join(
+            part for part in (_conn_text(reviewer.get("provider")),
+                              _conn_text(reviewer.get("model"))) if part)
+    roles = ["翻译"]
+    if reviewer_label:
+        roles.append("审校")
+    return {
+        "label": label,
+        "provider": provider,
+        "model": model,
+        "reviewer_label": reviewer_label,
+        "roles": roles,
+        "reasoning_effort": _conn_text(config.get("reasoning_effort")),
+    }
+
+
 def build_job_runtime_view(job_id, state=None):
     """Canonical user-facing runtime view shared by every product surface."""
     state = state if isinstance(state, dict) else load_job_state(job_id)
@@ -8824,6 +9013,9 @@ def build_job_runtime_view(job_id, state=None):
                 else "正在从最近进度继续处理"
     elif status == "waiting_external":
         detail = "正在等待模型响应"
+    elif status == "pausing":
+        # 暂停请求的理由（例如"在途请求会先用原连接完成"）比一句"正在暂停"更有用。
+        detail = runtime.get("last_event") or "正在暂停"
     elif status == "running":
         detail = runtime.get("phase_label") or "已恢复 · 正在执行"
     elif status == "interrupted":
@@ -8861,6 +9053,7 @@ def build_job_runtime_view(job_id, state=None):
         "progress_completed": completed,
         "progress_total": total,
         "stage_progress": runtime.get("stage_progress") or {},
+        "active_connection": _active_connection_view(state),
         "available_actions": actions,
         "primary_action": primary_action,
         "show_no_worker_warning": status in {
@@ -9193,6 +9386,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         kwargs.pop("on_caption", None)
         state = load_job_state(job_id) or new_job_state(filename)
         queued = load_runtime_state(job_id)
+        _take_pending_restart(job_id)  # a new worker never inherits an old request
         update_runtime_state(
             job_id, status="starting", phase="starting",
             phase_label="正在读取最近检查点", heartbeat=True, progress=True,
@@ -9200,42 +9394,74 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             event_visibility="technical", event_category="orchestration",
             pipeline=("segment_operation" if segment_operation else
                       "academic_writing" if kwargs.get("enable_report")
-                      else "document_pipeline"))
+                      else "document_pipeline"),
+            restart_requested=False,
+            worker_connection=_connection_signature_from_kwargs(kwargs))
         update_runtime_state(
             job_id, status="running", phase="running",
             phase_label="已恢复 · 正在执行" if queued.get("resume_request_id")
             else "正在执行", heartbeat=True)
-        if segment_operation:
-            kind = segment_operation["kind"]
-            indexes = segment_operation["indexes"]
-            kwargs.pop("reasoning_effort", None)
-            if kind == "review":
-                result = review_translation_segments(job_id, indexes, **kwargs)
-                failed = result[1].get("failed_segment_ids") or []
-                if failed:
-                    raise RuntimeError(f"{len(failed)} 个段落审校未完成，请在审校队列中重试。")
-            else:
-                result = retranslate_segments(
-                    job_id, indexes, **kwargs,
-                    on_caption=lambda text: _runtime_caption_callback(job_id, text))
-                if len(result[1]) != len(indexes):
-                    raise RuntimeError("部分段落未完成重译，请查看段落状态后重试。")
-                readiness = _translation_evidence.translation_review_readiness(result[0])
-                if set(indexes) & set(readiness.get("failed_segment_ids") or []):
-                    raise RuntimeError("重译已保存，但部分段落审校未完成，请在审校队列中重试。")
-            if not _runtime_cancel_requested(job_id):
+        while True:
+            if segment_operation:
+                kind = segment_operation["kind"]
+                indexes = segment_operation["indexes"]
+                kwargs.pop("reasoning_effort", None)
+                if kind == "review":
+                    result = review_translation_segments(job_id, indexes, **kwargs)
+                    failed = result[1].get("failed_segment_ids") or []
+                    if failed:
+                        raise RuntimeError(f"{len(failed)} 个段落审校未完成，请在审校队列中重试。")
+                else:
+                    result = retranslate_segments(
+                        job_id, indexes, **kwargs,
+                        on_caption=lambda text: _runtime_caption_callback(job_id, text))
+                    if len(result[1]) != len(indexes):
+                        raise RuntimeError("部分段落未完成重译，请查看段落状态后重试。")
+                    readiness = _translation_evidence.translation_review_readiness(result[0])
+                    if set(indexes) & set(readiness.get("failed_segment_ids") or []):
+                        raise RuntimeError("重译已保存，但部分段落审校未完成，请在审校队列中重试。")
+                if not _runtime_cancel_requested(job_id):
+                    update_runtime_state(
+                        job_id, segment_operation_result="completed",
+                        completed_units=len(indexes), progress=True,
+                        event="所选段落审校已完成" if kind == "review" else "所选段落重译已完成",
+                        event_name="segment_operation_completed", event_visibility="user",
+                        event_category="progress")
+                break
+            try:
+                result = run_job_pipeline(
+                    job_id, filename, file_bytes, **kwargs,
+                    on_status=lambda label: _runtime_status_callback(job_id, state, label),
+                    on_caption=lambda text: _runtime_caption_callback(job_id, text),
+                )
+            except _WorkerRestartRequested:
+                # The connection changed while the task was paused.  Keep the
+                # same worker thread and task lock, but re-enter the pipeline
+                # from the last checkpoint with the newly resolved settings.
+                pending = _take_pending_restart(job_id)
+                if not pending:
+                    raise
+                trace.finish_run(job_id=job_id, status="interrupted")
+                filename = pending.get("filename") or filename
+                kwargs = dict(pending.get("kwargs") or {})
+                kwargs.pop("on_status", None)
+                kwargs.pop("on_caption", None)
+                base_url = pending.get("base_url")
+                set_llm_base_url(base_url)
+                set_llm_reasoning_effort(kwargs.get("reasoning_effort"))
+                state = load_job_state(job_id) or state
+                flush_runtime_status(job_id)
+                reset_runtime_status(job_id)
                 update_runtime_state(
-                    job_id, segment_operation_result="completed",
-                    completed_units=len(indexes), progress=True,
-                    event="所选段落审校已完成" if kind == "review" else "所选段落重译已完成",
-                    event_name="segment_operation_completed", event_visibility="user",
-                    event_category="progress")
-        else:
-            result = run_job_pipeline(
-                job_id, filename, file_bytes, **kwargs,
-                on_status=lambda label: _runtime_status_callback(job_id, state, label),
-                on_caption=lambda text: _runtime_caption_callback(job_id, text),
-            )
+                    job_id, pause_requested=False, restart_requested=False,
+                    cancel_requested=False, exit_requested=False,
+                    worker_connection=_connection_signature_from_kwargs(kwargs),
+                    event="已用新连接重新启动任务；已识别的页面与译文会保留。",
+                    event_name="connection_restart_applied",
+                    event_visibility="technical", event_category="lifecycle")
+                result = None
+                continue
+            break
         result_state = load_job_state(job_id) or state
         # 终态之前先把合并中的批次进度写掉并关闭这条通道：否则一次迟到的状态写
         # 会把 "completed" 覆盖回 "running"。
@@ -9319,6 +9545,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             "message": user_error_message,
             "stage": current.get("stage_id") or current.get("stage"),
             "operation": current.get("operation_id") or current.get("operation"),
+            "connection": _connection_label_from_kwargs(kwargs),
             "timestamp": _utc_now_iso(),
             "technical_log": RUNTIME_TECHNICAL_LOG,
         }
@@ -9347,6 +9574,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                 raise
         return None
     finally:
+        _take_pending_restart(job_id)
         _append_runtime_technical_log(
             job_id, f"worker released pid={os.getpid()}"
                     f" thread={threading.current_thread().name}")
@@ -9447,7 +9675,8 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 **context, started_at=runtime.get("started_at") if matching_resume
                 else started_at,
                 operation_started_at=started_at, last_progress_at=started_at,
-                last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False, error=None,
+                last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False,
+                restart_requested=False, error=None,
                 exit_requested=False,
                 attempt=attempt, resume_request_id=resume_request_id or "",
                 segment_operation=segment_operation or {}, segment_operation_result="pending",
@@ -9497,7 +9726,11 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
     with _RUNTIME_WORKERS_LOCK:
         runtime = get_job_runtime_status(job_id)
         if runtime.get("status") in {"paused", "pausing"} and is_job_worker_alive(job_id):
-            return continue_job(job_id)
+            # A paused worker is still alive: continue it.  Passing the freshly
+            # resolved kwargs lets the core restart the worker transparently if
+            # the connection changed while it was paused (issue #222).
+            return continue_job(job_id, restart_kwargs=dict(pipeline_kwargs or {}),
+                                base_url=base_url, filename=filename)
         if _job_execution_alive(job_id):
             return False
         if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
@@ -12614,8 +12847,11 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
     document = snapshot["document"]
     failed_pages = list(snapshot.get("failed_pages") or [])
     warnings = list(warnings) + [
-        f"第 {row['page']} 页识别失败（{row.get('reason') or row.get('code') or '请求失败'}），"
-        "原文缺失；继续任务时会补读" for row in failed_pages]
+        "第 {page} 页识别失败（{reason}）{conn}，原文缺失；继续任务时会补读".format(
+            page=row["page"],
+            reason=row.get("reason") or row.get("code") or "请求失败",
+            conn=(f"（连接：{row.get('connection')}）" if row.get("connection") else ""))
+        for row in failed_pages]
     report = _build_extraction_report(filename, paragraphs, facts=facts,
                                       warnings=list(warnings))
     report.update({
@@ -12826,10 +13062,16 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
         # 重试 / 失败不算进展（停滞提示照旧），但要让用户看到正在发生什么。
         failed = [item for item in page_events if item.get("kind") == "failed"]
         message = _scan_page_event_text((failed or page_events)[-1])
+        # 记下这一页实际使用的视觉连接，否则切换连接后失败会被误当成新连接出错
+        # （issue #222：日志里看不出这一页发往了哪个连接）。
+        if stream.provider_label:
+            message = f"{message}（连接：{stream.provider_label}）"
         update_runtime_state(
             job_id, phase_label=message, event=message,
             event_name="scan_page_failed" if failed else "scan_page_retry",
-            event_visibility="user", event_category="progress")
+            event_visibility="user", event_category="progress",
+            event_metadata=({"connection": stream.provider_label}
+                            if stream.provider_label else None))
     pause_message = None
     if stream.streak_tripped and not tracker.get("streak"):
         # 连续几页都超时：自动暂停（走同一条暂停路径，最终是「已暂停」），建议换模型。

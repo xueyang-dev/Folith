@@ -2225,8 +2225,15 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('任务当前不可暂停。'), error=True)
 
     def continue_job(self) -> None:
-        """恢复一个被暂停的任务（由"继续翻译"按钮/菜单承担）。"""
-        if self._current_job_id and adapter.continue_job(self._current_job_id):
+        """恢复一个被暂停的任务（由"继续翻译"按钮/菜单承担）。
+
+        若暂停期间连接（API Key / 服务商 / 模型 / 推理模式）改过，核心会用当前
+        连接透明地重新启动 worker：已识别的页面与译文保留，改动立即生效。
+        """
+        job_id = self._current_job_id
+        if job_id and adapter.continue_job(
+                job_id, self.config,
+                user_defaults=dict(self.stored_task_defaults)):
             self._notice(i18n.tr('正在继续任务。'))
             self.refresh_workbench(force=True)
         else:
