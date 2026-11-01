@@ -3755,7 +3755,8 @@ class MainWindow(QMainWindow):
         if kind == "welcome":
             self.show_onboarding()
         elif kind == "whatsnew":
-            onboarding.WhatsNewDialog(version, self).exec()
+            if not _automation():
+                onboarding.WhatsNewDialog(version, self).exec()
             onboarding.mark_completed(self.settings, version)
         return kind
 
