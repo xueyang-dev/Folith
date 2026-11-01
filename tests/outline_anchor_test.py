@@ -481,14 +481,26 @@ def test_a_split_segment_refuses_the_old_position(data_dir):
         target_a="译文 0", target_b="译文 1")
     state = core.load_job_state(JOB)
 
+    # #233: a forward split widens the range table instead of leaving a stale one.
+    ranges = [(row["start"], row["end"])
+              for row in state["segmentation"]["paragraph_ranges"]]
+    assert ranges == [(0, 2), (2, 3), (3, 4), (4, 5)]
+    assert ranges[-1][1] == len(state["paras"]) == 5
+
     mapping = anchor.resolve(JOB, state)
 
+    # The old position was a cache, not an anchor: the split gave the node new
+    # uids, so it is unresolved even though the paragraph chain could name
+    # segments.  Re-identification is by uid (the structure revision moved),
+    # not by the stale — or even the freshly widened — range table.
+    assert mapping["source"] == "uid"
     entry = mapping["nodes"]["n0000"]
     assert entry["state"] == "unresolved"
     assert entry["reason"] == "structure_edited"
     assert entry["first_segment_index"] is None
     second = mapping["nodes"]["n0001"]
     assert second["state"] == "resolved"
+    assert second["reason"] == "uid_match"
     assert (second["first_segment_index"], second["last_segment_index"]) == (3, 4)
 
 

@@ -727,6 +727,27 @@ def _resolve_by_uid(cached_nodes: dict, state: dict) -> dict[str, dict]:
     return nodes
 
 
+def _has_unexplained_uid_loss(cached_nodes: dict, state: dict) -> bool:
+    """Whether a cached uid vanished for a reason other than exclusion.
+
+    A split/merge/delete reissues or drops segment uids that never enter the
+    exclusion ledger; that is the editor-driven structural change the uid path
+    must re-identify (so a split node becomes ``structure_edited`` instead of
+    being silently re-placed).  A plain exclusion only moves uids into the
+    ledger, so the paragraph chain still describes it faithfully.
+    """
+    uid_index, _ = _uid_index(state)
+    excluded = _excluded_uids(state)
+    for entry in (cached_nodes or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for uid in entry.get("segment_uids") or []:
+            uid = str(uid or "")
+            if uid and uid not in uid_index and uid not in excluded:
+                return True
+    return False
+
+
 def resolve(job_id: str, state: dict, payload: dict | None = None, *,
             persist: bool = True) -> dict:
     """Resolve outline nodes to segments; returns the mapping wrapper.
@@ -763,6 +784,19 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
                       and cached.get("structure_signature") == signature)
     cached_revision = cached.get("structure_revision")
     cached_revision = int(cached_revision) if isinstance(cached_revision, int) else None
+    revision_changed = cached_revision is not None and cached_revision != revision
+    # An editor operation bumps structure_revision; a split/merge/delete also
+    # reissues uids that are not in the exclusion ledger.  Even though the
+    # paragraph ranges changed (signature differs), such an edit must be
+    # re-identified by uid: a split node has lost its old uid and belongs
+    # unresolved/structure_edited, not silently re-placed by the paragraph
+    # chain.  A cleanup/re-segmentation changes the signature *without* bumping
+    # the revision and keeps using the paragraph path.
+    uid_reidentify = (
+        same_document and bool(cached_nodes)
+        and (same_structure
+             or (revision_changed
+                 and _has_unexplained_uid_loss(cached_nodes, state))))
     if same_document and same_structure and cached_revision == revision:
         if _verify_cached(cached_nodes, state):
             return {"fingerprint": fingerprint, "structure_revision": revision,
@@ -770,7 +804,7 @@ def resolve(job_id: str, state: dict, payload: dict | None = None, *,
                     "source": "cache"}
         nodes = _resolve_by_uid(cached_nodes, state)
         source = "uid"
-    elif same_document and same_structure and cached_nodes:
+    elif uid_reidentify:
         nodes = _resolve_by_uid(cached_nodes, state)
         source = "uid"
     else:
