@@ -2443,5 +2443,11 @@
   "复用已审校翻译记忆": "Se reutilizó una memoria de traducción ya revisada",
   "无确定性风险信号": "Sin señal de riesgo determinista",
   "未记录跳过原因": "No se registró el motivo de omisión",
-  "按策略跳过": "Omitido por política"
+  "按策略跳过": "Omitido por política",
+  "此模型只输出纯文本，无法按视觉理解所需的结构化格式返回；请选择能看图并按格式回答的通用视觉语言模型。": "Este modelo solo devuelve texto plano y no puede devolver el formato estructurado que requiere la comprensión visual; elige un modelo de visión y lenguaje general que pueda leer imágenes y responder en ese formato.",
+  "此模型是机器翻译专用模型，不能看图；请选择支持图像输入的通用视觉语言模型。": "Este es un modelo solo de traducción automática y no puede leer imágenes; elige un modelo de visión y lenguaje general que acepte entrada de imágenes.",
+  "此模型是 OCR 专用模型，不能审校译文；请选择通用语言模型。": "Este es un modelo solo de OCR y no puede revisar traducciones; elige un modelo de lenguaje general.",
+  "此模型是 OCR 专用模型，不能翻译；请选择通用语言模型。": "Este es un modelo solo de OCR y no puede traducir; elige un modelo de lenguaje general.",
+  "这是专用翻译模型，读不懂审校要求；建议选择通用模型。": "Este es un modelo solo de traducción y no entiende las instrucciones de revisión; elige un modelo general.",
+  "这是专用翻译模型，读不懂术语抽取、文档画像等需要按格式回答的要求；建议选择通用模型。": "Este es un modelo solo de traducción y no sigue requisitos como la extracción de términos y el perfil del documento, que necesitan una respuesta con formato; elige un modelo general."
 }

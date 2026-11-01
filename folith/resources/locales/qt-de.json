@@ -2443,5 +2443,11 @@
   "复用已审校翻译记忆": "Bereits geprüftes Translation-Memory wiederverwendet",
   "无确定性风险信号": "Kein deterministisches Risikosignal",
   "未记录跳过原因": "Kein Überspringgrund erfasst",
-  "按策略跳过": "Richtlinienbedingt übersprungen"
+  "按策略跳过": "Richtlinienbedingt übersprungen",
+  "此模型只输出纯文本，无法按视觉理解所需的结构化格式返回；请选择能看图并按格式回答的通用视觉语言模型。": "Dieses Modell gibt nur Klartext aus und kann nicht das für das visuelle Verständnis erforderliche strukturierte Format liefern; wählen Sie ein allgemeines Vision-Sprachmodell, das Bilder lesen und in diesem Format antworten kann.",
+  "此模型是机器翻译专用模型，不能看图；请选择支持图像输入的通用视觉语言模型。": "Dies ist ein reines Maschinenübersetzungsmodell und kann keine Bilder lesen; wählen Sie ein allgemeines Vision-Sprachmodell, das Bildeingaben annimmt.",
+  "此模型是 OCR 专用模型，不能审校译文；请选择通用语言模型。": "Dies ist ein reines OCR-Modell und kann Übersetzungen nicht prüfen; wählen Sie ein allgemeines Sprachmodell.",
+  "此模型是 OCR 专用模型，不能翻译；请选择通用语言模型。": "Dies ist ein reines OCR-Modell und kann nicht übersetzen; wählen Sie ein allgemeines Sprachmodell.",
+  "这是专用翻译模型，读不懂审校要求；建议选择通用模型。": "Dies ist ein reines Übersetzungsmodell und versteht die Prüfanweisungen nicht; wählen Sie ein allgemeines Modell.",
+  "这是专用翻译模型，读不懂术语抽取、文档画像等需要按格式回答的要求；建议选择通用模型。": "Dies ist ein reines Übersetzungsmodell und befolgt Anforderungen wie Termextraktion und Dokumentprofil, die eine formatierte Antwort brauchen, nicht; wählen Sie ein allgemeines Modell."
 }

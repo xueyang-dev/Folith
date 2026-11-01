@@ -436,3 +436,16 @@ def test_a_truncated_reply_keeps_its_head_tail_and_length_for_study():
     assert attempt["response_chars"] == len(text)
     assert attempt["response_head"] == text[:ocr_online.RESPONSE_EXCERPT_CHARS // 2]
     assert attempt["response_tail"].endswith("y" * 100)
+
+
+def test_plain_text_truncation_points_at_a_general_vision_model():
+    """#258：纯文本转写被截断时，建议换通用视觉模型，而不是只让用户提高输出上限。"""
+    backend, _client = backend_with([response(
+        "11\n序章 中国史の時代\nはじめに\n一、日本におけ\n二、中国国家・",
+        finish_reason="length")])
+    blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                     language="jpn", dpi=220)
+    assert blocks == []
+    assert "结构化格式" in error or "纯文本" in error
+    assert "通用视觉语言模型" in error
+    assert "提高输出上限或改用其他来源" not in error

@@ -751,8 +751,7 @@ class OnlineOCRBackend(OCRBackend):
                     response_tail=text[-half:] if len(text) > half else "",
                     distinct_piece_ratio=round(len(set(pieces)) / max(len(pieces), 1), 3))
                 return self._fail(
-                    "truncated", "线上 OCR 输出被服务截断（finish_reason=length）；"
-                    "该页未保存，请提高输出上限或改用其他来源。",
+                    "truncated", _truncation_message(text),
                     attempts, usage_total, request_ids, started)
             if finish not in {None, "stop"}:
                 return self._fail(
@@ -889,7 +888,37 @@ def _sum_optional(left, right):
     return (left or 0) + (right or 0)
 
 
+def _truncation_message(response_text: str) -> str:
+    """finish_reason=length 时给用户的说明（#258）。
+
+    输出被截断有两个很不一样的原因：内容确实太多（提高上限有用），或者模型根本
+    不按结构化格式回答、一直在写纯文本转写（提高上限只会让它写得更久）。响应里
+    没有任何 JSON 结构特征时按后者说明——这类模型（PaddleOCR-VL、GOT-OCR 等）
+    需要换成能看图并按格式回答的通用视觉语言模型。
+    """
+    text = str(response_text or "").strip()
+    looks_like_json = text.startswith(("{", "[")) or '{"' in text or "'b'" in text
+    if text and not looks_like_json:
+        return (
+            "视觉理解返回的是纯文本转写，不是约定的结构化格式（finish_reason=length）；"
+            "该页未保存。这通常说明所选模型只做 OCR、不按指令返回结构化结果；"
+            "请改用能看图并按格式回答的通用视觉语言模型（如 Qwen-VL），"
+            "单纯提高输出上限不会解决。")
+    return (
+        "线上 OCR 输出被服务截断（finish_reason=length）；"
+        "该页未保存，请提高输出上限或改用其他来源。")
+
+
 def _parse_failure_message(code: str) -> str:
+    # #258：invalid_semantic_* 是「返回内容无法解析为约定的 JSON」。最常见的原因
+    # 是 OCR 专用模型只返回纯文本转写，而不是按结构化格式回答——直接指出方向，
+    # 免得用户只看到一句「校验失败」。
+    if code in ("invalid_semantic_json", "invalid_semantic_blocks", "invalid_semantic_block",
+                "invalid_semantic_language"):
+        return (
+            "视觉理解返回的内容不是约定的结构化格式；该页未保存。"
+            "这通常说明所选模型不按结构化格式回答（例如只做 OCR 的模型）；"
+            "请改用能看图并按格式回答的通用视觉语言模型（如 Qwen-VL）。")
     return {
         "empty_response": "线上 OCR 返回空响应；该页未保存。",
         "not_json": "线上 OCR 响应不是约定的 JSON；该页未保存。",
