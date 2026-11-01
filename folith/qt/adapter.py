@@ -673,8 +673,18 @@ def pause_job(job_id: str) -> bool:
     return _commands.pause_job(job_id)
 
 
-def continue_job(job_id: str) -> bool:
-    return _commands.continue_job(job_id)
+def continue_job(job_id: str, config: "EngineConfig | None" = None, *,
+                 user_defaults: dict | None = None) -> bool:
+    """Continue a paused task, restarting it if the connection changed.
+
+    Passing ``config`` (the user's current connection in the desktop client)
+    lets the shared command resolve the effective connection against the task
+    state and restart a paused worker when it differs (issue #222).
+    """
+    if config is None:
+        return _commands.continue_job(job_id)
+    return _commands.continue_job(
+        job_id, settings_sources(config, {}, user_defaults=user_defaults))
 
 
 def cancel_job(job_id: str, *, force: bool = False) -> bool:

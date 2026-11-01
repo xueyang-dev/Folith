@@ -174,14 +174,18 @@ class ScanStream:
             self._halted.clear()
 
     def failed_pages_info(self) -> List[dict]:
-        """读失败、等待重试的页（页码从 1 起）。"""
+        """读失败、等待重试的页（页码从 1 起），并记下读它时用的连接。"""
         with self._cond:
+            connection = self.provider_label or ""
             rows = {failed.page_index: {"page": failed.page_index + 1, "code": failed.code,
                                         "http_status": failed.http_status,
-                                        "reason": failed.describe()}
+                                        "reason": failed.describe(),
+                                        "connection": connection}
                     for failed in self._assembler.failed_pages.values()}
             for index in self._late_pending:
-                rows.setdefault(index, {**self._late[index], "page": index + 1})
+                rows.setdefault(index, {**self._late[index], "page": index + 1,
+                                        "connection": self._late[index].get("connection")
+                                        or connection})
         return [rows[key] for key in sorted(rows)]
 
     def _run(self) -> None:

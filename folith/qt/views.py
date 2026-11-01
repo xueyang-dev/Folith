@@ -5908,6 +5908,19 @@ class WorkbenchView(QWidget):
         # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
         self.run_status.track.setVisible(tone != "done")
         self.run_status.percent.setVisible(tone != "done")
+        # 运行头显示这条任务实际在用的连接（服务商 · 模型，以及哪些角色在用它），
+        # 而不是设置里"现在选的是什么"：切换连接后用户能立刻看出是不是已经生效。
+        connection = runtime.get("active_connection") or {}
+        conn_label = str(connection.get("label") or "")
+        if conn_label and (running or raw_status in ("paused", "pausing", "stalled")):
+            extra = conn_label
+            roles = [str(role) for role in (connection.get("roles") or []) if str(role)]
+            if roles:
+                extra += "（" + "、".join(i18n.tr(role) for role in roles) + "）"
+            reviewer_label = str(connection.get("reviewer_label") or "")
+            if reviewer_label and reviewer_label != conn_label:
+                extra += "；" + i18n.tr('审校') + " " + reviewer_label
+            line = line + " · " + i18n.tr('连接') + " " + extra
         self.run_status.set_state(tone=tone, line=line)
         # 任务开始后运行状态一直在：跑完了只剩「已完成 · N 分钟」一行（没有进度条），
         # 它也是运行记录唯一的入口（「更多」菜单撤掉了）。
