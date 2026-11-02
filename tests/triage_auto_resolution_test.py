@@ -236,46 +236,62 @@ def test_condition_3_stale_candidate_is_a_conflict_not_an_overwrite(job):
     assert state["finding_triage"][key]["disposition"] == "needs_investigation"
 
 
-def test_condition_4_verification_failure_keeps_adopted_text(job, monkeypatch):
+def test_precheck_failure_keeps_original_text(job, monkeypatch):
+    # The dry-run on the staged candidate's text still reports a same-kind
+    # number finding: the repair must NOT be adopted and the pair must stay
+    # exactly as it was before adoption.
     job_id, finding = _number_state()
     key = tr.triage_key(finding)
     tr.stage_auto_resolution(job_id, key)
 
-    # The detector keeps reporting the same number finding after adoption.
     monkeypatch.setattr(core, "check_translation_batch",
                         lambda *a, **k: [{"kind": "number", "detected_text": "131",
                                           "segment_index": 0}])
     result = tr.commit_auto_resolution(job_id, key)
 
     state = _reload(job_id)
-    assert result["committed"] is False and result["step"] == "verification"
-    assert state["pairs"][0]["target"] == TGT_FIXED          # text stays adopted
+    assert result["committed"] is False and result["step"] == "precheck"
+    assert state["pairs"][0]["target"] == TGT_WRONG          # unchanged/pre-adoption
+    assert state["pairs"][0].get("target_provenance") != "candidate_adopted"
+    assert "adopted_candidate_id" not in state["pairs"][0]
     record = state["finding_triage"][key]
     assert record["committed"] is False
     assert record["disposition"] == "needs_investigation"
-    assert record["auto_resolution"]["step"] == "verification"
+    assert record["auto_resolution"]["step"] == "precheck"
+    assert record["auto_resolution"]["ok"] is False
+    assert "candidate_verification" not in [e["kind"] for e in record["evidence"]]
 
 
-def test_condition_4_any_same_kind_re_run_blocks_commit(job, monkeypatch):
-    # A repair that merely moved the defect must not read as a success: the
-    # re-run reports kind="number" with a *different* detected_text, and that
-    # still counts as "the detector is still firing".
+def test_post_verification_failure_restores_original_text(job, monkeypatch):
+    # The first call (dry-run on the candidate text) passes, but a later call
+    # (the post-adoption verification) still fires with the same kind: the
+    # adopted text must be restored to the ORIGINAL wrong target.
     job_id, finding = _number_state()
     key = tr.triage_key(finding)
     tr.stage_auto_resolution(job_id, key)
 
-    monkeypatch.setattr(core, "check_translation_batch",
-                        lambda *a, **k: [{"kind": "number", "detected_text": "999",
-                                          "segment_index": 0}])
+    calls = {"n": 0}
+
+    def _check(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:      # precheck on the candidate text passes
+            return []
+        return [{"kind": "number", "detected_text": "131", "segment_index": 0}]
+
+    monkeypatch.setattr(core, "check_translation_batch", _check)
     result = tr.commit_auto_resolution(job_id, key)
 
     state = _reload(job_id)
     assert result["committed"] is False and result["step"] == "verification"
-    assert state["pairs"][0]["target"] == TGT_FIXED          # text stays adopted
+    # The failed candidate text must NOT be left in the text.
+    assert state["pairs"][0]["target"] == TGT_WRONG
+    assert state["pairs"][0].get("target_provenance") != "candidate_adopted"
+    assert "adopted_candidate_id" not in state["pairs"][0]
     record = state["finding_triage"][key]
     assert record["committed"] is False
     assert record["disposition"] == "needs_investigation"
     assert record["auto_resolution"]["step"] == "verification"
+    assert record["auto_resolution"]["ok"] is False
     assert "candidate_verification" not in [e["kind"] for e in record["evidence"]]
 
 

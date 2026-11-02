@@ -7,9 +7,12 @@ Two strictly separated transactions, mirroring the candidate transaction:
   ``core.materialize_deterministic_group_fix`` and writes a triage record with
   ``disposition="auto_resolvable"`` and ``committed=False``.  **No text is
   written.**
-* :func:`commit_auto_resolution` adopts that single candidate under five
-  short-circuiting conditions and only then writes ``committed=True`` with
-  ``candidate_verification`` evidence.
+* :func:`commit_auto_resolution` dry-runs the candidate text first, adopts that
+  single candidate under five short-circuiting conditions, re-runs the detector
+  on the committed segment and only then writes ``committed=True`` with
+  ``candidate_verification`` evidence.  A failed precheck never writes the
+  candidate text; a failed post-check restores the pre-adoption text and pair
+  fields in the same transaction.
 
 A failure never removes the finding, never writes ``resolved``/``dismissed`` and
 never writes a ``HumanDecision``; it leaves the candidate for a human and records
@@ -113,10 +116,17 @@ def _same_kind(candidate: Mapping[str, Any], original: Mapping[str, Any]) -> boo
 
 
 def _detector_still_fires(state: Mapping[str, Any], finding: Mapping[str, Any],
-                          pair: Mapping[str, Any]) -> bool:
-    """Re-run the deterministic batch check on the committed segment."""
+                          pair: Mapping[str, Any],
+                          target: Optional[str] = None) -> bool:
+    """Re-run the deterministic batch check on a target text.
+
+    ``target`` defaults to the pair's current target (the committed segment).
+    The precheck passes the staged candidate's proposed text instead, so the
+    same helper covers both the dry-run before adoption and the post-check after
+    it without writing anything into the pair.
+    """
     source = str(pair.get("source") or "")
-    target = str(pair.get("target") or "")
+    target = str(pair.get("target") or "") if target is None else str(target)
     glossary = state.get("glossary") \
         or (state.get("glossary_frozen") or {}).get("entries") or []
     target_lang = str(state.get("target_lang") or "简体中文")
@@ -262,8 +272,27 @@ def commit_auto_resolution(job_id: str, finding_id: str, *,
         _c.save_job_state(job_id, state)
         return {"committed": False, "step": "protection", "reason": detail}
 
-    # Condition 3 — adoption succeeds (baseline, exclusion, source-quality, protection).
+    # Condition 2.5 — dry-run the staged candidate's text before adopting it.
+    # A deterministic repair is only adopted if it would actually silence the
+    # same detector; a candidate that still fires is never written into the pair.
     candidate_id = str(entry["candidate_id"])
+    candidate_record = _candidates_store.by_id(state, candidate_id) or {}
+    candidate_target = str(candidate_record.get("candidate_target") or "")
+    if _detector_still_fires(state, finding, pair, target=candidate_target):
+        reason = "precheck: detector still fires on the candidate text"
+        _write(state, finding, disposition=_triage.NEEDS_INVESTIGATION,
+               evidence=list(entry.get("evidence") or []), committed=False,
+               step="precheck", ok=False, reason=reason)
+        _c.save_job_state(job_id, state)
+        return {"committed": False, "step": "precheck", "reason": reason}
+
+    # Condition 3 — adoption succeeds (baseline, exclusion, source-quality, protection).
+    # Capture the pre-adoption pair state now: adoption mutates the pair, so a
+    # failed post-check restores the text and the fields adoption flips.
+    old_target = str(pair.get("target") or "")
+    old_pair_fields = {field: (field in pair, pair.get(field))
+                       for field in ("reviewed", "review_status",
+                                     "target_provenance", "from_tm")}
     try:
         adopted = _candidates.adopt_translation_candidate(
             job_id, candidate_id, actor=actor, allow_protected=False,
@@ -298,6 +327,16 @@ def commit_auto_resolution(job_id: str, finding_id: str, *,
     pair = _pair_for(state, finding)
     evidence = list(_record(state, key).get("evidence") or [])
     if _detector_still_fires(state, finding, pair):
+        # The committed text did not silence the detector: put the old text back
+        # and undo the pair fields adoption flipped, so neither the pair nor its
+        # provenance keeps a failed candidate as if it had been adopted.
+        pair["target"] = old_target
+        for field, (existed, value) in old_pair_fields.items():
+            if existed:
+                pair[field] = value
+            else:
+                pair.pop(field, None)
+        pair.pop("adopted_candidate_id", None)
         _write(state, finding, disposition=_triage.NEEDS_INVESTIGATION,
                evidence=evidence, committed=False, step="verification", ok=False,
                reason="detector still fires on the committed segment")
