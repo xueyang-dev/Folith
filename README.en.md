@@ -276,6 +276,7 @@ The interface is Simplified Chinese by default. English, Español, Русски�
 - [Translated EPUB / DOCX export](docs/epub-export.md)
 - [OCR and vision reading](docs/ocr-subsystem.md)
 - [Architecture and capability boundaries](docs/architecture-boundaries.md)
+- [Intelligent QA triage design (v0.8.1 planning, English)](docs/qa-triage-v0.8.1.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md) (Chinese)
 

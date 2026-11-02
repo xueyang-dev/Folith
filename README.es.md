@@ -276,6 +276,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 - [Exportación de la traducción a EPUB / DOCX](docs/epub-export.md)
 - [OCR y lectura con visión](docs/ocr-subsystem.md)
 - [Arquitectura y límites de capacidad](docs/architecture-boundaries.md)
+- [Diseño del triaje inteligente de QA (v0.8.1, en inglés)](docs/qa-triage-v0.8.1.md)
 - [Registro de cambios](CHANGELOG.md)
 - [Cómo contribuir](CONTRIBUTING.md) (en chino)
 

@@ -276,6 +276,7 @@ python -m folith.qt
 - [Экспорт перевода в EPUB / DOCX](docs/epub-export.md)
 - [OCR и чтение моделью зрения](docs/ocr-subsystem.md)
 - [Архитектура и границы возможностей](docs/architecture-boundaries.md)
+- [Проектирование интеллектуального триажа QA (v0.8.1, на английском)](docs/qa-triage-v0.8.1.md)
 - [Журнал изменений](CHANGELOG.md)
 - [Участие в проекте](CONTRIBUTING.md) (на китайском)
 
