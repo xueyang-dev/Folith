@@ -544,6 +544,62 @@ def test_cde_rate_denominator_is_real_error_labels():
 
 
 # ---------------------------------------------------------------------------
+# No cost column without a cost source (#231 is still open)
+# ---------------------------------------------------------------------------
+
+#: Field-name fragments that would claim a money figure.  Cost per resolved
+#: finding is undefined until #231 makes usage (including vision and failed
+#: attempts) computable; #291 ships escalation without one.
+_COST_FIELD_FRAGMENTS = ("cost", "price", "usd", "dollar", "currency", "spend")
+
+
+def _assert_no_cost_field(payload, where):
+    text = json.dumps(payload, ensure_ascii=False, default=str).lower()
+    for fragment in _COST_FIELD_FRAGMENTS:
+        assert fragment not in text, f"{where} mentions {fragment!r}"
+    assert "cost_per_resolved_finding" not in text, where
+
+
+def test_report_has_no_cost_field_because_no_cost_source_exists():
+    state, corpus = _two_queue_state()
+    report = _cde(state, corpus)
+    assert {"human_decisions", "cde"} <= set(report)
+    _assert_no_cost_field(report, "measure() report")
+
+
+def test_cli_writes_no_cost_field(tmp_path):
+    state, corpus = _two_queue_state()
+    corpus_path = _write_tmp_corpus(tmp_path, corpus)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "hir.json"
+    result = _run_cli(["--corpus", str(corpus_path), "--state", str(state_path),
+                       "--out", str(out)])
+    assert result.returncode == 0, result.stderr
+    written = out.read_text(encoding="utf-8")
+    assert "cost" not in written.lower()
+    assert "cost_per_resolved_finding" not in written
+    _assert_no_cost_field(json.loads(written), "hir.json")
+
+
+def test_escalation_provenance_adds_no_cost_field_to_the_report():
+    """A #291 run leaves HIR+CDE exactly as deterministic triage did."""
+    state, corpus = _two_queue_state()
+    baseline = _cde(state, corpus)
+    finding = state["findings"][0]
+    state["pairs"][0]["target"] = "译文 1（升级后）"
+    ft.record(state, finding, disposition=ft.HUMAN_REQUIRED, actor_type="model",
+              evidence=[{"kind": ft.MODEL_ESCALATION, "ref": "packet:abc",
+                         "detail": "需要人工核对数量词"}], now="2026-03-01T00:00:00+00:00")
+    report = _cde(state, corpus)
+    _assert_no_cost_field(report, "report over an escalated record")
+    for field in ("human_decisions", "human_clicks", "cde", "cde_rate",
+                  "operations_per_real_problem"):
+        assert report[field] == baseline[field]
+
+
+
+# ---------------------------------------------------------------------------
 # CLI contract: refuse without all four labels, write nothing
 # ---------------------------------------------------------------------------
 

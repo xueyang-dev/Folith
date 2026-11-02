@@ -112,10 +112,14 @@ def _store_entry(state, finding, disposition, evidence, actor_type="rule"):
 # Allowlist vocabulary
 # --------------------------------------------------------------------------
 
-def test_allowlist_is_the_five_kinds():
+def test_allowlist_vocabulary_is_closed():
+    # The set is closed: a new kind only enters by an issue that says why it is
+    # deterministic.  #291 added model_escalation, which is registered so a
+    # batched model's note for a human survives the read-time check, and is kept
+    # out of the producing set below so it can never justify verified_safe.
     assert ft.EVIDENCE_KINDS == frozenset({
         "concept_decision", "orthographic_equivalence", "retention_policy",
-        "candidate_verification", "structural_repair",
+        "candidate_verification", "structural_repair", "model_escalation",
     })
     assert ft.PRODUCING_EVIDENCE_KINDS == frozenset({
         "concept_decision", "orthographic_equivalence", "retention_policy",
