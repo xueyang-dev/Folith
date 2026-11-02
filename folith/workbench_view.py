@@ -298,7 +298,8 @@ def _triage_fields(state: Mapping[str, Any],
 
 
 def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
-                  confirmations: Mapping[str, str] | None = None) -> Dict[str, Any]:
+                  confirmations: Mapping[str, str] | None = None,
+                  locked_entities: Mapping[str, str] | None = None) -> Dict[str, Any]:
     context = delivery.finding_context(dict(state), dict(finding))
     segment_id = context.get("segment_index")
     severity = str(context.get("severity") or "informational")
@@ -319,7 +320,7 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
     confirmed = (not finding.get("resolved")) and bool(
         (confirmations or {}).get(rendered_id)
         or (core_id and (confirmations or {}).get(core_id)))
-    return {
+    item = {
         "id": f"finding:{rendered_id}",
         "kind": "finding",
         "filter_group": filter_group,
@@ -395,6 +396,12 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
         **(_triage_fields(state, finding)
            if _finding_triage.enabled(state) else {}),
     }
+    if finding.get("type") == "entity_conflict":
+        # #277: 概念决策类术语卡的决定参考字段只加在这一类发现项上；
+        # 其余发现项保持逐字节不变。
+        item.update(_entity_term_fields(finding, locked_entities or {},
+                                        fallback_segment=segment_id))
+    return item
 
 
 def _historical_event(state: Mapping[str, Any], segment_id: int, *,
@@ -499,6 +506,68 @@ def _glossary_entries_by_id(state: Mapping[str, Any]) -> Dict[str, Mapping[str, 
     return {entry["id"]: entry for entry in entries if entry.get("id")}
 
 
+def _locked_entity_targets(state: Mapping[str, Any]) -> Dict[str, str]:
+    """#277: 已锁定译名的实体 → 冻结译法，供概念决策类术语卡取「已锁定的译法」。
+
+    概念决策与人工定名都写回 ``EntityRegistry.lock``（``status == "locked"``），
+    所以这里只读登记里已有的锁定状态，不新造任何决定。未锁定的观察值不算：
+    把生成的首选译名当成冻结译法会夸大决定。
+    """
+    from . import entity_registry as _entity_registry
+    locked: Dict[str, str] = {}
+    for record in _entity_registry.normalize_registry(
+            list(state.get("entity_registry") or [])):
+        if str(record.get("status") or "") != "locked":
+            continue
+        target = str(record.get("preferred_target") or "").strip()
+        if not target:
+            continue
+        for form in [record.get("source_form"), *(record.get("aliases") or [])]:
+            key = str(form or "").strip().casefold()
+            if key:
+                locked.setdefault(key, target)
+    return locked
+
+
+def _entity_term_fields(finding: Mapping[str, Any],
+                        locked_entities: Mapping[str, str],
+                        fallback_segment: Any = None) -> Dict[str, Any]:
+    """#277: 概念决策类术语卡的决定参考字段（与 #102 术语卡同一套字段名）。
+
+    - 冻结译法：概念决策继承的译名（``inherited_preferred``），否则登记里
+      已锁定的译法；都没有就留空，界面不显示这一行。
+    - 旧译法：译文里仍在使用、且不是冻结译法的观察形式；没有冻结译法时
+      「旧」无从谈起，同样留空。
+    - 受影响段数与命中段列表：该实体在段里实际命中的段（QA 产出时的
+      ``segment_indexes``），不是估计值；旧式发现项没有这份列表时退回
+      发现项自己的段定位，不凭空放大也不缩水。
+    """
+    source = str(finding.get("source") or "").strip()
+    frozen = str(finding.get("inherited_preferred") or "").strip()
+    if not frozen and source:
+        frozen = str(locked_entities.get(source.casefold()) or "").strip()
+    indexes = [index for index in (finding.get("segment_indexes") or [])
+               if isinstance(index, int) and not isinstance(index, bool)]
+    if not indexes and isinstance(fallback_segment, int) \
+            and not isinstance(fallback_segment, bool):
+        indexes = [fallback_segment]
+    previous = ""
+    if frozen:
+        olds: List[str] = []
+        for value in finding.get("observed_targets") or []:
+            name = str(value or "").strip()
+            if name and name.casefold() != frozen.casefold() and name not in olds:
+                olds.append(name)
+        previous = " / ".join(olds)
+    return {
+        "term_frozen_target": frozen,
+        "term_previous_target": previous,
+        "term_segment_total": len(indexes),
+        "segment_indexes": indexes,
+        "affected_segment_ids": list(indexes),
+    }
+
+
 def _merge_term_cards(
     state: Mapping[str, Any], items: Sequence[Mapping[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -599,6 +668,7 @@ def _merge_term_cards(
 def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """Decisions already made, one card per concept, collapsed by default."""
     triage_on = _finding_triage.enabled(state)
+    locked_entities = _locked_entity_targets(state)
     items: List[Dict[str, Any]] = []
     for finding in state.get("findings") or []:
         if not isinstance(finding, Mapping):
@@ -608,7 +678,7 @@ def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
             continue
         if finding.get("superseded_by_review_event_id"):
             continue
-        item = _finding_item(state, finding)
+        item = _finding_item(state, finding, locked_entities=locked_entities)
         if triage_on:
             # #289: 「已处理」也要能看出是谁处理的。没有 triage 记录的旧式已解决
             # 发现，actor 默认归人工；disposition 用产生这条决定的处置动作本身。
@@ -662,7 +732,10 @@ def _queue_items(state: Mapping[str, Any],
         if _current_finding(state, finding, index=index)
     ]
     confirmations = _open_confirmations(state)
-    items.extend(_finding_item(state, finding, confirmations=confirmations)
+    # #277: 一次建好「已锁定译名」索引，逐条发现项共用；登记每条都归一化太贵。
+    locked_entities = _locked_entity_targets(state)
+    items.extend(_finding_item(state, finding, confirmations=confirmations,
+                               locked_entities=locked_entities)
                  for finding in current_findings)
     auto_items: List[Dict[str, Any]] = []
     if _finding_triage.enabled(state):
