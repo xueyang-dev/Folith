@@ -68,8 +68,15 @@ def test_dispositions_and_evidence_allowlist_are_closed():
         "human_required", "blocking",
     )
     assert ft.DEFAULT_DISPOSITION == "human_required"
-    # #286 keeps the allowlist empty on purpose: verified_safe cannot be produced yet.
-    assert ft.EVIDENCE_KINDS == frozenset()
+    # #287 populates the closed allowlist; only three kinds can produce
+    # verified_safe in this round, the other two are registered for later.
+    assert ft.EVIDENCE_KINDS == frozenset({
+        "concept_decision", "orthographic_equivalence", "retention_policy",
+        "candidate_verification", "structural_repair",
+    })
+    assert ft.PRODUCING_EVIDENCE_KINDS == frozenset({
+        "concept_decision", "orthographic_equivalence", "retention_policy",
+    })
 
 
 def test_record_round_trips_through_save_and_reopen(job_env):
