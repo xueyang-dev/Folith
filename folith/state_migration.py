@@ -88,6 +88,10 @@ def _default_new_fields() -> Dict[str, Any]:
         # 附加的，删掉即回到今天的行为。
         "finding_triage": {},
         "qa_triage_enabled": False,
+        # Issue #291：needs_investigation 分组升级的缓存与预算留档。默认关闭；
+        # 分诊总开关关时它连一次调用都不会发起。删掉这两个键即回到 #290 的行为。
+        "qa_escalation": {},
+        "qa_escalation_enabled": False,
         "translation_failures": [],
         "review_evidence": [],
         "translation_core_review_required": False,
