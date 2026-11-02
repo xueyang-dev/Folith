@@ -40,7 +40,9 @@ the design follows the code**; no parallel subsystem is introduced.
 - No change to `record_human_decision`, `HumanDecision`, `finding_groups` or `review_gate`.
 - **No LLM/VLM call** anywhere in this design. The triage layer is deterministic; the
   "model" actor type exists in the record schema for a later round and is capped at
-  `needs_investigation`.
+  `needs_investigation`. (#291 later shipped the *mechanism* for a batched escalation call, off by
+  default and with no runtime caller; the deterministic round this section describes is unchanged,
+  and the cap is the same one that path writes through. See `docs/qa-escalation-v0.8.1.md`.)
 - No usage/cost accounting — that is [#231](https://github.com/xueyang-dev/Folith/issues/231)
   and stays there.
 - No review-UI redesign. The UI work is one P1 sub-issue (queue / audit list split) and it
@@ -454,6 +456,14 @@ Hard rules:
 | `retention_policy` | glossary entry id + frozen glossary version | glossary entry with `behavior == "preserve"` present in `state["glossary_frozen"]` | The user froze the glossary; retention is an instruction, not an inference |
 | `candidate_verification` | `candidate_id` + detector re-run result | §5.5 verification step | The same detector, re-run on the committed text, no longer fires |
 | `structural_repair` | detector code + segment id | `finding_groups.build_number_fix_draft` returning a draft | The repair is a single literal substitution with a unique candidate |
+| `model_escalation` (#291, **non-producing**) | the escalation packet's `input_fingerprint` | `folith/qa_escalation.py` after a batched model answer | It is *not* deterministic, and it is registered precisely because it is never read as safety: absent from `PRODUCING_EVIDENCE_KINDS`, so `verified_safe` cannot be written from it and a stored `verified_safe` carrying only it reads as `human_required` |
+
+The five kinds above `concept_decision … structural_repair` are the deterministic allowlist this
+round was designed around. `model_escalation` was added in #291 as a sixth, **non-producing** kind
+so that the note a model writes *for a human* survives the read-time kind check instead of
+invalidating the record. It carries no confidence value, appears only on
+`needs_investigation`/`human_required` records, and can never move a finding out of the human
+queue. `PRODUCING_EVIDENCE_KINDS` is unchanged at three.
 
 Explicitly **not** evidence: model self-reported confidence, similarity scores, character
 ratios, "the source and target are equal", language-pair heuristics, or a human-looking actor
@@ -831,7 +841,7 @@ Stated in advance, so the result cannot be reinterpreted later:
 | R7 | **Surface divergence.** The review page renders `queue_items`; the check-and-fix page aggregates operational cards and never reads findings at all (D10). | A finding could leave the review queue and still be counted by another surface, or vice versa. | The audit list is added to the shared read model `review_workbench_view`, which both the page and the exported audit trail already consume. The follow-up page is explicitly out of scope and unchanged. |
 | R8 | **Persistence growth.** One triage record plus evidence per finding on a book-length task. | `state.json` is already the critical-path artefact (51 MB on the 漢帝国 task). | Records are small and keyed by `finding_id`; pruning follows `translation_candidates._prune` (oldest resolved first, never pending); the switch off writes nothing. |
 | R9 | **Gate coupling.** Someone later "optimises" the gate to read dispositions. | Would let a machine judgment pass delivery. | §5.8 states the gate predicate as an invariant and the only legal change is the stricter guard. Note that `translation_review_readiness` requires a `human_actions` record with `actor_type == "human"` for every blocking review finding, so a disposition cannot satisfy it even by accident. |
-| R10 | **Cost creep.** Triage could become an LLM call per finding. | #270 warns against shifting human cost into API cost. | This round has no model calls; `model` is capped at `needs_investigation`; batch model upgrade is P2 and depends on #231. |
+| R10 | **Cost creep.** Triage could become an LLM call per finding. | #270 warns against shifting human cost into API cost. | This round has no model calls; `model` is capped at `needs_investigation`; batch model upgrade is P2 and depends on #231. When #291's mechanism landed it stayed off by default with no runtime caller, and its own guards are a group floor of 2 (never one call per finding), selection by the existing `review_gate` signals, a per-run **and** per-task call/token ceiling recorded with the run, and no cost figure reported until #231 supplies one. |
 | R11 | **Metric gaming.** HIR reported alone. | The whole point of §7. | HIR and CDE are a pair; reporting one without the other is a process failure, written into the acceptance criteria. |
 | R12 | **The baseline is already permissive, so "no regression" is not a safety argument.** Three real tasks shipped `final` with 273 unresolved actionable findings, because the gate only blocks on `blocking` (§7.2). | A change that merely preserves today's behaviour would also preserve the hole. | The sub-issues are accepted on CDE = 0 over a labeled set, not on "HIR did not get worse". §7.5 states the bad-result conditions in advance. |
 | R13 | **Stale planning inputs.** The milestone body lists closed v0.8.0 issues as prerequisites and #258 as open (D17); the measurement scripts default to a fixture that does not exist (D16). | A sub-issue could depend on something already merged, or on a script that cannot run. | Each sub-issue names its real dependency and its real test surface; D16/D17 are recorded so the implementation does not inherit the assumption. |
@@ -851,7 +861,7 @@ on #290 (it needs a cost baseline).
  ├── #288 deterministic-repair candidate commit conditions + how the gate reads disposition
  │      ├── #289 human queue vs automatic-handling audit list (Qt, existing page)
  │      └── #290 labeled corpus, HIR + Critical Defect Escape regression
- └──────────────────────── #291 batched model escalation and cost (blocked by #231, not this round)
+ └──────────────────────── #291 batched model escalation: mechanism only; cost + runtime wiring still blocked by #231
 ```
 
 | Order | Issue | Priority | Delivers |
@@ -861,7 +871,7 @@ on #290 (it needs a cost baseline).
 | 3 | [#288](https://github.com/xueyang-dev/Folith/issues/288) | P0 | staging via `materialize_deterministic_group_fix`, the five commit conditions, detector re-run, gate explanation (predicate unchanged) |
 | 4 | [#289](https://github.com/xueyang-dev/Folith/issues/289) | P1 | `auto_handled_items` in the shared read model, collapsed audit group in the existing page, revoke, grouping finally rendered |
 | 5 | [#290](https://github.com/xueyang-dev/Folith/issues/290) | P1 | annotation format, redacted seed corpus, HIR + CDE paired measurement, the mechanical checker |
-| 6 | [#291](https://github.com/xueyang-dev/Folith/issues/291) | P2 | batched escalation for `needs_investigation`, budget and degradation — blocked by #231, not this round |
+| 6 | [#291](https://github.com/xueyang-dev/Folith/issues/291) | P2 | batched escalation for `needs_investigation`, budget and degradation — shipped as the mechanism only, off by default and not wired into the runtime; cost reporting and wiring stay blocked by #231. Plan: `docs/qa-escalation-v0.8.1.md` |
 
 Implementation order: **#286 → #287 → #288 → #289 → #290 → (#291 later)**. #287 and #288 may be
 developed in parallel once #286 lands; #289 and #290 may be developed in parallel once #288
