@@ -254,3 +254,58 @@ def test_lost_model_support_keeps_stored_value(app, isolated):
     assert p is not None
     # 根据逻辑：thinking_box.count() <= 1 → 用 _thinking_mode（非空）→ 不删除
     assert p.get("reasoning_mode") == "thinking_disabled_vllm"
+
+
+# ---------------------------------------------------------------------------
+# 4. 作用范围提示（#220 A3）：开关影响哪些角色要写在界面上
+# ---------------------------------------------------------------------------
+
+def test_thinking_hint_lists_roles_next_to_switch(app, isolated):
+    """dots3 连接：提示紧挨思考行显示，占位符已替换，列出翻译、辅助、视觉。
+
+    默认没有单独配置视觉连接，视觉沿用翻译连接，所以三个角色都在列
+    （job_reasoning_modes 喂翻译与辅助；follow_connection_thinking 的
+    translation_profile 分支让视觉跟随）。
+    """
+    profile = _make_profile(provider="自定义中转站", model="dots3-note-prev",
+                            base_url="http://relay.local/v1")
+    dialog = _dialog(app, profiles=[profile])
+    lib = dialog.connection_library
+    lib.edit("c1")
+    app.processEvents()
+
+    hint = dialog.thinking_hint
+    assert not hint.isHidden(), "思考行可见时，作用范围提示也应可见"
+    text = hint.text()
+    assert "{v0}" not in text, f"占位符必须已被替换，实际：{text!r}"
+    for role in ("翻译", "辅助", "视觉"):
+        assert role in text, f"提示应列出{role}，实际：{text!r}"
+
+
+def test_thinking_hint_drops_vision_when_dedicated_vision_connection(app, isolated):
+    """单独配置了视觉连接后，视觉不再跟随翻译连接的开关，提示里也不应再列视觉。"""
+    core.save_ocr_online_config(provider="自定义中转站", model="vision-model",
+                                api_key="sk-vision", base_url="http://vision.local/v1")
+    profile = _make_profile(provider="自定义中转站", model="dots3-note-prev",
+                            base_url="http://relay.local/v1")
+    dialog = _dialog(app, profiles=[profile])
+    lib = dialog.connection_library
+    lib.edit("c1")
+    app.processEvents()
+
+    text = dialog.thinking_hint.text()
+    assert "视觉" not in text, f"有专用视觉连接时不应列视觉，实际：{text!r}"
+    assert "翻译" in text and "辅助" in text
+
+
+def test_thinking_hint_hides_with_unknown_model(app):
+    """未知模型：思考行隐藏，作用范围提示也一起隐藏。"""
+    profile = _make_profile(pid="c3", provider="OpenAI", model="gpt-4-turbo",
+                            custom=False, provider_id="", base_url="")
+    dialog = _dialog(app, profiles=[profile])
+    lib = dialog.connection_library
+    lib.edit("c3")
+    app.processEvents()
+
+    assert dialog.thinking_row.isHidden()
+    assert dialog.thinking_hint.isHidden(), "思考行隐藏时提示不应单独残留"
