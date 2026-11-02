@@ -426,8 +426,10 @@ def _visible_ids(panel):
 
 def test_default_view_lists_only_items_that_need_a_decision(panel):
     panel.apply(_mixed_view())
+    # #289 之后多了第四个组「自动处理（审计）」：默认收起；没有审计项时它
+    # 连组头都不渲染，必须处理的展开规则不变。
     assert panel._expanded == {"must": True, "suggested": False,
-                               "reference": False}
+                               "reference": False, "auto": False}
     assert set(_visible_ids(panel)) == {"finding:p", "stale:segment:4"}
     assert "finding:r" not in _visible_ids(panel), "仅供参考默认收起"
     assert "finding:s" not in _visible_ids(panel), "建议默认收起"
