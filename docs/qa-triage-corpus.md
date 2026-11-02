@@ -153,15 +153,17 @@ violations and changes nothing.
 `scripts/review_defect_recall.py`, `scripts/review_yield_live.py` and
 `scripts/review_cost_audit.py` all defaulted to
 `benchmark/translation-efficiency/workload.json`, a file that had never been
-committed — all three were unrunnable as shipped.  Of the two options in the
-issue (commit a fixture vs. repoint the defaults), the smaller change is the
-committed fixture: the defaults are the *same path* every historical document
-already names, so a fixture at that path fixes all three scripts and every
-other consumer with zero code edits, while repointing would have required
-editing the three scripts and orphaned the documented path anyway.
-`benchmark/translation-efficiency/workload.json` is now a **minimal synthetic
-smoke fixture** (177 authored short en→zh pairs) documented by
-`benchmark/translation-efficiency/README.md`: the scripts run against it, but
-it is not the original 239-segment real OECD workload, and any figure produced
-from it is a fixture result, not an efficiency measurement.  The statistics the
-scripts compute are unchanged.
+committed — the whole directory is git-ignored — so all three were unrunnable
+as shipped.  Of the two options in the issue (commit a fixture vs. repoint the
+defaults), the smaller change is the committed fixture: the defaults are the
+*same path* every historical document and several sibling scripts already
+name, so a fixture at that path makes all three scripts runnable with zero
+script edits, while repointing would have edited the three scripts and
+orphaned the documented path anyway.  `.gitignore` gained a narrow exception
+that tracks exactly two files in that directory — the fixture and its README —
+while all run outputs stay ignored.  `benchmark/translation-efficiency/workload.json`
+is now a **minimal synthetic smoke fixture** (177 authored short en→zh pairs)
+documented by `benchmark/translation-efficiency/README.md`: the scripts run
+against it, but it is not the original 239-segment real OECD workload, and any
+figure produced from it is a fixture result, not an efficiency measurement.
+The statistics the scripts compute are unchanged.
