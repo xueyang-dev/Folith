@@ -69,10 +69,12 @@ def test_dispositions_and_evidence_allowlist_are_closed():
     )
     assert ft.DEFAULT_DISPOSITION == "human_required"
     # #287 populates the closed allowlist; only three kinds can produce
-    # verified_safe in this round, the other two are registered for later.
+    # verified_safe in this round.  The others are registered for a later
+    # issue: #288's two repair kinds and #291's model_escalation, which a
+    # batched model may cite for a human but which never proves safety.
     assert ft.EVIDENCE_KINDS == frozenset({
         "concept_decision", "orthographic_equivalence", "retention_policy",
-        "candidate_verification", "structural_repair",
+        "candidate_verification", "structural_repair", "model_escalation",
     })
     assert ft.PRODUCING_EVIDENCE_KINDS == frozenset({
         "concept_decision", "orthographic_equivalence", "retention_policy",

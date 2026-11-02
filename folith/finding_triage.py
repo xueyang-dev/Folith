@@ -35,9 +35,10 @@ recorded from an allowlisted deterministic evidence item, ``blocking`` can never
 be downgraded, and a model actor can reach at most ``needs_investigation``.
 
 Only three kinds can *produce* ``verified_safe`` here — ``concept_decision``,
-``orthographic_equivalence`` and ``retention_policy``.  ``candidate_verification``
-and ``structural_repair`` are registered in the allowlist so a later issue can
-attach them, but they never justify ``verified_safe`` in this round.
+``orthographic_equivalence`` and ``retention_policy``.  ``candidate_verification``,
+``structural_repair`` and ``model_escalation`` (#291) are registered in the
+allowlist so a later issue can attach them, but they never justify
+``verified_safe`` in this round.
 """
 from __future__ import annotations
 
@@ -86,15 +87,22 @@ ORTHOGRAPHIC_EQUIVALENCE = "orthographic_equivalence"
 RETENTION_POLICY = "retention_policy"
 CANDIDATE_VERIFICATION = "candidate_verification"
 STRUCTURAL_REPAIR = "structural_repair"
+#: Issue #291: the record a batched model escalation writes for a *human* to read.
+#: Registered so the record survives the read-time kind check — and deliberately
+#: kept out of ``PRODUCING_EVIDENCE_KINDS``, exactly like ``candidate_verification``
+#: and ``structural_repair`` above.  A model's narrative can never justify
+#: ``verified_safe``: a judgement is not deterministic evidence (§5.4).
+MODEL_ESCALATION = "model_escalation"
 EVIDENCE_KINDS = frozenset({
     CONCEPT_DECISION,
     ORTHOGRAPHIC_EQUIVALENCE,
     RETENTION_POLICY,
     CANDIDATE_VERIFICATION,
     STRUCTURAL_REPAIR,
+    MODEL_ESCALATION,
 })
 
-#: Kinds that can justify ``verified_safe`` in this round.  The other two are
+#: Kinds that can justify ``verified_safe`` in this round.  The other three are
 #: registered for a later issue and never produce ``verified_safe`` here.
 PRODUCING_EVIDENCE_KINDS = frozenset({
     CONCEPT_DECISION,
