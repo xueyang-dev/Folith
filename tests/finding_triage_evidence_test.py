@@ -220,13 +220,45 @@ def test_concept_decision_keep_variants_only_is_not_evidence():
                   evidence=[{"kind": "concept_decision", "ref": "concept-test01"}])
 
 
-def test_concept_decision_allows_segment_exception_and_accepted_variants():
+def test_concept_decision_allows_accepted_variants_without_occurrences():
+    state = _state(decisions=_card(["汉武帝"], "汉武帝"),
+                   registry=_registry("汉武帝", ["孝武皇帝"]))
+    finding = _entity("f-accepted", "汉武帝", "汉武帝", ["汉武帝", "孝武皇帝"])
+    result = ft.classify(state, finding)
+    assert result["disposition"] == "verified_safe"
+    assert ft.record(state, finding, **result) is not None
+    assert ft.disposition_of(state, finding) == "verified_safe"
+
+
+def test_segment_exception_does_not_cover_another_segment():
+    # The exception is declared for segment 0 only; 汉文帝 still appears in
+    # segment 5, where no exception applies -> a genuine conflict.
     decisions = _card(["汉武帝"], "汉武帝",
                       exceptions=[{"scope": "segment:0", "target": "汉文帝"}])
-    state = _state(decisions=decisions,
-                   registry=_registry("汉武帝", ["孝武皇帝"]))
-    finding = _entity("f-exc", "汉武帝", "汉武帝",
-                      ["汉武帝", "汉文帝", "孝武皇帝"])
+    state = _state(decisions=decisions)
+    finding = _entity(
+        "f-seg-a", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"],
+        occurrences=[
+            {"index": 0, "variants": ["汉武帝"]},
+            {"index": 5, "variants": ["汉文帝"]},
+        ])
+    assert ft.classify(state, finding)["disposition"] == "human_required"
+    with pytest.raises(ValueError):
+        ft.record(state, finding, disposition="verified_safe", actor_type="rule",
+                  evidence=[{"kind": "concept_decision", "ref": "concept-test01"}])
+
+
+def test_segment_exception_covers_only_the_segment_it_is_declared_for():
+    # The exception is declared for segment 5, exactly where 汉文帝 appears.
+    decisions = _card(["汉武帝"], "汉武帝",
+                      exceptions=[{"scope": "segment:5", "target": "汉文帝"}])
+    state = _state(decisions=decisions)
+    finding = _entity(
+        "f-seg-b", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"],
+        occurrences=[
+            {"index": 0, "variants": ["汉武帝"]},
+            {"index": 5, "variants": ["汉文帝"]},
+        ])
     result = ft.classify(state, finding)
     assert result["disposition"] == "verified_safe"
     assert ft.record(state, finding, **result) is not None
