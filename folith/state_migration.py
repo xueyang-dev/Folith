@@ -83,6 +83,11 @@ def _default_new_fields() -> Dict[str, Any]:
         "terminology_variant_decisions": {},
         # Issue #96：概念级术语决策卡（首选译名 + 上下文例外 + keep_variants）。
         "concept_decisions": {},
+        # Issue #286：每条 finding 的分诊记录（FindingTriage），按 finding_id 索引。
+        # 默认关闭；旧任务缺失这两个键时补默认值，避免 KeyError。记录本身是
+        # 附加的，删掉即回到今天的行为。
+        "finding_triage": {},
+        "qa_triage_enabled": False,
         "translation_failures": [],
         "review_evidence": [],
         "translation_core_review_required": False,
