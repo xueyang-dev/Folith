@@ -464,6 +464,71 @@ def test_hir_and_cde_are_always_written_as_a_pair():
         assert field in report
 
 
+def _two_queue_state():
+    """One labeled real_error and one unlabeled finding, both human_required."""
+    findings = [_finding("f-real"), _finding("f-unl", segment_id=1)]
+    state = _state(findings)
+    corpus = _mini_corpus([
+        _label(0, "real_error", finding_id="f-real"),
+        _label(1, "legitimate_keep", finding_id=None),
+        _label(2, "legitimate_variant", finding_id=None),
+        _label(3, "ambiguous", finding_id=None),
+    ])
+    return state, corpus
+
+
+def test_operations_numerator_only_counts_labeled_real_errors():
+    state, corpus = _two_queue_state()
+    state["human_actions"] = [
+        # one human decision on the labeled real_error…
+        {"finding_id": "f-real", "action": "confirmed_open",
+         "record_type": "finding_confirmation", "actor": "user"},
+        # …and operations on an UNLABELED finding that must not enter the
+        # operations_per_real_problem numerator (but do count in HIR).
+        {"finding_id": "f-unl", "action": "dismiss",
+         "record_type": "human_decision", "actor": "user"},
+        {"finding_id": "f-unl", "action": "target_rechecked", "actor": "user"},
+    ]
+    report = _cde(state, corpus)
+    assert report["human_decisions"] == 2
+    assert report["human_clicks"] == 1
+    assert report["operations_on_real_error_findings"] == 1
+    assert report["real_error_labels"] == 1
+    # 1 operation on the one labeled real problem — the unlabeled finding's
+    # two operations are not in the numerator
+    assert report["operations_per_real_problem"] == 1.0
+
+
+def test_qa_triage_auto_rows_move_neither_hir_count():
+    state, corpus = _two_queue_state()
+    state["human_actions"] = [
+        {"finding_id": "f-real", "action": "confirmed_open",
+         "record_type": "finding_confirmation", "actor": "user"},
+    ]
+    baseline = _cde(state, corpus)
+    assert baseline["human_decisions"] == 1
+    assert baseline["human_clicks"] == 0
+    assert baseline["operations_per_real_problem"] == 1.0
+
+    # automatic #288 adoptions on the same queued, labeled real_error: never
+    # a human decision, never a click, and HIR rates stay identical; the CDE
+    # rules are unaffected.
+    state["human_actions"] += [
+        {"finding_id": "f-real", "action": "candidate_adopted",
+         "record_type": "qa_triage_auto_resolution", "actor": "qa_triage"},
+        {"finding_id": "f-real", "action": "candidate_adopted",
+         "actor": "qa_triage"},
+    ]
+    report = _cde(state, corpus)
+    assert report["human_decisions"] == 1
+    assert report["human_clicks"] == 0
+    assert report["operations_on_real_error_findings"] == 1
+    assert report["operations_per_real_problem"] == 1.0
+    assert report["decisions_per_1000_segments"] \
+        == baseline["decisions_per_1000_segments"]
+    assert report["cde"] == baseline["cde"] == 0
+
+
 def test_cde_rate_denominator_is_real_error_labels():
     state, corpus = _committed_number_state(verified=False)
     corpus["labels"] = corpus["labels"] + [

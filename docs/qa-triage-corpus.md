@@ -98,7 +98,13 @@ changed without changing the meaning of the numbers:
 - HIR counts decisions and clicks **only** on findings whose effective
   disposition is `human_required` or `blocking`, from
   `state["finding_triage"]` + `state["human_actions"]`, never from queue
-  length.
+  length.  Automatic rows (`actor == "qa_triage"`, record type
+  `qa_triage_auto_resolution`) are machine operations: they never enter
+  `human_decisions`, `human_clicks` or `decisions_per_1000_segments`.
+  `operations_per_real_problem` narrows the numerator further: only the human
+  operations made on findings the corpus labels `real_error` count; unlabeled
+  findings never enter it, and the denominator is the number of `real_error`
+  labels.
 - CDE (per §7.3) counts only: a `real_error` reading as `verified_safe`; a
   `real_error` commit that never earned its `candidate_verification`; a
   `real_error` gone from `state["findings"]` without a triage record carrying

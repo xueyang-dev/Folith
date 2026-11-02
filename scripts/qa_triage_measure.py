@@ -15,9 +15,13 @@ Effective conclusions come from ``finding_triage.disposition_of`` — the curren
 fail-closed read — never from a stale ``disposition`` string stored in a record.
 HIR counts only findings whose effective disposition is ``human_required`` or
 ``blocking``, computed from ``state["finding_triage"]`` + ``state["human_actions"]``,
-never from queue length.  CDE follows §7.3 exactly; a real error that was
-correctly auto-repaired and earned its ``candidate_verification`` is **not** an
-escape.
+never from queue length; automatic #288 rows (``actor == "qa_triage"`` /
+record type ``qa_triage_auto_resolution``) are never a human decision or click.
+``operations_per_real_problem`` divides the human operations made **on labeled
+``real_error`` findings** (current disposition ``human_required``/``blocking``)
+by the number of ``real_error`` labels — unlabeled findings never enter the
+numerator.  CDE follows §7.3 exactly; a real error that was correctly
+auto-repaired and earned its ``candidate_verification`` is **not** an escape.
 
 Numbers produced from the synthetic seed corpus are fixture results proving the
 pipeline runs end to end; they are not quality conclusions about any real task.
@@ -274,20 +278,43 @@ def _intervention_finding_ids(state: Mapping[str, Any],
     return ids
 
 
+#: record_type of the automatic #288 adoption rows: machine operations, never
+#: human ones.  Together with ``actor == "qa_triage"`` these rows are excluded
+#: from ``human_decisions``/``human_clicks`` and from the
+#: ``operations_per_real_problem`` numerator; only a real human ever moves the
+#: HIR pair (the CDE rules are independent of this filter).
+AUTOMATIC_ACTOR = "qa_triage"
+AUTOMATIC_RECORD_TYPES = frozenset({"qa_triage_auto_resolution"})
+
+
+def _is_automatic_row(action: Mapping[str, Any]) -> bool:
+    return str(action.get("actor") or "").strip() == AUTOMATIC_ACTOR \
+        or str(action.get("record_type") or "").strip() in AUTOMATIC_RECORD_TYPES
+
+
 def _count_human_actions(state: Mapping[str, Any],
-                         findings: Mapping[str, Mapping[str, Any]]
-                         ) -> Tuple[int, int, set]:
-    """Return ``(human_decisions, human_clicks, decided_finding_ids)``.
+                         findings: Mapping[str, Mapping[str, Any]],
+                         real_error_ids: set,
+                         ) -> Tuple[int, int, set, int]:
+    """Return ``(human_decisions, human_clicks, decided_finding_ids,
+    operations_on_real_errors)``.
 
     Only entries whose ``finding_id`` resolves to a current finding whose
-    effective disposition is ``human_required``/``blocking`` are counted; the
-    set of finding ids that carry *any* human entry is returned separately for
-    the ambiguous-left-the-queue case.
+    effective disposition is ``human_required``/``blocking`` are counted, and
+    automatic #288 rows (``actor == "qa_triage"`` or record type
+    ``qa_triage_auto_resolution``) never count as a human decision or click.
+    ``operations_on_real_errors`` is the ``operations_per_real_problem``
+    numerator: the same intervention-filtered entries further restricted to
+    findings the corpus labels as ``real_error`` — unlabeled findings never
+    enter it.  The set of finding ids that carry *any* human entry is returned
+    separately for the ambiguous-left-the-queue case (unchanged by the
+    automatic-row filter, as the CDE rules are).
     """
     intervention_ids = _intervention_finding_ids(state, findings)
     decided_ids: set = set()
     decisions = 0
     clicks = 0
+    operations_on_real_errors = 0
     for action in state.get("human_actions") or []:
         if not isinstance(action, Mapping):
             continue
@@ -296,7 +323,7 @@ def _count_human_actions(state: Mapping[str, Any],
             continue
         if fid in findings:
             decided_ids.add(fid)
-        if fid not in intervention_ids:
+        if fid not in intervention_ids or _is_automatic_row(action):
             continue
         record_type = str(action.get("record_type") or "").strip()
         act = str(action.get("action") or "").strip()
@@ -304,7 +331,9 @@ def _count_human_actions(state: Mapping[str, Any],
             decisions += 1
         else:
             clicks += 1
-    return decisions, clicks, decided_ids
+        if fid in real_error_ids:
+            operations_on_real_errors += 1
+    return decisions, clicks, decided_ids, operations_on_real_errors
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +344,16 @@ def measure(corpus: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, An
     """Compute the paired HIR + CDE report for one corpus over one state."""
     findings = _findings_by_id(state)
     triage = _triage_map(state)
-    human_decisions, human_clicks, decided_ids = _count_human_actions(state, findings)
+    # Pre-pass: the labeled real errors, so the operations numerator can be
+    # restricted to them (null finding_ids label detector coverage only).
+    real_error_ids = {
+        str(label.get("finding_id"))
+        for label in corpus.get("labels") or []
+        if str(label.get("label") or "") == "real_error"
+        and label.get("finding_id") is not None
+    }
+    human_decisions, human_clicks, decided_ids, ops_on_real_errors = \
+        _count_human_actions(state, findings, real_error_ids)
 
     escapes: List[Dict[str, Any]] = []
     by_defect: Dict[str, Dict[str, int]] = {}
@@ -362,12 +400,13 @@ def measure(corpus: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, An
         "segments": segments,
         "label_coverage": dict(sorted(label_counts.items())),
         "real_error_labels": real_error_count,
+        "operations_on_real_error_findings": ops_on_real_errors,
         "human_decisions": human_decisions,
         "human_clicks": human_clicks,
         "decisions_per_1000_segments":
             round(human_decisions * 1000.0 / segments, 4),
         "operations_per_real_problem":
-            round((human_decisions + human_clicks) / max(1, real_error_count), 4),
+            round(ops_on_real_errors / max(1, real_error_count), 4),
         "cde": cde,
         "cde_rate": round(cde / real_error_count, 4) if real_error_count else None,
         "by_evidence_kind": dict(sorted(by_kind.items())),
