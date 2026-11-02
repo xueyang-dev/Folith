@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from . import delivery, translation_evidence
 from . import finding_groups as _finding_groups
+from . import finding_triage as _finding_triage
 
 
 #: 左栏三组（xueyang-dev/Folith#102）：必须处理 / 建议 / 已处理 · 仅供参考。
@@ -221,6 +222,81 @@ def _is_invariant(finding: Mapping[str, Any]) -> bool:
             or finding.get("detector") == "Translation Target Invariant")
 
 
+# ---------------------------------------------------------------------------
+# QA triage 只读分流（issue #289）
+#
+# 队列是投影，不是第二套规则：分流**只**用 ``finding_triage.enabled`` 与
+# ``finding_triage.disposition_of``——绝不调用 ``classify()``（它不看开关）。
+# ``disposition_of`` 在开关关闭时对 blocking 严重度仍返回 ``blocking``，所以
+# 「是否启用」必须由 ``enabled(state)`` 决定，不能拿 disposition 本身当信号。
+# 开关关闭时本段代码一个字都不执行：投影与今天逐字段相等（golden 测试钉住）。
+# ---------------------------------------------------------------------------
+
+#: 与 ``engine.triage_resolution.triage_key`` 同一规则。读侧内联实现，避免
+#: workbench_view 依赖 engine 写路径。
+def _triage_key(finding: Mapping[str, Any]) -> str:
+    explicit = str(finding.get("finding_id") or "").strip()
+    if explicit:
+        return explicit
+    return str(delivery.finding_id(dict(finding)))
+
+
+#: 人工处置的 actor 字符串不是权威（AGENTS/#288），但 "system"/"qa_triage"
+#: 这类机器 actor 必须能看出来：未知 actor 归 rule，已知人工归 human。
+_HUMAN_ACTORS = frozenset({"", "user", "human", "用户", "人工", "译者"})
+
+
+def _resolution_actor_type(resolution: Mapping[str, Any]) -> str:
+    actor = str(resolution.get("actor") or "").strip()
+    if actor in _HUMAN_ACTORS:
+        return "human"
+    if actor == "model":
+        return "model"
+    return "rule"
+
+
+def _triage_fields(state: Mapping[str, Any],
+                   finding: Mapping[str, Any]) -> Dict[str, Any]:
+    """Per-item read-only triage fields.  Called only when the switch is on.
+
+    Never mutates the finding, never writes ``resolved``/``HumanDecision``:
+    this is a projection over ``disposition_of`` plus the stored record for
+    display (evidence / snapshot / candidate / committed).
+    """
+    key = _triage_key(finding)
+    keyed = dict(finding)
+    keyed["finding_id"] = key
+    disposition = _finding_triage.disposition_of(state, keyed)
+    current = state.get(_finding_triage.STATE_KEY)
+    entry = current.get(key) if isinstance(current, Mapping) else None
+    entry = dict(entry) if isinstance(entry, Mapping) else {}
+    committed = bool(entry.get("committed"))
+    actor_type = str(entry.get("actor_type") or "")
+    resolution = finding.get("resolution")
+    if not actor_type and isinstance(resolution, Mapping):
+        # handled_items 里机器消解过的旧发现：按 resolution.actor 归类，
+        # 「人工决定」与「机器消解」从此在界面上不再长得一样（#289 D13）。
+        actor_type = _resolution_actor_type(resolution)
+    evidence = [dict(item) for item in (entry.get("evidence") or [])
+                if isinstance(item, Mapping)]
+    snapshot = {str(field): str((entry.get("snapshot") or {}).get(field) or "")
+                for field in _finding_triage.SNAPSHOT_FIELDS} \
+        if isinstance(entry.get("snapshot"), Mapping) else {}
+    auto_handled = disposition == _finding_triage.VERIFIED_SAFE or (
+        disposition == _finding_triage.AUTO_RESOLVABLE and committed)
+    return {
+        "triage_record_key": key,
+        "triage_disposition": disposition,
+        "triage_actor_type": actor_type,
+        "triage_evidence": evidence,
+        "triage_candidate_id": str(entry.get("candidate_id") or ""),
+        "triage_committed": committed,
+        "triage_snapshot": snapshot,
+        "triage_created_at": str(entry.get("created_at") or ""),
+        "triage_auto_handled": auto_handled,
+    }
+
+
 def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
                   confirmations: Mapping[str, str] | None = None) -> Dict[str, Any]:
     context = delivery.finding_context(dict(state), dict(finding))
@@ -314,6 +390,10 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
             exceptions=_finding_groups.normalize_exceptions(
                 state.get(_finding_groups.EXCEPTIONS_KEY)))
            if _finding_groups.enabled(state) else {}),
+        # #289: triage fields appear only when the switch is on; with the
+        # switch off the item is byte-for-byte what it was before.
+        **(_triage_fields(state, finding)
+           if _finding_triage.enabled(state) else {}),
     }
 
 
@@ -518,6 +598,7 @@ def _merge_term_cards(
 
 def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """Decisions already made, one card per concept, collapsed by default."""
+    triage_on = _finding_triage.enabled(state)
     items: List[Dict[str, Any]] = []
     for finding in state.get("findings") or []:
         if not isinstance(finding, Mapping):
@@ -527,7 +608,19 @@ def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
             continue
         if finding.get("superseded_by_review_event_id"):
             continue
-        items.append(_finding_item(state, finding))
+        item = _finding_item(state, finding)
+        if triage_on:
+            # #289: 「已处理」也要能看出是谁处理的。没有 triage 记录的旧式已解决
+            # 发现，actor 默认归人工；disposition 用产生这条决定的处置动作本身。
+            if not item.get("triage_actor_type"):
+                item["triage_actor_type"] = "human"
+            if item.get("triage_disposition") == _finding_triage.HUMAN_REQUIRED:
+                resolution = finding.get("resolution")
+                action = str((resolution or {}).get("action") or "").strip() \
+                    if isinstance(resolution, Mapping) else ""
+                if action:
+                    item["triage_disposition"] = action
+        items.append(item)
     if not items:
         return []
     for item in items:
@@ -535,7 +628,16 @@ def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return _merge_term_cards(state, items)
 
 
-def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List[Dict[str, Any]]:
+def _queue_items(state: Mapping[str, Any],
+                 readiness: Mapping[str, Any]) -> tuple[List[Dict[str, Any]],
+                                                        List[Dict[str, Any]]]:
+    """Human queue rows plus the automatic-handling audit rows (#289).
+
+    The split is a filter over the same projection: with the switch off the
+    second list is empty and the first is exactly what it was before.  A
+    finding is never removed from ``state["findings"]`` — only moved between
+    buckets of this read model.
+    """
     # One index for the whole queue: per-item reverse scans of every review event
     # were O(items × events) (thousands × ~1 000 on a book-length task).
     index = translation_evidence.review_index(state)
@@ -562,10 +664,27 @@ def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List
     confirmations = _open_confirmations(state)
     items.extend(_finding_item(state, finding, confirmations=confirmations)
                  for finding in current_findings)
+    auto_items: List[Dict[str, Any]] = []
+    if _finding_triage.enabled(state):
+        # Only ``verified_safe`` and *committed* ``auto_resolvable`` leave the
+        # human queue.  Everything else — needs_investigation, human_required,
+        # uncommitted auto_resolvable and every blocking finding (whatever the
+        # record claims) — stays.  ``triage_auto_handled`` is computed by
+        # ``_triage_fields`` from ``disposition_of`` + the record's committed flag.
+        keep: List[Dict[str, Any]] = []
+        for item in items:
+            if item.get("kind") == "finding" and item.get("triage_auto_handled"):
+                auto_items.append(item)
+            else:
+                keep.append(item)
+        items = keep
     items = _merge_term_cards(state, items)
-    return sorted(items, key=lambda item: (
+    items = sorted(items, key=lambda item: (
         item["priority"], item.get("segment_id") if isinstance(
             item.get("segment_id"), int) else 10**9, item["id"]))
+    auto_items = sorted(auto_items, key=lambda item: (
+        str(item.get("triage_created_at") or ""), item["id"]))
+    return items, auto_items
 
 
 def _primary_action(
@@ -676,10 +795,38 @@ def _risk_acceptance(
     }
 
 
+def _triage_stats(items: Sequence[Mapping[str, Any]],
+                  handled: Sequence[Mapping[str, Any]],
+                  auto_items: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Counters that keep the page truthful when the queue shrinks (#289).
+
+    Only ``kind == "finding"`` rows are counted: the header buckets plus the
+    automatic-handling count must sum to the number of findings in this
+    projection.  A shorter human queue is never a smaller finding set.
+    """
+    buckets = {"must": 0, "suggested": 0, "reference": 0, "auto": len(auto_items)}
+    queue_findings = 0
+    for item in items:
+        if item.get("kind") != "finding":
+            continue
+        queue_findings += 1
+        group = str(item.get("list_group") or "reference")
+        if group in ("must", "suggested", "reference"):
+            buckets[group] += 1
+    buckets["reference"] += len(handled)
+    return {
+        "buckets": buckets,
+        "queue_findings": queue_findings,
+        "handled_findings": len(handled),
+        "auto_handled_findings": len(auto_items),
+        "total_findings": queue_findings + len(handled) + len(auto_items),
+    }
+
+
 def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
     """Project authoritative review truth into one read-only workbench model."""
     readiness = translation_evidence.translation_review_readiness(state)
-    items = _queue_items(state, readiness)
+    items, auto_items = _queue_items(state, readiness)
     counts = {
         severity: sum(item.get("kind") == "finding" and item.get("severity") == severity
                       for item in items)
@@ -712,7 +859,7 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         exceptions=_finding_groups.normalize_exceptions(
             state.get(_finding_groups.EXCEPTIONS_KEY)))
         if _finding_groups.enabled(state) else [])
-    return {
+    result: Dict[str, Any] = {
         "finding_groups": _finding_groups.group_summaries(groups),
         "readiness": {**readiness, "label": label, "detail": detail, "tone": tone},
         "progress": progress,
@@ -728,6 +875,13 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         "nav": _nav_copy(readiness, counts),
         "risk_acceptance": _risk_acceptance(state, readiness),
     }
+    if _finding_triage.enabled(state):
+        # 开关关闭时下面这些键**不存在**——投影与今天逐字段相等（golden 钉住）。
+        result["qa_triage_enabled"] = True
+        result["auto_handled_items"] = auto_items
+        result["triage_stats"] = _triage_stats(items, handled, auto_items)
+        group_counts["auto"] = len(auto_items)
+    return result
 
 
 def filter_queue_items(
