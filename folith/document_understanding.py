@@ -592,10 +592,16 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
         except Exception as exc:
             if cancel_check and cancel_check():
                 raise RuntimeError('任务已请求取消') from exc   # not a page failure
-            failure ={'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
-                       'regions':len(index.regions), 'spatial_available':bool(index.regions),
-                       'error':str(exc), 'latency_s':time.perf_counter()-started,
-                       'request':dict(getattr(getattr(provider, 'transport', None), '_last_request', {}))}
+            # 页码双记（#220 C3）：`page` 从 1 计，与界面、页面事件、报告一致；
+            # `page_index` 从 0 计，也是 <index>-failure.json 文件名里的那个数。
+            # 文件名保持 0 基不再改：同目录的逐页成功缓存 <index>.json 也是 0 基，
+            # 只改失败文件会撞号（22.json 是第 23 页的缓存、22-failure.json 却是
+            # 第 22 页），一起改则旧缓存全部失配，恢复任务会整本真实重读。
+            failure ={'page': i + 1, 'page_index': i,
+                      'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
+                      'regions':len(index.regions), 'spatial_available':bool(index.regions),
+                      'error':str(exc), 'latency_s':time.perf_counter()-started,
+                      'request':dict(getattr(getattr(provider, 'transport', None), '_last_request', {}))}
             _diag = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
             if _diag:
                 failure['error_code'] = _diag.get('error_code')
@@ -610,7 +616,7 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                 # append-only so every failure (with its rejected replies) stays for study.
                 try:
                     with open(path.parent/'failures.jsonl', 'a', encoding='utf-8') as log:
-                        log.write(json.dumps({'at': time.time(), 'page_index': i, **failure},
+                        log.write(json.dumps({'at': time.time(), **failure},
                                              ensure_ascii=False) + '\n')
                 except OSError:
                     pass

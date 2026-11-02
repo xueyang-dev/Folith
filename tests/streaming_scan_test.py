@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import threading
 
 import fitz
@@ -535,6 +536,10 @@ def test_a_page_level_service_error_skips_the_page_and_the_stream_finishes(tmp_p
     assert [row["page"] for row in snapshot["failed_pages"]] == [3]
     assert snapshot["failed_pages"][0]["reason"] == "服务商超时"
     assert (tmp_path / "document_understanding" / "2-failure.json").exists()
+    # #220 C3：文件名 0 基，记录里 1 基的 page 与 0 基的 page_index 双记，
+    # 和快照里的 failed_pages（page=3）能直接对上。
+    recorded = json.loads((tmp_path / "document_understanding" / "2-failure.json").read_text(encoding="utf-8"))
+    assert recorded["page"] == 3 and recorded["page_index"] == 2
     pages = snapshot["document"]["pages"]
     assert pages[2]["recognition"] == "failed" and pages[2]["recognition_error"]["http_status"] == 524
     assert not any("Page 3 " in p for p in snapshot["paragraphs"])  # 没有悄悄拼进别的文字
