@@ -256,6 +256,44 @@ def test_condition_4_verification_failure_keeps_adopted_text(job, monkeypatch):
     assert record["auto_resolution"]["step"] == "verification"
 
 
+def test_condition_4_any_same_kind_re_run_blocks_commit(job, monkeypatch):
+    # A repair that merely moved the defect must not read as a success: the
+    # re-run reports kind="number" with a *different* detected_text, and that
+    # still counts as "the detector is still firing".
+    job_id, finding = _number_state()
+    key = tr.triage_key(finding)
+    tr.stage_auto_resolution(job_id, key)
+
+    monkeypatch.setattr(core, "check_translation_batch",
+                        lambda *a, **k: [{"kind": "number", "detected_text": "999",
+                                          "segment_index": 0}])
+    result = tr.commit_auto_resolution(job_id, key)
+
+    state = _reload(job_id)
+    assert result["committed"] is False and result["step"] == "verification"
+    assert state["pairs"][0]["target"] == TGT_FIXED          # text stays adopted
+    record = state["finding_triage"][key]
+    assert record["committed"] is False
+    assert record["disposition"] == "needs_investigation"
+    assert record["auto_resolution"]["step"] == "verification"
+    assert "candidate_verification" not in [e["kind"] for e in record["evidence"]]
+
+
+def test_condition_4_ignores_other_kinds(job, monkeypatch):
+    # A different kind firing after adoption is not this finding; the number
+    # finding is gone, so the commit succeeds.
+    job_id, finding = _number_state()
+    key = tr.triage_key(finding)
+    tr.stage_auto_resolution(job_id, key)
+    monkeypatch.setattr(core, "check_translation_batch",
+                        lambda *a, **k: [{"kind": "", "detected_text": "131",
+                                          "segment_index": 0},
+                                         {"kind": "tag", "detected_text": "<b>",
+                                          "segment_index": 0}])
+    result = tr.commit_auto_resolution(job_id, key)
+    assert result["committed"] is True and result["step"] == "committed"
+
+
 def test_condition_5_success_sets_candidate_verification(job):
     job_id, finding = _number_state()
     key = tr.triage_key(finding)

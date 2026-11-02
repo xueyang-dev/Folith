@@ -100,14 +100,16 @@ def _has_structural_evidence(entry: Mapping[str, Any]) -> bool:
     return False
 
 
-def _same_finding(candidate: Mapping[str, Any], original: Mapping[str, Any]) -> bool:
-    """Whether a re-run finding is the same signal as the original."""
+def _same_kind(candidate: Mapping[str, Any], original: Mapping[str, Any]) -> bool:
+    """Whether a re-run finding is the same detector class as the original.
+
+    Verification is conservative: the same ``kind`` firing again means the
+    detector is still unhappy, even if the concrete token or span differs.  A
+    narrower comparison would let a repair that merely moved the defect read as
+    a success.
+    """
     kind = str(candidate.get("kind") or "")
-    if not kind or kind != str(original.get("kind") or ""):
-        return False
-    left = str(candidate.get("detected_text") or candidate.get("source_span") or "")
-    right = str(original.get("detected_text") or original.get("source_span") or "")
-    return left == right
+    return bool(kind) and kind == str(original.get("kind") or "")
 
 
 def _detector_still_fires(state: Mapping[str, Any], finding: Mapping[str, Any],
@@ -123,7 +125,7 @@ def _detector_still_fires(state: Mapping[str, Any], finding: Mapping[str, Any],
     except Exception:  # noqa: BLE001 - if we cannot verify, treat as still firing
         return True
     for item in rerun or []:
-        if isinstance(item, Mapping) and _same_finding(item, finding):
+        if isinstance(item, Mapping) and _same_kind(item, finding):
             return True
     return False
 
