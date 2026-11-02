@@ -760,14 +760,19 @@ What exists today, and what is missing:
 
 ### 7.3 Critical Defect Escape — the counterweight
 
-**Critical Defect Escape (CDE)** is counted per labeled sample:
+**Critical Defect Escape (CDE)** is counted per labeled sample. A real error that is correctly
+auto-repaired and passes verification is **not** a Critical Defect Escape. Only these failures
+count:
 
-1. a `real_error` label whose finding received `verified_safe`;
-2. a `real_error` label whose finding received `auto_resolvable` **and** `committed=True`;
-3. a `real_error` label whose finding is no longer present in `state["findings"]` **and** has no
-   triage record carrying a `snapshot` and a verification result;
-4. any finding whose severity was `blocking` and whose disposition is not `blocking`;
-5. any `ambiguous` label that received `verified_safe`.
+1. a `real_error` label whose finding received `verified_safe` — a real error marked as needing
+   no human action;
+2. a `real_error` label whose repair failed or repaired the wrong thing but was treated as a
+   success — an `auto_resolvable` / `committed=True` result that verification did not actually
+   earn, or a finding that is no longer present in `state["findings"]` with no triage record
+   carrying a `snapshot` and a verification result;
+3. an `ambiguous` label that was auto-passed (for example `verified_safe`, or otherwise let
+   through without a human decision);
+4. any finding whose severity was `blocking` and whose disposition is not `blocking`.
 
 Escape rate = CDE / number of `real_error` labels. **HIR and CDE are always reported as a
 pair.** "HIR fell 40%" without "CDE = 0 / N" is not an acceptable result, and neither is the
@@ -776,7 +781,8 @@ reverse.
 Hiding a finding cannot lower HIR *and* cannot lower CDE, because:
 
 - HIR is computed from triage records and human actions, not from the queue length;
-- CDE case 3 specifically catches "it vanished from the record";
+- CDE case 2 specifically catches "a repair was treated as a success it did not earn, including
+  one that vanished from the record";
 - the `snapshot` requirement in §5.1 makes "vanished" observable rather than invisible.
 
 ### 7.4 A mechanical check that the design has not drifted
