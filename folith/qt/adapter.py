@@ -2031,6 +2031,51 @@ def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,
     return state
 
 
+def revoke_auto_handling(job_id: str, record_key: str,
+                         reason: str = "人工在审计列表撤销") -> dict:
+    """撤销一条自动处理结论（#289）：这一项回到人工队列。
+
+    只调用既有核心函数，面板不写状态：
+
+    * 记录**已提交**（committed 的确定性修复）：走
+      ``triage_resolution.revert_auto_resolution``——只暂存一条撤回候选，
+      **不改** ``pair["target"]``，并把记录标记撤销；
+    * 其余（``verified_safe`` 等）：走 ``finding_triage.revoke``。
+
+    两条路径都不删除 finding、不写 resolved/dismissed/HumanDecision。
+    """
+    from folith import finding_triage as _triage
+
+    key = str(record_key or "").strip()
+    if not key:
+        raise AdapterError("这一条审计记录没有标识。")
+    state = load_state(job_id)
+    if not _triage.enabled(state):
+        raise AdapterError("QA 分流开关已关闭：审计列表不再产生，无需撤销。")
+    entry = (state.get(_triage.STATE_KEY) or {}).get(key)
+    if not isinstance(entry, dict):
+        raise AdapterError("这条审计记录已经不存在。")
+    if entry.get("committed"):
+        from folith.engine import triage_resolution
+        try:
+            result = triage_resolution.revert_auto_resolution(
+                job_id, key, reason=reason)
+        except (RuntimeError, ValueError) as exc:
+            raise AdapterError(str(exc) or type(exc).__name__) from exc
+        if not result.get("reverted"):
+            raise AdapterError(f"无法撤回这条自动修复："
+                               f"{result.get('reason') or '未知原因'}")
+        return {"revoked": True, "revert_candidate_id":
+                str(result.get("candidate_id") or "")}
+    if not _triage.revoke(state, key, reason=reason):
+        raise AdapterError("无法撤销这条记录。")
+    try:
+        core.save_job_state(job_id, state)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return {"revoked": True, "revert_candidate_id": ""}
+
+
 def apply_suggested_translation(job_id: str, item: dict, note: str = "") -> dict:
     """把审校建议暂存为候选：不写正文，也不替用户处置发现项。
 
