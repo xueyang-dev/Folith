@@ -46,7 +46,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
-from . import concept_cards, terminology_variants
+from . import concept_cards, consistency, terminology_variants
 from .translation_core.evidence import fingerprint, freshness
 
 #: Environment kill switch.  Uses the current brand prefix; unlike the retained
@@ -315,9 +315,59 @@ def _span_key(text: Any) -> str:
     return terminology_variants.punct_key(str(text or ""))
 
 
+def _spell_fold(value: Any) -> str:
+    """The detector's own spelling fold: ``consistency.spelling`` + casefold.
+
+    A concept decision may only prove ``verified_safe`` when it covers the
+    finding under this exact fold.  Using a different (e.g. orthographic) fold
+    here would claim more than the detector actually settled.
+    """
+    return consistency.spelling(value).casefold()
+
+
+def _accepted_variants(state: Optional[Mapping[str, Any]],
+                       finding: Mapping[str, Any]) -> set:
+    """Accepted spellings of this finding's entity, from ``state["entity_registry"]``.
+
+    ``consistency.findings`` folds these in with the same ``spelling`` helper; a
+    human accepting a variant is a real decision, so it belongs in the allowed
+    set.  Absent registry, the set is empty (fail-closed).
+    """
+    records = (state or {}).get("entity_registry")
+    if not isinstance(records, (list, tuple)):
+        return set()
+    wanted = {_spell_fold(finding.get("source") or "")}
+    for alias in finding.get("aliases") or []:
+        wanted.add(_spell_fold(alias))
+    wanted.discard("")
+    if not wanted:
+        return set()
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        forms = [record.get("source_form"), *(record.get("aliases") or [])]
+        if not wanted & {_spell_fold(form) for form in forms if form}:
+            continue
+        return {_spell_fold(value) for value in record.get("accepted_variants") or []
+                if _spell_fold(value)}
+    return set()
+
+
 def _concept_decision_evidence(state: Optional[Mapping[str, Any]],
                                finding: Mapping[str, Any]) -> Optional[Dict[str, str]]:
-    """A stored concept decision that already settles this finding's concept."""
+    """A stored concept decision that actually covers every observed target.
+
+    A card being present does **not** settle a finding, and ``keep_variants``
+    alone is not evidence.  The decision only proves the finding safe when every
+    observed target, folded with the detector's own ``consistency.spelling``
+    helper, is the document preferred translation, the exception declared for
+    this finding's segment, or one of the entity's accepted variants.  Otherwise
+    the finding is a genuine conflict and must stay ``human_required``.
+
+    The evidence ref carries the preferred translation and the concrete observed
+    spellings, not just the card id, so changing the preferred target (which does
+    not change the card id) invalidates any older ``verified_safe`` record.
+    """
     decisions = (state or {}).get("concept_decisions")
     if not decisions:
         return None
@@ -333,11 +383,42 @@ def _concept_decision_evidence(state: Optional[Mapping[str, Any]],
     card = concept_cards.decision_for_keys(decisions, probes)
     if not card or not str(card.get("card_id") or "").strip():
         return None
+    # keep_variants-only (a card with no preferred target) settles nothing about
+    # a concrete observed spelling, so it can never produce this evidence.
     preferred = str(card.get("preferred_target") or "").strip()
-    if not preferred and not card.get("keep_variants"):
+    if not preferred:
         return None
-    detail = "keep_variants" if card.get("keep_variants") else f"preferred {preferred}"
-    return {"kind": CONCEPT_DECISION, "ref": str(card["card_id"]), "detail": detail}
+
+    observed = [str(value or "").strip() for value in finding.get("observed_targets") or []]
+    observed = [value for value in observed if value]
+    if not observed:
+        return None
+
+    allowed = {_spell_fold(preferred)}
+    segment_index = _segment_index(finding)
+    if segment_index is not None:
+        scope = f"segment:{segment_index}"
+        for exception in card.get("exceptions") or []:
+            if isinstance(exception, Mapping) \
+                    and str(exception.get("scope") or "") == scope:
+                target = str(exception.get("target") or "").strip()
+                if target:
+                    allowed.add(_spell_fold(target))
+    allowed |= _accepted_variants(state, finding)
+
+    folded = [_spell_fold(value) for value in observed]
+    if any(not key for key in folded):  # an unreadable spelling cannot be verified
+        return None
+    if any(key not in allowed for key in folded):
+        return None
+
+    spelled = " | ".join(dict.fromkeys(consistency.spelling(value) for value in observed))
+    card_id = str(card["card_id"])
+    return {
+        "kind": CONCEPT_DECISION,
+        "ref": f"{card_id}|preferred={consistency.spelling(preferred)}|observed={spelled}",
+        "detail": f"preferred {consistency.spelling(preferred)}; observed {spelled}",
+    }
 
 
 def _orthographic_equivalence_evidence(

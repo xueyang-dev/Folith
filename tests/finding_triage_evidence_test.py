@@ -46,25 +46,39 @@ def _empty_decisions():
     return {"version": 1, "disabled": False, "cards": {}, "manual_splits": [], "log": []}
 
 
-def _state(decisions=None, frozen=None, pairs=None):
-    return {
+def _state(decisions=None, frozen=None, pairs=None, registry=None):
+    state = {
         "pairs": pairs or [{"source": "原文", "target": "译文", "initial_target": "译文"}],
         "qa_triage_enabled": True,
         "concept_decisions": decisions if decisions is not None else _empty_decisions(),
         "glossary_frozen": frozen,
     }
+    if registry is not None:
+        state["entity_registry"] = registry
+    return state
 
 
-def _card(member_keys, preferred, *, keep_variants=False):
+def _registry(source_form, accepted_variants, aliases=None):
+    return [{
+        "id": "entity-test01",
+        "source_form": source_form,
+        "preferred_target": "",
+        "aliases": list(aliases or []),
+        "accepted_variants": list(accepted_variants),
+    }]
+
+
+def _card(member_keys, preferred, *, keep_variants=False, exceptions=None,
+          card_id="concept-test01"):
     return {
         "version": 1,
         "disabled": False,
         "cards": {
-            "concept-test01": {
+            card_id: {
                 "member_keys": list(member_keys),
                 "preferred_target": preferred,
                 "keep_variants": keep_variants,
-                "exceptions": [],
+                "exceptions": list(exceptions or []),
             }
         },
         "manual_splits": [],
@@ -173,15 +187,63 @@ def test_identical_source_and_target_is_not_evidence():
 # concept_decision
 # --------------------------------------------------------------------------
 
-def test_concept_decision_produces_verified_safe_with_card_id():
+def test_concept_decision_produces_verified_safe_when_all_observed_match():
     state = _state(decisions=_card(["前漢"], "前汉"))
-    finding = _entity("f-card", "前漢", "前汉", ["前汉", "西汉"])
+    finding = _entity("f-card", "前漢", "前汉", ["前汉"])
     result = ft.classify(state, finding)
     assert result["disposition"] == "verified_safe"
     assert result["evidence"][0]["kind"] == "concept_decision"
-    assert result["evidence"][0]["ref"] == "concept-test01"
+    ref = result["evidence"][0]["ref"]
+    assert "concept-test01" in ref
+    assert "前汉" in ref                       # preferred target is carried in the ref
+    assert ref != "concept-test01"              # the ref is not just the card id
     assert ft.record(state, finding, **result) is not None
     assert ft.disposition_of(state, finding) == "verified_safe"
+
+
+def test_concept_decision_requires_every_observed_target_to_match():
+    # 汉武帝 card, but the finding also observes 汉文帝: a different emperor.
+    state = _state(decisions=_card(["汉武帝"], "汉武帝"))
+    finding = _entity("f-emperor", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"])
+    assert ft.classify(state, finding)["disposition"] == "human_required"
+    with pytest.raises(ValueError):
+        ft.record(state, finding, disposition="verified_safe", actor_type="rule",
+                  evidence=[{"kind": "concept_decision", "ref": "concept-test01"}])
+
+
+def test_concept_decision_keep_variants_only_is_not_evidence():
+    state = _state(decisions=_card(["汉武帝"], "", keep_variants=True))
+    finding = _entity("f-keepv", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"])
+    assert ft.classify(state, finding)["disposition"] == "human_required"
+    with pytest.raises(ValueError):
+        ft.record(state, finding, disposition="verified_safe", actor_type="rule",
+                  evidence=[{"kind": "concept_decision", "ref": "concept-test01"}])
+
+
+def test_concept_decision_allows_segment_exception_and_accepted_variants():
+    decisions = _card(["汉武帝"], "汉武帝",
+                      exceptions=[{"scope": "segment:0", "target": "汉文帝"}])
+    state = _state(decisions=decisions,
+                   registry=_registry("汉武帝", ["孝武皇帝"]))
+    finding = _entity("f-exc", "汉武帝", "汉武帝",
+                      ["汉武帝", "汉文帝", "孝武皇帝"])
+    result = ft.classify(state, finding)
+    assert result["disposition"] == "verified_safe"
+    assert ft.record(state, finding, **result) is not None
+    assert ft.disposition_of(state, finding) == "verified_safe"
+
+
+def test_changed_preferred_with_the_same_card_id_invalidates_stored_verified_safe():
+    decisions = _card(["汉武帝"], "汉武帝")
+    state = _state(decisions=decisions)
+    finding = _entity("f-change", "汉武帝", "汉武帝", ["汉武帝"])
+    ft.record(state, finding, **ft.classify(state, finding))
+    assert ft.disposition_of(state, finding) == "verified_safe"
+
+    # Change only the preferred target; the card id ("concept-test01") is unchanged.
+    decisions["cards"]["concept-test01"]["preferred_target"] = "刘彻"
+    assert ft.disposition_of(state, finding) == "human_required"
+    assert ft.classify(state, finding)["disposition"] == "human_required"
 
 
 def test_concept_decision_absent_is_human_required():
@@ -192,7 +254,7 @@ def test_concept_decision_absent_is_human_required():
 
 def test_removing_the_concept_card_makes_a_stored_verified_safe_stale():
     state = _state(decisions=_card(["前漢"], "前汉"))
-    finding = _entity("f-fade", "前漢", "前汉", ["前汉", "西汉"])
+    finding = _entity("f-fade", "前漢", "前汉", ["前汉"])
     ft.record(state, finding, **ft.classify(state, finding))
     assert ft.disposition_of(state, finding) == "verified_safe"
     state["concept_decisions"] = _empty_decisions()
