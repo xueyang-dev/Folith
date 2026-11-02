@@ -4345,7 +4345,7 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
 
         count = len(legacy_blocking)
         review_issues.append(i18n.tr_n("必须处理的问题 {v0} 个", count, v0=count))
-    return {
+    preview = {
         "can_accept_risk": can_accept_risk,
         "blocking_count": blocking_count,
         "status_label": core.task_status_label(state, job_id),
@@ -4368,6 +4368,12 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
         and not legacy_blocking
         and (not review.get("required") or bool(review.get("ready"))),
     }
+    # QA triage supplies explanation, never permission.  Add the key only when
+    # triage is on so a switch-off preview is byte-for-byte unchanged.
+    from folith import finding_triage as _finding_triage
+    if _finding_triage.enabled(state):
+        preview["blocking_explanations"] = _delivery.blocking_explanations(state)
+    return preview
 
 
 GATE_HINTS: tuple[tuple[str, str], ...] = (
