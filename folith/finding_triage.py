@@ -765,3 +765,150 @@ def annotate(findings: Any,
             if isinstance(entry, Mapping) else 0
         result.append(item)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Read-only record validation (issue #290)
+#
+# These helpers *inspect* stored records; they never write to state, never
+# change what ``disposition_of`` returns and never alter detection, the gate or
+# the queue.  They encode the §7.4 invariants of ``docs/qa-triage-v0.8.1.md``:
+#
+#   1. every stored ``disposition`` is one of ``DISPOSITIONS``;
+#   2. ``verified_safe`` carries non-empty evidence and every evidence kind is
+#      in ``EVIDENCE_KINDS``;
+#   3. an ``actor_type`` of ``model`` may store at most ``needs_investigation``
+#      or ``human_required``;
+#   4. ``verified_safe``/``auto_resolvable`` never sits on a record whose
+#      snapshot severity is ``blocking``;
+#   5. replay: when a conclusion IS recomputable from the current state (the
+#      record is well-formed, not revoked and its fingerprint is current, and
+#      the finding is present), ``disposition_of`` must reproduce the stored
+#      disposition (after the actor cap).  A stale record is *valid by design*
+#      — it fails closed to ``human_required`` at read time — so staleness
+#      alone is never reported as a violation and never re-derives a mismatch.
+# ---------------------------------------------------------------------------
+
+#: Dispositions a stored record may keep under a ``model`` actor (mirror of
+#: ``_MODEL_FORBIDDEN``; spelled positively to match the §7.4 wording).
+MODEL_ALLOWED_DISPOSITIONS = frozenset({NEEDS_INVESTIGATION, HUMAN_REQUIRED})
+
+
+def _snapshot_severity(entry: Mapping[str, Any]) -> str:
+    snapshot = entry.get("snapshot")
+    if not isinstance(snapshot, Mapping):
+        return ""
+    return str(snapshot.get("severity") or "").strip()
+
+
+def _recomputable(state: Mapping[str, Any], entry: Mapping[str, Any],
+                  finding: Mapping[str, Any]) -> bool:
+    """Whether the replay check has enough current input to reproduce a result."""
+    if str(entry.get("disposition") or "").strip() not in DISPOSITIONS:
+        return False
+    if str(entry.get("revoked_at") or "").strip():
+        return False
+    snapshot = entry.get("snapshot")
+    if not isinstance(snapshot, Mapping) \
+            or not all(field in snapshot for field in SNAPSHOT_FIELDS):
+        return False
+    if not str(entry.get("input_fingerprint") or "").strip():
+        return False
+    if str(finding.get("severity") or "").strip() == BLOCKING:
+        # ``disposition_of`` short-circuits on live severity; the stored value
+        # is not the source of the answer, so replay proves nothing here.
+        return False
+    try:
+        current_fingerprint = input_fingerprint(state, finding)
+    except Exception:  # noqa: BLE001 - cannot recompute -> cannot replay
+        return False
+    return freshness(dict(entry), current_fingerprint) == "current"
+
+
+def validate_record(state: Optional[Mapping[str, Any]],
+                    entry: Any,
+                    finding: Optional[Mapping[str, Any]] = None,
+                    ) -> List[Dict[str, str]]:
+    """Return the §7.4 violations for one stored record.  Pure read.
+
+    ``finding`` is the live finding the record belongs to, when it still
+    exists; without it the replay invariant is simply not recomputable and is
+    skipped, exactly as staleness is skipped.
+    """
+    violations: List[Dict[str, str]] = []
+    if not isinstance(entry, Mapping):
+        return violations
+    disposition = str(entry.get("disposition") or "").strip()
+    finding_id = str(entry.get("finding_id") or "").strip()
+
+    def add(code: str, detail: str) -> None:
+        violations.append({
+            "finding_id": finding_id,
+            "code": code,
+            "detail": detail,
+        })
+
+    if disposition not in DISPOSITIONS:
+        add("unknown_disposition",
+            f"stored disposition {disposition!r} is not one of {DISPOSITIONS}")
+
+    evidence = entry.get("evidence")
+    items = list(evidence) if isinstance(evidence, (list, tuple)) else []
+    if disposition == VERIFIED_SAFE:
+        if not items:
+            add("verified_safe_without_evidence",
+                "verified_safe requires at least one evidence item")
+        for item in items:
+            kind = str(item.get("kind") or "") if isinstance(item, Mapping) else ""
+            if kind not in EVIDENCE_KINDS:
+                add("verified_safe_evidence_kind",
+                    f"evidence kind {kind!r} is not in EVIDENCE_KINDS")
+
+    if str(entry.get("actor_type") or "").strip() == "model" \
+            and disposition in DISPOSITIONS \
+            and disposition not in MODEL_ALLOWED_DISPOSITIONS:
+        add("model_actor_overreach",
+            f"a model actor may not hold {disposition!r}; "
+            "it caps at needs_investigation")
+
+    if disposition in (VERIFIED_SAFE, AUTO_RESOLVABLE) \
+            and _snapshot_severity(entry) == BLOCKING:
+        add("blocking_downgraded",
+            f"{disposition!r} on a record whose snapshot severity is blocking")
+
+    if not violations and finding is not None \
+            and _recomputable(state or {}, entry, finding):
+        expected = _cap_for_actor(disposition, entry.get("actor_type"))
+        effective = disposition_of(state, finding)
+        if effective != expected:
+            add("disposition_not_reproducible",
+                f"stored {expected!r} recomputes as {effective!r} from the "
+                "current state; the evidence was not deterministic")
+    return violations
+
+
+def validate_state(state: Optional[Mapping[str, Any]]) -> List[Dict[str, str]]:
+    """Run ``validate_record`` over every record in ``state["finding_triage"]``.
+
+    Records whose finding is still in ``state["findings"]`` get the replay
+    check; the others are checked on their stored shape only.  Returns the
+    violation list (empty when the state is consistent); it never mutates
+    anything.
+    """
+    current = (state or {}).get(STATE_KEY)
+    if not isinstance(current, Mapping):
+        return []
+    findings_by_id: Dict[str, Mapping[str, Any]] = {}
+    for finding in (state or {}).get("findings") or []:
+        if isinstance(finding, Mapping):
+            key = _finding_id(finding)
+            if key:
+                findings_by_id.setdefault(key, finding)
+    violations: List[Dict[str, str]] = []
+    for finding_id, entry in current.items():
+        for violation in validate_record(state, entry,
+                                         findings_by_id.get(str(finding_id))):
+            if not violation["finding_id"]:
+                violation["finding_id"] = str(finding_id)
+            violations.append(violation)
+    return violations

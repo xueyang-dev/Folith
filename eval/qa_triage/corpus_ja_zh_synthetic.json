@@ -1,0 +1,291 @@
+{
+  "corpus": "qa-triage-synthetic-ja-zh-v0",
+  "language_pair": "ja->zh-Hans",
+  "source_task": null,
+  "generated": true,
+  "note": "All text in this file is short synthetic sentences authored for the QA-triage format fixture. It is not an excerpt of the FOLITH sample document 漢帝国の成立 or of any real task, and it carries no quality claim.",
+  "segments": [
+    {
+      "segment_id": 0,
+      "source": "前206年、秦の最後の皇帝が降伏した。",
+      "target": "公元前205年，秦朝最后一位皇帝投降了。",
+      "document": "synthetic-doc-a"
+    },
+    {
+      "segment_id": 1,
+      "source": "始皇帝は天下を統一し、郡県制を導入した。",
+      "target": "秦始皇统一了天下。",
+      "document": "synthetic-doc-a"
+    },
+    {
+      "segment_id": 2,
+      "source": "文帝は謙倹を旨とした。",
+      "target": "文帝不以节俭为宗旨。",
+      "document": "synthetic-doc-a"
+    },
+    {
+      "segment_id": 3,
+      "source": "衛青が匈奴を撃った。",
+      "target": "霍去病击败了匈奴。",
+      "document": "synthetic-doc-a"
+    },
+    {
+      "segment_id": 4,
+      "source": "算緡令を発した。",
+      "target": "朝廷发布了普通的商业税令。",
+      "document": "synthetic-doc-a"
+    },
+    {
+      "segment_id": 5,
+      "source": "倉庫は充实であった。",
+      "target": "仓库很充实，朝廷还在月球修建了基地。",
+      "document": "synthetic-doc-b"
+    },
+    {
+      "segment_id": 6,
+      "source": "武帝が即位したのは前漢の時期である。",
+      "target": "武帝が即位したのは前漢の時期である。",
+      "document": "synthetic-doc-b"
+    },
+    {
+      "segment_id": 7,
+      "source": "県郷制度を引き継いだ。",
+      "target": "延续了县乡制度した。",
+      "document": "synthetic-doc-b"
+    },
+    {
+      "segment_id": 8,
+      "source": "均輸平準の法を実施した。",
+      "target": "",
+      "document": "synthetic-doc-b"
+    },
+    {
+      "segment_id": 9,
+      "source": "秦半両が流通した。",
+      "target": "秦半两流通开了。",
+      "document": "synthetic-doc-c"
+    },
+    {
+      "segment_id": 10,
+      "source": "元狩元年に匈奴を撃った。",
+      "target": "元狩元年出击匈奴。",
+      "document": "synthetic-doc-c"
+    },
+    {
+      "segment_id": 11,
+      "source": "増淵は光武帝の功臣である。",
+      "target": "增渊是光武帝的功臣。",
+      "document": "synthetic-doc-c"
+    },
+    {
+      "segment_id": 12,
+      "source": "奏讞書の類が出土した。",
+      "target": "出土了〈奏谳书〉一类文献。",
+      "document": "synthetic-doc-c"
+    },
+    {
+      "segment_id": 13,
+      "source": "文帝期の禁止令が出された。",
+      "target": "发布了文帝时期的禁止诏令。",
+      "document": "synthetic-doc-c"
+    },
+    {
+      "segment_id": 14,
+      "source": "光武中興の詔が下された。",
+      "target": "朝廷下了光武中興的诏书。",
+      "document": "synthetic-doc-d"
+    },
+    {
+      "segment_id": 15,
+      "source": "更始の政について議論が分かれる。",
+      "target": "关于更始之政的议论不一。",
+      "document": "synthetic-doc-d"
+    },
+    {
+      "segment_id": 16,
+      "source": "關都の遷徙が問題となった。",
+      "target": "迁都于关中的问题被提出。",
+      "document": "synthetic-doc-d"
+    },
+    {
+      "segment_id": 17,
+      "source": "塩鉄官を置いた。",
+      "target": "朝廷设置了盐铁官。",
+      "document": "synthetic-doc-d"
+    },
+    {
+      "segment_id": 18,
+      "source": "口銭税を課した。",
+      "target": "口銭税を課した。",
+      "document": "synthetic-doc-e"
+    },
+    {
+      "segment_id": 19,
+      "source": "五銖銭を再び鋳った。",
+      "target": "朝廷重新铸造了五铢钱。",
+      "document": "synthetic-doc-e"
+    }
+  ],
+  "labels": [
+    {
+      "finding_id": "f-001",
+      "segment_id": 0,
+      "label": "real_error",
+      "defect_class": "number_change",
+      "note": "公元前205年 contradicts the source 前206年; a numeral was altered.",
+      "deterministic_expected": true
+    },
+    {
+      "finding_id": "f-002",
+      "segment_id": 1,
+      "label": "real_error",
+      "defect_class": "omission",
+      "note": "The clause 郡県制を導入した is missing from the target.",
+      "deterministic_expected": true
+    },
+    {
+      "finding_id": "f-003",
+      "segment_id": 2,
+      "label": "real_error",
+      "defect_class": "negation_flip",
+      "note": "The target adds a negation the source does not have.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-004",
+      "segment_id": 3,
+      "label": "real_error",
+      "defect_class": "entity_swap",
+      "note": "衛青 (Wei Qing) rendered as 霍去病 (Huo Qubing), a different general.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-005",
+      "segment_id": 4,
+      "label": "real_error",
+      "defect_class": "terminology_drift",
+      "note": "The glossary term 算缗令 was replaced by a generic paraphrase.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-006",
+      "segment_id": 5,
+      "label": "real_error",
+      "defect_class": "hallucination",
+      "note": "The lunar-base sentence is fabricated; nothing in the source supports it.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-007",
+      "segment_id": 6,
+      "label": "real_error",
+      "defect_class": "translation_completion",
+      "note": "Target identical to the Japanese source: the era-name date style made an identical-looking target a genuine non-translation here.",
+      "deterministic_expected": true
+    },
+    {
+      "finding_id": "f-008",
+      "segment_id": 7,
+      "label": "real_error",
+      "defect_class": "source_residue",
+      "note": "The Japanese past-tense ending した is left in the Chinese target.",
+      "deterministic_expected": true
+    },
+    {
+      "finding_id": "f-009",
+      "segment_id": 8,
+      "label": "real_error",
+      "defect_class": "empty",
+      "note": "Empty target for a non-empty source.",
+      "deterministic_expected": true
+    },
+    {
+      "finding_id": null,
+      "segment_id": 18,
+      "label": "real_error",
+      "defect_class": "translation_completion",
+      "note": "Target identical to source, but no finding was raised on this segment; a null finding_id records detector coverage, not a disposition.",
+      "deterministic_expected": true
+    },
+    {
+      "finding_id": "f-101",
+      "segment_id": 9,
+      "label": "legitimate_keep",
+      "defect_class": "translation_completion",
+      "note": "The currency name 秦半两 is retained in Han characters verbatim: a legitimate keep, not source residue.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-102",
+      "segment_id": 10,
+      "label": "legitimate_keep",
+      "defect_class": "translation_completion",
+      "note": "年号 元狩元年 retained verbatim in the Chinese target: proper era name, legitimate keep.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-103",
+      "segment_id": 11,
+      "label": "legitimate_keep",
+      "defect_class": "entity_swap",
+      "note": "The personal name is written 增渊 (simplified forms), the orthographic counterpart of the source 増淵; no entity was swapped.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-201",
+      "segment_id": 12,
+      "label": "legitimate_variant",
+      "defect_class": "terminology_drift",
+      "note": "奏讞書 / 〈奏谳书〉 differ only in traditional/simplified forms and the 〈〉 brackets; orthographic variant, not drift.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-202",
+      "segment_id": 13,
+      "label": "legitimate_variant",
+      "defect_class": "terminology_drift",
+      "note": "文帝期 / 文帝时期 are the same era reference written at different lengths.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-203",
+      "segment_id": 14,
+      "label": "legitimate_variant",
+      "defect_class": "terminology_drift",
+      "note": "光武中興 / 光武中兴 is a traditional-vs-simplified variant of the same set phrase.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-301",
+      "segment_id": 15,
+      "label": "ambiguous",
+      "defect_class": "terminology_drift",
+      "note": "更始 may name the 更始帝 regime or mean 'a new beginning'; the short segment cannot decide, so no deterministic disposition is acceptable.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": "f-302",
+      "segment_id": 16,
+      "label": "ambiguous",
+      "defect_class": "entity_swap",
+      "note": "關都 read as 'the capital of the Guanzhong region' or as a proper name; the target picks one reading without evidence.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": null,
+      "segment_id": 17,
+      "label": "legitimate_keep",
+      "defect_class": "terminology_drift",
+      "note": "盐铁官 renders 塩鉄官 with simplified characters and adds 朝廷; retained official term, and no finding was raised.",
+      "deterministic_expected": false
+    },
+    {
+      "finding_id": null,
+      "segment_id": 19,
+      "label": "ambiguous",
+      "defect_class": "entity_swap",
+      "note": "再次鋳った vs 重新铸造: whether a second specific cast is claimed is unclear from the source alone; no finding was raised.",
+      "deterministic_expected": false
+    }
+  ]
+}
