@@ -23,6 +23,7 @@ not touched: disposition is explanation, never permission.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict, Mapping, Optional
 
 from folith import delivery as _delivery
@@ -287,12 +288,11 @@ def commit_auto_resolution(job_id: str, finding_id: str, *,
         return {"committed": False, "step": "precheck", "reason": reason}
 
     # Condition 3 — adoption succeeds (baseline, exclusion, source-quality, protection).
-    # Capture the pre-adoption pair state now: adoption mutates the pair, so a
-    # failed post-check restores the text and the fields adoption flips.
-    old_target = str(pair.get("target") or "")
-    old_pair_fields = {field: (field in pair, pair.get(field))
-                       for field in ("reviewed", "review_status",
-                                     "target_provenance", "from_tm")}
+    # Snapshot the WHOLE task state before adoption.  Adoption mutates the pair,
+    # the candidate record, translation_truth.version, human_actions and knowledge
+    # candidates; a failed post-check must restore this exact snapshot rather than
+    # patch a few fields back onto the adopted state.
+    pre_adoption_state = deepcopy(state)
     try:
         adopted = _candidates.adopt_translation_candidate(
             job_id, candidate_id, actor=actor, allow_protected=False,
@@ -327,20 +327,32 @@ def commit_auto_resolution(job_id: str, finding_id: str, *,
     pair = _pair_for(state, finding)
     evidence = list(_record(state, key).get("evidence") or [])
     if _detector_still_fires(state, finding, pair):
-        # The committed text did not silence the detector: put the old text back
-        # and undo the pair fields adoption flipped, so neither the pair nor its
-        # provenance keeps a failed candidate as if it had been adopted.
-        pair["target"] = old_target
-        for field, (existed, value) in old_pair_fields.items():
-            if existed:
-                pair[field] = value
-            else:
-                pair.pop(field, None)
-        pair.pop("adopted_candidate_id", None)
-        _write(state, finding, disposition=_triage.NEEDS_INVESTIGATION,
-               evidence=evidence, committed=False, step="verification", ok=False,
+        # The committed text did not silence the detector.  Patching a few pair
+        # fields back onto the adopted state would leave the candidate marked
+        # adopted and leak every other adoption side effect (truth version, audit
+        # rows, dropped knowledge candidates).  Restore the whole pre-adoption
+        # snapshot and add only this failure record.
+        restored = deepcopy(pre_adoption_state)
+        restored_finding = _find_finding(restored, key)
+        if restored_finding is None:
+            return {"committed": False, "step": "restore",
+                    "reason": "finding missing from pre-adoption snapshot"}
+        _write(restored, restored_finding,
+               disposition=_triage.NEEDS_INVESTIGATION,
+               evidence=list(_record(restored, key).get("evidence") or []),
+               committed=False, step="verification", ok=False,
                reason="detector still fires on the committed segment")
-        _c.save_job_state(job_id, state)
+        # Adoption persisted one snapshot under this same lock.  Advance the
+        # restored snapshot past that revision so save_job_state accepts it;
+        # otherwise the platform rejects the pre-adoption snapshot as stale.
+        current_revision = int(
+            (_c.load_job_state(job_id) or {}).get("snapshot_revision") or 0)
+        restored["snapshot_revision"] = current_revision
+        try:
+            _c.save_job_state(job_id, restored)
+        except Exception as exc:  # noqa: BLE001 - never fall back to partial rollback
+            return {"committed": False, "step": "restore_refused",
+                    "reason": f"could not restore pre-adoption state: {exc}"}
         return {"committed": False, "step": "verification",
                 "reason": "detector still fires"}
 

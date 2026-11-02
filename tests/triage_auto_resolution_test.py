@@ -295,6 +295,53 @@ def test_post_verification_failure_restores_original_text(job, monkeypatch):
     assert "candidate_verification" not in [e["kind"] for e in record["evidence"]]
 
 
+def test_post_verification_failure_restores_whole_pre_adoption_state(job, monkeypatch):
+    # A failed post-check must restore the entire pre-adoption snapshot, not patch
+    # a few fields: candidate status, translation_truth.version and the audit feed
+    # all have to match the moment before adoption.
+    job_id, finding = _number_state()
+    key = tr.triage_key(finding)
+    tr.stage_auto_resolution(job_id, key)
+
+    before = _reload(job_id)
+    candidate_id = before["finding_triage"][key]["candidate_id"]
+    truth_version_before = int((before.get("translation_truth") or {}).get("version") or 0)
+    adopted_rows_before = [a for a in before.get("human_actions") or []
+                           if a.get("action") == "candidate_adopted"]
+
+    calls = {"n": 0}
+
+    def _check(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:      # precheck on the candidate text passes
+            return []
+        return [{"kind": "number", "detected_text": "131", "segment_index": 0}]
+
+    monkeypatch.setattr(core, "check_translation_batch", _check)
+    result = tr.commit_auto_resolution(job_id, key)
+    assert result["committed"] is False and result["step"] == "verification"
+
+    state = _reload(job_id)
+    # Old text, not the failed candidate.
+    assert state["pairs"][0]["target"] == TGT_WRONG
+    # The candidate is not adopted.
+    candidate = next(c for c in state.get("translation_candidates") or []
+                     if c.get("candidate_id") == candidate_id)
+    assert candidate["status"] != "adopted"
+    # Adoption side effects did not leak.
+    assert int((state.get("translation_truth") or {}).get("version") or 0) \
+        == truth_version_before
+    adopted_rows_after = [a for a in state.get("human_actions") or []
+                          if a.get("action") == "candidate_adopted"]
+    assert len(adopted_rows_after) == len(adopted_rows_before)
+    # Only this failure record was added.
+    record = state["finding_triage"][key]
+    assert record["committed"] is False
+    assert record["disposition"] == "needs_investigation"
+    assert record["auto_resolution"]["step"] == "verification"
+    assert record["auto_resolution"]["ok"] is False
+
+
 def test_condition_4_ignores_other_kinds(job, monkeypatch):
     # A different kind firing after adoption is not this finding; the number
     # finding is gone, so the commit succeeds.
