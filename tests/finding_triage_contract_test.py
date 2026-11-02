@@ -109,16 +109,53 @@ def test_state_true_but_env_disabled_writes_nothing(monkeypatch):
     assert ft.STATE_KEY not in state
 
 
+def _gate_state():
+    """A task that reaches the delivery gate with one blocking review finding.
+
+    Copied from ``tests/red_team_acceptance_test.py::test_accept_risk_not_tmx_trusted``
+    so that ``approve_delivery`` reads findings instead of stopping at
+    ``p2_done``: without ``accept_blocking`` it refuses on the unresolved
+    blocking finding, with ``accept_blocking`` it finishes.
+    """
+    state = core.new_job_state("gate.docx")
+    finding = {
+        "finding_id": "f-gate",
+        "segment_index": 0,
+        "severity": "blocking",
+        "type": "review",
+        "reason": "语义严重错误",
+        "status": "open",
+    }
+    state.update(
+        p1_done=True,
+        p2_done=True,
+        has_blocking=True,
+        pairs=[{"source": "A bad sentence.", "target": "有风险的译文。",
+                "reviewed": True, "from_tm": False}],
+        findings=[finding],
+        review_stats={"blocking": 1, "actionable": 0, "informational": 0},
+        delivery_status="review_required",
+    )
+    return state
+
+
 def test_switch_off_keeps_queue_history_and_gate_output_identical():
-    # "bare" is a task exactly as it exists today: neither triage key present.
-    armed = _armed_state()
+    # Arm the same gate fixture: triage on, store one record for the blocking
+    # finding. Then compare "feature turned off with records on disk" against
+    # "task exactly as it exists today, with neither triage key".
+    armed = _gate_state()
+    armed[ft.ENABLED_KEY] = True
+    record = ft.record(armed, armed["findings"][0], disposition="blocking",
+                       actor_type="rule", now="2026-01-01T00:00:00+00:00")
+    assert record is not None
+
+    disabled = deepcopy(armed)
+    disabled[ft.ENABLED_KEY] = False
     bare = deepcopy(armed)
     bare.pop(ft.STATE_KEY)
     bare.pop(ft.ENABLED_KEY)
-    # "disabled" is the same task after the feature was turned off with records on disk.
-    disabled = deepcopy(armed)
-    disabled[ft.ENABLED_KEY] = False
 
+    # The queue, history and readiness projections are unchanged.
     assert workbench_view.review_workbench_view(bare) == \
         workbench_view.review_workbench_view(disabled)
     assert workbench_view.review_history(bare, 0) == \
@@ -127,10 +164,23 @@ def test_switch_off_keeps_queue_history_and_gate_output_identical():
     assert delivery.unresolved_blocking(bare) == delivery.unresolved_blocking(disabled)
     assert delivery.compute_delivery_status(bare) == delivery.compute_delivery_status(disabled)
 
-    bare_out = delivery.approve_delivery(deepcopy(bare))
-    disabled_out = delivery.approve_delivery(deepcopy(disabled))
-    assert bare_out[1] == disabled_out[1]      # ok / not ok
-    assert bare_out[2] == disabled_out[2]      # error messages
+    # The gate actually reads the finding here: without accepting risk it must
+    # refuse on the unresolved blocking finding, not on "translation not done".
+    bare_refuse = delivery.approve_delivery(deepcopy(bare))
+    disabled_refuse = delivery.approve_delivery(deepcopy(disabled))
+    assert bare_refuse[1] == disabled_refuse[1]
+    assert bare_refuse[2] == disabled_refuse[2]
+    assert bare_refuse[1] is False and bare_refuse[2]
+    assert not any("翻译尚未完成" in error for error in bare_refuse[2])
+    assert any("blocking" in error for error in bare_refuse[2])
+
+    # And with risk accepted it finishes the same way on both states.
+    bare_accept = delivery.approve_delivery(deepcopy(bare), accept_blocking=True)
+    disabled_accept = delivery.approve_delivery(deepcopy(disabled), accept_blocking=True)
+    assert bare_accept[1] == disabled_accept[1]
+    assert bare_accept[2] == disabled_accept[2]
+    assert bare_accept[1] is True and bare_accept[2] == []
+    assert bare_accept[0]["delivery_status"] == disabled_accept[0]["delivery_status"] == "final"
 
 
 @pytest.mark.parametrize("value", ["0", "false", "off", "no", "FALSE", " Off "])
