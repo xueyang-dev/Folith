@@ -30,7 +30,10 @@ Request policy
 Concurrency, pacing and rate-limit backoff reuse the process-wide
 :mod:`folith.request_control` controller, so an online OCR pass and a
 translation run against the same provider share one cooldown instead of
-stampeding it.  Authentication and parameter errors are **not** retried; rate
+stampeding it.  Authentication and parameter errors are **not** retried — the
+one exception is a 400 that immediately follows a 5xx on the same page, which
+reads like a transient relay reply and gets exactly one extra attempt; the
+rejected 400 body is kept, truncated, in the page's failure record.  Rate
 limits, timeouts and 5xx responses are retried a bounded number of times.  A
 timeout is recorded as "usage unknown": the service may have executed the
 request even though no response was received.
@@ -401,6 +404,34 @@ def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
                                  retry_after=retry_after)
 
 
+def response_body_excerpt(error: BaseException,
+                          limit: int = RESPONSE_EXCERPT_CHARS) -> Tuple[str, int]:
+    """Head of a rejected request's HTTP body (a 400, say), for the failure record.
+
+    Returns ``(excerpt, full_chars)``: the excerpt is capped at ``limit`` — the
+    whole body is never kept — and ``full_chars`` is the untruncated length, the
+    same pairing the content-failure records use.  Best effort: a transport that
+    exposes no body simply yields ``("", 0)``.
+    """
+    text = ""
+    response = getattr(error, "response", None)
+    if response is not None:
+        try:
+            text = str(response.text or "")
+        except Exception:  # noqa: BLE001 - diagnosis must never raise
+            text = ""
+    if not text:
+        body = getattr(error, "body", None)
+        if isinstance(body, str):
+            text = body
+        elif isinstance(body, dict):
+            try:
+                text = json.dumps(body, ensure_ascii=False)
+            except (TypeError, ValueError):
+                text = ""
+    return (text if len(text) <= limit else text[:limit]), len(text)
+
+
 def decode_segments(raw: str) -> List[Dict[str, Any]]:
     """Parse and *completely* validate one transcription response.
 
@@ -681,8 +712,13 @@ class OnlineOCRBackend(OCRBackend):
         usage_total: Dict[str, Any] = self._usage_record(None)
         request_ids: List[str] = []
         last_error: Optional[OnlineOCRRequestError] = None
+        # the 400-after-5xx grace (one extra attempt) is spent at most once per page
+        four_hundred_grace_used = False
         started = time.perf_counter()
-        for attempt in range(self.config.max_retries + 1):
+        # One iteration more than the retry budget: the 400-after-5xx grace is
+        # exactly one attempt beyond the budget, and nothing else can reach it
+        # (every other path breaks at ``attempt >= retries`` first).
+        for attempt in range(self.config.max_retries + 2):
             self._ensure_cancelled()
             gate_wait = controller.acquire(self._cancel_check)
             attempt_started = time.perf_counter()
@@ -701,16 +737,34 @@ class OnlineOCRBackend(OCRBackend):
                     "seconds": time.perf_counter() - attempt_started,
                     "usage_unknown": True,
                 })
+                if classified.http_status == 400:
+                    # The body is the only way to tell a transient relay reply
+                    # from a real parameter mistake; keep its head, never all of it.
+                    excerpt, body_chars = response_body_excerpt(exc)
+                    if body_chars:
+                        attempts[-1].update(response_chars=body_chars,
+                                            response_body=excerpt)
                 if classified.http_status == 429:
                     controller.note_rate_limited(classified.retry_after)
                 last_error = classified
                 retries = self.config.max_retries
                 if is_timeout_error(classified):
                     retries = min(retries, TIMEOUT_MAX_RETRIES)
-                if not classified.retryable or attempt >= retries:
+                # A 400 immediately after a 5xx on the same page reads like a
+                # transient relay reply, not a verdict on the request: allow
+                # exactly one extra attempt, even at the budget edge.  Every
+                # other 400 still stops right here.
+                grace_retry = (not classified.retryable
+                               and classified.http_status == 400
+                               and not four_hundred_grace_used
+                               and len(attempts) >= 2
+                               and (attempts[-2].get("http_status") or 0) >= 500)
+                if grace_retry:
+                    four_hundred_grace_used = True
+                elif not classified.retryable or attempt >= retries:
                     break
                 page_events.emit("retry", attempt=attempt + 1,
-                                 attempts=retries + 1,
+                                 attempts=(attempt + 2) if grace_retry else retries + 1,
                                  http_status=classified.http_status,
                                  code=classified.code, message=classified.message[:120])
                 delay = _bounded_backoff(attempt, classified.retry_after)
