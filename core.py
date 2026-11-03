@@ -1799,10 +1799,14 @@ _NO_TEXT_REASON = ("文档里没有可翻译的文本：可能是空文档，或
 
 def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
                  ocr_online_config=None, cancel_check=None, source_language=None,
-                 ocr_language=None, ocr_psm=None):
+                 ocr_language=None, ocr_psm=None, trace_job_id=None, usage_ledger=None):
     """视觉理解路径的读页 provider 与本地定位引擎（缺省时按配置构建）。"""
     from folith.document_understanding import VLMDocumentProvider
     from folith.spatial_index import SpatialTextIndex
+    if trace_job_id is None:
+        # Page reads run on worker threads; the job id is how each attempt finds
+        # the task's trace run and usage ledger (#231).
+        trace_job_id = _runtime_worker_job_id()
     if understanding_provider is None:
         config = ocr_online_config
         if config is None or isinstance(config, dict):
@@ -1812,7 +1816,12 @@ def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
         from folith import source_languages as _source_languages
         understanding_provider = VLMDocumentProvider(
             config, cancel_check=cancel_check,
-            language=_source_languages.english_name(source_language))
+            language=_source_languages.english_name(source_language),
+            trace_job_id=trace_job_id, usage_ledger=usage_ledger)
+    else:
+        attach = getattr(understanding_provider, "attach_trace_context", None)
+        if callable(attach):
+            attach(trace_job_id=trace_job_id, usage_ledger=usage_ledger)
     if spatial_engine is None:
         command = _find_tesseract()
         def spatial_engine(page):
@@ -12783,6 +12792,9 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                        committed_paragraphs=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
+    # 读页是并发线程：用量先记在这本线程安全的小账本里，由主线程并入任务账本
+    # （state 只允许主线程写）。见 folith.usage.merge_ledger 与 #231。
+    vision_usage = _usage.empty_usage()
 
     def page_gate():
         # 读每一页之前：任务暂停时后台识别也停下，不在暂停期间继续花钱。
@@ -12794,7 +12806,7 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
     provider, spatial_engine = _vlm_runtime(
         ocr_online_config=online_config, cancel_check=cancel_check,
         source_language=source_language, ocr_language=ocr_language,
-        ocr_psm=ocr_psm)
+        ocr_psm=ocr_psm, trace_job_id=job_id, usage_ledger=vision_usage)
     label = _vlm_label(provider)
     # 上次没读成的页：这次读完全书后补读（文字接在末尾，已翻译的前文不动）。
     late = {int(row["page"]) - 1: row for row in failed_pages or []
@@ -12804,13 +12816,14 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                         page_gate=page_gate, late_pages=late, provider_label=label,
                         known_paragraphs=committed_paragraphs)
     stream.facts = _pdf_extraction_facts(file_bytes)
+    stream.vision_usage = vision_usage
 
     def refresh_provider(state):
         config = online_config_resolver(state) if online_config_resolver else online_config
         return _vlm_runtime(
             ocr_online_config=config, cancel_check=cancel_check,
             source_language=source_language, ocr_language=ocr_language,
-            ocr_psm=ocr_psm)[0]
+            ocr_psm=ocr_psm, trace_job_id=job_id, usage_ledger=vision_usage)[0]
 
     stream.refresh_provider = refresh_provider
     return stream
@@ -13059,12 +13072,26 @@ def _scan_page_event_text(event):
     return f"第 {page} 页识别失败（{reason}），已跳过，可稍后重试"
 
 
+def _merge_vision_usage(state, stream):
+    """主线程把后台读页线程累计的视觉用量并入任务账本（#231）。
+
+    Page-check threads cannot touch ``state``; they keep their own accumulator.
+    Folding it in here (on the owner thread) keeps state single-threaded, and the
+    accumulator is reset so a later window cannot double-count.
+    """
+    accumulator = getattr(stream, "vision_usage", None)
+    if isinstance(accumulator, dict):
+        _usage.merge_ledger(state.setdefault("llm_usage", _usage.empty_usage()),
+                            accumulator)
+
+
 def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
     """等窗口期间主线程的逐页钩子：更新进度，并在暂停时到达暂停检查点。
 
     必须在 ScanStream 的锁外调用：暂停会阻塞在这里，识别线程要能继续把
     已在途的页存下来。工作线程里的重试 / 失败事件也在这里由主线程写进运行状态。
     """
+    _merge_vision_usage(state, stream)
     if done != tracker["done"] or retried != tracker["retried"]:
         tracker["done"], tracker["retried"] = done, retried
         detail = f"视觉识别 {done}/{total} 页"
@@ -13152,6 +13179,8 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
     stream.wait_for_pages(
         target, on_tick=lambda done, total, retried: _scan_stream_tick(
             job_id, state, stream, tracker, done, total, retried))
+    # The last window's usage can land after the final tick; fold it in once more.
+    _merge_vision_usage(state, stream)
     snapshot = stream.snapshot()
     start, end = _commit_scan_stream(
         state, snapshot, filename=filename, facts=stream.facts,

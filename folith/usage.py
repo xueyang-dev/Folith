@@ -57,6 +57,7 @@ def empty_usage() -> Dict[str, Any]:
         "completion_chars": 0,
         "prompt_tokens": 0,
         "completion_tokens": 0,
+        "cached_tokens": 0,
         "total_tokens": 0,
         "estimated_prompt_tokens": 0,
         "estimated_completion_tokens": 0,
@@ -80,13 +81,19 @@ def _usage_value(usage: Any, name: str) -> Optional[int]:
 
 
 def _slot(ledger: Dict[str, Any], group: str, key: str) -> Dict[str, Any]:
-    slots = ledger.setdefault(group, {})
-    return slots.setdefault(key, {
+    defaults = {
         "calls": 0, "failures": 0, "latency_seconds": 0.0,
         "prompt_chars": 0, "completion_chars": 0,
-        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-        "estimated_total_tokens": 0,
-    })
+        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0,
+        "total_tokens": 0, "estimated_total_tokens": 0,
+    }
+    slots = ledger.setdefault(group, {})
+    slot = slots.setdefault(key, dict(defaults))
+    # A ledger saved before #231 has no cached_tokens key; fill defaults in
+    # rather than KeyError on an old, partially-known state.
+    for name, value in defaults.items():
+        slot.setdefault(name, value)
+    return slot
 
 
 def record_call(
@@ -110,6 +117,7 @@ def record_call(
     prompt_tokens = _usage_value(usage, "prompt_tokens")
     completion_tokens = _usage_value(usage, "completion_tokens")
     total_tokens = _usage_value(usage, "total_tokens")
+    cached_tokens = _usage_value(usage, "cached_tokens")
     exact = (prompt_tokens is not None and completion_tokens is not None
              and total_tokens is not None)
     prompt_tokens = (_nonnegative_int(prompt_tokens)
@@ -120,6 +128,8 @@ def record_call(
     total_tokens = (_nonnegative_int(total_tokens)
                     if total_tokens is not None
                     else prompt_tokens + completion_tokens)
+    # Cached input tokens are a subset of the prompt; unknown means none reported.
+    cached_tokens = _nonnegative_int(cached_tokens) if cached_tokens is not None else 0
     role_key = str(role or "unknown")
     provider_model_key = f"{provider or 'unknown'}::{model or 'unknown'}"
     with _LOCK:
@@ -131,7 +141,7 @@ def record_call(
         ledger["latency_seconds"] = round(float(ledger.get("latency_seconds") or 0.0) + latency, 6)
         for name, value in (("prompt_chars", prompt_chars), ("completion_chars", completion_chars),
                             ("prompt_tokens", prompt_tokens), ("completion_tokens", completion_tokens),
-                            ("total_tokens", total_tokens)):
+                            ("cached_tokens", cached_tokens), ("total_tokens", total_tokens)):
             ledger[name] = _nonnegative_int(ledger.get(name)) + _nonnegative_int(value)
         if exact:
             ledger["exact_token_calls"] = _nonnegative_int(ledger.get("exact_token_calls")) + 1
@@ -151,9 +161,57 @@ def record_call(
             slot["completion_chars"] += completion_chars
             slot["prompt_tokens"] += prompt_tokens
             slot["completion_tokens"] += completion_tokens
+            slot["cached_tokens"] += cached_tokens
             slot["total_tokens"] += total_tokens
             slot["estimated_total_tokens"] += total_tokens if not exact else 0
     _add_daily(total_tokens, 0 if exact else total_tokens)
+
+
+#: Numeric fields folded by :func:`merge_ledger`.
+_LEDGER_SCALARS = (
+    "calls", "failures", "prompt_chars", "completion_chars", "prompt_tokens",
+    "completion_tokens", "cached_tokens", "total_tokens",
+    "estimated_prompt_tokens", "estimated_completion_tokens",
+    "estimated_total_tokens", "exact_token_calls",
+)
+_SLOT_SCALARS = (
+    "calls", "failures", "prompt_chars", "completion_chars", "prompt_tokens",
+    "completion_tokens", "cached_tokens", "total_tokens", "estimated_total_tokens",
+)
+
+
+def merge_ledger(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    """Fold a worker's usage accumulator into the task ledger on the owner thread.
+
+    Page-reading threads must not mutate the task's ``state`` directly (the
+    streaming design keeps state single-threaded).  They accumulate into their
+    own ledger instead; the main thread calls this to fold it in.  ``source`` is
+    reset, so calling it after every window never double-counts.
+    """
+    if not isinstance(target, dict) or not isinstance(source, dict):
+        return
+    with _LOCK:
+        target.setdefault("schema_version", SCHEMA_VERSION)
+        for name in _LEDGER_SCALARS:
+            target[name] = _nonnegative_int(target.get(name)) + _nonnegative_int(source.get(name))
+        target["latency_seconds"] = round(
+            float(target.get("latency_seconds") or 0.0)
+            + float(source.get("latency_seconds") or 0.0), 6)
+        for group in ("by_role", "by_provider_model"):
+            for key, slot in (source.get(group) or {}).items():
+                if not isinstance(slot, dict):
+                    continue
+                dest = _slot(target, group, str(key))
+                for name in _SLOT_SCALARS:
+                    dest[name] = _nonnegative_int(dest.get(name)) + _nonnegative_int(slot.get(name))
+                dest["latency_seconds"] = round(
+                    float(dest.get("latency_seconds") or 0.0)
+                    + float(slot.get("latency_seconds") or 0.0), 6)
+        for name in _LEDGER_SCALARS:
+            source[name] = 0
+        source["latency_seconds"] = 0.0
+        source["by_role"] = {}
+        source["by_provider_model"] = {}
 
 
 #: 按天累计的用量（侧栏连接浮窗里的「今天 N tokens」）。只在桌面端设了路径后才写；

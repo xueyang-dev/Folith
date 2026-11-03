@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
-from typing import Optional
+from typing import Any, Dict, Optional
 import json
 import hashlib
 from pathlib import Path
@@ -206,22 +206,70 @@ TILE_ERROR_CODES = ('truncated', 'missing_table_cells')
 
 THINKING_OFF_MODES = frozenset({'thinking_disabled', 'thinking_disabled_vllm'})
 
+#: Fallback keys whose presence in a page's diagnostics proves it was read again
+#: after its first reply failed — i.e. tokens were burnt on a rejected attempt.
+_FALLBACK_KEYS = ('thinking_fallback', 'plain_fallback', 'tiled_fallback')
+
+
+def _append_failure_log(directory, row: Dict[str, Any]) -> None:
+    """Append one failure/recovery record, never replacing an earlier one.
+
+    The per-page ``{i}-failure.json`` is deleted when the page is later read, so
+    this append-only log is the only durable place a recovered attempt survives.
+    """
+    try:
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        with open(directory / 'failures.jsonl', 'a', encoding='utf-8') as log:
+            log.write(json.dumps(row, ensure_ascii=False) + '\n')
+    except OSError:
+        pass  # Diagnostics must never replace the page's real result.
+
 
 class VLMDocumentProvider:
-    def __init__(self, config, *, client=None, cancel_check=None, language=''):
+    def __init__(self, config, *, client=None, cancel_check=None, language='',
+                 trace_job_id=None, usage_ledger=None):
         self.language = str(language or '').strip()
         self.system_prompt = SYSTEM_PROMPT + language_hint(self.language)
         # 语言提示改变了读页请求，所以它是缓存身份的一部分：换了原文语言不会复用旧结果。
         self.cache_identity = {**config.describe(), "prompt_version":PROMPT_VERSION}
         if self.language:
             self.cache_identity["language"] = self.language
-        self.transport = OnlineOCRBackend(config, client_factory=(lambda _: client) if client is not None else None, cancel_check=cancel_check)
-        self._init_args = (config, client, cancel_check, language)
+        # #231: 读页用量要进任务的 trace / 账本，而不是只留在逐页缓存里。
+        self._trace_job_id = str(trace_job_id) if trace_job_id else None
+        self._usage_ledger = usage_ledger if isinstance(usage_ledger, dict) else None
+        self.transport = self._make_transport(config, client, cancel_check)
+        self._init_args = (config, client, cancel_check, language,
+                           self._trace_job_id, self._usage_ledger)
+
+    def _make_transport(self, config, client, cancel_check):
+        return OnlineOCRBackend(
+            config,
+            client_factory=(lambda _: client) if client is not None else None,
+            cancel_check=cancel_check,
+            trace_job_id=self._trace_job_id,
+            usage_ledger=self._usage_ledger)
 
     def clone(self):
         """同配置的新实例：并发读页时每个线程一份，单次请求的诊断互不覆盖。"""
-        config, client, cancel_check, language = self._init_args
-        return VLMDocumentProvider(config, client=client, cancel_check=cancel_check, language=language)
+        config, client, cancel_check, language, trace_job_id, usage_ledger = self._init_args
+        return VLMDocumentProvider(config, client=client, cancel_check=cancel_check,
+                                   language=language, trace_job_id=trace_job_id,
+                                   usage_ledger=usage_ledger)
+
+    def attach_trace_context(self, *, trace_job_id=None, usage_ledger=None):
+        """Let a caller-supplied provider join the task trace and usage ledger (#231)."""
+        if trace_job_id:
+            self._trace_job_id = str(trace_job_id)
+        if isinstance(usage_ledger, dict):
+            self._usage_ledger = usage_ledger
+        config, client, cancel_check, language = self._init_args[:4]
+        self._init_args = (config, client, cancel_check, language,
+                           self._trace_job_id, self._usage_ledger)
+        transport = getattr(self, 'transport', None)
+        if transport is not None:
+            transport._trace_job_id = self._trace_job_id
+            transport._usage_ledger = self._usage_ledger
 
     def _read(self, transport, page, system_prompt=None):
         def decoder(raw):
@@ -231,7 +279,9 @@ class VLMDocumentProvider:
             self._dropped_empty_blocks = getattr(self, '_dropped_empty_blocks', 0) + dropped
             return blocks
         return transport.read_image(page.image, system_prompt=system_prompt or self.system_prompt,
-                                    user_prompt='Read all content on this page.', decoder=decoder)
+                                    user_prompt='Read all content on this page.', decoder=decoder,
+                                    page_index=page.page_index,
+                                    page_number=page.page_index + 1)
 
     def _thinking_fallback(self, page, first):
         """Final failure with thinking switched off: read the page once more with it on.
@@ -253,11 +303,10 @@ class VLMDocumentProvider:
                 or code == 'rate_limited'):
             return None
         client, cancel_check = self._init_args[1], self._init_args[2]
-        fallback = OnlineOCRBackend(
+        fallback = self._make_transport(
             replace(config, reasoning_mode='provider_default',
                     max_retries=min(int(config.max_retries), 1)),
-            client_factory=(lambda _: client) if client is not None else None,
-            cancel_check=cancel_check)
+            client, cancel_check)
         page_events.emit('retry', attempt=0, attempts=2, http_status=None, code=code,
                          message='关闭思考读页失败，改用服务默认再试一次')
         blocks, error = self._read(fallback, page)
@@ -275,10 +324,9 @@ class VLMDocumentProvider:
                 or code == 'rate_limited'):
             return None
         client, cancel_check = self._init_args[1], self._init_args[2]
-        fallback = OnlineOCRBackend(
+        fallback = self._make_transport(
             replace(config, max_retries=min(int(config.max_retries), 1)),
-            client_factory=(lambda _: client) if client is not None else None,
-            cancel_check=cancel_check)
+            client, cancel_check)
         page_events.emit('retry', attempt=0, attempts=2, http_status=None, code=code,
                          message='结构化读页失败，改用纯文本行再试一次')
         blocks, error = self._read(fallback, page, self.system_prompt + PLAIN_PROMPT_SUFFIX)
@@ -306,10 +354,9 @@ class VLMDocumentProvider:
             return None
         width, height = image.size
         config, client, cancel_check = self._init_args[0], self._init_args[1], self._init_args[2]
-        fallback = OnlineOCRBackend(
+        fallback = self._make_transport(
             replace(config, max_retries=min(int(config.max_retries), 1)),
-            client_factory=(lambda _: client) if client is not None else None,
-            cancel_check=cancel_check)
+            client, cancel_check)
         page_events.emit('retry', attempt=0, attempts=2, http_status=None, code='truncated',
                          message='整页读不完，分上下两半再读')
         system = self.system_prompt + PLAIN_PROMPT_SUFFIX
@@ -614,12 +661,8 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                 path.write_text(json.dumps(failure, ensure_ascii=False), encoding='utf-8')
                 # The per-page file is deleted once the page is later read; this log is
                 # append-only so every failure (with its rejected replies) stays for study.
-                try:
-                    with open(path.parent/'failures.jsonl', 'a', encoding='utf-8') as log:
-                        log.write(json.dumps({'at': time.time(), **failure},
-                                             ensure_ascii=False) + '\n')
-                except OSError:
-                    pass
+                # #300 already added ``page``/``page_index`` to ``failure``; spread it as-is.
+                _append_failure_log(path.parent, {'at': time.time(), **failure})
             diagnostics = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
             code = str((diagnostics or {}).get('error_code') or '')
             if skip_failed and diagnostics is not None and code not in FATAL_PAGE_ERROR_CODES \
@@ -627,6 +670,27 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                 return PageFailed(i, envelope.page_id, code,
                                   (diagnostics or {}).get('http_status'), str(exc))
             raise
+        # #231: a page finally read after earlier failures still burnt tokens on
+        # them.  Append a recovered record so a later successful read can never
+        # erase the cost of the attempts (the per-page failure file is deleted).
+        if checkpoint_dir:
+            _diag = dict(getattr(semantic, 'diagnostics', None) or {})
+            _attempts = [a for a in (_diag.get('attempts') or []) if isinstance(a, dict)]
+            _fallbacks = [key for key in _FALLBACK_KEYS if _diag.get(key)]
+            _had_failed_attempt = any(a.get('status') == 'failed' for a in _attempts)
+            if (not _diag.get('cache_hit')
+                    and (_had_failed_attempt or _fallbacks
+                         or int(_diag.get('attempt_count') or 0) > 1)):
+                _append_failure_log(
+                    Path(checkpoint_dir)/'document_understanding',
+                    {'at': time.time(), 'page': i + 1, 'page_index': i,
+                     'page_id': envelope.page_id, 'provider': 'vlm',
+                     'semantic_result': 'recovered', 'recovered': True,
+                     'attempt_count': _diag.get('attempt_count'),
+                     'attempts': _attempts, 'fallbacks': _fallbacks,
+                     'fallback_details': {key: _diag.get(key) for key in _fallbacks},
+                     'usage': _diag.get('usage'),
+                     'latency_s': _diag.get('latency_s')})
         if cache_path:
             cache_path.parent.mkdir(parents=True,exist_ok=True)
             temporary = cache_path.with_suffix(f'.{threading.get_ident()}.tmp')

@@ -2331,7 +2331,8 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
 
 
 #: 用量账本里的角色 → 界面标签（目录键）。
-USAGE_ROLE_LABELS = {"translation": "翻译", "review": "审校", "auxiliary": "辅助（画像、理解、标注）"}
+USAGE_ROLE_LABELS = {"translation": "翻译", "vision": "视觉（读页）",
+                     "review": "审校", "auxiliary": "辅助（画像、理解、标注）"}
 
 
 def run_facts(state: dict) -> dict:
@@ -5323,6 +5324,92 @@ def thinking_control_options(provider: str, model: str) -> tuple[str, ...]:
     return tuple(core.thinking_control_options(provider, model) or ())
 
 
+def task_cost_report(job_id: str) -> dict:
+    """每任务成本报告：只读性能追踪（#231）。
+
+    ``.performance/runs/*/requests.jsonl`` 里的每条 ``model_call`` 计一次，文本
+    请求与视觉读页（含失败 / 重试的尝试）因此共用一本账。仓库没有该服务商的
+    价目表，所以这里只报调用次数与提供方真实回报的 token，绝不编造金额。
+    """
+    try:
+        from folith import cost_report as _cost_report
+        return _cost_report.task_cost_report(
+            Path(core.job_dir(job_id)) / ".performance" / "runs")
+    except Exception:  # noqa: BLE001 - a broken trace simply hides the section
+        return {"available": False}
+
+
+def _cost_token_text(agg) -> str:
+    """'1,234（2/3 次回报）' for one nullable token total; '' when unreported."""
+    if not isinstance(agg, dict):
+        return ""
+    total = agg.get("total")
+    if total is None:
+        return ""
+    text = f"{int(total):,}"
+    reported, calls = int(agg.get("calls_reported") or 0), int(agg.get("calls_total") or 0)
+    if calls and reported < calls:
+        text += f"（{reported}/{calls} 次回报）"
+    return text
+
+
+def _cost_usage_text(entry: dict) -> str:
+    """One row of calls / failures / tokens for a role or a provider·model bucket."""
+    calls = int(entry.get("calls") or 0)
+    failures = int(entry.get("failures") or 0)
+    text = f"{calls:,} 次" + (f"（失败 {failures:,}）" if failures else "")
+    tokens = entry.get("tokens") or {}
+    prompt = _cost_token_text(tokens.get("prompt_tokens"))
+    completion = _cost_token_text(tokens.get("completion_tokens"))
+    cached = _cost_token_text(tokens.get("cached_tokens"))
+    parts = []
+    if prompt:
+        parts.append(f"输入 {prompt}")
+    if completion:
+        parts.append(f"输出 {completion}")
+    if cached and int((tokens.get("cached_tokens") or {}).get("total") or 0) > 0:
+        parts.append(f"缓存命中 {cached}")
+    if parts:
+        text += " · " + " · ".join(parts)
+    return text
+
+
+def _cost_report_group(report: dict):
+    """Task-page rows for the cost section, or None when the trace has no calls."""
+    report = report or {}
+    if not report.get("available"):
+        return None
+    calls = int(report.get("calls") or 0)
+    successes = int(report.get("successes") or 0)
+    failures = int(report.get("failures") or 0)
+    rows = [("模型调用", f"{calls:,} 次（成功 {successes:,} · 失败 {failures:,}）")]
+    totals = report.get("tokens") or {}
+    prompt = _cost_token_text(totals.get("prompt_tokens"))
+    completion = _cost_token_text(totals.get("completion_tokens"))
+    cached = _cost_token_text(totals.get("cached_tokens"))
+    total_parts = []
+    if prompt:
+        total_parts.append(f"输入 {prompt}")
+    if completion:
+        total_parts.append(f"输出 {completion}")
+    if cached and int((totals.get("cached_tokens") or {}).get("total") or 0) > 0:
+        total_parts.append(f"缓存命中 {cached}")
+    if total_parts:
+        rows.append(("合计 token", " · ".join(total_parts)))
+    for entry in report.get("by_role") or []:
+        role = str(entry.get("role") or "unknown")
+        rows.append((USAGE_ROLE_LABELS.get(role, role), _cost_usage_text(entry)))
+    models = report.get("by_model") or []
+    if len(models) > 1:
+        for entry in models:
+            rows.append((f"模型 · {entry.get('label')}", _cost_usage_text(entry)))
+    # No price table exists in this repository: tokens and calls only, never USD.
+    rows.append(("金额", "未计算：仓库内没有该服务商的价目表，只报 token 与调用次数。"))
+    return {"title": "成本",
+            "rows": [(label, value) for label, value in rows
+                     if value not in (None, "", [])]}
+
+
 def task_details(config: EngineConfig, job_id: str,
                  state: dict | None = None) -> list[dict]:
     """任务开始以后，"这个任务用的是什么设置"：分组的（标签, 值）。
@@ -5406,8 +5493,11 @@ def task_details(config: EngineConfig, job_id: str,
                           *_task_setup.DELIVERY_RESEARCH_ITEMS)
              if (setup.get("delivery") or {}).get(item["key"])]
     delivery = group("交付内容", [("文件", "、".join(names))])
-    return [item for item in (document, strategy_group, engine, source, delivery)
-            if item["rows"]]
+    items = [document, strategy_group, engine, source, delivery]
+    cost_group = _cost_report_group(task_cost_report(job_id))
+    if cost_group:
+        items.append(cost_group)
+    return [item for item in items if item["rows"]]
 
 
 def task_setup_view(config: EngineConfig, job_id: str,
