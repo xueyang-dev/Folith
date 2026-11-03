@@ -273,7 +273,10 @@ QLabel#caption, QLabel#hint {{ font-size: {f['caption']}px; color: {t['text-seco
 QLabel#faint {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 QLabel#metric {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
 /* These existing semantic names previously fell through to the body style. */
-QLabel#termsHeading, QLabel#reviewHeadline {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#termsHeading {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
+/* The review readiness line is a secondary status strip now, not a page title;
+   the compact metric overview above it carries the visual weight. */
+QLabel#reviewHeadline {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-secondary']}; }}
 QLabel#reviewItemTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel[role="muted"] {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#statusError {{ color: {t['danger']}; font-weight: 600; }}

@@ -277,13 +277,28 @@ class ReviewPanel(QWidget):
         self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
         self.concept_button = button(i18n.tr('概念决策'), "list")
         self.concept_button.clicked.connect(self.conceptRequested.emit)
-        top = QHBoxLayout()
+        # 决策工作台的紧凑质量概览：一行指标条取代原来的大标题，数字全部来自
+        # 现有投影（不制造统计）。「已自动处理」只在 QA 分诊开关打开时给数，
+        # 关闭时明确写「未启用」，不把停用的能力显示成 0。
+        self.overview = style_module.StatStrip([
+            ("must", i18n.tr('需要处理')),
+            ("suggested", i18n.tr('建议')),
+            ("auto", i18n.tr('已自动处理')),
+            ("reference", i18n.tr('历史 / 参考')),
+        ])
+        top = QVBoxLayout()
+        top.setSpacing(6)
+        strip_row = QHBoxLayout()
+        strip_row.setSpacing(8)
+        strip_row.addWidget(self.overview, 1, Qt.AlignmentFlag.AlignVCenter)
+        strip_row.addWidget(self.review_all_button, 0, Qt.AlignmentFlag.AlignTop)
+        strip_row.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(strip_row)
         text_column = QVBoxLayout()
         text_column.setSpacing(2)
         text_column.addWidget(self.headline)
         text_column.addWidget(self.detail)
-        top.addLayout(text_column, 1)
-        top.addWidget(self.review_all_button, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(text_column)
 
         # ---- 左：队列 --------------------------------------------------------
         self.list = QListWidget()
@@ -411,10 +426,13 @@ class ReviewPanel(QWidget):
         column = QVBoxLayout()
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(10)
-        column.addWidget(self.item_body, 1)
+        column.addWidget(self.item_body)
         column.addWidget(self.conflict)
         column.addWidget(self.source_confirm_box)
         column.addWidget(self.source_note_edit)
+        # 内容贴合顶部、决定区固定在底部：正文较短时不再让文本框拉满整列、
+        # 在右侧留下大片“空输入框”的观感。
+        column.addStretch(1)
         column.addWidget(self.note_edit)
         column.addLayout(action_row)
         column.addWidget(self.hint)
@@ -454,7 +472,6 @@ class ReviewPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
-        layout.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.content, 1)
         layout.addWidget(self.empty_state, 1)
 
@@ -533,17 +550,22 @@ class ReviewPanel(QWidget):
         headline, detail = _coverage_texts(self._view)
         self.headline.setText(headline)
         self.detail.setText(detail)
+        counts = self._group_counts()
+        self._sync_overview(counts)
         if not self._initialised:
             # 第一次打开：有「必须处理」就只展开它；没有就把第一个非空组展开，
             # 免得左栏看起来是空的。审计组永远不参与这个回退——它默认收起，
             # 收起不等于看不见：组头计数与页脚的总数守恒都在。
             self._initialised = True
-            counts = self._group_counts()
             if not counts.get("must"):
                 first = next((key for key in GROUP_ORDER
                               if key != "auto" and counts.get(key)), "")
                 if first:
                     self._expanded = {key: key == first for key in GROUP_ORDER}
+                elif counts.get("auto"):
+                    # 只有审计项时别让详情区空着：展开「已自动处理」，让这些记录
+                    # 仍然一眼可达（默认收起只为让步于人工队列，不是要把它们藏起来）。
+                    self._expanded = {key: key == "auto" for key in GROUP_ORDER}
         self._rebuild_list()
         self._sync_empty(readiness)
         self.shortcut_hint.setVisible(bool(self._items))
@@ -581,6 +603,18 @@ class ReviewPanel(QWidget):
                   for key in GROUP_ORDER}
         result["auto"] = len(self._auto)
         return result
+
+    def _sync_overview(self, counts: dict) -> None:
+        """把分组计数投到顶部指标条。数字全部来自投影；分诊关闭时「已自动处理」
+        写「未启用」，不把停用的能力显示成 0。需要处理的非零值用危险色挑出来。"""
+        self.overview.set_value(
+            "must", int(counts.get("must") or 0),
+            emphasis="danger" if counts.get("must") else "default")
+        self.overview.set_value("suggested", int(counts.get("suggested") or 0))
+        self.overview.set_value(
+            "auto", int(counts.get("auto") or 0) if self._triage_on
+            else i18n.tr('未启用'))
+        self.overview.set_value("reference", int(counts.get("reference") or 0))
 
     def _group_of(self, item: dict) -> str:
         group = str(item.get("list_group") or "")
