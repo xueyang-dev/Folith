@@ -2482,5 +2482,7 @@
   "核验结果": "Vérification",
   "撤销自动处理": "Révoquer le traitement automatique",
   "未修改译文（证据核验安全）": "Aucune modification de la traduction (vérifié sûr)",
-  "已提交的确定性修复": "Correction déterministe appliquée"
+  "已提交的确定性修复": "Correction déterministe appliquée",
+  "撤销这条自动处理结论；撤销会暂存撤回候选，仍需采用才会改正文。": "Révoquer cette décision automatique ; la révocation prépare un candidat d'annulation qui doit encore être adopté pour modifier le texte.",
+  "这是自动处理记录，仅供查看与撤销；不会作为人工决定项。": "Il s'agit d'un enregistrement de traitement automatique, uniquement pour l'inspection et la révocation ; ce n'est pas un élément de décision humaine."
 }

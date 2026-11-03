@@ -2482,5 +2482,7 @@
   "核验结果": "Verificación",
   "撤销自动处理": "Revocar gestión automática",
   "未修改译文（证据核验安全）": "Sin cambios en la traducción (verificado seguro)",
-  "已提交的确定性修复": "Reparación determinista confirmada"
+  "已提交的确定性修复": "Reparación determinista confirmada",
+  "撤销这条自动处理结论；撤销会暂存撤回候选，仍需采用才会改正文。": "Revocar esta decisión automática; revocar prepara un candidato de reversión que aún debe adoptarse para cambiar el texto.",
+  "这是自动处理记录，仅供查看与撤销；不会作为人工决定项。": "Este es un registro de gestión automática, solo para inspección y revocación; no es un elemento de decisión humana."
 }

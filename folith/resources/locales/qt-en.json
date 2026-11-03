@@ -2481,5 +2481,7 @@
   "核验结果": "Verification",
   "撤销自动处理": "Revoke automatic handling",
   "未修改译文（证据核验安全）": "No translation change (verified safe)",
-  "已提交的确定性修复": "Committed deterministic repair"
+  "已提交的确定性修复": "Committed deterministic repair",
+  "撤销这条自动处理结论；撤销会暂存撤回候选，仍需采用才会改正文。": "Revoke this automatic decision; revoking stages a revert candidate that still needs adoption to change the text.",
+  "这是自动处理记录，仅供查看与撤销；不会作为人工决定项。": "This is an automatic-handling record, for inspection and revoke only; it is not a human-decision item."
 }

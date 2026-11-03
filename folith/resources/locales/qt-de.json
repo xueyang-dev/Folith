@@ -2482,5 +2482,7 @@
   "核验结果": "Verifikation",
   "撤销自动处理": "Automatische Behandlung aufheben",
   "未修改译文（证据核验安全）": "Keine Übersetzungsänderung (verifiziert sicher)",
-  "已提交的确定性修复": "Übernommene deterministische Korrektur"
+  "已提交的确定性修复": "Übernommene deterministische Korrektur",
+  "撤销这条自动处理结论；撤销会暂存撤回候选，仍需采用才会改正文。": "Diese automatische Entscheidung aufheben; das Aufheben legt einen Rücknahme-Kandidaten an, der noch übernommen werden muss, um den Text zu ändern.",
+  "这是自动处理记录，仅供查看与撤销；不会作为人工决定项。": "Dies ist ein Datensatz zur automatischen Behandlung, nur zur Ansicht und zum Aufheben; kein Element für menschliche Entscheidungen."
 }
