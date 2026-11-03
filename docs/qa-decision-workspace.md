@@ -158,3 +158,12 @@ fails identically on pristine `main`; not touched here).
   projection (not done here). Program-owned panel copy is localized; the queue
   title line still shows the projection's Chinese string.
 - Native macOS/Windows visual acceptance outstanding.
+
+### v2.1 verification (final)
+
+`pytest tests/`: **5089 passed, 38 skipped, 1 failed**. The single failure is
+`qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`
+— the known order-dependent layout flake (passes in isolation, fails identically
+on pristine `main`, terminology panel untouched here). `scripts/qt_i18n_coverage.py
+--strict`: 1729/1729 per language, 0 missing. v2.1 audit/localization/layout
+tests in `tests/qt_review_decision_workspace_test.py` pass.
