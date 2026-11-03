@@ -338,7 +338,7 @@ class ReviewPanel(QWidget):
         # ---- 区域 A：决策队列 -------------------------------------------------
         # 用紧凑的分组筛选片 + 行式列表取代手风琴式大按钮；片可点，点某组就把
         # 该组展开、其余收起（仍是同一个 self.list，行为与既有键盘导航一致）。
-        self.queue_heading = style_module.SectionLabel(i18n.tr('决策队列'))
+        self.queue_heading = style_module.SectionLabel(i18n.tr('审校队列'))
         self._filter_chips: dict[str, QPushButton] = {}
         # 长语言下分组标签很长：用可换行的 FlowRow，窄列里折行而不是互相挤压。
         chip_row = components.FlowRow(spacing=6, fill=False)
@@ -375,7 +375,7 @@ class ReviewPanel(QWidget):
         self.evidence_body = QTextBrowser()
         self.evidence_body.setObjectName("reviewEvidence")
         self.evidence_body.setOpenExternalLinks(False)
-        self.evidence_body.setAccessibleName(i18n.tr('证据与上下文'))
+        self.evidence_body.setAccessibleName(i18n.tr('证据'))
         self.audit_hint = QLabel("")
         self.audit_hint.setWordWrap(True)
         self.audit_hint.setProperty("role", "muted")
@@ -478,8 +478,6 @@ class ReviewPanel(QWidget):
         content_column.addWidget(self.conflict)
         content_column.addWidget(self.source_confirm_box)
         content_column.addWidget(self.source_note_edit)
-        # 内容贴合顶部、决定区固定在底部。
-        content_column.addStretch(1)
         content_column.addWidget(self.note_edit)
         content_column.addLayout(action_row)
         content_column.addWidget(self.hint)
@@ -499,7 +497,7 @@ class ReviewPanel(QWidget):
         workspace.addLayout(work_split, 1)
 
         # ---- 区域 C：证据检查器（右侧，独立只读面）------------------------------
-        self.evidence_title = style_module.SectionLabel(i18n.tr('证据与上下文'))
+        self.evidence_title = style_module.SectionLabel(i18n.tr('证据'))
         self.evidence_area = QFrame()
         self.evidence_area.setObjectName("qaEvidence")
         evidence_layout = QVBoxLayout(self.evidence_area)
@@ -1079,7 +1077,7 @@ class ReviewPanel(QWidget):
         self.workspace_area.setVisible(not show_evidence)
         self.evidence_area.setVisible(show_evidence)
         self.evidence_toggle.setText(
-            i18n.tr('返回译文') if show_evidence else i18n.tr('证据'))
+            i18n.tr('证据'))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
@@ -1115,9 +1113,7 @@ class ReviewPanel(QWidget):
         if item.get("term_card"):
             # 术语卡的重点是「哪些段还在用旧译法」，不是某一段的问题描述。
             self.item_body.setHtml(self._term_html(item))
-            self.evidence_body.setHtml(
-                self._evidence_html(item, _colon())
-                or f"<p>{_escape(i18n.tr('证据见左侧术语对照表。'))}</p>")
+            self.evidence_body.setHtml(self._evidence_html(item, _colon()))
             self.audit_hint.setText("")
             self._sync_source()
             self._sync_buttons()
@@ -1137,9 +1133,7 @@ class ReviewPanel(QWidget):
                     f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
         self.item_body.setHtml("".join(problem_parts) + self._translation_html(item))
         # 证据检查器：术语参考 / 已记录决定 / 分组摘要；空则给说明，不留白。
-        self.evidence_body.setHtml(
-            self._evidence_html(item, sep)
-            or f"<p>{_escape(i18n.tr('暂无额外证据；这是确定性检测结果。'))}</p>")
+        self.evidence_body.setHtml(self._evidence_html(item, sep))
         self.audit_hint.setText("")
         summary_a11y = (task_copy.get("summary") if task_item else "") \
             or str(item.get("summary") or "")
