@@ -140,6 +140,37 @@ def _fmt_optional_total(agg: Dict[str, Any]) -> str:
     return f"≥{agg['total']:,} (partial: {agg['calls_reported']}/{agg['calls_total']} calls reported)"
 
 
+#: Exception-class fragments that mark a malformed *reply* rather than a fault in
+#: the transport.  ``TranslationProtocolError`` is the translation parser's own
+#: class; the others keep older/alternate call sites classified sensibly.
+_RETRY_PROTOCOL_MARKERS = ("Protocol", "Parse", "Decode")
+#: Exception-class fragments that mark a transport/framework fault.
+_RETRY_TRANSPORT_MARKERS = ("Connection", "Timeout", "RateLimit", "Status", "Transport",
+                            "HTTP", "Proxy", "SSL", "Server")
+
+
+def classify_retry_error(error_type: str, hint: str = "") -> str:
+    """Classify a retried request error as ``protocol`` / ``transport`` / ``other``.
+
+    #220 B1: the text path records ``type(error).__name__``.  The response
+    parser raises ``TranslationProtocolError`` while the transport surfaces the
+    SDK's own exception classes (``APIConnectionError``, ``APITimeoutError``,
+    ``RateLimitError``...), so the class name already separates a broken reply
+    from a network fault.  A caller that still has the exception object can pass
+    an explicit ``hint``.  Anything unrecognised stays ``unknown`` instead of
+    being guessed into one of the two buckets.
+    """
+    kind = str(hint or "").strip().lower()
+    if kind in {"protocol", "transport", "other", "unknown"}:
+        return kind
+    name = str(error_type or "")
+    if any(marker in name for marker in _RETRY_PROTOCOL_MARKERS):
+        return "protocol"
+    if any(marker in name for marker in _RETRY_TRANSPORT_MARKERS):
+        return "transport"
+    return "unknown"
+
+
 def generate_run_id() -> str:
     now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand_hex = hashlib.sha256(os.urandom(16)).hexdigest()[:8]
@@ -948,7 +979,8 @@ class RunContext:
         with self._lock:
             self.errors.append(rec)
 
-    def record_retry(self, stage: str, operation: str, attempt: int, backoff_s: float, error_type: str) -> None:
+    def record_retry(self, stage: str, operation: str, attempt: int, backoff_s: float,
+                     error_type: str, error_kind: str = "") -> None:
         rec = {
             "timestamp": _now_iso(),
             "stage": str(stage),
@@ -956,6 +988,9 @@ class RunContext:
             "attempt": int(attempt),
             "backoff_s": _safe_float(backoff_s, 2),
             "error_type": str(error_type),
+            # #220 B1: keep protocol vs transport on the record itself, so the
+            # summary does not have to re-derive it from a class name.
+            "error_kind": classify_retry_error(error_type, error_kind),
         }
         with self._lock:
             self.retries.append(rec)
@@ -1018,6 +1053,44 @@ class RunContext:
 
             return summary
 
+    def _exclusive_stage_times(self) -> Dict[str, float]:
+        """Seconds each stage spent as the *only* stage in flight (#220 E2).
+
+        ``wall_time_s`` is each stage's own union; stages that ran concurrently
+        each claim the same seconds, so their percentages can sum past 100%.
+        This sweep walks every start/end boundary of the root-span intervals and
+        attributes a slice only while exactly one stage is active.  The slices
+        are therefore disjoint: they can never double-count an overlapping
+        interval and always sum to at most the run wall time.
+        """
+        events: List[Tuple[float, int, str]] = []
+        for stage_name, intervals in self._stage_intervals.items():
+            for start, end in intervals:
+                if end > start:
+                    # end (-1) sorts before start (+1) on an identical timestamp.
+                    events.append((start, 1, stage_name))
+                    events.append((end, -1, stage_name))
+        if not events:
+            return {}
+        events.sort(key=lambda item: (item[0], item[1]))
+        exclusive: Dict[str, float] = {stage: 0.0 for stage in self._stage_intervals}
+        active: Dict[str, int] = {}
+        previous = events[0][0]
+        for timestamp, delta, stage_name in events:
+            if timestamp > previous and len(active) == 1:
+                (only_stage,) = active
+                exclusive[only_stage] += timestamp - previous
+            if delta == 1:
+                active[stage_name] = active.get(stage_name, 0) + 1
+            else:
+                remaining = active.get(stage_name, 0) - 1
+                if remaining > 0:
+                    active[stage_name] = remaining
+                else:
+                    active.pop(stage_name, None)
+            previous = timestamp
+        return {stage: round(value, 4) for stage, value in exclusive.items()}
+
     def _finalize_stage_times(self) -> None:
         """Make ``wall_time_s`` mean work time, never the stage's lifetime.
 
@@ -1025,8 +1098,10 @@ class RunContext:
         0 plus ``no_work`` and keeps its first-start→last-finish span as
         ``lifetime_s``.  Stages built from spans report the union of their
         root-span intervals (concurrent spans are not double counted) and keep
-        the plain sum as ``busy_time_s``.
+        the plain sum as ``busy_time_s``.  ``exclusive_time_s`` is the separate,
+        non-overlapping share measured while no other stage was in flight.
         """
+        exclusive_times = self._exclusive_stage_times()
         for stage_name, rec in self.stages.items():
             if "lifetime_s" not in rec:
                 rec["lifetime_s"] = rec.get("wall_time_s", 0.0)
@@ -1034,8 +1109,10 @@ class RunContext:
                 rec["no_work"] = True
                 rec["wall_time_s"] = 0.0
                 rec["busy_time_s"] = 0.0
+                rec["exclusive_time_s"] = 0.0
                 continue
             rec["no_work"] = False
+            rec["exclusive_time_s"] = round(exclusive_times.get(stage_name, 0.0), 4)
             intervals = sorted(self._stage_intervals.get(stage_name, ()))
             if intervals:
                 union = 0.0
@@ -1130,10 +1207,16 @@ class RunContext:
         stage_breakdown = {}
         for s_name, s_data in self.stages.items():
             w = s_data["wall_time_s"]
+            exclusive = float(s_data.get("exclusive_time_s") or 0.0)
             if current_wall > 0.05:
                 pct = min(100.0, max(0.0, round((w / current_wall) * 100.0, 2)))
+                # Floored, not rounded: a page of stages each rounds up by <0.01,
+                # so only flooring keeps the displayed exclusive shares from
+                # adding up past 100% through rounding alone.
+                exclusive_pct = min(100.0, int(exclusive / current_wall * 10000.0) / 100.0)
             else:
                 pct = 0.0
+                exclusive_pct = 0.0
             cpu = s_data["cpu_time_s"]
             stage_breakdown[s_name] = {
                 "wall_time_s": w,
@@ -1142,6 +1225,11 @@ class RunContext:
                 "busy_time_s": s_data.get("busy_time_s"),
                 "lifetime_s": s_data.get("lifetime_s"),
                 "pct_of_total": pct,
+                # #220 E2: seconds this stage was the only one in flight, and its
+                # share of the run.  Unlike pct_of_total these are disjoint and
+                # sum to at most 100%.
+                "exclusive_time_s": round(exclusive, 4),
+                "exclusive_pct_of_total": exclusive_pct,
                 "cpu_time_s": cpu,
                 "cpu_wall_ratio": round(cpu / max(0.001, w), 2),
                 "throughput": s_data.get("throughput", {}),
@@ -1152,6 +1240,50 @@ class RunContext:
         ocr_durations = [p["total_ms"] / 1000.0 for p in self.ocr_page_records]
         ocr_pcts = compute_percentiles(ocr_durations)
         slowest_ocr_pages = sorted(self.ocr_page_records, key=lambda p: p.get("total_ms", 0.0), reverse=True)[:5]
+
+        # Retry observation (#220 B1): protocol vs transport, whole run and for
+        # the text path per 100 recorded requests.  The denominator is what the
+        # run actually recorded; when nothing was recorded the rate stays
+        # ``None`` instead of inventing a number.
+        retry_kinds = {"protocol": 0, "transport": 0, "other": 0, "unknown": 0}
+        retry_by_stage: Dict[str, int] = {}
+        text_path_kinds = {"protocol": 0, "transport": 0, "other": 0, "unknown": 0}
+        text_path_retry_count = 0
+        for retry in self.retries:
+            kind = classify_retry_error(retry.get("error_type", ""), retry.get("error_kind", ""))
+            retry_kinds[kind] = retry_kinds.get(kind, 0) + 1
+            stage_key = str(retry.get("stage") or "unknown")
+            retry_by_stage[stage_key] = retry_by_stage.get(stage_key, 0) + 1
+            if stage_key in {"translation", "annotation"}:
+                text_path_kinds[kind] += 1
+                text_path_retry_count += 1
+        text_path_requests = sum(
+            1 for call in self.model_calls
+            if str(call.get("role") or "") in {"translation", "annotation"})
+
+        def _per_100(count: int) -> Optional[float]:
+            if not text_path_requests:
+                return None
+            return round(100.0 * count / text_path_requests, 2)
+
+        retry_observation = {
+            "total_retries": len(self.retries),
+            "by_kind": dict(retry_kinds),
+            "by_stage": dict(sorted(retry_by_stage.items())),
+            "text_path": {
+                "requests": text_path_requests,
+                "retries": text_path_retry_count,
+                "protocol": text_path_kinds["protocol"],
+                "transport": text_path_kinds["transport"],
+                "other": text_path_kinds["other"],
+                "unknown": text_path_kinds["unknown"],
+                # None = nothing was recorded, not "0 retries per 100".
+                "protocol_per_100_requests": _per_100(text_path_kinds["protocol"]),
+                "transport_per_100_requests": _per_100(text_path_kinds["transport"]),
+                "all_per_100_requests": _per_100(text_path_retry_count),
+            },
+            "denominator": "recorded model requests whose role is translation or annotation",
+        }
 
         summary = {
             "version": 2,
@@ -1227,6 +1359,7 @@ class RunContext:
                 "error_list": self.errors[-10:],
                 "retry_list": self.retries[-10:],
             },
+            "retry_observation": retry_observation,
         }
         return summary
 
@@ -1254,6 +1387,30 @@ class RunContext:
         r = summary.get("resources", {})
         lp = summary.get("latency_percentiles", {})
         err = summary.get("errors_and_retries", {})
+        ro = summary.get("retry_observation", {})
+
+        def _rate_text(value) -> str:
+            return "n/a (no requests recorded)" if value is None else f"{value} per 100 requests"
+
+        ro_by_kind = ro.get("by_kind") or {}
+        ro_by_stage = ro.get("by_stage") or {}
+        ro_text_path = ro.get("text_path") or {}
+        retry_observation_text = (
+            f"- **Retries (whole run)**: {ro.get('total_retries', 0)} "
+            f"(protocol: {ro_by_kind.get('protocol', 0)}, transport: {ro_by_kind.get('transport', 0)}, "
+            f"other: {ro_by_kind.get('other', 0)}, unknown: {ro_by_kind.get('unknown', 0)})\n"
+            f"- **By Stage**: {', '.join(f'{name}: {count}' for name, count in ro_by_stage.items()) or '—'}\n"
+            f"- **Text-path Requests Recorded**: {ro_text_path.get('requests', 0)}\n"
+            f"- **Text-path Protocol Retries**: {ro_text_path.get('protocol', 0)} "
+            f"({_rate_text(ro_text_path.get('protocol_per_100_requests'))})\n"
+            f"- **Text-path Transport Retries**: {ro_text_path.get('transport', 0)} "
+            f"({_rate_text(ro_text_path.get('transport_per_100_requests'))})\n"
+            f"- **Text-path All Retries**: {ro_text_path.get('retries', 0)} "
+            f"({_rate_text(ro_text_path.get('all_per_100_requests'))})\n"
+            f"- **Limitation**: these are this run's observed counts only. The protocol-retry rate on real "
+            f"body text still has to be re-measured with a live connection; this report defines the "
+            f"measurement, it does not assert a rate."
+        )
         _empty = {"total": None, "calls_reported": 0, "calls_total": 0, "complete": False}
         tu = {k: (m.get("token_usage") or {}).get(k, _empty) for k in (
             "prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens",
@@ -1324,16 +1481,25 @@ class RunContext:
             tp_str = ", ".join(f"{v} {k}" for k, v in s_info.get("throughput", {}).items()) or "—"
             if s_info.get("no_work"):
                 stage_rows.append(
-                    f"| `{s_name}` | — (not run / no work recorded) | — | — | — | — | {s_info.get('status')} |")
+                    f"| `{s_name}` | — (not run / no work recorded) | — | — | — | — | — | — | {s_info.get('status')} |")
                 continue
             stage_rows.append(
-                f"| `{s_name}` | {s_info.get('wall_time_s')} s | {s_info.get('pct_of_total')}% | {s_info.get('cpu_time_s')} s | {s_info.get('cpu_wall_ratio')} | {tp_str} | {s_info.get('status')} |"
+                f"| `{s_name}` | {s_info.get('wall_time_s')} s | {s_info.get('pct_of_total')}% | "
+                f"{s_info.get('exclusive_time_s')} s | {s_info.get('exclusive_pct_of_total')}% | "
+                f"{s_info.get('cpu_time_s')} s | {s_info.get('cpu_wall_ratio')} | {tp_str} | {s_info.get('status')} |"
             )
         stages_table = (
-            "| Stage | Work Time (union of spans) | % Total | CPU Time | CPU/Wall Ratio | Throughput | Status |\n"
-            "|---|---|---|---|---|---|---|\n" + "\n".join(stage_rows)
+            "| Stage | Work Time (union of spans) | % Total (union) | Exclusive Time (only stage in flight) | % Total (exclusive) | CPU Time | CPU/Wall Ratio | Throughput | Status |\n"
+            "|---|---|---|---|---|---|---|---|---|\n" + "\n".join(stage_rows)
             if stage_rows
             else "_No stages recorded._"
+        )
+        stages_note = (
+            "> **Why the union column can exceed 100%:** *Work Time (union of spans)* is each "
+            "stage's own union of root spans. When stages run concurrently, each claims the same "
+            "wall-clock seconds, so the union percentages legitimately add up past 100%. "
+            "*Exclusive Time* attributes a second to a stage only while it is the **only** stage "
+            "in flight, so those slices never overlap and sum to at most 100%."
         )
 
         md = f"""# Run Performance Report
@@ -1356,6 +1522,8 @@ class RunContext:
 
 ## Pipeline Timing & Stage Breakdown
 {stages_table}
+
+{stages_note}
 
 ## Resource Utilization
 - **Process CPU**: Avg {r.get('process_cpu_avg_pct')}% · Peak {r.get('process_cpu_peak_pct')}%
@@ -1391,6 +1559,9 @@ class RunContext:
 - **Warnings**: {err.get('warnings', 0)}
 - **Errors**: {err.get('errors', 0)} (Recovered: {err.get('recovered_errors', 0)})
 - **Retries**: {err.get('retries', 0)}
+
+## Retry Observability (Text Path)
+{retry_observation_text}
 
 ## Unaccounted Time
 - **Unaccounted Gap**: **{summary.get('unaccounted_time_s', 0.0)} s** ({summary.get('unaccounted_pct', 0.0)}% of total runtime)
