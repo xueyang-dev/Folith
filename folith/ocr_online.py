@@ -628,7 +628,7 @@ class OnlineOCRBackend(OCRBackend):
                 session_id = str(uuid.uuid4())
                 self._session_id = session_id
             body["extra_headers"] = {
-                "User-Agent": "Folith/0.8.0",
+                "User-Agent": "Folith/0.8.1",
                 "x-opencode-session": session_id,
             }
         elif config.provider == "Local Gateway" and not config.api_key:
