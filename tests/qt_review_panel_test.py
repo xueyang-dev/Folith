@@ -638,7 +638,7 @@ def test_concept_card_shows_frozen_previous_and_affected_segments(panel):
                               segment_indexes=[1, 2, 3, 4, 5])
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
-    body = panel.item_body.toPlainText()
+    body = _detail_text(panel)
     assert "冻结译法" in body and "阿里克" in body
     assert "旧译法" in body and "阿瑞克" in body
     assert "影响段落" in body and "5 段" in body
@@ -653,7 +653,7 @@ def test_concept_card_without_frozen_translation_shows_no_empty_field(panel):
                               segment_indexes=[0, 1, 2, 3, 4, 5])
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
-    body = panel.item_body.toPlainText()
+    body = _detail_text(panel)
     assert "冻结译法" not in body, "没有冻结译法就不显示空字段冒充有值"
     assert "旧译法" not in body
     assert "影响段落" in body and "6 段" in body
@@ -666,7 +666,7 @@ def test_concept_card_previous_equal_to_frozen_is_not_repeated(panel):
                               segment_indexes=[1, 2, 3])
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
-    body = panel.item_body.toPlainText()
+    body = _detail_text(panel)
     assert "冻结译法" in body
     assert "旧译法" not in body, "旧译法与冻结译法一致时不重复占一行"
 
@@ -689,3 +689,10 @@ def test_entity_rows_for_the_same_name_merge_the_hit_segments():
     assert merged["term_segment_total"] == 4
     assert merged["term_frozen_target"] == "阿里克"
     assert merged["term_previous_target"] == "阿瑞克"
+
+
+def _detail_text(panel):
+    """Decision workspace v2 splits the inspector: workspace problem/source/target
+    live in item_body, the evidence (terminology, recorded decision, group) in
+    evidence_body. A detail assertion should read both."""
+    return panel.item_body.toPlainText() + "\n" + panel.evidence_body.toPlainText()

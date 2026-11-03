@@ -188,8 +188,10 @@ def test_confirmed_open_decision_is_visible_in_the_queue_and_detail(qt_app):
                          decision_label="已确认存在，待修订"))
     try:
         assert "已确认存在，待修订" in _first_card_text(panel)
-        assert "已确认存在，待修订" in panel.item_body.toPlainText()
-        assert "已记录的决定" in panel.item_body.toPlainText()
+        detail = (panel.item_body.toPlainText() + "\n"
+                  + panel.evidence_body.toPlainText())
+        assert "已确认存在，待修订" in detail
+        assert "已记录的决定" in detail
     finally:
         panel.close()
 

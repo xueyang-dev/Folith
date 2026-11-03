@@ -19,7 +19,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QTextBrowser, QTextEdit,
     QVBoxLayout, QWidget,
 )
@@ -283,6 +283,10 @@ class ReviewPanel(QWidget):
         self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
         self.concept_button = button(i18n.tr('概念决策'), "list")
         self.concept_button.clicked.connect(self.conceptRequested.emit)
+        # 窄窗（<1000px）下证据检查器单独做成可切换面板，避免三栏把窗口撑出横向溢出。
+        self.evidence_toggle = button(i18n.tr('证据'), "info")
+        self.evidence_toggle.setVisible(False)
+        self.evidence_toggle.clicked.connect(self._toggle_evidence)
         # 标签复用左栏分组已有的、已翻译的词条，避免引入新 key 后在非中文界面
         # 回落成中文。
         self.overview = style_module.StatStrip([
@@ -304,6 +308,7 @@ class ReviewPanel(QWidget):
         controls_row = QHBoxLayout()
         controls_row.setSpacing(8)
         controls_row.addStretch(1)
+        controls_row.addWidget(self.evidence_toggle, 0, Qt.AlignmentFlag.AlignTop)
         controls_row.addWidget(self.review_all_button, 0, Qt.AlignmentFlag.AlignTop)
         controls_row.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignTop)
         top.addLayout(controls_row)
@@ -330,6 +335,32 @@ class ReviewPanel(QWidget):
         left.addWidget(self.list, 1)
         left.addWidget(self.empty_label)
 
+        # ---- 区域 A：决策队列 -------------------------------------------------
+        # 用紧凑的分组筛选片 + 行式列表取代手风琴式大按钮；片可点，点某组就把
+        # 该组展开、其余收起（仍是同一个 self.list，行为与既有键盘导航一致）。
+        self.queue_heading = style_module.SectionLabel(i18n.tr('决策队列'))
+        self._filter_chips: dict[str, QPushButton] = {}
+        # 长语言下分组标签很长：用可换行的 FlowRow，窄列里折行而不是互相挤压。
+        chip_row = components.FlowRow(spacing=6, fill=False)
+        for key in GROUP_ORDER:
+            chip = QPushButton("")
+            chip.setObjectName("pill")
+            chip.setCheckable(True)
+            chip.clicked.connect(
+                lambda _checked=False, name=key: self._focus_group(name))
+            chip_row.addWidget(chip)
+            self._filter_chips[key] = chip
+        self.queue_area = QWidget()
+        queue_layout = QVBoxLayout(self.queue_area)
+        queue_layout.setContentsMargins(12, 12, 8, 12)
+        queue_layout.setSpacing(10)
+        queue_layout.addWidget(self.queue_heading)
+        queue_layout.addLayout(chip_row)
+        queue_layout.addWidget(self.list, 1)
+        queue_layout.addWidget(self.empty_label)
+        self.queue_area.setMinimumWidth(250)
+        self.queue_area.setMaximumWidth(380)
+
         # ---- 右：详情 + 动作 -------------------------------------------------
         self.item_title = QLabel("")
         self.item_title.setObjectName("reviewItemTitle")
@@ -340,6 +371,14 @@ class ReviewPanel(QWidget):
         self.item_body.setOpenExternalLinks(False)
         self.item_body.setMinimumHeight(140)
         self.item_body.setAccessibleName(i18n.tr('审校详情'))
+        # 区域 C：证据检查器（独立只读面，不与工作区共用一张大卡片）。
+        self.evidence_body = QTextBrowser()
+        self.evidence_body.setObjectName("reviewEvidence")
+        self.evidence_body.setOpenExternalLinks(False)
+        self.evidence_body.setAccessibleName(i18n.tr('证据与上下文'))
+        self.audit_hint = QLabel("")
+        self.audit_hint.setWordWrap(True)
+        self.audit_hint.setProperty("role", "muted")
 
         self.note_edit = QLineEdit()
         self.note_edit.setPlaceholderText(i18n.tr('处理说明（可选）：这次决定的依据'))
@@ -431,38 +470,52 @@ class ReviewPanel(QWidget):
         title_row.addWidget(self.source_button, 0, Qt.AlignmentFlag.AlignTop)
         title_row.addWidget(self.item_chip, 0, Qt.AlignmentFlag.AlignTop)
 
-        column = QVBoxLayout()
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(10)
-        column.addWidget(self.item_body)
-        column.addWidget(self.conflict)
-        column.addWidget(self.source_confirm_box)
-        column.addWidget(self.source_note_edit)
-        # 内容贴合顶部、决定区固定在底部：正文较短时不再让文本框拉满整列、
-        # 在右侧留下大片“空输入框”的观感。
-        column.addStretch(1)
-        column.addWidget(self.note_edit)
-        column.addLayout(action_row)
-        column.addWidget(self.hint)
-        column.addWidget(self.shortcut_hint)
+        content_column = QVBoxLayout()
+        content_column.setContentsMargins(0, 0, 0, 0)
+        content_column.setSpacing(10)
+        self.item_body.setMinimumHeight(180)
+        content_column.addWidget(self.item_body, 1)
+        content_column.addWidget(self.conflict)
+        content_column.addWidget(self.source_confirm_box)
+        content_column.addWidget(self.source_note_edit)
+        # 内容贴合顶部、决定区固定在底部。
+        content_column.addStretch(1)
+        content_column.addWidget(self.note_edit)
+        content_column.addLayout(action_row)
+        content_column.addWidget(self.hint)
+        content_column.addWidget(self.shortcut_hint)
 
-        # 详情卡：左边是问题与决定，右边是这一段在原文里的位置与上下文。
-        detail_row = QHBoxLayout()
-        detail_row.setSpacing(12)
-        detail_row.addLayout(column, 2)
-        detail_row.addWidget(self.pdf, 1)
+        # ---- 区域 B：译文工作区（中间，视觉中心；右侧可并排原页）---------------
+        self.workspace_area = QFrame()
+        self.workspace_area.setObjectName("qaWorkspace")
+        workspace = QVBoxLayout(self.workspace_area)
+        workspace.setContentsMargins(20, 16, 20, 16)
+        workspace.setSpacing(10)
+        workspace.addLayout(title_row)
+        work_split = QHBoxLayout()
+        work_split.setSpacing(14)
+        work_split.addLayout(content_column, 2)
+        work_split.addWidget(self.pdf, 1)
+        workspace.addLayout(work_split, 1)
 
-        detail_card = Card()
-        detail_layout = QVBoxLayout(detail_card)
-        detail_layout.setContentsMargins(16, 14, 16, 14)
-        detail_layout.setSpacing(10)
-        detail_layout.addLayout(title_row)
-        detail_layout.addLayout(detail_row, 1)
+        # ---- 区域 C：证据检查器（右侧，独立只读面）------------------------------
+        self.evidence_title = style_module.SectionLabel(i18n.tr('证据与上下文'))
+        self.evidence_area = QFrame()
+        self.evidence_area.setObjectName("qaEvidence")
+        evidence_layout = QVBoxLayout(self.evidence_area)
+        evidence_layout.setContentsMargins(16, 16, 16, 16)
+        evidence_layout.setSpacing(10)
+        evidence_layout.addWidget(self.evidence_title)
+        evidence_layout.addWidget(self.evidence_body, 1)
+        evidence_layout.addWidget(self.audit_hint)
+        self.evidence_area.setMinimumWidth(280)
+        self.evidence_area.setMaximumWidth(440)
 
         body = QHBoxLayout()
-        body.setSpacing(12)
-        body.addLayout(left, 1)
-        body.addWidget(detail_card, 2)
+        body.setSpacing(0)
+        body.addWidget(self.queue_area, 0)
+        body.addWidget(self.workspace_area, 2)
+        body.addWidget(self.evidence_area, 0)
 
         # 队列与详情装在一个容器里：审校队列整个是空的时，它整体让位给一个空状态
         # （设计审校 40 号 4.1：不再画五个 0 计数的筛选、一个空列表和一块空白详情）。
@@ -560,6 +613,7 @@ class ReviewPanel(QWidget):
         self.detail.setText(detail)
         counts = self._group_counts()
         self._sync_overview(counts)
+        self._sync_filter_chips(counts)
         if not self._initialised:
             # 第一次打开：有「必须处理」就只展开它；没有就把第一个非空组展开，
             # 免得左栏看起来是空的。审计组永远不参与这个回退——它默认收起，
@@ -687,6 +741,7 @@ class ReviewPanel(QWidget):
             i18n.tr('展开分组查看其中的项目。')
             if self._items or self._handled or self._auto
             else i18n.tr('审校队列是空的：没有需要人工处理的项目。'))
+        self._sync_filter_chips(self._group_counts())
         self._render_detail()
 
     def _add_group_header(self, key: str, count: int) -> None:
@@ -952,14 +1007,99 @@ class ReviewPanel(QWidget):
             parts.append(f"<p>{_escape(i18n.tr('另有 {v0} 段未列出', v0=total - len(shown)))}</p>")
         return "".join(parts)
 
+    def _translation_html(self, item: dict) -> str:
+        """工作区里把原文、当前译文、建议译文各画成独立区块（不是一整块灰）。"""
+        from folith.textual import text_direction
+        muted = style_module.html_color("text-muted", over="bg-surface")
+        blocks: list[str] = []
+        for label, key, span_key in (("原文", "source", "source_span"),
+                                     ("当前译文", "target", "target_span"),
+                                     ("建议译文", "suggested_target", None)):
+            value = str(item.get(key) or "").strip()
+            if not value:
+                continue
+            rtl = text_direction(value, None) == "rtl"
+            block = ' dir="rtl"' if rtl else ""
+            span = str(item.get(span_key) or "") if span_key else ""
+            if blocks:
+                blocks.append("<hr/>")
+            blocks.append(
+                f"<p style=\"font-size:11px;font-weight:700;color:{muted};"
+                f"margin-bottom:2px\">{_escape(i18n.tr(label))}</p>"
+                f"<p{block} style=\"margin-top:0\">"
+                f"{self._highlight(value, span)}</p>")
+        return "".join(blocks)
+
+    def _evidence_html(self, item: dict, sep: str) -> str:
+        """证据检查器的内容：术语参考、已记录决定、分组摘要。空字符串表示没有。"""
+        parts: list[str] = []
+        if item.get("entity_source"):
+            total = int(item.get("term_segment_total") or 0)
+            if total > 0:
+                parts.append(_decision_reference_html(
+                    str(item.get("term_frozen_target") or "").strip(),
+                    str(item.get("term_previous_target") or "").strip(), total))
+        decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
+        if decision:
+            parts.append(f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
+                         f"{_escape(decision)}</p>")
+        group_copy = self._finding_group_copy(item)
+        if group_copy:
+            parts.append(f"<p>{_escape(group_copy)}</p>")
+        return "".join(parts)
+
+    def _focus_group(self, key: str) -> None:
+        """点分组筛选片：只展开该组（其余收起），即按组过滤队列。"""
+        self._expanded = {name: name == key for name in GROUP_ORDER}
+        self._rebuild_list()
+
+    def _sync_filter_chips(self, counts: dict) -> None:
+        labels = {"must": GROUP_LABELS["must"],
+                  "suggested": GROUP_LABELS["suggested"],
+                  "auto": GROUP_LABELS["auto"],
+                  "reference": GROUP_LABELS["reference"]}
+        for key, chip in self._filter_chips.items():
+            chip.setText(f"{i18n.tr(labels[key])} {int(counts.get(key) or 0)}")
+            # 分诊关闭时没有「自动处理」这种能力：不显示这一片，避免出现一个
+            # 会误导的 0。其余分组始终显示。
+            chip.setVisible(not (key == "auto" and not self._triage_on))
+            chip.setChecked(bool(self._expanded.get(key)))
+
+    def _toggle_evidence(self) -> None:
+        self._apply_narrow_evidence(not getattr(self, "_narrow_evidence", False))
+
+    def _apply_narrow_evidence(self, show_evidence: bool) -> None:
+        """窄窗下证据检查器与译文工作区互斥显示，避免三栏把窗口撑出横向溢出。"""
+        self._narrow_evidence = bool(show_evidence)
+        if self.width() >= 1000:
+            self.workspace_area.setVisible(True)
+            self.evidence_area.setVisible(True)
+            self.evidence_toggle.setText(i18n.tr('证据'))
+            return
+        self.workspace_area.setVisible(not show_evidence)
+        self.evidence_area.setVisible(show_evidence)
+        self.evidence_toggle.setText(
+            i18n.tr('返回译文') if show_evidence else i18n.tr('证据'))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if not hasattr(self, "workspace_area"):
+            return
+        narrow = self.width() < 1000
+        self.evidence_toggle.setVisible(narrow)
+        self._apply_narrow_evidence(getattr(self, "_narrow_evidence", False))
+
     def _render_detail(self) -> None:
         item = self.selected_item()
         has = bool(item)
-        for widget in (self.item_title, self.item_chip, self.item_body):
+        for widget in (self.item_title, self.item_chip, self.item_body,
+                       self.evidence_body):
             widget.setVisible(has)
         if not has:
             self.item_title.setText("")
             self.item_body.setHtml("")
+            self.evidence_body.setHtml("")
+            self.audit_hint.setText("")
             self._set_actions(source=False, task=False, decision=False,
                               suggestion=False, edit=False)
             self.hint.setText("")
@@ -975,13 +1115,17 @@ class ReviewPanel(QWidget):
         if item.get("term_card"):
             # 术语卡的重点是「哪些段还在用旧译法」，不是某一段的问题描述。
             self.item_body.setHtml(self._term_html(item))
+            self.evidence_body.setHtml(
+                self._evidence_html(item, _colon())
+                or f"<p>{_escape(i18n.tr('证据见左侧术语对照表。'))}</p>")
+            self.audit_hint.setText("")
             self._sync_source()
+            self._sync_buttons()
             return
         sep = _colon()
         task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
         task_copy = _localized_task_copy(item) if task_item else {}
-        # 查看器分三段：问题 → 原文/译文 → 证据。证据放最后、带一个轻量分区标题，
-        # 让术语参考、已记录的决定、分组摘要有共同的落点，而不是散落在正文里。
+        # 工作区：问题 → 原文 / 当前译文 / 建议译文（各自独立的区块）。
         problem_parts: list[str] = []
         for label, key in (("问题", "summary"), ("原因", "reason"),
                            ("说明", "explanation"), ("建议", "recommendation")):
@@ -991,50 +1135,12 @@ class ReviewPanel(QWidget):
             if value and not any(value in part for part in problem_parts):
                 problem_parts.append(
                     f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
-        from folith.textual import text_direction
-
-        translation_parts: list[str] = []
-        for label, key, span_key in (("原文", "source", "source_span"),
-                                     ("当前译文", "target", "target_span"),
-                                     ("建议译文", "suggested_target", None)):
-            value = str(item.get(key) or "").strip()
-            if value:
-                # 原文与译文各按自己的书写方向排：中文原文从左往右、阿拉伯语译文从右往左，
-                # 同一个面板里混排（试用反馈）。
-                rtl = text_direction(value, None) == "rtl"
-                block = ' dir="rtl"' if rtl else ""
-                span = str(item.get(span_key) or "") if span_key else ""
-                translation_parts.append(
-                    f"<p><b>{_escape(i18n.tr(label))}{sep}</b></p>"
-                    f"<p{block} style=\"margin-top:2px\">"
-                    f"{self._highlight(value, span)}</p>")
-        evidence_parts: list[str] = []
-        if item.get("entity_source"):
-            # #277: 概念决策类术语卡补上决定参考字段，渲染与 #102 过期译法卡同源。
-            # 没有锁定译法时投影里就是空值，这里自然不画冻结/旧译法两行。
-            total = int(item.get("term_segment_total") or 0)
-            if total > 0:
-                evidence_parts.append(_decision_reference_html(
-                    str(item.get("term_frozen_target") or "").strip(),
-                    str(item.get("term_previous_target") or "").strip(),
-                    total))
-        decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
-        if decision:
-            # 已经记下的人工判断：确认问题存在之后问题仍在队列里，必须说清它
-            # 不是"待处理但没人看过"。
-            evidence_parts.append(
-                f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
-                f"{_escape(decision)}</p>")
-        group_copy = self._finding_group_copy(item)
-        if group_copy:
-            evidence_parts.append(f"<p>{_escape(group_copy)}</p>")
-        parts = problem_parts + translation_parts
-        if evidence_parts:
-            muted = style_module.html_color("text-secondary", over="bg-surface-sunken")
-            parts.append(f"<p style=\"margin-top:10px;font-weight:600;color:{muted}\">"
-                         f"{_escape(i18n.tr('证据'))}</p>")
-            parts.extend(evidence_parts)
-        self.item_body.setHtml("".join(parts))
+        self.item_body.setHtml("".join(problem_parts) + self._translation_html(item))
+        # 证据检查器：术语参考 / 已记录决定 / 分组摘要；空则给说明，不留白。
+        self.evidence_body.setHtml(
+            self._evidence_html(item, sep)
+            or f"<p>{_escape(i18n.tr('暂无额外证据；这是确定性检测结果。'))}</p>")
+        self.audit_hint.setText("")
         summary_a11y = (task_copy.get("summary") if task_item else "") \
             or str(item.get("summary") or "")
         self.item_body.setAccessibleDescription(
@@ -1163,13 +1269,21 @@ class ReviewPanel(QWidget):
             str(item.get("suggested_target") or "").strip()) and has_segment
         self._set_actions(source=source, task=task, decision=decision,
                           suggestion=suggestion, edit=has_segment and not task)
-        # 同一时刻只留一个实心主按钮：有建议时"暂存为候选"是下一步，没有建议时
-        # "确认已解决"才是。两个主按钮并排会让人不知道该点哪个（设计审校 40）。
+        # 呈现层的行动优先级：按项的真实状态选“唯一实心主行动”，而不是只看严重度。
+        # 有建议时“暂存为候选”是下一步；没有建议但原文与译文完全相同（整段未翻译）
+        # 时，没有任何“已解决”的依据，主行动应是“修改译文”，把“确认已解决”降为次要。
+        source_text = str(item.get("source") or "").strip()
+        target_text = str(item.get("target") or "").strip()
+        untranslated = bool(source_text) and source_text == target_text
+        edit_primary = (not suggestion) and (not source) and has_segment and untranslated
         self._set_button_kind(
             self.apply_button, "primary" if suggestion else "secondary", "_apply_kind")
         self._set_button_kind(
+            self.edit_button, "primary" if edit_primary else "secondary", "_edit_kind")
+        self._set_button_kind(
             self.confirm_button,
-            "primary" if decision and not suggestion else "secondary", "_confirm_kind")
+            "primary" if (decision and not suggestion and not edit_primary)
+            else "secondary", "_confirm_kind")
         if task:
             self.review_button.setText(i18n.tr({
                 "failed": "重试审校本段", "stale": "重新审校本段",

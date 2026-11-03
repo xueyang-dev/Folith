@@ -942,6 +942,12 @@ QTextBrowser#reviewDetail {{
     padding: {sp['sm']}px;
     color: {t['text-primary']};
 }}
+/* 决策工作台三区：译文工作区是页面底色，证据检查器是独立的右侧只读面。 */
+QFrame#qaWorkspace {{ background: {t['bg-page']}; border: none; }}
+QFrame#qaEvidence {{ background: {t['bg-surface-subtle']};
+    border-left: 1px solid {t['border-subtle']}; }}
+QTextBrowser#reviewEvidence {{ background: transparent; border: none;
+    color: {t['text-primary']}; font-size: {f['caption']}px; }}
 QComboBox {{
     background: {t['bg-surface']};
     color: {t['text-primary']};
