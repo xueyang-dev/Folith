@@ -2473,5 +2473,13 @@
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "{v0} group {v1} · {v2} occurrences · {v3} segments affected",
   "需要调查": "Needs investigation",
   "作用于：{v0}": "Applies to: {v0}",
-  "辅助": "Auxiliary"
+  "辅助": "Auxiliary",
+  "自动处理": "Automated handling",
+  "处置": "Disposition",
+  "处理前译文": "Previous translation",
+  "处理结果": "Result",
+  "核验结果": "Verification",
+  "撤销自动处理": "Revoke automatic handling",
+  "未修改译文（证据核验安全）": "No translation change (verified safe)",
+  "已提交的确定性修复": "Committed deterministic repair"
 }

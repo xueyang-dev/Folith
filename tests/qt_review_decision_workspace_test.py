@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from folith.qt import review_panel as rp
+from folith.qt import i18n
 
 
 @pytest.fixture(scope="module")
@@ -177,3 +178,99 @@ def test_large_audit_only_task_stays_collapsed(qapp):
                                     "reference": 0, "auto": 500}))
     assert panel._expanded["auto"] is False
     assert panel.list.count() <= 2  # header only, no per-record widgets
+
+
+def _audit_view(disposition="auto_resolvable", committed=True,
+                evidence=(), snapshot=None, candidate="cand-1"):
+    item = {
+        "title": "第 41 段 · 数字确定性修复",
+        "triage_record_key": "rk1",
+        "triage_actor_type": "rule",
+        "triage_disposition": disposition,
+        "triage_candidate_id": candidate,
+        "triage_committed": committed,
+        "triage_evidence": list(evidence),
+        "triage_snapshot": dict(snapshot or {}),
+    }
+    return _view(qa_triage_enabled=True, auto_handled_items=[item],
+                 group_counts={"must": 0, "suggested": 0, "reference": 0, "auto": 1})
+
+
+def _select_audit(panel, key="rk1"):
+    from PySide6.QtCore import Qt
+    for row in range(panel.list.count()):
+        e = panel.list.item(row)
+        if e.data(Qt.ItemDataRole.UserRole + 1) == key \
+                and not e.data(Qt.ItemDataRole.UserRole):
+            panel.list.setCurrentRow(row)
+            return True
+    raise AssertionError("audit row not found")
+
+
+def test_selecting_audit_populates_workspace_and_evidence(qapp):
+    panel = rp.ReviewPanel()
+    panel.apply(_audit_view(
+        disposition="auto_resolvable", committed=True,
+        evidence=[{"kind": "structural_repair", "ref": "cand-1",
+                   "detail": "数字单位已按确定性规则修正"}],
+        snapshot={"source": "完成于 100 s", "target": "完成于 00 s",
+                  "summary": "数量单位不完整"}))
+    assert _select_audit(panel)
+    body = panel.item_body.toPlainText()
+    assert "完成于 100 s" in body            # source shown
+    assert "完成于 00 s" in body             # previous/committed text shown
+    ev = panel.evidence_body.toPlainText()
+    assert "structural_repair" in ev and "cand-1" in ev
+
+
+def test_verified_safe_says_no_translation_change(qapp):
+    panel = rp.ReviewPanel()
+    panel.apply(_audit_view(disposition="verified_safe", committed=False,
+                            evidence=[{"kind": "orthographic_equivalence",
+                                       "ref": "r", "detail": "等价形式"}],
+                            snapshot={"source": "奏獻書下达。", "target": "奏献书下达。"}))
+    assert _select_audit(panel)
+    assert "未修改译文" in panel.item_body.toPlainText()
+
+
+def test_audit_selection_hides_human_actions_and_revokes(qapp):
+    panel = rp.ReviewPanel()
+    panel.apply(_audit_view())
+    seen = {}
+    panel.triageRevokeRequested.connect(lambda key: seen.update(key=key))
+    assert _select_audit(panel)
+    for button in (panel.apply_button, panel.open_button, panel.confirm_button,
+                   panel.preserve_button, panel.edit_button,
+                   panel.retranslate_button):
+        assert not button.isVisibleTo(panel), button.text()
+    assert panel.audit_revoke_button.isVisibleTo(panel)
+    panel.audit_revoke_button.click()
+    assert seen.get("key") == "rk1"
+
+
+def test_rtl_layout_direction_follows_language(qapp):
+    from PySide6.QtCore import Qt
+    panel = rp.ReviewPanel()
+    try:
+        i18n.set_language("ar")
+        panel.apply(_view())
+        assert panel.layoutDirection() == Qt.LayoutDirection.RightToLeft
+        i18n.set_language("zh-CN")
+        panel.apply(_view())
+        assert panel.layoutDirection() == Qt.LayoutDirection.LeftToRight
+    finally:
+        i18n.set_language("zh-CN")
+
+
+def test_short_content_body_height_is_bounded(qapp):
+    panel = rp.ReviewPanel()
+    panel.resize(1440, 900)
+    item = {"id": "finding:s", "kind": "finding", "severity": "actionable",
+            "severity_label": "建议检查", "filter_group": "suggested",
+            "title": "第 1 段", "segment_index": 0, "decidable": True,
+            "summary": "短", "source": "Hi.", "target": "嗨。"}
+    panel.apply(_view(group_counts={"must": 1, "suggested": 0, "reference": 0, "auto": 0},
+                      queue_items=[item]))
+    assert panel.select_item_id("finding:s")
+    # 内容自适应：短内容不会撑满整个工作区高度。
+    assert panel.item_body.height() <= 340

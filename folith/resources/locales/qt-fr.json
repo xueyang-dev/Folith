@@ -2474,5 +2474,13 @@
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "Groupe {v0} {v1} · {v2} occurrences · {v3} segments concernés",
   "需要调查": "Investigation nécessaire",
   "作用于：{v0}": "S'applique à : {v0}",
-  "辅助": "Auxiliaire"
+  "辅助": "Auxiliaire",
+  "自动处理": "Traitement automatique",
+  "处置": "Disposition",
+  "处理前译文": "Traduction précédente",
+  "处理结果": "Résultat",
+  "核验结果": "Vérification",
+  "撤销自动处理": "Révoquer le traitement automatique",
+  "未修改译文（证据核验安全）": "Aucune modification de la traduction (vérifié sûr)",
+  "已提交的确定性修复": "Correction déterministe appliquée"
 }

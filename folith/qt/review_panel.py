@@ -20,8 +20,8 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QPlainTextEdit, QPushButton, QTextBrowser, QTextEdit,
-    QVBoxLayout, QWidget,
+    QListWidgetItem, QPlainTextEdit, QPushButton, QSizePolicy, QTextBrowser,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 from . import adapter
@@ -251,6 +251,9 @@ class ReviewPanel(QWidget):
         # #289: 自动处理审计列表（开关关闭时永远是空的，页面与今天一致）。
         self._auto: list[dict] = []
         self._triage_on = False
+        # 审计检查器：选择一条自动处理记录只用于「查看/撤销」，不进入人工决定循环。
+        self._selected_audit_key = ""
+        self._auto_by_key: dict[str, dict] = {}
         self._group_summaries: dict[str, dict] = {}
         self._expanded = dict(GROUP_EXPANDED_BY_DEFAULT)
         self._initialised = False
@@ -369,7 +372,11 @@ class ReviewPanel(QWidget):
         self.item_body = QTextBrowser()
         self.item_body.setObjectName("reviewDetail")
         self.item_body.setOpenExternalLinks(False)
-        self.item_body.setMinimumHeight(140)
+        self.item_body.setMinimumHeight(80)
+        # 内容自适应：短段落按内容高度、长段落限高后内部滚动，避免一整块空文本框。
+        self.item_body.setMaximumHeight(340)
+        self.item_body.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                     QSizePolicy.Policy.Maximum)
         self.item_body.setAccessibleName(i18n.tr('审校详情'))
         # 区域 C：证据检查器（独立只读面，不与工作区共用一张大卡片）。
         self.evidence_body = QTextBrowser()
@@ -441,11 +448,17 @@ class ReviewPanel(QWidget):
 
         # 动作按钮会折行：俄语/西语/阿拉伯语的按钮文字比中文长得多，固定一行会把
         # 整页撑到 2600px 宽（默认窗口只有 1180px），右半列被裁掉。
+        self.audit_revoke_button = button(i18n.tr('撤销自动处理'), "refresh")
+        self.audit_revoke_button.setToolTip(i18n.tr(
+            '撤销这条自动处理结论；撤销会暂存撤回候选，仍需采用才会改正文。'))
+        self.audit_revoke_button.clicked.connect(self._emit_audit_revoke)
+        self.audit_revoke_button.setVisible(False)
         action_row = components.FlowRow(spacing=6, fill=False)
         for widget in (self.apply_button, self.open_button, self.confirm_button,
                        self.confirm_source_button, self.preserve_button,
                        self.review_button, self.edit_button,
-                       self.retranslate_button, self.style_rule_button):
+                       self.retranslate_button, self.style_rule_button,
+                       self.audit_revoke_button):
             action_row.addWidget(widget)
 
         # 名字译法不一：同一个部件（与「检查与修复」抽屉共用），代替逐段的动作行。
@@ -473,11 +486,12 @@ class ReviewPanel(QWidget):
         content_column = QVBoxLayout()
         content_column.setContentsMargins(0, 0, 0, 0)
         content_column.setSpacing(10)
-        self.item_body.setMinimumHeight(180)
-        content_column.addWidget(self.item_body, 1)
+        content_column.addWidget(self.item_body, 0)
+        # 术语决定控件紧跟在文本之后：决定与它所影响的译文保持就近。
         content_column.addWidget(self.conflict)
         content_column.addWidget(self.source_confirm_box)
         content_column.addWidget(self.source_note_edit)
+        content_column.addStretch(1)
         content_column.addWidget(self.note_edit)
         content_column.addLayout(action_row)
         content_column.addWidget(self.hint)
@@ -602,6 +616,16 @@ class ReviewPanel(QWidget):
         # 下面的列表就是空的，页面渲染与今天完全一致。
         self._triage_on = bool(self._view.get("qa_triage_enabled"))
         self._auto = [item for item in (self._view.get("auto_handled_items") or [])]
+        self._auto_by_key = {
+            str(item.get("triage_record_key")): item for item in self._auto
+            if item.get("triage_record_key")}
+        # 程序自己拥有、但可能被选中的审计记录在刷新后要重新解析：键还在就沿用。
+        if self._selected_audit_key not in self._auto_by_key:
+            self._selected_audit_key = ""
+        # RTL：整块面板按界面语言镜像（三栏的顺序、对齐、阅读方向都跟着走）。
+        _rtl = i18n.language().startswith("ar")
+        self.setLayoutDirection(
+            Qt.LayoutDirection.RightToLeft if _rtl else Qt.LayoutDirection.LeftToRight)
         self._group_summaries = {
             str(group.get("group_id") or ""): dict(group)
             for group in (self._view.get("finding_groups") or [])}
@@ -840,8 +864,9 @@ class ReviewPanel(QWidget):
         """
         record_key = str(item.get("triage_record_key") or "")
         entry = QListWidgetItem()
-        # 没有 UserRole 标识：导航（_list_row/_visible_index）会跳过这一行。
-        entry.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        # 没有 UserRole：导航（_list_row/_visible_index）仍会跳过这一行，
+        # 它不属于人工处置循环；但允许被选中，用于在右侧检查器里查看/撤销。
+        entry.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         entry.setData(Qt.ItemDataRole.UserRole + 1, record_key)
         card = IssueCard("info", collapsible=True, expanded=False)
         card.setObjectName("qaAuditItem")
@@ -923,9 +948,12 @@ class ReviewPanel(QWidget):
         self._rebuild_list()
 
     def _current_changed(self, current, _previous) -> None:
-        # #289: 审计行没有队列标识（不参与处置循环）：data 为空时选中项为空。
-        self._selected_id = (str(current.data(Qt.ItemDataRole.UserRole) or "")
-                             if current else "")
+        # 人工处置项带 UserRole；审计行带 UserRole+1（record key）。两者分开：
+        # 选中审计记录只更新检查器，绝不进入人工决定循环。
+        action_id = str(current.data(Qt.ItemDataRole.UserRole) or "") if current else ""
+        audit_key = str(current.data(Qt.ItemDataRole.UserRole + 1) or "") if current else ""
+        self._selected_id = action_id
+        self._selected_audit_key = "" if action_id else audit_key
         self.note_edit.clear()
         self.source_note_edit.clear()
         self.source_confirm_box.setChecked(False)
@@ -1087,7 +1115,119 @@ class ReviewPanel(QWidget):
         self.evidence_toggle.setVisible(narrow)
         self._apply_narrow_evidence(getattr(self, "_narrow_evidence", False))
 
+    def _block(self, label: str, value: str) -> str:
+        """Work-area 里一个独立文本块（标签 + 正文），原文/译文各自成块。"""
+        from folith.textual import text_direction
+        muted = style_module.html_color("text-muted", over="bg-surface")
+        rtl = text_direction(value, None) == "rtl"
+        attr = ' dir="rtl"' if rtl else ""
+        return (f"<p style=\"font-size:11px;font-weight:700;color:{muted};"
+                f"margin-bottom:2px\">{_escape(i18n.tr(label))}</p>"
+                f"<p{attr} style=\"margin-top:0\">{_escape(value)}</p>")
+
+    def _render_audit(self) -> None:
+        """审计检查器：选中一条自动处理记录，填充译文工作区与证据检查器。
+
+        只读：绝不显示也不触发任何人工决定动作；唯一可用的是「撤销自动处理」，
+        它仍走既有核心路径（提交过的修复只暂存撤回候选，不改正文）。
+        """
+        key = self._selected_audit_key
+        item = self._auto_by_key.get(key, {})
+        if not item:
+            self._render_detail_empty()
+            return
+        self._selected_id = ""
+        self.item_title.setText(self._item_title(item) or i18n.tr('自动处理'))
+        disposition_name = i18n.tr_dynamic(str(_DISPOSITION_LABELS.get(
+            str(item.get("triage_disposition") or ""),
+            str(item.get("triage_disposition") or ""))))
+        self.item_chip.setText(disposition_name or i18n.tr('自动处理'))
+        self.item_chip.set_tone("info")
+        self.item_chip.setVisible(True)
+        for widget in (self.item_title, self.item_chip, self.item_body,
+                       self.evidence_body):
+            widget.setVisible(True)
+        # 审计记录不是人工决定项：隐藏全部人工处置按钮，只留撤销。
+        self._set_actions(source=False, task=False, decision=False,
+                          suggestion=False, edit=False)
+        self.audit_revoke_button.setVisible(not self._busy)
+        self.hint.setText(i18n.tr(
+            '这是自动处理记录，仅供查看与撤销；不会作为人工决定项。'))
+        self.conflict.setVisible(False)
+        sep = _colon()
+        snap = item.get("triage_snapshot") or {}
+        committed = bool(item.get("triage_committed"))
+        disposition = str(item.get("triage_disposition") or "")
+        parts = [f"<p><b>{_escape(i18n.tr('自动处理'))}{sep}</b>"
+                 f"{_escape(disposition_name)}</p>"]
+        source = str(snap.get("source") or "")
+        if source:
+            parts.append(self._block("原文", source))
+        if disposition == "verified_safe" and not committed:
+            parts.append(f"<p>{_escape(i18n.tr('未修改译文（证据核验安全）'))}</p>")
+        else:
+            before = str(item.get("triage_previous_target") or snap.get("target") or "")
+            after = str(item.get("triage_target") or item.get("target") or "")
+            if before:
+                parts.append(self._block("处理前译文", before))
+            if after and after != before:
+                parts.append(self._block("当前译文", after))
+            elif committed:
+                parts.append(f"<p>{_escape(i18n.tr('已提交的确定性修复'))}</p>")
+        self.item_body.setHtml("".join(parts))
+        evidence_lines = []
+        for entry in item.get("triage_evidence") or []:
+            if not isinstance(entry, dict):
+                continue
+            detail = str(entry.get("detail") or "")
+            line = (f"<p><b>{_escape(i18n.tr('证据'))}{sep}</b>"
+                    f"{_escape(str(entry.get('kind') or ''))} · "
+                    f"{_escape(str(entry.get('ref') or ''))}")
+            if detail:
+                line += f" · {_escape(detail)}"
+            evidence_lines.append(line + "</p>")
+        who = i18n.tr(_ACTOR_TYPE_LABELS.get(
+            str(item.get("triage_actor_type") or ""),
+            str(item.get("triage_actor_type") or "")))
+        evidence_lines.append(f"<p><b>{_escape(i18n.tr('处置'))}{sep}</b>"
+                              f"{_escape(disposition_name)} · {_escape(who)}</p>")
+        if item.get("triage_candidate_id"):
+            state = i18n.tr('已提交') if committed else i18n.tr('未提交')
+            evidence_lines.append(f"<p><b>{_escape(i18n.tr('候选'))}{sep}</b>"
+                                  f"{_escape(str(item['triage_candidate_id']))} · "
+                                  f"{_escape(state)}</p>")
+        if snap.get("summary"):
+            evidence_lines.append(f"<p><b>{_escape(i18n.tr('问题'))}{sep}</b>"
+                                  f"{_escape(str(snap['summary']))}</p>")
+        self.evidence_body.setHtml("".join(evidence_lines))
+        self.audit_hint.setText("")
+        # 审计记录没有对应的可定位原文面板。
+        self._sync_source()
+
+    def _emit_audit_revoke(self) -> None:
+        if self._busy or not self._selected_audit_key:
+            return
+        self.triageRevokeRequested.emit(self._selected_audit_key)
+
+    def _render_detail_empty(self) -> None:
+        self.item_title.setText("")
+        self.item_body.setHtml("")
+        self.evidence_body.setHtml("")
+        self.audit_hint.setText("")
+        self._selected_id = ""
+        self._selected_audit_key = ""
+        self.audit_revoke_button.setVisible(False)
+        self._set_actions(source=False, task=False, decision=False,
+                          suggestion=False, edit=False)
+        self.hint.setText("")
+        self.conflict.setVisible(False)
+        self._sync_source()
+
     def _render_detail(self) -> None:
+        if self._selected_audit_key:
+            self._render_audit()
+            return
+        self.audit_revoke_button.setVisible(False)
         item = self.selected_item()
         has = bool(item)
         for widget in (self.item_title, self.item_chip, self.item_body,

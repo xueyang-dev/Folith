@@ -123,3 +123,38 @@ Full `pytest tests/` on this branch: **5084 passed, 38 skipped**, one failure �
 `qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`,
 the known order-dependent layout flake in the terminology panel (passes isolated,
 fails identically on pristine `main`; not touched here).
+
+## v2.1 — audit inspector, RTL, content-adaptive
+
+- **Audit inspector (P0).** Audit rows are now selectable. Selecting one fills
+  the Translation Workspace (disposition, source, previous translation / after
+  text, committed status) and the Evidence Inspector (evidence kind/ref/detail,
+  disposition + actor type, candidate id + committed, snapshot problem). It never
+  enters the human-decision cycle: all human action buttons and shortcuts stay
+  inert (the emit paths guard on `selected_item`, which is empty for an audit
+  row), and the only control is a contextual **撤销自动处理** button that emits
+  `triageRevokeRequested` (staging a revert candidate for committed repairs,
+  never writing text). `verified_safe` shows *未修改译文（证据核验安全）*; a
+  committed repair shows the previous text and, when recorded, the current text.
+- **RTL (P0).** The panel sets its own `layoutDirection` from the UI language, so
+  the three columns, alignment and reading order mirror for Arabic (queue moves
+  to the right, evidence to the left). Program-owned area headings reuse the
+  existing `审校队列` / `证据` keys.
+- **Content-adaptive workspace (P1).** `item_body` uses a `Preferred/Maximum`
+  policy with a 340px cap: short segments hug their text (measured ~192px for a
+  two-line segment), long paragraphs scroll inside the cap. The terminology
+  decision widget sits directly under the source/target comparison.
+
+### v2.1 screenshots (`/tmp/qa_shots/`)
+
+`v21_light_1440`, `v21_dark_1440`, `v21_paper_1440`, `v21_audit_committed`,
+`v21_audit_verified`, `v21_long_term`, `v21_short_980`, `v21_long_980`,
+`v21_de_980`, `v21_ar_1280`, `v21_ar_980`, `v21_empty`.
+
+### Known limitations (v2.1)
+
+- Deterministic finding **titles and summaries** come from `workbench_view` in
+  Chinese; localizing categories 1–2 fully needs structured title fields in the
+  projection (not done here). Program-owned panel copy is localized; the queue
+  title line still shows the projection's Chinese string.
+- Native macOS/Windows visual acceptance outstanding.
