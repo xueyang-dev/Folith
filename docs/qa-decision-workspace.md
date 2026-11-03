@@ -118,3 +118,8 @@ Offscreen screenshots under `/tmp/qa_shots/`: `v2_light_1440`, `v2_dark_1440`,
 `v2_paper_1440`, `v2_light_980`, `v2_de_980`, `v2_ar_1280`, `v2_long_term`,
 `v2_audit`, `v2_empty`. These are implementation evidence; native macOS/Windows
 visual acceptance is still outstanding.
+
+Full `pytest tests/` on this branch: **5084 passed, 38 skipped**, one failure —
+`qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`,
+the known order-dependent layout flake in the terminology panel (passes isolated,
+fails identically on pristine `main`; not touched here).
