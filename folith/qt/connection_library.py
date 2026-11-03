@@ -227,6 +227,7 @@ class ConnectionLibrary(QWidget):
         body.addLayout(manual)
         body.addWidget(dialog.reasoning_row)
         body.addWidget(dialog.thinking_row)
+        body.addWidget(dialog.thinking_hint)
         dialog.model_box.setParent(self.editor)
         dialog.model_box.hide()          # 数据模型：列表里看到的就是它的条目
         model = dialog.model_box.model()

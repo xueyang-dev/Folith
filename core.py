@@ -2934,6 +2934,12 @@ PRESERVE_SEVERITY = {
 #: tokens (citation markers) may write their digits as the target's numerals.
 _VERBATIM_PRESERVE_KINDS = frozenset({"url", "email", "doi"})
 
+# A dot-leader run as it appears in headings and tables of contents: two or
+# more typographic leader characters (… ‥ ⋯), or three or more ASCII or
+# fullwidth dots.  #220 D3 treats such a line as real text for the
+# copy-through check; it deliberately does not try to classify anything else.
+_DOT_LEADER_RUN = re.compile(r"(?:…|‥|⋯){2,}|[.．]{3,}")
+
 
 
 def check_translation_batch(sources, targets, glossary, target_lang,
@@ -2985,7 +2991,14 @@ def check_translation_batch(sources, targets, glossary, target_lang,
         # own (kana, hangul, Cyrillic, Arabic... digits and dot leaders do not count).
         source_letters = sum(1 for ch in (src or "")
                              if ch.isalpha() and not ("A" <= ch <= "z"))
-        source_has_text = len(source_words) >= 2 or source_letters >= 4
+        # #220 D3: a short heading / TOC line with dot leaders is real text, so
+        # one word or a couple of letters beside a leader run is enough.  The
+        # leaders themselves carry nothing translatable — digits never did —
+        # so the line still needs at least one letter of its own.
+        leader_line = bool(_DOT_LEADER_RUN.search(src or "")) \
+            and bool(source_words or source_letters)
+        source_has_text = (len(source_words) >= 2 or source_letters >= 4
+                           or leader_line)
         whole_source_preserved = any(
             str(entry.get("behavior") or "") == "preserve"
             and str(entry.get("status") or "") == "locked"

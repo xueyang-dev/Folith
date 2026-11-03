@@ -2472,5 +2472,7 @@
   "无法撤销这条自动处理": "Diese automatische Entscheidung konnte nicht aufgehoben werden",
   "必须处理 {v0} · 建议处理 {v1} · 参考 {v2} · 自动处理 {v3}，合计等于本次投影的 {v4} 条发现。": "Muss {v0} · Empfohlen {v1} · Referenz {v2} · Automatisch {v3}, zusammen {v4} Befunde dieser Projektion.",
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "{v0}-Gruppe {v1} · {v2} Vorkommen · {v3} Abschnitte betroffen",
-  "需要调查": "Untersuchung erforderlich"
+  "需要调查": "Untersuchung erforderlich",
+  "作用于：{v0}": "Wirkt auf: {v0}",
+  "辅助": "Auxiliär"
 }

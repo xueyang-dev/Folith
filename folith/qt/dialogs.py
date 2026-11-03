@@ -437,6 +437,9 @@ class EngineDialog(QDialog):
         self.reasoning_row = _field(i18n.tr('推理强度'), self.reasoning_box)
         self.thinking_box = style_module.ComboBox()
         self.thinking_row = _field(i18n.tr('思考'), self.thinking_box)
+        self.thinking_hint = QLabel("")
+        self.thinking_hint.setObjectName("hint")
+        self.thinking_hint.setWordWrap(True)
         self.fetch_button = QPushButton(i18n.tr('获取可用模型'))
         self.fetch_button.clicked.connect(self._fetch_models)
         self.test_button = QPushButton(i18n.tr('测试连接'))
@@ -1093,6 +1096,19 @@ class EngineDialog(QDialog):
         self.reasoning_box.blockSignals(False)
         self.reasoning_row.setVisible(bool(options))
 
+    def _thinking_scope_labels(self) -> list[str]:
+        """连接「思考」开关实际作用到的角色，按引擎的真实分支列，不凭印象。
+
+        * ``job_reasoning_modes`` 把连接开关同时喂给翻译与辅助两个角色
+          （审校刻意不在 ``_MODE_ROLE_OF`` 里，不受它影响）；
+        * ``follow_connection_thinking`` 只在视觉沿用翻译连接（没有单独配置
+          视觉连接）时让视觉跟随这个开关。
+        """
+        roles = [i18n.tr('翻译'), i18n.tr('辅助')]
+        if not adapter.core.load_ocr_online_config():
+            roles.append(i18n.tr('视觉'))
+        return roles
+
     def _sync_thinking(self) -> None:
         """按当前模型给出可用的思考开关；没实测过的模型不显示这一项，也不会被写入连接。"""
         options = adapter.thinking_control_options(
@@ -1106,7 +1122,11 @@ class EngineDialog(QDialog):
                 i18n.tr(adapter.THINKING_MODE_LABELS.get(value, value)), value)
         self.thinking_box.setCurrentIndex(max(self.thinking_box.findData(current), 0))
         self.thinking_box.blockSignals(False)
-        self.thinking_row.setVisible(bool(options))
+        visible = bool(options)
+        self.thinking_row.setVisible(visible)
+        self.thinking_hint.setText(
+            i18n.tr('作用于：{v0}', v0='、'.join(self._thinking_scope_labels())))
+        self.thinking_hint.setVisible(visible)
 
     def _fetch_models(self) -> None:
         provider = self.provider_box.currentText().strip()

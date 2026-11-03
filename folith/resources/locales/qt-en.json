@@ -2471,5 +2471,7 @@
   "无法撤销这条自动处理": "Could not revoke this automatic decision",
   "必须处理 {v0} · 建议处理 {v1} · 参考 {v2} · 自动处理 {v3}，合计等于本次投影的 {v4} 条发现。": "Must handle {v0} · Suggested {v1} · Reference {v2} · Automatic {v3}, summing to the {v4} findings in this projection.",
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "{v0} group {v1} · {v2} occurrences · {v3} segments affected",
-  "需要调查": "Needs investigation"
+  "需要调查": "Needs investigation",
+  "作用于：{v0}": "Applies to: {v0}",
+  "辅助": "Auxiliary"
 }

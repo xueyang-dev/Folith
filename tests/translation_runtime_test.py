@@ -230,6 +230,26 @@ def test_deterministic_findings_explain_rule_failures_without_fake_confidence():
     assert findings[0]["confidence"] is None
 
 
+def test_dot_leader_heading_lines_count_as_real_text_for_copy_through():
+    """#220 D3：#229 的「任意文字」门槛挡不住简短标题 / 目录行——
+    一个词或一两个字母配上点引导符仍绕过了 copy-through 检查（实测
+    `序論……… 1`、`Index ........ 9` 在 origin/main 上无任何发现）。
+    这类行是真实文本，逐字照抄时应当被拦下。"""
+    for heading in ("序論……… 1", "序……… 1", "Index ........ 9", "A ......... 3"):
+        findings = core.check_translation_batch([heading], [heading], [], "简体中文")
+        assert any(f["summary"] == "译文仍保留整段源文" for f in findings), \
+            f"点引导标题行照抄应被拦下：{heading}"
+    # 真译过（源 ≠ 译）不报；引导符和页码本身没有可翻内容，也不报。
+    assert not any(f["summary"] == "译文仍保留整段源文" for f in
+                   core.check_translation_batch(["序論……… 1"], ["序论……… 1"], [], "简体中文"))
+    for line in ("……… 5", "5"):
+        findings = core.check_translation_batch([line], [line], [], "简体中文")
+        assert not any(f["summary"] == "译文仍保留整段源文" for f in findings), line
+    # 无引导符的单词维持 #229 的既有门槛，不因本改动扩大。
+    findings = core.check_translation_batch(["Introduction"], ["Introduction"], [], "简体中文")
+    assert not any(f["summary"] == "译文仍保留整段源文" for f in findings)
+
+
 def test_incomplete_new_diagnostic_payload_is_not_accepted_as_complete():
     index = TranslationEvidenceIndex(["source"], [{"target": "target"}], [])
     findings, failed, trace = review_translation_batch_with_evidence(
