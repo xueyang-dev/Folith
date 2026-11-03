@@ -277,28 +277,30 @@ class ReviewPanel(QWidget):
         self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
         self.concept_button = button(i18n.tr('概念决策'), "list")
         self.concept_button.clicked.connect(self.conceptRequested.emit)
-        # 决策工作台的紧凑质量概览：一行指标条取代原来的大标题，数字全部来自
-        # 现有投影（不制造统计）。「已自动处理」只在 QA 分诊开关打开时给数，
-        # 关闭时明确写「未启用」，不把停用的能力显示成 0。
+        # 标签复用左栏分组已有的、已翻译的词条，避免引入新 key 后在非中文界面
+        # 回落成中文。
         self.overview = style_module.StatStrip([
-            ("must", i18n.tr('需要处理')),
-            ("suggested", i18n.tr('建议')),
-            ("auto", i18n.tr('已自动处理')),
-            ("reference", i18n.tr('历史 / 参考')),
+            ("must", i18n.tr(GROUP_LABELS["must"])),
+            ("suggested", i18n.tr(GROUP_LABELS["suggested"])),
+            ("auto", i18n.tr(GROUP_LABELS["auto"])),
+            ("reference", i18n.tr(GROUP_LABELS["reference"])),
         ])
         top = QVBoxLayout()
         top.setSpacing(6)
-        strip_row = QHBoxLayout()
-        strip_row.setSpacing(8)
-        strip_row.addWidget(self.overview, 1, Qt.AlignmentFlag.AlignVCenter)
-        strip_row.addWidget(self.review_all_button, 0, Qt.AlignmentFlag.AlignTop)
-        strip_row.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignTop)
-        top.addLayout(strip_row)
+        top.addWidget(self.overview, 0)
         text_column = QVBoxLayout()
         text_column.setSpacing(2)
         text_column.addWidget(self.headline)
         text_column.addWidget(self.detail)
         top.addLayout(text_column)
+        # 次级控件单独一行右对齐：和概览条挤在一行会把最小宽度撑过默认窗口，
+        # 德语/俄语/法语的长标签就会横向溢出。
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(8)
+        controls_row.addStretch(1)
+        controls_row.addWidget(self.review_all_button, 0, Qt.AlignmentFlag.AlignTop)
+        controls_row.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(controls_row)
 
         # ---- 左：队列 --------------------------------------------------------
         self.list = QListWidget()
