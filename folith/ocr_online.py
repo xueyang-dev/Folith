@@ -498,12 +498,21 @@ class OnlineOCRBackend(OCRBackend):
     def __init__(self, config: OnlineOCRConfig, *,
                  client_factory: Optional[Callable[[OnlineOCRConfig], Any]] = None,
                  cancel_check: Optional[Callable[[], bool]] = None,
-                 sleeper: Callable[[float], None] = time.sleep) -> None:
+                 sleeper: Callable[[float], None] = time.sleep,
+                 trace_job_id: Optional[str] = None,
+                 usage_ledger: Optional[Dict[str, Any]] = None) -> None:
         self.config = (config or OnlineOCRConfig()).normalized()
         self._client_factory = client_factory
         self._client = None
         self._cancel_check = cancel_check
         self._sleep = sleeper
+        # #231: a vision page read is a billable model call.  When the caller knows
+        # which task it belongs to, every HTTP attempt (failed ones too) is written
+        # to that task's trace as a ``model_call`` with role="vision", and its usage
+        # is folded into the task usage ledger.  Page reads run on worker threads,
+        # so the run is found by job id instead of the text path's thread context.
+        self._trace_job_id = str(trace_job_id) if trace_job_id else None
+        self._usage_ledger = usage_ledger if isinstance(usage_ledger, dict) else None
         self._state = "available"
         self._import_error = ""
         self._last_timings: Dict[str, float] = {}
@@ -655,6 +664,13 @@ class OnlineOCRBackend(OCRBackend):
                 usage_dict = usage.model_dump()
             except AttributeError:
                 usage_dict = dict(usage) if isinstance(usage, dict) else None
+        if isinstance(usage_dict, dict) and not usage_dict.get("prompt_tokens_details"):
+            # DeepSeek's OpenAI-compatible usage reports cache hits as a top-level
+            # field that ``model_dump`` may omit; normalize it so cached input
+            # tokens are not silently lost from the trace and ledger (#231).
+            cache_hit = getattr(usage, "prompt_cache_hit_tokens", None)
+            if cache_hit is not None:
+                usage_dict["prompt_tokens_details"] = {"cached_tokens": cache_hit}
         return {
             "text": content,
             "finish_reason": getattr(choice, "finish_reason", None),
@@ -668,28 +684,143 @@ class OnlineOCRBackend(OCRBackend):
         """Actual reported usage; ``amount`` stays unknown unless reported."""
         if not isinstance(usage, dict):
             return {"reported": False, "prompt_tokens": None, "completion_tokens": None,
-                    "reasoning_tokens": None, "total_tokens": None, "amount": None}
+                    "reasoning_tokens": None, "cached_tokens": None,
+                    "total_tokens": None, "amount": None}
         details = usage.get("completion_tokens_details") or {}
+        prompt_details = usage.get("prompt_tokens_details") or {}
         return {
             "reported": True,
             "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
             "reasoning_tokens": details.get("reasoning_tokens") if isinstance(details, dict) else None,
+            # Cached input tokens are a subset of the prompt; None means unreported.
+            "cached_tokens": (prompt_details.get("cached_tokens")
+                              if isinstance(prompt_details, dict) else None),
             "total_tokens": usage.get("total_tokens"),
             # No billing amount is returned by this protocol; it stays unknown.
             "amount": usage.get("amount") if isinstance(usage.get("amount"), (int, float)) else None,
         }
 
+    # -- #231: vision usage tracing --------------------------------------
+    def _active_trace_run(self):
+        """The active ``RunContext`` for this task, or None when nothing is open.
+
+        Page reads run on worker threads, where the text path's context variable is
+        not set; the run is looked up by job id instead.  Tracing is a diagnostic,
+        so any failure here returns None and never disturbs the read.
+        """
+        if not self._trace_job_id:
+            return None
+        try:
+            from folith.trace import TraceLevel, trace as trace_manager
+            run = trace_manager.get_active_run(self._trace_job_id)
+        except Exception:  # noqa: BLE001 - diagnostics must not break a request
+            return None
+        if run is None or getattr(run, "level", None) == TraceLevel.OFF:
+            return None
+        return run
+
+    def _open_attempt_request(self, run, *, page_index, page_number,
+                              system_prompt, user_prompt):
+        """Open one logical request for a single attempt so its model_call carries role."""
+        if run is None:
+            return None
+        try:
+            run.begin_model_request(
+                self.config.provider or ONLINE_OCR_BACKEND, self.config.model,
+                role="vision", operation_id="vision_page", purpose="vision_page_read",
+                segment_count=1, system_chars=len(system_prompt or ""),
+                user_chars=len(user_prompt or ""))
+        except Exception:  # noqa: BLE001
+            return None
+        return run
+
+    def _close_attempt_request(self, run) -> None:
+        if run is None:
+            return
+        try:
+            run.end_model_request()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _record_attempt(self, run, *, attempt: int, page_index, page_number,
+                        duration_s: float, system_prompt, user_prompt,
+                        result: Optional[Dict[str, Any]] = None,
+                        error_type: Optional[str] = None) -> None:
+        """Keep one attempt: a trace ``model_call`` plus the worker usage ledger.
+
+        Every attempt is its own append-only event, so a failed attempt is never
+        overwritten by the retry that follows it.  A returned-but-rejected reply
+        (bad JSON, truncation) counts as an error attempt with its real usage; a
+        transport failure is kept with unknown usage rather than dropped.
+        """
+        usage = result.get("usage") if isinstance(result, dict) else None
+        prompt_details = usage.get("prompt_tokens_details") if isinstance(usage, dict) else None
+        completion_details = usage.get("completion_tokens_details") if isinstance(usage, dict) else None
+        cached = prompt_details.get("cached_tokens") if isinstance(prompt_details, dict) else None
+        reasoning = (completion_details.get("reasoning_tokens")
+                     if isinstance(completion_details, dict) else None)
+        output_text = str((result or {}).get("text") or "")
+        success = error_type is None
+        if run is not None:
+            try:
+                run.record_model_call(
+                    provider=self.config.provider or ONLINE_OCR_BACKEND,
+                    model=self.config.model,
+                    duration_s=duration_s,
+                    request_id=(result or {}).get("request_id"),
+                    input_segments=1,
+                    input_chars=len(system_prompt or "") + len(user_prompt or ""),
+                    output_chars=len(output_text),
+                    prompt_tokens=usage.get("prompt_tokens") if isinstance(usage, dict) else None,
+                    completion_tokens=usage.get("completion_tokens") if isinstance(usage, dict) else None,
+                    cached_tokens=cached,
+                    total_tokens=usage.get("total_tokens") if isinstance(usage, dict) else None,
+                    reasoning_tokens=reasoning,
+                    status="success" if success else "error",
+                    retry_count=int(attempt),
+                    error_type=None if success else str(error_type),
+                    metadata={"usage_available": isinstance(usage, dict),
+                              "attempt": int(attempt), "page_index": page_index,
+                              "page_number": page_number, "backend": "online_ocr",
+                              "vision": True},
+                )
+            except Exception:  # noqa: BLE001 - diagnostics must not break a request
+                pass
+        if self._usage_ledger is not None:
+            try:
+                from folith import usage as usage_module
+                ledger_usage = None
+                if isinstance(usage, dict):
+                    ledger_usage = {
+                        "prompt_tokens": usage.get("prompt_tokens"),
+                        "completion_tokens": usage.get("completion_tokens"),
+                        "total_tokens": usage.get("total_tokens"),
+                        "cached_tokens": cached,
+                    }
+                usage_module.record_call(
+                    self._usage_ledger, role="vision",
+                    provider=self.config.provider or ONLINE_OCR_BACKEND,
+                    model=self.config.model,
+                    system_prompt=system_prompt or "", user_prompt=user_prompt or "",
+                    completion=output_text, usage=ledger_usage,
+                    latency_seconds=duration_s, success=success)
+            except Exception:  # noqa: BLE001
+                pass
+
     # -- page recognition -------------------------------------------------
     def ocr_page(self, png_bytes: bytes, *, page_index: int, page_number: int,
                  language: str, dpi: int) -> Tuple[List[OCRBlock], Optional[str]]:
-        segments, error = self.read_image(png_bytes)
+        segments, error = self.read_image(png_bytes, page_index=page_index,
+                                          page_number=page_number)
         if error:
             return [], error
         return self._blocks_from_segments(segments, page_index, page_number, language), None
 
     def read_image(self, png_bytes: bytes, *, system_prompt=None,
-                   user_prompt=None, decoder=decode_segments):
+                   user_prompt=None, decoder=decode_segments,
+                   page_index: Optional[int] = None,
+                   page_number: Optional[int] = None):
         """Shared bounded image transport; response normalization belongs to adapters."""
         self._last_timings = {}
         reason = self.unavailable_reason()
@@ -722,136 +853,179 @@ class OnlineOCRBackend(OCRBackend):
             self._ensure_cancelled()
             gate_wait = controller.acquire(self._cancel_check)
             attempt_started = time.perf_counter()
+            # One logical request per attempt: role="vision" lands on every
+            # model_call, success or failure, and is ended in the finally below.
+            trace_run = self._open_attempt_request(
+                self._active_trace_run(), page_index=page_index,
+                page_number=page_number, system_prompt=system_prompt,
+                user_prompt=user_prompt)
             try:
-                result = (self._attempt(png_bytes, system_prompt, user_prompt=user_prompt)
-                          if user_prompt is not None else self._attempt(png_bytes, system_prompt))
-            except BaseException as exc:  # noqa: BLE001 - classified below
-                self._ensure_cancelled()  # a cancel is not a failed attempt to retry
-                classified = classify_request_error(exc)
+                try:
+                    result = (self._attempt(png_bytes, system_prompt, user_prompt=user_prompt)
+                              if user_prompt is not None else self._attempt(png_bytes, system_prompt))
+                except BaseException as exc:  # noqa: BLE001 - classified below
+                    self._ensure_cancelled()  # a cancel is not a failed attempt to retry
+                    classified = classify_request_error(exc)
+                    attempts.append({
+                        "attempt": attempt,
+                        "status": "failed",
+                        "error_code": classified.code,
+                        "http_status": classified.http_status,
+                        "message": classified.message[:200],
+                        "seconds": time.perf_counter() - attempt_started,
+                        "usage_unknown": True,
+                    })
+                    if classified.http_status == 400:
+                        # The body is the only way to tell a transient relay reply
+                        # from a real parameter mistake; keep its head, never all of it.
+                        excerpt, body_chars = response_body_excerpt(exc)
+                        if body_chars:
+                            attempts[-1].update(response_chars=body_chars,
+                                                response_body=excerpt)
+                    # A failed attempt is billable work too: keep it in the trace
+                    # so a retry never erases the tokens it burnt (#231).
+                    self._record_attempt(
+                        trace_run, attempt=attempt, page_index=page_index,
+                        page_number=page_number, duration_s=attempts[-1]["seconds"],
+                        system_prompt=system_prompt, user_prompt=user_prompt,
+                        error_type=classified.code)
+                    if classified.http_status == 429:
+                        controller.note_rate_limited(classified.retry_after)
+                    last_error = classified
+                    retries = self.config.max_retries
+                    if is_timeout_error(classified):
+                        retries = min(retries, TIMEOUT_MAX_RETRIES)
+                    # A 400 immediately after a 5xx on the same page reads like a
+                    # transient relay reply, not a verdict on the request: allow
+                    # exactly one extra attempt, even at the budget edge.  Every
+                    # other 400 still stops right here.
+                    grace_retry = (not classified.retryable
+                                   and classified.http_status == 400
+                                   and not four_hundred_grace_used
+                                   and len(attempts) >= 2
+                                   and (attempts[-2].get("http_status") or 0) >= 500)
+                    if grace_retry:
+                        four_hundred_grace_used = True
+                    elif not classified.retryable or attempt >= retries:
+                        break
+                    page_events.emit("retry", attempt=attempt + 1,
+                                     attempts=(attempt + 2) if grace_retry else retries + 1,
+                                     http_status=classified.http_status,
+                                     code=classified.code, message=classified.message[:120])
+                    delay = _bounded_backoff(attempt, classified.retry_after)
+                    self._last_timings[f"retry_backoff_{attempt}"] = delay
+                    self._sleep_slices(delay)
+                    continue
+                controller.note_success()
                 attempts.append({
                     "attempt": attempt,
-                    "status": "failed",
-                    "error_code": classified.code,
-                    "http_status": classified.http_status,
-                    "message": classified.message[:200],
-                    "seconds": time.perf_counter() - attempt_started,
-                    "usage_unknown": True,
+                    "status": "returned",
+                    "request_id": result.get("request_id"),
+                    "finish_reason": result.get("finish_reason"),
+                    "model": result.get("model"),
+                    "seconds": result.get("seconds"),
+                    "gate_wait_s": gate_wait,
+                    "usage_unknown": result.get("usage") is None,
                 })
-                if classified.http_status == 400:
-                    # The body is the only way to tell a transient relay reply
-                    # from a real parameter mistake; keep its head, never all of it.
-                    excerpt, body_chars = response_body_excerpt(exc)
-                    if body_chars:
-                        attempts[-1].update(response_chars=body_chars,
-                                            response_body=excerpt)
-                if classified.http_status == 429:
-                    controller.note_rate_limited(classified.retry_after)
-                last_error = classified
-                retries = self.config.max_retries
-                if is_timeout_error(classified):
-                    retries = min(retries, TIMEOUT_MAX_RETRIES)
-                # A 400 immediately after a 5xx on the same page reads like a
-                # transient relay reply, not a verdict on the request: allow
-                # exactly one extra attempt, even at the budget edge.  Every
-                # other 400 still stops right here.
-                grace_retry = (not classified.retryable
-                               and classified.http_status == 400
-                               and not four_hundred_grace_used
-                               and len(attempts) >= 2
-                               and (attempts[-2].get("http_status") or 0) >= 500)
-                if grace_retry:
-                    four_hundred_grace_used = True
-                elif not classified.retryable or attempt >= retries:
-                    break
-                page_events.emit("retry", attempt=attempt + 1,
-                                 attempts=(attempt + 2) if grace_retry else retries + 1,
-                                 http_status=classified.http_status,
-                                 code=classified.code, message=classified.message[:120])
-                delay = _bounded_backoff(attempt, classified.retry_after)
-                self._last_timings[f"retry_backoff_{attempt}"] = delay
-                self._sleep_slices(delay)
-                continue
-            controller.note_success()
-            attempts.append({
-                "attempt": attempt,
-                "status": "returned",
-                "request_id": result.get("request_id"),
-                "finish_reason": result.get("finish_reason"),
-                "model": result.get("model"),
-                "seconds": result.get("seconds"),
-                "gate_wait_s": gate_wait,
-                "usage_unknown": result.get("usage") is None,
-            })
-            usage = self._usage_record(result.get("usage"))
-            usage_total = {
-                "reported": usage_total["reported"] or usage["reported"],
-                "prompt_tokens": _sum_optional(usage_total["prompt_tokens"], usage["prompt_tokens"]),
-                "completion_tokens": _sum_optional(usage_total["completion_tokens"], usage["completion_tokens"]),
-                "reasoning_tokens": _sum_optional(usage_total["reasoning_tokens"], usage["reasoning_tokens"]),
-                "total_tokens": _sum_optional(usage_total["total_tokens"], usage["total_tokens"]),
-                "amount": _sum_optional(usage_total["amount"], usage["amount"]),
-            }
-            if result.get("request_id"):
-                request_ids.append(str(result["request_id"]))
-            finish = result.get("finish_reason")
-            if finish == "length":
-                # The reply never finished, so it never reaches the decoder: keep its
-                # head and tail, and how repetitive it is, so a runaway can be studied.
-                text = str(result.get("text") or "")
-                half = RESPONSE_EXCERPT_CHARS // 2
-                pieces = text.split(",")
-                attempts[-1].update(
-                    response_chars=len(text), response_head=text[:half],
-                    response_tail=text[-half:] if len(text) > half else "",
-                    distinct_piece_ratio=round(len(set(pieces)) / max(len(pieces), 1), 3))
-                return self._fail(
-                    "truncated", _truncation_message(text),
-                    attempts, usage_total, request_ids, started)
-            if finish not in {None, "stop"}:
-                return self._fail(
-                    "incomplete_response",
-                    f"线上 OCR 未正常结束（finish_reason={finish}）；该页未保存。",
-                    attempts, usage_total, request_ids, started)
-            raw = result.get("text") or ""
-            self._last_response_text = raw
-            try:
-                segments = decoder(raw)
-            except ValueError as exc:
-                code = str(exc)
-                attempts[-1].update(error_code=code, response_chars=len(raw),
-                                    response_excerpt=raw[:RESPONSE_EXCERPT_CHARS])
-                if attempt >= min(self.config.max_retries, CONTENT_MAX_RETRIES):
+                usage = self._usage_record(result.get("usage"))
+                usage_total = {
+                    "reported": usage_total["reported"] or usage["reported"],
+                    "prompt_tokens": _sum_optional(usage_total["prompt_tokens"], usage["prompt_tokens"]),
+                    "completion_tokens": _sum_optional(usage_total["completion_tokens"], usage["completion_tokens"]),
+                    "reasoning_tokens": _sum_optional(usage_total["reasoning_tokens"], usage["reasoning_tokens"]),
+                    "cached_tokens": _sum_optional(usage_total["cached_tokens"], usage["cached_tokens"]),
+                    "total_tokens": _sum_optional(usage_total["total_tokens"], usage["total_tokens"]),
+                    "amount": _sum_optional(usage_total["amount"], usage["amount"]),
+                }
+                if result.get("request_id"):
+                    request_ids.append(str(result["request_id"]))
+                finish = result.get("finish_reason")
+                attempt_seconds = float(result.get("seconds")
+                                        or (time.perf_counter() - attempt_started))
+                if finish == "length":
+                    # The reply never finished, so it never reaches the decoder: keep its
+                    # head and tail, and how repetitive it is, so a runaway can be studied.
+                    text = str(result.get("text") or "")
+                    half = RESPONSE_EXCERPT_CHARS // 2
+                    pieces = text.split(",")
+                    attempts[-1].update(
+                        response_chars=len(text), response_head=text[:half],
+                        response_tail=text[-half:] if len(text) > half else "",
+                        distinct_piece_ratio=round(len(set(pieces)) / max(len(pieces), 1), 3))
+                    self._record_attempt(
+                        trace_run, attempt=attempt, page_index=page_index,
+                        page_number=page_number, duration_s=attempt_seconds,
+                        system_prompt=system_prompt, user_prompt=user_prompt,
+                        result=result, error_type="truncated")
                     return self._fail(
-                        code, _parse_failure_message(code),
+                        "truncated", _truncation_message(text),
                         attempts, usage_total, request_ids, started)
-                page_events.emit("retry", attempt=attempt + 1,
-                                 attempts=min(self.config.max_retries, CONTENT_MAX_RETRIES) + 1,
-                                 http_status=None, code=code,
-                                 message=f"返回格式不合要求（{code}）")
-                continue
-            if not segments:
-                return self._fail("empty_transcription", "线上 OCR 未返回可用的正文行；该页未保存。",
-                                  attempts, usage_total, request_ids, started)
-            self._last_request = {
-                "status": "completed",
-                "backend": self.name,
-                "provider": self.config.provider,
-                "model": self.config.model,
-                "model_reported": result.get("model"),
-                "target_fingerprint": self.config.target_fingerprint(),
-                "prompt_version": self.config.prompt_version,
-                "request_ids": request_ids,
-                "attempts": attempts,
-                "attempt_count": len(attempts),
-                "usage": usage_total,
-                "finish_reason": finish,
-                "max_tokens": self.config.max_tokens,
-                "reasoning_mode": self.config.reasoning_mode,
-                "geometry": False,
-                "confidence": "unknown",
-            }
-            self._last_timings["request_s"] = time.perf_counter() - started
-            return segments, None
+                if finish not in {None, "stop"}:
+                    self._record_attempt(
+                        trace_run, attempt=attempt, page_index=page_index,
+                        page_number=page_number, duration_s=attempt_seconds,
+                        system_prompt=system_prompt, user_prompt=user_prompt,
+                        result=result, error_type="incomplete_response")
+                    return self._fail(
+                        "incomplete_response",
+                        f"线上 OCR 未正常结束（finish_reason={finish}）；该页未保存。",
+                        attempts, usage_total, request_ids, started)
+                raw = result.get("text") or ""
+                self._last_response_text = raw
+                try:
+                    segments = decoder(raw)
+                except ValueError as exc:
+                    code = str(exc)
+                    attempts[-1].update(error_code=code, response_chars=len(raw),
+                                        response_excerpt=raw[:RESPONSE_EXCERPT_CHARS])
+                    self._record_attempt(
+                        trace_run, attempt=attempt, page_index=page_index,
+                        page_number=page_number, duration_s=attempt_seconds,
+                        system_prompt=system_prompt, user_prompt=user_prompt,
+                        result=result, error_type=code)
+                    if attempt >= min(self.config.max_retries, CONTENT_MAX_RETRIES):
+                        return self._fail(
+                            code, _parse_failure_message(code),
+                            attempts, usage_total, request_ids, started)
+                    page_events.emit("retry", attempt=attempt + 1,
+                                     attempts=min(self.config.max_retries, CONTENT_MAX_RETRIES) + 1,
+                                     http_status=None, code=code,
+                                     message=f"返回格式不合要求（{code}）")
+                    continue
+                if not segments:
+                    self._record_attempt(
+                        trace_run, attempt=attempt, page_index=page_index,
+                        page_number=page_number, duration_s=attempt_seconds,
+                        system_prompt=system_prompt, user_prompt=user_prompt,
+                        result=result, error_type="empty_transcription")
+                    return self._fail("empty_transcription", "线上 OCR 未返回可用的正文行；该页未保存。",
+                                      attempts, usage_total, request_ids, started)
+                self._record_attempt(
+                    trace_run, attempt=attempt, page_index=page_index,
+                    page_number=page_number, duration_s=attempt_seconds,
+                    system_prompt=system_prompt, user_prompt=user_prompt, result=result)
+                self._last_request = {
+                    "status": "completed",
+                    "backend": self.name,
+                    "provider": self.config.provider,
+                    "model": self.config.model,
+                    "model_reported": result.get("model"),
+                    "target_fingerprint": self.config.target_fingerprint(),
+                    "prompt_version": self.config.prompt_version,
+                    "request_ids": request_ids,
+                    "attempts": attempts,
+                    "attempt_count": len(attempts),
+                    "usage": usage_total,
+                    "finish_reason": finish,
+                    "max_tokens": self.config.max_tokens,
+                    "reasoning_mode": self.config.reasoning_mode,
+                    "geometry": False,
+                    "confidence": "unknown",
+                }
+                self._last_timings["request_s"] = time.perf_counter() - started
+                return segments, None
+            finally:
+                self._close_attempt_request(trace_run)
         # every attempt failed
         page_events.emit("failed", attempts=len(attempts),
                          http_status=getattr(last_error, "http_status", None),
