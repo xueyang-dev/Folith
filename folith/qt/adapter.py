@@ -1965,12 +1965,27 @@ def _group_entity_conflicts(view: dict) -> None:
             continue
         first = seen.get(source)
         if first is None:
-            seen[source] = item = dict(item, segment_indexes=[])
-            items.append(item)
-            first = item
+            # #277: 第一行自带完整命中段列表（segment_indexes），不能清空后只靠
+            # 逐行的 segment_index 重新数——那会把多段命中缩成一个段。
+            first = dict(item, segment_indexes=[
+                index for index in (item.get("segment_indexes") or [])
+                if isinstance(index, int) and not isinstance(index, bool)])
+            seen[source] = first
+            items.append(first)
         index = item.get("segment_index")
         if isinstance(index, int) and index not in first["segment_indexes"]:
             first["segment_indexes"].append(index)
+        if first is item:
+            continue
+        for extra in (item.get("segment_indexes") or []):
+            if isinstance(extra, int) and extra not in first["segment_indexes"]:
+                first["segment_indexes"].append(extra)
+        # #277: 合并行的决定参考字段跟着并起来；段数按并后的实际命中重算。
+        for key in ("term_frozen_target", "term_previous_target"):
+            if not str(first.get(key) or "") and item.get(key):
+                first[key] = item[key]
+        first["term_segment_total"] = len(first["segment_indexes"])
+        first["affected_segment_ids"] = list(first["segment_indexes"])
     view["queue_items"] = items
     counts = {name: sum(item.get("filter_group") == name for item in items)
               for name in ("pending", "rereview", "skipped", "suggested", "reference")}

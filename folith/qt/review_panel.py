@@ -97,6 +97,24 @@ def _term_card_title(item: dict) -> str:
     return i18n.tr_dynamic(str(item.get("title") or ""))
 
 
+def _decision_reference_html(frozen: str, previous: str, total: int) -> str:
+    """两类术语卡共用的决定参考行：冻结译法、旧译法、影响段落（#277）。
+
+    过期译法卡（#102）与概念决策卡都走这里，避免各写一套。缺值不占位：
+    没有冻结译法、或旧译法与冻结译法一致时就不画那一行——不留一个空字段
+    冒充有值。
+    """
+    sep = _colon()
+    parts = []
+    if frozen:
+        parts.append(f"<p><b>{_escape(i18n.tr('冻结译法'))}{sep}</b>{_escape(frozen)}</p>")
+    if previous and previous != frozen:
+        parts.append(f"<p><b>{_escape(i18n.tr('旧译法'))}{sep}</b>{_escape(previous)}</p>")
+    parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}{sep}</b>"
+                 f"{_escape(i18n.tr('{v0} 段', v0=total))}</p>")
+    return "".join(parts)
+
+
 def _trim(text: object, limit: int = 90) -> str:
     """表格单元格只放一行摘要：太长就把中间略掉，保留首尾。"""
     value = " ".join(str(text or "").split())
@@ -867,12 +885,7 @@ class ReviewPanel(QWidget):
         parts = []
         if source:
             parts.append(f"<p><b>{_escape(i18n.tr('术语'))}{sep}</b>{_escape(source)}</p>")
-        if target:
-            parts.append(f"<p><b>{_escape(i18n.tr('冻结译法'))}{sep}</b>{_escape(target)}</p>")
-        if previous and previous != target:
-            parts.append(f"<p><b>{_escape(i18n.tr('旧译法'))}{sep}</b>{_escape(previous)}</p>")
-        parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}{sep}</b>"
-                     f"{_escape(i18n.tr('{v0} 段', v0=total))}</p>")
+        parts.append(_decision_reference_html(target, previous, total))
         shown = rows[:TERM_ROWS_SHOWN]
         if shown:
             cells = []
@@ -922,6 +935,15 @@ class ReviewPanel(QWidget):
         sep = _colon()
         task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
         parts = []
+        if item.get("entity_source"):
+            # #277: 概念决策类术语卡补上决定参考字段，渲染与 #102 过期译法卡同源。
+            # 没有锁定译法时投影里就是空值，这里自然不画冻结/旧译法两行。
+            total = int(item.get("term_segment_total") or 0)
+            if total > 0:
+                parts.append(_decision_reference_html(
+                    str(item.get("term_frozen_target") or "").strip(),
+                    str(item.get("term_previous_target") or "").strip(),
+                    total))
         decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
         if decision:
             # 已经记下的人工判断：确认问题存在之后问题仍在队列里，必须说清它

@@ -346,3 +346,73 @@ def test_superseded_confirmation_does_not_claim_the_finding_was_reviewed():
 
     assert item["decision"] == ""
     assert item["decision_label"] == ""
+
+
+# ---- #277：概念决策类术语卡的决定参考字段 ---------------------------------------
+
+def _entity_state(*, locked: bool):
+    """「Aaric」在 6 段里实际命中（阿瑞克 / 艾里克各半）的最小任务状态。"""
+    from folith import entity_registry as _entity_registry
+
+    pairs = [{"source": f"Aaric appears in chapter {index}",
+              "target": ("阿瑞克出现在第%d章" % index) if index % 2
+              else ("艾里克出现在第%d章" % index)}
+             for index in range(6)]
+    registry = _entity_registry.EntityRegistry([])
+    for index in range(6):
+        registry.observe("Aaric", "阿瑞克" if index % 2 else "艾里克",
+                         segment_id=index, provenance="generated_observation")
+    if locked:
+        # 概念决策 / 人工定名都写回 EntityRegistry.lock（status == "locked"）。
+        registry.lock("Aaric", "阿里克", note="concept decision")
+    records = registry.to_list()
+    return {
+        "translation_core_review_required": True,
+        "p2_done": True,
+        "pairs": pairs,
+        "entity_registry": records,
+        "findings": _entity_registry.EntityRegistry(records).consistency_findings(pairs),
+        "review_evidence": [],
+        "human_actions": [],
+    }
+
+
+def _concept_card(state):
+    return next(item for item in review_workbench_view(state)["queue_items"]
+                if item.get("entity_source"))
+
+
+def test_concept_card_projects_frozen_previous_and_real_affected_segments():
+    state = _entity_state(locked=True)
+
+    item = _concept_card(state)
+
+    assert item["term_frozen_target"] == "阿里克"
+    assert set(item["term_previous_target"].split(" / ")) == {"阿瑞克", "艾里克"}
+    # 受影响段数 = 该实体在段里的实际命中，不是估计值。
+    hits = [index for index, pair in enumerate(state["pairs"])
+            if "阿瑞克" in pair["target"] or "艾里克" in pair["target"]]
+    assert item["term_segment_total"] == len(hits) == 6
+    assert item["segment_indexes"] == hits
+    assert item["affected_segment_ids"] == hits
+
+
+def test_concept_card_without_locked_translation_leaves_the_fields_empty():
+    state = _entity_state(locked=False)
+
+    item = _concept_card(state)
+
+    assert item["term_frozen_target"] == "", "未锁定的观察值不能冒充冻结译法"
+    assert item["term_previous_target"] == ""
+    assert item["term_segment_total"] == 6, "段数仍来自实际命中"
+
+
+def test_concept_card_uses_the_concept_decision_target_when_present():
+    state = _entity_state(locked=False)
+    state["findings"][0]["inherited_preferred"] = "阿利克"
+
+    item = _concept_card(state)
+
+    assert item["term_frozen_target"] == "阿利克"
+    assert set(item["term_previous_target"].split(" / ")) == {"阿瑞克", "艾里克"}
+    assert item["term_segment_total"] == 6

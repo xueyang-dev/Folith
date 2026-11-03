@@ -610,3 +610,82 @@ def test_term_card_title_counts_the_affected_paragraphs(panel):
                  "term_segments": []})
     panel.apply(_view(item))
     assert "7" in panel._item_title(item)
+
+
+# ---- #277：概念决策类术语卡的决定参考字段 ---------------------------------------
+# 与 #102 过期译法卡同一套字段与渲染：冻结译法 / 旧译法 / 影响段落。
+
+def _concept_card_view(**term_fields):
+    item = _item(id="finding:c277", finding_id="c277",
+                 finding_type="entity_conflict", severity="actionable",
+                 severity_label="建议处理", filter_group="suggested",
+                 entity_source="Aaric", segment_index=1,
+                 title="第 2 段 · “Aaric”",
+                 source="Aaric appears in chapter 2",
+                 target="阿瑞克出现在第2章")
+    item.update(term_fields)
+    view = _view(item)
+    view["entities"] = [{"source": "Aaric", "preferred_target": "阿里克",
+                         "observed_targets": ["阿瑞克"],
+                         "occurrences": [{"index": 1, "variants": ["阿瑞克"]}]}]
+    return view
+
+
+def test_concept_card_shows_frozen_previous_and_affected_segments(panel):
+    view = _concept_card_view(term_frozen_target="阿里克",
+                              term_previous_target="阿瑞克",
+                              term_segment_total=5,
+                              segment_indexes=[1, 2, 3, 4, 5])
+    panel.apply(view)
+    assert panel.select_item_id("finding:c277")
+    body = panel.item_body.toPlainText()
+    assert "冻结译法" in body and "阿里克" in body
+    assert "旧译法" in body and "阿瑞克" in body
+    assert "影响段落" in body and "5 段" in body
+    # 原有信息不丢：原文 / 当前译文对照与统一译名的操作部件都还在。
+    assert "原文" in body and "当前译文" in body
+    assert panel.conflict.isVisibleTo(panel)
+
+
+def test_concept_card_without_frozen_translation_shows_no_empty_field(panel):
+    view = _concept_card_view(term_frozen_target="", term_previous_target="",
+                              term_segment_total=6,
+                              segment_indexes=[0, 1, 2, 3, 4, 5])
+    panel.apply(view)
+    assert panel.select_item_id("finding:c277")
+    body = panel.item_body.toPlainText()
+    assert "冻结译法" not in body, "没有冻结译法就不显示空字段冒充有值"
+    assert "旧译法" not in body
+    assert "影响段落" in body and "6 段" in body
+
+
+def test_concept_card_previous_equal_to_frozen_is_not_repeated(panel):
+    view = _concept_card_view(term_frozen_target="阿里克",
+                              term_previous_target="阿里克",
+                              term_segment_total=3,
+                              segment_indexes=[1, 2, 3])
+    panel.apply(view)
+    assert panel.select_item_id("finding:c277")
+    body = panel.item_body.toPlainText()
+    assert "冻结译法" in body
+    assert "旧译法" not in body, "旧译法与冻结译法一致时不重复占一行"
+
+
+def test_entity_rows_for_the_same_name_merge_the_hit_segments():
+    """同名的多条发现项并成一行时，命中段与段数按并后的实际命中重算。"""
+    view = _view(
+        _item(id="finding:m1", finding_id="m1", finding_type="entity_conflict",
+              entity_source="Aaric", segment_index=1,
+              term_frozen_target="阿里克", term_previous_target="阿瑞克",
+              term_segment_total=3, segment_indexes=[1, 2, 3]),
+        _item(id="finding:m2", finding_id="m2", finding_type="entity_conflict",
+              entity_source="Aaric", segment_index=9,
+              term_segment_total=1),
+    )
+    adapter._group_entity_conflicts(view)
+    merged = next(item for item in view["queue_items"]
+                  if item.get("entity_source") == "Aaric")
+    assert merged["segment_indexes"] == [1, 2, 3, 9]
+    assert merged["term_segment_total"] == 4
+    assert merged["term_frozen_target"] == "阿里克"
+    assert merged["term_previous_target"] == "阿瑞克"
