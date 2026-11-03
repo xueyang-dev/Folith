@@ -2697,7 +2697,7 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             session_id = str(uuid.uuid4())
             _LLM_CTX.opencode_session = session_id
         request["extra_headers"] = {
-            "User-Agent": "Folith/0.8.0",
+            "User-Agent": "Folith/0.8.1",
             "x-opencode-session": str(session_id),
         }
     if provider == "Local Gateway" and not api_key:
