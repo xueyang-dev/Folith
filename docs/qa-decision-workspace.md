@@ -53,7 +53,7 @@ handling record — not an error log to clear row by row.
   or coverage is invented. Switching triage off keeps the page identical to the
   classic review queue.
 
-## Implemented in this increment (Phase 1)
+## Implemented in this increment (Phase 1 + density pass)
 
 - Compact `StatStrip` quality overview above the readiness line, with the
   requires-attention emphasis rule and the `未启用` auto-handling state.
@@ -63,7 +63,12 @@ handling record — not an error log to clear row by row.
 - Audit-only state opens the audit group instead of leaving the detail pane blank.
 - Detail column hugs its content and pins the decision row to the bottom, so a
   short issue no longer leaves a giant empty input box on the right.
-- Focused tests: `tests/qt_review_decision_workspace_test.py`.
+- **Density pass:** group headers are now flat, left-aligned section titles
+  (`QPushButton#reviewGroupHeader`, semantic tokens, no hardcoded palette)
+  instead of full-width pill buttons; queue rows use a uniform compact height.
+- Focused tests: `tests/qt_review_decision_workspace_test.py` (overview values,
+  `未启用` auto state, requires-attention emphasis, audit-only expansion, and a
+  large-queue rule that a collapsed group builds no row per finding).
 
 ## Remaining phases
 

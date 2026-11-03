@@ -683,7 +683,7 @@ class ReviewPanel(QWidget):
     def _add_group_header(self, key: str, count: int) -> None:
         entry = QListWidgetItem()
         entry.setFlags(Qt.ItemFlag.NoItemFlags)
-        entry.setSizeHint(QSize(0, 34))
+        entry.setSizeHint(QSize(0, 30))
         self.list.addItem(entry)
         expanded = self._expanded[key]
         button = QPushButton(f"{i18n.tr(GROUP_LABELS[key])} · {count}")
@@ -744,6 +744,8 @@ class ReviewPanel(QWidget):
         text = f"{title}\n{second}" if second else title
         entry = QListWidgetItem(text)
         entry.setData(Qt.ItemDataRole.UserRole, item.get("id"))
+        # 统一紧凑行高：两行摘要固定到 46px，队列看起来是整齐的一列而不是高度参差的卡片。
+        entry.setSizeHint(QSize(0, 46))
         # 队列只有两行；完整问题放进悬停提示，读屏读同一份文本，不再显示
         # 截断到 60 字却没有省略号的半句话。
         entry.setToolTip(text)

@@ -603,6 +603,15 @@ QListWidget#issueList {{ background: {t['bg-surface-sunken']}; border: none;
 /* 审校队列：与"检查与修复"的列表同一套沉底面板，不用输入框的描边盒子。 */
 QListWidget#reviewQueue {{ background: {t['bg-surface-sunken']}; border: none;
     border-radius: {r['md']}px; font-size: {f['caption']}px; }}
+/* 决策工作台：分组标题是一行轻量的分节标题，不是一排大按钮——扁平、左对齐、
+   只在悬停时给极浅底色，让左栏读起来像一份队列而不是一排控件。 */
+QPushButton#reviewGroupHeader {{
+    text-align: left; padding: 4px 8px; border: none; border-radius: {r['md']}px;
+    background: transparent; color: {t['text-secondary']};
+    font-size: {f['label']}px; font-weight: 600;
+}}
+QPushButton#reviewGroupHeader:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+QPushButton#reviewGroupHeader:checked {{ background: transparent; color: {t['text-primary']}; }}
 QLabel#attentionHeading {{ font-size: {f['label']}px; font-weight: 700; color: {t['warning']}; }}
 /* 底栏字数：本身可点（打开字数浮窗）。 */
 QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}

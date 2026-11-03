@@ -86,3 +86,32 @@ def test_audit_only_state_opens_the_audit_group(qapp):
     assert panel._expanded["auto"] is True
     assert panel._visible == []
     assert panel.list.count() > 0
+
+
+def test_large_collapsed_group_does_not_build_a_widget_per_finding(qapp):
+    """Large-queue rule: a collapsed group must not create one list row per finding.
+
+    Only expanded groups render rows, so a book-length task with thousands of
+    suggestions in a collapsed group keeps the left list cheap.
+    """
+    panel = rp.ReviewPanel()
+    many = [{
+        "id": f"finding:s{i}", "kind": "finding", "severity": "actionable",
+        "severity_label": "建议检查", "filter_group": "suggested",
+        "title": f"第 {i} 段 · 建议", "segment_number": i,
+        "segment_index": i, "summary": "建议检查", "decidable": True,
+    } for i in range(2000)]
+    must = [{
+        "id": "finding:m0", "kind": "finding", "severity": "blocking",
+        "severity_label": "必须处理", "filter_group": "pending",
+        "title": "第 1 段 · 阻断", "segment_number": 1, "segment_index": 0,
+        "summary": "阻断", "decidable": True,
+    }]
+    panel.apply({
+        "group_counts": {"must": 1, "suggested": 2000, "reference": 0, "auto": 0},
+        "readiness": {"status": "current", "label": "就绪", "detail": ""},
+        "queue_items": must + many,
+        "handled_items": [], "auto_handled_items": [], "qa_triage_enabled": False,
+    })
+    # must(1) expands to one row; suggested(2000) is collapsed -> header only.
+    assert panel.list.count() < 10, panel.list.count()
