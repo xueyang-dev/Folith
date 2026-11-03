@@ -972,32 +972,21 @@ class ReviewPanel(QWidget):
             return
         sep = _colon()
         task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
-        parts = []
-        if item.get("entity_source"):
-            # #277: 概念决策类术语卡补上决定参考字段，渲染与 #102 过期译法卡同源。
-            # 没有锁定译法时投影里就是空值，这里自然不画冻结/旧译法两行。
-            total = int(item.get("term_segment_total") or 0)
-            if total > 0:
-                parts.append(_decision_reference_html(
-                    str(item.get("term_frozen_target") or "").strip(),
-                    str(item.get("term_previous_target") or "").strip(),
-                    total))
-        decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
-        if decision:
-            # 已经记下的人工判断：确认问题存在之后问题仍在队列里，必须说清它
-            # 不是"待处理但没人看过"。
-            parts.append(f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
-                         f"{_escape(decision)}</p>")
         task_copy = _localized_task_copy(item) if task_item else {}
+        # 查看器分三段：问题 → 原文/译文 → 证据。证据放最后、带一个轻量分区标题，
+        # 让术语参考、已记录的决定、分组摘要有共同的落点，而不是散落在正文里。
+        problem_parts: list[str] = []
         for label, key in (("问题", "summary"), ("原因", "reason"),
                            ("说明", "explanation"), ("建议", "recommendation")):
             value = str(item.get(key) or "").strip()
             if value and task_item:
                 value = task_copy.get(key) or i18n.tr_dynamic(value)
-            if value and not any(value in part for part in parts):
-                parts.append(f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
+            if value and not any(value in part for part in problem_parts):
+                problem_parts.append(
+                    f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
         from folith.textual import text_direction
 
+        translation_parts: list[str] = []
         for label, key, span_key in (("原文", "source", "source_span"),
                                      ("当前译文", "target", "target_span"),
                                      ("建议译文", "suggested_target", None)):
@@ -1008,9 +997,36 @@ class ReviewPanel(QWidget):
                 rtl = text_direction(value, None) == "rtl"
                 block = ' dir="rtl"' if rtl else ""
                 span = str(item.get(span_key) or "") if span_key else ""
-                parts.append(f"<p><b>{_escape(i18n.tr(label))}{sep}</b></p>"
-                             f"<p{block} style=\"margin-top:2px\">"
-                             f"{self._highlight(value, span)}</p>")
+                translation_parts.append(
+                    f"<p><b>{_escape(i18n.tr(label))}{sep}</b></p>"
+                    f"<p{block} style=\"margin-top:2px\">"
+                    f"{self._highlight(value, span)}</p>")
+        evidence_parts: list[str] = []
+        if item.get("entity_source"):
+            # #277: 概念决策类术语卡补上决定参考字段，渲染与 #102 过期译法卡同源。
+            # 没有锁定译法时投影里就是空值，这里自然不画冻结/旧译法两行。
+            total = int(item.get("term_segment_total") or 0)
+            if total > 0:
+                evidence_parts.append(_decision_reference_html(
+                    str(item.get("term_frozen_target") or "").strip(),
+                    str(item.get("term_previous_target") or "").strip(),
+                    total))
+        decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
+        if decision:
+            # 已经记下的人工判断：确认问题存在之后问题仍在队列里，必须说清它
+            # 不是"待处理但没人看过"。
+            evidence_parts.append(
+                f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
+                f"{_escape(decision)}</p>")
+        group_copy = self._finding_group_copy(item)
+        if group_copy:
+            evidence_parts.append(f"<p>{_escape(group_copy)}</p>")
+        parts = problem_parts + translation_parts
+        if evidence_parts:
+            muted = style_module.html_color("text-secondary", over="bg-surface-sunken")
+            parts.append(f"<p style=\"margin-top:10px;font-weight:600;color:{muted}\">"
+                         f"{_escape(i18n.tr('证据'))}</p>")
+            parts.extend(evidence_parts)
         self.item_body.setHtml("".join(parts))
         summary_a11y = (task_copy.get("summary") if task_item else "") \
             or str(item.get("summary") or "")

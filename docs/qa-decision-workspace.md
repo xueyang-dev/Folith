@@ -66,9 +66,15 @@ handling record — not an error log to clear row by row.
 - **Density pass:** group headers are now flat, left-aligned section titles
   (`QPushButton#reviewGroupHeader`, semantic tokens, no hardcoded palette)
   instead of full-width pill buttons; queue rows use a uniform compact height.
+- **Inspector sections:** the detail body reads in three blocks — problem →
+  source/target/suggested → evidence. The evidence block gathers the terminology
+  reference (frozen / previous / affected), the recorded human decision and the
+  finding-group summary under one translated "证据" heading, instead of scattering
+  them through the prose.
 - Focused tests: `tests/qt_review_decision_workspace_test.py` (overview values,
-  `未启用` auto state, requires-attention emphasis, audit-only expansion, and a
-  large-queue rule that a collapsed group builds no row per finding).
+  `未启用` auto state, requires-attention emphasis, audit-only expansion, handled-
+  only detail is populated, staging is not adoption, selection survives refresh,
+  and a large-queue rule that a collapsed group builds no row per finding).
 
 ## Remaining phases
 

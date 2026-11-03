@@ -115,3 +115,53 @@ def test_large_collapsed_group_does_not_build_a_widget_per_finding(qapp):
     })
     # must(1) expands to one row; suggested(2000) is collapsed -> header only.
     assert panel.list.count() < 10, panel.list.count()
+
+
+def _finding(fid, severity="actionable", group="suggested", **extra):
+    item = {"id": fid, "kind": "finding", "severity": severity,
+            "severity_label": "建议检查", "filter_group": group,
+            "title": f"第 1 段 · {fid}", "segment_number": 1, "segment_index": 0,
+            "summary": "问题说明", "decidable": True}
+    item.update(extra)
+    return item
+
+
+def test_staging_is_not_adoption(qapp):
+    """A suggestion is staged, never shown as adopted. The primary action is
+    「暂存为候选」 and there is no adoption wording in the action row."""
+    panel = rp.ReviewPanel()
+    panel.apply(_view(group_counts={"must": 1, "suggested": 0, "reference": 0, "auto": 0},
+                      queue_items=[_finding("finding:s", severity="actionable",
+                                            group="pending",
+                                            suggested_target="更好的译文")]))
+    assert panel.select_item_id("finding:s")
+    assert panel.apply_button.isVisibleTo(panel)
+    assert "暂存" in panel.apply_button.text()
+    assert panel.apply_button.property("kind") == "primary"
+    assert "采用" not in panel.apply_button.text()
+
+
+def test_selection_is_preserved_across_refresh(qapp):
+    panel = rp.ReviewPanel()
+    view = _view(group_counts={"must": 2, "suggested": 0, "reference": 0, "auto": 0},
+                 queue_items=[_finding("finding:a", severity="blocking", group="pending"),
+                              _finding("finding:b", severity="blocking", group="pending")])
+    panel.apply(view)
+    assert panel.select_item_id("finding:b")
+    panel.apply(dict(view))   # same projection refreshed
+    assert panel._selected_id == "finding:b"
+    assert panel.selected_item().get("id") == "finding:b"
+
+
+def test_handled_only_state_keeps_the_detail_pane_useful(qapp):
+    """No actionable items but a handled item exists: the reference group opens
+    and its detail renders, so the right pane is not blank."""
+    panel = rp.ReviewPanel()
+    panel.apply(_view(
+        group_counts={"must": 0, "suggested": 0, "reference": 1, "auto": 0},
+        handled_items=[_finding("finding:h", severity="informational",
+                                group="reference", handled=True,
+                                decision_label="确认问题存在")]))
+    assert panel._expanded["reference"] is True
+    assert panel.selected_item().get("id") == "finding:h"
+    assert panel.item_body.toPlainText().strip() != ""
