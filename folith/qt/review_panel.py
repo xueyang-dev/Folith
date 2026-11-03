@@ -50,6 +50,12 @@ GROUP_LABELS = {
 GROUP_EXPANDED_BY_DEFAULT = {"must": True, "suggested": False, "reference": False,
                              "auto": False}
 
+#: When only automatic-handling records exist, open the audit group so the pane
+#: is not blank — but only up to this many; a large audit-only task keeps the
+#: group collapsed (header count still visible) instead of building hundreds of
+#: card widgets on open.
+AUDIT_AUTO_EXPAND_LIMIT = 50
+
 #: #289: 界面显示 actor_type（谁产出的结论），不显示 actor 字符串——
 #: "qa_triage" 绝不能看起来像人工决定。
 _ACTOR_TYPE_LABELS = {"rule": "规则", "model": "模型", "human": "人工"}
@@ -564,9 +570,10 @@ class ReviewPanel(QWidget):
                               if key != "auto" and counts.get(key)), "")
                 if first:
                     self._expanded = {key: key == first for key in GROUP_ORDER}
-                elif counts.get("auto"):
+                elif 0 < int(counts.get("auto") or 0) <= AUDIT_AUTO_EXPAND_LIMIT:
                     # 只有审计项时别让详情区空着：展开「已自动处理」，让这些记录
                     # 仍然一眼可达（默认收起只为让步于人工队列，不是要把它们藏起来）。
+                    # 数量很大时仍保持收起，避免一打开就构建几百张卡片。
                     self._expanded = {key: key == "auto" for key in GROUP_ORDER}
         self._rebuild_list()
         self._sync_empty(readiness)

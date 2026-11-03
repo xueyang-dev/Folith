@@ -165,3 +165,15 @@ def test_handled_only_state_keeps_the_detail_pane_useful(qapp):
     assert panel._expanded["reference"] is True
     assert panel.selected_item().get("id") == "finding:h"
     assert panel.item_body.toPlainText().strip() != ""
+
+
+def test_large_audit_only_task_stays_collapsed(qapp):
+    """A huge audit-only task must not build one card per record on open: the
+    auto-expand convenience is capped, so it stays collapsed with the count."""
+    panel = rp.ReviewPanel()
+    panel.apply(_view(qa_triage_enabled=True,
+                      auto_handled_items=[_auto_item(f"k{i}") for i in range(500)],
+                      group_counts={"must": 0, "suggested": 0,
+                                    "reference": 0, "auto": 500}))
+    assert panel._expanded["auto"] is False
+    assert panel.list.count() <= 2  # header only, no per-record widgets
