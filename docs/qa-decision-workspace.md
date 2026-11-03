@@ -91,6 +91,12 @@ switch-off paths, category counts, audit visibility, terminology fields, human
 decisions vs staging, selection preservation, keyboard navigation, seven UI
 languages' minimum width, and the large-queue lazy-render rules.
 
+Full `pytest tests/` on the branch: **5084 passed, 38 skipped**, one failure —
+`qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`.
+That test passes in isolation and fails identically on pristine `main`; it is an
+order-dependent layout flake in the terminology panel (not touched here), not a
+regression from this page.
+
 ## Remaining phases
 
 - **Phase 2 — inspector restructuring:** sectioned evidence (source/target diff,
