@@ -4174,7 +4174,9 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             backoff = controller.note_rate_limited() if is_rate_limited(e) else 0.0
             if _attempt < 2:
                 trace.record_retry("translation", "translate_batch", _attempt + 2,
-                                   backoff, type(e).__name__, job_id=_runtime_job_id())
+                                   backoff, type(e).__name__,
+                                   error_kind=_retry_error_kind(e),
+                                   job_id=_runtime_job_id())
 
     if prompt_stats is not None:
         prompt_stats.append(_translation_prompt_cost(
@@ -4787,7 +4789,9 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
                 backoff = controller.note_rate_limited()
                 if _attempt < 2:
                     trace.record_retry("annotation", "annotate_batch", _attempt + 2,
-                                       backoff, type(e).__name__, job_id=_runtime_job_id())
+                                       backoff, type(e).__name__,
+                                       error_kind=_retry_error_kind(e),
+                                       job_id=_runtime_job_id())
                 continue
             return AnnotationBatchResult(status="request_failed", error=str(e)[:500])
     return AnnotationBatchResult(status="request_failed", error="请求限流，重试次数已用尽")
@@ -10460,6 +10464,82 @@ def new_job_state(filename):
     return state
 
 
+def _dataset_info_from_state(state, file_bytes=None):
+    """The run's real dataset numbers for ``performance.md`` (#220 E1).
+
+    The trace recorder starts with ``page_count``/``source_chars``/``…`` at 0
+    and only ``file_size_bytes`` was ever passed, so real tasks showed
+    "0 bytes, 0 source chars, 0 segments".  This derives the numbers the report
+    prints from what the job already recorded:
+
+    * the importer's own extraction report (``extracted.characters`` /
+      ``extracted.paragraphs`` / ``extracted.pages``) when present;
+    * otherwise the paragraph list in the state (``source_paragraphs`` / ``paras``).
+
+    ``segment_count`` is the translation-unit count: the committed pairs once
+    translation started, else the segments built by segmentation.  ``source_words``
+    counts whitespace-separated tokens of the source paragraphs.  Unknowns are
+    left out rather than written as a guessed number.
+    """
+    state = state or {}
+    report = state.get("extraction_report") or {}
+    extracted = report.get("extracted") if isinstance(report, dict) else None
+    extracted = extracted if isinstance(extracted, dict) else {}
+    paragraphs = state.get("source_paragraphs") or state.get("paras") or []
+    paragraphs = [str(item or "") for item in paragraphs]
+
+    source_chars = _safe_positive_int(extracted.get("characters"))
+    if source_chars is None:
+        source_chars = sum(len(text) for text in paragraphs)
+    paragraph_count = _safe_positive_int(extracted.get("paragraphs"))
+    if paragraph_count is None:
+        paragraph_count = len(paragraphs)
+
+    pairs = state.get("pairs") or []
+    segments = pairs if pairs else (state.get("paras") or [])
+    info = {
+        "source_chars": int(source_chars),
+        "source_words": sum(len(text.split()) for text in paragraphs),
+        "paragraph_count": int(paragraph_count),
+        "segment_count": len(segments),
+    }
+    pages = _safe_positive_int(extracted.get("pages"))
+    if pages is not None:
+        info["page_count"] = int(pages)
+    if file_bytes is not None:
+        info["file_size_bytes"] = len(file_bytes) if file_bytes else 0
+    return info
+
+
+def _safe_positive_int(value):
+    """Positive integer, else ``None`` (a zero/unknown stays unknown)."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _retry_error_kind(error):
+    """``protocol`` / ``transport`` / ``other`` for a text-path retry (#220 B1).
+
+    The retry record already keeps ``type(error).__name__``; this makes the
+    split explicit at the call site while the exception object is still at hand.
+    A malformed reply raises :class:`TranslationProtocolError`; anything that
+    came out of the transport keeps the SDK's own class name.
+    """
+    if isinstance(error, _translation_protocol.TranslationProtocolError):
+        return "protocol"
+    name = type(error).__name__
+    module = str(type(error).__module__ or "")
+    if module.startswith(("openai", "httpx", "httpcore")):
+        return "transport"
+    if any(marker in name for marker in ("Connection", "Timeout", "RateLimit",
+                                         "Status", "Transport", "HTTP", "Proxy")):
+        return "transport"
+    return "other"
+
+
 def load_job_state(job_id):
     """加载任务状态。使用文件签名缓存（mtime/size）消除重复反序列化，并返回安全深拷贝。"""
     return _job_repo.load_job_state_cached(job_id)
@@ -13346,6 +13426,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         target_lang=target_lang,
         output_dir=job_dir(job_id),
     )
+    # #220 E1: a resumed task already knows its dataset; feed the real numbers
+    # now instead of leaving the report at "0 bytes, 0 source chars, 0 segments".
+    # A fresh run is updated again right after segmentation.
+    active_run.set_dataset_info(**_dataset_info_from_state(state, file_bytes=file_bytes))
     profiler = PipelineProfiler(
         job_dir(job_id) / "performance.json", run_id=active_run.run_id
     )
@@ -13972,6 +14056,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             "paragraph_count": len(cleaned_paragraphs),
             "segment_count": len(segments),
         })
+        # #220 E1: this is the first point a fresh run knows the real volume;
+        # update the recorder so the report is not left with placeholder zeros.
+        active_run.set_dataset_info(**_dataset_info_from_state(state, file_bytes=file_bytes))
         if on_status:
             on_status(f"【阶段一】按句构建翻译单元（0/{len(segments)} 句）…")
         segment_stage = profiler.start_stage(
