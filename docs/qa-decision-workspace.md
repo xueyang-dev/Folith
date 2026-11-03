@@ -75,6 +75,21 @@ handling record — not an error log to clear row by row.
   `未启用` auto state, requires-attention emphasis, audit-only expansion, handled-
   only detail is populated, staging is not adoption, selection survives refresh,
   and a large-queue rule that a collapsed group builds no row per finding).
+- **Large-queue guards:** a collapsed group builds no row per finding; the
+  audit-only auto-expand is capped at `AUDIT_AUTO_EXPAND_LIMIT` (50) so a task
+  with hundreds of automatic records opens collapsed instead of building a card
+  per record.
+
+## Verification
+
+Relevant to this page (all passing on the branch):
+`qt_review_panel_test`, `qt_review_decision_workspace_test`,
+`qt_review_layout_a11y_test`, `qt_qa_triage_audit_list_test`,
+`qt_review_queue_navigation_test`, `qt_empty_states_test`,
+`qt_client_style_test`, `qt_concept_dialog_test`. This covers switch-on and
+switch-off paths, category counts, audit visibility, terminology fields, human
+decisions vs staging, selection preservation, keyboard navigation, seven UI
+languages' minimum width, and the large-queue lazy-render rules.
 
 ## Remaining phases
 
