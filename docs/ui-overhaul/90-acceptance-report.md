@@ -60,3 +60,25 @@
 2. **图标语义收尾**（F17 缺口）：`dialogs.py` 设置页 PAGES 的 `models=sparkles` / `defaults=package`、`views.py` 翻译范围 `eye-off`。
 3. **死 QSS**：`QPushButton#presetOption`、`QFrame#modeTrack`、`QComboBox#primaryCombo` 已无调用点，可下一轮清理（`qt_design_tokens_test.py` 的白名单可保留）。
 4. **测试进程稳定性**：`qt_client_window_test.py`（118 条、单进程 4–8 分钟）偶发段错误，崩溃点每次不同；分 3 块跑则 118/118 全绿（40+39+38，含 1 次时序 flaky，复跑通过）。所有结论都在串行锁 + 分块下取得。
+
+
+## 测试结果（最终，2026-11-04 18:2x）
+
+| 集合 | 结果 |
+| --- | --- |
+| 非窗口的界面/契约套件（23 个文件：design tokens/system/review_p0、style、i18n、reading、settings、projects、terms、task setup、shell、long-language、motion、interaction physics、followup、brand、overhaul 证据测试…） | **451 passed / 1 failed** |
+| `qt_client_window_test`（118 条） | 单进程偶发段错误；**分 3 块 = 40 + 39 + 38 全绿**（其中 1 次时序 flaky，复跑通过） |
+| `scripts/check_ui_locales.py` | 0 errors / 0 TODOs（基线空） |
+| `scripts/qt_i18n_coverage.py` | 7 目录 1731/1731 |
+| `scripts/ui_overhaul_measure_widths.py --detail` | 窗口 min 874/1072/1123/1149（≤1280 ✅） |
+
+**唯一失败**：`tests/qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`。
+已在**干净 HEAD**（`git archive HEAD` → /tmp）上用同一 venv 对照：单独跑通过；与
+`tests/qt_projects_view_test.py` 同批跑就红（`assert editor_bottom <= actions_top`）。
+即**既有的、顺序相关的失败**，与本轮改动无关，且本轮前后一致。
+
+**段错误的性质**：干净 HEAD 单进程 118 passed / 422s；当前工作区单进程长跑会
+在第 10–100 条之间随机崩（崩点每次不同：`_rebuild_list`、`_sync_exclude_action`、
+`reading_text_height`），摘掉任何单一嫌疑改动都仍会崩 → 属长进程累积性不稳定，
+不是某条用例的确定性缺陷。所有结论改用「串行锁 + 分块」取得，已写进
+`scripts/run_tests.py` 的说明与上方复跑命令。
