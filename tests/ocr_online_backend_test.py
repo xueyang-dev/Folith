@@ -16,6 +16,7 @@ import pytest
 
 from folith import ocr_online, request_control
 from folith.ocr_online import (
+    RESPONSE_EXCERPT_CHARS,
     OnlineOCRBackend,
     OnlineOCRConfig,
     classify_request_error,
@@ -34,11 +35,12 @@ class FakeUsage:
 
 
 class FakeStatusError(Exception):
-    def __init__(self, status, message="boom", retry_after=None):
+    def __init__(self, status, message="boom", retry_after=None, body=None):
         self.status_code = status
         self.response = types.SimpleNamespace(
             status_code=status,
-            headers=({"retry-after": str(retry_after)} if retry_after else {}))
+            headers=({"retry-after": str(retry_after)} if retry_after else {}),
+            text=body)
         super().__init__(message)
 
 
@@ -260,6 +262,78 @@ def test_parameter_error_is_not_retried():
     assert len(client.requests) == 1
 
 
+def test_plain_400_keeps_truncated_body_and_never_retries():
+    """#220 C2：普通 400 不重试，但被拒的响应体（截断）要进该页的失败记录。"""
+    body = "x" * (RESPONSE_EXCERPT_CHARS + 500)
+    backend, client = backend_with([FakeStatusError(400, "bad model", body=body),
+                                    segments_response(["一 行"])])
+    _blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                      language="ara", dpi=350)
+    assert error.startswith("invalid_request")
+    assert len(client.requests) == 1, "普通 400 仍然一次都不多试"
+    attempt = backend._last_request["attempts"][-1]
+    assert attempt["http_status"] == 400
+    assert attempt["response_chars"] == len(body), "记录里要留完整长度"
+    assert attempt["response_body"] == body[:RESPONSE_EXCERPT_CHARS], "只存截断后的开头"
+    assert len(attempt["response_body"]) == RESPONSE_EXCERPT_CHARS
+
+
+def test_400_immediately_after_5xx_gets_exactly_one_extra_attempt():
+    """#220 C2：同一页里 400 紧跟 5xx → 额外多试一次；再失败就停，不放第二个宽限。"""
+    backend, client = backend_with([FakeStatusError(502),
+                                    FakeStatusError(400, "relay hiccup"),
+                                    FakeStatusError(400, "still bad")])
+    backend._sleep = lambda _seconds: None
+    _blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                      language="ara", dpi=350)
+    assert error.startswith("invalid_request")
+    assert len(client.requests) == 3, "502 重试 + 400 宽限一次，到此为止"
+    statuses = [attempt["http_status"] for attempt in backend._last_request["attempts"]]
+    assert statuses == [502, 400, 400]
+
+
+def test_400_grace_is_one_attempt_even_at_the_retry_budget_edge():
+    """#220 C2：「额外重试一次」是预算之外的那一次——502 把预算耗尽后紧跟的
+    400 仍能拿到唯一一次多试的机会。"""
+    backend, client = backend_with([FakeStatusError(502), FakeStatusError(502),
+                                    FakeStatusError(400, "relay hiccup"),
+                                    FakeStatusError(400, "still bad")],
+                                   max_retries=2)
+    backend._sleep = lambda _seconds: None
+    _blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                      language="ara", dpi=350)
+    assert error.startswith("invalid_request")
+    assert len(client.requests) == 4, "两次 502 重试 + 400 的唯一一次宽限"
+    statuses = [attempt["http_status"] for attempt in backend._last_request["attempts"]]
+    assert statuses == [502, 502, 400, 400]
+
+
+def test_400_after_5xx_can_recover_and_the_page_succeeds():
+    """#220 C2：宽限那次如果读成了，该页照常成功。"""
+    backend, client = backend_with([FakeStatusError(502),
+                                    FakeStatusError(400, "relay hiccup"),
+                                    segments_response(["一 行"], request_id="req-2")])
+    backend._sleep = lambda _seconds: None
+    blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                     language="ara", dpi=350)
+    assert error is None and len(blocks) == 1
+    assert len(client.requests) == 3
+    request = backend._last_request
+    assert request["status"] == "completed"
+    assert [attempt["status"] for attempt in request["attempts"]] == [
+        "failed", "failed", "returned"]
+
+
+def test_400_after_a_content_failure_gets_no_grace():
+    """#220 C2：宽限只认「紧跟 5xx」。前一次是内容格式失败（非 5xx）时，
+    400 仍然立即失败。"""
+    backend, client = backend_with([response('{"broken":'), FakeStatusError(400, "bad")])
+    _blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                      language="ara", dpi=350)
+    assert error.startswith("invalid_request")
+    assert len(client.requests) == 2, "格式失败重试那次遇 400 不再额外宽限"
+
+
 def test_service_error_is_retried_then_reported():
     backend, client = backend_with([FakeStatusError(503), FakeStatusError(503),
                                     FakeStatusError(503)])
@@ -436,3 +510,16 @@ def test_a_truncated_reply_keeps_its_head_tail_and_length_for_study():
     assert attempt["response_chars"] == len(text)
     assert attempt["response_head"] == text[:ocr_online.RESPONSE_EXCERPT_CHARS // 2]
     assert attempt["response_tail"].endswith("y" * 100)
+
+
+def test_plain_text_truncation_points_at_a_general_vision_model():
+    """#258：纯文本转写被截断时，建议换通用视觉模型，而不是只让用户提高输出上限。"""
+    backend, _client = backend_with([response(
+        "11\n序章 中国史の時代\nはじめに\n一、日本におけ\n二、中国国家・",
+        finish_reason="length")])
+    blocks, error = backend.ocr_page(PNG, page_index=0, page_number=1,
+                                     language="jpn", dpi=220)
+    assert blocks == []
+    assert "结构化格式" in error or "纯文本" in error
+    assert "通用视觉语言模型" in error
+    assert "提高输出上限或改用其他来源" not in error

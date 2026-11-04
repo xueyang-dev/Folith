@@ -358,15 +358,48 @@ def unresolved_blocking(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [f for f in unresolved_findings(state) if f.get("severity") == "blocking"]
 
 
+def blocking_explanations(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Read-only: join each unresolved blocking finding with its triage record.
+
+    Explanation only — this never changes ``unresolved_blocking``,
+    ``compute_delivery_status`` or the ``approve_delivery`` predicate.  When QA
+    triage is off it returns an empty list, so the delivery view is unchanged.
+    """
+    from . import finding_triage as _triage
+
+    if not _triage.enabled(state):
+        return []
+    records = _triage.records(state)
+    explanations: List[Dict[str, Any]] = []
+    for finding in unresolved_blocking(state):
+        core_id = str(finding.get("finding_id") or "")
+        key = core_id or finding_id(finding)
+        record = records.get(key) or {}
+        explanations.append({
+            "finding_id": key,
+            "reason": str(finding.get("reason") or finding.get("summary") or ""),
+            "disposition": _triage.disposition_of(state, finding),
+            "evidence": list(record.get("evidence") or []),
+            "committed": bool(record.get("committed")),
+        })
+    return explanations
+
+
 def add_human_action(state: Dict[str, Any], finding_id_: str, action: str,
-                     note: str = "", actor: str = "user") -> Dict[str, Any]:
-    state.setdefault("human_actions", []).append({
+                     note: str = "", actor: str = "user", *,
+                     record_type: str = "") -> Dict[str, Any]:
+    entry = {
         "finding_id": finding_id_,
         "action": action,
         "note": note,
         "timestamp": now_iso(),
         "actor": actor,
-    })
+    }
+    # Additive: only stamp a marker when the caller asks for one, so existing
+    # audit rows stay byte-identical.
+    if record_type:
+        entry["record_type"] = record_type
+    state.setdefault("human_actions", []).append(entry)
     return state
 
 

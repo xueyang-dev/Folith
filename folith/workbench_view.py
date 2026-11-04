@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from . import delivery, translation_evidence
 from . import finding_groups as _finding_groups
+from . import finding_triage as _finding_triage
 
 
 #: 左栏三组（xueyang-dev/Folith#102）：必须处理 / 建议 / 已处理 · 仅供参考。
@@ -79,6 +80,43 @@ def _coverage_copy(readiness: Mapping[str, Any]) -> tuple[str, str, str]:
             "warning",
         )
     return label, detail, tone
+
+
+def coverage_copy_parts(readiness: Mapping[str, Any]) -> Dict[str, Any]:
+    """Structured pieces behind the "skipped / partial coverage" sentence (#102).
+
+    ``_coverage_copy`` must keep returning the canonical Chinese string for core
+    callers that predate the Qt client, but the Qt review panel has to render
+    that sentence in the user's language instead of showing composed Chinese.
+    Returning the parts (rather than a pre-joined sentence) lets the panel attach
+    its own translated templates without parsing a string, and without the core
+    learning about locales. Only numeric parts and raw reason codes cross the
+    boundary; every human-readable word stays in the Qt catalog.
+    """
+    status = str(readiness.get("status") or "not_run")
+    coverage = str(readiness.get("coverage_status") or "")
+    skipped = int(readiness.get("skipped_count") or 0)
+    if status != "current":
+        return {"kind": ""}
+    if coverage == "skipped":
+        kind = "skipped"
+    elif coverage == "partial" and skipped:
+        kind = "partial"
+    else:
+        return {"kind": ""}
+    reasons = [
+        {"reason": str(reason), "count": int(count)}
+        for reason, count in sorted(
+            (readiness.get("skipped_reason_counts") or {}).items())
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0
+    ]
+    return {
+        "kind": kind,
+        "skipped": skipped,
+        "reviewed": int(readiness.get("reviewed_count") or 0),
+        "total": len(readiness.get("expected_segment_ids") or []),
+        "reasons": reasons,
+    }
 
 
 FINDING_STATUS_COPY = {
@@ -184,8 +222,84 @@ def _is_invariant(finding: Mapping[str, Any]) -> bool:
             or finding.get("detector") == "Translation Target Invariant")
 
 
+# ---------------------------------------------------------------------------
+# QA triage 只读分流（issue #289）
+#
+# 队列是投影，不是第二套规则：分流**只**用 ``finding_triage.enabled`` 与
+# ``finding_triage.disposition_of``——绝不调用 ``classify()``（它不看开关）。
+# ``disposition_of`` 在开关关闭时对 blocking 严重度仍返回 ``blocking``，所以
+# 「是否启用」必须由 ``enabled(state)`` 决定，不能拿 disposition 本身当信号。
+# 开关关闭时本段代码一个字都不执行：投影与今天逐字段相等（golden 测试钉住）。
+# ---------------------------------------------------------------------------
+
+#: 与 ``engine.triage_resolution.triage_key`` 同一规则。读侧内联实现，避免
+#: workbench_view 依赖 engine 写路径。
+def _triage_key(finding: Mapping[str, Any]) -> str:
+    explicit = str(finding.get("finding_id") or "").strip()
+    if explicit:
+        return explicit
+    return str(delivery.finding_id(dict(finding)))
+
+
+#: 人工处置的 actor 字符串不是权威（AGENTS/#288），但 "system"/"qa_triage"
+#: 这类机器 actor 必须能看出来：未知 actor 归 rule，已知人工归 human。
+_HUMAN_ACTORS = frozenset({"", "user", "human", "用户", "人工", "译者"})
+
+
+def _resolution_actor_type(resolution: Mapping[str, Any]) -> str:
+    actor = str(resolution.get("actor") or "").strip()
+    if actor in _HUMAN_ACTORS:
+        return "human"
+    if actor == "model":
+        return "model"
+    return "rule"
+
+
+def _triage_fields(state: Mapping[str, Any],
+                   finding: Mapping[str, Any]) -> Dict[str, Any]:
+    """Per-item read-only triage fields.  Called only when the switch is on.
+
+    Never mutates the finding, never writes ``resolved``/``HumanDecision``:
+    this is a projection over ``disposition_of`` plus the stored record for
+    display (evidence / snapshot / candidate / committed).
+    """
+    key = _triage_key(finding)
+    keyed = dict(finding)
+    keyed["finding_id"] = key
+    disposition = _finding_triage.disposition_of(state, keyed)
+    current = state.get(_finding_triage.STATE_KEY)
+    entry = current.get(key) if isinstance(current, Mapping) else None
+    entry = dict(entry) if isinstance(entry, Mapping) else {}
+    committed = bool(entry.get("committed"))
+    actor_type = str(entry.get("actor_type") or "")
+    resolution = finding.get("resolution")
+    if not actor_type and isinstance(resolution, Mapping):
+        # handled_items 里机器消解过的旧发现：按 resolution.actor 归类，
+        # 「人工决定」与「机器消解」从此在界面上不再长得一样（#289 D13）。
+        actor_type = _resolution_actor_type(resolution)
+    evidence = [dict(item) for item in (entry.get("evidence") or [])
+                if isinstance(item, Mapping)]
+    snapshot = {str(field): str((entry.get("snapshot") or {}).get(field) or "")
+                for field in _finding_triage.SNAPSHOT_FIELDS} \
+        if isinstance(entry.get("snapshot"), Mapping) else {}
+    auto_handled = disposition == _finding_triage.VERIFIED_SAFE or (
+        disposition == _finding_triage.AUTO_RESOLVABLE and committed)
+    return {
+        "triage_record_key": key,
+        "triage_disposition": disposition,
+        "triage_actor_type": actor_type,
+        "triage_evidence": evidence,
+        "triage_candidate_id": str(entry.get("candidate_id") or ""),
+        "triage_committed": committed,
+        "triage_snapshot": snapshot,
+        "triage_created_at": str(entry.get("created_at") or ""),
+        "triage_auto_handled": auto_handled,
+    }
+
+
 def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
-                  confirmations: Mapping[str, str] | None = None) -> Dict[str, Any]:
+                  confirmations: Mapping[str, str] | None = None,
+                  locked_entities: Mapping[str, str] | None = None) -> Dict[str, Any]:
     context = delivery.finding_context(dict(state), dict(finding))
     segment_id = context.get("segment_index")
     severity = str(context.get("severity") or "informational")
@@ -206,7 +320,7 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
     confirmed = (not finding.get("resolved")) and bool(
         (confirmations or {}).get(rendered_id)
         or (core_id and (confirmations or {}).get(core_id)))
-    return {
+    item = {
         "id": f"finding:{rendered_id}",
         "kind": "finding",
         "filter_group": filter_group,
@@ -277,7 +391,17 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
             exceptions=_finding_groups.normalize_exceptions(
                 state.get(_finding_groups.EXCEPTIONS_KEY)))
            if _finding_groups.enabled(state) else {}),
+        # #289: triage fields appear only when the switch is on; with the
+        # switch off the item is byte-for-byte what it was before.
+        **(_triage_fields(state, finding)
+           if _finding_triage.enabled(state) else {}),
     }
+    if finding.get("type") == "entity_conflict":
+        # #277: 概念决策类术语卡的决定参考字段只加在这一类发现项上；
+        # 其余发现项保持逐字节不变。
+        item.update(_entity_term_fields(finding, locked_entities or {},
+                                        fallback_segment=segment_id))
+    return item
 
 
 def _historical_event(state: Mapping[str, Any], segment_id: int, *,
@@ -338,6 +462,9 @@ def _review_task_item(
         "severity_label": status_label,
         "status": kind,
         "status_label": status_label,
+        # 原始跳过原因码：界面据此重新组装本地化摘要，而不是把核心拼好的
+        # 中文句子原样塞进英文界面。
+        "skip_reason": skip_reason if kind == "skipped" else "",
         "category": "review_coverage" if kind == "skipped" else "review_freshness",
         "category_label": "审校覆盖" if kind == "skipped" else "独立审校",
         "title": f"第 {segment_id + 1} 段 · {status_label}",
@@ -377,6 +504,68 @@ def _glossary_entries_by_id(state: Mapping[str, Any]) -> Dict[str, Mapping[str, 
     entries = models.normalize_glossary(
         frozen.get("entries") or state.get("glossary") or [])
     return {entry["id"]: entry for entry in entries if entry.get("id")}
+
+
+def _locked_entity_targets(state: Mapping[str, Any]) -> Dict[str, str]:
+    """#277: 已锁定译名的实体 → 冻结译法，供概念决策类术语卡取「已锁定的译法」。
+
+    概念决策与人工定名都写回 ``EntityRegistry.lock``（``status == "locked"``），
+    所以这里只读登记里已有的锁定状态，不新造任何决定。未锁定的观察值不算：
+    把生成的首选译名当成冻结译法会夸大决定。
+    """
+    from . import entity_registry as _entity_registry
+    locked: Dict[str, str] = {}
+    for record in _entity_registry.normalize_registry(
+            list(state.get("entity_registry") or [])):
+        if str(record.get("status") or "") != "locked":
+            continue
+        target = str(record.get("preferred_target") or "").strip()
+        if not target:
+            continue
+        for form in [record.get("source_form"), *(record.get("aliases") or [])]:
+            key = str(form or "").strip().casefold()
+            if key:
+                locked.setdefault(key, target)
+    return locked
+
+
+def _entity_term_fields(finding: Mapping[str, Any],
+                        locked_entities: Mapping[str, str],
+                        fallback_segment: Any = None) -> Dict[str, Any]:
+    """#277: 概念决策类术语卡的决定参考字段（与 #102 术语卡同一套字段名）。
+
+    - 冻结译法：概念决策继承的译名（``inherited_preferred``），否则登记里
+      已锁定的译法；都没有就留空，界面不显示这一行。
+    - 旧译法：译文里仍在使用、且不是冻结译法的观察形式；没有冻结译法时
+      「旧」无从谈起，同样留空。
+    - 受影响段数与命中段列表：该实体在段里实际命中的段（QA 产出时的
+      ``segment_indexes``），不是估计值；旧式发现项没有这份列表时退回
+      发现项自己的段定位，不凭空放大也不缩水。
+    """
+    source = str(finding.get("source") or "").strip()
+    frozen = str(finding.get("inherited_preferred") or "").strip()
+    if not frozen and source:
+        frozen = str(locked_entities.get(source.casefold()) or "").strip()
+    indexes = [index for index in (finding.get("segment_indexes") or [])
+               if isinstance(index, int) and not isinstance(index, bool)]
+    if not indexes and isinstance(fallback_segment, int) \
+            and not isinstance(fallback_segment, bool):
+        indexes = [fallback_segment]
+    previous = ""
+    if frozen:
+        olds: List[str] = []
+        for value in finding.get("observed_targets") or []:
+            name = str(value or "").strip()
+            if name and name.casefold() != frozen.casefold() and name not in olds:
+                olds.append(name)
+        previous = " / ".join(olds)
+    return {
+        "term_frozen_target": frozen,
+        "term_previous_target": previous,
+        "term_segment_total": len(indexes),
+        "segment_indexes": indexes,
+        "affected_segment_ids": list(indexes),
+    }
 
 
 def _merge_term_cards(
@@ -478,6 +667,8 @@ def _merge_term_cards(
 
 def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """Decisions already made, one card per concept, collapsed by default."""
+    triage_on = _finding_triage.enabled(state)
+    locked_entities = _locked_entity_targets(state)
     items: List[Dict[str, Any]] = []
     for finding in state.get("findings") or []:
         if not isinstance(finding, Mapping):
@@ -487,7 +678,19 @@ def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
             continue
         if finding.get("superseded_by_review_event_id"):
             continue
-        items.append(_finding_item(state, finding))
+        item = _finding_item(state, finding, locked_entities=locked_entities)
+        if triage_on:
+            # #289: 「已处理」也要能看出是谁处理的。没有 triage 记录的旧式已解决
+            # 发现，actor 默认归人工；disposition 用产生这条决定的处置动作本身。
+            if not item.get("triage_actor_type"):
+                item["triage_actor_type"] = "human"
+            if item.get("triage_disposition") == _finding_triage.HUMAN_REQUIRED:
+                resolution = finding.get("resolution")
+                action = str((resolution or {}).get("action") or "").strip() \
+                    if isinstance(resolution, Mapping) else ""
+                if action:
+                    item["triage_disposition"] = action
+        items.append(item)
     if not items:
         return []
     for item in items:
@@ -495,7 +698,16 @@ def _handled_items(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return _merge_term_cards(state, items)
 
 
-def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List[Dict[str, Any]]:
+def _queue_items(state: Mapping[str, Any],
+                 readiness: Mapping[str, Any]) -> tuple[List[Dict[str, Any]],
+                                                        List[Dict[str, Any]]]:
+    """Human queue rows plus the automatic-handling audit rows (#289).
+
+    The split is a filter over the same projection: with the switch off the
+    second list is empty and the first is exactly what it was before.  A
+    finding is never removed from ``state["findings"]`` — only moved between
+    buckets of this read model.
+    """
     # One index for the whole queue: per-item reverse scans of every review event
     # were O(items × events) (thousands × ~1 000 on a book-length task).
     index = translation_evidence.review_index(state)
@@ -520,12 +732,32 @@ def _queue_items(state: Mapping[str, Any], readiness: Mapping[str, Any]) -> List
         if _current_finding(state, finding, index=index)
     ]
     confirmations = _open_confirmations(state)
-    items.extend(_finding_item(state, finding, confirmations=confirmations)
+    # #277: 一次建好「已锁定译名」索引，逐条发现项共用；登记每条都归一化太贵。
+    locked_entities = _locked_entity_targets(state)
+    items.extend(_finding_item(state, finding, confirmations=confirmations,
+                               locked_entities=locked_entities)
                  for finding in current_findings)
+    auto_items: List[Dict[str, Any]] = []
+    if _finding_triage.enabled(state):
+        # Only ``verified_safe`` and *committed* ``auto_resolvable`` leave the
+        # human queue.  Everything else — needs_investigation, human_required,
+        # uncommitted auto_resolvable and every blocking finding (whatever the
+        # record claims) — stays.  ``triage_auto_handled`` is computed by
+        # ``_triage_fields`` from ``disposition_of`` + the record's committed flag.
+        keep: List[Dict[str, Any]] = []
+        for item in items:
+            if item.get("kind") == "finding" and item.get("triage_auto_handled"):
+                auto_items.append(item)
+            else:
+                keep.append(item)
+        items = keep
     items = _merge_term_cards(state, items)
-    return sorted(items, key=lambda item: (
+    items = sorted(items, key=lambda item: (
         item["priority"], item.get("segment_id") if isinstance(
             item.get("segment_id"), int) else 10**9, item["id"]))
+    auto_items = sorted(auto_items, key=lambda item: (
+        str(item.get("triage_created_at") or ""), item["id"]))
+    return items, auto_items
 
 
 def _primary_action(
@@ -636,10 +868,38 @@ def _risk_acceptance(
     }
 
 
+def _triage_stats(items: Sequence[Mapping[str, Any]],
+                  handled: Sequence[Mapping[str, Any]],
+                  auto_items: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Counters that keep the page truthful when the queue shrinks (#289).
+
+    Only ``kind == "finding"`` rows are counted: the header buckets plus the
+    automatic-handling count must sum to the number of findings in this
+    projection.  A shorter human queue is never a smaller finding set.
+    """
+    buckets = {"must": 0, "suggested": 0, "reference": 0, "auto": len(auto_items)}
+    queue_findings = 0
+    for item in items:
+        if item.get("kind") != "finding":
+            continue
+        queue_findings += 1
+        group = str(item.get("list_group") or "reference")
+        if group in ("must", "suggested", "reference"):
+            buckets[group] += 1
+    buckets["reference"] += len(handled)
+    return {
+        "buckets": buckets,
+        "queue_findings": queue_findings,
+        "handled_findings": len(handled),
+        "auto_handled_findings": len(auto_items),
+        "total_findings": queue_findings + len(handled) + len(auto_items),
+    }
+
+
 def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
     """Project authoritative review truth into one read-only workbench model."""
     readiness = translation_evidence.translation_review_readiness(state)
-    items = _queue_items(state, readiness)
+    items, auto_items = _queue_items(state, readiness)
     counts = {
         severity: sum(item.get("kind") == "finding" and item.get("severity") == severity
                       for item in items)
@@ -672,7 +932,7 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         exceptions=_finding_groups.normalize_exceptions(
             state.get(_finding_groups.EXCEPTIONS_KEY)))
         if _finding_groups.enabled(state) else [])
-    return {
+    result: Dict[str, Any] = {
         "finding_groups": _finding_groups.group_summaries(groups),
         "readiness": {**readiness, "label": label, "detail": detail, "tone": tone},
         "progress": progress,
@@ -682,10 +942,19 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         "filter_counts": filter_counts,
         "group_counts": group_counts,
         "primary_action": _primary_action(readiness, counts, items),
+        # 结构化覆盖信息，供 Qt 审校页按当前语言重排「按策略跳过」句子。
+        "coverage": coverage_copy_parts(readiness),
         "delivery": _delivery_copy(readiness, counts),
         "nav": _nav_copy(readiness, counts),
         "risk_acceptance": _risk_acceptance(state, readiness),
     }
+    if _finding_triage.enabled(state):
+        # 开关关闭时下面这些键**不存在**——投影与今天逐字段相等（golden 钉住）。
+        result["qa_triage_enabled"] = True
+        result["auto_handled_items"] = auto_items
+        result["triage_stats"] = _triage_stats(items, handled, auto_items)
+        group_counts["auto"] = len(auto_items)
+    return result
 
 
 def filter_queue_items(

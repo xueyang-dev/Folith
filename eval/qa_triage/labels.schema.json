@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/xueyang-dev/Folith/eval/qa_triage/labels.schema.json",
+  "title": "QA-triage labeled corpus (issue #290)",
+  "description": "Shape of a labeled regression corpus for Human Intervention Rate and Critical Defect Escape measurement. See docs/qa-triage-corpus.md for the label definitions and the collection procedure.",
+  "type": "object",
+  "required": ["corpus", "language_pair", "segments", "labels"],
+  "additionalProperties": true,
+  "properties": {
+    "corpus": {
+      "type": "string",
+      "description": "Stable corpus id, e.g. qa-triage-synthetic-ja-zh-v0."
+    },
+    "language_pair": {
+      "type": "string",
+      "description": "Language pair of the corpus, e.g. ja->zh-Hans."
+    },
+    "source_task": {
+      "type": ["string", "null"],
+      "description": "Redacted task id when the sample was drawn from a real task; null for synthetic corpora. Never an app-data task id."
+    },
+    "generated": {
+      "type": "boolean",
+      "description": "True when all text is authored for the fixture rather than exported from a task."
+    },
+    "note": {
+      "type": "string",
+      "description": "Provenance note; required by convention for synthetic corpora (see the corpus README)."
+    },
+    "segments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["segment_id", "source", "target", "document"],
+        "additionalProperties": true,
+        "properties": {
+          "segment_id": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Segment index within the corpus; labels reference it."
+          },
+          "source": {"type": "string"},
+          "target": {"type": "string"},
+          "document": {
+            "type": "string",
+            "description": "Document id within the corpus; synthetic ids only."
+          }
+        }
+      }
+    },
+    "labels": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/definitions/label"}
+    }
+  },
+  "definitions": {
+    "label": {
+      "type": "object",
+      "required": ["finding_id", "segment_id", "label", "defect_class", "note", "deterministic_expected"],
+      "additionalProperties": true,
+      "properties": {
+        "finding_id": {
+          "type": ["string", "null"],
+          "description": "The finding this label annotates. null means the point of the sample is that NO finding was raised on that segment."
+        },
+        "segment_id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Must reference a segment in the same corpus."
+        },
+        "label": {
+          "enum": ["real_error", "legitimate_keep", "legitimate_variant", "ambiguous"],
+          "description": "The four ground-truth labels; a corpus must contain all four (issue #290)."
+        },
+        "defect_class": {
+          "enum": [
+            "omission",
+            "empty",
+            "terminology_drift",
+            "entity_swap",
+            "number_change",
+            "hallucination",
+            "negation_flip",
+            "translation_completion",
+            "source_residue"
+          ],
+          "description": "Reuses the class names already injected by scripts/review_defect_recall.py, plus translation_completion and source_residue."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why this is an error, or why keeping it is legitimate."
+        },
+        "deterministic_expected": {
+          "type": "boolean",
+          "description": "Reused from scripts/review_defect_recall.py: whether the deterministic layer is expected to catch this defect."
+        }
+      }
+    }
+  }
+}

@@ -445,6 +445,8 @@ class MainWindow(QMainWindow):
         self.workbench.revealLogRequested.connect(
             lambda job_id: self.reveal_path(adapter.technical_log_path(job_id)))
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
+        # #289: 审计列表的撤销信号 → 适配器 → 既有核心函数。
+        self.workbench.reviewRevokeRequested.connect(self.revoke_auto_handling)
         self.workbench.glossaryDraftRequested.connect(self.save_glossary_draft)
         self.workbench.glossaryFreezeRequested.connect(self.freeze_glossary)
         self.workbench.glossaryUnfreezeRequested.connect(self.unfreeze_glossary)
@@ -2225,8 +2227,15 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('任务当前不可暂停。'), error=True)
 
     def continue_job(self) -> None:
-        """恢复一个被暂停的任务（由"继续翻译"按钮/菜单承担）。"""
-        if self._current_job_id and adapter.continue_job(self._current_job_id):
+        """恢复一个被暂停的任务（由"继续翻译"按钮/菜单承担）。
+
+        若暂停期间连接（API Key / 服务商 / 模型 / 推理模式）改过，核心会用当前
+        连接透明地重新启动 worker：已识别的页面与译文保留，改动立即生效。
+        """
+        job_id = self._current_job_id
+        if job_id and adapter.continue_job(
+                job_id, self.config,
+                user_defaults=dict(self.stored_task_defaults)):
             self._notice(i18n.tr('正在继续任务。'))
             self.refresh_workbench(force=True)
         else:
@@ -3221,6 +3230,24 @@ class MainWindow(QMainWindow):
         # 连续处理（#98）：只有动作**成功**才前进到下一项；失败时提示留在
         # 队列里，未处理的发现项不会被跳过。
         self.workbench.review_panel.consume_advance_hint()
+
+    def revoke_auto_handling(self, record_key: str) -> None:
+        """#289: 撤销一条自动处理结论——窗口层是唯一写状态的地方。
+
+        面板只发信号；这里经适配器调用既有核心函数（已提交的修复走
+        ``revert_auto_resolution`` 只暂存撤回候选、不改译文，其余走
+        ``finding_triage.revoke``），然后刷新页面：这一项回到人工队列。
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.revoke_auto_handling(job_id, record_key)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法撤销这条自动处理'), str(exc))
+            return
+        self._notice(i18n.tr('已撤销这条自动处理结论；这一项回到人工队列。'))
+        self.refresh_workbench(force=True)
 
     def apply_suggestion(self, item: dict, note: str) -> None:
         """把审校建议暂存为候选；正文和发现项都不动，采用是另一个动作。"""

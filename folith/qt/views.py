@@ -2528,6 +2528,8 @@ class WorkbenchView(QWidget):
     findingResolveRequested = Signal(list, str, str)    # finding_ids, action, note
     suggestionApplyRequested = Signal(dict, str)        # queue item, note
     sourceConfirmRequested = Signal(int, str)           # segment index, note
+    # #289: 审计列表的撤销（由窗口层调用适配器 → 既有核心函数；面板不写状态）
+    reviewRevokeRequested = Signal(str)                 # triage record key
     # 术语页（暂存修改 / 冻结 / 逐条修订）
     glossaryDraftRequested = Signal(list)
     glossaryFreezeRequested = Signal(list)
@@ -3628,6 +3630,8 @@ class WorkbenchView(QWidget):
         self.review_panel.reviewRequested.connect(self.reviewSelectedRequested.emit)
         self.review_panel.retranslateRequested.connect(self.retranslateRequested.emit)
         self.review_panel.editRequested.connect(self.show_segment_for_edit)
+        # #289: 撤销 → 窗口层 → 适配器 → 核心（revert 候选 / revoke）。
+        self.review_panel.triageRevokeRequested.connect(self.reviewRevokeRequested.emit)
         self.tabs.addTab(self.review_panel,
                          icons.icon("shield-check", 16, "text-secondary"),
                          i18n.tr('审校'))
@@ -3724,16 +3728,23 @@ class WorkbenchView(QWidget):
         self._pdf_follow.setInterval(150)
         self._pdf_follow.timeout.connect(self._follow_source)
         self.translation_split.splitterMoved.connect(self._remember_source_width)
-        source_shortcut = QAction(i18n.tr('原页'), self)
-        source_shortcut.setShortcut(platform_ui.shortcut("source"))
-        source_shortcut.triggered.connect(lambda: self.set_source_open(not self.source_open()))
-        self.addAction(source_shortcut)
+        self.source_shortcut = QAction(i18n.tr('原页'), self)
+        self.source_shortcut.setShortcut(platform_ui.shortcut("source"))
+        self.source_shortcut.triggered.connect(lambda: self.set_source_open(not self.source_open()))
+        self.addAction(self.source_shortcut)
         # 文档结构（#187）：与按钮共用 platform_ui 的同一条快捷键定义。
         self.outline_shortcut = QAction(i18n.tr('文档结构'), self)
         self.outline_shortcut.setShortcut(platform_ui.shortcut("outline"))
         self.outline_shortcut.triggered.connect(
             lambda: self.set_outline_open(not self.outline_open()))
         self.addAction(self.outline_shortcut)
+        # #276：Windows 上 Ctrl+Alt+<字母> 就是 AltGr，聚焦的文本框会把它当成输入
+        # 字符（QEvent.ShortcutOverride），窗口级 QAction 因此收不到、界面毫无反应；
+        # 点按钮走的是另一条路径，所以一直正常。给工作台里会拿到焦点的文本控件
+        # 都装上同一个守卫：命中「原页 / 文档结构」这两条快捷键时不接受 override，
+        # 让 Qt 改走快捷键分发（与 macOS 上 Command 抑制文本输入的效果一致）。
+        self._source_shortcut_actions = (self.source_shortcut, self.outline_shortcut)
+        self._install_source_shortcut_guards()
         # 检查与修复：从顶栏的盾牌图标下面展开的「凸」字下拉卡片（与运行记录同一种），
         # 不再挤占右栏、也不会自己弹出来挡住操作键（2026-10-16 第三轮试用反馈）。
         # 点外面或 Esc 收起；处理某一条（定位段落、预览）时卡片保持打开。
@@ -4473,6 +4484,19 @@ class WorkbenchView(QWidget):
     def set_outline_open(self, open_: bool) -> None:
         """文档结构在工作台左侧展开 / 收起（#187）。"""
         self._set_left_panel("outline", bool(open_) and self._outline_available())
+
+    def _install_source_shortcut_guards(self) -> None:
+        """Let Ctrl+Alt+P / Ctrl+Alt+O survive a focused text widget (#276).
+
+        Windows 的 AltGr 键盘布局会把 Ctrl+Alt+<字母> 当成输入字符，聚焦的文本框
+        （译文编辑框、原文浮层、搜索框、页码框…）会通过 ShortcutOverride 抢走它，
+        窗口级 QAction 就永远收不到。守卫只认这两条已绑定的动作，其它按键原样
+        交还给控件。
+        """
+        for field in (self.target_edit, self.inline_editor.source_view,
+                      self.segment_list, self.search_edit, self.assist_input,
+                      self.pdf_panel.page_box):
+            platform_ui.install_shortcut_guard(field, self._source_shortcut_actions)
 
     def _left_widget(self, mode: str) -> QWidget:
         if mode == "source":
@@ -5888,6 +5912,19 @@ class WorkbenchView(QWidget):
         # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
         self.run_status.track.setVisible(tone != "done")
         self.run_status.percent.setVisible(tone != "done")
+        # 运行头显示这条任务实际在用的连接（服务商 · 模型，以及哪些角色在用它），
+        # 而不是设置里"现在选的是什么"：切换连接后用户能立刻看出是不是已经生效。
+        connection = runtime.get("active_connection") or {}
+        conn_label = str(connection.get("label") or "")
+        if conn_label and (running or raw_status in ("paused", "pausing", "stalled")):
+            extra = conn_label
+            roles = [str(role) for role in (connection.get("roles") or []) if str(role)]
+            if roles:
+                extra += "（" + "、".join(i18n.tr(role) for role in roles) + "）"
+            reviewer_label = str(connection.get("reviewer_label") or "")
+            if reviewer_label and reviewer_label != conn_label:
+                extra += "；" + i18n.tr('审校') + " " + reviewer_label
+            line = line + " · " + i18n.tr('连接') + " " + extra
         self.run_status.set_state(tone=tone, line=line)
         # 任务开始后运行状态一直在：跑完了只剩「已完成 · N 分钟」一行（没有进度条），
         # 它也是运行记录唯一的入口（「更多」菜单撤掉了）。

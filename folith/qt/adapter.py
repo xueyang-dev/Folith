@@ -673,8 +673,18 @@ def pause_job(job_id: str) -> bool:
     return _commands.pause_job(job_id)
 
 
-def continue_job(job_id: str) -> bool:
-    return _commands.continue_job(job_id)
+def continue_job(job_id: str, config: "EngineConfig | None" = None, *,
+                 user_defaults: dict | None = None) -> bool:
+    """Continue a paused task, restarting it if the connection changed.
+
+    Passing ``config`` (the user's current connection in the desktop client)
+    lets the shared command resolve the effective connection against the task
+    state and restart a paused worker when it differs (issue #222).
+    """
+    if config is None:
+        return _commands.continue_job(job_id)
+    return _commands.continue_job(
+        job_id, settings_sources(config, {}, user_defaults=user_defaults))
 
 
 def cancel_job(job_id: str, *, force: bool = False) -> bool:
@@ -1955,12 +1965,27 @@ def _group_entity_conflicts(view: dict) -> None:
             continue
         first = seen.get(source)
         if first is None:
-            seen[source] = item = dict(item, segment_indexes=[])
-            items.append(item)
-            first = item
+            # #277: 第一行自带完整命中段列表（segment_indexes），不能清空后只靠
+            # 逐行的 segment_index 重新数——那会把多段命中缩成一个段。
+            first = dict(item, segment_indexes=[
+                index for index in (item.get("segment_indexes") or [])
+                if isinstance(index, int) and not isinstance(index, bool)])
+            seen[source] = first
+            items.append(first)
         index = item.get("segment_index")
         if isinstance(index, int) and index not in first["segment_indexes"]:
             first["segment_indexes"].append(index)
+        if first is item:
+            continue
+        for extra in (item.get("segment_indexes") or []):
+            if isinstance(extra, int) and extra not in first["segment_indexes"]:
+                first["segment_indexes"].append(extra)
+        # #277: 合并行的决定参考字段跟着并起来；段数按并后的实际命中重算。
+        for key in ("term_frozen_target", "term_previous_target"):
+            if not str(first.get(key) or "") and item.get(key):
+                first[key] = item[key]
+        first["term_segment_total"] = len(first["segment_indexes"])
+        first["affected_segment_ids"] = list(first["segment_indexes"])
     view["queue_items"] = items
     counts = {name: sum(item.get("filter_group") == name for item in items)
               for name in ("pending", "rereview", "skipped", "suggested", "reference")}
@@ -2019,6 +2044,51 @@ def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,
     if state is None:
         raise AdapterError(f"找不到任务 {job_id}")
     return state
+
+
+def revoke_auto_handling(job_id: str, record_key: str,
+                         reason: str = "人工在审计列表撤销") -> dict:
+    """撤销一条自动处理结论（#289）：这一项回到人工队列。
+
+    只调用既有核心函数，面板不写状态：
+
+    * 记录**已提交**（committed 的确定性修复）：走
+      ``triage_resolution.revert_auto_resolution``——只暂存一条撤回候选，
+      **不改** ``pair["target"]``，并把记录标记撤销；
+    * 其余（``verified_safe`` 等）：走 ``finding_triage.revoke``。
+
+    两条路径都不删除 finding、不写 resolved/dismissed/HumanDecision。
+    """
+    from folith import finding_triage as _triage
+
+    key = str(record_key or "").strip()
+    if not key:
+        raise AdapterError("这一条审计记录没有标识。")
+    state = load_state(job_id)
+    if not _triage.enabled(state):
+        raise AdapterError("QA 分流开关已关闭：审计列表不再产生，无需撤销。")
+    entry = (state.get(_triage.STATE_KEY) or {}).get(key)
+    if not isinstance(entry, dict):
+        raise AdapterError("这条审计记录已经不存在。")
+    if entry.get("committed"):
+        from folith.engine import triage_resolution
+        try:
+            result = triage_resolution.revert_auto_resolution(
+                job_id, key, reason=reason)
+        except (RuntimeError, ValueError) as exc:
+            raise AdapterError(str(exc) or type(exc).__name__) from exc
+        if not result.get("reverted"):
+            raise AdapterError(f"无法撤回这条自动修复："
+                               f"{result.get('reason') or '未知原因'}")
+        return {"revoked": True, "revert_candidate_id":
+                str(result.get("candidate_id") or "")}
+    if not _triage.revoke(state, key, reason=reason):
+        raise AdapterError("无法撤销这条记录。")
+    try:
+        core.save_job_state(job_id, state)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return {"revoked": True, "revert_candidate_id": ""}
 
 
 def apply_suggested_translation(job_id: str, item: dict, note: str = "") -> dict:
@@ -2261,7 +2331,8 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
 
 
 #: 用量账本里的角色 → 界面标签（目录键）。
-USAGE_ROLE_LABELS = {"translation": "翻译", "review": "审校", "auxiliary": "辅助（画像、理解、标注）"}
+USAGE_ROLE_LABELS = {"translation": "翻译", "vision": "视觉（读页）",
+                     "review": "审校", "auxiliary": "辅助（画像、理解、标注）"}
 
 
 def run_facts(state: dict) -> dict:
@@ -4335,7 +4406,7 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
 
         count = len(legacy_blocking)
         review_issues.append(i18n.tr_n("必须处理的问题 {v0} 个", count, v0=count))
-    return {
+    preview = {
         "can_accept_risk": can_accept_risk,
         "blocking_count": blocking_count,
         "status_label": core.task_status_label(state, job_id),
@@ -4358,6 +4429,12 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
         and not legacy_blocking
         and (not review.get("required") or bool(review.get("ready"))),
     }
+    # QA triage supplies explanation, never permission.  Add the key only when
+    # triage is on so a switch-off preview is byte-for-byte unchanged.
+    from folith import finding_triage as _finding_triage
+    if _finding_triage.enabled(state):
+        preview["blocking_explanations"] = _delivery.blocking_explanations(state)
+    return preview
 
 
 GATE_HINTS: tuple[tuple[str, str], ...] = (
@@ -5247,6 +5324,92 @@ def thinking_control_options(provider: str, model: str) -> tuple[str, ...]:
     return tuple(core.thinking_control_options(provider, model) or ())
 
 
+def task_cost_report(job_id: str) -> dict:
+    """每任务成本报告：只读性能追踪（#231）。
+
+    ``.performance/runs/*/requests.jsonl`` 里的每条 ``model_call`` 计一次，文本
+    请求与视觉读页（含失败 / 重试的尝试）因此共用一本账。仓库没有该服务商的
+    价目表，所以这里只报调用次数与提供方真实回报的 token，绝不编造金额。
+    """
+    try:
+        from folith import cost_report as _cost_report
+        return _cost_report.task_cost_report(
+            Path(core.job_dir(job_id)) / ".performance" / "runs")
+    except Exception:  # noqa: BLE001 - a broken trace simply hides the section
+        return {"available": False}
+
+
+def _cost_token_text(agg) -> str:
+    """'1,234（2/3 次回报）' for one nullable token total; '' when unreported."""
+    if not isinstance(agg, dict):
+        return ""
+    total = agg.get("total")
+    if total is None:
+        return ""
+    text = f"{int(total):,}"
+    reported, calls = int(agg.get("calls_reported") or 0), int(agg.get("calls_total") or 0)
+    if calls and reported < calls:
+        text += f"（{reported}/{calls} 次回报）"
+    return text
+
+
+def _cost_usage_text(entry: dict) -> str:
+    """One row of calls / failures / tokens for a role or a provider·model bucket."""
+    calls = int(entry.get("calls") or 0)
+    failures = int(entry.get("failures") or 0)
+    text = f"{calls:,} 次" + (f"（失败 {failures:,}）" if failures else "")
+    tokens = entry.get("tokens") or {}
+    prompt = _cost_token_text(tokens.get("prompt_tokens"))
+    completion = _cost_token_text(tokens.get("completion_tokens"))
+    cached = _cost_token_text(tokens.get("cached_tokens"))
+    parts = []
+    if prompt:
+        parts.append(f"输入 {prompt}")
+    if completion:
+        parts.append(f"输出 {completion}")
+    if cached and int((tokens.get("cached_tokens") or {}).get("total") or 0) > 0:
+        parts.append(f"缓存命中 {cached}")
+    if parts:
+        text += " · " + " · ".join(parts)
+    return text
+
+
+def _cost_report_group(report: dict):
+    """Task-page rows for the cost section, or None when the trace has no calls."""
+    report = report or {}
+    if not report.get("available"):
+        return None
+    calls = int(report.get("calls") or 0)
+    successes = int(report.get("successes") or 0)
+    failures = int(report.get("failures") or 0)
+    rows = [("模型调用", f"{calls:,} 次（成功 {successes:,} · 失败 {failures:,}）")]
+    totals = report.get("tokens") or {}
+    prompt = _cost_token_text(totals.get("prompt_tokens"))
+    completion = _cost_token_text(totals.get("completion_tokens"))
+    cached = _cost_token_text(totals.get("cached_tokens"))
+    total_parts = []
+    if prompt:
+        total_parts.append(f"输入 {prompt}")
+    if completion:
+        total_parts.append(f"输出 {completion}")
+    if cached and int((totals.get("cached_tokens") or {}).get("total") or 0) > 0:
+        total_parts.append(f"缓存命中 {cached}")
+    if total_parts:
+        rows.append(("合计 token", " · ".join(total_parts)))
+    for entry in report.get("by_role") or []:
+        role = str(entry.get("role") or "unknown")
+        rows.append((USAGE_ROLE_LABELS.get(role, role), _cost_usage_text(entry)))
+    models = report.get("by_model") or []
+    if len(models) > 1:
+        for entry in models:
+            rows.append((f"模型 · {entry.get('label')}", _cost_usage_text(entry)))
+    # No price table exists in this repository: tokens and calls only, never USD.
+    rows.append(("金额", "未计算：仓库内没有该服务商的价目表，只报 token 与调用次数。"))
+    return {"title": "成本",
+            "rows": [(label, value) for label, value in rows
+                     if value not in (None, "", [])]}
+
+
 def task_details(config: EngineConfig, job_id: str,
                  state: dict | None = None) -> list[dict]:
     """任务开始以后，"这个任务用的是什么设置"：分组的（标签, 值）。
@@ -5330,8 +5493,11 @@ def task_details(config: EngineConfig, job_id: str,
                           *_task_setup.DELIVERY_RESEARCH_ITEMS)
              if (setup.get("delivery") or {}).get(item["key"])]
     delivery = group("交付内容", [("文件", "、".join(names))])
-    return [item for item in (document, strategy_group, engine, source, delivery)
-            if item["rows"]]
+    items = [document, strategy_group, engine, source, delivery]
+    cost_group = _cost_report_group(task_cost_report(job_id))
+    if cost_group:
+        items.append(cost_group)
+    return [item for item in items if item["rows"]]
 
 
 def task_setup_view(config: EngineConfig, job_id: str,

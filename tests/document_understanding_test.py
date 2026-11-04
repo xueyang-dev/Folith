@@ -287,6 +287,20 @@ def test_failed_page_preserves_request_accounting(tmp_path):
     assert not (tmp_path/'document_understanding'/'0.json').exists()
 
 
+def test_failure_record_names_the_page_both_ways(tmp_path):
+    """#220 C3：文件名保持 0 基（同目录逐页缓存也是 0 基，改名会撞号或作废缓存），
+    但记录里必须有 1 基的 `page`（界面、事件口径）和 0 基的 `page_index`（文件名口径），
+    读记录的人不用再自己加一。"""
+    client,_=fake_client(response('{"b":[]}',finish='length'))
+    provider=VLMDocumentProvider(config(),client=client)
+    core.extract_document_paragraphs_with_report(
+        'scan.pdf',scanned_pdf(2),understanding_provider=provider,
+        spatial_engine=lambda p:SpatialTextIndex(p.page_id),checkpoint_dir=tmp_path)
+    recorded=json.loads((tmp_path/'document_understanding'/'0-failure.json').read_text(encoding='utf-8'))
+    assert recorded['page']==1, f"page 应从 1 计，实际：{recorded.get('page')!r}"
+    assert recorded['page_index']==0, f"page_index 应与文件名一致，实际：{recorded.get('page_index')!r}"
+
+
 def test_real_relay_fenced_payload_is_normalized():
     from pathlib import Path
     # Freeze the real failure shape without depending on benchmark files.

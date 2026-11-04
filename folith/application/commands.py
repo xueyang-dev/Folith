@@ -411,9 +411,36 @@ def pause_job(job_id: str) -> bool:
     return bool(_core().request_job_pause(str(job_id or "")))
 
 
-def continue_job(job_id: str) -> bool:
-    """Continue a paused task whose worker is still alive."""
-    return bool(_core().continue_job(str(job_id or "")))
+def continue_job(
+    job_id: str, values: "SettingsSources | Mapping[str, Any] | None" = None
+) -> bool:
+    """Continue a paused task whose worker is still alive.
+
+    When the caller supplies the settings layers that describe "the connection
+    the user has now", the command resolves them against the task and hands the
+    result to the core, which restarts a live worker transparently if the
+    connection changed while the task was paused (issue #222).  With no
+    ``values`` (legacy callers) it keeps the old plain-continue behaviour.
+    """
+    core = _core()
+    job_id = _require_text(job_id, "缺少任务标识")
+    if values is None:
+        return bool(core.continue_job(job_id))
+    state = core.load_job_state(job_id) or core.new_job_state("当前任务")
+    try:
+        contract = JobConfig.from_settings(
+            resolve_effective_settings(as_settings_sources(values).with_state(state)))
+    except Exception:  # noqa: BLE001 - a bad new selection must not block Continue
+        return bool(core.continue_job(job_id))
+    if contract.connection_problem():
+        # The newly selected connection is not usable; keep the existing worker
+        # rather than restarting it into a connection that cannot run.
+        return bool(core.continue_job(job_id))
+    kwargs = contract.to_pipeline_kwargs()
+    return bool(core.continue_job(
+        job_id, restart_kwargs=kwargs,
+        base_url=kwargs.get("translator_base_url") or None,
+        filename=str(state.get("filename") or "当前任务")))
 
 
 def cancel_job(job_id: str, *, force: bool = False) -> bool:

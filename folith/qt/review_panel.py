@@ -30,17 +30,44 @@ from . import i18n
 from . import icons
 from . import pdf_panel as pdf_panel_module
 from . import style as style_module
+# #289: 复用仓库里唯一已有的可展开行原语 IssueCard（「检查与修复」抽屉同款）。
+# followup_panel 不 import 本模块，无循环依赖；本模块也不改它。
+from .followup_panel import IssueCard
 from .name_conflict import NameConflictWidget
 from .style import Card
 
-#: 左栏三组（xueyang-dev/Folith#102）：必须处理展开，其余默认收起。
-GROUP_ORDER = ("must", "suggested", "reference")
+#: 左栏分组（xueyang-dev/Folith#102）：必须处理展开，其余默认收起。
+#: #289 新增「自动处理（审计）」组：只在 QA triage 开关打开且有项时出现，
+#: 默认收起；它是同一个复核页里的一组，不是新页面、不是新窗口，
+#: 也不按操作系统分叉。
+GROUP_ORDER = ("must", "suggested", "reference", "auto")
 GROUP_LABELS = {
     "must": "必须处理",
     "suggested": "建议",
     "reference": "已处理 / 仅供参考",
+    "auto": "自动处理（审计）",
 }
-GROUP_EXPANDED_BY_DEFAULT = {"must": True, "suggested": False, "reference": False}
+GROUP_EXPANDED_BY_DEFAULT = {"must": True, "suggested": False, "reference": False,
+                             "auto": False}
+
+#: #289: 界面显示 actor_type（谁产出的结论），不显示 actor 字符串——
+#: "qa_triage" 绝不能看起来像人工决定。
+_ACTOR_TYPE_LABELS = {"rule": "规则", "model": "模型", "human": "人工"}
+
+#: #289: disposition 的界面措辞；查不到的（旧式人工处置动作）原样显示代码名。
+_DISPOSITION_LABELS = {
+    "verified_safe": "证据核验安全",
+    "auto_resolvable": "确定性自动修复",
+    "needs_investigation": "需要调查",
+    "human_required": "需人工决定",
+    "blocking": "阻断",
+    "human_fixed": "确认已解决",
+    "preserved": "保留当前译文",
+    "accepted_risk": "接受风险",
+    "confirmed_open": "确认问题存在",
+    "resolved": "已解决",
+    "dismissed": "已驳回",
+}
 
 _SEVERITY_TONE = {"blocking": "danger", "actionable": "warn",
                   "informational": "info"}
@@ -70,6 +97,24 @@ def _term_card_title(item: dict) -> str:
     return i18n.tr_dynamic(str(item.get("title") or ""))
 
 
+def _decision_reference_html(frozen: str, previous: str, total: int) -> str:
+    """两类术语卡共用的决定参考行：冻结译法、旧译法、影响段落（#277）。
+
+    过期译法卡（#102）与概念决策卡都走这里，避免各写一套。缺值不占位：
+    没有冻结译法、或旧译法与冻结译法一致时就不画那一行——不留一个空字段
+    冒充有值。
+    """
+    sep = _colon()
+    parts = []
+    if frozen:
+        parts.append(f"<p><b>{_escape(i18n.tr('冻结译法'))}{sep}</b>{_escape(frozen)}</p>")
+    if previous and previous != frozen:
+        parts.append(f"<p><b>{_escape(i18n.tr('旧译法'))}{sep}</b>{_escape(previous)}</p>")
+    parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}{sep}</b>"
+                 f"{_escape(i18n.tr('{v0} 段', v0=total))}</p>")
+    return "".join(parts)
+
+
 def _trim(text: object, limit: int = 90) -> str:
     """表格单元格只放一行摘要：太长就把中间略掉，保留首尾。"""
     value = " ".join(str(text or "").split())
@@ -83,6 +128,92 @@ def _trim(text: object, limit: int = 90) -> str:
 def _colon() -> str:
     """字段名后的冒号：中文用全角，其他语言用半角 + 空格。"""
     return "：" if i18n.language().startswith(("zh", "ja", "ko")) else ": "
+
+
+def _list_separator() -> str:
+    """并列短句的分隔符：中日韩用全角分号，其余语言用半角 + 空格。"""
+    return "；" if i18n.language().startswith(("zh", "ja", "ko")) else "; "
+
+
+def _localized_reason_breakdown(reasons) -> str:
+    """把核心给出的跳过原因码按当前语言重排成「原因 N 段」列表。
+
+    核心只交出原因码与段数（见 ``workbench_view.coverage_copy_parts``），
+    这里的每个词都走目录，所以英文界面不会漏出「无确定性风险信号 10 段」。
+    """
+    from folith import workbench_view as _workbench_view
+
+    parts: list[str] = []
+    for entry in reasons or []:
+        if not isinstance(entry, dict):
+            continue
+        count = int(entry.get("count") or 0)
+        if count <= 0:
+            continue
+        code = str(entry.get("reason") or "")
+        label = i18n.tr(_workbench_view.skip_reason_label(code))
+        parts.append(i18n.tr("{v0} {v1} 段", v0=label, v1=count))
+    return _list_separator().join(parts)
+
+
+def _coverage_texts(view: dict) -> tuple[str, str]:
+    """审校就绪的标题与说明：覆盖被整段/部分跳过时按当前语言重排。
+
+    其它就绪状态的标题已在目录里，仍走 ``tr_dynamic``；只有核心拼好、带跳过
+    原因明细的句子需要在这里用结构化部件重新拼，否则英文界面会显示中文。
+    """
+    readiness = view.get("readiness") or {}
+    label = i18n.tr_dynamic(str(readiness.get("label") or ""))
+    detail = i18n.tr_dynamic(str(readiness.get("detail") or ""))
+    coverage = view.get("coverage") or {}
+    kind = str(coverage.get("kind") or "")
+    breakdown = _localized_reason_breakdown(coverage.get("reasons"))
+    if kind == "skipped":
+        label = i18n.tr("{v0} 段未执行本轮独立语义审校（按策略跳过）",
+                        v0=int(coverage.get("skipped") or 0))
+        detail = i18n.tr(
+            "按策略跳过：{v0}。这些段落没有独立审校结论，"
+            "不等于审校通过；现有交付门禁保持不变。", v0=breakdown)
+    elif kind == "partial":
+        label = i18n.tr("部分译文未执行独立语义审校")
+        detail = i18n.tr(
+            "{v0} / {v1} 段已完成独立审校，{v2} 段未执行本轮独立语义审校"
+            "（按策略跳过：{v3}）。",
+            v0=int(coverage.get("reviewed") or 0),
+            v1=int(coverage.get("total") or 0),
+            v2=int(coverage.get("skipped") or 0),
+            v3=breakdown)
+    return label, detail
+
+
+def _localized_task_copy(item: dict) -> dict:
+    """合成审校项（待审 / 需重审 / 失败 / 跳过）的界面文案。
+
+    发现项的摘要、说明与建议是模型产出，必须保持原样；只有这几类**合成项**
+    的句子是核心拼好的界面文案，需要按当前语言重排。返回需要覆盖的字段；
+    未覆盖的字段由调用方回落到 ``tr_dynamic`` / 原文。
+    """
+    kind = str(item.get("kind") or "")
+    if kind not in _REVIEW_TASK_KINDS:
+        return {}
+    if kind == "skipped":
+        from folith import workbench_view as _workbench_view
+
+        overrides: dict[str, str] = {}
+        code = str(item.get("skip_reason") or "")
+        reason = i18n.tr(_workbench_view.skip_reason_label(code)) if code else ""
+        if reason:
+            summary = i18n.tr(
+                "按策略跳过：{v0}。没有独立语义审校结果，不等于审校通过。",
+                v0=reason)
+            overrides["summary"] = summary
+            overrides["reason"] = summary
+            overrides["explanation"] = summary
+        overrides["recommendation"] = i18n.tr(
+            "如需覆盖本段，请重新运行独立审校。")
+        return overrides
+    return {"recommendation": i18n.tr(
+        "重新运行此段审校，生成与当前译文一致的新结果。")}
 
 
 class ReviewPanel(QWidget):
@@ -100,6 +231,9 @@ class ReviewPanel(QWidget):
     entityRepairRequested = Signal(str, str, list)  # source, target, preview
     entityAcceptRequested = Signal(str)             # source
     conceptRequested = Signal()
+    #: #289: 审计列表的撤销——面板只发信号（triage 记录键），写状态的是
+    #: 窗口层经适配器调用既有核心函数；面板自己不写状态。
+    triageRevokeRequested = Signal(str)             # triage record key
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -108,6 +242,10 @@ class ReviewPanel(QWidget):
         self._visible: list[dict] = []
         self._selected_id = ""
         self._handled: list[dict] = []
+        # #289: 自动处理审计列表（开关关闭时永远是空的，页面与今天一致）。
+        self._auto: list[dict] = []
+        self._triage_on = False
+        self._group_summaries: dict[str, dict] = {}
         self._expanded = dict(GROUP_EXPANDED_BY_DEFAULT)
         self._initialised = False
         self._group_buttons: dict[str, QPushButton] = {}
@@ -384,16 +522,26 @@ class ReviewPanel(QWidget):
         self.concept_button.setEnabled(not busy)
         self._items = list(self._view.get("queue_items") or [])
         self._handled = list(self._view.get("handled_items") or [])
+        # #289: 审计列表。开关关闭时视图里没有 `auto_handled_items` 这个键，
+        # 下面的列表就是空的，页面渲染与今天完全一致。
+        self._triage_on = bool(self._view.get("qa_triage_enabled"))
+        self._auto = [item for item in (self._view.get("auto_handled_items") or [])]
+        self._group_summaries = {
+            str(group.get("group_id") or ""): dict(group)
+            for group in (self._view.get("finding_groups") or [])}
         readiness = self._view.get("readiness") or {}
-        self.headline.setText(i18n.tr_dynamic(str(readiness.get("label") or "")))
-        self.detail.setText(i18n.tr_dynamic(str(readiness.get("detail") or "")))
+        headline, detail = _coverage_texts(self._view)
+        self.headline.setText(headline)
+        self.detail.setText(detail)
         if not self._initialised:
             # 第一次打开：有「必须处理」就只展开它；没有就把第一个非空组展开，
-            # 免得左栏看起来是空的。
+            # 免得左栏看起来是空的。审计组永远不参与这个回退——它默认收起，
+            # 收起不等于看不见：组头计数与页脚的总数守恒都在。
             self._initialised = True
             counts = self._group_counts()
             if not counts.get("must"):
-                first = next((key for key in GROUP_ORDER if counts.get(key)), "")
+                first = next((key for key in GROUP_ORDER
+                              if key != "auto" and counts.get(key)), "")
                 if first:
                     self._expanded = {key: key == first for key in GROUP_ORDER}
         self._rebuild_list()
@@ -401,15 +549,19 @@ class ReviewPanel(QWidget):
         self.shortcut_hint.setVisible(bool(self._items))
 
     def _sync_empty(self, readiness: dict) -> None:
-        """队列整个是空的：整页换成一个空状态，最多一个动作。"""
-        empty = not self._items and not self._handled
+        """队列整个是空的：整页换成一个空状态，最多一个动作。
+
+        #289: 人工队列空但审计列表非空时**不算空**——审计项必须仍然可达，
+        不能整页换成空状态把它们藏起来。
+        """
+        empty = not self._items and not self._handled and not self._auto
         self.content.setVisible(not empty)
         if not empty:
             self.empty_state.setVisible(False)
             return
         status = str(readiness.get("status") or "")
-        title = i18n.tr_dynamic(str(readiness.get("label") or "")) or i18n.tr('尚未审校')
-        hint = i18n.tr_dynamic(str(readiness.get("detail") or ""))
+        title, hint = _coverage_texts(self._view)
+        title = title or i18n.tr('尚未审校')
         # 审校已完成：没有要做的事，就不给按钮。
         self.empty_state.set_text(title, hint)
         coverage_complete = readiness.get("coverage_complete")
@@ -425,8 +577,10 @@ class ReviewPanel(QWidget):
         if counts:
             return {key: int(counts.get(key) or 0) for key in GROUP_ORDER}
         rows = list(self._items) + list(self._handled)
-        return {key: sum(self._group_of(item) == key for item in rows)
-                for key in GROUP_ORDER}
+        result = {key: sum(self._group_of(item) == key for item in rows)
+                  for key in GROUP_ORDER}
+        result["auto"] = len(self._auto)
+        return result
 
     def _group_of(self, item: dict) -> str:
         group = str(item.get("list_group") or "")
@@ -454,8 +608,11 @@ class ReviewPanel(QWidget):
             buckets[self._group_of(item)].append(item)
         for item in self._handled:
             buckets["reference"].append(item)
+        # #289: 审计组保持投影给出的顺序（按记录创建时间），不再按优先级重排。
+        buckets["auto"] = list(self._auto)
         for key, rows in buckets.items():
-            buckets[key] = self._sorted(rows)
+            if key != "auto":
+                buckets[key] = self._sorted(rows)
         self.list.blockSignals(True)
         self.list.clear()
         self._group_buttons.clear()
@@ -468,8 +625,11 @@ class ReviewPanel(QWidget):
             if not self._expanded[key]:
                 continue
             for item in rows:
-                self._add_card(item)
-                self._visible.append(item)
+                if key == "auto":
+                    self._add_audit_card(item)
+                else:
+                    self._add_card(item)
+                    self._visible.append(item)
         row = next((position for position, item in enumerate(self._visible)
                     if item.get("id") == wanted), 0 if self._visible else -1)
         if self._visible:
@@ -481,7 +641,8 @@ class ReviewPanel(QWidget):
                              if 0 <= row < len(self._visible) else "")
         self.empty_label.setVisible(not self._visible)
         self.empty_label.setText(
-            i18n.tr('展开分组查看其中的项目。') if self._items or self._handled
+            i18n.tr('展开分组查看其中的项目。')
+            if self._items or self._handled or self._auto
             else i18n.tr('审校队列是空的：没有需要人工处理的项目。'))
         self._render_detail()
 
@@ -501,6 +662,16 @@ class ReviewPanel(QWidget):
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.clicked.connect(lambda _checked=False, name=key: self._toggle_group(name))
+        if key == "auto":
+            # #289: 组头让键盘/读屏用户也能核对总数守恒——自动处理不是把问题藏起来。
+            stats = self._view.get("triage_stats") or {}
+            buckets = stats.get("buckets") or {}
+            button.setAccessibleDescription(i18n.tr(
+                '必须处理 {v0} · 建议处理 {v1} · 参考 {v2} · 自动处理 {v3}，'
+                '合计等于本次投影的 {v4} 条发现。',
+                v0=int(buckets.get("must") or 0), v1=int(buckets.get("suggested") or 0),
+                v2=int(buckets.get("reference") or 0), v3=int(buckets.get("auto") or 0),
+                v4=int(stats.get("total_findings") or 0)))
         self.list.setItemWidget(entry, button)
         self._group_buttons[key] = button
 
@@ -512,12 +683,29 @@ class ReviewPanel(QWidget):
         if item.get("kind") in _REVIEW_TASK_KINDS:
             # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案；
             # 发现项的摘要是模型产出，必须原样显示。
-            summary = i18n.tr_dynamic(summary)
+            summary = _localized_task_copy(item).get("summary") \
+                or i18n.tr_dynamic(summary)
         # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
         tags = [value for value in (decision, label)
                 if value and value not in title]
+        if self._triage_on and item.get("handled") and item.get("triage_actor_type"):
+            # #289 D13: 人工决定与机器消解从此不同形——显示 actor_type，
+            # 不显示 actor 字符串（"qa_triage" 不是人工决定）。
+            who = i18n.tr(_ACTOR_TYPE_LABELS.get(
+                str(item.get("triage_actor_type")),
+                str(item.get("triage_actor_type"))))
+            decided = i18n.tr_dynamic(str(_DISPOSITION_LABELS.get(
+                str(item.get("triage_disposition") or ""),
+                str(item.get("triage_disposition") or ""))))
+            tags.insert(0, f"{who} · {decided}" if decided else who)
         if summary:
             tags.append(summary)
+        if self._triage_on:
+            group_copy = self._finding_group_copy(item)
+            if group_copy:
+                # #289 D12: 已有的 finding_groups 分组结果第一次被渲染出来
+                # （只渲染，不改分组算法）——重复的数字/单位/标记问题不再是 N 行孤岛。
+                tags.append(group_copy)
         second = " · ".join(dict.fromkeys(tags))
         text = f"{title}\n{second}" if second else title
         entry = QListWidgetItem(text)
@@ -528,6 +716,98 @@ class ReviewPanel(QWidget):
         entry.setData(Qt.ItemDataRole.AccessibleTextRole,
                       f"{title}. {second}".strip())
         self.list.addItem(entry)
+
+    def _finding_group_copy(self, item: dict) -> str:
+        """一行分组摘要：类型 · token · 出现次数 · 影响段落数（数据来自 #101）。"""
+        group_id = str(item.get("finding_group_id") or "")
+        if not group_id:
+            return ""
+        group = self._group_summaries.get(group_id) or {}
+        token = str(item.get("finding_group_token") or group.get("token") or "")
+        if not token:
+            return ""
+        kind_label = i18n.tr_dynamic(str(item.get("finding_group_label")
+                                         or group.get("label") or ""))
+        return i18n.tr('{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段',
+                       v0=kind_label, v1=token,
+                       v2=int(group.get("occurrence_count") or 0),
+                       v3=int(group.get("segment_count") or 0))
+
+    def _add_audit_card(self, item: dict) -> None:
+        """#289: 审计列表里的一行——可展开看证据与快照，可撤销回人工队列。
+
+        复用仓库已有的可展开行原语 ``IssueCard``（「检查与修复」抽屉同款）。
+        这一行**不在** ``_visible`` 里：它不参与 N/A/C/K 键盘处置循环，
+        人工决定按钮也不会作用在它身上。撤销只发信号，面板不写状态。
+        """
+        record_key = str(item.get("triage_record_key") or "")
+        entry = QListWidgetItem()
+        # 没有 UserRole 标识：导航（_list_row/_visible_index）会跳过这一行。
+        entry.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        entry.setData(Qt.ItemDataRole.UserRole + 1, record_key)
+        card = IssueCard("info", collapsible=True, expanded=False)
+        card.setObjectName("qaAuditItem")
+        who = i18n.tr(_ACTOR_TYPE_LABELS.get(
+            str(item.get("triage_actor_type") or ""),
+            str(item.get("triage_actor_type") or "")))
+        disposition = i18n.tr_dynamic(str(_DISPOSITION_LABELS.get(
+            str(item.get("triage_disposition") or ""),
+            str(item.get("triage_disposition") or ""))))
+        card.set_title(self._item_title(item))
+        head = " · ".join(value for value in (who, disposition) if value)
+        detail_bits = []
+        if item.get("triage_candidate_id"):
+            detail_bits.append(i18n.tr('候选 {v0}', v0=str(item["triage_candidate_id"])))
+            detail_bits.append(i18n.tr('已提交') if item.get("triage_committed")
+                               else i18n.tr('未提交'))
+        card.set_summary(" · ".join([value for value in (head, " ".join(detail_bits))
+                                    if value]) or head)
+
+        sep = _colon()
+        for evidence in item.get("triage_evidence") or []:
+            line = QLabel(f"<b>{_escape(i18n.tr('证据'))}{sep}</b>"
+                          f"{_escape(str(evidence.get('kind') or ''))}"
+                          f" · {_escape(str(evidence.get('ref') or ''))}"
+                          f" · {_escape(str(evidence.get('detail') or ''))}")
+            line.setObjectName("qaAuditEvidence")
+            line.setWordWrap(True)
+            line.setProperty("role", "muted")
+            card.details_layout.addWidget(line)
+        snapshot = item.get("triage_snapshot") or {}
+        for label_key, text_key in (("当时原文", "source"), ("当时译文", "target")):
+            value = str(snapshot.get(text_key) or "")
+            if not value:
+                continue
+            line = QLabel(f"<b>{_escape(i18n.tr(label_key))}{sep}</b>"
+                          f"{_escape(value)}")
+            line.setObjectName("qaAuditSnapshot")
+            line.setWordWrap(True)
+            card.details_layout.addWidget(line)
+        summary_text = str(snapshot.get("summary") or "")
+        if summary_text:
+            line = QLabel(f"<b>{_escape(i18n.tr('问题'))}{sep}</b>{_escape(summary_text)}")
+            line.setObjectName("qaAuditSnapshot")
+            line.setWordWrap(True)
+            line.setProperty("role", "muted")
+            card.details_layout.addWidget(line)
+
+        revoke = QPushButton(i18n.tr('撤销'))
+        style_module.set_button(revoke, "secondary", small=True)
+        revoke.setToolTip(i18n.tr('撤销这条自动处理结论；这一项回到人工队列。'))
+        revoke.clicked.connect(
+            lambda _checked=False, key=record_key: self.triageRevokeRequested.emit(key))
+        card.add_action(revoke)
+        card.finish_actions()
+
+        entry.setSizeHint(card.sizeHint())
+        card.toggle.toggled.connect(
+            lambda checked=False, c=card, e=entry: e.setSizeHint(c.sizeHint()))
+        accessible = " · ".join(value for value in
+                                (card.title.text(), head,
+                                 i18n.tr('自动处理（审计）')) if value)
+        entry.setData(Qt.ItemDataRole.AccessibleTextRole, accessible)
+        self.list.addItem(entry)
+        self.list.setItemWidget(entry, card)
 
     def _list_row(self, visible_index: int) -> int:
         """``_visible`` 里的位置 → 列表行（跳过组标题）。"""
@@ -545,7 +825,9 @@ class ReviewPanel(QWidget):
         self._rebuild_list()
 
     def _current_changed(self, current, _previous) -> None:
-        self._selected_id = str(current.data(Qt.ItemDataRole.UserRole)) if current else ""
+        # #289: 审计行没有队列标识（不参与处置循环）：data 为空时选中项为空。
+        self._selected_id = (str(current.data(Qt.ItemDataRole.UserRole) or "")
+                             if current else "")
         self.note_edit.clear()
         self.source_note_edit.clear()
         self.source_confirm_box.setChecked(False)
@@ -603,12 +885,7 @@ class ReviewPanel(QWidget):
         parts = []
         if source:
             parts.append(f"<p><b>{_escape(i18n.tr('术语'))}{sep}</b>{_escape(source)}</p>")
-        if target:
-            parts.append(f"<p><b>{_escape(i18n.tr('冻结译法'))}{sep}</b>{_escape(target)}</p>")
-        if previous and previous != target:
-            parts.append(f"<p><b>{_escape(i18n.tr('旧译法'))}{sep}</b>{_escape(previous)}</p>")
-        parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}{sep}</b>"
-                     f"{_escape(i18n.tr('{v0} 段', v0=total))}</p>")
+        parts.append(_decision_reference_html(target, previous, total))
         shown = rows[:TERM_ROWS_SHOWN]
         if shown:
             cells = []
@@ -658,17 +935,27 @@ class ReviewPanel(QWidget):
         sep = _colon()
         task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
         parts = []
+        if item.get("entity_source"):
+            # #277: 概念决策类术语卡补上决定参考字段，渲染与 #102 过期译法卡同源。
+            # 没有锁定译法时投影里就是空值，这里自然不画冻结/旧译法两行。
+            total = int(item.get("term_segment_total") or 0)
+            if total > 0:
+                parts.append(_decision_reference_html(
+                    str(item.get("term_frozen_target") or "").strip(),
+                    str(item.get("term_previous_target") or "").strip(),
+                    total))
         decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
         if decision:
             # 已经记下的人工判断：确认问题存在之后问题仍在队列里，必须说清它
             # 不是"待处理但没人看过"。
             parts.append(f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
                          f"{_escape(decision)}</p>")
+        task_copy = _localized_task_copy(item) if task_item else {}
         for label, key in (("问题", "summary"), ("原因", "reason"),
                            ("说明", "explanation"), ("建议", "recommendation")):
             value = str(item.get(key) or "").strip()
             if value and task_item:
-                value = i18n.tr_dynamic(value)
+                value = task_copy.get(key) or i18n.tr_dynamic(value)
             if value and not any(value in part for part in parts):
                 parts.append(f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
         from folith.textual import text_direction
@@ -687,9 +974,11 @@ class ReviewPanel(QWidget):
                              f"<p{block} style=\"margin-top:2px\">"
                              f"{self._highlight(value, span)}</p>")
         self.item_body.setHtml("".join(parts))
+        summary_a11y = (task_copy.get("summary") if task_item else "") \
+            or str(item.get("summary") or "")
         self.item_body.setAccessibleDescription(
             " · ".join(value for value in (self._item_title(item), chip_text,
-                                          str(item.get("summary") or ""))
+                                          summary_a11y)
                        if value))
         entity = self._entity_for(item)
         if entity:
