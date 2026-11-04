@@ -215,3 +215,46 @@ tests in `tests/qt_review_decision_workspace_test.py` pass.
 on the unchanged baseline `main` (`7d565d80`); only fails under full-suite load.
 Not a regression from this work. Focused audit/triage/candidate/localization
 suites pass; `qt_i18n_coverage.py --strict` is 1729/1729, 0 missing.
+
+## v2.3 — Phase 4: structured deterministic finding localization
+
+### Ownership boundary (audited)
+- **Program-owned / localize:** category labels (`_CATEGORY_LABELS`, 11 values), the
+  `第 N 段` frame, deterministic explanation/recommendation/reason templates,
+  severity/status/disposition/candidate labels, panel headings, audit before/after/
+  status copy.
+- **Preserve (never translated):** source text, target text, model-generated finding
+  summaries/explanations, user notes, quotes/spans, evidence ids/refs, technical ids.
+
+### Approach (fits existing convention)
+Folith's Qt catalogs are keyed by the Chinese source string (`i18n.tr`/`tr_dynamic`
+do exact-key lookup). So the fix is:
+1. Add the program-owned deterministic strings (category labels + the fixed
+   explanation/recommendation/reason templates + defaults) to all seven catalogs.
+2. Make the panel run `i18n.tr_dynamic` on finding `summary`/`reason`/`explanation`/
+   `recommendation` (in `_render_detail` and `_add_card`). A deterministic Chinese
+   template hits its catalog key and localizes; model/document text has no key and is
+   returned unchanged. Titles are composed as `第 {n} 段 · <localized category|span>`.
+
+This is additive and read-only: no projection schema change, no persisted data change,
+Finding identity/fingerprints/candidates unchanged.
+
+### Result
+- German/Arabic deterministic **titles** (`Absatz 1 · Übersetzungsvollständigkeit`,
+  `الفقرة 1 · اكتمال الترجمة`) and **summaries/explanations** render localized; document
+  content (`Hello world.`, `完成于 100 s`) is preserved verbatim.
+- Automatic audit titles localize (`Absatz 41 · Deterministische Prüfung`).
+- `scripts/qt_i18n_coverage.py --strict`: 1733/1733 per language, 0 missing.
+
+### Production-state end-to-end tests
+`tests/qt_qa_structured_localization_test.py`: real `state → workbench_view →
+ReviewPanel` asserts de/ar localized title/explanation, model summary preserved,
+source content preserved.
+
+### Remaining limitation (precise)
+Deterministic **parameterized** messages (e.g. `译文残留源文文字：{names}`,
+`保留项 {kind}「{token}」在译文中丢失`, `疑似残留源语片段「{residual}」`,
+`疑似漏译/截断：原文 … 字符/… 句`) embed runtime values, so the whole composed string
+is not a catalog key and stays in Chinese. Localizing them needs structured
+`{kind, params}` threaded from the detector; out of scope for this pass (no schema
+change to persisted findings). Also native macOS/Windows acceptance still outstanding.

@@ -801,10 +801,13 @@ class ReviewPanel(QWidget):
         decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
         summary = str(item.get("summary") or "")
         if item.get("kind") in _REVIEW_TASK_KINDS:
-            # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案；
-            # 发现项的摘要是模型产出，必须原样显示。
+            # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案。
             summary = _localized_task_copy(item).get("summary") \
                 or i18n.tr_dynamic(summary)
+        else:
+            # 发现项摘要多数是模型产出：tr_dynamic 查不到 key 就原样保留。
+            # 但确定性发现的摘要是程序模板（以中文为 key），这里命中即本地化。
+            summary = i18n.tr_dynamic(summary)
         # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
         tags = [value for value in (decision, label)
                 if value and value not in title]
@@ -1287,8 +1290,11 @@ class ReviewPanel(QWidget):
         for label, key in (("问题", "summary"), ("原因", "reason"),
                            ("说明", "explanation"), ("建议", "recommendation")):
             value = str(item.get(key) or "").strip()
-            if value and task_item:
-                value = task_copy.get(key) or i18n.tr_dynamic(value)
+            if value:
+                # 程序自有的确定性文案以中文为 i18n key，走 tr_dynamic 命中即本地化；
+                # 模型/文档文本查不到 key，原样保留（不会被改写）。
+                override = task_copy.get(key) if task_item else ""
+                value = override or i18n.tr_dynamic(value)
             if value and not any(value in part for part in problem_parts):
                 problem_parts.append(
                     f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
