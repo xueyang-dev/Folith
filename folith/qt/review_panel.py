@@ -374,7 +374,7 @@ class ReviewPanel(QWidget):
         self.item_body.setOpenExternalLinks(False)
         self.item_body.setMinimumHeight(80)
         # 内容自适应：短段落按内容高度、长段落限高后内部滚动，避免一整块空文本框。
-        self.item_body.setMaximumHeight(340)
+        self.item_body.setMaximumHeight(420)
         self.item_body.setSizePolicy(QSizePolicy.Policy.Preferred,
                                      QSizePolicy.Policy.Maximum)
         self.item_body.setAccessibleName(i18n.tr('审校详情'))
@@ -1158,23 +1158,43 @@ class ReviewPanel(QWidget):
         snap = item.get("triage_snapshot") or {}
         committed = bool(item.get("triage_committed"))
         disposition = str(item.get("triage_disposition") or "")
+        before = str(item.get("triage_before_target") or snap.get("target") or "")
+        after = str(item.get("triage_after_target") or "")
+        current = str(item.get("target") or "")
+        candidate_status = str(item.get("triage_candidate_status") or "")
         parts = [f"<p><b>{_escape(i18n.tr('自动处理'))}{sep}</b>"
                  f"{_escape(disposition_name)}</p>"]
+        if disposition == "verified_safe":
+            # 证据核验安全：没有改动译文，也不该假装有 before/after。
+            parts.append(f"<p>{_escape(i18n.tr('未修改译文（证据核验安全）'))}</p>")
+        else:
+            if candidate_status in ("discarded", "stale"):
+                status = i18n.tr('已撤销或已回退')
+            elif not committed:
+                status = i18n.tr('仅暂存未采用')
+            elif not after:
+                status = i18n.tr('原修复结果已无法重新构造')
+            elif current and current.strip() == after.strip():
+                status = i18n.tr('已提交且仍为当前')
+            else:
+                status = i18n.tr('已提交但已被修改')
+            # 状态紧跟在处置之后、置于最上方：它是审计最关键的一句，不能被
+            # 正文滚动区裁到下面看不见。
+            parts.append(f"<p><b>{_escape(i18n.tr('状态'))}{sep}</b>"
+                         f"{_escape(status)}</p>")
         source = str(snap.get("source") or "")
         if source:
             parts.append(self._block("原文", source))
-        if disposition == "verified_safe" and not committed:
-            parts.append(f"<p>{_escape(i18n.tr('未修改译文（证据核验安全）'))}</p>")
-        else:
-            before = str(item.get("triage_previous_target") or snap.get("target") or "")
-            after = str(item.get("triage_target") or item.get("target") or "")
+        if disposition != "verified_safe":
             if before:
                 parts.append(self._block("处理前译文", before))
-            if after and after != before:
-                parts.append(self._block("当前译文", after))
-            elif committed:
-                parts.append(f"<p>{_escape(i18n.tr('已提交的确定性修复'))}</p>")
+            if after:
+                parts.append(self._block("处理后译文", after))
+            if status == i18n.tr('已提交但已被修改') and current:
+                parts.append(self._block("当前译文", current))
         self.item_body.setHtml("".join(parts))
+        # 审计要完整展示前/后/当前/状态：给正文更大的最小高度（普通短内容仍是自适应）。
+        self.item_body.setMinimumHeight(360)
         evidence_lines = []
         for entry in item.get("triage_evidence") or []:
             if not isinstance(entry, dict):
@@ -1228,6 +1248,7 @@ class ReviewPanel(QWidget):
             self._render_audit()
             return
         self.audit_revoke_button.setVisible(False)
+        self.item_body.setMinimumHeight(80)
         item = self.selected_item()
         has = bool(item)
         for widget in (self.item_title, self.item_chip, self.item_body,
@@ -1404,12 +1425,14 @@ class ReviewPanel(QWidget):
         self._set_actions(source=source, task=task, decision=decision,
                           suggestion=suggestion, edit=has_segment and not task)
         # 呈现层的行动优先级：按项的真实状态选“唯一实心主行动”，而不是只看严重度。
-        # 有建议时“暂存为候选”是下一步；没有建议但原文与译文完全相同（整段未翻译）
-        # 时，没有任何“已解决”的依据，主行动应是“修改译文”，把“确认已解决”降为次要。
+        # 有建议 → 暂存候选；整段未翻译、或无法安全记录人工决定（证据/定位不足）→
+        # 主行动是“修改译文”，把“确认已解决”降为次要；其余可判定项才把“确认已解决”
+        # 作为主行动。
         source_text = str(item.get("source") or "").strip()
         target_text = str(item.get("target") or "").strip()
         untranslated = bool(source_text) and source_text == target_text
-        edit_primary = (not suggestion) and (not source) and has_segment and untranslated
+        edit_primary = (not suggestion) and (not source) and has_segment and (
+            untranslated or not decidable)
         self._set_button_kind(
             self.apply_button, "primary" if suggestion else "secondary", "_apply_kind")
         self._set_button_kind(

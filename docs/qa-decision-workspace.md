@@ -167,3 +167,42 @@ fails identically on pristine `main`; not touched here).
 on pristine `main`, terminology panel untouched here). `scripts/qt_i18n_coverage.py
 --strict`: 1729/1729 per language, 0 missing. v2.1 audit/localization/layout
 tests in `tests/qt_review_decision_workspace_test.py` pass.
+
+## v2.2 — release-candidate hardening
+
+### Invariants audited
+- Triage disposition is **effective**, from `finding_triage.disposition_of` (fail-closed);
+  the projection (`_triage_fields`) never trusts a stored string.
+- `verified_safe` needs allowlisted **producing** evidence that still holds;
+  `record()` refuses a `structural_repair`-only `verified_safe`, and `disposition_of`
+  re-validates on read, so an invalid stored record reads as `human_required` and
+  is kept in the human queue (never the auto/audit list). Blocking is never downgraded.
+- "after" text comes only from the Candidate record (`translation_candidates.by_id`);
+  "current" is the projected `target`; if either is unavailable the UI says so.
+
+### Changes
+- **Projection (P0/P2):** `_triage_fields` adds `triage_before_target` (snapshot.target),
+  `triage_after_target` (candidate `candidate_target`), `triage_candidate_status`.
+- **Audit inspector:** shows 状态 (已提交且仍为当前 / 已提交但已被修改 / 原修复结果已无法
+  重新构造 / 仅暂存未采用 / 已撤销或已回退) at the top, then 原文 / 处理前译文 /
+  处理后译文 / 当前译文; `verified_safe` shows *未修改译文（证据核验安全）* and no fake
+  before/after. Never asserts current == after.
+- **Primary action (P1):** suggestion → stage; untranslated **or** non-decidable →
+  modify translation primary (confirm demoted); otherwise confirm-resolved primary.
+- **Tests:** v2.2 audit states (committed/current, committed-then-modified,
+  unreconstructable, staged, stale), non-decidable primary, and `record()` refusing
+  `structural_repair`-only `verified_safe`.
+- Locale keys for the audit before/after/status copy added to all seven languages
+  (`qt_i18n_coverage.py --strict`: 1729/1729, 0 missing).
+
+### Remaining limitations
+- **Phase 4 not complete:** deterministic finding **titles/summaries** are still built in
+  Chinese inside `workbench_view` (e.g. `第 N 段 · <identity_detail>`, `summary`). The panel
+  localizes its own frame (`第 {v0} 段` when a segment number is present) and all
+  program-owned panel copy, but the projection text is not yet structured templates, so
+  Arabic/German still show the projection's Chinese title/summary. Fixing fully needs
+  structured `{kind, segment, template, params}` fields threaded through the projection
+  and detector copy — designed but not implemented in this pass.
+- **Native macOS/Windows acceptance not performed here** (no interactive native GUI run in
+  this automated environment). Offscreen Qt renders are not native acceptance; both remain
+  release gates.

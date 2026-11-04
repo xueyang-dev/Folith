@@ -2484,5 +2484,11 @@
   "未修改译文（证据核验安全）": "Sin cambios en la traducción (verificado seguro)",
   "已提交的确定性修复": "Reparación determinista confirmada",
   "撤销这条自动处理结论；撤销会暂存撤回候选，仍需采用才会改正文。": "Revocar esta decisión automática; revocar prepara un candidato de reversión que aún debe adoptarse para cambiar el texto.",
-  "这是自动处理记录，仅供查看与撤销；不会作为人工决定项。": "Este es un registro de gestión automática, solo para inspección y revocación; no es un elemento de decisión humana."
+  "这是自动处理记录，仅供查看与撤销；不会作为人工决定项。": "Este es un registro de gestión automática, solo para inspección y revocación; no es un elemento de decisión humana.",
+  "处理后译文": "Después (reparación)",
+  "已提交且仍为当前": "Confirmado y aún vigente",
+  "已提交但已被修改": "Confirmado pero modificado después",
+  "原修复结果已无法重新构造": "El resultado original ya no es reconstruible",
+  "仅暂存未采用": "Preparado, no adoptado",
+  "已撤销或已回退": "Revocado o revertido"
 }

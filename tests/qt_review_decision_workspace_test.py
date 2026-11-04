@@ -273,4 +273,98 @@ def test_short_content_body_height_is_bounded(qapp):
                       queue_items=[item]))
     assert panel.select_item_id("finding:s")
     # 内容自适应：短内容不会撑满整个工作区高度。
-    assert panel.item_body.height() <= 340
+    assert panel.item_body.height() <= 420
+
+
+def _audit_item(**over):
+    base = {"title": "第 41 段 · 数字确定性修复", "triage_record_key": "rk1",
+            "triage_actor_type": "rule", "triage_disposition": "auto_resolvable",
+            "triage_candidate_id": "cand-1", "triage_committed": True,
+            "triage_evidence": [{"kind": "structural_repair", "ref": "cand-1",
+                                 "detail": "数字修正"},
+                                {"kind": "candidate_verification", "ref": "cand-1",
+                                 "detail": "检测器静默"}],
+            "triage_snapshot": {"source": "完成于 100 s", "target": "完成于 00 s",
+                                "summary": "单位不完整"},
+            "triage_before_target": "完成于 00 s", "triage_after_target": "完成于 100 s",
+            "triage_candidate_status": "adopted"}
+    base.update(over)
+    return base
+
+
+def _audit_view_item(item):
+    return _view(qa_triage_enabled=True, auto_handled_items=[item],
+                 group_counts={"must": 0, "suggested": 0, "reference": 0, "auto": 1})
+
+
+def test_committed_repair_shows_before_after_and_current(qapp):
+    panel = rp.ReviewPanel()
+    item = _audit_item(target="完成于 100 s")   # current == after
+    panel.apply(_audit_view_item(item))
+    assert _select_audit(panel)
+    body = panel.item_body.toPlainText()
+    assert "完成于 00 s" in body and "完成于 100 s" in body
+    assert "已提交且仍为当前" in body
+
+
+def test_committed_then_modified_shows_current_and_status(qapp):
+    panel = rp.ReviewPanel()
+    item = _audit_item(target="完成于 100 s（人工再改）")   # current != after
+    panel.apply(_audit_view_item(item))
+    assert _select_audit(panel)
+    body = panel.item_body.toPlainText()
+    assert "已提交但已被修改" in body
+    assert "人工再改" in body          # current block shown
+
+
+def test_committed_missing_after_is_unreconstructable(qapp):
+    panel = rp.ReviewPanel()
+    item = _audit_item(target="", triage_after_target="",
+                       triage_candidate_status="")
+    panel.apply(_audit_view_item(item))
+    assert _select_audit(panel)
+    assert "原修复结果已无法重新构造" in panel.item_body.toPlainText()
+
+
+def test_staged_candidate_reads_not_adopted(qapp):
+    panel = rp.ReviewPanel()
+    item = _audit_item(triage_committed=False, triage_candidate_status="pending")
+    panel.apply(_audit_view_item(item))
+    assert _select_audit(panel)
+    assert "仅暂存未采用" in panel.item_body.toPlainText()
+
+
+def test_stale_candidate_reads_revoked(qapp):
+    panel = rp.ReviewPanel()
+    item = _audit_item(triage_candidate_status="stale")
+    panel.apply(_audit_view_item(item))
+    assert _select_audit(panel)
+    assert "已撤销或已回退" in panel.item_body.toPlainText()
+
+
+def test_not_decidable_makes_edit_the_primary_action(qapp):
+    panel = rp.ReviewPanel()
+    item = {"id": "finding:x", "kind": "finding", "severity": "actionable",
+            "severity_label": "建议检查", "filter_group": "suggested",
+            "title": "第 1 段", "segment_number": 1, "segment_index": 0,
+            "summary": "定位不足", "source": "A", "target": "乙",
+            "decidable": False}
+    panel.apply(_view(group_counts={"must": 1, "suggested": 0, "reference": 0, "auto": 0},
+                      queue_items=[item]))
+    assert panel.select_item_id("finding:x")
+    assert panel.edit_button.property("kind") == "primary"
+    assert panel.confirm_button.property("kind") == "secondary"
+
+
+def test_record_refuses_verified_safe_without_producing_evidence(qapp):
+    """Phase 1: a verified_safe write needs allowlisted producing evidence; a
+    structural_repair-only record is refused at the source (so it can never be
+    projected as a safe automatic approval)."""
+    from folith import finding_triage as ft
+    state = {"qa_triage_enabled": True, "target_lang": "简体中文",
+             "pairs": [{"source": "S", "target": "T"}], "findings": []}
+    finding = {"finding_id": "f1", "id": "f1", "segment_index": 0,
+               "severity": "actionable", "source": "S", "target": "T"}
+    with pytest.raises(ValueError):
+        ft.record(state, finding, disposition=ft.VERIFIED_SAFE, actor_type="rule",
+                  evidence=[{"kind": ft.STRUCTURAL_REPAIR, "ref": "c", "detail": "d"}])
