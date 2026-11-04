@@ -258,3 +258,16 @@ Deterministic **parameterized** messages (e.g. `译文残留源文文字：{name
 is not a catalog key and stays in Chinese. Localizing them needs structured
 `{kind, params}` threaded from the detector; out of scope for this pass (no schema
 change to persisted findings). Also native macOS/Windows acceptance still outstanding.
+
+### v2.3 verification (final)
+
+`pytest tests/`: **5098 passed, 38 skipped, 2 failed**. Both failures are
+load/timing flakes, not regressions from this work:
+- `qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`
+  — order-dependent layout flake; passes isolated on this branch and on unchanged
+  `main` (`7d565d80`).
+- `ui_watchdog_test.py::test_independent_gate_with_real_qt_and_gil_stall[gil_stall]`
+  — timing-sensitive; the whole module passes isolated (3 passed) on this branch
+  and on unchanged `main`.
+`scripts/qt_i18n_coverage.py --strict`: 1733/1733 per language, 0 missing. New
+production-projection localization tests pass.
