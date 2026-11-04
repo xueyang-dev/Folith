@@ -22,7 +22,7 @@ from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QLinea
                            QIcon, QPainter, QPainterPath, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLayout,
                                QLineEdit, QPushButton, QSizePolicy, QSplitter, QSplitterHandle,
-                               QTableWidget, QToolButton, QVBoxLayout, QWidget)
+                               QStackedWidget, QTableWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import platform_ui, i18n
 from . import icons

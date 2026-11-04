@@ -2482,5 +2482,7 @@
   "更多段落操作": "More segment actions",
   "第一处位于第 {v0} 段。": "The first one is in segment {v0}.",
   "约为「标准」的 {v0} 倍": "about {v0}× the «Standard» setting",
-  "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Review records are complete, but the delivery gate still has unresolved blocking issues; freeze only after they are resolved."
+  "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Review records are complete, but the delivery gate still has unresolved blocking issues; freeze only after they are resolved.",
+  "阅读": "Reading",
+  "还有 {v0} 个问题待处理": "{v0} issues still to handle"
 }

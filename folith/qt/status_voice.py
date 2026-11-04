@@ -133,7 +133,9 @@ def escalate(tone: str, runtime_status: str, *, active: bool = False) -> str:
     if run_tone in (ERROR, ATTENTION):
         return run_tone
     if base == DONE:
-        return DONE
+        # 已冻结的任务又跑起来了（重译 / 重跑审校）：语气跟着"正在动"，
+        # 否则就是绿字写「正在生成」（2026-11-04 复审 F4 剩余项）。
+        return ACTIVE if run_tone == ACTIVE else base
     if run_tone == ACTIVE and base == IDLE:
         return ACTIVE
     return base

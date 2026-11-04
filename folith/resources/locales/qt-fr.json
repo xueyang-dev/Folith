@@ -2483,5 +2483,7 @@
   "更多段落操作": "Autres actions du segment",
   "第一处位于第 {v0} 段。": "La première se trouve dans le segment {v0}.",
   "约为「标准」的 {v0} 倍": "environ {v0}× le réglage « Standard »",
-  "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Les enregistrements de révision sont complets, mais le contrôle de livraison comporte encore des problèmes bloquants non résolus ; ne gelez qu'après les avoir traités."
+  "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Les enregistrements de révision sont complets, mais le contrôle de livraison comporte encore des problèmes bloquants non résolus ; ne gelez qu'après les avoir traités.",
+  "阅读": "Lecture",
+  "还有 {v0} 个问题待处理": "{v0} problèmes à traiter"
 }

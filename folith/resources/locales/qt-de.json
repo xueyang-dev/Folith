@@ -2483,5 +2483,7 @@
   "更多段落操作": "Weitere Segmentaktionen",
   "第一处位于第 {v0} 段。": "Die erste befindet sich in Segment {v0}.",
   "约为「标准」的 {v0} 倍": "etwa {v0}× der Einstellung „Standard“",
-  "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Die Prüfeinträge sind vollständig, aber das Liefer-Gate hat noch ungelöste blockierende Probleme; erst danach einfrieren."
+  "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Die Prüfeinträge sind vollständig, aber das Liefer-Gate hat noch ungelöste blockierende Probleme; erst danach einfrieren.",
+  "阅读": "Lesen",
+  "还有 {v0} 个问题待处理": "Noch {v0} offene Probleme"
 }

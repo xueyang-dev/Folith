@@ -488,10 +488,14 @@ class _TaskCard(QFrame):
     attentionRequested = Signal(str)
     #: 卡片宽度范围（px）：列数 = 可用宽度能放下几张；再宽只会让书面变成海报。
     MIN_WIDTH = 180
-    MAX_WIDTH = 236
+    #: 236 → 200：F8 把文字移到纸下之后整卡变高，980×640 下第一张卡会掉出首屏
+    #: （qt_trial_feedback_test）。收窄一点换回高度，纸页比例仍是 1.20。
+    MAX_WIDTH = 200
     #: 书面四周给投影与抬起留的空间。
-    PAD = QMargins(8, 10, 8, 18)
-    ASPECT = 1.34          # 书面的高 / 宽（接近一本书或一页纸）
+    PAD = QMargins(8, 8, 8, 12)
+    #: 书面的高 / 宽。F8 把文字移到纸页下方之后整卡变高，980×640 下第一张卡会掉出
+    #: 首屏（qt_trial_feedback_test）；比例收到 1.20 把高度还回去，纸页仍是"一页"。
+    ASPECT = 1.14
     LIFT = 6
 
     def __init__(self, row: adapter.JobRow, *, tone: str,
@@ -599,7 +603,7 @@ class _TaskCard(QFrame):
 
     # ---- 尺寸与摆放 -------------------------------------------------------
     #: 纸页与下方文字之间的间距。
-    TEXT_GAP = 10
+    TEXT_GAP = 6
     #: 文件名最多显示的行数（F8：两行折行，不再省略成头尾几个字符）。
     TITLE_LINES = 2
 
@@ -2719,6 +2723,11 @@ class WorkbenchView(QWidget):
         # 推荐的下一步：随阶段变化（重试失败的审校 / 处理问题 / 冻结并交付）。
         self.stage_action_button = _icon_button(QPushButton(""), "arrow-right", "text-on-accent")
         style_module.set_button(self.stage_action_button, "primary")
+        # F1：这是顶栏里最宽的按钮，文案带数字（「继续处理 1 个必须处理的问题」），
+        # 它的 minimumSizeHint 直接决定工作台——进而窗口——的最小宽度，会把首页
+        # 也一起撑宽（俄语 1418px）。给一个上限，放不下时按钮自己省略（有完整提示）。
+        self.stage_action_button.setMaximumWidth(240)
+        self.stage_action_button.setToolTip("")
         self.stage_action_button.clicked.connect(self._run_stage_action)
         self.stage_action_button.setVisible(False)
         self._stage_action: dict | None = None
@@ -4965,11 +4974,15 @@ class WorkbenchView(QWidget):
         self._sync_stage_action()
 
     def _sync_stage_action(self) -> None:
-        """头部的"下一步"主按钮。交付页自己有「冻结交付」（和交付说明放在一起），
+        """头部的"下一步"主按钮。交付页自己有「冻结交付」/「去处理」，
         在那一页头部就不再放一个做同一件事的主按钮——一屏只有一个主按钮。"""
         action = getattr(self, "_stage_action", None)
-        on_its_page = bool(action) and action.get("kind") == "deliver" \
-            and self.current_page_id() == "deliver"
+        on_deliver = self.current_page_id() == "deliver"
+        on_its_page = bool(action) and action.get("kind") == "deliver" and on_deliver
+        # 有阻断项时交付页的「去处理 N 个必须处理的问题」才是主位；头部再放一个
+        # 「继续处理 N 个…」就是两个蓝色主按钮说同一件事（2026-11-04 复审）。
+        if on_deliver and not self.fix_button.isHidden():
+            on_its_page = True
         self.stage_action_button.setVisible(bool(action) and not on_its_page)
         if action:
             self.stage_action_button.setText(str(action.get("label") or ""))
@@ -6054,7 +6067,7 @@ class WorkbenchView(QWidget):
             # 语气改成"需要处理"，但这条运行确实结束了：进度条保持隐藏，
             # 否则会显示一条 0% 的空条（审查回归项）。
             tone = "attention"
-            line = i18n.tr('必须处理 {v0}', v0=len(blocking))
+            line = i18n.tr('还有 {v0} 个问题待处理', v0=len(blocking))
         # 跑完了就不要进度条：没有阶段进度时它停在 0，和下面的"已完成"自相矛盾；
         # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
         self.run_status.track.setVisible(tone != "done" and not run_finished)
@@ -6263,6 +6276,7 @@ class WorkbenchView(QWidget):
         # 成品仍然存在，不能因此把封面收起来（审查阻断项 4）。
         frozen = bool(snapshot.get("current") or snapshot.get("latest") or self._snapshots)
         self.delivery_product_row.setVisible(frozen)
+        self.delivery_cover.setVisible(frozen)
         if frozen:
             filename = str(self._state.get("filename") or "")
             if getattr(self, "_delivery_cover_name", None) != filename:

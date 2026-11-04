@@ -282,6 +282,9 @@ class MainWindow(QMainWindow):
         shell_layout.addWidget(self.sheet, 1)
         self.setCentralWidget(shell)
         self._shell_layout = shell_layout
+        # 页面栈的最小宽度取所有页的最大值：打开过一次宽任务，首页就再也缩不回去
+        # （实测 zh 934 → 1289，俄语 1418）。`QWidgetItem` 对 `Ignored` 策略的页面
+        # 不计算最小尺寸，所以只让**当前页**参与窗口下限（F1）。
         self._extend_shell_under_title_bar()
         # 顶部那条外壳（标题栏 + 页面上方的间隙）任意位置都能拖动窗口。
         self._shell_drag = components.WindowDragArea(
@@ -1447,6 +1450,9 @@ class MainWindow(QMainWindow):
             self._cached_models_key = self._workbench_models_key(job_id, signature)
             self._delivery_cache.prime(job_id, prepared["delivery"])
             self.stack.setCurrentWidget(self.workbench)
+            # 页面换过、内容也铺好了：这时重新同步窗口最小尺寸，别让 minimumSize()
+            # 还停在首页那一档（否则缩到"最小"会被 Qt 放大到工作台的真实下限）。
+            self._sync_minimum_size()
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
             self._sync_menu_state()

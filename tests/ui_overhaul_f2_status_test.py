@@ -267,3 +267,32 @@ def test_a_legacy_blocking_finding_is_visible_and_handled_in_the_review_queue():
     assert view["delivery"]["title"] == "暂时无法交付"
     # 与交付门禁同一个数。
     assert len(delivery.unresolved_blocking(state)) == 1
+
+
+def test_a_legacy_blocking_finding_can_actually_be_resolved(synthetic_job):
+    """旧式阻断项必须能**真的**被处置掉——不只是「看起来可判定」。
+
+    2026-11-04 复审阻断项：`record_runtime_human_decision` 要求发现项带审校事件 ID，
+    而旧式发现项没有，于是三个动作全报 `cannot decide a stale finding`，阻断数
+    永远是 1。这条用例真的走一遍处置，并断言门禁归零。
+    """
+    import dataclasses
+
+    from folith import workbench_view
+    from folith.qt import adapter
+
+    job_id, state = synthetic_job
+    finding = dict(state["findings"][0])
+    finding_id = str(finding["finding_id"])
+    assert len(workbench_view.delivery.unresolved_blocking(dict(state))) == 1
+
+    live = dict(adapter.load_state(job_id))
+    result = adapter.resolve_findings(job_id, [finding_id], adapter.RESOLVE_CONFIRMED,
+                                      note="复审用例")
+    assert isinstance(result, dict), result
+    live = dict(adapter.load_state(job_id))
+    resolved = next(item for item in live["findings"]
+                    if str(item.get("finding_id")) == finding_id)
+    assert resolved.get("resolved") is True, resolved
+    assert workbench_view.delivery.unresolved_blocking(live) == [], \
+        "处置之后交付门禁仍然挂着这条阻断项"

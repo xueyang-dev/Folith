@@ -3752,10 +3752,10 @@ def test_resize_and_fullscreen_round_trip_keep_the_workbench_usable(client):
 
     # 缩到"允许的最小尺寸"和"更大的尺寸"都必须生效（在这个范围内窗口可以自由缩放）。
     #
-    # 最小尺寸这一档允许 1px 的取整差：布局的最小宽度可能是分数（侧栏 240 + 间隙 +
-    # 页面栈），`minimumSize()` 向下取整而 Qt 用布局真实下限向上兜住，于是
-    # resize(870, …) 会得到 871。这是 Qt 的行为，不是"缩放没生效"——原来这条断言
-    # 把取整差当失败，掩盖了真正的问题（另一个方向的 8px 漂移）。
+    # 最小尺寸这一档允许 1px 取整差：布局的最小宽度可能是分数（侧栏 + 间隙 + 页面栈），
+    # `minimumSize()` 向下取整、Qt 用布局真实下限向上兜住，于是 resize(870, …) → 871。
+    # 窗口最小尺寸由 `MainWindow._sync_minimum_size()` 保持与布局一致（打开任务、每次
+    # 刷新都会同步），所以这里只剩 1px；8px 那类真实漂移已经被它挡掉（见 git 历史）。
     minimum = window.minimumSize()
     for width, height, tolerance in ((minimum.width(), minimum.height(), 1), (1400, 900, 0)):
         window.resize(width, height)
