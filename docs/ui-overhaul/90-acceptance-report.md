@@ -95,7 +95,7 @@
 | 旧式阻断项无法就地处理 | 真阻断（未完全解决） | 现在能定位到段，但该段仍显示「已审校」且检查器无对应条目——**本轮未修**：需要把旧式 findings 合进审校队列的呈现层，属下一轮 |
 | 有阻断时页头主按钮变「审校全部段落」 | 真回归 | `stage._action` 增加 `kind == "delivery"` 分支（返回 None），不再落到 `review_all` |
 | 交付封面从不显示 | 实现与审查结论不一致 | 在 `test_declared_delivery_formats_are_the_ones_produced` 里断言通过（冻结后可见）。仍按审查意见加固：只要有冻结快照就显示，不依赖 `snapshot.current`；该测试已加断言 |
-| `resize(870,529)` 得到 871×537 | 真回归 | 根因：窗口 `minimumSize()` 与布局 `minimumSizeHint()` 不一致（Qt 只用 hint 兜底 resize）。`MainWindow` 在 `showEvent`/`resizeEvent` 同步最小尺寸；该用例通过 |
+| `resize(870,529)` 得到 871×537 | 真回归 | 根因：`minimumSizeHint()` 比布局真实下限小（QMainWindow 不算中央部件里分数宽度向上取整），Qt 于是把 resize 顶到 871×537。`MainWindow._sync_minimum_size()` 取 `minimumSizeHint().expandedTo(layout().minimumSize())`，在 show / resize / 每次 workbench 刷新时同步；用例恢复通过（最小尺寸那一档保留 1px 取整容差并有注释） |
 | F4 反例（done + 运行失败显示绿色） | 真 | `escalate()` 让失败/停滞压过 `done`；项目页子串判断删除；`Voice.finished` 删除 |
 | 外语界面露中文 / 覆盖率不实 | 真 | 补 10 条缺失译文（7 个目录），`qt_i18n_coverage.py --strict` → **1739/1739**；审校页 headline 再过一次 `tr_dynamic`（业务层中文） |
 | 页头 0% 空进度条 + 文案截断 | 真回归 | 运行结束但仍有阻断时进度条保持隐藏；文案缩为「必须处理 N」 |
@@ -114,3 +114,13 @@
 * 「分块跑 118/118 全绿」这句话掩盖了 `resize` 用例的确定性失败（它不在被分块的那一份里）。已修。
 * 「1 次时序 flaky」不成立：那条是确定性回归，已修。
 * F6 网格行距仍未启用——这条理由（长会话不稳定）目前**没有复现证据**，下一轮应先复现再决定。
+
+
+## 修正后的测试结果（2026-11-04 22:2x）
+
+| 集合 | 结果 |
+| --- | --- |
+| `qt_client_window_test` 分 3 块 | **118/118 全绿**（40 + 40 + 38） |
+| 契约/界面套件 16 文件 | **362 passed / 1 failed**（仍是既有的顺序相关 `test_workbench_stays_at_980px_with_terms_open_and_closed`，干净 HEAD 同红） |
+| `scripts/qt_i18n_coverage.py --strict` | **1739/1739**（7 个目录，0 缺译） |
+| `scripts/check_ui_locales.py` | 0 errors / 0 TODOs |

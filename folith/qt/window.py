@@ -1659,7 +1659,12 @@ class MainWindow(QMainWindow):
         """
         if getattr(self, "_syncing_minimum", False):
             return
+        # `minimumSizeHint()` 有时比布局的真实下限小（QMainWindow 不算中央部件里
+        # 分数宽度向上取整的那一位），所以两个都问，取较大者。
         hint = self.minimumSizeHint()
+        layout = self.layout()
+        if layout is not None:
+            hint = hint.expandedTo(layout.minimumSize())
         if not hint.isValid():
             return
         if self.minimumSize() == hint:
@@ -2113,6 +2118,10 @@ class MainWindow(QMainWindow):
                                  refresh_delivery=force or terminal_change, prepared=prepared,
                                  models=models)
         self._sync_menu_state()
+        # 内容变了，布局的最小尺寸也可能跟着变（标题、阶段条、检查器动作条）。
+        # 每次刷新同步一次，窗口的 minimumSize() 才不会比真实下限小 1–8px——
+        # 否则「缩到最小尺寸」会被 Qt 悄悄放大（resize(870,463) → 871×463）。
+        self._sync_minimum_size()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
         self._later(600, lambda: self._offer_tips(runtime))
 

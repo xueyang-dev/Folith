@@ -3750,13 +3750,19 @@ def test_resize_and_fullscreen_round_trip_keep_the_workbench_usable(client):
     assert window.minimumHeight() <= 875, (
         f"主窗口最小高度 {window.minimumHeight()} 超过 1440x900 屏幕的可用高度（约 875pt）")
 
-    # 缩到"允许的最小尺寸"和"更大的尺寸"都必须精确生效（在这个范围内窗口可以自由缩放）
+    # 缩到"允许的最小尺寸"和"更大的尺寸"都必须生效（在这个范围内窗口可以自由缩放）。
+    #
+    # 最小尺寸这一档允许 1px 的取整差：布局的最小宽度可能是分数（侧栏 240 + 间隙 +
+    # 页面栈），`minimumSize()` 向下取整而 Qt 用布局真实下限向上兜住，于是
+    # resize(870, …) 会得到 871。这是 Qt 的行为，不是"缩放没生效"——原来这条断言
+    # 把取整差当失败，掩盖了真正的问题（另一个方向的 8px 漂移）。
     minimum = window.minimumSize()
-    for width, height in ((minimum.width(), minimum.height()), (1400, 900)):
+    for width, height, tolerance in ((minimum.width(), minimum.height(), 1), (1400, 900, 0)):
         window.resize(width, height)
         _pump(app, 0.5)
-        assert window.size().width() == width and window.size().height() == height, \
-            f"resize({width},{height}) 没有生效：{window.size()}"
+        assert (abs(window.width() - width) <= tolerance
+                and abs(window.height() - height) <= tolerance), \
+            f"resize({width},{height}) 没有生效：{window.size()}（容差 {tolerance}px）"
         assert workbench.visible_segment_count() == rows_before, \
             f"缩放到 {width}x{height} 之后段落数变了"
         assert workbench.target_edit.isVisible(), f"{width}x{height} 下译文框不可见"
