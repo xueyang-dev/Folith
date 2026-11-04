@@ -480,3 +480,72 @@ the earlier concept-dialog crash had the same cause.
 - The earlier full attempt crashed during window destruction before totals; it
   is not represented as a completed suite. The test-generated DOCX fixture
   changes were restored after the completed run.
+
+
+## Release stabilisation (2026-11-04)
+
+Final stabilisation pass; no features were added and the branch was not merged.
+
+### Terminology sidebar overlap at 980×523 — fixed
+
+- **Root cause.** The compact terminology panel (table, editor card, locate /
+  workspace buttons) was added straight into a `QVBoxLayout` of the workbench
+  sidebar with a stretch of 1 and no scroll container. In a short window the
+  available height was smaller than the panel's own minimum, so Qt compressed
+  children below their minimum sizes and their rectangles overlapped (table
+  bottom 241 px vs editor top 204 px). It depended on the fully styled font
+  metrics, which is why unstyled runs passed.
+- **Fix.** `WorkbenchView.terms_side_scroll` (`QScrollArea`, widget-resizable,
+  horizontal bar off) now contains the whole panel in `folith/qt/views.py`; the
+  "open full workspace" dialog detaches and re-attaches the panel through the
+  scroll area. No minimum height, font size, global style or assertion changed.
+- **Evidence.** `test_styled_sidebar_rectangles_survive_resize_cycles[light|dark|paper]`
+  asserts real mapped rectangles (table ≤ editor ≤ actions, no horizontal
+  scroll) across 980×523, 1280×720, 1440×900, 980×680 and repeated open/close
+  resize cycles, with no fixed `qWait`. Without the fix all three fail
+  (`241 <= 204`); with it they pass, as does the original 980px test.
+- Not covered: long terminology strings and very large glossaries were not
+  separately fixtured; the scroll area bounds both vertically.
+
+### Realistic E2E (`tests/qa_decision_e2e_test.py`, 7 tests)
+
+Disposable on-disk jobs, real detectors, supported transaction APIs, reopened
+from disk after cache invalidation. Scenario results:
+
+| Scenario | Result |
+| --- | --- |
+| A Missing translation | PASS: detected, shown empty, a delivery notice (not blocking), cleared by a saved edit |
+| B Source == target | PASS: flagged; an explicit keep-as-is action persists, text not mutated |
+| C Terminology conflict | PASS: preview touches only the divergent segment; staging writes no text; adoption is the separate step and clears the conflict |
+| D Deterministic repair | PASS: stage → commit → audit row (`qa_triage`, non-human) → revert only stages a pending candidate, committed text is not overwritten |
+| E verified_safe | PASS: requires live allowlisted evidence, never mutates text, missing/unrelated/stale evidence fails closed |
+| F Review disabled | PASS: deterministic findings remain, no triage record claims independent review, staging refused |
+| G Persistence | PASS: findings, candidates, revoke state and `validate_state` consistent after reopen |
+
+A fixture lacking parsed paragraphs triggers a `pair_count_mismatch` blocking
+invariant after adoption; that was a test-fixture artefact (not a product bug)
+and the fixture now models one paragraph per segment.
+
+### Performance probe (offscreen, 1,200 findings)
+
+Queue build 56 ms, `ReviewPanel.apply` 79 ms, selection median 4.1 ms / p95
+5.0 ms over 300 jumps, peak RSS 294→295 MB, close/delete without crash. This is
+offscreen and not a native-window measurement.
+
+### Results
+
+- Full offline regression (`scripts/run_regression.py`, 336 files): **5,113
+  passed, 0 failed files, 38 skipped**. The earlier single failure is the
+  overlap above and is fixed.
+- Focused (terminology, E2E, review panel, triage, candidates, escalation,
+  audit list, localization, visual fixtures, delivery): **365 passed**.
+- `qt_i18n_coverage.py --strict`: 1,735/1,735 per language, 0 missing.
+- `qt_release_checks.py` needs a built app/DMG; **not run**.
+
+### Not verified
+
+- **Native macOS** window acceptance (real saved task, shortcuts, resize, all
+  themes, close/reopen, Arabic RTL, narrow window): not performed; offscreen
+  runs are not native acceptance.
+- **Native Windows**: not performed (no Windows environment).
+- Native large-document responsiveness (offscreen figures only).

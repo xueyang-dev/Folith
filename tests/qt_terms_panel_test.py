@@ -338,6 +338,42 @@ def test_workbench_stays_at_980px_with_terms_open_and_closed(qapp, job):
     bench.close()
 
 
+@pytest.mark.parametrize('theme_name', ['light', 'dark', 'paper'])
+def test_styled_sidebar_rectangles_survive_resize_cycles(qapp, job, theme_name):
+    from PySide6.QtCore import QPoint
+    from folith.qt import style, views
+
+    style.apply_theme(qapp, theme_name)
+    state = adapter.load_state(job)
+    state.update(p2_done=True, pairs=[{'source': 'Skopos theory matters.',
+                                     'target': '目的论很重要。', 'reviewed': True}])
+    core.save_job_state(job, state)
+    bench = views.WorkbenchView()
+    bench.resize(980, 680)
+    bench.load(job, adapter.EngineConfig(target_lang='简体中文'), state,
+               adapter.segment_rows(job, state), [])
+    bench.show()
+    try:
+        for width, height in ((980, 523), (1280, 720), (1440, 900), (980, 680), (980, 523)):
+            bench.resize(width, height)
+            bench.set_terms_open(True)
+            qapp.processEvents()
+            panel = bench.terms_panel
+            table_bottom = panel.table.mapTo(panel, QPoint(0, panel.table.height())).y()
+            editor_top = panel.editor_card.mapTo(panel, QPoint(0, 0)).y()
+            editor_bottom = panel.editor_card.mapTo(panel, QPoint(0, panel.editor_card.height())).y()
+            actions_top = min(panel.locate_button.mapTo(panel, QPoint(0, 0)).y(),
+                              panel.workspace_button.mapTo(panel, QPoint(0, 0)).y())
+            assert table_bottom <= editor_top
+            assert editor_bottom <= actions_top
+            assert bench.terms_side_scroll.horizontalScrollBar().maximum() == 0
+            bench.set_terms_open(False)
+            qapp.processEvents()
+    finally:
+        bench.close()
+        style.apply_theme(qapp, 'light')
+
+
 def test_workbench_shows_no_gate_notice_once_frozen(qapp, job):
     rows = _rows(job)
     for row in rows:
