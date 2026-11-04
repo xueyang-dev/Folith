@@ -344,3 +344,19 @@ focus ring and accessibility tree were inspected. The computer-control tool did
 not reliably deliver individual keys even for an ordinary letter; keyboard
 entry was instead verified with Qt key-event tests. These checks do not replace
 full native macOS application/title-bar acceptance or Windows acceptance.
+
+### v3 verification
+
+- Focused review, audit, triage, candidate, keyboard, accessibility, RTL,
+  localization and style suites: **358 passed, 0 failed, 0 skipped**.
+- Strict Qt localization coverage: **1,734/1,734 keys per language**, zero missing.
+- Full offline `pytest -q tests`: **5,102 passed, 1 failed, 38 skipped**
+  (572 warnings, 918.74 seconds). The failure was
+  `qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`:
+  at the short height the editor-card bottom was 241 px versus the navigation
+  boundary at 204 px. The same test **passed in isolation** (1 passed). The
+  earlier v2/v2.3 branch verification records the same order-dependent failure
+  and baseline reproduction; this run does not establish that its underlying
+  cause is fixed. No assertions were weakened.
+- The test-generated DOCX fixture changes were restored after the run. The
+  interrupted earlier run does not count as a completed suite result.
